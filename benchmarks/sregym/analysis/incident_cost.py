@@ -676,10 +676,6 @@ def _is_state_change(command: str) -> bool:
             tokens = tokens[1:]
         if not tokens:
             continue
-        if Path(tokens[0]).name == "sdo" and tokens[1:2] == ["act"] and "--" in tokens:
-            tokens = tokens[tokens.index("--") + 1 :]
-            if not tokens:
-                continue
         program = tokens[0]
         if Path(program).name == "kubectl":
             if any(token.startswith("--dry-run") for token in tokens):

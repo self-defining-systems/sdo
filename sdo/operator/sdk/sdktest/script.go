@@ -7,7 +7,7 @@ import (
 )
 
 // ScriptOrigin checks linkage to an original successful timed receipt of the
-// case's incident. Every recorded mutation path qualifies (RunScript, sdo act,
+// case's incident. Every recorded mutation path qualifies (RunScript,
 // observed API writes); when the receipt recorded script bytes, they must be
 // these bytes.
 func ScriptOrigin(script program.RunScript, c CorpusCase) (program.ScriptOriginReceipt, error) {

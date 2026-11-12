@@ -154,7 +154,8 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
     response = IncidentResult()
     assert result.response.Unpack(response)
     assert result.status == "completed"
-    assert {action.target for action in response.repair_actions} == {"Service/reservation", "Deployment/rate"}
+    assert not response.repair_actions  # the recording of the scripted kubectl calls is the receipt
+    assert response.repair_changes
     assert api.objects["Deployment", "rate"]["spec"]["template"]["spec"]["containers"][0]["image"] == "built:source"
     capture = tmp_path / "capture"
     capture.mkdir()
@@ -321,7 +322,7 @@ def test_respond_returns_typed_result_after_source_repair(monkeypatch: pytest.Mo
     assert result.status == "completed"
     assert result.incident_id == request.incident_id
     assert result.confirmed_root_causes[0].explained_detectors == [request.findings[0].detector_id]
-    assert result.repair_actions[0].resources[0].name == "front"
+    assert not result.repair_actions  # the recording of the scripted kubectl calls is the receipt
     assert result.verification_evidence[0].passed
     assert result.usage.llm_calls == 0
     assert calls == ["diagnose", "verify", "verify"]
@@ -358,4 +359,4 @@ def test_respond_repairs_changed_service_behind_deployment_finding(monkeypatch: 
     monkeypatch.setattr(scripts, "_patch_from_source", lambda _request, ref: repairs.append(ref["name"]))
     result = scripts.respond(request)
     assert {"front", "back"} <= set(repairs)
-    assert {"front", "back"} <= {resource.name for action in result.repair_actions for resource in action.resources}
+    assert not result.repair_actions  # the recording of the scripted kubectl calls is the receipt

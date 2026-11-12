@@ -161,7 +161,7 @@ def test_responder_package_exports_resolve_lazily():
 def test_local_help_is_a_concise_capability_index() -> None:
     help_text = tools_cli._parser().format_help()
     assert "accepted source" in help_text
-    assert "record" in help_text
+    assert "mitigate" in help_text
     assert "verify" in help_text
     assert len(help_text) < 2000
 
@@ -184,39 +184,6 @@ def test_incident_command_index_keeps_details_in_help(monkeypatch: pytest.Monkey
         command.description = f"Detailed {name} behavior " * 100
         command.epilog = f"Detailed {name} output " * 100
     assert tools_cli.command_surface() == surface
-
-
-@pytest.mark.parametrize("response", [{"summary": "captured"}, {"error": "capture failed"}])
-def test_act_waits_for_controller_capture_before_running(tmp_path, monkeypatch, response):
-    seen = []
-
-    def exchange(request, _directory):
-        assert request == {
-            "command": "pre-apply",
-            "refs": [{"api_version": "v1", "kind": "Service", "namespace": "app", "name": "api"}],
-        }
-        seen.append("capture")
-        return response
-
-    def run(*_args, **_kwargs):
-        assert seen == ["capture"]
-        seen.append("mutation")
-        return 0
-
-    monkeypatch.setattr(tools_cli, "_exchange", exchange)
-    monkeypatch.setattr(tools_cli.recorded_actions, "run_and_record", run)
-    result = tools_cli.main(["--json", "act", "--resource", "Service/app/api", "--", "true"])
-    assert result == 0
-    assert seen == ["capture", "mutation"]
-
-
-def test_menu_does_not_gate_direct_act(monkeypatch):
-    monkeypatch.setenv("SDO_MITIGATION_SESSION", "1")
-    seen = []
-    monkeypatch.setattr(tools_cli, "_exchange", lambda request, _directory: seen.append(request["command"]) or {})
-    monkeypatch.setattr(tools_cli.recorded_actions, "run_and_record", lambda *_args, **_kwargs: 0)
-    assert tools_cli.main(["--json", "act", "--resource", "Deployment/app/api", "--", "true"]) == 0
-    assert seen == ["pre-apply"]
 
 
 def test_detect_repeated_detector_selection(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -363,37 +330,6 @@ def test_json_flag_works_before_or_after_the_subcommand(monkeypatch, capsys, arg
     assert json.loads(expand_context(capsys.readouterr().out)) == response
 
 
-def test_act_full_json_preserves_existing_output_redaction(monkeypatch, capsys, tmp_path):
-    from sdo.agents.responder import tool_output
-
-    monkeypatch.setattr(tool_output, "OUTPUT_ROOT", tmp_path / "outputs")
-    monkeypatch.setenv("SDO_INCIDENT_ID", "toy")
-    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path / "scratch"))
-    monkeypatch.setattr(tools_cli, "_exchange", lambda *_: {"summary": "captured"})
-    assert (
-        tools_cli.main(
-            [
-                "act",
-                "--resource",
-                "Deployment/toy/api",
-                "--summary",
-                "Update secret-dependent settings",
-                "--",
-                sys.executable,
-                "-c",
-                "print('SYNTHETIC_PRIVATE_CANARY')",
-            ]
-        )
-        == 0
-    )
-    text = expand_context(capsys.readouterr().out)
-    details = Path(text.split("Full JSON: ", 1)[1].splitlines()[0])
-    full = details.read_text()
-    assert "SYNTHETIC_PRIVATE_CANARY" not in text + full
-    assert json.loads(full)["actions"][0]["output"] == "[withheld]"
-    assert json.loads(full)["actions"][0]["receipt"]["success"] is True
-
-
 def test_client_side_failures_also_produce_compact_output_and_complete_json(monkeypatch, capsys):
     monkeypatch.setattr(tools_cli, "_exchange", lambda *_: {"error": "menu read failed"})
     assert tools_cli.main(["mitigate", "repair"]) == 1
@@ -404,18 +340,6 @@ def test_client_side_failures_also_produce_compact_output_and_complete_json(monk
         assert "menu read failed" in text
     finally:
         details.unlink()
-
-
-def test_act_does_not_bypass_pending_mutation_refusal(monkeypatch):
-    called = []
-    monkeypatch.setattr(
-        tools_cli,
-        "_exchange",
-        lambda *_: {"error": "pending target", "report": {"reason_code": "pending_write_conflict"}},
-    )
-    monkeypatch.setattr(tools_cli.recorded_actions, "run_and_record", lambda *_args, **_kw: called.append(True) or 0)
-    assert tools_cli.main(["act", "--resource", "Deployment/app/api", "--", "true"]) == 2
-    assert not called
 
 
 def test_verify_wait_uses_cached_controller_protocol(monkeypatch, capsys):
@@ -438,3 +362,15 @@ def test_mitigate_passes_structured_values_as_json_text(monkeypatch):
     roles = '[{"database": "app", "name": "readWrite"}]'
     assert tools_cli.main(["--json", "mitigate", "EnsureDatabaseUser", "--bind", "roles=" + roles]) == 0
     assert json.loads(seen[0]["targets"][0]["parameters"]["roles"]) == [{"database": "app", "name": "readWrite"}]
+
+
+def test_sdo_act_is_not_a_command_and_mitigate_still_is(capsys: pytest.CaptureFixture[str]) -> None:
+    assert "act" not in tools_cli.command_surface()["commands"]
+    assert "mitigate" in tools_cli.command_surface()["commands"]
+    with pytest.raises(SystemExit) as unknown:
+        tools_cli.main(["act", "--resource", "Deployment/app/api", "--", "true"])
+    assert unknown.value.code == 2
+    assert "invalid choice: 'act'" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        tools_cli.main(["mitigate", "--help"])
+    assert "mitigate" in capsys.readouterr().out

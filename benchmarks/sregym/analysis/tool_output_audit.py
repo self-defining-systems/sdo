@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
 _COMMAND = re.compile(
-    r"\bsdo\s+(status|menu|diagnose|mitigate|act|detect|verify|source|check|plan|apply|rollback|report)\b"
+    r"\bsdo\s+(status|menu|diagnose|mitigate|detect|verify|source|check|plan|apply|rollback|report)\b"
 )
 
 

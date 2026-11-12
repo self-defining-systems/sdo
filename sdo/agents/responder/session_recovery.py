@@ -219,7 +219,6 @@ def open_recovery(incident_id: str, provider: str) -> SessionRecovery | None:
     """Join the controller session only when the dispatcher enables the protocol."""
     if os.environ.get("SDO_RESPONDER_SESSION") != "1" and os.environ.get("SDO_MITIGATION_SESSION") != "1":
         return None
-    from sdo.agents.responder import recorded_actions
     from sdo.agents.responder.tools_cli import _exchange
     from sdo.contracts import parse_json, validate
 
@@ -242,4 +241,6 @@ def open_recovery(incident_id: str, provider: str) -> SessionRecovery | None:
         if response.get("error"):
             raise SessionRecoveryError("interrupted: controller refused provider checkpoint")
 
-    return SessionRecovery(session, provider, recorded_actions.scratch_directory(), persist)
+    return SessionRecovery(
+        session, provider, Path(os.environ.get("SDO_SESSION_SCRATCH") or "/tmp/sdo-session-scratch"), persist
+    )

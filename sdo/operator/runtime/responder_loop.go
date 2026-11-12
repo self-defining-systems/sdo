@@ -45,7 +45,6 @@ type ToolRequest struct {
 	FindingFingerprints []string                               `json:"finding_fingerprints,omitempty"`
 	DetectorIDs         []string                               `json:"detector_ids,omitempty"`
 	Finding             string                                 `json:"finding,omitempty"`
-	Refs                []sdk.ObjectRef                        `json:"refs,omitempty"`
 	Parameters          map[string]string                      `json:"parameters,omitempty"`
 	Selection           *contracts.MitigationSelection         `json:"-"`
 	ReportQuery         *contracts.MitigationReportQuery       `json:"-"`
@@ -184,7 +183,7 @@ type ResponderLoop struct {
 	// BuiltinRestoreAuto lets the automatic stage apply the built-in
 	// source-restore playbook; off, the responder decides (response.builtin_restore_auto).
 	BuiltinRestoreAuto bool
-	scriptRefusals map[string]error
+	scriptRefusals     map[string]error
 
 	stageProgress       map[string]responseStageProgress
 	dataWorkloads       dataHolders
@@ -230,21 +229,21 @@ type ResponderLoop struct {
 	Trust                 map[string]ProgramTrust
 	// Credits are the (symptom, component) pairs each learned playbook earned;
 	// a playbook without any keeps the finding binding.
-	Credits               ProgramCredits
-	CorpusSessionRoot     string
-	RecoverySessionRoot   string
-	capturePhase          string
-	sourceCompared        map[string]bool
-	stageNotes            []StageNote
-	timing                toolTiming
-	preApplyCaptured      bool
-	saveToolState         func(context.Context, []byte) error
-	operationMu           sync.RWMutex
-	mu                    sync.Mutex
-	sessionID             string
-	plans                 map[string]selectedPlan
-	applications          map[string]PlanApplicationResult
-	applicationsLog       []RecordedPlanApplication
+	Credits             ProgramCredits
+	CorpusSessionRoot   string
+	RecoverySessionRoot string
+	capturePhase        string
+	sourceCompared      map[string]bool
+	stageNotes          []StageNote
+	timing              toolTiming
+	preApplyCaptured    bool
+	saveToolState       func(context.Context, []byte) error
+	operationMu         sync.RWMutex
+	mu                  sync.Mutex
+	sessionID           string
+	plans               map[string]selectedPlan
+	applications        map[string]PlanApplicationResult
+	applicationsLog     []RecordedPlanApplication
 	// Restored application evidence has no live plan or rollback handles.
 	archivedApplications []RecordedPlanApplication
 	completedRepairs     []continuationRepair
@@ -561,7 +560,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	}()
 	response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
 
-	if request.Command == "apply" || request.Command == "mitigate" || request.Command == "rollback" || request.Command == "pre-apply" {
+	if request.Command == "apply" || request.Command == "mitigate" || request.Command == "rollback" {
 		if l.gateError != nil {
 			response.Error = l.gateError.Error()
 			return response
@@ -729,18 +728,6 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			response.MitigationHealth = result.MitigationHealth
 			response.TargetedHealthy = result.VerificationPassed
 		}
-	case "pre-apply":
-		if l.pendingConflict(ctx, request.Refs, &response) {
-			break
-		}
-		if l.CachedFindings != nil {
-			response.Findings = l.CachedFindings().Findings
-		}
-		if err := l.capturePreApply(ctx, request.Refs...); err != nil {
-			response.Error = err.Error()
-			break
-		}
-		response.Summary = "first-mutation snapshot captured"
 	case "verify":
 		if l.Traffic == nil && (request.Workload != "" || len(request.Scenarios) > 0) {
 			response.Error = "bounded traffic verification is unavailable"

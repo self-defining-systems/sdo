@@ -32,7 +32,7 @@ verification. They compare controller cached findings before/after by fingerprin
 and evidence into `fixed`, `new` (possible regression), and `unchanged` sets.
 Every invocation writes the complete output and evidence to
 `scratch/sdo-reports/<incident>/<sequence>-<command>.json` inside its private
-session. Native runtime-artifacts export admits only numbered act/apply/mitigate
+session. Native runtime-artifacts export admits only numbered apply/mitigate
 report filenames from that exact subtree. The report contains `actions`,
 `option_reports`, `findings`, `fixed`, `new`, `unchanged`; the printed schema is
 generated from Go/proto types. Large inventories explicitly point to the full
@@ -42,6 +42,6 @@ to normal responses; it does not replace findings, states, reports or receipts.
 Plain verify uses cached state; `verify --wait SECONDS` waits for stable closure,
 a new/reactivated finding, or timeout. Detect remains the fresh evaluation path.
 
-Mutation output accounting includes the emitted UTF-8 bytes, JSON envelope/escaping and final newline for act, apply, mitigate and rollback. Controller progress is authoritative; absent snapshots are unknown, while explicit empty arrays remain empty. Action-local findings never substitute for controller observations. Full errors remain in the complete report; long-path fallback copies retain the original session-scratch report for export.
+Mutation output accounting includes the emitted UTF-8 bytes, JSON envelope/escaping and final newline for apply, mitigate and rollback. Controller progress is authoritative; absent snapshots are unknown, while explicit empty arrays remain empty. Action-local findings never substitute for controller observations. Full errors remain in the complete report; long-path fallback copies retain the original session-scratch report for export.
 
 Context overflow is now preserved in private session `context/*.txt` files; summaries are partial evidence. Use `scripts/check_session_context.py` to measure canonical provider messages and aggregate tool text, and follow complete references for causal analysis. Playbook indexes use README `description:` metadata rather than body excerpts.

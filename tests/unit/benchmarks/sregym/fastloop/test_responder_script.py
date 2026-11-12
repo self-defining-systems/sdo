@@ -404,7 +404,8 @@ def test_full_generated_result_and_calls(tmp_path, monkeypatch, scenario):
 
     assert actual.status == ("failed" if scenario in {"unsure", "exhausted"} else "completed")
     assert actual.incident_id == request.incident_id
-    assert bool(actual.repair_actions) == (scenario not in {"matched", "healthy", "stale", "unsure", "exhausted"})
+    assert not actual.repair_actions  # the scripted kubectl calls are receipted by the recording, not the result
+    assert bool(actual.repair_changes) == (scenario not in {"matched", "healthy", "stale", "unsure", "exhausted"})
     assert len(actual.verification_evidence) >= 1
     if scenario == "matched":
         assert [p.playbook_id for p in actual.applied_playbooks] == ["repair"]

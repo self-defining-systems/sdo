@@ -49,7 +49,7 @@ def test_seven_finding_response_preserves_full_report_and_bounded_verdict(tmp_pa
 def test_partial_progress_and_possible_regression(tmp_path, monkeypatch):
     monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
     a, b, c = finding("A"), finding("B"), finding("C")
-    text, path = format_mutation_response([a, b], [b, c], [{"command": "act", "success": True}])
+    text, path = format_mutation_response([a, b], [b, c], [{"command": "mitigate", "success": True}])
     assert "fixed by/since this action: 1" in text
     assert "new since this action: 1 (possible regression)" in text
     assert "still broken, unchanged: 1" in text
@@ -82,7 +82,7 @@ def test_changed_evidence_is_visible_as_possible_regression(tmp_path, monkeypatc
     assert not report["fixed"]
 
 
-@pytest.mark.parametrize("command", ["act", "mitigate"])
+@pytest.mark.parametrize("command", ["mitigate"])
 @pytest.mark.parametrize("full_json", [False, True])
 @pytest.mark.parametrize("count", [7, 100])
 def test_emitted_mutation_stdout_utf8_including_json_framing_and_newline(
@@ -127,7 +127,7 @@ def test_emitted_mutation_stdout_utf8_including_json_framing_and_newline(
     assert set(report) == set(command_report_schema())
 
 
-@pytest.mark.parametrize("command", ["act", "mitigate", "rollback"])
+@pytest.mark.parametrize("command", ["mitigate", "rollback"])
 @pytest.mark.parametrize("full_json", [False, True])
 @pytest.mark.parametrize("error", ["💥" * 500, '"\\\n\t界' * 500], ids=["emoji", "escaped"])
 def test_rec_mandatory_envelope_byte_cap(tmp_path, monkeypatch, capsys, command, full_json, error):
@@ -205,7 +205,7 @@ def test_rec_snapshots_never_use_action_local_findings(tmp_path, monkeypatch, ca
     assert not any(item["fingerprint"] == "live" for key in ("fixed", "new", "unchanged") for item in report[key])
 
 
-@pytest.mark.parametrize("command", ["act", "mitigate", "rollback"])
+@pytest.mark.parametrize("command", ["mitigate", "rollback"])
 @pytest.mark.parametrize("full_json", [False, True])
 def test_rec_maximum_variable_fields_and_path(tmp_path, monkeypatch, capsys, command, full_json):
     from sdo.agents.responder import tools_cli
@@ -278,7 +278,7 @@ def test_rec_rollback_honors_existing_smaller_policy(tmp_path, monkeypatch, caps
     assert report["findings"] == report["new"] == after
 
 
-@pytest.mark.parametrize("command", ["act", "mitigate", "rollback"])
+@pytest.mark.parametrize("command", ["mitigate", "rollback"])
 @pytest.mark.parametrize("full_json", [False, True])
 def test_rec_schema_growth_cannot_bypass_hard_output_limit(tmp_path, monkeypatch, capsys, command, full_json):
     from sdo.agents.responder import mutation_output, tools_cli
@@ -296,13 +296,13 @@ def test_rec_schema_growth_cannot_bypass_hard_output_limit(tmp_path, monkeypatch
     assert json.loads(originals[0].read_text())["actions"] == [action]
 
 
-def test_failed_act_line_says_why_it_failed(tmp_path, monkeypatch, capsys):
-    # BASE1 C: a failed act printed only its summary, so the agent opened the report to learn why.
+def test_failed_mutation_line_says_why_it_failed(tmp_path, monkeypatch, capsys):
+    # BASE1 C: a failed mutation printed only its summary, so the agent opened the report to learn why.
     from sdo.agents.responder import tools_cli
 
     monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
     action = {
-        "command": "act",
+        "command": "mitigate",
         "summary": "scale checkout",
         "success": False,
         "failure_reason": "execution_failed",

@@ -6,7 +6,6 @@ import argparse
 import io
 import json
 import os
-import re
 import sys
 import time
 import uuid
@@ -15,7 +14,6 @@ from pathlib import Path
 from typing import Any, NoReturn, TypedDict
 
 from sdo.agents.context_output import budget_for, cap_text
-from sdo.agents.responder import recorded_actions
 from sdo.agents.responder.mutation_output import compact_mutation_envelope
 from sdo.agents.responder.tool_output import render_summary, write_response
 
@@ -24,28 +22,12 @@ CLI_EXAMPLES = (
     "sdo diagnose targetport --bind service=Service/app/api",
     "sdo mitigate targetport --bind service=Service/app/api",
 )
-ACT_EXAMPLE = "sdo act --resource Deployment/app/api -- kubectl -n app set image deployment/api api=img:1.2"
-ACT_USAGE = "sdo act --resource Kind/namespace/name [--summary TEXT] [--irreversible] [--json] -- COMMAND ARGS"
-# SDO's own act options that kubectl never defines, mapped to whether each takes a value.
-# A kubectl command may carry them in any position before its own --; kubectl keeps every
-# flag it defines (--resource included) and other programs receive their arguments verbatim.
-SDO_ACT_FLAGS = {"--json": False, "--irreversible": False, "--summary": True}
-#: Field manager of every kubectl write the responder makes through ``sdo act``. Mirror of
-#: ``ResponderFieldManager`` in ``sdo/operator/sdk/secret.go``, which SDO treats as its own: the responder's writes
-#: never read as a foreign Secret data change.
-RESPONDER_FIELD_MANAGER = "sdo-responder"
-#: kubectl verbs that write objects and accept ``--field-manager``.
-_FIELD_MANAGED_VERBS = frozenset({"apply", "create", "patch", "edit", "replace", "label", "annotate", "set"})
-#: Subcommands of those verbs that reject ``--field-manager``.
-_UNMANAGED_SUBCOMMANDS = frozenset({("create", "token"), ("apply", "view-last-applied"), ("apply", "set-last-applied")})
-_USAGE_ERROR = re.compile(r"unknown (?:shorthand )?flag|unknown command|for usage\.")
-
 OBJECT_REFERENCE_HELP = (
     "Object references accept Kind/name, Kind/namespace/name, or JSON with kind, name and optional "
     "namespace and api_version; kubectl aliases are accepted."
 )
 
-MUTATION_COMMANDS = frozenset({"act", "mitigate", "rollback"})
+MUTATION_COMMANDS = frozenset({"mitigate", "rollback"})
 
 # Key response paths are part of the CLI help contract, shared with the generated
 # responder reference. Fields are conditional, not a promise of success/presence.
@@ -61,7 +43,6 @@ RESPONSE_FIELDS = {
     "verify": "healthy, verification_status, findings[], new_since_dispatch[], detector_states[], "
     "verification_blockers[{detector_id,reason}], drift[], drift_events[], data_effects[]",
     "report": "report.{status, attempt_id, rounds}, session",
-    "act": "actions[].{success, exit_code, receipt, output, failure_reason, hint}",
     "mitigate": (
         "actions[].{application_id, targeted_healthy, mitigation_health, rollout_pending, program_revisions}, "
         "option_reports[]"
@@ -79,13 +60,6 @@ def response_fields_help(command: str, *, markdown: bool = False) -> str:
         label = "Key JSON fields"
     fields = RESPONSE_FIELDS[command]
     return label + ": " + (f"`{fields}`." if markdown else fields)
-
-
-def _resource(value: str) -> dict[str, str]:
-    try:
-        return recorded_actions.resource_ref(value)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 def _binding(value: str) -> tuple[str, str]:
@@ -223,34 +197,6 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser(
         "source", help="inspect accepted source for one resource", epilog="Example: " + CLI_EXAMPLES[0]
     ).add_argument("ref", metavar="Kind/namespace/name")
-    act = commands.add_parser(
-        "act",
-        help="record a command with --resource Kind/namespace/name",
-        description=(
-            "Run one live mutation and record its repair receipt (target, resources, timing, outcome and "
-            "command line). The command's exit code is returned. Do not hand-write receipts. "
-            "Report one cause per independently fixable fault; combine edits to one object, "
-            "keeping each cause's evidence separate. Declare all changed resources so the receipt "
-            "covers the combined edit. Start independent repairs together only for distinct active faults. "
-            "When an admission control blocks recovery and its backend is gone, restore the backend if you can. "
-            "Otherwise a scoped fail-open or removal that restores availability is acceptable; report it. "
-            "SDO options go before --; the command after it runs verbatim, except that a kubectl command "
-            "may also carry SDO's --json, --summary and --irreversible, which kubectl never defines. "
-            "A rejected command line returns a one-line hint with the correct form."
-        ),
-        epilog="Example: " + ACT_EXAMPLE,
-    )
-    act.add_argument(
-        "--resource",
-        action="append",
-        type=_resource,
-        required=True,
-        metavar="Kind/namespace/name",
-        help="object the command mutates (Kind/name when cluster-scoped); repeat for each one",
-    )
-    act.add_argument("--summary", help="one line describing the repair")
-    act.add_argument("--irreversible", action="store_true", help="the mutation cannot be undone")
-    act.add_argument("act_command", nargs=argparse.REMAINDER, metavar="-- COMMAND", help="the mutating command")
     verify = commands.add_parser(
         "verify",
         help="read cached controller verification; optionally await a stable verdict",
@@ -282,7 +228,7 @@ def _parser() -> argparse.ArgumentParser:
         help="wait for stable verification, a new/reactivated finding, or this timeout (0: cached and instant)",
     )
     commands.add_parser("rollback", help="roll back a plan application").add_argument("application_id")
-    for name in ("mitigate", "act", "rollback"):
+    for name in ("mitigate", "rollback"):
         specific_help = commands.choices[name].epilog
         commands.choices[name].epilog = (specific_help + "\n\n" if specific_help else "") + (
             "Action output separates target progress from incident verification and lists fixed, new "
@@ -295,7 +241,7 @@ def _parser() -> argparse.ArgumentParser:
             "informational warning; reads/reports keep their normal results, and new mutations are rejected."
         )
     for name, command in commands.choices.items():
-        if name in {"source", "act", "diagnose", "menu", "mitigate"}:
+        if name in {"source", "diagnose", "menu", "mitigate"}:
             command.epilog = (command.epilog or "") + "\n\n" + OBJECT_REFERENCE_HELP
         command.epilog = (command.epilog or "") + "\n\n" + response_fields_help(name)
         command.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
@@ -453,124 +399,6 @@ def verify_incident() -> dict[str, object]:
     return _exchange({"command": "verify"}, Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")))
 
 
-class _PendingMutationConflict(ValueError):
-    pass
-
-
-def _act_command(args: argparse.Namespace) -> list[str]:
-    """Return the wrapped command, moving SDO's own options out of a kubectl command into *args*."""
-    command = args.act_command[1:] if args.act_command[:1] == ["--"] else list(args.act_command)
-    if not command or Path(command[0]).name != "kubectl":
-        return command
-    kept = command[:1]
-    tokens = iter(command[1:])
-    for token in tokens:
-        if token == "--":
-            kept.extend(["--", *tokens])
-            break
-        name, has_value, value = token.partition("=")
-        if name not in SDO_ACT_FLAGS or has_value and not SDO_ACT_FLAGS[name]:
-            kept.append(token)
-        elif not SDO_ACT_FLAGS[name]:
-            setattr(args, name.removeprefix("--"), True)
-        else:
-            value = value if has_value else next(tokens, None)
-            if value is None or args.summary not in (None, value):
-                raise ValueError(f"{name} takes one value; usage: {ACT_USAGE}")
-            args.summary = value
-    return _as_responder(kept)
-
-
-def _as_responder(command: list[str]) -> list[str]:
-    """Write a mutating kubectl command as SDO's responder field manager, replacing any manager it names."""
-    words = recorded_actions.kubectl_words(command)
-    if not words or words[0] not in _FIELD_MANAGED_VERBS or tuple(words[:2]) in _UNMANAGED_SUBCOMMANDS:
-        return command
-    kept: list[str] = []
-    tokens = iter(command)
-    for token in tokens:
-        if token == "--":
-            kept.extend([token, *tokens])
-            break
-        if token == "--field-manager":
-            next(tokens, None)
-        elif not token.startswith("--field-manager="):
-            kept.append(token)
-    end = kept.index("--") if "--" in kept else len(kept)
-    return [*kept[:end], f"--field-manager={RESPONDER_FIELD_MANAGER}", *kept[end:]]
-
-
-def _usage_hint(command: list[str], output: str) -> str | None:
-    """One line that says how to call act when the wrapped program rejected its arguments."""
-    if not _USAGE_ERROR.search(output):
-        return None
-    program = Path(command[0]).name
-    return (
-        f"{program} rejected its arguments; SDO options go before --, the command after it runs verbatim: {ACT_USAGE}"
-    )
-
-
-def _act(args: argparse.Namespace) -> int:
-    try:
-        command = _act_command(args)
-        if not command:
-            raise ValueError("a command is required after --")
-        response: dict[str, Any] = {}
-        # Capture is evidence collection, not mutation authority. Keep repairs and
-        # their receipts available even when the controller cannot capture.
-        try:
-            response = _exchange(
-                {"command": "pre-apply", "refs": args.resource},
-                Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")),
-            )
-            report = response.get("report")
-            if isinstance(report, dict) and report.get("reason_code") == "pending_write_conflict":
-                raise _PendingMutationConflict(str(response.get("error", "mutation overlaps a pending application")))
-            if response.get("error"):
-                raise ValueError(str(response["error"]))
-        except _PendingMutationConflict:
-            raise
-        except (OSError, ValueError, TimeoutError) as exc:
-            print(f"sdo: pre-apply evidence gap: {exc}; proceeding with repair", file=sys.stderr)
-
-        before = response.get("findings", [])
-
-        def completed(code: int, output: str, receipt: dict[str, object]) -> None:
-            response: dict[str, object] = {
-                "command": "act",
-                "summary": receipt["summary"],
-                "success": receipt["success"],
-                "failure_reason": receipt.get("failure_reason", ""),
-                "exit_code": code,
-                "receipt": receipt,
-                "output": output,
-            }
-            hint = None if code == 0 else _usage_hint(command, output)
-            if hint:
-                response["hint"] = hint
-            if os.environ.get("SDO_RESPONDER_SESSION") == "1":
-                verified = _exchange(
-                    {"command": "verify", "previous_findings": before},
-                    Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")),
-                )
-                response["before_findings"] = before
-                response["controller_findings"] = verified.get("findings", [])
-                response["healthy"] = verified.get("healthy", False)
-                if verified.get("progress") is not None:
-                    response["progress"] = verified["progress"]
-                if verified.get("incident_verified"):
-                    response["incident_verified"] = verified["incident_verified"]
-            _print_response(response, full_json=args.json)
-
-        result = recorded_actions.run_and_record(
-            command, args.resource, summary=args.summary, reversible=not args.irreversible, on_completed=completed
-        )
-        return result
-    except (OSError, ValueError, TimeoutError) as exc:
-        _print_client_error(args, exc)
-        return 2
-
-
 def _print_response(response: dict[str, Any], *, full_json: bool) -> None:
     history = os.environ.get("SDO_API_HISTORY_DIR")
     if history and "incident_verified" not in response:
@@ -646,8 +474,6 @@ def _main(argv: list[str] | None = None) -> int:
         args.more_targets = [parser.parse_args(["mitigate", *chunk]) for chunk in more]
         if any(item.rounds is not None for item in args.more_targets):
             parser.error("--rounds belongs to a single fix")
-    if args.command == "act":
-        return _act(args)
     try:
         directory = Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools"))
         response = _check(args, directory) if args.command == "check" else _exchange(_request(args), directory)
