@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"sdo.dev/operator/contracts/settings"
-	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
 	"sdo.dev/operator/operatorcli/internal/processio"
 	"strings"
 	"time"
@@ -38,12 +37,17 @@ type HostConfig struct {
 }
 
 func ParseHostLaunch(args []string) (HostConfig, error) {
+	return ParseHostLaunchEnv(args, processio.Environ())
+}
+
+// ParseHostLaunchEnv parses a host launch against an explicit environment (KEY=VALUE lines).
+func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 	if len(args) == 0 || args[0] != "host" {
 		return HostConfig{}, errors.New("expected host subcommand")
 	}
 	flags := flag.NewFlagSet("sdo-operator host", flag.ContinueOnError)
-	codePathName := flags.String("code-path", processio.Environment("SDO_CODE_PATH"), "programming-model plugin set: go or shell")
-	codePathOverrides := flags.String("code-path-overrides", "", "CodePathOverrides JSON")
+	flags.String("code-path", "", "programming-model plugin set: go or shell")
+	flags.String("code-path-overrides", "", "CodePathOverrides JSON")
 	flags.SetOutput(io.Discard)
 	repository := flags.String("repository", "", "clean accepted Git repository")
 	ceilingJSON := flags.String("observation-ceiling-json", "", "installer-owned observation ceiling JSON")
@@ -56,14 +60,16 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	sourceKind := flags.String("source-kind", "", "upstream watcher kind to follow (published as .sdo/goal/sources.yaml)")
 	sourceConfig := flags.String("source-config", "", "JSON config of the followed upstream")
 	deploymentPlan := flags.String("deployment-plan", "", "provided DeploymentPlan as ProtoJSON (source, image sources, expected workload IDs): the deployer agent is skipped and the plan is deployed as given")
-	evidenceFlags := registerEvidenceSinkFlags(flags)
+	registerEvidenceSinkFlags(flags)
+	var configFiles repeatable
+	flags.Var(&configFiles, "config", "operator configuration YAML (repeatable; later files override earlier ones; see docs/config.md)")
 	var policyFlags deploymentpolicy.Flags
 	flags.StringVar(&policyFlags.AllowedRegistries, "allow-registry", "", "comma-separated registry hosts deployments may pull from (enforced; empty: no allowlist)")
 	flags.BoolVar(&policyFlags.ScopeBlocking, "scope-blocking", false, "refuse foreign-namespace and cluster-scoped objects unless granted")
 	flags.StringVar(&policyFlags.GrantedNamespaces, "grant-namespace", "", "comma-separated foreign namespaces deployments may write to (needs --scope-blocking)")
 	flags.StringVar(&policyFlags.GrantedClusterKinds, "grant-cluster-kind", "", "comma-separated cluster-scoped Kinds deployments may contain (needs --scope-blocking)")
 	operationID := flags.String("operation-id", "", "durable operation identity")
-	maxAttempts := flags.Int("max-attempts", 3, "maximum deployment attempts")
+	flags.Int("max-attempts", 3, "maximum deployment attempts")
 	controllerImage := flags.String("controller-image", "", "compiled operator image")
 	responderImage := flags.String("responder-image", "", "agent worker image")
 	buildkitImage := flags.String("buildkit-image", "", "digest-pinned image builder")
@@ -71,48 +77,46 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	credentialsSecret := flags.String("credentials-secret", "", "agent credentials Secret")
 	registrySecret := flags.String("registry-push-secret", "", "separate image registry credentials Secret")
 	registryHost := flags.String("registry-host", "", "trusted source image registry host[:port]")
-	model := flags.String("model", "", "agent model")
-	provider := flags.String("agent-provider", "codex", "agent provider")
-	replay := flags.String("replay", "", "replay and corpus capture: on (default) or off")
-	effort := flags.String("agent-effort", "", "reasoning effort of every agent worker (empty: the shared default)")
-	lifecycleTimeout := flags.Duration("lifecycle-timeout", 0, "limit of one lifecycle (detection designer) session (0: the shared default)")
+	flags.String("model", "", "agent model")
+	flags.String("agent-provider", "codex", "agent provider")
+	flags.String("replay", "", "replay and corpus capture: on (default) or off")
+	flags.String("agent-effort", "", "reasoning effort of every agent worker (empty: the shared default)")
+	flags.Duration("lifecycle-timeout", 0, "limit of one lifecycle (detection designer) session (0: the shared default)")
 	registrationSource := flags.String("agent-registrations", "", "local registration JSON directory")
 	registrationConfigMap := flags.String("agent-registration-configmap", "", "registration ConfigMap name")
 	controllerDuration := flags.Duration("controller-duration", 0, "bounded controller run duration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "stop after first closure")
-	lateFindings := flags.String("late-findings", "off", "late finding pull mode: off or pull")
-	repairPolicy := flags.String("repair-policy", "recorded-actions", "repair evidence policy")
-	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
-	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
-	frozenMemory := flags.Bool("frozen-memory", false, "keep closure evidence private and disable learning")
-	externalIncidents := flags.Bool("external-incidents", false, "accept external alerts only; close on responder completion (requires frozen memory)")
-	watchOnly := flags.Bool("watch-only", false, "detect, open, verify and close incidents but never respond: no automatic stage, responder or reflection (requires frozen memory)")
-	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
-	maxResponseLoops := flags.Int("max-response-loops", 10, "maximum mitigation rounds the responder agent may use per incident (the automatic stage's one apply does not count)")
-	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
-	verificationTimeout := flags.Duration("verification-timeout", 5*time.Minute, "independent verification timeout")
-	buildTimeout := flags.Duration("build-timeout", settings.DefaultBuildTimeout, "deadline of one source image build")
-	buildBudget := flags.Duration("build-budget", settings.DefaultBuildBudget, "deadline of all source image builds of one deployment attempt")
-	rolloutTimeout := flags.Duration("rollout-timeout", settings.DefaultRolloutTimeout, "how long to wait for each applied workload to finish rolling out")
+	flags.String("late-findings", "off", "late finding pull mode: off or pull")
+	flags.String("repair-policy", "recorded-actions", "repair evidence policy")
+	flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
+	flags.String("reflection-guidance", "baseline", "reflection guidance mode")
+	flags.Bool("frozen-memory", false, "keep closure evidence private and disable learning")
+	flags.Bool("external-incidents", false, "accept external alerts only; close on responder completion (requires frozen memory)")
+	flags.Bool("watch-only", false, "detect, open, verify and close incidents but never respond: no automatic stage, responder or reflection (requires frozen memory)")
+	flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
+	flags.Int("max-response-loops", 10, "maximum mitigation rounds the responder agent may use per incident (the automatic stage's one apply does not count)")
+	flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
+	flags.Duration("verification-timeout", 5*time.Minute, "independent verification timeout")
+	flags.Duration("build-timeout", settings.DefaultBuildTimeout, "deadline of one source image build")
+	flags.Duration("build-budget", settings.DefaultBuildBudget, "deadline of all source image builds of one deployment attempt")
+	flags.Duration("rollout-timeout", settings.DefaultRolloutTimeout, "how long to wait for each applied workload to finish rolling out")
 	registryInsecure := flags.Bool("registry-insecure", false, "allow an explicitly configured HTTP image registry")
-	permissiveResponder := flags.Bool("permissive-responder", false, "broad lane repair permissions excluding Secret and credential APIs")
-	var responderNamespaces repeatable
-	flags.Var(&responderNamespaces, "responder-namespace", "additional lane namespace for permissive responder")
-	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
-	telemetryFlags := registerTelemetryFlags(flags)
-	var responderEnv repeatable
-	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
+	flags.Bool("permissive-responder", false, "broad lane repair permissions excluding Secret and credential APIs")
+	flags.Var(new(repeatable), "responder-namespace", "additional lane namespace for permissive responder")
+	flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
+	registerTelemetryFlags(flags)
+	flags.Var(new(repeatable), "responder-env", "responder environment NAME=VALUE")
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes client and kubectl config")
 	if err := flags.Parse(args[1:]); err != nil {
 		return HostConfig{}, err
 	}
 
-	menuEnabled, menuErr := responderMenuEnabled()
-	if menuErr != nil {
-		return HostConfig{}, menuErr
-	}
 	if flags.NArg() != 0 {
 		return HostConfig{}, fmt.Errorf("unexpected host arguments: %v", flags.Args())
+	}
+	resolved, err := resolveSettings(configFiles, environ, flags)
+	if err != nil {
+		return HostConfig{}, err
 	}
 	if *goalFile != "" && *objective != "" {
 		return HostConfig{}, errors.New("host accepts at most one of --health-objective/--goal or --goal-file")
@@ -136,29 +140,17 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 		"controller image": *controllerImage, "responder image": *responderImage,
 		"BuildKit image": *buildkitImage,
 		"repository PVC": *repositoryPVC, "agent credentials Secret": *credentialsSecret,
-		"registry push Secret": *registrySecret, "model": *model,
+		"registry push Secret": *registrySecret,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return HostConfig{}, fmt.Errorf("host launch requires %s", name)
 		}
 	}
-	if !filepath.IsAbs(*repository) || *maxAttempts < 1 || (*provider != "codex" && *provider != "claude") {
-		return HostConfig{}, errors.New("host launch requires an absolute repository, positive max attempts, and supported agent provider")
+	if !filepath.IsAbs(*repository) {
+		return HostConfig{}, errors.New("host launch requires an absolute repository")
 	}
 	if *controllerDuration < 0 || (*controllerDuration > 0 && controllerDuration.Seconds() < 1) {
 		return HostConfig{}, errors.New("bounded controller duration must be positive whole seconds")
-	}
-	if *lateFindings != "off" && *lateFindings != "pull" {
-		return HostConfig{}, fmt.Errorf("invalid late findings mode %q", *lateFindings)
-	}
-	if (*repairPolicy != "commit" && *repairPolicy != "recorded-actions") || *responseTimeout < time.Second || *verificationTimeout < time.Second {
-		return HostConfig{}, errors.New("host requires supported repair policy and positive controller timeouts")
-	}
-	if *reflectionSession != "fresh" && *reflectionSession != "resume" {
-		return HostConfig{}, fmt.Errorf("unsupported reflection session mode %q", *reflectionSession)
-	}
-	if *reflectionGuidance != "baseline" && *reflectionGuidance != "generalize" && *reflectionGuidance != "generalize-spec" {
-		return HostConfig{}, fmt.Errorf("unsupported reflection guidance %q", *reflectionGuidance)
 	}
 	if !strings.Contains(*buildkitImage, "@sha256:") || *credentialsSecret == *registrySecret {
 		return HostConfig{}, errors.New("host launch requires digest-pinned BuildKit image and separate registry push Secret")
@@ -185,20 +177,12 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 			return HostConfig{}, err
 		}
 	}
-	selectedCodePath, err := parseCodePathSelection(*codePathName, *codePathOverrides)
-	if err != nil {
-		return HostConfig{}, err
-	}
 	sources, err := parseSourceFlags(*sourceKind, *sourceConfig)
 	if err != nil {
 		return HostConfig{}, err
 	}
 	if len(sources) > 0 && strings.TrimSpace(*objective) == "" {
 		return HostConfig{}, errors.New("a followed source is published with the human goal and requires a health objective")
-	}
-	deploymentPolicy, err := encodedPolicy(policyFlags)
-	if err != nil {
-		return HostConfig{}, err
 	}
 	providedPlan, err := rendered.ParseDeploymentPlan(*deploymentPlan)
 	if err != nil {
@@ -212,38 +196,26 @@ func ParseHostLaunch(args []string) (HostConfig, error) {
 	if controlForTelemetry == "" {
 		controlForTelemetry = *namespace
 	}
-	telemetryProfile, err := telemetryFlags.resolve(controlForTelemetry)
-	if err != nil {
-		return HostConfig{}, err
-	}
-	evidenceSink, err := evidenceFlags.resolve(controlForTelemetry)
-	if err != nil {
-		return HostConfig{}, err
-	}
 	config := install.Config{
-		EvidenceSink:   evidenceSink,
-		BackendRecipes: telemetrysources.Recipes(), TelemetryProfile: telemetryProfile,
-		SourceKind: *sourceKind, SourceConfig: *sourceConfig, DeploymentPlan: compactPlan, DeploymentPolicy: deploymentPolicy,
-		CodePath:           selectedCodePath,
-		ResponderMenu:      menuEnabled,
+		SourceKind: *sourceKind, SourceConfig: *sourceConfig, DeploymentPlan: compactPlan,
 		ObservationCeiling: ceiling,
 		Namespace:          *namespace, ControlNamespace: *control, Application: *application,
 		ControllerImage: *controllerImage, ResponderImage: *responderImage,
 		BuildKitImage: *buildkitImage,
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret,
-		RegistryPushSecret: *registrySecret, RegistryHost: *registryHost, Model: *model, AgentProvider: *provider, AgentEffort: *effort, LifecycleTimeout: *lifecycleTimeout, Replay: *replay,
-		RegistryInsecure: *registryInsecure, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
+		RegistryPushSecret: *registrySecret, RegistryHost: *registryHost,
+		RegistryInsecure:          *registryInsecure,
 		ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
-		LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents, WatchOnly: *watchOnly,
-		MaxResponseLoops: *maxResponseLoops,
-		TimeoutSeconds:   int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()), BuildTimeoutSeconds: int(buildTimeout.Seconds()), BuildBudgetSeconds: int(buildBudget.Seconds()), RolloutTimeoutSeconds: int(rolloutTimeout.Seconds()), RepairPolicy: *repairPolicy,
 		NativeCommand:         []string{"/usr/local/bin/sdo-operator"},
 		RegistrationConfigMap: *registrationConfigMap,
+	}
+	if err := applySettings(&config, resolved, controlForTelemetry); err != nil {
+		return HostConfig{}, err
 	}
 	if *registrationConfigMap != "" {
 		config.RegistrationDirectory = "/sdo/registrations"
 	}
-	return HostConfig{Repository: *repository, Objective: *objective, OperationID: *operationID, MaxAttempts: *maxAttempts, Install: config, Kubeconfig: *kubeconfig, RegistrationSource: *registrationSource}, nil
+	return HostConfig{Repository: *repository, Objective: *objective, OperationID: *operationID, MaxAttempts: resolved.Deployment.MaxAttempts, Install: config, Kubeconfig: *kubeconfig, RegistrationSource: *registrationSource}, nil
 }
 
 func hostKubernetesConfig(path string) (*rest.Config, error) {

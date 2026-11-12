@@ -27,6 +27,7 @@ import (
 //	sessions/<digest>/...   -> incidents/<digest>/...   (one incident's agent session)
 //	tasks/<key>/...         -> lifecycle/<key>/...      (one lifecycle task: designer, deployer, judge)
 //	usage/*, telemetry/*    -> usage/*, telemetry/*
+//	config.yaml             -> config.yaml              (the resolved operator configuration)
 //	setup/..., codex/..., claude/... -> controller/...  (agent sessions run by the controller process itself)
 func Place(runtimeRelative string) (string, bool) {
 	if checkRelative(runtimeRelative) != nil || !Allowed(runtimeRelative) {
@@ -40,6 +41,8 @@ func Place(runtimeRelative string) (string, bool) {
 		return "lifecycle/" + rest, true
 	case "usage", "telemetry":
 		return runtimeRelative, true
+	case ResolvedConfigFile:
+		return ResolvedConfigFile, true
 	case "setup", "codex", "claude":
 		return "controller/" + runtimeRelative, true
 	}

@@ -13,6 +13,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/evidencesink"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/operatorcli/internal/processio"
@@ -140,27 +141,32 @@ func registerEvidenceSinkFlags(flags *flag.FlagSet) evidenceSinkFlags {
 
 // resolve returns the compact sink JSON for install.Config.EvidenceSink, or "" when no sink is configured.
 func (f evidenceSinkFlags) resolve(controlNamespace string) (string, error) {
-	if *f.hostPath == "" && *f.volume == "" {
-		if *f.runID != "" {
-			return "", errors.New("--evidence-run-id requires an evidence sink")
+	return resolveEvidenceSink(settings.Evidence{HostPath: *f.hostPath, Volume: *f.volume, RunID: *f.runID}, controlNamespace)
+}
+
+// resolveEvidenceSink is the compact sink JSON of the configured sink, or "" when none is configured.
+func resolveEvidenceSink(e settings.Evidence, controlNamespace string) (string, error) {
+	if e.HostPath == "" && e.Volume == "" {
+		if e.RunID != "" {
+			return "", errors.New("evidence.run_id requires an evidence sink")
 		}
 		return "", nil
 	}
-	if *f.hostPath != "" && *f.volume != "" {
-		return "", errors.New("use one of --evidence-sink-host-path and --evidence-sink-volume")
+	if e.HostPath != "" && e.Volume != "" {
+		return "", errors.New("use one of evidence.host_path and evidence.volume")
 	}
-	sink := install.EvidenceSink{RunID: *f.runID}
+	sink := install.EvidenceSink{RunID: e.RunID}
 	if sink.RunID == "" {
 		sink.RunID = controlNamespace
 	}
-	if *f.hostPath != "" {
+	if e.HostPath != "" {
 		kind := corev1.HostPathDirectoryOrCreate
-		sink.Volume.HostPath = &corev1.HostPathVolumeSource{Path: *f.hostPath, Type: &kind}
+		sink.Volume.HostPath = &corev1.HostPathVolumeSource{Path: e.HostPath, Type: &kind}
 	} else {
-		decoder := json.NewDecoder(strings.NewReader(*f.volume))
+		decoder := json.NewDecoder(strings.NewReader(e.Volume))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&sink.Volume); err != nil {
-			return "", fmt.Errorf("decode --evidence-sink-volume: %w", err)
+			return "", fmt.Errorf("decode evidence.volume: %w", err)
 		}
 	}
 	return sink.Format()

@@ -24,6 +24,9 @@ echo "==> generated skill references"
 bash "$SCRIPT_DIR/gen_skill_references.sh" --check
 python3 "$SCRIPT_DIR/go_quality_checks.py" --group layout "${quality_mode[@]}"
 
+echo "==> generated operator configuration reference (docs/config.md)"
+bash "$SCRIPT_DIR/gen_config_docs.sh" --check
+
 echo "==> generated read-only Kubernetes client facade"
 bash "$SCRIPT_DIR/gen_kube_read_clients.sh" --check
 

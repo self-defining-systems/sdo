@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strconv"
 	"time"
+
+	"sdo.dev/operator/contracts/settings"
 )
 
 // ProviderEnvironment names the variable that selects a worker's agent provider.
@@ -22,7 +24,7 @@ const EffortEnvironment = "SDO_AGENT_EFFORT"
 
 // AgentEfforts are the efforts a worker accepts; sdo/contracts/agent_env.json
 // names the same list for the Python workers; a test keeps the two equal.
-var AgentEfforts = []string{"low", "medium", "high", "xhigh", "max"}
+var AgentEfforts = settings.AgentEfforts
 
 // LifecycleTimeoutEnvironment names the variable that bounds one lifecycle
 // (detection designer) session, in whole seconds; workers use the shared default
@@ -30,7 +32,7 @@ var AgentEfforts = []string{"low", "medium", "high", "xhigh", "max"}
 const LifecycleTimeoutEnvironment = "SDO_LIFECYCLE_TIMEOUT_SECONDS"
 
 // DefaultLifecycleTimeout is the workers' lifecycle session limit when none is configured.
-const DefaultLifecycleTimeout = 900 * time.Second
+const DefaultLifecycleTimeout = settings.DefaultLifecycleTimeout
 
 // AgentEnvironment is the provider, model, effort and lifecycle session limit a
 // controller was configured with, as the environment every agent worker Job

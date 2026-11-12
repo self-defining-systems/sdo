@@ -217,6 +217,9 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "registrations", MountPath: cfg.registrationDirectory(), ReadOnly: true})
 	}
 	pod.Containers = []corev1.Container{container}
+	if cfg.Settings != nil {
+		mountSettings(pod)
+	}
 	if err := evidenceSinkSidecar(cfg, pod); err != nil {
 		return nil, err
 	}

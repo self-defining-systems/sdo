@@ -48,6 +48,9 @@ func RunController(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := publishResolvedSettings(mountedSettings, run.Controller.GetRepositoryMountPath()); err != nil {
+		return fmt.Errorf("controller cannot read its configuration: %w", err)
+	}
 	// The accepted tree is the only home of the deployment source; a lane
 	// without .sdo/deployment/plan.yaml has nothing to read desired state from.
 	if _, err := planfile.Read(run.Controller.GetAppRoot(), planCatalogs()); err != nil {
