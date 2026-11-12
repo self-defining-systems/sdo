@@ -104,6 +104,10 @@ func TestSourceDeparturesCompareSecretsByMetadataOnly(t *testing.T) {
 	changed := detectOnset.Add(-time.Minute)
 	app := detectApp()
 	app.SecretList = []sdk.SecretMetadata{{Name: "creds", Namespace: "app", DataChangedAt: changed}, {Name: "untouched", Namespace: "app"}}
+	// A Pod that started before the data changed and reads the Secret may hold the old value.
+	app.PodList[0].Spec.Volumes = append(app.PodList[0].Spec.Volumes, corev1.Volume{
+		Name: "creds", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "creds"}},
+	})
 	// DiffAgainstSource would error on a Secret; the classifier must not call it.
 	view := departureView{detectFake: app}
 	got := SourceDepartures(DepartureInput{View: view, Onset: detectOnset}, []sdk.ObjectRef{dref("Secret", "creds"), dref("Secret", "untouched")})

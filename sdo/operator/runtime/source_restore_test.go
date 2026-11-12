@@ -74,7 +74,7 @@ func TestSourceRestoreDoesNotMatchSDOsOwnWritesOrMatchingSource(t *testing.T) {
 		t.Fatalf("an object equal to source matched: %+v", verdict)
 	}
 	deploying := restoreRequest("kubectl")
-	deploying.SourceCommit, deploying.DeployedCommit = "new", "old"
+	deploying.DeploymentInFlight = true
 	during := sourceRestoreProgram{evidence: newRestoreEvidence(deploying)}
 	if verdict, _ := during.Diagnose(context.Background(), view, restoreAPI()); verdict.Result != program.NoMatch {
 		t.Fatalf("a departure during a deployment matched: %+v", verdict)
