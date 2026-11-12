@@ -117,16 +117,11 @@ func (c *Controller) PendingClosureEffect() (ClosureEffect, bool) {
 }
 
 func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEffect) error {
-	defer c.lockObservation("closure_effect")()
-	if err := c.requireAdoptedHealth(ctx); err != nil {
-		return err
-	}
-	c.mu.Lock()
-	valid := c.pendingClosure != nil && c.closureState == contracts.ClosureState_CLOSURE_STATE_PENDING && sameIncidentClosure(*c.pendingClosure, effect.Closure)
-	c.mu.Unlock()
-	if !valid {
-		return fmt.Errorf("closure effect is not pending")
-	}
+	// The committed-receipt and committed-outcome lookups talk to the broker,
+	// which can be busy for minutes with another incident's reflection. They
+	// read only the closure's own durable evidence, so they run before the
+	// observation lock is taken: a broker wait must never hold the detector
+	// loop. The lock covers only the controller's own live recheck below.
 	// Receipt replay is bookkeeping for a closure already committed by the
 	// native broker. Adoption can change observation generations, but must not
 	// turn fetching that exact receipt into another repair/closure decision.
@@ -150,6 +145,16 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		if err != nil {
 			return err
 		}
+	}
+	defer c.lockObservation("closure_effect")()
+	if err := c.requireAdoptedHealth(ctx); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	valid := c.pendingClosure != nil && c.closureState == contracts.ClosureState_CLOSURE_STATE_PENDING && sameIncidentClosure(*c.pendingClosure, effect.Closure)
+	c.mu.Unlock()
+	if !valid {
+		return fmt.Errorf("closure effect is not pending")
 	}
 	// Only closures without an accepted outcome can make a new success decision.
 	// The recheck runs under the detectors now in force, whatever scope the
