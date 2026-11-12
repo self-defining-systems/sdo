@@ -28,6 +28,9 @@ func materializesPatches(phase Phase) bool {
 type ChangePartition struct {
 	SDO     []string
 	Scratch []string
+	// Source are the app paths a responder committed (ProposalPhase only):
+	// what a source publication carries.
+	Source []string
 }
 
 // PartitionChanges is the actual change set of a materialized checkout.
@@ -59,7 +62,16 @@ func (b *Broker) ProposalPartition(ctx context.Context, incidentID string, phase
 	if err != nil {
 		return ChangePartition{}, err
 	}
-	return PartitionChanges(ctx, proposal.Path, proposal.BaseCommit)
+	partition, err := PartitionChanges(ctx, proposal.Path, proposal.BaseCommit)
+	if err != nil || phase != ProposalPhase {
+		return partition, err
+	}
+	change, err := SourceChangeOf(ctx, proposal.Path, proposal.BaseCommit)
+	if err != nil {
+		return ChangePartition{}, err
+	}
+	partition.Source, partition.Scratch = change.Kept, change.Scratch
+	return partition, nil
 }
 
 // UncapturedScratch is the scratch-consistency function behind the
@@ -104,10 +116,11 @@ func uncapturedMessage(paths []string) string {
 }
 
 // scratchChecked reports whether an actor's publication is bound by the
-// scratch-consistency rule: the agents that read and edit app files in a
-// materialized checkout.
+// scratch-consistency rule: the deployer, whose app edits are still patches. A
+// responder commits its source instead (SourceChangeOf), and what it leaves
+// uncommitted is scratch that is discarded, never a rejection.
 func scratchChecked(actor Actor, phase Phase) bool {
-	return (actor == Deployer && phase == InitialPhase) || (actor == Responder && phase == ProposalPhase)
+	return actor == Deployer && phase == InitialPhase
 }
 
 // requireCapturedScratch enforces `patch.uncaptured` at publish and returns
@@ -140,6 +153,13 @@ func (b *Broker) ScratchFeedback(ctx context.Context, incidentID string, phase P
 	proposal, err := b.proposal(incidentID, phase)
 	if err != nil {
 		return "", err
+	}
+	if phase == ProposalPhase {
+		change, err := SourceChangeOf(ctx, proposal.Path, proposal.BaseCommit)
+		if err != nil {
+			return "", err
+		}
+		return CleanupMessage(change.Scratch), nil
 	}
 	return ScratchFeedback(ctx, proposal.Path)
 }

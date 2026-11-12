@@ -14,6 +14,7 @@ import (
 	"sdo.dev/operator/broker/internal/processio"
 	"sdo.dev/operator/contracts/settings"
 	"slices"
+	"sort"
 	"strings"
 	"syscall"
 	"unicode"
@@ -438,12 +439,26 @@ func (b *Broker) publishOrStage(ctx context.Context, incidentID string, actor Ac
 			}
 		}
 		candidateRoot := proposal.Path
+		var sourceBody string
 		if actor == Responder && phase == ProposalPhase {
-			paths = SourceRepairPaths(paths)
+			// The responder's .sdo/ edits are the working tree; its source is
+			// what it committed. Scratch (uncommitted app files) is never part
+			// of the publication.
+			change, err := SourceChangeOf(ctx, proposal.Path, proposal.BaseCommit)
+			if err != nil {
+				return err
+			}
+			if err := b.requireSourceRules(ctx, proposal.Path, proposal.BaseCommit, change); err != nil {
+				return err
+			}
+			paths = SourceRepairPaths(partitionPaths(paths).SDO)
+			paths = append(paths, change.Kept...)
+			sort.Strings(paths)
 			if len(paths) == 0 {
 				receipt = Receipt{IncidentID: incidentID, Phase: phase}
 				return nil
 			}
+			sourceBody = squashBody(change.Subjects)
 			// Validate the exact source-only submission in a private tree. Working
 			// programs are never included in a source publication or its compile check.
 			sourceStage, cleanup, err := b.privateClone(ctx)
@@ -455,7 +470,12 @@ func (b *Broker) publishOrStage(ctx context.Context, incidentID string, actor Ac
 				return err
 			}
 			for _, path := range paths {
-				if err := copyChange(proposal.Path, sourceStage, path); err != nil {
+				if entry, kept := change.entries[path]; kept {
+					err = copyCommitted(ctx, proposal.Path, sourceStage, path, entry)
+				} else {
+					err = copyChange(proposal.Path, sourceStage, path)
+				}
+				if err != nil {
 					return err
 				}
 			}
@@ -567,7 +587,7 @@ func (b *Broker) publishOrStage(ctx context.Context, incidentID string, actor Ac
 		if evidence != nil {
 			trailers = append(trailers, operabilityTrailer(operability.StageDeployment, evidence.OperabilityDigest))
 		}
-		receipt, err = b.commitStage(ctx, stage, incidentID, actor, phase, paths, trailers, gaps...)
+		receipt, err = b.commitStageBody(ctx, stage, incidentID, actor, phase, paths, sourceBody, trailers, gaps...)
 		if err != nil {
 			return err
 		}
@@ -597,7 +617,19 @@ func (b *Broker) ChangedPaths(ctx context.Context, incidentID string, phase Phas
 	if err != nil {
 		return nil, err
 	}
-	return validate.ChangedPaths(ctx, proposal.Path, proposal.BaseCommit)
+	paths, err := validate.ChangedPaths(ctx, proposal.Path, proposal.BaseCommit)
+	if err != nil || phase != ProposalPhase {
+		return paths, err
+	}
+	// A responder's source is what it committed; its scratch is not a change.
+	change, err := SourceChangeOf(ctx, proposal.Path, proposal.BaseCommit)
+	if err != nil {
+		return nil, err
+	}
+	paths = partitionPaths(paths).SDO
+	paths = append(paths, change.Kept...)
+	sort.Strings(paths)
+	return paths, nil
 }
 
 // ProposalInfo returns broker-owned identity for a prepared checkout.
@@ -811,6 +843,12 @@ func (b *Broker) acceptWithTrailers(ctx context.Context, stage, incidentID strin
 // commitStage commits the staged tree with the broker identity and trailers.
 // The accepted head does not move.
 func (b *Broker) commitStage(ctx context.Context, stage, incidentID string, actor Actor, phase Phase, paths []string, trailers []string, gaps ...validate.Diagnostic) (Receipt, error) {
+	return b.commitStageBody(ctx, stage, incidentID, actor, phase, paths, "", trailers, gaps...)
+}
+
+// commitStageBody is commitStage with a message body between the subject and
+// the trailers: for a source publication, the subjects of the agent's commits.
+func (b *Broker) commitStageBody(ctx context.Context, stage, incidentID string, actor Actor, phase Phase, paths []string, body string, trailers []string, gaps ...validate.Diagnostic) (Receipt, error) {
 	if err := checkIncidentID(incidentID); err != nil {
 		return Receipt{}, err
 	}
@@ -820,7 +858,11 @@ func (b *Broker) commitStage(ctx context.Context, stage, incidentID string, acto
 	if _, err := runGit(ctx, stage, "add", "--all", "--", "."); err != nil {
 		return Receipt{}, err
 	}
-	message := fmt.Sprintf("sdo(%s): validated %s\n\nSDO-Incident: %s\nSDO-Actor: %s\nSDO-Phase: %s\nSDO-Validation: passed", incidentID, phase, incidentID, actor, phase)
+	message := fmt.Sprintf("sdo(%s): validated %s\n\n", incidentID, phase)
+	if body != "" {
+		message += body + "\n\n"
+	}
+	message += fmt.Sprintf("SDO-Incident: %s\nSDO-Actor: %s\nSDO-Phase: %s\nSDO-Validation: passed", incidentID, actor, phase)
 	if phase == ReflectionPhase {
 		message += "\nSDO-Learning: executable-v1"
 	}
@@ -891,15 +933,18 @@ func (b *Broker) findAccepted(ctx context.Context, incidentID string, phase Phas
 }
 
 func (b *Broker) findAcceptedAt(ctx context.Context, incidentID string, phase Phase, expected string) (Receipt, bool, error) {
-	data, err := runGit(ctx, b.target, "log", "--format=%H%x1f%B%x1e")
+	// Only the broker's own commits carry trusted trailers: an engineer, the
+	// benchmark replayer or an agent can write any message but not this identity.
+	data, err := runGit(ctx, b.target, "log", "--format=%H%x1f%ce%x1f%B%x1e")
 	if err != nil {
 		return Receipt{}, false, err
 	}
 	for _, item := range strings.Split(string(data), "\x1e") {
-		parts := strings.SplitN(item, "\x1f", 2)
-		if len(parts) != 2 {
+		fields := strings.SplitN(item, "\x1f", 3)
+		if len(fields) != 3 || fields[1] != brokerCommitterEmail {
 			continue
 		}
+		parts := []string{fields[0], fields[2]}
 		if expected != "" && strings.TrimSpace(parts[0]) != expected {
 			continue
 		}

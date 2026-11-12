@@ -453,11 +453,12 @@ var gateRows = []gateRow{
 		write(t, r, ".sdo/diagnostics/detectors/incidents/dns/manifest.yaml", gateIncidentManifest("dns", "1", "inc-2"))
 		write(t, r, ".sdo/diagnostics/detectors/incidents/dns/detector.go", "package dns\n")
 	}},
-	gateAppFileDenied(Responder, ProposalPhase), gateAppFileDenied(Responder, ReflectionPhase), gateAppFileDenied(Responder, InitialPhase),
+	gateAppFileDenied(Responder, ReflectionPhase), gateAppFileDenied(Responder, InitialPhase),
 	gateAppFileDenied(Deployer, InitialPhase), gateAppFileDenied(Deployer, AdvancePhase), gateAppFileDenied(Deployer, ProposalPhase),
 	gateAppFileDenied(Upkeep, InitialPhase), gateAppFileDenied(Human, InitialPhase),
 	gateAppFileDenied(Human, ImportPhase), gateAppFileDenied(HealthJudge, ProposalPhase),
-	{name: "responder edits source in a proposal", kind: gateOwnership, actor: Responder, phase: ProposalPhase, rules: []string{RuleOwnershipDenied}, edit: gateWrite("app.txt", "repair\n")},
+	{name: "responder commits source in a proposal", kind: gateOwnership, actor: Responder, phase: ProposalPhase, edit: gateWrite("app.txt", "repair\n")},
+	{name: "the detection designer may not change source in a proposal", kind: gateOwnership, actor: HealthJudge, phase: ProposalPhase, rules: []string{RuleOwnershipDenied}, edit: gateWrite("app.txt", "repair\n")},
 	{name: "health judge edits health detectors in initial", kind: gateOwnership, actor: HealthJudge, phase: InitialPhase, edit: func(t *testing.T, r string) {
 		write(t, r, gateHealth, "package objective\n\n// edit\n")
 		edit(t, r, gateHealthManifest, "interval: 30s", "interval: 20s")
@@ -1090,8 +1091,8 @@ func gateRead(t *testing.T, root, name string) string {
 	return string(data)
 }
 
-// gateAppFileDenied is the negative control for the .sdo/-only rule: no agent
-// actor may change an app file in any phase (only the upstream advance may).
+// gateAppFileDenied is the negative control for the source grant: only a
+// responder's proposal and the upstream advance may change an app file.
 func gateAppFileDenied(actor Actor, phase Phase) gateRow {
 	return gateRow{name: fmt.Sprintf("%s may not change an app file in %s", actor, phase), kind: gateOwnership, actor: actor, phase: phase,
 		rules: []string{RuleOwnershipDenied}, edit: gateWrite("app.txt", "edit\n")}

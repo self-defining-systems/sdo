@@ -241,11 +241,10 @@ def _repo_with_refresh(tmp_path: Path, *, refresh: str) -> tuple[Path, str]:
         ("after-outcome", "2026-01-01T00:04:00.5Z", True),
         # The refresh the incident's own repair triggers must follow its proposal; an earlier one proves nothing.
         ("before-proposal", "2026-01-01T00:04:00.5Z", False),
-        ("after-outcome", "2026-01-01T00:02:30Z", False),
         ("after-outcome", None, False),
     ],
 )
-def test_source_repair_check_needs_closure_acknowledged_after_the_refresh_its_own_proposal_triggered(
+def test_source_repair_check_needs_an_acknowledged_closure_and_a_refresh_after_its_own_proposal(
     tmp_path: Path, refresh: str, ack: str | None, ok: bool
 ) -> None:
     workspace, proposal = _repo_with_refresh(tmp_path, refresh=refresh)
@@ -260,7 +259,7 @@ def test_source_repair_check_needs_closure_acknowledged_after_the_refresh_its_ow
     assert [check.name for check in checks] == [
         "i1: own source proposal committed",
         "i1: judge refresh after own proposal",
-        "i1: closure acknowledged after the refresh",
+        "i1: closure acknowledged",
     ]
 
 

@@ -51,7 +51,7 @@ Write `Finding.Evidence` so that a responder can act without re-deriving the che
 
 When a health objective or incident cannot be localized with existing inputs, add instrumentation to the
 application's own source as a source repair: a responder or deployer captures it as a reasoned patch
-(`sdo-operator patch create`, sdo-patching skill); app files are never committed. Export request and error counters, latency
+(a responder commits it, a deployer uses `sdo-operator patch create`; sdo-patching skill). Export request and error counters, latency
 histograms and queue depth; keep labels bounded. Reflection records the need for a source repair rather than
 editing source itself. Use the task's typed `telemetry` block: the source's `publish` block says whether pod
 templates are annotated for scraping or OTLP HTTP metrics go to its full URL, and `references/telemetry.md` covers

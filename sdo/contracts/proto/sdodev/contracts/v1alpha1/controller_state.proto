@@ -353,6 +353,17 @@ message BrokerLedger {
   repeated MemoryDiagnostic reflection_coverage_gaps = 30;
   // Presence binds publication policy across retries and restarts.
   optional bool frozen_memory = 31;
+  // The responder's committed source is published after the acknowledgment:
+  // "pending" until it is deployed and accepted, held or discarded, then the
+  // outcome ("deployed", "published", "held", "none"). Empty before the
+  // closure decided it. source_commit is the accepted commit.
+  string source_repair = 32;
+  string source_commit = 33;
+  string source_detail = 34;
+  // App files the agent left uncommitted; discarded when the publication ends.
+  repeated string source_uncaptured = 35;
+  // Cleanup prompts the closing turn has spent on leftover edits.
+  uint32 cleanup_turns_used = 36;
 }
 
 // Source field ownership adoption survives controller restarts.
