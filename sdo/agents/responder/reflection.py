@@ -369,7 +369,7 @@ class CodexSessionBackend:
         raise AssertionError("unreachable closing turn state")
 
     def _run(
-        self, *, worktree: Path, prompt: RenderedPrompt, session_id: str, timeout_seconds: float
+        self, *, worktree: Path, prompt: RenderedPrompt | str, session_id: str, timeout_seconds: float
     ) -> StructuredTurn:
         if os.environ.get("SDO_API_HISTORY_DIR"):
             prompt = prompt + render_prompt("responder", "run_01", part="reflection.instructions")

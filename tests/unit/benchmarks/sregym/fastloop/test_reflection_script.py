@@ -103,7 +103,7 @@ def test_already_accepted_program_produces_no_edits(tmp_path: Path) -> None:
     turn = script.select("reflector", "incident", 0)
     assert turn.steps == []
     assert turn.result["note"]
-    assert "already accepted" in turn.result["summary"]
+    assert "already accepted" in turn.result["note"]
 
 
 def test_reflection_task_selects_incident_specific_script(tmp_path: Path, monkeypatch, capsys) -> None:

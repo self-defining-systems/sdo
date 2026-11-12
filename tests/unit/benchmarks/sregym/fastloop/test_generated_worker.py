@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -192,6 +193,13 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
     monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(capture))
     program_source = ROOT / "benchmarks/sregym/fastloop/scripted_program"
     monkeypatch.setattr(scripts, "PROGRAM_SOURCE", program_source)
+    # The closing turn's decision is derived from the checkout's diff, so the seed must be a repository.
+    for args in (
+        ["init", "-q"],
+        ["add", "-A"],
+        ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "seed"],
+    ):
+        subprocess.run(["git", "-C", str(seed), *args], check=True)
     closure = _closure()
     closure.request.repository_worktree = str(seed)
     closure.request.namespace = "hotel"
