@@ -24,7 +24,7 @@ type Field struct {
 // workerTransport lists variables that share a section prefix with the knobs but are internal worker or
 // installer transport, never operator configuration.
 var workerTransport = []string{
-	"SDO_AGENT_GUIDANCE", "SDO_RESPONSE_CONTINUATION", "SDO_DEPLOYMENT_MODEL", "SDO_TELEMETRY_POLICY",
+	"SDO_AGENT_GUIDANCE", "SDO_DEPLOYMENT_MODEL", "SDO_TELEMETRY_POLICY",
 }
 
 // workerTransportPrefixes are families of such variables.

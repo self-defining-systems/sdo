@@ -40,6 +40,13 @@ func stageEscalation(ctx context.Context, mitigator program.Mitigator, canMitiga
 	return program.EscalationOf(plan)
 }
 
+// stageEscalatedIn reports whether any automatic-stage attempt escalated.
+func stageEscalatedIn(stages []*contracts.StageReport) bool {
+	return slices.ContainsFunc(stages, func(report *contracts.StageReport) bool {
+		return slices.ContainsFunc(report.GetMitigations(), func(attempt *contracts.StageMitigation) bool { return attempt.GetResult() == stageEscalated })
+	})
+}
+
 // escalateStageAttempt records the escalation and removes its targeted
 // findings from the stage's remaining work, so no later stage repairs a cause
 // out of the namespace's reach. The findings stay in the incident request:

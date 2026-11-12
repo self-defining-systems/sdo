@@ -186,7 +186,7 @@ type Controller struct {
 	incidentDetectedAt      time.Time
 	incidentDispatchedAt    time.Time
 	responderCompletedAt    time.Time
-	verificationDeadline    time.Time
+	escalatedAt             time.Time
 	// detectorClearSince maps each detector to the start of its current
 	// streak of clear evaluations; a firing or erroring evaluation ends
 	// the streak. Guarded by mu.
@@ -939,7 +939,6 @@ func (c *Controller) beginIncident(now time.Time, request IncidentRequest, batch
 	c.incidentDetectedAt = now.UTC()
 	c.incidentDispatchedAt = time.Time{}
 	c.responderCompletedAt = time.Time{}
-	c.verificationDeadline = time.Time{}
 	c.resetDispatchRetryLocked()
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_PENDING
 	if c.broker != nil {
@@ -1056,10 +1055,10 @@ func (c *Controller) nextWake() (time.Time, string) {
 		consider(c.startup.bound, "start-up bound")
 	}
 	c.mu.Lock()
-	verificationPending := c.incidentOpen && (c.responderDone || !c.verificationDeadline.IsZero()) && c.currentIncidentRequest != nil
+	verificationPending := c.incidentOpen && c.responderDone && c.escalatedAt.IsZero() && c.currentIncidentRequest != nil
 	verificationDeadline := time.Time{}
 	if verificationPending {
-		verificationDeadline = c.verificationDeadlineLocked()
+		verificationDeadline = c.recoveryGraceEndsLocked()
 		if c.earlyStopRetryAt.After(verificationDeadline) {
 			verificationDeadline = c.earlyStopRetryAt
 		}
@@ -1306,7 +1305,6 @@ func (c *Controller) processDispatchCompletions(observedAt time.Time) {
 }
 
 func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, observedAt time.Time) {
-	durableDriftPrompt := c.driftRepromptRecord()
 	c.mu.Lock()
 	if c.currentIncidentRequest == nil || completion.incidentID != c.currentIncidentRequest.IncidentID {
 		currentIncidentID := ""
@@ -1318,13 +1316,6 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 			"ignore stale dispatch completion",
 			fmt.Errorf("completion incident %q does not match current incident %q", completion.incidentID, currentIncidentID),
 		)
-		return
-	}
-	// Cancellation at the frozen bound is controller-owned settlement, not a
-	// failed worker report. Keep the completed first turn while quiescence retries.
-	var boundedJobFailure *ResponderJobFailedError
-	if !c.verificationDeadline.IsZero() && !observedAt.Before(c.verificationDeadlineLocked()) && errors.Is(completion.err, context.Canceled) && !errors.As(completion.err, &boundedJobFailure) {
-		c.mu.Unlock()
 		return
 	}
 	c.responseStagesRunning = false
@@ -1355,12 +1346,22 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		c.mu.Unlock()
 		return
 	}
-	priorDriftPrompt := durableDriftPrompt
-	if c.currentIncidentResult != nil && c.currentIncidentResult.DriftReprompt != nil {
-		priorDriftPrompt = cloneDriftReprompt(c.currentIncidentResult.DriftReprompt)
-	}
 	var jobFailed *ResponderJobFailedError
-	if errors.As(completion.err, &jobFailed) {
+	var timedOut *ResponseTimeoutError
+	if errors.As(completion.err, &timedOut) {
+		// The response timeout is a safety stop, not a failure: the agent never
+		// reached Recovered, so the incident escalates and stays open.
+		c.responderDone = true
+		c.responderCompletedAt = observedAt.UTC()
+		if c.responderCompletedAt.Before(c.incidentDispatchedAt) {
+			c.responderCompletedAt = c.incidentDispatchedAt
+		}
+		c.dispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
+		c.dispatchError = ""
+		c.currentIncidentResult = &IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: completion.incidentID, Status: IncidentCompleted, ResponderSessionID: completion.result.ResponderSessionID, Timing: TimingMetrics{StartedAt: c.incidentDispatchedAt, CompletedAt: c.responderCompletedAt}}
+		c.escalateLocked(c.responderCompletedAt)
+		c.resetDispatchRetryLocked()
+	} else if errors.As(completion.err, &jobFailed) {
 		// A failed Job is terminal and exactly-once dispatch forbids a second
 		// responder, so the responder is done without a result. Health alone
 		// decides closure, and the broker records the outcome as failed.
@@ -1380,12 +1381,6 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 				startedAt = c.responderCompletedAt
 			}
 			c.currentIncidentResult = &IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: completion.incidentID, Status: IncidentFailed, ResponderSessionID: completion.result.ResponderSessionID, Error: completion.err.Error(), Timing: TimingMetrics{StartedAt: startedAt, CompletedAt: c.responderCompletedAt}}
-		}
-		if priorDriftPrompt != nil {
-			if c.currentIncidentResult == nil {
-				c.currentIncidentResult = &IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: completion.incidentID, Status: IncidentFailed, Error: completion.err.Error(), Timing: TimingMetrics{StartedAt: c.incidentDispatchedAt, CompletedAt: c.responderCompletedAt}}
-			}
-			c.currentIncidentResult.DriftReprompt = priorDriftPrompt
 		}
 		c.resetDispatchRetryLocked()
 	} else if completion.err != nil {
@@ -1416,9 +1411,6 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		c.resetDispatchRetryLocked()
 	}
 	if c.responderDone {
-		if c.verificationDeadline.IsZero() {
-			c.verificationDeadline = c.verificationDeadlineLocked()
-		}
 		c.emitLifecycleLocked(&contracts.LifecycleEvent{
 			Event: PhaseResponderCompleted, RecordedAt: contractTimestamp(c.responderCompletedAt), IncidentId: completion.incidentID,
 			DispatchError: c.dispatchError != "",
@@ -1455,16 +1447,10 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		c.closeExternalIncident(now)
 		return
 	}
-	if !c.settleBoundedContinuation(ctx, now) {
-		return
-	}
 	c.mu.Lock()
 	if !c.incidentOpen || c.currentIncidentRequest == nil {
 		c.mu.Unlock()
 		return
-	}
-	if c.responderDone && c.verificationDeadline.IsZero() {
-		c.verificationDeadline = c.verificationDeadlineLocked()
 	}
 	early := !c.responderDone
 	requiresStability := early || c.codePath != nil && c.codePath.Selection.DetectorSource == "shell"
@@ -1478,8 +1464,6 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 	loop := c.responderLoop
 	c.mu.Unlock()
-	// Keep observing while the optional extra turn runs.
-	waitForResponder := early && loop.driftRepromptPending()
 	var guard *apihistory.MutationObservation
 	release := func() {}
 	safe := true
@@ -1506,12 +1490,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		if snapshotErr != nil {
 			c.resetEarlyStability()
 			c.reportBrokerError("verify observation scope", snapshotErr)
-			c.mu.Lock()
-			bounded := c.responderDone && !now.Before(c.verificationDeadlineLocked())
-			c.mu.Unlock()
-			if !bounded {
-				return
-			}
+			return
 		}
 	}
 	if snapshotErr == nil {
@@ -1609,17 +1588,6 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 	verification.Healthy = false // Only the shared recovery proof can grant health.
 	c.cacheVerificationLocked(verification)
-	if waitForResponder {
-		verification.Summary = "awaiting responder investigation and controller recovery proof"
-		if verified && safe && (guard == nil || !guard.Pending) && verification.Error == "" && len(verification.Findings) == 0 && len(verification.VerificationBlockers) == 0 {
-			verification.VerificationStatus = VerificationAwaitingResponderCompletion
-			verification.Summary = "Fresh health is clear; return the structured incident result now with your repair evidence and disposition of remaining source differences. Recovery proof awaits responder completion; the controller independently checks stability and publishes recovery after you finish."
-		}
-		c.cacheVerificationLocked(verification)
-		// Refresh verify reports without ending the responder's whole turn.
-		c.mu.Unlock()
-		return
-	}
 	if verified && !terminalFailure {
 		requiresStability = true
 		verified = c.recoveryProofLocked(now, finalStates, safe && (guard == nil || !guard.Pending))
@@ -1635,10 +1603,6 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 		verification.Healthy = verified
 		c.cacheVerificationLocked(verification)
-		if !verified && (early || now.Before(c.verificationDeadlineLocked()) || c.recoveryWindowRunningLocked(now)) {
-			c.mu.Unlock()
-			return
-		}
 	} else {
 		c.closureStableSince = time.Time{}
 		verification.Healthy = false
@@ -1649,80 +1613,41 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		}
 	}
 
-	// An automatic stage has no provider continuation to resume. Transfer its
-	// receipts and residuals through the first-worker handoff, rather than
-	// treating a missing continuation checkpoint as exhausted model work.
-	if !early && !verified && !terminalFailure && now.Before(c.currentIncidentRequest.ResponseDeadline) && stageOnlyClosure(IncidentClosure{Request: *c.currentIncidentRequest, Result: c.currentIncidentResult}) &&
-		stageHandoffWarranted(c.config.AfterPlaybook, c.currentIncidentRequest.PriorStages, c.recoveryScopeLocked(), verification.Findings, !now.Before(c.verificationDeadlineLocked()),
-			c.tracker.HasActiveKeys(openingKeys(c.currentIncidentRequest)), len(c.activeHealthDetectors()) > 0) {
-		request := *cloneIncidentRequest(c.currentIncidentRequest)
-		request.Findings = append([]sdk.Finding(nil), verification.Findings...)
-		if len(request.Findings) == 0 {
-			for _, state := range c.tracker.Snapshot() {
-				if state.Active {
-					request.Findings = append(request.Findings, state.Finding)
-				}
-			}
-		}
-		if playbookApplied(request.PriorStages) {
-			// After an applied playbook the agent receives the opening alerts only.
-			request.Findings = holdingFindings(c.recoveryScopeLocked(), request.Findings)
-		}
-		c.mu.Unlock()
-		_, err := c.prepareResponseStageHandoff(ctx, request)
-		if err != nil {
-			c.reportBrokerError("handoff unrecovered automatic stage", err)
+	if !verified && !terminalFailure {
+		if early {
+			c.mu.Unlock()
 			return
 		}
-		c.mu.Lock()
-		c.responderDone = false
-		c.responderCompletedAt = time.Time{}
-		c.verificationDeadline = time.Time{}
-		c.dispatchState = contracts.DispatchState_DISPATCH_STATE_PENDING
-		c.resetDispatchRetryLocked()
-		c.mu.Unlock()
-		return
-	}
-
-	driftPrompt := !early && verified && driftRepromptCanProgress(source.Drift, c.currentIncidentResult)
-	continuationDeadline := c.verificationDeadlineLocked()
-	if driftPrompt {
-		continuationDeadline = c.currentIncidentRequest.ResponseDeadline
-	}
-	effectObservationOnly := len(source.Effects) > 0 && len(verification.Findings) == 0 && verification.Error == "" && len(verification.VerificationBlockers) == len(source.Effects)
-	if !effectObservationOnly && ((!verified && (len(verification.Findings) > 0 || verification.Error != "" || len(verification.VerificationBlockers) > 0)) || driftPrompt) && !terminalFailure && c.dispatchError == "" && now.Before(continuationDeadline) {
-		if continuer, ok := c.dispatcher.(interface {
-			ContinueAfterVerification(context.Context, IncidentRequest, ToolResponse, time.Time) (bool, error)
-		}); ok {
-			// The dispatcher builds its responder loop through the controller
-			// (LoopFactory registers it under c.mu), so it must run unlocked.
-			request := cloneIncidentRequest(c.currentIncidentRequest)
-			c.mu.Unlock()
-			resumed, err := continuer.ContinueAfterVerification(ctx, *request, verification, now)
-			driftRecord := c.driftRepromptRecord()
-			c.mu.Lock()
-			if err != nil {
-				c.mu.Unlock()
-				c.reportBrokerError("resume unhealthy responder", err)
-				return
-			}
-			// maybeCloseIncident runs only inside StepEvents, which holds observationMu, so no other
-			// step can close or replace the incident while c.mu is released. This re-check is the
-			// defense if that ever stops holding: the continuation's side effects are then abandoned.
-			if !c.incidentOpen || !c.responderDone || c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != request.IncidentID {
-				c.mu.Unlock()
-				return
-			}
-			if resumed {
-				// Health already verified before optional source work. Its
-				// return needs a fresh observation window; unconfirmed turns
-				// keep their original frozen bound instead.
-				if driftPrompt {
-					c.verificationDeadline = time.Time{}
+		stageOnly := stageOnlyClosure(IncidentClosure{Request: *c.currentIncidentRequest, Result: c.currentIncidentResult})
+		graceOver := !now.Before(c.recoveryGraceEndsLocked())
+		switch {
+		case stageOnly && !stageEscalatedIn(c.currentIncidentRequest.PriorStages):
+			// An automatic stage has no provider session to resume. When its
+			// recovery wait ended with the opening alerts still firing, the
+			// first agent task takes over through the stage hand-off.
+			if now.Before(c.currentIncidentRequest.ResponseDeadline) &&
+				stageHandoffWarranted(c.config.AfterPlaybook, c.currentIncidentRequest.PriorStages, c.recoveryScopeLocked(), verification.Findings, graceOver,
+					c.tracker.HasActiveKeys(openingKeys(c.currentIncidentRequest)), len(c.activeHealthDetectors()) > 0) {
+				request := *cloneIncidentRequest(c.currentIncidentRequest)
+				request.Findings = append([]sdk.Finding(nil), verification.Findings...)
+				if len(request.Findings) == 0 {
+					for _, state := range c.tracker.Snapshot() {
+						if state.Active {
+							request.Findings = append(request.Findings, state.Finding)
+						}
+					}
 				}
-				if c.currentIncidentResult != nil && driftRecord != nil {
-					c.currentIncidentResult.DriftReprompt = driftRecord
+				if playbookApplied(request.PriorStages) {
+					// After an applied playbook the agent receives the opening alerts only.
+					request.Findings = holdingFindings(c.recoveryScopeLocked(), request.Findings)
 				}
+				c.mu.Unlock()
+				_, err := c.prepareResponseStageHandoff(ctx, request)
+				if err != nil {
+					c.reportBrokerError("handoff unrecovered automatic stage", err)
+					return
+				}
+				c.mu.Lock()
 				c.responderDone = false
 				c.responderCompletedAt = time.Time{}
 				c.dispatchState = contracts.DispatchState_DISPATCH_STATE_PENDING
@@ -1730,19 +1655,25 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 				c.mu.Unlock()
 				return
 			}
-		}
-	}
-	if !verified {
-		// One timeout bounds how long a stuck incident can block the stream. It
-		// closes with a receipt: failed for actionable findings, unconfirmed
-		// for incomplete observations, and never health-verified.
-		if !terminalFailure && now.Before(c.verificationDeadlineLocked()) {
+			// The policy withholds the agent after an applied playbook: past
+			// the grace, the incident escalates without one.
+			if !graceOver || !playbookApplied(c.currentIncidentRequest.PriorStages) || agentMayFollowPlaybook(c.config.AfterPlaybook, c.currentIncidentRequest.PriorStages) {
+				c.mu.Unlock()
+				return
+			}
+		case !stageOnly && !graceOver:
+			// Recovered may still hold within the grace after the agent returned.
 			c.mu.Unlock()
 			return
 		}
-		if !terminalFailure {
-			logVerificationTimeout(c.currentIncidentRequest.IncidentID, c.config.VerificationTimeout, c.activeHealthDetectors())
-		}
+		// The responder returned (or its stage escalated) before Recovered held:
+		// the incident escalates. No agent runs again for these symptoms; it
+		// stays open until its opening alerts clear or `incidents reset`.
+		c.escalateLocked(now)
+		c.mu.Unlock()
+		return
+	}
+	if !verified {
 		finalStates = nil
 	}
 	verifiedAt := now.UTC()
@@ -1799,6 +1730,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		windowUsed = c.config.ClosureStabilityWindow
 	}
 	closure := IncidentClosure{
+		EscalatedAt:                   c.escalatedAt,
 		VerifiedWhileResponderRunning: early,
 		ClosureStabilityWindow:        windowUsed,
 		ObservationGeneration:         generation,
@@ -1898,17 +1830,25 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 }
 
-// verificationDeadlineLocked bounds observation by both the completed response
-// and its original request budget. Continuations never extend that request.
-func (c *Controller) verificationDeadlineLocked() time.Time {
-	deadline := c.verificationDeadline
-	if deadline.IsZero() {
-		deadline = c.responderCompletedAt.Add(c.config.VerificationTimeout)
+// recoveryGraceEndsLocked is how long Recovered may still hold after a responder
+// returned: past it, an unrecovered incident escalates (and an unrecovered
+// automatic stage hands its alerts to the first agent task). It never closes an
+// incident.
+func (c *Controller) recoveryGraceEndsLocked() time.Time {
+	bound := c.responderCompletedAt.Add(c.config.VerificationTimeout)
+	if response := c.currentIncidentRequest.ResponseDeadline; !response.IsZero() && response.Before(bound) {
+		bound = response
 	}
-	if response := c.currentIncidentRequest.ResponseDeadline; !response.IsZero() && response.Before(deadline) {
-		deadline = response
+	return bound
+}
+
+// escalateLocked records that the incident's responder ended before Recovered.
+// The first escalation time is kept; a restart rejoins it.
+func (c *Controller) escalateLocked(at time.Time) {
+	if c.escalatedAt.IsZero() {
+		c.escalatedAt = at.UTC()
+		slog.Warn("incident_escalated", "incident_id", c.currentIncidentRequest.IncidentID, "active_health_detectors", c.activeHealthDetectors())
 	}
-	return deadline
 }
 
 // activeHealthDetectors lists health detectors with an active finding the
@@ -1922,12 +1862,6 @@ func (c *Controller) activeHealthDetectors() []string {
 	}
 	sort.Strings(active)
 	return active
-}
-
-// logVerificationTimeout records that the verification window ended with
-// health or admitted source drift unresolved, so the incident closes as failed.
-func logVerificationTimeout(incidentID string, timeout time.Duration, active []string) {
-	slog.Warn("incident_verification_timeout", "incident_id", incidentID, "verification_timeout", timeout.String(), "active_health_detectors", active)
 }
 
 // logIncidentVerified records the verification wait: how long after the
@@ -2065,7 +1999,7 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		History: evaluationsContract(history), IncidentOpen: c.incidentOpen, ResponderDone: c.responderDone,
 		DispatchError: c.dispatchError, IncidentDetectedAt: optionalTimestamp(c.incidentDetectedAt),
 		IncidentDispatchedAt: optionalTimestamp(c.incidentDispatchedAt), ResponderCompletedAt: optionalTimestamp(c.responderCompletedAt),
-		VerificationDeadlineAt: optionalTimestamp(c.verificationDeadline),
+		EscalatedAt: optionalTimestamp(c.escalatedAt),
 		DetectorClearSince:     timestampsContract(c.detectorClearSince),
 		DispatchState:          dispatchState,
 		IncidentFindingKeys:    append([]string(nil), c.incidentFindingKeys...), ClosureState: c.closureState,
@@ -2153,7 +2087,7 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	c.incidentDetectedAt = controllerTime(state.GetIncidentDetectedAt())
 	c.incidentDispatchedAt = controllerTime(state.GetIncidentDispatchedAt())
 	c.responderCompletedAt = controllerTime(state.GetResponderCompletedAt())
-	c.verificationDeadline = controllerTime(state.GetVerificationDeadlineAt())
+	c.escalatedAt = controllerTime(state.GetEscalatedAt())
 	c.detectorClearSince = cloneClearSince(timestampsState(state.GetDetectorClearSince()))
 	c.recoveryObserverStarted = c.startedAt
 	c.dispatchState = state.DispatchState

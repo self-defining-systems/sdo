@@ -257,7 +257,6 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 
 func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, error) {
 	message := &contracts.IncidentResult{
-		DriftReprompt: cloneDriftReprompt(result.DriftReprompt),
 		SchemaVersion: result.SchemaVersion, IncidentId: result.IncidentID, Status: string(result.Status),
 		ConfirmedRootCauses: make([]*contracts.ConfirmedRootCause, 0, len(result.ConfirmedRootCauses)),
 		DriftEvents:         driftEventsContract(result.DriftEvents),
@@ -359,7 +358,6 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 
 func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 	result := IncidentResult{
-		DriftReprompt: cloneDriftReprompt(message.GetDriftReprompt()),
 		SchemaVersion: message.GetSchemaVersion(), IncidentID: message.GetIncidentId(), Status: IncidentStatus(message.GetStatus()),
 		ConfirmedRootCauses:  make([]ConfirmedRootCause, 0, len(message.GetConfirmedRootCauses())),
 		DriftEvents:          driftEventsState(message.GetDriftEvents()),
@@ -458,6 +456,7 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 		StatePersistenceFailure: clonePersistenceFailure(closure.StatePersistenceFailure),
 		SourceCheckNotes:        append([]string(nil), closure.SourceCheckNotes...),
 		Frozen:                  closure.Frozen,
+		EscalatedAt:             optionalTimestamp(closure.EscalatedAt),
 	}
 	if closure.RecoveryVerification != nil {
 		message.RecoveryVerification = proto.Clone(closure.RecoveryVerification).(*contracts.RecoveryVerification)
@@ -656,6 +655,7 @@ func incidentClosureState(message *contracts.IncidentClosure) IncidentClosure {
 		StatePersistenceFailure: clonePersistenceFailure(message.GetStatePersistenceFailure()),
 		SourceCheckNotes:        append([]string(nil), message.GetSourceCheckNotes()...),
 		Frozen:                  message.GetFrozen(),
+		EscalatedAt:             controllerTime(message.GetEscalatedAt()),
 	}
 	if message.GetRecoveryVerification() != nil {
 		closure.RecoveryVerification = proto.Clone(message.GetRecoveryVerification()).(*contracts.RecoveryVerification)

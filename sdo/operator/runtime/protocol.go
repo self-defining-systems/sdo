@@ -178,7 +178,6 @@ type IncidentResult struct {
 	// automaticStages carries an in-process pre-claim observation back to the
 	// pipeline. Durable evidence remains in request stage reports and receipts.
 	automaticStages       []*contracts.StageReport
-	DriftReprompt         *contracts.DriftReprompt
 	UnresolvedFindings    []sdk.Finding
 	DriftEvents           []sdk.DriftEvent
 	SchemaVersion         string
@@ -265,7 +264,10 @@ type IncidentClosure struct {
 	// RecoveryVerification is the closure's recovered test: each faulted
 	// component's verification set, its strength and whether it recovered
 	// after SDO's last write settled. nil when it was not computed.
-	RecoveryVerification    *contracts.RecoveryVerification
+	RecoveryVerification *contracts.RecoveryVerification
+	// EscalatedAt is when the incident escalated: its responder ended before
+	// Recovered held. Zero otherwise.
+	EscalatedAt             time.Time
 	StatePersistenceFailure *contracts.StatePersistenceFailure
 	// SourceCheckNotes lists what the accepted-source checks found when the
 	// closure committed: checks that were unavailable, and objects that still

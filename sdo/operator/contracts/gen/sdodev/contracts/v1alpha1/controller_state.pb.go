@@ -804,12 +804,7 @@ type ControllerState struct {
 	// observationMu is held, whether or not the pass found work, took a
 	// snapshot, or failed. It stops only when the step loop is blocked, so
 	// observers judge a hung controller by it and never by evaluation_iteration.
-	StepCount int64 `protobuf:"varint,44,opt,name=step_count,json=stepCount,proto3" json:"step_count,omitempty"`
-	// First completed response starts this absolute verification bound. An
-	// unconfirmed continuation or controller restart never extends it. A healthy
-	// optional source turn starts its own fresh verification window on return.
-	// The original response deadline caps both; cleared with the incident.
-	VerificationDeadlineAt *timestamppb.Timestamp   `protobuf:"bytes,45,opt,name=verification_deadline_at,json=verificationDeadlineAt,proto3" json:"verification_deadline_at,omitempty"`
+	StepCount              int64                    `protobuf:"varint,44,opt,name=step_count,json=stepCount,proto3" json:"step_count,omitempty"`
 	SetupEvaluatedRevision string                   `protobuf:"bytes,46,opt,name=setup_evaluated_revision,json=setupEvaluatedRevision,proto3" json:"setup_evaluated_revision,omitempty"`
 	DisabledSetupDetectors []*DisabledSetupDetector `protobuf:"bytes,47,rep,name=disabled_setup_detectors,json=disabledSetupDetectors,proto3" json:"disabled_setup_detectors,omitempty"`
 	// Preserve completion policy when the acknowledged closure payload is retired.
@@ -818,7 +813,10 @@ type ControllerState struct {
 	// seen the application healthy once, or the bound passes. Unset when the
 	// period is off. It is persisted so a restart neither starts a new period
 	// nor extends one.
-	Startup       *StartupPeriod `protobuf:"bytes,49,opt,name=startup,proto3" json:"startup,omitempty"`
+	Startup *StartupPeriod `protobuf:"bytes,49,opt,name=startup,proto3" json:"startup,omitempty"`
+	// When the open incident escalated: its responder returned, or its response
+	// timeout passed, before Recovered held. No agent is dispatched again.
+	EscalatedAt   *timestamppb.Timestamp `protobuf:"bytes,50,opt,name=escalated_at,json=escalatedAt,proto3" json:"escalated_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1105,13 +1103,6 @@ func (x *ControllerState) GetStepCount() int64 {
 	return 0
 }
 
-func (x *ControllerState) GetVerificationDeadlineAt() *timestamppb.Timestamp {
-	if x != nil {
-		return x.VerificationDeadlineAt
-	}
-	return nil
-}
-
 func (x *ControllerState) GetSetupEvaluatedRevision() string {
 	if x != nil {
 		return x.SetupEvaluatedRevision
@@ -1136,6 +1127,13 @@ func (x *ControllerState) GetLastAcknowledgedExternalIncidentId() string {
 func (x *ControllerState) GetStartup() *StartupPeriod {
 	if x != nil {
 		return x.Startup
+	}
+	return nil
+}
+
+func (x *ControllerState) GetEscalatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.EscalatedAt
 	}
 	return nil
 }
@@ -2006,7 +2004,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\tpermanent\x18\b \x01(\bR\tpermanent\x12\x16\n" +
 	"\x06action\x18\t \x01(\tR\x06action\x12Q\n" +
 	"\x06reason\x18\n" +
-	" \x01(\x0e2/.sdodev.contracts.v1alpha1.ClosureFailureReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\x06reason\"\xf1$\n" +
+	" \x01(\x0e2/.sdodev.contracts.v1alpha1.ClosureFailureReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\x06reason\"\xfa$\n" +
 	"\x0fControllerState\x122\n" +
 	"\aversion\x18\x01 \x01(\tB\x18\xbaH\x15r\x13\n" +
 	"\x11sdo.controller/v1R\aversion\x12s\n" +
@@ -2047,12 +2045,12 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\n" +
 	"busy_until\x18+ \x01(\v2\x1a.google.protobuf.TimestampR\tbusyUntil\x12\x1d\n" +
 	"\n" +
-	"step_count\x18, \x01(\x03R\tstepCount\x12T\n" +
-	"\x18verification_deadline_at\x18- \x01(\v2\x1a.google.protobuf.TimestampR\x16verificationDeadlineAt\x128\n" +
+	"step_count\x18, \x01(\x03R\tstepCount\x128\n" +
 	"\x18setup_evaluated_revision\x18. \x01(\tR\x16setupEvaluatedRevision\x12j\n" +
 	"\x18disabled_setup_detectors\x18/ \x03(\v20.sdodev.contracts.v1alpha1.DisabledSetupDetectorR\x16disabledSetupDetectors\x12R\n" +
 	"&last_acknowledged_external_incident_id\x180 \x01(\tR\"lastAcknowledgedExternalIncidentId\x12B\n" +
-	"\astartup\x181 \x01(\v2(.sdodev.contracts.v1alpha1.StartupPeriodR\astartup\x1aa\n" +
+	"\astartup\x181 \x01(\v2(.sdodev.contracts.v1alpha1.StartupPeriodR\astartup\x12=\n" +
+	"\fescalated_at\x182 \x01(\v2\x1a.google.protobuf.TimestampR\vescalatedAt\x1aa\n" +
 	"\x17SchedulerDeadlinesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
 	"\x05value\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05value:\x028\x01\x1ai\n" +
@@ -2066,7 +2064,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"*state.failed_closure_has_permanent_failure\x126a failed closure requires its permanent failure record\x1aXthis.closure_state != 5 || (has(this.closure_failure) && this.closure_failure.permanent)\x1a\xe0\x02\n" +
 	"-state.closure_failure_matches_pending_closure\x12da closure failure must belong to the pending closure and its permanence must match the closure state\x1a\xc8\x01!has(this.closure_failure) || (has(this.pending_closure) && this.closure_failure.incident_id == this.pending_closure.request.incident_id && this.closure_failure.permanent == (this.closure_state == 5))\x1a\x9c\x01\n" +
 	"!state.pending_closure_has_payload\x129pending or processing closure requires its frozen payload\x1a<!(this.closure_state in [1, 2]) || has(this.pending_closure)\x1a\x9c\x01\n" +
-	"#state.committed_closure_has_receipt\x127committed or acknowledging closure requires its receipt\x1a<!(this.closure_state in [3, 4]) || has(this.closure_receipt)J\x04\b\x0e\x10\x0fJ\x04\b\x0f\x10\x10J\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x1a\x10\x1bJ\x04\b \x10!J\x04\b!\x10\"J\x04\b\"\x10#R\x18detector_review_requiredR\x1bdetector_review_required_atR\x16detector_review_reasonR\x19incident_observed_changesR\x10pending_releasesR\x13drift_investigationR\x0fdrift_admissionR\x15program_sweep_cursors\"\xc6\x02\n" +
+	"#state.committed_closure_has_receipt\x127committed or acknowledging closure requires its receipt\x1a<!(this.closure_state in [3, 4]) || has(this.closure_receipt)J\x04\b\x0e\x10\x0fJ\x04\b\x0f\x10\x10J\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x1a\x10\x1bJ\x04\b \x10!J\x04\b!\x10\"J\x04\b\"\x10#J\x04\b-\x10.R\x18detector_review_requiredR\x1bdetector_review_required_atR\x16detector_review_reasonR\x19incident_observed_changesR\x10pending_releasesR\x13drift_investigationR\x0fdrift_admissionR\x15program_sweep_cursorsR\x18verification_deadline_at\"\xc6\x02\n" +
 	"\rStartupPeriod\x125\n" +
 	"\bbegan_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\abeganAt\x125\n" +
 	"\bbound_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\aboundAt\x12A\n" +
@@ -2284,9 +2282,9 @@ var file_sdodev_contracts_v1alpha1_controller_state_proto_depIdxs = []int32{
 	30, // 34: sdodev.contracts.v1alpha1.ControllerState.accepted_source_drift:type_name -> sdodev.contracts.v1alpha1.DriftEvent
 	32, // 35: sdodev.contracts.v1alpha1.ControllerState.namespace_onboarding:type_name -> sdodev.contracts.v1alpha1.NamespaceOnboarding
 	23, // 36: sdodev.contracts.v1alpha1.ControllerState.busy_until:type_name -> google.protobuf.Timestamp
-	23, // 37: sdodev.contracts.v1alpha1.ControllerState.verification_deadline_at:type_name -> google.protobuf.Timestamp
-	33, // 38: sdodev.contracts.v1alpha1.ControllerState.disabled_setup_detectors:type_name -> sdodev.contracts.v1alpha1.DisabledSetupDetector
-	10, // 39: sdodev.contracts.v1alpha1.ControllerState.startup:type_name -> sdodev.contracts.v1alpha1.StartupPeriod
+	33, // 37: sdodev.contracts.v1alpha1.ControllerState.disabled_setup_detectors:type_name -> sdodev.contracts.v1alpha1.DisabledSetupDetector
+	10, // 38: sdodev.contracts.v1alpha1.ControllerState.startup:type_name -> sdodev.contracts.v1alpha1.StartupPeriod
+	23, // 39: sdodev.contracts.v1alpha1.ControllerState.escalated_at:type_name -> google.protobuf.Timestamp
 	23, // 40: sdodev.contracts.v1alpha1.StartupPeriod.began_at:type_name -> google.protobuf.Timestamp
 	23, // 41: sdodev.contracts.v1alpha1.StartupPeriod.bound_at:type_name -> google.protobuf.Timestamp
 	23, // 42: sdodev.contracts.v1alpha1.StartupPeriod.established_at:type_name -> google.protobuf.Timestamp

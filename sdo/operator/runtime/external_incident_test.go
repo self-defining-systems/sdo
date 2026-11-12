@@ -145,7 +145,6 @@ func TestExternalCompletionSchedulesClosureImmediately(t *testing.T) {
 	}
 	c.responderDone = true
 	c.responderCompletedAt = now
-	c.verificationDeadline = now.Add(5 * time.Minute)
 	if wake := c.NextWake(); wake.After(now) || wake.IsZero() {
 		t.Fatalf("completed external responder must wake now, got %v", wake)
 	}
