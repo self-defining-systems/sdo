@@ -70,6 +70,22 @@ func (v *LiveReadView) Logs(ref sdk.ObjectRef, container string, since time.Dura
 	data, err := v.client.CoreV1().Pods(ref.Namespace).GetLogs(ref.Name, options).DoRaw(ctx)
 	return string(data), err
 }
+
+// LogsWithOptions reads bounded container logs live; the embedded replay view
+// holds no recording and must not answer it.
+func (v *LiveReadView) LogsWithOptions(ref sdk.ObjectRef, options corev1.PodLogOptions) (string, error) {
+	if ref.Kind != "Pod" || ref.Namespace != v.Namespace() || ref.Name == "" || v.client == nil {
+		return "", errors.New("logs require a namespace-scoped Pod and Kubernetes reader")
+	}
+	bounded, err := program.BoundedLogOptions(options)
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(v.ctx, 5*time.Second)
+	defer cancel()
+	data, err := v.client.CoreV1().Pods(ref.Namespace).GetLogs(ref.Name, &bounded).DoRaw(ctx)
+	return string(data), err
+}
 func (v *LiveReadView) target(ref sdk.ObjectRef, port int32) (string, error) {
 	if ref.Namespace != v.Namespace() || ref.Name == "" || port < 1 || port > 65535 {
 		return "", errors.New("probe requires a namespace-scoped target and valid port")
