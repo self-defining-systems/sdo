@@ -911,3 +911,35 @@ reason = "CTXFAIL1: retain the original cause-work allowance for optional settle
 [reflection.outcome_details]
 max_chars = 3600
 reason = "CTXFAIL1: retain the original outcome allowance for optional findings and plan detail; complete repair receipts have their own required cap."
+
+[skills.incident-response]
+max_chars = 200
+reason = "Responder method skill description; shares the existing 200-character skill-index allowance."
+
+[skills.sdo-operating]
+max_chars = 200
+reason = "Responder SDO command skill description; shares the existing 200-character skill-index allowance."
+
+[template_data.responder-incident_prompt-branch_instruction]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_prompt-incident_id]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_prompt-namespace]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_prompt-onset]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_prompt-opened_on]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_prompt-skills_root]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
