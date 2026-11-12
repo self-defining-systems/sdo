@@ -17,9 +17,9 @@ import (
 	"sdo.dev/operator/sdk"
 )
 
-// The API server stamps managedFields with wall-clock seconds; writes that
-// must be told apart in time are separated by one.
-func nextManagedFieldsSecond() { time.Sleep(1100 * time.Millisecond) }
+// installedAt is when the installer wrote the Secret: well before any write
+// the test makes, which the API server stamps with the wall clock.
+var installedAt = metav1.NewTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 
 func secretApply(value string) []byte {
 	return []byte(`{"apiVersion":"v1","kind":"Secret","metadata":{"name":"token","namespace":"app"},"data":{"token":"` + base64.StdEncoding.EncodeToString([]byte(value)) + `"}}`)
@@ -63,26 +63,27 @@ func TestSecretDataChangeTimeIgnoresSDOWritesOnTheAPIServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "app", Name: "token"}, Data: map[string][]byte{"token": []byte("installed")}}
-	if _, err := client.CoreV1().Secrets("app").Create(context.Background(), created, metav1.CreateOptions{FieldManager: "installer"}); err != nil {
-		t.Fatal(err)
-	}
+	w.Kube.Put(&unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1", "kind": "Secret",
+		"metadata": map[string]any{"name": "token", "namespace": "app", "creationTimestamp": installedAt.UTC().Format(time.RFC3339), "managedFields": []any{
+			map[string]any{"manager": "installer", "operation": "Update", "apiVersion": "v1", "time": installedAt.UTC().Format(time.RFC3339), "fieldsType": "FieldsV1", "fieldsV1": map[string]any{"f:data": map[string]any{".": map[string]any{}, "f:token": map[string]any{}}, "f:type": map[string]any{}}},
+		}},
+		"type": "Opaque",
+		"data": map[string]any{"token": base64.StdEncoding.EncodeToString([]byte("installed"))},
+	}})
 	installed, _ := secretChangedAt(t, client)
-	if installed.IsZero() {
-		t.Fatal("a foreign create must set the data-change time")
+	if !installed.Equal(installedAt.Time) {
+		t.Fatalf("the installer's data-change time = %s, want %s", installed, installedAt.Time)
 	}
 
-	nextManagedFieldsSecond()
 	applySecret(t, client, sdk.DeployerFieldManager, "installed")
 	if got, secret := secretChangedAt(t, client); !got.Equal(installed) {
 		t.Fatalf("SDO adoption moved the data-change time to %s (installed %s); managedFields %+v", got, installed, secret.ManagedFields)
 	}
-	nextManagedFieldsSecond()
 	applySecret(t, client, sdk.DeployerFieldManager, "installed")
 	if got, _ := secretChangedAt(t, client); !got.Equal(installed) {
 		t.Fatalf("a no-op re-apply moved the data-change time to %s", got)
 	}
-	nextManagedFieldsSecond()
 	// A responder value change takes the key from every other manager, so no
 	// foreign owner remains and the time is zero; it never becomes the
 	// responder's write time.
@@ -91,14 +92,12 @@ func TestSecretDataChangeTimeIgnoresSDOWritesOnTheAPIServer(t *testing.T) {
 		t.Fatalf("a responder write moved the data-change time to %s", got)
 	}
 
-	nextManagedFieldsSecond()
 	foreignWrite(t, client, "rotator", "rotated")
 	rotated, _ := secretChangedAt(t, client)
 	if !rotated.After(installed) {
 		t.Fatalf("a foreign data write left the data-change time at %s (installed %s)", rotated, installed)
 	}
 
-	nextManagedFieldsSecond()
 	applySecret(t, client, sdk.DeployerFieldManager, "accepted")
 	if got, secret := secretChangedAt(t, client); !got.IsZero() {
 		t.Fatalf("after SDO force-reclaimed every data field the time is %s, want zero; managedFields %+v", got, secret.ManagedFields)
@@ -110,7 +109,7 @@ func TestSecretDataChangeTimeIgnoresSDOWritesOnTheAPIServer(t *testing.T) {
 // a data change: the time stays the creation time.
 func TestSecretAdoptedWithoutManagedFieldsKeepsItsCreationTime(t *testing.T) {
 	w := sim.NewWorld(1)
-	createdAt := metav1.NewTime(time.Now().Add(-time.Hour).Truncate(time.Second))
+	createdAt := installedAt
 	w.Kube.Put(&unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "v1", "kind": "Secret",
 		"metadata": map[string]any{"name": "token", "namespace": "app", "creationTimestamp": createdAt.UTC().Format(time.RFC3339)},
