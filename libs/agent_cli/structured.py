@@ -25,6 +25,7 @@ import json
 import logging
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -453,6 +454,15 @@ def run_structured_turn(
             attempt += 1
 
 
+_TOKEN_LIKE = re.compile(r"[A-Za-z0-9_\-.=+/]{24,}")
+
+
+def _redacted_tail(text: str, limit: int = 600) -> str:
+    """Last lines of provider output with credential-shaped runs removed."""
+    tail = _TOKEN_LIKE.sub("<redacted>", text)[-limit:].strip()
+    return tail or "no output"
+
+
 def _with_prior_usage(turn: StructuredTurn, prior: Mapping[str, int | float]) -> StructuredTurn:
     if not prior:
         return turn
@@ -841,7 +851,7 @@ def _run_structured_turn_once(
             raise failed from None
         if (environment or {}).get("SDO_CLAUDE_ACCOUNTS_DIR"):
             raise StructuredTurnError(
-                f"{provider} exited with code {exc.returncode}; provider output withheld"
+                f"{provider} exited with code {exc.returncode}; redacted output tail: {_redacted_tail(details)}"
             ) from None
         raise StructuredTurnError(f"{provider} exited with code {exc.returncode}: {details or 'no output'}") from exc
     except AgentShimError as exc:
