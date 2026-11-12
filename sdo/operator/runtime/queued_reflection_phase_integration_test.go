@@ -70,7 +70,7 @@ func queuedReflectionLedger(t *testing.T, root string, worker ReflectionWorkerFu
 			SchemaVersion: ProtocolSchemaVersion, IncidentID: workspace.IncidentID,
 			Status: IncidentCompleted, ResponderSessionID: "synthetic-session",
 			// A recorded fix on a verified closure: the closing turn's gate lets the learning turn through.
-			RepairActions: []RepairActionReceipt{{Kind: "api-exec", Target: "Pod/app-1", Success: true}},
+			RepairActions: []RepairActionReceipt{{ActionID: "sdo-api-1", Kind: "api-exec", Target: "Pod/app-1", Summary: "agent exec session", Details: "synthetic exec", StartedAt: now, CompletedAt: now, Success: true}},
 			Timing:        TimingMetrics{StartedAt: now, CompletedAt: now.Add(time.Second)},
 		},
 		FinalDetectorStates: []DetectorEvaluation{{DetectorID: "health", EvaluatedAt: now.Add(time.Second), Status: DetectorEvaluationClear}},
