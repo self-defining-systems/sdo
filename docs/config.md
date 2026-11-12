@@ -40,6 +40,7 @@ environment; use `SDO_AGENT_CODE_PATH` and `SDO_RESPONSE_MENU`.
 | `agent.provider` | `SDO_AGENT_PROVIDER` | string | `codex` | agent provider of every worker: codex or claude |
 | `agent.model` | `SDO_AGENT_MODEL` | string | `""` | agent model of every worker (required) |
 | `agent.effort` | `SDO_AGENT_EFFORT` | string | `medium` | reasoning effort of every worker: low, medium, high, xhigh or max |
+| `agent.reasoning_summary` | `SDO_AGENT_REASONING_SUMMARY` | string | `auto` | reasoning summaries Codex workers record in their rollouts: auto, concise, detailed or none (auto and concise record readable summaries) |
 | `agent.lifecycle_timeout` | `SDO_AGENT_LIFECYCLE_TIMEOUT` | duration | `15m0s` | limit of one lifecycle (detection designer) session |
 | `agent.memory_check_timeout` | `SDO_AGENT_MEMORY_CHECK_TIMEOUT` | duration | `5m0s` | limit of one memory check a worker runs on its checkout |
 | `agent.code_path` | `SDO_AGENT_CODE_PATH` | string | `go` | programming-model plugin set: go or shell |

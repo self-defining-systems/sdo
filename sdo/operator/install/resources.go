@@ -56,6 +56,8 @@ type Config struct {
 	RepositoryPVC, CredentialsSecret, Model  string
 	AcceptedCommit                           string
 	RepairPolicy, AgentProvider, AgentEffort string
+	// AgentReasoningSummary is the Codex reasoning summary mode; empty selects the shared default.
+	AgentReasoningSummary string
 	// LifecycleTimeout bounds one lifecycle (detection designer) session; zero selects the shared default.
 	LifecycleTimeout                           time.Duration
 	Replay                                     string
@@ -267,6 +269,9 @@ func (c Config) validate() error {
 	if c.AgentEffort != "" && !slices.Contains(worker_registry.AgentEfforts, c.AgentEffort) {
 		return fmt.Errorf("invalid agent effort %q", c.AgentEffort)
 	}
+	if c.AgentReasoningSummary != "" && !slices.Contains(worker_registry.ReasoningSummaries, c.AgentReasoningSummary) {
+		return fmt.Errorf("invalid agent reasoning summary %q", c.AgentReasoningSummary)
+	}
 	if c.LifecycleTimeout < 0 {
 		return fmt.Errorf("invalid lifecycle timeout %s", c.LifecycleTimeout)
 	}
@@ -443,6 +448,9 @@ func controllerJob(c Config) *batchv1.Job {
 	}
 	if c.AgentEffort != "" {
 		args = append(args, "--agent-effort", c.AgentEffort)
+	}
+	if c.AgentReasoningSummary != "" {
+		args = append(args, "--agent-reasoning-summary", c.AgentReasoningSummary)
 	}
 	if c.LifecycleTimeout > 0 {
 		args = append(args, "--lifecycle-timeout", c.LifecycleTimeout.String())

@@ -102,6 +102,7 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 	backend := flags.String("responder-backend", "codex", "responder backend")
 	replay := flags.String("replay", "", "replay and corpus capture: on (default) or off")
 	effort := flags.String("agent-effort", "", "reasoning effort of every agent worker (empty: the shared default)")
+	reasoningSummary := flags.String("agent-reasoning-summary", "", "reasoning summary mode Codex workers record (empty: the shared default)")
 	lifecycleTimeout := flags.Duration("lifecycle-timeout", 0, "limit of one lifecycle (detection designer) session (0: the shared default)")
 	brokerMode := flags.String("broker-mode", "", "broker mode")
 	workerMountMode := flags.String("worker-mount-mode", "", "worker mount mode")
@@ -199,7 +200,7 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 		ExitAfterClosure: *exitAfterClosure,
 		ScriptImage:      *scriptImage, ToolchainImage: *toolchainImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode,
-		ResponderBackend: *backend, ResponderModel: *model, AgentEffort: *effort, LifecycleTimeout: lifecycleTimeoutProto(*lifecycleTimeout), Replay: *replay, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents, WatchOnly: *watchOnly, HealthyBaseline: *healthyBaseline, TelemetryEnvironmentFile: *telemetryEnvironment,
+		ResponderBackend: *backend, ResponderModel: *model, AgentEffort: *effort, AgentReasoningSummary: *reasoningSummary, LifecycleTimeout: lifecycleTimeoutProto(*lifecycleTimeout), Replay: *replay, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents, WatchOnly: *watchOnly, HealthyBaseline: *healthyBaseline, TelemetryEnvironmentFile: *telemetryEnvironment,
 	}
 	// The child deploys a responder's source repair with the identity the
 	// parent deploys upstream advances with.

@@ -950,3 +950,17 @@ def test_a_claude_turn_passes_the_configured_model_and_effort_to_the_cli(tmp_pat
     (argv,) = agent.argvs
     assert argv[argv.index("--model") + 1] == "claude-opus-5-5"
     assert argv[argv.index("--effort") + 1] == "medium"
+
+
+def test_the_reasoning_summary_names_match_the_shared_agent_manifest() -> None:
+    import json
+    from pathlib import Path
+
+    from libs.agent_cli import structured
+
+    manifest = json.loads(
+        (Path(__file__).resolve().parents[4] / "sdo" / "contracts" / "agent_env.json").read_text("utf-8")
+    )
+    assert manifest["reasoning_summary"] == structured.REASONING_SUMMARY_ENV
+    assert manifest["default_reasoning_summary"] == structured.DEFAULT_REASONING_SUMMARY
+    assert list(structured.REASONING_SUMMARIES) == manifest["reasoning_summaries"]

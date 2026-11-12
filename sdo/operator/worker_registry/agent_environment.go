@@ -22,6 +22,12 @@ var ModelEnvironments = []string{"SDO_RESPONDER_MODEL", "SDO_REFLECTION_MODEL", 
 // agent worker (deployer, health judge, responder, reflection).
 const EffortEnvironment = "SDO_AGENT_EFFORT"
 
+// ReasoningSummaryEnvironment names the variable carrying the Codex reasoning summary mode.
+const ReasoningSummaryEnvironment = "SDO_AGENT_REASONING_SUMMARY"
+
+// ReasoningSummaries are the summary modes a worker accepts.
+var ReasoningSummaries = settings.ReasoningSummaries
+
 // AgentEfforts are the efforts a worker accepts; sdo/contracts/agent_env.json
 // names the same list for the Python workers; a test keeps the two equal.
 var AgentEfforts = settings.AgentEfforts
@@ -39,9 +45,12 @@ const DefaultLifecycleTimeout = settings.DefaultLifecycleTimeout
 // reads. An unconfigured provider, effort or limit (zero) adds nothing; an
 // unknown provider or effort or a negative limit is an error, so no worker runs
 // at a setting other than the configured one.
-func AgentEnvironment(provider, model, effort string, lifecycleTimeout time.Duration) (map[string]string, error) {
+func AgentEnvironment(provider, model, effort, reasoningSummary string, lifecycleTimeout time.Duration) (map[string]string, error) {
 	if effort != "" && !slices.Contains(AgentEfforts, effort) {
 		return nil, fmt.Errorf("unsupported agent effort %q: must be one of %v", effort, AgentEfforts)
+	}
+	if reasoningSummary != "" && !slices.Contains(ReasoningSummaries, reasoningSummary) {
+		return nil, fmt.Errorf("unsupported reasoning summary %q: must be one of %v", reasoningSummary, ReasoningSummaries)
 	}
 	if lifecycleTimeout < 0 {
 		return nil, fmt.Errorf("invalid lifecycle timeout %s: must not be negative", lifecycleTimeout)
@@ -49,6 +58,9 @@ func AgentEnvironment(provider, model, effort string, lifecycleTimeout time.Dura
 	environment := ProviderCapacityEnvironment()
 	if effort != "" {
 		environment[EffortEnvironment] = effort
+	}
+	if reasoningSummary != "" {
+		environment[ReasoningSummaryEnvironment] = reasoningSummary
 	}
 	if lifecycleTimeout > 0 {
 		seconds := lifecycleTimeout / time.Second

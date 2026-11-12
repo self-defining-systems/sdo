@@ -35,6 +35,10 @@ var Modes = []Mode{ModeOperate, ModeFrozen, ModeWatchOnly, ModeExternal}
 // Python workers, and a test keeps the two equal.
 var AgentEfforts = []string{"low", "medium", "high", "xhigh", "max"}
 
+// ReasoningSummaries are the reasoning summary modes of the Codex agent CLI; sdo/contracts/agent_env.json lists the same
+// set, and a test keeps the two equal.
+var ReasoningSummaries = []string{"auto", "concise", "detailed", "none"}
+
 // DefaultLifecycleTimeout is the limit of one lifecycle (detection designer) session.
 const DefaultLifecycleTimeout = 900 * time.Second
 
@@ -79,6 +83,7 @@ type Agent struct {
 	Provider           string   `yaml:"provider" doc:"agent provider of every worker: codex or claude"`
 	Model              string   `yaml:"model" doc:"agent model of every worker (required)"`
 	Effort             string   `yaml:"effort" doc:"reasoning effort of every worker: low, medium, high, xhigh or max"`
+	ReasoningSummary   string   `yaml:"reasoning_summary" doc:"reasoning summaries Codex workers record in their rollouts: auto, concise, detailed or none (auto and concise record readable summaries)"`
 	LifecycleTimeout   Duration `yaml:"lifecycle_timeout" doc:"limit of one lifecycle (detection designer) session"`
 	MemoryCheckTimeout Duration `yaml:"memory_check_timeout" doc:"limit of one memory check a worker runs on its checkout"`
 	CodePath           string   `yaml:"code_path" doc:"programming-model plugin set: go or shell"`
@@ -144,7 +149,7 @@ func Default() Config {
 	return Config{
 		Mode: ModeOperate,
 		Agent: Agent{
-			Provider: "codex", Effort: "medium", LifecycleTimeout: Duration(DefaultLifecycleTimeout),
+			Provider: "codex", Effort: "medium", ReasoningSummary: "auto", LifecycleTimeout: Duration(DefaultLifecycleTimeout),
 			MemoryCheckTimeout: Duration(DefaultMemoryCheckTimeout), CodePath: "go",
 		},
 		Response: Response{
@@ -186,6 +191,7 @@ func (c Config) Validate() error {
 		bad("agent.model", "a model is required")
 	}
 	oneOf("agent.effort", c.Agent.Effort, AgentEfforts...)
+	oneOf("agent.reasoning_summary", c.Agent.ReasoningSummary, ReasoningSummaries...)
 	positive("agent.lifecycle_timeout", c.Agent.LifecycleTimeout)
 	positive("agent.memory_check_timeout", c.Agent.MemoryCheckTimeout)
 	oneOf("agent.code_path", c.Agent.CodePath, "go", "shell")

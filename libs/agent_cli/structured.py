@@ -130,9 +130,9 @@ CODEX_SESSION_SETTINGS = (
 )
 #: Codex records reasoning only as encrypted items unless it is asked for summaries; ``auto`` makes
 #: the rollout carry a readable summary item per reasoning step (``concise`` is equivalent on the
-#: Codex 0.163 models, ``detailed`` currently yields empty summaries there). The central config
-#: absorbs this default as ``agent.reasoning_summary``; until then ``SDO_AGENT_REASONING_SUMMARY``
-#: overrides it for one worker environment.
+#: Codex 0.163 models, ``detailed`` currently yields empty summaries there). The operator config
+#: sets it as ``agent.reasoning_summary`` (``SDO_AGENT_REASONING_SUMMARY`` in every worker); the names
+#: match ``sdo/contracts/agent_env.json``.
 DEFAULT_REASONING_SUMMARY = "auto"
 REASONING_SUMMARY_ENV = "SDO_AGENT_REASONING_SUMMARY"
 REASONING_SUMMARIES = ("auto", "concise", "detailed", "none")
