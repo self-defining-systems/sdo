@@ -13,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	utiljson "k8s.io/apimachinery/pkg/util/json"
+	"sdo.dev/operator/planwire"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -131,6 +132,9 @@ func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest,
 	}
 	if ca, ok := action.(program.SyncWebhookCA); ok {
 		return e.webhookCAStep(ctx, ca, dry)
+	}
+	if planwire.IsSecretRestore(action) {
+		return e.secretRestoreStep(ctx, incident, generalSecretRestore(action), dry)
 	}
 	if script, ok := action.(program.RunScript); ok {
 		return e.scriptStep(ctx, incident, script, dry)
@@ -518,7 +522,7 @@ func (e PlanExecutor) preflightGeneral(ctx context.Context, incident IncidentReq
 		}
 		var step PlanApplicationResult
 		var err error
-		if _, privateCA := a.(program.SyncWebhookCA); privateCA {
+		if _, privateCA := a.(program.SyncWebhookCA); privateCA || planwire.IsSecretRestore(a) {
 			step, err = e.generalStep(ctx, incident, a, true)
 		} else if isGeneralAction(a) {
 			step, err = projected.generalStep(ctx, incident, a, true)

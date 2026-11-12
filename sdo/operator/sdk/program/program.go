@@ -273,6 +273,13 @@ func (DeleteObject) action() {}
 
 // ReconcileFromSource restores a whole source-owned object to accepted source,
 // removing additions SourceDiff reports; prefer SetField for one field.
+// For a Secret the controller writes the literal data of the accepted render
+// (the keys the source declares; other keys stay) and nothing records a value:
+// the receipt names the keys. It refuses a Secret whose source has no literal
+// data or whose render is not deterministic (a generated password); then
+// Escalate. Restart the readers that started after the foreign change with
+// RestartRollout later in the same plan, because a running Pod keeps the value
+// it started with (finding secret-readers-predate-change names them).
 type ReconcileFromSource struct{ Ref sdk.ObjectRef }
 
 func (ReconcileFromSource) action() {}

@@ -154,6 +154,13 @@ func ReadFrom(view sdk.DetectionContext) ReadView
 type ReconcileFromSource struct{ Ref sdk.ObjectRef }
     ReconcileFromSource restores a whole source-owned object to accepted source,
     removing additions SourceDiff reports; prefer SetField for one field.
+    For a Secret the controller writes the literal data of the accepted render
+    (the keys the source declares; other keys stay) and nothing records a value:
+    the receipt names the keys. It refuses a Secret whose source has no
+    literal data or whose render is not deterministic (a generated password);
+    then Escalate. Restart the readers that started after the foreign change
+    with RestartRollout later in the same plan, because a running Pod keeps the
+    value it started with (finding secret-readers-predate-change names them).
 
 type RemoveServicePort struct {
 	Ref        sdk.ObjectRef
@@ -219,20 +226,4 @@ type RestartRollout struct {
     waiting on an unready Pod) are deleted so they restart too; the receipt
     names each deleted Pod and why. Ref must be one named apps/v1 Deployment,
     StatefulSet or DaemonSet.
-
-type RestoreBackup struct {
-	Target StoreTarget
-	Backup string
-	Reason string
-}
-    RestoreBackup puts an incident's StoreBackup back. Its effect is data-write:
-    redis keys are restored with REPLACE, mongodb documents upserted by _id,
-    postgres rows replaced by primary key in one transaction, mysql rows with
-    REPLACE in one transaction, memcached items set again with their flags
-    and expiry. Items created since the backup stay, and writes made since the
-    backup to the restored items are lost: name them in the outcome. A fresh
-    StoreBackup of the same scope first is recorded as holding what the restore
-    overwrote.
-
-func (a RestoreBackup) Validate() error
 ```
