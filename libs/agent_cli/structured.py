@@ -128,6 +128,14 @@ CODEX_SESSION_SETTINGS = (
     "features.tool_suggest=false",
     "features.skill_search=false",
 )
+#: Codex records reasoning only as encrypted items unless it is asked for summaries; ``auto`` makes
+#: the rollout carry a readable summary item per reasoning step (``concise`` is equivalent on the
+#: Codex 0.163 models, ``detailed`` currently yields empty summaries there). The central config
+#: absorbs this default as ``agent.reasoning_summary``; until then ``SDO_AGENT_REASONING_SUMMARY``
+#: overrides it for one worker environment.
+DEFAULT_REASONING_SUMMARY = "auto"
+REASONING_SUMMARY_ENV = "SDO_AGENT_REASONING_SUMMARY"
+REASONING_SUMMARIES = ("auto", "concise", "detailed", "none")
 # Optional JSONL file that receives one token-accounting record per turn.
 TURN_USAGE_LOG_ENV = "SDO_TURN_USAGE_LOG"
 
@@ -254,6 +262,21 @@ class _ShellCommandRecorder:
             command = event.args.get("command")
             if isinstance(command, str):
                 self.commands.append(command)
+
+
+def codex_session_settings(environment: Mapping[str, str] | None = None) -> list[str]:
+    """Every ``-c`` setting of a Codex turn: the fixed session settings plus the reasoning summary."""
+
+    summary = ((environment or {}).get(REASONING_SUMMARY_ENV) or "").strip().lower() or DEFAULT_REASONING_SUMMARY
+    if summary not in REASONING_SUMMARIES:
+        raise ValueError(
+            f"unsupported reasoning summary {summary!r} ({REASONING_SUMMARY_ENV} must be one of {REASONING_SUMMARIES})"
+        )
+    return [
+        argument
+        for setting in (*CODEX_SESSION_SETTINGS, f"model_reasoning_summary={summary}")
+        for argument in ("-c", setting)
+    ]
 
 
 def run_structured_turn(
@@ -635,7 +658,7 @@ def _run_structured_turn_once(
             selected, extra_args, extra_env = _provider_for(provider, access, workspace, turn_scope)
             startup = turn_scope.enter_context(StartupTelemetry(provider))
             if provider == "codex":
-                settings = [argument for setting in CODEX_SESSION_SETTINGS for argument in ("-c", setting)]
+                settings = codex_session_settings({**os.environ, **(environment or {})})
                 extra_args = [*extra_args, *settings, *startup.codex_args()]
             if startup.endpoint:
                 executor = startup.executor(executor)
