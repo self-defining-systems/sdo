@@ -250,6 +250,10 @@ type IncidentClosure struct {
 	// unverified (final states moved to partial) instead of being superseded.
 	UnconfirmedReason       contracts.ClosureUnconfirmedReason
 	UnconfirmedDetail       string
+	// RecoveryVerification is the closure's recovered test: each faulted
+	// component's verification set, its strength and whether it recovered
+	// after SDO's last write settled. nil when it was not computed.
+	RecoveryVerification *contracts.RecoveryVerification
 	StatePersistenceFailure *contracts.StatePersistenceFailure
 	// SourceCheckNotes lists what the accepted-source checks found when the
 	// closure committed: checks that were unavailable, and objects that still

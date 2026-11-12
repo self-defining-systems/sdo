@@ -77,8 +77,11 @@ type OutcomeRecord struct {
 	DriftReprompt           *DriftReprompt           `protobuf:"bytes,39,opt,name=drift_reprompt,json=driftReprompt,proto3" json:"drift_reprompt,omitempty"`
 	DisabledSetupDetectors  []*DisabledSetupDetector `protobuf:"bytes,40,rep,name=disabled_setup_detectors,json=disabledSetupDetectors,proto3" json:"disabled_setup_detectors,omitempty"`
 	StatePersistenceFailure *StatePersistenceFailure `protobuf:"bytes,41,opt,name=state_persistence_failure,json=statePersistenceFailure,proto3" json:"state_persistence_failure,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	// Controller-observed: the closure's recovery verification set, strength
+	// per component and whether it recovered after SDO's last write settled.
+	RecoveryVerification *RecoveryVerification `protobuf:"bytes,42,opt,name=recovery_verification,json=recoveryVerification,proto3" json:"recovery_verification,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *OutcomeRecord) Reset() {
@@ -398,6 +401,13 @@ func (x *OutcomeRecord) GetStatePersistenceFailure() *StatePersistenceFailure {
 	return nil
 }
 
+func (x *OutcomeRecord) GetRecoveryVerification() *RecoveryVerification {
+	if x != nil {
+		return x.RecoveryVerification
+	}
+	return nil
+}
+
 type OutcomeTimestamps struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DetectedAt    *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=detected_at,json=detectedAt,proto3" json:"detected_at,omitempty"`
@@ -642,7 +652,7 @@ var File_sdodev_contracts_v1alpha1_outcome_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\n" +
-	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a1sdodev/contracts/v1alpha1/controller_config.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a&sdodev/contracts/v1alpha1/common.proto\x1a1sdodev/contracts/v1alpha1/memory_diagnostic.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\xbd\x18\n" +
+	"'sdodev/contracts/v1alpha1/outcome.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1bbuf/validate/validate.proto\x1a1sdodev/contracts/v1alpha1/controller_config.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a&sdodev/contracts/v1alpha1/common.proto\x1a1sdodev/contracts/v1alpha1/memory_diagnostic.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\xa3\x19\n" +
 	"\rOutcomeRecord\x12F\n" +
 	"\tcode_path\x18d \x01(\v2).sdodev.contracts.v1alpha1.CodePathConfigR\bcodePath\x12.\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05B\a\xbaH\x04\x1a\x02\b\x01R\rschemaVersion\x12,\n" +
@@ -689,7 +699,8 @@ const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\x12source_check_notes\x18& \x03(\tR\x10sourceCheckNotes\x12O\n" +
 	"\x0edrift_reprompt\x18' \x01(\v2(.sdodev.contracts.v1alpha1.DriftRepromptR\rdriftReprompt\x12j\n" +
 	"\x18disabled_setup_detectors\x18( \x03(\v20.sdodev.contracts.v1alpha1.DisabledSetupDetectorR\x16disabledSetupDetectors\x12n\n" +
-	"\x19state_persistence_failure\x18) \x01(\v22.sdodev.contracts.v1alpha1.StatePersistenceFailureR\x17statePersistenceFailureB\x10\n" +
+	"\x19state_persistence_failure\x18) \x01(\v22.sdodev.contracts.v1alpha1.StatePersistenceFailureR\x17statePersistenceFailure\x12d\n" +
+	"\x15recovery_verification\x18* \x01(\v2/.sdodev.contracts.v1alpha1.RecoveryVerificationR\x14recoveryVerificationB\x10\n" +
 	"\x0e_repair_commitB\x10\n" +
 	"\x0e_memory_commitJ\x04\b\x16\x10\x17J\x04\b\x1f\x10 J\x04\b \x10!J\x04\b!\x10\"R\x16diagnosis_verification\"\xcc\x02\n" +
 	"\x11OutcomeTimestamps\x12;\n" +
@@ -752,8 +763,9 @@ var file_sdodev_contracts_v1alpha1_outcome_proto_goTypes = []any{
 	(*DriftReprompt)(nil),           // 18: sdodev.contracts.v1alpha1.DriftReprompt
 	(*DisabledSetupDetector)(nil),   // 19: sdodev.contracts.v1alpha1.DisabledSetupDetector
 	(*StatePersistenceFailure)(nil), // 20: sdodev.contracts.v1alpha1.StatePersistenceFailure
-	(*timestamppb.Timestamp)(nil),   // 21: google.protobuf.Timestamp
-	(*ObjectRef)(nil),               // 22: sdodev.contracts.v1alpha1.ObjectRef
+	(*RecoveryVerification)(nil),    // 21: sdodev.contracts.v1alpha1.RecoveryVerification
+	(*timestamppb.Timestamp)(nil),   // 22: google.protobuf.Timestamp
+	(*ObjectRef)(nil),               // 23: sdodev.contracts.v1alpha1.ObjectRef
 }
 var file_sdodev_contracts_v1alpha1_outcome_proto_depIdxs = []int32{
 	4,  // 0: sdodev.contracts.v1alpha1.OutcomeRecord.code_path:type_name -> sdodev.contracts.v1alpha1.CodePathConfig
@@ -777,20 +789,21 @@ var file_sdodev_contracts_v1alpha1_outcome_proto_depIdxs = []int32{
 	18, // 18: sdodev.contracts.v1alpha1.OutcomeRecord.drift_reprompt:type_name -> sdodev.contracts.v1alpha1.DriftReprompt
 	19, // 19: sdodev.contracts.v1alpha1.OutcomeRecord.disabled_setup_detectors:type_name -> sdodev.contracts.v1alpha1.DisabledSetupDetector
 	20, // 20: sdodev.contracts.v1alpha1.OutcomeRecord.state_persistence_failure:type_name -> sdodev.contracts.v1alpha1.StatePersistenceFailure
-	21, // 21: sdodev.contracts.v1alpha1.OutcomeTimestamps.detected_at:type_name -> google.protobuf.Timestamp
-	21, // 22: sdodev.contracts.v1alpha1.OutcomeTimestamps.dispatched_at:type_name -> google.protobuf.Timestamp
-	21, // 23: sdodev.contracts.v1alpha1.OutcomeTimestamps.mitigated_at:type_name -> google.protobuf.Timestamp
-	21, // 24: sdodev.contracts.v1alpha1.OutcomeTimestamps.verified_at:type_name -> google.protobuf.Timestamp
-	21, // 25: sdodev.contracts.v1alpha1.OutcomeTimestamps.completed_at:type_name -> google.protobuf.Timestamp
-	22, // 26: sdodev.contracts.v1alpha1.SdkGap.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	22, // 27: sdodev.contracts.v1alpha1.UndetectedCause.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	21, // 28: sdodev.contracts.v1alpha1.UndetectedCause.open_observed_at:type_name -> google.protobuf.Timestamp
-	21, // 29: sdodev.contracts.v1alpha1.UndetectedCause.fixed_observed_at:type_name -> google.protobuf.Timestamp
-	30, // [30:30] is the sub-list for method output_type
-	30, // [30:30] is the sub-list for method input_type
-	30, // [30:30] is the sub-list for extension type_name
-	30, // [30:30] is the sub-list for extension extendee
-	0,  // [0:30] is the sub-list for field type_name
+	21, // 21: sdodev.contracts.v1alpha1.OutcomeRecord.recovery_verification:type_name -> sdodev.contracts.v1alpha1.RecoveryVerification
+	22, // 22: sdodev.contracts.v1alpha1.OutcomeTimestamps.detected_at:type_name -> google.protobuf.Timestamp
+	22, // 23: sdodev.contracts.v1alpha1.OutcomeTimestamps.dispatched_at:type_name -> google.protobuf.Timestamp
+	22, // 24: sdodev.contracts.v1alpha1.OutcomeTimestamps.mitigated_at:type_name -> google.protobuf.Timestamp
+	22, // 25: sdodev.contracts.v1alpha1.OutcomeTimestamps.verified_at:type_name -> google.protobuf.Timestamp
+	22, // 26: sdodev.contracts.v1alpha1.OutcomeTimestamps.completed_at:type_name -> google.protobuf.Timestamp
+	23, // 27: sdodev.contracts.v1alpha1.SdkGap.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	23, // 28: sdodev.contracts.v1alpha1.UndetectedCause.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	22, // 29: sdodev.contracts.v1alpha1.UndetectedCause.open_observed_at:type_name -> google.protobuf.Timestamp
+	22, // 30: sdodev.contracts.v1alpha1.UndetectedCause.fixed_observed_at:type_name -> google.protobuf.Timestamp
+	31, // [31:31] is the sub-list for method output_type
+	31, // [31:31] is the sub-list for method input_type
+	31, // [31:31] is the sub-list for extension type_name
+	31, // [31:31] is the sub-list for extension extendee
+	0,  // [0:31] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_outcome_proto_init() }

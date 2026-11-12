@@ -71,6 +71,9 @@ type Event struct {
 	UnconfirmedStates []*contracts.DetectorEvaluation
 	// SourceCheckNotes are the recheck's notes a Freeze event records.
 	SourceCheckNotes []string
+	// Verification is the recovered test a Freeze or Unconfirmed event
+	// records on the pending closure.
+	Verification *contracts.RecoveryVerification
 }
 
 type EffectKind uint8
@@ -174,6 +177,9 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 			pending.HealthClearedAt = copy.HealthClearedAt
 		}
 		pending.SourceCheckNotes = append(pending.SourceCheckNotes, event.SourceCheckNotes...)
+		if event.Verification != nil {
+			pending.RecoveryVerification = proto.Clone(event.Verification).(*contracts.RecoveryVerification)
+		}
 		pending.Frozen = true
 		return next, nil
 	}
@@ -189,6 +195,9 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 		pending.FinalDetectorStates = nil
 		pending.UnconfirmedReason = event.UnconfirmedReason
 		pending.UnconfirmedDetail = event.Error
+		if event.Verification != nil {
+			pending.RecoveryVerification = proto.Clone(event.Verification).(*contracts.RecoveryVerification)
+		}
 		return next, nil
 	}
 	if event.Kind == Superseded || event.Kind == ResponseExpired || event.Kind == ObserverDenied || event.Kind == OwnerLost {

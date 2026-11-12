@@ -18,7 +18,7 @@ import (
 func seedMemory(t *testing.T, w *patchWorld) {
 	t.Helper()
 	writeFiles(t, w.accepted, map[string]string{
-		".sdo/schema-version": "6\n",
+		".sdo/schema-version": "7\n",
 		".sdo/arch.md":        "---\nschema_version: 1\ngenerated_at_commit: base\napplication: demo\n---\nsynthetic\n",
 	})
 	testutil.Git(t, w.accepted, "add", ".")

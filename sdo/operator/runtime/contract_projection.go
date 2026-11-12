@@ -457,6 +457,9 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 		SourceCheckNotes:        append([]string(nil), closure.SourceCheckNotes...),
 		Frozen:                  closure.Frozen,
 	}
+	if closure.RecoveryVerification != nil {
+		message.RecoveryVerification = proto.Clone(closure.RecoveryVerification).(*contracts.RecoveryVerification)
+	}
 	if closure.ClosureStabilityWindow == 0 {
 		message.ClosureStabilityWindow = nil
 	}
@@ -649,6 +652,9 @@ func incidentClosureState(message *contracts.IncidentClosure) IncidentClosure {
 		StatePersistenceFailure: clonePersistenceFailure(message.GetStatePersistenceFailure()),
 		SourceCheckNotes:        append([]string(nil), message.GetSourceCheckNotes()...),
 		Frozen:                  message.GetFrozen(),
+	}
+	if message.GetRecoveryVerification() != nil {
+		closure.RecoveryVerification = proto.Clone(message.GetRecoveryVerification()).(*contracts.RecoveryVerification)
 	}
 	if request := incidentRequestState(message.GetRequest()); request != nil {
 		closure.Request = *request

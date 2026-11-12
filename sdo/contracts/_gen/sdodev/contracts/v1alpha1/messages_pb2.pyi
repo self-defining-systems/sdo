@@ -17,6 +17,13 @@ from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
+class VerificationStrength(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    VERIFICATION_STRENGTH_UNSPECIFIED: _ClassVar[VerificationStrength]
+    VERIFICATION_STRENGTH_OPERATION: _ClassVar[VerificationStrength]
+    VERIFICATION_STRENGTH_REACHABILITY: _ClassVar[VerificationStrength]
+    VERIFICATION_STRENGTH_UNOBSERVABLE: _ClassVar[VerificationStrength]
+
 class ClosureUnconfirmedReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED: _ClassVar[ClosureUnconfirmedReason]
@@ -24,6 +31,10 @@ class ClosureUnconfirmedReason(int, metaclass=_enum_type_wrapper.EnumTypeWrapper
     CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE: _ClassVar[ClosureUnconfirmedReason]
     CLOSURE_UNCONFIRMED_REASON_EXTERNAL_COMPLETION: _ClassVar[ClosureUnconfirmedReason]
     CLOSURE_UNCONFIRMED_REASON_DATA_MAY_BE_LOST: _ClassVar[ClosureUnconfirmedReason]
+VERIFICATION_STRENGTH_UNSPECIFIED: VerificationStrength
+VERIFICATION_STRENGTH_OPERATION: VerificationStrength
+VERIFICATION_STRENGTH_REACHABILITY: VerificationStrength
+VERIFICATION_STRENGTH_UNOBSERVABLE: VerificationStrength
 CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED: ClosureUnconfirmedReason
 CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE: ClosureUnconfirmedReason
 CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE: ClosureUnconfirmedReason
@@ -793,7 +804,7 @@ class DetectorTimelineEntry(_message.Message):
     def __init__(self, detector_id: _Optional[str] = ..., detector_class: _Optional[str] = ..., owner: _Optional[str] = ..., rule_id: _Optional[str] = ..., fingerprint: _Optional[str] = ..., parameter_bindings: _Optional[_Mapping[str, _common_pb2.ObjectRef]] = ..., surfaced_playbook_ids: _Optional[_Iterable[str]] = ..., first_activated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., last_seen_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., relation: _Optional[str] = ..., activations: _Optional[int] = ...) -> None: ...
 
 class IncidentClosure(_message.Message):
-    __slots__ = ("request", "result", "dispatch_error", "final_detector_states", "incident_detector_states", "detector_timeline", "incident_detector_fired_before_dispatch", "incident_detector_fired_after_dispatch", "no_incident_detector_fired", "final_state_changes", "detected_at", "dispatched_at", "responder_completed_at", "verified_at", "health_cleared_at", "cleaned_helpers", "observation_generation", "partial_detector_states", "verified_while_responder_running", "closure_stability_window", "unconfirmed_reason", "unconfirmed_detail", "source_check_notes", "state_persistence_failure", "frozen")
+    __slots__ = ("request", "result", "dispatch_error", "final_detector_states", "incident_detector_states", "detector_timeline", "incident_detector_fired_before_dispatch", "incident_detector_fired_after_dispatch", "no_incident_detector_fired", "final_state_changes", "detected_at", "dispatched_at", "responder_completed_at", "verified_at", "health_cleared_at", "cleaned_helpers", "observation_generation", "partial_detector_states", "verified_while_responder_running", "closure_stability_window", "unconfirmed_reason", "unconfirmed_detail", "source_check_notes", "state_persistence_failure", "frozen", "recovery_verification")
     REQUEST_FIELD_NUMBER: _ClassVar[int]
     RESULT_FIELD_NUMBER: _ClassVar[int]
     DISPATCH_ERROR_FIELD_NUMBER: _ClassVar[int]
@@ -819,6 +830,7 @@ class IncidentClosure(_message.Message):
     SOURCE_CHECK_NOTES_FIELD_NUMBER: _ClassVar[int]
     STATE_PERSISTENCE_FAILURE_FIELD_NUMBER: _ClassVar[int]
     FROZEN_FIELD_NUMBER: _ClassVar[int]
+    RECOVERY_VERIFICATION_FIELD_NUMBER: _ClassVar[int]
     request: IncidentRequest
     result: IncidentResult
     dispatch_error: str
@@ -844,7 +856,60 @@ class IncidentClosure(_message.Message):
     source_check_notes: _containers.RepeatedScalarFieldContainer[str]
     state_persistence_failure: StatePersistenceFailure
     frozen: bool
-    def __init__(self, request: _Optional[_Union[IncidentRequest, _Mapping]] = ..., result: _Optional[_Union[IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., final_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., incident_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., detector_timeline: _Optional[_Iterable[_Union[DetectorTimelineEntry, _Mapping]]] = ..., incident_detector_fired_before_dispatch: _Optional[bool] = ..., incident_detector_fired_after_dispatch: _Optional[bool] = ..., no_incident_detector_fired: _Optional[bool] = ..., final_state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verified_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., health_cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cleaned_helpers: _Optional[_Iterable[str]] = ..., observation_generation: _Optional[str] = ..., partial_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., verified_while_responder_running: _Optional[bool] = ..., closure_stability_window: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., unconfirmed_reason: _Optional[_Union[ClosureUnconfirmedReason, str]] = ..., unconfirmed_detail: _Optional[str] = ..., source_check_notes: _Optional[_Iterable[str]] = ..., state_persistence_failure: _Optional[_Union[StatePersistenceFailure, _Mapping]] = ..., frozen: _Optional[bool] = ...) -> None: ...
+    recovery_verification: RecoveryVerification
+    def __init__(self, request: _Optional[_Union[IncidentRequest, _Mapping]] = ..., result: _Optional[_Union[IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., final_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., incident_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., detector_timeline: _Optional[_Iterable[_Union[DetectorTimelineEntry, _Mapping]]] = ..., incident_detector_fired_before_dispatch: _Optional[bool] = ..., incident_detector_fired_after_dispatch: _Optional[bool] = ..., no_incident_detector_fired: _Optional[bool] = ..., final_state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verified_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., health_cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cleaned_helpers: _Optional[_Iterable[str]] = ..., observation_generation: _Optional[str] = ..., partial_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., verified_while_responder_running: _Optional[bool] = ..., closure_stability_window: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., unconfirmed_reason: _Optional[_Union[ClosureUnconfirmedReason, str]] = ..., unconfirmed_detail: _Optional[str] = ..., source_check_notes: _Optional[_Iterable[str]] = ..., state_persistence_failure: _Optional[_Union[StatePersistenceFailure, _Mapping]] = ..., frozen: _Optional[bool] = ..., recovery_verification: _Optional[_Union[RecoveryVerification, _Mapping]] = ...) -> None: ...
+
+class RecoveryVerification(_message.Message):
+    __slots__ = ("probed", "since", "writes_settled", "components", "writes")
+    PROBED_FIELD_NUMBER: _ClassVar[int]
+    SINCE_FIELD_NUMBER: _ClassVar[int]
+    WRITES_SETTLED_FIELD_NUMBER: _ClassVar[int]
+    COMPONENTS_FIELD_NUMBER: _ClassVar[int]
+    WRITES_FIELD_NUMBER: _ClassVar[int]
+    probed: bool
+    since: _timestamp_pb2.Timestamp
+    writes_settled: bool
+    components: _containers.RepeatedCompositeFieldContainer[ComponentVerification]
+    writes: _containers.RepeatedCompositeFieldContainer[WriteSettlement]
+    def __init__(self, probed: _Optional[bool] = ..., since: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., writes_settled: _Optional[bool] = ..., components: _Optional[_Iterable[_Union[ComponentVerification, _Mapping]]] = ..., writes: _Optional[_Iterable[_Union[WriteSettlement, _Mapping]]] = ...) -> None: ...
+
+class ComponentVerification(_message.Message):
+    __slots__ = ("component", "strength", "members", "recovered", "in_scope", "edge_from")
+    COMPONENT_FIELD_NUMBER: _ClassVar[int]
+    STRENGTH_FIELD_NUMBER: _ClassVar[int]
+    MEMBERS_FIELD_NUMBER: _ClassVar[int]
+    RECOVERED_FIELD_NUMBER: _ClassVar[int]
+    IN_SCOPE_FIELD_NUMBER: _ClassVar[int]
+    EDGE_FROM_FIELD_NUMBER: _ClassVar[int]
+    component: str
+    strength: VerificationStrength
+    members: _containers.RepeatedCompositeFieldContainer[VerificationMember]
+    recovered: bool
+    in_scope: bool
+    edge_from: str
+    def __init__(self, component: _Optional[str] = ..., strength: _Optional[_Union[VerificationStrength, str]] = ..., members: _Optional[_Iterable[_Union[VerificationMember, _Mapping]]] = ..., recovered: _Optional[bool] = ..., in_scope: _Optional[bool] = ..., edge_from: _Optional[str] = ...) -> None: ...
+
+class VerificationMember(_message.Message):
+    __slots__ = ("id", "kind", "passed", "detail")
+    ID_FIELD_NUMBER: _ClassVar[int]
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    PASSED_FIELD_NUMBER: _ClassVar[int]
+    DETAIL_FIELD_NUMBER: _ClassVar[int]
+    id: str
+    kind: str
+    passed: bool
+    detail: str
+    def __init__(self, id: _Optional[str] = ..., kind: _Optional[str] = ..., passed: _Optional[bool] = ..., detail: _Optional[str] = ...) -> None: ...
+
+class WriteSettlement(_message.Message):
+    __slots__ = ("application_id", "settled_at", "settled")
+    APPLICATION_ID_FIELD_NUMBER: _ClassVar[int]
+    SETTLED_AT_FIELD_NUMBER: _ClassVar[int]
+    SETTLED_FIELD_NUMBER: _ClassVar[int]
+    application_id: str
+    settled_at: _timestamp_pb2.Timestamp
+    settled: bool
+    def __init__(self, application_id: _Optional[str] = ..., settled_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., settled: _Optional[bool] = ...) -> None: ...
 
 class StageReport(_message.Message):
     __slots__ = ("stage", "mitigations", "remaining_finding_fingerprints", "error", "cleared_finding_fingerprints", "recovery_wait", "started_at")

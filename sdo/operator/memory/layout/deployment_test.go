@@ -61,8 +61,8 @@ func TestMigrateToSchema4OnlyStamps(t *testing.T) {
 	if err != nil || !changed {
 		t.Fatalf("Migrate = %v, %v; want changed", changed, err)
 	}
-	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "6\n" {
-		t.Fatalf("schema-version = %q, want 6", got)
+	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "7\n" {
+		t.Fatalf("schema-version = %q, want 7", got)
 	}
 	var files []string
 	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {

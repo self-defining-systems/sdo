@@ -3,7 +3,7 @@
 GENERATED from `memory/layout/paths.go` and `memory/validate/ownership.go`. Do not edit.
 Regenerate from `sdo/operator` with `SDO_UPDATE_LAYOUT_REFERENCE=1 go test ./memory/validate -run '^TestMemoryLayoutReference$'`.
 
-Schema version: 6. Paths are repository-relative and used only while editing a proposal checkout; worker results and memory prose use logical IDs.
+Schema version: 7. Paths are repository-relative and used only while editing a proposal checkout; worker results and memory prose use logical IDs.
 
 - Playbook, library and corpus IDs: `^[a-z][a-z0-9_-]*$`.
 - Detector IDs: `^[a-z0-9][a-z0-9_.-]*$`.

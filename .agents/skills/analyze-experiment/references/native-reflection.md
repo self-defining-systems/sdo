@@ -55,6 +55,10 @@ claims are omitted from that learning view. No global recovery, positive fixed
 capture, program trust credit, or repaired peer is inferred from partial repair.
 A cause with no recorded successful repair is not saved. Full-success reflection follows the
 LEARN3 rule: any recorded successful repair on a verified-healthy closure is saved.
+Neither path runs when the outcome's `recovery_verification` shows an in-scope component
+below operation strength (reachability only, unobserved, not recovered, or an unsettled
+write): the reflection view lists them as `recovery_unverified` and no repair is verified
+(`validate.WeakRecovery`), until one credit rule (R8) decides what reachability may teach.
 
 Every closed incident with a resumable responder session requires reflection,
 including failed, cancelled and self-healed incidents with no verified repair.

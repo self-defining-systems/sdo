@@ -173,6 +173,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 	unconfirmed, denied := "", ""
 	var unconfirmedReason contracts.ClosureUnconfirmedReason
 	var unconfirmedStates []DetectorEvaluation
+	var verification *contracts.RecoveryVerification
 	// Notes are evidence of this one recheck. Only freezing records them; a
 	// frozen closure's retry rechecks for contradiction and never adds notes.
 	var notes []string
@@ -324,10 +325,26 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		if risk != "" {
 			unconfirmed, unconfirmedReason = risk, contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_DATA_MAY_BE_LOST
 			unconfirmedStates = []DetectorEvaluation{{DetectorID: dataAtRiskEvaluation, EvaluatedAt: c.clock(), Status: DetectorEvaluationPending, Reason: risk}}
-		} else if gap := closureRecoveryUnprobed(snapshot, effect.Closure); gap != "" {
-			// Readiness is not recovery: no probe crossed a faulted Service.
-			unconfirmed, unconfirmedReason = gap, contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
-			unconfirmedStates = []DetectorEvaluation{{DetectorID: recoveryUnprobedEvaluation, EvaluatedAt: c.clock(), Status: DetectorEvaluationPending, Reason: gap}}
+		} else {
+			// Readiness is not recovery: every in-scope faulted component's
+			// verification set must pass after SDO's last write settled.
+			check := c.closureRecoveryCheck(actionCtx, snapshot, effect.Closure)
+			verification = check.record
+			switch check.verdict {
+			case recoveryPending:
+				if !c.closureRecheckWaitExpired(effect.Identity, check.horizon+effect.Closure.ClosureStabilityWindow) {
+					c.scheduleClosureRecheck()
+					cancel()
+					return nil
+				}
+				unconfirmed = "not recovered by the verification bound: " + check.reason
+				unconfirmedReason = contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
+			case recoveryWeak:
+				unconfirmed, unconfirmedReason = check.reason, contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
+			}
+			if unconfirmed != "" {
+				slog.Warn("closure_recovery_unverified", "incident_id", effect.Closure.Request.IncidentID, "reason", unconfirmed)
+			}
 		}
 	}
 	effectKind := lifecyclecore.ProcessClosure
@@ -351,7 +368,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		return err
 	}
 	if unconfirmed != "" {
-		_, stepErr := c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Unconfirmed, At: c.clock(), Error: unconfirmed, UnconfirmedReason: unconfirmedReason, UnconfirmedStates: evaluationsContract(unconfirmedStates)})
+		_, stepErr := c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Unconfirmed, At: c.clock(), Error: unconfirmed, UnconfirmedReason: unconfirmedReason, UnconfirmedStates: evaluationsContract(unconfirmedStates), Verification: verification})
 		c.mu.Unlock()
 		cancel()
 		c.clearClosureRecheckWait()
@@ -388,7 +405,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		return nil
 	}
 	if effect.Freeze {
-		frozen, err := c.freezeClosureLocked(ctx, effect.Identity, notes, recoveryStates)
+		frozen, err := c.freezeClosureLocked(ctx, effect.Identity, notes, recoveryStates, verification)
 		if err != nil {
 			c.mu.Unlock()
 			cancel()
@@ -431,8 +448,8 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 // freezeClosureLocked records the recheck's notes on the pending closure,
 // persists it, and returns the frozen closure's broker effect. Callers hold
 // c.mu; it is released while the state is saved.
-func (c *Controller) freezeClosureLocked(ctx context.Context, identity string, notes []string, recoveryStates []DetectorEvaluation) (ClosureEffect, error) {
-	event := lifecyclecore.Event{Kind: lifecyclecore.Freeze, At: c.clock(), EffectID: identity, SourceCheckNotes: notes}
+func (c *Controller) freezeClosureLocked(ctx context.Context, identity string, notes []string, recoveryStates []DetectorEvaluation, verification *contracts.RecoveryVerification) (ClosureEffect, error) {
+	event := lifecyclecore.Event{Kind: lifecyclecore.Freeze, At: c.clock(), EffectID: identity, SourceCheckNotes: notes, Verification: verification}
 	if c.pendingClosure != nil && c.pendingClosure.ClosureStabilityWindow > 0 && len(recoveryStates) > 0 {
 		proof := *cloneIncidentClosure(c.pendingClosure)
 		proof.VerifiedAt = c.clock()

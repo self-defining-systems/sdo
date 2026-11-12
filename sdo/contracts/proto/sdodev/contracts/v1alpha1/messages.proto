@@ -649,6 +649,67 @@ message IncidentClosure {
   // recheck's notes folded in. A frozen closure is the incident's terminal
   // identity: every later attempt, across restarts, sends these exact bytes.
   bool frozen = 28;
+  // Controller-computed: whether each faulted component's verification set
+  // passed after SDO's last write settled, and at what strength.
+  RecoveryVerification recovery_verification = 29;
+}
+
+// RecoveryVerification is the controller's one "recovered" test for a
+// closure: for each component an incident finding faulted, the probes of user
+// operations that cover it (operation strength) or, when none do, the link
+// dials into it (reachability strength), and whether each passed in a
+// sustained way after SDO's last write settled.
+message RecoveryVerification {
+  // False when the application has no health-probe workload: its closures rest
+  // on its detectors and this record decides nothing (review U4).
+  bool probed = 1;
+  // The later of detection and the settle time of SDO's last write.
+  google.protobuf.Timestamp since = 2;
+  // False when an SDO write had not settled (its rollout still pending), so
+  // nothing could verify.
+  bool writes_settled = 3;
+  repeated ComponentVerification components = 4;
+  repeated WriteSettlement writes = 5;
+}
+
+enum VerificationStrength {
+  VERIFICATION_STRENGTH_UNSPECIFIED = 0;
+  // A probe of a user operation entering at a user entry covers the component.
+  VERIFICATION_STRENGTH_OPERATION = 1;
+  // Only link dials into the component (a protocol handshake) observe it.
+  VERIFICATION_STRENGTH_REACHABILITY = 2;
+  // Nothing observes the component.
+  VERIFICATION_STRENGTH_UNOBSERVABLE = 3;
+}
+
+message ComponentVerification {
+  string component = 1 [(buf.validate.field).string.min_len = 1];
+  VerificationStrength strength = 2 [(buf.validate.field).enum = {defined_only: true, not_in: [0]}];
+  repeated VerificationMember members = 3;
+  // Every member passed in a sustained way since the record's since.
+  bool recovered = 4;
+  // An opening finding names the component or an SDO write touched it. Only
+  // in-scope components decide the closure label; the others are recorded and
+  // must still clear their findings (review C3).
+  bool in_scope = 5;
+  // Set when a held finding names one edge into the component (a link
+  // finding): the members then cross that edge.
+  string edge_from = 6;
+}
+
+message VerificationMember {
+  string id = 1 [(buf.validate.field).string.min_len = 1];
+  string kind = 2 [(buf.validate.field).string = {in: ["probe", "link"]}];
+  bool passed = 3;
+  string detail = 4;
+}
+
+// When one SDO write settled: the plan's completion, or the latest Ready
+// transition of the written workload's current Pods, whichever is later.
+message WriteSettlement {
+  string application_id = 1;
+  google.protobuf.Timestamp settled_at = 2;
+  bool settled = 3;
 }
 
 // ClosureUnconfirmedReason explains why a verified closure was committed
