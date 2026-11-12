@@ -118,15 +118,17 @@ const DateLayout = "2006-01-02"
     DateLayout is the layout DateRange and DaysAfter read and write.
 
 const DefaultHealthMinDuration = 9 * time.Second
-    DefaultHealthMinDuration is the sdk.PersistencePolicy.MinDuration a health
-    (Class health, Owner health_judge) traffic detector gets when its spec
-    leaves MinDuration unset. Synthetic-traffic windows are re-evaluated on
-    every probe poll (sdo/operator/runtime.DefaultTrafficPollInterval, 500ms),
-    so an evaluation-count-only policy reaches its firing threshold in about
-    0.5s. A kind worker's data plane can stall for about 3s after a pod-network
-    change (roughly 1 in 6-10 such changes), producing real prober timeouts that
-    would otherwise dispatch a responder for nothing. Real faults in this suite
-    are detected in 3-5s. Nine seconds clears the observed stalls with headroom
+    DefaultHealthMinDuration is how long a health (Class health) traffic
+    detector's failing samples must span, from the first failing
+    sample in the window to the last, before a scenario violation is
+    reported, when its spec leaves Persistence.MinDuration unset.
+    Synthetic-traffic windows are re-evaluated on every probe poll
+    (sdo/operator/runtime.DefaultTrafficPollInterval, 500ms), so an
+    evaluation-count-only policy reaches its firing threshold in about 0.5s.
+    A kind worker's data plane can stall for about 3s after a pod-network change
+    (roughly 1 in 6-10 such changes), producing real prober timeouts that would
+    otherwise dispatch a responder for nothing. Real faults in this suite are
+    detected in 3-5s. Nine seconds clears the observed stalls with headroom
     while adding at most one more poll beyond real-fault detection.
 
 const MaxExecStderr = 512

@@ -216,6 +216,9 @@ type SLOVerdict struct {
 	StatusCounts   map[string]int
 	RecentFailures []Sample
 	Span           time.Duration
+	// FailureSpan is the time from the first to the last failing sample in
+	// the judged window; zero with fewer than two failing samples.
+	FailureSpan time.Duration
 }
     SLOVerdict is one scenario's SLO judgement over its recent samples.
 

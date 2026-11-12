@@ -12,13 +12,13 @@ func LinkFindingIn(spec sdk.DetectorSpec, namespace string, setting LinkSetting,
 
 func NewDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
     NewDetector returns a health detector that reports every qualified scenario
-    of a health-probe workload that violates its SLO. It decides purely
-    from the prober's observed samples; missing or unproven observations
-    remain unconfirmed and cannot establish health. A health-class spec that
-    leaves Persistence.MinDuration unset gets DefaultHealthMinDuration,
-    so judge-authored and lifecycle-generated traffic-health detectors alike
-    require a sustained violation before they fire, not just an evaluation
-    count.
+    of a health-probe workload that violates its SLO. It decides purely from
+    the prober's observed samples; missing or unproven observations remain
+    unconfirmed and cannot establish health. A health-class spec that leaves
+    Persistence.MinDuration unset holds each violation until its failing samples
+    span DefaultHealthMinDuration, so judge-authored and lifecycle-generated
+    traffic-health detectors alike require a sustained failure, counted from the
+    first failing sample, before they fire, not just an evaluation count.
 
 func NewLinkDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
     NewLinkDetector returns a health detector that reports every qualified link
@@ -249,7 +249,4 @@ type HTTPEndpoint struct {
 
 func DELETE(path string, query Params) *HTTPEndpoint
     DELETE sends generated query parameters.
-
-func GET(path string, query Params) *HTTPEndpoint
-    GET is a read endpoint with generated query parameters.
 ```

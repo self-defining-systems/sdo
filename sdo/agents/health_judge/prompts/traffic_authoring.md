@@ -44,9 +44,9 @@ covers breaks.
    already broken in the application as deployed keeps its operation and probe: declare its health-probe scenario
    `knownBroken: {reason, failsWith}` (a short reason and the failures seen live) so it is observed without
    gating health; never use it to silence a probe that should pass.
-3. Firing policy: `traffic.NewDetector` defaults `Persistence.MinDuration` to `traffic.DefaultHealthMinDuration`
-   (9s) for a health-class detector, so a brief data-plane stall does not dispatch a responder while lasting
-   failures still fire. Do not set it lower.
+3. Firing policy: `traffic.NewDetector` holds a health-class detector's violation until its failing samples span
+   `traffic.DefaultHealthMinDuration` (9s, from the first failing sample), so a brief data-plane stall does not
+   dispatch a responder while lasting failures still fire. Do not set `Persistence.MinDuration` lower.
 4. Links: a journey can stay healthy while a dependency cannot be reached afresh, because callers reuse open
    connections. For each map edge between Services, add one link to workloads/links.yaml: apiVersion
    sdo.dev/v1alpha1, kind TrafficWorkload, name `links`, purpose `link-probe`, and `links: [{from: <calling

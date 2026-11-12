@@ -21,12 +21,13 @@ type Consumer interface {
 // RuleIDPrefix prefixes the rule ID of each scenario finding ("scenario-slo.<id>").
 const RuleIDPrefix = "scenario-slo."
 
-// DefaultHealthMinDuration is the sdk.PersistencePolicy.MinDuration a health
-// (Class health, Owner health_judge) traffic detector gets when its spec
-// leaves MinDuration unset. Synthetic-traffic windows are re-evaluated on
-// every probe poll (sdo/operator/runtime.DefaultTrafficPollInterval, 500ms),
-// so an evaluation-count-only policy reaches its firing threshold in about
-// 0.5s. A kind worker's data plane can stall for about 3s after a
+// DefaultHealthMinDuration is how long a health (Class health) traffic
+// detector's failing samples must span, from the first failing sample in the
+// window to the last, before a scenario violation is reported, when its spec
+// leaves Persistence.MinDuration unset. Synthetic-traffic windows are
+// re-evaluated on every probe poll (sdo/operator/runtime.DefaultTrafficPollInterval,
+// 500ms), so an evaluation-count-only policy reaches its firing threshold in
+// about 0.5s. A kind worker's data plane can stall for about 3s after a
 // pod-network change (roughly 1 in 6-10 such changes), producing real prober
 // timeouts that would otherwise dispatch a responder for nothing. Real
 // faults in this suite are detected in 3-5s. Nine seconds clears the
@@ -37,20 +38,25 @@ const DefaultHealthMinDuration = 9 * time.Second
 type sloDetector struct {
 	spec     sdk.DetectorSpec
 	workload string
+	// hold is the failing-sample span a violation needs before it is reported.
+	hold time.Duration
 }
 
 // NewDetector returns a health detector that reports every qualified
 // scenario of a health-probe workload that violates its SLO. It decides
 // purely from the prober's observed samples; missing or unproven observations
-// remain unconfirmed and cannot establish health. A health-class spec that leaves Persistence.MinDuration unset
-// gets DefaultHealthMinDuration, so judge-authored and lifecycle-generated
-// traffic-health detectors alike require a sustained violation before they
-// fire, not just an evaluation count.
+// remain unconfirmed and cannot establish health. A health-class spec that
+// leaves Persistence.MinDuration unset holds each violation until its failing
+// samples span DefaultHealthMinDuration, so judge-authored and
+// lifecycle-generated traffic-health detectors alike require a sustained
+// failure, counted from the first failing sample, before they fire, not just
+// an evaluation count.
 func NewDetector(spec sdk.DetectorSpec, workload string) sdk.Detector {
+	d := sloDetector{spec: spec, workload: workload}
 	if spec.Class == sdk.DetectorClassHealth && spec.Persistence.MinDuration <= 0 {
-		spec.Persistence.MinDuration = DefaultHealthMinDuration
+		d.hold = DefaultHealthMinDuration
 	}
-	return sloDetector{spec: spec, workload: workload}
+	return d
 }
 
 func (d sloDetector) Spec() sdk.DetectorSpec { return d.spec }
@@ -164,7 +170,7 @@ func (d sloDetector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.
 	}
 	findings := make([]sdk.Finding, 0)
 	for _, verdict := range Judge(window) {
-		if verdict.Healthy {
+		if verdict.Healthy || verdict.FailureSpan < d.hold {
 			continue
 		}
 		findings = append(findings, ScenarioFinding(d.spec, ctx.Namespace(), window.Workload, descriptors[verdict.ScenarioID], verdict))
