@@ -64,6 +64,10 @@ type ControllerConfig struct {
 	// to watch events and the detector's own interval.
 	ConfirmationInterval time.Duration
 	RepairPolicy         string
+	// AfterPlaybook and AfterPlaybookWait are response.after_playbook and
+	// response.after_playbook_wait; empty AfterPlaybook is the agent policy.
+	AfterPlaybook     string
+	AfterPlaybookWait time.Duration
 	// ClosureRetry bounds resubmission of a closure the broker rejects.
 	ClosureRetry ClosureRetryPolicy
 	// DispatchRetry bounds how quickly a transient dispatch failure
@@ -282,6 +286,8 @@ func (c ControllerConfig) WithSettings(policy settings.Config) ControllerConfig 
 	c.ClosureStabilityWindow = time.Duration(policy.Detection.StabilityWindow)
 	c.RepairPolicy = policy.Response.RepairPolicy
 	c.StartupBound = time.Duration(policy.Response.StartupBound)
+	c.AfterPlaybook = policy.Response.AfterPlaybook
+	c.AfterPlaybookWait = time.Duration(policy.Response.AfterPlaybookWait)
 	return c
 }
 
@@ -1646,7 +1652,8 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	// receipts and residuals through the first-worker handoff, rather than
 	// treating a missing continuation checkpoint as exhausted model work.
 	if !early && !verified && !terminalFailure && now.Before(c.currentIncidentRequest.ResponseDeadline) && stageOnlyClosure(IncidentClosure{Request: *c.currentIncidentRequest, Result: c.currentIncidentResult}) &&
-		(len(verification.Findings) > 0 || (!now.Before(c.verificationDeadlineLocked()) && len(c.activeHealthDetectors()) > 0)) {
+		stageHandoffWarranted(c.config.AfterPlaybook, c.currentIncidentRequest.PriorStages, c.recoveryScopeLocked(), verification.Findings, !now.Before(c.verificationDeadlineLocked()),
+			c.tracker.HasActiveKeys(openingKeys(c.currentIncidentRequest)), len(c.activeHealthDetectors()) > 0) {
 		request := *cloneIncidentRequest(c.currentIncidentRequest)
 		request.Findings = append([]sdk.Finding(nil), verification.Findings...)
 		if len(request.Findings) == 0 {
@@ -1655,6 +1662,10 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 					request.Findings = append(request.Findings, state.Finding)
 				}
 			}
+		}
+		if playbookApplied(request.PriorStages) {
+			// After an applied playbook the agent receives the opening alerts only.
+			request.Findings = holdingFindings(c.recoveryScopeLocked(), request.Findings)
 		}
 		c.mu.Unlock()
 		_, err := c.prepareResponseStageHandoff(ctx, request)

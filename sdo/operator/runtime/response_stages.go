@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 
 	"sdo.dev/operator/runtime/internal/lifecycleio"
@@ -34,6 +35,12 @@ type IncidentState struct {
 	// ran: Findings are re-observed and coverage is rebuilt, and attempts the
 	// stage recorded earlier are never repeated.
 	Refresh bool
+	// AfterPlaybook is response.after_playbook: what follows an applied
+	// playbook that did not recover the opening alerts within the stage's bound.
+	AfterPlaybook string
+	// afterWrite is set once a playbook of this stage wrote: from then on the
+	// stage observes only the incident's opening alerts.
+	afterWrite bool
 }
 
 // RunResponseStages stops when no findings remain. Every attempted stage has a
@@ -42,6 +49,10 @@ func RunResponseStages(ctx context.Context, state *IncidentState, stages []Respo
 	state.refreshUnexplained()
 	for _, stage := range stages {
 		if len(state.Findings) == 0 {
+			break
+		}
+		if stage.Name() == "agent" && !agentMayFollowPlaybook(state.AfterPlaybook, state.PriorStages) {
+			slog.Info("after_playbook_withheld", "incident_id", state.Request.IncidentID, "policy", state.AfterPlaybook, "remaining_findings", len(state.Findings))
 			break
 		}
 		before := findingFingerprints(state.Findings)

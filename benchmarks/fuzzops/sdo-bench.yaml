@@ -3,5 +3,7 @@
 # per-run values (agent provider, model and effort, evidence host path and run ID, mode) come from SDO_* env.
 response:
   repair_policy: recorded-actions   # benchmarks repair live state without a source commit (D6)
+  after_playbook: wait              # upper bound: a playbook that applied is never followed by the agent; recovery gets the whole bound, then the incident escalates
+  after_playbook_wait: 5m
 detection:
   self_heal_hold: 60s               # faults are graded in minutes (D2); production holds 5m. A restart that heals in 30 s still opens nothing

@@ -285,3 +285,32 @@ func TestStartupBoundDefaultEnvironmentAndValidation(t *testing.T) {
 		t.Fatalf("a negative bound must be refused, got %v", err)
 	}
 }
+
+// After a learned playbook applied and Recovered did not hold, the agent is dispatched by default; a profile
+// can withhold it (escalate) or let the playbook keep waiting first (wait).
+func TestAfterPlaybookDefaultsFileEnvironmentAndValidation(t *testing.T) {
+	def := settings.Default().Response
+	if def.AfterPlaybook != settings.AfterPlaybookAgent || time.Duration(def.AfterPlaybookWait) != 5*time.Minute {
+		t.Fatalf("after_playbook defaults = %q %v", def.AfterPlaybook, def.AfterPlaybookWait)
+	}
+	file := writeFile(t, "response:\n  after_playbook: wait\n  after_playbook_wait: 3m\n")
+	cfg, err := settings.Resolve([]string{file}, []string{"SDO_AGENT_MODEL=m"})
+	if err != nil || cfg.Response.AfterPlaybook != settings.AfterPlaybookWait || time.Duration(cfg.Response.AfterPlaybookWait) != 3*time.Minute {
+		t.Fatalf("file: %v %+v", err, cfg.Response)
+	}
+	cfg, err = settings.Resolve([]string{file}, []string{"SDO_AGENT_MODEL=m", "SDO_RESPONSE_AFTER_PLAYBOOK=escalate"})
+	if err != nil || cfg.Response.AfterPlaybook != settings.AfterPlaybookEscalate {
+		t.Fatalf("environment must win over the file: %v %+v", err, cfg.Response)
+	}
+	for _, mutate := range []func(*settings.Config){
+		func(c *settings.Config) { c.Response.AfterPlaybook = "never" },
+		func(c *settings.Config) { c.Response.AfterPlaybookWait = 0 },
+	} {
+		bad := settings.Default()
+		bad.Agent.Model = "m"
+		mutate(&bad)
+		if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "response.after_playbook") {
+			t.Fatalf("an invalid after_playbook value must be refused, got %v", err)
+		}
+	}
+}
