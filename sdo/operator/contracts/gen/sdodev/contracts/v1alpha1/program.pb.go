@@ -6030,7 +6030,7 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\acommand\x18\x03 \x03(\v2$.sdodev.contracts.v1alpha1.PlanValueB\b\xbaH\x05\x92\x01\x02\b\x01R\acommand\"q\n" +
 	"\x0eRestartRollout\x12>\n" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\x03ref\x12\x1f\n" +
-	"\x06reason\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\"\xf4\x03\n" +
+	"\x06reason\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x06reason\"\xfd\x03\n" +
 	"\n" +
 	"ProgramRun\x12&\n" +
 	"\n" +
@@ -6040,8 +6040,8 @@ const file_sdodev_contracts_v1alpha1_program_proto_rawDesc = "" +
 	"\bduration\x18\x04 \x01(\v2\x19.google.protobuf.DurationB\x06\xbaH\x03\xc8\x01\x01R\bduration\x12\x14\n" +
 	"\x05error\x18\x05 \x01(\tR\x05error\x12/\n" +
 	"\x13finding_fingerprint\x18\x06 \x01(\tR\x12findingFingerprint\x12)\n" +
-	"\x10program_revision\x18\a \x01(\tR\x0fprogramRevision\x12N\n" +
-	"\x0ebinding_source\x18\b \x01(\tB'\xbaH$r\"R\x00R\afindingR\x04hintR\x05sweepR\bcreditedR\rbindingSource\x12&\n" +
+	"\x10program_revision\x18\a \x01(\tR\x0fprogramRevision\x12W\n" +
+	"\x0ebinding_source\x18\b \x01(\tB0\xbaH-r+R\x00R\afindingR\x04hintR\x05sweepR\asuspectR\bcreditedR\rbindingSource\x12&\n" +
 	"\fcan_mitigate\x18\t \x01(\bH\x00R\vcanMitigate\x88\x01\x01B\x0f\n" +
 	"\r_can_mitigate\"\xcd\x02\n" +
 	"\x0eRolloutPending\x12L\n" +
