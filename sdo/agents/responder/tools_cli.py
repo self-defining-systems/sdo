@@ -668,7 +668,7 @@ def _main(argv: list[str] | None = None) -> int:
         directory = Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools"))
         response = _check(args, directory) if args.command == "check" else _exchange(_request(args), directory)
         response.setdefault("command", args.command)
-        if args.command == "detect" and not args.json and not response.get("error"):
+        if args.command == "detect" and not args.json and (response.get("findings") or response.get("detector_states")):
             from sdo.agents.responder import detect_summary
 
             write_response(dict(response))

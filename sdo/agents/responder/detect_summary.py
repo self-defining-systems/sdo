@@ -65,6 +65,7 @@ class _Map:
         self.components = [item for item in document.get("components") or [] if isinstance(item, dict)]
         operations = {item.get("id"): item for item in document.get("operations") or [] if isinstance(item, dict)}
         self.paths: dict[str, list[str]] = {}
+        self.kinds: dict[str, str] = {}
         for probe in document.get("probes") or []:
             path: list[str] = []
             for operation in probe.get("operations") or []:
@@ -72,6 +73,7 @@ class _Map:
                     if component not in path:
                         path.append(component)
             self.paths[str(probe.get("scenario"))] = path
+            self.kinds[str(probe.get("scenario"))] = str(probe.get("kind") or "")
         self.names = sorted((str(item.get("name")) for item in self.components), key=len, reverse=True)
 
     def workload(self, component: str) -> str:
@@ -223,6 +225,11 @@ def _playbooks(component: str, app_map: _Map, facts: dict[str, Any]) -> list[str
     return lines
 
 
+def _token(fingerprint: str) -> str:
+    parts = str(fingerprint).split("/")
+    return _clip(parts[1] if len(parts) > 1 else parts[0], 60).rstrip("…")
+
+
 def render(response: dict[str, Any], *, namespace: str, root: Path, onset_text: str, facts_path: str) -> str:
     findings = [item for item in response.get("findings") or [] if item.get("status", "active") == "active"]
     drift = list(response.get("drift_events") or [])
@@ -236,7 +243,22 @@ def render(response: dict[str, Any], *, namespace: str, root: Path, onset_text: 
     onset = _time(onset_text)
     failing = _failing_tests(findings, app_map)
     failing_ids = {test["scenario"] for test in failing}
-    passing = [scenario for scenario in app_map.paths if scenario not in failing_ids]
+    states = {
+        str(item.get("detector_id") or item.get("DetectorID")): str(item.get("status") or item.get("Status"))
+        for item in response.get("detector_states") or []
+    }
+    detector_for = {
+        "call": "traffic-probe-call",
+        "write-read": "traffic-probe-write",
+        "read-later": "traffic-probe-read-later",
+    }
+    unknown = [
+        scenario
+        for scenario in app_map.paths
+        if scenario not in failing_ids
+        and states.get(detector_for.get(app_map.kinds.get(scenario, ""), ""), "missing") not in ("clear", "firing")
+    ]
+    passing = [scenario for scenario in app_map.paths if scenario not in failing_ids and scenario not in unknown]
     on_passing = {component for scenario in passing for component in app_map.paths.get(scenario, [])}
     paths = [test["path"] for test in failing if test["path"]]
     suspects: list[str] = []
@@ -261,14 +283,19 @@ def render(response: dict[str, Any], *, namespace: str, root: Path, onset_text: 
         details[component] = latest
 
     # Suspects with a change shortly before onset first; then the order along the failing paths.
-    def rank(component: str) -> tuple[int, float]:
+    def rank(component: str) -> tuple[int, int, float]:
         latest = details.get(component)
         near = (
             latest is not None
             and onset is not None
             and onset - timedelta(minutes=30) <= latest[0] <= onset + timedelta(seconds=30)
         )
-        return (0 if near else 1, -(latest[0].timestamp() if near and latest else 0))
+        flagged = any(
+            app_map.resolve(str((item.get("primary_resource") or {}).get("name", ""))) == component
+            for item in findings
+            if not (item.get("metadata") or {}).get("scenario")
+        )
+        return (0 if near else 1, 0 if flagged else 1, -(latest[0].timestamp() if near and latest else 0))
 
     order = {component: index for index, component in enumerate(suspects)}
     suspects.sort(key=lambda c: (rank(c), order[c]))
@@ -284,15 +311,19 @@ def render(response: dict[str, Any], *, namespace: str, root: Path, onset_text: 
                 f"{test['scenario']} {'>'.join(test['path'])} step {test['step']} {test['status']} "
                 f'"{_clip(test["error"], 60)}" since {_hm(test["onset"])} {test["ratio"]}'
             )
-            out.append(f"  more: sdo detect --finding {test['fingerprint'][:12]}")
+            out.append(f"  more: sdo detect --finding {_token(test['fingerprint'])}")
         if len(failing) > 3:
             out.append(f"+{len(failing) - 3} more: sdo detect --json")
     else:
         out.append("\nno failing user test: suspects come from findings")
     out.append("PASSING: " + _clip(" ".join(passing) or "none known", 200))
+    if unknown:
+        out.append("NOT YET EVALUATED (rerun sdo detect): " + _clip(" ".join(unknown), 160))
+    if response.get("error"):
+        out.append("note: " + _clip(str(response["error"]), 160))
     used: set[str] = set()
     if suspects:
-        out.append("\nSUSPECTS (on failing paths, most likely first)")
+        out.append("\nSUSPECTS (" + ("on failing paths" if failing else "from findings") + ", most likely first)")
     for index, component in enumerate(suspects[:3]):
         workload = app_map.workload(component)
         out.append(f"{component} {workload}" + (" (also on passing paths)" if component in on_passing else ""))
@@ -304,7 +335,7 @@ def render(response: dict[str, Any], *, namespace: str, root: Path, onset_text: 
         for item in mine[:1]:
             used.add(item.get("fingerprint", ""))
             out.append(f"  finding: {_clip(item.get('summary', ''), 110)}")
-            out.append(f"    more: sdo detect --finding {item.get('fingerprint', '')[:12]}")
+            out.append(f"    more: sdo detect --finding {_token(item.get('fingerprint', ''))}")
         for item in mine[1:]:
             used.add(item.get("fingerprint", ""))
         latest = details.get(component)
@@ -329,7 +360,7 @@ def render(response: dict[str, Any], *, namespace: str, root: Path, onset_text: 
     if background:
         out.append("\nBACKGROUND (not on a failing path)")
     tail = [
-        f"{_clip(item.get('summary', ''), 90)}  more: sdo detect --finding {item.get('fingerprint', '')[:12]}"
+        f"{_clip(item.get('summary', ''), 90)}  more: sdo detect --finding {_token(item.get('fingerprint', ''))}"
         for item in background
     ]
     text = "\n".join(out)
@@ -348,10 +379,7 @@ def render(response: dict[str, Any], *, namespace: str, root: Path, onset_text: 
 
 def render_finding(response: dict[str, Any], prefix: str) -> str:
     for item in response.get("findings") or []:
-        if (
-            str(item.get("fingerprint", "")).startswith(prefix)
-            or (item.get("metadata") or {}).get("scenario") == prefix
-        ):
+        if prefix in str(item.get("fingerprint", "")) or (item.get("metadata") or {}).get("scenario") == prefix:
             ref = item.get("primary_resource") or {}
             return _clip(
                 f"{item.get('summary', '')}\nresource: {ref.get('kind')}/{ref.get('namespace')}/{ref.get('name')}\n"
