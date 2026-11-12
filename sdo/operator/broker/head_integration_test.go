@@ -68,14 +68,6 @@ func TestHeadDeploymentEvidenceMustBindToTheCommit(t *testing.T) {
 	_ = before
 }
 
-// A responder's committed source that conflicts with a commit pushed to the
-// branch is a typed conflict, nothing is accepted, and HoldSource keeps the
-// agent's commits on the remote side branch sdo-held/<incident>.
-func TestAConflictingSourceChangeIsKeptOnTheSideBranch(t *testing.T) {
-	ctx := context.Background()
-	w := newPatchWorld(t, false)
-	seedIfNeeded(t, w)
-
 // A commit pushed to the branch SDO syncs with (an engineer's, or the benchmark
 // replayer's) is fast-forwarded into the accepted repository and becomes the
 // head to deploy: the replay needs nothing from SDO but the branch.
@@ -88,37 +80,6 @@ func TestACommitPushedToTheSourceBranchBecomesTheHeadToDeploy(t *testing.T) {
 	if err := w.broker.SetUpstream(Upstream{URL: remote, Branch: "sdo-source"}); err != nil {
 		t.Fatal(err)
 	}
-	p, err := w.broker.CreateProposalForPhase(ctx, "inc-conflict", ProposalPhase)
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeFiles(t, p.Path, map[string]string{"app.txt": "one\ntwo\nthree by SDO\n"})
-	commitInCheckout(t, p.Path, "SDO changes the third line", "app.txt")
-
-	engineer := t.TempDir() + "/engineer"
-	testutil.Git(t, "", "clone", "-q", "--branch", "sdo-source", remote, engineer)
-	testutil.ConfigureGit(t, engineer)
-	writeFiles(t, engineer, map[string]string{"app.txt": "one\ntwo\nthree by an engineer\n"})
-	testutil.Git(t, engineer, "add", ".")
-	testutil.Git(t, engineer, "commit", "-qm", "an engineer changes the same line")
-	testutil.Git(t, engineer, "push", "-q", "origin", "HEAD:refs/heads/sdo-source")
-
-	_, err = w.broker.StageCandidate(ctx, "inc-conflict", Responder, ProposalPhase)
-	var conflict *MemoryConflict
-	if !errors.As(err, &conflict) {
-		t.Fatalf("StageCandidate = %v, want a MemoryConflict", err)
-	}
-	branch, err := w.broker.HoldSource(ctx, "inc-conflict")
-	if err != nil || branch != "sdo-held/inc-conflict" {
-		t.Fatalf("HoldSource = %q, %v", branch, err)
-	}
-	held := gitOut(t, remote, "rev-parse", "refs/heads/sdo-held/inc-conflict")
-	if got := gitOut(t, remote, "show", held+":app.txt"); !strings.Contains(got, "three by SDO") {
-		t.Fatalf("the side branch holds %q, want the agent's change", got)
-	}
-	if got := gitOut(t, remote, "show", "refs/heads/sdo-source:app.txt"); !strings.Contains(got, "three by an engineer") {
-		t.Fatal("the source branch was touched")
-
 	engineer := t.TempDir() + "/engineer"
 	testutil.Git(t, "", "clone", "-q", "--branch", "sdo-source", remote, engineer)
 	testutil.ConfigureGit(t, engineer)
@@ -175,5 +136,51 @@ func TestADivergedBranchIsHeldNotMerged(t *testing.T) {
 	}
 	if got := gitOut(t, remote, "rev-parse", "refs/heads/sdo-held/diverged-"+local[:12]); got != local {
 		t.Fatalf("the side branch holds %s, want the local history %s", got, local)
+	}
+}
+
+// A responder's committed source that conflicts with a commit pushed to the
+// branch is a typed conflict, nothing is accepted, and HoldSource keeps the
+// agent's commits on the remote side branch sdo-held/<incident>.
+func TestAConflictingSourceChangeIsKeptOnTheSideBranch(t *testing.T) {
+	ctx := context.Background()
+	w := newPatchWorld(t, false)
+	seedIfNeeded(t, w)
+	remote := t.TempDir() + "/remote.git"
+	testutil.Git(t, "", "init", "-q", "--bare", remote)
+	testutil.Git(t, w.accepted, "push", "-q", remote, "HEAD:refs/heads/sdo-source")
+	if err := w.broker.SetUpstream(Upstream{URL: remote, Branch: "sdo-source"}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := w.broker.CreateProposalForPhase(ctx, "inc-conflict", ProposalPhase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, p.Path, map[string]string{"app.txt": "one\ntwo\nthree by SDO\n"})
+	commitInCheckout(t, p.Path, "SDO changes the third line", "app.txt")
+
+	engineer := t.TempDir() + "/engineer"
+	testutil.Git(t, "", "clone", "-q", "--branch", "sdo-source", remote, engineer)
+	testutil.ConfigureGit(t, engineer)
+	writeFiles(t, engineer, map[string]string{"app.txt": "one\ntwo\nthree by an engineer\n"})
+	testutil.Git(t, engineer, "add", ".")
+	testutil.Git(t, engineer, "commit", "-qm", "an engineer changes the same line")
+	testutil.Git(t, engineer, "push", "-q", "origin", "HEAD:refs/heads/sdo-source")
+
+	_, err = w.broker.StageCandidate(ctx, "inc-conflict", Responder, ProposalPhase)
+	var conflict *MemoryConflict
+	if !errors.As(err, &conflict) {
+		t.Fatalf("StageCandidate = %v, want a MemoryConflict", err)
+	}
+	branch, err := w.broker.HoldSource(ctx, "inc-conflict")
+	if err != nil || branch != "sdo-held/inc-conflict" {
+		t.Fatalf("HoldSource = %q, %v", branch, err)
+	}
+	held := gitOut(t, remote, "rev-parse", "refs/heads/sdo-held/inc-conflict")
+	if got := gitOut(t, remote, "show", held+":app.txt"); !strings.Contains(got, "three by SDO") {
+		t.Fatalf("the side branch holds %q, want the agent's change", got)
+	}
+	if got := gitOut(t, remote, "show", "refs/heads/sdo-source:app.txt"); !strings.Contains(got, "three by an engineer") {
+		t.Fatal("the source branch was touched")
 	}
 }
