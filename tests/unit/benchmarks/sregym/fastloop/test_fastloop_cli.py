@@ -158,7 +158,7 @@ def test_parser_defaults_match_the_benchmark_configuration() -> None:
 
     assert (args.model, args.provider, args.incidents) == ("gpt-6-luna", "codex", 1)
     # Operator knobs left unset take the configured value (docs/config.md), not a fastloop default.
-    assert (args.reflection_session, args.reasoning_effort, args.lifecycle_timeout) == (None, None, None)
+    assert (args.reasoning_effort, args.lifecycle_timeout) == (None, None)
     assert args.replay == "on"
     assert build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo", "--replay", "off"]).replay == "off"
     up = build_parser().parse_args(["up", "--run-dir", "x"])

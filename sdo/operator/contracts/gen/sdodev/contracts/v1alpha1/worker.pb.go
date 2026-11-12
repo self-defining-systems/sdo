@@ -570,7 +570,8 @@ type ReflectionRequest struct {
 	ProposalCommit string                     `protobuf:"bytes,4,opt,name=proposal_commit,json=proposalCommit,proto3" json:"proposal_commit,omitempty"`
 	OutcomeCommit  string                     `protobuf:"bytes,5,opt,name=outcome_commit,json=outcomeCommit,proto3" json:"outcome_commit,omitempty"`
 	MemorySnapshot *OperationalMemorySnapshot `protobuf:"bytes,6,opt,name=memory_snapshot,json=memorySnapshot,proto3" json:"memory_snapshot,omitempty"`
-	// Empty selects a fresh reflection. Resume requires a valid prior responder session.
+	// Empty resumes. "resume" continues the responder session in closure.result and needs a valid ID;
+	// "fresh" is set only for a closure the automatic stage resolved without any agent (no session exists).
 	SessionMode string `protobuf:"bytes,7,opt,name=session_mode,json=sessionMode,proto3" json:"session_mode,omitempty"`
 	// Empty selects baseline. Other modes are generalize and generalize-spec.
 	Guidance      string           `protobuf:"bytes,8,opt,name=guidance,proto3" json:"guidance,omitempty"`

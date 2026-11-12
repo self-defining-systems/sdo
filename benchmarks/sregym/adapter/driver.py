@@ -349,12 +349,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--agent-registrations", default=config.get("agent_registrations"))
     parser.add_argument(
-        "--reflection-session",
-        choices=("resume", "fresh"),
-        default=config.get("reflection_session"),
-        help="default: the configured learning.reflection_session",
-    )
-    parser.add_argument(
         "--reflection-guidance",
         choices=("baseline", "generalize", "generalize-spec"),
         default=config.get("reflection_guidance"),
@@ -767,7 +761,6 @@ def _launch_native_lifecycle(
         kubeconfig=kubeconfig,
         agent_provider=args.provider,
         late_findings=args.late_findings,
-        reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
         deployment_source=args.deployment_source,
         permissive_responder=args.permissive_responder,
@@ -880,7 +873,6 @@ def _native_install_for_run(
         kubeconfig=Path(raw_kubeconfig),
         agent_provider=args.provider,
         late_findings=args.late_findings,
-        reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
         deployment_source=args.deployment_source,
         permissive_responder=args.permissive_responder,
@@ -1079,7 +1071,6 @@ def _run_persistent(args: argparse.Namespace, api_base: str, started: float) -> 
         model=args.model,
         timeout_seconds=args.timeout_sec,
         agent_provider=args.provider,
-        reflection_session=args.reflection_session,
         reflection_guidance=args.reflection_guidance,
         deployment_source=args.deployment_source,
         permissive_responder=args.permissive_responder,

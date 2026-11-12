@@ -20,7 +20,7 @@ def test_a_benchmark_lane_resolves_to_the_values_benchmarks_ran_with(operator_bi
     assert config.duration_seconds(lane["response"]["timeout"]) == 1800
     assert config.duration_seconds(lane["response"]["verification_timeout"]) == 300
     assert lane["response"]["max_loops"] == 10
-    assert (lane["learning"]["reflection_session"], lane["learning"]["reflection_guidance"]) == ("resume", "baseline")
+    assert lane["learning"]["reflection_guidance"] == "baseline"
     production = config.resolved([str(operator_binary)], (), {"SDO_AGENT_MODEL": "synthetic"})
     assert production["response"]["repair_policy"] == "commit"
     assert {**production, "response": lane["response"]} == lane

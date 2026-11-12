@@ -39,7 +39,6 @@ LEGACY_FLAGS: dict[str, tuple[tuple[str, ...], str]] = {
     "--permissive-responder": (("response", "permissive"), "bool"),
     "--responder-namespace": (("response", "permissive_namespaces"), "list"),
     "--replay": (("learning", "replay"), "string"),
-    "--reflection-session": (("learning", "reflection_session"), "string"),
     "--reflection-guidance": (("learning", "reflection_guidance"), "string"),
     "--force-reflection": (("learning", "force_reflection"), "bool"),
     "--healthy-baseline": (("learning", "healthy_baseline"), "bool"),

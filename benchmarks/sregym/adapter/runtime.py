@@ -56,7 +56,6 @@ class RuntimeConfig:
     replay: str = "on"
     agent_effort: str = ""
     lifecycle_timeout_seconds: int | None = None
-    reflection_session: str | None = None
     reflection_guidance: str | None = None
     force_reflection: bool | None = None
     frozen_memory: bool = False
@@ -173,7 +172,6 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         lifecycle_timeout_seconds=config.lifecycle_timeout_seconds,
         repair_policy=config.repair_policy,
         late_findings=config.late_findings,
-        reflection_session=config.reflection_session,
         reflection_guidance=config.reflection_guidance,
         force_reflection=config.force_reflection,
         frozen_memory=config.frozen_memory,

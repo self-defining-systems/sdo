@@ -145,7 +145,7 @@ func TestOperateAndControllerArgvCarryNoPolicyValues(t *testing.T) {
 		c.Agent.ExtraEnv = []string{"EXTRA_X=1"}
 		c.Response.Timeout, c.Response.VerificationTimeout = settings.Duration(91*time.Minute), settings.Duration(93*time.Minute)
 		c.Response.MaxLoops, c.Response.RepairPolicy, c.Response.Standby = 7, "recorded-actions", false
-		c.Learning.Replay, c.Learning.ReflectionSession, c.Learning.ReflectionGuidance = "off", "fresh", "generalize"
+		c.Learning.Replay, c.Learning.ReflectionGuidance = "off", "generalize"
 		c.Learning.HealthyBaseline, c.Learning.LateFindings = true, "pull"
 		c.Deployment.BuildTimeout, c.Deployment.BuildBudget, c.Deployment.RolloutTimeout = settings.Duration(89*time.Minute), settings.Duration(99*time.Minute), settings.Duration(87*time.Minute)
 	})

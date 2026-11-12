@@ -96,7 +96,8 @@ message ReflectionRequest {
   string proposal_commit = 4;
   string outcome_commit = 5;
   OperationalMemorySnapshot memory_snapshot = 6;
-  // Empty selects a fresh reflection. Resume requires a valid prior responder session.
+  // Empty resumes. "resume" continues the responder session in closure.result and needs a valid ID;
+  // "fresh" is set only for a closure the automatic stage resolved without any agent (no session exists).
   string session_mode = 7 [(buf.validate.field).string = {in: ["", "fresh", "resume"]}];
   // Empty selects baseline. Other modes are generalize and generalize-spec.
   string guidance = 8 [(buf.validate.field).string = {in: ["", "baseline", "generalize", "generalize-spec"]}];

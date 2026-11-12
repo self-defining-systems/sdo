@@ -179,7 +179,6 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 		Replay: policy.Learning.Replay, TaskStore: &lifecycleio.TaskStore{Root: filepath.Join(native.LedgerRoot, "reflection-tasks")},
 		Executor: freshExecutor,
 		AgentID:  reflectorID, TaskType: reflectionTask, Outcomes: memory.NewJSONStore(config.GetAppRoot()), Timeout: time.Duration(policy.Response.Timeout),
-		SessionMode:       policy.Learning.ReflectionSession,
 		Guidance:          policy.Learning.ReflectionGuidance,
 		Catalog:           catalog,
 		CorpusSessionRoot: config.GetRepositoryMountPath(),

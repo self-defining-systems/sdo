@@ -82,7 +82,6 @@ def _install() -> NativeInstallConfig:
         lifecycle_timeout_seconds=900,
         repair_policy="recorded-actions",
         late_findings="pull",
-        reflection_session="fresh",
         reflection_guidance="generalize-spec",
         force_reflection=True,
         max_response_loops=3,

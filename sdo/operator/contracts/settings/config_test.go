@@ -49,7 +49,7 @@ func TestResolveAppliesDefaultsThenFilesInOrderThenEnvironment(t *testing.T) {
 	if cfg.Agent.Model != "from-file" {
 		t.Errorf("a key no later source sets keeps the earlier value: model = %q", cfg.Agent.Model)
 	}
-	if cfg.Learning.ReflectionSession != settings.Default().Learning.ReflectionSession {
+	if cfg.Learning.ReflectionGuidance != settings.Default().Learning.ReflectionGuidance {
 		t.Errorf("an untouched key keeps its default")
 	}
 }
@@ -112,7 +112,6 @@ func TestValidateIsTheOnePlaceValuesAreChecked(t *testing.T) {
 		"response.max_loops":            func(c *settings.Config) { c.Response.MaxLoops = 0 },
 		"response.repair_policy":        func(c *settings.Config) { c.Response.RepairPolicy = "yolo" },
 		"learning.replay":               func(c *settings.Config) { c.Learning.Replay = "maybe" },
-		"learning.reflection_session":   func(c *settings.Config) { c.Learning.ReflectionSession = "other" },
 		"learning.reflection_guidance":  func(c *settings.Config) { c.Learning.ReflectionGuidance = "other" },
 		"learning.late_findings":        func(c *settings.Config) { c.Learning.LateFindings = "push" },
 		"force_reflection":              func(c *settings.Config) { c.Mode = settings.ModeFrozen; c.Learning.ForceReflection = true },
@@ -196,5 +195,16 @@ func TestValidateCoversTheRetiredParserChecks(t *testing.T) {
 	}
 	if plain, err := settings.Default().Agent.CodePathSelection(); err != nil || plain != nil {
 		t.Fatalf("the default go code path selects nothing: %v, %v", plain, err)
+	}
+}
+
+// Reflection resumes the responder's session; no file or environment variable
+// selects a fresh one, and no layer's default does.
+func TestNoSettingSelectsAFreshReflectionSession(t *testing.T) {
+	if _, err := settings.Resolve([]string{writeFile(t, "learning:\n  reflection_session: fresh\n")}, nil); err == nil || !strings.Contains(err.Error(), "reflection_session") {
+		t.Errorf("learning.reflection_session must be an unknown key, got %v", err)
+	}
+	if _, err := settings.Resolve(nil, []string{"SDO_LEARNING_REFLECTION_SESSION=fresh"}); err == nil {
+		t.Error("SDO_LEARNING_REFLECTION_SESSION must be rejected")
 	}
 }
