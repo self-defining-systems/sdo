@@ -609,3 +609,50 @@ def test_collect_records_a_view_failure_without_raising(tmp_path: Path, monkeypa
     out = tmp_path / "out"
     hooks.collect(_sink_env(tmp_path, BENCH_OUT=str(out)), out=lambda _: None)
     assert json.loads((out / "collect.json").read_text())["parts"]["view"] == "error: boom"
+
+
+def test_reset_incidents_requires_an_acknowledged_receipt(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+    answer = {"control_namespace": "fg1-sdo", "generation": 3, "acknowledged": True}
+
+    def run_cmd(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, json.dumps(answer) + "\n", "")
+
+    monkeypatch.setattr(hooks.subprocess, "run", run_cmd)
+    kc = tmp_path / "kc"
+    assert hooks.reset_incidents(kc.parent / "sdo-operator", "fg1-sdo", kc)["generation"] == 3
+    assert calls[0] == [
+        str(kc.parent / "sdo-operator"),
+        "incidents",
+        "reset",
+        "--control-namespace",
+        "fg1-sdo",
+        "--timeout",
+        "2m",
+        "--kubeconfig",
+        str(kc),
+    ]
+    answer["acknowledged"] = False
+    with pytest.raises(hooks.HookError, match="not acknowledged"):
+        hooks.reset_incidents(kc.parent / "sdo-operator", "fg1-sdo", None)
+
+
+def test_collect_ends_with_an_operator_reset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    lane = tmp_path / "lane"
+    (lane / "bin").mkdir(parents=True)
+    (lane / "bin" / "sdo-operator").write_text("")
+    resets: list[list[str]] = []
+
+    def run_cmd(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        if cmd[1:3] == ["incidents", "reset"]:
+            resets.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, '{"generation": 7, "acknowledged": true}\n', "")
+        return subprocess.CompletedProcess(cmd, 1, "", "no cluster")
+
+    monkeypatch.setattr(hooks.subprocess, "run", run_cmd)
+    out = tmp_path / "out"
+    hooks.collect(_sink_env(tmp_path, BENCH_OUT=str(out), BENCH_LANE_DIR=str(lane)), out=lambda _: None)
+    assert len(resets) == 1
+    assert json.loads((out / "collect.json").read_text())["parts"]["reset"] == "ok (generation 7)"
+    assert json.loads((out / "incidents-reset.json").read_text())["generation"] == 7

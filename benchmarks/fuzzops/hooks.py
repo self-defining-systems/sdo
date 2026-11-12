@@ -11,13 +11,17 @@ ever touches its own lane. Verbs (environment: ``BENCH_*`` and ``FUZZOPS_*``, se
               pack, build ``sdo-operator``, load the operator images onto the worker nodes, provision the namespaces,
               clone the baseline memory and run production ``sdo-operator install-existing`` with the lane's evidence
               sink (``BENCH_EVIDENCE_NODE``, ``BENCH_EVIDENCE_RUN``; required). The last stdout line is
-              ``{"pack", "operator_version", "memory"}``.
+              ``{"pack", "operator_version", "memory"}``. It ends with an operator reset between problems
+              (``sdo-operator incidents reset``), so the lane starts with no incident.
 ``idle``      exit 0 when the controller pod is Ready, its state ConfigMap changed within 60 s and SDO owns no incident
               work; otherwise exit 1 with the reason on the first line (``alarm: incident open <id>`` for an incident).
 ``watch``     the fault window's ``exec:`` command: ``benchmarks.fuzzops.observe``.
 ``collect``   best effort: accepted outcomes and playbooks, the controller state, controller logs since the inject, and
               from the host sink the interval's incidents and tasks (``evidence/``) and ``transcripts.json``; then
-              the dashboard view (``view.json``, ``view/transcripts/``; ``benchmarks.fuzzops.view``).
+              the dashboard view (``view.json``, ``view/transcripts/``; ``benchmarks.fuzzops.view``); last, after the
+              run has settled and its evidence is copied, the operator reset between problems
+              (``sdo-operator incidents reset``: any open or escalated incident closes as RESET, no learning credit,
+              memory untouched), so the next run's gate starts on a clean slate (``incidents-reset.json``).
 ``teardown``  delete the control namespace (waiting, so the evidence sidecar's final pass runs), then the cluster grant
               install-existing made for it.
 ``transcripts`` read-only, the host sink only: exit 0 when ``$BENCH_EVIDENCE_HOST/$BENCH_EVIDENCE_RUN`` is an
@@ -836,8 +840,39 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     if rc != 0:
         tail = (lane_dir / "install-existing.log").read_text()[-300:].strip().replace("\n", " ")
         raise HookError(f"install-existing exited {rc}: {tail}")
+    reset = reset_incidents(binary.resolve(), baseline.control, kubeconfig)
+    out(f"incidents reset: generation {reset.get('generation')}")
     out(json.dumps({"pack": str(attached), "operator_version": revision, "memory": memory}))
     return 0
+
+
+RESET_TIMEOUT = "2m"
+
+
+def _binary(env: Mapping[str, str]) -> Path:
+    """The ``sdo-operator`` prepare built into the lane directory."""
+    binary = Path(_need(env, "BENCH_LANE_DIR")) / "bin" / "sdo-operator"
+    if not binary.is_file():
+        raise HookError(f"{binary} missing: the lane was not prepared")
+    return binary.resolve()
+
+
+def reset_incidents(binary: Path, control: str, kubeconfig: Path | None) -> dict[str, Any]:
+    """``sdo-operator incidents reset``: the operator closes any open or escalated incident as RESET (no learning
+    credit, memory untouched). Returns its JSON receipt; raises unless the controller acknowledged it."""
+    args = [str(binary), "incidents", "reset", "--control-namespace", control, "--timeout", RESET_TIMEOUT]
+    if kubeconfig is not None:
+        args += ["--kubeconfig", str(kubeconfig)]
+    proc = subprocess.run(args, capture_output=True, text=True, timeout=300, check=False)
+    lines = [line for line in proc.stdout.splitlines() if line.strip()]
+    try:
+        receipt = json.loads(lines[-1]) if lines else {}
+    except json.JSONDecodeError:
+        receipt = {}
+    if proc.returncode != 0 or not receipt.get("acknowledged"):
+        why = (proc.stderr or proc.stdout).strip()[-300:]
+        raise HookError(f"incidents reset not acknowledged (exit {proc.returncode}): {why}")
+    return receipt
 
 
 def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
@@ -928,6 +963,14 @@ def collect(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
         return f"ok ({len(value['events'])} events, {len(value['panels'])} panels)"
 
     part("view", dashboard)
+
+    def reset() -> str:
+        kubeconfig = Path(env["KUBECONFIG"]).resolve() if env.get("KUBECONFIG") else None
+        receipt = reset_incidents(_binary(env), control, kubeconfig)
+        (dest / "incidents-reset.json").write_text(json.dumps(receipt, indent=2) + "\n")
+        return f"ok (generation {receipt.get('generation')})"
+
+    part("reset", reset)
     summary = {
         "control_namespace": control,
         "run": env.get("BENCH_RUN", ""),
