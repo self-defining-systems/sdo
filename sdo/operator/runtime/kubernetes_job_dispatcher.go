@@ -168,7 +168,11 @@ func (l *ResponderLoop) prepareDispatch(ctx context.Context, request IncidentReq
 		request.MaxResponseLoops = l.MaxBatches
 		return request
 	}
-	l.capturePhase = "open@detect"
+	// The automatic stage and the controller already stored open@detect; only a
+	// learned playbook's diagnosis needs recording again.
+	if l.hasLearnedPlaybooks() {
+		l.capturePhase = "open@detect"
+	}
 	defer func() { l.capturePhase = "" }()
 	request.InitialProgramRuns = l.diagnose(ctx, l.findings, false)
 	fillProgramRevisions(ctx, request.InitialProgramRuns, request.RepositoryWorktree, request.SourceCommit)

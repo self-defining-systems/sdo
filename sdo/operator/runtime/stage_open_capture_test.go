@@ -66,3 +66,31 @@ func TestStageWithALearnedPlaybookTakesTheOpeningCapture(t *testing.T) {
 		t.Fatalf("no open@detect capture with a learned playbook registered (root has %d entries)", len(entries))
 	}
 }
+
+// Preparing the agent's task diagnoses the same findings again. With no learned
+// playbook that preparation must not retake the open@detect capture either: the
+// controller stored it when the incident opened.
+func TestAgentPreparationWithoutLearnedPlaybooksTakesNoOpeningCapture(t *testing.T) {
+	world, stage, state := restoreStage(t, false)
+	loop := stage.NewLoop(state.Request)
+	root := t.TempDir()
+	loop.CorpusSessionRoot = root
+	loop.Provider = &countingProvider{SnapshotProvider: world}
+	loop.prepareDispatch(context.Background(), state.Request, nil, goCodePathCoverage{})
+	if capturedOpenDetect(root) {
+		t.Fatal("agent task preparation retook the open@detect capture although no learned playbook was diagnosed")
+	}
+}
+
+// With a learned playbook the preparation still records its diagnosis.
+func TestAgentPreparationWithALearnedPlaybookTakesTheOpeningCapture(t *testing.T) {
+	world, stage, state := keyedStageLoop(t, nil)
+	loop := stage.NewLoop(state.Request)
+	root := t.TempDir()
+	loop.CorpusSessionRoot = root
+	loop.Provider = &countingProvider{SnapshotProvider: world}
+	loop.prepareDispatch(context.Background(), state.Request, nil, goCodePathCoverage{})
+	if !capturedOpenDetect(root) {
+		t.Fatal("no open@detect capture with a learned playbook registered")
+	}
+}
