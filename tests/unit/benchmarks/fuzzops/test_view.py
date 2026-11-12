@@ -201,7 +201,12 @@ def test_write_builds_a_valid_view_with_the_sdo_summary(tmp_path: Path) -> None:
         "reflection": "updated",
         "learned": 2,
     }
-    assert doc["hide"] == ["evidence/**/rollout-*.jsonl", "evidence/**/model_io/**", "controller.log"]
+    assert doc["hide"] == [
+        "evidence/**/rollout-*.jsonl",
+        "evidence/**/claude/projects/**",
+        "evidence/**/model_io/**",
+        "controller.log",
+    ]
 
 
 def test_events_are_ordered_on_the_five_lanes(tmp_path: Path) -> None:
@@ -306,6 +311,50 @@ def test_rollout_splits_into_responder_and_reflection(tmp_path: Path) -> None:
     assert reflection[0]["role"] == "user"
     assert "reflection" in reflection[0]["text"]
     assert all("hunter2x" not in e["text"] and ACCOUNT not in e["text"] for e in reflection)
+
+
+def test_claude_session_files_make_responder_panels(tmp_path: Path) -> None:
+    dest = _collected(tmp_path, rollout=False)
+    session = dest / "evidence" / "incidents" / DIR / "claude" / "projects" / "-checkout" / "d50edf54.jsonl"
+    session.parent.mkdir(parents=True)
+    rows = [
+        {"type": "queue-operation", "timestamp": "2026-11-11T08:10:00Z"},
+        {
+            "type": "user",
+            "timestamp": "2026-11-11T08:10:01Z",
+            "message": {"role": "user", "content": "SDO responder: inc-1."},
+        },
+        {
+            "type": "assistant",
+            "timestamp": "2026-11-11T08:10:02Z",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "Checking pods."},
+                    {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "kubectl get pods"}},
+                ],
+            },
+        },
+        {
+            "type": "user",
+            "timestamp": "2026-11-11T08:10:03Z",
+            "message": {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "t1", "content": "pod-a Running"},
+                ],
+            },
+        },
+    ]
+    session.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    doc = view.write(dest)
+    short = DIR[:12]
+    assert [p["file"] for p in doc["panels"] if p["type"] == "transcript"] == [
+        f"view/transcripts/{short}-responder.jsonl"
+    ]
+    entries = _transcript(dest, f"{short}-responder.jsonl")[1:]
+    assert [e["role"] for e in entries] == ["user", "assistant", "tool", "output"]
+    assert entries[2]["text"] == "kubectl get pods"
 
 
 def test_a_rollout_with_reasoning_summaries_exports_them_to_the_transcript(tmp_path: Path) -> None:

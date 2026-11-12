@@ -31,6 +31,7 @@ INDEX_FILE = "index.jsonl"
 LEDGER_FILE = "ledger.json"
 IDENTITY_FILE = "incident.json"
 ROLLOUT_GLOB = "rollout-*.jsonl"
+CLAUDE_PROJECTS = Path("claude") / "projects"
 INCIDENTS = "incidents"
 TASKS = "lifecycle"
 #: Reflection failures that end the task before any agent turn starts.
@@ -189,8 +190,19 @@ class IncidentCoverage:
         return {k: v for k, v in asdict(self).items() if k != "dir"}
 
 
+def rollout_files(directory: Path) -> list[Path]:
+    """Codex rollouts below ``directory``."""
+    return sorted(p for p in directory.rglob(ROLLOUT_GLOB) if p.is_file())
+
+
+def claude_session_files(directory: Path) -> list[Path]:
+    """Claude session files, ``claude/projects/<cwd>/<session>.jsonl``."""
+    return sorted(p for p in (directory / CLAUDE_PROJECTS).rglob("*.jsonl") if p.is_file())
+
+
 def count_rollouts(directory: Path) -> int:
-    return sum(1 for p in directory.rglob(ROLLOUT_GLOB) if p.is_file())
+    """Transcripts of one incident: Codex rollouts plus Claude session files, once each."""
+    return len({*rollout_files(directory), *claude_session_files(directory)})
 
 
 def incident_coverage(directory: Path) -> IncidentCoverage:

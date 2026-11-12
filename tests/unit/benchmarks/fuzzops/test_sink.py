@@ -41,6 +41,17 @@ def _closure(**result: Any) -> dict[str, Any]:
     return {"detected_at": "2026-11-12T10:01:00.123456789Z", "result": result}
 
 
+def test_claude_session_files_count_as_transcripts(tmp_path: Path) -> None:
+    run = _run(tmp_path)
+    responded = {"closure": _closure(responder_session_id="s"), "outcome_document": {"classification": "success"}}
+    directory = _incident(run, "a" * 32, responded)
+    session = directory / "claude" / "projects" / "-workspace-checkout"
+    session.mkdir(parents=True)
+    (session / "d50edf54-080a-43b2-9c16-18423070962b.jsonl").write_text("{}\n")
+    assert sink.count_rollouts(directory) == 1
+    assert sink.transcripts_verdict(run) == ""
+
+
 # ---- environment ---------------------------------------------------------------------------------------------
 
 
