@@ -35,6 +35,9 @@ run's cap) and the `collect` hook. Later positions of a sequence run on the memo
                                                  as rollout-*.jsonl, scratch/sdo-reports/...), lifecycle/<task>/
       transcripts.json                          {incidents: [{id, outcome, agents_ran, rollouts}], rollouts,
                                                  missing: [ids with outcome and agents_ran but no rollout]}
+      incidents-reset.json                      receipt of collect's operator reset between problems
+                                                 ({control_namespace, generation, acknowledged}); an incident still
+                                                 open after the settle closed as RESET (no learning credit)
       view.json                                 dashboard view (fuzzops.view/v1): summary, hide, events, panels;
                                                  written by collect's `view` part or `python -m
                                                  benchmarks.fuzzops.view <run dir>`
