@@ -74,7 +74,7 @@ manifests, RBAC and cluster-scoped objects are not accepted.
 
 ## Instrumentation
 
-Instrumentation is a source repair a responder or deployer captures as a patch, never an edit of application source by
+Instrumentation is a source repair a responder commits or a deployer captures as a patch, never an edit of application source by
 you. Use the source's `publish` block: annotate pod templates for scraping when `scrape.annotations` is set, or send
 OTLP HTTP to its full metrics URL. A deployment overlay under `overlays/telemetry/` may carry the annotations. Do not
 infer publishing support from a query endpoint.

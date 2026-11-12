@@ -11,3 +11,9 @@ Every rule names the validator rule IDs that enforce it.
   patch. Responders only add patches. Enforced by: `patch.owner`.
 - An app file differing from what the series produces is rejected at publish. Capture it or revert it. Enforced by:
   `patch.uncaptured`.
+
+## Committed source (responders)
+
+- Only regular files (modes 100644 and 100755) are published: no symlinks, submodules or gitlinks. A committed file that a deployment patch also changes is refused: revert it and add a patch. Enforced by: `source.policy`.
+- At most 256 KiB per file and 2 MiB per publication; do not commit generated or binary artifacts. Enforced by: `source.size`.
+- Commit on top of the checkout's starting commit; a reset, rebase or amend below it is refused. Enforced by: `source.history`.

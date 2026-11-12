@@ -1590,9 +1590,20 @@ type BrokerLedger struct {
 	// The count is the number of entries; the committed outcome file stays immutable.
 	ReflectionCoverageGaps []*MemoryDiagnostic `protobuf:"bytes,30,rep,name=reflection_coverage_gaps,json=reflectionCoverageGaps,proto3" json:"reflection_coverage_gaps,omitempty"`
 	// Presence binds publication policy across retries and restarts.
-	FrozenMemory  *bool `protobuf:"varint,31,opt,name=frozen_memory,json=frozenMemory,proto3,oneof" json:"frozen_memory,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	FrozenMemory *bool `protobuf:"varint,31,opt,name=frozen_memory,json=frozenMemory,proto3,oneof" json:"frozen_memory,omitempty"`
+	// The responder's committed source is published after the acknowledgment:
+	// "pending" until it is deployed and accepted, held or discarded, then the
+	// outcome ("deployed", "published", "held", "none"). Empty before the
+	// closure decided it. source_commit is the accepted commit.
+	SourceRepair string `protobuf:"bytes,32,opt,name=source_repair,json=sourceRepair,proto3" json:"source_repair,omitempty"`
+	SourceCommit string `protobuf:"bytes,33,opt,name=source_commit,json=sourceCommit,proto3" json:"source_commit,omitempty"`
+	SourceDetail string `protobuf:"bytes,34,opt,name=source_detail,json=sourceDetail,proto3" json:"source_detail,omitempty"`
+	// App files the agent left uncommitted; discarded when the publication ends.
+	SourceUncaptured []string `protobuf:"bytes,35,rep,name=source_uncaptured,json=sourceUncaptured,proto3" json:"source_uncaptured,omitempty"`
+	// Cleanup prompts the closing turn has spent on leftover edits.
+	CleanupTurnsUsed uint32 `protobuf:"varint,36,opt,name=cleanup_turns_used,json=cleanupTurnsUsed,proto3" json:"cleanup_turns_used,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *BrokerLedger) Reset() {
@@ -1826,6 +1837,41 @@ func (x *BrokerLedger) GetFrozenMemory() bool {
 		return *x.FrozenMemory
 	}
 	return false
+}
+
+func (x *BrokerLedger) GetSourceRepair() string {
+	if x != nil {
+		return x.SourceRepair
+	}
+	return ""
+}
+
+func (x *BrokerLedger) GetSourceCommit() string {
+	if x != nil {
+		return x.SourceCommit
+	}
+	return ""
+}
+
+func (x *BrokerLedger) GetSourceDetail() string {
+	if x != nil {
+		return x.SourceDetail
+	}
+	return ""
+}
+
+func (x *BrokerLedger) GetSourceUncaptured() []string {
+	if x != nil {
+		return x.SourceUncaptured
+	}
+	return nil
+}
+
+func (x *BrokerLedger) GetCleanupTurnsUsed() uint32 {
+	if x != nil {
+		return x.CleanupTurnsUsed
+	}
+	return 0
 }
 
 // Source field ownership adoption survives controller restarts.
@@ -2100,7 +2146,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x1dobserved_detector_fingerprint\x18\x04 \x01(\tR\x1bobservedDetectorFingerprint\x12\x18\n" +
 	"\asuccess\x18\x05 \x01(\bR\asuccess\x12;\n" +
 	"\vverified_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"verifiedAt\"\x8b\x13\n" +
+	"verifiedAt\"\xd5\x14\n" +
 	"\fBrokerLedger\x12\x1f\n" +
 	"\vincident_id\x18\x01 \x01(\tR\n" +
 	"incidentId\x12D\n" +
@@ -2132,7 +2178,12 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x11reflection_queued\x18\x1c \x01(\bR\x10reflectionQueued\x12L\n" +
 	"\x14reflection_queued_at\x18\x1d \x01(\v2\x1a.google.protobuf.TimestampR\x12reflectionQueuedAt\x12e\n" +
 	"\x18reflection_coverage_gaps\x18\x1e \x03(\v2+.sdodev.contracts.v1alpha1.MemoryDiagnosticR\x16reflectionCoverageGaps\x12(\n" +
-	"\rfrozen_memory\x18\x1f \x01(\bH\x01R\ffrozenMemory\x88\x01\x01\x1ae\n" +
+	"\rfrozen_memory\x18\x1f \x01(\bH\x01R\ffrozenMemory\x88\x01\x01\x12#\n" +
+	"\rsource_repair\x18  \x01(\tR\fsourceRepair\x12#\n" +
+	"\rsource_commit\x18! \x01(\tR\fsourceCommit\x12#\n" +
+	"\rsource_detail\x18\" \x01(\tR\fsourceDetail\x12+\n" +
+	"\x11source_uncaptured\x18# \x03(\tR\x10sourceUncaptured\x12,\n" +
+	"\x12cleanup_turns_used\x18$ \x01(\rR\x10cleanupTurnsUsed\x1ae\n" +
 	"\x1bClosurePhaseTimestampsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
 	"\x05value\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05value:\x028\x01:\xf1\x01\xbaH\xed\x01\x1a\xea\x01\n" +

@@ -70,9 +70,12 @@ func TestProposalTreeDigestCoversOnlyTheMemoryDirectory(t *testing.T) {
 	}
 }
 
-// The responder publishes a source repair as a patch; an app-file edit that no
-// patch reproduces is rejected with patch.uncaptured, never published.
-func TestResponderPublishesPatchesAndRejectsUncapturedScratch(t *testing.T) {
+// The responder keeps source by committing it. An uncommitted app-file edit is
+// scratch: ScratchFeedback asks for a decision, and a publication carries
+// nothing and moves nothing. The committed file is published (as app source,
+// not as a patch) with the agent's subject in the message and the broker's
+// trailers.
+func TestResponderPublishesCommittedSourceAndNeverScratch(t *testing.T) {
 	ctx := context.Background()
 	w := newPatchWorld(t, false)
 	seedMemory(t, w)
@@ -80,36 +83,39 @@ func TestResponderPublishesPatchesAndRejectsUncapturedScratch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeFiles(t, p.Path, map[string]string{"app.txt": "one\ntwo\nthree fixed\n"})
-	if feedback, err := w.broker.ScratchFeedback(ctx, "inc-resp", ProposalPhase); err != nil || !strings.Contains(feedback, UncapturedRule) {
+	writeFiles(t, p.Path, map[string]string{"app.txt": "one\ntwo\nthree fixed\n", "probe.sh": "echo debug\n"})
+	feedback, err := w.broker.ScratchFeedback(ctx, "inc-resp", ProposalPhase)
+	if err != nil || !strings.Contains(feedback, "app.txt") || !strings.Contains(feedback, "probe.sh") || strings.Contains(feedback, UncapturedRule) {
 		t.Fatalf("ScratchFeedback = %q, %v", feedback, err)
 	}
 	head := w.head(t)
-	_, err = w.broker.Publish(ctx, "inc-resp", Responder, ProposalPhase)
-	if got := rulesOf(t, err); len(got) != 1 || got[0] != validate.RulePatchUncaptured {
-		t.Fatalf("publish of an uncaptured edit: rules = %v (%v)", got, err)
-	}
-	if w.head(t) != head {
-		t.Fatal("an uncaptured edit moved the accepted head")
+	receipt, err := w.broker.Publish(ctx, "inc-resp", Responder, ProposalPhase)
+	if err != nil || receipt.Commit != "" || w.head(t) != head {
+		t.Fatalf("publishing scratch = %+v, %v; the head moved: %v", receipt, err, w.head(t) != head)
 	}
 
-	created, err := patchset.Create(ctx, p.Path, patchset.CreateRequest{Owner: patchset.OwnerResponder, Incident: "inc-resp", Reason: patchReason})
-	if err != nil {
-		t.Fatal(err)
+	testutil.ConfigureGit(t, p.Path)
+	testutil.Git(t, p.Path, "add", "app.txt")
+	testutil.Git(t, p.Path, "commit", "-qm", "fix the off-by-one in app.txt")
+	if feedback, err := w.broker.ScratchFeedback(ctx, "inc-resp", ProposalPhase); err != nil || strings.Contains(feedback, "app.txt") || !strings.Contains(feedback, "probe.sh") {
+		t.Fatalf("ScratchFeedback after the commit = %q, %v", feedback, err)
 	}
-	if feedback, err := w.broker.ScratchFeedback(ctx, "inc-resp", ProposalPhase); err != nil || feedback != "" {
-		t.Fatalf("ScratchFeedback after capture = %q, %v", feedback, err)
-	}
-	receipt, err := w.broker.Publish(ctx, "inc-resp", Responder, ProposalPhase)
-	if err != nil {
-		t.Fatalf("publish of a captured repair: %v", err)
+	receipt, err = w.broker.Publish(ctx, "inc-resp", Responder, ProposalPhase)
+	if err != nil || receipt.Commit == "" {
+		t.Fatalf("publish of committed source: %+v, %v", receipt, err)
 	}
 	changed := strings.Fields(gitOut(t, w.accepted, "diff", "--name-only", head, receipt.Commit))
-	if len(changed) != 1 || changed[0] != ".sdo/deployment/patches/"+created.Name {
-		t.Fatalf("accepted commit changed %v, want only the patch file", changed)
+	if len(changed) != 1 || changed[0] != "app.txt" {
+		t.Fatalf("accepted commit changed %v, want only the committed app.txt", changed)
 	}
-	if got := gitOut(t, w.accepted, "show", receipt.Commit+":app.txt"); strings.Contains(got, "fixed") {
-		t.Fatalf("the accepted app file was edited: %q", got)
+	if got := gitOut(t, w.accepted, "show", receipt.Commit+":app.txt"); !strings.Contains(got, "three fixed") {
+		t.Fatalf("the accepted app file is %q", got)
+	}
+	message := gitOut(t, w.accepted, "log", "-1", "--format=%B", receipt.Commit)
+	for _, want := range []string{"- fix the off-by-one in app.txt", "SDO-Incident: inc-resp", "SDO-Actor: responder", "SDO-Phase: proposal"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("commit message lacks %q:\n%s", want, message)
+		}
 	}
 }
 

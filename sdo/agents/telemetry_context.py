@@ -7,8 +7,8 @@ from sdo.contracts import TelemetryContext, TelemetrySource
 Reader = Literal["designer", "responder"]
 
 _INSTRUMENTATION = (
-    "Needed instrumentation is a source repair a responder captures as a patch (sdo-patching); "
-    "never edit application source; use sdo-operationalize for it."
+    "Needed instrumentation is a source repair a responder commits (sdo-patching); "
+    "the designer never edits application source; use sdo-operationalize for it."
 )
 
 

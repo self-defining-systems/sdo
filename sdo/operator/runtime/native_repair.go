@@ -25,6 +25,10 @@ type SourceRepair struct {
 	// Undeployed reports an accepted repair no SDO deployment could apply (an
 	// installation with no recorded deployment).
 	Undeployed bool
+	// Deferred names why the deploy did not start (the controller is busy or
+	// did not acknowledge the maintenance pause). Nothing was applied or
+	// accepted; the publication is tried again later.
+	Deferred string
 }
 
 // SourceRepairer accepts the source repair of an incident's responder
@@ -44,6 +48,8 @@ type DeploymentRepairer struct {
 	// AppRoot is the accepted repository; its goal holds the health
 	// objective the candidate's detectors are judged against.
 	AppRoot string
+	// Gate reports work a deploy after the closure must not overlap.
+	Gate *SourceGate
 }
 
 // Repair implements SourceRepairer.
@@ -52,7 +58,11 @@ func (r DeploymentRepairer) Repair(ctx context.Context, incidentID string) (Sour
 	if err != nil {
 		return SourceRepair{}, err
 	}
-	result, err := r.Deployer.Repair(ctx, lifecycle.RepairConfig{Namespace: r.Namespace, HealthObjective: objective}, incidentID)
+	deployer := r.Deployer
+	if r.Gate != nil {
+		deployer.Busy = func(context.Context) (string, error) { return r.Gate.Busy(), nil }
+	}
+	result, err := deployer.Repair(ctx, lifecycle.RepairConfig{Namespace: r.Namespace, HealthObjective: objective}, incidentID)
 	if err != nil {
 		return SourceRepair{}, err
 	}
@@ -67,6 +77,8 @@ func (r DeploymentRepairer) Repair(ctx context.Context, incidentID string) (Sour
 		return SourceRepair{Commit: result.Receipt.Commit, Deployed: true}, nil
 	case lifecycle.RepairHeld:
 		return SourceRepair{Held: fmt.Sprintf("%s: %s", result.Hold, result.Detail)}, nil
+	case lifecycle.RepairDeferred:
+		return SourceRepair{Deferred: result.Detail}, nil
 	}
 	return SourceRepair{}, fmt.Errorf("unknown source repair outcome %q", result.Outcome)
 }
@@ -112,5 +124,5 @@ func (p PlainPublication) Repair(ctx context.Context, incidentID string) (Source
 		return SourceRepair{}, err
 	}
 	accepted, err := p.Repository.Publish(ctx, incidentID, broker.Responder, broker.ProposalPhase)
-	return SourceRepair{Commit: accepted.Commit, Undeployed: slices.ContainsFunc(paths, layout.IsEffectiveDeploymentInput)}, err
+	return SourceRepair{Commit: accepted.Commit, Undeployed: slices.ContainsFunc(paths, func(p string) bool { return layout.IsEffectiveDeploymentInput(p) || !layout.IsMemoryPath(p) })}, err
 }

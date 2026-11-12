@@ -136,11 +136,16 @@ func (s *JSONStore) appendReflectionAnnotations(ctx context.Context, id string, 
 // originalOutcomeRetry accepts replay of immutable evidence after annotation,
 // retaining every appended gap and rejecting a replacement/addition via Put.
 func originalOutcomeRetry(previous, requested *contracts.OutcomeRecord) bool {
-	if previous == nil || requested == nil || (len(previous.GetSdkGaps()) == 0 && len(previous.GetReflectionRejections()) == 0) {
+	if previous == nil || requested == nil || (len(previous.GetSdkGaps()) == 0 && len(previous.GetReflectionRejections()) == 0 && previous.GetSourceRepair() == nil) {
+		return false
+	}
+	if requested.GetSourceRepair() != nil && !proto.Equal(requested.GetSourceRepair(), previous.GetSourceRepair()) {
 		return false
 	}
 	old := proto.Clone(previous).(*contracts.OutcomeRecord)
 	next := proto.Clone(requested).(*contracts.OutcomeRecord)
+	old.SourceRepair = nil
+	next.SourceRepair = nil
 	old.SdkGaps = nil
 	next.SdkGaps = nil
 	old.ReflectionRejections = nil

@@ -19,7 +19,7 @@ The app map is `.sdo/arch.md`: components, edges, user operations, what holds da
 - `sdo verify --wait SECONDS`: has it recovered?
 
 `sdo COMMAND --help` gives the syntax. Make changes through `mitigate` or `act` so SDO records them; use `kubectl`
-for reads. A source fix is a patch (see the patching skill).
+for reads. Keep a source fix with `git commit` (patching skill).
 
 SDO decides recovery: the alerts that opened the incident cleared and stayed clear after your last change settled.
 SDO then ends your incident work and moves the session to its closing turn. Returning before that escalates to a

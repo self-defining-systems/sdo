@@ -8,6 +8,7 @@ import (
 	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/lifecycle"
+	"sdo.dev/operator/operatorcli/internal/processio"
 )
 
 // Verifier is the independent health verifier of a controller launch: it
@@ -38,7 +39,8 @@ func RepairDeployer(identity Identity, launch *contracts.ControllerConfig, opera
 	if err != nil {
 		return lifecycle.RepairDeployer{}, err
 	}
-	return lifecycle.RepairDeployer{Broker: repository, Readiness: deployer, Verifier: verifier}, nil
+	return lifecycle.RepairDeployer{Broker: repository, Readiness: deployer, Verifier: verifier,
+		Maintenance: Maintenance{Client: client, Namespace: ControlNamespace(launch), Now: processio.Now}}, nil
 }
 
 // The controller's broker is the repair's broker.
