@@ -61,10 +61,12 @@ const (
 	// binding files under .sdo/diagnostics/telemetry, which the controller reads
 	// from the accepted revision; version 6 adds the detection designer's data
 	// checks under .sdo/diagnostics/data; version 7 adds the controller's
-	// recovery verification to each outcome document. Versions 4 to 7 need no
-	// conversion: no earlier repository holds those files, and an earlier
-	// outcome keeps what it recorded.
-	CurrentSchemaVersion = 7
+	// recovery verification to each outcome document; version 8 lets Go write
+	// the incident's opening keys and suspects into corpus case labels. Versions
+	// 4 to 8 need no conversion: no earlier repository holds those files, an
+	// earlier outcome keeps what it recorded, and an earlier case is valid
+	// without the optional labels.
+	CurrentSchemaVersion = 8
 )
 
 // Kind names a class of file in operational memory.

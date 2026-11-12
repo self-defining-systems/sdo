@@ -197,6 +197,13 @@ func stageApplicationSettled(stage *contracts.StageMitigation, applications []*c
 		final.GetCompletedAt() != nil && final.GetCompletedAt().AsTime().After(initial.GetCompletedAt().AsTime())
 }
 
+// ApplicationOwnsRepair reports whether a repair receipt is one of the
+// application's own: closure credit uses the same receipt-to-application
+// binding as the reflection validator.
+func ApplicationOwnsRepair(app *contracts.PlanApplication, receipt *contracts.RepairActionReceipt) bool {
+	return applicationOwnsRepair(app, receipt)
+}
+
 // Match the controller's receipt identities, including per-script receipts and
 // duplicate suffixes. A bare program-plan kind never proves playbook ownership:
 // direct hand repairs also run through the ordinary plan executor.

@@ -311,7 +311,7 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 		if _, err := validate.NormalizeAuthoredWhitespace(absolute, paths); err != nil {
 			return exitInfra, err
 		}
-		if _, err := validate.NormalizeAuthoredPlaybooks(absolute, paths); err != nil {
+		if _, err := validate.NormalizeAuthoredPlaybooks(absolute, paths, getenv(memoryIncidentEnv)); err != nil {
 			return exitInfra, err
 		}
 		if _, err := normalizeCorpusForReplay(absolute, paths, replay); err != nil {

@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
+	"strings"
 
 	"fmt"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
+	"sdo.dev/operator/memory/layout"
 )
 
 // DecisionShape is the expected decision JSON. A malformed or missing decision
@@ -109,4 +112,32 @@ func ReflectionResultDiagnostics(result *contracts.ReflectionResult) []Diagnosti
 		return reflectionResultFailure("direct-edit reflection rejects deprecated artifact_proposal")
 	}
 	return nil
+}
+
+// DeriveReflectionDecision completes what the diff already says. A decision
+// that names its verdict is the agent's and stays untouched. Otherwise an empty
+// diff is no_change (with the agent's reason when it gave one) and any other
+// diff is an update, listing exactly the playbooks whose files changed.
+func DeriveReflectionDecision(decision *contracts.ReflectionDecision, paths []string) *contracts.ReflectionDecision {
+	if decision.GetLearningDecision() != "" {
+		return decision
+	}
+	derived := &contracts.ReflectionDecision{DeclineReason: decision.GetDeclineReason(), SdkGaps: decision.GetSdkGaps()}
+	if len(paths) == 0 {
+		derived.LearningDecision, derived.NoChangeReason = "no_change", decision.GetNoChangeReason()
+		if strings.TrimSpace(derived.NoChangeReason) == "" {
+			derived.NoChangeReason = "the proposal changed no memory file"
+		}
+		return derived
+	}
+	derived.LearningDecision = "updated"
+	for _, path := range paths {
+		kind, id, ok := layout.Classify(path)
+		id, _, _ = strings.Cut(id, "/")
+		if ok && (kind == layout.KindPlaybook || kind == layout.KindPlaybookScript || kind == layout.KindPlaybookProgram) && !slices.Contains(derived.PlaybookIds, id) {
+			derived.PlaybookIds = append(derived.PlaybookIds, id)
+		}
+	}
+	slices.Sort(derived.PlaybookIds)
+	return derived
 }

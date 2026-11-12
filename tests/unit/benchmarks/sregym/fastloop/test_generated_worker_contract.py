@@ -33,7 +33,7 @@ def _accepted_app(tmp_path: Path, *, verified: bool = False) -> Path:
     shutil.rmtree(memory / "playbooks/service-targetport-mismatch")
     shutil.rmtree(memory / "corpus/targetport-mismatch")
     shutil.rmtree(memory / "diagnostics/detectors/incidents/routing-relations")
-    (memory / "schema-version").write_text("7\n")
+    (memory / "schema-version").write_text("8\n")
     (memory / "goal.md").write_text("---\nschema_version: 1\nowner: human\n---\n\nKeep the app healthy.\n")
     (memory / "arch.md").write_text("---\nschema_version: 1\nowner: health_judge\n---\n\nOne service.\n")
     (memory / "playbooks/README.md").write_text("# Playbooks\n\n- [missing-configmap](missing-configmap/README.md)\n")

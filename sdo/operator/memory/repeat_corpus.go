@@ -13,6 +13,7 @@ import (
 
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/safefs"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -21,6 +22,25 @@ import (
 // reflection validator and broker before accepting it; this grants no credit.
 // Healthy peer associations come from accepted cases, never a new model claim.
 func RecordRepeatCorpus(root, captures, incidentID string, instances map[string][]program.Bindings, origins ...map[string]string) (paths []string, err error) {
+	var origin map[string]string
+	if len(origins) > 0 {
+		origin = origins[0]
+	}
+	return RecordCorpus(root, captures, incidentID, instances, origin, CaseContext{})
+}
+
+// CaseContext is what the controller knows about the incident beyond the
+// captures, written into every case's labels so later readers never re-derive
+// it: the alerts the incident opened on and the components suspect on the
+// failing path. Both are optional; a case without them is still valid.
+type CaseContext struct {
+	OpeningKeys []string
+	Suspects    []sdk.ObjectRef
+}
+
+// RecordCorpus is RecordRepeatCorpus with the incident's Go labels.
+func RecordCorpus(root, captures, incidentID string, instances map[string][]program.Bindings, originMap map[string]string, caseContext CaseContext) (paths []string, err error) {
+	origins := []map[string]string{originMap}
 	fixed, err := readCapturedSnapshot(filepath.Join(captures, "fixed.json"))
 	if err != nil {
 		return nil, err
@@ -30,10 +50,12 @@ func RecordRepeatCorpus(root, captures, incidentID string, instances map[string]
 		return nil, err
 	}
 	type labels struct {
-		Programs   []string                 `json:"root_cause_program_ids"`
-		Bindings   program.Bindings         `json:"bindings"`
-		Peers      program.Bindings         `json:"peer_bindings"`
-		Provenance sdktest.CorpusProvenance `json:"provenance"`
+		Programs    []string                 `json:"root_cause_program_ids"`
+		Bindings    program.Bindings         `json:"bindings"`
+		Peers       program.Bindings         `json:"peer_bindings"`
+		Provenance  sdktest.CorpusProvenance `json:"provenance"`
+		OpeningKeys []string                 `json:"opening_keys,omitempty"`
+		Suspects    []sdk.ObjectRef          `json:"suspects,omitempty"`
 	}
 	prior := []labels{}
 	for _, entry := range entries {
@@ -92,7 +114,7 @@ func RecordRepeatCorpus(root, captures, incidentID string, instances map[string]
 			name := fmt.Sprintf("repeat-%x", digest[:12])
 			label := labels{Programs: []string{id}, Bindings: binding, Peers: peers, Provenance: sdktest.CorpusProvenance{
 				IncidentID: incidentID, OpenAt: phase, OpenSHA256: fmt.Sprintf("%x", sha256.Sum256(opened)), FixedSHA256: fmt.Sprintf("%x", sha256.Sum256(fixed)),
-			}}
+			}, OpeningKeys: slices.Clone(caseContext.OpeningKeys), Suspects: slices.Clone(caseContext.Suspects)}
 			encoded, err = json.MarshalIndent(label, "", "  ")
 			if err != nil {
 				return nil, err

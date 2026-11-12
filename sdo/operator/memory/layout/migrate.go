@@ -149,6 +149,10 @@ var schemaMigrations = map[int]func(*schemaPlan) error{
 	// Version 7 adds recovery_verification to outcome documents. Earlier
 	// outcomes are not reinterpreted: the step only stamps.
 	7: func(*schemaPlan) error { return nil },
+	// Version 8 adds the optional opening_keys and suspects to corpus case
+	// labels, which Go writes. An earlier case stays valid without them: the
+	// step only stamps and leaves every case byte for byte.
+	8: func(*schemaPlan) error { return nil },
 }
 
 type fileRewrite struct {

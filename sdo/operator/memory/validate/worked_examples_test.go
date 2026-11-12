@@ -88,7 +88,7 @@ func TestWorkedExamplesPassTheReflectionMemoryCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NormalizeAuthoredPlaybooks(root, paths); err != nil {
+	if _, err := NormalizeAuthoredPlaybooks(root, paths, ""); err != nil {
 		t.Fatal(err)
 	}
 	var notes []sdktest.MitigationReplayResult

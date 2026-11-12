@@ -74,6 +74,11 @@ func Check(ctx context.Context, request Request, compile CompileRunner) ([]Diagn
 		}
 	}
 	if request.Phase == ReflectionPhase && request.Actor == Responder {
+		changed, err := ChangedPaths(ctx, request.Root, request.Base)
+		if err != nil {
+			return nil, err
+		}
+		request.Decision = DeriveReflectionDecision(request.Decision, changed)
 		diagnostics = append(diagnostics, ReflectionDecisionContractDiagnostics(request.Decision)...)
 	}
 	// Publication content gates run before executing candidate Go code.

@@ -172,16 +172,22 @@ func (v *ReplayReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, e
 }
 
 type CorpusCase struct {
-	ScriptOrigins          map[string]string `json:"script_origins,omitempty"`
-	Open                   Snapshot
-	Fixed                  Snapshot
-	Healthy                Snapshot
-	Recordings             []PrimitiveCall
-	RootCauseProgramIDs    []string
-	NoMatchProgramIDs      []string
-	Bindings               program.Bindings
-	PeerBindings           program.Bindings
-	Provenance             CorpusProvenance
+	ScriptOrigins       map[string]string `json:"script_origins,omitempty"`
+	Open                Snapshot
+	Fixed               Snapshot
+	Healthy             Snapshot
+	Recordings          []PrimitiveCall
+	RootCauseProgramIDs []string
+	NoMatchProgramIDs   []string
+	Bindings            program.Bindings
+	PeerBindings        program.Bindings
+	Provenance          CorpusProvenance
+	// OpeningKeys and Suspects are the incident's own labels, written by Go
+	// with the case: the alerts the incident opened on and the components that
+	// were suspect on the failing path. Cases written before they existed
+	// carry neither.
+	OpeningKeys            []string
+	Suspects               []sdk.ObjectRef
 	SyntheticNoMatchReason string
 	// HealthImpact marks visible impact in Open. Nil defaults to true for
 	// existing fault fixtures; false permits silent health detectors.
@@ -224,7 +230,9 @@ func loadCorpusCase(dir string, snapshots bool) (CorpusCase, error) {
 			SyntheticNoMatchReason *string            `json:"synthetic_no_match_reason"`
 			HealthImpact           **bool             `json:"health_impact"`
 			ScriptOrigins          *map[string]string `json:"script_origins,omitempty"`
-		}{&c.RootCauseProgramIDs, &c.NoMatchProgramIDs, &c.Bindings, &c.PeerBindings, &c.Provenance, &c.SyntheticNoMatchReason, &c.HealthImpact, &c.ScriptOrigins}},
+			OpeningKeys            *[]string          `json:"opening_keys,omitempty"`
+			Suspects               *[]sdk.ObjectRef   `json:"suspects,omitempty"`
+		}{&c.RootCauseProgramIDs, &c.NoMatchProgramIDs, &c.Bindings, &c.PeerBindings, &c.Provenance, &c.SyntheticNoMatchReason, &c.HealthImpact, &c.ScriptOrigins, &c.OpeningKeys, &c.Suspects}},
 	} {
 		if !snapshots && (item.name == "open.json" || item.name == "fixed.json" || item.name == "healthy.json") {
 			continue
