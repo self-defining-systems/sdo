@@ -44,7 +44,10 @@ func RepairDeployer(identity Identity, launch *contracts.ControllerConfig, opera
 }
 
 // The controller's broker is the repair's broker.
-var _ lifecycle.RepairBroker = (*broker.Broker)(nil)
+var (
+	_ lifecycle.RepairBroker = (*broker.Broker)(nil)
+	_ lifecycle.HeadBroker   = (*broker.Broker)(nil)
+)
 
 // RepairFromLaunch is the runtime.RepairDeployerFactory of the generated
 // controller: the identity the parent put in the typed launch config, then
@@ -55,4 +58,10 @@ func RepairFromLaunch(launch *contracts.ControllerConfig, client kubernetes.Inte
 		return lifecycle.RepairDeployer{}, err
 	}
 	return RepairDeployer(identity, launch, builder.DefaultOperatorRoot(), client, repository)
+}
+
+// HeadDeployer is the controller's deployment of a branch head SDO did not
+// write, sharing the repair deployer's trusted Deployer, verifier and pause.
+func HeadDeployer(repair lifecycle.RepairDeployer, repository lifecycle.HeadBroker) lifecycle.HeadDeployer {
+	return lifecycle.HeadDeployer{Broker: repository, Deployer: repair}
 }

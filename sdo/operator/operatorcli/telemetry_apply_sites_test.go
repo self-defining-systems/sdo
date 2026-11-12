@@ -19,6 +19,7 @@ var verifyCandidateOwners = map[string]string{
 	"lifecycle/gate.go":               "Coordinator.TelemetryApply",
 	"lifecycle/advance.go":            "Advancer.Verifier is deploywire.AppliedVerifier",
 	"lifecycle/repair.go":             "RepairDeployer.Verifier is deploywire.AppliedVerifier",
+	"lifecycle/head.go":               "HeadDeployer.Deployer is a RepairDeployer whose Verifier is deploywire.AppliedVerifier",
 	"deployment/health.go":            "the verifier itself",
 	"lifecycle/telemetry_verifier.go": "the apply wrapper",
 }
