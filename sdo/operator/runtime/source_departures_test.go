@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"sdo.dev/operator/sdk"
@@ -17,6 +19,8 @@ type departureView struct {
 	detectFake
 	diffs map[string]sdk.SourceDiff
 	gone  map[string]bool
+	// written gives a live object its managedFields (manager to write time).
+	written map[string][]metav1.ManagedFieldsEntry
 }
 
 func (v departureView) DiffAgainstSource(ref sdk.ObjectRef) (sdk.SourceDiff, error) {
@@ -30,7 +34,16 @@ func (v departureView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, er
 	if v.gone[ref.Kind+"/"+ref.Name] {
 		return nil, nil
 	}
-	return &unstructured.Unstructured{}, nil
+	object := &unstructured.Unstructured{}
+	if entries, ok := v.written[ref.Kind+"/"+ref.Name]; ok {
+		object.SetManagedFields(entries)
+	}
+	return object, nil
+}
+
+func wrote(manager string, at time.Time, subresource string) metav1.ManagedFieldsEntry {
+	stamp := metav1.NewTime(at)
+	return metav1.ManagedFieldsEntry{Manager: manager, Operation: metav1.ManagedFieldsOperationApply, Time: &stamp, Subresource: subresource}
 }
 
 func dref(kind, name string) sdk.ObjectRef {
@@ -131,3 +144,112 @@ func TestDetectChangeLineShowsTheSourceDepartureAndHowToRestoreIt(t *testing.T) 
 	}
 }
 
+func closedIncidentController(t *testing.T) *Controller {
+	t.Helper()
+	config := testControllerConfig()
+	config.SourceCommit, config.DeployedCommit = "closure-commit", "start-up-commit"
+	c, err := NewController(config, nil, staticProvider{}, &recordingDispatcher{}, time.Unix(0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// A closure moves the source commit; the deployed commit stays. That alone is
+// not a rollout, so the classifier must keep working after the first incident.
+func TestSourceDeparturesStillClassifyAfterAClosureMovedTheSourceCommit(t *testing.T) {
+	c := closedIncidentController(t)
+	request := c.incidentRequest(detectNow(), nil)
+	if request.SourceCommit == request.DeployedCommit || request.DeploymentInFlight {
+		t.Fatalf("a moved source commit is not a rollout: %+v", request)
+	}
+	before := detectOnset.Add(-4 * time.Second)
+	request.DriftEvents = []sdk.DriftEvent{departureEvent(dref("Service", "api"), "kubectl", before, "spec.ports")}
+	view := departureView{detectFake: detectApp(), diffs: map[string]sdk.SourceDiff{"Service/api": {Changed: true}}}
+	got := SourceDepartures(departureInput(request, view, detectOnset), []sdk.ObjectRef{dref("Service", "api")})
+	if len(got) != 1 || got[0].Manager != "kubectl" {
+		t.Fatalf("departures after a closure = %v", got)
+	}
+}
+
+func TestDeploymentInFlightFollowsTheControllersRolloutState(t *testing.T) {
+	c := closedIncidentController(t)
+	if c.deploymentInFlight() {
+		t.Fatal("no rollout is pending")
+	}
+	c.reflections.rollout = "inc-1"
+	if !c.deploymentInFlight() || !c.incidentRequest(detectNow(), nil).DeploymentInFlight {
+		t.Fatal("a queued reflection's rollout that has not converged is a deployment in flight")
+	}
+	c.reflections.rollout, c.reflections.unknown = "", true
+	if !c.deploymentInFlight() {
+		t.Fatal("an unreadable ledger must not be trusted as converged")
+	}
+}
+
+func TestSourceDeparturesIgnoreAForeignEventSDOHasSinceOverwritten(t *testing.T) {
+	old := detectOnset.Add(-time.Hour)
+	view := departureView{detectFake: detectApp(), diffs: map[string]sdk.SourceDiff{
+		"Service/api": {Changed: true}, "Service/front": {Changed: true},
+	}, written: map[string][]metav1.ManagedFieldsEntry{
+		"Service/front": {wrote("kubectl", old, ""), wrote(sdk.ResponderFieldManager, detectOnset.Add(-time.Minute), ""), wrote("kube-controller-manager", detectOnset, "status")},
+	}}
+	events := []sdk.DriftEvent{
+		departureEvent(dref("Service", "api"), "kubectl", old, "spec"),
+		departureEvent(dref("Service", "api"), sdk.DeployerFieldManager, detectOnset.Add(-time.Minute), "spec"),
+		departureEvent(dref("Service", "front"), "kubectl", old, "spec"),
+	}
+	got := SourceDepartures(DepartureInput{View: view, Events: events, Onset: detectOnset}, []sdk.ObjectRef{dref("Service", "api"), dref("Service", "front")})
+	if len(got) != 0 {
+		t.Fatalf("an old foreign write must not be blamed for what SDO changed later: %v", got)
+	}
+}
+
+func TestMissingObjectsNeedTheLatestWriterToBeForeign(t *testing.T) {
+	before := detectOnset.Add(-4 * time.Second)
+	view := departureView{detectFake: detectApp(), diffs: map[string]sdk.SourceDiff{
+		"Service/deleted-by-sdo": {Changed: true}, "Service/deleted-by-user": {Changed: true}, "Service/not-yet": {Changed: true},
+	}, gone: map[string]bool{"Service/deleted-by-sdo": true, "Service/deleted-by-user": true, "Service/not-yet": true}}
+	events := []sdk.DriftEvent{
+		departureEvent(dref("Service", "deleted-by-sdo"), "kubectl", before.Add(-time.Hour), "metadata"),
+		departureEvent(dref("Service", "deleted-by-sdo"), sdk.ResponderFieldManager, before, "metadata"),
+		departureEvent(dref("Service", "deleted-by-user"), "kubectl", before, "metadata"),
+	}
+	objects := []sdk.ObjectRef{dref("Service", "deleted-by-sdo"), dref("Service", "deleted-by-user"), dref("Service", "not-yet")}
+	got := map[string]SourceDeparture{}
+	for _, departure := range SourceDepartures(DepartureInput{View: view, Events: events, Onset: detectOnset}, objects) {
+		got[departure.Ref.Name] = departure
+	}
+	if _, ok := got["deleted-by-sdo"]; ok || len(got) != 2 {
+		t.Fatalf("departures = %v", got)
+	}
+	if user := got["deleted-by-user"]; user.Unattributed || user.Command() != "sdo mitigate CreateFromSource --bind ref=Service/app/deleted-by-user" || !strings.Contains(user.Text(), "by kubectl (not sdo)") {
+		t.Fatalf("a foreign deletion is attributed and restorable: %+v", user)
+	}
+	if pending := got["not-yet"]; !pending.Unattributed || pending.Command() != "" || strings.Contains(pending.Text(), "not sdo") {
+		t.Fatalf("a missing object no event explains is information only: %+v %q", pending, pending.Text())
+	}
+	view.diffs["Service/not-yet"] = sdk.SourceDiff{Changed: true}
+	if got := SourceDepartures(DepartureInput{View: view, Events: events, Onset: detectOnset, DeploymentInFlight: true}, objects); len(got) != 0 {
+		t.Fatalf("nothing is missing yet while an advance is in flight: %v", got)
+	}
+}
+
+func TestSecretDepartureNeedsAReadingPodAndNoLaterSDOWrite(t *testing.T) {
+	changed := detectOnset.Add(-time.Minute)
+	app := detectApp()
+	app.SecretList = []sdk.SecretMetadata{
+		{Name: "read", Namespace: "app", DataChangedAt: changed}, {Name: "unread", Namespace: "app", DataChangedAt: changed},
+		{Name: "rewritten", Namespace: "app", DataChangedAt: changed},
+	}
+	started := metav1.NewTime(changed.Add(-time.Hour))
+	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "app", CreationTimestamp: started}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main",
+		EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "read"}}}},
+		Env:     []corev1.EnvVar{{Name: "X", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "rewritten"}}}}}}}}}
+	app.PodList = []corev1.Pod{pod}
+	events := []sdk.DriftEvent{departureEvent(dref("Secret", "rewritten"), sdk.DeployerFieldManager, changed.Add(time.Second), "data")}
+	got := SourceDepartures(DepartureInput{View: departureView{detectFake: app}, Events: events, Onset: detectOnset}, []sdk.ObjectRef{dref("Secret", "read"), dref("Secret", "unread"), dref("Secret", "rewritten")})
+	if len(got) != 1 || got[0].Ref.Name != "read" {
+		t.Fatalf("departures = %v", got)
+	}
+}

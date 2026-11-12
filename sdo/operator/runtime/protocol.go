@@ -70,18 +70,23 @@ type IncidentRequest struct {
 	// ObservationGeneration binds the incident to accepted scope and installer policy.
 	ObservationGeneration string
 	// DetectedAt is when the controller opened this incident.
-	DetectedAt           time.Time
-	SchemaVersion        string
-	Application          string
-	Namespace            string
-	IncidentID           string
-	Findings             []sdk.Finding
-	DriftEvents          []sdk.DriftEvent
-	DetectorHistory      []DetectorEvaluation
-	SurfacedPlaybooks    []SurfacedPlaybook
-	RelevantOutcomes     []PriorOutcomeEvidence
-	SourceCommit         string
-	DeployedCommit       string
+	DetectedAt        time.Time
+	SchemaVersion     string
+	Application       string
+	Namespace         string
+	IncidentID        string
+	Findings          []sdk.Finding
+	DriftEvents       []sdk.DriftEvent
+	DetectorHistory   []DetectorEvaluation
+	SurfacedPlaybooks []SurfacedPlaybook
+	RelevantOutcomes  []PriorOutcomeEvidence
+	SourceCommit      string
+	DeployedCommit    string
+	// DeploymentInFlight is the controller's own rollout state when it built
+	// the request: an accepted-source rollout or advance has not converged.
+	// The source and deployed commits cannot say so (the source commit moves
+	// at every closure). It is controller-local, not part of the wire contract.
+	DeploymentInFlight   bool
 	RepositoryWorktree   string
 	RepositoryBaseCommit string
 	ResponseDeadline     time.Time

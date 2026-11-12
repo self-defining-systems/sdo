@@ -6,6 +6,9 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -36,6 +39,9 @@ type SourceDeparture struct {
 	Manager string
 	// At is when the manager wrote; zero when the object is gone and nothing records it.
 	At time.Time
+	// Unattributed is a missing object no drift event explains: shown as plain
+	// information, with no claim about who removed it and no restore command.
+	Unattributed bool
 }
 
 // Command is the responder command that puts the object back to accepted
@@ -47,6 +53,9 @@ func (d SourceDeparture) Command() string {
 	case DepartureChanged:
 		return "sdo mitigate ReconcileFromSource --bind ref=" + ref
 	case DepartureMissing:
+		if d.Unattributed {
+			return ""
+		}
 		return "sdo mitigate CreateFromSource --bind ref=" + ref
 	case DepartureExtra:
 		return "sdo mitigate DeleteObject --bind ref=" + ref
@@ -59,7 +68,10 @@ func (d SourceDeparture) Text() string {
 	name := d.Ref.Kind + "/" + d.Ref.Name
 	switch d.Kind {
 	case DepartureMissing:
-		return name + " is missing; accepted source declares it"
+		if d.Unattributed {
+			return name + " is missing; accepted source declares it"
+		}
+		return fmt.Sprintf("%s was deleted at %s by %s (not sdo); accepted source declares it", name, hms(d.At), orQuestion(d.Manager))
 	case DepartureSecretData:
 		return fmt.Sprintf("%s data changed at %s by a non-sdo manager; values not compared", name, hms(d.At))
 	}
@@ -84,19 +96,16 @@ type DepartureInput struct {
 	Events []sdk.DriftEvent
 	// Onset bounds the window: later changes are consequences, not causes. Zero is unbounded.
 	Onset time.Time
-	// DeploymentInFlight is true while SDO is deploying or advancing the source;
+	// DeploymentInFlight is true while the controller has an accepted-source
+	// rollout or advance that has not converged (IncidentRequest.DeploymentInFlight);
 	// differences then are SDO's own work in progress.
 	DeploymentInFlight bool
 }
 
 // departureInput is the classifier input every reader builds the same way: the
-// request's drift events, and a deployment in flight while the accepted source
-// is not the deployed commit.
+// request's drift events, and the controller's own rollout state for the guard.
 func departureInput(request IncidentRequest, view sdk.DetectionContext, onset time.Time) DepartureInput {
-	return DepartureInput{
-		View: view, Events: request.DriftEvents, Onset: onset,
-		DeploymentInFlight: request.SourceCommit != "" && request.DeployedCommit != "" && request.SourceCommit != request.DeployedCommit,
-	}
+	return DepartureInput{View: view, Events: request.DriftEvents, Onset: onset, DeploymentInFlight: request.DeploymentInFlight}
 }
 
 // componentObjects are the objects whose departure from source can explain a
@@ -142,18 +151,28 @@ func SourceDepartures(in DepartureInput, objects []sdk.ObjectRef) []SourceDepart
 			continue
 		}
 		departure := SourceDeparture{Ref: ref, Kind: DepartureChanged}
+		missing := false
 		if reader, ok := in.View.(sdk.ObjectReader); ok && !diff.SourceAbsent {
-			if object, err := reader.Object(ref); err == nil && object == nil {
+			object, err := reader.Object(ref)
+			if err == nil && object == nil {
+				missing = true
 				departure.Kind = DepartureMissing
-				result = append(result, departure)
+			} else if err == nil && sdoWroteLast(object) {
 				continue
 			}
 		}
 		if diff.SourceAbsent {
 			departure.Kind = DepartureExtra
 		}
-		event := foreignDriftEvent(in.Events, ref)
+		event := latestDriftEvent(in.Events, ref)
+		if event != nil && sdk.IsSDOFieldManager(event.Manager) {
+			continue
+		}
 		if event == nil {
+			if missing {
+				departure.Unattributed = true
+				result = append(result, departure)
+			}
 			continue
 		}
 		departure.Manager = event.Manager
@@ -162,6 +181,10 @@ func SourceDepartures(in DepartureInput, objects []sdk.ObjectRef) []SourceDepart
 			departure.At = *event.ManagerAt
 		}
 		if late(departure.At) {
+			continue
+		}
+		if missing {
+			result = append(result, departure)
 			continue
 		}
 		for _, field := range event.Fields {
@@ -181,37 +204,86 @@ func SourceDepartures(in DepartureInput, objects []sdk.ObjectRef) []SourceDepart
 	return result
 }
 
-// foreignDriftEvent is the latest event for ref written by a manager that is not SDO.
-func foreignDriftEvent(events []sdk.DriftEvent, ref sdk.ObjectRef) *sdk.DriftEvent {
-	var best *sdk.DriftEvent
-	when := func(e *sdk.DriftEvent) time.Time {
-		if e.ManagerAt != nil {
-			return *e.ManagerAt
-		}
-		return e.ObservedAt
+// driftEventTime is when the manager wrote, else when the controller observed it.
+func driftEventTime(e *sdk.DriftEvent) time.Time {
+	if e.ManagerAt != nil {
+		return *e.ManagerAt
 	}
+	return e.ObservedAt
+}
+
+// latestDriftEvent is the latest event for ref across all managers. Whether its
+// writer is SDO decides if the object counts: an older foreign event never
+// explains a difference a later SDO write made.
+func latestDriftEvent(events []sdk.DriftEvent, ref sdk.ObjectRef) *sdk.DriftEvent {
+	var best *sdk.DriftEvent
 	for index := range events {
 		event := &events[index]
-		if event.Ref.Kind != ref.Kind || event.Ref.Name != ref.Name || sdk.IsSDOFieldManager(event.Manager) {
+		if event.Ref.Kind != ref.Kind || event.Ref.Name != ref.Name {
 			continue
 		}
-		if best == nil || when(event).After(when(best)) {
+		if best == nil || driftEventTime(event).After(driftEventTime(best)) {
 			best = event
 		}
 	}
 	return best
 }
 
+// sdoWroteLast reports that, by managedFields time across all managers, the
+// object's latest writer is one of SDO's. Status-subresource entries are
+// controllers reporting state, not writers of the declared object. An object
+// with no field ownership records says nothing, so it is not SDO's.
+func sdoWroteLast(object *unstructured.Unstructured) bool {
+	var latest string
+	var at time.Time
+	for _, entry := range object.GetManagedFields() {
+		if entry.Time == nil || entry.Subresource == "status" {
+			continue
+		}
+		if latest == "" || entry.Time.Time.After(at) {
+			latest, at = entry.Manager, entry.Time.Time
+		}
+	}
+	return latest != "" && sdk.IsSDOFieldManager(latest)
+}
+
+// podReferencesSecret reports whether the Pod reads the named Secret.
+func podReferencesSecret(pod corev1.Pod, name string) bool {
+	for _, volume := range pod.Spec.Volumes {
+		if volume.Secret != nil && volume.Secret.SecretName == name {
+			return true
+		}
+	}
+	for _, container := range append(append([]corev1.Container{}, pod.Spec.InitContainers...), pod.Spec.Containers...) {
+		for _, from := range container.EnvFrom {
+			if from.SecretRef != nil && from.SecretRef.Name == name {
+				return true
+			}
+		}
+		for _, env := range container.Env {
+			if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil && env.ValueFrom.SecretKeyRef.Name == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // secretDeparture reports a Secret whose data a non-SDO manager changed after
-// a Pod started, so a running reader may hold the old value. It uses
-// SecretMetadata only; a Secret never has its values read or compared.
+// a Pod that reads it started, so a running reader may hold the old value. It
+// uses SecretMetadata only; a Secret never has its values read or compared.
+// DataChangedAt counts only non-SDO managers; a later SDO write recorded as a
+// drift event retires the claim.
 func secretDeparture(in DepartureInput, ref sdk.ObjectRef) (SourceDeparture, bool) {
 	for _, secret := range in.View.Secrets() {
-		if secret.Name != ref.Name || secret.DataChangedAt.IsZero() {
+		if secret.Name != ref.Name || secret.Namespace != ref.Namespace && secret.Namespace != "" && ref.Namespace != "" || secret.DataChangedAt.IsZero() {
+			continue
+		}
+		if event := latestDriftEvent(in.Events, ref); event != nil && sdk.IsSDOFieldManager(event.Manager) && !driftEventTime(event).Before(secret.DataChangedAt) {
 			continue
 		}
 		for _, pod := range in.View.Pods() {
-			if pod.CreationTimestamp.Time.Before(secret.DataChangedAt) {
+			if pod.CreationTimestamp.Time.Before(secret.DataChangedAt) && podReferencesSecret(pod, ref.Name) {
 				return SourceDeparture{Ref: ref, Kind: DepartureSecretData, At: secret.DataChangedAt, Manager: "a non-sdo manager"}, true
 			}
 		}
