@@ -30,11 +30,12 @@ components:
     workload: Deployment/metrics
     services: [metrics]
     holds_data: false
+    unprobed: fire-and-forget push; no response reaches the user
 edges:
   - {from: web, to: orders, evidence: [config, observed], source: web/config.yaml}
   - {from: orders, to: orders-db, evidence: [config], source: orders/db.go}
   - {from: orders, to: orders-cache, evidence: [config], source: orders/cache.go}
-  - {from: web, to: metrics, evidence: [config], source: web/config.yaml, unprobed: fire-and-forget push; no response reaches the user}
+  - {from: web, to: metrics, evidence: [config], source: web/config.yaml}
 operations:
   - id: place-order
     writes: true
@@ -71,9 +72,10 @@ Rules the memory check enforces:
 - `call` scenarios are in workload `probe-call`, `write-read` scenarios (a write side effect, at least one
   writing operation) in `probe-write`, `read-later` scenarios (read side effect, a data-holding component on the
   path) in `probe-read-later`. Each scenario is in exactly one of them and has one probe entry.
-- Coverage: every edge from an entry component lies on the path of a probed operation, or carries `unprobed`, one
-  line saying why no synthetic request can cross it (needing a login is not a reason: a scenario logs in as a test
-  identity); every operation is in a call or write-read probe; every writing operation is in a write-read probe;
+- Coverage: every component reachable from a user entry Service (exposed outside the cluster; else the entry
+  Services of your operations) lies on the path of a probed operation that enters at a user entry Service, or the
+  component carries `unprobed`, one line saying why no synthetic request can reach it (needing a login is not a
+  reason: a scenario signs in as a probe user); every operation is in a call or write-read probe; every writing operation is in a write-read probe;
   every data-holding component on a writing operation's path is on a read-later probe's path. An operation broken
   in the application as deployed is covered by a probe whose workload scenario is declared `knownBroken`
   (`knownBroken: {reason: <one line>, failsWith: ["404"]}`); at most half of the operations may be.

@@ -38,13 +38,18 @@ see them as notes. The diagnostic names the operation, component, edge or probe 
   operations no gated probe exercises, without a write-read or read-later probe; it never gates health. Each such
   probe must exercise one operation no gated probe covers, and these operations are at most half of the map's.
   Enforced by: `map.known-broken`.
-- Every edge from an entry component (the first component of an operation's path, or a component whose Service no
-  edge calls) lies on the path of an operation some probe exercises, or records `unprobed: <why>` when no
-  synthetic request can cross it. Enforced by: `map.uncovered-edge`. A recorded reason is a coverage gap note in
-  the operability report, and a probe that crosses the edge makes the reason wrong (`map.schema`). Enforced by:
-  `map.unprobed-edge`.
-- Any other edge no operation path crosses is noted, never refused: add the operation that uses it, or keep it as
-  a known gap. Enforced by: `map.unexercised-edge`.
+- User entry Services are the Services the manifests expose outside the cluster (NodePort, LoadBalancer, an
+  Ingress backend; the inventory's `exposure:` lines), metrics ports excluded. When none is mapped, they are the
+  entry Services of your declared operations. A Service nothing calls is not an entry by itself. Every component
+  reachable from an entry component over mapped edges (or a listed possible edge) is covered by a probe whose
+  operation enters at a user entry Service and includes the component on its path, or the component records
+  `unprobed: <why>` when no synthetic request can reach it. An operation entering elsewhere (a metrics scrape, an
+  internal API) covers nothing. Enforced by: `map.coverage`.
+- A recorded component reason is a coverage gap note in the operability report; the component is then verified
+  at reachability strength (its link dials) only. A probe that covers the component makes the reason wrong
+  (`map.schema`). An exposed Service users never use (an operator or observability UI) records the reason on its
+  component. `unprobed` on an edge is an informational note only and satisfies nothing. Enforced by:
+  `map.unprobed`.
 - A possible edge Go lists above the map (a Secret reference names the callee's Service; the address is unread) is
   noted until the map has the edge: confirm the call on the live application and add it. Enforced by:
   `map.possible-edge`.

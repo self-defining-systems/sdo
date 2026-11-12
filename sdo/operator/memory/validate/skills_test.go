@@ -34,7 +34,6 @@ var internalRules = map[string]string{
 	RuleDeploymentInvalid:       "Go writes the canonical plan.yaml during deployment admission; no skill flow edits it",
 
 	RuleReflectionDetectorRequired: "a coverage-gap name, recorded and never refused; the skills teach linking detectors",
-	RuleTrafficUndrivenEdge:        "a coverage-gap name, recorded and never refused; the detector-authoring skill teaches driving every edge",
 	RuleTrafficDefaultLatency:      "a coverage-gap name, recorded and never refused; the detector-authoring skill teaches latency bounds",
 }
 

@@ -10,11 +10,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-_EDGE = re.compile(r"^(\s*- \{from: .*?)\}\s*$")
+_COMPONENT = re.compile(r"^(\s*- \{name: [^,]+, )(.*)$")
 
 
-def record_unprobed_edges(architecture: Path) -> None:
-    """This designer writes no probes: record every mapped edge as unprobed, with the reason."""
+def record_unprobed_components(architecture: Path) -> None:
+    """This designer writes no probes: record every mapped component as unprobed, with the reason."""
     if not architecture.exists():
         return
     text = architecture.read_text()
@@ -27,9 +27,9 @@ def record_unprobed_edges(architecture: Path) -> None:
         return
     lines = []
     for line in region.split("\n"):
-        match = _EDGE.match(line)
+        match = _COMPONENT.match(line)
         if match and "unprobed:" not in line:
-            line = match.group(1) + ", unprobed: the scripted designer writes no probes}"
+            line = match.group(1) + "unprobed: the scripted designer writes no probes, " + match.group(2)
         lines.append(line)
     architecture.write_text(head + begin + "\n".join(lines) + end + tail)
 
@@ -37,7 +37,7 @@ def record_unprobed_edges(architecture: Path) -> None:
 def main() -> None:
     task = json.loads(Path(sys.argv[1]).read_text())
     root = Path(task["workspace"]["checkoutPath"])
-    record_unprobed_edges(root / ".sdo/arch.md")
+    record_unprobed_components(root / ".sdo/arch.md")
     detector = root / ".sdo/diagnostics/detectors/health/application-config"
     detector.mkdir(parents=True, exist_ok=True)
     (detector / "manifest.yaml").write_text("""apiVersion: sdo.dev/v1alpha1

@@ -77,7 +77,7 @@ func TestCheckMemoryClassifiesByFamily(t *testing.T) {
 
 func TestNotesNeverBlockAndAreSplitByFamily(t *testing.T) {
 	checks := offline.CheckMemory(offline.Memory{OwnershipChecked: true, Notes: []offline.Finding{
-		finding("map.unexercised-edge", ".sdo/arch.md", "edge never exercised"),
+		finding("map.unprobed", ".sdo/arch.md", "component not probed: needs a device"),
 		finding("reflection.sdk-gap-unavailable", ".sdo/x", "gap"),
 	}})
 	got := byID(t, checks)

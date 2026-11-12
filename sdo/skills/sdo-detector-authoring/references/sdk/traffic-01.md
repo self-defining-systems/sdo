@@ -51,7 +51,6 @@ func LinkFindingIn(spec sdk.DetectorSpec, namespace string, setting LinkSetting,
 func NewDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
 func NewLinkDetector(spec sdk.DetectorSpec, workload string) sdk.Detector
 func ScenarioFinding(spec sdk.DetectorSpec, namespace string, workload Workload, ...) sdk.Finding
-func UndrivenLinkNote(link Link) string
 type Arrival string
     const ArrivalUniform Arrival = "uniform" ...
 type Catalog []Scenario
@@ -75,7 +74,6 @@ type HTTPEndpoint struct{ ... }
     func PUT(path string, query Params) *HTTPEndpoint
 type KnownBroken struct{ ... }
 type Link struct{ ... }
-    func UndrivenLinks(catalog Catalog, workloads []Workload) []Link
 type LinkCondition string
     const LinkUnreachable LinkCondition = "unreachable" ...
 type LinkFailureClass string

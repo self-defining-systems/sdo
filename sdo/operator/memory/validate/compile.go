@@ -82,13 +82,6 @@ func (s *run) compile(ctx context.Context) error {
 		for _, gap := range gaps {
 			s.req.noteGaps(Diagnostic{Rule: RuleReplayObservation, Path: layout.PlaybooksDir, Message: gap})
 		}
-		edges, edgeErr := workspace.TrafficCoverageGaps()
-		if edgeErr != nil {
-			s.req.noteGaps(Diagnostic{Rule: RuleTrafficUndrivenEdge, Path: layout.TrafficWorkloadsDir, Message: "traffic coverage unverified: " + edgeErr.Error()})
-		}
-		for _, edge := range edges {
-			s.req.noteGaps(Diagnostic{Rule: RuleTrafficUndrivenEdge, Path: layout.TrafficWorkloadsDir, Message: edge})
-		}
 		bounds, boundErr := workspace.TrafficLatencyGaps()
 		if boundErr != nil {
 			s.req.noteGaps(Diagnostic{Rule: RuleTrafficDefaultLatency, Path: layout.TrafficWorkloadsDir, Message: "traffic latency bounds unverified: " + boundErr.Error()})

@@ -17,10 +17,6 @@ func ScenarioFinding(spec sdk.DetectorSpec, namespace string, workload Workload,
     the Service the scenario calls; the Services it depends on are related,
     so the finding localizes the fault along the request path.
 
-func UndrivenLinkNote(link Link) string
-    UndrivenLinkNote is the non-blocking memory-check note for an edge
-    UndrivenLinks returns.
-
 
 TYPES
 

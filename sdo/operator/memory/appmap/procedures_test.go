@@ -37,7 +37,7 @@ func procedureFindings(t *testing.T, procedures string) []Finding {
 	t.Helper()
 	var out []Finding
 	for _, f := range mustParse(t, shopYAML+procedures).Check(ParseInventory(procedureInventory), shopWorkloads) {
-		if f.Rule != RuleUnexercisedEdge {
+		if f.Rule != RuleCoverage {
 			out = append(out, f)
 		}
 	}

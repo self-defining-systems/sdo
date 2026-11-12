@@ -8,9 +8,10 @@ Toy API depends on the store.
 Resources: [{'kind': 'Service', 'name': 'api', 'namespace': 'default', 'source': 'deploy/api.yaml', 'dependencies': []}]
 Validation feedback: No validator feedback is available for the first round.
 
-Probe every mapped edge from an entry component: an operation whose path crosses it and a probe that exercises
-it. A probe coverage section after the architecture lists the edges the accepted map leaves uncovered. Record an
-edge `unprobed` only when no synthetic request can cross it; needing authentication is not such a reason.
+Probe every component on the user path: an operation that enters at a user entry Service (exposed outside the
+cluster) whose path includes it, and a probe that exercises it. A probe coverage section after the architecture
+lists the components the accepted map leaves uncovered. Record a component `unprobed` only when no synthetic
+request can reach it; needing authentication is not such a reason.
 
 Follow /opt/sdo/skills/sdo-operationalize/SKILL.md: map the application, write probes and detectors from the
 map, and calibrate them on the live application. The skill directory is the one place outside this checkout you
@@ -96,9 +97,8 @@ covers breaks.
    stores, not services it does not run. Protocols: http (optional http.path, http.statusMin/statusMax), grpc
    (grpc.tls when required), redis, memcached, mongodb, postgres or mysql; tcp only when none fits. A link proves
    the server answers its protocol, not that queries succeed. Optional: interval (1s), timeout (1s), failures
-   (5 consecutive failed fresh probes report the edge). `sdo-operator memory check` notes each link no
-   health-probe scenario drives (`traffic.undriven-edge`); drive it, or record why no synthetic request can
-   cross it as `unprobed` on its map edge.
+   (5 consecutive failed fresh probes report the edge). A component no probed user operation covers is verified
+   only through the links into it, so map one link for each edge into a user-path component.
 Omit synthetic traffic only for an application that serves no HTTP.
 
 Application telemetry (optional input). task.telemetry lists the bound sources, each with its kinds and query

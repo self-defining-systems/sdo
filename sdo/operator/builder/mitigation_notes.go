@@ -38,10 +38,6 @@ func (workspace *Workspace) MitigationReplayResults() ([]sdktest.MitigationRepla
 	return results, nil
 }
 
-// trafficCoverageNotes is the generated traffic test's file of undriven
-// dependency edges, beside the program replay's coverage-gaps.json.
-const trafficCoverageNotes = "traffic-coverage-gaps.json"
-
 // trafficLatencyNotes is the generated traffic test's file of health-probe
 // scenarios that keep the default latency bound.
 const trafficLatencyNotes = "traffic-latency-gaps.json"
@@ -56,12 +52,6 @@ func (workspace *Workspace) CoverageGaps() ([]string, error) {
 	}
 	gaps = append(gaps, recorded...)
 	return append(gaps, workspace.advisoryTestErrors...), nil
-}
-
-// TrafficCoverageGaps reads the generated traffic test's non-blocking notes:
-// the declared dependency edges no health-probe scenario drives.
-func (workspace *Workspace) TrafficCoverageGaps() ([]string, error) {
-	return workspace.generatedNotes(trafficCoverageNotes)
 }
 
 // TrafficLatencyGaps reads the generated traffic test's non-blocking notes:

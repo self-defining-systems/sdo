@@ -112,9 +112,9 @@ const (
 
 	// Application map (the region of .sdo/arch.md the detection designer owns).
 	// Blocking for the designer's commits once a map exists, notes for other
-	// actors; map.missing, map.unexercised-edge and map.unprobed-edge are
-	// always notes. map.uncovered-edge is an edge from an entry component that
-	// no probed operation crosses and that records no unprobed reason.
+	// actors; map.missing, map.unprobed and map.possible-edge are always
+	// notes. map.coverage is a user-path component no probed user operation
+	// covers and that records no unprobed reason.
 	RuleMapMissing         = "map.missing"
 	RuleMapSchema          = "map.schema"
 	RuleMapUnknownName     = "map.unknown-name"
@@ -122,9 +122,8 @@ const (
 	RuleMapUncoveredOp     = "map.uncovered-operation"
 	RuleMapUncoveredWrite  = "map.uncovered-write"
 	RuleMapUncoveredData   = "map.uncovered-data"
-	RuleMapUnexercisedEdge = "map.unexercised-edge"
-	RuleMapUncoveredEdge   = "map.uncovered-edge"
-	RuleMapUnprobedEdge    = "map.unprobed-edge"
+	RuleMapCoverage        = "map.coverage"
+	RuleMapUnprobed        = "map.unprobed"
 	RuleMapKnownBroken     = "map.known-broken"
 	RuleMapPossibleEdge    = "map.possible-edge"
 	// Ownership of the map region: the designer changes nothing outside it,
@@ -143,9 +142,6 @@ const (
 
 	// Informational replay evidence, never an acceptance diagnostic.
 	RuleReplayObservation = "program.replay-observation"
-	// Informational traffic coverage: a declared dependency edge no
-	// health-probe scenario drives. Never an acceptance diagnostic.
-	RuleTrafficUndrivenEdge = "traffic.undriven-edge"
 	// Informational traffic coverage: a health-probe scenario that keeps the
 	// default latency bound. Never an acceptance diagnostic.
 	RuleTrafficDefaultLatency = "traffic.default-latency"

@@ -15,7 +15,7 @@ func TestProvenanceAcceptsAManifestDerivedMap(t *testing.T) {
 	text = strings.Replace(text, "from: api, to: db, evidence: [config, observed], source: config/api.json", "from: api, to: db, evidence: [manifest, observed], source: Deployment/api env DB_HOST=db:5432", 1)
 	m := mustParse(t, text)
 	for _, f := range m.Check(ParseInventory(shopInventory), shopWorkloads) {
-		if f.Rule != RuleUnexercisedEdge {
+		if f.Rule != RuleCoverage {
 			t.Fatalf("finding = %+v", f)
 		}
 	}

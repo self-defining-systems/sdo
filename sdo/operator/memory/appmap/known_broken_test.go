@@ -30,7 +30,7 @@ func TestKnownBrokenProbeCoversItsOperation(t *testing.T) {
 	m := mustParse(t, brokenShop("  - {scenario: call-review, kind: call, operations: [review]}\n"))
 	var findings []Finding
 	for _, f := range m.Check(ParseInventory(shopInventory), brokenWorkloads("call-review")) {
-		if f.Rule != RuleUnexercisedEdge {
+		if f.Rule != RuleCoverage {
 			findings = append(findings, f)
 		}
 	}
