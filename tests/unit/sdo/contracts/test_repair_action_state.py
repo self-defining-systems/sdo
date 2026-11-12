@@ -63,28 +63,3 @@ _UNVERIFIED = RepairActionReceipt(action_id="sdo-program-plan-s-1", kind="progra
 )
 def test_repair_action_state(action: RepairActionReceipt, applications: list[PlanApplication], state: str) -> None:
     assert repair_action_state(action, applications) == state
-
-
-def test_reflection_brief_shows_failed_only_with_a_reason() -> None:
-    from sdo.agents.responder.reflection_brief import _result_section
-    from sdo.contracts import IncidentResult
-
-    result = IncidentResult(incident_id="i", status="completed")
-    result.plan_applications.append(_clean())
-    result.repair_actions.append(
-        RepairActionReceipt(action_id="sdo-program-plan-s-1", kind="program-plan", target="Deployment/api", summary="a")
-    )
-    result.repair_actions.append(
-        RepairActionReceipt(
-            action_id="sdo-program-plan-s-2",
-            kind="program-plan",
-            target="Deployment/db",
-            summary="b",
-            failure_reason="rolled_back",
-        )
-    )
-    lines = [line for line in _result_section(result, "").splitlines() if "Deployment/" in line]
-    assert len(lines) == 2
-    assert "applied" in lines[0]
-    assert "FAILED" not in lines[0]
-    assert "FAILED" in lines[1]

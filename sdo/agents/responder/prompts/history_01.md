@@ -1,1 +1,0 @@
-- ${detector_id}: ${len} evaluation(s) ${iso} .. ${iso_2}; latest statuses: ${statuses}

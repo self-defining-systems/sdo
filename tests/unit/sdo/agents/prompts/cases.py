@@ -8,7 +8,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from google.protobuf import json_format
 from google.protobuf.timestamp_pb2 import Timestamp
 
 from benchmarks.sregym.adapter.runtime import _responder_instructions
@@ -21,8 +20,7 @@ from sdo.agents.lifecycle.agents import (
 from sdo.agents.responder import codex, reflection
 from sdo.agents.responder.codex import _responder_prompt
 from sdo.agents.responder.memory_check import ValidationResult
-from sdo.agents.responder.reflection import CodexSessionBackend, ReflectionTurn, SessionReflector
-from sdo.agents.responder.reflection_brief import incident_brief
+from sdo.agents.responder.reflection import cleanup_prompt, closing_prompt
 from sdo.agents.responder.session_recovery import SessionRecovery
 from sdo.agents.responder.session_turn import branch_correction, branch_instruction
 from sdo.agents.source_deployment import worker
@@ -30,9 +28,7 @@ from sdo.contracts import (
     DetectorEvaluation,
     Finding,
     HealthJudgeRequest,
-    IncidentClosure,
     IncidentRequest,
-    IncidentResult,
     MemoryDetector,
     MemoryDiagnostic,
     MemoryPlaybook,
@@ -42,10 +38,7 @@ from sdo.contracts import (
     MitigationSession,
     ObjectRef,
     OperationalMemorySnapshot,
-    OutcomeRecord,
     PriorOutcomeEvidence,
-    ReflectionCauseWork,
-    ReflectionWorkItem,
     SourceDeploymentRequest,
     StateChange,
     StateChanges,
@@ -158,165 +151,8 @@ def responder_prompt(request: IncidentRequest) -> str:
     return _responder_prompt(request)
 
 
-class ReflectionCapture:
-    def __init__(self) -> None:
-        self.prompt = ""
-
-    def resume(self, *, session_id: str, worktree: Path, prompt: str, idempotency_key: str) -> ReflectionTurn:
-        self.prompt = prompt
-        return ReflectionTurn(summary="toy capture", learning_decision="no_change", no_change_reason="synthetic")
-
-    def fresh(self, *, worktree: Path, prompt: str, idempotency_key: str) -> ReflectionTurn:
-        return self.resume(session_id="", worktree=worktree, prompt=prompt, idempotency_key=idempotency_key)
-
-
 def _toy_ref(kind: str, name: str, api_version: str = "v1") -> dict[str, str]:
     return {"api_version": api_version, "kind": kind, "namespace": "toy", "name": name}
-
-
-def live_shaped_reflection(scale: int = 1) -> SimpleNamespace:
-    """A reflection input with the record shapes of a live outcome; ``scale`` multiplies its lists.
-
-    Live outcomes carry few lists of deep records (repair receipts, plan
-    applications, per-cause questions), unlike the flat findings above.
-    """
-    request = incident(2 * scale, warm=True, drift=True, real_scale=scale > 1)
-    request.namespace_onboarding.namespace = "toy"
-    request.namespace_onboarding.accepted_commit = "a" * 40
-    for index in range(26 * scale):
-        request.namespace_onboarding.objects.add(**_toy_ref("ConfigMap", f"toy-config-{index}"))
-        request.namespace_onboarding.environment_objects.add(
-            ref=ObjectRef(**_toy_ref("Service", f"toy-service-{index}")), digest="sha256:" + "e" * 64
-        )
-    for index in range(2 * scale):
-        request.playbook_coverage.matches.add(
-            playbook_id="repair-0",
-            program_revision="r" * 64,
-            explained_finding_fingerprints=[finding.fingerprint for finding in request.findings[index::2]],
-            can_mitigate=True,
-            verified_successes=3,
-        )
-    plan = {"actions": [{"reconcile_from_source": {"ref": _toy_ref("ConfigMap", "toy-config")}}]}
-    outcome = json_format.ParseDict(
-        {
-            "schema_version": 1,
-            "incident_id": request.incident_id,
-            "classification": "success",
-            "findings": [
-                json_format.MessageToDict(item, preserving_proto_field_name=True) for item in request.findings
-            ],
-            "confirmed_root_causes": [
-                {
-                    "summary": "unexplained drift; restore accepted-source differences unless evidence shows "
-                    "intended drift, then verify",
-                    "resources": [_toy_ref("ConfigMap", f"toy-config-{index}")],
-                    "explained_detectors": ["drift.unexplained"],
-                }
-                for index in range(scale)
-            ],
-            "repair_actions": [
-                {
-                    "action_id": f"sdo-program-toy-mitigation-{index}-r1",
-                    "kind": "program-plan",
-                    "target": f"ConfigMap/toy-config-{index}",
-                    "resources": [_toy_ref("ConfigMap", f"toy-config-{index}")],
-                    "summary": "applied program plan action:ReconcileFromSource",
-                    "details": f"controller confirmed 1 applied resource effects in toy-mitigation-{index}-r1",
-                    "started_at": "2026-01-01T00:00:00.000000000Z",
-                    "completed_at": "2026-01-01T00:00:01.000000000Z",
-                    "success": True,
-                }
-                for index in range(3 * scale)
-            ],
-            "plan_applications": [
-                {
-                    "plan": plan,
-                    "applied": True,
-                    "verification": {"result": "RESULT_MATCH"},
-                    "application_id": f"toy-mitigation-{index}-r1",
-                    "program_ids": ["action:ReconcileFromSource"],
-                    "actions_applied": plan["actions"],
-                    "verification_completed": True,
-                    "action_reports": [{"status": "applied"}],
-                }
-                for index in range(2 * scale)
-            ],
-        },
-        OutcomeRecord(),
-    )
-    question = (
-        "No opening detector observed this recorded configuration repair. Propose diagnosis, mitigation and "
-        "detector coverage from its captured before/after transition."
-    )
-    cause_work = [
-        ReflectionCauseWork(
-            cause_index=index,
-            resources=[ObjectRef(**_toy_ref("ConfigMap", f"toy-config-{index}"))],
-            items=[
-                ReflectionWorkItem(
-                    disposition="question",
-                    question=question,
-                    reason="unbound_write",
-                    resources=[ObjectRef(**_toy_ref("ConfigMap", f"toy-config-{index}"))],
-                )
-            ],
-        )
-        for index in range(scale)
-    ]
-    unassigned = [
-        ReflectionWorkItem(
-            disposition="question",
-            question="A repaired resource is outside confirmed cause groups. Review the write without a cause.",
-            reason="unbound_write",
-            resources=[ObjectRef(**_toy_ref("Service", "toy-service"))],
-        )
-    ]
-    return SimpleNamespace(
-        closure=IncidentClosure(request=request),
-        outcome=outcome,
-        cause_work=cause_work,
-        unassigned_work=unassigned,
-    )
-
-
-def recorded_scale_reflection() -> SimpleNamespace:
-    """Synthetic values at recorded run19 cardinalities, never copied run artifacts.
-
-    The 63-task run19 replay found maxima of 20 causes / 91 questions and 24
-    repair receipts. Names, prose and resources here are deliberately synthetic.
-    Full recording provenance and measurements live in the CTXFAIL1 handoff.
-    """
-    live = live_shaped_reflection()
-    del live.cause_work[:]
-    del live.unassigned_work[:]
-    for cause_index in range(20):
-        cause = ReflectionCauseWork(
-            cause_index=cause_index,
-            resources=[ObjectRef(**_toy_ref("ConfigMap", f"toy-cause-{cause_index}"))],
-        )
-        for index in range(5 if cause_index < 11 else 4):
-            question = (
-                f"Synthetic question {cause_index}/{index}: " + "Which recorded observation explains this repair? " * 3
-            )
-            cause.items.add(
-                disposition="question",
-                question=question,
-                reason="unbound_write",
-                program_id=f"toy-program-{cause_index}",
-                program_revision="r" * 64,
-                resources=[ObjectRef(**_toy_ref("ConfigMap", f"toy-cause-{cause_index}"))],
-            )
-        live.cause_work.append(cause)
-    original = type(live.outcome.repair_actions[0])()
-    original.CopyFrom(live.outcome.repair_actions[0])
-    del live.outcome.repair_actions[:]
-    for index in range(24):
-        action = live.outcome.repair_actions.add()
-        action.CopyFrom(original)
-        action.action_id = f"synthetic-repair-{index}"
-        action.summary = f"Synthetic repair {index}: restore the accepted configuration."
-        action.details = "Synthetic controller-confirmed resource effect. " * 6
-    return live
 
 
 SEED_HEALTH_SIZES = (("hotel", 866, 793), ("social", 101, 788), ("astronomy", 972, 793))
@@ -347,109 +183,14 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
         prompts["responder_transport"] = responder_prompt(scaled())
         patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "Use the toy incident transport.")
 
-        for mode in ("resume", "fresh", "retry", "fresh_retry"):
-            for count in (2, 5):
-                capture = ReflectionCapture()
-                request = scaled(count, warm=True, drift=True)
-                closure = IncidentClosure(
-                    request=request,
-                    result=IncidentResult(
-                        incident_id=request.incident_id,
-                        status="completed",
-                        responder_session_id="toy-session",
-                    ),
-                )
-                outcome = OutcomeRecord(
-                    schema_version=1,
-                    incident_id=request.incident_id,
-                    classification="success",
-                    findings=request.findings,
-                )
-                SessionReflector(capture, guidance="generalize-spec").resume(
-                    session_id="toy-session",
-                    incident_id=request.incident_id,
-                    worktree=Path("/application"),
-                    outcome=outcome,
-                    history=[OutcomeRecord(schema_version=1, incident_id="prior-toy", classification="success")],
-                    outcome_commit="d" * 40,
-                    closure=closure,
-                    session_mode="fresh" if mode in {"fresh", "fresh_retry"} else "resume",
-                    diagnostics=[
-                        MemoryDiagnostic(rule="toy-rule", path="toy.go", line=3, message="fix toy", hint="check type")
-                    ]
-                    if mode in {"retry", "fresh_retry"}
-                    else (),
-                )
-                prompts[f"reflection_{mode}_{count}"] = capture.prompt
-        capture = ReflectionCapture()
-        SessionReflector(capture).resume(
-            session_id="toy-session",
-            incident_id="toy-incident",
-            worktree=Path("/application"),
-            outcome=OutcomeRecord(schema_version=1, incident_id="toy-incident", classification="failed"),
-            history=[],
-            outcome_commit="d" * 40,
-            closure=IncidentClosure(request=scaled(5)),
-            unassigned_work=[
-                ReflectionWorkItem(
-                    program_id="repair-0",
-                    disposition="question",
-                    question="Which live observation establishes the repair?",
-                    reason="synthetic work item",
-                )
-            ],
-        )
-        prompts["reflection_cause_work"] = capture.prompt
-        live_capture = ReflectionCapture()
-        live = live_shaped_reflection(scale)
-        SessionReflector(live_capture).resume(
-            session_id="toy-session",
-            incident_id="toy-incident",
-            worktree=Path("/application"),
-            outcome=live.outcome,
-            history=[],
-            outcome_commit="d" * 40,
-            closure=live.closure,
-            cause_work=live.cause_work,
-            unassigned_work=live.unassigned_work,
-        )
-        prompts["reflection_live_shape"] = live_capture.prompt
-
+        changes = ["1. 03:04:05 api-exec Pod/db-1", "2. 03:04:06 api-delete Pod/api-1"]
+        prompts["closing_learning"] = closing_prompt(incident_id="toy-incident", changes=changes)
+        prompts["closing_cleanup"] = cleanup_prompt(leftovers=["app/main.go", "app/debug.txt"], turn=1)
         prompts["reflection_memory_check_correction"] = reflection.memory_check_correction(
-            ValidationResult(1, False, "reflection.program-required: verified cause 1 lacks replay coverage", ""),
+            ValidationResult(1, False, "playbook.component-literal: names a component", ""),
             "reflection:toy-incident:outcome",
         )
 
-        class CapturedPrompt(Exception):
-            pass
-
-        for api_history in (False, True):
-            if api_history:
-                patch.setenv("SDO_API_HISTORY_DIR", "/synthetic-history")
-            else:
-                patch.delenv("SDO_API_HISTORY_DIR", raising=False)
-
-            def capture_transport(
-                _provider: str, prompt: str, *, _api_history: bool = api_history, **_kwargs: object
-            ) -> None:
-                prompts[f"reflection_transport_{_api_history}"] = prompt
-                raise CapturedPrompt
-
-            patch.setattr(reflection, "run_structured_turn", capture_transport)
-            try:
-                CodexSessionBackend(reasoning_effort="medium").fresh(
-                    worktree=Path("/application"),
-                    prompt=capture.prompt,
-                    idempotency_key="reflection:toy-incident:outcome",
-                )
-            except CapturedPrompt:
-                pass
-
-        for count in (2, 5):
-            closure = IncidentClosure(request=scaled(count, oversized=True))
-            prompts[f"reflection_brief_{count}"] = incident_brief(
-                closure, worktree=Path("/application"), detector_detail=True, event_dependence=True
-            )
         for pending in (False, True):
             session = MitigationSession(incident_id="toy-incident", session_id="logical-toy")
             if pending:

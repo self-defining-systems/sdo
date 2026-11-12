@@ -16,11 +16,6 @@ def normalize_prompt(prompt: str) -> str:
         prompt,
     )
     prompt = re.sub(r'"/tmp/sdo/[^"\n]+-incident\.json"', '"<temporary incident facts file>"', prompt)
-    prompt = re.sub(
-        r'("full_outcome_path": ")[^"]*/sdo-reflection-history-[^/"]+/([^"]+)(")',
-        r"\1<temporary reflection history>/\2\3",
-        prompt,
-    )
     return re.sub(r"(?m)^Full incident facts: .+$", "Full incident facts: <temporary incident facts file>", prompt)
 
 
@@ -50,7 +45,7 @@ def test_fixture_skill_root_is_independent_of_checkout(monkeypatch, tmp_path: Pa
     prompts = rendered_cases()
     assert "Read your skills: /opt/sdo/skills/incident-response/SKILL.md" in prompts["responder_cold_two"]
     assert "/opt/sdo/skills/sdo-detector-authoring/references/sdk.md" in prompts["lifecycle_HealthJudgeDraft"]
-    assert "Authoring guide: /opt/sdo/skills/sdo-playbook-authoring/SKILL.md" in prompts["reflection_resume_2"]
+    assert "Read /opt/sdo/skills/playbook-writing/SKILL.md" in prompts["closing_learning"]
 
 
 def test_production_instructions_never_spill_to_context_files() -> None:

@@ -68,7 +68,7 @@ func TestReflectionRequestFitsWhenEveryRunQuotesALargeDiff(t *testing.T) {
 func TestReflectionRequestTooLargeRecordsEveryReductionStep(t *testing.T) {
 	outcome := &contracts.OutcomeRecord{IncidentId: "incident-1", Findings: []*contracts.Finding{{DetectorId: "detector", Evidence: strings.Repeat("f", worker_registry.MaxRequestBytes)}}}
 	outcome.ProgramRuns = []*contracts.ProgramRun{syntheticRun("source-drift", 8<<10, 0)}
-	request := &contracts.ReflectionRequest{Outcome: outcome, PriorOutcomes: []*contracts.OutcomeRecord{{IncidentId: "earlier"}}}
+	request := &contracts.ReflectionRequest{Outcome: outcome}
 	build := reflectionTaskBuilder(request)
 
 	fits, steps, err := fitReflectionRequest(request, build)
@@ -83,7 +83,7 @@ func TestReflectionRequestTooLargeRecordsEveryReductionStep(t *testing.T) {
 		t.Fatal(err)
 	}
 	detail := requestTooLargeDetail(steps, task)
-	for _, rung := range []string{"drop_prior_incident_history", "trim_memory_to_touched", "clip_memory_documents", "clip_program_evidence", "cap_program_runs_and_tool_calls"} {
+	for _, rung := range []string{"trim_memory_to_touched", "clip_memory_documents", "clip_program_evidence", "cap_program_runs_and_tool_calls"} {
 		if !strings.Contains(detail, rung) {
 			t.Fatalf("detail %q does not name step %s", detail, rung)
 		}

@@ -1,1 +1,0 @@
-## Existing operational memory (trusted logical snapshot)

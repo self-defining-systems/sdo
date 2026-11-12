@@ -139,6 +139,7 @@ type Response struct {
 	BuiltinRestoreAuto   bool     `yaml:"builtin_restore_auto" doc:"let the automatic stage apply the built-in source-restore playbook (put a component's non-SDO departures from accepted source back) when its diagnosis matches; off, it is only offered like any playbook and the responder decides"`
 	Permissive           bool     `yaml:"permissive" doc:"broad lane repair permissions excluding Secret and credential APIs"`
 	PermissiveNamespaces []string `yaml:"permissive_namespaces" doc:"additional lane namespaces the permissive responder may repair"`
+	CleanupTurns         int      `yaml:"cleanup_turns" doc:"how many times the responder's session is asked, after Recovered, to keep or remove the app-file edits it left uncaptured; edits still left after that are discarded and recorded as source_repair_uncaptured. 0 asks no cleanup turn"`
 	StartupBound         Duration `yaml:"startup_bound" doc:"how long a new install waits for SDO to see its application healthy (2 min with no opener firing) before incidents open anyway; until then no incident opens. 0s turns the start-up period off"`
 }
 
@@ -192,7 +193,7 @@ func Default() Config {
 			Timeout: Duration(30 * time.Minute), VerificationTimeout: Duration(5 * time.Minute), MaxLoops: 10,
 			DiagnosisDeadline: Duration(10 * time.Second), StageBudget: Duration(45 * time.Second), RepairPolicy: "commit",
 			AfterPlaybook: AfterPlaybookAgent, AfterPlaybookWait: Duration(5 * time.Minute),
-			Standby: true, Menu: true, StartupBound: Duration(30 * time.Minute),
+			CleanupTurns: 2, Standby: true, Menu: true, StartupBound: Duration(30 * time.Minute),
 		},
 		Detection: Detection{
 			SelfHealHold: Duration(DefaultSelfHealHold), StabilityWindow: Duration(15 * time.Second), DriftBatchWindow: Duration(20 * time.Second),
@@ -264,6 +265,9 @@ func (c Config) Validate() error {
 	}
 	positive("response.diagnosis_deadline", c.Response.DiagnosisDeadline)
 	positive("response.stage_budget", c.Response.StageBudget)
+	if c.Response.CleanupTurns < 0 {
+		bad("response.cleanup_turns", "%d must not be negative", c.Response.CleanupTurns)
+	}
 	if c.Response.StartupBound < 0 {
 		bad("response.startup_bound", "%s must not be negative", c.Response.StartupBound)
 	}

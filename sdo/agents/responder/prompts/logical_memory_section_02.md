@@ -1,1 +1,0 @@
-Health detectors (designer-owned, never edit): 

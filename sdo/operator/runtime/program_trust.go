@@ -9,6 +9,7 @@ import (
 	"sdo.dev/operator/sdk/program"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	outcomeclass "sdo.dev/operator/contracts/outcome"
 )
 
 type ProgramTrust struct {
@@ -92,6 +93,33 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 					creditedInOutcome[id] = true
 				}
 				stats[id] = state
+			}
+		}
+		// A close that did not recover users after a playbook applied lowers that playbook's trust, once per
+		// incident and revision. This is about the outcome (the opening alerts did not clear), not about what a
+		// repair did to data, so it does not touch "never a gate or a credit rule": trust gates nothing, it is
+		// the failure count that coverage and `sdo detect` show.
+		if class := outcome.GetClassification(); class == outcomeclass.Failed || class == outcomeclass.Escalated {
+			for _, application := range outcome.GetPlanApplications() {
+				// "Applied" means what the application loop above counts.
+				if application.GetDryRun() || (application.GetRolloutPending() != nil && !applicationExecutionFailed(application)) ||
+					(!application.GetApplied() && len(application.GetActionsApplied()) == 0 && !applicationExecutionFailed(application)) {
+					continue
+				}
+				for _, id := range application.GetProgramIds() {
+					if failedInApplication[id] {
+						continue
+					}
+					revision := revisions[id]
+					if revision == "" {
+						revision = outcome.GetSourceCommit()
+					}
+					state := stateForRevision(id, revision)
+					state.Failures = recordFailure(id, revision)
+					state.VerifiedSuccesses = 0
+					failedInApplication[id] = true
+					stats[id] = state
+				}
 			}
 		}
 		// Success comes only from the controller's persisted exact settlement.

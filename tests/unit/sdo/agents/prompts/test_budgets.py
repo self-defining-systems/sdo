@@ -77,11 +77,11 @@ def test_strict_template_requires_every_value() -> None:
 def test_parts_survive_composition() -> None:
     left = named_prompt("responder.instructions", "é界")
     right = named_prompt("responder.additional_context", "\r\n🙂")
-    prompt = join_prompts("|", [left, right], part="reflection_brief.separators")
+    prompt = join_prompts("|", [left, right], part="reflection.instructions")
     assert prompt.final == "é界|\r\n🙂"
     assert prompt.parts == (
         PromptPart("responder.instructions", "é界"),
-        PromptPart("reflection_brief.separators", "|"),
+        PromptPart("reflection.instructions", "|"),
         PromptPart("responder.additional_context", "\r\n🙂"),
     )
     assert (left + right).parts == (*left.parts, *right.parts)

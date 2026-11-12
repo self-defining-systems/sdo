@@ -55,13 +55,12 @@ def test_scripted_policy_reflection_uses_captured_repair(tmp_path: Path, monkeyp
         "NETWORKPOLICY_PROGRAM_SOURCE",
         ROOT / "benchmarks/sregym/fastloop/scripted_networkpolicy_program",
     )
-    turn = scripts.Reflector().resume(
+    turn = scripts.Reflector().learn(
         worktree=tmp_path,
         incident_id="first-incident",
         closure=SimpleNamespace(
             request=SimpleNamespace(namespace="app", drift_events=[SimpleNamespace(investigation_verdict="bug")])
         ),
     )
-    assert turn.learning_decision == "updated"
-    assert turn.playbook_ids == ["networkpolicy-service-isolation"]
+    assert turn.note
     assert len(calls) == 2

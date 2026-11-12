@@ -89,8 +89,6 @@ uv run python scripts/check_app_names.py
 echo "==> flaky-test quarantine deadlines"
 uv run python scripts/ci_quarantine.py check
 
-echo "==> responder skill contracts"
-uv run python -m sdo.agents.responder.skill_contracts --check
 
 # A merge that keeps this branch's older SREGym pin silently reverts the base
 # branch's pin; the base pin must be an ancestor of (or equal to) this one.

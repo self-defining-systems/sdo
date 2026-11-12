@@ -95,3 +95,12 @@ func TestReflectionRepairVerifiedEnvironment(t *testing.T) {
 		t.Error("an unset fact must leave the check's default")
 	}
 }
+
+func TestMemoryTestTakesExactlyOnePlaybookID(t *testing.T) {
+	for _, args := range [][]string{{"test"}, {"test", "a", "b"}, {"test", "Not A Playbook"}} {
+		var stdout, stderr bytes.Buffer
+		if code := RunMemory(context.Background(), args, func(string) string { return "" }, &stdout, &stderr); code != exitInfra {
+			t.Errorf("memory %v exit = %d, want %d (stderr %q)", args, code, exitInfra, stderr.String())
+		}
+	}
+}

@@ -1,1 +1,0 @@
-- [${severity}] ${detector_id} / ${rule_id}: ${summary} (${ref}; evidence omitted)

@@ -129,3 +129,30 @@ func TestCreditedBindingSourceIsAValidProgramRunContract(t *testing.T) {
 		t.Fatalf("binding source round trip = %q", got)
 	}
 }
+
+// A close that did not recover users after a playbook applied lowers that playbook's trust: one failure per incident, and
+// the success streak resets. A success, an unconfirmed close and a close without an applied playbook change nothing.
+func TestAFailedCloseAfterAnAppliedPlaybookLowersItsTrust(t *testing.T) {
+	earlier := creditOutcome("success")
+	earlier.IncidentId = "earlier"
+	earlier.Timestamps = &contracts.OutcomeTimestamps{CompletedAt: creditAt(-60)}
+	for _, class := range []string{"failed", "escalated"} {
+		failing := creditOutcome(class)
+		failing.IncidentId = "later-" + class
+		failing.Timestamps = &contracts.OutcomeTimestamps{CompletedAt: creditAt(60)}
+		stats := ProgramTrustStats([]*contracts.OutcomeRecord{earlier, failing})["fix"]
+		if stats.Failures != 1 || stats.VerifiedSuccesses != 0 {
+			t.Errorf("%s close: trust = %+v, want one failure and the streak reset", class, stats)
+		}
+	}
+	for _, class := range []string{"success", "unconfirmed", "cleared_without_action"} {
+		stats := ProgramTrustStats([]*contracts.OutcomeRecord{creditOutcome(class)})["fix"]
+		if stats.Failures != 0 {
+			t.Errorf("%s close lowered trust: %+v", class, stats)
+		}
+	}
+	noPlaybook := &contracts.OutcomeRecord{IncidentId: "none", Classification: "failed"}
+	if got := ProgramTrustStats([]*contracts.OutcomeRecord{noPlaybook}); len(got) != 0 {
+		t.Errorf("a failed close with no applied playbook produced trust %v", got)
+	}
+}

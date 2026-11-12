@@ -47,6 +47,7 @@ def _role(schema: dict[str, Any], branch: str | None = None) -> str:
         return "responder" if branch == "incident_result" else "reflector"
     properties = schema.get("properties", {})
     for key, role in (
+        ("note", "reflector"),
         ("learning_decision", "reflector"),
         ("detector_ids", "health-judge"),
         ("proposed", "source-deployment"),
