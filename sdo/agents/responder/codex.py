@@ -15,7 +15,7 @@ from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 from sdo.agents.provider import MODEL_ENV, agent_effort, resolve_agent
 from sdo.agents.replay import selected_skills_root
 from sdo.agents.responder.credentials import SKILLS_ROOT
-from sdo.agents.responder.incident_opening import onset, opened_on
+from sdo.agents.responder.incident_opening import symptom
 from sdo.agents.responder.result_output import parse_incident_result
 from sdo.agents.responder.session_recovery import SessionRecoveryError, open_recovery
 from sdo.agents.responder.session_turn import (
@@ -185,8 +185,7 @@ def _responder_prompt(request: IncidentRequest) -> RenderedPrompt:
         part="responder.instructions",
         incident_id=request.incident_id,
         namespace=request.namespace,
-        opened_on=opened_on(request),
-        onset=onset(request),
+        symptom=symptom(request),
         skills_root=selected_skills_root(SKILLS_ROOT),
         branch_instruction=branch_instruction("incident_result"),
     )
