@@ -16,7 +16,8 @@ ever touches its own lane. Verbs (environment: ``BENCH_*`` and ``FUZZOPS_*``, se
               work; otherwise exit 1 with the reason on the first line (``alarm: incident open <id>`` for an incident).
 ``watch``     the fault window's ``exec:`` command: ``benchmarks.fuzzops.observe``.
 ``collect``   best effort: accepted outcomes and playbooks, the controller state, controller logs since the inject, and
-              from the host sink the interval's incidents and tasks (``evidence/``) and ``transcripts.json``.
+              from the host sink the interval's incidents and tasks (``evidence/``) and ``transcripts.json``; then
+              the dashboard view (``view.json``, ``view/transcripts/``; ``benchmarks.fuzzops.view``).
 ``teardown``  delete the control namespace (waiting, so the evidence sidecar's final pass runs), then the cluster grant
               install-existing made for it.
 ``transcripts`` read-only, the host sink only: exit 0 when ``$BENCH_EVIDENCE_HOST/$BENCH_EVIDENCE_RUN`` is an
@@ -54,7 +55,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from benchmarks.fuzzops import observe, sink
+from benchmarks.fuzzops import observe, sink, view
 from benchmarks.fuzzops.install import (
     CREDENTIALS_SECRET,
     REPOSITORY_PVC,
@@ -921,6 +922,12 @@ def collect(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     part("state", state)
     part("logs", logs)
     part("evidence", evidence)
+
+    def dashboard() -> str:
+        value = view.write(dest)
+        return f"ok ({len(value['events'])} events, {len(value['panels'])} panels)"
+
+    part("view", dashboard)
     summary = {
         "control_namespace": control,
         "run": env.get("BENCH_RUN", ""),

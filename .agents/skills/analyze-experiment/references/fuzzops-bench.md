@@ -35,6 +35,11 @@ run's cap) and the `collect` hook. Later positions of a sequence run on the memo
                                                  as rollout-*.jsonl, scratch/sdo-reports/...), lifecycle/<task>/
       transcripts.json                          {incidents: [{id, outcome, agents_ran, rollouts}], rollouts,
                                                  missing: [ids with outcome and agents_ran but no rollout]}
+      view.json                                 dashboard view (fuzzops.view/v1): summary, hide, events, panels;
+                                                 written by collect's `view` part or `python -m
+                                                 benchmarks.fuzzops.view <run dir>`
+      view/transcripts/<incident12>-{responder,reflection}.jsonl
+                                                redacted fuzzops.transcript/v1 files built from the rollouts
 <root>/evidence/...                             each lane's host sink (BENCH_EVIDENCE_HOST), one run directory
                                                  <exp>-<lane>-<build> per build; append-only, never cleaned by
                                                  the bench; the source of every run's operator/evidence/
@@ -69,7 +74,8 @@ and the render. The `prepare` hook's receipt and log (`install-existing*.json|lo
 - Transcripts (responder and reflection rollouts) live only in `operator/evidence/incidents/*/` (copied from the host
   sink); `operator/transcripts.json` gives per-incident coverage. The lane timeline's `transcripts` check after each
   teardown records `transcripts missing: N` when the sink lost any. Older experiments have `operator/sdo_runtime/`
-  (in-cluster export) instead.
+  (in-cluster export) instead. `operator/view/transcripts/` holds redacted, normalized copies for reading (raw
+  rollouts stay the source; `operator/view.json` `hide` keeps them from the dashboard).
 
 ## SDO table
 

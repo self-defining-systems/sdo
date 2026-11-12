@@ -24,6 +24,7 @@ operator and `run --skip-reset`.
   best-fix, lost writes, harmful actions, lifecycle times, cause class and reach, tokens and cost, auto-applied,
   repeat/first ratios per sequence, churn findings, false alarms from healthy runs and alarms while gating).
 - `hooks.py`: SDO's operator hooks for fuzzops-bench (below).
+- `view.py`: the dashboard view of a collected run (`operator/view.json`, below).
 
 ## fuzzops-bench hooks
 
@@ -38,7 +39,7 @@ fuzzops-bench.md`). It runs `uv run -q python -m benchmarks.fuzzops.hooks <verb>
 | `prepare` | plain-manifest pack from the live app (the namespace's one Helm release, Jobs and namespaces dropped, the pack's other files beside `manifests/`; or the pack's own `manifests/`), refuse a render that differs from the baseline's (key order, document order and null-valued keys ignored), attached pack in `$BENCH_LANE_DIR/pack`, `go build` of `sdo-operator`, `kind load` of `sdo-{controller,responder,script-tools}:<image_tag>` on the workers, namespaces and credentials (`--from-file`), node image digest names, the bundle branch cloned as `main`, production `install-existing` with the baseline's controller flags, the settings' model, effort and provider, and always `--evidence-sink-host-path $BENCH_EVIDENCE_NODE --evidence-run-id $BENCH_EVIDENCE_RUN` (either unset: fails before any work). An operator left in the control namespace is removed first. Last stdout line: `{"pack", "operator_version", "memory"}` |
 | `idle` | two kubectl reads: controller pod (`job-name=sdo-controller-run`) Ready, `sdo-controller-state` written within 60 s (newest managedFields time; every controller step advances `step_count`, so a live controller writes it), and no open incident, pending closure or queued reflection. Busy reasons: `alarm: incident open <id>`, `busy: ...`, `down: ...`, `stale: ...` |
 | `watch` | `observe.py` on the control namespace with `--fault $BENCH_FAULT` (none for a healthy run); no PVC snapshot (the sink carries the evidence) |
-| `collect` | best effort into `BENCH_OUT`: `memory/.sdo/{outcomes,playbooks}`, `controller-state.json`, `controller.log` since the inject (from the cluster), and from the host sink only `evidence/` (the interval's incidents and lifecycle tasks, relative paths kept, with their `index.jsonl` records) and `transcripts.json`; `collect.json` |
+| `collect` | best effort into `BENCH_OUT`: `memory/.sdo/{outcomes,playbooks}`, `controller-state.json`, `controller.log` since the inject (from the cluster), and from the host sink only `evidence/` (the interval's incidents and lifecycle tasks, relative paths kept, with their `index.jsonl` records) and `transcripts.json`; last `view.json` and `view/transcripts/` (below); `collect.json` |
 | `teardown` | delete the control namespace with `--wait` first (its Pods get SIGTERM, so the evidence sidecar runs its final pass), then the `sdo-admin-<control namespace>` ClusterRole and binding; never the app namespace. The bench waits for `idle` before it |
 | `transcripts` | read-only, 2 min, only `$BENCH_EVIDENCE_HOST/$BENCH_EVIDENCE_RUN` on the host: exit 0 when `layout.json` has schema `sdo.evidence/v1` and every `incidents/*/` with a `ledger.json` holds a `rollout-*.jsonl` (anywhere below it) unless no agent ran; else exit 1 with `no sink: <why>` or `transcripts missing: N (<short ids>)` first. The bench runs it at the end of every build check (the lane is not ready until it passes) and after every teardown (a failure is recorded; the reset proceeds) |
 
@@ -81,6 +82,27 @@ fuzzops run --pack <dir>/pack --namespace <ns> --skip-reset --operator exec:sdo 
 
 Baselines (`noop`, `codex`) run on a copy of the same pack deployed by fuzzops itself in another namespace of the
 same cluster, so SDO never sees their namespaces.
+
+## Dashboard view
+
+`view.py` writes what the fuzzops-bench dashboard shows for a run: `operator/view.json` (`fuzzops.view/v1`, contract in
+the fuzzops repository's `docs/bench.md`) and redacted `operator/view/transcripts/*.jsonl` (`fuzzops.transcript/v1`).
+`collect` calls `view.write(dest)` last as the `view` part (a failure is recorded in `collect.json`, never raised);
+`uv run python -m benchmarks.fuzzops.view RUN_DIR [RUN_DIR ...]` regenerates both for existing run directories and
+rewrites nothing else. It reads only the collected copy (`evidence/`, `memory/.sdo/`) and the run's `run.json` /
+`record.json` for the inject time and the run's incidents (`BenchRun.pick`; every incident of the copy without them).
+
+- `summary`: incidents, outcome, cause class, reach, auto-applied, responder tokens, reflection decision, learned count.
+- `events` (lanes `detect`, `stage`, `act`, `close`, `learn`) come from the ledger and outcome document; panels are the
+  incidents table, repair actions, one transcript per responder and reflection turn, and what the reflection learned.
+- Transcripts come from Codex `rollout-*.jsonl` `response_item` entries only, split at `task_started`; a turn whose
+  prompt is about reflection is the reflection transcript. Codex runs carry no reasoning summaries today, so reasoning
+  shows as "reasoning (not summarized)".
+- `redact()` runs on every written string: secret-named key values, bearer/basic credentials, JWTs, API-key prefixes,
+  PEM blocks, base64 data fields and the session's `creator_user_id` / `creator_account_id`. It errs on the side of
+  redacting (a key such as `secret_namespace=x` loses its value). `hide` keeps the raw rollouts, `model_io` and the
+  controller log from being served next to the transcripts.
+- Limits live in the dataclasses (`__post_init__`); `write` clips and caps so the file is always valid.
 
 ## Evidence sink
 
