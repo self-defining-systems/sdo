@@ -903,3 +903,43 @@ reason = "CTXFAIL1: retain the original cause-work allowance for optional settle
 [reflection.outcome_details]
 max_chars = 3600
 reason = "CTXFAIL1: retain the original outcome allowance for optional findings and plan detail; complete repair receipts have their own required cap."
+
+[skills.playbook-writing]
+max_chars = 200
+reason = "Baseline synthetic fixture maximum: 191 Unicode code points; byte-identical template extraction."
+
+[reflection.scriptify]
+max_chars = 600
+reason = "The closing turn's learning message: its literal text is about 400 characters; the incident ID, skill path and one-line reply instruction add the rest. The recorded change list is its own part."
+
+[reflection.cleanup]
+max_chars = 500
+reason = "The closing turn's cleanup message: literal text about 330 characters, plus the cleanup turn number and reply instruction."
+
+[reflection.changes]
+max_chars = 1700
+reason = "Go renders the incident's recorded changes, ranked and cut to 1.5 KB, with a count of lines left out. A non-restore change is never dropped for a restore."
+
+[reflection.leftovers]
+max_chars = 800
+reason = "At most 12 uncaptured app paths, one per line, with a count of the rest."
+
+[template_data.responder-scriptify-incident_id]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-scriptify-skills_root]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-scriptify-branch_instruction]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-cleanup-turn]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-cleanup-branch_instruction]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
