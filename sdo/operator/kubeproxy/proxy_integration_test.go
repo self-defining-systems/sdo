@@ -150,6 +150,17 @@ func TestWriteRecordsFieldPathsForcesTheManagerAndStoresNoBody(t *testing.T) {
 	if got := upstream.last().URL.Query()["fieldManager"]; len(got) != 1 || got[0] != "sdo-responder" {
 		t.Fatalf("upstream fieldManager = %v, want exactly sdo-responder", got)
 	}
+	// The proxy records the end event as the response body closes, which can land after
+	// the client has read its last byte; wait for it instead of racing it.
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		found := false
+		for _, e := range historySnapshot(t, store, dir).Events {
+			found = found || e.Phase == "end"
+		}
+		if found {
+			break
+		}
+	}
 	h := history(t, store, dir)
 	var end apihistory.Event
 	for _, e := range h.Events {
