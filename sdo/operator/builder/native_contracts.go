@@ -18,16 +18,6 @@ import (
 )
 
 func generateRegistrationTest(root string, detectors []layout.Detector) error {
-	linkProbes := map[string]bool{}
-	workloads, err := loadTrafficWorkloads(filepath.Join(root, "traffic", "workloads"))
-	if err != nil {
-		return err
-	}
-	for name, document := range workloads {
-		if strings.Contains(string(document), `"purpose":"link-probe"`) {
-			linkProbes["traffic-"+name] = true
-		}
-	}
 	var source strings.Builder
 	source.WriteString("package generated\n\nimport (\n\"testing\"\n")
 	if len(detectors) > 0 {
@@ -40,25 +30,17 @@ func generateRegistrationTest(root string, detectors []layout.Detector) error {
 		interval, _ := time.ParseDuration(item.Interval)
 		debounce, _ := time.ParseDuration(item.Batching.Debounce)
 		watches := []string{}
-		synthetic := false
 		for _, watch := range item.Watches {
 			watches = append(watches, fmt.Sprintf("{APIVersion:%q, Kind:%q, Namespace:%q}", watch.APIVersion, watch.Kind, watch.Namespace))
-			if watch.APIVersion == "sdo.dev/v1alpha1" && watch.Kind == "SyntheticTraffic" {
-				synthetic = true
-			}
 		}
 		playbooks := []string{}
 		for _, playbook := range item.PossiblePlaybooks {
 			playbooks = append(playbooks, strconv.Quote(playbook))
 		}
-		minDuration := ""
-		if item.Class == "health" && synthetic && !linkProbes[item.ID] {
-			minDuration = ", MinDuration: 9000000000"
-		}
 		fmt.Fprintf(&source, `    {
         got := detectors[%d].Spec()
         if got.ID != %q || string(got.Class) != %q || string(got.Owner) != %q || got.Interval != time.Duration(%d) ||
-            got.Persistence != (sdk.PersistencePolicy{Firing:%d, Clearing:%d%s}) ||
+            got.Persistence != (sdk.PersistencePolicy{Firing:%d, Clearing:%d}) ||
             got.Batching != (sdk.BatchingPolicy{Severity:sdk.FindingSeverity(%q), Debounce:time.Duration(%d)}) ||
             got.OriginatingIncident != %q || got.OriginatingCommit != %q ||
             !reflect.DeepEqual(got.Watches, []sdk.WatchKind{%s}) ||
@@ -66,7 +48,7 @@ func generateRegistrationTest(root string, detectors []layout.Detector) error {
             t.Errorf("detector registration mismatch for %%q: %%#v", %q, got)
         }
     }
-`, index, item.ID, item.Class, item.Owner, interval.Nanoseconds(), item.Persistence.Firing, item.Persistence.Clearing, minDuration,
+`, index, item.ID, item.Class, item.Owner, interval.Nanoseconds(), item.Persistence.Firing, item.Persistence.Clearing,
 			item.Batching.Severity, debounce.Nanoseconds(), item.OriginatingIncident, item.OriginatingCommit,
 			strings.Join(watches, ","), strings.Join(playbooks, ","), item.ID)
 	}
