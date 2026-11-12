@@ -18,6 +18,19 @@ type headWorld struct {
 	recorded []broker.SourceEvidence
 	busy     string
 	pause    *recordedPause
+	holds    *memoryHolds
+}
+
+type memoryHolds struct{ held map[string]string }
+
+func (h *memoryHolds) Held(_ context.Context, change broker.HeadChange) (string, bool, error) {
+	detail, ok := h.held[change.EffectiveTree]
+	return detail, ok, nil
+}
+
+func (h *memoryHolds) Hold(_ context.Context, change broker.HeadChange, reason lifecycle.HoldReason, detail string) error {
+	h.held[change.EffectiveTree] = string(reason) + ": " + detail
+	return nil
 }
 
 type recordedPause struct {
@@ -35,9 +48,9 @@ func (p *recordedPause) Resume(context.Context) error {
 	return nil
 }
 
-func (w *headWorld) HeadToDeploy(context.Context) (string, bool, error) {
+func (w *headWorld) HeadToDeploy(context.Context) (broker.HeadChange, bool, error) {
 	w.log("head")
-	return advCandidate, w.needed, nil
+	return broker.HeadChange{Commit: advCandidate, EffectiveTree: advEffective, PatchesDigest: advDigest}, w.needed, nil
 }
 
 func (w *headWorld) HeadCheckout(_ context.Context, commit string) (string, func(), error) {
@@ -57,7 +70,11 @@ func (w *headWorld) deployer() lifecycle.HeadDeployer {
 		repair.Maintenance = w.pause
 		repair.Busy = func(context.Context) (string, error) { return w.busy, nil }
 	}
-	return lifecycle.HeadDeployer{Broker: w, Deployer: repair}
+	deployer := lifecycle.HeadDeployer{Broker: w, Deployer: repair}
+	if w.holds != nil {
+		deployer.Holds = w.holds
+	}
+	return deployer
 }
 
 func newHeadWorld(t *testing.T, needed bool) *headWorld {
@@ -109,5 +126,23 @@ func TestAHeadIsDeferredWhileAnIncidentIsOpen(t *testing.T) {
 	}
 	if slices.Contains(w.events, "apply") || w.events[len(w.events)-1] != "resume" {
 		t.Fatalf("events %q: nothing may be applied and the pause must be lifted", w.events)
+	}
+}
+
+// A refused head is held by its effective source: the next poll does not apply
+// it again (and does not pause detection), however many SDO memory commits
+// have landed on top.
+func TestARefusedHeadIsHeldAndNotAppliedAgain(t *testing.T) {
+	w := newHeadWorld(t, true)
+	w.holds = &memoryHolds{held: map[string]string{}}
+	w.applyErrs = []error{errors.New("deployment never became ready")}
+	first, err := w.deployer().Deploy(context.Background(), repairConfig)
+	if err != nil || first.Outcome != lifecycle.HeadHeld {
+		t.Fatalf("first = %+v, err = %v", first, err)
+	}
+	w.events = nil
+	second, err := w.deployer().Deploy(context.Background(), repairConfig)
+	if err != nil || second.Outcome != lifecycle.HeadHeld || slices.Contains(w.events, "apply") || slices.Contains(w.events, "checkout 4444") {
+		t.Fatalf("second = %+v, err = %v, events %q: a held head must not be applied again", second, err, w.events)
 	}
 }

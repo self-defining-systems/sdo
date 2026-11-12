@@ -101,8 +101,9 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	}
 	return &NativeIncidentBroker{
 		Replay: policy.Learning.Replay, Repository: repository, LedgerRoot: ledgerRoot, Repairs: repairs, SourceGate: gate,
-		CodePath: codePathConfigFromContract(config.GetCodePath()),
-		Deriver:  ProtoOutcomeDeriver{SessionRoot: config.GetRepositoryMountPath()}, ResponderBackend: policy.Agent.Provider, ResponderModel: policy.Agent.Model,
+		HeadHolds: ConfigMapHeadHolds{Client: client, Namespace: controlNamespace},
+		CodePath:  codePathConfigFromContract(config.GetCodePath()),
+		Deriver:   ProtoOutcomeDeriver{SessionRoot: config.GetRepositoryMountPath()}, ResponderBackend: policy.Agent.Provider, ResponderModel: policy.Agent.Model,
 		ForceReflection: policy.Learning.ForceReflection, FrozenMemory: frozenMemory, PhaseLog: os.Stdout,
 		SessionRoot: config.GetRepositoryMountPath(), SessionRetention: DefaultSessionRetention,
 	}, client, nil

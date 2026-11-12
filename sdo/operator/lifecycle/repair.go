@@ -33,6 +33,10 @@ type RepairBroker interface {
 	FinalizeAcceptedDeployment(ctx context.Context, incidentID string) (bool, error)
 }
 
+// ErrMaintenanceBusy is returned by a MaintenanceWindow's Pause while another
+// owner holds the controller in maintenance.
+var ErrMaintenanceBusy = errors.New("controller maintenance is paused by another owner")
+
 // RepairOutcome is what Repair did with a responder's proposal.
 type RepairOutcome string
 
@@ -174,6 +178,10 @@ func (r RepairDeployer) paused(ctx context.Context, deploy func() (RepairResult,
 	var cfg AdvanceConfig
 	expiresAt := now().Add(orDefault(cfg.PauseAckTimeout, DefaultPauseAckTimeout) + orDefault(cfg.PauseApplyBound, DefaultPauseApplyBound) + orDefault(cfg.SettleWindow, DefaultSettleWindow))
 	if err := r.Maintenance.Pause(ctx, "source repair", expiresAt); err != nil {
+		if errors.Is(err, ErrMaintenanceBusy) {
+			// Someone else holds the pause: not a failure, try again later.
+			return RepairResult{Outcome: RepairDeferred, Detail: err.Error()}, nil
+		}
 		return RepairResult{}, fmt.Errorf("pause controller maintenance: %w", err)
 	}
 	defer func() {

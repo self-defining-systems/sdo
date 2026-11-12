@@ -26,6 +26,9 @@ type ReflectionQueue interface {
 type reflectionCompletion struct {
 	incidentID string
 	err        error
+	// head marks the end of a branch head deploy, which shares the queue's
+	// completion channel but not its bookkeeping.
+	head bool
 }
 
 type reflectionQueueState struct {
@@ -127,6 +130,10 @@ func (c *Controller) driveQueuedReflections(ctx context.Context, now time.Time) 
 }
 
 func (c *Controller) handleReflectionCompletion(completion reflectionCompletion) {
+	if completion.head {
+		c.handleHeadCompletion(completion)
+		return
+	}
 	c.mu.Lock()
 	state := &c.reflections
 	state.running, state.rescan = "", true
