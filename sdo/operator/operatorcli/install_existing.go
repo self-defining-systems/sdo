@@ -86,6 +86,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
 	verificationTimeout := flags.Duration("verification-timeout", 5*time.Minute, "verification timeout")
 	duration := flags.Duration("duration", 0, "bounded controller duration")
+	selfHealHold := flags.Duration("self-heal-hold", 0, "controller self_heal_hold: how long a Kubernetes failure condition without a give-up signal must hold before it opens an incident (0: the controller default)")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "stop after the first closure")
 	lateFindings := flags.String("late-findings", "off", "late finding pull mode: off or pull")
 	permissiveResponder := flags.Bool("permissive-responder", false, "broad lane repair permissions excluding Secret and credential APIs")
@@ -139,7 +140,7 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	if *lateFindings != "off" && *lateFindings != "pull" {
 		return InstallExistingConfig{}, fmt.Errorf("invalid late findings mode %q", *lateFindings)
 	}
-	if *duration < 0 || *responseTimeout <= 0 || *verificationTimeout <= 0 {
+	if *duration < 0 || *selfHealHold < 0 || *responseTimeout <= 0 || *verificationTimeout <= 0 {
 		return InstallExistingConfig{}, errors.New("controller timeouts must be positive")
 	}
 	menu := processio.Environment("SDO_RESPONDER_MENU")
@@ -205,6 +206,9 @@ func ParseInstallExistingLaunch(args []string) (InstallExistingConfig, error) {
 	}
 	if *duration > 0 {
 		config.ExtraControllerArgs = append(config.ExtraControllerArgs, "--duration", duration.String())
+	}
+	if *selfHealHold > 0 {
+		config.ExtraControllerArgs = append(config.ExtraControllerArgs, "--self-heal-hold", selfHealHold.String())
 	}
 	if *exitAfterClosure {
 		config.ExtraControllerArgs = append(config.ExtraControllerArgs, "--exit-after-closure")

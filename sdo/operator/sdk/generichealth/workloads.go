@@ -2,11 +2,14 @@ package generichealth
 
 import (
 	"fmt"
+	"time"
+
 	"github.com/robfig/cron/v3"
 	apps "k8s.io/api/apps/v1"
 	batch "k8s.io/api/batch/v1"
 	core "k8s.io/api/core/v1"
-	"time"
+	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sdo.dev/operator/sdk"
 )
 
 // Kubernetes allows standard five-field schedules and descriptors; time zones
@@ -21,52 +24,33 @@ func (e *evaluation) workloads() {
 		if v.Spec.Replicas != nil {
 			desired = *v.Spec.Replicas
 		}
-		old := e.old(v.CreationTimestamp)
-		for _, p := range e.ctx.Pods() {
-			if p.Namespace != ns {
-				continue
-			}
-			for _, o := range p.OwnerReferences {
-				if o.Kind == "StatefulSet" && o.Name == v.Name && !e.old(p.CreationTimestamp) {
-					old = false
-				}
-			}
-		}
-		if !old {
-			continue
-		}
-		if v.Status.ReadyReplicas < desired {
-			e.emit("statefulset-unready", ref("StatefulSet", "apps/v1", &v), fmt.Sprintf("ready=%d desired=%d past %s", v.Status.ReadyReplicas, desired, ProgressWindow), true)
+		unready, created := e.ownedPodTimes("StatefulSet", v.Name, v.CreationTimestamp.Time)
+		r := ref("StatefulSet", "apps/v1", &v)
+		if v.Status.ReadyReplicas < desired && sdk.HeldPastSelfHeal(e.ctx, unready) {
+			e.emit("statefulset-unready", r, fmt.Sprintf("ready=%d desired=%d unready since %s", v.Status.ReadyReplicas, desired, unready.UTC().Format(time.RFC3339)), true)
 		}
 		// OnDelete and partitioned updates intentionally retain old revisions.
-		if v.Spec.UpdateStrategy.Type != apps.OnDeleteStatefulSetStrategyType && (v.Spec.UpdateStrategy.RollingUpdate == nil || v.Spec.UpdateStrategy.RollingUpdate.Partition == nil || *v.Spec.UpdateStrategy.RollingUpdate.Partition == 0) && v.Status.CurrentRevision != "" && v.Status.UpdateRevision != "" && v.Status.CurrentRevision != v.Status.UpdateRevision {
-			e.emit("statefulset-old-revision", ref("StatefulSet", "apps/v1", &v), fmt.Sprintf("current=%s update=%s past %s", v.Status.CurrentRevision, v.Status.UpdateRevision, ProgressWindow), false)
+		if v.Spec.UpdateStrategy.Type != apps.OnDeleteStatefulSetStrategyType && (v.Spec.UpdateStrategy.RollingUpdate == nil || v.Spec.UpdateStrategy.RollingUpdate.Partition == nil || *v.Spec.UpdateStrategy.RollingUpdate.Partition == 0) && v.Status.CurrentRevision != "" && v.Status.UpdateRevision != "" && v.Status.CurrentRevision != v.Status.UpdateRevision && sdk.HeldPastSelfHeal(e.ctx, created) {
+			e.emit("statefulset-old-revision", r, fmt.Sprintf("current=%s update=%s; no Pod replaced since %s", v.Status.CurrentRevision, v.Status.UpdateRevision, created.UTC().Format(time.RFC3339)), false)
 		}
 	}
 	for _, v := range e.ctx.DaemonSets() {
-		if v.Namespace != ns || v.DeletionTimestamp != nil || v.Generation > v.Status.ObservedGeneration || !e.old(v.CreationTimestamp) {
+		if v.Namespace != ns || v.DeletionTimestamp != nil || v.Generation > v.Status.ObservedGeneration {
 			continue
 		}
-		recent := false
-		for _, p := range e.ctx.Pods() {
-			for _, o := range p.OwnerReferences {
-				if p.Namespace == ns && o.Kind == "DaemonSet" && o.Name == v.Name && !e.old(p.CreationTimestamp) {
-					recent = true
-				}
-			}
+		unready, created := e.ownedPodTimes("DaemonSet", v.Name, v.CreationTimestamp.Time)
+		r := ref("DaemonSet", "apps/v1", &v)
+		if v.Status.NumberReady < v.Status.DesiredNumberScheduled && sdk.HeldPastSelfHeal(e.ctx, unready) {
+			e.emit("daemonset-unready", r, fmt.Sprintf("ready=%d desired=%d unready since %s", v.Status.NumberReady, v.Status.DesiredNumberScheduled, unready.UTC().Format(time.RFC3339)), true)
 		}
-		if recent {
-			continue
-		}
-		if v.Status.NumberReady < v.Status.DesiredNumberScheduled {
-			e.emit("daemonset-unready", ref("DaemonSet", "apps/v1", &v), fmt.Sprintf("ready=%d desired=%d past %s", v.Status.NumberReady, v.Status.DesiredNumberScheduled, ProgressWindow), true)
-		}
-		if v.Spec.UpdateStrategy.Type != apps.OnDeleteDaemonSetStrategyType && v.Status.UpdatedNumberScheduled < v.Status.DesiredNumberScheduled {
-			e.emit("daemonset-old-revision", ref("DaemonSet", "apps/v1", &v), fmt.Sprintf("updated=%d desired=%d past %s", v.Status.UpdatedNumberScheduled, v.Status.DesiredNumberScheduled, ProgressWindow), false)
+		if v.Spec.UpdateStrategy.Type != apps.OnDeleteDaemonSetStrategyType && v.Status.UpdatedNumberScheduled < v.Status.DesiredNumberScheduled && sdk.HeldPastSelfHeal(e.ctx, created) {
+			e.emit("daemonset-old-revision", r, fmt.Sprintf("updated=%d desired=%d; no Pod replaced since %s", v.Status.UpdatedNumberScheduled, v.Status.DesiredNumberScheduled, created.UTC().Format(time.RFC3339)), false)
 		}
 	}
 	for _, v := range e.ctx.Jobs() {
-		if v.Namespace != ns || v.DeletionTimestamp != nil {
+		// A CronJob's failed Job keeps Failed=True until history GC, so it
+		// never reconciles; cronjob-overdue covers CronJobs.
+		if v.Namespace != ns || v.DeletionTimestamp != nil || ownedBy(v.OwnerReferences, "CronJob") {
 			continue
 		}
 		for _, c := range v.Status.Conditions {
@@ -106,4 +90,48 @@ func (e *evaluation) workloads() {
 			e.emit("cronjob-overdue", ref("CronJob", "batch/v1", &v), fmt.Sprintf("last success (or creation)=%s schedule=%q timezone=%s two scheduled runs elapsed at %s", last, v.Spec.Schedule, zone, second), false)
 		}
 	}
+}
+
+// ownedPodTimes returns, for the Pods a workload owns, the newest unready
+// Pod's Ready transition (the hold of an unready rule) and the newest Pod
+// creation (the hold of an old-revision rule: no Pod was replaced since). A
+// workload with no unready Pod, or no Pod, falls back to the newest creation
+// and then to the workload's own creation.
+func (e *evaluation) ownedPodTimes(kind, name string, workloadCreated time.Time) (unready, created time.Time) {
+	created = workloadCreated
+	for _, p := range e.ctx.Pods() {
+		if p.Namespace != e.ctx.Namespace() || p.DeletionTimestamp != nil || !ownedByName(p.OwnerReferences, kind, name) {
+			continue
+		}
+		if p.CreationTimestamp.After(created) {
+			created = p.CreationTimestamp.Time
+		}
+		for _, c := range p.Status.Conditions {
+			if c.Type == core.PodReady && c.Status != core.ConditionTrue && c.LastTransitionTime.After(unready) {
+				unready = c.LastTransitionTime.Time
+			}
+		}
+	}
+	if unready.IsZero() {
+		unready = created
+	}
+	return unready, created
+}
+
+func ownedBy(owners []meta.OwnerReference, kind string) bool {
+	for _, o := range owners {
+		if o.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func ownedByName(owners []meta.OwnerReference, kind, name string) bool {
+	for _, o := range owners {
+		if o.Kind == kind && o.Name == name {
+			return true
+		}
+	}
+	return false
 }

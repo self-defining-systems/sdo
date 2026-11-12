@@ -26,23 +26,16 @@ const (
     and fire only while a user-facing probe fails, because a reader that reloads
     files, or a rotation nobody depends on yet, is not a fault.
 
-const CrashRecoveredAfter = 10 * time.Minute
-    CrashRecoveredAfter is how long a crashed container's successor must have
-    been running and Ready before the crash is history rather than health.
-
 const ProgressWindow = 10 * time.Minute
-    ProgressWindow allows ordinary controller convergence before reporting
-    faults.
+    ProgressWindow allows ordinary controller convergence before reporting a
+    claim that is not bound. Incident-opening conditions use the self-heal hold
+    instead (sdk.HeldPastSelfHeal).
 
 
 FUNCTIONS
 
-func NewCrashes(s sdk.DetectorSpec) sdk.Detector
-    NewCrashes reports failed-container crash tails and newly appearing runtime
-    signatures in surviving containers, never generic error lines.
-
 func NewNodes(s sdk.DetectorSpec) sdk.Detector
-    NewNodes checks only nodes hosting application pods.
+    NewNodes checks that the nodes hosting application pods are Ready.
 
 func NewSaturation(s sdk.DetectorSpec, throttling bool) sdk.Detector
     NewSaturation monitors memory and PVC capacity. Throttling requests
@@ -59,7 +52,9 @@ func NewWiring(s sdk.DetectorSpec) sdk.Detector
     read last changed.
 
 func NewWorkloads(s sdk.DetectorSpec) sdk.Detector
-    NewWorkloads checks StatefulSets, DaemonSets, Jobs and CronJobs.
+    NewWorkloads checks StatefulSets, DaemonSets, Jobs and CronJobs. Unready
+    and old-revision rules report a condition that outlived the self-heal hold;
+    a failed Job not owned by a CronJob is Kubernetes' give-up signal.
 
 func Watches(kind string) []sdk.WatchKind
     Watches returns all inputs used by the named detector, shared by

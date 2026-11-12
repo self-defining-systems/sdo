@@ -132,8 +132,8 @@ func scenarioPlan(seed uint64, detectors []planDetector) plan {
 
 // hungBatchPlan is one ordinary detector and four that hang.
 func hungBatchPlan() plan {
-	detectors := []planDetector{{ID: "alpha0", Behaviour: behaveNormal}}
-	for _, id := range []string{"bravo0", "charlie0", "delta0", "echo0"} {
+	detectors := []planDetector{{ID: "traffic-alpha0", Behaviour: behaveNormal}}
+	for _, id := range []string{"traffic-bravo0", "traffic-charlie0", "traffic-delta0", "traffic-echo0"} {
 		detectors = append(detectors, planDetector{ID: id, Behaviour: behaveHang})
 	}
 	return scenarioPlan(hungBatchSeed, detectors)
@@ -141,7 +141,7 @@ func hungBatchPlan() plan {
 
 // openedCrashPlan is one ordinary detector and a death at the first open event.
 func openedCrashPlan() plan {
-	p := scenarioPlan(openedCrashSeed, []planDetector{{ID: "alpha0", Behaviour: behaveNormal}})
+	p := scenarioPlan(openedCrashSeed, []planDetector{{ID: "traffic-alpha0", Behaviour: behaveNormal}})
 	p.Crashes = []crashPoint{{crashOpenedAfter, 1}}
 	return p
 }
@@ -164,7 +164,7 @@ func planFor(seed uint64) plan {
 	names := []string{"alpha", "bravo", "charlie", "delta", "echo"}
 	next := 0
 	detector := func(force detectorBehaviour) planDetector {
-		d := planDetector{ID: names[next%len(names)] + fmt.Sprint(next/len(names)), Interval: seconds(1, 4), Behaviour: behaveNormal}
+		d := planDetector{ID: "traffic-" + names[next%len(names)] + fmt.Sprint(next/len(names)), Interval: seconds(1, 4), Behaviour: behaveNormal}
 		next++
 		if force != "" {
 			d.Behaviour = force

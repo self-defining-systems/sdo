@@ -111,6 +111,9 @@ func (c *Controller) reportHealthyCaptureError(err error) {
 	}
 }
 
+// completeHealthyEvaluation reports that every detector was evaluated since
+// start and none reports an opener: healthy means no opener is active and no
+// incident is open.
 func (c *Controller) completeHealthyEvaluation() bool {
 	latest := map[string]DetectorEvaluation{}
 	for _, evaluation := range c.history {
@@ -124,7 +127,12 @@ func (c *Controller) completeHealthyEvaluation() bool {
 			continue
 		}
 		evaluation, found := latest[id]
-		if !found || evaluation.Status != DetectorEvaluationClear || evaluation.EvaluatedAt.Before(c.startedAt) {
+		if !found || evaluation.EvaluatedAt.Before(c.startedAt) {
+			return false
+		}
+		// A detector firing only clues still completes a healthy evaluation.
+		firingClues := evaluation.Status == DetectorEvaluationFiring && !c.openerFiring(id)
+		if evaluation.Status != DetectorEvaluationClear && !firingClues {
 			return false
 		}
 	}

@@ -393,6 +393,13 @@ func observe(snapshot *sdktest.Snapshot, o *pb.MemoryObservation) error {
 		at := o.ObservedAt.AsTime()
 		snapshot.ObservedAtTime = &at
 	}
+	if o.SelfHealHold != nil {
+		if err := o.SelfHealHold.CheckValid(); err != nil {
+			return err
+		}
+		hold := o.SelfHealHold.AsDuration()
+		snapshot.SelfHealHoldTime = &hold
+	}
 	// Use the SDK's existing capture decoder: wire and replay share input semantics.
 	var err error
 	snapshot.Reachability, err = decode[servicehealth.ReachabilityWindow](o.Reachability)

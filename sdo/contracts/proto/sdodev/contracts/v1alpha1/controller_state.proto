@@ -86,6 +86,10 @@ enum ClosureFailureReason {
   // harvested result remains past its response bound plus a grace. A harvested
   // response stays controller-owned through closure, including after restart.
   CLOSURE_FAILURE_REASON_OWNER_LOST = 6;
+  // An operator reset the controller between problems (for example a
+  // benchmark harness): the open incident ended without an outcome and earns
+  // no learning credit.
+  CLOSURE_FAILURE_REASON_RESET = 7;
 }
 
 // FailedIncidentClosure preserves terminal evidence independently of the next

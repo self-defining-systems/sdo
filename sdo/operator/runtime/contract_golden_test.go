@@ -85,7 +85,7 @@ func goldenIncident(
 ) (IncidentRequest, *IncidentView, IncidentClosure) {
 	t.Helper()
 	cause := controllerDetector(
-		"cause", time.Second, stateFinding("cause"), stateFinding("cause"),
+		"workload-health", time.Second, stateFinding("cause"), stateFinding("cause"),
 		sdk.Finding{}, sdk.Finding{}, sdk.Finding{}, sdk.Finding{}, sdk.Finding{},
 	)
 	dispatcher := &fixedResultDispatcher{requests: make(chan IncidentRequest, 1), result: result}

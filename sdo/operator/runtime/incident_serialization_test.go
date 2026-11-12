@@ -19,7 +19,7 @@ import (
 type twoFaultHealth struct{ first, second atomic.Bool }
 
 func (*twoFaultHealth) Spec() sdk.DetectorSpec {
-	return sdk.DetectorSpec{ID: "health", Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge,
+	return sdk.DetectorSpec{ID: "workload-health", Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge,
 		Interval: time.Second, Persistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1},
 		Batching: sdk.BatchingPolicy{Severity: sdk.SeverityWarning}, OriginatingCommit: "synthetic"}
 }
@@ -31,7 +31,7 @@ func (d *twoFaultHealth) Detect(context.Context, sdk.DetectionContext) ([]sdk.Fi
 		name string
 	}{{d.first.Load(), "first"}, {d.second.Load(), "second"}} {
 		if fault.on {
-			findings = append(findings, sdk.Finding{DetectorID: "health", RuleID: "unhealthy", Status: sdk.FindingActive,
+			findings = append(findings, sdk.Finding{DetectorID: "workload-health", RuleID: "unhealthy", Status: sdk.FindingActive,
 				Severity: sdk.SeverityCritical, Summary: fault.name + " unhealthy", Evidence: "synthetic",
 				PrimaryResource: sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "demo", Name: fault.name}})
 		}
@@ -86,12 +86,11 @@ func (r *recordingFirings) relations(fingerprint string) []string {
 	return relations
 }
 
-// The controller runs one incident at a time. A fault that starts while an
-// incident's responder works does not get its own incident, so the open
-// incident must say so: the responder's verification names the finding as new
-// since dispatch, and the closure record lists it, so neither the responder
-// nor analysis mistakes it for the incident's own fault.
-func TestFindingAfterDispatchIsMarkedNewInTheOpenIncident(t *testing.T) {
+// The controller runs one incident at a time. A second opener that starts
+// while an incident's responder works waits for the next incident: it does not
+// hold this incident's verification or closure, and the closure record still
+// lists it as after dispatch so analysis sees it arrived.
+func TestLaterOpenerAfterDispatchWaitsForTheNextIncident(t *testing.T) {
 	runOnOneProcessor(t)
 	ctx := context.Background()
 	opened := time.Unix(20_000, 0).UTC()
@@ -118,7 +117,7 @@ func TestFindingAfterDispatchIsMarkedNewInTheOpenIncident(t *testing.T) {
 	firings := &recordingFirings{}
 	controller.SetFiringSink(firings)
 
-	second := FindingFingerprint(sdk.Finding{DetectorID: "health", RuleID: "unhealthy", PrimaryResource: sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "demo", Name: "second"}})
+	second := FindingFingerprint(sdk.Finding{DetectorID: "workload-health", RuleID: "unhealthy", PrimaryResource: sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "demo", Name: "second"}})
 	var dispatchedAt, secondAt time.Time
 	var verification ToolResponse
 	for step := 0; step < 600 && len(broker.closures()) == 0; step++ {
@@ -174,11 +173,13 @@ func TestFindingAfterDispatchIsMarkedNewInTheOpenIncident(t *testing.T) {
 	for _, finding := range verification.NewSinceDispatch {
 		newKeys = append(newKeys, FindingFingerprint(finding))
 	}
-	if !slices.Equal(newKeys, []string{second}) {
-		t.Fatalf("verification new_since_dispatch = %v, want only the second fault %s (findings %d)", newKeys, second, len(verification.Findings))
+	if len(newKeys) != 0 {
+		t.Fatalf("verification new_since_dispatch = %v; a later opener is not this incident's", newKeys)
 	}
-	if !strings.Contains(verification.Summary, "new since dispatch") {
-		t.Fatalf("verification summary does not tell the responder about the new finding: %q", verification.Summary)
+	for _, finding := range verification.Findings {
+		if FindingFingerprint(finding) == second {
+			t.Fatalf("the later opener %s held this incident's verification", second)
+		}
 	}
 
 	closures := broker.closures()
@@ -192,7 +193,7 @@ func TestFindingAfterDispatchIsMarkedNewInTheOpenIncident(t *testing.T) {
 	if closed == nil {
 		t.Fatal("no incident_closed lifecycle event")
 	}
-	if want := []string{FindingStateKey("health", second)}; !slices.Equal(closed.GetAfterDispatchFindingKeys(), want) {
+	if want := []string{FindingStateKey("workload-health", second)}; !slices.Equal(closed.GetAfterDispatchFindingKeys(), want) {
 		t.Fatalf("incident_closed after_dispatch_finding_keys = %v, want %v", closed.GetAfterDispatchFindingKeys(), want)
 	}
 	if got := firings.relations(second); len(got) == 0 || got[0] != "activated:after_dispatch" {

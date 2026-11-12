@@ -13,7 +13,9 @@ import (
 	"time"
 )
 
-// ProgressWindow allows ordinary controller convergence before reporting faults.
+// ProgressWindow allows ordinary controller convergence before reporting a
+// claim that is not bound. Incident-opening conditions use the self-heal hold
+// instead (sdk.HeldPastSelfHeal).
 const ProgressWindow = 10 * time.Minute
 
 type detector struct {
@@ -28,14 +30,16 @@ func (d detector) Spec() sdk.DetectorSpec { return d.spec }
 // read last changed.
 func NewWiring(s sdk.DetectorSpec) sdk.Detector { return detector{s, "wiring"} }
 
-// NewWorkloads checks StatefulSets, DaemonSets, Jobs and CronJobs.
+// NewWorkloads checks StatefulSets, DaemonSets, Jobs and CronJobs. Unready
+// and old-revision rules report a condition that outlived the self-heal hold;
+// a failed Job not owned by a CronJob is Kubernetes' give-up signal.
 func NewWorkloads(s sdk.DetectorSpec) sdk.Detector { return detector{s, "workloads"} }
 
 // NewWarnings checks persistent recent warning events on extant application
 // objects whose current state is not healthy.
 func NewWarnings(s sdk.DetectorSpec) sdk.Detector { return detector{s, "warnings"} }
 
-// NewNodes checks only nodes hosting application pods.
+// NewNodes checks that the nodes hosting application pods are Ready.
 func NewNodes(s sdk.DetectorSpec) sdk.Detector { return detector{s, "nodes"} }
 
 // Watches returns all inputs used by the named detector, shared by installation.
@@ -64,8 +68,6 @@ func Watches(kind string) []sdk.WatchKind {
 		add("v1", "Node", "Pod")
 	case "saturation":
 		add("sdo.dev/v1alpha1", "ResourceUsage")
-	case "crashes":
-		add("sdo.dev/v1alpha1", "Logs")
 	}
 	return result
 }
@@ -108,14 +110,15 @@ func (e *evaluation) nodes() {
 			used[p.Spec.NodeName] = true
 		}
 	}
+	// Pressure conditions are not reported: the kubelet evicts, so they heal
+	// themselves. A node that is not Ready opens once it outlived the hold.
 	for _, n := range e.ctx.Nodes() {
 		if !used[n.Name] {
 			continue
 		}
 		for _, c := range n.Status.Conditions {
-			bad := c.Type == core.NodeReady && c.Status != core.ConditionTrue || (c.Type == core.NodeMemoryPressure || c.Type == core.NodeDiskPressure || c.Type == core.NodePIDPressure) && c.Status == core.ConditionTrue
-			if bad {
-				e.emit("node-"+string(c.Type), ref("Node", "v1", &n), fmt.Sprintf("condition=%s status=%s reason=%s message=%s; node hosts application pods", c.Type, c.Status, c.Reason, c.Message), false)
+			if c.Type == core.NodeReady && c.Status != core.ConditionTrue && sdk.HeldPastSelfHeal(e.ctx, c.LastTransitionTime.Time) {
+				e.emit("node-"+string(c.Type), ref("Node", "v1", &n), fmt.Sprintf("condition=%s status=%s reason=%s message=%s since=%s; node hosts application pods", c.Type, c.Status, c.Reason, c.Message, c.LastTransitionTime.UTC().Format(time.RFC3339)), false)
 			}
 		}
 	}

@@ -52,6 +52,9 @@ type KubernetesCacheConfig struct {
 	Client             kubernetes.Interface
 	StateConfigMapName string
 	TrackDrift         bool
+	// SelfHealHold is carried on every snapshot (sdk.SelfHealPolicy); zero
+	// leaves the SDK default.
+	SelfHealHold time.Duration
 }
 
 type ObjectChange struct {
@@ -469,7 +472,7 @@ func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, e
 		return nil, err
 	}
 	c.observeScoped(scoped)
-	snapshot := controllercore.DetectionSnapshot{GenericCapture: c.config.GenericCapture, NamespaceName: c.config.Namespace, ObservedAtTime: clock().UTC(), ScopedSnapshot: scoped}
+	snapshot := controllercore.DetectionSnapshot{GenericCapture: c.config.GenericCapture, NamespaceName: c.config.Namespace, ObservedAtTime: clock().UTC(), SelfHealHoldTime: c.config.SelfHealHold, ScopedSnapshot: scoped}
 	c.informerMu.RLock()
 	for key, informer := range c.informers {
 		for _, object := range informer.GetStore().List() {

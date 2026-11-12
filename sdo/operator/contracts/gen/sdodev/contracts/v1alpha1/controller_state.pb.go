@@ -160,6 +160,10 @@ const (
 	// harvested result remains past its response bound plus a grace. A harvested
 	// response stays controller-owned through closure, including after restart.
 	ClosureFailureReason_CLOSURE_FAILURE_REASON_OWNER_LOST ClosureFailureReason = 6
+	// An operator reset the controller between problems (for example a
+	// benchmark harness): the open incident ended without an outcome and earns
+	// no learning credit.
+	ClosureFailureReason_CLOSURE_FAILURE_REASON_RESET ClosureFailureReason = 7
 )
 
 // Enum value maps for ClosureFailureReason.
@@ -172,6 +176,7 @@ var (
 		4: "CLOSURE_FAILURE_REASON_AGENT_TIMEOUT",
 		5: "CLOSURE_FAILURE_REASON_OBSERVER_DENIED",
 		6: "CLOSURE_FAILURE_REASON_OWNER_LOST",
+		7: "CLOSURE_FAILURE_REASON_RESET",
 	}
 	ClosureFailureReason_value = map[string]int32{
 		"CLOSURE_FAILURE_REASON_UNSPECIFIED":     0,
@@ -181,6 +186,7 @@ var (
 		"CLOSURE_FAILURE_REASON_AGENT_TIMEOUT":   4,
 		"CLOSURE_FAILURE_REASON_OBSERVER_DENIED": 5,
 		"CLOSURE_FAILURE_REASON_OWNER_LOST":      6,
+		"CLOSURE_FAILURE_REASON_RESET":           7,
 	}
 )
 
@@ -2056,7 +2062,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x18CLOSURE_STATE_PROCESSING\x10\x02\x12\x1b\n" +
 	"\x17CLOSURE_STATE_COMMITTED\x10\x03\x12\x1f\n" +
 	"\x1bCLOSURE_STATE_ACKNOWLEDGING\x10\x04\x12\x18\n" +
-	"\x14CLOSURE_STATE_FAILED\x10\x05*\xbc\x02\n" +
+	"\x14CLOSURE_STATE_FAILED\x10\x05*\xde\x02\n" +
 	"\x14ClosureFailureReason\x12&\n" +
 	"\"CLOSURE_FAILURE_REASON_UNSPECIFIED\x10\x00\x12'\n" +
 	"#CLOSURE_FAILURE_REASON_BROKER_ERROR\x10\x01\x12*\n" +
@@ -2064,7 +2070,8 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"&CLOSURE_FAILURE_REASON_RETRY_EXHAUSTED\x10\x03\x12(\n" +
 	"$CLOSURE_FAILURE_REASON_AGENT_TIMEOUT\x10\x04\x12*\n" +
 	"&CLOSURE_FAILURE_REASON_OBSERVER_DENIED\x10\x05\x12%\n" +
-	"!CLOSURE_FAILURE_REASON_OWNER_LOST\x10\x06*\xac\x02\n" +
+	"!CLOSURE_FAILURE_REASON_OWNER_LOST\x10\x06\x12 \n" +
+	"\x1cCLOSURE_FAILURE_REASON_RESET\x10\a*\xac\x02\n" +
 	"\x0fReflectionPhase\x12 \n" +
 	"\x1cREFLECTION_PHASE_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18REFLECTION_PHASE_INSPECT\x10\x01\x12\x1d\n" +

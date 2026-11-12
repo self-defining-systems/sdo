@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"sort"
-	"strings"
 	"time"
 
 	"sdo.dev/operator/sdk"
@@ -97,8 +96,7 @@ func (c *Controller) refreshIncidentView(now time.Time, evaluated bool) {
 }
 
 // blockingFindingsLocked mirrors finalVerificationStates: closure waits on
-// every active health-detector finding the recovery scope holds, or without
-// health detectors, on the incident's own findings.
+// the incident's active opening alerts (the recovery scope).
 func (c *Controller) blockingFindingsLocked() []sdk.Finding {
 	health := make(map[string]struct{}, len(c.healthDetectorIDs))
 	for _, detectorID := range c.healthDetectorIDs {
@@ -116,7 +114,7 @@ func (c *Controller) blockingFindingsLocked() []sdk.Finding {
 		}
 		_, isHealth := health[state.DetectorID]
 		_, isIncident := incident[key]
-		if (len(health) > 0 && isHealth) || (len(health) == 0 && isIncident) || (isIncident && strings.HasPrefix(state.DetectorID, "drift.")) {
+		if (len(health) > 0 && isHealth) || (len(health) == 0 && isIncident) {
 			findings = append(findings, state.Finding)
 		}
 	}

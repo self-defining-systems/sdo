@@ -81,7 +81,7 @@ func (w *sameWriteWorld) Revision(context.Context, sdk.ObjectRef, string) (*unst
 type sameWriteDetector struct{ world *sameWriteWorld }
 
 func (sameWriteDetector) Spec() sdk.DetectorSpec {
-	return sdk.DetectorSpec{ID: "traffic", Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge,
+	return sdk.DetectorSpec{ID: "workload-health", Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge,
 		Watches:  []sdk.WatchKind{{APIVersion: "apps/v1", Kind: "Deployment"}},
 		Interval: time.Second, Persistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1},
 		Batching: sdk.BatchingPolicy{Severity: sdk.SeverityCritical}, Playbooks: []string{"aware-restart", "blind-restart"}, OriginatingCommit: "seed"}
@@ -93,7 +93,7 @@ func (d sameWriteDetector) Detect(_ context.Context, view sdk.DetectionContext) 
 	}
 	var findings []sdk.Finding
 	for _, deployment := range view.Deployments() {
-		findings = append(findings, sdk.Finding{DetectorID: "traffic", RuleID: "request-stall", Status: sdk.FindingActive, Severity: sdk.SeverityCritical, PrimaryResource: sdk.ObjectRefFrom("Deployment", "apps/v1", &deployment), Summary: "requests stall", Evidence: "synthetic stall", Playbooks: []string{"aware-restart", "blind-restart"}})
+		findings = append(findings, sdk.Finding{DetectorID: "workload-health", RuleID: "request-stall", Status: sdk.FindingActive, Severity: sdk.SeverityCritical, PrimaryResource: sdk.ObjectRefFrom("Deployment", "apps/v1", &deployment), Summary: "requests stall", Evidence: "synthetic stall", Playbooks: []string{"aware-restart", "blind-restart"}})
 	}
 	return findings, nil
 }

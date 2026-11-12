@@ -100,6 +100,11 @@ func PrepareHealthWith(root string, options HealthOptions) error {
 			return err
 		}
 	}
+	for _, id := range retiredGenericDetectorIDs {
+		if err := removeBootstrapDetector(root, id); err != nil {
+			return err
+		}
+	}
 	if err := prepareStoreStateDetectors(root); err != nil {
 		return err
 	}
@@ -111,6 +116,25 @@ func PrepareHealthWith(root string, options HealthOptions) error {
 	}
 	return prepareDataCheckDetectors(root)
 }
+
+// The generic detectors whose findings are Kubernetes failure conditions that
+// outlived Kubernetes' own self-healing (a give-up signal, or the self-heal
+// hold). They open incidents; every other generic detector reports clues.
+const (
+	WorkloadHealthDetectorID      = "workload-health"
+	WorkloadControllersDetectorID = "workload-controllers"
+	NodeHealthDetectorID          = "node-health"
+)
+
+// KubernetesConditionDetectorIDs lists the condition detectors above.
+func KubernetesConditionDetectorIDs() []string {
+	return []string{WorkloadHealthDetectorID, WorkloadControllersDetectorID, NodeHealthDetectorID}
+}
+
+// retiredGenericDetectorIDs are generic detectors Go no longer installs. An
+// existing accepted tree still carries their Go-installed package, so
+// preparation removes it.
+var retiredGenericDetectorIDs = []string{"runtime-crashes"}
 
 // plannedDetector is one generic detector package Go installs.
 type plannedDetector struct {
@@ -129,9 +153,9 @@ func plannedGenericDetectors(options HealthOptions) []plannedDetector {
 		{genericManifest("service-reachability", "10s", reachabilityWatches()), reachabilitySource()},
 	}
 	for _, policy := range []struct{ id, kind, constructor string }{
-		{"cluster-wiring", "wiring", "NewWiring"}, {"workload-controllers", "workloads", "NewWorkloads"},
-		{"warning-events", "warnings", "NewWarnings"}, {"node-health", "nodes", "NewNodes"},
-		{"resource-saturation", "saturation", "NewSaturation"}, {"runtime-crashes", "crashes", "NewCrashes"},
+		{"cluster-wiring", "wiring", "NewWiring"}, {WorkloadControllersDetectorID, "workloads", "NewWorkloads"},
+		{"warning-events", "warnings", "NewWarnings"}, {NodeHealthDetectorID, "nodes", "NewNodes"},
+		{"resource-saturation", "saturation", "NewSaturation"},
 	} {
 		watches := []layout.Watch{}
 		for _, w := range generichealth.Watches(policy.kind) {
@@ -139,9 +163,6 @@ func plannedGenericDetectors(options HealthOptions) []plannedDetector {
 		}
 		manifest := genericManifest(policy.id, "30s", watches)
 		manifest.Batching.Severity = "warn"
-		if policy.kind == "crashes" {
-			manifest.Persistence.Firing = 1
-		}
 		planned = append(planned, plannedDetector{manifest, extendedSource(policy.id, policy.kind, policy.constructor)})
 	}
 	if options.AlertSources {
@@ -152,9 +173,9 @@ func plannedGenericDetectors(options HealthOptions) []plannedDetector {
 	return planned
 }
 
-// trafficDetectorPrefix starts the ID of every Go-installed traffic-probe
+// TrafficDetectorPrefix starts the ID of every Go-installed traffic-probe
 // detector; the rest of the ID is the workload it consumes.
-const trafficDetectorPrefix = "traffic-"
+const TrafficDetectorPrefix = "traffic-"
 
 // prepareTrafficDetectors installs one detector per probe workload file and
 // removes the Go-installed ones whose workload is gone or no longer a probe,
@@ -181,7 +202,7 @@ func prepareTrafficDetectors(root string) error {
 		if !isProbePurpose(workload.GetPurpose()) {
 			continue
 		}
-		id := trafficDetectorPrefix + workload.GetName()
+		id := TrafficDetectorPrefix + workload.GetName()
 		manifest := genericManifest(id, "10s", []layout.Watch{{APIVersion: "sdo.dev/v1alpha1", Kind: "SyntheticTraffic"}})
 		link := workload.GetPurpose() == "link-probe"
 		if link {
@@ -193,7 +214,7 @@ func prepareTrafficDetectors(root string) error {
 		}
 		wanted[id] = true
 	}
-	return pruneStaleBootstrapDetectors(root, trafficDetectorPrefix, wanted)
+	return pruneStaleBootstrapDetectors(root, TrafficDetectorPrefix, wanted)
 }
 
 func isProbePurpose(purpose string) bool { return purpose == "health-probe" || purpose == "link-probe" }
@@ -227,7 +248,7 @@ func PreparedTrafficDetector(file string, content []byte) (string, bool) {
 	if err != nil || !isProbePurpose(workload.GetPurpose()) {
 		return "", false
 	}
-	return trafficDetectorPrefix + workload.GetName(), true
+	return TrafficDetectorPrefix + workload.GetName(), true
 }
 
 // removeBootstrapDetector removes the health detector package id when Go
@@ -400,7 +421,7 @@ func New() sdk.Detector {
 `, genericSpec("service-endpoints"))
 }
 
-const workloadHealthID = "workload-health"
+const workloadHealthID = WorkloadHealthDetectorID
 
 // workloadManifest registers sdk/workloadhealth; its watches must equal
 // workloadhealth.Watches().
@@ -478,11 +499,6 @@ func extendedSource(id, kind, constructor string) string {
 	spec := genericSpecWithSeverity(id, "Warning")
 	if kind == "saturation" {
 		extra = ", false"
-	}
-	// Appeared is a transition, so requiring two consecutive evaluations loses it.
-	// The log helper already requires a complete quiet cycle followed by a match.
-	if kind == "crashes" {
-		spec = strings.Replace(spec, "Firing: 2", "Firing: 1", 1)
 	}
 	return fmt.Sprintf(`package synthetic
 import (

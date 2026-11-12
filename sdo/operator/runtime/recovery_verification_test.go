@@ -229,10 +229,9 @@ func TestUnobservableComponentIsWeak(t *testing.T) {
 	}
 }
 
-// (a, review C3) A critical churn finding that joins the incident on a
-// component SDO never touched is recorded with its strength and must still
-// clear, but does not downgrade the closure the opening finding decides. (f)
-// The joined finding adds its component to the record.
+// (a, review C3) A critical finding that joins the incident on a component SDO
+// never touched is a clue: it does not downgrade the closure the opening
+// finding decides, and adds no component to the record.
 func TestJoinedCriticalFindingOnAnUntouchedComponentDoesNotDowngrade(t *testing.T) {
 	now := verifyT0.Add(2 * time.Minute)
 	findings := []sdk.Finding{
@@ -243,8 +242,10 @@ func TestJoinedCriticalFindingOnAnUntouchedComponentDoesNotDowngrade(t *testing.
 	if check.verdict != recoveryVerified {
 		t.Fatalf("verdict %v: %s", check.verdict, check.reason)
 	}
-	if gate := componentOf(t, check, "ssh-gate"); gate.GetInScope() || gate.GetStrength() != contracts.VerificationStrength_VERIFICATION_STRENGTH_UNOBSERVABLE {
-		t.Fatalf("ssh-gate = %v", gate)
+	for _, component := range check.record.GetComponents() {
+		if component.GetComponent() == "ssh-gate" {
+			t.Fatalf("a joined clue's component was recorded: %v", component)
+		}
 	}
 	// The same component written by SDO is in scope.
 	result := restartOf("StatefulSet", "db", verifyT0.Add(30*time.Second))

@@ -76,6 +76,10 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string, refs ...sdk.Ob
 		observed := clock.ObservedAt().UTC()
 		s.ObservedAtTime = &observed
 	}
+	if policy, ok := view.(sdk.SelfHealPolicy); ok && policy.SelfHealHold() > 0 {
+		hold := policy.SelfHealHold()
+		s.SelfHealHoldTime = &hold
+	}
 	if scoped, ok := view.(sdk.ScopedObservationSource); ok {
 		snapshot, scopedRefs, err := CaptureScoped(scoped)
 		if err != nil {

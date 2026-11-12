@@ -95,6 +95,7 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	dur("--response-timeout", config.GetResponseTimeout())
 	dur("--verification-timeout", config.GetVerificationTimeout())
 	dur("--closure-stability-window", config.GetClosureStabilityWindow())
+	dur("--self-heal-hold", config.GetSelfHealHold())
 	dur("--responder-report-grace", config.GetResponderReportGrace())
 	if config.GetMaxResponseLoops() > 0 {
 		args = append(args, "--max-response-loops", strconv.Itoa(int(config.GetMaxResponseLoops())))

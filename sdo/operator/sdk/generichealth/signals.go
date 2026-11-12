@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/usage"
 	"sort"
 	"time"
@@ -124,92 +123,4 @@ func (e *evaluation) capacity(rule string, r sdk.ObjectRef, value float64, limit
 	}
 	e.emit(rule, r, "container="+container+" "+usage.Evidence(value, limit, window, forecast)+fmt.Sprintf(" ratio=%g threshold=0.9 forecast horizon=%s", ratio, horizon), false)
 	e.findings[len(e.findings)-1].Fingerprint += "/" + container
-}
-
-type crashes struct{ spec sdk.DetectorSpec }
-
-// CrashRecoveredAfter is how long a crashed container's successor must have
-// been running and Ready before the crash is history rather than health.
-const CrashRecoveredAfter = 10 * time.Minute
-
-// containerServingSince returns when the current incarnation of a pod's
-// container started, and whether it is running and Ready now.
-func (e *evaluation) containerServingSince(pod, container string) (time.Time, bool) {
-	for _, p := range e.ctx.Pods() {
-		if p.Namespace != e.ctx.Namespace() || p.Name != pod || p.DeletionTimestamp != nil {
-			continue
-		}
-		for _, c := range p.Status.ContainerStatuses {
-			if c.Name == container && c.Ready && c.State.Running != nil {
-				return c.State.Running.StartedAt.Time, true
-			}
-		}
-	}
-	return time.Time{}, false
-}
-
-// NewCrashes reports failed-container crash tails and newly appearing runtime
-// signatures in surviving containers, never generic error lines.
-func NewCrashes(s sdk.DetectorSpec) sdk.Detector { return crashes{s} }
-func (d crashes) Spec() sdk.DetectorSpec         { return d.spec }
-
-// LogQueries requests previous-container evidence as well as bounded current logs.
-func (d crashes) LogQueries() []logs.Query {
-	return []logs.Query{{ID: "generic-crashes", Previous: true, Terminations: true, Patterns: []logs.Pattern{
-		{ID: "go-panic", RE2: `^panic:`}, {ID: "go-fatal", RE2: `^fatal error:`}, {ID: "python-traceback", RE2: `^Traceback \(most recent call last\):`}, {ID: "java-oom", RE2: `\bjava\.lang\.OutOfMemoryError\b`}, {ID: "java-thread", RE2: `^Exception in thread "`}, {ID: "segfault", RE2: `(?i)\bsegmentation fault\b`},
-		// Evidence only: never used as a firing signature.
-		{ID: "previous-tail", RE2: `.+`},
-	}}}
-}
-func (d crashes) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Finding, error) {
-	r, err := logs.Require(ctx, "generic-crashes")
-	if err != nil {
-		return nil, err
-	}
-	e := evaluation{ctx: ctx}
-	for _, w := range r.Windows {
-		if w.Namespace != ctx.Namespace() {
-			continue
-		}
-		recoveredSince, recovered := e.containerServingSince(w.Pod, w.Container)
-		for _, t := range w.Terminations {
-			if t.ExitCode == 0 || t.Tail.Error != "" {
-				continue
-			}
-			// Kubernetes retains the last termination for the container's life.
-			// A successor that has been Ready for CrashRecoveredAfter has
-			// recovered from it (a service that started before its database);
-			// a recent crash stays reported, so periodic crashes are found.
-			if recovered && !recoveredSince.Before(t.FinishedAt) && r.ObservedAt.Sub(recoveredSince) >= CrashRecoveredAfter {
-				continue
-			}
-			for _, p := range d.LogQueries()[0].Patterns {
-				if p.ID == "previous-tail" || t.Tail.Matches[p.ID].Count == 0 {
-					continue
-				}
-				e.emit("log-"+p.ID, sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: w.Namespace, Name: w.Pod}, fmt.Sprintf("container=%s restarts=%d exit=%d finished=%s pattern=%s tail=%+v", w.Container, t.RestartCount, t.ExitCode, t.FinishedAt, p.RE2, t.Tail), false)
-				e.findings[len(e.findings)-1].Fingerprint += fmt.Sprintf("/%s/%s/%d", w.UID, w.Container, t.RestartCount)
-				break // One finding per completed crash, even with multiple signatures.
-			}
-		}
-		if len(w.Cycles) == 0 || !w.Cycles[len(w.Cycles)-1].Running {
-			continue
-		}
-		for _, p := range d.LogQueries()[0].Patterns {
-			if p.ID == "previous-tail" {
-				continue
-			}
-			if yes, ev := logs.Appeared(w, p.ID); yes {
-				previous := ""
-				if len(w.Cycles) > 0 {
-					if prev := w.Cycles[len(w.Cycles)-1].Previous; prev != nil {
-						previous = fmt.Sprintf("%+v", prev.Matches)
-					}
-				}
-				e.emit("log-"+p.ID, sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: w.Namespace, Name: w.Pod}, fmt.Sprintf("container=%s restarts=%d pattern=%s evidence=%+v previous-container=%s", w.Container, w.RestartCount, p.RE2, ev, previous), false)
-				e.findings[len(e.findings)-1].Fingerprint += fmt.Sprintf("/%s/%s/%d", w.UID, w.Container, w.RestartCount)
-			}
-		}
-	}
-	return finish(e.findings, d.spec), nil
 }

@@ -31,10 +31,10 @@ func (p coveringProbe) Detect(_ context.Context, view sdk.DetectionContext) ([]s
 		Summary: "repository read fails", Evidence: "synthetic 500", Playbooks: []string{"health-objective"}}}, nil
 }
 
-// A component's pod restarts (the incident's own finding) and comes back
-// Ready, but the probe whose operation crosses that component keeps failing:
-// the restart alone is no recovery. The incident stays open until the
-// covering probe passes again, and only then closes.
+// An incident opens on a failing user test and a component's crash. The pod
+// comes back Ready, but the user test keeps failing: the restart alone is no
+// recovery. The incident stays open until every opening alert, the user test
+// included, passes again, and only then closes.
 func TestClosureWaitsForTheProbeCoveringTheFaultedComponent(t *testing.T) {
 	ctx := context.Background()
 	opened := dataRiskOpened
@@ -47,7 +47,6 @@ func TestClosureWaitsForTheProbeCoveringTheFaultedComponent(t *testing.T) {
 	cfg.VerificationTimeout = 10 * time.Minute
 	dispatcher := &blockingDispatcher{stopAfter: opened.Add(20 * time.Second)}
 	usersOK := &atomic.Bool{}
-	usersOK.Store(true)
 	controller, err := NewController(cfg, []sdk.Detector{sameWriteDetector{world: world}, coveringProbe{usersOK: usersOK}}, store, dispatcher, opened)
 	if err != nil {
 		t.Fatal(err)

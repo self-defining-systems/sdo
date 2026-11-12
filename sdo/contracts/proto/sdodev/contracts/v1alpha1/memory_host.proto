@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package sdodev.contracts.v1alpha1;
 
+import "google/protobuf/duration.proto";
 import "google/protobuf/struct.proto";
 import "google/protobuf/timestamp.proto";
 import "sdodev/contracts/v1alpha1/common.proto";
@@ -84,6 +85,9 @@ message MemoryObservation {
   // The platform observation (sdk.Platform) was deleted unused.
   reserved 13;
   reserved "platform";
+  // The controller's self-heal hold (sdk.SelfHealPolicy). Absent means the
+  // SDK default.
+  google.protobuf.Duration self_heal_hold = 14;
 }
 message EvaluateRequest {
   repeated string detector_ids = 1;

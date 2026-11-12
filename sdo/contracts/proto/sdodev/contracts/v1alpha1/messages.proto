@@ -351,6 +351,10 @@ message IncidentRequest {
   google.protobuf.Timestamp detected_at = 35;
   // Go-owned: the telemetry bindings of the accepted memory revision plus the environment.
   TelemetryContext telemetry = 36;
+  // Go-owned: the finding keys of the alerts the incident opened on (failing
+  // user tests or held Kubernetes conditions). Recovery is judged on these
+  // alone; every other finding in the request is a clue.
+  repeated string opening_keys = 37;
 }
 
 message ResponseProgress {

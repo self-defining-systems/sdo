@@ -144,13 +144,7 @@ func (c *Controller) observeSourceInventory(now time.Time) {
 		c.driftEvents = append(c.driftEvents, event)
 		c.mu.Unlock()
 		c.observeUnexplainedDrift(now, finding)
-		if !c.attachDrift(finding) {
-			window := c.drift.BatchWindow
-			if window <= 0 {
-				window = 20 * time.Second
-			}
-			c.batcher.AddAtWithDebounce(finding, now, window)
-		}
+		c.attachBeforeLaunch([]sdk.Finding{finding}, false)
 	}
 	for key, state := range c.tracker.Snapshot() {
 		if !inventoryFinding(state.Finding) || !state.Active || active[key] {

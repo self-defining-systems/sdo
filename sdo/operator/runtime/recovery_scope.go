@@ -2,13 +2,11 @@ package runtime
 
 import "sdo.dev/operator/sdk"
 
-// recoveryScope decides which active health findings hold an incident's
-// recovery proof. Every outage finding (critical or latent) does. A
-// degradation finding (warning or info severity) does only when the incident
-// opened on it: a degradation that appears elsewhere during the incident, such
-// as a slow link on a loaded node, is not evidence that this repair failed. It
-// stays tracked and opens its own incident. A nil scope (no open incident)
-// holds every finding.
+// recoveryScope is the opening-alert scope: only the alerts an incident
+// opened on (its opening keys, at any severity) hold its recovery proof. A
+// clue, or a later opener waiting in the batcher for the next incident, is not
+// evidence that this repair failed. A nil scope (no open incident) holds every
+// finding.
 type recoveryScope map[string]struct{}
 
 func newRecoveryScope(keys []string) recoveryScope {
@@ -24,7 +22,7 @@ func (c *Controller) recoveryScopeLocked() recoveryScope {
 	if !c.incidentOpen || c.currentIncidentRequest == nil {
 		return nil
 	}
-	return newRecoveryScope(c.incidentFindingKeys)
+	return newRecoveryScope(openingKeys(c.currentIncidentRequest))
 }
 
 func (c *Controller) recoveryScope() recoveryScope {
@@ -35,7 +33,7 @@ func (c *Controller) recoveryScope() recoveryScope {
 
 // holds reports whether an active finding holds the recovery proof.
 func (s recoveryScope) holds(finding sdk.Finding) bool {
-	if s == nil || (finding.Severity != sdk.SeverityWarning && finding.Severity != sdk.SeverityInfo) {
+	if s == nil {
 		return true
 	}
 	_, own := s[FindingStateKey(finding.DetectorID, FindingFingerprint(finding))]

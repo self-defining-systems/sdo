@@ -99,7 +99,7 @@ Advice, not validator-checked: tests and recorded-state replay run as informatio
 ## Go-installed generic health detectors
 
 Do not author `service-endpoints`, `workload-health`, `service-reachability`, `cluster-wiring`,
-`workload-controllers`, `warning-events`, `node-health`, `resource-saturation`, or `runtime-crashes`.
+`workload-controllers`, `warning-events`, `node-health`, or `resource-saturation`.
 The shared memory check installs these constructors from the SDK. Wiring checks selectors,
 protocol-specific declared targets, required template references/keys, PVC binding, Ingress backends,
 total NetworkPolicy isolation and local ExternalName aliases. Other controller kinds, persistent

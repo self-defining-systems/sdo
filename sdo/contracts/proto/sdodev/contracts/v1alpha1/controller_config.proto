@@ -152,6 +152,9 @@ message ControllerConfig {
   // Required at startup, independently of the optional traffic prober image.
   string toolchain_image = 75;
   google.protobuf.Duration closure_stability_window = 76;
+  // How long a Kubernetes failure condition without its own give-up signal
+  // must hold before it opens an incident. Unset uses the controller default.
+  google.protobuf.Duration self_heal_hold = 119 [(buf.validate.field).duration.gt = {}];
   google.protobuf.Duration responder_report_grace = 77;
   // Pre-start one idle responder; false forces the ordinary cold Job path.
   optional bool responder_standby = 78;

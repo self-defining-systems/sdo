@@ -7,7 +7,7 @@
       {
         "activations": 1,
         "cleared_at": "1970-01-01T00:00:03Z",
-        "detector_id": "cause",
+        "detector_id": "workload-health",
         "fingerprint": "cause",
         "first_activated_at": "1970-01-01T00:00:01Z",
         "last_seen_at": "1970-01-01T00:00:01Z",
@@ -18,7 +18,7 @@
     "dispatched_at": "1970-01-01T00:00:01Z",
     "final_detector_states": [
       {
-        "detector_id": "cause",
+        "detector_id": "workload-health",
         "evaluated_at": "1970-01-01T00:00:17Z",
         "status": "clear"
       }
@@ -31,7 +31,7 @@
     "incident_detector_fired_before_dispatch": true,
     "incident_detector_states": [
       {
-        "detector_id": "cause",
+        "detector_id": "workload-health",
         "evaluated_at": "1970-01-01T00:00:17Z",
         "status": "clear"
       }
@@ -43,7 +43,7 @@
       "detected_at": "1970-01-01T00:00:01Z",
       "detector_history": [
         {
-          "detector_id": "cause",
+          "detector_id": "workload-health",
           "evaluated_at": "1970-01-01T00:00:00Z",
           "fingerprints": [
             "cause"
@@ -51,7 +51,7 @@
           "status": "firing"
         },
         {
-          "detector_id": "cause",
+          "detector_id": "workload-health",
           "evaluated_at": "1970-01-01T00:00:01Z",
           "fingerprints": [
             "cause"
@@ -61,7 +61,7 @@
       ],
       "findings": [
         {
-          "detector_id": "cause",
+          "detector_id": "workload-health",
           "evidence": "evidence",
           "fingerprint": "cause",
           "primary_resource": {
@@ -76,6 +76,9 @@
       ],
       "incident_id": "demo-1000000000",
       "namespace": "demo",
+      "opening_keys": [
+        "workload-health\u0000cause"
+      ],
       "repair_policy": "recorded-actions",
       "repository_base_commit": "source",
       "repository_worktree": "/tmp/demo",
