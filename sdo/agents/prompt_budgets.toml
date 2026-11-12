@@ -128,13 +128,9 @@ reason = "Baseline synthetic fixture maximum: 6 Unicode code points; byte-identi
 max_chars = 744
 reason = "Actual benchmark transport appendix: 676 Unicode code points, with 10 percent headroom."
 
-[responder.incident_data]
-max_chars = 5400
-reason = "Reduced to the existing incident tool-output cap; complete facts and generated summaries share the production renderer."
-
 [responder.instructions]
-max_chars = 700
-reason = "Measured workflow-routing and late-finding instructions with both skill file paths: 495 Unicode code points, with 10 percent headroom; Codex no longer injects a skill list. Raised for the patch-capture sentence (about 90 characters): agents write only .sdo/, so source repairs are patches (sdo-patching), not commits."
+max_chars = 450
+reason = "The responder's three-line first message with both skill paths: about 330 Unicode code points with a long skills root, plus headroom. The workflow, late-finding and patch-capture sentences moved into the skills."
 
 [session.incident_data]
 max_chars = 100
@@ -160,9 +156,13 @@ reason = "Baseline synthetic fixture maximum: 191 Unicode code points; byte-iden
 max_chars = 200
 reason = "Operationalization skill description; shares the existing 200-character skill-index allowance."
 
-[skills.sdo-incident-response]
+[skills.incident-response]
 max_chars = 200
-reason = "New responder workflow skill description; shares the existing 200-character skill-index allowance."
+reason = "Responder method skill description; shares the existing 200-character skill-index allowance."
+
+[skills.sdo-operating]
+max_chars = 200
+reason = "Responder SDO command skill description; shares the existing 200-character skill-index allowance."
 
 [skills.sdo-patching]
 max_chars = 200
@@ -608,19 +608,27 @@ reason = "Explicit template-placeholder cap; preserve small identities inline an
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
-[template_data.responder-incident_response_instructions-branch_instruction]
+[template_data.responder-incident_prompt-branch_instruction]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
-[template_data.responder-incident_response_instructions-incident_id]
+[template_data.responder-incident_prompt-incident_id]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
-[template_data.responder-incident_response_instructions-repair_policy]
+[template_data.responder-incident_prompt-namespace]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
-[template_data.responder-incident_response_instructions-skills_root]
+[template_data.responder-incident_prompt-onset]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_prompt-opened_on]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_prompt-skills_root]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
@@ -633,18 +641,6 @@ max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
 [template_data.responder-incident_shell-skills_root]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.responder-late_findings_guidance_01-incident_id]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.responder-late_findings_guidance_01-late_findings_command]
-max_chars = 256
-reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
-
-[template_data.responder-late_findings_guidance_02-command]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 

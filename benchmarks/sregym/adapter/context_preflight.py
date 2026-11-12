@@ -15,7 +15,6 @@ if TYPE_CHECKING:
 
 from sdo.agents.responder import (
     command_surface,
-    prepared_incident_data,
     print_tool_response,
     render_incident_prompt,
     render_reflection_prompt,
@@ -83,8 +82,7 @@ def check_context_shapes(
     before = os.environ.get("SDO_SESSION_SCRATCH")
     os.environ["SDO_SESSION_SCRATCH"] = str(directory)
     try:
-        with prepared_incident_data(request) as data:
-            responder = render_incident_prompt(request, incident_data=data)
+        responder = render_incident_prompt(request)
         reflection = render_reflection_prompt(
             outcome=outcome,
             history=[],

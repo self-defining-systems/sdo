@@ -1,7 +1,7 @@
 # Responder workflow
 
 Source: the agreed LE workflow, implemented by
-`sdo/agents/responder/codex.py`, the installed incident-response skill and the
+`sdo/agents/responder/codex.py`, the installed `incident-response` and `sdo-operating` skills and the
 Go responder tool transport/controller. Check the fields and tools available
 at the rollout's revision; report unavailable steps instead of assuming them.
 

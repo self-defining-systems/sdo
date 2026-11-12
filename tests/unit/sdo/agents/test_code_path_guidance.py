@@ -16,14 +16,14 @@ def test_default_code_path_keeps_existing_skills(monkeypatch: pytest.MonkeyPatch
     assert skills_for_role("responder") == AGENT_SKILLS["responder"]
 
 
-def test_shell_guidance_is_free_form_and_retains_incident_facts(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_shell_guidance_is_free_form_and_points_at_sdo_detect(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SDO_CODE_PATH", "shell")
     monkeypatch.delenv("SDO_AGENT_GUIDANCE", raising=False)
     snapshot = OperationalMemorySnapshot(accepted_commit="accepted", goal_markdown="Serve traffic")
     request = IncidentRequest(incident_id="incident-1", memory_snapshot=snapshot)
-    prompt = _responder_prompt(request, incident_data="FIRED SCRIPT EVIDENCE")
+    prompt = _responder_prompt(request)
     assert "shell" in prompt
-    assert "FIRED SCRIPT EVIDENCE" in prompt
+    assert "sdo detect" in prompt
     assert "Go SDK" not in prompt
     assert "sdo-shell-authoring" in skills_for_role("responder")
     assert "sdo-detector-authoring" not in skills_for_role("reflector")

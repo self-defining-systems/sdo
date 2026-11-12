@@ -164,7 +164,7 @@ def test_every_registered_capability_has_a_production_render_fixture():
             ("python3", "-m", "sdo.agents.responder.reflection_worker"),
         ): cases["reflection_resume_5"],
         ("sdo-responder", "incident-response", ("python3", "-m", "sdo.agents.responder.worker")): cases[
-            "responder_oversized"
+            "responder_cold_two"
         ],
     }
     registered = {
