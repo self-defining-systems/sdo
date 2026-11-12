@@ -54,6 +54,7 @@ def bundle(root: Path, count: int = 2) -> dict[str, str]:
     [
         AUTH,
         "Invalid API key · Please run /login",
+        "Failed to authenticate: OAuth session expired and could not be refreshed",
         LIMIT,
         'API Error: 529 {"error":{"type":"overloaded_error","message":"Overloaded"}}',
     ],
@@ -426,3 +427,28 @@ def test_slot_allowlist_never_assigns_or_fails_over_to_an_excluded_registration(
         account.close()
     with pytest.raises(ValueError, match="unreadable"):
         sync_cswap(store, secret, listing, lanes=[], capacity=2, slots=[2, 9])
+
+
+def test_unclassified_exit_keeps_a_redacted_stderr_tail_in_account_mode(tmp_path: Path) -> None:
+    env = bundle(tmp_path)
+    secret = "sk-ant-oat01-" + "A1b2C3d4" * 6
+    agent = ScriptedAgent(lambda request: failure(stderr=f"boom: unexpected failure token={secret}\nlast line"))
+    work = tmp_path / "work"
+    work.mkdir()
+    with pytest.raises(StructuredTurnError) as raised:
+        run_structured_turn(
+            "claude",
+            "go",
+            output_schema=SCHEMA,
+            cwd=work,
+            access="read-only",
+            model="claude-opus-5-5",
+            executor=agent.executor,
+            environment=env,
+            provider_capacity=ProviderCapacity(environment=env),
+        )
+    text = str(raised.value)
+    assert "exited with code" in text
+    assert "unexpected failure" in text
+    assert "last line" in text
+    assert secret not in text
