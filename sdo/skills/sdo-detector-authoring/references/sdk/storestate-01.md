@@ -92,6 +92,9 @@ const LockWaitThreshold = 30 * time.Second
     in milliseconds; a lock still blocking others after this long is held by a
     session that is not finishing.
 
+const MaxAuthFailures = 16
+    MaxAuthFailures bounds the users AuthFailures returns.
+
 const MaxHolders = 12
     MaxHolders bounds the holder groups of one read; the read lists the largest
     groups first.
@@ -205,6 +208,18 @@ func AdapterFor(engine Engine) (Adapter, bool)
     AdapterFor returns the engine's adapter, or false when SDO has no reader for
     the engine yet.
 
+type AuthFailure struct {
+	User  string `json:"user"`
+	Count int    `json:"count"`
+}
+    AuthFailure is one user a store refused to sign in, with how many log lines
+    said so.
+
+func AuthFailures(engine Engine, logs string) []AuthFailure
+    AuthFailures counts, by user, the refused sign-ins in a store Pod's logs.
+    It returns names and counts only, most refused first. An engine without a
+    pattern (redis does not log the refused user) returns nil.
+
 type Change struct {
 	Before *Item `json:"before,omitempty"`
 	After  *Item `json:"after,omitempty"`
@@ -222,31 +237,4 @@ func (c Change) Key() Key
     Key returns the changed item's identity.
 
 func (c Change) String() string
-
-type Config struct {
-	// Spec is the detector's spec; a v1 Pod watch is added when absent.
-	Spec sdk.DetectorSpec
-	// Component is the application-map component the store belongs to.
-	Component string
-	// Engine selects the adapter; it must have one (AdapterFor).
-	Engine Engine
-	// Target selects the store's Pods and container by role.
-	Target podread.Target
-	// Port is where the store listens in its container; 0 is the engine default.
-	Port int
-	// ReadInterval is the pod-read interval; 0 is podread.MinInterval.
-	ReadInterval time.Duration
-	// GapWithoutBaseline makes a store Pod the detector has no healthy
-	// baseline for a coverage gap instead of a finding or an error: a read
-	// that is unavailable, unparsable or refused clears, and
-	// ConfirmationReason says why the store is not observed. Go sets it on
-	// the readers it installs from the application map, which no designer
-	// checked against the store's image or credentials, so a store SDO cannot
-	// read never stalls deployment acceptance or an incident's recovery. Once
-	// the Pod was read healthy, the same reads are a refusal finding or a
-	// detector error as usual. Absolute facts of a readable store (write
-	// blocks, near-cap use) are judged either way.
-	GapWithoutBaseline bool
-}
-    Config declares one store component to watch.
 ```

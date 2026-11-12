@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/planwire"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -29,6 +30,10 @@ func (e *SourceReconcilePartialError) Error() string {
 }
 
 func isSourceReconcile(action program.Action) bool {
+	// A Secret restore is a private write: nothing reads the Secret back.
+	if planwire.IsSecretRestore(action) {
+		return false
+	}
 	switch a := action.(type) {
 	case program.ReconcileFromSource:
 		return true

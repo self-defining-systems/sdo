@@ -6,6 +6,7 @@ package planwire
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"google.golang.org/protobuf/types/known/durationpb"
 	utiljson "k8s.io/apimachinery/pkg/util/json"
@@ -255,7 +256,23 @@ func GeneralAction(a program.Action) program.Action {
 	return ConcreteExternalAction(a)
 }
 
+// IsSecretRestore reports a ReconcileFromSource of a Secret. It is a private
+// step: the controller writes the accepted literal data and no pre-image,
+// patch or receipt carries a value.
+func IsSecretRestore(a program.Action) bool {
+	switch r := a.(type) {
+	case program.ReconcileFromSource:
+		return strings.EqualFold(r.Ref.Kind, "Secret")
+	case *program.ReconcileFromSource:
+		return r != nil && strings.EqualFold(r.Ref.Kind, "Secret")
+	}
+	return false
+}
+
 func IsGeneralAction(a program.Action) bool {
+	if IsSecretRestore(a) {
+		return true
+	}
 	switch GeneralAction(a).(type) {
 	case program.SyncWebhookCA, program.PatchObject, program.ApplyObject, program.KubernetesRequest, program.WaitFor, program.DeleteObject:
 		return true
