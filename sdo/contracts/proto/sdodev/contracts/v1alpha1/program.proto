@@ -329,7 +329,10 @@ message RecoveryWait {
     EXIT_REASON_DEADLINE = 2;
     EXIT_REASON_BLOCKER = 3;
     EXIT_REASON_FAILED = 4;
+    // An open finding depends on no write: another cause needs another actor.
     EXIT_REASON_UNCOVERED = 5;
+    // No learned playbook applied, so the stage had nothing to wait for.
+    EXIT_REASON_NOTHING_APPLIED = 6;
   }
   ExitReason exit_reason = 1 [(buf.validate.field).enum.defined_only = true];
   google.protobuf.Duration duration = 2 [(buf.validate.field).duration.gte = {}];
@@ -365,6 +368,11 @@ message PlanApplication {
   RecoveryWait recovery_wait = 24;
   string final_verification_basis = 22 [(buf.validate.field).string = {in: ["", "observed-transition", "recovery-settled"]}];
   SettlementRejectionReason settlement_rejection_reason = 23 [(buf.validate.field).enum.defined_only = true];
+  // Controller-observed: every non-Secret object the plan wrote departed from
+  // accepted source before it (a departure present before SDO's first write in
+  // the incident) and matches accepted source after it, or was source-absent
+  // and is gone. The write is proven by its own receipt.
+  bool restored_source = 25;
 }
 
 message ProgramToolCall {

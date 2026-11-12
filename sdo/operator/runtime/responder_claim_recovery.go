@@ -100,15 +100,16 @@ func (d KubernetesJobDispatcher) beforeFirstResponderClaim(ctx context.Context, 
 			// The same proof the stage's own recovery wait requires; without it
 			// the wait below observes again and hands off what stays unproven.
 			view, err := loop.snapshotView(ctx)
-			detectors := map[string]sdk.Detector{}
-			for _, detector := range loop.Detectors {
-				detectors[detector.Spec().ID] = detector
-			}
 			seen := map[string]sdk.Finding{}
 			for _, finding := range request.Findings {
 				seen[FindingFingerprint(finding)] = finding
 			}
-			clear = err == nil && recoveryClearance(view, detectors, seen, report.Mitigations, progress.EffectSettled, loop.clock()).proven()
+			if err == nil {
+				check := loop.stageRecoveryCheck(ctx, view, state, seen)
+				clear = decideStageRecovery(check, "", report) == stageCleared
+			} else {
+				clear = false
+			}
 		}
 		if clear {
 			report.RecoveryWait = &contracts.RecoveryWait{ExitReason: contracts.RecoveryWait_EXIT_REASON_CLEARED}

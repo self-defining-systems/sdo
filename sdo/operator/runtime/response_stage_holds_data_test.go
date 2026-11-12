@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -37,8 +36,9 @@ func runHoldsDataStage(t *testing.T, document string) (*sameWriteWorld, map[stri
 	loop.GitRead = fakeArchitecture(document)
 	state.Request.RepositoryWorktree = "synthetic-worktree"
 	loop.Request.RepositoryWorktree = "synthetic-worktree"
+	instant := newInstantRecoveryClock()
 	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true,
-		recoveryWait: func(context.Context, time.Duration) error { return nil }}
+		recoveryNow: instant.now, recoveryWait: instant.wait}
 	report, err := stage.Run(context.Background(), state)
 	if err != nil {
 		t.Fatal(err)

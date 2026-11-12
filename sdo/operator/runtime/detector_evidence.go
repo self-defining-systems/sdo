@@ -2,7 +2,7 @@ package runtime
 
 import (
 	"fmt"
-	"sort"
+
 	"strings"
 	"time"
 
@@ -70,65 +70,6 @@ func trafficConfirmationReason(consumer traffic.Consumer, view sdk.DetectionCont
 			reason = explained.ConfirmationReason(view)
 		}
 		reasons = append(reasons, fmt.Sprintf("traffic workload %s: %s", workload, reason))
-	}
-	return strings.Join(reasons, "; ")
-}
-
-// recoveryTrafficEvidence explains why the traffic a detector consumes does
-// not yet show recovery after since, when the write took effect; empty means
-// it does. Each qualified scenario of each health-probe workload needs at least
-// its SLO's minSamples usable samples taken after since and within maxAge, and
-// those samples alone must meet the SLO. Samples that stopped arriving, or
-// samples that predate the write, are not positive evidence.
-func recoveryTrafficEvidence(detector sdk.Detector, view sdk.DetectionContext, since time.Time) string {
-	consumer, ok := detector.(traffic.Consumer)
-	if !ok {
-		return ""
-	}
-	var reasons []string
-	for _, workload := range consumer.TrafficWorkloads() {
-		window, ok := traffic.WindowFrom(view, workload)
-		if !ok {
-			reasons = append(reasons, fmt.Sprintf("traffic workload %s has no observations", workload))
-			continue
-		}
-		if window.Workload.Purpose == traffic.PurposeLinkProbe {
-			continue
-		}
-		if window.LoadError != "" {
-			reasons = append(reasons, fmt.Sprintf("traffic workload %s: %s", workload, window.LoadError))
-			continue
-		}
-		var short []string
-		qualified := 0
-		for _, observed := range window.Scenarios {
-			if !observed.Qualified {
-				continue
-			}
-			qualified++
-			var fresh []traffic.Sample
-			for _, sample := range observed.Samples {
-				if !sample.At.Before(since) {
-					fresh = append(fresh, sample)
-				}
-			}
-			id := observed.Scenario.ID
-			slo := window.Workload.ScenarioSLO(id)
-			verdict := traffic.Evaluate(id, slo, fresh, window.ObservedAt)
-			switch {
-			case !verdict.Evaluated:
-				short = append(short, fmt.Sprintf("%s has %d of %d samples since the write took effect", id, verdict.Samples, slo.MinSamples))
-			case !verdict.Healthy:
-				short = append(short, fmt.Sprintf("%s violates its SLO since the write took effect: %s", id, strings.Join(verdict.Violations, ", ")))
-			}
-		}
-		if qualified == 0 {
-			short = append(short, "no qualified scenario")
-		}
-		sort.Strings(short)
-		if len(short) > 0 {
-			reasons = append(reasons, fmt.Sprintf("traffic workload %s: %s", workload, strings.Join(short, "; ")))
-		}
 	}
 	return strings.Join(reasons, "; ")
 }
