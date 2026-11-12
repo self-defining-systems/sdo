@@ -23,6 +23,11 @@ func (v *RecordingReadView) ProbeTCP(ref sdk.ObjectRef, port int32) (program.Pro
 
 func (v *RecordingReadView) QueryMetrics(q metrics.Query) metrics.Result
 
+func (v *RecordingReadView) Read(q program.Query) (program.Observation, error)
+    Read records the query and its bounded typed answer. A recording holds only
+    the fields the query named: a store row is the projection, a probe row the
+    extracted fields, and no response body or other column is kept.
+
 func (v *RecordingReadView) RecordExternalCalls(calls []PrimitiveCall)
     RecordExternalCalls feeds subprocess receipts through the same evidence sink
     used for local primitive reads. It performs no live reads.
@@ -103,6 +108,10 @@ func (v *ReplayReadView) ProbeHTTP(ref sdk.ObjectRef, req program.HTTPProbe) (pr
 func (v *ReplayReadView) ProbeTCP(ref sdk.ObjectRef, port int32) (program.ProbeResult, error)
 
 func (v *ReplayReadView) QueryMetrics(q metrics.Query) metrics.Result
+
+func (v *ReplayReadView) Read(q program.Query) (program.Observation, error)
+    Read serves a recorded answer; a query with no recorded answer is an
+    UnrecordedError ("no recorded case").
 
 func (v *ReplayReadView) Recorded(method string, arguments any, result any) error
     Recorded answers a state read from the first matching recorded reply without
@@ -202,18 +211,4 @@ func (s Snapshot) AlertsResult() (metrics.AlertsResult, bool)
     AlertsResult implements metrics.AlertSource.
 
 func (s Snapshot) AppMap() (program.AppMap, error)
-
-func (s Snapshot) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error)
-
-func (s Snapshot) ConfigMaps() []corev1.ConfigMap
-
-func (s Snapshot) CronJobs() []batchv1.CronJob
-
-func (s Snapshot) DaemonSets() []appsv1.DaemonSet
-
-func (s Snapshot) DataChecks() (map[string]string, error)
-
-func (s Snapshot) DatabaseUsers(t program.DatabaseTarget) ([]program.DatabaseUser, error)
-
-func (s Snapshot) Deployments() []appsv1.Deployment
 ```

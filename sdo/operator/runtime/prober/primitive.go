@@ -3,6 +3,7 @@ package prober
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strconv"
@@ -81,5 +82,17 @@ func (p *Prober) Primitive(ctx context.Context, request PrimitiveRequest) (progr
 		return program.ProbeResult{Detail: err.Error()}, nil
 	}
 	defer response.Body.Close()
-	return program.ProbeResult{Success: response.StatusCode < 400, Detail: fmt.Sprintf("HTTP %d", response.StatusCode)}, nil
+	result := program.ProbeResult{Success: response.StatusCode < 400, Detail: fmt.Sprintf("HTTP %d", response.StatusCode), Status: response.StatusCode}
+	if len(request.HTTP.Fields) > 0 {
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, program.MaxProbeBodyBytes+1))
+		if readErr != nil || len(body) > program.MaxProbeBodyBytes {
+			return result, fmt.Errorf("probe response body unreadable or longer than %d bytes", program.MaxProbeBodyBytes)
+		}
+		fields, extractErr := program.ExtractJSONFields(body, request.HTTP.Fields)
+		if extractErr != nil {
+			return result, extractErr
+		}
+		result.Fields = fields
+	}
+	return result, nil
 }

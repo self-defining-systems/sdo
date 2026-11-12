@@ -26,7 +26,7 @@ Full [SDK](program-sdk.md).
 
 ## Reads (ReadView)
 
-- `type ReadView interface: inputs.Sources, WebhookCAMatchesSecret, AdmissionWebhooksFor, ObjectReader, DetectionContext, ScopedObservationSource, ObservationClock, StatefulSets, HorizontalPodAutoscalers, PodDisruptionBudgets, metrics.Source, metrics.AlertSource, metrics.QuerySource, traffic.Source, AppMap, datacheck.Accepted, servicehealth.ReachabilitySource, Logs, LogsWithOptions, metrics.UsageSource, ProbeTCP, ProbeHTTP, DiffAgainstSource, DiffAgainstBaseline, DatabaseUsers, Observe, KubernetesRead`: is a program's frozen, recorded read access to the incident namespace; every read is replayed from the corpus at check time.
+- `type ReadView interface: inputs.Sources, WebhookCAMatchesSecret, AdmissionWebhooksFor, ObjectReader, DetectionContext, ScopedObservationSource, ObservationClock, StatefulSets, HorizontalPodAutoscalers, PodDisruptionBudgets, metrics.Source, metrics.AlertSource, metrics.QuerySource, traffic.Source, AppMap, datacheck.Accepted, servicehealth.ReachabilitySource, Logs, LogsWithOptions, metrics.UsageSource, ProbeTCP, ProbeHTTP, DiffAgainstSource, DiffAgainstBaseline, DatabaseUsers, Observe, KubernetesRead, Read`: is a program's frozen, recorded read access to the incident namespace; every read is replayed from the corpus at check time.
 - `type DetectionContext interface: StatefulSets, DaemonSets, Jobs, CronJobs, PersistentVolumeClaims, ServiceAccounts, HorizontalPodAutoscalers, PodDisruptionBudgets, Ingresses, Nodes, Secrets, DiffAgainstSource, PodAdmission, Namespace, ConfigMaps, Services, Pods, Deployments, ReplicaSets, Endpoints, EndpointSlices, NetworkPolicies, Events, ReadyEndpointCountForService, PodsForService, RecentEventsFor`: is the frozen snapshot read by detectors and, through ReadView, by programs.
 - `ObjectReader.Object(ObjectRef) (*unstructured.Unstructured, error)`: reads one exact object by kind, namespace and name.
 - `ReadView.LogsWithOptions(pod sdk.ObjectRef, options corev1.PodLogOptions) (string, error)`: reads bounded container logs; Previous selects the last terminated instance.
@@ -71,7 +71,7 @@ Full [SDK](program-sdk.md).
 
 - `ReadView.ProbeTCP(to sdk.ObjectRef, port int32) (ProbeResult, error)`: connects to one port of a Pod or Service and records whether it accepted.
 - `ReadView.ProbeHTTP(to sdk.ObjectRef, req HTTPProbe) (ProbeResult, error)`: sends one recorded HTTP request to a Pod or Service.
-- `type HTTPProbe struct{Method string; Path string; Headers map[string]string}`: is the request ProbeHTTP sends.
+- `type HTTPProbe struct{Method string; Path string; Headers map[string]string; Fields map[string]string}`: is the request ProbeHTTP sends.
 - `type RemoveServicePort struct{Ref sdk.ObjectRef; Name string; Port int32; Protocol string; AllowEmpty bool; Reason string}`: removes exactly one Service port.
 
 ## Database users

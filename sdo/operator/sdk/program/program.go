@@ -180,11 +180,18 @@ type ReadView interface {
 	DatabaseUsers(DatabaseTarget) ([]DatabaseUser, error)
 	Observe(ExternalOperation) (int32, error)
 	KubernetesRead(KubernetesRequest) (json.RawMessage, error)
+	// Read returns bounded typed rows: store records over a RepairData scope, or
+	// named fields of an unauthenticated HTTP status response. See Query.
+	Read(Query) (Observation, error)
 }
 
 type ProbeResult struct {
 	Success bool   `json:"success"`
 	Detail  string `json:"detail,omitempty"`
+	// Status is the HTTP status, set when the request got a response.
+	Status int `json:"status,omitempty"`
+	// Fields holds the scalars an HTTPProbe asked for by JSON pointer.
+	Fields Row `json:"fields,omitempty"`
 }
 
 // HTTPProbe is the request ProbeHTTP sends.
@@ -192,6 +199,9 @@ type HTTPProbe struct {
 	Method  string            `json:"method"`
 	Path    string            `json:"path"`
 	Headers map[string]string `json:"headers,omitempty"`
+	// Fields maps a name to an RFC 6901 pointer to a scalar in the JSON
+	// response body; the answer carries those scalars and drops the body.
+	Fields map[string]string `json:"fields,omitempty"`
 }
 
 // Diff is the shared accepted-source or baseline comparison result.
@@ -440,7 +450,7 @@ func RunDiagnose(ctx context.Context, p Diagnoser, v ReadView, b Bindings, deadl
 				result <- outcome{err: fmt.Errorf("panic: %v", recovered)}
 			}
 		}()
-		checked := &checkedReadView{ReadView: v}
+		checked := &checkedReadView{ReadView: v, maxReads: MaxDiagnoseReads}
 		verdict, err := p.Diagnose(ctx, checked, b)
 		if readErr := checked.failure(); readErr != nil {
 			err = readErr
@@ -470,6 +480,8 @@ type checkedReadView struct {
 	ReadView
 	mu  sync.Mutex
 	err error
+	// maxReads bounds Read calls when positive (a Diagnose); reads counts them.
+	maxReads, reads int
 }
 
 func (v *checkedReadView) check(err error) {

@@ -311,6 +311,11 @@ func (v *View) QueryMetrics(a0 p1.Query) (r0 p1.Result) {
 	}
 	return
 }
+func (v *View) Read(a0 p2.Query) (r0 p2.Observation, r1 error) {
+	err := v.call("Read", []any{a0}, []any{&r0})
+	r1 = err
+	return
+}
 func (v *View) ReadyEndpointCountForService(a0 string, a1 string) (r0 int) {
 	err := v.call("ReadyEndpointCountForService", []any{a0, a1}, []any{&r0})
 	if err != nil {
