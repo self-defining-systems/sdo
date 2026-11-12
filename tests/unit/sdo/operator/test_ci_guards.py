@@ -871,3 +871,21 @@ def test_every_buildkit_cache_scope_a_workflow_uses_has_index_and_blob_families(
             f"{key} is in no cache family: add one under cache.families in .github/ci_budgets.json "
             "or name the scope sdo-<image>"
         )
+
+
+def test_a_shallow_checkout_without_the_base_commit_fetches_it_instead_of_failing(tmp_path: Path) -> None:
+    (tmp_path / "origin").mkdir()
+    origin = _base_repo(tmp_path / "origin")
+    base = subprocess.check_output(["git", "-C", str(origin), "rev-parse", "HEAD"], text=True).strip()
+    (origin / "tests/test_a.py").write_text("def test_old():\n    pass\n\n\ndef test_head_only():\n    pass\n")
+    _git(origin, "add", "-A")
+    _git(origin, "commit", "-qm", "head")
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", "--depth=1", f"file://{origin}", str(clone)], check=True)
+    # The base is the head's parent: a depth-1 clone does not have it.
+    missing = subprocess.run(["git", "-C", str(clone), "cat-file", "-e", f"{base}^{{commit}}"], check=False)
+    assert missing.returncode != 0
+    _git(origin, "config", "uploadpack.allowAnySHA1InWant", "true")
+    empty: dict[str, dict[str, str]] = {"go": {}, "python": {}}
+    near = {"tests/test_a.py::test_old": 6.0, "tests/test_a.py::test_head_only": 6.0}
+    assert slow.new_near_budget(near, empty, base, clone) == {"tests/test_a.py::test_head_only": 6.0}

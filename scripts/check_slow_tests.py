@@ -80,8 +80,25 @@ def test_name(key: str) -> str:
     return key.split("::")[-1] if "::" in key else key.rsplit(" ", 1)[-1]
 
 
+def ensure_base(base: str, root: Path) -> None:
+    """Make the base commit available: a shallow CI checkout holds the PR head but not its base."""
+    present = subprocess.run(
+        ["git", "-C", str(root), "cat-file", "-e", f"{base}^{{commit}}"], check=False, capture_output=True
+    )
+    if present.returncode == 0:
+        return
+    fetched = subprocess.run(
+        ["git", "-C", str(root), "fetch", "--depth=1", "--quiet", "origin", base], check=False, capture_output=True
+    )
+    if fetched.returncode != 0:
+        raise RuntimeError(
+            f"base {base} is not in the checkout and cannot be fetched: {fetched.stderr.decode().strip()}"
+        )
+
+
 def defined_at(base: str, key: str, root: Path) -> bool:
     """True when the base revision already defines the test (by name, in any test file)."""
+    ensure_base(base, root)
     name = test_name(key)
     if "::" in key:
         spec, pattern = [f"{key.split('::')[0]}"], rf"def {name}\("
