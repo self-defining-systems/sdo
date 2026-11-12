@@ -227,3 +227,5 @@ After a `success` outcome Go captures each such proposal as a responder-owned pa
 `.sdo/deployment/patches/` in the reflection checkout (`memory.CaptureSourceProposals`); a proposal
 whose object has no single YAML source file is logged `source_proposal_not_captured` and left to
 reflection. Escalated stage attempts appear in `prior_stages` with result `escalated`.
+
+`source_repair` (broker append after the acknowledgment; absent on older runs): `status` is `deployed`, `published` (accepted without a deployment), `held` (not accepted; `detail` says why) or `none`; `commit` is the accepted source commit; `uncaptured_paths` are uncommitted app files that were discarded. It never changes the classification: recovery was verified before the source was published.

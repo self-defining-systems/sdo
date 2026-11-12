@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"time"
 )
@@ -34,6 +35,9 @@ type reflectionQueueState struct {
 	retryAt  time.Time
 	attempts map[string]int
 	lastErr  map[string]string
+	// deferred holds incidents whose source publication could not start until
+	// a time: they are skipped, so one cannot block another's reflection.
+	deferred map[string]time.Time
 	// unknown means the last ledger rescan failed, so queued work may exist.
 	unknown bool
 	// rollout names an incident whose queued reflection accepted a detector
@@ -85,7 +89,17 @@ func (c *Controller) driveQueuedReflections(ctx context.Context, now time.Time) 
 		c.mu.Unlock()
 		return nil
 	}
-	id := state.queued[0]
+	id := ""
+	for _, candidate := range state.queued {
+		if until, waiting := state.deferred[candidate]; !waiting || !now.Before(until) {
+			id = candidate
+			break
+		}
+	}
+	if id == "" {
+		c.mu.Unlock()
+		return nil
+	}
 	if state.attempts == nil {
 		state.attempts = map[string]int{}
 	}
@@ -119,6 +133,7 @@ func (c *Controller) handleReflectionCompletion(completion reflectionCompletion)
 	if completion.err == nil {
 		delete(state.attempts, completion.incidentID)
 		delete(state.lastErr, completion.incidentID)
+		delete(state.deferred, completion.incidentID)
 		state.retryAt = time.Time{}
 		c.mu.Unlock()
 		// An accepted detector change keeps the incident queued until a
@@ -142,6 +157,20 @@ func (c *Controller) handleReflectionCompletion(completion reflectionCompletion)
 		if err != nil {
 			c.reportBrokerError("check queued reflection rollout "+completion.incidentID, err)
 		}
+		return
+	}
+	var deferral interface{ Deferred() bool }
+	if errors.As(completion.err, &deferral) && deferral.Deferred() {
+		// Not a failed attempt: the deploy needs the controller idle. Try again
+		// after the controller's initial retry interval, without blocking others.
+		if state.deferred == nil {
+			state.deferred = map[string]time.Time{}
+		}
+		interval := max(c.config.ClosureRetry.InitialBackoff, time.Second)
+		state.deferred[completion.incidentID] = c.clock().Add(interval)
+		state.rescan = true
+		c.mu.Unlock()
+		slog.Info("source_publication_deferred", "incident_id", completion.incidentID, "reason", completion.err.Error())
 		return
 	}
 	if state.lastErr == nil {

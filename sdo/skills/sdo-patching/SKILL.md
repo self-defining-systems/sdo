@@ -1,15 +1,27 @@
 ---
 name: sdo-patching
-description: Keep a change to a vendored or application file as a reasoned patch under .sdo/deployment/patches. Use before editing any file outside .sdo/, and when a patch fails to apply.
+description: Keep a change to an application file: a responder commits it, the deployer captures it as a reasoned patch. Use before editing any file outside .sdo/, and when a patch fails to apply.
 ---
 
-# Patches: the only way a source change persists
+# Keeping a source change
+
+## Responders: commit it
+
+Edit the application files in your checkout, test them, then `git commit -m "<why>"` each change that must survive.
+After SDO has verified recovery and your closing turn is over, SDO publishes your commits as one change, deploys and
+verifies it, and accepts it. Commit on top of the starting commit (never reset or amend below it). Uncommitted files,
+including probe scripts and debug edits, are discarded: nothing publishes or deploys them. A live fix that source
+lacks is reverted by the next deploy, so commit the change that makes it permanent. Never commit Secret values. Your
+checkout already holds the deployment patches applied; do not edit a file a patch changes (the commit is refused):
+add a later patch for it instead, as below.
+
+## Deployers: patches
 
 A patch that no build source covers does not mitigate (`patch.undeployable`); use a runtime mitigation instead.
 
-Agents write only `.sdo/`. Application files (everything outside `.sdo/`) are never published or committed. Go applies
-the patch series in `.sdo/deployment/patches/` to the accepted repository to build the **effective tree**; every render,
-build, drift read, upgrade and responder uses that tree. Your checkout already holds the series applied.
+The deployer writes only `.sdo/`: its application-file edits are never published as edited. Go applies the patch series
+in `.sdo/deployment/patches/` to the accepted repository to build the **effective tree**; every render, build, drift
+read, upgrade and responder uses that tree. Your checkout already holds the series applied.
 
 ## When a patch is justified
 
@@ -47,4 +59,4 @@ Capture each independent fix as its own patch, one reason each. Later patches ap
 - Only the owner changes or deletes a patch; responders add new patches and never rewrite earlier ones. To supersede
   a responder patch, add a later patch.
 
-Never commit app files with git; a local commit of them changes nothing Go publishes.
+A deployer never commits app files with git; a local commit of them changes nothing Go publishes.

@@ -61,6 +61,12 @@ const (
 	RulePatchUncaptured   = "patch.uncaptured"
 	RuleDeploymentInvalid = "deployment.invalid"
 
+	// Application source an agent committed (the broker's source publication):
+	// the shape of the committed files, their size, and the history they sit on.
+	RuleSourcePolicy  = "source.policy"
+	RuleSourceSize    = "source.size"
+	RuleSourceHistory = "source.history"
+
 	// Telemetry bindings (.sdo/diagnostics/telemetry), the detection designer's
 	// data: sources and backends are checked against the environment's policy
 	// and the adapter registry without executing anything.
@@ -115,17 +121,17 @@ const (
 	// actors; map.missing, map.unprobed and map.possible-edge are always
 	// notes. map.coverage is a user-path component no probed user operation
 	// covers and that records no unprobed reason.
-	RuleMapMissing         = "map.missing"
-	RuleMapSchema          = "map.schema"
-	RuleMapUnknownName     = "map.unknown-name"
-	RuleMapPathMismatch    = "map.path-mismatch"
-	RuleMapUncoveredOp     = "map.uncovered-operation"
-	RuleMapUncoveredWrite  = "map.uncovered-write"
-	RuleMapUncoveredData   = "map.uncovered-data"
-	RuleMapCoverage        = "map.coverage"
-	RuleMapUnprobed        = "map.unprobed"
-	RuleMapKnownBroken     = "map.known-broken"
-	RuleMapPossibleEdge    = "map.possible-edge"
+	RuleMapMissing        = "map.missing"
+	RuleMapSchema         = "map.schema"
+	RuleMapUnknownName    = "map.unknown-name"
+	RuleMapPathMismatch   = "map.path-mismatch"
+	RuleMapUncoveredOp    = "map.uncovered-operation"
+	RuleMapUncoveredWrite = "map.uncovered-write"
+	RuleMapUncoveredData  = "map.uncovered-data"
+	RuleMapCoverage       = "map.coverage"
+	RuleMapUnprobed       = "map.unprobed"
+	RuleMapKnownBroken    = "map.known-broken"
+	RuleMapPossibleEdge   = "map.possible-edge"
 	// Ownership of the map region: the designer changes nothing outside it,
 	// and nobody else changes it.
 	RuleMapOutsideRegion = "ownership.map-outside-region"

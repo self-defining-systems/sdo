@@ -54,6 +54,10 @@ const (
 	// RepairHeld: the candidate could not be deployed and verified (Hold and
 	// Detail say why). Nothing is accepted; the cluster is left as it is.
 	RepairHeld RepairOutcome = "held"
+	// RepairDeferred: the deploy did not start (the controller did not
+	// acknowledge the maintenance pause in time). Nothing was applied or
+	// accepted; the caller tries again later.
+	RepairDeferred RepairOutcome = "deferred"
 )
 
 // RepairResult is the typed result of one Repair.
@@ -90,6 +94,17 @@ type RepairDeployer struct {
 	// Wait pauses between bounded re-evaluations and infrastructure retries;
 	// nil waits on a timer.
 	Wait func(context.Context, time.Duration) error
+	// Maintenance pauses the controller's evaluation around the deploy. A
+	// repair deploys after its incident closed, so nothing holds an incident
+	// open: without the pause the rollout would itself open one. Nil deploys
+	// without a pause (tests, and configurations that never detect).
+	Maintenance MaintenanceWindow
+	// Now stamps the pause's expiry; nil reads the clock.
+	Now func() time.Time
+	// Busy names work the deploy must not overlap (an open incident, another
+	// closure in flight), or "". It is read after the pause is acknowledged,
+	// so nothing can open between the check and the rollout. Nil is never busy.
+	Busy func(context.Context) (string, error)
 }
 
 func (r RepairDeployer) validate(cfg RepairConfig) error {
@@ -130,20 +145,67 @@ func (r RepairDeployer) Repair(ctx context.Context, cfg RepairConfig, incidentID
 		receipt, err := r.Broker.Publish(ctx, incidentID, broker.Responder, broker.ProposalPhase)
 		return RepairResult{Outcome: RepairUndeployed, Receipt: receipt, Detail: ErrNoAcceptedPlan.Error()}, err
 	}
-	for restage := 0; ; restage++ {
-		result, err := r.deploy(ctx, cfg, incidentID, accepted.Plan)
-		if !errors.Is(err, broker.ErrCandidateStale) {
-			return result, err
+	return r.paused(ctx, func() (RepairResult, error) {
+		for restage := 0; ; restage++ {
+			result, err := r.deploy(ctx, cfg, incidentID, accepted.Plan)
+			if !errors.Is(err, broker.ErrCandidateStale) {
+				return result, err
+			}
+			if restage >= maxCandidateRestages {
+				return result, fmt.Errorf("the accepted head moved %d times while the repair was deployed: %w", restage+1, err)
+			}
 		}
-		if restage >= maxCandidateRestages {
-			return result, fmt.Errorf("the accepted head moved %d times while the repair was deployed: %w", restage+1, err)
-		}
-	}
+	})
 }
 
+// paused runs a deploy inside the controller's maintenance pause: declared,
+// acknowledged by the controller, lifted afterwards even when ctx is done. A
+// pause the controller does not acknowledge in time is a deferral, not a
+// failure: nothing was applied.
+func (r RepairDeployer) paused(ctx context.Context, deploy func() (RepairResult, error)) (_ RepairResult, err error) {
+	if r.Maintenance == nil {
+		return deploy()
+	}
+	now := time.Now
+	if r.Now != nil {
+		now = r.Now
+	}
+	advancer := Advancer{Maintenance: r.Maintenance, Wait: r.Wait}
+	var cfg AdvanceConfig
+	expiresAt := now().Add(orDefault(cfg.PauseAckTimeout, DefaultPauseAckTimeout) + orDefault(cfg.PauseApplyBound, DefaultPauseApplyBound) + orDefault(cfg.SettleWindow, DefaultSettleWindow))
+	if err := r.Maintenance.Pause(ctx, "source repair", expiresAt); err != nil {
+		return RepairResult{}, fmt.Errorf("pause controller maintenance: %w", err)
+	}
+	defer func() {
+		if resumeErr := advancer.resume(context.WithoutCancel(ctx), cfg); resumeErr != nil {
+			err = errors.Join(err, fmt.Errorf("resume controller maintenance: %w", resumeErr))
+		}
+	}()
+	acknowledged, err := advancer.awaitPauseAcknowledged(ctx, cfg)
+	if err != nil {
+		return RepairResult{}, err
+	}
+	if !acknowledged {
+		return RepairResult{Outcome: RepairDeferred, Detail: "the controller did not acknowledge the maintenance pause in time"}, nil
+	}
+	if r.Busy != nil {
+		reason, err := r.Busy(ctx)
+		if err != nil {
+			return RepairResult{}, fmt.Errorf("controller activity: %w", err)
+		}
+		if reason != "" {
+			return RepairResult{Outcome: RepairDeferred, Detail: reason}, nil
+		}
+	}
+	return deploy()
+}
+
+// changesDeploymentInputs reports a repair that shapes what is deployed: a
+// deployment file, overlay or patch, or any application source the responder
+// committed.
 func changesDeploymentInputs(paths []string) bool {
 	for _, path := range paths {
-		if layout.IsEffectiveDeploymentInput(path) {
+		if layout.IsEffectiveDeploymentInput(path) || !layout.IsMemoryPath(path) {
 			return true
 		}
 	}

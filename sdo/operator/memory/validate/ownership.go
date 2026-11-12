@@ -55,11 +55,12 @@ var telemetryKinds = []layout.Kind{layout.KindTelemetrySources, layout.KindTelem
 // and health-judge bootstrap stages are InitialPhase. An upstream advance
 // (AdvancePhase) changes source only. Responders change
 // operational memory only in ReflectionPhase, after an independently verified
-// outcome. No agent edits app files in any phase: only the upstream actor
-// owns source, and an agent's change to upstream source is a deployment
-// patch. No actor edits memory in ProposalPhase except responders adding
-// deployment patches (add-only, patchOwnership), and nobody but the
-// controller writes outcomes or lifecycle provenance.
+// outcome. Only the upstream actor
+// owns source, except that a responder's committed app source is published
+// by the broker after the incident closes (the deployer's source change is
+// still a deployment patch). No actor edits memory in ProposalPhase except
+// responders adding deployment patches (add-only, patchOwnership), and nobody
+// but the controller writes outcomes or lifecycle provenance.
 //
 // Deployment class (.sdo/deployment): the human seeds all of it, the deployer
 // owns the plan, files and patches (in the initial and advance phases, and may
@@ -91,7 +92,9 @@ var grants = []grant{
 	// patchOwnership still limits it to patches it owns.
 	{actor: Deployer, phase: AdvancePhase, kinds: deployerKinds},
 	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindDeploymentOverlay}},
-	{actor: Responder, phase: ProposalPhase, kinds: []layout.Kind{layout.KindDeploymentPatch}},
+	// A responder adds deployment patches and commits application source;
+	// the broker publishes the committed source after the incident closes.
+	{actor: Responder, phase: ProposalPhase, kinds: []layout.Kind{layout.KindDeploymentPatch, kindSource}},
 	// An upstream advance changes only source: an upstream revision that
 	// touches .sdo/ is held before any proposal exists.
 	{actor: Upstream, phase: AdvancePhase, kinds: []layout.Kind{kindSource}},
@@ -166,13 +169,16 @@ func owners(kind layout.Kind, id string) string {
 	return "changeable by " + strings.Join(found, " or ")
 }
 
-// sourceHint explains a denied app-file change. App files are never edited by
-// SDO: a change to upstream source is a patch under .sdo/deployment/patches/.
+// sourceHint explains a denied app-file change. A responder commits source in
+// its checkout; the deployer still keeps an edit as a deployment patch.
 func sourceHint(actor Actor, phase Phase) string {
 	if actor == Upstream {
 		return owners(kindSource, "")
 	}
-	return "app files are never edited or published; make the change a patch (`sdo-operator patch create --reason \"<why>\"`), or revert the file. Only the upstream advance changes app files"
+	if actor == Deployer {
+		return "app files are not published as edited; make the change a patch (`sdo-operator patch create --reason \"<why>\"`), or revert the file"
+	}
+	return "only a responder's committed source and the upstream advance change app files; the detection designer and other actors never do"
 }
 
 func (s *run) ownership(ctx context.Context) error {

@@ -49,6 +49,10 @@ func secretDataDiagnostics(root string, paths []string) []Diagnostic {
 	return diagnostics
 }
 
+// SecretMaterialIn names credential-looking material in text that a source
+// change adds (the broker checks added lines only), or "".
+func SecretMaterialIn(p string, text []byte) string { return secretMaterial(p, text) }
+
 // holdsSecretData reports a Secret object with data or stringData, either by
 // kind or as an element of a typed "secrets" collection.
 func holdsSecretData(value any, inSecrets bool) bool {

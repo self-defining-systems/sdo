@@ -1,6 +1,8 @@
 package deploywire
 
 import (
+	"time"
+
 	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/builder"
@@ -38,7 +40,8 @@ func RepairDeployer(identity Identity, launch *contracts.ControllerConfig, opera
 	if err != nil {
 		return lifecycle.RepairDeployer{}, err
 	}
-	return lifecycle.RepairDeployer{Broker: repository, Readiness: deployer, Verifier: verifier}, nil
+	return lifecycle.RepairDeployer{Broker: repository, Readiness: deployer, Verifier: verifier,
+		Maintenance: Maintenance{Client: client, Namespace: ControlNamespace(launch), Now: time.Now}}, nil
 }
 
 // The controller's broker is the repair's broker.
