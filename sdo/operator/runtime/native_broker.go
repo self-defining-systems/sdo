@@ -594,6 +594,9 @@ func (n NativeIncidentBroker) ProcessQueuedReflection(ctx context.Context, incid
 	if err != nil || !sourceOwed {
 		return err
 	}
+	// The agent is asked once more, before anything is deployed, to commit or
+	// remove what it left (closing turn; it never fails the publication).
+	n.cleanupBeforePublish(ctx, incidentID)
 	// The source publication deploys and verifies for as long as a build and a
 	// rollout take: it holds the ledger lock only to read and write the ledger.
 	return n.publishSource(ctx, incidentID)
