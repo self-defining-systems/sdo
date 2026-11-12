@@ -7,6 +7,7 @@ import (
 
 	"sdo.dev/operator/apihistory"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	outcomeclass "sdo.dev/operator/contracts/outcome"
 )
 
 // VerifiedReflectionCauses selects the causes whose repair steps may be saved.
@@ -14,8 +15,12 @@ import (
 // successful repair touching its resources. On any other outcome a cause needs
 // a recorded mutation and fresh clearance of its opening findings, including
 // symptoms that recovered without being written, plus controller eligibility
-// and exclusive ownership of its resources.
+// and exclusive ownership of its resources. An escalated closure credits none.
 func VerifiedReflectionCauses(outcome *contracts.OutcomeRecord) []*contracts.ReflectionCauseWork {
+	if outcome.GetClassification() == outcomeclass.Escalated {
+		// The responder ended before Recovered held: nothing it did earns credit.
+		return nil
+	}
 	owners := map[[3]string]int{}
 	for _, cause := range outcome.GetConfirmedRootCauses() {
 		seen := map[[3]string]bool{}

@@ -1,13 +1,11 @@
 """An incident on a large application never fails on a prompt budget; it degrades to counts and files."""
 
-import json
 from pathlib import Path
 
 import pytest
 
 from sdo.agents.context_output import budget_for
 from sdo.agents.prompt_templates import RenderedPrompt
-from sdo.agents.responder.continuation import continuation_prompt
 from sdo.agents.responder.session_recovery import SessionRecovery
 from sdo.contracts import MitigationReport, MitigationSession
 from tests.context_helpers import expand_context
@@ -25,56 +23,6 @@ def _fits(prompt: RenderedPrompt) -> None:
     assert prompt.parts
     for part in prompt.parts:
         assert len(part.text) <= budget_for(part.name), part.name
-
-
-def _continuation_payload() -> dict[str, object]:
-    resources = [
-        {"api_version": "apps/v1", "kind": "Deployment", "namespace": "big", "name": f"workload-{i}"}
-        for i in range(WORKLOADS)
-    ]
-    return {
-        "attempt": 2,
-        "healthy": False,
-        "summary": "rollout partly applied; many workloads pending " * 3,
-        "error": "verification failed " * 40,
-        "still_broken": [
-            {
-                "primary_resource": resource,
-                "fingerprint": f"workload-health/unavailable/{resource['name']}-" + "a" * 40,
-                "detector_id": "workload-health",
-                "rule_id": "unavailable",
-                "summary": f"{resource['name']} has no ready replicas; " * 6,
-                "evidence": "pods pending " * 50,
-            }
-            for resource in resources
-        ],
-        "already_done": [
-            {
-                "action_id": f"act-{i:04d}",
-                "kind": "recorded-action",
-                "summary": "restart workload " * 10,
-                "receipt": {"action_id": f"act-{i:04d}", "success": True, "resources": [resources[i]]},
-            }
-            for i in range(WORKLOADS)
-        ],
-        "verification_blockers": [
-            {"detector_id": f"health-{i}", "reason": "observation window is incomplete " * 8} for i in range(20)
-        ],
-    }
-
-
-def test_continuation_for_dozens_of_workloads_fits_and_keeps_essentials() -> None:
-    payload = _continuation_payload()
-    prompt = continuation_prompt(json.dumps(payload))
-    _fits(prompt)
-    assert "still_broken: (60)" in prompt
-    assert "already_done:" in prompt
-    assert "verification_blockers: (20)" in prompt
-    assert "Omitted" in prompt
-    # Still-broken findings are the last rows to go: the first fingerprint survives.
-    assert payload["still_broken"][0]["fingerprint"] in prompt  # type: ignore[index]
-    evidence = Path(expand_context(prompt).split("Full JSON: ", 1)[1].splitlines()[0])
-    assert json.loads(evidence.read_text()) == payload
 
 
 def test_responder_first_message_for_many_findings_and_stage_actions_fits() -> None:

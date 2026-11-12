@@ -16,11 +16,11 @@ import (
 // that escalated on a matched out-of-reach Diagnose.
 const stageEscalatedResult = "escalated"
 
-// escalationLearning reports whether an outcome is an escalation the
-// responder confirmed itself: no automatic-stage attempt escalated it, so no
+// escalationLearning reports whether an outcome is an escalation with a
+// confirmed out-of-reach cause that the responder confirmed itself: no automatic-stage attempt escalated it, so no
 // accepted playbook recognizes the fault yet.
 func escalationLearning(outcome *contracts.OutcomeRecord) bool {
-	if outcome.GetClassification() != outcomeclass.Escalated {
+	if outcome.GetClassification() != outcomeclass.Escalated || !outcomeclass.Escalation(outcome.GetConfirmedRootCauses(), outcome.GetFindings(), outcome.GetRepairActions()) {
 		return false
 	}
 	for _, stage := range outcome.GetPriorStages() {

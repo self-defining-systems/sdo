@@ -31,8 +31,8 @@ message OutcomeRecord {
   repeated string applied_playbooks = 11 [(buf.validate.field).repeated.items.string.pattern = "^[a-z][a-z0-9_-]*$"];
   repeated ConfirmedRootCause confirmed_root_causes = 12;
   repeated DetectorEvaluation final_health_detector_state = 13;
-  // escalated: health not restored, but an out-of-reach cause was confirmed by
-  // observations taken before any repair; routed to a human, never success.
+  // escalated: the responder ended before Recovered held; the incident stayed
+  // open until its alerts cleared. Routed to a human, never success.
   string classification = 14 [(buf.validate.field).string = {in: ["success", "cleared_without_action", "failed", "unconfirmed", "escalated"]}];
   optional string repair_commit = 15;
   repeated RepairActionReceipt repair_actions = 16;

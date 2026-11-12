@@ -198,46 +198,6 @@ def _scripted_reply(result: IncidentResult, session: str) -> FakeRun:
     )
 
 
-def test_controller_continuation_requires_existing_provider_session(monkeypatch) -> None:
-    monkeypatch.setenv("SDO_RESPONSE_CONTINUATION", '{"healthy":false,"attempt":1}')
-    monkeypatch.setattr("sdo.agents.responder.codex.open_recovery", lambda *_: None)
-    with pytest.raises(ResponderExecutionError, match="existing provider session"):
-        execute_incident(_request(), provider="codex")
-
-
-def test_controller_verification_resumes_same_session_with_remaining_budget(monkeypatch) -> None:
-    from types import SimpleNamespace
-
-    from libs.agent_cli.structured import StructuredTurn
-
-    feedback = '{"healthy":false,"attempt":1,"summary":"still unavailable","still_broken":[],"already_done":[]}'
-    monkeypatch.setenv("SDO_RESPONSE_CONTINUATION", feedback)
-    recovery = SimpleNamespace(
-        resume_session_id=lambda: "same-provider-session",
-        recovered_prompt=lambda: "",
-        remaining_seconds=lambda: 43.0,
-        checkpoint=lambda _: None,
-        acknowledge_reports=lambda: None,
-    )
-    monkeypatch.setattr("sdo.agents.responder.codex.open_recovery", lambda *_: recovery)
-    captured = {}
-
-    def run_turn(provider, prompt, **options):
-        captured.update(provider=provider, prompt=prompt, **options)
-        return StructuredTurn(output_json=json.dumps(_reply(_result())), session_id="same-provider-session", usage=None)
-
-    monkeypatch.setattr("sdo.agents.responder.codex.run_structured_turn", run_turn)
-    monkeypatch.setattr("sdo.agents.responder.codex.turn_usage", lambda _: {"llm_calls": 1})
-    monkeypatch.setattr("sdo.agents.responder.codex.recorded_actions.merge_into", lambda _: None)
-    execute_incident(_request(), provider="codex")
-    assert captured["resume_session_id"] == "same-provider-session"
-    assert captured["timeout_seconds"] == 43.0
-    assert "still unavailable" in captured["prompt"]
-    assert "still_broken: (0)" in captured["prompt"]
-    evidence = Path(captured["prompt"].split("Full JSON: ", 1)[1].splitlines()[0])
-    assert json.loads(evidence.read_text()) == json.loads(feedback)
-
-
 def test_responder_checkpoint_binds_worker_task_and_phase(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from agentshim import normalized_usage
     from agentshim.testing import scripted_turn
@@ -324,3 +284,16 @@ def test_long_result_validation_error_spills_instead_of_crashing_the_worker(monk
     assert "ValidationError" in prompt
     assert prompt.context_files
     assert diagnostic in prompt.context_files[0].read_text()
+
+
+def test_the_agent_gets_one_incident_turn_whatever_the_controller_publishes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SDO ends the work turn itself, from Go; the worker never prompts or interrupts the session."""
+    (tmp_path / "incident-verified.json").write_text("{}")
+    monkeypatch.setenv("SDO_API_HISTORY_DIR", str(tmp_path))
+    monkeypatch.setenv("SDO_RESPONSE_CONTINUATION", '{"healthy":false,"attempt":1}')
+    agent = ScriptedAgent(lambda _request: _scripted_reply(_result(), "session-1"))
+    execute_incident(_request(), provider="codex", executor=agent.executor)
+    assert len(agent.requests) == 1
+    assert not agent.executor.handles[0].terminated

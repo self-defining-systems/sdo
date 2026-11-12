@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -18,9 +17,7 @@ from sdo.agents.prompt_templates import (
     named_prompt,
     render_prompt,
 )
-from sdo.agents.responder.continuation import MAX_CONTINUATION_CHARS, continuation_prompt
 from tests.unit.sdo.agents.prompts.cases import incident, rendered_cases, responder_prompt
-from tests.unit.sdo.agents.responder.continuation_cases import ten_receipt_continuation
 from tests.unit.sdo.agents.responder.tool_output_cases import rendered_stdout_cases
 
 if sys.version_info >= (3, 11):
@@ -34,8 +31,6 @@ ROOT = Path(__file__).resolve().parents[5]
 def measured_parts() -> dict[str, int]:
     maxima: dict[str, int] = defaultdict(int)
     prompts = rendered_cases()
-    prompts["ten_receipt_continuation"] = continuation_prompt(json.dumps(ten_receipt_continuation()))
-    assert len(prompts["ten_receipt_continuation"]) <= MAX_CONTINUATION_CHARS
     boundary = incident(5, oversized=True)
     boundary.memory_snapshot.goal_markdown = "目" * 1000
     boundary.memory_snapshot.architecture_markdown = "界" * 2000

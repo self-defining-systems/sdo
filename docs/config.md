@@ -144,7 +144,6 @@ These are written by the controller into worker Jobs, or read by `sdo-operator m
 transport, not knobs, and keep their names.
 
 - `SDO_AGENT_GUIDANCE`
-- `SDO_RESPONSE_CONTINUATION`
 - `SDO_DEPLOYMENT_MODEL`
 - `SDO_TELEMETRY_POLICY`
 - `SDO_AGENT_SCRIPT_*`

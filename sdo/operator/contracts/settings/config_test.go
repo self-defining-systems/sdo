@@ -68,7 +68,7 @@ func TestResolveRejectsUnknownKeysAndMistypedEnvironmentNames(t *testing.T) {
 	if _, err := settings.Resolve(nil, []string{"SDO_RESPONSE_TIMEOUT=soon"}); err == nil {
 		t.Error("an unparsable value must be an error")
 	}
-	for _, transport := range []string{"SDO_AGENT_GUIDANCE=go", "SDO_RESPONSE_CONTINUATION=1", "SDO_AGENT_SCRIPT_STATE=x", "SDO_DEPLOYMENT_MODEL=m", "SDO_TELEMETRY_POLICY=x", "SDO_CODE_PATH=go"} {
+	for _, transport := range []string{"SDO_AGENT_GUIDANCE=go", "SDO_AGENT_SCRIPT_STATE=x", "SDO_DEPLOYMENT_MODEL=m", "SDO_TELEMETRY_POLICY=x", "SDO_CODE_PATH=go"} {
 		if _, err := settings.Resolve(nil, []string{transport}); err != nil {
 			t.Errorf("worker transport name %s shares a prefix but is not a knob: %v", transport, err)
 		}

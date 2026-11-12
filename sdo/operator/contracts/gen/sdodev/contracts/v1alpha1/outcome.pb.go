@@ -42,8 +42,8 @@ type OutcomeRecord struct {
 	AppliedPlaybooks         []string              `protobuf:"bytes,11,rep,name=applied_playbooks,json=appliedPlaybooks,proto3" json:"applied_playbooks,omitempty"`
 	ConfirmedRootCauses      []*ConfirmedRootCause `protobuf:"bytes,12,rep,name=confirmed_root_causes,json=confirmedRootCauses,proto3" json:"confirmed_root_causes,omitempty"`
 	FinalHealthDetectorState []*DetectorEvaluation `protobuf:"bytes,13,rep,name=final_health_detector_state,json=finalHealthDetectorState,proto3" json:"final_health_detector_state,omitempty"`
-	// escalated: health not restored, but an out-of-reach cause was confirmed by
-	// observations taken before any repair; routed to a human, never success.
+	// escalated: the responder ended before Recovered held; the incident stayed
+	// open until its alerts cleared. Routed to a human, never success.
 	Classification        string                 `protobuf:"bytes,14,opt,name=classification,proto3" json:"classification,omitempty"`
 	RepairCommit          *string                `protobuf:"bytes,15,opt,name=repair_commit,json=repairCommit,proto3,oneof" json:"repair_commit,omitempty"`
 	RepairActions         []*RepairActionReceipt `protobuf:"bytes,16,rep,name=repair_actions,json=repairActions,proto3" json:"repair_actions,omitempty"`
