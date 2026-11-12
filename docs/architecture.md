@@ -1059,6 +1059,11 @@ cAdvisor parsing adds allocation cost and an extra kubelet HTTP request per node
 per cycle, in addition to kubelet rendering and transport work. Enabling it also makes missing CFS counters fail the usage cycle;
 without representative live cost and availability evidence it stays opt-in. Containers without
 limits never produce memory or CPU saturation findings.
+Memory saturation requires a working set above 90% of the limit and a hurt signal: kubelet
+anonymous RSS above 90% of the limit, or a container whose previous instance was `OOMKilled`
+within 10 minutes (read from Pod status in the usage observer). A high working set alone is
+reclaimable page cache and stays silent, as does a source without RSS. Shared memory is neither
+anonymous RSS nor reclaimable, so such growth is missed until the first OOM kill.
 
 ## Memory host
 

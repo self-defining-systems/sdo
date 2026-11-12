@@ -42,7 +42,7 @@ func (d saturation) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.F
 			}
 		}
 		if s.WorkingSetBytes != nil {
-			e.capacity("memory-saturation", resource, *s.WorkingSetBytes, s.MemoryLimit, points, time.Hour, w.Identity.Container)
+			e.memory(resource, s, points, w.Identity.Container)
 		}
 		if d.throttling && s.CPULimit != nil && *s.CPULimit > 0 {
 			if f, ok := usage.ThrottledFraction(w.Samples); ok && f > 0.25 {
@@ -98,6 +98,40 @@ func finish(fs []sdk.Finding, s sdk.DetectorSpec) []sdk.Finding {
 		result = append(result, f)
 	}
 	return result
+}
+// Memory saturation needs a hurt signal beyond a high working set, which
+// includes reclaimable page cache: anonymous (RSS) memory above the threshold,
+// or an OOMKilled termination within the window. A source with neither is
+// silent. Shared memory is neither anonymous RSS nor reclaimable without swap,
+// so such growth is missed until the first OOM kill.
+const (
+	memoryThreshold = 0.9
+	memoryOOMWindow = 10 * time.Minute
+)
+
+func (e *evaluation) memory(r sdk.ObjectRef, s usage.Sample, points []usage.Point, container string) {
+	ratio, ok := usage.RatioToLimit(*s.WorkingSetBytes, s.MemoryLimit)
+	if !ok || ratio <= memoryThreshold {
+		return
+	}
+	signal := ""
+	if s.RSSBytes != nil {
+		if rr, ok := usage.RatioToLimit(*s.RSSBytes, s.MemoryLimit); ok && rr > memoryThreshold {
+			signal = fmt.Sprintf("rss ratio=%g", rr)
+		}
+	}
+	if signal == "" && !s.LastOOMKilledAt.IsZero() && s.At.Sub(s.LastOOMKilledAt) <= memoryOOMWindow {
+		signal = "oom-killed"
+	}
+	if signal == "" {
+		return
+	}
+	window := time.Duration(0)
+	if len(points) > 0 {
+		window = points[len(points)-1].At.Sub(points[0].At)
+	}
+	e.emit("memory-saturation", r, "container="+container+" signal="+signal+" "+usage.Evidence(*s.WorkingSetBytes, s.MemoryLimit, window, nil)+fmt.Sprintf(" ratio=%g threshold=%g", ratio, memoryThreshold), false)
+	e.findings[len(e.findings)-1].Fingerprint += "/" + container
 }
 func (e *evaluation) capacity(rule string, r sdk.ObjectRef, value float64, limit *float64, points []usage.Point, horizon time.Duration, container string) {
 	ratio, ok := usage.RatioToLimit(value, limit)
