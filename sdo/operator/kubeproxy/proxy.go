@@ -140,6 +140,9 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 		}()
 		recordEnd := func(event apihistory.Event, body []byte) { completed = &event; responseBody = body }
 		record(e, nil)
+		if write && !session && recorder != nil && r.Method != http.MethodPost {
+			recordBeforeState(r, e, upstream, readTransport, record)
+		}
 		transport := readTransport
 		if mutating(r.Method) {
 			transport = writeTransport
@@ -429,4 +432,37 @@ func supportedRepresentation(header http.Header) bool {
 	}
 	encodings := header.Values("Content-Encoding")
 	return len(encodings) == 0 || (len(encodings) == 1 && strings.EqualFold(strings.TrimSpace(encodings[0]), "identity"))
+}
+
+// beforeStateLimit bounds the object the proxy keeps as a write's "before" evidence.
+const beforeStateLimit = 1 << 20
+
+// recordBeforeState reads the object a write is about to change and records it (phase "before", the write's request
+// ID) so every write path has the evidence a plan application captures first. A create has no prior object; a read
+// that fails or is too large records nothing, and never blocks or alters the write.
+func recordBeforeState(r *http.Request, e apihistory.Event, upstream *url.URL, transport http.RoundTripper, record func(apihistory.Event, []byte)) {
+	if e.Name == "" {
+		return
+	}
+	target := *upstream
+	target.Path, target.RawPath = r.URL.Path, r.URL.RawPath
+	read, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target.String(), nil)
+	if err != nil {
+		return
+	}
+	read.Header.Set("Accept", "application/json")
+	response, err := transport.RoundTrip(read)
+	if err != nil {
+		return
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, beforeStateLimit+1))
+	if err != nil || len(body) > beforeStateLimit || response.StatusCode != http.StatusOK {
+		return
+	}
+	before := e
+	before.Phase, before.Verb, before.Status = "before", "get", response.StatusCode
+	before.Reserved = false
+	before.Finished = proxyio.Now().UTC()
+	record(before, body)
 }
