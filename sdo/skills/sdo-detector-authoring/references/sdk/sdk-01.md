@@ -12,8 +12,8 @@ const (
 	DeployerFieldManager        = "sdo-deployer"
 	AcceptanceFieldManager      = "sdo-acceptance"
 	ReplicasHandoffFieldManager = "sdo-replicas-handoff"
-	// ResponderFieldManager is stamped by `sdo act` on every mutating kubectl
-	// command the responder runs (mirrored in sdo/agents/responder/tools_cli.py).
+	// ResponderFieldManager is forced by the recording API proxy on every write a
+	// responder Job makes, whatever client sent it (`sdo act` also stamps it).
 	ResponderFieldManager = "sdo-responder"
 )
     Field managers through which SDO writes application objects. Their writes
