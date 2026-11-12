@@ -301,6 +301,7 @@ class VerifiedIncident:
 def runtime_config_payload(config: RuntimeConfig) -> dict[str, Any]:
     payload = {field.name: getattr(config, field.name) for field in fields(RuntimeConfig)}
     payload["deployment_policy"] = asdict(config.deployment_policy)
+    payload["config_files"] = [str(path) for path in config.config_files]
     return {key: str(value) if isinstance(value, Path) else value for key, value in payload.items()}
 
 
@@ -331,6 +332,7 @@ def runtime_config_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
             "evidence and controller config are not migrated)"
         )
     values["responder_namespaces"] = tuple(values.get("responder_namespaces", ()))
+    values["config_files"] = tuple(Path(path) for path in values.get("config_files", ()))
     # Records written before the policy existed carry none: no policy, as installed then.
     policy = values.get("deployment_policy") or {}
     values["deployment_policy"] = DeploymentPolicyConfig(
@@ -343,7 +345,7 @@ def runtime_config_from_payload(payload: dict[str, Any]) -> RuntimeConfig:
     for field in fields(RuntimeConfig):
         value = values.get(field.name)
         hint = hints[field.name]
-        if value is not None and Path in (hint, *get_args(hint)):
+        if isinstance(value, (str, Path)) and Path in (hint, *get_args(hint)):
             values[field.name] = Path(value)
     return RuntimeConfig(**values)
 

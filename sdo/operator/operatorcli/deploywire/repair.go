@@ -5,18 +5,25 @@ import (
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/lifecycle"
 )
 
 // Verifier is the independent health verifier of a controller launch: it
 // judges a candidate checkout's detectors against the live deployment that
-// readiness applied.
+// readiness applied, under the launch's operator configuration.
 func Verifier(launch *contracts.ControllerConfig, operatorRoot string, readiness *deployment.Deployer) deployment.IndependentHealthVerifier {
 	return deployment.IndependentHealthVerifier{
 		AcceptedRoot: launch.GetAppRoot(), OperatorRoot: operatorRoot, Readiness: readiness,
-		Probe: deployment.AcceptedDetectorProbe{Replay: launch.GetReplay(), TelemetryEnvironment: launch.GetTelemetryEnvironmentFile()},
+		Probe: deployment.AcceptedDetectorProbe{Settings: launch.GetSettingsPath(), TelemetryEnvironment: launch.GetTelemetryEnvironmentFile()},
 	}
+}
+
+// Settings is the operator configuration a controller launch runs under: the record the parent wrote at its start
+// (ControllerConfig.settings_path).
+func Settings(launch *contracts.ControllerConfig) (settings.Config, error) {
+	return settings.Read(launch.GetSettingsPath())
 }
 
 // RepairDeployer is the controller's deployment of a responder's accepted

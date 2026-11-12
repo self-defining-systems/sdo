@@ -21,11 +21,6 @@ import (
 	"sdo.dev/operator/sdk/workloadhealth"
 )
 
-// DefaultStageBudget retains the existing pass/refresh scheduling bound.
-// Shared recovery uses DefaultMitigationRolloutTimeout; direct writes remain
-// bounded by the original incident context.
-const DefaultStageBudget = 45 * time.Second
-
 const stagePlanNotExecutable = "plan_not_executable"
 
 // stageIneffective skips a match whose program revision already applied in
@@ -97,7 +92,7 @@ type DeterministicResponseStage struct {
 }
 
 type responseStageProgress struct {
-	RecoveryDeadline time.Time
+	RecoveryDeadline   time.Time
 	Report             *contracts.StageReport
 	Coverage           *contracts.PlaybookCoverage
 	InitialProgramRuns []ProgramRun

@@ -63,7 +63,7 @@ def judge_prompt(
 
     monkeypatch.setattr(CodexLifecycleBackend, "_execute", execute)
     monkeypatch.setattr("sdo.agents.lifecycle.agents.HealthJudgeArtifact", lambda **_kw: None)
-    CodexLifecycleBackend().run_health_judge(
+    CodexLifecycleBackend(reasoning_effort="medium", timeout_seconds=900).run_health_judge(
         repository=tmp_path,
         application="demo",
         health_objective=objective,

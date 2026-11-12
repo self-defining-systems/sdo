@@ -8,17 +8,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/operatorcli/internal/processio"
 	"strings"
-	"time"
 
 	"encoding/json"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	"sdo.dev/operator/deploymentpolicy"
 	"sdo.dev/operator/imagesrc/buildkit"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/rendered"
@@ -30,7 +27,6 @@ import (
 // clean accepted Git checkout and Kubernetes deployment configuration.
 type HostConfig struct {
 	Repository, Objective, OperationID string
-	MaxAttempts                        int
 	Install                            install.Config
 	Kubeconfig                         string
 	RegistrationSource                 string
@@ -46,8 +42,6 @@ func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 		return HostConfig{}, errors.New("expected host subcommand")
 	}
 	flags := flag.NewFlagSet("sdo-operator host", flag.ContinueOnError)
-	flags.String("code-path", "", "programming-model plugin set: go or shell")
-	flags.String("code-path-overrides", "", "CodePathOverrides JSON")
 	flags.SetOutput(io.Discard)
 	repository := flags.String("repository", "", "clean accepted Git repository")
 	ceilingJSON := flags.String("observation-ceiling-json", "", "installer-owned observation ceiling JSON")
@@ -60,16 +54,9 @@ func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 	sourceKind := flags.String("source-kind", "", "upstream watcher kind to follow (published as .sdo/goal/sources.yaml)")
 	sourceConfig := flags.String("source-config", "", "JSON config of the followed upstream")
 	deploymentPlan := flags.String("deployment-plan", "", "provided DeploymentPlan as ProtoJSON (source, image sources, expected workload IDs): the deployer agent is skipped and the plan is deployed as given")
-	registerEvidenceSinkFlags(flags)
 	var configFiles repeatable
 	flags.Var(&configFiles, "config", "operator configuration YAML (repeatable; later files override earlier ones; see docs/config.md)")
-	var policyFlags deploymentpolicy.Flags
-	flags.StringVar(&policyFlags.AllowedRegistries, "allow-registry", "", "comma-separated registry hosts deployments may pull from (enforced; empty: no allowlist)")
-	flags.BoolVar(&policyFlags.ScopeBlocking, "scope-blocking", false, "refuse foreign-namespace and cluster-scoped objects unless granted")
-	flags.StringVar(&policyFlags.GrantedNamespaces, "grant-namespace", "", "comma-separated foreign namespaces deployments may write to (needs --scope-blocking)")
-	flags.StringVar(&policyFlags.GrantedClusterKinds, "grant-cluster-kind", "", "comma-separated cluster-scoped Kinds deployments may contain (needs --scope-blocking)")
 	operationID := flags.String("operation-id", "", "durable operation identity")
-	flags.Int("max-attempts", 3, "maximum deployment attempts")
 	controllerImage := flags.String("controller-image", "", "compiled operator image")
 	responderImage := flags.String("responder-image", "", "agent worker image")
 	buildkitImage := flags.String("buildkit-image", "", "digest-pinned image builder")
@@ -77,35 +64,11 @@ func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 	credentialsSecret := flags.String("credentials-secret", "", "agent credentials Secret")
 	registrySecret := flags.String("registry-push-secret", "", "separate image registry credentials Secret")
 	registryHost := flags.String("registry-host", "", "trusted source image registry host[:port]")
-	flags.String("model", "", "agent model")
-	flags.String("agent-provider", "codex", "agent provider")
-	flags.String("replay", "", "replay and corpus capture: on (default) or off")
-	flags.String("agent-effort", "", "reasoning effort of every agent worker (empty: the shared default)")
-	flags.Duration("lifecycle-timeout", 0, "limit of one lifecycle (detection designer) session (0: the shared default)")
 	registrationSource := flags.String("agent-registrations", "", "local registration JSON directory")
 	registrationConfigMap := flags.String("agent-registration-configmap", "", "registration ConfigMap name")
 	controllerDuration := flags.Duration("controller-duration", 0, "bounded controller run duration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "stop after first closure")
-	flags.String("late-findings", "off", "late finding pull mode: off or pull")
-	flags.String("repair-policy", "recorded-actions", "repair evidence policy")
-	flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
-	flags.String("reflection-guidance", "baseline", "reflection guidance mode")
-	flags.Bool("frozen-memory", false, "keep closure evidence private and disable learning")
-	flags.Bool("external-incidents", false, "accept external alerts only; close on responder completion (requires frozen memory)")
-	flags.Bool("watch-only", false, "detect, open, verify and close incidents but never respond: no automatic stage, responder or reflection (requires frozen memory)")
-	flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
-	flags.Int("max-response-loops", 10, "maximum mitigation rounds the responder agent may use per incident (the automatic stage's one apply does not count)")
-	flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
-	flags.Duration("verification-timeout", 5*time.Minute, "independent verification timeout")
-	flags.Duration("build-timeout", settings.DefaultBuildTimeout, "deadline of one source image build")
-	flags.Duration("build-budget", settings.DefaultBuildBudget, "deadline of all source image builds of one deployment attempt")
-	flags.Duration("rollout-timeout", settings.DefaultRolloutTimeout, "how long to wait for each applied workload to finish rolling out")
 	registryInsecure := flags.Bool("registry-insecure", false, "allow an explicitly configured HTTP image registry")
-	flags.Bool("permissive-responder", false, "broad lane repair permissions excluding Secret and credential APIs")
-	flags.Var(new(repeatable), "responder-namespace", "additional lane namespace for permissive responder")
-	flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
-	registerTelemetryFlags(flags)
-	flags.Var(new(repeatable), "responder-env", "responder environment NAME=VALUE")
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes client and kubectl config")
 	if err := flags.Parse(args[1:]); err != nil {
 		return HostConfig{}, err
@@ -114,7 +77,7 @@ func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 	if flags.NArg() != 0 {
 		return HostConfig{}, fmt.Errorf("unexpected host arguments: %v", flags.Args())
 	}
-	resolved, err := resolveSettings(configFiles, environ, flags)
+	resolved, err := resolveSettings(configFiles, environ)
 	if err != nil {
 		return HostConfig{}, err
 	}
@@ -215,7 +178,7 @@ func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 	if *registrationConfigMap != "" {
 		config.RegistrationDirectory = "/sdo/registrations"
 	}
-	return HostConfig{Repository: *repository, Objective: *objective, OperationID: *operationID, MaxAttempts: resolved.Deployment.MaxAttempts, Install: config, Kubeconfig: *kubeconfig, RegistrationSource: *registrationSource}, nil
+	return HostConfig{Repository: *repository, Objective: *objective, OperationID: *operationID, Install: config, Kubeconfig: *kubeconfig, RegistrationSource: *registrationSource}, nil
 }
 
 func hostKubernetesConfig(path string) (*rest.Config, error) {
@@ -283,19 +246,9 @@ func RunHost(ctx context.Context, launch HostConfig) (install.OperateResult, err
 	if err := installer.Prepare(ctx, config, seed); err != nil {
 		return install.OperateResult{}, err
 	}
-	return installer.LaunchOperate(ctx, config, launch.Objective, launch.OperationID, launch.MaxAttempts)
+	return installer.LaunchOperate(ctx, config, launch.Objective, launch.OperationID)
 }
 
 func acceptedHead(ctx context.Context, repository string) (string, error) {
 	return processio.AcceptedHead(ctx, repository)
-}
-
-// encodedPolicy is the install-time deployment policy of the human flags in
-// the compact form install.Config carries; empty when none is set.
-func encodedPolicy(flags deploymentpolicy.Flags) (string, error) {
-	policy, err := deploymentpolicy.FromFlags(flags)
-	if err != nil {
-		return "", err
-	}
-	return deploymentpolicy.Format(policy)
 }

@@ -34,6 +34,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.fuzzops import config as operator_config
 from benchmarks.sregym.skilleval.metrics import (
     RunMetrics,
     Usage,
@@ -50,7 +51,7 @@ from benchmarks.sregym.skilleval.scenario import Scenario
 from libs.agent_cli.provider_capacity import ProviderCapacity
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
 ENTRY = Path(__file__).with_name("container_entry.py")
 # Shared-host budget (user, 2026-10-28): runs yield to experiment lanes.
@@ -141,13 +142,17 @@ def docker_command(
     auth: Path,
     model: str,
     name: str,
+    worker_env: Mapping[str, str],
     extra_skills: tuple[str, ...] = (),
     post_only: bool = False,
     replay: str = "on",
     code_root: Path | None = None,
     operator_binary: Path | None = None,
 ) -> list[str]:
-    """The reflection Job's container, as one ``docker run``: same image, paths, user-visible env."""
+    """The reflection Job's container, as one ``docker run``: same image, paths, user-visible env.
+
+    ``worker_env`` holds the agent variables a controller sets in every worker Job (``local_worker_env``).
+    """
 
     if replay not in {"on", "off"}:
         raise ValueError("replay must be on or off")
@@ -177,6 +182,7 @@ def docker_command(
         mounts[f"{run_dir / 'session' / 'api-history'}"] = f"{session}/api-history:ro"
     model = model or scenario.model
     environment = {
+        **worker_env,
         "HOME": "/tmp/home",
         # A resumed reflection uses the responder's homes; a fresh one gets private homes, as live.
         "CODEX_HOME": f"{session}/codex" if scenario.session_mode == "resume" else "/tmp/codex",
@@ -190,8 +196,7 @@ def docker_command(
         "SDO_HEALTHY_BASELINE": f"{session}/corpus/healthy",
         "SDO_CAPTURED_CORPUS_DIR": f"{session}/corpus",
         "SDO_AGENT_PROVIDER": scenario.provider,
-        "SDO_REFLECTION_EFFORT": scenario.effort,
-        "SDO_RESPONDER_EFFORT": scenario.effort,
+        "SDO_AGENT_EFFORT": scenario.effort,
         "SDO_RESPONDER_MODEL": model,
         "SDO_REFLECTION_MODEL": model,
         "SDO_LIFECYCLE_MODEL": model,
@@ -241,6 +246,13 @@ def wait_for_host_load(
     while (current := load()) >= limit:
         print(f"host load {current:.1f} >= {limit:g}; waiting to start the next run", file=sys.stderr, flush=True)
         sleep(poll_seconds)
+
+
+def local_worker_env(operator_binary: Path | None) -> dict[str, str]:
+    """The worker limits a controller would set, from ``sdo-operator config print`` (the Go defaults)."""
+
+    operator = [str(operator_binary)] if operator_binary is not None else operator_config.local_operator()
+    return operator_config.worker_environment(operator)
 
 
 def _fresh_task(scenario_dir: Path, destination: Path, budget_seconds: int) -> None:
@@ -300,6 +312,7 @@ def run_one(
         auth=auth,
         model=model,
         name=name,
+        worker_env=local_worker_env(operator_binary),
         extra_skills=extra_skills,
         replay=replay,
         code_root=code_root,
@@ -375,6 +388,9 @@ def remeasure(scenario_dir: Path, run_dir: Path, *, skills: Path, toolchain_cach
         auth=auth,
         model=DEFAULT_MODEL,
         name=f"skilleval-post-{scenario.scenario_id}-{run_dir.name}-{os.getpid()}",
+        worker_env=local_worker_env(
+            Path(configuration["operator_binary"]) if configuration.get("operator_binary") else None
+        ),
         post_only=True,
         replay=configuration.get("replay", "on"),
         code_root=Path(configuration["code_root"]) if configuration.get("code_root") else None,

@@ -15,6 +15,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/runtime/envtestio"
 )
@@ -30,10 +31,12 @@ func TestControllerServiceAccountMayKeepItsConfigMaps(t *testing.T) {
 	const app, control = "app", "sdo-control"
 	env.CreateNamespace(t, app)
 	env.CreateNamespace(t, control)
+	policy := settings.Default()
+	policy.Agent.Model = "m"
 	cfg := install.Config{
 		Namespace: app, ControlNamespace: control, Application: "app", RepositoryPVC: "repo", CredentialsSecret: "creds",
-		ControllerImage: "controller:test", ResponderImage: "responder:test", Model: "m", Replay: "on",
-		NativeCommand: []string{"/usr/local/bin/sdo-operator"}, AcceptedCommit: strings.Repeat("c", 40), TimeoutSeconds: 60, VerificationTimeoutSeconds: 60,
+		ControllerImage: "controller:test", ResponderImage: "responder:test", Settings: &policy,
+		NativeCommand: []string{"/usr/local/bin/sdo-operator"}, AcceptedCommit: strings.Repeat("c", 40),
 		BuildKitImage: "buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "push",
 	}
 	if err := (install.Installer{Client: env.Client(t)}).EnsureGrants(ctx, cfg); err != nil {

@@ -12,11 +12,11 @@ from typing import TYPE_CHECKING, Protocol, cast
 from libs.agent_cli.errors import rate_limit_failure
 from libs.agent_cli.session_ownership import SessionHandoffError, SessionHandoffTimeout, SessionOwnership
 from libs.agent_cli.structured import StructuredTurnTimeout
-from sdo.agents.provider import resolve_agent
+from sdo.agents.provider import memory_check_timeout_seconds, resolve_agent
 from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home, skills_for_role
 from sdo.agents.responder.detection_learning import detector_learning_needed
 from sdo.agents.responder.job import KubernetesResultPublisher
-from sdo.agents.responder.memory_check import VALIDATION_TIMEOUT_SECONDS, MemoryCheckTimeout, check_reflection_result
+from sdo.agents.responder.memory_check import MemoryCheckTimeout, check_reflection_result
 from sdo.agents.responder.reflection import (
     REFLECTION_DEADLINE_ENV,
     REFLECTION_GUIDANCE_MODES,
@@ -187,7 +187,7 @@ def run_reflection_task(
             check = check_reflection_result(
                 Path(task.workspace.checkout_path),
                 covered.to_result(),
-                min(VALIDATION_TIMEOUT_SECONDS, reflection_budget_seconds() / 3),
+                min(memory_check_timeout_seconds(), reflection_budget_seconds() / 3),
             )
             if check.timed_out:
                 raise MemoryCheckTimeout(check)

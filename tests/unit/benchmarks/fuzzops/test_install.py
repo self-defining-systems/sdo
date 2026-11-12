@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from benchmarks.fuzzops.config import BENCH_PROFILE
 from benchmarks.fuzzops.install import InstallConfig
 
 
@@ -20,13 +21,22 @@ def _config(**overrides: object) -> InstallConfig:
     return InstallConfig(**values)  # type: ignore[arg-type]
 
 
-def test_watch_only_installs_a_frozen_watch_only_controller() -> None:
-    args = _config(watch_only=True).host_args(Path("/synthetic/work/app"), {})
-    assert "--watch-only" in args
-    assert "--frozen-memory" in args
+def test_watch_only_installs_a_watch_only_controller_through_the_mode_variable() -> None:
+    config = _config(watch_only=True)
+    assert config.host_env()["SDO_MODE"] == "watch-only"
+    assert not any(arg in ("--watch-only", "--frozen-memory") for arg in config.host_args(Path("/w/app"), {}))
 
 
 def test_default_install_responds() -> None:
-    args = _config().host_args(Path("/synthetic/work/app"), {})
-    assert "--watch-only" not in args
-    assert "--frozen-memory" not in args
+    assert "SDO_MODE" not in _config().host_env()
+
+
+def test_host_passes_the_benchmark_profile_then_the_overlays() -> None:
+    args = _config(config_files=(Path("/synthetic/lane.yaml"),)).host_args(Path("/synthetic/work/app"), {})
+    files = [args[i + 1] for i, arg in enumerate(args) if arg == "--config"]
+    assert files == [str(BENCH_PROFILE), "/synthetic/lane.yaml"]
+
+
+def test_max_attempts_is_configured_only_when_given() -> None:
+    assert "SDO_DEPLOYMENT_MAX_ATTEMPTS" not in _config().host_env()
+    assert _config(max_attempts=2).host_env()["SDO_DEPLOYMENT_MAX_ATTEMPTS"] == "2"

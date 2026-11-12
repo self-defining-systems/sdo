@@ -81,7 +81,7 @@ var telemetryEnvironmentFile = sync.OnceValue(func() string {
 func launch() *contracts.ControllerConfig {
 	return &contracts.ControllerConfig{
 		Namespace: "shop", ControlNamespace: "sdo-system", AppRoot: "/synthetic/app", BrokerWorktreeRoot: "/synthetic/repo/proposals",
-		RepositoryMountPath: "/synthetic/repo", RepositoryPvc: "repo", Replay: "off", TelemetryEnvironmentFile: telemetryEnvironmentFile(),
+		RepositoryMountPath: "/synthetic/repo", RepositoryPvc: "repo", TelemetryEnvironmentFile: telemetryEnvironmentFile(),
 	}
 }
 

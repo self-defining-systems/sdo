@@ -54,20 +54,23 @@ func RunConfig(_ context.Context, args []string, environ []string, stdout, stder
 	return 0
 }
 
-// publishResolvedSettings records the configuration the controller runs under once, beside its other runtime
-// evidence, where the evidence sink picks it up. A controller started without a mounted config records nothing.
-func publishResolvedSettings(mountedPath, repositoryMount string) error {
-	cfg, err := loadMountedSettings(mountedPath)
-	if err != nil || cfg == nil {
-		return err
-	}
+// resolvedSettingsPath is the controller's record of the configuration it runs under, beside its other runtime
+// evidence on the repository volume, where the evidence sink picks it up. The compiled child reads this record
+// (ControllerConfig.settings_path), never the live mount, so the parent and every child it launches run with the
+// values the parent started with.
+func resolvedSettingsPath(repositoryMount string) string {
+	return filepath.Join(repositoryMount, ".sdo-runtime", evidencesink.ResolvedConfigFile)
+}
+
+// publishResolvedSettings writes that record once, at the parent's start.
+func publishResolvedSettings(cfg settings.Config, repositoryMount string) error {
 	document, err := cfg.YAML()
 	if err != nil {
 		return err
 	}
-	directory := filepath.Join(repositoryMount, ".sdo-runtime")
-	if err := os.MkdirAll(directory, 0o755); err != nil {
+	path := resolvedSettingsPath(repositoryMount)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(directory, evidencesink.ResolvedConfigFile), document, 0o644)
+	return os.WriteFile(path, document, 0o644)
 }

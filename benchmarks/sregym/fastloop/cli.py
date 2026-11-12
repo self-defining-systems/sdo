@@ -62,7 +62,7 @@ from benchmarks.sregym.fastloop.wipe import (
 )
 from benchmarks.sregym.fastloop.worker_client import SregymWorker, worker_argv
 from benchmarks.sregym.repository_git import host_clone_command, host_git_command
-from sdo.agents.provider import AGENT_EFFORTS, DEFAULT_AGENT_EFFORT, DEFAULT_LIFECYCLE_TIMEOUT_SECONDS
+from sdo.agents.provider import AGENT_EFFORTS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -645,19 +645,20 @@ def _runtime_config(args: argparse.Namespace, environment: FastloopEnvironment, 
         credentials_secret=getattr(args, "credentials_secret", "sdo-agent-credentials"),
         model=args.model,
         timeout_seconds=args.timeout,
-        repair_policy=args.repair_policy,
+        repair_policy=getattr(args, "repair_policy", None),
         agent_provider=args.provider,
         replay=getattr(args, "replay", "on"),
-        agent_effort=args.reasoning_effort,
-        lifecycle_timeout_seconds=getattr(args, "lifecycle_timeout", DEFAULT_LIFECYCLE_TIMEOUT_SECONDS),
+        agent_effort=args.reasoning_effort or "",
+        lifecycle_timeout_seconds=getattr(args, "lifecycle_timeout", None),
         frozen_memory=getattr(args, "frozen_memory", False),
         external_incidents=getattr(args, "external_incidents", False),
-        reflection_session=args.reflection_session,
-        reflection_guidance=args.reflection_guidance,
+        reflection_session=getattr(args, "reflection_session", None),
+        reflection_guidance=getattr(args, "reflection_guidance", None),
         code_path=getattr(args, "code_path", "go"),
         code_path_overrides=getattr(args, "code_path_overrides", "") or "",
-        late_findings=args.late_findings,
-        healthy_baseline=args.healthy_baseline,
+        late_findings=getattr(args, "late_findings", None),
+        healthy_baseline=args.healthy_baseline or None,
+        config_files=tuple(path.resolve() for path in getattr(args, "config", None) or ()),
         controller_namespace=control_namespace_for(environment.namespace),
         kind_cluster_name=environment.cluster,
         persistent=True,
@@ -956,6 +957,11 @@ def _run(args: argparse.Namespace) -> int:
         raise SystemExit("--sweep-service requires an SDO --stream run")
     # A full-reset caller must obey the same ownership as a warm caller; otherwise
     # it could wipe the controller while the warm transaction proves continuity.
+    if getattr(args, "reasoning_effort", None) is None:
+        from benchmarks.sregym.adapter import configured_agent_effort
+
+        # Records and the Codex baseline name the effort the SDO agents run at.
+        args.reasoning_effort = configured_agent_effort(tuple(path.resolve() for path in getattr(args, "config", ())))
     environment = FastloopEnvironment.load(args.run_dir.resolve())
     limits = HostLimits.from_env(environment.worker_env)
     with own_lane(limits.directory, environment.cluster):
@@ -1942,7 +1948,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--model", default="gpt-6-luna")
     run.add_argument("--provider", choices=("codex", "claude"), default="codex", help="SDO agent provider")
-    run.add_argument("--repair-policy", choices=("recorded-actions", "commit"), default="recorded-actions")
+    run.add_argument(
+        "--config",
+        type=Path,
+        action="append",
+        default=[],
+        help="operator config overlay file passed after benchmarks/fuzzops/sdo-bench.yaml (repeatable; docs/config.md)",
+    )
+    run.add_argument(
+        "--repair-policy", choices=("recorded-actions", "commit"), default=None, help="default: the configured value"
+    )
     run.add_argument("--diagnosis-grading", choices=("off", "deferred", "inline"), default=None)
     run.add_argument("--judge-model-id", default=None, help="SREGym JUDGE_MODEL_ID for diagnosis grading")
     run.add_argument("--replay", choices=("on", "off"), default="on", help="corpus capture and memory replay")
@@ -1954,7 +1969,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--ablation-repository", help="override the per-app variant repository (toy proof uses a local repo)"
     )
     run.add_argument("--frozen-memory", action="store_true", help="keep closure evidence private and disable learning")
-    run.add_argument("--reflection-session", choices=("resume", "fresh"), default="resume")
+    run.add_argument("--reflection-session", choices=("resume", "fresh"), default=None, help="default: configured")
     run.add_argument("--code-path", choices=("go", "shell"), default="go")
     run.add_argument(
         "--code-path-overrides",
@@ -1969,8 +1984,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="executable run once per admission before SDO onboards the fresh app: argv is the app namespace, "
         "KUBECONFIG is the lane's; use it to create probe fixtures such as seeded users",
     )
-    run.add_argument("--reflection-guidance", choices=("baseline", "generalize", "generalize-spec"), default="baseline")
-    run.add_argument("--late-findings", choices=("off", "pull"), default="off")
+    run.add_argument(
+        "--reflection-guidance",
+        choices=("baseline", "generalize", "generalize-spec"),
+        default=None,
+        help="default: the configured value",
+    )
+    run.add_argument("--late-findings", choices=("off", "pull"), default=None, help="default: the configured value")
     run.add_argument(
         "--healthy-baseline",
         action="store_true",
@@ -1991,14 +2011,16 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--reasoning-effort",
         choices=AGENT_EFFORTS,
-        default=DEFAULT_AGENT_EFFORT,
-        help="reasoning effort of every agent in the run: each SDO agent and the Codex baseline",
+        default=None,
+        help="reasoning effort of every agent in the run: each SDO agent and the Codex baseline "
+        "(default: the configured agent.effort)",
     )
     run.add_argument(
         "--lifecycle-timeout",
         type=int,
-        default=DEFAULT_LIFECYCLE_TIMEOUT_SECONDS,
-        help="seconds one SDO lifecycle (detection designer) session may run; raise it with the effort or app size",
+        default=None,
+        help="seconds one SDO lifecycle (detection designer) session may run; raise it with the effort or app size "
+        "(default: the configured agent.lifecycle_timeout)",
     )
     run.add_argument("--timeout", type=int, default=3600, help="per-incident agent timeout in seconds")
 

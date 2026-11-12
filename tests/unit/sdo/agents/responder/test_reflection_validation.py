@@ -185,7 +185,7 @@ def test_reflection_backend_installs_blocking_validation_tool(
         )
 
     agent = ScriptedAgent(respond)
-    backend = backend_type(executor=agent.executor)
+    backend = backend_type(reasoning_effort="medium", executor=agent.executor)
     kwargs = {"worktree": tmp_path, "prompt": "reflect", "idempotency_key": "reflection:test"}
     if resume:
         backend.resume(session_id="session-1", **kwargs)

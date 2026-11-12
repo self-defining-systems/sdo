@@ -44,14 +44,9 @@ def _closure(**result: Any) -> dict[str, Any]:
 # ---- environment ---------------------------------------------------------------------------------------------
 
 
-def test_install_flags_use_the_node_path_and_run_id() -> None:
+def test_install_env_names_the_node_path_and_run_id() -> None:
     env = {"BENCH_EVIDENCE_NODE": "/bench-evidence", "BENCH_EVIDENCE_RUN": "exp-lane-7"}
-    assert sink.install_flags(env) == [
-        "--evidence-sink-host-path",
-        "/bench-evidence",
-        "--evidence-run-id",
-        "exp-lane-7",
-    ]
+    assert sink.install_env(env) == {"SDO_EVIDENCE_HOST_PATH": "/bench-evidence", "SDO_EVIDENCE_RUN_ID": "exp-lane-7"}
 
 
 @pytest.mark.parametrize(
@@ -63,9 +58,9 @@ def test_install_flags_use_the_node_path_and_run_id() -> None:
         ({"BENCH_EVIDENCE_NODE": "/n", "BENCH_EVIDENCE_RUN": "../x"}, "run ID"),
     ],
 )
-def test_install_flags_refuse_a_lane_without_a_sink(env: dict[str, str], message: str) -> None:
+def test_install_env_refuses_a_lane_without_a_sink(env: dict[str, str], message: str) -> None:
     with pytest.raises(sink.SinkError, match=message):
-        sink.install_flags(env)
+        sink.install_env(env)
 
 
 def test_host_run_dir_joins_the_host_directory_and_run(tmp_path: Path) -> None:

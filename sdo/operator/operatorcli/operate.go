@@ -6,17 +6,14 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
 	"strings"
-	"time"
 
 	"sdo.dev/operator/deploymentpolicy"
 	"sdo.dev/operator/imagesrc/buildkit"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory/observation"
-	"sdo.dev/operator/operatorcli/internal/processio"
 	"sdo.dev/operator/rendered"
 )
 
@@ -39,8 +36,6 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 		return OperateConfig{}, errors.New("expected operate subcommand")
 	}
 	flags := flag.NewFlagSet("sdo-operator operate", flag.ContinueOnError)
-	codePathName := flags.String("code-path", processio.Environment("SDO_CODE_PATH"), "programming-model plugin set: go or shell")
-	codePathOverrides := flags.String("code-path-overrides", "", "CodePathOverrides JSON")
 	flags.SetOutput(io.Discard)
 	app := flags.String("app", "", "accepted application checkout")
 	operatorRoot := flags.String("operator-root", "/opt/sdo/sdo/operator", "installed operator modules")
@@ -51,10 +46,10 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	sourceKind := flags.String("source-kind", "", "upstream watcher kind to follow (published as .sdo/goal/sources.yaml)")
 	sourceConfig := flags.String("source-config", "", "JSON config of the followed upstream")
 	deploymentPlan := flags.String("deployment-plan", "", "provided DeploymentPlan as ProtoJSON; the deployer agent is skipped and the plan is deployed as given")
-	deploymentPolicyFlag := flags.String("deployment-policy", "", "install-time DeploymentPolicy as ProtoJSON (registry allowlist, scope grants); empty is no policy")
-	evidenceSink := flags.String("evidence-sink", "", "evidence sink as compact JSON (run_id, volume); empty keeps evidence on the repository volume")
+	deploymentPolicyFlag := flags.String("deployment-policy", "", "the installer's resolved DeploymentPolicy as ProtoJSON; empty is no policy")
+	evidenceSink := flags.String("evidence-sink", "", "the installer's resolved evidence sink as compact JSON (run_id, volume); empty keeps evidence on the repository volume")
+	telemetryProfile := flags.String("telemetry-profile", telemetrysources.DefaultProfileName, "the installer's resolved telemetry profile: a built-in name or an inline JSON document")
 	operationID := flags.String("operation-id", "", "durable operation identity")
-	maxAttempts := flags.Int("max-attempts", 3, "maximum deployment attempts")
 	controllerImage := flags.String("controller-image", "", "controller image")
 	responderImage := flags.String("responder-image", "", "agent worker image")
 	scriptImage := flags.String("script-image", "", "fixed slim RunScript tool image")
@@ -64,11 +59,6 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	repositoryPVC := flags.String("repository-pvc", "", "shared repository PVC")
 	repositoryMount := flags.String("repository-mount-path", "", "shared repository PVC mount")
 	credentialsSecret := flags.String("credentials-secret", "", "agent credentials Secret")
-	model := flags.String("model", "", "agent model")
-	provider := flags.String("agent-provider", "codex", "agent provider")
-	replay := flags.String("replay", "", "replay and corpus capture: on (default) or off")
-	effort := flags.String("agent-effort", "", "reasoning effort of every agent worker (empty: the shared default)")
-	lifecycleTimeout := flags.Duration("lifecycle-timeout", 0, "limit of one lifecycle (detection designer) session (0: the shared default)")
 	worktreeRoot := flags.String("worktree-root", "", "broker proposal and ledger root")
 	registrations := flags.String("agent-registration-directory", "", "agent registration directory")
 	registrationConfigMap := flags.String("agent-registration-configmap", "", "read-only agent registration ConfigMap")
@@ -76,35 +66,15 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	judgeID := flags.String("judge-agent-id", "", "health judge registration ID; defaults to the agent registered for health judgment")
 	controllerDuration := flags.Duration("controller-duration", 0, "bounded controller run duration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "stop after first closure")
-	lateFindings := flags.String("late-findings", "off", "late finding pull mode: off or pull")
-	repairPolicy := flags.String("repair-policy", "recorded-actions", "repair evidence policy")
-	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
-	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
-	frozenMemory := flags.Bool("frozen-memory", false, "keep closure evidence private and disable learning")
-	externalIncidents := flags.Bool("external-incidents", false, "accept external alerts only; close on responder completion (requires frozen memory)")
-	watchOnly := flags.Bool("watch-only", false, "detect, open, verify and close incidents but never respond: no automatic stage, responder or reflection (requires frozen memory)")
-	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
-	maxResponseLoops := flags.Int("max-response-loops", 10, "maximum mitigation rounds the responder agent may use per incident (the automatic stage's one apply does not count)")
-	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
-	verificationTimeout := flags.Duration("verification-timeout", 5*time.Minute, "independent verification timeout")
-	buildTimeout := flags.Duration("build-timeout", settings.DefaultBuildTimeout, "deadline of one source image build")
-	buildBudget := flags.Duration("build-budget", settings.DefaultBuildBudget, "deadline of all source image builds of one deployment attempt")
-	rolloutTimeout := flags.Duration("rollout-timeout", settings.DefaultRolloutTimeout, "how long to wait for each applied workload to finish rolling out")
 	registryInsecure := flags.Bool("registry-insecure", false, "allow an explicitly configured HTTP image registry")
-	permissiveResponder := flags.Bool("permissive-responder", false, "broad lane repair permissions excluding Secret and credential APIs")
-	var responderNamespaces repeatable
-	flags.Var(&responderNamespaces, "responder-namespace", "additional lane namespace for permissive responder")
-	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
-	telemetryFlags := registerTelemetryFlags(flags)
-	var responderEnv repeatable
-	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
 	if err := flags.Parse(args[1:]); err != nil {
 		return OperateConfig{}, err
 	}
-
-	menuEnabled, menuErr := responderMenuEnabled()
-	if menuErr != nil {
-		return OperateConfig{}, menuErr
+	// Every timing and policy value is the sdo-config the Job mounts; the controller this Job installs carries the
+	// same document.
+	policy, err := loadMountedSettings(mountedSettings)
+	if err != nil {
+		return OperateConfig{}, err
 	}
 	if flags.NArg() != 0 {
 		return OperateConfig{}, fmt.Errorf("unexpected operate arguments: %v", flags.Args())
@@ -116,29 +86,14 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 		"repository PVC": *repositoryPVC,
 		"BuildKit image": *buildkitImage, "registry push Secret": *registryPushSecret,
 		"repository mount": *repositoryMount, "credentials Secret": *credentialsSecret,
-		"model": *model, "agent provider": *provider, "worktree root": *worktreeRoot,
+		"worktree root": *worktreeRoot,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return OperateConfig{}, fmt.Errorf("operate requires %s", key)
 		}
 	}
-	if *maxAttempts < 1 || (*provider != "codex" && *provider != "claude") {
-		return OperateConfig{}, errors.New("operate requires positive max attempts and supported agent provider")
-	}
 	if *controllerDuration < 0 || (*controllerDuration > 0 && controllerDuration.Seconds() < 1) {
 		return OperateConfig{}, errors.New("bounded controller duration must be positive whole seconds")
-	}
-	if *lateFindings != "off" && *lateFindings != "pull" {
-		return OperateConfig{}, fmt.Errorf("invalid late findings mode %q", *lateFindings)
-	}
-	if (*repairPolicy != "commit" && *repairPolicy != "recorded-actions") || *responseTimeout < time.Second || *verificationTimeout < time.Second {
-		return OperateConfig{}, errors.New("operate requires supported repair policy and positive controller timeouts")
-	}
-	if *reflectionSession != "fresh" && *reflectionSession != "resume" {
-		return OperateConfig{}, fmt.Errorf("unsupported reflection session mode %q", *reflectionSession)
-	}
-	if *reflectionGuidance != "baseline" && *reflectionGuidance != "generalize" && *reflectionGuidance != "generalize-spec" {
-		return OperateConfig{}, fmt.Errorf("unsupported reflection guidance %q", *reflectionGuidance)
 	}
 	if !strings.Contains(*buildkitImage, "@sha256:") || *registryPushSecret == *credentialsSecret {
 		return OperateConfig{}, errors.New("operate requires a digest-pinned BuildKit image and separate registry push Secret")
@@ -175,11 +130,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	if err != nil {
 		return OperateConfig{}, err
 	}
-	telemetryProfile, err := telemetryFlags.resolve(control)
-	if err != nil {
-		return OperateConfig{}, err
-	}
-	selectedCodePath, err := parseCodePathSelection(*codePathName, *codePathOverrides)
+	profile, err := loadTelemetryProfile(*telemetryProfile, control)
 	if err != nil {
 		return OperateConfig{}, err
 	}
@@ -206,25 +157,21 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			OperationID:  *operationID, Application: *application, Namespace: *namespace,
 			HealthObjective: *objective, Sources: sources, DeployerAgentID: *deployerID, JudgeAgentID: *judgeID,
 			RegistryHost: *registryHost,
-			MaxAttempts:  *maxAttempts,
+			MaxAttempts:  policy.Deployment.MaxAttempts,
 		},
 		Install: install.Config{
-			BackendRecipes: telemetrysources.Recipes(), TelemetryProfile: telemetryProfile,
-			CodePath:           selectedCodePath,
-			ResponderMenu:      menuEnabled,
+			Settings:       &policy,
+			BackendRecipes: telemetrysources.Recipes(), TelemetryProfile: profile,
 			ObservationCeiling: ceiling,
 			Namespace:          *namespace, ControlNamespace: control, Application: *application,
 			SourceKind: *sourceKind, SourceConfig: *sourceConfig, DeploymentPlan: *deploymentPlan, DeploymentPolicy: *deploymentPolicyFlag, EvidenceSink: *evidenceSink,
 			ControllerImage: *controllerImage, ResponderImage: *responderImage,
 			ScriptImage: *scriptImage, RepositoryPVC: *repositoryPVC,
-			CredentialsSecret: *credentialsSecret, Model: *model, AgentProvider: *provider, AgentEffort: *effort, LifecycleTimeout: *lifecycleTimeout, Replay: *replay,
+			CredentialsSecret: *credentialsSecret,
 			// The controller parent deploys upstream advances with the same identity.
 			BuildKitImage: *buildkitImage, RegistryPushSecret: *registryPushSecret,
-			RegistryInsecure: *registryInsecure, RegistryHost: *registryHost, ResponderEnv: responderEnv, HealthyBaseline: *healthyBaseline, PermissiveResponder: *permissiveResponder, ResponderNamespaces: responderNamespaces,
+			RegistryInsecure: *registryInsecure, RegistryHost: *registryHost,
 			ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
-			LateFindings: *lateFindings, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents, WatchOnly: *watchOnly,
-			MaxResponseLoops: *maxResponseLoops,
-			TimeoutSeconds:   int(responseTimeout.Seconds()), VerificationTimeoutSeconds: int(verificationTimeout.Seconds()), BuildTimeoutSeconds: int(buildTimeout.Seconds()), BuildBudgetSeconds: int(buildBudget.Seconds()), RolloutTimeoutSeconds: int(rolloutTimeout.Seconds()), RepairPolicy: *repairPolicy,
 			NativeCommand:         []string{"/usr/local/bin/sdo-operator"},
 			ReuseExisting:         true,
 			RegistrationConfigMap: *registrationConfigMap, RegistrationDirectory: *registrations,
@@ -237,16 +184,6 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 		if !filepath.IsAbs(*registrations) {
 			return OperateConfig{}, errors.New("agent registration directory must be absolute")
 		}
-	}
-	for _, value := range responderEnv {
-		name, _, found := strings.Cut(value, "=")
-		if !found || name == "" || strings.ContainsAny(name, "=\r\n") {
-			return OperateConfig{}, fmt.Errorf("invalid responder environment %q", value)
-		}
-	}
-	// The controller this Job installs carries the same sdo-config the Job was started with.
-	if config.Install.Settings, err = loadMountedSettings(mountedSettings); err != nil {
-		return OperateConfig{}, err
 	}
 	return config, nil
 }

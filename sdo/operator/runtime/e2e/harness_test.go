@@ -20,6 +20,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/telemetry"
 )
@@ -315,7 +316,7 @@ func (w *World) wrapAgent(registration map[string]any) map[string]any {
 
 // InstallController installs the controller with the production installer, seeding the accepted repository
 // onto the claim directory instead of through kubectl exec.
-func (w *World) InstallController(extra ...string) {
+func (w *World) InstallController(configure ...func(*settings.Config)) {
 	t := w.T
 	t.Helper()
 	ctx := context.Background()
@@ -327,15 +328,21 @@ func (w *World) InstallController(extra ...string) {
 		t.Fatal(err)
 	}
 	w.publishRegistrations()
+	policy := settings.Default()
+	policy.Agent.Model, policy.Response.RepairPolicy = "gpt-6-luna", "recorded-actions"
+	policy.Response.Timeout, policy.Response.VerificationTimeout = settings.Duration(300*time.Second), settings.Duration(120*time.Second)
+	for _, apply := range configure {
+		apply(&policy)
+	}
 	w.Install = install.Config{
+		Settings:  &policy,
 		Namespace: AppNamespace, ControlNamespace: ControlNamespace, Application: "toy",
 		ControllerImage: ControllerImage, ResponderImage: ResponderImage,
-		RepositoryPVC: RepositoryPVC, CredentialsSecret: "sdo-agent-credentials", Model: "gpt-6-luna",
-		RepairPolicy: "recorded-actions", AcceptedCommit: w.Commit, ResponderMenu: true, MaxResponseLoops: 10,
-		TimeoutSeconds: 300, VerificationTimeoutSeconds: 120,
-		NativeCommand: []string{"/usr/local/bin/sdo-operator"}, ReuseExisting: true,
+		RepositoryPVC: RepositoryPVC, CredentialsSecret: "sdo-agent-credentials",
+		AcceptedCommit: w.Commit,
+		NativeCommand:  []string{"/usr/local/bin/sdo-operator"}, ReuseExisting: true,
 		RegistrationConfigMap: "sdo-agent-registrations", RegistrationDirectory: "/sdo/registrations",
-		TelemetryProfile: telemetry.Profile{Name: "none"}, ExtraControllerArgs: extra,
+		TelemetryProfile: telemetry.Profile{Name: "none"},
 	}
 	seed := func(ctx context.Context, c install.Config) error {
 		destination := filepath.Join(w.Kubelet.Run.PVCDir(c.ControlNamespace, c.RepositoryPVC), "application")

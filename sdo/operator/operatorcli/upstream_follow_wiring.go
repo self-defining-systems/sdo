@@ -12,6 +12,7 @@ import (
 	"k8s.io/client-go/rest"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/lifecycle"
@@ -90,7 +91,11 @@ func newUpstreamFollowing(ctx context.Context, launch *contracts.ControllerConfi
 	if !identity.Enabled() {
 		return upstreamFollowing{}, errors.New("the controller was installed without a BuildKit image and registry push Secret, so it cannot deploy an upstream revision; reinstall to follow upstream sources")
 	}
-	if launch.GetFrozenMemory() {
+	policy, err := deploywire.Settings(launch)
+	if err != nil {
+		return upstreamFollowing{}, err
+	}
+	if policy.Mode != settings.ModeOperate {
 		return upstreamFollowing{}, errors.New("frozen memory accepts no source changes")
 	}
 	if source := launch.GetCodePath().GetOverrides().GetDetectorSource(); source == "shell" || source == "" && launch.GetCodePath().GetName() == "shell" {

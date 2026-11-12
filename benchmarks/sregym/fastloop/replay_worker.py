@@ -31,6 +31,7 @@ from benchmarks.sregym.fastloop.replay import (
 from benchmarks.sregym.fastloop.replay_transport import captured_commands
 from benchmarks.sregym.fastloop.responder_script import responder_script
 from benchmarks.sregym.repository_git import host_clone_command, host_git_command
+from sdo.agents.provider import agent_effort
 from sdo.agents.responder import (
     CodexSessionBackend,
     SessionReflector,
@@ -319,7 +320,8 @@ def replay_generated_reflection(
                         "replay-result",
                         publisher,
                         reflector=SessionReflector(
-                            CodexSessionBackend(model="gpt-6-luna"), guidance=typed.guidance or "baseline"
+                            CodexSessionBackend(model="gpt-6-luna", reasoning_effort=agent_effort()),
+                            guidance=typed.guidance or "baseline",
                         ),
                     )
         if publisher.payload is None:
@@ -553,7 +555,9 @@ def replay_script_worker(
                 if not isinstance(typed, ReflectionRequest):
                     raise CheckpointError("reflection checkpoint requires a reflection request")
                 guidance = typed.guidance or "baseline"
-                reflector = SessionReflector(CodexSessionBackend(model="gpt-6-luna"), guidance=guidance)
+                reflector = SessionReflector(
+                    CodexSessionBackend(model="gpt-6-luna", reasoning_effort=agent_effort()), guidance=guidance
+                )
                 result = run_reflection_task(task_path, "replay-result", publisher, reflector=reflector)
         if publisher.payload is None:
             raise CheckpointError("script worker did not publish a result")

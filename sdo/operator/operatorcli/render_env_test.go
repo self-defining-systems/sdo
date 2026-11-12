@@ -15,18 +15,18 @@ func TestControllerRenderEnvFlagReachesTheLaunch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, _, err := parseControllerLaunch(controllerLaunchArgs("--render-env", encoded))
+	config, _, _, err := parseControllerLaunch(controllerLaunchArgs("--render-env", encoded))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !renderenv.Same(config.Controller.GetRenderEnvironment(), environment) {
 		t.Fatalf("launch environment = %v, want %v", config.Controller.GetRenderEnvironment(), environment)
 	}
-	plain, _, err := parseControllerLaunch(controllerLaunchArgs())
+	plain, _, _, err := parseControllerLaunch(controllerLaunchArgs())
 	if err != nil || plain.Controller.GetRenderEnvironment() != nil {
 		t.Fatalf("no flag = %v, %v; want unknown", plain.Controller.GetRenderEnvironment(), err)
 	}
-	if _, _, err := parseControllerLaunch(controllerLaunchArgs("--render-env", "{bad")); err == nil {
+	if _, _, _, err := parseControllerLaunch(controllerLaunchArgs("--render-env", "{bad")); err == nil {
 		t.Fatal("malformed --render-env accepted")
 	}
 }

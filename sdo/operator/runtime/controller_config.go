@@ -3,7 +3,6 @@ package runtime
 import (
 	"fmt"
 	"os"
-	"strconv"
 
 	"google.golang.org/protobuf/types/known/durationpb"
 
@@ -32,14 +31,11 @@ func LoadControllerConfig(path string) (*contractsv1alpha1.ControllerConfig, err
 	return config, nil
 }
 
-// controllerConfigToArgs expands a ControllerConfig into the controller's flag
-// arguments. It is the single mapping between the shared config schema and the
-// controller's own flags; the launcher never names a flag. Unset fields are
-// omitted so the flag defaults apply, which is how the controller's non-zero
-// defaults (e.g. --response-timeout 30m) survive a config that does not set
-// them. Optional bools are emitted as `--flag=<bool>` only when present, so an
-// omitted synthetic_traffic/clean_responder_helpers/state_baseline keeps its
-// true default.
+// controllerConfigToArgs expands a ControllerConfig's wiring into the
+// controller's flag arguments. It is the single mapping between the shared
+// config schema and the controller's own flags; the launcher never names a
+// flag. Timing and policy are not flags: the controller reads them from
+// settings_path. Unset fields are omitted so the flag defaults apply.
 func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string {
 	var args []string
 	str := func(flag, value string) {
@@ -52,25 +48,7 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 			args = append(args, flag, value.AsDuration().String())
 		}
 	}
-	repeated := func(flag string, values []string) {
-		for _, value := range values {
-			args = append(args, flag+"="+value)
-		}
-	}
-	boolFlag := func(flag string, set bool) {
-		if set {
-			args = append(args, flag)
-		}
-	}
-	optBool := func(flag string, value *bool) {
-		if value != nil {
-			args = append(args, flag+"="+strconv.FormatBool(*value))
-		}
-	}
 
-	str("--replay", config.GetReplay())
-	str("--code-path", config.GetCodePath().GetName())
-	args = append(args, codePathOverrideArgs(config.GetCodePath())...)
 	str("--namespace", config.GetNamespace())
 	str("--control-namespace", config.GetControlNamespace())
 	str("--app-root", config.GetAppRoot())
@@ -78,53 +56,32 @@ func controllerConfigToArgs(config *contractsv1alpha1.ControllerConfig) []string
 	str("--source-commit", config.GetSourceCommit())
 	str("--deployed-commit", config.GetDeployedCommit())
 
-	str("--dispatcher-mode", config.GetDispatcherMode())
 	str("--responder-image", config.GetResponderImage())
-	optBool("--responder-standby", config.ResponderStandby)
 	str("--agent-registration-directory", config.GetAgentRegistrationDirectory())
 	str("--responder-agent-id", config.GetResponderAgentId())
 	str("--repository-pvc", config.GetRepositoryPvc())
 	str("--repository-mount-path", config.GetRepositoryMountPath())
 	str("--repository-pvc-subpath", config.GetRepositoryPvcSubpath())
 	str("--responder-credentials-secret", config.GetResponderCredentialsSecret())
-	repeated("--responder-env", config.GetResponderEnv())
 
 	str("--firing-telemetry-path", config.GetFiringTelemetryPath())
 
 	dur("--duration", config.GetDuration())
-	dur("--response-timeout", config.GetResponseTimeout())
-	dur("--verification-timeout", config.GetVerificationTimeout())
 	dur("--closure-stability-window", config.GetClosureStabilityWindow())
 	dur("--self-heal-hold", config.GetSelfHealHold())
-	dur("--responder-report-grace", config.GetResponderReportGrace())
-	if config.GetMaxResponseLoops() > 0 {
-		args = append(args, "--max-response-loops", strconv.Itoa(int(config.GetMaxResponseLoops())))
-	}
 	str("--memory-host-binary", config.GetMemoryHostBinary())
 	str("--memory-host-digest", config.GetMemoryHostDigest())
-	dur("--diagnosis-deadline", config.GetDiagnosisDeadline())
 	dur("--drift-batch-window", config.GetDriftBatchWindow())
-	str("--repair-policy", config.GetRepairPolicy())
 
-	str("--lease-name", config.GetLeaseName())
-	dur("--lease-duration", config.GetLeaseDuration())
 	str("--identity", config.GetIdentity())
 
-	boolFlag("--exit-after-closure", config.GetExitAfterClosure())
-	boolFlag("--force-reflection", config.GetForceReflection())
-	boolFlag("--frozen-memory", config.GetFrozenMemory())
-	boolFlag("--external-incidents", config.GetExternalIncidents())
-	boolFlag("--watch-only", config.GetWatchOnly())
+	if config.GetExitAfterClosure() {
+		args = append(args, "--exit-after-closure")
+	}
 	str("--maintenance-configmap", config.GetMaintenanceConfigmap())
-	dur("--maintenance-poll-interval", config.GetMaintenancePollInterval())
-	dur("--resume-sync-timeout", config.GetResumeSyncTimeout())
-	optBool("--synthetic-traffic", config.SyntheticTraffic)
-	dur("--synthetic-traffic-warmup", config.GetSyntheticTrafficWarmup())
 	str("--toolchain-image", config.GetToolchainImage())
 	str("--script-image", config.GetScriptImage())
 	str("--telemetry-environment", config.GetTelemetryEnvironmentFile())
-	optBool("--clean-responder-helpers", config.CleanResponderHelpers)
-	optBool("--state-baseline", config.StateBaseline)
 
 	return args
 }

@@ -215,7 +215,7 @@ func main() {
             task_path,
             "result",
             publisher,
-            reflector=SessionReflector(CodexSessionBackend(executor=executor)),
+            reflector=SessionReflector(CodexSessionBackend(reasoning_effort="medium", executor=executor)),
         )
     store = CheckpointStore(run_dir)
     edits = record_file_edits(source, commit)

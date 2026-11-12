@@ -33,7 +33,7 @@ func withSource(t *testing.T, profile telemetry.Profile, value string) telemetry
 }
 
 func TestTelemetryProfileDefaultsToPrometheusDefaultAndInstallsTheStack(t *testing.T) {
-	launch, err := ParseOperateLaunch(operateArgs())
+	launch, err := ParseHostLaunchEnv(hostArgs(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestTelemetryProfileDefaultsToPrometheusDefaultAndInstallsTheStack(t *testi
 }
 
 func TestTelemetryProfileNoneInstallsNothingAndSourcesAreProvided(t *testing.T) {
-	launch, err := ParseOperateLaunch(operateArgs("--telemetry-profile", "none", "--telemetry-source", "ops=http://prom.ops.svc:9090"))
+	launch, err := ParseHostLaunchEnv(hostArgs(), []string{"SDO_TELEMETRY_PROFILE=none", `SDO_TELEMETRY_SOURCES=["ops=http://prom.ops.svc:9090"]`})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestTelemetryProfileFileAndTheOperateJobRoundTrip(t *testing.T) {
 	if err := os.WriteFile(path, []byte(document), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	launch, err := ParseOperateLaunch(operateArgs("--telemetry-profile", path))
+	launch, err := ParseHostLaunchEnv(hostArgs(), []string{"SDO_TELEMETRY_PROFILE=" + path})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestTelemetryProfileFileAndTheOperateJobRoundTrip(t *testing.T) {
 		t.Fatalf("profile = %+v", profile)
 	}
 	launch.Install.AcceptedCommit = strings.Repeat("c", 40)
-	job, err := install.OperateJob(launch.Install, "healthy", "op", 1)
+	job, err := install.OperateJob(launch.Install, "healthy", "op")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,8 +112,11 @@ func TestRetiredTelemetryFlagsAreRefusedAndBadProfilesFail(t *testing.T) {
 			t.Errorf("%v accepted", flag)
 		}
 	}
-	for _, bad := range [][]string{{"--telemetry-profile", "no-such-profile"}, {"--telemetry-source", "missing-equals"}, {"--telemetry-source", "a=http://x.svc", "--telemetry-source", "a=http://y.svc"}} {
-		if _, err := ParseOperateLaunch(operateArgs(bad...)); err == nil {
+	if _, err := ParseOperateLaunch(operateArgs("--telemetry-profile", "no-such-profile")); err == nil {
+		t.Error("operate accepted an unknown profile")
+	}
+	for _, bad := range [][]string{{"SDO_TELEMETRY_PROFILE=no-such-profile"}, {`SDO_TELEMETRY_SOURCES=["missing-equals"]`}, {`SDO_TELEMETRY_SOURCES=["a=http://x.svc","a=http://y.svc"]`}} {
+		if _, err := ParseHostLaunchEnv(hostArgs(), bad); err == nil {
 			t.Errorf("%v accepted", bad)
 		}
 	}

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 
+	"sdo.dev/operator/contracts/settings"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -121,25 +123,30 @@ func (i Installer) restoreApplicationGrants(ctx context.Context, cfg InspectConf
 	return i.restoreApplicationGrantsWithSettings(ctx, cfg, "")
 }
 
-func (i Installer) restoreApplicationGrantsWithSettings(ctx context.Context, cfg InspectConfig, settings string) error {
+func (i Installer) restoreApplicationGrantsWithSettings(ctx context.Context, cfg InspectConfig, permissive string) error {
 	var namespaces []string
-	if settings != "" {
-		if err := json.Unmarshal([]byte(settings), &namespaces); err != nil {
+	if permissive != "" {
+		if err := json.Unmarshal([]byte(permissive), &namespaces); err != nil {
 			return fmt.Errorf("invalid permissive responder settings: %w", err)
 		}
 	}
-	plan, err := Resources(Config{
-		PermissiveResponder: settings != "", ResponderNamespaces: namespaces,
+	// The plan is built only for its grants; a default configuration satisfies its validation of the controller Job
+	// it never creates.
+	grants := settings.Default()
+	grants.Agent.Model = "grants-only"
+	grants.Response.Permissive, grants.Response.PermissiveNamespaces = permissive != "", namespaces
+	planned := Config{
+		Settings:  &grants,
 		Namespace: cfg.Namespace, ControlNamespace: cfg.ControlNamespace, Application: cfg.Application,
-		RepositoryPVC: cfg.RepositoryPVC, CredentialsSecret: "grants-only", Model: "grants-only",
+		RepositoryPVC: cfg.RepositoryPVC, CredentialsSecret: "grants-only",
 		ControllerImage: cfg.ControllerImage, ResponderImage: cfg.ControllerImage,
-		// The plan is built only for its grants; these satisfy its validation of the controller Job it never creates.
-		TimeoutSeconds: 1, AcceptedCommit: strings.Repeat("0", 40), NativeCommand: []string{"/usr/local/bin/sdo-operator"},
-	})
+		AcceptedCommit: strings.Repeat("0", 40), NativeCommand: []string{"/usr/local/bin/sdo-operator"},
+	}
+	plan, err := Resources(planned)
 	if err != nil {
 		return fmt.Errorf("plan application grants: %w", err)
 	}
-	if err := i.ensurePermissiveNamespaces(ctx, Config{PermissiveResponder: settings != "", ResponderNamespaces: namespaces}); err != nil {
+	if err := i.ensurePermissiveNamespaces(ctx, planned); err != nil {
 		return err
 	}
 	return i.ensureClusterGrants(ctx, plan)

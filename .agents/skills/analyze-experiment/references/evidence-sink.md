@@ -1,6 +1,8 @@
 # Evidence sink
 
-When a run was installed with an evidence sink (`--evidence-sink-host-path` or `--evidence-sink-volume`), its
+When a run was installed with an evidence sink (operator config `evidence.host_path` or `evidence.volume`, set by
+benchmarks as `SDO_EVIDENCE_HOST_PATH`; runs before the central config used `--evidence-sink-host-path` or
+`--evidence-sink-volume`), its
 trajectories live outside the cluster under `<sink>/<run-id>/` and survive namespace deletion. Read them there first;
 `sdo_runtime/` exports and the repository PVC may be gone. The layout is `sdo.evidence/v1` (check `layout.json`).
 

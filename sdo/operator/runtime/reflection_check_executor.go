@@ -56,7 +56,9 @@ func (e reflectionCheckExecutor) RecoverCompleted(ctx context.Context, task *con
 	return nil, false, nil
 }
 
-func reflectionCheckHandler(repository *broker.Broker, sessionRoot, incidentID string) func(context.Context, ToolRequest) ToolResponse {
+// reflectionCheckHandler runs one memory check for a reflection worker, bounded by agent.memory_check_timeout (the
+// same limit the worker receives as SDO_MEMORY_CHECK_TIMEOUT_SECONDS).
+func reflectionCheckHandler(repository *broker.Broker, sessionRoot, incidentID string, limit time.Duration) func(context.Context, ToolRequest) ToolResponse {
 	return func(ctx context.Context, request ToolRequest) ToolResponse {
 		response := ToolResponse{Command: request.Command}
 		if request.Command != "memory-check" {
@@ -81,7 +83,7 @@ func reflectionCheckHandler(repository *broker.Broker, sessionRoot, incidentID s
 		defer func() {
 			slog.Info("reflection_memory_check_finished", "incident_id", incidentID, "duration", lifecycleio.Since(started), "error", response.Error)
 		}()
-		bounded, cancel := context.WithTimeout(ctx, 300*time.Second)
+		bounded, cancel := context.WithTimeout(ctx, limit)
 		defer cancel()
 		report, err := repository.CheckReflection(bounded, incidentID, decision)
 		if err != nil {

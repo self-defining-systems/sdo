@@ -94,10 +94,6 @@ func (i Installer) markPreparedCommit(ctx context.Context, cfg Config) error {
 	return nil
 }
 
-func operateBuildArgs(cfg Config) []string {
-	return []string{"--build-timeout", fmt.Sprintf("%ds", int(buildTimeout(cfg).Seconds())), "--build-budget", fmt.Sprintf("%ds", int(buildBudget(cfg).Seconds())), "--rollout-timeout", fmt.Sprintf("%ds", int(rolloutTimeout(cfg).Seconds()))}
-}
-
 func OperateJobName(operationID string) string {
 	hash := sha256.Sum256([]byte(operationID))
 	return "sdo-operate-" + hex.EncodeToString(hash[:8])
@@ -105,33 +101,28 @@ func OperateJobName(operationID string) string {
 
 // OperateJob runs the full native lifecycle inside the shared repository PVC.
 // The Job owns the accepted checkout; delegated workers receive proposal mounts.
-func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int) (*batchv1.Job, error) {
+// Its argv carries identity and wiring only; every timing and policy value is
+// the mounted sdo-config.
+func OperateJob(cfg Config, healthObjective, operationID string) (*batchv1.Job, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
 	if cfg.BuildKitImage == "" || cfg.RegistryPushSecret == "" {
 		return nil, errors.New("native operate requires BuildKit image and dedicated registry push Secret")
 	}
-	if strings.TrimSpace(operationID) == "" || maxAttempts <= 0 {
-		return nil, errors.New("operate requires operation ID and positive max attempts")
+	if strings.TrimSpace(operationID) == "" {
+		return nil, errors.New("operate requires an operation ID")
 	}
 	args := []string{
 		"operate", "--app", "/workspace/application", "--namespace", cfg.Namespace,
 		"--control-namespace", cfg.controlNamespace(), "--application", cfg.Application,
 		"--health-objective", healthObjective, "--operation-id", operationID,
-		"--max-attempts", fmt.Sprint(maxAttempts), "--controller-image", cfg.ControllerImage,
+		"--controller-image", cfg.ControllerImage,
 		"--responder-image", cfg.ResponderImage,
 		"--repository-pvc", cfg.RepositoryPVC, "--repository-mount-path", "/workspace",
-		"--credentials-secret", cfg.CredentialsSecret, "--model", cfg.Model,
-		"--replay", cfg.Replay, "--agent-provider", provider(cfg), "--agent-effort", cfg.AgentEffort, "--lifecycle-timeout", cfg.LifecycleTimeout.String(), "--worktree-root", "/workspace/worktrees",
+		"--credentials-secret", cfg.CredentialsSecret, "--worktree-root", "/workspace/worktrees",
 		"--buildkit-image", cfg.BuildKitImage, "--registry-push-secret", cfg.RegistryPushSecret,
-		"--repair-policy", defaultRepairPolicy(cfg), "--response-timeout", fmt.Sprintf("%ds", cfg.TimeoutSeconds),
-		"--verification-timeout", fmt.Sprintf("%ds", verificationTimeout(cfg)),
-		"--reflection-session", reflectionSession(cfg),
-		"--reflection-guidance", reflectionGuidance(cfg),
 	}
-	args = append(args, codePathArgs(cfg)...)
-	args = append(args, operateBuildArgs(cfg)...)
 	if cfg.SourceKind != "" {
 		args = append(args, "--source-kind", cfg.SourceKind, "--source-config", cfg.SourceConfig)
 	}
@@ -144,42 +135,11 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	if cfg.EvidenceSink != "" {
 		args = append(args, "--evidence-sink", cfg.EvidenceSink)
 	}
-	if cfg.ExternalIncidents {
-		args = append(args, "--external-incidents")
-	}
-	if cfg.WatchOnly {
-		args = append(args, "--watch-only")
-	}
-	if cfg.FrozenMemory {
-		args = append(args, "--frozen-memory")
-	}
-	if cfg.ForceReflection {
-		args = append(args, "--force-reflection")
-	}
-	if cfg.MaxResponseLoops > 0 {
-		args = append(args, "--max-response-loops", fmt.Sprint(cfg.MaxResponseLoops))
-	}
-
-	if cfg.LateFindings == "pull" {
-		args = append(args, "--late-findings", cfg.LateFindings)
-	}
 	if cfg.RegistryHost != "" {
 		args = append(args, "--registry-host", cfg.RegistryHost)
 	}
-	for _, value := range cfg.ResponderEnv {
-		args = append(args, "--responder-env", value)
-	}
 	if cfg.RegistryInsecure {
 		args = append(args, "--registry-insecure")
-	}
-	if cfg.PermissiveResponder {
-		args = append(args, "--permissive-responder")
-	}
-	for _, ns := range cfg.ResponderNamespaces {
-		args = append(args, "--responder-namespace", ns)
-	}
-	if cfg.HealthyBaseline {
-		args = append(args, "--healthy-baseline")
 	}
 	if cfg.TelemetryProfile.Name != "" {
 		document, err := cfg.TelemetryProfile.Marshal()
@@ -199,7 +159,9 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	}
 	zero := int32(0)
 	ttl := int32(600)
-	deadline := int64((cfg.TimeoutSeconds+int(lifecycleTimeout(cfg).Seconds())+int(buildBudget(cfg).Seconds())+int(rolloutTimeout(cfg).Seconds()))*maxAttempts + 600)
+	policy := cfg.Settings
+	attempt := time.Duration(policy.Response.Timeout) + time.Duration(policy.Agent.LifecycleTimeout) + time.Duration(policy.Deployment.BuildBudget) + time.Duration(policy.Deployment.RolloutTimeout)
+	deadline := int64((attempt*time.Duration(policy.Deployment.MaxAttempts) + 600*time.Second) / time.Second)
 	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: OperateJobName(operationID), Namespace: cfg.controlNamespace(), Annotations: map[string]string{PreparedCommitAnnotation: cfg.AcceptedCommit}}, Spec: batchv1.JobSpec{BackoffLimit: &zero, TTLSecondsAfterFinished: &ttl, ActiveDeadlineSeconds: &deadline}}
 	job.Spec.Template.Labels = map[string]string{"app.kubernetes.io/name": "sdo-operate", "sdo.dev/operation": OperateJobName(operationID)}
 	pod := &job.Spec.Template.Spec
@@ -212,14 +174,12 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 	}
 	container := corev1.Container{Name: "operate", Image: cfg.ControllerImage, ImagePullPolicy: corev1.PullIfNotPresent, Command: append([]string{}, cfg.NativeCommand...), Args: args, SecurityContext: containerSecurity(), Resources: limits("250m", "512Mi", "2", "4Gi"), EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: cfg.CredentialsSecret}}}}, Env: []corev1.EnvVar{{Name: "CODEX_HOME", Value: "/workspace/.sdo-runtime/codex"}, {Name: "CLAUDE_CONFIG_DIR", Value: "/workspace/.sdo-runtime/claude"}, {Name: "TMPDIR", Value: "/tmp"}, {Name: "GIT_AUTHOR_NAME", Value: "sdo-controller"}, {Name: "GIT_AUTHOR_EMAIL", Value: "sdo-controller@invalid"}, {Name: "GIT_COMMITTER_NAME", Value: "sdo-controller"}, {Name: "GIT_COMMITTER_EMAIL", Value: "sdo-controller@invalid"}}, VolumeMounts: []corev1.VolumeMount{{Name: "repository", MountPath: "/workspace"}, {Name: "scratch", MountPath: "/tmp"}, {Name: "credentials", MountPath: "/sdo/credentials", ReadOnly: true}}}
 	policyJSON, _ := json.Marshal(cfg.ObservationCeiling)
-	container.Env = append(container.Env, corev1.EnvVar{Name: observation.CeilingEnvironment, Value: string(policyJSON)}, corev1.EnvVar{Name: "SDO_RESPONDER_MENU", Value: responderMenuValue(cfg.ResponderMenu)})
+	container.Env = append(container.Env, corev1.EnvVar{Name: observation.CeilingEnvironment, Value: string(policyJSON)})
 	if cfg.RegistrationConfigMap != "" {
 		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "registrations", MountPath: cfg.registrationDirectory(), ReadOnly: true})
 	}
 	pod.Containers = []corev1.Container{container}
-	if cfg.Settings != nil {
-		mountSettings(pod)
-	}
+	mountSettings(pod)
 	if err := evidenceSinkSidecar(cfg, pod); err != nil {
 		return nil, err
 	}
@@ -231,30 +191,6 @@ func OperateJob(cfg Config, healthObjective, operationID string, maxAttempts int
 		return nil, err
 	}
 	return job, nil
-}
-func provider(c Config) string {
-	if c.AgentProvider != "" {
-		return c.AgentProvider
-	}
-	return "codex"
-}
-func defaultRepairPolicy(c Config) string {
-	if c.RepairPolicy != "" {
-		return c.RepairPolicy
-	}
-	return "recorded-actions"
-}
-func reflectionSession(c Config) string {
-	if c.ReflectionSession != "" {
-		return c.ReflectionSession
-	}
-	return "resume"
-}
-func reflectionGuidance(c Config) string {
-	if c.ReflectionGuidance != "" {
-		return c.ReflectionGuidance
-	}
-	return "baseline"
 }
 
 type OperateResult struct {
@@ -269,11 +205,11 @@ type OperateResult struct {
 }
 
 // StartOperate checks the prepared commit and starts one native lifecycle Job.
-func (i Installer) StartOperate(ctx context.Context, cfg Config, objective, operationID string, maxAttempts int) (string, error) {
+func (i Installer) StartOperate(ctx context.Context, cfg Config, objective, operationID string) (string, error) {
 	if i.Client == nil {
 		return "", errors.New("Kubernetes client is required")
 	}
-	job, err := OperateJob(cfg, objective, operationID, maxAttempts)
+	job, err := OperateJob(cfg, objective, operationID)
 	if err != nil {
 		return "", err
 	}
@@ -390,17 +326,9 @@ func (i Installer) WaitOperate(ctx context.Context, cfg Config, operationID stri
 }
 
 // LaunchOperate starts and awaits the native in-cluster lifecycle.
-func (i Installer) LaunchOperate(ctx context.Context, cfg Config, objective, operationID string, maxAttempts int) (OperateResult, error) {
-	if _, err := i.StartOperate(ctx, cfg, objective, operationID, maxAttempts); err != nil {
+func (i Installer) LaunchOperate(ctx context.Context, cfg Config, objective, operationID string) (OperateResult, error) {
+	if _, err := i.StartOperate(ctx, cfg, objective, operationID); err != nil {
 		return OperateResult{}, err
 	}
 	return i.WaitOperate(ctx, cfg, operationID)
-}
-
-// lifecycleTimeout is the configured designer session limit, or the workers' shared default.
-func lifecycleTimeout(cfg Config) time.Duration {
-	if cfg.LifecycleTimeout > 0 {
-		return cfg.LifecycleTimeout
-	}
-	return worker_registry.DefaultLifecycleTimeout
 }

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"sdo.dev/operator/contracts/settings"
 )
 
 // Scenario 2: reliability under faults. One run: API latency, an
@@ -16,7 +18,7 @@ import (
 func TestControllerSurvivesFaults(t *testing.T) {
 	w := NewWorld(t)
 	w.DeployToy()
-	w.InstallController("--response-timeout=45s")
+	w.InstallController(func(c *settings.Config) { c.Response.Timeout = settings.Duration(45 * time.Second) })
 	w.WaitBaseline(5 * time.Minute)
 	// The scripted agent repairs source drift on first sight; health faults need a learned program.
 	const drift, health, later = "toy_target_port_frontend", "toy_target_port_catalog", "toy_target_port_backend"
@@ -144,7 +146,7 @@ func TestControllerToleratesAPIErrors(t *testing.T) {
 func TestControllerEndsHungAgent(t *testing.T) {
 	w := NewWorld(t)
 	w.DeployToy()
-	w.InstallController("--response-timeout=45s")
+	w.InstallController(func(c *settings.Config) { c.Response.Timeout = settings.Duration(45 * time.Second) })
 	w.WaitBaseline(5 * time.Minute)
 	w.SetAgentMode("hang")
 	w.Inject("toy_target_port_catalog")

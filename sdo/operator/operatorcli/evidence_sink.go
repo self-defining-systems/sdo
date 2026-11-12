@@ -126,34 +126,11 @@ func RunEvidenceSinkProcess(args []string, log io.Writer) error {
 	return RunEvidenceSink(ctx, cfg, EvidenceSinkClock{}, log)
 }
 
-// evidenceSinkFlags are the runner's sink choices on host and install-existing.
-type evidenceSinkFlags struct {
-	hostPath, volume, runID *string
-}
-
-func registerEvidenceSinkFlags(flags *flag.FlagSet) evidenceSinkFlags {
-	return evidenceSinkFlags{
-		hostPath: flags.String("evidence-sink-host-path", "", "node directory that receives run evidence (writable by uid 65532); outlives the control namespace"),
-		volume:   flags.String("evidence-sink-volume", "", "evidence sink as a Kubernetes VolumeSource JSON (for example an NFS or Retain PersistentVolume claim)"),
-		runID:    flags.String("evidence-run-id", "", "run directory inside the evidence sink (default: the control namespace)"),
-	}
-}
-
-// resolve returns the compact sink JSON for install.Config.EvidenceSink, or "" when no sink is configured.
-func (f evidenceSinkFlags) resolve(controlNamespace string) (string, error) {
-	return resolveEvidenceSink(settings.Evidence{HostPath: *f.hostPath, Volume: *f.volume, RunID: *f.runID}, controlNamespace)
-}
-
 // resolveEvidenceSink is the compact sink JSON of the configured sink, or "" when none is configured.
 func resolveEvidenceSink(e settings.Evidence, controlNamespace string) (string, error) {
+	// Validate already refused a run ID without a sink and a sink with both forms.
 	if e.HostPath == "" && e.Volume == "" {
-		if e.RunID != "" {
-			return "", errors.New("evidence.run_id requires an evidence sink")
-		}
 		return "", nil
-	}
-	if e.HostPath != "" && e.Volume != "" {
-		return "", errors.New("use one of evidence.host_path and evidence.volume")
 	}
 	sink := install.EvidenceSink{RunID: e.RunID}
 	if sink.RunID == "" {

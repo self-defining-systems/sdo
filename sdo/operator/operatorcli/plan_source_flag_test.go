@@ -18,7 +18,7 @@ func existingLaunchArgs(extra ...string) []string {
 	return append([]string{
 		"install-existing", "--repository", "/synthetic/repo", "--namespace", "shop", "--application", "shop",
 		"--controller-image", "example.invalid/controller", "--responder-image", "example.invalid/responder",
-		"--repository-pvc", "repo", "--credentials-secret", "creds", "--model", "synthetic",
+		"--repository-pvc", "repo", "--credentials-secret", "creds", "--config", testModelConfig,
 	}, extra...)
 }
 
@@ -26,7 +26,7 @@ func controllerLaunchArgs(extra ...string) []string {
 	return append([]string{
 		"controller", "--app", "/synthetic/app", "--namespace", "shop", "--responder-image", "example.invalid/responder",
 		"--toolchain-image", "example.invalid/controller", "--repository-pvc", "repo", "--repository-mount-path", "/workspace",
-		"--credentials-secret", "creds", "--worktree-root", "/workspace/proposals", "--model", "synthetic",
+		"--credentials-secret", "creds", "--worktree-root", "/workspace/proposals",
 		"--broker-mode", "native", "--worker-mount-mode", "proposal-only",
 	}, extra...)
 }

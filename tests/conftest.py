@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -197,6 +198,23 @@ def _isolated_opus_pool(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytes
     # belongs in a sibling directory, outside every agent-authored checkout.
     monkeypatch.setenv("SDO_OPUS_POOL_DIR", str(tmp_path_factory.mktemp("provider-capacity")))
     monkeypatch.setenv("SDO_OPUS_MAX_SESSIONS", "8")
+
+
+@pytest.fixture(autouse=True)
+def _controller_worker_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run worker code as the controller launches it: the agent effort and limits are always set.
+
+    Workers have no defaults of their own (the controller writes these from the operator config, docs/config.md);
+    the values here are the production defaults. A test of the unset case deletes them.
+    """
+    for name, value in (
+        ("SDO_AGENT_EFFORT", "medium"),
+        ("SDO_LIFECYCLE_TIMEOUT_SECONDS", "900"),
+        ("SDO_MEMORY_CHECK_TIMEOUT_SECONDS", "300"),
+        # A reflection task binds its own deadline; this one stands in for the controller's default 30 minutes.
+        ("SDO_REFLECTION_DEADLINE", repr(time.time() + 1800)),
+    ):
+        monkeypatch.setenv(name, value)
 
 
 @pytest.fixture(scope="session")

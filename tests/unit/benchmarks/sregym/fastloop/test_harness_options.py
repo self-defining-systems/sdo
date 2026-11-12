@@ -30,9 +30,9 @@ def _install(**extra: object) -> NativeInstallConfig:
 
 
 def test_code_path_overrides_reach_the_operator_launch_and_default_to_none() -> None:
-    assert "--code-path-overrides" not in _install().common_args()
-    args = _install(code_path_overrides=OVERRIDES).common_args()
-    assert args[args.index("--code-path-overrides") + 1] == OVERRIDES
+    assert "code_path_overrides" not in _install().overlay().get("agent", {})
+    assert _install(code_path_overrides=OVERRIDES).overlay()["agent"]["code_path_overrides"] == OVERRIDES
+    assert not any(arg.startswith("--code-path") for arg in _install(code_path_overrides=OVERRIDES).common_args())
 
 
 @pytest.mark.parametrize("bad", ["{not json", "[1]", '"text"'])

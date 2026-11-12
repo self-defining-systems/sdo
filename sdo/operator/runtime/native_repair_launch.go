@@ -27,9 +27,9 @@ type RepairDeployerFactory func(config *contracts.ControllerConfig, client kuber
 // PlainPublication: a repair is published without a deployment, as before. Every other launch
 // requires the factory: a missing one fails the launch instead of silently
 // publishing repairs undeployed.
-func repairsFromLaunch(config *contracts.ControllerConfig, client kubernetes.Interface, repository *broker.Broker, factory RepairDeployerFactory) (SourceRepairer, error) {
+func repairsFromLaunch(config *contracts.ControllerConfig, frozenMemory bool, client kubernetes.Interface, repository *broker.Broker, factory RepairDeployerFactory) (SourceRepairer, error) {
 	source := config.GetCodePath().GetOverrides().GetDetectorSource()
-	if config.GetFrozenMemory() {
+	if frozenMemory {
 		return PlainPublication{Repository: repository, Reason: PublishesUndeployedFrozenMemory}, nil
 	}
 	if source == "shell" || source == "" && config.GetCodePath().GetName() == "shell" {

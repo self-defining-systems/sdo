@@ -93,7 +93,7 @@ def test_worker_corrects_result_contract_before_python_conversion(
         return reply("codex", payload, session_id="reflection-session", branch="reflection")
 
     agent = ScriptedAgent(respond)
-    result = CodexSessionBackend(executor=agent.executor).fresh(
+    result = CodexSessionBackend(reasoning_effort="medium", executor=agent.executor).fresh(
         worktree=tmp_path,
         prompt="reflect",
         idempotency_key="single-dispatch",

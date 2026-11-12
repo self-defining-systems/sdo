@@ -1,10 +1,9 @@
 {
   "provider": "SDO_AGENT_PROVIDER",
   "effort": "SDO_AGENT_EFFORT",
-  "default_effort": "medium",
   "efforts": ["low", "medium", "high", "xhigh", "max"],
   "lifecycle_timeout": "SDO_LIFECYCLE_TIMEOUT_SECONDS",
-  "default_lifecycle_timeout_seconds": 900,
+  "memory_check_timeout": "SDO_MEMORY_CHECK_TIMEOUT_SECONDS",
   "models": {
     "responder": "SDO_RESPONDER_MODEL",
     "reflection": "SDO_REFLECTION_MODEL",

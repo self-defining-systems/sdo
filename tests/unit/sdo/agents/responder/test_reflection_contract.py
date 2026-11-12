@@ -111,7 +111,9 @@ def test_t1_work_reaches_scripted_session(
         task_path,
         "t1-result",
         publisher,
-        reflector=SessionReflector(CodexSessionBackend(model="scripted", executor=agent.executor)),
+        reflector=SessionReflector(
+            CodexSessionBackend(reasoning_effort="medium", model="scripted", executor=agent.executor)
+        ),
     )
     decision = ReflectionResult()
     assert result.response.Unpack(decision)

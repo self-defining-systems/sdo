@@ -19,6 +19,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+WORKER_ENV = {"SDO_LIFECYCLE_TIMEOUT_SECONDS": "900", "SDO_MEMORY_CHECK_TIMEOUT_SECONDS": "300"}
+
+
 def _scenario(session_mode: str = "resume") -> Scenario:
     return Scenario(
         scenario_id="synthetic",
@@ -54,6 +57,7 @@ def test_docker_command_mounts_the_scenario_where_the_live_job_had_it(tmp_path: 
         auth=tmp_path / "auth.json",
         model="gpt-6-luna",
         name="skilleval-test",
+        worker_env=WORKER_ENV,
     )
 
     mounts = _mounts(command)
@@ -66,6 +70,7 @@ def test_docker_command_mounts_the_scenario_where_the_live_job_had_it(tmp_path: 
     assert environment["SDO_REFLECTION_MODEL"] == "gpt-6-luna"
     assert environment["SDO_BASE_COMMIT"] == "a" * 40
     assert environment["SDO_PHASE"] == "reflection"
+    assert environment["SDO_MEMORY_CHECK_TIMEOUT_SECONDS"] == "300"
     assert command[command.index("-w") + 1] == "/workspace/proposal/checkout"
     assert command[-5:] == ["sdo-sregym-responder:le-test", "-n", "10", "python3", "/skilleval/entry.py"]
     assert command[command.index("--entrypoint") + 1] == "nice"
@@ -81,6 +86,7 @@ def test_fresh_reflection_uses_a_private_codex_home(tmp_path: Path) -> None:
         auth=tmp_path / "auth.json",
         model="gpt-6-luna",
         name="skilleval-test",
+        worker_env=WORKER_ENV,
     )
 
     assert _environment(command)["CODEX_HOME"] == "/tmp/codex"
@@ -241,11 +247,12 @@ def test_claude_job_uses_the_recorded_provider_model_effort_and_credentials(tmp_
         auth=tmp_path / ".credentials.json",
         model="",
         name="synthetic",
+        worker_env=WORKER_ENV,
     )
     env = _environment(command)
     assert env["SDO_AGENT_PROVIDER"] == "claude"
     assert env["SDO_REFLECTION_MODEL"] == "claude-opus-5-5"
-    assert env["SDO_REFLECTION_EFFORT"] == "medium"
+    assert env["SDO_AGENT_EFFORT"] == "medium"
     assert _mounts(command)["/sdo/credentials/.credentials.json"] == str(tmp_path / ".credentials.json")
     assert env["CLAUDE_CONFIG_DIR"] == "/sdo/session/claude"
 
@@ -302,6 +309,7 @@ def test_replay_policy_is_explicit_in_the_offline_worker(tmp_path: Path) -> None
         auth=tmp_path / "auth",
         model="test",
         name="test",
+        worker_env=WORKER_ENV,
         replay="off",
     )
     assert _environment(command)["SDO_REPLAY"] == "off"
@@ -320,6 +328,7 @@ def test_source_overlay_uses_native_opus_pool_admission(tmp_path: Path, monkeypa
         auth=tmp_path / "auth",
         model="test",
         name="test",
+        worker_env=WORKER_ENV,
         replay="off",
         code_root=tmp_path / "code",
         operator_binary=tmp_path / "operator",

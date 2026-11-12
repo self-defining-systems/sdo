@@ -52,9 +52,12 @@ run's cap) and the `collect` hook. Later positions of a sequence run on the memo
 <root>/<exp>/sdo-table/                         SDO table: table.md, table.csv, false-alarms.json
 ```
 
-A baseline directory holds `baseline.json` (namespace, optional control namespace, bundle, branch, commit, render and
-its sha256, objective, extra `install-existing` controller flags, the SDO revision it was made with), the memory bundle
-and the render. The `prepare` hook's receipt and log (`install-existing*.json|log`) are in the build step's output.
+A baseline directory holds `baseline.json` (format 2: namespace, optional control namespace, bundle, branch, commit,
+render and its sha256, objective, a `config` overlay of operator settings beyond `sdo-bench.yaml`, the SDO revision it
+was made with; a format-1 manifest's `controller_flags` are translated to `config` on read), the memory bundle and the
+render. The `prepare` hook's argv, `SDO_*` variables, receipt and log (`install-existing-args.json`,
+`install-existing-env.json`, `install-existing.json`, `install-existing.log`) are in the build step's output; the
+overlay files it passed are under the lane's `sdo-config/`.
 
 ## Reading it
 

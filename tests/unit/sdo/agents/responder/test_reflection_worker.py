@@ -670,13 +670,17 @@ def test_expired_task_deadline_is_a_typed_timeout(tmp_path: Path) -> None:
     assert parse_json(publisher.payload, AgentResult()).failure_reason == "agent_timeout"
 
 
-def test_reflection_default_budget_fits_the_controller_and_eval_deadlines() -> None:
-    from benchmarks.sregym.adapter.native_operator import NativeInstallConfig
-    from benchmarks.sregym.adapter.persistent import DRAIN_TIMEOUT_SECONDS
-    from sdo.agents.responder.reflection import DEFAULT_REFLECTION_SECONDS
+def test_a_reflection_without_a_bound_deadline_has_no_budget_of_its_own(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The controller binds every reflection task to a deadline derived from the configured response timeout.
+    from sdo.agents.responder.reflection import (
+        REFLECTION_DEADLINE_ENV,
+        ReflectionDeadlineExceeded,
+        reflection_budget_seconds,
+    )
 
-    response_timeout = NativeInstallConfig.__dataclass_fields__["response_timeout_seconds"].default
-    assert DEFAULT_REFLECTION_SECONDS < response_timeout < DRAIN_TIMEOUT_SECONDS
+    monkeypatch.delenv(REFLECTION_DEADLINE_ENV, raising=False)
+    with pytest.raises(ReflectionDeadlineExceeded, match=REFLECTION_DEADLINE_ENV):
+        reflection_budget_seconds()
 
 
 def test_builtin_resume_requires_persisted_session_storage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -807,7 +811,7 @@ def test_real_final_check_timeout_publishes_terminal_worker_result(
         _task_path(tmp_path),
         "result-map",
         publisher,
-        reflector=SessionReflector(backend(executor=agent.executor, memory_checker=check)),
+        reflector=SessionReflector(backend(reasoning_effort="medium", executor=agent.executor, memory_checker=check)),
     )
     assert (result.status, result.failure_reason) == ("failed", "agent_timeout")
     assert "memory check timed out" in result.error_summary

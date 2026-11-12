@@ -1,4 +1,4 @@
-"""Launchers name the install-time deployment policy as flags; the default is no policy (today's behavior)."""
+"""Launchers name the install-time deployment policy as config ``deployment.policy``; the default is no policy."""
 
 from __future__ import annotations
 
@@ -9,8 +9,6 @@ import pytest
 
 from benchmarks.sregym.adapter import DeploymentPolicyConfig, RuntimeConfig
 from benchmarks.sregym.adapter.native_operator import NativeInstallConfig
-
-POLICY_FLAGS = ("--allow-registry", "--scope-blocking", "--grant-namespace", "--grant-cluster-kind")
 
 
 def _install(**overrides: object) -> NativeInstallConfig:
@@ -30,36 +28,33 @@ def _install(**overrides: object) -> NativeInstallConfig:
     )
 
 
-def test_no_policy_adds_no_flag() -> None:
-    args = _install().common_args()
-    assert not set(POLICY_FLAGS) & set(args)
-    assert DeploymentPolicyConfig().args() == []
+def test_no_policy_adds_no_config() -> None:
+    assert "deployment" not in _install().overlay()
+    assert DeploymentPolicyConfig().settings() == {}
 
 
-def test_policy_flags_follow_the_configuration() -> None:
+def test_policy_config_follows_the_configuration() -> None:
     policy = DeploymentPolicyConfig(
         allowed_registries=("registry.gitlab.com", "docker.io"),
         scope_blocking=True,
         granted_namespaces=("monitoring", "ingress"),
         granted_cluster_kinds=("ClusterRole",),
     )
-    args = _install(deployment_policy=policy).common_args()
-    assert args[-7:] == [
-        "--allow-registry",
-        "registry.gitlab.com,docker.io",
-        "--scope-blocking",
-        "--grant-namespace",
-        "monitoring,ingress",
-        "--grant-cluster-kind",
-        "ClusterRole",
-    ]
-    assert DeploymentPolicyConfig(allowed_registries=("docker.io",)).args() == ["--allow-registry", "docker.io"]
+    assert _install(deployment_policy=policy).overlay()["deployment"] == {
+        "policy": {
+            "allowed_registries": ["registry.gitlab.com", "docker.io"],
+            "scope_blocking": True,
+            "granted_namespaces": ["monitoring", "ingress"],
+            "granted_cluster_kinds": ["ClusterRole"],
+        }
+    }
+    assert DeploymentPolicyConfig(allowed_registries=("docker.io",)).settings() == {"allowed_registries": ["docker.io"]}
 
 
 def test_content_rules_have_one_owner() -> None:
-    # Go's deploymentpolicy.Validate refuses these when the installer parses the flags
+    # Go's deploymentpolicy.Validate refuses these when the installer resolves the config
     # (sdo/operator/deploymentpolicy TestInvalidPoliciesAreRefused); Python adds no second copy.
-    assert DeploymentPolicyConfig(allowed_registries=("Docker.io",)).args() == ["--allow-registry", "Docker.io"]
+    assert DeploymentPolicyConfig(allowed_registries=("Docker.io",)).settings() == {"allowed_registries": ["Docker.io"]}
     with pytest.raises(TypeError):
         DeploymentPolicyConfig(scope_blocking="yes")  # type: ignore[arg-type]
 

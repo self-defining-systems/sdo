@@ -118,9 +118,9 @@ class ModelPolicy:
     User rule (2026-09-28): SDO's responder, reflection, lifecycle and health
     judge use only Codex gpt-6-luna; the Codex baselines use gpt-6-luna; the
     SREGym judge is only ``codex-gpt-6-luna`` at ``xhigh``. ``agent_effort`` is
-    the effort SDO pins its incident agents to in code
-    (``sdo.agents.provider.DEFAULT_AGENT_EFFORT``; a test keeps
-    the two equal), so every compared arm declares it.
+    the effort SDO's agents run at under the benchmark profile (operator config
+    ``agent.effort``, ``docs/config.md``; a test keeps the two equal), so every
+    compared arm declares it.
     """
 
     provider: str = "codex"

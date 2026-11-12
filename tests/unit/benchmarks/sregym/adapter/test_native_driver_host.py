@@ -8,9 +8,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from benchmarks.fuzzops.config import BENCH_PROFILE
 from benchmarks.sregym.adapter import driver, native_operator
 from benchmarks.sregym.adapter.deployment_source import raw_source
 from benchmarks.sregym.adapter.runtime import RuntimeConfig
+from tests.unit.benchmarks.sregym.adapter.launch_capture import stub_resolution
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -28,7 +30,9 @@ def test_native_host_prepares_benchmark_registry_and_go_settings(
     def launch(config: object) -> dict[str, object]:
         events.append("host")
         assert config.install.control_namespace == "demo-sdo"
-        assert config.install.repair_policy == "recorded-actions"
+        # The benchmark profile sets the repair policy; the lane overrides nothing it did not choose.
+        assert config.install.repair_policy is None
+        assert config.install.config_files == (BENCH_PROFILE,)
         assert config.install.reflection_session == "resume"
         assert config.install.exit_after_closure is True
         assert config.registry_host == "sdo-benchmark-registry.demo-sdo.svc.cluster.local:5000"
@@ -263,7 +267,8 @@ def test_fastloop_native_launch_has_recorded_action_repairs_and_no_submission_tr
         persistent=True,
     )
 
-    assert seen[0].install.repair_policy == "recorded-actions"
+    assert seen[0].install.config_files == (BENCH_PROFILE,)
+    assert seen[0].install.repair_policy is None
     assert seen[0].install.responder_env == ()
 
 
@@ -347,6 +352,7 @@ def test_runtime_install_preserves_shared_settings_on_every_lifecycle_path(
         return native_operator.install_existing(value)
 
     monkeypatch.setattr(native_operator, "_run", run)
+    stub_resolution(monkeypatch)
     monkeypatch.setattr(driver, "install_existing", install)
     monkeypatch.setattr(driver, "launch_host", lambda host: installed.append(host.install) or {"installed": True})
 
@@ -354,8 +360,12 @@ def test_runtime_install_preserves_shared_settings_on_every_lifecycle_path(
 
     assert len(installed) == 1
     actual = installed[0]
+    # A field the lane leaves empty stays unset, so the config files decide it.
+    unset = {"code_path_overrides": None, "permissive_responder": None, "config_files": (BENCH_PROFILE,)}
     for field in fields(native_operator.NativeInstallConfig):
-        if hasattr(config, field.name):
+        if field.name in unset:
+            assert getattr(actual, field.name) == unset[field.name], field.name
+        elif hasattr(config, field.name):
             assert getattr(actual, field.name) == getattr(config, field.name), field.name
     assert actual.control_namespace == config.controller_namespace
     assert actual.response_timeout_seconds == config.timeout_seconds

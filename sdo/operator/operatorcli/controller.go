@@ -34,7 +34,7 @@ func (r *repeatable) Set(value string) error { *r = append(*r, value); return ni
 // Kubernetes effect. It is pure so installer Job arguments can be contract
 // tested against the same parser shipped in the controller image.
 func ParseControllerLaunch(args []string) (builder.RunConfig, error) {
-	run, _, err := parseControllerLaunch(args)
+	run, _, _, err := parseControllerLaunch(args)
 	return run, err
 }
 
@@ -44,17 +44,18 @@ func ParseControllerLaunch(args []string) (builder.RunConfig, error) {
 // upstream revisions of an accepted .sdo/goal/sources.yaml. The follower
 // never ends the controller; it stops when the child loop ends.
 func RunController(ctx context.Context, args []string) error {
-	run, identity, err := parseControllerLaunch(args)
+	run, identity, policy, err := parseControllerLaunch(args)
 	if err != nil {
 		return err
-	}
-	if err := publishResolvedSettings(mountedSettings, run.Controller.GetRepositoryMountPath()); err != nil {
-		return fmt.Errorf("controller cannot read its configuration: %w", err)
 	}
 	// The accepted tree is the only home of the deployment source; a lane
 	// without .sdo/deployment/plan.yaml has nothing to read desired state from.
 	if _, err := planfile.Read(run.Controller.GetAppRoot(), planCatalogs()); err != nil {
 		return fmt.Errorf("controller cannot start: %w", err)
+	}
+	// The child and every wiring read below see the values the parent started with.
+	if err := publishResolvedSettings(policy, run.Controller.GetRepositoryMountPath()); err != nil {
+		return fmt.Errorf("controller cannot record its configuration: %w", err)
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -75,16 +76,15 @@ func RunController(ctx context.Context, args []string) error {
 	return err
 }
 
-func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, error) {
+func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, settings.Config, error) {
+	fail := func(err error) (builder.RunConfig, deployIdentity, settings.Config, error) {
+		return builder.RunConfig{}, deployIdentity{}, settings.Config{}, err
+	}
 	if len(args) == 0 || args[0] != "controller" {
-		return builder.RunConfig{}, deployIdentity{}, errors.New("expected controller subcommand")
+		return fail(errors.New("expected controller subcommand"))
 	}
 	flags := flag.NewFlagSet("sdo-operator controller", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var responseStageOverrides []string
-	flags.Func("response-stages", "ordered response stages; overrides the selected code path", func(value string) error { responseStageOverrides = stageOverride(value); return nil })
-	codePath := flags.String("code-path", "", "programming-model plugin set: go or shell")
-	codePathOverrides := flags.String("code-path-overrides", "", "CodePathOverrides JSON")
 	app := flags.String("app", "", "accepted application checkout")
 	operatorRoot := flags.String("operator-root", "/opt/sdo/sdo/operator", "installed Go operator modules")
 	namespace := flags.String("namespace", "", "application namespace")
@@ -98,38 +98,18 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 	repositorySubPath := flags.String("repository-pvc-subpath", "", "repository PVC subpath")
 	credentialsSecret := flags.String("credentials-secret", "", "responder credentials secret")
 	worktreeRoot := flags.String("worktree-root", "", "broker proposal and ledger root")
-	model := flags.String("model", "", "responder model")
-	backend := flags.String("responder-backend", "codex", "responder backend")
-	replay := flags.String("replay", "", "replay and corpus capture: on (default) or off")
-	effort := flags.String("agent-effort", "", "reasoning effort of every agent worker (empty: the shared default)")
-	lifecycleTimeout := flags.Duration("lifecycle-timeout", 0, "limit of one lifecycle (detection designer) session (0: the shared default)")
 	brokerMode := flags.String("broker-mode", "", "broker mode")
 	workerMountMode := flags.String("worker-mount-mode", "", "worker mount mode")
 	registrations := flags.String("agent-registration-directory", "", "agent registration directory")
 	responderID := flags.String("responder-agent-id", "", "responder agent identity; defaults to the agent registered for incident requests")
 	sourceCommit := flags.String("source-commit", "", "source commit")
 	deployedCommit := flags.String("deployed-commit", "", "deployed commit")
-	responseTimeout := flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
-	verificationTimeout := flags.Duration("verification-timeout", 5*time.Minute, "verification timeout")
-	repairPolicy := flags.String("repair-policy", "recorded-actions", "repair evidence policy")
-	reflectionSession := flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
-	reflectionGuidance := flags.String("reflection-guidance", "baseline", "reflection guidance mode")
-	frozenMemory := flags.Bool("frozen-memory", false, "keep closure evidence private and disable learning")
-	externalIncidents := flags.Bool("external-incidents", false, "accept external alerts only; close on responder completion (requires frozen memory)")
-	watchOnly := flags.Bool("watch-only", false, "detect, open, verify and close incidents but never respond: no automatic stage, responder or reflection (requires frozen memory)")
-	forceReflection := flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
-	healthyBaseline := flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
 	telemetryEnvironment := flags.String("telemetry-environment", "", "telemetry environment document: the sources the operator provides, their credential directory and the pinning mode")
-	maxResponseLoops := flags.Int("max-response-loops", 10, "maximum mitigation rounds the responder agent may use per incident (the automatic stage's one apply does not count)")
-	diagnosisDeadline := flags.Duration("diagnosis-deadline", 10*time.Second, "shared candidate diagnosis deadline")
 	duration := flags.Duration("duration", 0, "bounded controller duration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "exit after the first acknowledged closure")
-	standby := flags.Bool("responder-standby", true, "pre-start a responder; false forces cold Jobs")
 	upstreamURL := flags.String("memory-upstream-url", "", "shared remote Git URL the accepted repository replicates")
 	upstreamBranch := flags.String("memory-upstream-branch", "", "remote branch for this run's accepted memory")
 	upstreamSSH := flags.String("memory-upstream-ssh-dir", "", "read-only directory with the ssh identity and known_hosts for the memory remote")
-	var responderEnv repeatable
-	flags.Var(&responderEnv, "responder-env", "responder environment NAME=VALUE")
 	deploymentPolicyFlag := flags.String("deployment-policy", "", "install-time deployment policy (DeploymentPolicy as ProtoJSON); empty is no policy")
 	renderEnvFlag := flags.String("render-env", "", "install-time render environment (RenderEnvironment as ProtoJSON); empty is unknown")
 	// The deploy identity: the parent deploys upstream advances with it, the
@@ -139,67 +119,63 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 	flags.StringVar(&identity.RegistryPushSecret, "registry-push-secret", "", "image registry push Secret for upstream advances")
 	flags.StringVar(&identity.RegistryHost, "registry-host", "", "trusted source image registry host[:port]")
 	flags.BoolVar(&identity.RegistryInsecure, "registry-insecure", false, "allow the explicitly configured HTTP image registry")
-	flags.DurationVar(&identity.BuildTimeout, "build-timeout", settings.DefaultBuildTimeout, "deadline of one source image build")
-	flags.DurationVar(&identity.BuildBudget, "build-budget", settings.DefaultBuildBudget, "deadline of all source image builds of one advance")
-	flags.DurationVar(&identity.RolloutTimeout, "rollout-timeout", settings.DefaultRolloutTimeout, "how long to wait for each applied workload to finish rolling out")
 	if err := flags.Parse(args[1:]); err != nil {
-		return builder.RunConfig{}, deployIdentity{}, err
+		return fail(err)
 	}
-	if err := identity.validate(); err != nil {
-		return builder.RunConfig{}, deployIdentity{}, err
-	}
-
 	if flags.NArg() != 0 {
-		return builder.RunConfig{}, deployIdentity{}, fmt.Errorf("unexpected controller arguments: %v", flags.Args())
+		return fail(fmt.Errorf("unexpected controller arguments: %v", flags.Args()))
+	}
+	// Every timing and policy value is the mounted sdo-config, read once here.
+	policy, err := loadMountedSettings(mountedSettings)
+	if err != nil {
+		return fail(err)
+	}
+	identity.BuildTimeout, identity.BuildBudget = time.Duration(policy.Deployment.BuildTimeout), time.Duration(policy.Deployment.BuildBudget)
+	identity.RolloutTimeout = time.Duration(policy.Deployment.RolloutTimeout)
+	if err := identity.validate(); err != nil {
+		return fail(err)
 	}
 	renderEnvironment, err := renderenv.Parse(*renderEnvFlag)
 	if err != nil {
-		return builder.RunConfig{}, deployIdentity{}, err
+		return fail(err)
 	}
 	deploymentPolicy, err := deploymentpolicy.Parse(*deploymentPolicyFlag)
 	if err != nil {
-		return builder.RunConfig{}, deployIdentity{}, err
+		return fail(err)
 	}
 	if err := toolchain.ValidateImage(*toolchainImage); err != nil {
-		return builder.RunConfig{}, deployIdentity{}, err
+		return fail(err)
 	}
 	if *brokerMode != "native" || *workerMountMode != "proposal-only" {
-		return builder.RunConfig{}, deployIdentity{}, errors.New("native broker requires proposal-only worker mounts")
+		return fail(errors.New("native broker requires proposal-only worker mounts"))
 	}
 	if *duration < 0 {
-		return builder.RunConfig{}, deployIdentity{}, errors.New("duration must be nonnegative")
+		return fail(errors.New("duration must be nonnegative"))
 	}
 	if *app == "" || !filepath.IsAbs(*app) || *operatorRoot == "" || *namespace == "" || *responderImage == "" || *repositoryPVC == "" || *repositoryMount == "" ||
-		*credentialsSecret == "" || *worktreeRoot == "" || *model == "" || *backend == "" || *responseTimeout <= 0 || *verificationTimeout <= 0 {
-		return builder.RunConfig{}, deployIdentity{}, errors.New("native launch requires application, namespace, images, repository, credentials, and responder identity")
+		*credentialsSecret == "" || *worktreeRoot == "" {
+		return fail(errors.New("native launch requires application, namespace, images, repository, credentials, and responder identity"))
 	}
 	if !filepath.IsAbs(*repositoryMount) || !filepath.IsAbs(*worktreeRoot) {
-		return builder.RunConfig{}, deployIdentity{}, errors.New("repository mount and proposal root must be absolute")
+		return fail(errors.New("repository mount and proposal root must be absolute"))
 	}
 	if *application == "" {
 		*application = filepath.Base(*app)
 	}
-	selectedCodePath, err := parseCodePathSelection(*codePath, *codePathOverrides)
-	if err != nil {
-		return builder.RunConfig{}, deployIdentity{}, err
-	}
-	addResponseStageOverride(&selectedCodePath, responseStageOverrides)
+	codePath, _ := policy.Agent.CodePathSelection() // validated with the configuration
 	launch := &contracts.ControllerConfig{
-		CodePath:         selectedCodePath,
-		ResponderStandby: standby,
-		Namespace:        *namespace, ControlNamespace: *controlNamespace, AppRoot: *app, Application: *application,
+		CodePath:  codePath,
+		Namespace: *namespace, ControlNamespace: *controlNamespace, AppRoot: *app, Application: *application,
 		SourceCommit: *sourceCommit, DeployedCommit: *deployedCommit,
 		RenderEnvironment: renderEnvironment, DeploymentPolicy: deploymentPolicy,
-		Dispatcher: "python3", DispatcherMode: "job", DispatcherArgs: []string{"-m", "sdo.agents.responder.worker"},
-		ResponderImage: *responderImage, ResponderEnv: responderEnv,
-		RepositoryPvc: *repositoryPVC, RepositoryMountPath: *repositoryMount, RepositoryPvcSubpath: *repositorySubPath,
+		ResponderImage: *responderImage,
+		RepositoryPvc:  *repositoryPVC, RepositoryMountPath: *repositoryMount, RepositoryPvcSubpath: *repositorySubPath,
 		ResponderCredentialsSecret: *credentialsSecret, BrokerWorktreeRoot: *worktreeRoot,
-		ResponseTimeout: durationpb.New(*responseTimeout), VerificationTimeout: durationpb.New(*verificationTimeout),
-		RepairPolicy: *repairPolicy, MaxResponseLoops: int32(*maxResponseLoops), DiagnosisDeadline: durationpb.New(*diagnosisDeadline), LeaseName: "sdo-controller",
 		ExitAfterClosure: *exitAfterClosure,
 		ScriptImage:      *scriptImage, ToolchainImage: *toolchainImage, AgentRegistrationDirectory: *registrations, ResponderAgentId: *responderID,
 		BrokerMode: *brokerMode, WorkerMountMode: *workerMountMode,
-		ResponderBackend: *backend, ResponderModel: *model, AgentEffort: *effort, LifecycleTimeout: lifecycleTimeoutProto(*lifecycleTimeout), Replay: *replay, ReflectionSession: *reflectionSession, ReflectionGuidance: *reflectionGuidance, ForceReflection: *forceReflection, FrozenMemory: *frozenMemory, ExternalIncidents: *externalIncidents, WatchOnly: *watchOnly, HealthyBaseline: *healthyBaseline, TelemetryEnvironmentFile: *telemetryEnvironment,
+		TelemetryEnvironmentFile: *telemetryEnvironment,
+		SettingsPath:             resolvedSettingsPath(*repositoryMount),
 	}
 	// The child deploys a responder's source repair with the identity the
 	// parent deploys upstream advances with.
@@ -211,10 +187,10 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 		launch.MemoryUpstream = &contracts.MemoryUpstream{Url: *upstreamURL, Branch: *upstreamBranch, SshDir: *upstreamSSH}
 	}
 	if err := wire.Validate(launch); err != nil {
-		return builder.RunConfig{}, deployIdentity{}, err
+		return fail(err)
 	}
 	return builder.RunConfig{
-		Build: builder.Config{Replay: *replay, ApplicationRoot: *app, OperatorRoot: *operatorRoot}, Controller: launch,
+		Build: builder.Config{Replay: policy.Learning.Replay, ApplicationRoot: *app, OperatorRoot: *operatorRoot}, Controller: launch,
 		PrepareShell: func(ctx context.Context) error {
 			repository, err := openControllerBroker(launch)
 			if err != nil {
@@ -240,13 +216,5 @@ func parseControllerLaunch(args []string) (builder.RunConfig, deployIdentity, er
 			}
 			return builder.DiagnosticsProjection{Directory: projected.Directory, Fingerprint: projected.Fingerprint, AcceptedRevision: projected.AcceptedRevision}, nil
 		},
-	}, identity, nil
-}
-
-// lifecycleTimeoutProto leaves an unconfigured (zero) limit unset, so workers keep the shared default.
-func lifecycleTimeoutProto(limit time.Duration) *durationpb.Duration {
-	if limit == 0 {
-		return nil
-	}
-	return durationpb.New(limit)
+	}, identity, policy, nil
 }

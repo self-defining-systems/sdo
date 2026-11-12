@@ -27,6 +27,7 @@ import (
 	"sdo.dev/operator/artifacts"
 	"sdo.dev/operator/broker"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/install"
@@ -514,9 +515,11 @@ func onboardWith(t *testing.T, app onbApp, profile telemetry.Profile, options on
 	if err != nil {
 		t.Fatal(err)
 	}
+	policy := settings.Default()
+	policy.Agent.Model, policy.Learning.Replay = "m", "off"
 	config := OperateConfig{
 		ApplicationRoot: root, RepositoryMount: mount, WorktreeRoot: filepath.Join(mount, "worktrees"),
-		Install: install.Config{TelemetryProfile: profile, BackendRecipes: telemetrysources.Recipes(), Replay: "off", RepositoryPVC: "sdo-repository"},
+		Install: install.Config{Settings: &policy, TelemetryProfile: profile, BackendRecipes: telemetrysources.Recipes(), RepositoryPVC: "sdo-repository"},
 		Lifecycle: lifecycle.Config{
 			OperationID: "onb", Application: app.name, Namespace: app.namespace, HealthObjective: "every synthetic workload stays available",
 			MaxAttempts: 1, PendingEvaluations: 1, InfrastructureTries: 1,

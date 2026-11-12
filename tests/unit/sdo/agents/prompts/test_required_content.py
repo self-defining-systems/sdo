@@ -204,6 +204,6 @@ def test_fresh_retry_survives_final_provider_transport(monkeypatch, tmp_path, ap
 
     monkeypatch.setattr(reflection, "run_structured_turn", capture)
     with pytest.raises(Captured):
-        reflection.CodexSessionBackend().fresh(
+        reflection.CodexSessionBackend(reasoning_effort="medium").fresh(
             worktree=Path("/application"), prompt=request, idempotency_key="reflection:synthetic:outcome"
         )

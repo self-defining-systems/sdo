@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"sdo.dev/operator/broker"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/lifecycle"
@@ -102,7 +103,7 @@ func runOnboardingCases(t *testing.T, validator broker.Validator) {
 
 			config := OperateConfig{
 				ApplicationRoot: root, WorktreeRoot: filepath.Join(t.TempDir(), "workspaces"),
-				Install:   install.Config{TelemetryProfile: tc.profile, BackendRecipes: telemetrysources.Recipes(), Replay: "off"},
+				Install:   install.Config{TelemetryProfile: tc.profile, BackendRecipes: telemetrysources.Recipes(), Settings: replayOff()},
 				Lifecycle: lifecycle.Config{Namespace: "shop"},
 			}
 			repository, err := onboardingBroker(config, "sdo-ctl", validator, sdk.ObservationScope{}, onboardingTestRegistry())
@@ -167,4 +168,10 @@ func copyDir(t *testing.T, from, to string) {
 	if err != nil {
 		t.Fatalf("copy %s: %v", from, err)
 	}
+}
+
+func replayOff() *settings.Config {
+	cfg := settings.Default()
+	cfg.Agent.Model, cfg.Learning.Replay = "m", "off"
+	return &cfg
 }

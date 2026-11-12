@@ -15,7 +15,7 @@ import (
 
 	"sdo.dev/operator/builder"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/deploymentpolicy"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
@@ -61,8 +61,6 @@ func ParseInstallExistingLaunchEnv(args []string, environ []string) (InstallExis
 	}
 	flags := flag.NewFlagSet("sdo-operator install-existing", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	flags.String("code-path", "", "programming-model plugin set: go or shell")
-	flags.String("code-path-overrides", "", "CodePathOverrides JSON")
 	adopt := flags.Bool("adopt-existing-memory", false, "explicitly adopt supplied memory unvalidated as the accepted base")
 	operatorRoot := flags.String("operator-root", "/opt/sdo/sdo/operator", "operator sources used to compile adopted memory")
 	repository := flags.String("repository", "", "clean accepted Git repository")
@@ -74,41 +72,13 @@ func ParseInstallExistingLaunchEnv(args []string, environ []string) (InstallExis
 	scriptImage := flags.String("script-image", "", "fixed slim script-tools image; defaults to the controller image")
 	repositoryPVC := flags.String("repository-pvc", "", "shared accepted repository PVC")
 	credentialsSecret := flags.String("credentials-secret", "", "agent credentials Secret")
-	flags.String("model", "", "agent model")
-	flags.String("agent-provider", "codex", "agent provider")
-	flags.String("replay", "", "replay and corpus capture: on (default) or off")
-	flags.String("agent-effort", "", "reasoning effort of every agent worker (empty: the shared default)")
-	flags.Duration("lifecycle-timeout", 0, "limit of one lifecycle (detection designer) session (0: the shared default)")
-	flags.String("repair-policy", "recorded-actions", "repair evidence policy")
-	flags.String("reflection-session", "resume", "reflection session mode: fresh or resume")
-	flags.String("reflection-guidance", "baseline", "reflection guidance mode")
-	flags.Bool("frozen-memory", false, "keep closure evidence private and disable learning")
-	flags.Bool("external-incidents", false, "accept external alerts only; close on responder completion (requires frozen memory)")
-	flags.Bool("watch-only", false, "detect, open, verify and close incidents but never respond: no automatic stage, responder or reflection (requires frozen memory)")
-	flags.Bool("force-reflection", false, "always dispatch reflection after verified closure")
-	flags.Int("max-response-loops", 10, "maximum mitigation rounds the responder agent may use per incident (the automatic stage's one apply does not count)")
-	flags.Duration("response-timeout", 30*time.Minute, "responder timeout")
-	flags.Duration("verification-timeout", 5*time.Minute, "verification timeout")
 	duration := flags.Duration("duration", 0, "bounded controller duration")
 	selfHealHold := flags.Duration("self-heal-hold", 0, "controller self_heal_hold: how long a Kubernetes failure condition without a give-up signal must hold before it opens an incident (0: the controller default)")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "stop after the first closure")
-	flags.String("late-findings", "off", "late finding pull mode: off or pull")
-	flags.Bool("permissive-responder", false, "broad lane repair permissions excluding Secret and credential APIs")
-	flags.Var(new(repeatable), "responder-namespace", "additional lane namespace for permissive responder")
-	flags.Bool("healthy-baseline", false, "validate incident detectors against recorded healthy snapshots")
-	registerTelemetryFlags(flags)
 	registrationConfigMap := flags.String("agent-registration-configmap", "", "registration ConfigMap")
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes client and kubectl config")
-	flags.Bool("responder-standby", true, "pre-start a responder; false forces cold Jobs")
-	flags.Var(new(repeatable), "responder-env", "responder environment NAME=VALUE")
-	registerEvidenceSinkFlags(flags)
 	var configFiles repeatable
 	flags.Var(&configFiles, "config", "operator configuration YAML (repeatable; later files override earlier ones; see docs/config.md)")
-	var policyFlags deploymentpolicy.Flags
-	flags.StringVar(&policyFlags.AllowedRegistries, "allow-registry", "", "comma-separated registry hosts deployments may pull from (enforced; empty: no allowlist)")
-	flags.BoolVar(&policyFlags.ScopeBlocking, "scope-blocking", false, "refuse foreign-namespace and cluster-scoped objects unless granted")
-	flags.StringVar(&policyFlags.GrantedNamespaces, "grant-namespace", "", "comma-separated foreign namespaces deployments may write to (needs --scope-blocking)")
-	flags.StringVar(&policyFlags.GrantedClusterKinds, "grant-cluster-kind", "", "comma-separated cluster-scoped Kinds deployments may contain (needs --scope-blocking)")
 	deploymentSourceFlag := flags.String("deployment-source", "", "DeploymentSource as ProtoJSON, recorded as the repository's .sdo/deployment/plan.yaml in a human commit; optional when the repository already carries a plan")
 	if err := flags.Parse(args[1:]); err != nil {
 		return InstallExistingConfig{}, err
@@ -117,7 +87,7 @@ func ParseInstallExistingLaunchEnv(args []string, environ []string) (InstallExis
 	if flags.NArg() != 0 {
 		return InstallExistingConfig{}, fmt.Errorf("unexpected install-existing arguments: %v", flags.Args())
 	}
-	resolved, err := resolveSettings(configFiles, environ, flags)
+	resolved, err := resolveSettings(configFiles, environ)
 	if err != nil {
 		return InstallExistingConfig{}, err
 	}
@@ -246,7 +216,7 @@ func prepareInstallExistingRepository(ctx context.Context, launch InstallExistin
 	if !launch.AdoptExistingMemory {
 		return acceptedHead(ctx, launch.Repository)
 	}
-	if memoryCodePath(launch.Install.CodePath) == "shell" {
+	if memoryCodePath(launch.Install.CodePathSelection()) == "shell" {
 		if err := validate.ShellHygieneValidator(ctx, launch.Repository, nil); err != nil {
 			return "", err
 		}
@@ -256,7 +226,7 @@ func prepareInstallExistingRepository(ctx context.Context, launch InstallExistin
 	if err != nil {
 		return "", err
 	}
-	w, err := builder.BuildWorkspace(ctx, builder.Config{Replay: launch.Install.Replay, ApplicationRoot: launch.Repository, DiagnosticsRoot: diagnostics, OperatorRoot: launch.OperatorRoot, CompileOnly: true})
+	w, err := builder.BuildWorkspace(ctx, builder.Config{Replay: launch.Install.Settings.Learning.Replay, ApplicationRoot: launch.Repository, DiagnosticsRoot: diagnostics, OperatorRoot: launch.OperatorRoot, CompileOnly: true})
 	if err != nil {
 		return "", err
 	}
@@ -283,11 +253,14 @@ func memoryAdoptExisting(ctx context.Context, args []string, getenv func(string)
 	if err != nil {
 		return err
 	}
-	selectedCodePath, err := parseCodePathSelection(*codePathName, "")
-	if err != nil {
+	policy := settings.Default()
+	if *codePathName != "" {
+		policy.Agent.CodePath = *codePathName
+	}
+	if _, err := policy.Agent.CodePathSelection(); err != nil {
 		return err
 	}
-	commit, err := prepareInstallExistingRepository(ctx, InstallExistingConfig{Repository: absolute, OperatorRoot: *operator, AdoptExistingMemory: true, Install: install.Config{CodePath: selectedCodePath}})
+	commit, err := prepareInstallExistingRepository(ctx, InstallExistingConfig{Repository: absolute, OperatorRoot: *operator, AdoptExistingMemory: true, Install: install.Config{Settings: &policy}})
 	if err != nil {
 		return err
 	}

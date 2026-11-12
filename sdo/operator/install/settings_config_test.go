@@ -68,7 +68,7 @@ func TestResolvedConfigIsMountedAndHashedIntoTheInstallFingerprint(t *testing.T)
 	if !mountsSettings(pod.Volumes, pod.Containers[0].VolumeMounts, SettingsConfigMapName) {
 		t.Fatalf("controller Job does not mount %s read-only at %s", SettingsConfigMapName, SettingsDir)
 	}
-	job, err := OperateJob(settingsConfig(t, nil), "goal", "op-1", 3)
+	job, err := OperateJob(settingsConfig(t, nil), "goal", "op-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,9 +117,72 @@ func TestInstallingCreatesThenReplacesTheConfigMap(t *testing.T) {
 	}
 }
 
-func TestAnInstallWithoutResolvedConfigStillRenders(t *testing.T) {
-	plan, err := Resources(environmentConfig())
-	if err != nil || plan.Settings != nil {
-		t.Fatalf("legacy callers render no ConfigMap: %v %v", plan.Settings, err)
+func testSettings() *settings.Config {
+	resolved := settings.Default()
+	resolved.Agent.Model = "m"
+	return &resolved
+}
+
+// The configuration is required: an install without one has no values to run with, and none are defaulted here.
+func TestAnInstallWithoutResolvedConfigIsRefused(t *testing.T) {
+	cfg := environmentConfig()
+	cfg.Settings = nil
+	if _, err := Resources(cfg); err == nil || !strings.Contains(err.Error(), "operator configuration") {
+		t.Fatalf("an install without the resolved config must be refused: %v", err)
+	}
+	invalid := settingsConfig(t, func(c *settings.Config) { c.Agent.Model = "" })
+	if _, err := Resources(invalid); err == nil || !strings.Contains(err.Error(), "agent.model") {
+		t.Fatalf("an invalid config must be refused by its one validator: %v", err)
+	}
+}
+
+// No timing or policy value crosses the Jobs' argv: they read the mounted sdo-config. A distinctive value in every
+// knob would otherwise show up in an argument.
+func TestOperateAndControllerArgvCarryNoPolicyValues(t *testing.T) {
+	cfg := settingsConfig(t, func(c *settings.Config) {
+		c.Mode = settings.ModeWatchOnly
+		c.Agent.Model, c.Agent.Effort, c.Agent.LifecycleTimeout = "model-x", "xhigh", settings.Duration(97*time.Minute)
+		c.Agent.ExtraEnv = []string{"EXTRA_X=1"}
+		c.Response.Timeout, c.Response.VerificationTimeout = settings.Duration(91*time.Minute), settings.Duration(93*time.Minute)
+		c.Response.MaxLoops, c.Response.RepairPolicy, c.Response.Standby = 7, "recorded-actions", false
+		c.Learning.Replay, c.Learning.ReflectionSession, c.Learning.ReflectionGuidance = "off", "fresh", "generalize"
+		c.Learning.HealthyBaseline, c.Learning.LateFindings = true, "pull"
+		c.Deployment.BuildTimeout, c.Deployment.BuildBudget, c.Deployment.RolloutTimeout = settings.Duration(89*time.Minute), settings.Duration(99*time.Minute), settings.Duration(87*time.Minute)
+	})
+	plan, err := Resources(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operate, err := OperateJob(cfg, "goal", "op-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, args := range map[string][]string{"controller": plan.Job.Spec.Template.Spec.Containers[0].Args, "operate": operate.Spec.Template.Spec.Containers[0].Args} {
+		joined := strings.Join(args, " ")
+		for _, policy := range []string{"model-x", "xhigh", "1h37m", "EXTRA_X", "1h31m", "1h33m", "recorded-actions", "generalize", "fresh", "watch-only", "frozen", "healthy-baseline", "late-findings", "1h29m", "1h39m", "1h27m", "--replay", "--max-response-loops", "--responder-standby", "--max-attempts"} {
+			if strings.Contains(joined, policy) {
+				t.Errorf("%s argv carries policy %q: %v", name, policy, args)
+			}
+		}
+	}
+	for _, env := range append(plan.Job.Spec.Template.Spec.Containers[0].Env, operate.Spec.Template.Spec.Containers[0].Env...) {
+		if env.Name == "SDO_RESPONDER_MENU" {
+			t.Error("the responder menu is response.menu, not an environment variable")
+		}
+	}
+}
+
+// The operate Job's own deadline leaves every deployment attempt room for the configured limits.
+func TestOperateJobDeadlineBudgetsTheConfiguredLimits(t *testing.T) {
+	cfg := settingsConfig(t, func(c *settings.Config) {
+		c.Agent.LifecycleTimeout = settings.Duration(3 * time.Hour)
+		c.Deployment.MaxAttempts = 4
+	})
+	job, err := OperateJob(cfg, "goal", "op-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deadline := time.Duration(*job.Spec.ActiveDeadlineSeconds) * time.Second; deadline < 4*3*time.Hour {
+		t.Fatalf("operate Job deadline %s leaves no room for four 3h designer sessions", deadline)
 	}
 }

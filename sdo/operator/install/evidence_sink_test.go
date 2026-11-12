@@ -35,7 +35,7 @@ func evidenceSidecar(pod corev1.PodSpec) (*corev1.Container, *corev1.Volume) {
 func TestEvidenceSinkRunsBesideControllerAndOperate(t *testing.T) {
 	cfg := policyConfig()
 	cfg.EvidenceSink = hostPathSink(t)
-	operate, err := OperateJob(cfg, "stay healthy", "op-1", 3)
+	operate, err := OperateJob(cfg, "stay healthy", "op-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestEvidenceSinkRunsBesideControllerAndOperate(t *testing.T) {
 
 func TestNoEvidenceSinkKeepsTodaysPods(t *testing.T) {
 	cfg := policyConfig()
-	operate, err := OperateJob(cfg, "stay healthy", "op-1", 3)
+	operate, err := OperateJob(cfg, "stay healthy", "op-1")
 	if err != nil {
 		t.Fatal(err)
 	}

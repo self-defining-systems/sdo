@@ -60,7 +60,7 @@ func onboardingBroker(config OperateConfig, control string, validator broker.Val
 	}
 	repository, err := broker.New(config.ApplicationRoot, config.WorktreeRoot, validator, broker.ObservationPolicy{
 		Telemetry: derived,
-		Replay:    config.Install.Replay, CodePath: memoryCodePath(config.Install.CodePath), Ceiling: ceiling, ApplicationNamespace: config.Lifecycle.Namespace,
+		Replay:    config.Install.Settings.Learning.Replay, CodePath: memoryCodePath(config.Install.CodePathSelection()), Ceiling: ceiling, ApplicationNamespace: config.Lifecycle.Namespace,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open accepted repository broker: %w", err)

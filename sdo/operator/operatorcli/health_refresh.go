@@ -52,7 +52,11 @@ func withHealthRefreshDeadline(ctx context.Context, budget time.Duration, refres
 }
 
 func refreshControllerHealthOnce(ctx context.Context, scope string, config *contracts.ControllerConfig, operatorRoot string, repository lifecycle.ProposalBroker) error {
-	if config.GetFrozenMemory() {
+	policy, err := deploywire.Settings(config)
+	if err != nil {
+		return err
+	}
+	if policy.Mode != settings.ModeOperate {
 		return nil
 	}
 	shapeOf, err := healthShapeOf(config)
@@ -125,22 +129,19 @@ func controllerAgentWorkers(config *contracts.ControllerConfig) (*worker_registr
 	if err != nil {
 		return nil, nil, worker_registry.KubernetesExecutor{}, err
 	}
-	environment, err := worker_registry.AgentEnvironment(config.GetResponderBackend(), config.GetResponderModel(), config.GetAgentEffort(), config.GetLifecycleTimeout().AsDuration())
+	policy, err := deploywire.Settings(config)
 	if err != nil {
 		return nil, nil, worker_registry.KubernetesExecutor{}, err
 	}
-	replay, err := settings.Replay(config.GetReplay())
-	if err != nil {
-		return nil, nil, worker_registry.KubernetesExecutor{}, err
-	}
-	environment[settings.ReplayEnvironment] = replay
+	environment := worker_registry.AgentEnvironment(policy.Agent)
+	environment[settings.ReplayEnvironment] = policy.Learning.Replay
 	environment = codePathWorkerEnvironment(config.GetCodePath(), environment)
 	// The judge's self-check runs under the policy the broker validates with.
-	policy, err := broker.ControllerPolicyEnvironment(config, telemetryRegistry())
+	telemetryPolicy, err := broker.ControllerPolicyEnvironment(config, telemetryRegistry())
 	if err != nil {
 		return nil, nil, worker_registry.KubernetesExecutor{}, err
 	}
-	for name, value := range policy {
+	for name, value := range telemetryPolicy {
 		environment[name] = value
 	}
 	namespace := config.GetControlNamespace()
@@ -149,7 +150,7 @@ func controllerAgentWorkers(config *contracts.ControllerConfig) (*worker_registr
 	}
 	workers := worker_registry.KubernetesExecutor{
 		ToolchainImage: config.GetToolchainImage(),
-		Client:         client, Namespace: namespace, Registry: registry, ServiceAccount: "sdo-responder", RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(), RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), CredentialsSecret: config.GetResponderCredentialsSecret(), HealthyBaseline: config.GetHealthyBaseline(), Environment: environment,
+		Client:         client, Namespace: namespace, Registry: registry, ServiceAccount: "sdo-responder", RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(), RepositoryPVCSubPath: config.GetRepositoryPvcSubpath(), CredentialsSecret: config.GetResponderCredentialsSecret(), HealthyBaseline: policy.Learning.HealthyBaseline, Environment: environment,
 	}
 	return registry, client, workers, nil
 }
@@ -203,8 +204,12 @@ func newControllerBroker(config *contracts.ControllerConfig) (*broker.Broker, er
 	if err := toolchain.ValidateImage(config.GetToolchainImage()); err != nil {
 		return nil, err
 	}
+	policy, err := deploywire.Settings(config)
+	if err != nil {
+		return nil, err
+	}
 	validation := broker.SubprocessValidator{}
-	if config.GetHealthyBaseline() {
+	if policy.Learning.HealthyBaseline {
 		validation.HealthyBaseline = filepath.Join(config.GetRepositoryMountPath(), ".sdo-baseline/healthy")
 	}
 	ceiling, err := observation.CeilingFromEnvironment()
@@ -215,7 +220,7 @@ func newControllerBroker(config *contracts.ControllerConfig) (*broker.Broker, er
 	if err != nil {
 		return nil, err
 	}
-	return broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), selectMemoryValidator(config.GetCodePath(), validation.Validator()), broker.ObservationPolicy{Telemetry: telemetry, Replay: config.GetReplay(), CodePath: memoryCodePath(config.GetCodePath()), Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
+	return broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), selectMemoryValidator(config.GetCodePath(), validation.Validator()), broker.ObservationPolicy{Telemetry: telemetry, Replay: policy.Learning.Replay, CodePath: memoryCodePath(config.GetCodePath()), Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
 }
 
 // healthRefreshCoordinator is the Coordinator of a health refresh: the judge's

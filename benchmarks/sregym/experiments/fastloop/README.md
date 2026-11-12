@@ -463,7 +463,7 @@ to nested workers. Default mounts and offline network policy remain unchanged.
 
 ## Automatic repair defaults (GS1)
 
-Every incident dispatches the responder with a playbook coverage view. `recorded-actions` is the default, with 10 response loops, 5 validation retries and a 5-minute verification timeout. The menu is on unless `SDO_RESPONDER_MENU=0`. The agent chooses mitigations and rollback; verified program counters are information only.
+Every incident dispatches the responder with a playbook coverage view. `recorded-actions` is the benchmark profile's repair policy (`benchmarks/fuzzops/sdo-bench.yaml`; production defaults to `commit`), with 10 response loops, 5 validation retries and a 5-minute verification timeout. The menu is on unless operator config `response.menu` is false. The agent chooses mitigations and rollback; verified program counters are information only.
 
 One trusted match is selected by distinct findings covered, then program ID and canonical bindings. Uncovered findings and unexplained drift do not prevent the attempt. Whole-incident verification still decides success; failure rolls back reversible writes and dispatches the responder sequentially with the attempt summary. No source-plan policy file is needed, even when the deployed application name differs from its benchmark name. See [automatic repair checks](../../../../docs/plan-safety-authority.md).
 

@@ -4,14 +4,11 @@ from __future__ import annotations
 
 import json
 import subprocess
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
 from benchmarks.sregym.adapter import driver
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def test_application_name_is_a_kubernetes_dns_label(tmp_path: Path) -> None:
@@ -118,10 +115,21 @@ def test_agent_settings_keep_native_reflection_options(monkeypatch: pytest.Monke
     assert args.late_findings == "pull"
 
 
-def test_reflection_defaults_to_resume_and_fresh_remains_selectable(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reflection_session_is_configured_unless_the_lane_selects_one(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SREGYM_EXPERIMENT_AGENT_CONFIG", raising=False)
-    assert driver._parse_args([]).reflection_session == "resume"
+    # Unset: the operator config (production default resume) decides.
+    assert driver._parse_args([]).reflection_session is None
     assert driver._parse_args(["--reflection-session", "fresh"]).reflection_session == "fresh"
+
+
+def test_the_experiment_config_table_and_files_reach_the_install(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "SREGYM_EXPERIMENT_AGENT_CONFIG",
+        json.dumps({"config": {"response": {"max_loops": 4}}, "config_files": ["/fixture/lane.yaml"]}),
+    )
+    args = driver._parse_args(["--config", "/fixture/extra.yaml"])
+    assert args.settings == {"response": {"max_loops": 4}}
+    assert args.config_files == [Path("/fixture/lane.yaml"), Path("/fixture/extra.yaml")]
 
 
 def test_receipt_is_persisted_atomically(tmp_path: Path) -> None:

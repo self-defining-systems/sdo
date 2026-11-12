@@ -22,30 +22,20 @@ func configFile(t *testing.T, body string) string {
 	return path
 }
 
-// A file's values reach the install and are carried as the resolved config; the environment overrides the file; a
-// flag that is explicitly set overrides both, so the pre-config flags keep working unchanged.
-func TestHostResolvesDefaultsThenFilesThenEnvironmentThenExplicitFlags(t *testing.T) {
+// A file's values reach the install as the resolved config and the environment overrides the file; no knob has a
+// flag of its own.
+func TestHostResolvesDefaultsThenFilesThenEnvironment(t *testing.T) {
 	file := configFile(t, "response:\n  timeout: 20m\n  max_loops: 4\nmode: frozen\nlearning:\n  healthy_baseline: true\n")
 	launch, err := ParseHostLaunchEnv(hostArgs("--config", file), []string{"SDO_RESPONSE_MAX_LOOPS=6"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := launch.Install
-	if got.TimeoutSeconds != 1200 || got.MaxResponseLoops != 6 || !got.FrozenMemory || !got.HealthyBaseline {
+	got := launch.Install.Settings
+	if got == nil || time.Duration(got.Response.Timeout) != 20*time.Minute || got.Response.MaxLoops != 6 || got.Mode != settings.ModeFrozen || !got.Learning.HealthyBaseline {
 		t.Fatalf("file and environment did not reach the install: %+v", got)
 	}
-	if got.Settings == nil || time.Duration(got.Settings.Response.Timeout) != 20*time.Minute || got.Settings.Response.MaxLoops != 6 {
-		t.Fatalf("the resolved config is not carried: %+v", got.Settings)
-	}
-	if got.Settings.Agent.Model != "m" {
-		t.Fatalf("an explicit --model overlays the config: %q", got.Settings.Agent.Model)
-	}
-	flagged, err := ParseHostLaunchEnv(hostArgs("--config", file, "--response-timeout", "7m", "--frozen-memory=false"), []string{"SDO_RESPONSE_TIMEOUT=9m"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if flagged.Install.TimeoutSeconds != 420 || flagged.Install.FrozenMemory || flagged.Install.Settings.Mode != settings.ModeOperate {
-		t.Fatalf("explicit flags must win over file and environment: %+v", flagged.Install.Settings)
+	if got.Agent.Model != "m" {
+		t.Fatalf("the earlier --config file's model is kept: %q", got.Agent.Model)
 	}
 }
 
@@ -57,7 +47,7 @@ func TestHostWithoutConfigKeepsTheProductionDefaults(t *testing.T) {
 	want := settings.Default()
 	want.Agent.Model = "m"
 	got := *launch.Install.Settings
-	if !reflect.DeepEqual(got, want) || launch.MaxAttempts != 3 {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("defaults differ:\n got %+v\nwant %+v", got, want)
 	}
 }
@@ -91,14 +81,34 @@ func TestInstallExistingResolvesTheSameWay(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := launch.Install
-	if got.TimeoutSeconds != 1200 || !got.FrozenMemory || !got.WatchOnly || got.AgentEffort != "high" {
-		t.Fatalf("install-existing did not resolve the config: %+v", got)
+	if time.Duration(got.Settings.Response.Timeout) != 20*time.Minute || got.Settings.Mode != settings.ModeWatchOnly || got.Settings.Agent.Effort != "high" {
+		t.Fatalf("install-existing did not resolve the config: %+v", got.Settings)
 	}
 	if !strings.Contains(got.EvidenceSink, "lane-1") || !strings.Contains(got.EvidenceSink, "/opt/sdo-evidence") {
 		t.Fatalf("evidence sink = %q", got.EvidenceSink)
 	}
-	if _, err := ParseInstallExistingLaunchEnv(existingLaunchArgs("--watch-only"), nil); err == nil || !strings.Contains(err.Error(), "frozen") {
-		t.Fatalf("--watch-only without --frozen-memory stays an error: %v", err)
+}
+
+// The policy flags are gone from every parser: a stale invocation fails at parse time instead of being ignored.
+func TestDeletedPolicyFlagsAreUnknown(t *testing.T) {
+	for _, flag := range [][]string{
+		{"--response-timeout", "7m"}, {"--verification-timeout", "7m"}, {"--model", "m"}, {"--agent-effort", "high"},
+		{"--repair-policy", "commit"}, {"--frozen-memory"}, {"--watch-only"}, {"--max-response-loops", "3"},
+		{"--replay", "off"}, {"--healthy-baseline"}, {"--responder-env", "A=1"}, {"--code-path", "go"},
+		{"--build-timeout", "7m"}, {"--telemetry-source", "a=http://b"}, {"--allow-registry", "ghcr.io"}, {"--evidence-sink-host-path", "/e"},
+	} {
+		if _, err := ParseHostLaunchEnv(hostArgs(flag...), nil); err == nil {
+			t.Errorf("host accepted %v", flag)
+		}
+		if _, err := ParseInstallExistingLaunchEnv(existingLaunchArgs(flag...), nil); err == nil {
+			t.Errorf("install-existing accepted %v", flag)
+		}
+		if _, err := ParseOperateLaunch(operateArgs(flag...)); err == nil {
+			t.Errorf("operate accepted %v", flag)
+		}
+		if _, err := ParseControllerLaunch(controllerLaunchArgs(flag...)); err == nil {
+			t.Errorf("controller accepted %v", flag)
+		}
 	}
 }
 
@@ -123,48 +133,54 @@ func TestConfigPrintShowsTheResolvedDocument(t *testing.T) {
 	}
 }
 
-func TestOperateAndControllerReadTheMountedConfig(t *testing.T) {
-	cfg := settings.Default()
-	cfg.Agent.Model = "m"
-	cfg.Response.Timeout = settings.Duration(45 * time.Minute)
-	document, err := cfg.YAML()
-	if err != nil {
-		t.Fatal(err)
+// The operate and controller Jobs read the mounted sdo-config and nothing else: a missing or invalid mount fails the
+// launch instead of running defaults.
+func TestOperateAndControllerRequireTheMountedConfig(t *testing.T) {
+	withMountedSettings(t, func(c *settings.Config) { c.Response.Timeout = settings.Duration(45 * time.Minute) })
+	operate, err := ParseOperateLaunch(operateArgs())
+	if err != nil || time.Duration(operate.Install.Settings.Response.Timeout) != 45*time.Minute {
+		t.Fatalf("operate did not read the mount: %+v, %v", operate.Install.Settings, err)
 	}
-	path := configFile(t, string(document))
-	got, err := loadMountedSettings(path)
-	if err != nil || got == nil || time.Duration(got.Response.Timeout) != 45*time.Minute {
-		t.Fatalf("mounted config = %+v, %v", got, err)
+	_, _, policy, err := parseControllerLaunch(controllerLaunchArgs())
+	if err != nil || time.Duration(policy.Response.Timeout) != 45*time.Minute {
+		t.Fatalf("controller did not read the mount: %+v, %v", policy, err)
 	}
-	missing, err := loadMountedSettings(filepath.Join(t.TempDir(), "absent.yaml"))
-	if err != nil || missing != nil {
-		t.Fatalf("an absent mount is no config: %v %v", missing, err)
-	}
-	if _, err := loadMountedSettings(configFile(t, "bogus: 1\n")); err == nil {
-		t.Fatal("a mounted config with an unknown key must be refused")
+	for name, path := range map[string]string{"absent": filepath.Join(t.TempDir(), "absent.yaml"), "invalid": configFile(t, "bogus: 1\n")} {
+		prior := mountedSettings
+		mountedSettings = path
+		if _, err := ParseOperateLaunch(operateArgs()); err == nil || !strings.Contains(err.Error(), "sdo-config") {
+			t.Errorf("operate with an %s mount: %v", name, err)
+		}
+		if _, err := ParseControllerLaunch(controllerLaunchArgs()); err == nil || !strings.Contains(err.Error(), "sdo-config") {
+			t.Errorf("controller with an %s mount: %v", name, err)
+		}
+		mountedSettings = prior
 	}
 }
 
-func TestControllerRecordsItsConfigBesideItsOtherRuntimeEvidence(t *testing.T) {
-	cfg := settings.Default()
-	cfg.Agent.Model = "m"
-	document, err := cfg.YAML()
+// The compiled child reads the parent's record of the configuration through ControllerConfig.settings_path, and the
+// launch carries the code path the configuration selects.
+func TestControllerChildReadsTheParentsRecord(t *testing.T) {
+	withMountedSettings(t, func(c *settings.Config) {
+		c.Response.MaxLoops = 3
+		c.Agent.CodePathOverrides = `{"response_stages":["agent"]}`
+	})
+	run, _, policy, err := parseControllerLaunch(controllerLaunchArgs())
 	if err != nil {
 		t.Fatal(err)
 	}
+	if got, want := run.Controller.GetSettingsPath(), filepath.Join("/workspace", ".sdo-runtime", "config.yaml"); got != want {
+		t.Fatalf("settings_path = %q, want %q", got, want)
+	}
+	if stages := run.Controller.GetCodePath().GetOverrides().GetResponseStages(); len(stages) != 1 || stages[0] != "agent" {
+		t.Fatalf("code path = %v", run.Controller.GetCodePath())
+	}
 	mount := t.TempDir()
-	if err := publishResolvedSettings(configFile(t, string(document)), mount); err != nil {
+	if err := publishResolvedSettings(policy, mount); err != nil {
 		t.Fatal(err)
 	}
-	recorded, err := os.ReadFile(filepath.Join(mount, ".sdo-runtime", "config.yaml"))
-	if err != nil || string(recorded) != string(document) {
-		t.Fatalf("recorded config = %q, %v", recorded, err)
-	}
-	empty := t.TempDir()
-	if err := publishResolvedSettings(filepath.Join(empty, "absent.yaml"), empty); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(empty, ".sdo-runtime")); !os.IsNotExist(err) {
-		t.Fatal("a controller without a mounted config records nothing")
+	recorded, err := settings.Read(resolvedSettingsPath(mount))
+	if err != nil || recorded.Response.MaxLoops != 3 || !reflect.DeepEqual(recorded, policy) {
+		t.Fatalf("recorded config = %+v, %v", recorded, err)
 	}
 }

@@ -356,7 +356,7 @@ func (i Installer) install(ctx context.Context, cfg Config, prepared bool) (resu
 	}
 	result = Result{Fingerprint: plan.Job.Annotations[InstallFingerprintAnnotation]}
 	if cfg.WaitForCompletion {
-		if err := i.waitJob(ctx, control, time.Duration(cfg.TimeoutSeconds+300)*time.Second); err != nil {
+		if err := i.waitJob(ctx, control, time.Duration(cfg.Settings.Response.Timeout)+300*time.Second); err != nil {
 			return Result{}, err
 		}
 		pods, err := i.Client.CoreV1().Pods(control).List(ctx, metav1.ListOptions{LabelSelector: "job-name=" + ControllerJobName})

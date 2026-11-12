@@ -156,7 +156,9 @@ def test_up_persists_a_dns_application_name_and_loads_legacy_display_names(
 def test_parser_defaults_match_the_benchmark_configuration() -> None:
     args = build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo"])
 
-    assert (args.model, args.provider, args.reflection_session, args.incidents) == ("gpt-6-luna", "codex", "resume", 1)
+    assert (args.model, args.provider, args.incidents) == ("gpt-6-luna", "codex", 1)
+    # Operator knobs left unset take the configured value (docs/config.md), not a fastloop default.
+    assert (args.reflection_session, args.reasoning_effort, args.lifecycle_timeout) == (None, None, None)
     assert args.replay == "on"
     assert build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo", "--replay", "off"]).replay == "off"
     up = build_parser().parse_args(["up", "--run-dir", "x"])
@@ -257,12 +259,43 @@ def test_default_response_budget_reaches_fastloop_runtime(tmp_path: Path, monkey
         ]
     )
     agent = cli._sdo_agent(args, environment, tmp_path)
-    assert agent.stage_inputs("stage", tmp_path, "fp").runtime_config.max_response_loops == 10
+    runtime_config = agent.stage_inputs("stage", tmp_path, "fp").runtime_config
+    # Unset knobs are decided by the benchmark profile and the production defaults, not by fastloop.
+    assert runtime_config.max_response_loops is None
+    assert runtime_config.repair_policy is None
+    assert runtime_config.lifecycle_timeout_seconds is None
+    assert runtime_config.config_files == ()
 
 
-def test_sdo_repair_policy_defaults_to_recorded_actions_and_is_configurable(tmp_path: Path) -> None:
+def test_fastloop_config_files_follow_the_benchmark_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarks.fuzzops.config import BENCH_PROFILE
+    from benchmarks.sregym.adapter import native_install_config
+    from benchmarks.sregym.fastloop import cli
+
+    environment = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="fastloop-w0",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel-reservation",
+        application="hotel-reservation",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+    )
+    monkeypatch.setenv("KUBECONFIG", str(tmp_path / "kubeconfig"))
+    monkeypatch.delenv("SREGYM_BASE_KUBECONFIG", raising=False)
+    args = build_parser().parse_args(
+        ["run", "--run-dir", str(tmp_path), "--agent", "sdo", "--config", str(tmp_path / "lane.yaml")]
+    )
+    args.reasoning_effort = "high"
+    native = native_install_config(cli._runtime_config(args, environment, tmp_path))
+    assert native.config_files == (BENCH_PROFILE, tmp_path / "lane.yaml")
+    assert native.environment()["SDO_AGENT_EFFORT"] == "high"
+
+
+def test_sdo_repair_policy_is_configured_unless_selected(tmp_path: Path) -> None:
     args = build_parser().parse_args(["run", "--run-dir", str(tmp_path), "--agent", "sdo"])
-    assert args.repair_policy == "recorded-actions"
+    assert args.repair_policy is None
     selected = build_parser().parse_args(
         [
             "run",

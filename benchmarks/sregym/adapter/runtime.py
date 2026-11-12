@@ -6,16 +6,14 @@ import json
 import logging
 import os
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from pathlib import Path
 from typing import Any
 
-from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+from benchmarks.fuzzops.config import BENCH_PROFILE
 from benchmarks.sregym.adapter.cluster_resources import kubectl
 from benchmarks.sregym.adapter.deployment_source import DeploymentPolicyConfig
 from benchmarks.sregym.adapter.native_operator import (
-    AGENT_EFFORTS,
-    DEFAULT_AGENT_EFFORT,
-    DEFAULT_LIFECYCLE_TIMEOUT_SECONDS,
     NativeInstallConfig,
     collect_native_receipt,
     install_existing,
@@ -36,7 +34,11 @@ class ControllerInstallError(RuntimeError):
 
 @dataclass(frozen=True)
 class RuntimeConfig:
-    """Benchmark settings passed to the native operator and persistent runner."""
+    """Benchmark settings passed to the native operator and persistent runner.
+
+    An operator knob left ``None`` is not overridden: the benchmark profile, ``config_files`` and the production
+    defaults decide it (``docs/config.md``), and Go validates every value.
+    """
 
     repository: Path
     namespace: str
@@ -47,26 +49,29 @@ class RuntimeConfig:
     credentials_secret: str
     model: str
     timeout_seconds: int
-    verification_timeout_seconds: int = int(wait_for(WaitKind.VERIFICATION_SAMPLE))
+    verification_timeout_seconds: int | None = None
     wait_for_completion: bool = False
-    repair_policy: str = "recorded-actions"
-    agent_provider: str = "codex"
+    repair_policy: str | None = None
+    agent_provider: str = ""
     replay: str = "on"
-    agent_effort: str = DEFAULT_AGENT_EFFORT
-    lifecycle_timeout_seconds: int = DEFAULT_LIFECYCLE_TIMEOUT_SECONDS
-    reflection_session: str = "resume"
-    reflection_guidance: str = "baseline"
-    force_reflection: bool = False
+    agent_effort: str = ""
+    lifecycle_timeout_seconds: int | None = None
+    reflection_session: str | None = None
+    reflection_guidance: str | None = None
+    force_reflection: bool | None = None
     frozen_memory: bool = False
     external_incidents: bool = False
     code_path: str = "go"
     code_path_overrides: str = ""
 
-    late_findings: str = "off"
-    max_response_loops: int = 10
-    healthy_baseline: bool = False
+    late_findings: str | None = None
+    max_response_loops: int | None = None
+    healthy_baseline: bool | None = None
     permissive_responder: bool = False
     responder_namespaces: tuple[str, ...] = ()
+    # Operator config overlay files passed after the benchmark profile, in order, and further keys merged last.
+    config_files: tuple[Path, ...] = ()
+    settings: dict[str, Any] = dataclass_field(default_factory=dict)
     controller_namespace: str | None = None
     reuse_existing: bool = False
     submission_api_base: str | None = None
@@ -77,7 +82,7 @@ class RuntimeConfig:
     buildkit_image: str = "moby/buildkit@sha256:ef31818fffd0b9133d710742e06b492553f7ebc54f5fd66cd21a1a9bf2e51f76"
     registry_push_secret: str = "sdo-registry-push"
     kind_cluster_name: str | None = None
-    max_deployment_attempts: int = 3
+    max_deployment_attempts: int | None = None
     agent_registrations: Path | None = None
     # ProtoJSON DeploymentSource (see ``deployment_source.py``) recorded as ``.sdo/deployment/plan.yaml`` by
     # install-existing; ``None`` requires the seeded repository to carry a plan already.
@@ -103,8 +108,6 @@ class RuntimeConfig:
             raise ValueError("external incidents require frozen memory")
         if type(self.frozen_memory) is not bool:
             raise TypeError("frozen_memory must be a boolean")
-        if self.frozen_memory and self.force_reflection:
-            raise ValueError("frozen memory conflicts with force reflection")
         if type(self.permissive_responder) is not bool:
             raise TypeError("permissive_responder must be a boolean")
         if self.responder_namespaces and not self.permissive_responder:
@@ -120,31 +123,16 @@ class RuntimeConfig:
         ):
             if not getattr(self, field).strip():
                 raise ValueError(f"{field} must be non-empty")
-        if self.timeout_seconds <= 0 or self.verification_timeout_seconds <= 0:
+        if self.timeout_seconds <= 0:
             raise ValueError("controller timeouts must be positive")
         if self.controller_namespace is not None and not self.controller_namespace.strip():
             raise ValueError("controller namespace must be non-empty")
-        if self.repair_policy not in ("commit", "recorded-actions"):
-            raise ValueError("repair_policy must be commit or recorded-actions")
-        if self.agent_provider not in ("codex", "claude"):
-            raise ValueError("agent_provider must be codex or claude")
+        # The harness branches on these two; Go validates every other value when it resolves the config.
         if self.replay not in ("on", "off"):
             raise ValueError("replay must be on or off")
-        if self.agent_effort not in AGENT_EFFORTS:
-            raise ValueError(f"agent_effort must be one of {AGENT_EFFORTS}")
-        if self.reflection_session not in ("fresh", "resume"):
-            raise ValueError("reflection_session must be fresh or resume")
         if self.code_path not in ("go", "shell"):
             raise ValueError("code_path must be go or shell")
         validate_code_path_overrides(self.code_path_overrides)
-        if self.reflection_guidance not in ("baseline", "generalize", "generalize-spec"):
-            raise ValueError("invalid reflection_guidance")
-        if self.late_findings not in ("off", "pull"):
-            raise ValueError("late_findings must be off or pull")
-        if self.max_response_loops <= 0:
-            raise ValueError("max_response_loops must be positive")
-        if self.max_deployment_attempts <= 0:
-            raise ValueError("max_deployment_attempts must be positive")
 
         if self.agent_registrations is not None and not self.agent_registrations.is_absolute():
             raise ValueError("agent_registrations path must be absolute")
@@ -192,14 +180,16 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         external_incidents=config.external_incidents,
         registration_configmap="sdo-agent-registrations" if config.agent_registrations else None,
         code_path=config.code_path,
-        code_path_overrides=config.code_path_overrides,
+        code_path_overrides=config.code_path_overrides or None,
         healthy_baseline=config.healthy_baseline,
-        permissive_responder=config.permissive_responder,
+        permissive_responder=config.permissive_responder or None,
         responder_namespaces=config.responder_namespaces,
         max_response_loops=config.max_response_loops,
         response_timeout_seconds=config.timeout_seconds,
         verification_timeout_seconds=config.verification_timeout_seconds,
         responder_env=responder_env,
+        settings=config.settings,
+        config_files=(BENCH_PROFILE, *config.config_files),
         deployment_source=config.deployment_source,
         deployment_policy=config.deployment_policy,
         shared_accepted_id=config.shared_accepted_id,

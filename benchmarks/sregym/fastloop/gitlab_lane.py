@@ -221,7 +221,6 @@ def lane_runtime_config(environment: Any, plan: dict[str, Any], *, registrations
         credentials_secret="sdo-agent-credentials",
         model="gpt-6-luna",
         timeout_seconds=int(wait_for(WaitKind.RESPONSE, 2)),
-        repair_policy="recorded-actions",
         persistent=True,
         kind_cluster_name=environment.cluster,
         deployment_source=deployment_source(),

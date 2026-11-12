@@ -10,14 +10,14 @@ import (
 )
 
 func TestControllerLaunchCarriesTheTelemetryEnvironmentFile(t *testing.T) {
-	config, _, err := parseControllerLaunch(controllerLaunchArgs("--telemetry-environment", "/sdo/telemetry/environment.json"))
+	config, _, _, err := parseControllerLaunch(controllerLaunchArgs("--telemetry-environment", "/sdo/telemetry/environment.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := config.Controller.GetTelemetryEnvironmentFile(); got != "/sdo/telemetry/environment.json" {
 		t.Fatalf("telemetry environment file = %q", got)
 	}
-	plain, _, err := parseControllerLaunch(controllerLaunchArgs())
+	plain, _, _, err := parseControllerLaunch(controllerLaunchArgs())
 	if err != nil || plain.Controller.GetTelemetryEnvironmentFile() != "" {
 		t.Fatalf("no flag = %q, %v", plain.Controller.GetTelemetryEnvironmentFile(), err)
 	}
@@ -25,7 +25,7 @@ func TestControllerLaunchCarriesTheTelemetryEnvironmentFile(t *testing.T) {
 
 func TestControllerLaunchRefusesTheRetiredMetricsFlags(t *testing.T) {
 	for _, flag := range []string{"--metrics-url", "--metrics-publish-url", "--metrics-token-file"} {
-		if _, _, err := parseControllerLaunch(controllerLaunchArgs(flag, "x")); err == nil {
+		if _, _, _, err := parseControllerLaunch(controllerLaunchArgs(flag, "x")); err == nil {
 			t.Errorf("%s accepted: a stale installer would run without its metrics source", flag)
 		}
 	}

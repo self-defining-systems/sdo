@@ -149,7 +149,7 @@ def test_claude_reflection_resumes_structured_session(tmp_path: Path, prepare_re
             branch="reflection",
         )
     )
-    result = ClaudeSessionBackend(model="haiku", executor=agent.executor).resume(
+    result = ClaudeSessionBackend(reasoning_effort="medium", model="haiku", executor=agent.executor).resume(
         session_id="session-1", worktree=tmp_path, prompt="reflect", idempotency_key="reflection:incident:commit"
     )
     assert result.learning_decision == "no_change"
@@ -461,7 +461,7 @@ def test_generic_resume_failure_propagates_without_fresh_retry(tmp_path: Path) -
 
 def test_claude_model_failure_is_not_classified_as_missing_session(tmp_path: Path) -> None:
     backend = ClaudeSessionBackend(
-        executor=ScriptedAgent(lambda _request: failure(stderr="model unavailable")).executor
+        reasoning_effort="medium", executor=ScriptedAgent(lambda _request: failure(stderr="model unavailable")).executor
     )
     with pytest.raises(RuntimeError, match="model unavailable"):
         backend.resume(session_id="session-1", worktree=tmp_path, prompt="reflect", idempotency_key="key")
@@ -471,7 +471,9 @@ def test_claude_model_failure_is_not_classified_as_missing_session(tmp_path: Pat
     ("provider", "backend_type"), [("codex", CodexSessionBackend), ("claude", ClaudeSessionBackend)]
 )
 def test_provider_missing_session_raises_typed_error(provider: str, backend_type: type, tmp_path: Path) -> None:
-    backend = backend_type(executor=ScriptedAgent(lambda _request: scripted_resume_failure(provider)).executor)
+    backend = backend_type(
+        reasoning_effort="medium", executor=ScriptedAgent(lambda _request: scripted_resume_failure(provider)).executor
+    )
     with pytest.raises(ResponderSessionUnavailable):
         backend.resume(session_id="missing", worktree=tmp_path, prompt="reflect", idempotency_key="key")
 
