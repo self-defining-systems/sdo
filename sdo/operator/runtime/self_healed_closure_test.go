@@ -65,7 +65,6 @@ func selfHealedIncident(t *testing.T, terminating time.Duration) {
 	store := newRestartedStore(opened)
 	cfg := testControllerConfig()
 	cfg.Namespace, cfg.SourceCommit, cfg.RepositoryWorktree = "app", "synthetic-accepted", "synthetic-worktree"
-	cfg.FiringThreshold, cfg.ClearThreshold = 1, 1
 	cfg.ClosureStabilityWindow = 5 * time.Second
 	cfg.VerificationTimeout = 5 * time.Minute
 	dispatcher := &blockingDispatcher{stopAfter: opened.Add(20*time.Second + terminating)}
@@ -158,7 +157,6 @@ func TestVerificationTimeoutDoesNotApplyWithoutActiveDetectors(t *testing.T) {
 	d.spec.OriginatingCommit = "synthetic"
 	d.spec.Persistence = sdk.PersistencePolicy{Firing: 1, Clearing: 1}
 	cfg := testControllerConfig()
-	cfg.FiringThreshold, cfg.ClearThreshold = 1, 1
 	cfg.ClosureStabilityWindow = 30 * time.Second
 	cfg.VerificationTimeout = 10 * time.Second
 	c, err := NewController(cfg, []sdk.Detector{d}, staticProvider{}, &recordingDispatcher{}, now)

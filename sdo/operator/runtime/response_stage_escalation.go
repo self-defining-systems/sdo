@@ -40,7 +40,6 @@ func stageEscalation(ctx context.Context, mitigator program.Mitigator, canMitiga
 	return program.EscalationOf(plan)
 }
 
-
 // escalateStageAttempt records the escalation and removes its targeted
 // findings from the stage's remaining work, so no later stage repairs a cause
 // out of the namespace's reach. The findings stay in the incident request:

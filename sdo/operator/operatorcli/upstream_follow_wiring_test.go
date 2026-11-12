@@ -26,6 +26,7 @@ func TestControllerAdvancerWiresTheOnboardingDeployer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	run.Controller.SettingsPath = mountedSettings
 	identity := deployIdentity{
 		BuildKitImage: "buildkit@sha256:" + strings.Repeat("a", 64), RegistryPushSecret: "push",
 		RegistryHost: "registry.synthetic.invalid:5000", RolloutTimeout: time.Minute,
@@ -91,6 +92,7 @@ func TestControllerAdvancerWiresEveryRequiredCollaborator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	run.Controller.SettingsPath = mountedSettings
 	advancer, _, maintenance, err := controllerAdvancer(run.Controller, "/opt/sdo/sdo/operator", wiringIdentity(), fake.NewSimpleClientset(), &broker.Broker{}, upstreams.Catalog())
 	if err != nil {
 		t.Fatal(err)
@@ -124,6 +126,7 @@ func TestUpstreamFollowingIsAssembledComplete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	run.Controller.SettingsPath = mountedSettings
 	sources := func(context.Context) ([]upstream.Source, error) { return nil, nil }
 	following, err := assembleUpstreamFollowing(context.Background(), run.Controller, "/opt/sdo/sdo/operator", wiringIdentity(), upstreams.Catalog(), sources, slog.Default(), fake.NewSimpleClientset(), &broker.Broker{})
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/contracts/settings"
 	"strings"
 	"testing"
 	"time"
@@ -175,7 +176,7 @@ func advanceARecreatedJobThatCannotSucceed(t *testing.T, reportFailed bool) {
 		Maintenance: advMaintenance{}, Activity: advMaintenance{},
 		Wait: advClock.wait, Now: advClock.now,
 	}
-	result, err := advancer.Advance(ctx, lifecycle.AdvanceConfig{
+	result, err := advancer.Advance(ctx, lifecycle.AdvanceConfig{SettingsDigest: settings.Default().DetectionDigest(),
 		Namespace: advChartNamespace, HealthObjective: "every synthetic workload stays available", GitDir: filepath.Join(o.accepted, ".git"),
 		PendingEvaluations: 1, InfrastructureTries: 1,
 	}, upstream.Request{Source: sources[0], Revision: latest, Prev: prev})

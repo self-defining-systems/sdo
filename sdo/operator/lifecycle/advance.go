@@ -317,6 +317,8 @@ func (r AdvanceResult) reason() string {
 // AdvanceConfig is the installation an advance deploys into.
 type AdvanceConfig struct {
 	Namespace, HealthObjective string
+	// SettingsDigest is settings.Config.DetectionDigest, bound into the advance's operability subject.
+	SettingsDigest string
 	// GitDir is the accepted repository's Git directory, where the upstream
 	// revision is materialized.
 	GitDir string
@@ -798,6 +800,7 @@ func (a Advancer) offlineChecks(ctx context.Context, cfg AdvanceConfig, proposal
 		subject := operability.Subject{
 			AcceptedCommit: proposal.BaseCommit, BaseTree: offline.BaseTree, EffectiveTree: offline.EffectiveTree,
 			PatchesDigest: offline.PatchesDigest, RenderDigest: offline.RenderDigest, EnvDigest: offline.EnvDigest,
+			SettingsDigest: cfg.SettingsDigest,
 		}
 		checks, unused = offline.Checks, offline.UnusedImages
 		// Offline, an advance is judged on its deployment items only; the
@@ -908,6 +911,7 @@ func (a Advancer) deployAndAccept(ctx context.Context, cfg AdvanceConfig, result
 	subject := operability.Subject{
 		AcceptedCommit: proposal.BaseCommit, BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree,
 		PatchesDigest: receipt.PatchesDigest, RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest,
+		SettingsDigest: cfg.SettingsDigest,
 	}
 	detectors := skippedDetectors("not run: a deployment check failed")
 	if !failing(live) {

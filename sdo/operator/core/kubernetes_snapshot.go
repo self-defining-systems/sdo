@@ -35,6 +35,9 @@ type KubernetesSnapshotProvider struct {
 	Generation string
 	Namespace  string
 	Client     kubernetes.Interface
+	// SelfHealHold is the operator's detection.self_heal_hold, stamped on every snapshot; zero leaves detectors
+	// on sdk.DefaultSelfHealHold.
+	SelfHealHold time.Duration
 }
 
 func NewKubernetesSnapshotProvider(namespace string) (*KubernetesSnapshotProvider, error) {
@@ -226,7 +229,8 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 		NetworkPolicyList:  networkPolicies.Items,
 		EventList:          events.Items,
 		// Stamped after every list so no listed object postdates it.
-		ObservedAtTime: now().UTC(),
+		ObservedAtTime:   now().UTC(),
+		SelfHealHoldTime: p.SelfHealHold,
 	}, nil
 }
 

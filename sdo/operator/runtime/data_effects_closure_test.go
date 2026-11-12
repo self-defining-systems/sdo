@@ -187,7 +187,6 @@ func TestResponderRestartOfDataStoreInOnboardedNamespaceLeavesLabelToRecovery(t 
 	dispatcher := &handRestartDispatcher{store: store, world: world}
 	cfg := testControllerConfig()
 	cfg.Namespace, cfg.SourceCommit, cfg.RepositoryWorktree = "app", "synthetic-accepted", "synthetic-worktree"
-	cfg.FiringThreshold, cfg.ClearThreshold = 1, 1
 	cfg.ClosureStabilityWindow = time.Second
 	controller, err := NewController(cfg, []sdk.Detector{sameWriteDetector{world: world}}, store, dispatcher, opened)
 	if err != nil {

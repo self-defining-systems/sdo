@@ -79,7 +79,7 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	if err != nil {
 		return nil, nil, fmt.Errorf("native repository broker: %w", err)
 	}
-	repository, err := broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), selectedCodePath.Memory.Validate, broker.ObservationPolicy{Telemetry: brokerTelemetry, Replay: policy.Learning.Replay, CodePath: memoryCodePath, Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
+	repository, err := broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), selectedCodePath.Memory.Validate, broker.ObservationPolicy{SettingsDigest: policy.DetectionDigest(), Telemetry: brokerTelemetry, Replay: policy.Learning.Replay, CodePath: memoryCodePath, Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
 	if err != nil {
 		return nil, nil, fmt.Errorf("native repository broker: %w", err)
 	}

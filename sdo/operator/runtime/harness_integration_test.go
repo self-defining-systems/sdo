@@ -435,9 +435,10 @@ func (h *harness) crashController(why string) {
 
 func (h *harness) runController(ctx context.Context) {
 	args := []string{"--namespace", hotel, "--control-namespace", harnessControlNamespace, "--app-root", h.repo,
-		"--application", "hotel", "--drift-batch-window", "20ms",
-		"--closure-stability-window", "5s", "--source-commit", harnessAcceptedCommit, "--repository-mount-path", h.t.TempDir()}
+		"--application", "hotel",
+		"--source-commit", harnessAcceptedCommit, "--repository-mount-path", h.t.TempDir()}
 	policy := settings.Default()
+	policy.Detection.DriftBatchWindow, policy.Detection.StabilityWindow = settings.Duration(20*time.Millisecond), settings.Duration(5*time.Second)
 	policy.Response.Timeout, policy.Response.VerificationTimeout = settings.Duration(30*time.Second), settings.Duration(20*time.Second)
 	for ctx.Err() == nil {
 		runCtx, cancel := context.WithCancel(ctx)

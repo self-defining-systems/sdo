@@ -1,10 +1,10 @@
 package runtime
 
 import (
-	"maps"
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sort"
 	"strings"

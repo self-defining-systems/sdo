@@ -84,7 +84,7 @@ func TestNotesNeverBlockAndAreSplitByFamily(t *testing.T) {
 	want(t, got, "O3.coverage-gaps", operability.StatusNote, "")
 	want(t, got, "O5.gaps", operability.StatusNote, "")
 	r, err := operability.New(operability.StageComplete, operability.Subject{
-		AcceptedCommit: "c", BaseTree: "b", EffectiveTree: "e", PatchesDigest: "p", RenderDigest: "r", EnvDigest: "v", DiagnosticsTree: "d",
+		AcceptedCommit: "c", BaseTree: "b", EffectiveTree: "e", PatchesDigest: "p", RenderDigest: "r", EnvDigest: "v", SettingsDigest: "s", DiagnosticsTree: "d",
 	}).With(checks...)
 	if err != nil {
 		t.Fatal(err)

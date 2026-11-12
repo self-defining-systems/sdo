@@ -95,12 +95,16 @@ func StageItems(s Stage) []ItemID {
 // Subject binds a report to the exact state it describes. A reader compares it
 // with a recomputation from the repository, never with a stored claim.
 type Subject struct {
-	AcceptedCommit  string `json:"accepted_commit"`
-	BaseTree        string `json:"base_tree"`
-	EffectiveTree   string `json:"effective_tree"`
-	PatchesDigest   string `json:"patches_digest"`
-	RenderDigest    string `json:"render_digest"`
-	EnvDigest       string `json:"env_digest"`
+	AcceptedCommit string `json:"accepted_commit"`
+	BaseTree       string `json:"base_tree"`
+	EffectiveTree  string `json:"effective_tree"`
+	PatchesDigest  string `json:"patches_digest"`
+	RenderDigest   string `json:"render_digest"`
+	EnvDigest      string `json:"env_digest"`
+	// SettingsDigest is the sha256 of the operator configuration's detection section (settings.Config.DetectionDigest):
+	// the waiting time a held condition needs before it fires changes what a verification sees, so a report made
+	// under one hold never binds to a subject under another.
+	SettingsDigest  string `json:"settings_digest"`
 	DiagnosticsTree string `json:"diagnostics_tree,omitempty"`
 }
 
@@ -114,6 +118,7 @@ func (s Subject) BindsTo(want Subject) error {
 		{"patches_digest", s.PatchesDigest, want.PatchesDigest},
 		{"render_digest", s.RenderDigest, want.RenderDigest},
 		{"env_digest", s.EnvDigest, want.EnvDigest},
+		{"settings_digest", s.SettingsDigest, want.SettingsDigest},
 		{"diagnostics_tree", s.DiagnosticsTree, want.DiagnosticsTree},
 	} {
 		if f.have != f.want {
@@ -130,7 +135,7 @@ const Unavailable = "unavailable"
 
 // WithUnavailable returns the subject with every empty field set to Unavailable.
 func (s Subject) WithUnavailable() Subject {
-	for _, f := range []*string{&s.AcceptedCommit, &s.BaseTree, &s.EffectiveTree, &s.PatchesDigest, &s.RenderDigest, &s.EnvDigest, &s.DiagnosticsTree} {
+	for _, f := range []*string{&s.AcceptedCommit, &s.BaseTree, &s.EffectiveTree, &s.PatchesDigest, &s.RenderDigest, &s.EnvDigest, &s.SettingsDigest, &s.DiagnosticsTree} {
 		if *f == "" {
 			*f = Unavailable
 		}
@@ -146,6 +151,7 @@ func (s Subject) validate(requireDiagnostics bool) error {
 		{"patches_digest", s.PatchesDigest},
 		{"render_digest", s.RenderDigest},
 		{"env_digest", s.EnvDigest},
+		{"settings_digest", s.SettingsDigest},
 	} {
 		if f.v == "" {
 			return fmt.Errorf("operability subject %s is empty", f.name)

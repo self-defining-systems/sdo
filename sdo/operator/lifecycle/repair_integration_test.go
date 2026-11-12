@@ -104,7 +104,7 @@ func (w *gateWorld) onboard(t *testing.T) *contracts.DeploymentSource {
 	}
 	subject := operability.Subject{
 		AcceptedCommit: p.BaseCommit, BaseTree: receipt.BaseTree, EffectiveTree: receipt.EffectiveTree, PatchesDigest: receipt.PatchesDigest,
-		RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest,
+		RenderDigest: receipt.RenderDigest, EnvDigest: receipt.EnvDigest, SettingsDigest: "settings-digest",
 	}
 	report, err := operability.New(operability.StageDeployment, subject).With(
 		operability.Check{ID: "O1.deploy", Phase: operability.PhaseLive, Status: operability.StatusPass},

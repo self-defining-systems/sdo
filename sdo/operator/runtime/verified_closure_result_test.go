@@ -28,7 +28,6 @@ func TestVerifiedClosureSettlesFailedResponderReport(t *testing.T) {
 			d.spec.OriginatingCommit = "synthetic"
 			d.spec.Persistence = sdk.PersistencePolicy{Firing: 1, Clearing: 1}
 			cfg := testControllerConfig()
-			cfg.FiringThreshold, cfg.ClearThreshold = 1, 1
 			cfg.ClosureStabilityWindow = time.Second
 			c, err := NewController(cfg, []sdk.Detector{d}, staticProvider{}, &recordingDispatcher{}, now)
 			if err != nil {

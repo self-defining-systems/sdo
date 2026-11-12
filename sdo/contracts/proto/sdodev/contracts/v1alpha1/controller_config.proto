@@ -118,7 +118,8 @@ message ControllerConfig {
   reserved "drift_sweep_interval";
   reserved 59, 60, 61;
   reserved "drift_investigation_window", "drift_investigation_dispatches_per_hour", "drift_investigation_tokens_per_hour";
-  google.protobuf.Duration drift_batch_window = 66;
+  reserved 66;
+  reserved "drift_batch_window";
   reserved 67, 68;
   reserved "drift_dispatches_per_hour", "drift_tokens_per_hour";
   reserved 62;
@@ -139,10 +140,10 @@ message ControllerConfig {
   // Trusted controller image supplying Go to compiler-free workers and validators.
   // Required at startup, independently of the optional traffic prober image.
   string toolchain_image = 75;
-  google.protobuf.Duration closure_stability_window = 76;
-  // How long a Kubernetes failure condition without its own give-up signal
-  // must hold before it opens an incident. Unset uses the controller default.
-  google.protobuf.Duration self_heal_hold = 119 [(buf.validate.field).duration.gt = {}];
+  // The detection section of the operator configuration (stability window, self-heal hold, drift batch window)
+  // reaches the controller through settings_path.
+  reserved 76, 119;
+  reserved "closure_stability_window", "self_heal_hold";
   reserved 77, 78;
   reserved "responder_report_grace", "responder_standby";
   // Fixed tool image for application-local RunScript Jobs.

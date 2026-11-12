@@ -42,7 +42,6 @@ func TestRecoveryProofWaitsOnlyOnOpeningAlerts(t *testing.T) {
 			repaired := health("workloads", sdk.Finding{})
 			links := health("links", slow)
 			cfg := testControllerConfig()
-			cfg.FiringThreshold, cfg.ClearThreshold = 1, 1
 			cfg.ClosureStabilityWindow = time.Second
 			c, err := NewController(cfg, []sdk.Detector{repaired, links}, staticProvider{}, &recordingDispatcher{}, now)
 			if err != nil {

@@ -38,7 +38,7 @@ func TestStageReportsCarryEachCheckIDOnce(t *testing.T) {
 	}
 	detectors := operability.Check{ID: "O4.detectors", Phase: operability.PhaseLive, Status: operability.StatusPass, Detail: "clear"}
 	memory := offline.CheckMemory(offline.Memory{OwnershipChecked: true})
-	subject := operability.Subject{AcceptedCommit: "c", BaseTree: off.BaseTree, EffectiveTree: off.EffectiveTree, PatchesDigest: off.PatchesDigest, RenderDigest: off.RenderDigest, EnvDigest: off.EnvDigest, DiagnosticsTree: "d"}
+	subject := operability.Subject{AcceptedCommit: "c", BaseTree: off.BaseTree, EffectiveTree: off.EffectiveTree, PatchesDigest: off.PatchesDigest, RenderDigest: off.RenderDigest, EnvDigest: off.EnvDigest, SettingsDigest: "s", DiagnosticsTree: "d"}
 
 	stages := map[operability.Stage][]operability.Check{
 		operability.StageDeployment: operability.Combine(off.Checks, live),
