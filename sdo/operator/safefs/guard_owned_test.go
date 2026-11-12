@@ -26,8 +26,6 @@ var operatorOwned = map[string]string{
 	"apihistory/writer.go":                           reasonState,
 	"evidencesink/mirror.go":                         "only reads runtime evidence, opening each file with O_NOFOLLOW",
 	"evidencesink/sink.go":                           "writes only below the runner-owned evidence sink, never a checkout; paths are allowlisted relative names and symlinked directories are refused",
-	"broker/advance.go":                              "removes broker-owned proposal roots (whole directories, never a path inside a checkout)",
-	"broker/advance_patches.go":                      "removes a MkdirTemp scratch directory",
 	"broker/attestation.go":                          "materializes an attestation tree into a fresh broker-created scratch directory",
 	"broker/broker.go":                               "broker-owned workspaces and ledger; copyChange Lstats and rejects symlinks before it replaces a file",
 	"broker/concurrent_publish.go":                   "writes into clones and metadata the broker itself created from the accepted base",

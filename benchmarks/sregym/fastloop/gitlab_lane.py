@@ -226,6 +226,8 @@ def lane_runtime_config(environment: Any, plan: dict[str, Any], *, registrations
         deployment_source=deployment_source(),
         deployment_plan=plan,
         deployment_policy=deployment_policy(),
+        source_branch_url=lane_upstream(environment).cluster_url,
+        source_branch=lane_upstream(environment).ref,
         agent_registrations=registrations.resolve() if registrations else None,
         evidence_sink_host_path=EVIDENCE_NODE_ROOT if environment.evidence_root is not None else "",
     )

@@ -51,6 +51,8 @@ func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 	objective := flags.String("health-objective", "", "human health objective")
 	flags.StringVar(objective, "goal", "", "human health objective")
 	goalFile := flags.String("goal-file", "", "file containing human health objective")
+	sourceBranchURL := flags.String("source-branch-url", "", "Git remote of the one branch SDO commits to and deploys from (source.branch); engineers and the benchmark replayer push to it")
+	sourceBranch := flags.String("source-branch", "", "name of that branch (never main or master)")
 	deploymentPlan := flags.String("deployment-plan", "", "provided DeploymentPlan as ProtoJSON (source, image sources, expected workload IDs): the deployer agent is skipped and the plan is deployed as given")
 	var configFiles repeatable
 	flags.Var(&configFiles, "config", "operator configuration YAML (repeatable; later files override earlier ones; see docs/config.md)")
@@ -162,6 +164,7 @@ func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 		ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 		NativeCommand:         []string{"/usr/local/bin/sdo-operator"},
 		RegistrationConfigMap: *registrationConfigMap,
+		MemoryUpstreamURL:     *sourceBranchURL, MemoryUpstreamBranch: *sourceBranch,
 	}
 	if err := applySettings(&config, resolved, controlForTelemetry); err != nil {
 		return HostConfig{}, err

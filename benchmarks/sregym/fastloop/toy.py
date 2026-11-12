@@ -527,6 +527,8 @@ def install_controller(
             deployment_source=raw_source(("kubernetes",)) if variant == "raw" else None,
             deployment_plan=provided_deployment_plan(variant, environment.namespace, environment.workspace),
             deployment_policy=deployment_policy(variant, environment.namespace),
+            source_branch_url=UpstreamLayout(environment.namespace).cluster_url if variant in PROVIDED_VARIANTS else "",
+            source_branch=UpstreamLayout(environment.namespace).ref if variant in PROVIDED_VARIANTS else "",
             agent_registrations=registrations.resolve() if registrations else None,
             evidence_sink_host_path=EVIDENCE_NODE_ROOT if environment.evidence_root is not None else "",
         )

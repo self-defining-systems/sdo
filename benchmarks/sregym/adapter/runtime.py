@@ -89,12 +89,20 @@ class RuntimeConfig:
     deployment_plan: dict[str, Any] | None = None
     # Install-time deployment policy the lane chooses (registry allowlist, scope grants); default: none.
     deployment_policy: DeploymentPolicyConfig = DeploymentPolicyConfig()
+    # The one branch SDO commits to and deploys from (``--source-branch-url`` / ``--source-branch``); both or
+    # neither. Engineers, and the benchmark replayer, push to it.
+    source_branch_url: str = ""
+    source_branch: str = ""
     shared_accepted_id: str = ""
     # Evidence sink node directory and run ID (see ``NativeInstallConfig``); empty: no sink.
     evidence_sink_host_path: str = ""
     evidence_run_id: str = ""
 
     def __post_init__(self) -> None:
+        if bool(self.source_branch_url) != bool(self.source_branch):
+            raise ValueError("source_branch_url and source_branch must be given together")
+        if self.source_branch.strip().lower() in {"main", "master"}:
+            raise ValueError("the source branch must not be main or master")
         if type(self.external_incidents) is not bool:
             raise TypeError("external_incidents must be a boolean")
         if self.external_incidents and not self.frozen_memory:

@@ -28,7 +28,7 @@ def git(path: Path, *args: str) -> str:
 
 def bare_remote(tmp_path: Path) -> str:
     remote = tmp_path / "remote.git"
-    subprocess.run(["git", "init", "--bare", "-q", "-b", "main", str(remote)], check=True)
+    subprocess.run(["git", "init", "--bare", "-q", "-b", "sdo-source", str(remote)], check=True)
     return f"file://{remote}"
 
 
@@ -66,7 +66,7 @@ def test_seed_pushes_workspace_commit_and_is_idempotent(tmp_path):
     head = git(workspace, "rev-parse", "HEAD")
     assert up.seed_upstream(workspace, remote, LAYOUT) == head
     assert up.seed_upstream(workspace, remote, LAYOUT) == head
-    assert git(tmp_path / "remote.git", "rev-parse", "refs/heads/main") == head
+    assert git(tmp_path / "remote.git", "rev-parse", "refs/heads/sdo-source") == head
 
 
 def test_seed_refuses_a_remote_on_another_commit(tmp_path):
@@ -85,7 +85,7 @@ def test_every_commit_applies_to_every_variant_and_fast_forwards(tmp_path, varia
     seed = up.seed_upstream(workspace, remote, LAYOUT)
     sha = up.replay_commit("benign", remote, LAYOUT)
     remote_dir = tmp_path / "remote.git"
-    assert git(remote_dir, "rev-parse", "refs/heads/main") == sha
+    assert git(remote_dir, "rev-parse", "refs/heads/sdo-source") == sha
     assert git(remote_dir, "rev-parse", f"{sha}^") == seed
     assert git(remote_dir, "diff", "--name-only", seed, sha) == "main.go"
     assert "v2" in git(remote_dir, "show", f"{sha}:main.go")
@@ -117,7 +117,7 @@ def test_replay_that_does_not_apply_changes_nothing_upstream(tmp_path):
     shutil.copy(up.patch_path("benign"), patches / "again.patch")  # already applied: the context no longer matches
     with pytest.raises(up.UpstreamError):
         up.replay_commit("again", remote, LAYOUT, directory=patches)
-    assert git(tmp_path / "remote.git", "rev-parse", "refs/heads/main") == after_benign
+    assert git(tmp_path / "remote.git", "rev-parse", "refs/heads/sdo-source") == after_benign
 
 
 @pytest.mark.go_integration
@@ -138,7 +138,7 @@ def test_patched_toy_source_builds_and_is_gofmt_clean(tmp_path):
 
 
 def test_replay_against_a_missing_ref_fails(tmp_path):
-    with pytest.raises(up.UpstreamError, match="clone"):
+    with pytest.raises(up.UpstreamError, match="fetch"):
         up.replay_commit("benign", bare_remote(tmp_path), LAYOUT)
 
 
@@ -164,7 +164,7 @@ def test_the_manifest_daemon_script_serves_seed_and_push_over_git_protocol(tmp_p
         workspace, _ = seeded(tmp_path)
         head = up.seed_upstream(workspace, url, LAYOUT)
         sha = up.replay_commit("benign", url, LAYOUT)
-        assert git(base / up.REPOSITORY, "rev-parse", "refs/heads/main") == sha != head
+        assert git(base / up.REPOSITORY, "rev-parse", "refs/heads/sdo-source") == sha != head
     finally:
         process.terminate()
         process.wait(timeout=5)
@@ -177,6 +177,6 @@ def test_cli_push(tmp_path, capsys):
     args = parser.parse_args(["toy", "push", "--commit", "benign", "--remote", remote, "--lane-namespace", "sdo-toy"])
     assert args.handler(args) == 0
     pushed = json.loads(capsys.readouterr().out)
-    assert pushed["pushed"] == git(tmp_path / "remote.git", "rev-parse", "main")
+    assert pushed["pushed"] == git(tmp_path / "remote.git", "rev-parse", "sdo-source")
     with pytest.raises(SystemExit):
         parser.parse_args(["toy", "push", "--commit", "unknown", "--remote", remote])

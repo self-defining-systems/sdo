@@ -306,8 +306,13 @@ class NativeHostConfig:
     agent_registrations: Path | None = None
     # ProtoJSON DeploymentPlan for an app that ships its own deployment; ``None``: the deployer agent authors one.
     deployment_plan: dict[str, Any] | None = None
+    # The branch SDO commits to and deploys from (``--source-branch-url`` / ``--source-branch``); both or neither.
+    source_branch_url: str = ""
+    source_branch: str = ""
 
     def __post_init__(self) -> None:
+        if bool(self.source_branch_url) != bool(self.source_branch):
+            raise ValueError("source_branch_url and source_branch must be given together")
         if not self.operation_id.strip():
             raise ValueError("host launch requires operation ID")
         if self.max_attempts is not None and self.max_attempts < 1:
@@ -874,6 +879,8 @@ def launch_host(config: NativeHostConfig) -> dict[str, Any]:
         args.extend(("--agent-registrations", str(config.agent_registrations)))
     if config.deployment_plan is not None:
         args.extend(("--deployment-plan", plan_flag_value(config.deployment_plan)))
+    if config.source_branch_url:
+        args.extend(("--source-branch-url", config.source_branch_url, "--source-branch", config.source_branch))
     with launch_config(install) as (config_args, env):
         value = _run("host", [*args, *config_args], timeout=int(attempts * per_attempt), env=env)
     if value.get("installed") is not True or value.get("operation_id") != config.operation_id:

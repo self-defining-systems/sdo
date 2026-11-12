@@ -123,6 +123,9 @@ func OperateJob(cfg Config, healthObjective, operationID string) (*batchv1.Job, 
 		"--credentials-secret", cfg.CredentialsSecret, "--worktree-root", "/workspace/worktrees",
 		"--buildkit-image", cfg.BuildKitImage, "--registry-push-secret", cfg.RegistryPushSecret,
 	}
+	if cfg.MemoryUpstreamURL != "" {
+		args = append(args, "--source-branch-url", cfg.MemoryUpstreamURL, "--source-branch", cfg.MemoryUpstreamBranch)
+	}
 	if cfg.DeploymentPlan != "" {
 		args = append(args, "--deployment-plan", cfg.DeploymentPlan)
 	}

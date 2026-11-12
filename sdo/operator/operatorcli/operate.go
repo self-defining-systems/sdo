@@ -46,6 +46,8 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	deploymentPlan := flags.String("deployment-plan", "", "provided DeploymentPlan as ProtoJSON; the deployer agent is skipped and the plan is deployed as given")
 	deploymentPolicyFlag := flags.String("deployment-policy", "", "the installer's resolved DeploymentPolicy as ProtoJSON; empty is no policy")
 	evidenceSink := flags.String("evidence-sink", "", "the installer's resolved evidence sink as compact JSON (run_id, volume); empty keeps evidence on the repository volume")
+	sourceBranchURL := flags.String("source-branch-url", "", "Git remote of the one branch SDO commits to and deploys from (source.branch); engineers and the benchmark replayer push to it")
+	sourceBranch := flags.String("source-branch", "", "name of that branch (never main or master)")
 	telemetryProfile := flags.String("telemetry-profile", telemetrysources.DefaultProfileName, "the installer's resolved telemetry profile: a built-in name or an inline JSON document")
 	operationID := flags.String("operation-id", "", "durable operation identity")
 	controllerImage := flags.String("controller-image", "", "controller image")
@@ -164,8 +166,9 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			BuildKitImage: *buildkitImage, RegistryPushSecret: *registryPushSecret,
 			RegistryInsecure: *registryInsecure, RegistryHost: *registryHost,
 			ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
-			NativeCommand:         []string{"/usr/local/bin/sdo-operator"},
-			ReuseExisting:         true,
+			NativeCommand:     []string{"/usr/local/bin/sdo-operator"},
+			ReuseExisting:     true,
+			MemoryUpstreamURL: *sourceBranchURL, MemoryUpstreamBranch: *sourceBranch,
 			RegistrationConfigMap: *registrationConfigMap, RegistrationDirectory: *registrations,
 		},
 		ApplicationRoot: *app, RepositoryMount: *repositoryMount, WorktreeRoot: *worktreeRoot,
