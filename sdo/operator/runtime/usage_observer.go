@@ -257,7 +257,7 @@ func parseUsageSummary(data []byte, namespace string, pods []corev1.Pod, now tim
 			if !ok {
 				continue
 			}
-			s := usage.Sample{At: c.CPU.Time, WorkingSetBytes: c.Memory.WorkingSetBytes, RSSBytes: c.Memory.RSSBytes}
+			s := usage.Sample{At: c.CPU.Time, WorkingSetBytes: c.Memory.WorkingSetBytes, RSSBytes: c.Memory.RSSBytes, LastOOMKilledAt: lastOOMKilled(spec, c.Name)}
 			if s.At.IsZero() {
 				s.At = c.Memory.Time
 			}
@@ -319,6 +319,16 @@ func parseUsageSummary(data []byte, namespace string, pods []corev1.Pod, now tim
 		return r.Volumes[i].PodUID+"/"+r.Volumes[i].PVC < r.Volumes[j].PodUID+"/"+r.Volumes[j].PVC
 	})
 	return r, nil
+}
+// lastOOMKilled reads the Pod status the observer already holds: the finish
+// time of the container's previous termination when its reason was OOMKilled.
+func lastOOMKilled(p corev1.Pod, container string) time.Time {
+	for _, st := range p.Status.ContainerStatuses {
+		if st.Name == container && st.LastTerminationState.Terminated != nil && st.LastTerminationState.Terminated.Reason == "OOMKilled" {
+			return st.LastTerminationState.Terminated.FinishedAt.Time
+		}
+	}
+	return time.Time{}
 }
 func resourceValue(resources corev1.ResourceList, name corev1.ResourceName) *float64 {
 	q, ok := resources[name]

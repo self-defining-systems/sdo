@@ -36,6 +36,9 @@ type Sample struct {
 	EphemeralRequest, EphemeralLimit                    *float64
 	Periods, ThrottledPeriods                           float64
 	ThrottlingAvailable                                 bool
+	// LastOOMKilledAt is when the container's previous instance was terminated
+	// with reason OOMKilled; zero when none is recorded.
+	LastOOMKilledAt time.Time
 }
 
 // VolumeSample contains a PVC's filesystem statistics; nil means unreported.
