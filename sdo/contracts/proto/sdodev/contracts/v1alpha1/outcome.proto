@@ -14,6 +14,19 @@ option go_package = "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;co
 
 // Independently verified, durable incident evidence. This is the logical
 // contract; the memory adapter alone chooses its repository representation.
+// SourceRepair is the result of publishing the source a responder committed.
+// status is one of: deployed (verified and accepted), published (accepted
+// without a deployment: this installation has none), held (not accepted;
+// detail says why) and none (nothing was committed).
+message SourceRepair {
+  string status = 1 [(buf.validate.field).string = {in: ["deployed", "published", "held", "none"]}];
+  // commit is the accepted source commit; empty unless deployed or published.
+  string commit = 2;
+  string detail = 3;
+  // uncaptured_paths are app files left uncommitted that were discarded.
+  repeated string uncaptured_paths = 4;
+}
+
 message OutcomeRecord {
   // Explicit nondefault programming model, including per-seam overrides.
   CodePathConfig code_path = 100;
@@ -65,6 +78,9 @@ message OutcomeRecord {
   repeated UndetectedCause undetected_causes = 51;
   // Broker-only append: named rejections retain the original incident evidence.
   repeated ProposalRejection reflection_rejections = 52;
+  // Broker-only append after the acknowledgment: what became of the source the
+  // responder committed. Never changes the classification or other evidence.
+  SourceRepair source_repair = 53;
   // Controller-observed: source checks that were unavailable when health
   // verified the closure. Information only; never a verdict.
   repeated string source_check_notes = 38;

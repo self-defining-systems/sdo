@@ -197,7 +197,21 @@ func (b *Broker) newestDeployment(ctx context.Context) (commit, incidentID strin
 	}
 	for _, record := range strings.Split(string(out), "\x1e") {
 		fields := strings.Split(strings.TrimSpace(record), "\x1f")
-		if len(fields) != 5 || fields[1] != brokerCommitterEmail {
+		if len(fields) != 5 {
+			continue
+		}
+		if fields[1] != brokerCommitterEmail {
+			// Someone else's commit: a deployment only when a head deployment
+			// of exactly this commit was recorded.
+			if commit := strings.TrimSpace(fields[0]); validGitID(commit) {
+				deployed, err := b.headDeployed(ctx, commit)
+				if err != nil {
+					return "", "", false, err
+				}
+				if deployed {
+					return commit, headDeploymentID(commit), true, nil
+				}
+			}
 			continue
 		}
 		actor, phase := Actor(strings.TrimSpace(fields[3])), Phase(strings.TrimSpace(fields[4]))

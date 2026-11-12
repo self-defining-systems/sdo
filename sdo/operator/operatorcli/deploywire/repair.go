@@ -8,6 +8,7 @@ import (
 	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/lifecycle"
+	"sdo.dev/operator/operatorcli/internal/processio"
 )
 
 // Verifier is the independent health verifier of a controller launch: it
@@ -38,11 +39,15 @@ func RepairDeployer(identity Identity, launch *contracts.ControllerConfig, opera
 	if err != nil {
 		return lifecycle.RepairDeployer{}, err
 	}
-	return lifecycle.RepairDeployer{Broker: repository, Readiness: deployer, Verifier: verifier}, nil
+	return lifecycle.RepairDeployer{Broker: repository, Readiness: deployer, Verifier: verifier,
+		Maintenance: Maintenance{Client: client, Namespace: ControlNamespace(launch), Now: processio.Now}}, nil
 }
 
 // The controller's broker is the repair's broker.
-var _ lifecycle.RepairBroker = (*broker.Broker)(nil)
+var (
+	_ lifecycle.RepairBroker = (*broker.Broker)(nil)
+	_ lifecycle.HeadBroker   = (*broker.Broker)(nil)
+)
 
 // RepairFromLaunch is the runtime.RepairDeployerFactory of the generated
 // controller: the identity the parent put in the typed launch config, then
@@ -53,4 +58,10 @@ func RepairFromLaunch(launch *contracts.ControllerConfig, client kubernetes.Inte
 		return lifecycle.RepairDeployer{}, err
 	}
 	return RepairDeployer(identity, launch, builder.DefaultOperatorRoot(), client, repository)
+}
+
+// HeadDeployer is the controller's deployment of a branch head SDO did not
+// write, sharing the repair deployer's trusted Deployer, verifier and pause.
+func HeadDeployer(repair lifecycle.RepairDeployer, repository lifecycle.HeadBroker) lifecycle.HeadDeployer {
+	return lifecycle.HeadDeployer{Broker: repository, Deployer: repair}
 }

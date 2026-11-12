@@ -116,6 +116,10 @@ type NativeIncidentBroker struct {
 	// remove the app edits it left uncaptured, up to CleanupTurns times (response.cleanup_turns).
 	Cleaner      LeftoverCleaner
 	CleanupTurns int
+
+	// SourceGate is the controller's view of its own activity, read before a
+	// source deploy that runs after the closure. Nil is never busy.
+	SourceGate *SourceGate
 }
 
 type ControllerRolloutExpectation struct {
@@ -355,91 +359,19 @@ func (n NativeIncidentBroker) processClosure(ctx context.Context, closure Incide
 			}
 		}
 
-		if ledger.ProposalCommit == "" {
-			if accepted, ok, err := n.Repository.AcceptedCommit(ctx, id, broker.ProposalPhase); err != nil {
+		if ledger.SourceRepair == "" && ledger.ProposalCommit == "" {
+			// The source a responder keeps is published after the closure is
+			// acknowledged (publishSource): a repair that cannot deploy or is
+			// held must never cost the incident its outcome. The closure only
+			// records that one is owed.
+			status, detail, err := n.planSourceRepair(ctx, id, len(closure.FinalDetectorStates) > 0, closure.Request.RepairPolicy == "commit")
+			if err != nil {
 				return err
-			} else if ok {
-				ledger.ProposalCommit = accepted.Commit
 			}
-			if ledger.ProposalCommit == "" {
-				partition, err := n.Repository.ProposalPartition(ctx, id, broker.ProposalPhase)
-				if err != nil {
+			ledger.SourceRepair, ledger.SourceDetail = status, detail
+			if status == sourcePending {
+				if err := n.recordPhase(ledger, "source_repair_pending"); err != nil {
 					return err
-				}
-				// An unverified (timed-out) closure never publishes its repair.
-				verified := len(closure.FinalDetectorStates) > 0
-				// Agents write only .sdo/: a source repair is a deployment patch,
-				// and the patch files are the non-working-program .sdo/ paths.
-				// App-file edits are scratch; one the series does not reproduce
-				// is a typed fact of this closure, never its failure: the
-				// agent's turn is over, so nobody can correct it and every
-				// retry would see the same checkout. The proposal (and the
-				// scratch) is not published and nothing is deployed; the
-				// outcome below is still committed.
-				uncaptured := false
-				if verified {
-					// The closing turn's cleanup: the same session keeps (captures as a patch) or removes what
-					// it left, before the partition is read; what is still left is recorded below.
-					if _, err := n.resolveLeftovers(ctx, closure, id); err != nil {
-						return err
-					}
-					partition, err = n.Repository.ProposalPartition(ctx, id, broker.ProposalPhase)
-					if err != nil {
-						return err
-					}
-					feedback, err := n.Repository.ScratchFeedback(ctx, id, broker.ProposalPhase)
-					if err != nil {
-						return err
-					}
-					if feedback != "" {
-						uncaptured = true
-						slog.Warn("source_repair_uncaptured", "incident_id", id, "detail", feedback)
-						if _, seen := ledger.GetClosurePhaseTimestamps()["source_repair_uncaptured"]; !seen {
-							if err := n.recordPhase(ledger, "source_repair_uncaptured"); err != nil {
-								return err
-							}
-						}
-					}
-				}
-				if uncaptured {
-					// Not published; see above.
-				} else if len(broker.SourceRepairPaths(partition.SDO)) > 0 && verified {
-					// A hold is final for this closure: a retry never deploys again.
-					repair := SourceRepair{Held: "held by an earlier attempt of this closure"}
-					if _, held := ledger.GetClosurePhaseTimestamps()["source_repair_held"]; !held {
-						if repair, err = n.acceptSourceRepair(ctx, id, broker.SourceRepairPaths(partition.SDO)); err != nil {
-							return err
-						}
-					}
-					switch {
-					case repair.Held != "":
-						// Nothing was accepted and the cluster is as the
-						// deployment left it: the closure records no repair.
-						if err := n.recordPhase(ledger, "source_repair_held"); err != nil {
-							return err
-						}
-						if closure.Request.RepairPolicy == "commit" {
-							return fmt.Errorf("commit repair policy: the source repair was not deployed: %s", repair.Held)
-						}
-					case repair.Deployed:
-						if err := n.recordPhase(ledger, "source_repair_deployed"); err != nil {
-							return err
-						}
-						ledger.ProposalCommit = repair.Commit
-					case repair.Undeployed:
-						// Accepted, but no SDO deployment applied it: the effective
-						// tree now differs from what runs, and pins follow the last
-						// deployment. Say so in the ledger and the log.
-						slog.Warn("source_repair_published_undeployed", "incident_id", id, "commit", repair.Commit)
-						if err := n.recordPhase(ledger, "source_repair_published_undeployed"); err != nil {
-							return err
-						}
-						ledger.ProposalCommit = repair.Commit
-					default:
-						ledger.ProposalCommit = repair.Commit
-					}
-				} else if verified && closure.Request.RepairPolicy == "commit" {
-					return errors.New("commit repair policy requires a nonempty validated proposal")
 				}
 			}
 			if err := n.saveLedger(ledger); err != nil {
@@ -511,7 +443,7 @@ func (n NativeIncidentBroker) processClosure(ctx context.Context, closure Incide
 		// the controller handles one incident at a time, and a reflection run
 		// inside the closure held it pending for the agent's whole run, so a
 		// fault that started meanwhile went unanswered.
-		if ledger.RequiresReflection && !ledger.ReflectionProcessed {
+		if (ledger.RequiresReflection && !ledger.ReflectionProcessed) || ledger.SourceRepair == sourcePending {
 			if !ledger.ReflectionQueued {
 				ledger.ReflectionQueued = true
 				ledger.ReflectionQueuedAt = contractTimestamp(n.clock())
@@ -545,7 +477,7 @@ func (n NativeIncidentBroker) acceptSourceRepair(ctx context.Context, id string,
 	if n.Repairs != nil {
 		return n.Repairs.Repair(ctx, id)
 	}
-	if slices.ContainsFunc(paths, layout.IsEffectiveDeploymentInput) {
+	if slices.ContainsFunc(paths, func(p string) bool { return layout.IsEffectiveDeploymentInput(p) || !layout.IsMemoryPath(p) }) {
 		// A configuration without a repairer stays without one on every retry:
 		// the typed hold is recorded once, never an error that is retried.
 		return SourceRepair{Held: fmt.Sprintf("repairer_required: incident %s: %s", id, ErrRepairerRequired)}, nil
@@ -617,7 +549,7 @@ func (n NativeIncidentBroker) QueuedReflections() ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("broker ledger %s: %w", entry.Name(), err)
 		}
-		if ledger.ReflectionQueued && ledger.Acknowledged && (!ledger.ReflectionProcessed || reflectionRolloutPending(ledger)) {
+		if ledger.ReflectionQueued && ledger.Acknowledged && (!ledger.ReflectionProcessed || reflectionRolloutPending(ledger) || ledger.SourceRepair == sourcePending) {
 			queued = append(queued, ledger)
 		}
 	}
@@ -641,12 +573,28 @@ func (n NativeIncidentBroker) ProcessQueuedReflection(ctx context.Context, incid
 	if n.FrozenMemory {
 		return errors.New("frozen memory cannot resume queued learning")
 	}
-	return n.withLock(func() error {
+	sourceOwed, err := n.reflectQueued(ctx, incidentID)
+	if err != nil || !sourceOwed {
+		return err
+	}
+	// The source publication deploys and verifies for as long as a build and a
+	// rollout take: it holds the ledger lock only to read and write the ledger.
+	return n.publishSource(ctx, incidentID)
+}
+
+// reflectQueued runs the queued reflection, when one is owed, and reports
+// whether a source publication is still owed.
+func (n NativeIncidentBroker) reflectQueued(ctx context.Context, incidentID string) (sourceOwed bool, err error) {
+	err = n.withLock(func() error {
 		ledger, err := n.readLedger(incidentID)
 		if err != nil {
 			return err
 		}
-		if !ledger.ReflectionQueued || ledger.ReflectionProcessed || !ledger.Acknowledged {
+		if !ledger.ReflectionQueued || !ledger.Acknowledged {
+			return nil
+		}
+		sourceOwed = ledger.SourceRepair == sourcePending
+		if ledger.ReflectionProcessed || !ledger.RequiresReflection {
 			return nil
 		}
 		if err := n.reflectLocked(ctx, ledger); err != nil {
@@ -664,6 +612,7 @@ func (n NativeIncidentBroker) ProcessQueuedReflection(ctx context.Context, incid
 		}
 		return n.saveLedger(ledger)
 	})
+	return sourceOwed, err
 }
 
 // reflectionResultPhase names what a finished reflection left on the accepted
@@ -715,14 +664,25 @@ func reflectionRolloutPending(ledger *contracts.BrokerLedger) bool {
 
 // AbandonQueuedReflection ends a queued reflection whose retries are spent.
 // The outcome commit stands; the ledger records why no reflection followed.
-func (n NativeIncidentBroker) AbandonQueuedReflection(_ context.Context, incidentID, reason string) error {
+func (n NativeIncidentBroker) AbandonQueuedReflection(ctx context.Context, incidentID, reason string) error {
 	return n.withLock(func() error {
 		ledger, err := n.readLedger(incidentID)
 		if err != nil {
 			return err
 		}
-		if !ledger.ReflectionQueued || ledger.ReflectionProcessed {
+		if !ledger.ReflectionQueued || (ledger.ReflectionProcessed && ledger.SourceRepair != sourcePending) {
 			return nil
+		}
+		if ledger.SourceRepair == sourcePending {
+			// The publication is spent too: say so on the outcome, so a source
+			// fix that never reached the branch is never silent.
+			ledger.SourceRepair, ledger.SourceDetail = sourceHeld, "queued source publication abandoned: "+reason
+			if _, err := n.Repository.RecordSourceRepair(ctx, incidentID, sourceRepairContract(ledger)); err != nil {
+				return err
+			}
+			if err := n.Repository.ReleaseProposal(incidentID, broker.ProposalPhase); err != nil {
+				return err
+			}
 		}
 		ledger.ReflectionProcessed = true
 		ledger.ReflectionSkippedReason = "queued_reflection_abandoned: " + reason
@@ -901,8 +861,11 @@ func (n NativeIncidentBroker) AcknowledgeClosure(_ context.Context, receipt Clos
 		if ledger.RolloutExpectation != nil && !successfulRollout(rolloutReceiptsState(ledger.RolloutReceipts)) {
 			return errors.New("controller rollout has not been independently verified")
 		}
-		if err := n.Repository.ReleaseProposal(receipt.IncidentID, broker.ProposalPhase); err != nil {
-			return err
+		// A source repair still owed is published from this checkout.
+		if ledger.SourceRepair != sourcePending {
+			if err := n.Repository.ReleaseProposal(receipt.IncidentID, broker.ProposalPhase); err != nil {
+				return err
+			}
 		}
 		if !ledger.ReflectionQueued || ledger.ReflectionProcessed {
 			if err := n.Repository.ReleaseProposal(receipt.IncidentID, broker.ReflectionPhase); err != nil {
@@ -958,7 +921,7 @@ func (n NativeIncidentBroker) PruneIncidentSessions(now time.Time) error {
 				return fmt.Errorf("session retention ledger %s has mismatched identity", entry.Name())
 			}
 			// A queued reflection still resumes the session it would delete.
-			queued := ledger.ReflectionQueued && !ledger.ReflectionProcessed
+			queued := ledger.ReflectionQueued && (!ledger.ReflectionProcessed || ledger.SourceRepair == sourcePending)
 			if ledger.Acknowledged && !queued && ledger.AcknowledgedAt != nil && !now.Before(ledger.AcknowledgedAt.AsTime().Add(retention)) {
 				if err := memory.RemoveIncidentSession(n.SessionRoot, ledger.IncidentId); err != nil {
 					return fmt.Errorf("prune session for %s: %w", ledger.IncidentId, err)

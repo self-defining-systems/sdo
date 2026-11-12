@@ -2138,7 +2138,25 @@ func (c *Controller) SetIncidentBroker(broker IncidentBroker) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.broker = broker
+	if native, ok := broker.(*NativeIncidentBroker); ok && native.SourceGate != nil {
+		native.SourceGate.Set(c.sourceDeployBusy)
+	}
 	return nil
+}
+
+// sourceDeployBusy is the work a source deploy after a closure must not
+// overlap: an open incident, or another closure still in flight. The queued
+// reflection that carries the publication is not a reason; it is the deploy.
+func (c *Controller) sourceDeployBusy() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	switch {
+	case c.incidentOpen:
+		return "an incident is open"
+	case c.closureBlocksNextLocked():
+		return "a closure is in flight"
+	}
+	return ""
 }
 
 func findingKeys(findings []sdk.Finding) []string {

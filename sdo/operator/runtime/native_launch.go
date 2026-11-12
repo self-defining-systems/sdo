@@ -94,8 +94,13 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	if err != nil {
 		return nil, nil, err
 	}
+	gate := &SourceGate{}
+	if deploying, ok := repairs.(DeploymentRepairer); ok {
+		deploying.Gate = gate
+		repairs = deploying
+	}
 	return &NativeIncidentBroker{
-		Replay: policy.Learning.Replay, Repository: repository, LedgerRoot: ledgerRoot, Repairs: repairs,
+		Replay: policy.Learning.Replay, Repository: repository, LedgerRoot: ledgerRoot, Repairs: repairs, SourceGate: gate,
 		CodePath: codePathConfigFromContract(config.GetCodePath()),
 		Deriver:  ProtoOutcomeDeriver{SessionRoot: config.GetRepositoryMountPath()}, ResponderBackend: policy.Agent.Provider, ResponderModel: policy.Agent.Model,
 		ForceReflection: policy.Learning.ForceReflection, FrozenMemory: frozenMemory, PhaseLog: os.Stdout,

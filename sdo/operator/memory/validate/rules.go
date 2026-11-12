@@ -55,6 +55,12 @@ const (
 	RulePatchUncaptured   = "patch.uncaptured"
 	RuleDeploymentInvalid = "deployment.invalid"
 
+	// Application source an agent committed (the broker's source publication):
+	// the shape of the committed files, their size, and the history they sit on.
+	RuleSourcePolicy  = "source.policy"
+	RuleSourceSize    = "source.size"
+	RuleSourceHistory = "source.history"
+
 	// Telemetry bindings (.sdo/diagnostics/telemetry), the detection designer's
 	// data: sources and backends are checked against the environment's policy
 	// and the adapter registry without executing anything.

@@ -131,7 +131,7 @@ func TestQueuedReflectionCommittedOnlyWhenAcceptedBranchHasTheCommit(t *testing.
 	accepted := filepath.Join(root, "accepted")
 	ledger := queuedReflectionLedger(t, root, func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
 		// Stand in for a broker publication that already reached the branch.
-		queuedReflectionGit(t, accepted, "commit", "-q", "--allow-empty", "-m", "sdo(incident-1): validated reflection\n\nSDO-Incident: incident-1\nSDO-Phase: reflection")
+		queuedReflectionGit(t, accepted, "-c", "user.name=SDO Commit Broker", "-c", "user.email=sdo-commit-broker@localhost", "commit", "-q", "--allow-empty", "-m", "sdo(incident-1): validated reflection\n\nSDO-Incident: incident-1\nSDO-Phase: reflection")
 		return ReflectionDecision{LearningDecision: "updated"}, nil
 	})
 	head := queuedReflectionGit(t, accepted, "rev-parse", "HEAD")
@@ -153,7 +153,7 @@ func TestQueuedReflectionServesTheAcceptedHeadAfterALaterPublication(t *testing.
 	root := t.TempDir()
 	accepted := filepath.Join(root, "accepted")
 	ledger := queuedReflectionLedger(t, root, func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
-		queuedReflectionGit(t, accepted, "commit", "-q", "--allow-empty", "-m", "sdo(incident-1): validated reflection\n\nSDO-Incident: incident-1\nSDO-Phase: reflection")
+		queuedReflectionGit(t, accepted, "-c", "user.name=SDO Commit Broker", "-c", "user.email=sdo-commit-broker@localhost", "commit", "-q", "--allow-empty", "-m", "sdo(incident-1): validated reflection\n\nSDO-Incident: incident-1\nSDO-Phase: reflection")
 		return ReflectionDecision{LearningDecision: "updated"}, nil
 	})
 	reflection := ledger.GetReflectionCommit()
