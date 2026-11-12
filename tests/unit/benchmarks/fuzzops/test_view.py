@@ -539,3 +539,15 @@ def test_cli_reports_a_run_without_operator_output(tmp_path: Path, capsys: pytes
     lines = capsys.readouterr().out.splitlines()
     assert "no operator directory" in lines[0]
     assert "1 incidents" in lines[1]
+
+
+def test_redaction_is_linear_in_the_text() -> None:
+    """Long command output (a word of 200 kB) is redacted in well under a second: no pattern rescans a word from each
+    of its positions."""
+    import time
+
+    text = "x" * 200_000 + " password=hunter2"
+    start = time.monotonic()
+    out = view.redact(text)
+    assert time.monotonic() - start < 1.0
+    assert out.endswith("password=" + view.REDACTED)

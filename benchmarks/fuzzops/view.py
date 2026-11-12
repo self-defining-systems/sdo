@@ -65,9 +65,11 @@ class ViewError(ValueError):
 
 # ---- redaction -----------------------------------------------------------------------------------------------
 
+# Key names are bounded (40 characters around the keyword): an unbounded prefix rescans every long word from each
+# of its positions, quadratic in the text's length.
 _KEY = (
-    r"[A-Za-z0-9_.-]*(?:token(?!s\b|s[_-]|_count|_usage|_limit|_budget)|secret|password|passwd|api[_-]?key|apikey"
-    r"|authorization|cookie|client[_-]key[_-]data|private[_-]?key)[A-Za-z0-9_.-]*"
+    r"[A-Za-z0-9_.-]{0,40}(?:token(?!s\b|s[_-]|_count|_usage|_limit|_budget)|secret|password|passwd|api[_-]?key|apikey"
+    r"|authorization|cookie|client[_-]key[_-]data|private[_-]?key)[A-Za-z0-9_.-]{0,40}"
 )
 _PEM = re.compile(r"-----BEGIN [A-Z0-9 ]+-----.*?(?:-----END [A-Z0-9 ]+-----|\Z)", re.DOTALL)
 _JWT = re.compile(r"\beyJ[\w-]{5,}\.eyJ[\w-]{5,}\.[\w-]*")
@@ -85,7 +87,7 @@ _PLAIN = re.compile(
 )
 _SCHEME = re.compile(r"\b(Bearer|Basic)[ \t]+([A-Za-z0-9._~+/=-]{8,})")
 _BASE64_FIELD = re.compile(
-    r"((?:[\w.-]*-data|data|secret)[ \t]*[:=][ \t]*[\"']?)[A-Za-z0-9+/]{40,}={0,2}", re.IGNORECASE
+    r"((?:[\w.-]{0,40}-data|data|secret)[ \t]*[:=][ \t]*[\"']?)[A-Za-z0-9+/]{40,}={0,2}", re.IGNORECASE
 )
 
 
