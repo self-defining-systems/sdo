@@ -77,8 +77,8 @@ max_chars = 744
 reason = "Actual benchmark transport appendix: 676 Unicode code points, with 10 percent headroom."
 
 [responder.instructions]
-max_chars = 450
-reason = "The responder's three-line first message with both skill paths: about 330 Unicode code points with a long skills root, plus headroom. The workflow, late-finding and patch-capture sentences moved into the skills."
+max_chars = 1800
+reason = "The responder's first message: the symptom block of at most 1100 code points (failing user tests grouped by status and server error with failed counts, first failing sample, passing tests, sdo verify), plus the identity line and the two skill lines (about 330 code points with a long skills root), plus headroom."
 
 [session.incident_data]
 max_chars = 100
@@ -347,6 +347,10 @@ reason = "Explicit template-placeholder cap; preserve small identities inline an
 [template_data.responder-incident_prompt-opened_on]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_prompt-symptom]
+max_chars = 1200
+reason = "The symptom block is bounded to 1100 code points by the renderer; the cap leaves headroom so it is never spilled to a context file."
 
 [template_data.responder-incident_prompt-skills_root]
 max_chars = 256
