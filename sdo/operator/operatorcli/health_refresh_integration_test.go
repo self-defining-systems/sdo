@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/rendered"
 )
@@ -61,7 +62,17 @@ func TestRefreshNeedsJudgeOnShapeNotSourceBytes(t *testing.T) {
 	}
 	shapeGit(t, dir, "add", "-A")
 	shapeGit(t, dir, "commit", "-q", "-m", "judge\n\nSDO-Actor: health_judge\nSDO-Phase: initial\nSDO-Validation: passed")
-	config := &contracts.ControllerConfig{AppRoot: dir, Namespace: "app", Duration: durationpb.New(0)}
+	cfg := settings.Default()
+	cfg.Agent.Model = "test-model"
+	yaml, err := cfg.YAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settingsPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(settingsPath, yaml, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	config := &contracts.ControllerConfig{AppRoot: dir, Namespace: "app", Duration: durationpb.New(0), SettingsPath: settingsPath}
 
 	shapeWrite(t, dir, "main.go", "package main // v2\n")
 	shapeGit(t, dir, "commit", "-qam", "benign")
