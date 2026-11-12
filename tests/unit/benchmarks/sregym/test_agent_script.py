@@ -298,13 +298,7 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
                                 "text": "package synthetic\n",
                             }
                         ],
-                        "result": {
-                            "summary": "Added synthetic incident detector",
-                            "learning_decision": "updated",
-                            "proposed_artifact_ids": ["synthetic"],
-                            "no_change_reason": None,
-                            "sdk_gaps": [],
-                        },
+                        "result": {"note": "Added synthetic incident detector"},
                     },
                 ],
             }
@@ -376,7 +370,7 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
                 prompt="Reflect on independently verified closure",
                 idempotency_key=f"reflection:{incident}:{'a' * 40}",
             )
-            assert reflected.learning_decision == "updated"
+            assert reflected.note
             assert (root / ".sdo/diagnostics/detectors/incidents/synthetic/detector.go").exists()
             assert not failures
         finally:

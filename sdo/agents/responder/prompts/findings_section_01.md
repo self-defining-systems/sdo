@@ -1,1 +1,0 @@
-## Live evidence at dispatch (closure request)

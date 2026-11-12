@@ -5,8 +5,7 @@ import pytest
 from sdo.agents.code_paths import agent_guidance
 from sdo.agents.responder.codex import _responder_prompt
 from sdo.agents.responder.credentials import AGENT_SKILLS, skills_for_role
-from sdo.agents.responder.reflection import _logical_learning_request
-from sdo.contracts import IncidentClosure, IncidentRequest, OperationalMemorySnapshot, OutcomeRecord
+from sdo.contracts import IncidentRequest, OperationalMemorySnapshot
 
 
 def test_default_code_path_keeps_existing_skills(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -27,16 +26,7 @@ def test_shell_guidance_is_free_form_and_points_at_sdo_detect(monkeypatch: pytes
     assert "Go SDK" not in prompt
     assert "sdo-shell-authoring" in skills_for_role("responder")
     assert "sdo-detector-authoring" not in skills_for_role("reflector")
-    reflection = _logical_learning_request(
-        outcome=OutcomeRecord(incident_id="incident-1"),
-        history=[],
-        outcome_commit="outcome",
-        closure=IncidentClosure(request=request),
-        guidance="baseline",
-    )
-    assert "notes and shell scripts" in reflection
-    assert "incident-1" in reflection
-    assert "required structure" not in reflection
+    assert skills_for_role("reflector") == ("playbook-writing",)
 
 
 def test_guidance_override_and_invalid_selection(monkeypatch: pytest.MonkeyPatch) -> None:

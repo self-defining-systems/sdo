@@ -39,7 +39,6 @@ def test_outcomes_are_typed_across_the_reflection_boundary() -> None:
     assert hasattr(contract_proto, "OutcomeRecord")
     fields = contract_proto.ReflectionRequest.DESCRIPTOR.fields_by_name
     assert fields["outcome"].message_type.full_name == "sdodev.contracts.v1alpha1.OutcomeRecord"
-    assert fields["prior_outcomes"].message_type.full_name == "sdodev.contracts.v1alpha1.OutcomeRecord"
 
 
 def test_outcome_classification_is_read_from_proto_validation() -> None:

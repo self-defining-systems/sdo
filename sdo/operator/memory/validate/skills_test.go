@@ -33,8 +33,7 @@ var internalRules = map[string]string{
 	RulePatchUpstreamBase:       "Go fills Upstream-Base; agents never choose it",
 	RuleDeploymentInvalid:       "Go writes the canonical plan.yaml during deployment admission; no skill flow edits it",
 
-	RuleReflectionDetectorRequired: "a coverage-gap name, recorded and never refused; the skills teach linking detectors",
-	RuleTrafficDefaultLatency:      "a coverage-gap name, recorded and never refused; the detector-authoring skill teaches latency bounds",
+	RuleTrafficDefaultLatency: "a coverage-gap name, recorded and never refused; the detector-authoring skill teaches latency bounds",
 }
 
 // ruleIDs returns every rule constant declared in rules.go.

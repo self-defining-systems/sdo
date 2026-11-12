@@ -1,1 +1,0 @@
-[... ${omitted} commands omitted ...]

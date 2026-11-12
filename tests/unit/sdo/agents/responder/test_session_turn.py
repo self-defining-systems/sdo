@@ -1,8 +1,7 @@
-"""The responder turn and its resumed reflection turn share one prompt-cache prefix."""
+"""The responder turn and its resumed closing turn share one prompt-cache prefix."""
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
@@ -12,8 +11,7 @@ from google.protobuf import json_format
 
 from sdo.agents.responder import CodexSessionBackend, execute_incident, session_output_schema, unwrap_branch
 from sdo.agents.responder.codex import ResponderExecutionError
-from sdo.agents.responder.reflection import ClaudeSessionBackend
-from sdo.agents.responder.reflection_validation import validation_server
+from sdo.agents.responder.reflection import ClaudeSessionBackend, closing_prompt
 from sdo.agents.responder.session_turn import WrongBranchError
 from sdo.contracts import IncidentRequest, IncidentResult
 from tests.proto_messages import evolve
@@ -21,12 +19,7 @@ from tests.structured_turns import ScriptedAgent, reply
 from tests.unit.sdo.agents.prompts.cases import responder_prompt as _responder_prompt
 from tests.unit.sdo.agents.responder.test_codex_responder import _fixture
 
-_REFLECTION = {
-    "summary": "covered",
-    "learning_decision": "no_change",
-    "no_change_reason": "ok",
-    "proposed_artifact_ids": [],
-}
+_REFLECTION = {"note": "ok"}
 
 
 def _raw_schema(request: object) -> str:
@@ -56,29 +49,18 @@ class _Recorder:
         return reply(self.provider, self._output, session_id="session-1", branch=self._branch)
 
 
-def _model_visible(servers: dict[str, dict[str, object]]) -> dict[str, object]:
-    """What a server definition shows the model: its name and timeout (the tools are listed separately)."""
-    return {name: entry.get("tool_timeout_s") for name, entry in servers.items()}
-
-
-def _tool_definitions(root: Path) -> list[str]:
-    return [tool.model_dump_json() for tool in asyncio.run(validation_server(root).list_tools())]
-
-
 @pytest.mark.parametrize(
     ("provider", "backend_type"), [("codex", CodexSessionBackend), ("claude", ClaudeSessionBackend)]
 )
-def test_responder_and_reflection_turns_send_the_same_model_visible_schema_and_mcp_servers(
+def test_responder_and_closing_turns_send_the_same_schema_and_no_mcp_server(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     provider: str,
     backend_type: type[CodexSessionBackend],
     prepare_reflection_memory,
 ) -> None:
-    # The turns deliberately run in different roots with different environments: the reflection turn
-    # works in a scratch clone and the broker pins SDO_* values per phase. ``--root`` and the server
-    # environment are process launch details the model never sees, so only the prompt-cache prefix
-    # (schema bytes, server name, tool definitions, tool timeout) must match.
+    # The closing turn works in a scratch clone and the broker pins SDO_* values per phase; only the
+    # prompt-cache prefix (schema bytes, and no tool list on either turn) must match.
     responder_root, reflection_root = tmp_path / "responder", tmp_path / "reflection"
     responder_root.mkdir()
     reflection_root.mkdir()
@@ -100,18 +82,17 @@ def test_responder_and_reflection_turns_send_the_same_model_visible_schema_and_m
     execute_incident(request, provider=provider, executor=responder.agent.executor)
     prepare_reflection_memory(reflection_root)
     backend_type(reasoning_effort="medium", executor=reflection.agent.executor).resume(
-        session_id="session-1", worktree=reflection_root, prompt="reflect", idempotency_key="reflection:test"
+        session_id="session-1",
+        worktree=reflection_root,
+        prompt=closing_prompt(incident_id="incident", changes=[]),
+        idempotency_key="reflection:test",
+        check=False,
     )
 
     assert responder.schemas == reflection.schemas
     assert json.loads(responder.schemas[0]) == session_output_schema()
-    (responder_servers,), (reflection_servers,) = responder.servers, reflection.servers
-    assert set(responder_servers) == {"sdo_reflection"}
-    assert _model_visible(responder_servers) == _model_visible(reflection_servers)
-    assert responder.tool_timeouts == reflection.tool_timeouts
-    assert _tool_definitions(responder_root) == _tool_definitions(reflection_root)
-    # The launch details really do differ, so the equality above is not vacuous.
-    assert responder_servers != reflection_servers
+    assert responder.servers == [{}]
+    assert reflection.servers == [{}]
 
 
 def test_session_schema_is_a_strict_wrapper_of_both_turn_results() -> None:
@@ -208,10 +189,14 @@ def test_reflection_resumes_once_when_it_answers_in_the_wrong_branch(
     agent = ScriptedAgent(lambda _request: replies.pop(0))
 
     turn = backend_type(reasoning_effort="medium", executor=agent.executor).resume(
-        session_id="session-1", worktree=tmp_path, prompt="reflect", idempotency_key="reflection:test"
+        session_id="session-1",
+        worktree=tmp_path,
+        prompt=closing_prompt(incident_id="incident", changes=[]),
+        idempotency_key="reflection:test",
+        check=False,
     )
 
-    assert turn.learning_decision == "no_change"
+    assert turn.note == "ok"
     assert len(agent.requests) == 2
     assert "`reflection`" in agent.prompts[1]
     assert "Idempotency key" not in agent.prompts[1]
@@ -224,7 +209,11 @@ def test_reflection_raises_the_typed_error_when_the_correction_is_also_wrong(tmp
 
     with pytest.raises(WrongBranchError, match="no reflection object; it filled incident_result"):
         CodexSessionBackend(reasoning_effort="medium", executor=agent.executor).resume(
-            session_id="session-1", worktree=tmp_path, prompt="reflect", idempotency_key="reflection:test"
+            session_id="session-1",
+            worktree=tmp_path,
+            prompt=closing_prompt(incident_id="incident", changes=[]),
+            idempotency_key="reflection:test",
+            check=False,
         )
 
     assert len(agent.requests) == 2

@@ -95,9 +95,9 @@ def reflection_script(
     def tool(argv: list[str], **_: Any) -> None:
         steps.append(Tool(kind="tool", argv=argv, timeout=300.0 if argv[1:3] == ["memory", "check"] else 180.0))
 
-    def finish(**result: Any) -> AgentScript:
-        result.setdefault("no_change_reason", None)
-        result.setdefault("sdk_gaps", [])
+    def finish(**fields: Any) -> AgentScript:
+        # The closing turn replies with one line; Go derives the decision from the checkout's diff.
+        result = {"note": str(fields.get("summary") or fields.get("no_change_reason") or "done")}
         return AgentScript(
             version=1,
             turns=[

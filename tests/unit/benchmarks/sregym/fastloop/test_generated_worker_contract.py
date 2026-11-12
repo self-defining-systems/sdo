@@ -16,6 +16,7 @@ from benchmarks.sregym.agent_script.runner import execute
 from benchmarks.sregym.agent_script.wire import EventStream
 from benchmarks.sregym.fastloop.reflection_script import reflection_script
 from sdo.agents.responder import ReflectionTurn
+from sdo.agents.responder.reflection import changed_playbooks
 from sdo.contracts import IncidentClosure
 from tests.unit.benchmarks.sregym.fastloop import script_harness as scripts
 
@@ -181,8 +182,8 @@ def test_scripted_reflector_writes_program_that_passes_real_memory_check(
     assert "memory check" in output.getvalue()
     assert not list(tools.glob("reflection-decision-*"))
 
-    assert turn.learning_decision == "updated"
-    assert turn.playbook_ids == [scripts.PROGRAM_ID]
+    assert turn.note
+    assert changed_playbooks(app) == [scripts.PROGRAM_ID]
     program = app / ".sdo/playbooks" / scripts.PROGRAM_ID
     assert (program / "diagnose.go").is_file()
     assert "originating_incident: scripted-incident" in (program / "README.md").read_text()

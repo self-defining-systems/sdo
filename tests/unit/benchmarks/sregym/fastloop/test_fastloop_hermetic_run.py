@@ -522,12 +522,12 @@ class Controller(FakeOps):
             if not closure or closure["request"]["incident_id"] != incident:
                 return
             if incident == "incident-1":
-                turn = scripts.Reflector().resume(
+                turn = scripts.Reflector().learn(
                     worktree=self.app.workspace,
                     incident_id=incident,
                     closure=SimpleNamespace(request=SimpleNamespace(namespace=NAMESPACE, drift_events=[])),
                 )
-                assert turn.playbook_ids == [scripts.PROGRAM_ID]
+                assert turn.note
                 directory = self.app.workspace / ".sdo/playbooks" / scripts.PROGRAM_ID
                 corpus = next((self.app.workspace / ".sdo/corpus").iterdir())
                 labels = json.loads((corpus / "labels.json").read_text())
