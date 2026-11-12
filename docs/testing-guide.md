@@ -1068,7 +1068,7 @@ a day. Fix the class: reproduce with repetition under load (`go test -count=N`, 
 minutes), find the race, wall-clock dependency or shared resource, and remove it; do not add retries or raise a timeout
 unless the condition really is a wall-clock bound. When a fix does not fit the day, add the test to
 `.github/ci_quarantine.json` with an owner, a reason and a deadline (a Go id is `<package import path> <TopLevelTest>`, a
-pytest id is the node id). Pull request, merge-queue and main runs skip quarantined tests (`go test -skip`, `pytest --deselect`);
+pytest id is the node id). Pull request and main runs skip quarantined tests (`go test -skip`, `pytest --deselect`);
 the nightly run still runs them. `scripts/ci_quarantine.py check`, part of `check_errors.sh`, fails once a deadline passes
 or the test no longer exists, so each entry ends in a fix or a deletion.
 
