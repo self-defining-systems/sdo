@@ -252,7 +252,7 @@ func (s *SessionToolServer) process(ctx context.Context) error {
 
 // detect takes one fresh snapshot and runs only the selected deterministic
 // detectors. It never diagnoses programs, prepares plans or consumes a batch.
-func (l *ResponderLoop) detect(ctx context.Context, ids []string, response *ToolResponse) {
+func (l *ResponderLoop) detect(ctx context.Context, ids []string, finding string, response *ToolResponse) {
 	selected := map[string]bool{}
 	valid := make([]string, 0, len(l.Detectors))
 	for _, detector := range l.Detectors {
@@ -323,4 +323,16 @@ func (l *ResponderLoop) detect(ctx context.Context, ids []string, response *Tool
 		response.Healthy = response.Healthy && state.Status == DetectorEvaluationClear
 	}
 	response.Summary = fmt.Sprintf("%d detectors evaluated; %d current findings", len(response.DetectorStates), len(response.Findings)) + pendingEvaluationSummary(response.DetectorStates)
+	if reads, ok := any(view).(detectReads); ok && len(selected) == 0 {
+		summary := buildDetectSummary(detectInput{Request: l.Request, Findings: response.Findings, View: reads, Now: l.clock().UTC(), Recovered: l.detectIncidentRecovered()})
+		response.Text = summary.Text
+		if finding != "" {
+			text, found := summary.item(finding)
+			if !found {
+				response.Error = fmt.Sprintf("no current item matches %q; sdo detect lists the current ones", finding)
+				return
+			}
+			response.Text = text
+		}
+	}
 }

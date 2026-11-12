@@ -44,6 +44,7 @@ type ToolRequest struct {
 	PreviousFindings    []sdk.Finding                          `json:"previous_findings,omitempty"`
 	FindingFingerprints []string                               `json:"finding_fingerprints,omitempty"`
 	DetectorIDs         []string                               `json:"detector_ids,omitempty"`
+	Finding             string                                 `json:"finding,omitempty"`
 	Refs                []sdk.ObjectRef                        `json:"refs,omitempty"`
 	Parameters          map[string]string                      `json:"parameters,omitempty"`
 	Selection           *contracts.MitigationSelection         `json:"-"`
@@ -80,6 +81,7 @@ type VerificationStatus string
 const VerificationAwaitingResponderCompletion VerificationStatus = "awaiting_responder_completion"
 
 type ToolResponse struct {
+	Text                string              `json:"text,omitempty"`
 	Burst               *prober.BurstResult `json:"burst,omitempty"`
 	VerificationStatus  VerificationStatus  `json:"verification_status,omitempty"`
 	MemoryCheckReport   json.RawMessage     `json:"memory_check_report,omitempty"`
@@ -624,7 +626,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	case "report":
 		l.selectionReport(ctx, request.ReportQuery, &response)
 	case "detect":
-		l.detect(ctx, request.DetectorIDs, &response)
+		l.detect(ctx, request.DetectorIDs, request.Finding, &response)
 	case "status":
 		response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
 		response.Trust = l.Trust

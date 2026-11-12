@@ -159,6 +159,12 @@ def _parser() -> argparse.ArgumentParser:
             metavar="ID",
             help="detector IDs to run; repeat for more IDs (default: all)",
         )
+        if name == "detect":
+            check.add_argument(
+                "--finding",
+                metavar="ID",
+                help="print one item of the summary in full: a test ID, component, clue ID, tests or background",
+            )
     for name in ("diagnose", "menu"):
         command = commands.add_parser(
             name,
@@ -385,6 +391,8 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
     if args.command == "detect":
         if args.detector:
             request["detector_ids"] = args.detector
+        if args.finding:
+            request["finding"] = args.finding
     elif args.command in ("diagnose", "menu"):
         if args.program_id:
             request["program_id"] = args.program_id
@@ -594,6 +602,9 @@ def _print_response(response: dict[str, Any], *, full_json: bool) -> None:
             print(text)
         return
     output = write_response(response)
+    if response.get("command") == "detect" and response.get("text") and not full_json:
+        print(cap_text(str(response["text"]), budget_for("tool_stdout.detect") - 1))
+        return
     text = json.dumps(response, ensure_ascii=False, sort_keys=True) if full_json else render_summary(output)
     limit = budget_for("tool_stdout." + str(response["command"]))
     print(cap_text(text, limit - 1, json_output=full_json))
