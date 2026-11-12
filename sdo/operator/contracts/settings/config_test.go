@@ -198,3 +198,57 @@ func TestValidateCoversTheRetiredParserChecks(t *testing.T) {
 		t.Fatalf("the default go code path selects nothing: %v, %v", plain, err)
 	}
 }
+
+// The detection section holds the operator timing that decides when a held condition opens an incident; its
+// defaults are the production values and a benchmark profile overrides them by file or environment.
+func TestDetectionDefaultsFileAndEnvironment(t *testing.T) {
+	def := settings.Default().Detection
+	if time.Duration(def.SelfHealHold) != 5*time.Minute || time.Duration(def.StabilityWindow) != 15*time.Second || time.Duration(def.DriftBatchWindow) != 20*time.Second {
+		t.Fatalf("detection defaults = %+v", def)
+	}
+	file := filepath.Join(t.TempDir(), "bench.yaml")
+	if err := os.WriteFile(file, []byte("detection:\n  self_heal_hold: 60s\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := settings.Resolve([]string{file}, []string{"SDO_AGENT_MODEL=m"})
+	if err != nil || time.Duration(cfg.Detection.SelfHealHold) != time.Minute {
+		t.Fatalf("file: %v %+v", err, cfg.Detection)
+	}
+	cfg, err = settings.Resolve([]string{file}, []string{"SDO_AGENT_MODEL=m", "SDO_DETECTION_SELF_HEAL_HOLD=90s"})
+	if err != nil || time.Duration(cfg.Detection.SelfHealHold) != 90*time.Second {
+		t.Fatalf("environment must win over the file: %v %+v", err, cfg.Detection)
+	}
+	for _, mutate := range []func(*settings.Config){
+		func(c *settings.Config) { c.Detection.SelfHealHold = 0 },
+		func(c *settings.Config) { c.Detection.StabilityWindow = 0 },
+		func(c *settings.Config) { c.Detection.DriftBatchWindow = 0 },
+	} {
+		bad := settings.Default()
+		bad.Agent.Model = "m"
+		mutate(&bad)
+		if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "detection.") {
+			t.Fatalf("a non-positive detection value must be refused, got %v", err)
+		}
+	}
+}
+
+// Only the detection section can change what an accepted detector decides, so only it is bound into an
+// operability report's subject.
+func TestDetectionDigestBindsOnlyTheDetectionSection(t *testing.T) {
+	base := settings.Default()
+	base.Agent.Model = "m"
+	digest := base.DetectionDigest()
+	if len(digest) != 64 {
+		t.Fatalf("digest = %q, want sha256 hex", digest)
+	}
+	other := base
+	other.Response.Timeout = settings.Duration(time.Hour)
+	other.Agent.Effort = "high"
+	if other.DetectionDigest() != digest {
+		t.Fatal("a response or agent value must not change the detection digest")
+	}
+	other.Detection.SelfHealHold = settings.Duration(time.Minute)
+	if other.DetectionDigest() == digest {
+		t.Fatal("a 60s hold must not share the 5m digest")
+	}
+}

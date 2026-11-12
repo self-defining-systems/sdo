@@ -13,7 +13,7 @@ import (
 func subject() Subject {
 	return Subject{
 		AcceptedCommit: "c0", BaseTree: "t-base", EffectiveTree: "t-eff",
-		PatchesDigest: "p0", RenderDigest: "r0", EnvDigest: "e0", DiagnosticsTree: "t-diag",
+		PatchesDigest: "p0", RenderDigest: "r0", EnvDigest: "e0", SettingsDigest: "s0", DiagnosticsTree: "t-diag",
 	}
 }
 
@@ -277,6 +277,7 @@ func TestBindsTo(t *testing.T) {
 		"patches_digest":   func(x *Subject) { x.PatchesDigest = "other" },
 		"render_digest":    func(x *Subject) { x.RenderDigest = "other" },
 		"env_digest":       func(x *Subject) { x.EnvDigest = "other" },
+		"settings_digest":  func(x *Subject) { x.SettingsDigest = "other" },
 		"diagnostics_tree": func(x *Subject) { x.DiagnosticsTree = "other" },
 	}
 	for name, m := range mutators {

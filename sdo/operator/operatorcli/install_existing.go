@@ -73,7 +73,6 @@ func ParseInstallExistingLaunchEnv(args []string, environ []string) (InstallExis
 	repositoryPVC := flags.String("repository-pvc", "", "shared accepted repository PVC")
 	credentialsSecret := flags.String("credentials-secret", "", "agent credentials Secret")
 	duration := flags.Duration("duration", 0, "bounded controller duration")
-	selfHealHold := flags.Duration("self-heal-hold", 0, "controller self_heal_hold: how long a Kubernetes failure condition without a give-up signal must hold before it opens an incident (0: the controller default)")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "stop after the first closure")
 	registrationConfigMap := flags.String("agent-registration-configmap", "", "registration ConfigMap")
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes client and kubectl config")
@@ -130,9 +129,6 @@ func ParseInstallExistingLaunchEnv(args []string, environ []string) (InstallExis
 	}
 	if *duration > 0 {
 		config.ExtraControllerArgs = append(config.ExtraControllerArgs, "--duration", duration.String())
-	}
-	if *selfHealHold > 0 {
-		config.ExtraControllerArgs = append(config.ExtraControllerArgs, "--self-heal-hold", selfHealHold.String())
 	}
 	if *exitAfterClosure {
 		config.ExtraControllerArgs = append(config.ExtraControllerArgs, "--exit-after-closure")

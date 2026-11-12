@@ -68,6 +68,14 @@ environment; use `SDO_AGENT_CODE_PATH` and `SDO_RESPONSE_MENU`.
 | `response.permissive` | `SDO_RESPONSE_PERMISSIVE` | bool | `false` | broad lane repair permissions excluding Secret and credential APIs |
 | `response.permissive_namespaces` | `SDO_RESPONSE_PERMISSIVE_NAMESPACES` | list (JSON) | `[]` | additional lane namespaces the permissive responder may repair |
 
+### `detection`
+
+| Key | Env | Type | Default | Description |
+|---|---|---|---|---|
+| `detection.self_heal_hold` | `SDO_DETECTION_SELF_HEAL_HOLD` | duration | `5m0s` | how long a Kubernetes condition without a give-up signal must hold before it opens an incident; carried in every detector observation and bound into the operability report |
+| `detection.stability_window` | `SDO_DETECTION_STABILITY_WINDOW` | duration | `15s` | how long the opening alerts must stay clear after SDO's last write settled before the incident counts as recovered |
+| `detection.drift_batch_window` | `SDO_DETECTION_DRIFT_BATCH_WINDOW` | duration | `20s` | batch window for unexplained drift |
+
 ### `learning`
 
 | Key | Env | Type | Default | Description |

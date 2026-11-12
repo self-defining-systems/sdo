@@ -421,7 +421,7 @@ func (b *Broker) PublishAdvance(ctx context.Context, id, upstream, base string, 
 	if err := validateSourceEvidence(evidence); err != nil {
 		return Receipt{}, err
 	}
-	digest, err := advanceReportDigest(report, evidence)
+	digest, err := advanceReportDigest(report, evidence, b.settingsDigest)
 	if err != nil {
 		return Receipt{}, err
 	}

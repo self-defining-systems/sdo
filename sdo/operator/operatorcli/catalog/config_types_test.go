@@ -4,11 +4,11 @@ import (
 	"strings"
 	"testing"
 
+	"sdo.dev/operator/imagesrc/buildkit"
 	"sdo.dev/operator/internal/archcheck"
 	"sdo.dev/operator/operatorcli/catalog/images"
 	"sdo.dev/operator/operatorcli/catalog/renderers"
 	"sdo.dev/operator/operatorcli/catalog/upstreams"
-	"sdo.dev/operator/imagesrc/buildkit"
 )
 
 // TestEveryPluginConfigTypeIsInTheArchcheckRegistry fails when a built-in

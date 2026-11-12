@@ -150,12 +150,18 @@ def test_a_format_1_baseline_translates_its_controller_flags_to_config(tmp_path:
             "--allow-registry",
             "r1,r2",
             "--frozen-memory",
+            "--self-heal-hold",
+            "60s",
+            "--closure-stability-window=15s",
+            "--drift-batch-window",
+            "20s",
         ],
     )
     loaded = Baseline.load(root)
     assert loaded.format == 2
     assert loaded.config == {
         "mode": "frozen",
+        "detection": {"self_heal_hold": "60s", "stability_window": "15s", "drift_batch_window": "20s"},
         "response": {
             "timeout": "1800s",
             "verification_timeout": "300s",
@@ -172,7 +178,7 @@ def test_a_format_1_baseline_translates_its_controller_flags_to_config(tmp_path:
 @pytest.mark.parametrize(
     ("flags", "message"),
     [
-        (["--self-heal-hold", "60s"], "--self-heal-hold has no operator config key"),
+        (["--self-heal-window", "60s"], "--self-heal-window has no operator config key"),
         (["--model", "x"], "--model has no operator config key"),
         (["--kubeconfig=/k"], "set by the hook"),
         (["--watch-only"], "require --frozen-memory"),
@@ -475,8 +481,11 @@ def test_the_experiment_config_cannot_set_what_the_hook_sets(tmp_path: Path) -> 
         OperatorBlock.load(_operator_file(tmp_path, root, model="gpt-x", config={"agent": {"effort": "low"}}))
 
 
-def test_the_benchmark_profile_differs_from_production_only_in_the_repair_policy() -> None:
-    assert yaml.safe_load(BENCH_PROFILE.read_text()) == {"response": {"repair_policy": "recorded-actions"}}
+def test_the_benchmark_profile_differs_from_production_in_the_repair_policy_and_the_self_heal_hold() -> None:
+    assert yaml.safe_load(BENCH_PROFILE.read_text()) == {
+        "response": {"repair_policy": "recorded-actions"},
+        "detection": {"self_heal_hold": "60s"},
+    }
 
 
 @pytest.mark.parametrize("missing", ["BENCH_EVIDENCE_NODE", "BENCH_EVIDENCE_RUN"])

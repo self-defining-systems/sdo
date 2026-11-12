@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sdo.dev/operator/contracts/settings"
 	"sort"
 	"strings"
 	"testing"
@@ -415,7 +416,7 @@ func TestAdvanceRecreatesAFinishedJobAndAWorkloadWithAChangedSelector(t *testing
 		Maintenance: advMaintenance{}, Activity: advMaintenance{},
 		Wait: advClock.wait, Now: advClock.now,
 	}
-	result, err := advancer.Advance(ctx, lifecycle.AdvanceConfig{
+	result, err := advancer.Advance(ctx, lifecycle.AdvanceConfig{SettingsDigest: settings.Default().DetectionDigest(),
 		Namespace: advChartNamespace, HealthObjective: "every synthetic workload stays available", GitDir: filepath.Join(o.accepted, ".git"),
 		PendingEvaluations: 1, InfrastructureTries: 1,
 	}, upstream.Request{Source: sources[0], Revision: latest, Prev: prev})

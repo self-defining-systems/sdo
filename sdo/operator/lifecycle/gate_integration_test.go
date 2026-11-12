@@ -12,10 +12,10 @@ import (
 	"testing"
 
 	"sdo.dev/operator/broker"
-	"sdo.dev/operator/telemetry"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/internal/testutil"
 	"sdo.dev/operator/operability"
+	"sdo.dev/operator/telemetry"
 )
 
 // gateWorld is a real accepted repository and broker with the memory a health
@@ -43,7 +43,7 @@ func newGateWorld(t *testing.T) *gateWorld {
 	}
 	testutil.Git(t, w.accepted, "add", ".")
 	testutil.Git(t, w.accepted, "commit", "-qm", "seed")
-	b, err := broker.New(w.accepted, filepath.Join(base, "workspaces"), func(context.Context, string, []string) error { return nil }, broker.ObservationPolicy{Telemetry: broker.Telemetry{Registry: telemetry.NewRegistry()}})
+	b, err := broker.New(w.accepted, filepath.Join(base, "workspaces"), func(context.Context, string, []string) error { return nil }, broker.ObservationPolicy{SettingsDigest: "settings-digest", Telemetry: broker.Telemetry{Registry: telemetry.NewRegistry()}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func gateCoordinator(w *gateWorld, v *scriptedVerifier) Coordinator {
 }
 
 func gateConfig() Config {
-	return Config{OperationID: "op", Application: "app", Namespace: "ns", HealthObjective: "stay up", MaxAttempts: 1, PendingEvaluations: 1, InfrastructureTries: 1}
+	return Config{SettingsDigest: "settings-digest", OperationID: "op", Application: "app", Namespace: "ns", HealthObjective: "stay up", MaxAttempts: 1, PendingEvaluations: 1, InfrastructureTries: 1}
 }
 
 // The staged judge candidate is not the accepted head until the report accepts
@@ -235,7 +235,7 @@ func TestRealBrokerRefusesAJudgeCandidateWithoutABoundReport(t *testing.T) {
 		}
 		subject := operability.Subject{
 			AcceptedCommit: candidate.Commit, BaseTree: deployment.BaseTree, EffectiveTree: deployment.EffectiveTree, PatchesDigest: deployment.PatchesDigest,
-			RenderDigest: deployment.RenderDigest, EnvDigest: deployment.EnvDigest, DiagnosticsTree: candidate.DiagnosticsTree,
+			RenderDigest: deployment.RenderDigest, EnvDigest: deployment.EnvDigest, SettingsDigest: "settings-digest", DiagnosticsTree: candidate.DiagnosticsTree,
 		}
 		report, err := operability.New(operability.StageComplete, subject).With(checks...)
 		if err != nil {

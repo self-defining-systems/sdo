@@ -17,7 +17,6 @@ func inventoryObject(apiVersion, kind, name string) *unstructured.Unstructured {
 	return o
 }
 
-
 // The objects the deployer applies in hook phases are accepted, not strangers:
 // the drift inventory must not report them as absent from accepted source
 // whether the hook's delete policy kept them or not, nor demand them when the

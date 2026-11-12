@@ -403,7 +403,7 @@ func newHarness(t *testing.T, verifier *fakeVerifier) *harness {
 }
 
 func config() lifecycle.Config {
-	return lifecycle.Config{OperationID: "op", Application: "app", Namespace: "ns", HealthObjective: "stay up", MaxAttempts: 3, PendingEvaluations: 4, PendingInterval: time.Second, InfrastructureTries: 3, InfrastructureBackoff: time.Second}
+	return lifecycle.Config{SettingsDigest: "settings-digest", OperationID: "op", Application: "app", Namespace: "ns", HealthObjective: "stay up", MaxAttempts: 3, PendingEvaluations: 4, PendingInterval: time.Second, InfrastructureTries: 3, InfrastructureBackoff: time.Second}
 }
 
 var (

@@ -87,7 +87,7 @@ func refreshControllerHealthOnce(ctx context.Context, scope string, config *cont
 	if err != nil {
 		return err
 	}
-	if _, err := coordinator.RefreshHealth(ctx, lifecycle.Config{Application: config.GetApplication(), Namespace: config.GetNamespace(), DeploymentSource: source, RenderEnvironment: config.GetRenderEnvironment(), RefreshScope: scope}, revision); err != nil {
+	if _, err := coordinator.RefreshHealth(ctx, lifecycle.Config{SettingsDigest: policy.DetectionDigest(), Application: config.GetApplication(), Namespace: config.GetNamespace(), DeploymentSource: source, RenderEnvironment: config.GetRenderEnvironment(), RefreshScope: scope}, revision); err != nil {
 		return err
 	}
 	accepted, err := memory.AcceptedHealthRevision(ctx, config.GetAppRoot(), shapeOf)
@@ -220,7 +220,7 @@ func newControllerBroker(config *contracts.ControllerConfig) (*broker.Broker, er
 	if err != nil {
 		return nil, err
 	}
-	return broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), selectMemoryValidator(config.GetCodePath(), validation.Validator()), broker.ObservationPolicy{Telemetry: telemetry, Replay: policy.Learning.Replay, CodePath: memoryCodePath(config.GetCodePath()), Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
+	return broker.New(config.GetAppRoot(), config.GetBrokerWorktreeRoot(), selectMemoryValidator(config.GetCodePath(), validation.Validator()), broker.ObservationPolicy{SettingsDigest: policy.DetectionDigest(), Telemetry: telemetry, Replay: policy.Learning.Replay, CodePath: memoryCodePath(config.GetCodePath()), Ceiling: ceiling, ApplicationNamespace: config.GetNamespace()})
 }
 
 // healthRefreshCoordinator is the Coordinator of a health refresh: the judge's

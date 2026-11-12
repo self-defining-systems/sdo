@@ -87,7 +87,7 @@ func TestCleanDeploymentPassesAndFitsTheReport(t *testing.T) {
 	// The checks are well-formed report content for items O1, O2 and O6.
 	r, err := operability.New(operability.StageDeployment, operability.Subject{
 		AcceptedCommit: "c", BaseTree: "b", EffectiveTree: "e", PatchesDigest: "p",
-		RenderDigest: res.Set.RenderDigest, EnvDigest: res.Set.EnvDigest,
+		RenderDigest: res.Set.RenderDigest, EnvDigest: res.Set.EnvDigest, SettingsDigest: "s",
 	}).With(res.Checks...)
 	if err != nil {
 		t.Fatal(err)
@@ -327,7 +327,7 @@ func TestEarlyFailureDecidesTheReportNotSilence(t *testing.T) {
 	d.PatchesErr = &rendered.SourceError{Kind: rendered.SourceInvalid, Err: &patchset.PatchError{Kind: patchset.KindConflict, Patch: "0001-x.patch", Detail: "x"}}
 	res := offline.CheckDeployment(context.Background(), d)
 	r, err := operability.New(operability.StageDeployment, operability.Subject{
-		AcceptedCommit: "c", BaseTree: "b", EffectiveTree: "e", PatchesDigest: "p", RenderDigest: "r", EnvDigest: "v",
+		AcceptedCommit: "c", BaseTree: "b", EffectiveTree: "e", PatchesDigest: "p", RenderDigest: "r", EnvDigest: "v", SettingsDigest: "s",
 	}).With(res.Checks...)
 	if err != nil {
 		t.Fatal(err)

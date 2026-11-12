@@ -204,7 +204,7 @@ func TestCandidateOperabilityIsRecomputedFromTheStageAndTheDeployment(t *testing
 	good := func() CandidateEvidence {
 		subject := operability.Subject{
 			AcceptedCommit: head, BaseTree: evidence.BaseTree, EffectiveTree: evidence.EffectiveTree, PatchesDigest: evidence.PatchesDigest,
-			RenderDigest: evidence.RenderDigest, EnvDigest: evidence.EnvDigest, DiagnosticsTree: diagnostics,
+			RenderDigest: evidence.RenderDigest, EnvDigest: evidence.EnvDigest, SettingsDigest: testSettingsDigest, DiagnosticsTree: diagnostics,
 		}
 		complete, err := operability.New(operability.StageComplete, subject).With(passingChecks("O1.deploy", "O2.stamps", "O3.ready", "O4.detectors", "O5.memory", "O6.budget")...)
 		if err != nil {

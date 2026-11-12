@@ -86,6 +86,7 @@ func (c Coordinator) candidateReport(ctx context.Context, cfg Config, candidate 
 	subject := operability.Subject{
 		AcceptedCommit: candidate.Commit, BaseTree: deployment.BaseTree, EffectiveTree: deployment.EffectiveTree,
 		PatchesDigest: deployment.PatchesDigest, RenderDigest: deployment.RenderDigest, EnvDigest: deployment.EnvDigest,
+		SettingsDigest:  cfg.SettingsDigest,
 		DiagnosticsTree: candidate.DiagnosticsTree,
 	}
 	report, err := operability.New(operability.StageComplete, subject).With(checks...)

@@ -164,7 +164,7 @@ Each label, with captured before and after snapshots, is stored as a drift corpu
 | Source write-back and structural proposals | Unbuilt |
 | Additional foreign kinds and relation-scoped admission | Unbuilt; explicit extensions require churn evidence |
 
-The deployed drift flag is `--drift-batch-window`. Removed investigator config tags 59–61, state tag 32, the drift budget config tags 67–68 and state tag 33 are reserved; coordinated controller/worker images use the ordinary IncidentResult assessments. Synthetic detector IDs use dots to obey the mainline grammar. New run metadata declares `token_accounting_version: responder-drift/v2`; `drift_tokens` is legacy zero and merged reasoning is charged once to responder usage. Historical costs remain readable.
+The drift batch window is `detection.drift_batch_window` in the operator configuration. Removed investigator config tags 59–61, state tag 32, the drift budget config tags 67–68 and state tag 33 are reserved; coordinated controller/worker images use the ordinary IncidentResult assessments. Synthetic detector IDs use dots to obey the mainline grammar. New run metadata declares `token_accounting_version: responder-drift/v2`; `drift_tokens` is legacy zero and merged reasoning is charged once to responder usage. Historical costs remain readable.
 
 ### Hermetic coverage and churn
 

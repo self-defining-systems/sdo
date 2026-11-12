@@ -240,10 +240,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	duration := flags.Duration("duration", 0, "bounded controller duration; zero runs until cancellation")
 	memoryHostBinary := flags.String("memory-host-binary", "", "validated host binary")
 	memoryHostDigest := flags.String("memory-host-digest", "", "validated host digest")
-	driftBatchWindow := flags.Duration("drift-batch-window", 20*time.Second, "batch window for unexplained drift")
 	identity := flags.String("identity", defaultIdentity(), "unique leader-election identity")
-	closureStability := flags.Duration("closure-stability-window", 15*time.Second, "stable independent verification required to close a running incident")
-	selfHealHold := flags.Duration("self-heal-hold", sdk.DefaultSelfHealHold, "how long a Kubernetes failure condition without its own give-up signal must hold before it opens an incident (self_heal_hold)")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "exit after one closure is durably acknowledged")
 	maintenanceConfigMap := flags.String(
 		"maintenance-configmap", MaintenanceConfigMapName, "maintenance ConfigMap in the control namespace",
@@ -333,9 +330,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		options.NativeBroker.ForceReflection = true
 	}
 
-	if *driftBatchWindow <= 0 || *selfHealHold <= 0 {
-		return errors.New("drift batch window and self-heal hold must be positive")
-	}
 	if *controlNamespace == "" {
 		*controlNamespace = *namespace
 	}
@@ -495,7 +489,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	kubernetesCache, err := NewKubernetesCache(KubernetesCacheConfig{
 		AcceptedScope: func(ctx context.Context) (sdk.ObservationScope, string, error) {
 			return acceptedScope(ctx, resolvedRoot)
-		}, GenericCapture: genericCapture, Scope: scope, Ceiling: ceiling, Generation: scopeCommit, Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true, SelfHealHold: *selfHealHold, Clock: clock.Now, TimerClock: clock, ResyncPeriod: options.InformerResync,
+		}, GenericCapture: genericCapture, Scope: scope, Ceiling: ceiling, Generation: scopeCommit, Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true, SelfHealHold: time.Duration(policy.Detection.SelfHealHold), Clock: clock.Now, TimerClock: clock, ResyncPeriod: options.InformerResync,
 	}, detectors)
 	if err != nil {
 		return fmt.Errorf("create Kubernetes informer cache: %w", err)
@@ -810,8 +804,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		Application: *application, Namespace: *namespace,
 		SourceCommit: resolvedSourceCommit, DeployedCommit: resolvedDeployedCommit,
 		RepositoryWorktree: resolvedRoot, CorpusSessionRoot: corpusSessionRoot,
-		ClosureStabilityWindow: *closureStability,
-		FiringThreshold:        2, ClearThreshold: 2, BatchDebounce: 500 * time.Millisecond,
+		BatchDebounce:        500 * time.Millisecond,
 		ConfirmationInterval: time.Second,
 		// The submit gate confirms a clearing finding on 3 fresh evaluations
 		// over at least 2 s instead of waiting for the detector's interval;
@@ -831,7 +824,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		controller.gitRead = options.PlanGit
 	}
 	if !externalIncidents {
-		controller.ConfigureDrift(DriftControllerConfig{Inventory: true, Events: kubernetesCache, Source: planSource, Client: bootstrapProvider.Client, BatchWindow: *driftBatchWindow,
+		controller.ConfigureDrift(DriftControllerConfig{Inventory: true, Events: kubernetesCache, Source: planSource, Client: bootstrapProvider.Client, BatchWindow: time.Duration(policy.Detection.DriftBatchWindow),
 			View: func(snapshot sdk.DetectionContext) program.ReadView {
 				if cycle, ok := snapshot.(*CycleReadView); ok {
 					return cycle
@@ -1894,6 +1887,7 @@ func evaluateOnce(
 		if err != nil {
 			return fmt.Errorf("create Kubernetes snapshot provider: %w", err)
 		}
+		kubernetesProvider.SelfHealHold = time.Duration(policy.Detection.SelfHealHold)
 		if *appRoot != "" {
 			scope, revision, err := observation.Accepted(ctx, *appRoot)
 			if err != nil {
@@ -2044,7 +2038,6 @@ func evaluateOnce(
 		Application: *application, Namespace: *namespace,
 		SourceCommit: "evaluation", DeployedCommit: "evaluation",
 		RepositoryWorktree: ".",
-		FiringThreshold:    1, ClearThreshold: 1,
 	}.WithSettings(policy), detectors, provider, evaluationDispatcher{}, start)
 	if err != nil {
 		return err
