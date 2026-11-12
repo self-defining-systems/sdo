@@ -519,7 +519,7 @@ func (e KubernetesExecutor) publishWarmTask(ctx context.Context, task *contracts
 	if workerio.Since(b.ClaimedAt) > standbyPublishDeadline {
 		return unpublished(errors.New("standby claim is too old to publish before the pod expires"))
 	}
-	environment := cloneEnvironment(e.Environment)
+	environment := e.agentEnvironment()
 	for _, identity := range workerIdentityEnvironment() {
 		delete(environment, identity.Name)
 	}

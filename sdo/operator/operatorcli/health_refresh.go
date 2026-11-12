@@ -143,7 +143,6 @@ func controllerAgentWorkers(config *contracts.ControllerConfig) (*worker_registr
 	for name, value := range policy {
 		environment[name] = value
 	}
-	environment["CODEX_HOME"], environment["CLAUDE_CONFIG_DIR"] = "/tmp/codex", "/tmp/claude"
 	namespace := config.GetControlNamespace()
 	if namespace == "" {
 		namespace = config.GetNamespace()

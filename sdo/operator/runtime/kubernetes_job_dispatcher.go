@@ -275,8 +275,6 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 		if err != nil {
 			return IncidentResult{}, fmt.Errorf("prepare isolated responder session: %w", err)
 		}
-		environment["CODEX_HOME"] = "/sdo/session/codex"
-		environment["CLAUDE_CONFIG_DIR"] = "/sdo/session/claude"
 		environment["SDO_SESSION_SCRATCH"] = "/sdo/session/scratch"
 		environment["SDO_RESPONDER_USAGE_DIR"] = "/sdo/session/usage"
 		environment[latefindings.ReceiptsPathEnv] = latefindings.DefaultReceiptsPath
