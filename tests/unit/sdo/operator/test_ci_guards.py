@@ -229,6 +229,15 @@ def test_slow_test_script_fails_on_an_unlisted_offender(tmp_path: Path) -> None:
     assert ok.returncode == 0
 
 
+def test_slow_test_script_tolerates_runner_noise_just_over_the_budget(tmp_path: Path) -> None:
+    log = tmp_path / "go.json"
+    log.write_text(go_event("pass", "sdo.dev/old", "TestNoisy", 10.3) + "\n")
+    script = [sys.executable, str(ROOT / "scripts/check_slow_tests.py"), "--go", str(log)]
+    result = subprocess.run(script, capture_output=True, text=True, check=False)
+    assert result.returncode == 0
+    assert "::warning::sdo.dev/old TestNoisy took 10.3s" in result.stdout
+
+
 def test_slow_test_script_warns_about_a_test_over_half_the_budget(tmp_path: Path) -> None:
     log = tmp_path / "go.json"
     log.write_text(go_event("pass", "sdo.dev/new", "TestVaries", 6) + "\n")

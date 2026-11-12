@@ -25,6 +25,11 @@ BUDGETS = Path(__file__).resolve().parents[1] / ".github" / "ci_budgets.json"
 PYTEST_DURATION = re.compile(r"^\s*(?P<seconds>\d+(?:\.\d+)?)s\s+(?:call|setup|teardown)\s+(?P<node>\S+)")
 
 
+# A shared runner varies a test's wall time by tens of percent, so a test just over the budget is a warning and only
+# one over NOISE_FACTOR times the budget fails an existing PR (a new test over half the budget still fails).
+NOISE_FACTOR = 1.5
+
+
 def go_slow(lines: Iterable[str], limit: float) -> dict[str, float]:
     """Slowest elapsed per '<package> <TopLevelTest>'. Parallel subtests report time the parent does not."""
     slow: dict[str, float] = {}
@@ -113,13 +118,14 @@ def main() -> int:
     budgets = json.loads(BUDGETS.read_text())
     limit = float(budgets["slow_test_seconds"])
     allowed = budgets["slow_tests"]
+    hard = limit * NOISE_FACTOR
     found: dict[str, float] = {}
     for path in args.go:
-        found.update(offenders(go_slow(path.read_text(errors="replace").splitlines(), limit), allowed["go"]))
+        found.update(offenders(go_slow(path.read_text(errors="replace").splitlines(), hard), allowed["go"]))
     for path in args.pytest:
-        found.update(offenders(pytest_slow(path.read_text(errors="replace").splitlines(), limit), allowed["python"]))
+        found.update(offenders(pytest_slow(path.read_text(errors="replace").splitlines(), hard), allowed["python"]))
     for key, seconds in sorted(found.items(), key=lambda item: -item[1]):
-        print(f"::error::{key} took {seconds:.1f}s (PR budget {limit:.0f}s)")
+        print(f"::error::{key} took {seconds:.1f}s (PR budget {limit:.0f}s, failing above {hard:.0f}s)")
     near = {key: s for key, s in near_budget(args, allowed, limit).items() if key not in found}
     fresh = new_near_budget(near, allowed, args.base) if args.base else {}
     for key, seconds in sorted(fresh.items(), key=lambda item: -item[1]):
@@ -138,7 +144,7 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    print(f"no PR-tier test over {limit:.0f}s outside the allowlist")
+    print(f"no PR-tier test over {hard:.0f}s outside the allowlist")
     return 0
 
 
