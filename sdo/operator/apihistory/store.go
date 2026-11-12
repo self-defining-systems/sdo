@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sdo.dev/operator/apihistory/internal/apiio"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -94,13 +95,18 @@ type Event struct {
 }
 
 type Manifest struct {
-	Generation string    `json:"generation"`
-	Version    int       `json:"version"`
-	Incident   string    `json:"incident"`
-	Epoch      uint64    `json:"epoch"`
-	Complete   bool      `json:"complete"`
-	Open       bool      `json:"open"`
-	Dropped    uint64    `json:"dropped"`
+	Generation string `json:"generation"`
+	Version    int    `json:"version"`
+	Incident   string `json:"incident"`
+	Epoch      uint64 `json:"epoch"`
+	Complete   bool   `json:"complete"`
+	Open       bool   `json:"open"`
+	Dropped    uint64 `json:"dropped"`
+	// WriteGaps counts lost write records only: a lost start or end envelope of a write or exec session, and
+	// each restart of the recorder. Lost bodies, oversized responses and interrupted streams are not write gaps.
+	// A gap is a write at WriteGapAt: nothing unrecorded can follow it, so readers restart settlement there.
+	WriteGaps  uint64    `json:"write_gaps,omitempty"`
+	WriteGapAt time.Time `json:"write_gap_at,omitempty"`
 	Events     uint64    `json:"events"`
 	Bytes      int64     `json:"bytes"`
 	Updated    time.Time `json:"updated"`
@@ -122,6 +128,7 @@ type Store struct {
 	manifest    Manifest
 	queue       chan observation
 	dropped     atomic.Uint64
+	gapMu       sync.Mutex
 	closeOnce   sync.Once
 	gate        sync.RWMutex
 	closed      bool
@@ -175,6 +182,9 @@ func Open(directory, incident string, limits Limits) (*Store, error) {
 		if err := recoverUsage(directory, &m); err != nil {
 			return nil, err
 		}
+		// A recorder that restarts may have lost a write's record while it was gone.
+		m.WriteGaps++
+		m.WriteGapAt = apiio.Now().UTC()
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
@@ -233,7 +243,7 @@ func (s *Store) Record(event Event, raw []byte) {
 		return
 	}
 	if !event.Reserved && len(s.queue) >= s.limits.Queue {
-		s.Gap()
+		s.lose(event)
 		return
 	}
 	select {
@@ -274,20 +284,20 @@ func (s *Store) enqueue(event Event, body []byte) {
 		default:
 			s.queuedBytes.Add(-weight)
 			s.failed.Store(true)
-			s.Gap()
+			s.lose(event)
 		}
 		return
 	}
 	if s.queuedBytes.Add(weight) > MaxQueuedBytes || len(s.queue) >= s.limits.Queue {
 		s.queuedBytes.Add(-weight)
-		s.Gap()
+		s.lose(event)
 		return
 	}
 	select {
 	case s.queue <- observation{event: event, body: body, weight: weight}:
 	default:
 		s.queuedBytes.Add(-weight)
-		s.Gap()
+		s.lose(event)
 	}
 }
 
@@ -307,6 +317,44 @@ func (s *Store) Admit() error {
 	return nil
 }
 func (s *Store) Gap() { s.dropped.Add(1) }
+
+// WriteGap records that a write's record was lost, at the current time.
+func (s *Store) WriteGap() {
+	s.gapMu.Lock()
+	defer s.gapMu.Unlock()
+	s.manifest.WriteGaps++
+	s.manifest.WriteGapAt = apiio.Now().UTC()
+}
+
+// lose counts an envelope that could not be stored: always a gap, and a write gap when it belonged to a write
+// or an exec or attach session.
+func (s *Store) lose(event Event) {
+	s.Gap()
+	if WriteClass(event) {
+		s.WriteGap()
+	}
+}
+
+// WriteClass reports whether an event belongs to a request that changes the cluster: a POST, PUT, PATCH or
+// DELETE on any resource or subresource, or an exec or attach session. Reads, dry runs, port-forward tunnels
+// and other connect subresources, and the review creates that persist nothing are not writes.
+func WriteClass(event Event) bool {
+	if event.DryRun {
+		return false
+	}
+	switch event.Subresource {
+	case "exec", "attach":
+		return true
+	case "portforward", "proxy":
+		return false
+	}
+	switch event.Verb {
+	case "post", "put", "patch", "delete":
+	default:
+		return false
+	}
+	return !strings.HasSuffix(event.Resource, "subjectaccessreviews") && event.Resource != "selfsubjectrulesreviews" && event.Resource != "selfsubjectreviews" && event.Resource != "tokenreviews"
+}
 func (s *Store) Close() {
 	s.closeOnce.Do(func() {
 		s.gate.Lock()
@@ -318,6 +366,8 @@ func (s *Store) Close() {
 	})
 }
 func (s *Store) writeManifest() error {
+	s.gapMu.Lock()
+	defer s.gapMu.Unlock()
 	s.manifest.Dropped = s.dropped.Load()
 	s.manifest.Complete = s.manifest.Complete && s.manifest.Dropped == 0
 	s.manifest.Updated = apiio.Now().UTC()
@@ -346,7 +396,7 @@ func (s *Store) run() {
 			}
 			s.queuedBytes.Add(-item.weight)
 			if err := s.append(item); err != nil {
-				s.dropped.Add(1)
+				s.lose(item.event)
 				s.noteAppendFailure(item, err)
 			}
 			if err := s.writeManifest(); err != nil {
@@ -385,11 +435,13 @@ drain:
 	s.gate.Unlock()
 	for _, item := range batch {
 		if err := s.append(item); err != nil {
-			s.Gap()
+			s.lose(item.event)
 			s.noteAppendFailure(item, err)
 		}
 	}
+	s.gapMu.Lock()
 	s.manifest.SnapshotThrough = through
+	s.gapMu.Unlock()
 	if err := s.writeManifest(); err != nil {
 		s.Gap()
 		s.failed.Store(true)
@@ -456,22 +508,26 @@ func (s *Store) append(item observation) error {
 }
 
 type History struct {
-	Manifest  Manifest `json:"manifest"`
-	Events    []Event  `json:"events"`
+	Manifest Manifest `json:"manifest"`
+	Events   []Event  `json:"events"`
+	// Live is true while a recording proxy holds the history's writer lock.
+	Live      bool `json:"-"`
 	directory string
 }
 
 func Read(directory string) (History, error) { return readPrefix(directory, nil) }
 
 // ReadThrough reads one immutable manifest-bounded prefix covering until. A
-// live writer is safe only with a producer checkpoint; stale generations,
-// disabled recording and actual drops retain their rejection semantics.
+// live writer is safe only with a producer checkpoint. It never fails because a response body or stream was
+// lost: completeness for write readers is Manifest.WriteGaps, which includes the write records a stale
+// generation, disabled recording, a short event file or an unparsable line lost. The read waits for a
+// checkpoint covering until.
 func ReadThrough(ctx context.Context, directory string, until time.Time) (History, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	for {
 		h, err := readPrefix(directory, &until)
-		if err != nil || !h.Manifest.Open || !h.Manifest.SnapshotThrough.Before(until) {
+		if err != nil || !h.Manifest.Open || !h.Live || !h.Manifest.SnapshotThrough.Before(until) {
 			return h, err
 		}
 		timer := apiio.NewTimer(10 * time.Millisecond)
@@ -490,6 +546,7 @@ func readPrefix(directory string, through *time.Time) (History, error) {
 	// live forwarding generation invalidates a previous closed manifest even if
 	// the recorder cannot write a disabled marker.
 	writerOpen := writerPresent(directory)
+	h.Live = writerOpen
 	b, err := os.ReadFile(filepath.Join(directory, "manifest.json"))
 	if err != nil {
 		return h, fmt.Errorf("Unknown: history manifest: %w", err)
@@ -513,10 +570,12 @@ func readPrefix(directory string, through *time.Time) (History, error) {
 	defer f.Close()
 	scan := bufio.NewScanner(f)
 	scan.Buffer(make([]byte, 4096), 64<<10)
+	parseFailed := false
 	for (through == nil || uint64(len(h.Events)) < h.Manifest.Events) && scan.Scan() {
 		var e Event
 		if err := json.Unmarshal(scan.Bytes(), &e); err != nil {
 			h.Manifest.Complete = false
+			parseFailed = true
 			break
 		}
 		h.Events = append(h.Events, e)
@@ -537,20 +596,31 @@ func readPrefix(directory string, through *time.Time) (History, error) {
 	if err := scan.Err(); err != nil {
 		return h, err
 	}
+	// Lost records found at read time are write gaps at the last time the manifest was written: the recorder
+	// refuses a write it cannot record, so nothing unrecorded follows.
+	lostRecords := parseFailed
 	if uint64(len(h.Events)) != h.Manifest.Events {
 		h.Manifest.Complete = false
+		lostRecords = lostRecords || (through != nil && uint64(len(h.Events)) < h.Manifest.Events)
 	}
 	if _, err := os.Stat(filepath.Join(directory, "recording-disabled")); (writerOpen && (through == nil || (!h.Manifest.Open && h.Manifest.SnapshotThrough.Before(*through)))) || !errors.Is(err, os.ErrNotExist) {
 		h.Manifest.Complete = false
 		h.Manifest.Dropped++
+		lostRecords = lostRecords || !errors.Is(err, os.ErrNotExist)
 	}
 	expected, generationErr := generation(directory)
 	if generationErr != nil || expected != h.Manifest.Generation {
 		h.Manifest.Complete = false
 		h.Manifest.Dropped++
+		lostRecords = true
 	}
-	if through != nil && !h.Manifest.Complete && (!h.Manifest.Open || !h.Manifest.SnapshotThrough.Before(*through)) {
-		return h, errors.New("history checkpoint is incomplete")
+	// A manifest still open with no live writer is a recorder that died with records queued.
+	lostRecords = lostRecords || (through != nil && h.Manifest.Open && !writerOpen)
+	if lostRecords && through != nil {
+		h.Manifest.WriteGaps++
+		if h.Manifest.WriteGapAt.Before(h.Manifest.Updated) {
+			h.Manifest.WriteGapAt = h.Manifest.Updated
+		}
 	}
 	return h, nil
 }
