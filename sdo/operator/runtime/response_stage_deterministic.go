@@ -29,6 +29,10 @@ const stagePlanNotExecutable = "plan_not_executable"
 // but not new evidence. A finding the earlier attempt did not target is.
 const stageIneffective = "ineffective"
 
+// stageBuiltinRestoreManual skips the built-in source-restore playbook, which
+// the stage applies only when response.builtin_restore_auto is set.
+const stageBuiltinRestoreManual = "builtin_restore_manual"
+
 // stageRevertedIneffective is an applied attempt that cleared none of its
 // findings while its diagnosis still matched, whose writes the stage restored
 // before handoff so the responder starts from the original fault.
@@ -287,6 +291,12 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		}
 		if ineffective.covers(attempt.PlaybookId, attempt.ProgramRevision, match.targets) {
 			if err := skip(stageIneffective); err != nil {
+				return report, err
+			}
+			continue
+		}
+		if match.PlaybookId == SourceRestoreID && !loop.BuiltinRestoreAuto {
+			if err := skip(stageBuiltinRestoreManual); err != nil {
 				return report, err
 			}
 			continue

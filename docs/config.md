@@ -65,6 +65,7 @@ environment; use `SDO_AGENT_CODE_PATH` and `SDO_RESPONSE_MENU`.
 | `response.repair_policy` | `SDO_RESPONSE_REPAIR_POLICY` | string | `commit` | the evidence the controller requires for a responder repair: commit (a source repair is committed through the broker; production) or recorded-actions (live cluster repairs are recorded as actions without a source commit; benchmark runs) |
 | `response.standby` | `SDO_RESPONSE_STANDBY` | bool | `true` | pre-start a responder worker; false forces cold Jobs |
 | `response.menu` | `SDO_RESPONSE_MENU` | bool | `true` | offer the responder its tool menu |
+| `response.builtin_restore_auto` | `SDO_RESPONSE_BUILTIN_RESTORE_AUTO` | bool | `false` | let the automatic stage apply the built-in source-restore playbook (put a component's non-SDO departures from accepted source back) when its diagnosis matches; off, it is only offered like any playbook and the responder decides |
 | `response.permissive` | `SDO_RESPONSE_PERMISSIVE` | bool | `false` | broad lane repair permissions excluding Secret and credential APIs |
 | `response.permissive_namespaces` | `SDO_RESPONSE_PERMISSIVE_NAMESPACES` | list (JSON) | `[]` | additional lane namespaces the permissive responder may repair |
 | `response.startup_bound` | `SDO_RESPONSE_STARTUP_BOUND` | duration | `30m0s` | how long a new install waits for SDO to see its application healthy (2 min with no opener firing) before incidents open anyway; until then no incident opens. 0s turns the start-up period off |

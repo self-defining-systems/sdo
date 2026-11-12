@@ -97,6 +97,8 @@ type failingTest struct {
 type detectSuspect struct {
 	component program.AppComponent
 	passing   bool // also on passing paths
+	// everyPath is true for a component on every failing path, or the workload of an opening condition.
+	everyPath bool
 	changeAt  time.Time
 	change    string
 	changeCmd string
@@ -317,6 +319,22 @@ func hms(at time.Time) string {
 // (who, when, which fields), preferring one made shortly before onset, or the
 // configuration diff against the last healthy baseline, which has no time.
 func suspectChange(in detectInput, objects []sdk.ObjectRef, onset time.Time) (at time.Time, text, command string) {
+	// Departures from accepted source by a non-SDO manager are the strongest
+	// clue: the classifier the responder's other readers share names who, when
+	// and what, and the expand line is the command that restores the object.
+	departures := SourceDepartures(departureInput(in.Request, in.View, onset), objects)
+	if len(departures) > 0 {
+		first := departures[0]
+		text = first.Text()
+		if len(departures) > 1 {
+			text += fmt.Sprintf(" (+%d more)", len(departures)-1)
+		}
+		command = first.Command()
+		if command == "" {
+			command = fmt.Sprintf("kubectl -n %s describe secret %s", first.Ref.Namespace, first.Ref.Name)
+		}
+		return first.At, text, command
+	}
 	var best *sdk.DriftEvent
 	var bestAt time.Time
 	for index := range in.Request.DriftEvents {
@@ -474,12 +492,21 @@ func objectOfFinding(finding sdk.Finding) []sdk.ObjectRef {
 	return refs
 }
 
-// buildDetectSummary renders the compact incident summary: what users see
-// first, then the suspects on the failing paths (each with its latest change,
-// new log errors, clues and matching playbooks), then the other clues. It
-// never exceeds detectSummaryCap bytes and counts every item it drops.
-func buildDetectSummary(in detectInput) detectSummary {
-	items := map[string]string{}
+// detectSuspectSet is what the incident points at: the judged user tests, the
+// components on the failing paths, and the opening findings and clues. Both
+// `sdo detect` and the built-in restore playbook's candidates read it, so they
+// name the same suspects.
+type detectSuspectSet struct {
+	m                              program.AppMap
+	failing                        []failingTest
+	passing, unevaluated           []string
+	passingServices                map[string]bool
+	openingFindings, clues         []sdk.Finding
+	onset                          time.Time
+	suspects                       []*detectSuspect
+}
+
+func buildSuspectSet(in detectInput) detectSuspectSet {
 	m, _ := in.View.AppMap()
 	failing, passing, unevaluated, passingServices := judgedTests(in.View, m)
 	opening := openingKeys(&in.Request)
@@ -502,12 +529,12 @@ func buildDetectSummary(in detectInput) detectSummary {
 	// workloads of the opening conditions.
 	var suspects []*detectSuspect
 	seen := map[string]bool{}
-	addSuspect := func(component program.AppComponent) {
+	addSuspect := func(component program.AppComponent, everyPath bool) {
 		if component.Name == "" || seen[component.Name] {
 			return
 		}
 		seen[component.Name] = true
-		suspect := &detectSuspect{component: component}
+		suspect := &detectSuspect{component: component, everyPath: everyPath}
 		for _, service := range component.Services {
 			suspect.passing = suspect.passing || passingServices[service]
 		}
@@ -538,7 +565,7 @@ func buildDetectSummary(in detectInput) detectSummary {
 			if !ok {
 				component = program.AppComponent{Name: name}
 			}
-			addSuspect(component)
+			addSuspect(component, slices.Contains(common, name))
 		}
 	}
 	for _, finding := range openingFindings {
@@ -546,20 +573,34 @@ func buildDetectSummary(in detectInput) detectSummary {
 			continue
 		}
 		if component, ok := m.ComponentOf(in.View, finding.PrimaryResource); ok {
-			addSuspect(component)
+			addSuspect(component, true)
 		}
 	}
+	return detectSuspectSet{m: m, failing: failing, passing: passing, unevaluated: unevaluated, passingServices: passingServices, openingFindings: openingFindings, clues: clues, onset: onset, suspects: suspects}
+}
 
+// buildDetectSummary renders the compact incident summary: what users see
+// first, then the suspects on the failing paths (each with its latest change,
+// new log errors, clues and matching playbooks), then the other clues. It
+// never exceeds detectSummaryCap bytes and counts every item it drops.
+func buildDetectSummary(in detectInput) detectSummary {
+	items := map[string]string{}
+	set := buildSuspectSet(in)
+	m, failing, passing, unevaluated := set.m, set.failing, set.passing, set.unevaluated
+	openingFindings, clues, onset, suspects := set.openingFindings, set.clues, set.onset, set.suspects
+	seen := map[string]bool{}
+	for _, suspect := range suspects {
+		seen[suspect.component.Name] = true
+	}
 	namespace := in.Request.Namespace
 	if namespace == "" {
 		namespace = in.View.Namespace()
 	}
 	for _, suspect := range suspects {
-		workload := suspect.component.WorkloadRef(namespace)
 		if suspect.component.Workload == "" {
 			continue
 		}
-		suspect.changeAt, suspect.change, suspect.changeCmd = suspectChange(in, workloadObjects(in.View, workload), onset)
+		suspect.changeAt, suspect.change, suspect.changeCmd = suspectChange(in, componentObjects(in.View, suspect.component, namespace), onset)
 	}
 	// Latest change before onset first; the failing-path order otherwise.
 	order := map[string]int{}
@@ -812,6 +853,10 @@ func playbookFor(in detectInput, m program.AppMap, component string) *contracts.
 			continue
 		}
 		for _, binding := range match.GetBindings() {
+			// The built-in source-restore playbook binds a component by name.
+			if match.GetPlaybookId() == SourceRestoreID && binding.GetName() == SourceRestoreComponentParam && binding.GetValue().GetStringValue() == component {
+				return match
+			}
 			ref := binding.GetObject()
 			if ref == nil {
 				continue

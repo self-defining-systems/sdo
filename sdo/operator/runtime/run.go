@@ -745,6 +745,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					return cloneIncidentRequest(controller.currentIncidentRequest)
 				}
 				loop.DiagnosisDeadline = time.Duration(policy.Response.DiagnosisDeadline)
+				loop.BuiltinRestoreAuto = policy.Response.BuiltinRestoreAuto
 				if options.NativeBroker != nil {
 					loop.RecoverySessionRoot = options.NativeBroker.SessionRoot
 					if replayMode != "off" {
