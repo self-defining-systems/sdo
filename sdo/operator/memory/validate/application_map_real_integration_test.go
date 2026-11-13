@@ -36,6 +36,7 @@ func Scenarios() traffic.Catalog {
 	}
 	later := read("items-later", "web", "api", "db")
 	later.Marker = "sdo-synthetic"
+	later.Steps = []traffic.Step{{Name: "list", Endpoint: traffic.GET("/items", traffic.Params{}).ReadsExistingRecords("items", "name", "^.+$")}}
 	later.Setup = []traffic.Step{{Name: "ensure", Endpoint: traffic.POST("/items", traffic.Params{"name": traffic.Const("sdo-synthetic-fixture")}).OrExisting(409, "exists")}}
 	return traffic.Catalog{read("call-all", "web", "api", "db"), write, later}
 }
@@ -91,6 +92,26 @@ func TestApplicationMapAgainstCompiledScenarios(t *testing.T) {
 		request.Actor, request.Phase = HealthJudge, InitialPhase
 		got, err := CompileCandidate(ctx, request)
 		if err != nil || len(got) != 1 || got[0].Rule != RuleMapSchema || !strings.Contains(got[0].Message, "only the status") {
+			t.Fatalf("designer: %v %v", got, err)
+		}
+	})
+	t.Run("an unmarked records read blocks the designer", func(t *testing.T) {
+		t.Parallel()
+		root := mapCompileTree(t, `read("call-all", "web", "api", "db")`)
+		path := filepath.Join(root, ".sdo/diagnostics/traffic/generators/generators.go")
+		text, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		unmarked := strings.Replace(string(text), `.ReadsExistingRecords("items", "name", "^.+$")`, `.Contains("items")`, 1)
+		if unmarked == string(text) {
+			t.Fatal("the generators carry no marked step")
+		}
+		write(t, root, ".sdo/diagnostics/traffic/generators/generators.go", unmarked)
+		request := compileRequest(root)
+		request.Actor, request.Phase = HealthJudge, InitialPhase
+		got, err := CompileCandidate(ctx, request)
+		if err != nil || len(got) != 1 || got[0].Rule != RuleMapRecordsUnread {
 			t.Fatalf("designer: %v %v", got, err)
 		}
 	})
