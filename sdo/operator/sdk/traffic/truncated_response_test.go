@@ -9,11 +9,18 @@ import (
 	"time"
 )
 
-type sizedAPI struct{ size int }
+type sizedAPI struct{ size, status int }
 
 func (a sizedAPI) Do(request *http.Request) (*http.Response, error) {
 	body := `[` + strings.Repeat(`{"name":"repo"},`, a.size/16) + `{"name":"repo"}]`
-	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+	return &http.Response{StatusCode: a.statusOrOK(), Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+}
+
+func (a sizedAPI) statusOrOK() int {
+	if a.status == 0 {
+		return http.StatusOK
+	}
+	return a.status
 }
 
 func listScenario() Scenario {
@@ -79,4 +86,33 @@ func TestTruncationDefectsNeverFailAScenario(t *testing.T) {
 	if !verdict.Healthy || verdict.Errors != 0 || verdict.Timeouts != 0 || verdict.Samples != 0 {
 		t.Fatalf("verdict = %+v", verdict)
 	}
+}
+
+// A server error is an application failure however large its body is.
+func TestOversizedErrorResponseStaysAFailure(t *testing.T) {
+	engine := setupEngine(t, listScenario(), sizedAPI{size: 2 * MaxResponseBody, status: http.StatusInternalServerError})
+	_, sample := engine.Iterate(context.Background(), 0)
+	if sample.Outcome != OutcomeError || sample.Defect != "" {
+		t.Fatalf("sample = %+v", sample)
+	}
+}
+
+// A body of exactly the cap is read whole; one byte more is truncated.
+func TestCapBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		size int
+		want Outcome
+	}{{MaxResponseBody, OutcomeError}, {MaxResponseBody + 1, OutcomeInvalid}} {
+		engine := setupEngine(t, listScenario(), fixedBody{n: tc.size})
+		if _, sample := engine.Iterate(context.Background(), 0); sample.Outcome != tc.want {
+			t.Fatalf("%d bytes: sample = %+v, want %s", tc.size, sample, tc.want)
+		}
+	}
+}
+
+// fixedBody answers 200 with n bytes of non-JSON, which the list check rejects.
+type fixedBody struct{ n int }
+
+func (f fixedBody) Do(request *http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(strings.Repeat("x", f.n))), Request: request}, nil
 }

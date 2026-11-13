@@ -36,8 +36,9 @@ const (
 	OutcomeInvalid Outcome = "invalid"
 )
 
-// DefectResponseTruncated marks an invalid sample whose step response was
-// longer than MaxResponseBody and failed its check on the cut body. The probe
+// DefectResponseTruncated marks an invalid sample whose successful (2xx) step
+// response was longer than MaxResponseBody and failed its check on the cut
+// body. A non-2xx answer stays an application failure however large its body. The probe
 // cannot judge such a response, so it says nothing about the application: the
 // step must request less data (a smaller page).
 const DefectResponseTruncated = "response_truncated"
@@ -438,10 +439,10 @@ func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *ra
 		body = body[:MaxResponseBody]
 	}
 	verdict := step.Endpoint.Check(Response{Status: response.StatusCode, Header: response.Header.Clone(), Body: body}, state)
-	if !verdict.OK && truncated {
+	if !verdict.OK && truncated && response.StatusCode >= 200 && response.StatusCode < 300 {
 		return stepResult{
 			outcome: OutcomeInvalid, status: response.StatusCode, sent: 1, request: line, defect: DefectResponseTruncated, byteCap: MaxResponseBody,
-			err: fmt.Sprintf("%s: step %q response exceeded the %d-byte cap, so its check could not be judged; probe defect, not an application failure: reduce page size (request at most 20 records)", DefectResponseTruncated, step.Name, MaxResponseBody),
+			err: fmt.Sprintf("%s: step %q response exceeded the %d-byte cap, so its check could not be judged; probe defect, not an application failure: reduce page size or request less data (for a list, at most 20 records)", DefectResponseTruncated, step.Name, MaxResponseBody),
 		}
 	}
 	if !verdict.OK {
