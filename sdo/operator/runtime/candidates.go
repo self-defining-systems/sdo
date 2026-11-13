@@ -795,9 +795,9 @@ func (c *Controller) boundRecentChanges(lines []string) []string {
 	for _, line := range lines {
 		kept = append(kept, strings.ToValidUTF8(line[:min(len(line), candidateRenderCap)], ""))
 	}
-	for len(kept) > 0 && !recentChangesWithin(kept) {
-		kept = kept[:len(kept)-1]
-	}
+	// With every line capped, validity is monotone in the prefix length.
+	keep := sort.Search(len(kept)+1, func(n int) bool { return n > 0 && !recentChangesWithin(kept[:n]) }) - 1
+	kept = kept[:max(keep, 0)]
 	if c.OnError != nil {
 		c.OnError(fmt.Errorf("incident_request.recent_changes exceeded its contract (%d lines); sent %d", len(lines), len(kept)))
 	}
