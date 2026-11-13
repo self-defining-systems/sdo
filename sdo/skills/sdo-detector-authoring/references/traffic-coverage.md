@@ -71,3 +71,13 @@ step picks one of many records at random.
 - After a write, read back what it changed (an order clears what it consumed, a new record is listed). Some
   failures leave the write's own response successful: a service can ignore an error from a dependency it calls only
   to clean up.
+
+## Keep responses small
+
+The prober reads at most `traffic.MaxResponseBody` (64 KiB) of a response. A list step whose answer grows past it
+(record counts only grow) fails its check on a cut body. That is a probe defect, not an application failure: the sample
+is `invalid` with defect `response_truncated`, the scenario stays unproven, and `sdo detect` and the memory check
+report it with the step and the byte cap.
+
+- Request small pages from every list step (a page size of at most 20) and assert on a record you know, never on the
+  whole collection. Prefer a filter or a single-record read over a large listing.

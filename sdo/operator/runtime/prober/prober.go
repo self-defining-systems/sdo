@@ -101,6 +101,8 @@ type scenarioState struct {
 	qualified   bool
 	invalid     int
 	lastInvalid string
+	defect      string
+	byteCap     int
 	// identityWait is the latest sample's probe-user provisioning wait.
 	identityWait time.Duration
 }
@@ -263,6 +265,7 @@ func (p *Prober) record(workload string, scenario string, sample traffic.Sample)
 	if sample.Outcome == traffic.OutcomeInvalid {
 		state.invalid++
 		state.lastInvalid = sample.Error
+		state.defect, state.byteCap = sample.Defect, sample.ByteCap
 	}
 	state.identityWait = sample.IdentityWait
 	state.samples = append(state.samples, sample)
@@ -286,7 +289,7 @@ func (p *Prober) Windows() map[string]traffic.Window {
 			scenario := state.scenarios[id]
 			scenarios = append(scenarios, traffic.ScenarioObservations{
 				Scenario: scenario.descriptor, Samples: append([]traffic.Sample(nil), scenario.samples...),
-				Qualified: scenario.qualified, Invalid: scenario.invalid, LastInvalid: scenario.lastInvalid, IdentityWait: scenario.identityWait,
+				Qualified: scenario.qualified, Invalid: scenario.invalid, LastInvalid: scenario.lastInvalid, Defect: scenario.defect, ByteCap: scenario.byteCap, IdentityWait: scenario.identityWait,
 			})
 		}
 		windows[name] = traffic.Window{
@@ -308,7 +311,7 @@ func (p *Prober) Reset() {
 	defer p.mu.Unlock()
 	for _, state := range p.probes {
 		for _, scenario := range state.scenarios {
-			scenario.samples, scenario.invalid, scenario.lastInvalid = nil, 0, ""
+			scenario.samples, scenario.invalid, scenario.lastInvalid, scenario.defect, scenario.byteCap = nil, 0, "", "", 0
 		}
 		state.skipped = 0
 	}
@@ -392,6 +395,7 @@ func (p *Prober) Burst(ctx context.Context, request BurstRequest) (BurstResult, 
 		if sample.Outcome == traffic.OutcomeInvalid {
 			observed.invalid++
 			observed.lastInvalid = sample.Error
+			observed.defect, observed.byteCap = sample.Defect, sample.ByteCap
 		}
 	})
 	if ctx.Err() != nil {
@@ -405,7 +409,7 @@ func (p *Prober) Burst(ctx context.Context, request BurstRequest) (BurstResult, 
 		// A burst judges the present: every scenario counts, qualified or not.
 		window.Scenarios = append(window.Scenarios, traffic.ScenarioObservations{
 			Scenario: observed.descriptor, Samples: observed.samples, Qualified: true,
-			Invalid: observed.invalid, LastInvalid: observed.lastInvalid,
+			Invalid: observed.invalid, LastInvalid: observed.lastInvalid, Defect: observed.defect, ByteCap: observed.byteCap,
 		})
 		verdict := traffic.Evaluate(id, workload.ScenarioSLO(id), observed.samples, window.ObservedAt)
 		failures := make([]string, 0, len(verdict.RecentFailures))

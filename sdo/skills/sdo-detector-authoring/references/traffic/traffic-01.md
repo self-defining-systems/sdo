@@ -144,6 +144,13 @@ const DefaultHealthMinDuration = 9 * time.Second
     detected in 3-5s. Nine seconds clears the observed stalls with headroom
     while adding at most one more poll beyond real-fault detection.
 
+const DefectResponseTruncated = "response_truncated"
+    DefectResponseTruncated marks an invalid sample whose successful (2xx) step
+    response was longer than MaxResponseBody and failed its check on the cut
+    body. A non-2xx answer stays an application failure however large its body.
+    The probe cannot judge such a response, so it says nothing about the
+    application: the step must request less data (a smaller page).
+
 const ExistingMembersKey = "sdo.existing-members"
     ExistingMembersKey is the State key a ReadsExistingRecords step saves the
     JSON array of the member values it read, for the engine's exercised note.
@@ -219,9 +226,4 @@ func FailingUserScenarios(ctx sdk.DetectionContext) []string
     health-probe scenario of the context's carried windows that violates its SLO
     now: the user-facing failures a cause-only detector may gate on. It is empty
     when the context carries no traffic.
-
-func FromSeedPair(key string, count int, first func(index int) string, second func(index int) string) (Param, Param)
-    FromSeedPair returns two parameters rendered from the same seeded record,
-    such as a user name and its password. The record index is kept in State
-    under key, so later steps can reuse it with FromPrevious.
 ```

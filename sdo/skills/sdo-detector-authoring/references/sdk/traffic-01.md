@@ -34,6 +34,7 @@ const SyntheticHeader = "X-SDO-Synthetic" ...
 const APIVersion = "sdo.dev/v1alpha1" ...
 const DateLayout = "2006-01-02"
 const DefaultHealthMinDuration = 9 * time.Second
+const DefectResponseTruncated = "response_truncated"
 const ExistingMembersKey = "sdo.existing-members"
 const MaxExecStderr = 512
 const MaxKnownBrokenReason = 200

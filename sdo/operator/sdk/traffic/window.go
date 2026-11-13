@@ -28,6 +28,10 @@ type ScenarioObservations struct {
 	// safety rule; LastInvalid explains the latest one.
 	Invalid     int    `json:"invalid,omitempty"`
 	LastInvalid string `json:"lastInvalid,omitempty"`
+	// Defect is the probe-authoring defect (DefectResponseTruncated) of the
+	// latest invalid iteration that had one; ByteCap is the cap it names.
+	Defect  string `json:"defect,omitempty"`
+	ByteCap int    `json:"byteCap,omitempty"`
 	// IdentityWait is set while the latest sample waited for a probe user to
 	// be provisioned: how long one provisioning run may take.
 	IdentityWait time.Duration `json:"identityWait,omitempty"`
