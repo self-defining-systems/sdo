@@ -622,22 +622,14 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			fresh = append(fresh, detector)
 		}
 	}
-	evaluated := evaluateDetectors(ctx, fresh, snapshot)
-	for _, detector := range detectors {
+	apply := func(detector sdk.Detector, result setupDetection) error {
 		spec := detector.Spec()
-		if skipLearned && learnedIncidentDetector(spec) {
-			continue
-		}
-		result, cached := setupResults[spec.ID]
-		if !cached {
-			result = evaluated[spec.ID]
-		}
 		findings, status, detectErr := validateDetectorObservation(detector, snapshot, result.findings, result.err)
 		if detectErr != nil {
 			c.resetGate(spec.ID)
 			c.recordDetectorError(spec.ID, now, detectErr)
 			errored = true
-			continue
+			return nil
 		}
 		if status == DetectorEvaluationPending {
 			c.resetGate(spec.ID)
@@ -646,11 +638,11 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 				c.history = append([]DetectorEvaluation(nil), c.history[len(c.history)-100:]...)
 			}
 			c.trackClearStreak(spec.ID, now, false)
-			continue
+			return nil
 		}
 		validFindings := findings
 		if setupHealthy && learnedIncidentDetector(spec) && c.disableSetupDetector(spec, validFindings, now, onboardingCandidate) {
-			continue
+			return nil
 		}
 		changes := c.tracker.Observe(now, spec.ID, validFindings)
 		c.observeGate(spec.ID, now, validFindings)
@@ -671,6 +663,36 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			c.admitActivation(ctx, finding, now, c.detectorSpecs[spec.ID])
 		}
 		c.recordFiring(spec, now, validFindings, changes)
+		if len(changes.Activated) == 0 {
+			return nil
+		}
+		// An opener must not wait for a slower detector of this batch: it
+		// opens the incident, or joins it, as soon as it is applied.
+		return c.dispatchReady(ctx, now, snapshot)
+	}
+	// Results cached by setup health apply first, in batch order; the rest
+	// apply in completion order, so a fast detector's finding never waits for
+	// a slow one. Each detector owns its own tracker state, so the order
+	// between detectors changes no decision; sampleFindings is sorted below.
+	for _, detector := range detectors {
+		spec := detector.Spec()
+		if skipLearned && learnedIncidentDetector(spec) {
+			continue
+		}
+		if result, cached := setupResults[spec.ID]; cached {
+			if err := apply(detector, result); err != nil {
+				return err
+			}
+		}
+	}
+	var applyErr error
+	evaluateDetectorsEach(ctx, fresh, snapshot, func(detector sdk.Detector, result setupDetection) {
+		if applyErr == nil {
+			applyErr = apply(detector, result)
+		}
+	})
+	if applyErr != nil {
+		return applyErr
 	}
 	if setupHealthy {
 		c.mu.Lock()
@@ -2006,10 +2028,10 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		History: evaluationsContract(history), IncidentOpen: c.incidentOpen, ResponderDone: c.responderDone,
 		DispatchError: c.dispatchError, IncidentDetectedAt: optionalTimestamp(c.incidentDetectedAt),
 		IncidentDispatchedAt: optionalTimestamp(c.incidentDispatchedAt), ResponderCompletedAt: optionalTimestamp(c.responderCompletedAt),
-		EscalatedAt: optionalTimestamp(c.escalatedAt),
-		DetectorClearSince:     timestampsContract(c.detectorClearSince),
-		DispatchState:          dispatchState,
-		IncidentFindingKeys:    append([]string(nil), c.incidentFindingKeys...), ClosureState: c.closureState,
+		EscalatedAt:         optionalTimestamp(c.escalatedAt),
+		DetectorClearSince:  timestampsContract(c.detectorClearSince),
+		DispatchState:       dispatchState,
+		IncidentFindingKeys: append([]string(nil), c.incidentFindingKeys...), ClosureState: c.closureState,
 		ClosureReceipt: closureReceiptContract(c.closureReceipt), ClosureFailure: closureFailureContract(c.closureFailure), FailedClosures: cloneFailedClosures(c.failedClosures),
 		LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID, LastAcknowledgedExternalIncidentId: c.lastAcknowledgedExternalIncidentID, QueuedReflectionIncidentIds: append([]string(nil), c.reflections.queued...), QueuedReflectionsUnknown: c.reflections.unknown,
 		EvaluationIteration: int32(c.evaluationIteration), StepCount: c.stepCount, DetectorTimeline: timeline, IncidentView: view,

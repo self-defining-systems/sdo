@@ -3,7 +3,6 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"sdo.dev/operator/sdk"
@@ -32,6 +31,17 @@ func detectorDeadline(spec sdk.DetectorSpec) time.Duration {
 // not depend on which detector finished first. A panic or a missed deadline is
 // that detector's error and delays no other detector's evaluation.
 func evaluateDetectors(ctx context.Context, detectors []sdk.Detector, snapshot sdk.DetectionContext) map[string]setupDetection {
+	byID := make(map[string]setupDetection, len(detectors))
+	evaluateDetectorsEach(ctx, detectors, snapshot, func(detector sdk.Detector, result setupDetection) {
+		byID[detector.Spec().ID] = result
+	})
+	return byID
+}
+
+// evaluateDetectorsEach is evaluateDetectors that hands each result to apply,
+// on the calling goroutine, as soon as that detector returns. apply never runs
+// concurrently with itself, so it may touch controller state.
+func evaluateDetectorsEach(ctx context.Context, detectors []sdk.Detector, snapshot sdk.DetectionContext, apply func(sdk.Detector, setupDetection)) {
 	// Tool calls already own a scope across detector and program evaluation.
 	// Reuse it so both phases pin the same mirror instead of capturing twice.
 	if scope, _ := ctx.Value(memoryScopeKey{}).(*memoryScope); scope == nil {
@@ -39,44 +49,49 @@ func evaluateDetectors(ctx context.Context, detectors []sdk.Detector, snapshot s
 		ctx, releaseScope = withMemoryScope(ctx)
 		defer releaseScope()
 	}
-	results := make([]setupDetection, len(detectors))
+	type finished struct {
+		index  int
+		result setupDetection
+	}
+	done := make(chan finished, len(detectors))
 	slots := make(chan struct{}, maxConcurrentDetectors)
-	var wg sync.WaitGroup
-	for i, detector := range detectors {
-		slots <- struct{}{}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer func() { <-slots }()
-			spec := detector.Spec()
-			defer func() {
-				if r := recover(); r != nil {
-					results[i] = setupDetection{err: fmt.Errorf("detector %q panicked: %v", spec.ID, r)}
+	// Launching must not block applying: a full slot pool would otherwise hold
+	// back the results of detectors that already returned.
+	go func() {
+		for i, detector := range detectors {
+			slots <- struct{}{}
+			go func() {
+				defer func() { <-slots }()
+				spec := detector.Spec()
+				var result setupDetection
+				defer func() {
+					if r := recover(); r != nil {
+						result = setupDetection{err: fmt.Errorf("detector %q panicked: %v", spec.ID, r)}
+					}
+					done <- finished{i, result}
+				}()
+				if preparation, ok := detector.(interface {
+					prepareDetection(context.Context, sdk.DetectionContext) (sdk.Detector, func(), error)
+				}); ok {
+					prepared, release, err := preparation.prepareDetection(ctx, snapshot)
+					if err != nil {
+						result = setupDetection{err: err}
+						return
+					}
+					defer release()
+					detector = prepared
 				}
+				bounded, cancel := context.WithTimeout(ctx, detectorDeadline(spec))
+				defer cancel()
+				findings, err := sdk.DetectObserved(bounded, detector, snapshot)
+				result = setupDetection{findings, err}
 			}()
-			if preparation, ok := detector.(interface {
-				prepareDetection(context.Context, sdk.DetectionContext) (sdk.Detector, func(), error)
-			}); ok {
-				prepared, release, err := preparation.prepareDetection(ctx, snapshot)
-				if err != nil {
-					results[i] = setupDetection{err: err}
-					return
-				}
-				defer release()
-				detector = prepared
-			}
-			bounded, cancel := context.WithTimeout(ctx, detectorDeadline(spec))
-			defer cancel()
-			findings, err := sdk.DetectObserved(bounded, detector, snapshot)
-			results[i] = setupDetection{findings, err}
-		}()
+		}
+	}()
+	for range detectors {
+		f := <-done
+		apply(detectors[f.index], f.result)
 	}
-	wg.Wait()
-	byID := make(map[string]setupDetection, len(detectors))
-	for i, detector := range detectors {
-		byID[detector.Spec().ID] = results[i]
-	}
-	return byID
 }
 
 // recoveryRead is one detector's validated observation for closure and recovery.
