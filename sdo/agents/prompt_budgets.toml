@@ -184,6 +184,10 @@ reason = "Measured production rendering 1264 Unicode characters across three-fau
 max_chars = 16000
 reason = "On-demand CSV of signals over time at fixed steps for at most 24 operations and 8 workloads (Go incidentPageOps/incidentPageWorkloads); beyond the cap cap_text saves the full text to a context file."
 
+[tool_stdout.try]
+max_chars = 4000
+reason = "sdo try lists user tests (one line each, at most about 100 characters) or prints one test's latest, last failing and last passing recorded sample, each field bounded to 600 characters by Go; beyond the cap cap_text saves the full text to a context file."
+
 [tool_stdout.verify]
 max_chars = 1400
 reason = "Measured production rendering 1125 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
