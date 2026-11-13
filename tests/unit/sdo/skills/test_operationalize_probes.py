@@ -21,8 +21,10 @@ def test_probes_guidance_covers_records_users_own() -> None:
     # Reads happen on every iteration, over every such record, and remember what existed at Setup.
     assert "every iteration" in section
     assert "Setup" in section
-    # A private record needs read-only access for the probe identity, never write or admin.
-    assert "read-only" in section
+    # A write the grader's users make (a commit, an upload) is probed in the users' own containers too, on a marked
+    # record removed afterwards, and the probe identity gets the lowest role that can do it.
+    assert "marked" in section
+    assert "lowest role" in section
     assert "never admin" in section
 
 

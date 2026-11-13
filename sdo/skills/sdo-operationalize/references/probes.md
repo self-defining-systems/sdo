@@ -61,9 +61,13 @@ touched the affected records.
   Either way the scenario fails until data exists to read.
 - A probe that only creates fresh records (a new name, a new version) never reuses a record users keep writing
   into: read, and where it is safe append to, the existing container.
-- When the identity cannot see these records (private to their owner), the probe-identity procedure also grants
-  the probe user the application's lowest read-only role on existing records: read-only, never admin, never
-  write; a failed grant must not stop the user from being provisioned.
+- Probe the writes users make in the same containers, not only in the probe's own (a commit or push into a
+  user's repository runs that repository's hooks and storage path; an upload goes into the package users use):
+  a marked record, such as a branch of its own, created and removed in the same iteration (`Cleanup`), never
+  an edit of a user's record. Cover every write the health objective names; a read cannot see a hung hook.
+- When the identity cannot reach these records (private to their owner), the probe-identity procedure grants
+  the probe user the lowest role that can do the above, never admin; a failed grant must not stop the user from
+  being provisioned.
 
 ## Cost
 
