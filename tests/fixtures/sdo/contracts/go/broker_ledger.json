@@ -80,7 +80,8 @@
         "workload-health\u0000cause"
       ],
       "recent_changes": [
-        "full list: sdo changes; signals over time: sdo timeline"
+        "map: unavailable (application map unavailable: unrecorded AppMap call with arguments []); paths come from the traffic descriptors, no upstream or dependency candidates",
+        "live: sdo detect (this view); sdo changes and sdo timeline list every row"
       ],
       "repair_policy": "recorded-actions",
       "repository_base_commit": "source",

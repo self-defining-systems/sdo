@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"sdo.dev/operator/memory/appmap"
+	"sdo.dev/operator/sdk/program"
 )
 
 // mapGraph is the accepted application map with its possible edges (calls only
@@ -234,4 +235,39 @@ func (g mapGraph) position(component string, failing, passing map[string][]strin
 		}
 	}
 	return p
+}
+
+// graphFromProgramMap is the graph a read view without the architecture
+// document can offer: the components and edges of its AppMap, no operations,
+// probes or possible edges.
+func graphFromProgramMap(m program.AppMap) mapGraph {
+	g := mapGraph{comps: map[string]appmap.Component{}}
+	for _, c := range m.Components {
+		component := appmap.Component{Name: c.Name, Workload: c.Workload, Services: c.Services, HoldsData: c.HoldsData}
+		if c.Data != nil {
+			component.Data = &appmap.Data{Engine: c.Data.Engine, Role: c.Data.Role, DerivedFrom: c.Data.DerivedFrom}
+		}
+		g.m.Components = append(g.m.Components, component)
+		g.comps[c.Name] = component
+	}
+	for _, e := range m.Edges {
+		g.m.Edges = append(g.m.Edges, appmap.Edge{From: e.From, To: e.To})
+	}
+	return g
+}
+
+// programMap is the program-level view of the graph: one document, two shapes.
+func (g mapGraph) programMap() program.AppMap {
+	var m program.AppMap
+	for _, c := range g.m.Components {
+		component := program.AppComponent{Name: c.Name, Workload: c.Workload, Services: c.Services, HoldsData: c.HoldsData}
+		if c.Data != nil {
+			component.Data = &program.DataRole{Engine: c.Data.Engine, Role: c.Data.Role, DerivedFrom: c.Data.DerivedFrom}
+		}
+		m.Components = append(m.Components, component)
+	}
+	for _, e := range g.m.Edges {
+		m.Edges = append(m.Edges, program.AppEdge{From: e.From, To: e.To})
+	}
+	return m
 }

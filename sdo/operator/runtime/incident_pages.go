@@ -21,7 +21,7 @@ import (
 
 // On-demand pages: `sdo changes` and `sdo timeline` print CSV computed from the
 // controller's current state when called, and the first message and `sdo detect`
-// show the few changes nearest onset inline. They are information, never a
+// show the candidate view. They are information, never a
 // verdict: no row is scored or ranked beyond time order.
 const (
 	// incidentSignalHorizon is how much per-operation and workload history the
@@ -30,10 +30,8 @@ const (
 	incidentTimelineStep  = 10 * time.Second
 	// incidentDefaultLead is how far before onset `sdo changes` and `sdo timeline`
 	// reach unless --since says otherwise.
-	incidentDefaultLead = 10 * time.Minute
-	incidentChangesCap  = 200
-	// incidentInlineChanges is how many changes the first message and `sdo detect` list.
-	incidentInlineChanges = 10
+	incidentDefaultLead   = 10 * time.Minute
+	incidentChangesCap    = 200
 	incidentInlineValue   = 60
 	incidentPageOps       = 24
 	incidentPageWorkloads = 8
@@ -42,12 +40,13 @@ const (
 	incidentSignalSeries  = 128
 )
 
-// incidentPointer is the line after the inline changes.
-const incidentPointer = "full list: sdo changes; signals over time: sdo timeline"
-
 // IncidentChange is one row of `sdo changes`.
 type IncidentChange struct {
-	At             time.Time
+	// At is when the change happened; zero when nothing timed it.
+	At time.Time
+	// ReadAt is when a source with no change time was read (a store diff): it
+	// is the time the row was observed, never an onset-relative change time.
+	ReadAt         time.Time
 	Source         string // kubernetes, store or app-state
 	Component      string
 	ReaderOrObject string
@@ -55,6 +54,8 @@ type IncidentChange struct {
 	Before, After  string
 	Writer         string
 	Noisy          bool
+	// Command is the command that expands or restores the row's object, when there is one.
+	Command string
 }
 
 // AppStateChangeSource is the seam app-state readers plug into: the controller
@@ -285,15 +286,6 @@ func buildIncidentChanges(in incidentPageInput) []byte {
 	return renderChanges(incidentChangeRows(in, set, onset), onset)
 }
 
-// incidentRecentChanges are the lines the first message and `sdo detect` show:
-// the changes from onset-10 min to now, newest first, at most
-// incidentInlineChanges, then the pointer to the full commands.
-func incidentRecentChanges(in incidentPageInput) []string {
-	in.Since, in.Limit = 0, 0
-	set, onset := incidentSet(in)
-	return recentChangeLines(incidentChangeRows(in, set, onset), onset)
-}
-
 func renderTimeline(set detectSuspectSet, history incidentSignalHistory, request IncidentRequest, view detectReads, onset, now time.Time, lead time.Duration) []byte {
 	// Operations: the failing tests first, then the rest by name; no ranking.
 	var operations []string
@@ -319,12 +311,12 @@ func renderTimeline(set detectSuspectSet, history incidentSignalHistory, request
 	}
 	type workloadColumn struct{ component, key string }
 	var workloads []workloadColumn
-	for _, suspect := range set.suspects {
-		if suspect.component.Workload == "" || len(workloads) == incidentPageWorkloads {
+	for _, node := range set.nodes {
+		if node.Component.Workload == "" || len(workloads) == incidentPageWorkloads {
 			continue
 		}
-		ref := suspect.component.WorkloadRef(namespace)
-		workloads = append(workloads, workloadColumn{component: suspect.component.Name, key: ref.Kind + "/" + ref.Name})
+		ref := node.Component.WorkloadRef(namespace)
+		workloads = append(workloads, workloadColumn{component: node.Name, key: ref.Kind + "/" + ref.Name})
 	}
 	header := []string{"t_rel_s", "at_utc"}
 	for _, id := range operations {
@@ -408,7 +400,7 @@ func incidentChangeRows(in incidentPageInput, set detectSuspectSet, onset time.T
 				rows = append(rows, IncidentChange{
 					At: departure.At, Source: "kubernetes", Component: component.Name,
 					ReaderOrObject: departure.Ref.Kind + "/" + departure.Ref.Name, Key: strings.Join(departure.Fields, ";"),
-					Before: "accepted-source", After: string(departure.Kind), Writer: departure.Manager,
+					Before: "accepted-source", After: string(departure.Kind), Writer: departure.Manager, Command: departure.Command(),
 				})
 			}
 		}
@@ -453,7 +445,8 @@ func incidentChangeRows(in incidentPageInput, set detectSuspectSet, onset time.T
 }
 
 // storeChangeRows are the store-state changes against each store's promoted
-// baseline, at the time the store was read; the change itself is untimed.
+// baseline. The change itself is untimed: the row carries the time the store
+// was read as ReadAt and no At, so it is never shown as an onset offset.
 func storeChangeRows(stores []storestate.StoreChanges) []IncidentChange {
 	var rows []IncidentChange
 	for _, store := range stores {
@@ -462,14 +455,14 @@ func storeChangeRows(stores []storestate.StoreChanges) []IncidentChange {
 		}
 		for _, change := range store.Changes {
 			key, before, after := change.Describe()
-			rows = append(rows, IncidentChange{At: store.ObservedAt, Source: "store", Component: store.Component, ReaderOrObject: store.Pod.Kind + "/" + store.Pod.Name, Key: key, Before: bounded(before), After: bounded(after), Noisy: change.Noisy})
+			rows = append(rows, IncidentChange{ReadAt: store.ObservedAt, Source: "store", Component: store.Component, ReaderOrObject: store.Pod.Kind + "/" + store.Pod.Name, Key: key, Before: bounded(before), After: bounded(after), Noisy: change.Noisy})
 		}
 	}
 	return rows
 }
 
 func renderChanges(rows []IncidentChange, onset time.Time) []byte {
-	out := [][]string{{"t_rel_s", "at_utc", "source", "component", "reader_or_object", "key", "before", "after", "writer", "noisy"}}
+	out := [][]string{{"t_rel_s", "at_utc", "source", "component", "reader_or_object", "key", "before", "after", "writer", "noisy", "read_at_utc"}}
 	clean := func(text string) string { return redactDetectText(text, incidentPageValue) }
 	for _, row := range rows {
 		row = maskCredentialValues(row)
@@ -478,7 +471,11 @@ func renderChanges(rows []IncidentChange, onset time.Time) []byte {
 			relative = strconv.FormatInt(int64(row.At.Sub(onset)/time.Second), 10)
 			at = row.At.UTC().Format(time.RFC3339)
 		}
-		out = append(out, []string{relative, at, row.Source, clean(row.Component), clean(row.ReaderOrObject), clean(row.Key), clean(row.Before), clean(row.After), clean(row.Writer), strconv.FormatBool(row.Noisy)})
+		readAt := ""
+		if !row.ReadAt.IsZero() {
+			readAt = row.ReadAt.UTC().Format(time.RFC3339)
+		}
+		out = append(out, []string{relative, at, row.Source, clean(row.Component), clean(row.ReaderOrObject), clean(row.Key), clean(row.Before), clean(row.After), clean(row.Writer), strconv.FormatBool(row.Noisy), readAt})
 	}
 	return encodeCSV(out)
 }
@@ -508,52 +505,6 @@ func relativeOffset(d time.Duration) string {
 		return fmt.Sprintf("%s%ds", sign, seconds)
 	}
 	return fmt.Sprintf("%s%dm%02ds", sign, seconds/60, seconds%60)
-}
-
-// recentChangeLines lists up to incidentInlineChanges of rows (oldest first, as
-// incidentChangeRows returns them) newest first, untimed rows last, then the
-// pointer to the full commands.
-func recentChangeLines(rows []IncidentChange, onset time.Time) []string {
-	// Noisy rows (counters that moved all the while healthy) stay in `sdo changes`
-	// and never take an inline slot.
-	ordered := make([]IncidentChange, 0, len(rows))
-	for index := len(rows) - 1; index >= 0; index-- {
-		if !rows[index].At.IsZero() && !rows[index].Noisy {
-			ordered = append(ordered, rows[index])
-		}
-	}
-	for _, row := range rows {
-		if row.At.IsZero() && !row.Noisy {
-			ordered = append(ordered, row)
-		}
-	}
-	if len(ordered) > incidentInlineChanges {
-		ordered = ordered[:incidentInlineChanges]
-	}
-	clean := func(text string) string { return redactDetectText(text, incidentInlineValue) }
-	lines := make([]string, 0, len(ordered)+1)
-	for _, row := range ordered {
-		row = maskCredentialValues(row)
-		when := "?"
-		if !row.At.IsZero() {
-			when = relativeOffset(row.At.Sub(onset))
-		}
-		parts := []string{when}
-		for _, text := range []string{row.Source, row.Component, row.ReaderOrObject, row.Key} {
-			if text != "" {
-				parts = append(parts, clean(text))
-			}
-		}
-		line := strings.Join(parts, " ")
-		if row.Before != "" || row.After != "" {
-			line += ": " + orNone(clean(row.Before)) + " → " + orNone(clean(row.After))
-		}
-		if row.Writer != "" {
-			line += " by: " + clean(row.Writer)
-		}
-		lines = append(lines, line)
-	}
-	return append(lines, incidentPointer)
 }
 
 func orNone(text string) string {

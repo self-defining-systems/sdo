@@ -181,9 +181,10 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
         with_changes = scaled()
         with_changes.recent_changes.extend(
             [
-                "+2m settings api rate_limit: 100 → 1 by: operator",
-                "-1m kubectl Deployment/toy/api spec.replicas: 3 → 0",
-                "full list: sdo changes; signals over time: sdo timeline",
+                "CANDIDATES (on every failing path unless marked k of n, plus one hop upstream)",
+                "api  on every failing path",
+                "  -1m Deployment/api changed vs accepted source (spec.template) by kubectl",
+                "live: sdo detect (this view); sdo changes and sdo timeline list every row",
             ]
         )
         prompts["responder_optional"] = responder_prompt(with_changes)

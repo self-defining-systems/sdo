@@ -23,12 +23,15 @@ func TestStoreChangeRowsReadTheCatalogAndFlagNoise(t *testing.T) {
 	if len(rows) != 2 || !strings.Contains(rows[0].Key, "+1 trigger") || strings.Contains(rows[0].Key+rows[0].Before+rows[0].After, "684b516f") || !rows[1].Noisy {
 		t.Fatalf("rows = %+v", rows)
 	}
-	lines := recentChangeLines(rows, detectOnset)
-	if len(lines) != 2 || !strings.Contains(lines[0], "+1 trigger") || strings.Contains(strings.Join(lines, "\n"), "lease") {
-		t.Fatalf("inline lines:\n%s", strings.Join(lines, "\n"))
+	if !rows[0].At.IsZero() || !rows[0].ReadAt.Equal(detectOnset) {
+		t.Fatalf("a store diff is untimed: it carries only the time it was read: %+v", rows[0])
+	}
+	evidence, _ := rowEvidence(rows[0], detectOnset)
+	if !strings.Contains(evidence.Text, "+1 trigger") || !strings.Contains(evidence.Text, "read 07:28:09Z, change untimed") || strings.Contains(evidence.Text, "+0s") {
+		t.Fatalf("evidence line = %q", evidence.Text)
 	}
 	csv := string(renderChanges(rows, detectOnset))
-	if !strings.Contains(csv, "lease:*") || !strings.Contains(csv, ",true\n") {
+	if !strings.Contains(csv, "lease:*") || !strings.Contains(csv, ",true,2026-") {
 		t.Fatalf("sdo changes keeps the noisy row:\n%s", csv)
 	}
 }

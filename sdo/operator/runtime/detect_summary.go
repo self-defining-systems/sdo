@@ -18,6 +18,7 @@ import (
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/storestate"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -32,6 +33,8 @@ const (
 	detectItemCap        = 6000
 	detectFullSuspects   = 2
 	detectShownTests     = 3
+	// detectCandidateFloor is the room `sdo detect` keeps for the candidate view.
+	detectCandidateFloor = 800
 )
 
 // detectReads is what the summary reads: the frozen snapshot, the app map and
@@ -52,8 +55,8 @@ type detectInput struct {
 	Now      time.Time
 	// Recovered is the incident's verified marker.
 	Recovered bool
-	// RecentChanges are the inline change lines and the pointer line shown under the header.
-	RecentChanges []string
+	// AppState supplies the app-state changes placed on the candidates; nil lists none.
+	AppState AppStateChangeSource
 }
 
 // detectSummary is the compact text and the full text of each item a `more:`
@@ -94,16 +97,7 @@ type failingTest struct {
 	samples   int
 	last      []traffic.Sample
 	scenarios traffic.Descriptor
-}
-
-type detectSuspect struct {
-	component program.AppComponent
-	passing   bool // also on passing paths
-	// everyPath is true for a component on every failing path, or the workload of an opening condition.
-	everyPath bool
-	changeAt  time.Time
-	change    string
-	changeCmd string
+	latestOK  bool // the newest sample passed
 }
 
 // failureLabel is the user-facing result of one failed sample.
@@ -144,10 +138,27 @@ func componentForService(m program.AppMap, service string) program.AppComponent 
 	return program.AppComponent{Name: service}
 }
 
-// judgedTests reads the user tests from the traffic windows: the failing ones
-// with their last failing samples and failure onset, and the passing ones.
-func judgedTests(view detectReads, m program.AppMap) (failing []failingTest, passing, unevaluated []string, passingServices map[string]bool) {
-	passingServices = map[string]bool{}
+// testJudgement is the user tests as the traffic windows judge them.
+type testJudgement struct {
+	// failing are the tests judged failing: the group an incident opens on.
+	failing []failingTest
+	// alsoFailing are tests not judged failing that have a failed sample in
+	// the window (healthy, or too few samples to judge): a side-effect page
+	// leaves the real failing operation here.
+	alsoFailing  []failingTest
+	passing      []string // judged healthy with no failed sample
+	unevaluated  []string // no failed sample and too few samples to judge
+	tests        []candidateTest
+	disagreement []string // tests whose live traffic reaches components their mapped path lacks
+}
+
+// judgedTests reads the user tests from the traffic windows. g is the map the
+// accepted architecture gives, or nil: a test's path is the union of the
+// operation paths of the probe the map names for it and the components its
+// traffic descriptor reaches, or the descriptor's alone when the map names no
+// probe.
+func judgedTests(view detectReads, m program.AppMap, g *mapGraph) testJudgement {
+	var out testJudgement
 	windows := view.TrafficWindows()
 	names := make([]string, 0, len(windows))
 	for name := range windows {
@@ -173,47 +184,83 @@ func judgedTests(view detectReads, m program.AppMap) (failing []failingTest, pas
 		sort.Strings(ids)
 		for _, id := range ids {
 			verdict, ok := judged[id]
-			switch {
-			case !ok || !verdict.Evaluated:
-				unevaluated = append(unevaluated, id)
-			case verdict.Healthy:
-				passing = append(passing, id)
-				for _, service := range scenarioServices(descriptors[id]) {
-					passingServices[service] = true
-				}
-			default:
-				test := failingTest{id: id, scenarios: descriptors[id], failures: verdict.Errors + verdict.Timeouts, samples: verdict.Samples}
-				for _, service := range scenarioServices(descriptors[id]) {
-					test.path = append(test.path, componentForService(m, service).Name)
-				}
-				series := samples[id]
-				start := len(series)
-				for start > 0 && series[start-1].Outcome != traffic.OutcomeOK {
-					start--
-				}
-				if start < len(series) {
-					test.onset = series[start].At
-				}
-				for _, sample := range series[start:] {
-					if sample.Outcome != traffic.OutcomeInvalid {
-						test.last = append(test.last, sample)
+			var described []string
+			for _, service := range scenarioServices(descriptors[id]) {
+				described = append(described, componentForService(m, service).Name)
+			}
+			path, source := described, "descriptor"
+			if g != nil {
+				if mapped := g.testPath(id); len(mapped) > 0 {
+					path, source = mapped, "map"
+					for _, name := range described {
+						if !slices.Contains(mapped, name) {
+							path = append(path, name)
+							out.disagreement = append(out.disagreement, fmt.Sprintf("%s reaches %s", id, name))
+						}
 					}
 				}
-				if len(test.last) > 3 {
-					test.last = test.last[len(test.last)-3:]
-				}
-				if n := len(test.last); n > 0 {
-					latest := test.last[n-1]
-					test.step, test.label, test.err = latest.Step, failureLabel(latest), latest.Error
-				} else if len(verdict.RecentFailures) > 0 {
-					latest := verdict.RecentFailures[len(verdict.RecentFailures)-1]
-					test.step, test.label, test.err = latest.Step, failureLabel(latest), latest.Error
-				}
-				failing = append(failing, test)
 			}
+			series := samples[id]
+			failedSamples := 0
+			for _, sample := range series {
+				if sample.Outcome != traffic.OutcomeOK && sample.Outcome != traffic.OutcomeInvalid {
+					failedSamples++
+				}
+			}
+			start := len(series)
+			for start > 0 && series[start-1].Outcome != traffic.OutcomeOK {
+				start--
+			}
+			test := failingTest{id: id, scenarios: descriptors[id], failures: verdict.Errors + verdict.Timeouts, samples: verdict.Samples, path: described}
+			if len(series) > 0 {
+				test.latestOK = series[len(series)-1].Outcome == traffic.OutcomeOK
+			}
+			if start < len(series) {
+				test.onset = series[start].At
+			}
+			for _, sample := range series[start:] {
+				if sample.Outcome != traffic.OutcomeInvalid {
+					test.last = append(test.last, sample)
+				}
+			}
+			if len(test.last) > 3 {
+				test.last = test.last[len(test.last)-3:]
+			}
+			if n := len(test.last); n > 0 {
+				latest := test.last[n-1]
+				test.step, test.label, test.err = latest.Step, failureLabel(latest), latest.Error
+			} else if len(verdict.RecentFailures) > 0 {
+				latest := verdict.RecentFailures[len(verdict.RecentFailures)-1]
+				test.step, test.label, test.err = latest.Step, failureLabel(latest), latest.Error
+			}
+			if test.label == "" {
+				test.label = "error"
+			}
+			entry := candidateTest{ID: id, Symptom: test.label, Path: path, Source: source, Failures: test.failures, Samples: test.samples, LatestOK: test.latestOK}
+			switch {
+			case ok && verdict.Evaluated && !verdict.Healthy:
+				entry.State = testFailing
+				out.failing = append(out.failing, test)
+			case failedSamples > 0:
+				entry.State = testAlsoFailing
+				if entry.Failures == 0 {
+					entry.Failures, entry.Samples = failedSamples, len(series)
+				}
+				test.failures, test.samples = entry.Failures, entry.Samples
+				out.alsoFailing = append(out.alsoFailing, test)
+			case !ok || !verdict.Evaluated:
+				entry.State = testUnevaluated
+				out.unevaluated = append(out.unevaluated, id)
+			default:
+				entry.State = testPassing
+				out.passing = append(out.passing, id)
+			}
+			out.tests = append(out.tests, entry)
 		}
 	}
-	return failing, passing, unevaluated, passingServices
+	// The group that opened the incident prints last when its tests pass again.
+	sort.SliceStable(out.failing, func(i, j int) bool { return !out.failing[i].latestOK && out.failing[j].latestOK })
+	return out
 }
 
 // workloadObjects are the objects whose change can explain a workload's
@@ -317,74 +364,7 @@ func hms(at time.Time) string {
 	return at.UTC().Format("15:04:05Z")
 }
 
-// suspectChange is the latest change to a suspect's objects: a drift event
-// (who, when, which fields), preferring one made shortly before onset, or the
-// configuration diff against the last healthy baseline, which has no time.
-func suspectChange(in detectInput, objects []sdk.ObjectRef, onset time.Time) (at time.Time, text, command string) {
-	// Departures from accepted source by a non-SDO manager are the strongest
-	// clue: the classifier the responder's other readers share names who, when
-	// and what, and the expand line is the command that restores the object.
-	departures := SourceDepartures(departureInput(in.Request, in.View, onset), objects)
-	if len(departures) > 0 {
-		first := departures[0]
-		text = first.Text()
-		if len(departures) > 1 {
-			text += fmt.Sprintf(" (+%d more)", len(departures)-1)
-		}
-		command = first.Command()
-		if command == "" {
-			command = fmt.Sprintf("kubectl -n %s describe secret %s", first.Ref.Namespace, first.Ref.Name)
-		}
-		return first.At, text, command
-	}
-	var best *sdk.DriftEvent
-	var bestAt time.Time
-	for index := range in.Request.DriftEvents {
-		event := &in.Request.DriftEvents[index]
-		if !slices.ContainsFunc(objects, func(ref sdk.ObjectRef) bool { return ref.Kind == event.Ref.Kind && ref.Name == event.Ref.Name }) {
-			continue
-		}
-		when := event.ObservedAt
-		if event.ManagerAt != nil {
-			when = *event.ManagerAt
-		}
-		before := onset.IsZero() || !when.After(onset.Add(30*time.Second))
-		bestBefore := best != nil && (onset.IsZero() || !bestAt.After(onset.Add(30*time.Second)))
-		if best == nil || before && !bestBefore || before == bestBefore && when.After(bestAt) {
-			best, bestAt = event, when
-		}
-	}
-	if best != nil {
-		var fields []string
-		for _, field := range best.Fields {
-			if len(fields) < 2 {
-				fields = append(fields, redactDetectText(field.Path, 40))
-			}
-		}
-		by := "an unknown manager"
-		if best.Manager != "" {
-			by = best.Manager
-		}
-		if !strings.HasPrefix(best.Manager, "sdo") {
-			by += " (not sdo)"
-		}
-		what := "changed"
-		if len(fields) > 0 {
-			what = strings.Join(fields, ",") + " changed"
-		}
-		return bestAt, fmt.Sprintf("%s/%s %s at %s by %s", best.Ref.Kind, best.Ref.Name, what, hms(bestAt), by), "sdo source " + refText(best.Ref)
-	}
-	if changes := in.Request.StateChanges; changes != nil {
-		for _, change := range changes.Changes {
-			if slices.ContainsFunc(objects, func(ref sdk.ObjectRef) bool { return ref.Kind == change.Kind && ref.Name == change.Name }) {
-				return changes.ObservedAt, fmt.Sprintf("%s/%s %s since the last healthy state", change.Kind, change.Name, change.Change), "sdo source " + change.Kind + "/" + change.Namespace + "/" + change.Name
-			}
-		}
-	}
-	return time.Time{}, "", ""
-}
-
-// logLine reads the bounded error counts of one suspect: before and after
+// suspectLogs reads the bounded error counts of one candidate: before and after
 // onset in the newest Pod's first two containers and the previous container of
 // a restarted one. deadline bounds the whole read.
 func suspectLogs(in detectInput, workload sdk.ObjectRef, onset time.Time, deadline time.Time) (line, command string) {
@@ -495,22 +475,78 @@ func objectOfFinding(finding sdk.Finding) []sdk.ObjectRef {
 }
 
 // detectSuspectSet is what the incident points at: the judged user tests, the
-// components on the failing paths, and the opening findings and clues. Both
-// `sdo detect` and the built-in restore playbook's candidates read it, so they
-// name the same suspects.
+// candidate nodes placed on the map, and the opening findings and clues. Both
+// `sdo detect`, the first message and the built-in restore playbook's
+// candidates read it, so they name the same nodes.
 type detectSuspectSet struct {
 	m                      program.AppMap
+	graph                  *mapGraph
+	mapNote                string
+	mapLines               []string
+	judged                 testJudgement
 	failing                []failingTest
 	passing, unevaluated   []string
-	passingServices        map[string]bool
 	openingFindings, clues []sdk.Finding
+	conditions             []string
 	onset                  time.Time
-	suspects               []*detectSuspect
+	// nodes are the candidates in position order, before any evidence ranks them.
+	nodes []*candidateNode
+}
+
+// loadCandidateGraph is the one map source of the candidate view: the accepted
+// `.sdo/arch.md` at the accepted commit, parsed once. A view that cannot hand
+// over the document (a replay or a capture) falls back to its AppMap read,
+// which is the same document's components and edges without operations or
+// probes. The program-level map is derived from the graph, so the two never
+// disagree.
+func loadCandidateGraph(view detectReads) (*mapGraph, program.AppMap, string) {
+	var note string
+	if doc, ok, err := architectureOf(view); ok {
+		if err != nil {
+			note = err.Error()
+		} else if g, err := newMapGraph(doc); err != nil {
+			note = err.Error()
+		} else {
+			return &g, g.programMap(), ""
+		}
+	}
+	m, err := view.AppMap()
+	if err == nil && len(m.Components) > 0 {
+		g := graphFromProgramMap(m)
+		return &g, g.programMap(), ""
+	}
+	if note == "" {
+		note = "no application map"
+		if err != nil {
+			note = err.Error()
+		}
+	}
+	return nil, program.AppMap{}, note
+}
+
+// architectureOf finds the accepted architecture document behind a read view,
+// through the wrappers that cache or record its reads.
+func architectureOf(view any) (doc string, ok bool, err error) {
+	for depth := 0; depth < 8 && view != nil; depth++ {
+		if reader, found := view.(architectureReader); found {
+			doc, err = reader.ArchitectureText()
+			return doc, true, err
+		}
+		switch v := view.(type) {
+		case *CycleReadView:
+			view = v.RecordingReadView.ReadView
+		case interface{ UnderlyingReadView() program.ReadView }:
+			view = v.UnderlyingReadView()
+		default:
+			return "", false, nil
+		}
+	}
+	return "", false, nil
 }
 
 func buildSuspectSet(in detectInput) detectSuspectSet {
-	m, _ := in.View.AppMap()
-	failing, passing, unevaluated, passingServices := judgedTests(in.View, m)
+	g, m, note := loadCandidateGraph(in.View)
+	judged := judgedTests(in.View, m, g)
 	opening := openingKeys(&in.Request)
 	var openingFindings, clues []sdk.Finding
 	for _, finding := range in.Findings {
@@ -521,123 +557,228 @@ func buildSuspectSet(in detectInput) detectSuspectSet {
 		}
 	}
 	onset := in.Request.DetectedAt
-	for _, test := range failing {
+	for _, test := range append(slices.Clone(judged.failing), judged.alsoFailing...) {
 		if !test.onset.IsZero() && (onset.IsZero() || test.onset.Before(onset)) {
 			onset = test.onset
 		}
 	}
-
-	// Suspects: components on the failing paths (every failing path first), or the
-	// workloads of the opening conditions.
-	var suspects []*detectSuspect
-	seen := map[string]bool{}
-	addSuspect := func(component program.AppComponent, everyPath bool) {
-		if component.Name == "" || seen[component.Name] {
-			return
-		}
-		seen[component.Name] = true
-		suspect := &detectSuspect{component: component, everyPath: everyPath}
-		for _, service := range component.Services {
-			suspect.passing = suspect.passing || passingServices[service]
-		}
-		suspect.passing = suspect.passing || passingServices[component.Name]
-		suspects = append(suspects, suspect)
-	}
-	if len(failing) > 0 {
-		var common []string
-		for _, name := range failing[0].path {
-			onAll := true
-			for _, other := range failing[1:] {
-				onAll = onAll && slices.Contains(other.path, name)
-			}
-			if onAll {
-				common = append(common, name)
-			}
-		}
-		var rest []string
-		for _, test := range failing {
-			for _, name := range test.path {
-				if !slices.Contains(common, name) && !slices.Contains(rest, name) {
-					rest = append(rest, name)
-				}
-			}
-		}
-		for _, name := range append(common, rest...) {
-			component, ok := m.Component(name)
-			if !ok {
-				component = program.AppComponent{Name: name}
-			}
-			addSuspect(component, slices.Contains(common, name))
-		}
-	}
+	var conditions []string
 	for _, finding := range openingFindings {
 		if isProbeFinding(finding) {
 			continue
 		}
-		if component, ok := m.ComponentOf(in.View, finding.PrimaryResource); ok {
-			addSuspect(component, true)
+		if component, ok := m.ComponentOf(in.View, finding.PrimaryResource); ok && !slices.Contains(conditions, component.Name) {
+			conditions = append(conditions, component.Name)
 		}
 	}
-	return detectSuspectSet{m: m, failing: failing, passing: passing, unevaluated: unevaluated, passingServices: passingServices, openingFindings: openingFindings, clues: clues, onset: onset, suspects: suspects}
+	set := detectSuspectSet{m: m, graph: g, mapNote: note, judged: judged, failing: judged.failing, passing: judged.passing, unevaluated: judged.unevaluated, openingFindings: openingFindings, clues: clues, conditions: conditions, onset: onset}
+	if len(judged.disagreement) > 0 {
+		line := fmt.Sprintf("map: live traffic: %s, not on its mapped path", judged.disagreement[0])
+		if n := len(judged.disagreement) - 1; n > 0 {
+			line += fmt.Sprintf(" (+%d more)", n)
+		}
+		set.mapLines = []string{line}
+	}
+	set.nodes = computeCandidates(set.candidateInput(in, nil)).Nodes
+	return set
 }
 
-// buildDetectSummary renders the compact incident summary: what users see
-// first, then the suspects on the failing paths (each with its latest change,
-// new log errors, clues and matching playbooks), then the other clues. It
-// never exceeds detectSummaryCap bytes and counts every item it drops.
-func buildDetectSummary(in detectInput) detectSummary {
-	items := map[string]string{}
-	set := buildSuspectSet(in)
-	m, failing, passing, unevaluated := set.m, set.failing, set.passing, set.unevaluated
-	openingFindings, clues, onset, suspects := set.openingFindings, set.clues, set.onset, set.suspects
-	seen := map[string]bool{}
-	for _, suspect := range suspects {
-		seen[suspect.component.Name] = true
+// candidateInput is the computation's input for a set; the callers that render
+// evidence add rows and extra evidence.
+func (set detectSuspectSet) candidateInput(in detectInput, rows []IncidentChange) candidateInput {
+	return candidateInput{Graph: set.graph, MapNote: set.mapNote, MapLines: set.mapLines, Conditions: set.conditions, Tests: set.judged.tests, Onset: set.onset, Now: in.Now, Rows: rows, Components: set.m, SourceChecked: in.View != nil && !in.Request.DeploymentInFlight}
+}
+
+// storeObservation says, for each component that has a store-state read,
+// whether its state was observed: "" when it was, else why not.
+func storeObservation(view sdk.DetectionContext) map[string]string {
+	out := map[string]string{}
+	if view == nil {
+		return out
 	}
-	namespace := in.Request.Namespace
-	if namespace == "" {
-		namespace = in.View.Namespace()
+	for _, store := range storestate.Changes(view) {
+		switch {
+		case store.Error != "":
+			if prev, seen := out[store.Component]; !seen || prev != "" {
+				out[store.Component] = "store read failed: " + redactDetectText(store.Error, 70)
+			}
+		case !store.Baselined:
+			if _, seen := out[store.Component]; !seen {
+				out[store.Component] = "no baseline yet"
+			}
+		default:
+			out[store.Component] = ""
+		}
 	}
-	for _, suspect := range suspects {
-		if suspect.component.Workload == "" {
+	return out
+}
+
+// candidateEvidenceFor gathers what the change rows do not carry: log errors on
+// the leading workloads, object differences against the last healthy state,
+// clues that resolve to a node and the playbook that matched it.
+func candidateEvidenceFor(in detectInput, set detectSuspectSet, rows []IncidentChange, namespace string) (extra map[string][]candidateEvidence, other []sdk.Finding, items map[string]string) {
+	extra = map[string][]candidateEvidence{}
+	items = map[string]string{}
+	byName := map[string]*candidateNode{}
+	for _, n := range set.nodes {
+		byName[n.Name] = n
+	}
+	// Object differences against the last healthy baseline; a departure row
+	// already names the object, so it is not listed twice.
+	if changes := in.Request.StateChanges; changes != nil && in.View != nil {
+		for _, change := range changes.Changes {
+			if change.Kind == StoreStateChangeKind {
+				continue
+			}
+			for _, n := range set.nodes {
+				if n.Component.Workload == "" {
+					continue
+				}
+				objects := componentObjects(in.View, n.Component, namespace)
+				if !slices.ContainsFunc(objects, func(ref sdk.ObjectRef) bool { return ref.Kind == change.Kind && ref.Name == change.Name }) {
+					continue
+				}
+				name := change.Kind + "/" + change.Name
+				if slices.ContainsFunc(rows, func(row IncidentChange) bool { return row.Component == n.Name && row.ReaderOrObject == name }) {
+					continue
+				}
+				extra[n.Name] = append(extra[n.Name], candidateEvidence{Kind: "state", Unexplained: true, Text: fmt.Sprintf("%s %s since the last healthy state  (read %s, change untimed)", name, redactDetectText(string(change.Change), 30), hms(changes.ObservedAt))})
+			}
+		}
+	}
+	// Drift events name the manager and time of a change even when the source
+	// comparison shows no difference; one made after onset is a consequence.
+	for _, event := range in.Request.DriftEvents {
+		if sdk.IsSDOFieldManager(event.Manager) || strings.HasPrefix(event.Manager, "sdo") || in.View == nil {
 			continue
 		}
-		suspect.changeAt, suspect.change, suspect.changeCmd = suspectChange(in, componentObjects(in.View, suspect.component, namespace), onset)
-	}
-	// Latest change before onset first; the failing-path order otherwise.
-	order := map[string]int{}
-	for index, suspect := range suspects {
-		order[suspect.component.Name] = index
-	}
-	sort.SliceStable(suspects, func(i, j int) bool {
-		a, b := suspects[i], suspects[j]
-		if (a.change != "") != (b.change != "") {
-			return a.change != ""
+		at := event.ObservedAt
+		if event.ManagerAt != nil {
+			at = *event.ManagerAt
 		}
-		if a.change != "" && !a.changeAt.Equal(b.changeAt) {
-			return a.changeAt.After(b.changeAt)
+		if !set.onset.IsZero() && at.After(set.onset.Add(departureOnsetSlack)) {
+			continue
 		}
-		return order[a.component.Name] < order[b.component.Name]
-	})
-
-	// Clues that resolve to a suspect attach to it; the rest are background.
-	attached := map[string][]sdk.Finding{}
-	var background []sdk.Finding
-	for _, clue := range clues {
+		name := event.Ref.Kind + "/" + event.Ref.Name
+		for _, n := range set.nodes {
+			if n.Component.Workload == "" || slices.ContainsFunc(rows, func(row IncidentChange) bool { return row.Component == n.Name && row.ReaderOrObject == name }) {
+				continue
+			}
+			if !slices.ContainsFunc(componentObjects(in.View, n.Component, namespace), func(ref sdk.ObjectRef) bool { return ref.Kind == event.Ref.Kind && ref.Name == event.Ref.Name }) {
+				continue
+			}
+			var fields []string
+			for _, field := range event.Fields {
+				if len(fields) < 2 {
+					fields = append(fields, redactDetectText(field.Path, 40))
+				}
+			}
+			row := IncidentChange{At: at, Source: "kubernetes", Component: n.Name, ReaderOrObject: name, Key: strings.Join(fields, ";"), After: "changed", Writer: orQuestion(event.Manager), Command: "sdo source " + refText(event.Ref)}
+			if e, ok := rowEvidence(row, set.onset); ok {
+				extra[n.Name] = append(extra[n.Name], e)
+			}
+		}
+	}
+	for _, clue := range set.clues {
 		placed := false
 		for _, ref := range objectOfFinding(clue) {
-			if component, ok := m.ComponentOf(in.View, ref); ok && seen[component.Name] {
-				attached[component.Name] = append(attached[component.Name], clue)
+			if component, ok := set.m.ComponentOf(in.View, ref); ok && byName[component.Name] != nil {
+				extra[component.Name] = append(extra[component.Name], candidateEvidence{Kind: "clue", Unexplained: true, Text: "clue: " + redactDetectText(clue.Summary, 100) + "  more: sdo detect --finding " + shortID(FindingFingerprint(clue))})
 				placed = true
 				break
 			}
 		}
+		items[shortID(FindingFingerprint(clue))] = redactDetectText(clue.Summary+"\n"+clue.Evidence, detectItemCap)
 		if !placed {
-			background = append(background, clue)
+			other = append(other, clue)
 		}
 	}
+	for _, n := range set.nodes {
+		if match := playbookFor(in, set.m, n.Name); match != nil {
+			extra[n.Name] = append(extra[n.Name], candidateEvidence{Kind: "playbook", Text: "playbooks: " + match.GetPlaybookId() + "  more: " + strings.Replace(match.GetMitigateCommand(), "sdo mitigate", "sdo diagnose", 1)})
+		}
+	}
+	// Logs: the leading workloads by the evidence so far, under one deadline.
+	if in.View == nil {
+		return extra, other, items
+	}
+	ranked := set.candidateInput(in, rows)
+	ranked.Extra = extra
+	deadline := lifecycleio.Now().Add(detectLogTotal)
+	read := 0
+	for _, n := range computeCandidates(ranked).Nodes {
+		if read == detectFullSuspects {
+			break
+		}
+		if n.Component.Workload == "" {
+			continue
+		}
+		read++
+		line, _ := suspectLogs(in, n.Component.WorkloadRef(namespace), set.onset, deadline)
+		switch {
+		case line == "":
+		case strings.HasPrefix(line, "logs: ") && strings.Contains(line, " error lines since onset") && !strings.HasPrefix(line, "logs: 0 "):
+			extra[n.Name] = append(extra[n.Name], candidateEvidence{Kind: "logs", Unexplained: true, Text: line})
+		default:
+			extra[n.Name] = append(extra[n.Name], candidateEvidence{Kind: "note", Text: line})
+		}
+	}
+	return extra, other, items
+}
 
-	// Header and OPENED ON.
+// candidateViewFor computes the ranked view with all of its evidence, and the
+// drill-down items of the view and of the clues.
+func candidateViewFor(in detectInput, set detectSuspectSet) (candidateView, map[string]string) {
+	namespace := in.Request.Namespace
+	if namespace == "" && in.View != nil {
+		namespace = in.View.Namespace()
+	}
+	rows := incidentChangeRows(incidentPageInput{Request: in.Request, Findings: in.Findings, View: in.View, AppState: in.AppState, Now: in.Now}, set, set.onset)
+	extra, other, items := candidateEvidenceFor(in, set, rows, namespace)
+	input := set.candidateInput(in, rows)
+	input.Extra = extra
+	input.Observed = storeObservation(in.View)
+	view := computeCandidates(input)
+	for _, clue := range other {
+		view.otherClues = append(view.otherClues, redactDetectText(clue.Summary, 90))
+	}
+	for key, text := range view.items() {
+		items[key] = text
+	}
+	return view, items
+}
+
+// incidentCandidateBlock is what the first message carries (the IncidentRequest
+// recent_changes slot): the candidate view as `sdo detect` renders it, then a
+// pointer to the live commands. Both call computeCandidates.
+func incidentCandidateBlock(in incidentPageInput) []string {
+	detect := detectInput{Request: in.Request, Findings: in.Findings, View: in.View, Now: in.Now, AppState: in.AppState}
+	set := buildSuspectSet(detect)
+	if set.onset.IsZero() {
+		set.onset = in.Now
+	}
+	view, _ := candidateViewFor(detect, set)
+	const pointer = "live: sdo detect (this view); sdo changes and sdo timeline list every row"
+	text := view.render(candidateRenderCap - len(pointer) - 1)
+	if text == "" {
+		return []string{pointer}
+	}
+	return append(strings.Split(text, "\n"), pointer)
+}
+
+// buildDetectSummary renders the compact incident summary: what users see
+// first, then the candidate nodes with their evidence, what is elsewhere and
+// what was not observed. It never exceeds detectSummaryCap bytes.
+func buildDetectSummary(in detectInput) detectSummary {
+	items := map[string]string{}
+	set := buildSuspectSet(in)
+	failing, passing, unevaluated := set.failing, set.passing, set.unevaluated
+	openingFindings, onset := set.openingFindings, set.onset
+	view, viewItems := candidateViewFor(in, set)
+	for key, text := range viewItems {
+		items[key] = text
+	}
+
 	state := "no"
 	if in.Recovered {
 		state = "yes"
@@ -657,12 +798,6 @@ func buildDetectSummary(in detectInput) detectSummary {
 		fmt.Sprintf("incident %s  opened on: %s  onset %s  now %s", in.Request.IncidentID, opened, hms(onset), hms(in.Now)),
 		fmt.Sprintf("recovered: %s (%d opening alerts active)", state, active),
 	}
-	if len(in.RecentChanges) > 0 {
-		header = append(header, "changes (newest first, time from onset):")
-		for _, line := range in.RecentChanges {
-			header = append(header, "  "+line)
-		}
-	}
 	for _, note := range in.Request.PriorStages {
 		for _, mitigation := range note.GetMitigations() {
 			if mitigation.GetResult() != "skipped" {
@@ -671,26 +806,38 @@ func buildDetectSummary(in detectInput) detectSummary {
 		}
 	}
 
-	testBlocks := make([][]string, 0, len(failing))
-	for _, test := range failing {
+	testBlock := func(test failingTest, role string) ([]string, string) {
 		since := ""
 		if !test.onset.IsZero() {
 			since = " since " + hms(test.onset)
 		}
-		// The user-facing response comes first: what a person sees is the evidence.
 		lines := []string{
-			fmt.Sprintf("%s  %s %q  step %s", test.id, test.label, redactDetectText(test.err, 60), orQuestion(redactDetectText(test.step, 30))),
+			fmt.Sprintf("%s%s  %s %q  step %s", test.id, role, test.label, redactDetectText(test.err, 60), orQuestion(redactDetectText(test.step, 30))),
 			fmt.Sprintf("  %s  %d/%d failing%s", orQuestion(redactDetectText(strings.Join(test.path, ">"), 100)), test.failures, test.samples, since),
 			"  more: sdo detect --finding " + test.id,
 		}
-		testBlocks = append(testBlocks, lines)
 		var detail strings.Builder
 		fmt.Fprintf(&detail, "%s: %s\npath: %s\nsince %s, %d/%d failing\nlast failing samples:\n", test.id, test.scenarios.Description, strings.Join(test.path, ">"), hms(test.onset), test.failures, test.samples)
 		for _, sample := range test.last {
 			fmt.Fprintf(&detail, "  %s step %s %s: %s %s\n", hms(sample.At), orQuestion(sample.Step), sample.Request, failureLabel(sample), redactDetectText(sample.Error, 200))
 		}
-		items[test.id] = detail.String()
+		return lines, detail.String()
 	}
+	var testBlocks, alsoBlocks [][]string
+	var allTests strings.Builder
+	for _, test := range failing {
+		lines, detail := testBlock(test, "")
+		testBlocks = append(testBlocks, lines)
+		items[test.id] = detail
+		allTests.WriteString(detail + "\n")
+	}
+	for _, test := range set.judged.alsoFailing {
+		lines, detail := testBlock(test, "  (also failing)")
+		alsoBlocks = append(alsoBlocks, lines)
+		items[test.id] = detail
+		allTests.WriteString(detail + "\n")
+	}
+	items["tests"] = allTests.String()
 	var conditionBlocks [][]string
 	var allConditions strings.Builder
 	for _, finding := range openingFindings {
@@ -706,77 +853,19 @@ func buildDetectSummary(in detectInput) detectSummary {
 		allConditions.WriteString(shortID(FindingFingerprint(finding)) + "  " + redactDetectText(finding.Summary, 200) + "\n")
 	}
 	items["conditions"] = allConditions.String()
-	var allTests strings.Builder
-	for _, test := range failing {
-		allTests.WriteString(items[test.id] + "\n")
-	}
-	items["tests"] = allTests.String()
-
-	// Suspects.
-	deadline := lifecycleio.Now().Add(detectLogTotal)
-	type suspectText struct{ full, short []string }
-	texts := make([]suspectText, len(suspects))
-	for index, suspect := range suspects {
-		workload := suspect.component.WorkloadRef(namespace)
-		title := suspect.component.Name
-		if suspect.component.Workload != "" {
-			title += "  " + suspect.component.Workload
-		}
-		if suspect.passing {
-			title += "  (also on passing paths)"
-		}
-		full := []string{title}
-		if suspect.component.Workload == "" {
-			texts[index] = suspectText{full: full, short: full}
-			continue
-		}
-		if suspect.change != "" {
-			full = append(full, "  change: "+redactDetectText(suspect.change, 110), "    more: "+suspect.changeCmd)
-		} else {
-			full = append(full, "  change: none since accepted", "    more: sdo source "+refText(workload))
-		}
-		if index < detectFullSuspects {
-			if line, command := suspectLogs(in, workload, onset, deadline); line != "" {
-				full = append(full, "  "+line, "    more: "+command)
-			}
-		}
-		if mine := attached[suspect.component.Name]; len(mine) > 0 {
-			clue := mine[0]
-			id := shortID(FindingFingerprint(clue))
-			full = append(full, "  clue: "+redactDetectText(clue.Summary, 100), "    more: sdo detect --finding "+id)
-			for _, extra := range mine {
-				items[shortID(FindingFingerprint(extra))] = redactDetectText(extra.Summary+"\n"+extra.Evidence, detectItemCap)
-			}
-		}
-		if match := playbookFor(in, m, suspect.component.Name); match != nil {
-			full = append(full, "  playbooks: "+match.GetPlaybookId(), "    more: "+strings.Replace(match.GetMitigateCommand(), "sdo mitigate", "sdo diagnose", 1))
-		}
-		texts[index] = suspectText{full: full, short: full[:1]}
-		items[suspect.component.Name] = strings.Join(full, "\n")
-	}
-
-	// Background clues.
-	var backgroundLines []string
 	var backgroundAll strings.Builder
-	for _, clue := range background {
-		id := shortID(FindingFingerprint(clue))
-		backgroundLines = append(backgroundLines, fmt.Sprintf("%s  more: sdo detect --finding %s", redactDetectText(clue.Summary, 90), id))
-		items[id] = redactDetectText(clue.Summary+"\n"+clue.Evidence, detectItemCap)
-		backgroundAll.WriteString(id + "  " + redactDetectText(clue.Summary, 200) + "\n")
+	for _, clue := range set.clues {
+		backgroundAll.WriteString(shortID(FindingFingerprint(clue)) + "  " + redactDetectText(clue.Summary, 200) + "\n")
 	}
 	items["background"] = backgroundAll.String()
 
-	// Assemble, dropping the least important items until the text fits.
-	shownTests, shownSuspects, fullSuspects, shownClues := len(testBlocks), len(texts), min(detectFullSuspects, len(texts)), min(2, len(backgroundLines))
-	shownConditions := min(len(conditionBlocks), detectShownTests)
+	shownTests, shownConditions, shownAlso := min(len(testBlocks), detectShownTests), min(len(conditionBlocks), detectShownTests), min(len(alsoBlocks), 2)
 	showPassing := true
-	if shownTests > detectShownTests {
-		shownTests = detectShownTests
-	}
-	assemble := func() string {
-		var out []string
-		out = append(out, header...)
-		out = append(out, "", "OPENED ON")
+	observation := func() string {
+		out := slices.Clone(header)
+		if len(testBlocks)+len(conditionBlocks) > 0 {
+			out = append(out, "", "OPENED ON")
+		}
 		for _, block := range testBlocks[:shownTests] {
 			out = append(out, block...)
 		}
@@ -789,6 +878,12 @@ func buildDetectSummary(in detectInput) detectSummary {
 		if dropped := len(conditionBlocks) - shownConditions; dropped > 0 {
 			out = append(out, fmt.Sprintf("+%d more: sdo detect --finding conditions", dropped))
 		}
+		for _, block := range alsoBlocks[:shownAlso] {
+			out = append(out, block...)
+		}
+		if dropped := len(alsoBlocks) - shownAlso; dropped > 0 {
+			out = append(out, fmt.Sprintf("+%d more also failing: sdo detect --finding tests", dropped))
+		}
 		if showPassing && len(passing) > 0 {
 			out = append(out, "passing: "+redactDetectText(strings.Join(passing, " "), 160))
 		} else if !showPassing && len(passing) > 0 {
@@ -797,61 +892,35 @@ func buildDetectSummary(in detectInput) detectSummary {
 		if len(unevaluated) > 0 {
 			out = append(out, "not yet evaluated: "+redactDetectText(strings.Join(unevaluated, " "), 100))
 		}
-		if len(texts) > 0 {
-			label := "SUSPECTS (on every failing path)"
-			if len(failing) == 0 {
-				label = "SUSPECTS (from the opening conditions)"
-			}
-			out = append(out, "", label)
-		}
-		for index := 0; index < shownSuspects; index++ {
-			if index < fullSuspects {
-				out = append(out, texts[index].full...)
-			} else {
-				out = append(out, texts[index].short...)
-			}
-		}
-		if dropped := len(texts) - shownSuspects; dropped > 0 {
-			out = append(out, fmt.Sprintf("+%d more suspects: sdo detect --finding tests", dropped))
-		}
-		if len(backgroundLines) > 0 {
-			out = append(out, "", "OTHER CLUES (not on a failing path)")
-			out = append(out, backgroundLines[:shownClues]...)
-			if dropped := len(backgroundLines) - shownClues; dropped > 0 {
-				out = append(out, fmt.Sprintf("+%d more: sdo detect --finding background", dropped))
-			}
-		}
 		return strings.Join(out, "\n")
 	}
-	for len(assemble()) > detectSummaryCap {
+shrink:
+	for len(observation()) > detectSummaryCap-detectCandidateFloor {
 		switch {
-		case fullSuspects > 1:
-			fullSuspects--
-		case shownSuspects > fullSuspects:
-			shownSuspects--
-		case shownClues > 0:
-			shownClues--
+		case shownAlso > 0:
+			shownAlso--
 		case shownConditions > 1:
 			shownConditions--
 		case shownTests > 1:
 			shownTests--
 		case showPassing:
 			showPassing = false
-		case fullSuspects > 0:
-			fullSuspects--
-			shownSuspects = min(shownSuspects, 1)
-		case shownSuspects > 0:
-			shownSuspects--
 		default:
-			text := assemble()
-			cut := text[:detectSummaryCap-40]
-			for len(cut) > 0 && !strings.HasSuffix(cut, "\n") && cut[len(cut)-1] >= 0x80 {
-				cut = cut[:len(cut)-1]
-			}
-			return detectSummary{Text: cut + "\n+more: sdo detect --json", Items: items}
+			break shrink
 		}
 	}
-	return detectSummary{Text: assemble(), Items: items}
+	text := observation()
+	if rest := view.render(detectSummaryCap - len(text) - 2); rest != "" {
+		text += "\n\n" + rest
+	}
+	if len(text) > detectSummaryCap {
+		cut := text[:detectSummaryCap-40]
+		for len(cut) > 0 && !strings.HasSuffix(cut, "\n") && cut[len(cut)-1] >= 0x80 {
+			cut = cut[:len(cut)-1]
+		}
+		text = cut + "\n+more: sdo detect --json"
+	}
+	return detectSummary{Text: text, Items: items}
 }
 
 // playbookFor is the first playbook whose Diagnose matched on the component.

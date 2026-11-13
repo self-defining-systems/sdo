@@ -163,11 +163,14 @@ func (r sourceRestoreRegistry) Mitigator(id string) (program.Mitigator, bool) {
 func sourceRestoreCandidates(view program.ReadView, request IncidentRequest, findings []sdk.Finding) []sourceRestoreCandidate {
 	set := buildSuspectSet(detectInput{Request: request, View: view, Findings: findings, Now: time.Time{}})
 	var result []sourceRestoreCandidate
-	for rank, suspect := range set.suspects {
-		if !suspect.everyPath || suspect.passing || suspect.component.Workload == "" {
+	for rank, node := range set.nodes {
+		// On every failing path (or the opening condition's own component) and
+		// on no passing one.
+		onEvery := node.Condition || node.OfN > 0 && node.OnK == node.OfN
+		if node.Class != PositionFailingOnly || !onEvery || len(node.Serves) > 0 || node.Component.Workload == "" {
 			continue
 		}
-		bindings := program.Bindings{Values: map[string]any{SourceRestoreComponentParam: suspect.component.Name}}
+		bindings := program.Bindings{Values: map[string]any{SourceRestoreComponentParam: node.Name}}
 		for _, finding := range set.openingFindings {
 			result = append(result, sourceRestoreCandidate{bindings: bindings, fingerprint: FindingFingerprint(finding), rank: rank + 1})
 		}
