@@ -238,9 +238,11 @@ def _episode(directories: list[Path], model: str, pricing: PricingTable) -> dict
     ledgers: dict[str, ClaudeLedger] = {}
     for directory in directories:
         for path in sorted(directory.glob("claude/projects/**/*.jsonl")):
-            if sids and path.stem not in sids:
+            subagent = path.parent.name == "subagents"
+            sid = path.parent.parent.name if subagent else path.stem
+            if sids and sid not in sids:
                 continue
-            ledgers.setdefault(path.stem, ClaudeLedger()).merge_file(path)
+            ledgers.setdefault(sid, ClaudeLedger()).merge_file(path, subagent=subagent)
     role_sessions = {
         role: {event["session_id"] for event in events if event.get("role") == role and event.get("session_id")}
         for role in _ROLES

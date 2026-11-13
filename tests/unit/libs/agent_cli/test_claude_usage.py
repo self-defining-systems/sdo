@@ -356,3 +356,39 @@ def test_result_only_usd_requires_a_proven_session_baseline(tmp_path, monkeypatc
         assert turn_usage(turn)["total_cost_usd"] == 5.0
         assert turn.usd_complete
         assert record["cost_usd"] == 5.0
+
+
+def write_jsonl(path, *records: dict) -> None:
+    import json
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(record) + "\n" for record in records))
+
+
+def test_session_ledger_counts_subagent_transcripts_separately(tmp_path) -> None:
+    from libs.agent_cli.claude_usage import session_ledger
+
+    project = tmp_path / "projects" / "-work"
+    write_jsonl(project / "sid1.jsonl", assistant("main1"))
+    write_jsonl(project / "sid1" / "subagents" / "agent-a1.jsonl", assistant("sub1"), assistant("sub2"))
+    write_jsonl(project / "other" / "subagents" / "agent-z.jsonl", assistant("foreign"))
+
+    bill = session_ledger(tmp_path, "sid1").since(ClaudeLedger(), default_pricing())
+
+    assert bill.requests == 3
+    assert bill.subagent_requests == 2
+    assert bill.subagent_tokens.output_tokens == 20
+    assert bill.tokens.output_tokens == 30
+
+
+def test_live_stdout_and_transcript_of_one_subagent_request_count_once(tmp_path) -> None:
+    from libs.agent_cli.claude_usage import merge_session
+
+    project = tmp_path / "projects" / "-work"
+    write_jsonl(project / "sid1" / "subagents" / "agent-a1.jsonl", assistant("sub1"))
+    capture = ClaudeLedger()
+    capture.observe({**assistant("sub1"), "parent_tool_use_id": "toolu_1"})
+    merge_session(capture, tmp_path, "sid1")
+
+    bill = capture.since(ClaudeLedger(), default_pricing())
+    assert (bill.requests, bill.subagent_requests) == (1, 1)
