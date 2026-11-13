@@ -107,14 +107,14 @@ func TestSDKInputInterfaceInventory(t *testing.T) {
 }
 
 func TestCarrierUpdatesAreCopyOnWrite(t *testing.T) {
-	source := sdktest.Snapshot{ObservedAtTime: ptrTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), Traffic: map[string]traffic.Window{"q": {LoadError: "traffic"}}, Reachability: &servicehealth.ReachabilityWindow{LoadError: "reachability"}, Metrics: map[string]metrics.Result{"q": {Error: "metrics"}}, Alerts: &metrics.AlertsResult{Error: "alerts"}, Usage: &usage.Result{Error: "usage"}, Logs: map[string]logs.Result{"q": {Error: "logs"}}, PodReads: map[string]podread.Result{"q": {Error: "pod reads"}}, AppState: map[string]carried.Result{"q": {Reader: "q"}}}
+	source := sdktest.Snapshot{ObservedAtTime: ptrTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), Traffic: map[string]traffic.Window{"q": {LoadError: "traffic"}}, Reachability: &servicehealth.ReachabilityWindow{LoadError: "reachability"}, Metrics: map[string]metrics.Result{"q": {Error: "metrics"}}, Alerts: &metrics.AlertsResult{Error: "alerts"}, Usage: &usage.Result{Error: "usage"}, Logs: map[string]logs.Result{"q": {Error: "logs"}}, PodReads: map[string]podread.Result{"q": {Error: "pod reads"}}}
 	empty := inputs.New(struct{ sdk.DetectionContext }{})
 	full := inputs.New(source)
-	methods := []string{"Clock", "Traffic", "Reachability", "Metrics", "Alerts", "Usage", "Logs", "PodReads", "AppState"}
-	accessors := []string{"ObservedAt", "TrafficWindow", "ServiceReachability", "MetricResult", "AlertsResult", "UsageResult", "LogResult", "PodReadResult", "AppStateResult"}
+	methods := []string{"Clock", "Traffic", "Reachability", "Metrics", "Alerts", "Usage", "Logs", "PodReads"}
+	accessors := []string{"ObservedAt", "TrafficWindow", "ServiceReachability", "MetricResult", "AlertsResult", "UsageResult", "LogResult", "PodReadResult"}
 	read := func(c inputs.Carrier, i int) []reflect.Value {
 		var args []reflect.Value
-		if i == 1 || i == 3 || i == 6 || i == 7 || i == 8 {
+		if i == 1 || i == 3 || i == 6 || i == 7 {
 			args = []reflect.Value{reflect.ValueOf("q")}
 		}
 		return reflect.ValueOf(c).MethodByName(accessors[i]).Call(args)
@@ -151,5 +151,22 @@ func TestCarrierUpdatesAreCopyOnWrite(t *testing.T) {
 		}
 	}
 	visit(empty, 0)
+}
+
+// The permutation walk above doubles per input (and runs about 45 s at nine),
+// so app state, added later, is checked on its own.
+func TestCarrierAppStateUpdateIsCopyOnWrite(t *testing.T) {
+	source := sdktest.Snapshot{AppState: map[string]carried.Result{"q": {Reader: "q"}}}
+	empty := inputs.New(struct{ sdk.DetectionContext }{})
+	next := empty.WithAppState(source)
+	if _, ok := empty.AppStateResult("q"); ok {
+		t.Fatal("WithAppState mutated its predecessor")
+	}
+	if got, ok := next.AppStateResult("q"); !ok || got.Reader != "q" {
+		t.Fatalf("lost app state: %+v", got)
+	}
+	if len(inputs.New(source).AppStateResults()) != 1 {
+		t.Fatal("results not listed")
+	}
 }
 func ptrTime(at time.Time) *time.Time { return &at }
