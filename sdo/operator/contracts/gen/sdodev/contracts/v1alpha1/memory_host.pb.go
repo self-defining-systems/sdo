@@ -85,7 +85,7 @@ func (x TrafficRequest_Operation) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use TrafficRequest_Operation.Descriptor instead.
 func (TrafficRequest_Operation) EnumDescriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{16, 0}
+	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{18, 0}
 }
 
 type ReadyRequest struct {
@@ -486,7 +486,10 @@ type MemoryObservation struct {
 	Vantage map[string]*structpb.Struct `protobuf:"bytes,12,rep,name=vantage,proto3" json:"vantage,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// The controller's self-heal hold (sdk.SelfHealPolicy). Absent means the
 	// SDK default.
-	SelfHealHold  *durationpb.Duration `protobuf:"bytes,14,opt,name=self_heal_hold,json=selfHealHold,proto3" json:"self_heal_hold,omitempty"`
+	SelfHealHold *durationpb.Duration `protobuf:"bytes,14,opt,name=self_heal_hold,json=selfHealHold,proto3" json:"self_heal_hold,omitempty"`
+	// Frozen app-state reader results by reader ID (carried.Result): the ring of
+	// recent snapshots, the last-healthy snapshot and the healthy history.
+	AppState      map[string]*structpb.Struct `protobuf:"bytes,15,rep,name=app_state,json=appState,proto3" json:"app_state,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -605,6 +608,123 @@ func (x *MemoryObservation) GetSelfHealHold() *durationpb.Duration {
 	return nil
 }
 
+func (x *MemoryObservation) GetAppState() map[string]*structpb.Struct {
+	if x != nil {
+		return x.AppState
+	}
+	return nil
+}
+
+// ReadStateRequest names one reader (the ID of a health detector that
+// implements appstate.Reader). The host reads against its latest complete
+// mirror; no frozen view is needed because the controller never waits on the
+// reader. observed_at is the controller clock's time for the reader's view.
+type ReadStateRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ReaderId      string                 `protobuf:"bytes,1,opt,name=reader_id,json=readerId,proto3" json:"reader_id,omitempty"`
+	ObservedAt    *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReadStateRequest) Reset() {
+	*x = ReadStateRequest{}
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReadStateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReadStateRequest) ProtoMessage() {}
+
+func (x *ReadStateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReadStateRequest.ProtoReflect.Descriptor instead.
+func (*ReadStateRequest) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ReadStateRequest) GetReaderId() string {
+	if x != nil {
+		return x.ReaderId
+	}
+	return ""
+}
+
+func (x *ReadStateRequest) GetObservedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ObservedAt
+	}
+	return nil
+}
+
+// ReadStateResponse carries the state, or the reason the call failed. A failed
+// read is data, not a transport error.
+type ReadStateResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Values        map[string]string      `protobuf:"bytes,1,rep,name=values,proto3" json:"values,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReadStateResponse) Reset() {
+	*x = ReadStateResponse{}
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReadStateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReadStateResponse) ProtoMessage() {}
+
+func (x *ReadStateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReadStateResponse.ProtoReflect.Descriptor instead.
+func (*ReadStateResponse) Descriptor() ([]byte, []int) {
+	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ReadStateResponse) GetValues() map[string]string {
+	if x != nil {
+		return x.Values
+	}
+	return nil
+}
+
+func (x *ReadStateResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 type EvaluateRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	DetectorIds    []string               `protobuf:"bytes,1,rep,name=detector_ids,json=detectorIds,proto3" json:"detector_ids,omitempty"`
@@ -619,7 +739,7 @@ type EvaluateRequest struct {
 
 func (x *EvaluateRequest) Reset() {
 	*x = EvaluateRequest{}
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[7]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -631,7 +751,7 @@ func (x *EvaluateRequest) String() string {
 func (*EvaluateRequest) ProtoMessage() {}
 
 func (x *EvaluateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[7]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -644,7 +764,7 @@ func (x *EvaluateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EvaluateRequest.ProtoReflect.Descriptor instead.
 func (*EvaluateRequest) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{7}
+	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *EvaluateRequest) GetDetectorIds() []string {
@@ -686,7 +806,7 @@ type MemoryDetectorResult struct {
 
 func (x *MemoryDetectorResult) Reset() {
 	*x = MemoryDetectorResult{}
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[8]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -698,7 +818,7 @@ func (x *MemoryDetectorResult) String() string {
 func (*MemoryDetectorResult) ProtoMessage() {}
 
 func (x *MemoryDetectorResult) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[8]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -711,7 +831,7 @@ func (x *MemoryDetectorResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MemoryDetectorResult.ProtoReflect.Descriptor instead.
 func (*MemoryDetectorResult) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{8}
+	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *MemoryDetectorResult) GetDetectorId() string {
@@ -744,7 +864,7 @@ type EvaluateResponse struct {
 
 func (x *EvaluateResponse) Reset() {
 	*x = EvaluateResponse{}
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[9]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -756,7 +876,7 @@ func (x *EvaluateResponse) String() string {
 func (*EvaluateResponse) ProtoMessage() {}
 
 func (x *EvaluateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[9]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -769,7 +889,7 @@ func (x *EvaluateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EvaluateResponse.ProtoReflect.Descriptor instead.
 func (*EvaluateResponse) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{9}
+	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *EvaluateResponse) GetResults() []*MemoryDetectorResult {
@@ -793,7 +913,7 @@ type MemoryReadReceipt struct {
 
 func (x *MemoryReadReceipt) Reset() {
 	*x = MemoryReadReceipt{}
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[10]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -805,7 +925,7 @@ func (x *MemoryReadReceipt) String() string {
 func (*MemoryReadReceipt) ProtoMessage() {}
 
 func (x *MemoryReadReceipt) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[10]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -818,7 +938,7 @@ func (x *MemoryReadReceipt) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MemoryReadReceipt.ProtoReflect.Descriptor instead.
 func (*MemoryReadReceipt) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{10}
+	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *MemoryReadReceipt) GetOperation() string {
@@ -862,7 +982,7 @@ type MemoryProgramInput struct {
 
 func (x *MemoryProgramInput) Reset() {
 	*x = MemoryProgramInput{}
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[11]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -874,7 +994,7 @@ func (x *MemoryProgramInput) String() string {
 func (*MemoryProgramInput) ProtoMessage() {}
 
 func (x *MemoryProgramInput) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[11]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -887,7 +1007,7 @@ func (x *MemoryProgramInput) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MemoryProgramInput.ProtoReflect.Descriptor instead.
 func (*MemoryProgramInput) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{11}
+	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *MemoryProgramInput) GetProgramId() string {
@@ -934,7 +1054,7 @@ type DiagnoseRequest struct {
 
 func (x *DiagnoseRequest) Reset() {
 	*x = DiagnoseRequest{}
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[12]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -946,7 +1066,7 @@ func (x *DiagnoseRequest) String() string {
 func (*DiagnoseRequest) ProtoMessage() {}
 
 func (x *DiagnoseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[12]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -959,7 +1079,7 @@ func (x *DiagnoseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiagnoseRequest.ProtoReflect.Descriptor instead.
 func (*DiagnoseRequest) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{12}
+	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *DiagnoseRequest) GetInput() *MemoryProgramInput {
@@ -980,7 +1100,7 @@ type DiagnoseResponse struct {
 
 func (x *DiagnoseResponse) Reset() {
 	*x = DiagnoseResponse{}
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[13]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -992,7 +1112,7 @@ func (x *DiagnoseResponse) String() string {
 func (*DiagnoseResponse) ProtoMessage() {}
 
 func (x *DiagnoseResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[13]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1005,7 +1125,7 @@ func (x *DiagnoseResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiagnoseResponse.ProtoReflect.Descriptor instead.
 func (*DiagnoseResponse) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{13}
+	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *DiagnoseResponse) GetVerdict() *Verdict {
@@ -1038,7 +1158,7 @@ type MitigateRequest struct {
 
 func (x *MitigateRequest) Reset() {
 	*x = MitigateRequest{}
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[14]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1050,7 +1170,7 @@ func (x *MitigateRequest) String() string {
 func (*MitigateRequest) ProtoMessage() {}
 
 func (x *MitigateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[14]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1063,7 +1183,7 @@ func (x *MitigateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MitigateRequest.ProtoReflect.Descriptor instead.
 func (*MitigateRequest) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{14}
+	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *MitigateRequest) GetInput() *MemoryProgramInput {
@@ -1084,7 +1204,7 @@ type MitigateResponse struct {
 
 func (x *MitigateResponse) Reset() {
 	*x = MitigateResponse{}
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[15]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1096,7 +1216,7 @@ func (x *MitigateResponse) String() string {
 func (*MitigateResponse) ProtoMessage() {}
 
 func (x *MitigateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[15]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1109,7 +1229,7 @@ func (x *MitigateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MitigateResponse.ProtoReflect.Descriptor instead.
 func (*MitigateResponse) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{15}
+	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *MitigateResponse) GetPlan() *Plan {
@@ -1156,7 +1276,7 @@ type TrafficRequest struct {
 
 func (x *TrafficRequest) Reset() {
 	*x = TrafficRequest{}
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[16]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1168,7 +1288,7 @@ func (x *TrafficRequest) String() string {
 func (*TrafficRequest) ProtoMessage() {}
 
 func (x *TrafficRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[16]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1181,7 +1301,7 @@ func (x *TrafficRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TrafficRequest.ProtoReflect.Descriptor instead.
 func (*TrafficRequest) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{16}
+	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *TrafficRequest) GetOperation() TrafficRequest_Operation {
@@ -1284,7 +1404,7 @@ type TrafficResponse struct {
 
 func (x *TrafficResponse) Reset() {
 	*x = TrafficResponse{}
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[17]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1296,7 +1416,7 @@ func (x *TrafficResponse) String() string {
 func (*TrafficResponse) ProtoMessage() {}
 
 func (x *TrafficResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[17]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1309,7 +1429,7 @@ func (x *TrafficResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TrafficResponse.ProtoReflect.Descriptor instead.
 func (*TrafficResponse) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{17}
+	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *TrafficResponse) GetWindows() map[string]*structpb.Struct {
@@ -1372,7 +1492,7 @@ type TrafficDialTarget struct {
 
 func (x *TrafficDialTarget) Reset() {
 	*x = TrafficDialTarget{}
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[18]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1384,7 +1504,7 @@ func (x *TrafficDialTarget) String() string {
 func (*TrafficDialTarget) ProtoMessage() {}
 
 func (x *TrafficDialTarget) ProtoReflect() protoreflect.Message {
-	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[18]
+	mi := &file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1397,7 +1517,7 @@ func (x *TrafficDialTarget) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TrafficDialTarget.ProtoReflect.Descriptor instead.
 func (*TrafficDialTarget) Descriptor() ([]byte, []int) {
-	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{18}
+	return file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *TrafficDialTarget) GetService() string {
@@ -1450,8 +1570,7 @@ const file_sdodev_contracts_v1alpha1_memory_host_proto_rawDesc = "" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x03ref\x12/\n" +
 	"\x06object\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x06object\",\n" +
 	"\x0eMirrorResponse\x12\x1a\n" +
-	"\bsequence\x18\x01 \x01(\x04R\bsequence\"\x88\n" +
-	"\n" +
+	"\bsequence\x18\x01 \x01(\x04R\bsequence\"\xb7\v\n" +
 	"\x11MemoryObservation\x12;\n" +
 	"\vobserved_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"observedAt\x12S\n" +
@@ -1466,7 +1585,8 @@ const file_sdodev_contracts_v1alpha1_memory_host_proto_rawDesc = "" +
 	" \x01(\v2\x17.google.protobuf.StructR\fpodAdmission\x12W\n" +
 	"\tpod_reads\x18\v \x03(\v2:.sdodev.contracts.v1alpha1.MemoryObservation.PodReadsEntryR\bpodReads\x12S\n" +
 	"\avantage\x18\f \x03(\v29.sdodev.contracts.v1alpha1.MemoryObservation.VantageEntryR\avantage\x12?\n" +
-	"\x0eself_heal_hold\x18\x0e \x01(\v2\x19.google.protobuf.DurationR\fselfHealHold\x1aS\n" +
+	"\x0eself_heal_hold\x18\x0e \x01(\v2\x19.google.protobuf.DurationR\fselfHealHold\x12W\n" +
+	"\tapp_state\x18\x0f \x03(\v2:.sdodev.contracts.v1alpha1.MemoryObservation.AppStateEntryR\bappState\x1aS\n" +
 	"\fTrafficEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12-\n" +
 	"\x05value\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x05value:\x028\x01\x1aS\n" +
@@ -1481,7 +1601,20 @@ const file_sdodev_contracts_v1alpha1_memory_host_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x05value:\x028\x01\x1aS\n" +
 	"\fVantageEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12-\n" +
-	"\x05value\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x05value:\x028\x01J\x04\b\b\x10\tJ\x04\b\r\x10\x0eR\bsnapshotR\bplatform\"\xf1\x01\n" +
+	"\x05value\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x05value:\x028\x01\x1aT\n" +
+	"\rAppStateEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12-\n" +
+	"\x05value\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x05value:\x028\x01J\x04\b\b\x10\tJ\x04\b\r\x10\x0eR\bsnapshotR\bplatform\"l\n" +
+	"\x10ReadStateRequest\x12\x1b\n" +
+	"\treader_id\x18\x01 \x01(\tR\breaderId\x12;\n" +
+	"\vobserved_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"observedAt\"\xb6\x01\n" +
+	"\x11ReadStateResponse\x12P\n" +
+	"\x06values\x18\x01 \x03(\v28.sdodev.contracts.v1alpha1.ReadStateResponse.ValuesEntryR\x06values\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\x1a9\n" +
+	"\vValuesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xf1\x01\n" +
 	"\x0fEvaluateRequest\x12!\n" +
 	"\fdetector_ids\x18\x01 \x03(\tR\vdetectorIds\x12'\n" +
 	"\x0fmirror_sequence\x18\x02 \x01(\x04R\x0emirrorSequence\x12N\n" +
@@ -1565,14 +1698,15 @@ const file_sdodev_contracts_v1alpha1_memory_host_proto_rawDesc = "" +
 	"\x11TrafficDialTarget\x12\x18\n" +
 	"\aservice\x18\x01 \x01(\tR\aservice\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\x05R\x04port\x12\x1b\n" +
-	"\tport_name\x18\x03 \x01(\tR\bportName2\xe1\x04\n" +
+	"\tport_name\x18\x03 \x01(\tR\bportName2\xc9\x05\n" +
 	"\x11MemoryHostService\x12`\n" +
 	"\aTraffic\x12).sdodev.contracts.v1alpha1.TrafficRequest\x1a*.sdodev.contracts.v1alpha1.TrafficResponse\x12Z\n" +
 	"\x05Ready\x12'.sdodev.contracts.v1alpha1.ReadyRequest\x1a(.sdodev.contracts.v1alpha1.ReadyResponse\x12_\n" +
 	"\x06Mirror\x12(.sdodev.contracts.v1alpha1.MirrorRequest\x1a).sdodev.contracts.v1alpha1.MirrorResponse(\x01\x12c\n" +
 	"\bEvaluate\x12*.sdodev.contracts.v1alpha1.EvaluateRequest\x1a+.sdodev.contracts.v1alpha1.EvaluateResponse\x12c\n" +
 	"\bDiagnose\x12*.sdodev.contracts.v1alpha1.DiagnoseRequest\x1a+.sdodev.contracts.v1alpha1.DiagnoseResponse\x12c\n" +
-	"\bMitigate\x12*.sdodev.contracts.v1alpha1.MitigateRequest\x1a+.sdodev.contracts.v1alpha1.MitigateResponseB\x82\x02\n" +
+	"\bMitigate\x12*.sdodev.contracts.v1alpha1.MitigateRequest\x1a+.sdodev.contracts.v1alpha1.MitigateResponse\x12f\n" +
+	"\tReadState\x12+.sdodev.contracts.v1alpha1.ReadStateRequest\x1a,.sdodev.contracts.v1alpha1.ReadStateResponseB\x82\x02\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\x0fMemoryHostProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (
@@ -1588,7 +1722,7 @@ func file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP() []byte {
 }
 
 var file_sdodev_contracts_v1alpha1_memory_host_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
+var file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
 var file_sdodev_contracts_v1alpha1_memory_host_proto_goTypes = []any{
 	(TrafficRequest_Operation)(0),      // 0: sdodev.contracts.v1alpha1.TrafficRequest.Operation
 	(*ReadyRequest)(nil),               // 1: sdodev.contracts.v1alpha1.ReadyRequest
@@ -1598,104 +1732,114 @@ var file_sdodev_contracts_v1alpha1_memory_host_proto_goTypes = []any{
 	(*MemoryObject)(nil),               // 5: sdodev.contracts.v1alpha1.MemoryObject
 	(*MirrorResponse)(nil),             // 6: sdodev.contracts.v1alpha1.MirrorResponse
 	(*MemoryObservation)(nil),          // 7: sdodev.contracts.v1alpha1.MemoryObservation
-	(*EvaluateRequest)(nil),            // 8: sdodev.contracts.v1alpha1.EvaluateRequest
-	(*MemoryDetectorResult)(nil),       // 9: sdodev.contracts.v1alpha1.MemoryDetectorResult
-	(*EvaluateResponse)(nil),           // 10: sdodev.contracts.v1alpha1.EvaluateResponse
-	(*MemoryReadReceipt)(nil),          // 11: sdodev.contracts.v1alpha1.MemoryReadReceipt
-	(*MemoryProgramInput)(nil),         // 12: sdodev.contracts.v1alpha1.MemoryProgramInput
-	(*DiagnoseRequest)(nil),            // 13: sdodev.contracts.v1alpha1.DiagnoseRequest
-	(*DiagnoseResponse)(nil),           // 14: sdodev.contracts.v1alpha1.DiagnoseResponse
-	(*MitigateRequest)(nil),            // 15: sdodev.contracts.v1alpha1.MitigateRequest
-	(*MitigateResponse)(nil),           // 16: sdodev.contracts.v1alpha1.MitigateResponse
-	(*TrafficRequest)(nil),             // 17: sdodev.contracts.v1alpha1.TrafficRequest
-	(*TrafficResponse)(nil),            // 18: sdodev.contracts.v1alpha1.TrafficResponse
-	(*TrafficDialTarget)(nil),          // 19: sdodev.contracts.v1alpha1.TrafficDialTarget
-	nil,                                // 20: sdodev.contracts.v1alpha1.MemoryObservation.TrafficEntry
-	nil,                                // 21: sdodev.contracts.v1alpha1.MemoryObservation.MetricsEntry
-	nil,                                // 22: sdodev.contracts.v1alpha1.MemoryObservation.LogsEntry
-	nil,                                // 23: sdodev.contracts.v1alpha1.MemoryObservation.PodReadsEntry
-	nil,                                // 24: sdodev.contracts.v1alpha1.MemoryObservation.VantageEntry
-	nil,                                // 25: sdodev.contracts.v1alpha1.TrafficRequest.HttpHeadersEntry
-	nil,                                // 26: sdodev.contracts.v1alpha1.TrafficRequest.HttpFieldsEntry
-	nil,                                // 27: sdodev.contracts.v1alpha1.TrafficResponse.WindowsEntry
-	(*ProgramSpec)(nil),                // 28: sdodev.contracts.v1alpha1.ProgramSpec
-	(*structpb.Struct)(nil),            // 29: google.protobuf.Struct
-	(*ObjectRef)(nil),                  // 30: sdodev.contracts.v1alpha1.ObjectRef
-	(*timestamppb.Timestamp)(nil),      // 31: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),        // 32: google.protobuf.Duration
-	(*Finding)(nil),                    // 33: sdodev.contracts.v1alpha1.Finding
-	(*structpb.Value)(nil),             // 34: google.protobuf.Value
-	(*Binding)(nil),                    // 35: sdodev.contracts.v1alpha1.Binding
-	(*Verdict)(nil),                    // 36: sdodev.contracts.v1alpha1.Verdict
-	(*Plan)(nil),                       // 37: sdodev.contracts.v1alpha1.Plan
+	(*ReadStateRequest)(nil),           // 8: sdodev.contracts.v1alpha1.ReadStateRequest
+	(*ReadStateResponse)(nil),          // 9: sdodev.contracts.v1alpha1.ReadStateResponse
+	(*EvaluateRequest)(nil),            // 10: sdodev.contracts.v1alpha1.EvaluateRequest
+	(*MemoryDetectorResult)(nil),       // 11: sdodev.contracts.v1alpha1.MemoryDetectorResult
+	(*EvaluateResponse)(nil),           // 12: sdodev.contracts.v1alpha1.EvaluateResponse
+	(*MemoryReadReceipt)(nil),          // 13: sdodev.contracts.v1alpha1.MemoryReadReceipt
+	(*MemoryProgramInput)(nil),         // 14: sdodev.contracts.v1alpha1.MemoryProgramInput
+	(*DiagnoseRequest)(nil),            // 15: sdodev.contracts.v1alpha1.DiagnoseRequest
+	(*DiagnoseResponse)(nil),           // 16: sdodev.contracts.v1alpha1.DiagnoseResponse
+	(*MitigateRequest)(nil),            // 17: sdodev.contracts.v1alpha1.MitigateRequest
+	(*MitigateResponse)(nil),           // 18: sdodev.contracts.v1alpha1.MitigateResponse
+	(*TrafficRequest)(nil),             // 19: sdodev.contracts.v1alpha1.TrafficRequest
+	(*TrafficResponse)(nil),            // 20: sdodev.contracts.v1alpha1.TrafficResponse
+	(*TrafficDialTarget)(nil),          // 21: sdodev.contracts.v1alpha1.TrafficDialTarget
+	nil,                                // 22: sdodev.contracts.v1alpha1.MemoryObservation.TrafficEntry
+	nil,                                // 23: sdodev.contracts.v1alpha1.MemoryObservation.MetricsEntry
+	nil,                                // 24: sdodev.contracts.v1alpha1.MemoryObservation.LogsEntry
+	nil,                                // 25: sdodev.contracts.v1alpha1.MemoryObservation.PodReadsEntry
+	nil,                                // 26: sdodev.contracts.v1alpha1.MemoryObservation.VantageEntry
+	nil,                                // 27: sdodev.contracts.v1alpha1.MemoryObservation.AppStateEntry
+	nil,                                // 28: sdodev.contracts.v1alpha1.ReadStateResponse.ValuesEntry
+	nil,                                // 29: sdodev.contracts.v1alpha1.TrafficRequest.HttpHeadersEntry
+	nil,                                // 30: sdodev.contracts.v1alpha1.TrafficRequest.HttpFieldsEntry
+	nil,                                // 31: sdodev.contracts.v1alpha1.TrafficResponse.WindowsEntry
+	(*ProgramSpec)(nil),                // 32: sdodev.contracts.v1alpha1.ProgramSpec
+	(*structpb.Struct)(nil),            // 33: google.protobuf.Struct
+	(*ObjectRef)(nil),                  // 34: sdodev.contracts.v1alpha1.ObjectRef
+	(*timestamppb.Timestamp)(nil),      // 35: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),        // 36: google.protobuf.Duration
+	(*Finding)(nil),                    // 37: sdodev.contracts.v1alpha1.Finding
+	(*structpb.Value)(nil),             // 38: google.protobuf.Value
+	(*Binding)(nil),                    // 39: sdodev.contracts.v1alpha1.Binding
+	(*Verdict)(nil),                    // 40: sdodev.contracts.v1alpha1.Verdict
+	(*Plan)(nil),                       // 41: sdodev.contracts.v1alpha1.Plan
 }
 var file_sdodev_contracts_v1alpha1_memory_host_proto_depIdxs = []int32{
 	3,  // 0: sdodev.contracts.v1alpha1.ReadyResponse.detectors:type_name -> sdodev.contracts.v1alpha1.MemoryDetectorRegistration
-	28, // 1: sdodev.contracts.v1alpha1.ReadyResponse.programs:type_name -> sdodev.contracts.v1alpha1.ProgramSpec
-	29, // 2: sdodev.contracts.v1alpha1.MemoryDetectorRegistration.specification:type_name -> google.protobuf.Struct
+	32, // 1: sdodev.contracts.v1alpha1.ReadyResponse.programs:type_name -> sdodev.contracts.v1alpha1.ProgramSpec
+	33, // 2: sdodev.contracts.v1alpha1.MemoryDetectorRegistration.specification:type_name -> google.protobuf.Struct
 	5,  // 3: sdodev.contracts.v1alpha1.MirrorRequest.upserts:type_name -> sdodev.contracts.v1alpha1.MemoryObject
-	30, // 4: sdodev.contracts.v1alpha1.MirrorRequest.deletes:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	30, // 5: sdodev.contracts.v1alpha1.MemoryObject.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	29, // 6: sdodev.contracts.v1alpha1.MemoryObject.object:type_name -> google.protobuf.Struct
-	31, // 7: sdodev.contracts.v1alpha1.MemoryObservation.observed_at:type_name -> google.protobuf.Timestamp
-	20, // 8: sdodev.contracts.v1alpha1.MemoryObservation.traffic:type_name -> sdodev.contracts.v1alpha1.MemoryObservation.TrafficEntry
-	29, // 9: sdodev.contracts.v1alpha1.MemoryObservation.reachability:type_name -> google.protobuf.Struct
-	21, // 10: sdodev.contracts.v1alpha1.MemoryObservation.metrics:type_name -> sdodev.contracts.v1alpha1.MemoryObservation.MetricsEntry
-	29, // 11: sdodev.contracts.v1alpha1.MemoryObservation.alerts:type_name -> google.protobuf.Struct
-	29, // 12: sdodev.contracts.v1alpha1.MemoryObservation.usage:type_name -> google.protobuf.Struct
-	22, // 13: sdodev.contracts.v1alpha1.MemoryObservation.logs:type_name -> sdodev.contracts.v1alpha1.MemoryObservation.LogsEntry
-	29, // 14: sdodev.contracts.v1alpha1.MemoryObservation.scoped:type_name -> google.protobuf.Struct
-	29, // 15: sdodev.contracts.v1alpha1.MemoryObservation.pod_admission:type_name -> google.protobuf.Struct
-	23, // 16: sdodev.contracts.v1alpha1.MemoryObservation.pod_reads:type_name -> sdodev.contracts.v1alpha1.MemoryObservation.PodReadsEntry
-	24, // 17: sdodev.contracts.v1alpha1.MemoryObservation.vantage:type_name -> sdodev.contracts.v1alpha1.MemoryObservation.VantageEntry
-	32, // 18: sdodev.contracts.v1alpha1.MemoryObservation.self_heal_hold:type_name -> google.protobuf.Duration
-	7,  // 19: sdodev.contracts.v1alpha1.EvaluateRequest.observation:type_name -> sdodev.contracts.v1alpha1.MemoryObservation
-	11, // 20: sdodev.contracts.v1alpha1.EvaluateRequest.reads:type_name -> sdodev.contracts.v1alpha1.MemoryReadReceipt
-	33, // 21: sdodev.contracts.v1alpha1.MemoryDetectorResult.findings:type_name -> sdodev.contracts.v1alpha1.Finding
-	9,  // 22: sdodev.contracts.v1alpha1.EvaluateResponse.results:type_name -> sdodev.contracts.v1alpha1.MemoryDetectorResult
-	34, // 23: sdodev.contracts.v1alpha1.MemoryReadReceipt.arguments:type_name -> google.protobuf.Value
-	34, // 24: sdodev.contracts.v1alpha1.MemoryReadReceipt.result:type_name -> google.protobuf.Value
-	35, // 25: sdodev.contracts.v1alpha1.MemoryProgramInput.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
-	7,  // 26: sdodev.contracts.v1alpha1.MemoryProgramInput.observation:type_name -> sdodev.contracts.v1alpha1.MemoryObservation
-	11, // 27: sdodev.contracts.v1alpha1.MemoryProgramInput.reads:type_name -> sdodev.contracts.v1alpha1.MemoryReadReceipt
-	12, // 28: sdodev.contracts.v1alpha1.DiagnoseRequest.input:type_name -> sdodev.contracts.v1alpha1.MemoryProgramInput
-	36, // 29: sdodev.contracts.v1alpha1.DiagnoseResponse.verdict:type_name -> sdodev.contracts.v1alpha1.Verdict
-	11, // 30: sdodev.contracts.v1alpha1.DiagnoseResponse.reads:type_name -> sdodev.contracts.v1alpha1.MemoryReadReceipt
-	12, // 31: sdodev.contracts.v1alpha1.MitigateRequest.input:type_name -> sdodev.contracts.v1alpha1.MemoryProgramInput
-	37, // 32: sdodev.contracts.v1alpha1.MitigateResponse.plan:type_name -> sdodev.contracts.v1alpha1.Plan
-	11, // 33: sdodev.contracts.v1alpha1.MitigateResponse.reads:type_name -> sdodev.contracts.v1alpha1.MemoryReadReceipt
-	0,  // 34: sdodev.contracts.v1alpha1.TrafficRequest.operation:type_name -> sdodev.contracts.v1alpha1.TrafficRequest.Operation
-	30, // 35: sdodev.contracts.v1alpha1.TrafficRequest.target:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	25, // 36: sdodev.contracts.v1alpha1.TrafficRequest.http_headers:type_name -> sdodev.contracts.v1alpha1.TrafficRequest.HttpHeadersEntry
-	19, // 37: sdodev.contracts.v1alpha1.TrafficRequest.dial_targets:type_name -> sdodev.contracts.v1alpha1.TrafficDialTarget
-	26, // 38: sdodev.contracts.v1alpha1.TrafficRequest.http_fields:type_name -> sdodev.contracts.v1alpha1.TrafficRequest.HttpFieldsEntry
-	27, // 39: sdodev.contracts.v1alpha1.TrafficResponse.windows:type_name -> sdodev.contracts.v1alpha1.TrafficResponse.WindowsEntry
-	29, // 40: sdodev.contracts.v1alpha1.TrafficResponse.burst:type_name -> google.protobuf.Struct
-	29, // 41: sdodev.contracts.v1alpha1.TrafficResponse.dials:type_name -> google.protobuf.Struct
-	29, // 42: sdodev.contracts.v1alpha1.TrafficResponse.fields:type_name -> google.protobuf.Struct
-	29, // 43: sdodev.contracts.v1alpha1.MemoryObservation.TrafficEntry.value:type_name -> google.protobuf.Struct
-	29, // 44: sdodev.contracts.v1alpha1.MemoryObservation.MetricsEntry.value:type_name -> google.protobuf.Struct
-	29, // 45: sdodev.contracts.v1alpha1.MemoryObservation.LogsEntry.value:type_name -> google.protobuf.Struct
-	29, // 46: sdodev.contracts.v1alpha1.MemoryObservation.PodReadsEntry.value:type_name -> google.protobuf.Struct
-	29, // 47: sdodev.contracts.v1alpha1.MemoryObservation.VantageEntry.value:type_name -> google.protobuf.Struct
-	29, // 48: sdodev.contracts.v1alpha1.TrafficResponse.WindowsEntry.value:type_name -> google.protobuf.Struct
-	17, // 49: sdodev.contracts.v1alpha1.MemoryHostService.Traffic:input_type -> sdodev.contracts.v1alpha1.TrafficRequest
-	1,  // 50: sdodev.contracts.v1alpha1.MemoryHostService.Ready:input_type -> sdodev.contracts.v1alpha1.ReadyRequest
-	4,  // 51: sdodev.contracts.v1alpha1.MemoryHostService.Mirror:input_type -> sdodev.contracts.v1alpha1.MirrorRequest
-	8,  // 52: sdodev.contracts.v1alpha1.MemoryHostService.Evaluate:input_type -> sdodev.contracts.v1alpha1.EvaluateRequest
-	13, // 53: sdodev.contracts.v1alpha1.MemoryHostService.Diagnose:input_type -> sdodev.contracts.v1alpha1.DiagnoseRequest
-	15, // 54: sdodev.contracts.v1alpha1.MemoryHostService.Mitigate:input_type -> sdodev.contracts.v1alpha1.MitigateRequest
-	18, // 55: sdodev.contracts.v1alpha1.MemoryHostService.Traffic:output_type -> sdodev.contracts.v1alpha1.TrafficResponse
-	2,  // 56: sdodev.contracts.v1alpha1.MemoryHostService.Ready:output_type -> sdodev.contracts.v1alpha1.ReadyResponse
-	6,  // 57: sdodev.contracts.v1alpha1.MemoryHostService.Mirror:output_type -> sdodev.contracts.v1alpha1.MirrorResponse
-	10, // 58: sdodev.contracts.v1alpha1.MemoryHostService.Evaluate:output_type -> sdodev.contracts.v1alpha1.EvaluateResponse
-	14, // 59: sdodev.contracts.v1alpha1.MemoryHostService.Diagnose:output_type -> sdodev.contracts.v1alpha1.DiagnoseResponse
-	16, // 60: sdodev.contracts.v1alpha1.MemoryHostService.Mitigate:output_type -> sdodev.contracts.v1alpha1.MitigateResponse
-	55, // [55:61] is the sub-list for method output_type
-	49, // [49:55] is the sub-list for method input_type
-	49, // [49:49] is the sub-list for extension type_name
-	49, // [49:49] is the sub-list for extension extendee
-	0,  // [0:49] is the sub-list for field type_name
+	34, // 4: sdodev.contracts.v1alpha1.MirrorRequest.deletes:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	34, // 5: sdodev.contracts.v1alpha1.MemoryObject.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	33, // 6: sdodev.contracts.v1alpha1.MemoryObject.object:type_name -> google.protobuf.Struct
+	35, // 7: sdodev.contracts.v1alpha1.MemoryObservation.observed_at:type_name -> google.protobuf.Timestamp
+	22, // 8: sdodev.contracts.v1alpha1.MemoryObservation.traffic:type_name -> sdodev.contracts.v1alpha1.MemoryObservation.TrafficEntry
+	33, // 9: sdodev.contracts.v1alpha1.MemoryObservation.reachability:type_name -> google.protobuf.Struct
+	23, // 10: sdodev.contracts.v1alpha1.MemoryObservation.metrics:type_name -> sdodev.contracts.v1alpha1.MemoryObservation.MetricsEntry
+	33, // 11: sdodev.contracts.v1alpha1.MemoryObservation.alerts:type_name -> google.protobuf.Struct
+	33, // 12: sdodev.contracts.v1alpha1.MemoryObservation.usage:type_name -> google.protobuf.Struct
+	24, // 13: sdodev.contracts.v1alpha1.MemoryObservation.logs:type_name -> sdodev.contracts.v1alpha1.MemoryObservation.LogsEntry
+	33, // 14: sdodev.contracts.v1alpha1.MemoryObservation.scoped:type_name -> google.protobuf.Struct
+	33, // 15: sdodev.contracts.v1alpha1.MemoryObservation.pod_admission:type_name -> google.protobuf.Struct
+	25, // 16: sdodev.contracts.v1alpha1.MemoryObservation.pod_reads:type_name -> sdodev.contracts.v1alpha1.MemoryObservation.PodReadsEntry
+	26, // 17: sdodev.contracts.v1alpha1.MemoryObservation.vantage:type_name -> sdodev.contracts.v1alpha1.MemoryObservation.VantageEntry
+	36, // 18: sdodev.contracts.v1alpha1.MemoryObservation.self_heal_hold:type_name -> google.protobuf.Duration
+	27, // 19: sdodev.contracts.v1alpha1.MemoryObservation.app_state:type_name -> sdodev.contracts.v1alpha1.MemoryObservation.AppStateEntry
+	35, // 20: sdodev.contracts.v1alpha1.ReadStateRequest.observed_at:type_name -> google.protobuf.Timestamp
+	28, // 21: sdodev.contracts.v1alpha1.ReadStateResponse.values:type_name -> sdodev.contracts.v1alpha1.ReadStateResponse.ValuesEntry
+	7,  // 22: sdodev.contracts.v1alpha1.EvaluateRequest.observation:type_name -> sdodev.contracts.v1alpha1.MemoryObservation
+	13, // 23: sdodev.contracts.v1alpha1.EvaluateRequest.reads:type_name -> sdodev.contracts.v1alpha1.MemoryReadReceipt
+	37, // 24: sdodev.contracts.v1alpha1.MemoryDetectorResult.findings:type_name -> sdodev.contracts.v1alpha1.Finding
+	11, // 25: sdodev.contracts.v1alpha1.EvaluateResponse.results:type_name -> sdodev.contracts.v1alpha1.MemoryDetectorResult
+	38, // 26: sdodev.contracts.v1alpha1.MemoryReadReceipt.arguments:type_name -> google.protobuf.Value
+	38, // 27: sdodev.contracts.v1alpha1.MemoryReadReceipt.result:type_name -> google.protobuf.Value
+	39, // 28: sdodev.contracts.v1alpha1.MemoryProgramInput.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
+	7,  // 29: sdodev.contracts.v1alpha1.MemoryProgramInput.observation:type_name -> sdodev.contracts.v1alpha1.MemoryObservation
+	13, // 30: sdodev.contracts.v1alpha1.MemoryProgramInput.reads:type_name -> sdodev.contracts.v1alpha1.MemoryReadReceipt
+	14, // 31: sdodev.contracts.v1alpha1.DiagnoseRequest.input:type_name -> sdodev.contracts.v1alpha1.MemoryProgramInput
+	40, // 32: sdodev.contracts.v1alpha1.DiagnoseResponse.verdict:type_name -> sdodev.contracts.v1alpha1.Verdict
+	13, // 33: sdodev.contracts.v1alpha1.DiagnoseResponse.reads:type_name -> sdodev.contracts.v1alpha1.MemoryReadReceipt
+	14, // 34: sdodev.contracts.v1alpha1.MitigateRequest.input:type_name -> sdodev.contracts.v1alpha1.MemoryProgramInput
+	41, // 35: sdodev.contracts.v1alpha1.MitigateResponse.plan:type_name -> sdodev.contracts.v1alpha1.Plan
+	13, // 36: sdodev.contracts.v1alpha1.MitigateResponse.reads:type_name -> sdodev.contracts.v1alpha1.MemoryReadReceipt
+	0,  // 37: sdodev.contracts.v1alpha1.TrafficRequest.operation:type_name -> sdodev.contracts.v1alpha1.TrafficRequest.Operation
+	34, // 38: sdodev.contracts.v1alpha1.TrafficRequest.target:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	29, // 39: sdodev.contracts.v1alpha1.TrafficRequest.http_headers:type_name -> sdodev.contracts.v1alpha1.TrafficRequest.HttpHeadersEntry
+	21, // 40: sdodev.contracts.v1alpha1.TrafficRequest.dial_targets:type_name -> sdodev.contracts.v1alpha1.TrafficDialTarget
+	30, // 41: sdodev.contracts.v1alpha1.TrafficRequest.http_fields:type_name -> sdodev.contracts.v1alpha1.TrafficRequest.HttpFieldsEntry
+	31, // 42: sdodev.contracts.v1alpha1.TrafficResponse.windows:type_name -> sdodev.contracts.v1alpha1.TrafficResponse.WindowsEntry
+	33, // 43: sdodev.contracts.v1alpha1.TrafficResponse.burst:type_name -> google.protobuf.Struct
+	33, // 44: sdodev.contracts.v1alpha1.TrafficResponse.dials:type_name -> google.protobuf.Struct
+	33, // 45: sdodev.contracts.v1alpha1.TrafficResponse.fields:type_name -> google.protobuf.Struct
+	33, // 46: sdodev.contracts.v1alpha1.MemoryObservation.TrafficEntry.value:type_name -> google.protobuf.Struct
+	33, // 47: sdodev.contracts.v1alpha1.MemoryObservation.MetricsEntry.value:type_name -> google.protobuf.Struct
+	33, // 48: sdodev.contracts.v1alpha1.MemoryObservation.LogsEntry.value:type_name -> google.protobuf.Struct
+	33, // 49: sdodev.contracts.v1alpha1.MemoryObservation.PodReadsEntry.value:type_name -> google.protobuf.Struct
+	33, // 50: sdodev.contracts.v1alpha1.MemoryObservation.VantageEntry.value:type_name -> google.protobuf.Struct
+	33, // 51: sdodev.contracts.v1alpha1.MemoryObservation.AppStateEntry.value:type_name -> google.protobuf.Struct
+	33, // 52: sdodev.contracts.v1alpha1.TrafficResponse.WindowsEntry.value:type_name -> google.protobuf.Struct
+	19, // 53: sdodev.contracts.v1alpha1.MemoryHostService.Traffic:input_type -> sdodev.contracts.v1alpha1.TrafficRequest
+	1,  // 54: sdodev.contracts.v1alpha1.MemoryHostService.Ready:input_type -> sdodev.contracts.v1alpha1.ReadyRequest
+	4,  // 55: sdodev.contracts.v1alpha1.MemoryHostService.Mirror:input_type -> sdodev.contracts.v1alpha1.MirrorRequest
+	10, // 56: sdodev.contracts.v1alpha1.MemoryHostService.Evaluate:input_type -> sdodev.contracts.v1alpha1.EvaluateRequest
+	15, // 57: sdodev.contracts.v1alpha1.MemoryHostService.Diagnose:input_type -> sdodev.contracts.v1alpha1.DiagnoseRequest
+	17, // 58: sdodev.contracts.v1alpha1.MemoryHostService.Mitigate:input_type -> sdodev.contracts.v1alpha1.MitigateRequest
+	8,  // 59: sdodev.contracts.v1alpha1.MemoryHostService.ReadState:input_type -> sdodev.contracts.v1alpha1.ReadStateRequest
+	20, // 60: sdodev.contracts.v1alpha1.MemoryHostService.Traffic:output_type -> sdodev.contracts.v1alpha1.TrafficResponse
+	2,  // 61: sdodev.contracts.v1alpha1.MemoryHostService.Ready:output_type -> sdodev.contracts.v1alpha1.ReadyResponse
+	6,  // 62: sdodev.contracts.v1alpha1.MemoryHostService.Mirror:output_type -> sdodev.contracts.v1alpha1.MirrorResponse
+	12, // 63: sdodev.contracts.v1alpha1.MemoryHostService.Evaluate:output_type -> sdodev.contracts.v1alpha1.EvaluateResponse
+	16, // 64: sdodev.contracts.v1alpha1.MemoryHostService.Diagnose:output_type -> sdodev.contracts.v1alpha1.DiagnoseResponse
+	18, // 65: sdodev.contracts.v1alpha1.MemoryHostService.Mitigate:output_type -> sdodev.contracts.v1alpha1.MitigateResponse
+	9,  // 66: sdodev.contracts.v1alpha1.MemoryHostService.ReadState:output_type -> sdodev.contracts.v1alpha1.ReadStateResponse
+	60, // [60:67] is the sub-list for method output_type
+	53, // [53:60] is the sub-list for method input_type
+	53, // [53:53] is the sub-list for extension type_name
+	53, // [53:53] is the sub-list for extension extendee
+	0,  // [0:53] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_memory_host_proto_init() }
@@ -1712,7 +1856,7 @@ func file_sdodev_contracts_v1alpha1_memory_host_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sdodev_contracts_v1alpha1_memory_host_proto_rawDesc), len(file_sdodev_contracts_v1alpha1_memory_host_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   27,
+			NumMessages:   31,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

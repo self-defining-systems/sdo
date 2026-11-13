@@ -225,6 +225,9 @@ type Controller struct {
 	// VantageBaseline, when set, receives the client dial readings of each
 	// promoted healthy baseline.
 	VantageBaseline *VantageBaseline
+	// AppState, when set, receives each evaluation's health so last-healthy
+	// app state settles like the other baselines.
+	AppState *AppStateStore
 	// Helpers, when set, deletes responder helper objects once the
 	// responder completes, before recovery is verified.
 	Helpers HelperCleaner
@@ -738,6 +741,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		}
 		c.captureHealthyMemoryBaseline(ctx, now, snapshot, healthy)
 		c.promotePodReadBaseline(now, snapshot, healthy)
+		c.observeAppState(now, healthy)
 		c.promoteObservationBaselines(now, snapshot, healthy)
 		c.observeStartup(now)
 	}

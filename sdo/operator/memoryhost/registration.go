@@ -7,6 +7,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/appstate"
 	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/podread"
@@ -33,6 +34,12 @@ type Registration struct {
 	// Windowed marks a detector that judges a rolling window (sdk.WindowedDetector).
 	// The window itself is derived from the declared inputs and the view.
 	Windowed bool
+	// AppStateReader marks a detector that implements appstate.Reader;
+	// AppStateNoisy are the keys (exact or glob) it declares noisy.
+	AppStateReader bool
+	AppStateNoisy  []string
+	// AppStateReaders are the readers whose state the detector consumes.
+	AppStateReaders []string
 }
 
 func registration(d sdk.Detector) Registration {
@@ -66,6 +73,15 @@ func registration(d sdk.Detector) Registration {
 		r.Traffic = c.TrafficWorkloads()
 	}
 	_, r.Windowed = d.(sdk.WindowedDetector)
+	if _, ok := d.(appstate.Reader); ok {
+		r.AppStateReader = true
+		if n, ok := d.(appstate.NoisyDeclarer); ok {
+			r.AppStateNoisy = n.NoisyKeys()
+		}
+	}
+	if c, ok := d.(appstate.Consumer); ok {
+		r.AppStateReaders = c.AppStateReaders()
+	}
 	return r
 }
 func DecodeRegistration(wire *pb.MemoryDetectorRegistration) (Registration, error) {
@@ -96,6 +112,22 @@ func DecodeRegistration(wire *pb.MemoryDetectorRegistration) (Registration, erro
 	}
 	if err = vantage.ValidateProbes(r.Vantage); err != nil {
 		return r, fmt.Errorf("detector %s: %w", r.ID, err)
+	}
+	if r.AppStateReader {
+		if err = appstate.ValidateID(r.ID); err != nil {
+			return r, fmt.Errorf("detector %s: %w", r.ID, err)
+		}
+		// The validator keeps readers out of incident detectors; this is the
+		// runtime's own refusal, so a reader smuggled in through a shared
+		// helper type still never runs.
+		if r.Class != sdk.DetectorClassHealth {
+			return r, fmt.Errorf("detector %s: an app-state reader must be a health detector", r.ID)
+		}
+	}
+	for _, id := range r.AppStateReaders {
+		if err = appstate.ValidateID(id); err != nil {
+			return r, fmt.Errorf("detector %s: %w", r.ID, err)
+		}
 	}
 	return r, nil
 }

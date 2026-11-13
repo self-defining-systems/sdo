@@ -44,6 +44,10 @@ type detectorObservations struct {
 	VantageBaseline *VantageBaseline
 	// VantageImage replaces DefaultVantageImage.
 	VantageImage string
+	// AppState, when set, runs the revision's app-state readers in the
+	// background and attaches their last finished results; it outlives every
+	// memory-host swap.
+	AppState *AppStateObserver
 }
 
 // compose wraps base with every observation the detectors declare. A
@@ -87,7 +91,20 @@ func (o detectorObservations) compose(base SnapshotProvider, detectors []sdk.Det
 	if vantageObserver != nil {
 		provider = VantageSnapshotProvider{Base: provider, Observer: vantageObserver, Baseline: o.VantageBaseline}
 	}
-	return withMetrics(provider, detectors, o.Telemetry, designerSources, o.RequireMetrics, clock)
+	if o.AppState != nil {
+		provider = AppStateSnapshotProvider{Base: provider, Observer: o.AppState}
+	}
+	composed, metricsObserver, err := withMetrics(provider, detectors, o.Telemetry, designerSources, o.RequireMetrics, clock)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Last, so a rejected revision never leaves its readers running.
+	if o.AppState != nil {
+		if err := o.AppState.Reconfigure(detectors); err != nil {
+			return nil, nil, err
+		}
+	}
+	return composed, metricsObserver, nil
 }
 
 func (o detectorObservations) exec() kubereads.PodExec {
