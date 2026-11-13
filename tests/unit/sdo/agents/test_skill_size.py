@@ -1,4 +1,4 @@
-"""The responder's two skills stay short enough to be read in full on every incident."""
+"""The responder's skills stay short enough to be read in full on every incident."""
 
 from __future__ import annotations
 
@@ -9,9 +9,10 @@ from pathlib import Path
 import pytest
 
 from sdo.agents.code_paths import AGENT_SKILLS, SKILLS_ROOT
+from tests.skill_sizes import SKILL_BYTE_CAPS, SKILL_BYTE_FLOOR
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-SHORT_SKILLS = ("incident-response", "sdo-operating")
+SHORT_SKILLS = tuple(SKILL_BYTE_CAPS)
 
 
 def test_the_responder_reads_the_two_short_skills_patching_and_the_investigator_skill() -> None:
@@ -23,7 +24,7 @@ def test_a_short_skill_is_one_small_file(name: str) -> None:
     directory = SKILLS_ROOT / name
     assert [path.name for path in directory.iterdir()] == ["SKILL.md"]
     size = (directory / "SKILL.md").stat().st_size
-    assert 1024 <= size <= 1536, size
+    assert SKILL_BYTE_FLOOR <= size <= SKILL_BYTE_CAPS[name], size
 
 
 def test_the_skills_name_no_application() -> None:
