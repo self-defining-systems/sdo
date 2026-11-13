@@ -25,27 +25,18 @@ func snap(at time.Duration, kv ...string) carried.Snapshot {
 	return carried.Snapshot{At: t0.Add(at), Values: values(kv...)}
 }
 
-func TestValuesRefuseCredentialNamedKeysAndKeepNoValue(t *testing.T) {
+func TestValuesKeepCredentialLookingKeysWithAnyValue(t *testing.T) {
 	var v carried.Values
-	v.Set("rate_limit", "10")
 	v.Set("db_password", "hunter2")
-	v.Set("api_token", "x")
-	if _, ok := v.Get("db_password"); ok {
-		t.Fatal("credential-named key was stored")
+	v.Set("minimum_password_length", "12")
+	v.Set("otp_required_for_login", "true")
+	for k, want := range map[string]string{"db_password": "hunter2", "minimum_password_length": "12", "otp_required_for_login": "true"} {
+		if got, ok := v.Get(k); !ok || got != want {
+			t.Fatalf("%s = %q, %v; want %q", k, got, ok, want)
+		}
 	}
-	if v.Len() != 1 {
-		t.Fatalf("len = %d, want 1", v.Len())
-	}
-	err := v.Err()
-	if err == nil || !strings.Contains(err.Error(), "db_password") {
-		t.Fatalf("Err = %v, want refusal naming the key", err)
-	}
-	if strings.Contains(err.Error(), "hunter2") {
-		t.Fatalf("refusal leaked the value: %v", err)
-	}
-	data, _ := json.Marshal(v)
-	if strings.Contains(string(data), "hunter2") {
-		t.Fatalf("serialised values leaked: %s", data)
+	if v.Err() != nil {
+		t.Fatalf("Err = %v", v.Err())
 	}
 }
 
@@ -212,10 +203,10 @@ func TestHeldAboveCoversTheWholeWindow(t *testing.T) {
 
 func TestValuesLoadTolerantlyWhenAKeyIsNowRefused(t *testing.T) {
 	var v carried.Values
-	if err := json.Unmarshal([]byte(`{"ok":"1","old_password":"x"}`), &v); err != nil {
+	if err := json.Unmarshal([]byte(`{"ok":"1","`+strings.Repeat("k", carried.MaxKeyBytes+1)+`":"x"}`), &v); err != nil {
 		t.Fatalf("a stored snapshot with a now-refused key must still load: %v", err)
 	}
-	if _, ok := v.Get("old_password"); ok || v.Len() != 1 {
+	if v.Len() != 1 {
 		t.Fatalf("refused key kept: %v", v.Keys())
 	}
 }

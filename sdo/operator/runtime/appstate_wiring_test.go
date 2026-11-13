@@ -87,8 +87,12 @@ func TestRemoteReadStateDecodesValuesAndFailures(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	rpc.response = &pb.ReadStateResponse{Values: map[string]string{"admin_password": "x"}}
-	if _, err := remote.ReadState(context.Background(), "settings"); err == nil {
-		t.Fatal("a credential-named key from the host must be refused")
+	values, err = remote.ReadState(context.Background(), "settings")
+	if err != nil {
+		t.Fatalf("prototype: no secret filtering, got %v", err)
+	}
+	if v, _ := values.Get("admin_password"); v != "x" {
+		t.Fatalf("values = %v", values)
 	}
 }
 

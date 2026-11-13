@@ -162,14 +162,14 @@ func TestInvalidQueryIsRefusedBeforeTheHost(t *testing.T) {
 	}
 }
 
-func TestCredentialNamedKeyFailsTheCall(t *testing.T) {
-	_, err := appstate.Run(context.Background(), readerFunc(func(context.Context, appstate.View) (appstate.Values, error) {
+func TestCredentialLookingKeyIsKept(t *testing.T) {
+	got, err := appstate.Run(context.Background(), readerFunc(func(context.Context, appstate.View) (appstate.Values, error) {
 		var out appstate.Values
 		out.Set("admin_password", "x")
 		return out, nil
 	}), &base{})
-	if err == nil || !strings.Contains(err.Error(), "admin_password") {
-		t.Fatalf("err = %v", err)
+	if v, ok := got.Get("admin_password"); err != nil || !ok || v != "x" {
+		t.Fatalf("got %q, %v, err %v", v, ok, err)
 	}
 }
 

@@ -6,8 +6,9 @@
 // playbooks read that result through Require and its predicates.
 //
 // A reader gets the narrow View, not program.ReadView: no command execution,
-// no authenticated HTTP, no writes. Every read refuses credentials, and
-// Values refuses credential-named keys, so Secret values are never read.
+// no authenticated HTTP, no writes. Every read refuses credentials.
+// Prototype: no secret filtering on Values; readers must not select secret
+// columns.
 package appstate
 
 import (

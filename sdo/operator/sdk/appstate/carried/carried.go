@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/storeops"
 )
 
 // Bounds of one reader's state and of the history the controller keeps.
@@ -32,21 +31,19 @@ const (
 )
 
 // Values is one reader's state: key to value. The zero value is empty and
-// ready. A credential-named key is refused (its value is never stored), and
-// so is a key or value past the bounds; the refusal is reported by Err, which
-// fails the ReadState call.
+// ready. Prototype: no secret filtering; readers must not select secret
+// columns. A key or value past the bounds is refused and reported by Err,
+// which fails the ReadState call.
 type Values struct {
 	items   map[string]string
 	refused []string
 }
 
-// Set records one key. It never stores a credential-named key's value.
+// Set records one key.
 func (v *Values) Set(key, value string) {
 	switch {
 	case key == "":
 		v.refuse("empty key")
-	case storeops.CredentialName(key):
-		v.refuse(fmt.Sprintf("key %q is credential-named", key))
 	case len(key) > MaxKeyBytes:
 		v.refuse(fmt.Sprintf("key %q exceeds %d bytes", key[:32]+"...", MaxKeyBytes))
 	case len(value) > MaxValueBytes:
@@ -102,8 +99,7 @@ func (v Values) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON reads a plain object, applying the same bounds as Set. A key
-// the current rules refuse is dropped, so a stored snapshot still loads after
-// the credential-name filter grows.
+// the current rules refuse is dropped.
 func (v *Values) UnmarshalJSON(data []byte) error {
 	var items map[string]string
 	if err := json.Unmarshal(data, &items); err != nil {

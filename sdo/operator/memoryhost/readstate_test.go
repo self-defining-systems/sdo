@@ -78,10 +78,8 @@ func TestReadStateRunsTheReaderOverTheLiveReadFactory(t *testing.T) {
 }
 
 func TestReadStateFailuresAreDataNotTransportErrors(t *testing.T) {
-	server := readStateServer(t,
-		stateReader{id: "leaky", values: map[string]string{"admin_password": "x"}},
-		testDetector{})
-	for _, id := range []string{"leaky", "synthetic", "absent"} {
+	server := readStateServer(t, testDetector{})
+	for _, id := range []string{"synthetic", "absent"} {
 		response, err := server.ReadState(context.Background(), &pb.ReadStateRequest{ReaderId: id})
 		if err != nil || response.Error == "" || len(response.Values) != 0 {
 			t.Errorf("%s: response=%v err=%v, want an error string and no values", id, response, err)
