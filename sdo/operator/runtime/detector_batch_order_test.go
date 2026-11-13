@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	goruntime "runtime"
 	"testing"
 	"time"
 
@@ -68,7 +69,7 @@ func TestFastDetectorFindingOpensIncidentWhileSlowDetectorIsRunning(t *testing.T
 		case <-timeout.Done():
 			t.Fatal("incident did not open while the slow detector was still running")
 		default:
-			time.Sleep(time.Millisecond)
+			goruntime.Gosched()
 		}
 	}
 	release()
