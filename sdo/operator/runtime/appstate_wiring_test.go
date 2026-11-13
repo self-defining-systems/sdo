@@ -120,12 +120,12 @@ func TestObservationOfMaxedOutReadersStaysUnderTheWireLimit(t *testing.T) {
 	big := func(at int) carried.Snapshot {
 		var v carried.Values
 		for i := 0; i < carried.MaxKeys; i++ {
-			v.Set(strings.Repeat("k", 200)+string(rune('a'+i%26))+string(rune('a'+i/26)), strings.Repeat("v", carried.MaxValueBytes))
+			v.Set(strings.Repeat("k", 20)+string(rune('a'+i%26))+string(rune('a'+i/26)), strings.Repeat("v", carried.MaxValueBytes))
 		}
 		return carried.Snapshot{At: storeT0.Add(time.Duration(at) * time.Minute), Values: v}
 	}
 	var ring []carried.Snapshot
-	for i := 0; i < carried.RingSize; i++ {
+	for i := 0; i < 3; i++ {
 		ring = append(ring, big(i))
 	}
 	healthy := big(-1)

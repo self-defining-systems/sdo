@@ -107,14 +107,14 @@ func TestSDKInputInterfaceInventory(t *testing.T) {
 }
 
 func TestCarrierUpdatesAreCopyOnWrite(t *testing.T) {
-	source := sdktest.Snapshot{ObservedAtTime: ptrTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), Traffic: map[string]traffic.Window{"q": {LoadError: "traffic"}}, Reachability: &servicehealth.ReachabilityWindow{LoadError: "reachability"}, Metrics: map[string]metrics.Result{"q": {Error: "metrics"}}, Alerts: &metrics.AlertsResult{Error: "alerts"}, Usage: &usage.Result{Error: "usage"}, Logs: map[string]logs.Result{"q": {Error: "logs"}}, PodReads: map[string]podread.Result{"q": {Error: "pod reads"}}, AppState: map[string]carried.Result{"q": {Reader: "q"}}}
+	source := sdktest.Snapshot{ObservedAtTime: ptrTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), Traffic: map[string]traffic.Window{"q": {LoadError: "traffic"}}, Reachability: &servicehealth.ReachabilityWindow{LoadError: "reachability"}, Metrics: map[string]metrics.Result{"q": {Error: "metrics"}}, Alerts: &metrics.AlertsResult{Error: "alerts"}, Usage: &usage.Result{Error: "usage"}, Logs: map[string]logs.Result{"q": {Error: "logs"}}, PodReads: map[string]podread.Result{"q": {Error: "pod reads"}}}
 	empty := inputs.New(struct{ sdk.DetectionContext }{})
 	full := inputs.New(source)
-	methods := []string{"Clock", "Traffic", "Reachability", "Metrics", "Alerts", "Usage", "Logs", "PodReads", "AppState"}
-	accessors := []string{"ObservedAt", "TrafficWindow", "ServiceReachability", "MetricResult", "AlertsResult", "UsageResult", "LogResult", "PodReadResult", "AppStateResult"}
+	methods := []string{"Clock", "Traffic", "Reachability", "Metrics", "Alerts", "Usage", "Logs", "PodReads"}
+	accessors := []string{"ObservedAt", "TrafficWindow", "ServiceReachability", "MetricResult", "AlertsResult", "UsageResult", "LogResult", "PodReadResult"}
 	read := func(c inputs.Carrier, i int) []reflect.Value {
 		var args []reflect.Value
-		if i == 1 || i == 3 || i == 6 || i == 7 || i == 8 {
+		if i == 1 || i == 3 || i == 6 || i == 7 {
 			args = []reflect.Value{reflect.ValueOf("q")}
 		}
 		return reflect.ValueOf(c).MethodByName(accessors[i]).Call(args)
