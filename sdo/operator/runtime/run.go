@@ -830,6 +830,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	} else {
 		controller.ExternalIncidents = func(ctx context.Context) (*ExternalIncident, error) {
 			alert, err := lifecycleio.ReadExternalIncident(ctx, bootstrapProvider.Client, *controlNamespace)
+			if errors.Is(err, lifecycleio.ErrInvalidAlert) {
+				return nil, fmt.Errorf("%w: %w", ErrInvalidExternalIncident, err)
+			}
 			if err != nil || alert == nil {
 				return nil, err
 			}

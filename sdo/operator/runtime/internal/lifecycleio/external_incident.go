@@ -2,6 +2,7 @@ package lifecycleio
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -9,6 +10,10 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
 )
+
+// ErrInvalidAlert marks inbox content the contract refuses; the caller skips
+// it instead of stopping.
+var ErrInvalidAlert = errors.New("external incident inbox holds an invalid alert")
 
 // ReadExternalIncident is a single-slot Kubernetes alert inbox. The producer
 // retains the stable alert until controller acknowledgment, then may replace it.
@@ -23,7 +28,7 @@ func ReadExternalIncident(ctx context.Context, client kubernetes.Interface, name
 	}
 	alert := &contracts.ExternalIncident{}
 	if err := wire.Unmarshal([]byte(cm.Data["incident.json"]), alert); err != nil {
-		return nil, fmt.Errorf("external incident inbox: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidAlert, err)
 	}
 	return alert, nil
 }

@@ -27,6 +27,9 @@ if TYPE_CHECKING:
 
 INBOX = "sdo-external-incident"
 DEFAULT_ENTRY = "http://gitlab-webservice-default:8181"
+#: ``ExternalIncident.message`` max_len: the controller's inbox refuses a longer alert.
+MAX_MESSAGE = 4096
+_FROM_A_POD = " (run from a pod in the namespace, e.g. kubectl exec deploy/gitlab-toolbox -- ...)"
 
 
 @dataclass(frozen=True)
@@ -88,8 +91,11 @@ def parse_trace(stdout: str, stderr: str, names: Sequence[str]) -> dict[str, dic
     return res
 
 
-def recipe(pack_journeys: Mapping[str, Any], failing: Sequence[str], entry: str = DEFAULT_ENTRY) -> str:
-    """One line: how to try each failing operation against the entry Service (from the pack's journeys)."""
+def recipe(
+    pack_journeys: Mapping[str, Any], failing: Sequence[str], entry: str = DEFAULT_ENTRY, budget: int | None = None
+) -> str:
+    """One line: how to try each failing operation against the entry Service (from the pack's journeys). With a
+    ``budget`` (characters), operations past it are counted instead of spelled out."""
     by_name = {j["name"]: j for j in pack_journeys["journeys"]}
     header = ((pack_journeys.get("login") or {}).get("header")) or {}
     flags = "".join(f" -H '{k}: {v}'" for k, v in header.items())
@@ -102,7 +108,16 @@ def recipe(pack_journeys: Mapping[str, Any], failing: Sequence[str], entry: str 
             f"{name}: curl -s -w ' [%{{http_code}}]' -X {method}{flags} '{entry}{path}'"
             + (" (a write; JSON body)" if method != "GET" else "")
         )
-    return "; ".join(parts) + " (run from a pod in the namespace, e.g. kubectl exec deploy/gitlab-toolbox -- ...)"
+    shown = len(parts)
+    while budget is not None and shown and len(_recipe_line(parts, shown)) > budget:
+        shown -= 1
+    return _recipe_line(parts, shown)
+
+
+def _recipe_line(parts: Sequence[str], shown: int) -> str:
+    rest = len(parts) - shown
+    more = f"; (+{rest} more operations: the same form against each one's path)" if rest else ""
+    return "; ".join(parts[:shown]) + more + _FROM_A_POD
 
 
 def page_message(
@@ -123,12 +138,15 @@ def page_message(
         or "  - (the 10 s check at dispatch saw no failing operation; users still report failures)"
     )
     ok = ", ".join(n for n in names if n not in failing)
-    return (
+    head = (
         f"Page for the application in Kubernetes namespace {namespace}.\n"
         f"Since {onset}, users are seeing failures:\n{bullets}\n"
         f"These still work: {ok}.\n"
-        f"To check an operation yourself: {recipe(pack_journeys, list(failing), entry)}"
+        f"To check an operation yourself: "
     )
+    # B1's page has no bound; the contract does. The failing and passing operations are kept whole and only
+    # how-to-check lines that do not fit are counted, so the alert is never refused.
+    return (head + recipe(pack_journeys, list(failing), entry, budget=MAX_MESSAGE - len(head)))[:MAX_MESSAGE]
 
 
 def inbox_manifest(control_namespace: str, incident_id: str, namespace: str, message: str) -> dict[str, Any]:
