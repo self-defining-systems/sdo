@@ -43,6 +43,28 @@ or corrupted state is healed by the probe before it is read.
   setup again.
 - Check the fixture exactly (`JSONEquals`, `ExactSet`), so a changed or partial fixture fails too.
 
+## Users' own records
+
+Fixtures a probe wrote itself prove the mechanism works; they cannot see damage to the records users created or
+the deployment seeds (a status flipped on one stored object, a record left in a state its list or download
+filters out, a lock that never released). Two silent outages of that kind passed every probe because no scenario
+touched the affected records.
+
+- Every list, open and download the health objective names has a call or read-later scenario that reads
+  existing records the probe never wrote, on every iteration, over every such record (or the first
+  `traffic.MaxSteps` of them): save their ids in a Setup step or list them live, and open each one a user opens.
+- Check the answer a user relies on: a listing is non-empty and well-formed (`Each`), an opened or downloaded
+  record answers with its healthy status and content. A record that vanishes from a list or stops opening fails.
+  Pick records that are non-empty when calibrating; a list a healthy application leaves empty is not a check.
+- A record that later disappears must fail, not shrink the expected set: require each listing to be non-empty
+  every iteration, or save what existed in Setup (`SaveJSON` ids, names, files) and read exactly it again.
+  Either way the scenario fails until data exists to read.
+- A probe that only creates fresh records (a new name, a new version) never reuses a record users keep writing
+  into: read, and where it is safe append to, the existing container.
+- When the identity cannot see these records (private to their owner), the probe-identity procedure also grants
+  the probe user the application's lowest read-only role on existing records: read-only, never admin, never
+  write; a failed grant must not stop the user from being provisioned.
+
 ## Cost
 
 Without a delete or overwrite route, keep every write on the fixed test identity, declare
