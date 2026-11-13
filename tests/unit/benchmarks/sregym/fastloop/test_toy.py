@@ -357,6 +357,8 @@ def test_toy_controller_publishes_selected_registrations(tmp_path, monkeypatch, 
         kubeconfig=tmp_path / "config",
         images=images,
         evidence_root=None,
+        seed_commit="a" * 40,
+        save=lambda: None,
         apply_operator_env=lambda environ: environ.update(SDO_DEV_MOUNT="1", SDO_OPERATOR_BIN="synthetic"),
     )
     published = []
@@ -447,6 +449,8 @@ def test_frozen_toy_install_preserves_policy_at_native_boundary(tmp_path, monkey
         cluster="toy-private",
         images=SimpleNamespace(controller="controller:test", responder="responder:test"),
         evidence_root=None,
+        seed_commit="a" * 40,
+        save=lambda: None,
         apply_operator_env=lambda _: None,
     )
     monkeypatch.setenv("KUBECONFIG", str(environment.kubeconfig))
@@ -722,3 +726,17 @@ def test_restart_check_reports_each_failure_instead_of_passing(kwargs, expected)
 
     result = toy.check_controller_restart(_RestartOps(**kwargs), steady_seconds=30, restart_timeout=60, poll=5)
     assert expected in result.violations
+
+
+def test_install_adopts_the_plan_bearing_commit_as_the_reset_seed():
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop import toy
+
+    saved = []
+    environment = SimpleNamespace(seed_commit="a" * 40, save=lambda: saved.append(environment.seed_commit))
+    toy.adopt_installed_seed(environment, "b" * 40)
+    assert environment.seed_commit == "b" * 40
+    assert saved == ["b" * 40]
+    toy.adopt_installed_seed(environment, "b" * 40)
+    assert saved == ["b" * 40], "an unchanged seed is not rewritten"

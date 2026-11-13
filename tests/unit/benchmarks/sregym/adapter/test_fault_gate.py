@@ -297,3 +297,32 @@ def test_resumed_gate_still_expires_after_full_readiness_budget() -> None:
             sleep=clock.sleep,
         )
     assert clock.now == 310
+
+
+def test_persistent_gate_waits_out_the_startup_hold_before_injecting() -> None:
+    clock = _Clock()
+    log = _maintenance("active", "stage-1") + "\n" + _evaluation()
+    holding = {"startup": {"began_at": "2026-01-01T00:00:00Z", "bound_at": "2026-01-01T00:30:00Z"}}
+    established = {"startup": {**holding["startup"], "established_at": "2026-01-01T00:01:00Z"}}
+    states = [holding, holding, established]
+
+    def kubectl(args: list[str], *, namespace: str, check: bool) -> subprocess.CompletedProcess[str]:
+        if args[0] == "get":
+            state = states.pop(0) if len(states) > 1 else states[0]
+            payload = {"data": {"runtime-state.json": json.dumps(state)}}
+            return subprocess.CompletedProcess(args, 0, stdout=json.dumps(payload), stderr="")
+        return subprocess.CompletedProcess(args, 0, stdout=log, stderr="")
+
+    injected: list[str] = []
+    timings = inject_fault_after_resumed_baseline(
+        "hotel-sdo",
+        "stage-1",
+        inject=lambda: injected.append("fault"),
+        kubectl_runner=kubectl,
+        monotonic=clock.monotonic,
+        sleep=clock.sleep,
+        timeout_seconds=60,
+    )
+
+    assert injected == ["fault"]
+    assert timings["controller_baseline_wait"] >= 2.0, "the fault waited for the hold, not injected on first clear"

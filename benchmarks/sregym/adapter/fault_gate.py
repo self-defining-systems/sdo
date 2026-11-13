@@ -171,6 +171,22 @@ def _resumed_baseline_state(controller_logs: str, generation: str) -> tuple[bool
     return resumed, latest
 
 
+def _startup_holding(control_namespace: str, kubectl_runner: KubectlRunner) -> bool:
+    """Whether the controller's published state shows its start-up period still holding; unreadable state does not."""
+    from benchmarks.sregym.adapter.eval_guards import startup_hold_bound
+
+    completed = kubectl_runner(
+        ["get", "configmap/sdo-controller-state", "-o", "json"], namespace=control_namespace, check=False
+    )
+    if completed.returncode != 0:
+        return False
+    try:
+        state = json.loads(json.loads(completed.stdout)["data"]["runtime-state.json"])
+        return isinstance(state, dict) and startup_hold_bound(state) is not None
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
 def inject_fault_after_resumed_baseline(
     control_namespace: str,
     generation: str,
@@ -209,7 +225,11 @@ def inject_fault_after_resumed_baseline(
             deadline = resumed_at + timeout_seconds
         if active:
             last_error = f"latest controller evaluation has active findings {sorted(set(active))}"
-        if active == []:
+        if active == [] and _startup_holding(control_namespace, kubectl_runner):
+            # A new install, or one restarted before it was seen healthy, opens no incident yet: an injected
+            # fault would only be held, and the injection point reads the hold as open incident work.
+            last_error = "start-up period still holds the controller's openers"
+        elif active == []:
             baseline_ready = monotonic()
             inject()
             return {

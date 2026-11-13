@@ -571,7 +571,20 @@ def install_controller(
     )
     receipt = install_existing(install)
     wait_for_baseline(environment, receipt.accepted_commit)
+    adopt_installed_seed(environment, receipt.accepted_commit)
     return config
+
+
+def adopt_installed_seed(environment: FastloopEnvironment, accepted_commit: str) -> None:
+    """Make the commit the install accepted the lane's seed.
+
+    ``install-existing`` records the deployment plan (``.sdo/deployment/plan.yaml``) in a human commit on top of
+    the prepared workspace. A seed captured before that commit lacks the plan, so a reset to it leaves a
+    repository the controller refuses to start from.
+    """
+    if environment.seed_commit != accepted_commit:
+        environment.seed_commit = accepted_commit
+        environment.save()
 
 
 def record_controller(environment: FastloopEnvironment, config: Any) -> None:
