@@ -116,7 +116,7 @@ func TestDetectNotesUnchangedFindingsSinceLastCall(t *testing.T) {
 // The wiring hands the loop a nil source with the recording off; a non-nil one returning no rows would read as
 // "no write happened" and make verify claim a contradiction that is not known.
 func TestRecordingOffLeavesExternalReceiptsNilAndVerifyNotesUseApplicationsOnly(t *testing.T) {
-	clock := time.Now
+	clock := func() time.Time { return time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC) }
 	if source := externalReceiptsSource(false, t.TempDir(), "incident", clock); source != nil {
 		t.Fatal("recording off must leave ExternalReceipts nil")
 	}
