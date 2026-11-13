@@ -357,7 +357,7 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 		}
 	}
 
-	if d.Investigators.Enabled() && loop != nil && sessionSubPath != "" && request.ExternalMessage == "" {
+	if d.Investigators.Enabled() && sessionSubPath != "" && loop.hasCandidateView(request) {
 		// Armed with the responder's session: they start only if it makes no write within the delay, and end
 		// when it returns (or earlier, at Recovered, through StopResponder).
 		defer d.startInvestigators(ctx, request, task, loop)()

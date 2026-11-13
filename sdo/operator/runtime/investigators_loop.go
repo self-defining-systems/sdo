@@ -76,3 +76,10 @@ func (l *ResponderLoop) hasKnownWrite() bool {
 	})
 	return known
 }
+
+// hasCandidateView reports whether the incident can show the candidate view the briefs come from: every
+// incident with detectors can, and an external incident only with response.external_clues (otherwise
+// `sdo detect` is disabled for it and no brief can be rendered).
+func (l *ResponderLoop) hasCandidateView(request IncidentRequest) bool {
+	return l != nil && (request.ExternalMessage == "" || l.ExternalClues)
+}
