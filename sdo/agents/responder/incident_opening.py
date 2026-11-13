@@ -16,10 +16,16 @@ _TEST_RULE_PREFIX = "scenario-slo."
 _TEST_DETECTOR_PREFIX = "traffic-"
 _MAX_CHARS = 160
 _MAX_EXCERPT = 90
-_MAX_GROUPS = 4
-_MAX_TESTS = 6
-_MAX_PASSING = 10
-_MAX_SYMPTOM = 1100
+#: Every failing user test is named, so the agent sees which operations fail and what they share. The cap is a
+#: hard bound, not a summary: the largest probe set measured on a real multi-service application is about two
+#: dozen scenarios, and 48 leaves twofold headroom; beyond it the rest are counted and left to `sdo detect`.
+_MAX_FAILING = 48
+_MAX_GROUPS = 8
+_MAX_PASSING = 24
+_MAX_NAME = 40
+#: Worst case: 48 failing names (<= 48 chars + counts), 8 groups, 24 passing names; the block is bounded
+#: structurally and this is the final guard, mirrored by the symptom placeholder budget.
+_MAX_SYMPTOM = 5200
 
 
 def _clip(text: str) -> str:
@@ -82,29 +88,41 @@ def _names(names: list[str], shown: int) -> str:
     return f"{text} (+{len(names) - shown})" if len(names) > shown else text
 
 
+def _name(name: str) -> str:
+    return name if len(name) <= _MAX_NAME else name[: _MAX_NAME - 1] + "…"
+
+
 def symptom(request: IncidentRequest) -> str:
-    """What the incident opened on: for failing user tests the status, the server's error, the failed count of
-    the window, the passing tests and the first failing sample; otherwise the one-line condition and open time."""
+    """What the incident opened on: for failing user tests every failing test by name with failed/total, grouped
+    by the status and server error they share (largest group first), then the passing tests; otherwise the
+    one-line condition and open time."""
     tests = [] if request.external_message else _failing_tests(request)
     if not tests:
         opened = request.detected_at.ToDatetime(tzinfo=UTC) if request.HasField("detected_at") else None
         return f"Opened on {opened_on(request)}" + (f" at {_hms(opened)} UTC." if opened else ".")
     firsts = [datetime.fromisoformat(meta["first_failure_at"]) for _, meta in tests if meta.get("first_failure_at")]
     since = f" since {_hms(min(firsts))} UTC (first failing sample)" if firsts else ""
+    ordered = sorted(tests)
     groups: dict[tuple[str, str], list[str]] = {}
-    for name, meta in sorted(tests):
+    for name, meta in ordered[:_MAX_FAILING]:
         failed = int(meta.get("errors", 0)) + int(meta.get("timeouts", 0))
         key = (
             _status(str(meta.get("failure_status", "an unrecorded error"))),
             _short(str(meta.get("failure_observed", ""))),
         )
         total = int(meta.get("samples", 0))
-        groups.setdefault(key, []).append(f"{name} {failed}/{total}" if total else name)
-    lines = [f"Failing user tests{since}; counts are failed/total samples in the window:"]
-    for (status, observed), members in sorted(groups.items(), key=lambda item: -len(item[1]))[:_MAX_GROUPS]:
-        lines.append(f"- {_names(members, _MAX_TESTS)} failed with {status}" + (f": {observed}" if observed else ""))
-    if len(groups) > _MAX_GROUPS:
-        lines.append(f"- (+{len(groups) - _MAX_GROUPS} more error groups)")
-    passing = _names(list(request.passing_tests), _MAX_PASSING) or "none"
+        groups.setdefault(key, []).append(f"{_name(name)} {failed}/{total}" if total else _name(name))
+    lines = [
+        f"{len(tests)} failing user tests{since}; each name is followed by failed/total samples in the window."
+        " Shared symptom per group:"
+    ]
+    ranked = sorted(groups.items(), key=lambda item: -len(item[1]))
+    for (status, observed), members in ranked[:_MAX_GROUPS]:
+        lines.append(f"- {status}" + (f" {observed}" if observed else "") + f" ({len(members)}): " + ", ".join(members))
+    if len(ranked) > _MAX_GROUPS:
+        lines.append(f"- (+{len(ranked) - _MAX_GROUPS} more error groups: sdo detect --finding tests)")
+    if len(tests) > _MAX_FAILING:
+        lines.append(f"- (+{len(tests) - _MAX_FAILING} more failing tests not listed: sdo detect --finding tests)")
+    passing = _names([_name(name) for name in request.passing_tests], _MAX_PASSING) or "none"
     lines.append(f"Passing: {passing}. Re-check with `sdo verify`.")
     return "\n".join(lines)[:_MAX_SYMPTOM]

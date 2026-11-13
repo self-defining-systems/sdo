@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from google.protobuf import json_format
 
 from sdo.agents.context_output import budget_for
 from sdo.agents.prompt_templates import RenderedPrompt
@@ -40,6 +41,31 @@ def test_responder_first_message_for_many_findings_and_stage_actions_fits() -> N
     assert len(rendered.encode()) <= 800
     assert request.incident_id in rendered
     assert "repair-0-" not in rendered
+
+
+def test_responder_first_message_names_every_failing_test_within_a_measured_bound() -> None:
+    """The 800-byte bound above is for an incident opened on cluster findings. Failing user tests are the
+    exception: each is named so the agent sees which operations fail and what they share; the symptom is
+    bounded (48 failing names, 8 groups, 24 passing names) and never spills to a context file."""
+    request = incident(0)
+    for index in range(WORKLOADS):
+        finding = request.findings.add(
+            detector_id="traffic-probe-call",
+            rule_id=f"scenario-slo.operation-{index:02d}",
+            fingerprint=f"fp-{index}",
+        )
+        json_format.ParseDict(
+            {"failure_status": "429", "failure_observed": 'text "Retry later"', "errors": 3, "samples": 6},
+            finding.metadata,
+        )
+        request.opening_keys.append(f"{finding.detector_id}\x00{finding.fingerprint}")
+    request.passing_tests.extend(f"fixture-{index}" for index in range(WORKLOADS))
+    rendered = str(responder_prompt(request))
+    assert len(rendered.encode()) <= 3000
+    assert "operation-00 3/6" in rendered and "operation-47 3/6" in rendered
+    assert 'HTTP 429 text "Retry later" (48)' in rendered
+    assert "(+12 more failing tests not listed" in rendered
+    assert request.incident_id in rendered
 
 
 def test_pending_reports_for_a_large_incident_spill_instead_of_failing(tmp_path: Path) -> None:
