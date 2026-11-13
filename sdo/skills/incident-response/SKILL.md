@@ -5,21 +5,22 @@ description: A general method for finding and removing what is hurting an applic
 
 # Incident response
 
-Habits, not a procedure.
+A reasoning loop, not a procedure. Move between the parts as the evidence asks.
 
-- Start from what failed: user operations that fail (and which pass), or what stopped healing. Other alerts are
-  clues; the opening alert can be a side effect, so confirm the symptom is real now. Run a failing operation and
-  read the exact response.
-- Survey: `sdo detect`, `sdo changes`, `sdo timeline`, logs, the data the operations touch. An unexplained
-  row near onset outranks a readable one off that path.
-- Reason over `.sdo/arch.md`: trace each failing operation's path through components, edges and data holders.
-  Prefer causes on that path, not the passing operations'; an upstream dependency or data holder can break what
-  is downstream. Hypothesize from different points on the path, including the data it reads and writes.
-- Before acting, hold two to four explanations differing in component, layer or timing, each with a check that
-  could refute it. Drop what evidence refutes.
-- For longer checks spawn a sub-agent per hypothesis. It reads `sdo-investigator/SKILL.md` first; tell it the
-  hypothesis, what you expect either way, what is ruled out. It only reads. Keep its "How to diagnose" note for
-  closing.
-- Read what does not fit first: an unexplained observation is a new candidate; a change that left the failure
-  as is counts against its hypothesis.
-- Done when what failed passes and keeps passing; else escalate with findings.
+- **Observe.** What fails, which operations, since when, and what still works. The opening alert can be a side
+  effect, so run a failing operation and read the exact response.
+- **Localize.** The graph (`.sdo/arch.md`, `sdo map`) is a prior, not proof. A cause usually sits on or upstream
+  of every failing operation's path; `sdo detect` lists those candidate nodes with evidence. A passing operation
+  shows a node is alive, not that its data or code for the failing one is right; shared nodes stay candidates.
+- **Explain the timing.** Something changed near onset on a candidate (config, code, data, a dependency, load),
+  or a latent condition was triggered. Changes there are the strongest leads. A candidate with no observed
+  state is a gap, not a clean bill.
+- **Hypothesize.** Hold two to four explanations, each a node and a mechanism, from different layers and path
+  positions (entry, dependency, data holder). An unexplained observation is a new candidate.
+- **Discriminate.** Pick the check whose outcome differs most between them, ideally one that could refute.
+  Run it, or give a sub-agent one hypothesis: it reads `sdo-investigator/SKILL.md`, you say what you expect
+  either way and what is ruled out. It only reads. Keep its "How to diagnose" note for closing.
+- **Update.** Drop what is refuted. Stop when one explanation covers the failing, the passing and the timing.
+- **Fix as a test.** You alone change things and check the result. Predict the effect; a change that left the
+  failure as is counts against its hypothesis. Done when what failed passes and keeps passing; else escalate
+  with what you found and excluded.

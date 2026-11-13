@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from sdo.agents.responder.credentials import AGENT_SKILLS, SKILLS_ROOT, prepare_claude_home, prepare_codex_home
+from tests.skill_sizes import SKILL_BYTE_CAPS
 
 PROMPTS = Path(__file__).resolve().parents[5] / "sdo/agents/responder/prompts"
 WORKFLOW = "incident-response"
@@ -34,7 +35,7 @@ def test_incident_workflow_installs_from_the_shipped_skill_root(tmp_path: Path, 
     metadata = yaml.safe_load(frontmatter)
     assert metadata["name"] == WORKFLOW
     assert 0 < len(metadata["description"]) <= 200
-    assert len(document) <= 1536
+    assert len(document.encode()) <= SKILL_BYTE_CAPS[WORKFLOW]
 
 
 def test_the_first_message_template_renders_strictly() -> None:
