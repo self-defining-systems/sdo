@@ -566,11 +566,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return err
 	}
-	jobEnvironment, err := parseResponderEnvironment(policy.Agent.ExtraEnv)
+	jobEnvironment, err := responderJobEnvironment(launchConfig, policy, options.Telemetry)
 	if err != nil {
-		return err
-	}
-	if jobEnvironment, err = withAgentEnvironment(jobEnvironment, launchConfig, policy, options.Telemetry); err != nil {
 		return err
 	}
 	jobEnvironment[settings.ReplayEnvironment] = replayMode
@@ -761,12 +758,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	jobDispatcher, isJobDispatcher := dispatcher.(KubernetesJobDispatcher)
 	if !clientInjected && jobDispatch && isJobDispatcher && policy.Response.Standby && standbyEnabled(jobEnvironment) {
 		d := jobDispatcher
-		standbyEnvironment := make(map[string]string, len(jobEnvironment)+5)
-		for name, value := range jobEnvironment {
-			standbyEnvironment[name] = value
-		}
-		standbyEnvironment["SDO_SESSION_SCRATCH"] = "/sdo/session/scratch"
-		standbyEnvironment["SDO_TOOLS_DIR"] = "/sdo/session/tools"
+		standbyEnvironment := standbyWorkerEnvironment(jobEnvironment)
 		pool := worker_registry.NewStandbyPool(worker_registry.KubernetesExecutor{APIProxyImage: d.APIProxyImage, ToolchainImage: d.ToolchainImage, Client: d.Client, Namespace: d.Namespace, Registry: d.Registry, ServiceAccount: d.ServiceAccount, RepositoryPVC: d.RepositoryPVC, RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath, CredentialsSecret: d.CredentialsSecret, Environment: standbyEnvironment, CapturedCorpusReadOnly: true}, d.AgentID, *application)
 		standbyCtx, stopStandby := context.WithCancel(renewalCtx)
 		if err := pool.Start(standbyCtx); err != nil {
@@ -1718,30 +1710,7 @@ func maintainLeadership(
 	return errors
 }
 
-var environmentNamePattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
-
 var namespacePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
-
-func parseResponderEnvironment(entries []string) (map[string]string, error) {
-	reserved := map[string]bool{
-		"SDO_REQUEST_CONFIGMAP":    true,
-		"SDO_RESULT_CONFIGMAP":     true,
-		"SDO_NAMESPACE":            true,
-		ControllerStateEnvironment: true,
-	}
-	result := make(map[string]string, len(entries))
-	for _, entry := range entries {
-		name, value, ok := strings.Cut(entry, "=")
-		if !ok || !environmentNamePattern.MatchString(name) {
-			return nil, fmt.Errorf("responder environment must use NAME=VALUE with a valid uppercase name: %q", entry)
-		}
-		if reserved[name] {
-			return nil, fmt.Errorf("responder environment %q is managed by the controller", name)
-		}
-		result[name] = value
-	}
-	return result, nil
-}
 
 func resolveRepositoryCommits(repository string, sourceCommit string, deployedCommit string) (string, string, error) {
 	resolvedSource := strings.TrimSpace(sourceCommit)

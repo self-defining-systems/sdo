@@ -2,6 +2,7 @@ package worker_registry
 
 import (
 	"strconv"
+	"strings"
 	"time"
 
 	"sdo.dev/operator/contracts/settings"
@@ -35,11 +36,29 @@ const LifecycleTimeoutEnvironment = settings.LifecycleTimeoutEnvironment
 // MemoryCheckTimeoutEnvironment names the variable that bounds one memory check a worker runs, in whole seconds.
 const MemoryCheckTimeoutEnvironment = settings.MemoryCheckTimeoutEnvironment
 
+// ExtraEnvironment is agent.extra_env as variables. Every agent worker the controller launches carries it (responder
+// Jobs, standby pods, the reflection and closing turn, the health refresh judge, lifecycle agents): a provider reached
+// through it (for example Claude on Vertex AI) must work for every turn of a session, not only the first. The entries
+// were validated when the configuration was read.
+func ExtraEnvironment(agent settings.Agent) map[string]string {
+	environment := make(map[string]string, len(agent.ExtraEnv))
+	for _, entry := range agent.ExtraEnv {
+		if name, value, ok := strings.Cut(entry, "="); ok {
+			environment[name] = value
+		}
+	}
+	return environment
+}
+
 // AgentEnvironment is the agent section of the resolved operator configuration as the environment every agent
-// worker Job reads: provider, model, effort and both limits are always set, so no worker falls back to a default of
-// its own. The section was validated when the configuration was read.
+// worker Job reads: agent.extra_env, then provider, model, effort and both limits, always set and authoritative over
+// an extra entry, so no worker falls back to a default of its own. The section was validated when the configuration
+// was read.
 func AgentEnvironment(agent settings.Agent) map[string]string {
-	environment := ProviderCapacityEnvironment()
+	environment := ExtraEnvironment(agent)
+	for name, value := range ProviderCapacityEnvironment() {
+		environment[name] = value
+	}
 	environment[ProviderEnvironment] = agent.Provider
 	for _, name := range ModelEnvironments {
 		environment[name] = agent.Model

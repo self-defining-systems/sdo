@@ -201,7 +201,7 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 }
 
 // AgentWorkerEnvironment is the agent section of the operator configuration
-// (provider, model, effort and limits, always set), the replay policy, plus the
+// (agent.extra_env, then provider, model, effort and limits, always set), the replay policy, plus the
 // broker's telemetry policy (the controller's environment under the same
 // derivation as its brokers), as the environment every agent worker Job reads.
 func AgentWorkerEnvironment(config *contracts.ControllerConfig, policy settings.Config, telemetryRegistry *telemetry.Registry) (map[string]string, error) {
@@ -231,6 +231,19 @@ func AgentWorkerEnvironment(config *contracts.ControllerConfig, policy settings.
 		}
 	}
 	return environment, nil
+}
+
+// responderJobEnvironment is the environment of every responder Job: agent.extra_env, then the operator
+// configuration's agent section (authoritative over an extra entry). Without a typed launch configuration it is
+// agent.extra_env alone.
+func responderJobEnvironment(config *contracts.ControllerConfig, policy settings.Config, telemetryRegistry *telemetry.Registry) (map[string]string, error) {
+	return withAgentEnvironment(worker_registry.ExtraEnvironment(policy.Agent), config, policy, telemetryRegistry)
+}
+
+// standbyWorkerEnvironment is a standby responder pod's environment: the responder Job's plus the session mounts a
+// standby claims later.
+func standbyWorkerEnvironment(responder map[string]string) map[string]string {
+	return mergeEnvironment(responder, map[string]string{"SDO_SESSION_SCRATCH": "/sdo/session/scratch", "SDO_TOOLS_DIR": "/sdo/session/tools"})
 }
 
 // withAgentEnvironment makes the operator configuration authoritative for

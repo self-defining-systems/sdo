@@ -123,9 +123,9 @@ def test_worker_image_ships_offline_program_example_and_toolchain() -> None:
     dockerfile = (REPO_ROOT / "sdo/operator/Dockerfile.runtime").read_text(encoding="utf-8")
     assert "COPY examples/playbook-programs /opt/sdo/examples/playbook-programs" in dockerfile
     assert "COPY --from=go-deps /usr/local/go /usr/local/go" in dockerfile
-    assert "COPY --from=go-runtime /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator" in dockerfile
+    assert "COPY --from=go-binaries /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator" in dockerfile
     assert "COPY --from=go-deps /go/pkg/mod /go/pkg/mod" in dockerfile
-    assert "COPY --from=go-runtime /opt/sdo/sdo/operator /opt/sdo/sdo/operator" in dockerfile
+    assert "COPY --from=go-binaries /opt/sdo/sdo/operator /opt/sdo/sdo/operator" in dockerfile
     assert "GOPROXY=off" in dockerfile
     assert 'GOFLAGS="-mod=mod -p=2 -trimpath"' in dockerfile
     assert "SDO_PLAYBOOK_PROGRAM_EXAMPLE_DIR=/opt/sdo/examples/playbook-programs" in dockerfile
