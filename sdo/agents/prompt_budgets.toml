@@ -112,6 +112,10 @@ reason = "Operationalization skill description; shares the existing 200-characte
 max_chars = 200
 reason = "Responder method skill description; shares the existing 200-character skill-index allowance."
 
+[skills.sdo-investigator]
+max_chars = 200
+reason = "Hypothesis-investigator skill description; shares the existing 200-character skill-index allowance."
+
 [skills.sdo-operating]
 max_chars = 200
 reason = "Responder SDO command skill description; shares the existing 200-character skill-index allowance."

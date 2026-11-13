@@ -92,7 +92,7 @@ def test_no_skills_leaves_the_home_without_a_skills_directory(tmp_path: Path) ->
 @pytest.mark.parametrize(
     ("agent", "skills"),
     [
-        ("responder", {"incident-response", "sdo-operating", "sdo-patching"}),
+        ("responder", {"incident-response", "sdo-operating", "sdo-patching", "sdo-investigator"}),
         ("reflector", {"playbook-writing"}),
         ("health-judge", {"sdo-memory", "sdo-detector-authoring", "sdo-playbook-authoring", "sdo-operationalize"}),
         ("source_deployment", {"sdo-memory", "sdo-deploy", "sdo-patching"}),
@@ -103,3 +103,15 @@ def test_each_agent_worker_declares_the_skills_it_installs(agent: str, skills: s
     for name in skills:
         document = (SKILLS_ROOT / name / "SKILL.md").read_text(encoding="utf-8")
         assert document.startswith(f"---\nname: {name}\ndescription: ")
+
+
+def test_responder_home_ships_the_investigator_skill_its_method_names(tmp_path: Path) -> None:
+    claude_home = tmp_path / ".claude"
+
+    prepare_claude_home(credentials_root=tmp_path / "none", claude_home=claude_home, skills=AGENT_SKILLS["responder"])
+
+    method = (claude_home / "skills" / "incident-response" / "SKILL.md").read_text(encoding="utf-8")
+    investigator = (claude_home / "skills" / "sdo-investigator" / "SKILL.md").read_text(encoding="utf-8")
+    assert "sdo-investigator/SKILL.md" in method
+    assert "Do not call `sdo status`, `sdo diagnose`, `sdo menu` or `sdo verify`" in investigator
+    assert "How to diagnose" in investigator

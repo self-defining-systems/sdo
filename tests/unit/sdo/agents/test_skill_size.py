@@ -14,8 +14,8 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 SHORT_SKILLS = ("incident-response", "sdo-operating")
 
 
-def test_the_responder_reads_the_two_short_skills_and_patching() -> None:
-    assert AGENT_SKILLS["responder"] == (*SHORT_SKILLS, "sdo-patching")
+def test_the_responder_reads_the_two_short_skills_patching_and_the_investigator_skill() -> None:
+    assert AGENT_SKILLS["responder"] == (*SHORT_SKILLS, "sdo-patching", "sdo-investigator")
 
 
 @pytest.mark.parametrize("name", SHORT_SKILLS)
