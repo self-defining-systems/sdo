@@ -15,7 +15,7 @@ import (
 // ReconfigureMemory changes future evaluations only. Finding persistence,
 // open incidents, retained bindings and in-flight responder loops survive.
 func (c *Controller) ReconfigureMemory(remote *RemoteMemory, provider SnapshotProvider, at time.Time) error {
-	if c.config.ExternalIncidentsOnly {
+	if c.config.ExternalIncidentsOnly && !c.config.ExternalClues {
 		copy := *remote
 		copy.Detectors = nil
 		remote = &copy

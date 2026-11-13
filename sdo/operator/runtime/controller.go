@@ -36,6 +36,9 @@ type Dispatcher interface {
 
 type ControllerConfig struct {
 	ExternalIncidentsOnly bool
+	// ExternalClues keeps detectors observing in an external-incidents
+	// controller; their findings are clues and never open, join or close.
+	ExternalClues bool
 	// WatchOnly detects, opens, verifies and closes incidents as usual but never
 	// responds: the controller's dispatcher is replaced by one that idles until
 	// the incident ends, and no automatic stage is selected.
@@ -297,6 +300,7 @@ func (c ControllerConfig) WithSettings(policy settings.Config) ControllerConfig 
 	c.StartupBound = time.Duration(policy.Response.StartupBound)
 	c.AfterPlaybook = policy.Response.AfterPlaybook
 	c.AfterPlaybookWait = time.Duration(policy.Response.AfterPlaybookWait)
+	c.ExternalClues = policy.Response.ExternalClues
 	return c
 }
 
@@ -322,7 +326,9 @@ func NewController(
 		config.CorpusSessionRoot = ""
 	}
 	if config.ExternalIncidentsOnly {
-		detectors = nil
+		if !config.ExternalClues {
+			detectors = nil
+		}
 		config.CodePath.Overrides.ResponseStages = []string{"agent"}
 	}
 	if config.WatchOnly {
@@ -518,8 +524,10 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 				}
 			}
 		}
-		c.refreshIncidentView(now, false)
-		return nil
+		if !c.config.ExternalClues {
+			c.refreshIncidentView(now, false)
+			return nil
+		}
 	}
 	if err := c.prepareSourceInventory(ctx); err != nil {
 		return err
@@ -816,6 +824,10 @@ func (c *Controller) EvaluateAll(ctx context.Context, now time.Time) error {
 // tracked only. An opener joins the incident's opening alerts before launch
 // and otherwise waits in the batcher for the next incident.
 func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, now time.Time, spec sdk.DetectorSpec) {
+	if c.config.ExternalIncidentsOnly {
+		// External clues: tracked for the candidate view only.
+		return
+	}
 	if c.mergeIntoOpenIncident(finding) {
 		return
 	}

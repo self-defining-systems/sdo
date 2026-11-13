@@ -851,3 +851,40 @@ def test_a_failing_registry_falls_back_to_loading_the_nodes(tmp_path: Path, monk
     hooks.load_images("c", ["img:a"], lines.append, registry=tmp_path / "registry.sh")
     assert any(call.startswith("kind load docker-image") for call in log.read_text().splitlines())
     assert any("registry" in line and "falling back" in line for line in lines)
+
+
+# ---- harness-paged arm ---------------------------------------------------------------------------------------
+
+
+def test_harness_page_setting_selects_external_mode_with_detectors_as_clues(tmp_path: Path) -> None:
+    root = _baseline_dir(tmp_path)
+    block = OperatorBlock.load(
+        _operator_file(tmp_path, root, model="m", harness_page=True, config={"response": {"max_loops": 3}})
+    )
+    assert block.harness_page is not None
+    assert block.harness_page.after == 30
+    args, _ = install_existing_launch(
+        tmp_path / "sdo-operator",
+        tmp_path / "app",
+        Baseline.load(root),
+        block,
+        tmp_path / "kc",
+        SINK_ENV,
+        tmp_path / "c",
+    )
+    files = [Path(args[i + 1]) for i, arg in enumerate(args) if arg == "--config"]
+    assert yaml.safe_load(files[-1].read_text()) == {
+        "mode": "external",
+        "response": {"max_loops": 3, "external_clues": True},
+    }
+
+
+def test_without_harness_page_the_operator_mode_is_untouched(tmp_path: Path) -> None:
+    block = OperatorBlock.load(_operator_file(tmp_path, tmp_path, model="m"))
+    assert block.harness_page is None
+    assert block.effective_config() == {}
+
+
+def test_harness_page_refuses_an_experiment_mode(tmp_path: Path) -> None:
+    with pytest.raises(HookError, match="mode"):
+        OperatorBlock.load(_operator_file(tmp_path, tmp_path, model="m", harness_page=True, config={"mode": "frozen"}))

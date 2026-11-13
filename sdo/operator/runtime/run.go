@@ -263,7 +263,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// detectors, synthetic traffic or state baseline.
 	externalIncidents := policy.Mode == settings.ModeExternal
 	frozenMemory, forceReflection := policy.Mode != settings.ModeOperate, policy.Learning.ForceReflection
-	syntheticTraffic, stateBaseline := !externalIncidents, !externalIncidents
+	// External clues keep them running as clues the incident never depends on.
+	externalQuiet := externalIncidents && !policy.Response.ExternalClues
+	syntheticTraffic, stateBaseline := !externalQuiet, !externalQuiet
 	leaseDuration := options.LeaseDuration
 	if leaseDuration <= 0 {
 		leaseDuration = defaultLeaseDuration
@@ -276,7 +278,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if selectedCodePath.Selection.Coverage == "none" {
 		options.Programs = nil
 	}
-	if externalIncidents {
+	if externalQuiet {
 		detectors = nil
 	}
 	var hostManager *memoryhost.Manager
@@ -315,7 +317,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}
 		hostio.SetRecovery(hostManager, hostio.LaunchConfig{Namespace: *namespace, ProtectedNamespace: hostProtectedNamespace(*controlNamespace, *namespace), DisableSyntheticTraffic: !syntheticTraffic, ProbeIdentitySeed: hostio.ProbeIdentitySeedPath(*repositoryMountPath), Binary: *memoryHostBinary, Digest: *memoryHostDigest, Commit: launchConfig.GetControllerRevision(), MemoryBytes: 512 << 20, Output: stderr})
 		detectors, options.Programs, initialTelemetrySources = remote.Detectors, remote.Programs, remote.TelemetrySources
-		if externalIncidents {
+		if externalQuiet {
 			detectors = nil
 		}
 	}
@@ -670,6 +672,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					loop.Traffic = proberAPI
 				}
 				loop.WorkingProgramRoot = request.RepositoryWorktree
+				if policy.Response.ExternalClues && request.ExternalMessage != "" {
+					loop.Detectors, loop.ExternalClues = detectors, true
+				}
 				// Backups live on the repository volume beside the other
 				// controller state, outside the published .sdo/ tree.
 				loop.Executor.Stores = &StoreAccess{Read: loop.gitRead(), Snapshot: snapshotProvider, Backups: FileBackupStore{Root: filepath.Join(*repositoryMountPath, ".sdo-runtime", "backups")}, Payloads: storePayloads}
@@ -879,7 +884,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if err != nil {
 				return err
 			}
-			if externalIncidents {
+			if externalQuiet {
 				remote.Detectors = nil
 			}
 			if err := core.ValidateDetectors(remote.Detectors); err != nil {

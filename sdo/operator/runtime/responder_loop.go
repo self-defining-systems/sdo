@@ -192,6 +192,9 @@ type selectedPlan struct {
 type ResponderLoop struct {
 	// restoreEvidence is what the built-in source-restore playbook classifies with.
 	restoreEvidence *sourceRestoreEvidence
+	// ExternalClues lets `detect` run for an external incident as the candidate
+	// view; check and verify stay without detector authority.
+	ExternalClues bool
 	// BuiltinRestoreAuto lets the automatic stage apply the built-in
 	// source-restore playbook; off, the responder decides (response.builtin_restore_auto).
 	BuiltinRestoreAuto bool
@@ -533,7 +536,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	}
 	response = ToolResponse{Command: request.Command, LoopsUsed: l.batches, LoopsAllowed: l.batchLimit(),
 		MitigationRoundsUsed: l.batches, MitigationRoundsAllowed: l.batchLimit(), ResponseLoopsUsed: l.continuation.Attempts, ResponseLoopsAllowed: l.MaxBatches}
-	if l.Request.ExternalMessage != "" && (request.Command == "detect" || request.Command == "check" || request.Command == "verify") {
+	if l.Request.ExternalMessage != "" && (request.Command == "check" || request.Command == "verify" || request.Command == "detect" && !l.ExternalClues) {
 		response.VerificationStatus = VerificationAwaitingResponderCompletion
 		response.Summary = "External incident: detectors are disabled. Investigate with live reads and return your completed result when done."
 		return response

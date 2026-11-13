@@ -17,8 +17,10 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -26,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks.fuzzops.evidence import EvidenceError, EvidenceTarget, snapshot, snapshot_id_for
+from benchmarks.fuzzops.page import DEFAULT_ENTRY, PageConfig, Pager, fuzzops_check, kubectl_apply
 from benchmarks.fuzzops.window import concerns, fault_targets
 
 STATE_CONFIGMAP = "sdo-controller-state"
@@ -381,6 +384,37 @@ def seal_boundary(target: EvidenceTarget, incident: str) -> None:
         print(f"evidence snapshot failed: {exc}", file=sys.stderr, flush=True)
 
 
+def start_pager(a: argparse.Namespace, context: str, out: Path) -> threading.Thread:
+    """Page SDO's responder from the harness (the harness-paged arm): the incident the watcher then follows."""
+    config = PageConfig.from_settings(json.loads(a.page))
+    binary = a.page_fuzzops or Path(os.environ.get("FUZZOPS_BIN") or shutil.which("fuzzops") or "")
+    if config is None or not a.page_pack or not a.page_namespace or not binary.name:
+        raise SystemExit("--page needs a page config, --page-pack, --page-namespace and a fuzzops binary")
+    t0 = time.time()
+    pager = Pager(
+        config=config,
+        namespace=a.page_namespace,
+        control_namespace=a.control_namespace,
+        pack=a.page_pack,
+        incident_id=f"page-{int(t0)}",
+        out=out,
+        live_check=lambda: fuzzops_check(binary, a.page_pack, a.page_namespace, config),
+        submit=lambda manifest: kubectl_apply(manifest, a.kubeconfig, context),
+        entry=os.environ.get("BENCH_PAGE_ENTRY") or DEFAULT_ENTRY,
+    )
+
+    def run() -> None:
+        try:
+            pager.run(t0)
+            print(f"sdo: harness page sent at +{round(time.time() - t0)}s", flush=True)
+        except Exception as exc:  # the window must go on; the missing page shows in the record
+            print(f"harness page failed: {exc}", file=sys.stderr, flush=True)
+
+    thread = threading.Thread(target=run, daemon=True, name="harness-pager")
+    thread.start()
+    return thread
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--control-namespace", required=True)
@@ -402,6 +436,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--operator-binary", type=Path, help="seal an evidence snapshot when the incident closes")
     p.add_argument("--controller-image", default="", help="with --operator-binary: the controller image")
+    p.add_argument("--page", default="", help="the harness-paged arm: PageConfig as JSON (see page.py)")
+    p.add_argument("--page-pack", type=Path, help="with --page: the fuzzops pack (journeys.yaml)")
+    p.add_argument("--page-namespace", default="", help="with --page: the application namespace")
+    p.add_argument("--page-fuzzops", type=Path, help="with --page: the fuzzops binary (default: FUZZOPS_BIN or PATH)")
     a = p.parse_args(argv)
     evidence: EvidenceTarget | None = None
     if a.operator_binary is not None and a.controller_image:
@@ -417,6 +455,8 @@ def main(argv: list[str] | None = None) -> int:
     emitted: set[str] = set()
     out = Path(os.environ.get("FUZZOPS_OUT") or ".")
     out.mkdir(parents=True, exist_ok=True)
+    if a.page:
+        start_pager(a, context, out)
     watcher = Watcher(started=datetime.now(UTC) - timedelta(seconds=a.lookback), targets=fault_targets(a.fault))
     last_raw = ""
     closed_at: float | None = None

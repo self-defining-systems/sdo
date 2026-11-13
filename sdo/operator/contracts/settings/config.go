@@ -147,6 +147,7 @@ type Response struct {
 	Permissive           bool     `yaml:"permissive" doc:"broad lane repair permissions excluding Secret and credential APIs"`
 	PermissiveNamespaces []string `yaml:"permissive_namespaces" doc:"additional lane namespaces the permissive responder may repair"`
 	CleanupTurns         int      `yaml:"cleanup_turns" doc:"how many times the responder's session is asked, after Recovered, to keep or remove the app-file edits it left uncaptured; edits still left after that are discarded and recorded as source_repair_uncaptured. 0 asks no cleanup turn"`
+	ExternalClues        bool     `yaml:"external_clues" doc:"with mode external: keep the detectors, synthetic traffic and state baseline running as clues (sdo detect, the candidate view). Their findings never open, join or close an external incident; the caller opens it and the responder's completion closes it. Default off: an external controller observes nothing"`
 	StartupBound         Duration `yaml:"startup_bound" doc:"how long a new install waits for SDO to see its application healthy (2 min with no opener firing) before incidents open anyway; until then no incident opens. 0s turns the start-up period off"`
 }
 
@@ -293,6 +294,9 @@ func (c Config) Validate() error {
 	positive("detection.drift_batch_window", c.Detection.DriftBatchWindow)
 	oneOf("learning.replay", c.Learning.Replay, "on", "off")
 	oneOf("learning.reflection_guidance", c.Learning.ReflectionGuidance, "baseline", "generalize", "generalize-spec")
+	if c.Response.ExternalClues && c.Mode != ModeExternal {
+		bad("response.external_clues", "requires mode %s, not %s", ModeExternal, c.Mode)
+	}
 	if c.Mode != ModeOperate && c.Learning.ForceReflection {
 		bad("learning.force_reflection", "conflicts with mode %s, which keeps memory frozen", c.Mode)
 	}

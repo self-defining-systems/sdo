@@ -484,7 +484,7 @@ The detector SDK and runtime snapshot component observes namespaced StatefulSets
 
 The memory host owns read-only routing probes even without traffic workloads.
 An external-incidents controller (`mode: external`) runs no background workloads but
-retains primitive probes. Manager restores scheduler intent on host recovery and swaps immutable
+retains primitive probes. With `response.external_clues` (default off) its detectors, synthetic traffic and state baseline keep observing as clues: `sdo detect` serves the candidate view, but findings never open, join or close the external incident. Manager restores scheduler intent on host recovery and swaps immutable
 artifacts across accepted revisions without replacing the controller. Missing
 routing capability is recorded as a typed unavailable note, never a successful
 connection. No standalone prober binary, publication cache, pod, Service or policy

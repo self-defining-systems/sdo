@@ -64,7 +64,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from benchmarks.fuzzops import config, observe, sink, view
+from benchmarks.fuzzops import config, observe, page, sink, view
 from benchmarks.fuzzops.install import (
     CREDENTIALS_SECRET,
     REPOSITORY_PVC,
@@ -301,6 +301,9 @@ class OperatorBlock:
     auth_file: Path = field(default_factory=lambda: Path.home() / ".codex" / "auth.json")
     #: ``settings.config``: the experiment's operator config overlay, passed after the baseline's.
     config: dict[str, Any] = field(default_factory=dict)
+    #: ``settings.harness_page``: the harness-paged arm (``page.PageConfig``): the benchmark opens the one SDO
+    #: incident through the external-incident inbox at the inject plus ``after`` seconds; detectors only observe.
+    harness_page: page.PageConfig | None = None
 
     def __post_init__(self) -> None:
         if not self.revision:
@@ -310,6 +313,17 @@ class OperatorBlock:
         if not self.image_tag:
             object.__setattr__(self, "image_tag", f"fz-{self.revision[:8]}")
         refuse_hook_keys(self.config, "settings.config")
+        if self.harness_page is not None and "mode" in self.config:
+            raise ValueError("settings.harness_page sets the operator mode; settings.config may not")
+
+    def effective_config(self) -> dict[str, Any]:
+        """The experiment overlay, with the harness-paged arm's mode: external alerts only, detectors as clues."""
+        if self.harness_page is None:
+            return self.config
+        arm = {"mode": "external", "response": {"external_clues": True}}
+        merged = {**self.config, **arm}
+        merged["response"] = {**(self.config.get("response") or {}), **arm["response"]}
+        return merged
 
     @classmethod
     def load(cls, path: Path) -> OperatorBlock:
@@ -332,6 +346,7 @@ class OperatorBlock:
                 image_tag=str(settings.get("image_tag") or ""),
                 auth_file=Path(str(settings.get("auth_file") or Path.home() / ".codex" / "auth.json")).expanduser(),
                 config=settings.get("config") or {},
+                harness_page=page.PageConfig.from_settings(settings.get("harness_page")),
             )
         except (TypeError, ValueError) as exc:
             raise HookError(f"BENCH_OPERATOR: {exc}") from exc
@@ -695,7 +710,7 @@ def install_existing_launch(
     ]
     files = [config.BENCH_PROFILE]
     config_dir.mkdir(parents=True, exist_ok=True)
-    for name, overlay in (("baseline", baseline.config), ("experiment", block.config)):
+    for name, overlay in (("baseline", baseline.config), ("experiment", block.effective_config())):
         if overlay:
             files.append(config.write_overlay(overlay, config_dir / f"{name}.yaml"))
     environment = config.operator_env(provider=block.provider, model=block.model, effort=block.effort)
@@ -976,6 +991,16 @@ def watch(env: Mapping[str, str]) -> int:
     fault = env.get("BENCH_FAULT", "none")
     if fault and fault != "none":
         argv += ["--fault", fault]
+    block = _operator(env) if env.get("BENCH_OPERATOR") else None
+    if block is not None and block.harness_page is not None:
+        argv += [
+            "--page",
+            json.dumps(asdict(block.harness_page)),
+            "--page-pack",
+            _need(env, "BENCH_PACK"),
+            "--page-namespace",
+            _need(env, "FUZZOPS_NAMESPACE"),
+        ]
     return observe.main(argv)
 
 

@@ -34,7 +34,7 @@ func (l *ResponderLoop) handleRead(ctx context.Context, request ToolRequest) (re
 			prepareErr = l.loadWorkingPrograms(ctx, request.ProgramID)
 		}
 		read = &ResponderLoop{
-			Request: l.Request, Programs: l.Programs, Provider: l.Provider, Detectors: l.Detectors,
+			ExternalClues: l.ExternalClues, Request: l.Request, Programs: l.Programs, Provider: l.Provider, Detectors: l.Detectors,
 			Executor: l.Executor, Traffic: l.Traffic, ReadView: l.ReadView, DiagnosisDeadline: l.DiagnosisDeadline,
 			Now: l.Now, GitRead: l.GitRead, Trust: l.Trust, MenuConfig: l.MenuConfig,
 			IncidentStatus: l.IncidentStatus, CurrentEvidence: l.CurrentEvidence, MutationGate: l.MutationGate, IncidentSources: l.IncidentSources,
