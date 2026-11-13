@@ -55,6 +55,8 @@ type KubernetesJobDispatcher struct {
 	RequireMemorySnapshot bool
 	LoopFactory           func(IncidentRequest) *ResponderLoop
 	beforeClaim           func()
+	// Investigators is response.investigators and its running sessions; nil or Count 0 starts none.
+	Investigators *InvestigatorRegistry
 }
 
 // PrepareDispatch freezes the worker task before the controller records its
@@ -355,6 +357,11 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 		}
 	}
 
+	if d.Investigators.Enabled() && loop != nil && sessionSubPath != "" && request.ExternalMessage == "" {
+		// Armed with the responder's session: they start only if it makes no write within the delay, and end
+		// when it returns (or earlier, at Recovered, through StopResponder).
+		defer d.startInvestigators(ctx, request, task, loop)()
+	}
 	result, err := d.executeResponder(ctx, executor, task, loop, request)
 	if err != nil {
 		var failed *worker_registry.JobFailedError

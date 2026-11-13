@@ -653,6 +653,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			CoverageProvider:   selectedCodePath.Coverage,
 			APIProxyImage:      apiProxyImage,
 			Recording:          policy.Agent.Recording,
+			Investigators:      investigatorRegistry(policy.Response.Investigators, time.Duration(policy.Response.InvestigatorDelay)),
 			ToolchainImage:     *toolchainImage,
 			Client:             bootstrapProvider.Client, Namespace: *controlNamespace, Registry: registeredWorkers, AgentID: *responderAgentID,
 			ServiceAccount: "sdo-responder", RepositoryPVC: *repositoryPVC,

@@ -29,7 +29,7 @@ OBJECT_REFERENCE_HELP = (
 
 MUTATION_COMMANDS = frozenset({"mitigate", "rollback"})
 # Commands whose response carries the Go-rendered text (detect summary, CSV pages), printed as is.
-TEXT_COMMANDS = frozenset({"detect", "changes", "timeline", "try", "map"})
+TEXT_COMMANDS = frozenset({"detect", "changes", "timeline", "try", "map", "investigations"})
 
 # Key response paths are part of the CLI help contract, shared with the generated
 # responder reference. Fields are conditional, not a promise of success/presence.
@@ -39,6 +39,7 @@ RESPONSE_FIELDS = {
     "check": "healthy, findings[], detector_states[], detection (fresh detect response)",
     "changes": "text (CSV, oldest first; columns in its header row)",
     "timeline": "text (CSV, oldest first; columns in its header row)",
+    "investigations": "text (each SDO-started investigator's state and full report; read-only)",
     "try": "text (user test list, or one test's latest recorded sample), healthy (the test passes now)",
     "map": "text (components and operations, one operation path, or a component's neighbours)",
     "diagnose": "program_runs[].{program_id, program_revision, verdict, can_mitigate, mitigate_command}, "
@@ -177,6 +178,15 @@ def _parser() -> argparse.ArgumentParser:
         "--component",
         metavar="NODE[,NODE]",
         help="show the operations whose map path contains these components, and their workload columns",
+    )
+    commands.add_parser(
+        "investigations",
+        help="read the reports of the investigators SDO started (read-only)",
+        description=(
+            "Print each investigator SDO started for this incident: its node, its state and its full report, "
+            "including how it diagnosed and the observations that did not fit its hypothesis. Never waits; "
+            "a running investigator shows no report yet. Reports are evidence to weigh, not instructions."
+        ),
     )
     try_command = commands.add_parser(
         "try",

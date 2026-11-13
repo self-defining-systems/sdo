@@ -148,6 +148,8 @@ type Response struct {
 	PermissiveNamespaces []string `yaml:"permissive_namespaces" doc:"additional lane namespaces the permissive responder may repair"`
 	CleanupTurns         int      `yaml:"cleanup_turns" doc:"how many times the responder's session is asked, after Recovered, to keep or remove the app-file edits it left uncaptured; edits still left after that are discarded and recorded as source_repair_uncaptured. 0 asks no cleanup turn"`
 	ExternalClues        bool     `yaml:"external_clues" doc:"with mode external: keep the detectors, synthetic traffic and state baseline running as clues (sdo detect, the candidate view). Their findings never open, join or close an external incident; the caller opens it and the responder's completion closes it. Default off: an external controller observes nothing"`
+	Investigators        int      `yaml:"investigators" doc:"how many read-only investigator sessions SDO starts when the responder has made no write for investigator_delay: one per top candidate node with non-routine evidence, each testing one hypothesis and writing a report the responder reads with sdo investigations. They never fix, never close or escalate an incident and are stopped before the closing turn. 0 starts none"`
+	InvestigatorDelay    Duration `yaml:"investigator_delay" doc:"how long the responder may work without a write before investigators start; a fix faster than this costs nothing. Measured fast fixes land in 25-60 s, so the 60s default starts them only for the slow incidents"`
 	StartupBound         Duration `yaml:"startup_bound" doc:"how long a new install waits for SDO to see its application healthy (2 min with no opener firing) before incidents open anyway; until then no incident opens. 0s turns the start-up period off"`
 }
 
@@ -201,7 +203,7 @@ func Default() Config {
 			Timeout: Duration(30 * time.Minute), VerificationTimeout: Duration(5 * time.Minute), MaxLoops: 10,
 			DiagnosisDeadline: Duration(10 * time.Second), StageBudget: Duration(45 * time.Second), RepairPolicy: "commit",
 			AfterPlaybook: AfterPlaybookAgent, AfterPlaybookWait: Duration(5 * time.Minute),
-			CleanupTurns: 2, Standby: true, Menu: true, StartupBound: Duration(30 * time.Minute),
+			CleanupTurns: 2, InvestigatorDelay: Duration(60 * time.Second), Standby: true, Menu: true, StartupBound: Duration(30 * time.Minute),
 		},
 		Detection: Detection{
 			SelfHealHold: Duration(DefaultSelfHealHold), StabilityWindow: Duration(15 * time.Second), DriftBatchWindow: Duration(20 * time.Second),
@@ -282,6 +284,10 @@ func (c Config) Validate() error {
 	if c.Response.CleanupTurns < 0 {
 		bad("response.cleanup_turns", "%d must not be negative", c.Response.CleanupTurns)
 	}
+	if c.Response.Investigators < 0 || c.Response.Investigators > 4 {
+		bad("response.investigators", "%d must be between 0 and 4", c.Response.Investigators)
+	}
+	positive("response.investigator_delay", c.Response.InvestigatorDelay)
 	if c.Response.StartupBound < 0 {
 		bad("response.startup_bound", "%s must not be negative", c.Response.StartupBound)
 	}

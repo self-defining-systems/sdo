@@ -13,7 +13,7 @@ import (
 
 func concurrentRead(command string) bool {
 	switch command {
-	case "status", "detect", "diagnose", "menu", "source", "changes", "timeline", "try", "map":
+	case "status", "detect", "diagnose", "menu", "source", "changes", "timeline", "try", "map", "investigations":
 		return true
 	}
 	return false
@@ -24,6 +24,10 @@ func concurrentRead(command string) bool {
 // API reads never serialize unrelated observations. Registries are immutable
 // after loadWorkingPrograms publishes a version.
 func (l *ResponderLoop) handleRead(ctx context.Context, request ToolRequest) (response ToolResponse) {
+	if request.Command == "investigations" {
+		// A pure read of the board; it is not a loop call and records nothing.
+		return ToolResponse{Command: request.Command, Text: l.Investigations.Text(), Summary: "investigator reports"}
+	}
 	l.operationMu.RLock()
 	defer l.operationMu.RUnlock()
 	var read *ResponderLoop
@@ -84,6 +88,7 @@ func (l *ResponderLoop) handleRead(ctx context.Context, request ToolRequest) (re
 		}
 		if request.Command == "detect" && request.Finding == "" && len(request.DetectorIDs) == 0 && response.Error == "" {
 			appendNote(&response, l.detectNote(response.Findings))
+			appendNote(&response, l.Investigations.DetectLine())
 		}
 		raw, _ := json.Marshal(request)
 		l.calls = append(l.calls, ToolCall{Command: request.Command, At: l.clock().UTC(), RequestJSON: string(raw), ResponseJSON: string(recordedToolResponseJSON(response, nil)), Error: response.Error, Summary: response.Summary})

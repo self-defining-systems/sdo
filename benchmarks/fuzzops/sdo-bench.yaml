@@ -7,5 +7,6 @@ response:
   repair_policy: recorded-actions   # benchmarks repair live state without a source commit (D6)
   after_playbook: wait              # upper bound: a playbook that applied is never followed by the agent; recovery gets the whole bound, then the incident escalates
   after_playbook_wait: 5m
+  investigators: 2                  # up to 2 read-only investigator sessions when the responder has made no write for investigator_delay (default 60s); production default is 0
 detection:
   self_heal_hold: 60s               # faults are graded in minutes (D2); production holds 5m. A restart that heals in 30 s still opens nothing

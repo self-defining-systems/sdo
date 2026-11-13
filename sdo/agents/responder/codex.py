@@ -163,6 +163,7 @@ _MODEL_OMITS: dict[str, tuple[str, ...]] = {
         "proposed_artifact_ids",
         "usage",
         "responder_session_id",
+        "investigation_report",
         "error",
         "repair_actions",
     ),
