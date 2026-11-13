@@ -18,8 +18,9 @@ import (
 
 // componentLiteralDiagnostics rejects a change that writes a component name
 // (an accepted-source object or traffic scenario ID) into code a role or
-// binding could supply it to: a playbook program that declares a role, or an
-// incident detector that binds roles. Such code serves one component; the
+// binding could supply it to: a playbook program, with or without a role (one
+// without finds its subject by relation, so a name is as much an over-fit), or
+// an incident detector that binds roles. Such code serves one component; the
 // next incident on another component then copies it or enumerates a second
 // name. Names the accepted version of the same playbook or detector already
 // had are left alone, so editing old memory does not force a rewrite. Spec
@@ -69,8 +70,6 @@ func componentLiteralDiagnostics(ctx context.Context, r Request, paths []string)
 			if !binds {
 				continue
 			}
-		} else if len(programRoles(local)) == 0 {
-			continue
 		}
 		had := map[string]bool{}
 		for _, file := range baseGoSources(ctx, r, dir) {
@@ -100,9 +99,13 @@ func componentLiteralDiagnostics(ctx context.Context, r Request, paths []string)
 				Message: fmt.Sprintf("incident detector names the component %s it should take from the failure; it covers only that component", strings.Join(added, ", ")),
 				Hint:    "take the component from the failure: accept scenario failures (strings.HasPrefix(f.RuleID, traffic.RuleIDPrefix)) that carry the cause's own failure text (traffic.MatchFailures) or log pattern, and bind the role per suspect with localize.BindSuspects(f, result, role) (result from localize.FromContext on the application's probe workload), keeping only workloads the playbook can act on; the playbook's Diagnose checks its own evidence on the bound component"})
 		} else {
+			supplier := "that the application map, the owners or the source diff should supply"
+			if roles := programRoles(local); len(roles) > 0 {
+				supplier = "that its role " + strings.Join(roles, ", ") + " should supply"
+			}
 			diagnostics = append(diagnostics, Diagnostic{Rule: RulePlaybookComponentLiteral, Path: dir,
-				Message: fmt.Sprintf("playbook program names the component %s that its role %s should supply; it repairs only that component", strings.Join(added, ", "), strings.Join(programRoles(local), ", ")),
-				Hint:    "derive per-component values from the bound object through ReadView: a container from the bound workload's Pod template, its Pods by owner, the failing journeys through it with localize.FromContext(v, <the application's probe workload>) and Implicates(ref) instead of a scenario ID; the same program then repairs every component its detector binds"})
+				Message: fmt.Sprintf("playbook program names the component %s %s; it repairs only that component", strings.Join(added, ", "), supplier),
+				Hint:    "derive per-component values from the bound object, or for a role-less program from the subject found by relation, through ReadView: a container from the bound workload's Pod template, its Pods by owner, the failing journeys through it with localize.FromContext(v, <the application's probe workload>) and Implicates(ref) instead of a scenario ID; the same program then repairs every component its detector binds"})
 		}
 	}
 	return diagnostics
