@@ -1,7 +1,10 @@
 package replay
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -172,7 +175,39 @@ func (c *cluster) Patch(ctx context.Context, ref sdk.ObjectRef, kind types.Patch
 	if strings.EqualFold(ref.Kind, "Secret") {
 		return fmt.Errorf("Secret writes forbidden")
 	}
-	_, err := c.fake.Invokes(ktesting.NewPatchAction(fixtureResource(ref), ref.Namespace, ref.Name, kind, patch), &unstructured.Unstructured{})
+	var before *unstructured.Unstructured
+	if ref.Kind == "StatefulSet" {
+		before, _ = c.Get(ctx, ref)
+	}
+	if _, err := c.fake.Invokes(ktesting.NewPatchAction(fixtureResource(ref), ref.Namespace, ref.Name, kind, patch), &unstructured.Unstructured{}); err != nil {
+		return err
+	}
+	return c.advanceUpdateRevision(ctx, ref, before)
+}
+
+// advanceUpdateRevision models the StatefulSet controller observing a changed
+// pod template: status.updateRevision names a new revision, so Pods still on
+// the previous one are old-revision Pods.
+func (c *cluster) advanceUpdateRevision(ctx context.Context, ref sdk.ObjectRef, before *unstructured.Unstructured) error {
+	if before == nil {
+		return nil
+	}
+	after, err := c.Get(ctx, ref)
+	if err != nil {
+		return err
+	}
+	previous, _, _ := unstructured.NestedMap(before.Object, "spec", "template")
+	template, _, _ := unstructured.NestedMap(after.Object, "spec", "template")
+	left, _ := json.Marshal(previous)
+	right, _ := json.Marshal(template)
+	if bytes.Equal(left, right) {
+		return nil
+	}
+	sum := sha256.Sum256(right)
+	if err := unstructured.SetNestedField(after.Object, ref.Name+"-"+hex.EncodeToString(sum[:5]), "status", "updateRevision"); err != nil {
+		return err
+	}
+	_, err = c.fake.Invokes(ktesting.NewUpdateAction(fixtureResource(ref), ref.Namespace, after), &unstructured.Unstructured{})
 	return err
 }
 

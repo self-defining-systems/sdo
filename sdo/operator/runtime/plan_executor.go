@@ -424,6 +424,9 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 	if err := e.replaceStuckPods(ctx, stuckPods, &result); err != nil {
 		return result, err
 	}
+	if err := e.replaceRevisionStuckPods(ctx, sourceRestoredStatefulSets(plan, result), &result); err != nil {
+		return result, err
+	}
 	return result, nil
 }
 
