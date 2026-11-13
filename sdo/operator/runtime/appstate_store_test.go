@@ -142,3 +142,15 @@ func TestAppStateStoreChangesListsRecentMovesAcrossReaders(t *testing.T) {
 		t.Fatalf("changes = %+v", changes)
 	}
 }
+
+func TestAppStateStoreIsTheChangesCSVSeam(t *testing.T) {
+	store := NewAppStateStore(DefaultStateSettle)
+	store.Retain(map[string][]string{"a": nil})
+	store.Record("a", stateSnap(-20*time.Minute, "k", "1"))
+	store.Record("a", stateSnap(-10*time.Minute, "k", "2"))
+	var source AppStateChangeSource = store
+	rows := source.AppStateChanges(storeT0.Add(-30*time.Minute), storeT0)
+	if len(rows) != 1 || rows[0].Source != "app-state" || rows[0].ReaderOrObject != "a" || rows[0].Before != "1" || rows[0].After != "2" {
+		t.Fatalf("rows = %+v", rows)
+	}
+}

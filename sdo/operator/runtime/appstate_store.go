@@ -193,3 +193,14 @@ func (s *AppStateStore) Changes(now time.Time, d time.Duration) []AppStateChange
 func (c *Controller) observeAppState(now time.Time, healthy bool) {
 	c.AppState.Observe(now.UTC(), healthy)
 }
+
+// AppStateChanges adapts the store to changes.csv's app-state seam
+// (AppStateChangeSource): each reader's key moves in (since, now].
+func (s *AppStateStore) AppStateChanges(since, now time.Time) []IncidentChange {
+	var out []IncidentChange
+	for _, c := range s.Changes(now, now.Sub(since)) {
+		before, after := c.Change.Before, c.Change.After
+		out = append(out, IncidentChange{At: c.Change.At, Source: "app-state", ReaderOrObject: c.Reader, Key: c.Change.Key, Before: before, After: after, Noisy: c.Change.Noisy})
+	}
+	return out
+}

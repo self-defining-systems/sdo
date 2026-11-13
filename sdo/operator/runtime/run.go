@@ -946,6 +946,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	controller.PodReadBaseline = podReadBaseline
 	controller.VantageBaseline = vantageBaseline
 	controller.AppState = appStateObserver.Store()
+	controller.config.AppStateChanges = appStateObserver.Store()
 	controller.Helpers = KubernetesHelperCleaner{
 		Client: bootstrapProvider.Client, Namespaces: []string{*namespace, *controlNamespace},
 	}
