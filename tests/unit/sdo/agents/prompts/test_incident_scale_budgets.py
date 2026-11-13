@@ -62,7 +62,8 @@ def test_responder_first_message_names_every_failing_test_within_a_measured_boun
     request.passing_tests.extend(f"fixture-{index}" for index in range(WORKLOADS))
     rendered = str(responder_prompt(request))
     assert len(rendered.encode()) <= 3000
-    assert "operation-00 3/6" in rendered and "operation-47 3/6" in rendered
+    assert "operation-00 3/6" in rendered
+    assert "operation-47 3/6" in rendered
     assert 'HTTP 429 text "Retry later" (48)' in rendered
     assert "(+12 more failing tests not listed" in rendered
     assert request.incident_id in rendered
