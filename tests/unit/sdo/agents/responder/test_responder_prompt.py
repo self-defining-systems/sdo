@@ -62,7 +62,7 @@ def test_an_external_alert_says_to_return_when_it_is_fixed() -> None:
     request.external_message = "disk full on the batch node"
 
     prompt = str(_responder_prompt(request))
-    assert "external alert: disk full on the batch node; return when it is fixed" in prompt
+    assert "return when it is fixed:\ndisk full on the batch node" in prompt
 
 
 def test_the_repair_policy_stays_in_the_request_not_the_prompt() -> None:

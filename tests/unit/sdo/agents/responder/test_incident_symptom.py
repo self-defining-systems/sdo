@@ -142,4 +142,21 @@ def test_other_openers_keep_their_one_line_description_with_the_open_time() -> N
 def test_an_external_alert_is_stated_as_is() -> None:
     request = IncidentRequest(incident_id="x", namespace="app", external_message="disk full")
     request.detected_at.FromDatetime(OPENED)
-    assert symptom(request) == "Opened on external alert: disk full; return when it is fixed at 12:00:40 UTC."
+    assert symptom(request) == "Opened on external alert at 12:00:40 UTC; return when it is fixed:\ndisk full"
+
+
+def test_an_external_alert_reaches_the_agent_whole_with_its_line_breaks() -> None:
+    lines = [
+        "Page for the application in Kubernetes namespace app.",
+        "Users are seeing failures:",
+        "  - op-a: 500 (3 failed of 57 requests in the last 10 s)",
+        "These still work: " + ", ".join(f"op-{i}" for i in range(400)) + ".",
+        "To check an operation yourself: curl -s 'http://entry/api/a'",
+    ]
+    message = "\n".join(lines)
+    assert len(message) <= 4096  # the contract's max_len for external_message
+    request = IncidentRequest(incident_id="x", namespace="app", external_message=message)
+    request.detected_at.FromDatetime(OPENED)
+    block = symptom(request)
+    assert block.endswith("\n" + message)
+    assert "…" not in block
