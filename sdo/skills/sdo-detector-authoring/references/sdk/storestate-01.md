@@ -223,6 +223,9 @@ func AuthFailures(engine Engine, logs string) []AuthFailure
 type Change struct {
 	Before *Item `json:"before,omitempty"`
 	After  *Item `json:"after,omitempty"`
+	// Noisy is set when the item changed in most of the store's healthy
+	// readings (a key count, an offset): its change says nothing by itself.
+	Noisy bool `json:"noisy,omitempty"`
 }
     Change is one item that differs between a baseline and the current facts.
     Before is nil for an added item and After is nil for a removed one.
@@ -232,6 +235,11 @@ func Diff(baseline, current Facts) []Change
     Diff lists the items added, removed or changed from baseline to current,
     sorted by key. Diff of facts with themselves is empty. An item missing from
     current is not reported as removed when current could not read its kind.
+
+func (c Change) Describe() (key, before, after string)
+    Describe renders the change for a reader: the item's key and its before and
+    after values. A digest of a large catalog's table group (catalog_group.go)
+    is described by what it says, such as "+1 trigger", never by its hashes.
 
 func (c Change) Key() Key
     Key returns the changed item's identity.
