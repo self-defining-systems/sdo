@@ -5655,7 +5655,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x1aRESIDUAL_CLASS_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18RESIDUAL_CLASS_PROBE_LAG\x10\x01\x12 \n" +
 	"\x1cRESIDUAL_CLASS_BASELINE_CLUE\x10\x02\x12\x19\n" +
-	"\x15RESIDUAL_CLASS_ACTIVE\x10\x03\"\x98\v\n" +
+	"\x15RESIDUAL_CLASS_ACTIVE\x10\x03\"\xc6\v\n" +
 	"\x0fStageMitigation\x12(\n" +
 	"\vplaybook_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
 	"playbookId\x12)\n" +
@@ -5663,9 +5663,9 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\bbindings\x18\x03 \x03(\v2\".sdodev.contracts.v1alpha1.BindingR\bbindings\x12\x17\n" +
 	"\aplan_id\x18\x04 \x01(\tR\x06planId\x12O\n" +
 	"\rapply_receipt\x18\x05 \x01(\v2*.sdodev.contracts.v1alpha1.PlanApplicationR\fapplyReceipt\x12\xbf\x01\n" +
-	"\x06result\x18\x06 \x01(\tB\xa6\x01\xbaH\xa2\x01r\x9f\x01R\x0fapplied_clearedR\x16applied_still_matchingR\x14reverted_ineffectiveR\x0erollout_failedR\x1arollout_pending_at_handoffR\x11admission_blockedR\vapply_errorR\askippedR\tescalatedR\x06result\x12\x8a\x02\n" +
-	"\vskip_reason\x18\a \x01(\tB\xe8\x01\xbaH\xe4\x01r\xe1\x01R\x00R\x15multiple_entry_pointsR\rno_mitigationR\x11unbound_parameterR\x1adiagnose_no_longer_matchesR\x14diagnose_unavailableR\x14unexplained_coverageR\x11already_attemptedR\rrepair_policyR\fstage_budgetR\x13plan_not_executableR\vineffectiveR\n" +
-	"holds_dataR\n" +
+	"\x06result\x18\x06 \x01(\tB\xa6\x01\xbaH\xa2\x01r\x9f\x01R\x0fapplied_clearedR\x16applied_still_matchingR\x14reverted_ineffectiveR\x0erollout_failedR\x1arollout_pending_at_handoffR\x11admission_blockedR\vapply_errorR\askippedR\tescalatedR\x06result\x12\xb8\x02\n" +
+	"\vskip_reason\x18\a \x01(\tB\x96\x02\xbaH\x92\x02r\x8f\x02R\x00R\x15multiple_entry_pointsR\rno_mitigationR\x11unbound_parameterR\x1adiagnose_no_longer_matchesR\x14diagnose_unavailableR\x14unexplained_coverageR\x11already_attemptedR\rrepair_policyR\fstage_budgetR\x13plan_not_executableR\vineffectiveR\n" +
+	"holds_dataR\x16builtin_restore_manualR\x14script_unprovenancedR\n" +
 	"skipReason\x12U\n" +
 	"\x13post_apply_diagnose\x18\b \x01(\v2%.sdodev.contracts.v1alpha1.ProgramRunR\x11postApplyDiagnose\x12@\n" +
 	"\x1ccleared_finding_fingerprints\x18\t \x03(\tR\x1aclearedFindingFingerprints\x12D\n" +
