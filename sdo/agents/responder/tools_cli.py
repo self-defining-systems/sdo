@@ -29,7 +29,7 @@ OBJECT_REFERENCE_HELP = (
 
 MUTATION_COMMANDS = frozenset({"mitigate", "rollback"})
 # Commands whose response carries the Go-rendered text (detect summary, CSV pages), printed as is.
-TEXT_COMMANDS = frozenset({"detect", "changes", "timeline"})
+TEXT_COMMANDS = frozenset({"detect", "changes", "timeline", "try"})
 
 # Key response paths are part of the CLI help contract, shared with the generated
 # responder reference. Fields are conditional, not a promise of success/presence.
@@ -39,6 +39,7 @@ RESPONSE_FIELDS = {
     "check": "healthy, findings[], detector_states[], detection (fresh detect response)",
     "changes": "text (CSV, oldest first; columns in its header row)",
     "timeline": "text (CSV, oldest first; columns in its header row)",
+    "try": "text (user test list, or one test's latest recorded sample), healthy (the test passes now)",
     "diagnose": "program_runs[].{program_id, program_revision, verdict, can_mitigate, mitigate_command}, "
     "program_revisions",
     "menu": "menu.options[].{command, program_id, program_revision, disabled_reason, parameters}, "
@@ -166,6 +167,17 @@ def _parser() -> argparse.ArgumentParser:
         metavar="DURATION",
         help="how far before onset to reach, a Go duration such as 30m (default: 10m)",
     )
+    try_command = commands.add_parser(
+        "try",
+        help="show a user test's status and latest recorded sample (read-only)",
+        description=(
+            "With no TEST, list the user tests (probe scenarios) with their current status. With TEST, print its "
+            "latest, last failing and last passing recorded sample: request line, status, response and error, "
+            "and whether it passes now. Reads what the controller's prober already recorded; sends no traffic and "
+            "changes nothing. Probe credentials are never shown."
+        ),
+    )
+    try_command.add_argument("test", nargs="?", metavar="TEST", help="user test name; omit to list them")
     for name in ("diagnose", "menu"):
         command = commands.add_parser(
             name,
@@ -365,6 +377,9 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
             request["detector_ids"] = args.detector
         if args.finding:
             request["finding"] = args.finding
+    elif args.command == "try":
+        if args.test:
+            request["test"] = args.test
     elif args.command in ("changes", "timeline"):
         if args.since:
             request["since"] = args.since

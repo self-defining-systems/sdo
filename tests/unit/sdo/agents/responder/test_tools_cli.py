@@ -396,6 +396,22 @@ def test_changes_and_timeline_send_their_window_and_print_the_csv(monkeypatch, c
     assert capsys.readouterr().out == "t_rel_s,at_utc\n-60,10:00:00\n\n" * 3
 
 
+def test_try_lists_or_names_one_user_test(monkeypatch, capsys):
+    seen = []
+
+    def exchange(request, _directory):
+        seen.append(request)
+        return {"command": "try", "text": "FAIL       browse\n", "healthy": False}
+
+    monkeypatch.setattr(tools_cli, "_exchange", exchange)
+
+    assert tools_cli.main(["try"]) == 0
+    assert tools_cli.main(["try", "browse"]) == 0
+    assert seen == [{"command": "try"}, {"command": "try", "test": "browse"}]
+    assert capsys.readouterr().out == "FAIL       browse\n\n" * 2
+    assert "healthy" in tools_cli.RESPONSE_FIELDS["try"]
+
+
 def test_changes_limit_must_be_positive(monkeypatch, capsys):
     monkeypatch.setattr(tools_cli, "_exchange", lambda *_: pytest.fail("no request for an invalid limit"))
     assert tools_cli.main(["changes", "--limit", "0"]) == 1
