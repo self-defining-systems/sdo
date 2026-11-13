@@ -13,6 +13,22 @@ probes. frontend /journey calls backend:8080. catalog is a healthy peer for
 invariant generalization. Source manifests live in kubernetes/. All images are
 preloaded, use imagePullPolicy Never, and run without Kubernetes credentials.
 
+# Manifest inventory
+
+Manifest facts only; read application semantics from source where it is shipped.
+
+- Deployment/default/backend (source: kubernetes/backend.yaml)
+
+- Deployment/default/catalog (source: kubernetes/catalog.yaml)
+
+- Deployment/default/frontend (source: kubernetes/frontend.yaml)
+
+- Service/default/backend (source: kubernetes/backend.yaml)
+
+- Service/default/catalog (source: kubernetes/catalog.yaml)
+
+- Service/default/frontend (source: kubernetes/frontend.yaml)
+
 <!-- sdo:application-map:begin -->
 ```yaml
 version: 1
