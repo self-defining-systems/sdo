@@ -13,7 +13,7 @@ import (
 
 func concurrentRead(command string) bool {
 	switch command {
-	case "status", "detect", "diagnose", "menu", "source", "changes", "timeline", "try":
+	case "status", "detect", "diagnose", "menu", "source", "changes", "timeline", "try", "map":
 		return true
 	}
 	return false

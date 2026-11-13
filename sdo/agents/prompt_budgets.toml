@@ -160,6 +160,10 @@ reason = "Lists copy-pasteable commands (up to ten for menu, three fix commands 
 max_chars = 5400
 reason = "Measured production rendering 4776 Unicode characters across three-/five-fault, 100-finding and overflow incident fixtures; 10 percent plus 128 characters of path/identity headroom."
 
+[tool_stdout.map]
+max_chars = 4000
+reason = "sdo map prints at most 30 component and 30 operation lines of about 100 characters, or one operation path, one failing-versus-passing diff, or one component's two-hop neighbourhood (at most 12 names per direction), all bounded by Go; beyond the cap cap_text saves the full text to a context file."
+
 [tool_stdout.menu]
 max_chars = 1800
 reason = "Lists copy-pasteable commands (up to ten for menu, three fix commands for diagnose) instead of hash identifiers; sized for those lines plus bounded controller/client errors."

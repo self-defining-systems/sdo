@@ -7,9 +7,9 @@ description: Reading and changing an application through SDO's `sdo` command.
 
 `sdo detect` summarizes the incident: what opened it, suspects on the failing path (changes before onset, new log
 errors, clues), other clues, learned playbooks. Each `more:` line is the command that expands it.
-`.sdo/arch.md` maps components, edges, user operations, data holders.
 
 - `sdo detect [--finding ID]`
+- `sdo map [path OP | near COMPONENT]`: app map components, paths, neighbours (read-only)
 - `sdo changes [--since 30m] [--limit N]`, `sdo timeline [--since 30m]`: changes and signals as CSV
 - `sdo source Kind/ns/name`: intended state
 - `sdo try [TEST]`: user tests; one test's request, response, status (read-only)

@@ -14,8 +14,8 @@ restart anything, write through a client, or commit source. Reading is fine, inc
 a read in a Pod (a SELECT, a cache GET, listing files). If a check needs a change, name it in your report; the
 responder runs it.
 
-Safe reads: `sdo detect`, `sdo changes`, `sdo timeline`, `sdo source`, `kubectl get/describe/logs`, the app map
-`.sdo/arch.md`. Do not call `sdo status`, `sdo diagnose`, `sdo menu` or `sdo verify`: they change state the
+Safe reads: `sdo detect`, `sdo changes`, `sdo timeline`, `sdo source`, `sdo map`, `kubectl get/describe/logs`, the
+app map `.sdo/arch.md`. Do not call `sdo status`, `sdo diagnose`, `sdo menu` or `sdo verify`: they change state the
 responder shares.
 
 - Reproduce the failing operation first and read the exact response. A hypothesis that does not match what the
