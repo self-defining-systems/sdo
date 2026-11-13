@@ -489,6 +489,7 @@ def test_the_experiment_config_cannot_set_what_the_hook_sets(tmp_path: Path) -> 
 
 def test_the_benchmark_profile_differs_from_production_in_repair_policy_playbook_follow_up_and_self_heal_hold() -> None:
     assert yaml.safe_load(BENCH_PROFILE.read_text()) == {
+        "agent": {"recording": False},
         "response": {"repair_policy": "recorded-actions", "after_playbook": "wait", "after_playbook_wait": "5m"},
         "detection": {"self_heal_hold": "60s"},
     }

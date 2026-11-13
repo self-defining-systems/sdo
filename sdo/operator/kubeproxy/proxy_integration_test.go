@@ -339,3 +339,20 @@ func TestNoBeforeStateForACreateOrASession(t *testing.T) {
 		}
 	}
 }
+
+// With agent.recording off the proxy has no recorder: writes and exec sessions still reach the API server (the
+// responder manager is still forced), and nothing is stored for a reader to count as a write.
+func TestProxyWithoutARecorderForwardsWritesAndSessionsAndStoresNothing(t *testing.T) {
+	proxy, upstream := serve(t, kubeproxy.Config{FieldManager: "sdo-responder"})
+	response := do(t, "PATCH", proxy.URL+"/api/v1/namespaces/app/configmaps/x?fieldManager=kubectl", "application/merge-patch+json", `{"data":{"a":"b"}}`)
+	if response.StatusCode != http.StatusOK || upstream.count() != 1 {
+		t.Fatalf("write through a proxy with no recorder: status %d, forwarded %d", response.StatusCode, upstream.count())
+	}
+	if got := upstream.last().URL.Query().Get("fieldManager"); got != "sdo-responder" {
+		t.Fatalf("fieldManager = %q, want the forced responder manager", got)
+	}
+	do(t, "GET", proxy.URL+"/api/v1/namespaces/app/pods/p/exec?command=ls&container=c", "", "")
+	if upstream.count() != 2 {
+		t.Fatalf("exec was not forwarded: %d upstream requests", upstream.count())
+	}
+}

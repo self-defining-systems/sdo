@@ -22,6 +22,9 @@ func (e KubernetesExecutor) configureStandby(job *batchv1.Job, launch *contracts
 			continue
 		}
 		sidecar.Command = []string{"/usr/local/bin/sdo-operator", "standby-history", "--directory", "/sdo/history"}
+		if e.Recording {
+			sidecar.Command = append(sidecar.Command, "--recording")
+		}
 		sidecar.VolumeMounts = append(sidecar.VolumeMounts,
 			corev1.VolumeMount{Name: "repository", MountPath: "/sdo/request", SubPath: path.Join(e.standbySubPath, "control"), ReadOnly: true},
 			corev1.VolumeMount{Name: "repository", MountPath: "/sdo/standby/ready", SubPath: path.Join(e.standbySubPath, "ready")})

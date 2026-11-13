@@ -109,12 +109,26 @@ func ClosingChangeLines(changes []ClosingChange) []string {
 	return lines
 }
 
+// closingChangeLines is the learning turn's change list: the numbered recorded changes, or nothing when the
+// recording is off (the session knows what it did).
+func (n *NativeIncidentBroker) closingChangeLines(closure IncidentClosure) []string {
+	if !n.Recording {
+		return nil
+	}
+	return ClosingChangeLines(closingChangesOf(closure))
+}
+
 // ClosingLearns reports whether the closing turn may turn the fix into a playbook: the closure is a success, with a
 // responder session to ask and at least one change that is not a plain restore from accepted source. An escalated,
-// failed, unconfirmed or reset closure teaches nothing; its closing turn only cleans up.
-func ClosingLearns(classification string, changes []ClosingChange) bool {
+// failed, unconfirmed or reset closure teaches nothing; its closing turn only cleans up. With the recording off
+// (agent.recording) the agent's own cluster changes are unknown, so a success closure learns unless every change
+// SDO does know of is a plain restore; the session is asked and may answer that nothing is worth a playbook.
+func ClosingLearns(classification string, changes []ClosingChange, recorded bool) bool {
 	if classification != outcome.Success {
 		return false
+	}
+	if !recorded && len(changes) == 0 {
+		return true
 	}
 	for _, change := range changes {
 		if !change.Restore {

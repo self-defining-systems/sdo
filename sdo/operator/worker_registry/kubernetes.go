@@ -64,10 +64,12 @@ func (err *RequestTooLargeError) Error() string {
 // KubernetesExecutor is the implementation-neutral Job transport. By default,
 // a Job sees only its independent proposal checkout.
 type KubernetesExecutor struct {
-	WarmBinding            *WarmBinding
-	standbyMode            bool
-	standbySubPath         string
-	APIProxyImage          string
+	WarmBinding    *WarmBinding
+	standbyMode    bool
+	standbySubPath string
+	APIProxyImage  string
+	// Recording is agent.recording: whether the agent proxy keeps a history of the agent's Kubernetes calls.
+	Recording              bool
 	ToolchainImage         string
 	TaskPayload            string
 	CapturedCorpusReadOnly bool

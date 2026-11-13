@@ -29,6 +29,7 @@ func RunAPIProxy(ctx context.Context, args []string) error {
 	flags.SetOutput(io.Discard)
 	scopeFlag := flags.String("scope", "", "incident:<id> for a responder, task:<key> for any other agent (read-only)")
 	directory := flags.String("directory", "", "runtime history directory")
+	recording := flags.Bool("recording", false, "record every Kubernetes call in the history directory (agent.recording)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -51,19 +52,24 @@ func RunAPIProxy(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	// The directory lease exposes this forwarding generation even if storage
-	// writes fail and an old closed manifest remains readable.
-	lease, leaseErr := apihistory.BeginWriter(*directory)
-	if leaseErr == nil {
-		defer lease.Close()
-	}
-	// A store that cannot open leaves the endpoint up (the startup probe and reads still work) but refuses every
-	// write, exec, attach and port-forward: no write is forwarded without a record.
-	var recorder kubeproxy.Recorder = unavailableRecorder{}
-	store, storeErr := apihistory.Open(*directory, scope.historyIdentity(), apihistory.Limits{})
-	if storeErr == nil {
-		recorder = store
-		defer store.Close()
+	// With recording off the proxy keeps no history: no lease, no store, no admission. It still forwards, forces
+	// the field manager and applies the fence; an exec or a write moves no clock because nothing is stored.
+	var recorder kubeproxy.Recorder
+	if *recording {
+		// The directory lease exposes this forwarding generation even if storage
+		// writes fail and an old closed manifest remains readable.
+		lease, leaseErr := apihistory.BeginWriter(*directory)
+		if leaseErr == nil {
+			defer lease.Close()
+		}
+		// A store that cannot open leaves the endpoint up (the startup probe and reads still work) but refuses every
+		// write, exec, attach and port-forward: no write is forwarded without a record.
+		recorder = unavailableRecorder{}
+		store, storeErr := apihistory.Open(*directory, scope.historyIdentity(), apihistory.Limits{})
+		if storeErr == nil {
+			recorder = store
+			defer store.Close()
+		}
 	}
 	// Disabled markers and writer liveness make failed initialization Unknown.
 	var gate *apihistory.MutationGate

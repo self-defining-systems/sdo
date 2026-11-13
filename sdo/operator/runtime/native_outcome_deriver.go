@@ -15,6 +15,8 @@ import (
 // The derivation package remains independent of runtime and repository layout.
 type ProtoOutcomeDeriver struct {
 	SessionRoot string
+	// Recording is agent.recording: with it off there is no recording to derive the agent's writes from.
+	Recording bool
 }
 
 func (d ProtoOutcomeDeriver) Derive(ctx context.Context, closure IncidentClosure, repairCommit, backend, model string) (DerivedOutcome, error) {
@@ -26,7 +28,7 @@ func (d ProtoOutcomeDeriver) Derive(ctx context.Context, closure IncidentClosure
 	// preserving the frozen closure and any worker-supplied receipts. These receipts still need fresh
 	// independent finding clearance under the shared cause validator. A gap stands for a lost record, not for
 	// a repair, so it never reaches the outcome.
-	if d.SessionRoot != "" && message.GetResult() != nil {
+	if d.Recording && d.SessionRoot != "" && message.GetResult() != nil {
 		until := closure.ResponderCompletedAt
 		if closure.VerifiedAt.After(until) {
 			until = closure.VerifiedAt

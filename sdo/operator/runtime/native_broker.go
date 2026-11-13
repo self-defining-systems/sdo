@@ -115,7 +115,10 @@ type NativeIncidentBroker struct {
 
 	// Cleaner asks the responder's session, after Recovered and before the source repair is accepted, to keep or
 	// remove the app edits it left uncaptured, up to CleanupTurns times (response.cleanup_turns).
-	Cleaner      LeftoverCleaner
+	Cleaner LeftoverCleaner
+	// Recording is agent.recording: when false the closing turn carries no recorded changes and learns on any
+	// success closure (ClosingLearns).
+	Recording    bool
 	CleanupTurns int
 
 	// SourceGate is the controller's view of its own activity, read before a
@@ -740,7 +743,7 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 			return nil, err
 		}
 		if selected.Selection.MemoryValidation != "go" {
-			if closedShell := incidentClosureState(effect.Closure); hasResponderSession(closedShell) && !ClosingLearns(effect.Outcome.GetClassification(), closingChangesOf(closedShell)) {
+			if closedShell := incidentClosureState(effect.Closure); hasResponderSession(closedShell) && !ClosingLearns(effect.Outcome.GetClassification(), closingChangesOf(closedShell), n.Recording) {
 				return noLearningDecision(effect.Outcome.GetClassification(), false), nil
 			}
 			if n.Reflector == nil {
@@ -770,7 +773,7 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 			capturedProposals = len(created) > 0
 		}
 		closed := incidentClosureState(effect.Closure)
-		noLearning := hasResponderSession(closed) && !ClosingLearns(effect.Outcome.GetClassification(), closingChangesOf(closed))
+		noLearning := hasResponderSession(closed) && !ClosingLearns(effect.Outcome.GetClassification(), closingChangesOf(closed), n.Recording)
 		if !noLearning && effect.Attempt == 1 && !n.ForceReflection && !capturedProposals && coveredRepeatCandidate(effect.Outcome) {
 			decision := &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "accepted_programs_no_new_evidence"}
 			checkCtx := ctx
@@ -832,7 +835,7 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 		if n.Reflector == nil {
 			return nil, errors.New("closing turn requires a registered reflection worker")
 		}
-		decision, err := n.Reflector.Reflect(ctx, closed, workspace, effect.Outcome, effect.ProposalCommit, effect.OutcomeCommit, ReflectionFeedback{Attempt: effect.Attempt, Diagnostics: effect.Diagnostics, DispatchAt: controllerTime(effect.DispatchAt), Changes: ClosingChangeLines(closingChangesOf(closed))})
+		decision, err := n.Reflector.Reflect(ctx, closed, workspace, effect.Outcome, effect.ProposalCommit, effect.OutcomeCommit, ReflectionFeedback{Attempt: effect.Attempt, Diagnostics: effect.Diagnostics, DispatchAt: controllerTime(effect.DispatchAt), Changes: n.closingChangeLines(closed)})
 		if err != nil {
 			return nil, fmt.Errorf("reflection worker: %w", err)
 		}

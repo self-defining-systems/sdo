@@ -59,9 +59,40 @@ func TestClosingLearnsOnlyFromASuccessWithANonRestoreChange(t *testing.T) {
 		"unconfirmed close":     {outcome.Unconfirmed, fix, false},
 		"cleared without agent": {outcome.ClearedWithoutAction, fix, false},
 	} {
-		if got := ClosingLearns(tc.class, tc.changes); got != tc.want {
+		if got := ClosingLearns(tc.class, tc.changes, true); got != tc.want {
 			t.Errorf("%s: ClosingLearns = %v, want %v", name, got, tc.want)
 		}
+	}
+}
+
+func TestClosingLearnsWithTheRecordingOffOnAnySuccessThatIsNotAPlainRestore(t *testing.T) {
+	restore := []ClosingChange{{Line: "restore", Restore: true}}
+	mitigated := []ClosingChange{{Line: "sdo mitigate p"}}
+	for name, tc := range map[string]struct {
+		class   string
+		changes []ClosingChange
+		want    bool
+	}{
+		"success, nothing known (the session may have fixed it itself)": {outcome.Success, nil, true},
+		"success with a known mitigation":                               {outcome.Success, mitigated, true},
+		"success restore only":                                          {outcome.Success, restore, false},
+		"escalated close":                                               {outcome.Escalated, nil, false},
+		"failed close":                                                  {outcome.Failed, nil, false},
+		"cleared without agent":                                         {outcome.ClearedWithoutAction, nil, false},
+	} {
+		if got := ClosingLearns(tc.class, tc.changes, false); got != tc.want {
+			t.Errorf("%s: ClosingLearns = %v, want %v", name, got, tc.want)
+		}
+	}
+}
+
+func TestClosingChangeLinesAreOmittedWithTheRecordingOff(t *testing.T) {
+	closure := IncidentClosure{Result: &IncidentResult{RepairActions: []RepairActionReceipt{{Kind: "kubectl-patch", Target: "Deployment/web", Success: true}}}}
+	if got := (&NativeIncidentBroker{}).closingChangeLines(closure); len(got) != 0 {
+		t.Fatalf("recording off: closing turn change lines = %v, want none", got)
+	}
+	if got := (&NativeIncidentBroker{Recording: true}).closingChangeLines(closure); len(got) == 0 {
+		t.Fatalf("recording on: closing turn change lines are empty, want the rendered changes")
 	}
 }
 
@@ -114,10 +145,10 @@ func TestAnEscalatedCloseGetsCleanupOnlyAndSaysWhy(t *testing.T) {
 	if len(changes) != 2 || changes[0].Line != "sdo mitigate fix-db" {
 		t.Fatalf("changes = %+v, want the applied playbook then the recorded exec", changes)
 	}
-	if !ClosingLearns(outcome.Success, changes) {
+	if !ClosingLearns(outcome.Success, changes, true) {
 		t.Fatal("a success with a fix must learn")
 	}
-	if ClosingLearns(outcome.Escalated, changes) {
+	if ClosingLearns(outcome.Escalated, changes, true) {
 		t.Fatal("an escalated close must not learn, whatever it changed")
 	}
 	if got := closingSkipReason(outcome.Escalated); got != "escalated_no_learning" {
@@ -135,7 +166,7 @@ func TestAnEscalatedCloseGetsCleanupOnlyAndSaysWhy(t *testing.T) {
 // (a no_change over a nonempty diff is rejected by the shared check).
 func TestNoLearningDecisionKeepsFilesGoWrote(t *testing.T) {
 	for _, class := range []string{outcome.Escalated, outcome.Failed, outcome.Unconfirmed} {
-		if ClosingLearns(class, []ClosingChange{{Line: "exec"}}) {
+		if ClosingLearns(class, []ClosingChange{{Line: "exec"}}, true) {
 			t.Errorf("%s close must not learn", class)
 		}
 	}

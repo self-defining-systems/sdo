@@ -3,11 +3,13 @@
 package runtime
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"sdo.dev/operator/apihistory"
+	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 )
@@ -70,5 +72,55 @@ func TestAnOpenExecSessionIsPending(t *testing.T) {
 	_, pending, _, err := agentWriteReceipts(root, "inc", time.Now().UTC())
 	if err != nil || !pending {
 		t.Fatalf("pending %v err %v", pending, err)
+	}
+}
+
+func recordedExecClosure(t *testing.T, incident string) IncidentClosure {
+	t.Helper()
+	result := incidentResultState(&contractsv1alpha1.IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentId: incident, Status: string(IncidentCompleted)})
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	return IncidentClosure{
+		Request: IncidentRequest{
+			SchemaVersion: ProtocolSchemaVersion, Application: "app", Namespace: "default", IncidentID: incident,
+			SourceCommit: "base", DeployedCommit: "base", RepositoryWorktree: "/proposal", RepositoryBaseCommit: "base",
+			ResponseDeadline: now.Add(time.Minute), CancellationToken: "token", RepairPolicy: "commit",
+			Findings: []sdk.Finding{{DetectorID: "health", RuleID: "health", Status: sdk.FindingActive, Severity: sdk.SeverityWarning,
+				Summary: "fault", Evidence: "evidence", PrimaryResource: sdk.ObjectRef{Kind: "Deployment", Name: "health"}, Fingerprint: "health"}},
+		},
+		Result:     &result,
+		DetectedAt: now, DispatchedAt: now, ResponderCompletedAt: now.Add(time.Second),
+		Frozen: true,
+	}
+}
+
+// With agent.recording off the outcome deriver never reads a recording, so an exec the agent ran moves no
+// clock and becomes no repair record; with it on the same history is read (the control).
+func TestOutcomeDeriverReadsNoRecordingWhenRecordingIsOff(t *testing.T) {
+	root, store := openRecording(t, "inc-off")
+	recordWrite(store, "exec000001", verifyT0, apihistory.Event{Verb: "get", Version: "v1", Resource: "pods", Namespace: "app", Name: "db-0", Subresource: "exec", Status: 101}, true)
+	store.Close()
+	closure := recordedExecClosure(t, "inc-off")
+	writes := func(recording bool) int {
+		derived, err := (ProtoOutcomeDeriver{SessionRoot: root, Recording: recording}).Derive(context.Background(), closure, "", "test", "test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(derived.Record.GetRepairActions())
+	}
+	if got := writes(true); got != 1 {
+		t.Fatalf("recording on: %d repair actions, want the recorded exec", got)
+	}
+	if got := writes(false); got != 0 {
+		t.Fatalf("recording off: %d repair actions, want none", got)
+	}
+}
+
+// A responder that only ran an exec leaves no receipt with the recording off: the stability window is timed from
+// the alerts clearing, and the incident still reaches Recovered.
+func TestAResponderWithNoKnownWritesStillReachesRecovered(t *testing.T) {
+	now := verifyT0.Add(2 * time.Minute)
+	check := runVerify(t, verifyWorld{now: now}, []sdk.Finding{browseTest()}, 1, &IncidentResult{})
+	if check.verdict != recoveryVerified {
+		t.Fatalf("verdict %v: %s", check.verdict, check.reason)
 	}
 }

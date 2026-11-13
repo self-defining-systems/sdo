@@ -33,8 +33,10 @@ type KubernetesJobDispatcher struct {
 	Standby *worker_registry.StandbyPool
 	// AcceptedRepository is the durable broker-owned checkout used for trust.
 	// Proposal checkouts belong to individual incidents and may be retired.
-	AcceptedRepository    string
-	APIProxyImage         string
+	AcceptedRepository string
+	APIProxyImage      string
+	// Recording is agent.recording.
+	Recording             bool
 	ToolchainImage        string
 	Client                kubernetes.Interface
 	Namespace             string
@@ -284,6 +286,7 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 	}
 	executor := worker_registry.KubernetesExecutor{
 		APIProxyImage:  d.APIProxyImage,
+		Recording:      d.Recording,
 		ToolchainImage: d.ToolchainImage,
 		Client:         d.Client, Namespace: d.Namespace, Registry: d.Registry,
 		ServiceAccount: d.ServiceAccount, RepositoryPVC: d.RepositoryPVC,

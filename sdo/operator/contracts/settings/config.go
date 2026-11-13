@@ -97,6 +97,7 @@ type Agent struct {
 	MemoryCheckTimeout Duration `yaml:"memory_check_timeout" doc:"limit of one memory check a worker runs on its checkout"`
 	CodePath           string   `yaml:"code_path" doc:"programming-model plugin set: go or shell"`
 	CodePathOverrides  string   `yaml:"code_path_overrides" doc:"CodePathOverrides as a JSON object (for example {\"response_stages\":[\"agent\"]}); empty selects the code path's own seams"`
+	Recording          bool     `yaml:"recording" doc:"whether the proxy every agent Kubernetes call goes through records those calls (the agent-cluster recording that memory.AgentWrites reads). Off by default and a candidate for removal: with it off the proxy still forwards, forces the responder field manager and applies the incident mutation fence, but keeps no history, so Recovered is timed from SDO's own plan writes and the controller's observed settle, the closing turn carries no recorded-changes list and learns on any success closure, and an exec or raw write by the agent moves no clock"`
 	ExtraEnv           []string `yaml:"extra_env" doc:"extra NAME=VALUE environment of every agent worker the controller launches (responders, standby, reflection and closing turn, health refresh, lifecycle agents)"`
 }
 
