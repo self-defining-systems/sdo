@@ -2569,8 +2569,10 @@ type IncidentRequest struct {
 	DeploymentInFlight bool `protobuf:"varint,39,opt,name=deployment_in_flight,json=deploymentInFlight,proto3" json:"deployment_in_flight,omitempty"`
 	// Go-owned: the user tests judged healthy when the incident opened, sorted.
 	PassingTests []string `protobuf:"bytes,40,rep,name=passing_tests,json=passingTests,proto3" json:"passing_tests,omitempty"`
-	// Go-owned: the changes nearest onset, newest first, one line each, then the
-	// line that names the full commands, for the responder's first message.
+	// Go-owned: the candidate block of the responder's first message, one
+	// rendered line per item. The renderer caps the whole block at 2048 bytes
+	// (candidateRenderCap), so at most 1024 lines (one byte plus a newline each)
+	// of at most 2048 bytes.
 	RecentChanges []string `protobuf:"bytes,41,rep,name=recent_changes,json=recentChanges,proto3" json:"recent_changes,omitempty"`
 	// Go-owned: the finding keys of user tests that started failing while the
 	// incident was open (within the join window of detection). With opening_keys
@@ -5339,7 +5341,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x02id\x12%\n" +
 	"\tnamespace\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12$\n" +
 	"\amessage\x18\x03 \x01(\tB\n" +
-	"\xbaH\ar\x05\x10\x01\x18\x80 R\amessage\"\xd3\x16\n" +
+	"\xbaH\ar\x05\x10\x01\x18\x80 R\amessage\"\xd4\x16\n" +
 	"\x0fIncidentRequest\x12>\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
 	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12)\n" +
@@ -5381,8 +5383,9 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\fopening_keys\x18% \x03(\tR\vopeningKeys\x12#\n" +
 	"\rstanding_keys\x18& \x03(\tR\fstandingKeys\x120\n" +
 	"\x14deployment_in_flight\x18' \x01(\bR\x12deploymentInFlight\x12#\n" +
-	"\rpassing_tests\x18( \x03(\tR\fpassingTests\x126\n" +
-	"\x0erecent_changes\x18) \x03(\tB\x0f\xbaH\f\x92\x01\t\x10\v\"\x05r\x03\x18\xd8\x04R\rrecentChanges\x12\x1f\n" +
+	"\rpassing_tests\x18( \x03(\tR\fpassingTests\x127\n" +
+	"\x0erecent_changes\x18) \x03(\tB\x10\xbaH\r\x92\x01\n" +
+	"\x10\x80\b\"\x05r\x03\x18\x80\x10R\rrecentChanges\x12\x1f\n" +
 	"\vjoined_keys\x18* \x03(\tR\n" +
 	"joinedKeys:\xff\x02\xbaH\xfb\x02\x1a\xf8\x02\n" +
 	"\x10incident.trigger\x12^detected incidents require findings and history; external incidents carry no detector evidence\x1a\x83\x02this.external_message == '' ? (size(this.findings) > 0 && size(this.detector_history) > 0) : (size(this.findings) == 0 && size(this.detector_history) == 0 && size(this.drift_events) == 0 && !has(this.state_changes) && size(this.disabled_setup_detectors) == 0)J\x04\b\v\x10\fJ\x04\b\f\x10\rJ\x04\b\x13\x10\x14J\x04\b\x18\x10\x19J\x04\b!\x10\"R\x19architecture_summary_pathR\x15health_objective_pathR\tfollow_upR\x0emetrics_source\"\xb8\x02\n" +

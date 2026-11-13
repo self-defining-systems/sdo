@@ -982,6 +982,7 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	if reads, ok := snapshot.(detectReads); ok {
 		signals, appState := c.IncidentSources()
 		request.RecentChanges = incidentCandidateBlock(incidentPageInput{Request: request, Findings: batch, View: reads, Signals: signals, AppState: appState, Now: now.UTC()})
+		request.RecentChanges = c.boundRecentChanges(request.RecentChanges)
 	}
 	c.beginIncident(now, request, batch)
 	// The batcher is drained, so the incident is open before any file I/O: an

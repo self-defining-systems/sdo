@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -773,4 +775,31 @@ func (v candidateView) items() map[string]string {
 	}
 	items["candidates"] = strings.Join(all, "\n")
 	return items
+}
+
+// recentChangesWithin reports whether the lines satisfy the IncidentRequest
+// contract's recent_changes bounds (checked against the generated rules).
+func recentChangesWithin(lines []string) bool {
+	err := wire.Validate(&contracts.IncidentRequest{RecentChanges: lines})
+	return err == nil || !strings.Contains(err.Error(), "recent_changes")
+}
+
+// boundRecentChanges degrades instead of wedging: a candidate block that
+// exceeds the contract keeps its leading lines rather than failing state
+// persistence on every step and never starting the responder.
+func (c *Controller) boundRecentChanges(lines []string) []string {
+	if recentChangesWithin(lines) {
+		return lines
+	}
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		kept = append(kept, strings.ToValidUTF8(line[:min(len(line), candidateRenderCap)], ""))
+	}
+	// With every line capped, validity is monotone in the prefix length.
+	keep := sort.Search(len(kept)+1, func(n int) bool { return n > 0 && !recentChangesWithin(kept[:n]) }) - 1
+	kept = kept[:max(keep, 0)]
+	if c.OnError != nil {
+		c.OnError(fmt.Errorf("incident_request.recent_changes exceeded its contract (%d lines); sent %d", len(lines), len(kept)))
+	}
+	return kept
 }
