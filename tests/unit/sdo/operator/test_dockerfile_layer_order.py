@@ -23,10 +23,14 @@ def test_the_shipped_sources_are_copied_after_every_stable_layer(name: str) -> N
     lines = _lines(name)
     copies = [index for index, line in enumerate(lines) if line.strip() == FULL_SOURCE_COPY]
     # The first full copy feeds the dependency-list stage, which only emits package names;
-    # the second one starts the compile steps of the module being shipped.
-    assert len(copies) == 2
+    # the others start the two compile stages (binaries and offline-cache warming) of the module being shipped.
+    assert len(copies) == 3
     before = "\n".join(lines[: copies[1]])
-    compiled = "\n".join(lines[copies[1] :]).split("\nFROM ", 1)[0]
+    for start in copies[1:]:
+        _assert_compile_stage_has_no_stable_layers(before, "\n".join(lines[start:]).split("\nFROM ", 1)[0])
+
+
+def _assert_compile_stage_has_no_stable_layers(before: str, compiled: str) -> None:
     for stable in ("go mod download all", "go build $(cat", "apt-get install"):
         assert stable in before
         assert stable not in compiled
@@ -118,7 +122,9 @@ def test_workers_do_not_wait_for_offline_validator_cache_warming() -> None:
             stages[current] = (match[1], [])
         elif current:
             stages[current][1].append(line)
-    assert stages["go-runtime"][0] == "go-binaries"
+    # Warming and binaries both start at go-deps, so they compile in parallel.
+    assert stages["go-runtime"][0] == "go-deps"
+    assert stages["go-binaries"][0] == "go-deps"
     for name in ("worker-runtime", "scripted-runtime"):
         copies = [line for line in stages[name][1] if line.startswith("COPY --from=")]
         assert any(line.startswith("COPY --from=go-binaries /usr/local/bin/sdo-operator ") for line in copies)
