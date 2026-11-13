@@ -68,7 +68,8 @@ func main(){
  server.WithTraffic(trafficHost)
  objects,err:=core.NewGenericCapture(*namespace);if err!=nil{log.Fatal(err)}
  server.WithObjects(objects,*protected)
- server.WithReadFactory(func(ctx context.Context,snapshot sdktest.Snapshot)(program.ReadView,error){return hostio.NewLiveReadView(ctx,snapshot,hostio.ReadBackends{Client:reader,Config:restConfig,ProtectedNamespace:*protected}),nil})
+ applicationMap,err:=hostio.ApplicationMapFromYAML(generated.ApplicationMapYAML);if err!=nil{log.Fatal(err)}
+ server.WithReadFactory(func(ctx context.Context,snapshot sdktest.Snapshot)(program.ReadView,error){return hostio.NewLiveReadView(ctx,snapshot,hostio.ReadBackends{Client:reader,Config:restConfig,ProtectedNamespace:*protected,ApplicationMap:applicationMap}),nil})
  ctx,cancel:=signal.NotifyContext(context.Background(),syscall.SIGTERM,syscall.SIGINT);defer cancel()
  if err=hostio.Serve(ctx,*socket,*capBytes,server);err!=nil{log.Fatal(err)}
 }

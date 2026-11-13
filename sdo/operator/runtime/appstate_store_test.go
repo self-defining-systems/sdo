@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -151,6 +152,68 @@ func TestAppStateStoreIsTheChangesCSVSeam(t *testing.T) {
 	var source AppStateChangeSource = store
 	rows := source.AppStateChanges(storeT0.Add(-30*time.Minute), storeT0)
 	if len(rows) != 1 || rows[0].Source != "app-state" || rows[0].ReaderOrObject != "a" || rows[0].Before != "1" || rows[0].After != "2" {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+// settleHealthyBaseline records base as the last-healthy snapshot of reader r at
+// storeT0-50min (the first snapshot of a stretch that then settles).
+func settleHealthyBaseline(store *AppStateStore, r string, kv ...string) {
+	start := -50 * time.Minute
+	store.Observe(storeT0.Add(start), true)
+	store.Record(r, stateSnap(start+time.Second, kv...))
+	store.Observe(storeT0.Add(start+DefaultStateSettle+time.Second), true)
+}
+
+// A key that exists on one side of last-healthy only is a change even when no
+// two ring snapshots disagree (the move happened before the ring began).
+func TestAppStateChangesListKeysAppearingAndDisappearingSinceLastHealthy(t *testing.T) {
+	store := NewAppStateStore(DefaultStateSettle)
+	store.Retain(map[string][]string{"r": nil})
+	settleHealthyBaseline(store, "r", "gone", "7", "same", "1")
+	store.Record("r", stateSnap(-10*time.Minute, "same", "1", "new", "16"))
+	store.Record("r", stateSnap(-5*time.Minute, "same", "1", "new", "16"))
+	rows := store.AppStateChanges(storeT0.Add(-30*time.Minute), storeT0)
+	got := map[string]IncidentChange{}
+	for _, row := range rows {
+		got[row.Key] = row
+	}
+	if row := got["new"]; row.Before != AppStateAbsent || row.After != "16" || row.ReaderOrObject != "r" {
+		t.Fatalf("new key row = %+v (rows %+v)", row, rows)
+	}
+	if row := got["gone"]; row.Before != "7" || row.After != AppStateAbsent {
+		t.Fatalf("vanished key row = %+v (rows %+v)", row, rows)
+	}
+	if _, listed := got["same"]; listed {
+		t.Fatalf("an unchanged key was listed: %+v", rows)
+	}
+}
+
+func TestAppStateChangesListAKeyThatAppearedBetweenSnapshotsOnce(t *testing.T) {
+	store := NewAppStateStore(DefaultStateSettle)
+	store.Retain(map[string][]string{"r": nil})
+	settleHealthyBaseline(store, "r", "plan_limits.rows", "0")
+	store.Record("r", stateSnap(-10*time.Minute, "plan_limits.rows", "0"))
+	store.Record("r", stateSnap(-5*time.Minute, "plan_limits.rows", "1", "plan.x.limit", "16"))
+	var keys []string
+	for _, row := range store.AppStateChanges(storeT0.Add(-30*time.Minute), storeT0) {
+		keys = append(keys, row.Key)
+	}
+	if len(keys) != 2 || keys[0] == keys[1] {
+		t.Fatalf("keys = %v, want each moved key exactly once", keys)
+	}
+}
+
+// A reader whose reads fail leaves no change to derive; that must be a row,
+// not silence.
+func TestAppStateChangesSurfaceAFailingReader(t *testing.T) {
+	store := NewAppStateStore(DefaultStateSettle)
+	store.Retain(map[string][]string{"r": nil, "ok": nil})
+	store.Record("r", carried.Snapshot{At: storeT0.Add(-3 * time.Minute), Error: "store read refused: boom"})
+	store.Record("r", carried.Snapshot{At: storeT0.Add(-2 * time.Minute), Error: "store read refused: boom"})
+	store.Record("ok", stateSnap(-3*time.Minute, "k", "1"))
+	rows := store.AppStateChanges(storeT0.Add(-30*time.Minute), storeT0)
+	if len(rows) != 1 || rows[0].ReaderOrObject != "r" || rows[0].Key != AppStateReadKey || !strings.Contains(rows[0].After, "boom") {
 		t.Fatalf("rows = %+v", rows)
 	}
 }

@@ -146,3 +146,20 @@ func (c *checker) checkProbeUsers(scenarios []Scenario) {
 		}
 	}
 }
+
+// Program projects the map onto the SDK's read-only form.
+func (m Map) Program() program.AppMap {
+	out := program.AppMap{Components: []program.AppComponent{}}
+	for _, c := range m.Components {
+		component := program.AppComponent{Name: c.Name, Workload: c.Workload, Services: append([]string(nil), c.Services...), HoldsData: c.HoldsData}
+		if c.Data != nil {
+			component.Data = &program.DataRole{Engine: c.Data.Engine, Role: c.Data.Role, DerivedFrom: append([]string(nil), c.Data.DerivedFrom...)}
+		}
+		out.Components = append(out.Components, component)
+	}
+	for _, e := range m.Edges {
+		out.Edges = append(out.Edges, program.AppEdge{From: e.From, To: e.To})
+	}
+	out.Procedures = m.ProgramProcedures()
+	return out
+}

@@ -194,13 +194,61 @@ func (c *Controller) observeAppState(now time.Time, healthy bool) {
 	c.AppState.Observe(now.UTC(), healthy)
 }
 
+// AppStateAbsent is the before or after of an app-state row whose key does not
+// exist on that side, so a missing key is never read as an empty value.
+const AppStateAbsent = "(absent)"
+
+// AppStateReadKey is the key of the row that reports a reader whose latest
+// read failed; its After is the error.
+const AppStateReadKey = "(read)"
+
 // AppStateChanges adapts the store to changes.csv's app-state seam
-// (AppStateChangeSource): each reader's key moves in (since, now].
+// (AppStateChangeSource): each reader's key moves in (since, now]; a key that
+// differs between the reader's last-healthy snapshot and its newest one (when
+// the ring holds no move of it; a key on one side only shows (absent)); and one row for each reader whose
+// latest read failed, since such a reader derives no change at all.
 func (s *AppStateStore) AppStateChanges(since, now time.Time) []IncidentChange {
 	var out []IncidentChange
+	moved := map[string]map[string]bool{}
 	for _, c := range s.Changes(now, now.Sub(since)) {
 		before, after := c.Change.Before, c.Change.After
+		switch c.Change.Kind {
+		case carried.Added:
+			before = AppStateAbsent
+		case carried.Removed:
+			after = AppStateAbsent
+		}
+		if moved[c.Reader] == nil {
+			moved[c.Reader] = map[string]bool{}
+		}
+		moved[c.Reader][c.Change.Key] = true
 		out = append(out, IncidentChange{At: c.Change.At, Source: "app-state", ReaderOrObject: c.Reader, Key: c.Change.Key, Before: before, After: after, Noisy: c.Change.Noisy})
+	}
+	results := s.Results()
+	for _, id := range slices.Sorted(maps.Keys(results)) {
+		result := results[id]
+		latest, ok := result.Latest()
+		if !ok || latest.At.After(now) || !latest.At.After(since) {
+			continue
+		}
+		if latest.Error != "" {
+			out = append(out, IncidentChange{At: latest.At, Source: "app-state", ReaderOrObject: id, Key: AppStateReadKey, After: latest.Error})
+			continue
+		}
+		healthy, _ := carried.State{Result: result}.DiffersFromHealthy("*")
+		for _, c := range healthy {
+			if moved[id][c.Key] {
+				continue
+			}
+			before, after := c.Before, c.After
+			switch c.Kind {
+			case carried.Added:
+				before = AppStateAbsent
+			case carried.Removed:
+				after = AppStateAbsent
+			}
+			out = append(out, IncidentChange{At: c.At, Source: "app-state", ReaderOrObject: id, Key: c.Key, Before: before, After: after, Noisy: c.Noisy})
+		}
 	}
 	return out
 }

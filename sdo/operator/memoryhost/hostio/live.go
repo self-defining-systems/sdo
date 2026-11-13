@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"sdo.dev/operator/kubereads"
+	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -34,6 +35,33 @@ type ReadBackends struct {
 	APITransport func(program.KubernetesRequest) (kubereads.APIDoer, *url.URL, error)
 	// ProtectedNamespace is the SDO control namespace every read refuses.
 	ProtectedNamespace string
+	// ApplicationMap is the accepted application map the host was built with.
+	// A store read grounds its target in it, so a view without one refuses
+	// every store read (its replay holds no recorded AppMap call). Nil keeps
+	// the replay answer.
+	ApplicationMap *program.AppMap
+}
+
+// ApplicationMapFromYAML parses the application map region embedded in the
+// host's build; empty text is no map (nil).
+func ApplicationMapFromYAML(text string) (*program.AppMap, error) {
+	if strings.TrimSpace(text) == "" {
+		return nil, nil
+	}
+	parsed, err := appmap.Parse(text)
+	if err != nil {
+		return nil, fmt.Errorf("embedded application map: %w", err)
+	}
+	m := parsed.Program()
+	return &m, nil
+}
+
+// AppMap is the accepted application map the host carries, else the replay's.
+func (v *LiveReadView) AppMap() (program.AppMap, error) {
+	if v.backends.ApplicationMap != nil {
+		return *v.backends.ApplicationMap, nil
+	}
+	return v.ReplayReadView.AppMap()
 }
 
 func (b ReadBackends) exec() kubereads.PodExec {

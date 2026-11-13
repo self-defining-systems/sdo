@@ -26,3 +26,21 @@ func TestLiveViewReadsLogsWithOptionsLive(t *testing.T) {
 		t.Fatalf("LogsWithOptions = %q, %v", text, err)
 	}
 }
+
+// A store read grounds its target in the application map, which the host's
+// empty replay never recorded: the host must answer it from the map it was
+// built with, or every app-state reader fails with "unrecorded AppMap call".
+func TestLiveViewAnswersTheApplicationMapItWasBuiltWith(t *testing.T) {
+	m, err := ApplicationMapFromYAML("components:\n  - name: db\n    workload: StatefulSet/db\n")
+	if err != nil || m == nil {
+		t.Fatalf("ApplicationMapFromYAML = %v, %v", m, err)
+	}
+	view := NewLiveReadView(context.Background(), sdktest.Snapshot{NamespaceName: "app"}, ReadBackends{ApplicationMap: m})
+	got, err := view.AppMap()
+	if err != nil || len(got.Components) != 1 || got.Components[0].Name != "db" {
+		t.Fatalf("AppMap = %+v, %v", got, err)
+	}
+	if none, err := ApplicationMapFromYAML(""); none != nil || err != nil {
+		t.Fatalf("empty map = %v, %v", none, err)
+	}
+}
