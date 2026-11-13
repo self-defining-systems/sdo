@@ -17,6 +17,8 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/appstate"
+	"sdo.dev/operator/sdk/appstate/carried"
 	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/podread"
@@ -251,6 +253,100 @@ func decodeMirror(version *mirrorVersion) (sdktest.Snapshot, error) {
 	return snapshot, err
 }
 
+// latestSnapshot is the newest complete mirror version's snapshot.
+func (s *Server) latestSnapshot() (sdktest.Snapshot, error) {
+	s.mu.RLock()
+	var latest uint64
+	for _, version := range s.history {
+		if version.complete && version.sequence >= latest {
+			latest = version.sequence
+		}
+	}
+	s.mu.RUnlock()
+	return s.snapshot(latest)
+}
+
+// ReadState runs one app-state reader over the host's live read factory. The
+// answer always arrives as a response: a missing reader, mirror or factory, a
+// failed read, a refused key and a panic are each an error string, never a
+// transport failure that would evict a healthy host.
+func (s *Server) ReadState(ctx context.Context, request *pb.ReadStateRequest) (*pb.ReadStateResponse, error) {
+	values, err := s.readState(ctx, request)
+	if err != nil {
+		return &pb.ReadStateResponse{Error: err.Error()}, nil
+	}
+	response := &pb.ReadStateResponse{Values: map[string]string{}}
+	for _, key := range values.Keys() {
+		value, _ := values.Get(key)
+		response.Values[key] = value
+	}
+	return response, nil
+}
+
+func (s *Server) readState(ctx context.Context, request *pb.ReadStateRequest) (appstate.Values, error) {
+	id := request.GetReaderId()
+	d := s.detectors[id]
+	if d == nil {
+		return appstate.Values{}, fmt.Errorf("app-state reader %q is not registered", id)
+	}
+	reader, ok := d.(appstate.Reader)
+	if !ok || d.Spec().Class != sdk.DetectorClassHealth {
+		return appstate.Values{}, fmt.Errorf("detector %q is not a health-class app-state reader", id)
+	}
+	if s.readFactory == nil {
+		return appstate.Values{}, errors.New("memory host live reads unavailable")
+	}
+	snapshot, err := s.latestSnapshot()
+	if err != nil {
+		return appstate.Values{}, err
+	}
+	if at := request.GetObservedAt(); at != nil {
+		if err = at.CheckValid(); err != nil {
+			return appstate.Values{}, err
+		}
+		observed := at.AsTime()
+		snapshot.ObservedAtTime = &observed
+	}
+	live, err := s.readFactory(ctx, snapshot)
+	if err != nil {
+		return appstate.Values{}, err
+	}
+	view := s.programObjects(live, snapshot)
+	ctx, cancel := withinTransportBudget(ctx)
+	defer cancel()
+	key := "readstate:" + id
+	s.runMu.Lock()
+	if s.running[key] {
+		s.runMu.Unlock()
+		return appstate.Values{}, errors.New("reader is still running a previous read")
+	}
+	if s.running == nil {
+		s.running = map[string]bool{}
+	}
+	s.running[key] = true
+	s.runMu.Unlock()
+	type outcome struct {
+		values appstate.Values
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		defer func() {
+			s.runMu.Lock()
+			delete(s.running, key)
+			s.runMu.Unlock()
+		}()
+		values, err := appstate.Run(ctx, reader, view)
+		done <- outcome{values, err}
+	}()
+	select {
+	case got := <-done:
+		return got.values, got.err
+	case <-ctx.Done():
+		return appstate.Values{}, fmt.Errorf("app-state reader %q: %w", id, ctx.Err())
+	}
+}
+
 func (s *Server) Evaluate(ctx context.Context, request *pb.EvaluateRequest) (*pb.EvaluateResponse, error) {
 	snapshot, err := s.snapshot(request.GetMirrorSequence())
 	if err != nil {
@@ -466,6 +562,16 @@ func observe(snapshot *sdktest.Snapshot, o *pb.MemoryObservation) error {
 		}
 		if got != nil {
 			snapshot.PodReads[k] = *got
+		}
+	}
+	snapshot.AppState = map[string]carried.Result{}
+	for k, v := range o.AppState {
+		got, e := decode[carried.Result](v)
+		if e != nil {
+			return e
+		}
+		if got != nil {
+			snapshot.AppState[k] = *got
 		}
 	}
 	snapshot.Vantage = map[string]vantage.Result{}

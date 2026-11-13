@@ -311,6 +311,25 @@ func (m *Manager) Mitigate(ctx context.Context, r *pb.MitigateRequest) (*pb.Miti
 	return host.Mitigate(ctx, r)
 }
 
+// ReadState leases the accepted child like Diagnose. A transport failure is an
+// error; the caller records it as a failed read, never as state.
+func (m *Manager) ReadState(ctx context.Context, r *pb.ReadStateRequest) (*pb.ReadStateResponse, error) {
+	h := m.pin()
+	if h == nil {
+		return nil, errors.New("memory host is unavailable")
+	}
+	defer m.unpin(h)
+	host, ok := h.(interface {
+		ReadState(context.Context, *pb.ReadStateRequest) (*pb.ReadStateResponse, error)
+	})
+	if !ok {
+		return nil, errors.New("memory host state reads unavailable")
+	}
+	ctx, cancel := context.WithTimeout(ctx, m.timeout)
+	defer cancel()
+	return host.ReadState(ctx, r)
+}
+
 // retryRecovery retries a failed restart on the next demand, without spinning
 // or introducing a wall-clock retry loop in the controller.
 func (m *Manager) retryRecovery() {

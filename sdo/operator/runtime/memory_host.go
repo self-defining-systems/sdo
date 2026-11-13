@@ -13,7 +13,9 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memoryhost"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/appstate/carried"
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
@@ -112,6 +114,53 @@ func NewRemoteMemory(ready *pb.ReadyResponse, rpc MirroredMemoryRPC) (*RemoteMem
 	return r, err
 }
 
+// ReadState asks the host to run one app-state reader. The failure of the call
+// or of the read is returned as an error: the observer records it as the
+// reader's read error, never as state.
+func (r *RemoteMemory) ReadState(ctx context.Context, id string) (carried.Values, error) {
+	rpc, ok := r.rpc.(interface {
+		ReadState(context.Context, *pb.ReadStateRequest) (*pb.ReadStateResponse, error)
+	})
+	if !ok {
+		return carried.Values{}, errors.New("memory host state reads unavailable")
+	}
+	response, err := rpc.ReadState(ctx, &pb.ReadStateRequest{ReaderId: id, ObservedAt: timestamppb.New(lifecycleio.Now())})
+	if err != nil {
+		return carried.Values{}, fmt.Errorf("memory host read state: %w", err)
+	}
+	if response.GetError() != "" {
+		return carried.Values{}, errors.New(response.GetError())
+	}
+	var values carried.Values
+	for key, value := range response.GetValues() {
+		values.Set(key, value)
+	}
+	if err := values.Err(); err != nil {
+		return carried.Values{}, err
+	}
+	return values, nil
+}
+
+// appStateReaderClue is the reader detector's whole output: an info finding
+// while the newest read failed.
+func appStateReaderClue(spec sdk.DetectorSpec, view sdk.DetectionContext) []sdk.Finding {
+	result, ok := carried.ResultFrom(view, spec.ID)
+	if !ok {
+		return nil
+	}
+	latest, ok := result.Latest()
+	if !ok || latest.Error == "" {
+		return nil
+	}
+	return []sdk.Finding{{
+		DetectorID: spec.ID, RuleID: "app-state.read-failed", Status: sdk.FindingActive, Severity: sdk.SeverityInfo,
+		Summary:         "app-state reader " + spec.ID + " could not read the application's state",
+		Evidence:        latest.Error,
+		PrimaryResource: sdk.ObjectRef{APIVersion: "v1", Kind: "Namespace", Name: view.Namespace()},
+		Fingerprint:     "app-state-read-failed/" + spec.ID,
+	}}
+}
+
 type remoteProgramRegistry struct{ program.ProgramRegistry }
 
 type remoteDetector struct {
@@ -119,7 +168,13 @@ type remoteDetector struct {
 	remote *RemoteMemory
 }
 
-func (d *remoteDetector) Spec() sdk.DetectorSpec                { return d.DetectorSpec }
+func (d *remoteDetector) Spec() sdk.DetectorSpec    { return d.DetectorSpec }
+func (d *remoteDetector) AppStateReader() bool      { return d.Registration.AppStateReader }
+func (d *remoteDetector) AppStateNoisy() []string   { return d.Registration.AppStateNoisy }
+func (d *remoteDetector) AppStateReaders() []string { return d.Registration.AppStateReaders }
+func (d *remoteDetector) AppStateRead(ctx context.Context) (carried.Values, error) {
+	return d.remote.ReadState(ctx, d.ID)
+}
 func (d *remoteDetector) MetricQueries() []metrics.Query        { return d.Metrics }
 func (d *remoteDetector) LogQueries() []logs.Query              { return d.Logs }
 func (d *remoteDetector) PodReads() []podread.Query             { return d.Registration.PodReads }
@@ -131,6 +186,12 @@ func (d *remoteDetector) ConsumesAlerts() bool                  { return d.Alert
 func (d *remoteDetector) ConsumesPodAdmission() bool            { return d.PodAdmission }
 func (d *remoteDetector) TrafficWorkloads() []string            { return d.Traffic }
 func (d *remoteDetector) Detect(ctx context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
+	if d.Registration.AppStateReader {
+		// A reader runs in the background on its own interval; its detector
+		// only reports a failed read, as an info clue. It never errors, so a
+		// broken reader cannot block health or baseline promotion.
+		return appStateReaderClue(d.DetectorSpec, view), nil
+	}
 	prepared, release, err := d.prepareDetection(ctx, view)
 	if err != nil {
 		return nil, err
@@ -260,7 +321,7 @@ func (r *RemoteMemory) buildObservation(view sdk.DetectionContext) (*pb.MemoryOb
 		sourceView = wrapper.UnderlyingReadView()
 	}
 	source := inputs.New(sourceView)
-	out := &pb.MemoryObservation{Traffic: map[string]*structpb.Struct{}, Metrics: map[string]*structpb.Struct{}, Logs: map[string]*structpb.Struct{}, PodReads: map[string]*structpb.Struct{}, Vantage: map[string]*structpb.Struct{}}
+	out := &pb.MemoryObservation{Traffic: map[string]*structpb.Struct{}, Metrics: map[string]*structpb.Struct{}, Logs: map[string]*structpb.Struct{}, PodReads: map[string]*structpb.Struct{}, Vantage: map[string]*structpb.Struct{}, AppState: map[string]*structpb.Struct{}}
 	if at := source.ObservedAt(); !at.IsZero() {
 		out.ObservedAt = timestamppb.New(at)
 		if err := out.ObservedAt.CheckValid(); err != nil {
@@ -304,6 +365,13 @@ func (r *RemoteMemory) buildObservation(view sdk.DetectionContext) (*pb.MemoryOb
 		}
 	}
 	for _, spec := range r.registrations {
+		for _, id := range spec.AppStateReaders {
+			if v, ok := source.AppStateResult(id); ok {
+				if out.AppState[id], err = wireStruct(v); err != nil {
+					return nil, err
+				}
+			}
+		}
 		for _, id := range spec.Traffic {
 			if v, ok := source.TrafficWindow(id); ok {
 				out.Traffic[id], err = wireStruct(v)

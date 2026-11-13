@@ -20,6 +20,9 @@ service MemoryHostService {
   rpc Evaluate(EvaluateRequest) returns (EvaluateResponse);
   rpc Diagnose(DiagnoseRequest) returns (DiagnoseResponse);
   rpc Mitigate(MitigateRequest) returns (MitigateResponse);
+  // ReadState runs one app-state reader (appstate.Reader) over the host's live
+  // read factory and returns the key-value state it read.
+  rpc ReadState(ReadStateRequest) returns (ReadStateResponse);
 }
 
 message ReadyRequest {}
@@ -88,7 +91,25 @@ message MemoryObservation {
   // The controller's self-heal hold (sdk.SelfHealPolicy). Absent means the
   // SDK default.
   google.protobuf.Duration self_heal_hold = 14;
+  // Frozen app-state reader results by reader ID (carried.Result): the ring of
+  // recent snapshots, the last-healthy snapshot and the healthy history.
+  map<string, google.protobuf.Struct> app_state = 15;
 }
+// ReadStateRequest names one reader (the ID of a health detector that
+// implements appstate.Reader). The host reads against its latest complete
+// mirror; no frozen view is needed because the controller never waits on the
+// reader. observed_at is the controller clock's time for the reader's view.
+message ReadStateRequest {
+  string reader_id = 1;
+  google.protobuf.Timestamp observed_at = 2;
+}
+// ReadStateResponse carries the state, or the reason the call failed. A failed
+// read is data, not a transport error.
+message ReadStateResponse {
+  map<string, string> values = 1;
+  string error = 2;
+}
+
 message EvaluateRequest {
   repeated string detector_ids = 1;
   uint64 mirror_sequence = 2;

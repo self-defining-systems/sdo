@@ -113,6 +113,9 @@ func (p *Process) Diagnose(ctx context.Context, r *pb.DiagnoseRequest) (*pb.Diag
 func (p *Process) Mitigate(ctx context.Context, r *pb.MitigateRequest) (*pb.MitigateResponse, error) {
 	return p.client.Mitigate(ctx, r)
 }
+func (p *Process) ReadState(ctx context.Context, r *pb.ReadStateRequest) (*pb.ReadStateResponse, error) {
+	return p.client.ReadState(ctx, r)
+}
 func (p *Process) Close() error {
 	p.once.Do(func() {
 		if p.command != nil && p.command.Process != nil {

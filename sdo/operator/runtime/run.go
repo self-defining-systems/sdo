@@ -552,7 +552,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	storePayloads := &StorePayloads{Run: TypedPlanClient{Client: bootstrapProvider.Client, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace}.StoreCommand}
 	podReadBaseline.Payloads = storePayloads
 	vantageBaseline := NewVantageBaseline(DefaultStateSettle)
-	observations := detectorObservations{Client: bootstrapProvider.Client, Clock: clock.Now, Telemetry: telemetrySources, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, PodReadBaseline: podReadBaseline,
+	appStateObserver := NewAppStateObserver(NewAppStateStore(DefaultStateSettle), clock, clock.Now)
+	observations := detectorObservations{AppState: appStateObserver, Client: bootstrapProvider.Client, Clock: clock.Now, Telemetry: telemetrySources, ExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, PodReadBaseline: podReadBaseline,
 		VantageBaseline: vantageBaseline, VantageImage: lifecycleio.Getenv("SDO_VANTAGE_IMAGE")}
 	snapshotProvider, metricsObserver, err := observations.compose(snapshotProvider, detectors, initialTelemetrySources)
 	if err != nil {
@@ -949,6 +950,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	}
 	controller.PodReadBaseline = podReadBaseline
 	controller.VantageBaseline = vantageBaseline
+	controller.AppState = appStateObserver.Store()
 	controller.Helpers = KubernetesHelperCleaner{
 		Client: bootstrapProvider.Client, Namespaces: []string{*namespace, *controlNamespace},
 	}
@@ -1028,6 +1030,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		runCtx, cancel = context.WithTimeout(ctx, *duration)
 		defer cancel()
 	}
+	appStateObserver.Start(runCtx)
+	defer appStateObserver.Stop()
 	if options.NativeBroker != nil {
 		if err := options.NativeBroker.PruneIncidentSessions(clock.Now().UTC()); err != nil {
 			fmt.Fprintf(stderr, "prune retained incident sessions: %v\n", err)

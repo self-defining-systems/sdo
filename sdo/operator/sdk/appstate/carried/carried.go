@@ -180,7 +180,8 @@ type ResultSet interface {
 // Consumer declares the readers a detector's judgement depends on.
 type Consumer interface{ AppStateReaders() []string }
 
-var idPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+// idPattern is the detector ID grammar: a reader is identified by its detector.
+var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]*$`)
 
 // ValidateID checks a reader identifier.
 func ValidateID(id string) error {
