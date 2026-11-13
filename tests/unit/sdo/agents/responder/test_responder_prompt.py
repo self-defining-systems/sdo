@@ -25,8 +25,9 @@ def test_the_first_message_names_the_incident_and_the_failing_tests() -> None:
 
     assert prompt.startswith(
         "Incident toy-incident in namespace toy.\n"
-        "Failing user tests; counts are failed/total samples in the window:\n"
-        "- checkout, login failed with an unrecorded error\n"
+        "2 failing user tests; each name is followed by failed/total samples in the window."
+        " Shared symptom per group:\n"
+        "- an unrecorded error (2): checkout, login\n"
     )
     assert f"{SKILLS_ROOT}/incident-response/SKILL.md" in prompt
     assert f"{SKILLS_ROOT}/sdo-operating/SKILL.md" in prompt

@@ -59,9 +59,10 @@ def test_failing_tests_sharing_a_status_and_error_are_grouped_with_their_counts(
         passing=("fixture-read", "pipeline-call"),
     )
     assert symptom(request) == (
-        "Failing user tests since 12:00:10 UTC (first failing sample); counts are failed/total samples in the window:\n"
-        '- commit-call 3/6, user-api 4/6 failed with HTTP 429: text "Retry later"\n'
-        "- git-over-ssh 3/5 failed with timeout: i/o timeout\n"
+        "3 failing user tests since 12:00:10 UTC (first failing sample); each name is followed by failed/total"
+        " samples in the window. Shared symptom per group:\n"
+        '- HTTP 429 text "Retry later" (2): commit-call 3/6, user-api 4/6\n'
+        "- timeout i/o timeout (1): git-over-ssh 3/5\n"
         "Passing: fixture-read, pipeline-call. Re-check with `sdo verify`."
     )
 
@@ -78,9 +79,52 @@ def test_the_onset_is_the_earliest_first_failing_sample_not_the_open_time() -> N
 def test_the_error_excerpt_is_short_and_the_block_stays_bounded() -> None:
     findings = [_test_finding(f"test-{i}", status=str(500 + i), observed="e" * 500) for i in range(30)]
     block = symptom(_request(*findings, passing=tuple(f"ok-{i}" for i in range(80))))
-    assert len(block) <= 1100
+    assert len(block) <= 5200
     assert "e" * 120 not in block
     assert "sdo verify" in block
+    assert "(+22 more error groups" in block
+
+
+def test_twenty_five_failing_tests_in_three_groups_are_all_named_under_their_shared_symptom() -> None:
+    shapes = [
+        ("429", 'text "Retry later"', 12),
+        ("timeout", "i/o timeout", 8),
+        ("502", 'text "Bad Gateway"', 5),
+    ]
+    findings = [
+        _test_finding(f"{status}-op-{i:02d}", status=status, observed=observed, errors=i + 1, samples=20)
+        for status, observed, count in shapes
+        for i in range(count)
+    ]
+    block = symptom(_request(*findings, passing=("fixture-read",)))
+    lines = block.splitlines()
+    assert lines[0].startswith("25 failing user tests since")
+    assert lines[1].startswith('- HTTP 429 text "Retry later" (12): ')
+    assert lines[2].startswith("- timeout i/o timeout (8): ")
+    assert lines[3].startswith('- HTTP 502 text "Bad Gateway" (5): ')
+    for finding in findings:
+        assert finding.rule_id.removeprefix("scenario-slo.") + " " in block
+    assert "429-op-11 12/20" in block
+    assert "more" not in block
+    assert lines[-1] == "Passing: fixture-read. Re-check with `sdo verify`."
+
+
+def test_failing_tests_beyond_the_hard_cap_are_counted_not_dropped_silently() -> None:
+    findings = [_test_finding(f"op-{i:03d}") for i in range(60)]
+    block = symptom(_request(*findings))
+    assert "op-047" in block
+    assert "op-048" not in block
+    assert "(+12 more failing tests not listed: sdo detect --finding tests)" in block
+    assert len(block) <= 5200
+
+
+def test_a_worst_case_block_fits_the_symptom_budget_without_truncation() -> None:
+    findings = [
+        _test_finding("n" * 80 + str(i), status=str(500 + i % 9), observed="e" * 500, errors=100, samples=100)
+        for i in range(60)
+    ]
+    block = symptom(_request(*findings, passing=tuple("p" * 80 + str(i) for i in range(80))))
+    assert block.endswith("Re-check with `sdo verify`.")
 
 
 def test_no_passing_tests_says_so() -> None:
