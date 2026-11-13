@@ -80,6 +80,10 @@ reason = "Actual benchmark transport appendix: 676 Unicode code points, with 10 
 max_chars = 4000
 reason = "The responder's first message (the candidate block Go renders adds at most 2048 bytes; without it 1800 holds): the symptom block of at most 1100 code points (failing user tests grouped by status and server error with failed counts, first failing sample, passing tests, sdo verify), plus the identity line and the two skill lines (about 330 code points with a long skills root), plus headroom."
 
+[investigator.instructions]
+max_chars = 3200
+reason = "Go-rendered hypothesis brief (about 1500 characters: node, evidence lines, opening symptom, failing and passing tests, one hypothesis with expectations) plus the skill-path line; 3200 leaves headroom for 8 evidence lines and long test names."
+
 [session.incident_data]
 max_chars = 100
 reason = "Baseline synthetic fixture maximum: 40 Unicode code points; byte-identical template extraction."
@@ -191,6 +195,10 @@ reason = "Measured production rendering 1264 Unicode characters across three-fau
 [tool_stdout.timeline]
 max_chars = 16000
 reason = "On-demand CSV of signals over time at fixed steps for at most 24 operations and 8 workloads (Go incidentPageOps/incidentPageWorkloads); beyond the cap cap_text saves the full text to a context file."
+
+[tool_stdout.investigations]
+max_chars = 9000
+reason = "sdo investigations prints each started investigator's report in full: at most 2 reports of about 15 lines, each report bounded to 4000 characters by Go, plus a status header."
 
 [tool_stdout.try]
 max_chars = 4000
