@@ -36,6 +36,19 @@ const (
 	MaxResponseBody = 64 * 1024
 )
 const (
+	// ExistingRecordsExercised: it returned at least one record the probe did
+	// not create.
+	ExistingRecordsExercised = "exercised"
+	// ExistingRecordsOwnOnly: it returned records, all carrying the scenario's
+	// Marker.
+	ExistingRecordsOwnOnly = "own-only"
+	// ExistingRecordsEmpty: it returned none. The step passes: a fresh install
+	// has no user data.
+	ExistingRecordsEmpty = "empty"
+)
+    Values of Sample.ExistingRecords: what a ReadsExistingRecords step saw.
+
+const (
 	// LinkRuleIDPrefix prefixes the rule ID of each link finding
 	// ("link-reachability.<from>.<to>.<port>").
 	LinkRuleIDPrefix = "link-reachability."
@@ -131,6 +144,10 @@ const DefaultHealthMinDuration = 9 * time.Second
     detected in 3-5s. Nine seconds clears the observed stalls with headroom
     while adding at most one more poll beyond real-fault detection.
 
+const ExistingMembersKey = "sdo.existing-members"
+    ExistingMembersKey is the State key a ReadsExistingRecords step saves the
+    JSON array of the member values it read, for the engine's exercised note.
+
 const MaxExecStderr = 512
     MaxExecStderr bounds the standard error of an EXEC kept for a failure
     reason.
@@ -207,16 +224,4 @@ func FromSeedPair(key string, count int, first func(index int) string, second fu
     FromSeedPair returns two parameters rendered from the same seeded record,
     such as a user name and its password. The record index is kept in State
     under key, so later steps can reuse it with FromPrevious.
-
-func KnownBrokenChanges(window Window) string
-    KnownBrokenChanges describes the KnownBroken scenarios of window whose state
-    changed from their declaration: one that now meets its SLO, or one whose
-    recent failures include a status key outside FailsWith. It is empty when
-    every KnownBroken scenario still fails as declared or has too few samples to
-    judge. It is a note for the detection designer, never a finding.
-
-func LinkFinding(spec sdk.DetectorSpec, namespace string, window Window, observed LinkObservations) (sdk.Finding, bool)
-    LinkFinding explains one link JudgeLink reports, with per-link p50/p95
-    latency and failure classes. The primary resource is the target Service;
-    the calling Service is related.
 ```

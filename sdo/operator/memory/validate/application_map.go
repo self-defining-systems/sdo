@@ -2,7 +2,10 @@ package validate
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 	"sdo.dev/operator/memory/appmap"
@@ -16,7 +19,7 @@ func (r Request) mapBlocks() bool { return r.Actor == HealthJudge && r.Phase == 
 
 // mapAlwaysNote lists the findings that never reject.
 func mapAlwaysNote(rule string) bool {
-	return rule == RuleMapMissing || rule == RuleMapUnprobed || rule == RuleMapPossibleEdge
+	return rule == RuleMapMissing || rule == RuleMapUnprobed || rule == RuleMapPossibleEdge || rule == RuleMapNoUserRecords || rule == RuleMapReaders
 }
 
 // AgentObligation reports whether a diagnostic names work the agent's edit is
@@ -26,7 +29,7 @@ func mapAlwaysNote(rule string) bool {
 // base check never reports them; the designer's proposal is still held to them.
 func AgentObligation(rule string) bool {
 	switch rule {
-	case RuleEmptyDiff, RuleMapUncoveredOp, RuleMapUncoveredWrite, RuleMapUncoveredData, RuleMapCoverage:
+	case RuleEmptyDiff, RuleMapUncoveredOp, RuleMapUncoveredWrite, RuleMapUncoveredData, RuleMapCoverage, RuleMapRecordsUnread:
 		return true
 	}
 	return false
@@ -99,6 +102,41 @@ func (s *run) applicationMap(ctx context.Context) {
 	for _, f := range parsed.CheckPossibleEdges(source) {
 		s.mapFinding(Semantic, f, 0)
 	}
+	if f, ok := readerCoverageNote(s.req.Root, parsed); ok {
+		s.mapFinding(Semantic, f, 0)
+	}
+}
+
+// readerCoverageNote notes, without ever rejecting, a map that holds data
+// while no health detector implements appstate.Reader: nothing then exposes
+// application-defined settings or flags held in the store.
+func readerCoverageNote(root string, m appmap.Map) (appmap.Finding, bool) {
+	var stores []string
+	for _, comp := range m.Components {
+		if comp.Data != nil && comp.Data.Role == appmap.RoleAuthoritative {
+			stores = append(stores, comp.Name)
+		}
+	}
+	if len(stores) == 0 || root == "" {
+		return appmap.Finding{}, false
+	}
+	base := filepath.Join(root, filepath.FromSlash(layout.DetectorsDir), layout.ClassHealth.Dir())
+	dirs, _ := os.ReadDir(base)
+	readers := 0
+	for _, dir := range dirs {
+		files, _ := os.ReadDir(filepath.Join(base, dir.Name()))
+		for _, file := range files {
+			name := file.Name()
+			if !file.IsDir() && strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go") && implementsReader(filepath.Join(base, dir.Name(), name)) {
+				readers++
+				break
+			}
+		}
+	}
+	if readers > 0 {
+		return appmap.Finding{}, false
+	}
+	return appmap.Finding{Rule: RuleMapReaders, Message: "no health detector implements appstate.Reader, so settings and flags held in the authoritative store(s) " + strings.Join(stores, ", ") + " are not exposed", Hint: "note only: see references/app-state.md; write a reader for application-defined settings or flags, and a detector that uses appstate.Require"}, true
 }
 
 // mapInventory is the inventory the map's names resolve against: the manifest

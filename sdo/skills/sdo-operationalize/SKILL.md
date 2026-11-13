@@ -43,7 +43,7 @@ Three probe kinds, each a set of traffic scenarios in its own continuous health 
 - Writes use a synthetic test identity (user, account or key) named with the scenario's `Marker`, never real
   users' data, and carry the marker. Never forge credentials from application secrets or config: sign in as a
   test identity Setup created or, without self-service sign-up, a [probe identity](references/map.md#probe-identity).
-- Read records users own: every health objective list and download ([Users' own records](references/probes.md#users-own-records)).
+- Read records users own: a `ReadsExistingRecords` step (empty passes), else map `no_user_records: <why>` ([records](references/probes.md#users-own-records)).
 - Check exact content, never only statuses, and read back exactly the change each write-read iteration just
   made ([strict probes](references/probes.md)): re-applying one write every iteration re-heals what it reads.
 - Probes are self-contained: each passes on a freshly deployed application with nothing set up by hand. A
@@ -51,8 +51,8 @@ Three probe kinds, each a set of traffic scenarios in its own continuous health 
   with the marker. Each setup step is an ensure step: `OrExisting(status, text)` accepts the application's
   duplicate answer (from the handler's source, confirmed live). Each setup step runs once per prober start
   (retries skip passed steps); verify bursts reuse it, so lost data fails the steps until it comes back or a
-  restart writes it again. Steps read only data a setup or earlier step wrote, or records the deployment itself
-  seeds (confirmed live).
+  restart writes it again. Steps read data a setup or earlier step wrote, or records the deployment seeds
+  (live-confirmed).
 - Clean up what a write creates when the application has a delete or overwrite route
   (`SideEffectWriteWithCleanup`); otherwise bound and record its growth ([strict probes](references/probes.md#cost)).
 - A read-later scenario is a read (`SideEffectRead`) with a `Marker`: its `Setup` writes a fixed marked

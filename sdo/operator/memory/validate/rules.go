@@ -127,6 +127,11 @@ const (
 	RuleMapUnprobed       = "map.unprobed"
 	RuleMapKnownBroken    = "map.known-broken"
 	RuleMapPossibleEdge   = "map.possible-edge"
+	RuleMapUnprobedEntry  = "map.unprobed-entry"
+	RuleMapUnprobedShare  = "map.unprobed-share"
+	RuleMapRecordsUnread  = "map.records-unread"
+	RuleMapNoUserRecords  = "map.no-user-records"
+	RuleMapReaders        = "map.readers"
 	// Ownership of the map region: the designer changes nothing outside it,
 	// and nobody else changes it.
 	RuleMapOutsideRegion = "ownership.map-outside-region"

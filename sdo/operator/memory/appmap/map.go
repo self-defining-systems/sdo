@@ -14,17 +14,21 @@ import (
 
 // Rule IDs of the findings. The memory check re-exports them as its own rules.
 const (
-	RuleMissing         = "map.missing"
-	RuleSchema          = "map.schema"
-	RuleUnknownName     = "map.unknown-name"
-	RulePathMismatch    = "map.path-mismatch"
-	RuleUncoveredOp     = "map.uncovered-operation"
-	RuleUncoveredWrite  = "map.uncovered-write"
-	RuleUncoveredData   = "map.uncovered-data"
-	RuleCoverage        = "map.coverage"
-	RuleUnprobed        = "map.unprobed"
-	RuleKnownBroken     = "map.known-broken"
-	RulePossibleEdge    = "map.possible-edge"
+	RuleMissing        = "map.missing"
+	RuleSchema         = "map.schema"
+	RuleUnknownName    = "map.unknown-name"
+	RulePathMismatch   = "map.path-mismatch"
+	RuleUncoveredOp    = "map.uncovered-operation"
+	RuleUncoveredWrite = "map.uncovered-write"
+	RuleUncoveredData  = "map.uncovered-data"
+	RuleCoverage       = "map.coverage"
+	RuleUnprobed       = "map.unprobed"
+	RuleKnownBroken    = "map.known-broken"
+	RulePossibleEdge   = "map.possible-edge"
+	RuleUnprobedEntry  = "map.unprobed-entry"
+	RuleUnprobedShare  = "map.unprobed-share"
+	RuleRecordsUnread  = "map.records-unread"
+	RuleNoUserRecords  = "map.no-user-records"
 )
 
 // Probe kinds, and the health-probe workload that runs each.
@@ -53,6 +57,9 @@ type Map struct {
 	Probes     []Probe     `yaml:"probes"`
 	// Procedures are the operations procedures the application ships.
 	Procedures []Procedure `yaml:"procedures,omitempty"`
+	// NoUserRecords is the one escape from map.records-unread: why users keep
+	// no records in this application that a probe could read.
+	NoUserRecords string `yaml:"no_user_records,omitempty"`
 }
 
 // Component is one application workload that is part of the app.
@@ -251,7 +258,7 @@ type Workload struct {
 }
 
 var (
-	idPattern  = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+	idPattern      = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 	commandPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$`)
 	httpMethod     = map[string]bool{"GET": true, "HEAD": true, "POST": true, "PUT": true, "PATCH": true, "DELETE": true, "OPTIONS": true}
 )
@@ -292,6 +299,7 @@ func (m Map) Check(inv Inventory, workloads []Workload) []Finding {
 	c.knownBrokenOperations()
 	c.coverage()
 	c.coverageRule(inv, workloads)
+	c.unprobedShare(inv, workloads)
 	c.procedures(inv)
 	sort.SliceStable(c.findings, func(i, j int) bool { return c.findings[i].Rule < c.findings[j].Rule })
 	return c.findings
@@ -644,6 +652,22 @@ type Scenario struct {
 	StatusOnly bool
 	// Users are the names of the probe users the scenario signs in as.
 	Users []string
+	// KnownBroken is true when the scenario's workload declares it
+	// knownBroken: it is not a gated probe.
+	KnownBroken bool
+	// ExistingRecords are the steps marked as reading records the probe did
+	// not create.
+	ExistingRecords []ExistingRecordsStep
+}
+
+// ExistingRecordsStep is the compiled fact about one marked step.
+type ExistingRecordsStep struct {
+	Name string
+	// ChecksContent is true when the step checks the shape of the records.
+	ChecksContent bool
+	// OwnKeys are the State keys the step templates that a write step of the
+	// scenario saved.
+	OwnKeys []string
 }
 
 // CheckScenarios applies the rules that need the compiled scenarios: each
@@ -715,8 +739,55 @@ func (m Map) CheckScenarios(scenarios []Scenario) []Finding {
 		}
 	}
 	c.checkProbeUsers(scenarios)
+	c.recordsRule(byID)
 	sort.SliceStable(c.findings, func(i, j int) bool { return c.findings[i].Rule < c.findings[j].Rule })
 	return c.findings
+}
+
+// recordsRule requires, for a map with a data component, at least one gated
+// probe with a step marked as reading existing records that checks their
+// shape and templates no key the scenario itself wrote. The map-level
+// no_user_records is the only escape and is recorded as a note.
+func (c *checker) recordsRule(byID map[string]Scenario) {
+	var stores []string
+	for _, comp := range c.m.Components {
+		if comp.HoldsData {
+			stores = append(stores, comp.Name)
+		}
+	}
+	if len(stores) == 0 {
+		return
+	}
+	var problems []string
+	valid := false
+	for _, p := range c.m.Probes {
+		s, ok := byID[p.Scenario]
+		if !ok || s.KnownBroken {
+			continue
+		}
+		for _, step := range s.ExistingRecords {
+			switch {
+			case !step.ChecksContent:
+				problems = append(problems, fmt.Sprintf("step %s of probe %s has no valid member pattern", step.Name, p.Scenario))
+			case len(step.OwnKeys) > 0:
+				problems = append(problems, fmt.Sprintf("step %s of probe %s templates %s, which the scenario's own write steps saved", step.Name, p.Scenario, strings.Join(step.OwnKeys, ", ")))
+			default:
+				valid = true
+			}
+		}
+	}
+	reason := strings.TrimSpace(c.m.NoUserRecords)
+	switch {
+	case valid:
+	case reason != "":
+		c.add(RuleNoUserRecords, "note only: no probe reads records users made; the designer recorded why", "the map records no user records to read: %s", reason)
+	default:
+		message := fmt.Sprintf("the map holds data (%s) but no gated probe has a step that reads existing records the probe did not write", strings.Join(stores, ", "))
+		if len(problems) > 0 {
+			message += " (" + strings.Join(problems, "; ") + ")"
+		}
+		c.add(RuleRecordsUnread, "in a call or read-later probe, build one step with ReadsExistingRecords(path, field, pattern): it lists records users made (an empty list passes) and must not template a key the scenario's own write steps saved (open ids saved by a list step instead); only when users keep no records set `no_user_records: <why>` at the top level of the map", "%s", message)
+	}
 }
 
 func anyIn(items []string, set map[string]bool) bool {
