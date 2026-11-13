@@ -18,7 +18,7 @@ errors, clues), other clues, learned playbooks. Each `more:` line is the command
 - `sdo mitigate ReconcileFromSource --bind ref=Deployment/shop/api`: restore an object from accepted source
 - `sdo verify --wait SECONDS`: has it recovered?
 
-`sdo COMMAND --help` gives the syntax. Use `kubectl` for reads and changes; SDO records every call. A `kubectl exec` counts as a change; check recovery with `sdo verify`. Keep a source fix with `git commit`.
+`sdo COMMAND --help` gives the syntax. Use `kubectl` for reads and changes; reads, including `kubectl exec` to read, are fine. `sdo verify` judges recovery. Keep a source fix with `git commit`.
 
 SDO decides recovery: the alerts that opened the incident cleared and stayed clear after your last change settled.
 SDO then ends your incident work for its closing turn. Returning before that escalates to a human.
