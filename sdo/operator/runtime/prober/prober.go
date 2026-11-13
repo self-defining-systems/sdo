@@ -101,6 +101,8 @@ type scenarioState struct {
 	qualified   bool
 	invalid     int
 	lastInvalid string
+	// identityWait is the latest sample's probe-user provisioning wait.
+	identityWait time.Duration
 }
 
 type probe struct {
@@ -262,6 +264,7 @@ func (p *Prober) record(workload string, scenario string, sample traffic.Sample)
 		state.invalid++
 		state.lastInvalid = sample.Error
 	}
+	state.identityWait = sample.IdentityWait
 	state.samples = append(state.samples, sample)
 	if len(state.samples) > p.config.Capacity {
 		state.samples = append([]traffic.Sample(nil), state.samples[len(state.samples)-p.config.Capacity:]...)
@@ -283,7 +286,7 @@ func (p *Prober) Windows() map[string]traffic.Window {
 			scenario := state.scenarios[id]
 			scenarios = append(scenarios, traffic.ScenarioObservations{
 				Scenario: scenario.descriptor, Samples: append([]traffic.Sample(nil), scenario.samples...),
-				Qualified: scenario.qualified, Invalid: scenario.invalid, LastInvalid: scenario.lastInvalid,
+				Qualified: scenario.qualified, Invalid: scenario.invalid, LastInvalid: scenario.lastInvalid, IdentityWait: scenario.identityWait,
 			})
 		}
 		windows[name] = traffic.Window{

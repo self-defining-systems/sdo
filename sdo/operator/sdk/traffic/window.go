@@ -28,6 +28,9 @@ type ScenarioObservations struct {
 	// safety rule; LastInvalid explains the latest one.
 	Invalid     int    `json:"invalid,omitempty"`
 	LastInvalid string `json:"lastInvalid,omitempty"`
+	// IdentityWait is set while the latest sample waited for a probe user to
+	// be provisioned: how long one provisioning run may take.
+	IdentityWait time.Duration `json:"identityWait,omitempty"`
 }
 
 // Window is what the prober has observed for one workload at ObservedAt.
@@ -269,6 +272,16 @@ func (w Window) Ready() bool {
 		}
 	}
 	return true
+}
+
+// IdentityWait is the longest provisioning run any scenario is still waiting
+// for, zero when none waits on a probe user.
+func (w Window) IdentityWait() time.Duration {
+	var longest time.Duration
+	for _, observed := range w.Scenarios {
+		longest = max(longest, observed.IdentityWait)
+	}
+	return longest
 }
 
 // WarmupHorizon is how long a freshly started prober needs, at the workload's

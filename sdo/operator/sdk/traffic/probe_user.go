@@ -2,9 +2,11 @@ package traffic
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // ProbeUser names a test user a scenario signs in as. SDO provisions the user
@@ -36,6 +38,18 @@ type ProbeUser struct {
 type Passwords interface {
 	Password(ctx context.Context, user string) (string, error)
 }
+
+// IdentityPendingError is what a Passwords or ProbeKeys source returns while
+// the user's provisioning is under way. It is an environment wait, not a
+// measurement of the application: Wait is how long one provisioning run may
+// take, so a one-shot evaluation can wait for it instead of reporting a
+// health failure.
+type IdentityPendingError struct {
+	Reason string
+	Wait   time.Duration
+}
+
+func (e *IdentityPendingError) Error() string { return "identity pending: " + e.Reason }
 
 // ProbeKeys returns the SSH public key line of a provisioned probe user. A
 // Passwords source that also implements ProbeKeys serves scenarios whose
@@ -128,7 +142,7 @@ func (e *Engine) userState(ctx context.Context, scenario Scenario) (passwords St
 	for _, u := range scenario.Users {
 		value, err := e.passwords.Password(ctx, u.Name)
 		if err != nil {
-			return nil, nil, fmt.Errorf("probe user %s: %v", u.Name, err)
+			return nil, nil, fmt.Errorf("probe user %s: %w", u.Name, err)
 		}
 		if value == "" {
 			return nil, nil, fmt.Errorf("probe user %s has an empty password", u.Name)
@@ -143,7 +157,7 @@ func (e *Engine) userState(ctx context.Context, scenario Scenario) (passwords St
 		}
 		line, err := source.SSHPublicKey(ctx, u.Name)
 		if err != nil {
-			return nil, nil, fmt.Errorf("probe user %s SSH key: %v", u.Name, err)
+			return nil, nil, fmt.Errorf("probe user %s SSH key: %w", u.Name, err)
 		}
 		keys[u.SSHKey] = line
 	}
@@ -157,4 +171,14 @@ func (sample *Sample) redact(values State) {
 			*field = strings.ReplaceAll(*field, value, passwordPlaceholder)
 		}
 	}
+}
+
+// identityWait is the provisioning wait an error carries, zero when the error
+// is not an identity-pending one.
+func identityWait(err error) time.Duration {
+	var pending *IdentityPendingError
+	if errors.As(err, &pending) {
+		return max(pending.Wait, time.Second)
+	}
+	return 0
 }

@@ -24,6 +24,7 @@ import (
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 // ProbeUserRetry is the least time between two provisioning attempts of one
@@ -177,6 +178,13 @@ type ProbeUsers struct {
 	Now func() time.Time
 	// Unavailable, when set, is why this host provisions no probe users.
 	Unavailable string
+	// ReadyDir, when set, holds one empty marker file per probe user the
+	// procedure has provisioned, so the next memory host (every
+	// evaluate-once starts a fresh one) recognises the user instead of
+	// provisioning again. The marker name is an HMAC of the seed, the user and
+	// the Pod that ran the procedure: it holds no secret, dies with the seed,
+	// and a replaced Pod provisions again, which the procedure tolerates.
+	ReadyDir string
 
 	mu    sync.Mutex
 	seed  []byte
@@ -198,6 +206,9 @@ type probeUser struct {
 func NewProbeUsers(mapYAML, seedPath, namespace, protectedNamespace string, client kubernetes.Interface, exec kubereads.PodExec) *ProbeUsers {
 	users := &ProbeUsers{Namespace: namespace, ProtectedNamespace: protectedNamespace, Client: client, Exec: exec,
 		Seed: func() ([]byte, error) { return LoadProbeIdentitySeed(seedPath) }}
+	if seedPath != "" {
+		users.ReadyDir = filepath.Join(filepath.Dir(seedPath), "ready")
+	}
 	if strings.TrimSpace(mapYAML) == "" {
 		users.Unavailable = "the accepted memory has no application map, so no probe_identity procedure provisions probe users"
 		return users
@@ -237,9 +248,15 @@ func (p *ProbeUsers) SSHSigner(user string) (ssh.Signer, error) {
 	ready := state != nil && state.ready
 	p.mu.Unlock()
 	if !ready || seed == nil {
-		return nil, fmt.Errorf("identity pending: probe user %s is not provisioned yet", user)
+		return nil, p.pending(fmt.Sprintf("probe user %s is not provisioned yet", user))
 	}
 	return ssh.NewSignerFromKey(ProbeUserSSHKey(seed, user))
+}
+
+// pending is the typed environment wait: a run of the procedure may take its
+// whole declared timeout.
+func (p *ProbeUsers) pending(reason string) error {
+	return &traffic.IdentityPendingError{Reason: reason, Wait: p.Procedure.IdentityTimeout()}
 }
 
 // Password implements traffic.Passwords. It never waits for a run.
@@ -261,13 +278,13 @@ func (p *ProbeUsers) Password(_ context.Context, user string) (string, error) {
 	case state.ready:
 		return ProbeUserPassword(p.seed, user), nil
 	case state.running:
-		return "", fmt.Errorf("identity pending: procedure %s is provisioning the user", p.Procedure.ID)
+		return "", p.pending(fmt.Sprintf("procedure %s is provisioning the user", p.Procedure.ID))
 	case !state.failed.IsZero() && p.now().Sub(state.failed) < ProbeUserRetry:
 		return "", fmt.Errorf("identity unavailable: procedure %s failed (%v); retrying %s after the failure", p.Procedure.ID, state.err, ProbeUserRetry)
 	}
 	state.running, state.done = true, make(chan struct{})
 	go p.attempt(user, state)
-	return "", fmt.Errorf("identity pending: procedure %s started provisioning the user", p.Procedure.ID)
+	return "", p.pending(fmt.Sprintf("procedure %s started provisioning the user", p.Procedure.ID))
 }
 
 func (p *ProbeUsers) attempt(user string, state *probeUser) {
@@ -304,9 +321,15 @@ func (p *ProbeUsers) provision(ctx context.Context, user string) error {
 	if err != nil {
 		return err
 	}
-	pod, err := p.readyPod(ctx)
+	pod, uid, err := p.readyPod(ctx)
 	if err != nil {
 		return err
+	}
+	marker := p.readyMarker(seed, user, pod.Name, uid)
+	if marker != "" {
+		if _, err := os.Stat(marker); err == nil {
+			return nil
+		}
 	}
 	command := program.Command{Pod: pod, Container: p.Procedure.Container, Args: argv, Stdin: ProbeUserPassword(seed, user) + "\n"}
 	code, err := kubereads.RunCommand(ctx, p.Exec, p.ProtectedNamespace, command)
@@ -316,18 +339,35 @@ func (p *ProbeUsers) provision(ctx context.Context, user string) error {
 	if code != 0 {
 		return fmt.Errorf("exited %d in Pod %s container %s", code, pod.Name, p.Procedure.Container)
 	}
+	if marker != "" {
+		// Best effort: without the marker the next host provisions again.
+		if os.MkdirAll(p.ReadyDir, 0o700) == nil {
+			_ = os.WriteFile(marker, nil, 0o600)
+		}
+	}
 	return nil
+}
+
+// readyMarker is the path of user's readiness marker for the Pod that ran the
+// procedure; empty when markers are off.
+func (p *ProbeUsers) readyMarker(seed []byte, user, pod, uid string) string {
+	if p.ReadyDir == "" {
+		return ""
+	}
+	mac := hmac.New(sha256.New, seed)
+	mac.Write([]byte("sdo-probe-ready\x00" + user + "\x00" + pod + "\x00" + uid))
+	return filepath.Join(p.ReadyDir, fmt.Sprintf("%x", mac.Sum(nil)))
 }
 
 // readyPod picks, by name, a running Pod of the workload whose procedure
 // container is ready.
-func (p *ProbeUsers) readyPod(ctx context.Context) (sdk.ObjectRef, error) {
+func (p *ProbeUsers) readyPod(ctx context.Context) (sdk.ObjectRef, string, error) {
 	if p.Client == nil {
-		return sdk.ObjectRef{}, errors.New("no Kubernetes client")
+		return sdk.ObjectRef{}, "", errors.New("no Kubernetes client")
 	}
 	kind, name, ok := strings.Cut(p.Workload, "/")
 	if !ok || name == "" {
-		return sdk.ObjectRef{}, fmt.Errorf("workload %q is not Kind/name", p.Workload)
+		return sdk.ObjectRef{}, "", fmt.Errorf("workload %q is not Kind/name", p.Workload)
 	}
 	var selector *metav1.LabelSelector
 	apps := p.Client.AppsV1()
@@ -335,39 +375,39 @@ func (p *ProbeUsers) readyPod(ctx context.Context) (sdk.ObjectRef, error) {
 	case "Deployment":
 		object, err := apps.Deployments(p.Namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
-			return sdk.ObjectRef{}, err
+			return sdk.ObjectRef{}, "", err
 		}
 		selector = object.Spec.Selector
 	case "StatefulSet":
 		object, err := apps.StatefulSets(p.Namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
-			return sdk.ObjectRef{}, err
+			return sdk.ObjectRef{}, "", err
 		}
 		selector = object.Spec.Selector
 	case "DaemonSet":
 		object, err := apps.DaemonSets(p.Namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
-			return sdk.ObjectRef{}, err
+			return sdk.ObjectRef{}, "", err
 		}
 		selector = object.Spec.Selector
 	default:
-		return sdk.ObjectRef{}, fmt.Errorf("workload %s: a probe-identity procedure runs in a Deployment, StatefulSet or DaemonSet", p.Workload)
+		return sdk.ObjectRef{}, "", fmt.Errorf("workload %s: a probe-identity procedure runs in a Deployment, StatefulSet or DaemonSet", p.Workload)
 	}
 	parsed, err := metav1.LabelSelectorAsSelector(selector)
 	if err != nil || parsed.Empty() {
-		return sdk.ObjectRef{}, fmt.Errorf("workload %s has no usable selector", p.Workload)
+		return sdk.ObjectRef{}, "", fmt.Errorf("workload %s has no usable selector", p.Workload)
 	}
 	pods, err := p.Client.CoreV1().Pods(p.Namespace).List(ctx, metav1.ListOptions{LabelSelector: parsed.String()})
 	if err != nil {
-		return sdk.ObjectRef{}, err
+		return sdk.ObjectRef{}, "", err
 	}
 	sort.Slice(pods.Items, func(i, j int) bool { return pods.Items[i].Name < pods.Items[j].Name })
 	for _, pod := range pods.Items {
 		if containerReady(pod, p.Procedure.Container) {
-			return sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: pod.Namespace, Name: pod.Name}, nil
+			return sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: pod.Namespace, Name: pod.Name}, string(pod.UID), nil
 		}
 	}
-	return sdk.ObjectRef{}, fmt.Errorf("workload %s has no running Pod with container %s ready", p.Workload, p.Procedure.Container)
+	return sdk.ObjectRef{}, "", fmt.Errorf("workload %s has no running Pod with container %s ready", p.Workload, p.Procedure.Container)
 }
 
 func containerReady(pod corev1.Pod, container string) bool {

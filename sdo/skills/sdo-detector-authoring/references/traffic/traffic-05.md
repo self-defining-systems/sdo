@@ -32,9 +32,13 @@ type Sample struct {
 	// an application-level error or a slow response, whether the dial
 	// failed outright (Outcome error) or hung until the dial timeout
 	// (Outcome timeout).
-	DialFailed   bool   `json:"dialFailed,omitempty"`
-	Requests     int    `json:"requests"`
-	CleanupError string `json:"cleanupError,omitempty"`
+	DialFailed bool `json:"dialFailed,omitempty"`
+	// IdentityWait is set on an invalid sample whose probe user was still
+	// being provisioned: how long one provisioning run may take. Such a sample
+	// is an environment wait, not a finding about the application.
+	IdentityWait time.Duration `json:"identityWait,omitempty"`
+	Requests     int           `json:"requests"`
+	CleanupError string        `json:"cleanupError,omitempty"`
 }
     Sample is the observed result of one scenario iteration.
 
@@ -98,6 +102,9 @@ type ScenarioObservations struct {
 	// safety rule; LastInvalid explains the latest one.
 	Invalid     int    `json:"invalid,omitempty"`
 	LastInvalid string `json:"lastInvalid,omitempty"`
+	// IdentityWait is set while the latest sample waited for a probe user to
+	// be provisioned: how long one provisioning run may take.
+	IdentityWait time.Duration `json:"identityWait,omitempty"`
 }
     ScenarioObservations are one scenario's recent samples, oldest first.
 
@@ -174,6 +181,10 @@ func WindowFrom(ctx sdk.DetectionContext, workload string) (Window, bool)
     WindowFrom returns the observations of workload, when the context carries
     them.
 
+func (w Window) IdentityWait() time.Duration
+    IdentityWait is the longest provisioning run any scenario is still waiting
+    for, zero when none waits on a probe user.
+
 func (w Window) LinkSetting() LinkSetting
     LinkSetting returns the setting of the window's link-probe workload.
 
@@ -230,18 +241,4 @@ func ParseWorkloadJSON(data []byte) (Workload, error)
 func (w Workload) KnownBrokenScenario(id string) *KnownBroken
     KnownBrokenScenario returns the KnownBroken declaration of scenario id,
     or nil when the scenario gates health.
-
-func (w Workload) ScenarioArrival(id string) time.Duration
-    ScenarioArrival is the expected time between samples of one scenario: its
-    share of the workload rate. Zero when the rate or the scenario is unknown.
-
-func (w Workload) ScenarioSLO(id string) SLO
-    ScenarioSLO is the effective SLO of one scenario of the workload.
-
-func (w Workload) Validate() error
-    Validate reports the first problem that makes the workload unsafe.
-
-func (w Workload) ValidateAgainst(catalog Catalog) error
-    ValidateAgainst checks that every scenario the workload names exists in the
-    catalog. A health probe may hold only write scenarios.
 ```

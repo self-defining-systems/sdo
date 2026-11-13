@@ -77,6 +77,7 @@ type HTTPEndpoint struct{ ... }
     func GET(path string, query Params) *HTTPEndpoint
     func POST(path string, query Params) *HTTPEndpoint
     func PUT(path string, query Params) *HTTPEndpoint
+type IdentityPendingError struct{ ... }
 type KnownBroken struct{ ... }
 type Link struct{ ... }
 type LinkCondition string
