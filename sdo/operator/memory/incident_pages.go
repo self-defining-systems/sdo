@@ -4,7 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+
+	"sdo.dev/operator/safefs"
 	"sort"
 	"strings"
 )
@@ -51,28 +54,10 @@ func writeIncidentPages(repositoryMount, incidentID string, files map[string][]b
 	if err != nil {
 		return err
 	}
-	directory := filepath.Join(repositoryMount, relative, IncidentPagesDir)
-	if err := os.Mkdir(directory, 0700); err != nil && !errors.Is(err, os.ErrExist) {
-		return fmt.Errorf("prepare incident pages directory: %w", err)
-	}
-	if info, err := os.Lstat(directory); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("incident pages directory is not a real directory: %s", directory)
-	}
+	// safefs replaces each file atomically, refusing links on the way.
+	session := filepath.Join(repositoryMount, relative)
 	for _, name := range names {
-		// A unique temporary name: concurrent `sdo detect` reads may rewrite at once.
-		file, err := os.CreateTemp(directory, "."+name+".*")
-		if err != nil {
-			return fmt.Errorf("write incident page %s: %w", name, err)
-		}
-		_, err = file.Write(files[name])
-		if closeErr := file.Close(); err == nil {
-			err = closeErr
-		}
-		if err == nil {
-			err = os.Rename(file.Name(), filepath.Join(directory, name))
-		}
-		if err != nil {
-			_ = os.Remove(file.Name())
+		if err := safefs.WriteFile(session, path.Join(IncidentPagesDir, name), files[name], 0o600); err != nil {
 			return fmt.Errorf("write incident page %s: %w", name, err)
 		}
 	}
