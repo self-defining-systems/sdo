@@ -51,7 +51,7 @@ def _opening(request: IncidentRequest) -> list[Finding]:
 def opened_on(request: IncidentRequest) -> str:
     """Failing user tests, the failing object and condition, or the external alert."""
     if request.external_message:
-        return f"external alert: {_clip(request.external_message)}; return when it is fixed"
+        return "external alert"
     opening = _opening(request)
     tests = [
         finding.rule_id.removeprefix(_TEST_RULE_PREFIX)
@@ -96,9 +96,16 @@ def symptom(request: IncidentRequest) -> str:
     """What the incident opened on: for failing user tests every failing test by name with failed/total, grouped
     by the status and server error they share (largest group first), then the passing tests; otherwise the
     one-line condition and open time."""
-    tests = [] if request.external_message else _failing_tests(request)
+    opened = request.detected_at.ToDatetime(tzinfo=UTC) if request.HasField("detected_at") else None
+    if request.external_message:
+        # The alert is the page a person or harness wrote; it reaches the agent whole, line breaks kept. The
+        # contract bounds it (max_len 4096), so it always fits inside the symptom cap.
+        at = f" at {_hms(opened)} UTC" if opened else ""
+        return f"Opened on external alert{at}; return when it is fixed:\n{request.external_message.strip()}"[
+            :_MAX_SYMPTOM
+        ]
+    tests = _failing_tests(request)
     if not tests:
-        opened = request.detected_at.ToDatetime(tzinfo=UTC) if request.HasField("detected_at") else None
         return f"Opened on {opened_on(request)}" + (f" at {_hms(opened)} UTC." if opened else ".")
     firsts = [datetime.fromisoformat(meta["first_failure_at"]) for _, meta in tests if meta.get("first_failure_at")]
     since = f" since {_hms(min(firsts))} UTC (first failing sample)" if firsts else ""
