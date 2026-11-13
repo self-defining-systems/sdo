@@ -38,7 +38,8 @@ ACCOUNT_ENVIRONMENT = (
 _ALIAS = re.compile(r"a[0-9]{2,6}\Z")
 _AUTH = re.compile(
     r"authentication_error|API Error:\s*(?:401|403)\b|OAuth (?:token|session) (?:has )?expired|"
-    r"Failed to authenticate|could not be refreshed|"
+    r"Failed to authenticate|could not be refreshed|\b401 Unauthorized|status 401\b|"
+    r"refresh_token_reused|invalid_grant|Reauthentication is needed|"
     r"invalid (?:API key|OAuth token|access token)|token (?:has been )?revoked|please run /login|not logged in",
     re.IGNORECASE,
 )

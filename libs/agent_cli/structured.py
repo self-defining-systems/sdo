@@ -345,6 +345,7 @@ def run_structured_turn(
 
     attempt = 0
     account_retries: dict[str, int] = {}
+    auth_retries = 0
     while True:
         lease = None
         remaining = timeout_seconds
@@ -428,15 +429,26 @@ def run_structured_turn(
             if isinstance(exc, AccountExhausted):
                 capacity.record("account", "exhausted", reason="account_exhausted")
                 raise exc from None
-            if provider != "claude" or not exc.retryable:
+            # Without an account pool a credential failure is one that a later attempt may clear (a refreshed token, a
+            # remounted credential file); the request never reached the model, so the retry repeats no prompt.
+            provider_auth = isinstance(exc, AccountAuthenticationFailed) and router is None
+            if (provider != "claude" and not provider_auth) or not exc.retryable:
                 raise
+            if provider_auth:
+                if auth_retries >= _auth_retry_limit(capacity.environment):
+                    raise
+                delay = _auth_backoff_seconds(capacity.environment) * 2**auth_retries
+                auth_retries += 1
+                capacity.sleep(delay)
             session_id = exc.session_id or session_id
             prior_commands += exc.shell_commands
             prior_tool_calls += exc.tool_calls
             for name, value in (exc.usage or attempt_usage).items():
                 prior_usage[name] = prior_usage.get(name, 0) + value
             attempt_usage.clear()
-            if router is not None and lease is not None:
+            if provider_auth:
+                pass
+            elif router is not None and lease is not None:
                 retries = account_retries.get(lease.alias, 0)
                 if isinstance(exc, AccountAuthenticationFailed):
                     router.fail(lease, exc.account_failure_reason)
@@ -452,6 +464,22 @@ def run_structured_turn(
             else:
                 capacity.backoff(attempt, session_id=session_id or "")
             attempt += 1
+
+
+def _auth_retry_limit(environment: Mapping[str, str]) -> int:
+    """Retries of a provider credential failure outside an account pool (``SDO_PROVIDER_AUTH_RETRIES``, default 2)."""
+    value = int(environment.get("SDO_PROVIDER_AUTH_RETRIES", "2"))
+    if value < 0:
+        raise ValueError("SDO_PROVIDER_AUTH_RETRIES must not be negative")
+    return value
+
+
+def _auth_backoff_seconds(environment: Mapping[str, str]) -> float:
+    """First wait before retrying a credential failure; later waits double (``SDO_PROVIDER_AUTH_BACKOFF_SECONDS``)."""
+    value = float(environment.get("SDO_PROVIDER_AUTH_BACKOFF_SECONDS", "5"))
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError("SDO_PROVIDER_AUTH_BACKOFF_SECONDS must be positive and finite")
+    return value
 
 
 _TOKEN_LIKE = re.compile(r"[A-Za-z0-9_\-.=+/]{24,}")
@@ -632,15 +660,15 @@ def _run_structured_turn_once(
         )
 
     def provider_failure(*streams: str) -> ProviderRateLimited | None:
-        account_mode = bool((environment or {}).get("SDO_CLAUDE_ACCOUNTS_DIR"))
+        # A credential failure is typed for every provider and account mode; only Claude has a rate-limit grammar.
         failure_type = (
             AccountAuthenticationFailed
-            if account_mode and any(is_claude_auth_failure(text) for text in streams)
+            if any(is_claude_auth_failure(text) for text in streams)
             else ProviderRateLimited
-            if any(is_claude_rate_limit(text) for text in streams)
+            if provider == "claude" and any(is_claude_rate_limit(text) for text in streams)
             else None
         )
-        if failure_type is None or provider != "claude":
+        if failure_type is None:
             return None
         return failure_type(
             session_id=recorder.session_id or resume_session_id or "",
@@ -870,7 +898,7 @@ def _run_structured_turn_once(
             # Keep any observed partial checkpoint rather than billing it twice.
             raise StructuredTurnError("resumed cumulative token accounting unavailable after turn")
 
-    if provider == "claude" and result.structured_output is None and (failed := provider_failure(result.text)):
+    if result.structured_output is None and (failed := provider_failure(result.text)):
         raise failed from None
 
     structured_output: object = result.structured_output
