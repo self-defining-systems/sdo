@@ -40,7 +40,7 @@ RESPONSE_FIELDS = {
     "changes": "text (CSV, oldest first; columns in its header row)",
     "timeline": "text (CSV, oldest first; columns in its header row)",
     "try": "text (user test list, or one test's latest recorded sample), healthy (the test passes now)",
-    "map": "text (components and operations, one operation path, the failing-versus-passing diff, or a component's neighbours)",
+    "map": "text (components and operations, one operation path, or a component's neighbours)",
     "diagnose": "program_runs[].{program_id, program_revision, verdict, can_mitigate, mitigate_command}, "
     "program_revisions",
     "menu": "menu.options[].{command, program_id, program_revision, disabled_reason, parameters}, "
@@ -181,22 +181,21 @@ def _parser() -> argparse.ArgumentParser:
     try_command.add_argument("test", nargs="?", metavar="TEST", help="user test name; omit to list them")
     map_command = commands.add_parser(
         "map",
-        help="answer application-map questions: components, paths, failing-path diff (read-only)",
+        help="answer application-map questions: components, operation paths, neighbours (read-only)",
         description=(
             "Read the accepted application map. With no view, list components (workload, services, whether it "
             "holds data), operations and the edge count. `path OPERATION` shows the operation's path through "
-            "components and edges in order, data holders marked, the probes covering it and their status. `diff` "
-            "shows components and edges on the paths of the failing user tests and not on the passing ones, then "
-            "those shared; it uses the same failing and passing tests as sdo detect. `near COMPONENT` shows what "
-            "it depends on and what depends on it within two hops, and the operations through it. Possible edges "
-            "(a Secret reference only suggests them) are labelled. Changes nothing."
+            "components and edges in order, data holders marked, the probes covering it and their status. "
+            "`near COMPONENT` shows what it depends on and what depends on it within two hops, and the "
+            "operations through it. Possible edges (a Secret reference only suggests them) are labelled. "
+            "Changes nothing."
         ),
     )
     map_command.add_argument(
         "view",
         nargs="?",
-        choices=("path", "diff", "near"),
-        help="path OPERATION, diff, or near COMPONENT; omit to list the map",
+        choices=("path", "near"),
+        help="path OPERATION or near COMPONENT; omit to list the map",
     )
     map_command.add_argument("name", nargs="?", metavar="NAME", help="operation (path) or component (near)")
     for name in ("diagnose", "menu"):
@@ -404,8 +403,6 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
     elif args.command == "map":
         if args.view in ("path", "near") and not args.name:
             raise ValueError(f"sdo map {args.view} needs a name")
-        if args.view == "diff" and args.name:
-            raise ValueError("sdo map diff takes no name")
         if args.view:
             request["map_view"] = args.view
         if args.name:

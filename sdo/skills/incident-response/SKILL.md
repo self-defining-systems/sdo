@@ -12,8 +12,8 @@ Habits, not a procedure.
   read the exact response.
 - Survey: `sdo detect`, `sdo changes`, `sdo timeline`, logs, the data the operations touch. An unexplained
   row near onset outranks a readable one off that path.
-- Reason over the app map: `sdo map diff` shows what only failing paths touch; `sdo map path OP` and
-  `sdo map near C` show a path and neighbours. Prefer causes on the failing path; an upstream dependency or data
+- Reason over the app map: `sdo map path OP` traces a failing operation and `sdo map near C` shows what a
+  component depends on and what depends on it. Prefer causes on the failing path; an upstream dependency or data
   holder can break what is downstream. Hypothesize along the path, including the data it reads and writes.
 - Before acting, hold two to four explanations differing in component, layer or timing, each with a check that
   could refute it. Drop what evidence refutes.

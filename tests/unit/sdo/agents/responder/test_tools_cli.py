@@ -423,15 +423,13 @@ def test_map_sends_its_view_and_name_and_prints_the_text(monkeypatch, capsys):
 
     assert tools_cli.main(["map"]) == 0
     assert tools_cli.main(["map", "path", "create"]) == 0
-    assert tools_cli.main(["map", "diff"]) == 0
     assert tools_cli.main(["map", "near", "api"]) == 0
     assert seen == [
         {"command": "map"},
         {"command": "map", "map_view": "path", "name": "create"},
-        {"command": "map", "map_view": "diff"},
         {"command": "map", "map_view": "near", "name": "api"},
     ]
-    assert capsys.readouterr().out == "components (2):\n\n" * 4
+    assert capsys.readouterr().out == "components (2):\n\n" * 3
     assert "text" in tools_cli.RESPONSE_FIELDS["map"]
 
 
@@ -439,7 +437,8 @@ def test_map_path_and_near_need_a_name(monkeypatch, capsys):
     monkeypatch.setattr(tools_cli, "_exchange", lambda *_: pytest.fail("no request without a name"))
     assert tools_cli.main(["map", "path"]) == 1
     assert tools_cli.main(["map", "near"]) == 1
-    assert tools_cli.main(["map", "diff", "extra"]) == 1
+    with pytest.raises(SystemExit):
+        tools_cli.main(["map", "diff"])
 
 
 def test_changes_limit_must_be_positive(monkeypatch, capsys):

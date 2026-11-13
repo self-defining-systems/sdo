@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -21,76 +20,6 @@ const (
 // architecture document the application map lives in.
 type architectureReader interface {
 	ArchitectureText() (string, error)
-}
-
-// mapGraph is the accepted application map with its possible edges: calls only
-// a Secret reference suggests, never confirmed.
-type mapGraph struct {
-	m        appmap.Map
-	possible [][2]string
-	comps    map[string]appmap.Component
-}
-
-func newMapGraph(doc string) (mapGraph, error) {
-	region, found, err := appmap.Find(doc)
-	if err != nil {
-		return mapGraph{}, err
-	}
-	if !found {
-		return mapGraph{}, errors.New("no application map: the accepted architecture has no application-map region")
-	}
-	m, err := appmap.Parse(region.YAML)
-	if err != nil {
-		return mapGraph{}, fmt.Errorf("application map unreadable: %w", err)
-	}
-	g := mapGraph{m: m, possible: appmap.ParseInventory(doc).Possible, comps: map[string]appmap.Component{}}
-	for _, c := range m.Components {
-		g.comps[c.Name] = c
-	}
-	return g, nil
-}
-
-func (g mapGraph) hasEdge(from, to string) bool {
-	for _, e := range g.m.Edges {
-		if e.From == from && e.To == to {
-			return true
-		}
-	}
-	return false
-}
-
-func (g mapGraph) operation(id string) (appmap.Operation, bool) {
-	for _, op := range g.m.Operations {
-		if op.ID == id {
-			return op, true
-		}
-	}
-	return appmap.Operation{}, false
-}
-
-// probesOf are the probes whose steps exercise the operation.
-func (g mapGraph) probesOf(id string) []appmap.Probe {
-	var out []appmap.Probe
-	for _, p := range g.m.Probes {
-		for _, op := range p.Operations {
-			if op == id {
-				out = append(out, p)
-				break
-			}
-		}
-	}
-	return out
-}
-
-// edgesWithin are the mapped edges whose two ends are both in the set, in map order.
-func (g mapGraph) edgesWithin(set map[string]bool) []string {
-	var out []string
-	for _, e := range g.m.Edges {
-		if set[e.From] && set[e.To] {
-			out = append(out, e.From+"->"+e.To)
-		}
-	}
-	return out
 }
 
 func (g mapGraph) label(name string) string {
@@ -135,12 +64,12 @@ func unknownName(kind, name string, valid []string) string {
 // application map and the live user-test verdicts. It writes nothing.
 func (l *ResponderLoop) applicationMap(ctx context.Context, request ToolRequest, response *ToolResponse) {
 	switch request.MapView {
-	case "", "path", "diff", "near":
+	case "", "path", "near":
 	default:
-		response.Error = fmt.Sprintf("unknown map view %q; views: path, diff, near", request.MapView)
+		response.Error = fmt.Sprintf("unknown map view %q; views: path, near", request.MapView)
 		return
 	}
-	if (request.MapView == "path" || request.MapView == "near") && request.Name == "" {
+	if request.MapView != "" && request.Name == "" {
 		response.Error = fmt.Sprintf("sdo map %s needs a name", request.MapView)
 		return
 	}
@@ -196,48 +125,25 @@ func (l *ResponderLoop) applicationMap(ctx context.Context, request ToolRequest,
 			return
 		}
 		response.Text = g.renderNear(request.Name)
-	case "diff":
-		response.Text = g.renderDiff(l.userTestJudgement(readView))
 	}
 	response.Summary = strings.TrimSpace("sdo map " + request.MapView)
 }
 
-// userJudgement is the failing and passing user tests `sdo detect` names, and
-// the components the detect summary puts on each failing test's path.
-type userJudgement struct {
-	known       bool
-	failing     []string
-	failingPath map[string][]string
-	passing     []string
-	unevaluated int
-}
-
-// userTestJudgement reads the same sets the first message and `sdo detect`
-// use: buildSuspectSet over the fresh snapshot.
-func (l *ResponderLoop) userTestJudgement(view program.ReadView) userJudgement {
+// userTestVerdicts maps scenario ID to FAIL or PASS for the tests `sdo detect`
+// judges: buildSuspectSet over the fresh snapshot.
+func (l *ResponderLoop) userTestVerdicts(view program.ReadView) map[string]string {
+	out := map[string]string{}
 	reads, ok := any(NewCycleReadView(view)).(detectReads)
 	if !ok {
-		return userJudgement{}
+		return out
 	}
 	in := l.pageInput(reads, l.Request.Findings, l.clock().UTC())
 	set := buildSuspectSet(detectInput{Request: in.Request, Findings: in.Findings, View: in.View, Now: in.Now})
-	out := userJudgement{known: true, passing: append([]string(nil), set.passing...), failingPath: map[string][]string{}, unevaluated: len(set.unevaluated)}
-	for _, test := range set.failing {
-		out.failing = append(out.failing, test.id)
-		out.failingPath[test.id] = test.path
-	}
-	return out
-}
-
-// userTestVerdicts maps scenario ID to FAIL or PASS for the judged tests.
-func (l *ResponderLoop) userTestVerdicts(view program.ReadView) map[string]string {
-	j := l.userTestJudgement(view)
-	out := map[string]string{}
-	for _, id := range j.passing {
+	for _, id := range set.passing {
 		out[id] = "PASS"
 	}
-	for _, id := range j.failing {
-		out[id] = "FAIL"
+	for _, test := range set.failing {
+		out[test.id] = "FAIL"
 	}
 	return out
 }
@@ -275,7 +181,7 @@ func (g mapGraph) renderOverview() string {
 	if n := g.unadoptedPossible(); n > 0 {
 		fmt.Fprintf(&out, " (+%d possible, unconfirmed)", n)
 	}
-	out.WriteString("\nsdo map path OPERATION | diff | near COMPONENT\n")
+	out.WriteString("\nsdo map path OPERATION | near COMPONENT\n")
 	return out.String()
 }
 
@@ -317,143 +223,6 @@ func (g mapGraph) renderPath(op appmap.Operation, verdicts map[string]string) st
 	return out.String()
 }
 
-// testComponents is the components a user test exercises: the operation paths
-// its probe covers, else the services the detect summary resolves.
-func (g mapGraph) testComponents(id string, fallback []string) map[string]bool {
-	set := map[string]bool{}
-	for _, p := range g.m.Probes {
-		if p.Scenario != id {
-			continue
-		}
-		for _, opID := range p.Operations {
-			if op, ok := g.operation(opID); ok {
-				for _, name := range op.Path {
-					set[name] = true
-				}
-			}
-		}
-	}
-	if len(set) == 0 {
-		for _, name := range fallback {
-			set[name] = true
-		}
-	}
-	return set
-}
-
-func (g mapGraph) renderDiff(j userJudgement) string {
-	if !j.known {
-		return "user tests are unavailable: the snapshot cannot be judged\n"
-	}
-	if len(j.failing) == 0 {
-		return fmt.Sprintf("no failing user tests (%d passing); nothing to diff\n", len(j.passing))
-	}
-	failComps, passComps := map[string]bool{}, map[string]bool{}
-	for _, id := range j.failing {
-		for n := range g.testComponents(id, j.failingPath[id]) {
-			failComps[n] = true
-		}
-	}
-	for _, id := range j.passing {
-		for n := range g.testComponents(id, nil) {
-			passComps[n] = true
-		}
-	}
-	var out strings.Builder
-	fmt.Fprintf(&out, "failing: %s\npassing: %s\n", strings.Join(j.failing, ", "), joinOrNone(j.passing))
-	if j.unevaluated > 0 {
-		fmt.Fprintf(&out, "not yet judged: %d tests\n", j.unevaluated)
-	}
-	only, both := map[string]bool{}, map[string]bool{}
-	for n := range failComps {
-		if passComps[n] {
-			both[n] = true
-		} else {
-			only[n] = true
-		}
-	}
-	passEdgeSet := map[string]bool{}
-	for _, e := range g.edgesWithin(passComps) {
-		passEdgeSet[e] = true
-	}
-	var onlyEdges, bothEdges []string
-	for _, e := range g.edgesWithin(failComps) {
-		if passEdgeSet[e] {
-			bothEdges = append(bothEdges, e)
-		} else {
-			onlyEdges = append(onlyEdges, e)
-		}
-	}
-	out.WriteString("only on failing paths:\n")
-	g.writeSet(&out, only, onlyEdges)
-	out.WriteString("shared with passing paths:\n")
-	g.writeSet(&out, both, bothEdges)
-	return out.String()
-}
-
-func (g mapGraph) writeSet(out *strings.Builder, comps map[string]bool, edges []string) {
-	names := sortedKeys(comps)
-	labels := make([]string, len(names))
-	for i, n := range names {
-		labels[i] = g.label(n)
-	}
-	fmt.Fprintf(out, "  components: %s\n  edges: %s\n", joinOrNone(labels), joinOrNone(edges))
-}
-
-func joinOrNone(items []string) string {
-	if len(items) == 0 {
-		return "none"
-	}
-	return strings.Join(items, ", ")
-}
-
-// neighbours walks the edges up to two hops from start. depends follows
-// From->To (what start depends on); otherwise To->From (what depends on
-// start). Possible edges are marked.
-func (g mapGraph) neighbours(start string, depends bool) []string {
-	seen := map[string]bool{start: true}
-	frontier := []string{start}
-	var out []string
-	for depth := 1; depth <= 2; depth++ {
-		var next []string
-		visit := func(cur string, pair [2]string, possible bool) {
-			from, to := pair[0], pair[1]
-			if !depends {
-				from, to = to, from
-			}
-			if from != cur || seen[to] {
-				return
-			}
-			if _, known := g.comps[to]; !known {
-				return
-			}
-			seen[to] = true
-			next = append(next, to)
-			text := g.label(to)
-			if depth == 2 {
-				text += " (via " + cur + ")"
-			}
-			if possible {
-				text += " (possible, unconfirmed)"
-			}
-			out = append(out, text)
-		}
-		for _, cur := range frontier {
-			for _, e := range g.m.Edges {
-				visit(cur, [2]string{e.From, e.To}, false)
-			}
-			for _, e := range g.possible {
-				if !g.hasEdge(e[0], e[1]) {
-					visit(cur, e, true)
-				}
-			}
-		}
-		sort.Strings(next)
-		frontier = next
-	}
-	return out
-}
-
 func (g mapGraph) renderNear(name string) string {
 	var out strings.Builder
 	c := g.comps[name]
@@ -464,19 +233,27 @@ func (g mapGraph) renderNear(name string) string {
 			more = fmt.Sprintf(", +%d more", len(items)-mapNearCap)
 			items = items[:mapNearCap]
 		}
-		fmt.Fprintf(&out, "%s: %s%s\n", title, joinOrNone(items), more)
-	}
-	write("upstream (it depends on, 2 hops)", g.neighbours(name, true))
-	write("downstream (depend on it, 2 hops)", g.neighbours(name, false))
-	var ops []string
-	for _, op := range g.m.Operations {
-		for _, n := range op.Path {
-			if n == name {
-				ops = append(ops, op.ID)
-				break
-			}
+		if len(items) == 0 {
+			items = []string{"none"}
 		}
+		fmt.Fprintf(&out, "%s: %s%s\n", title, strings.Join(items, ", "), more)
 	}
-	write("operations through it", ops)
+	hopTexts := func(hops []mapHop) []string {
+		var texts []string
+		for _, hop := range hops {
+			text := g.label(hop.Name)
+			if hop.Depth > 1 {
+				text += " (via " + hop.Via + ")"
+			}
+			if hop.Possible {
+				text += " (possible, unconfirmed)"
+			}
+			texts = append(texts, text)
+		}
+		return texts
+	}
+	write("upstream (it depends on, 2 hops)", hopTexts(g.reach(name, true, 2)))
+	write("downstream (depend on it, 2 hops)", hopTexts(g.reach(name, false, 2)))
+	write("operations through it", g.operationsThrough(name))
 	return out.String()
 }

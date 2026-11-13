@@ -90,24 +90,6 @@ func TestMapPathShowsOrderDataProbesAndStatus(t *testing.T) {
 	wantAll(t, r.Text, "cache [data: redis derived from db]", "probe list (call): PASS")
 }
 
-func TestMapDiffSplitsFailingOnlyFromShared(t *testing.T) {
-	r := mapCall(t, mapLoop(mapTestDoc, nil, "create"), "diff", "")
-	if r.Error != "" {
-		t.Fatal(r.Error)
-	}
-	wantAll(t, r.Text, "failing: create", "passing: list",
-		"only on failing paths:\n  components: db [data: postgres authoritative]\n  edges: api->db\n",
-		"shared with passing paths:\n  components: api, front\n  edges: front->api\n")
-	if strings.Contains(r.Text, "jobs") || strings.Contains(r.Text, "cache") {
-		t.Fatalf("components off the failing paths leaked:\n%s", r.Text)
-	}
-}
-
-func TestMapDiffWithNothingFailing(t *testing.T) {
-	r := mapCall(t, mapLoop(mapTestDoc, nil), "diff", "")
-	wantAll(t, r.Text, "no failing user tests")
-}
-
 func TestMapNearShowsBothDirectionsPossibleEdgesAndOperations(t *testing.T) {
 	loop := mapLoop(mapTestDoc, nil, "create")
 	r := mapCall(t, loop, "near", "api")
@@ -139,7 +121,7 @@ func TestMapWithoutAnApplicationMapSaysSo(t *testing.T) {
 	}
 	view := detectApp()
 	bare := NewResponderLoop(detectRequest(), nil, staticProvider{view.Snapshot}, nil, PlanExecutor{}, 10)
-	if r := mapCall(t, bare, "diff", ""); !strings.Contains(r.Error, "no application map") {
+	if r := mapCall(t, bare, "", ""); !strings.Contains(r.Error, "no application map") {
 		t.Fatalf("error = %q", r.Error)
 	}
 }
