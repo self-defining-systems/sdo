@@ -101,10 +101,11 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 		repairs = deploying
 	}
 	return &NativeIncidentBroker{
-		Replay: policy.Learning.Replay, Repository: repository, LedgerRoot: ledgerRoot, Repairs: repairs, SourceGate: gate,
+		Recording: policy.Agent.Recording,
+		Replay:    policy.Learning.Replay, Repository: repository, LedgerRoot: ledgerRoot, Repairs: repairs, SourceGate: gate,
 		HeadHolds: ConfigMapHeadHolds{Client: client, Namespace: controlNamespace}, HeadPollInterval: time.Duration(policy.Source.PollInterval),
 		CodePath: codePathConfigFromContract(config.GetCodePath()),
-		Deriver:  ProtoOutcomeDeriver{SessionRoot: config.GetRepositoryMountPath()}, ResponderBackend: policy.Agent.Provider, ResponderModel: policy.Agent.Model,
+		Deriver:  ProtoOutcomeDeriver{SessionRoot: config.GetRepositoryMountPath(), Recording: policy.Agent.Recording}, ResponderBackend: policy.Agent.Provider, ResponderModel: policy.Agent.Model,
 		ForceReflection: policy.Learning.ForceReflection, FrozenMemory: frozenMemory, PhaseLog: os.Stdout,
 		SessionRoot: config.GetRepositoryMountPath(), SessionRetention: DefaultSessionRetention,
 	}, client, nil
@@ -136,6 +137,7 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 		return err
 	}
 	freshExecutor := worker_registry.KubernetesExecutor{
+		Recording:      policy.Agent.Recording,
 		ToolchainImage: config.GetToolchainImage(),
 		Client:         client, Namespace: namespace, Registry: registry,
 		ServiceAccount: "sdo-responder", RepositoryPVC: config.GetRepositoryPvc(), RepositoryMountPath: config.GetRepositoryMountPath(),

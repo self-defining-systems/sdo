@@ -3,7 +3,7 @@
 Controller-owned responder loops preserve `open@pre-apply.json` immediately
 before the first live repair made through a typed plan application. The agent's
 own `kubectl` writes no longer request this capture (`sdo act`, the only command
-that did, is gone); their evidence is the API recording.
+that did, is gone); their evidence is the API recording when `agent.recording` is on, and nothing when it is off.
 The snapshot comes from the current provider for the current incident, not the
 preserved detect snapshot. `open@detect` stays unchanged as historical evidence.
 

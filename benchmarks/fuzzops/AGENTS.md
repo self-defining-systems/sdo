@@ -108,7 +108,7 @@ rewrites nothing else. It reads only the collected copy (`evidence/`, `memory/.s
 
 - `summary`: incidents, outcome, cause class, reach, auto-applied, responder tokens, reflection decision, learned count.
 - `events` (lanes `detect`, `stage`, `act`, `read`, `close`, `learn`) come from the ledger and outcome document and,
-  for the agent's own Kubernetes calls, from the mirrored recording `incidents/<d>/api-history/events.jsonl` (about 60
+  for the agent's own Kubernetes calls, from the mirrored recording `incidents/<d>/api-history/events.jsonl` (present only with `agent.recording: true`; `sdo-bench.yaml` sets it false) (about 60
   lines in `view.py`, no production import): one `act` event per write (`api-patch Deployment/api: <changed field
   paths>`, `(failed 403)`, `(refused: scope_read_only)`, `(open)` while unfinished), per exec or attach (spanning the
   session, redacted command) and per port-forward; one `read` event per minute that had reads

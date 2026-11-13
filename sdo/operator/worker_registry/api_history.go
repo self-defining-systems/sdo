@@ -17,7 +17,9 @@ import (
 // addAPIHistory fronts every agent Job's Kubernetes access with the recording proxy. The native sidecar alone
 // writes the history, using the same Pod service account as the agent. A responder (incident) scope may write
 // and its writes are forced to the responder field manager; every other agent gets a read-only task scope. The
-// reflection agent reads the incident's own recording, so it records to a separate directory.
+// reflection agent reads the incident's own recording, so it records to a separate directory. With Recording
+// off (agent.recording, the default) the proxy still forwards, forces the field manager and applies the fence,
+// but opens no store and keeps no history.
 func (e KubernetesExecutor) addAPIHistory(job *batchv1.Job, task *contracts.AgentTask) error {
 	if e.SessionPVCSubPath == "" {
 		return nil
@@ -29,7 +31,9 @@ func (e KubernetesExecutor) addAPIHistory(job *batchv1.Job, task *contracts.Agen
 	if reflection {
 		directory = "api-history-reflection"
 	}
-	if incident || reflection {
+	// Reflection reads the recording only when there is one; the responder keeps the mount for the incident's
+	// mutation-fence marker.
+	if incident || (reflection && e.Recording) {
 		sub := path.Join(e.SessionPVCSubPath, "api-history")
 		agent.VolumeMounts = append(agent.VolumeMounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session/api-history", SubPath: sub, ReadOnly: true})
 		agent.VolumeMounts = append(agent.VolumeMounts, corev1.VolumeMount{Name: "repository", MountPath: "/sdo/session/api-history.generation", SubPath: sub + ".generation", ReadOnly: true})
@@ -54,10 +58,14 @@ func (e KubernetesExecutor) addAPIHistory(job *batchv1.Job, task *contracts.Agen
 		_ = task.GetRequest().UnmarshalTo(typed)
 		scope = "incident:" + typed.GetIncidentId()
 	}
+	command := []string{"/usr/local/bin/sdo-operator", "api-proxy", "--scope", scope, "--directory", "/sdo/history"}
+	if e.Recording {
+		command = append(command, "--recording")
+	}
 	always := corev1.ContainerRestartPolicyAlways
 	sidecar := corev1.Container{
 		Name: "kube-api-history", Image: image,
-		Command:         []string{"/usr/local/bin/sdo-operator", "api-proxy", "--scope", scope, "--directory", "/sdo/history"},
+		Command:         command,
 		RestartPolicy:   &always,
 		StartupProbe:    &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"/usr/local/bin/sdo-operator", "api-proxy", "ready"}}}, PeriodSeconds: 1, TimeoutSeconds: 2, FailureThreshold: 60},
 		VolumeMounts:    []corev1.VolumeMount{{Name: "repository", MountPath: "/sdo/history", SubPath: sub}, {Name: "repository", MountPath: "/sdo/history.generation", SubPath: sub + ".generation"}},

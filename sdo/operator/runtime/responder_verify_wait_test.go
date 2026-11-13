@@ -43,3 +43,14 @@ func TestVerifyWaitStillWaitsWhenTheRecordingIsPending(t *testing.T) {
 		t.Fatalf("verify --wait skipped the wait while the recording is pending: %v", *waits)
 	}
 }
+
+// With agent.recording off there is no ExternalReceipts and so no way to know the agent wrote nothing: --wait
+// falls back to waiting for the settle instead of skipping it, and nothing errors on the missing recording.
+func TestVerifyWaitStillWaitsWithNoRecording(t *testing.T) {
+	loop, waits := verifyWaitLoop(nil, false)
+	loop.ExternalReceipts = nil
+	loop.Handle(context.Background(), ToolRequest{Command: "verify", WaitSeconds: 60})
+	if len(*waits) != 1 {
+		t.Fatalf("verify --wait skipped the settle with no recording: %v", *waits)
+	}
+}
