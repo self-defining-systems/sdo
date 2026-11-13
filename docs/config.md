@@ -57,7 +57,7 @@ that show nothing missing without it are the case for removing it.
 | `agent.model` | `SDO_AGENT_MODEL` | string | `""` | agent model of every worker (required) |
 | `agent.effort` | `SDO_AGENT_EFFORT` | string | `medium` | reasoning effort of every worker: low, medium, high, xhigh or max |
 | `agent.reasoning_summary` | `SDO_AGENT_REASONING_SUMMARY` | string | `auto` | reasoning summaries Codex workers record in their rollouts: auto, concise, detailed or none (auto and concise record readable summaries) |
-| `agent.lifecycle_timeout` | `SDO_AGENT_LIFECYCLE_TIMEOUT` | duration | `15m0s` | limit of one lifecycle (detection designer) session |
+| `agent.lifecycle_timeout` | `SDO_AGENT_LIFECYCLE_TIMEOUT` | duration | `1h0m0s` | limit of one lifecycle (detection designer) session |
 | `agent.memory_check_timeout` | `SDO_AGENT_MEMORY_CHECK_TIMEOUT` | duration | `5m0s` | limit of one memory check a worker runs on its checkout |
 | `agent.code_path` | `SDO_AGENT_CODE_PATH` | string | `go` | programming-model plugin set: go or shell |
 | `agent.code_path_overrides` | `SDO_AGENT_CODE_PATH_OVERRIDES` | string | `""` | CodePathOverrides as a JSON object (for example {"response_stages":["agent"]}); empty selects the code path's own seams |

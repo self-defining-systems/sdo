@@ -1941,6 +1941,7 @@ func evaluateOnce(
 	// cluster, so it judges reachability without a recorded baseline.
 	trafficProvider := TrafficSnapshotProvider{Base: provider}
 	var unavailable []evaluation.UnavailableDetector
+	existingRecordsExercised := 0
 	if workloads := TrafficWorkloadNames(detectors); len(workloads) > 0 {
 		if trafficAPI == nil {
 			return errors.New("traffic health evaluation requires the active memory host")
@@ -2045,13 +2046,18 @@ func evaluateOnce(
 	if len(unavailable) > 0 {
 		status = evaluation.Unavailable
 	}
+	if trafficProvider.Observer != nil {
+		for _, window := range trafficProvider.Observer.Windows() {
+			existingRecordsExercised += window.ExistingRecordsExercised()
+		}
+	}
 	for _, finding := range findings {
 		if finding.Status == sdk.FindingActive {
 			status = evaluation.Firing
 			break
 		}
 	}
-	if err := json.NewEncoder(stdout).Encode(evaluation.Verdict{Status: status, Findings: findings, Unavailable: unavailable, DetectorStates: unconfirmed}); err != nil {
+	if err := json.NewEncoder(stdout).Encode(evaluation.Verdict{Status: status, Findings: findings, Unavailable: unavailable, DetectorStates: unconfirmed, ExistingRecordsExercised: existingRecordsExercised}); err != nil {
 		return err
 	}
 	if *acceptSeed && status != evaluation.Clear {

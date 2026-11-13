@@ -121,3 +121,17 @@ func (s Scenario) ExistingRecordsSteps() []ExistingRecordsStep {
 }
 
 func sentinel(key string) string { return "SDOSENTINEL" + key + "END" }
+
+// ExistingRecordsExercised counts the samples in which a ReadsExistingRecords
+// step returned at least one record the probe did not write.
+func (w Window) ExistingRecordsExercised() int {
+	n := 0
+	for _, scenario := range w.Scenarios {
+		for _, sample := range scenario.Samples {
+			if sample.ExistingRecords == ExistingRecordsExercised {
+				n++
+			}
+		}
+	}
+	return n
+}

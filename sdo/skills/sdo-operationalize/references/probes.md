@@ -56,6 +56,9 @@ touched the affected records.
   only notes whether the step ever saw a record the probe did not create. The step must not template a key a write
   step of its scenario saved: list live and save the id from the list, then open it. Only an app whose users keep
   no records sets `no_user_records: <why>` at the top level of the map.
+- Onboarding acceptance also needs one marked step to have returned a record the probe did not write. A probe
+  identity that owns only its own records (a listing of the projects or containers it created) never does, so
+  grant it read access to existing users' containers (the probe-identity procedure) and list those.
 - Every list, open and download the health objective names has a call or read-later scenario that reads
   existing records the probe never wrote, on every iteration, over every such record (or the first
   `traffic.MaxSteps` of them): save their ids in a Setup step or list them live, and open each one a user opens.

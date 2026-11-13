@@ -20,6 +20,10 @@ func WindowFrom(ctx sdk.DetectionContext, workload string) (Window, bool)
     WindowFrom returns the observations of workload, when the context carries
     them.
 
+func (w Window) ExistingRecordsExercised() int
+    ExistingRecordsExercised counts the samples in which a ReadsExistingRecords
+    step returned at least one record the probe did not write.
+
 func (w Window) IdentityWait() time.Duration
     IdentityWait is the longest provisioning run any scenario is still waiting
     for, zero when none waits on a probe user.
