@@ -307,11 +307,6 @@ func (s *Server) readState(ctx context.Context, request *pb.ReadStateRequest) (a
 		observed := at.AsTime()
 		snapshot.ObservedAtTime = &observed
 	}
-	live, err := s.readFactory(ctx, snapshot)
-	if err != nil {
-		return appstate.Values{}, err
-	}
-	view := s.programObjects(live, snapshot)
 	ctx, cancel := withinTransportBudget(ctx)
 	defer cancel()
 	key := "readstate:" + id
@@ -336,7 +331,17 @@ func (s *Server) readState(ctx context.Context, request *pb.ReadStateRequest) (a
 			delete(s.running, key)
 			s.runMu.Unlock()
 		}()
-		values, err := appstate.Run(ctx, reader, view)
+		defer func() {
+			if value := recover(); value != nil {
+				done <- outcome{err: fmt.Errorf("app-state reader panicked: %v", value)}
+			}
+		}()
+		live, err := s.readFactory(ctx, snapshot)
+		if err != nil {
+			done <- outcome{err: err}
+			return
+		}
+		values, err := appstate.Run(ctx, reader, s.programObjects(live, snapshot))
 		done <- outcome{values, err}
 	}()
 	select {

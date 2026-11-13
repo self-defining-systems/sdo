@@ -245,10 +245,75 @@ func TestAppStateReconfigureRefusesTooManyOrDuplicateReaders(t *testing.T) {
 	}
 }
 
-
 type appStateSource map[string]carried.Result
 
 func (s appStateSource) AppStateResult(id string) (carried.Result, bool) {
 	r, ok := s[id]
 	return r, ok
+}
+
+func TestAppStateRoundRobinsSoSlowReadersCannotStarveLaterOnes(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var readers []fakeReader
+		for _, id := range []string{"a", "b", "c", "d", "e", "f", "g", "h"} {
+			readers = append(readers, fakeReader{id: id, interval: 10 * time.Second, read: func(ctx context.Context) (carried.Values, error) {
+				time.Sleep(4 * time.Second)
+				return valuesOf("n", "1"), nil
+			}})
+		}
+		observer, store := newTestObserver(t, readers...)
+		ctx, cancel := context.WithCancel(context.Background())
+		observer.Start(ctx)
+		time.Sleep(25 * time.Second)
+		synctest.Wait()
+		cancel()
+		observer.Stop()
+		for _, r := range readers {
+			if res, ok := store.Result(r.id); !ok || len(res.Recent) < 2 {
+				t.Errorf("reader %s was starved: %d reads", r.id, len(res.Recent))
+			}
+		}
+	})
+}
+
+func TestAppStateLongErrorsAreBounded(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		observer, store := newTestObserver(t, fakeReader{id: "loud", interval: time.Minute, read: func(context.Context) (carried.Values, error) {
+			return carried.Values{}, errors.New(string(make([]byte, 5000)))
+		}})
+		ctx, cancel := context.WithCancel(context.Background())
+		observer.Start(ctx)
+		synctest.Wait()
+		cancel()
+		observer.Stop()
+		r, _ := store.Result("loud")
+		if len(r.Recent[0].Error) > carried.MaxValueBytes {
+			t.Fatalf("error is %d bytes", len(r.Recent[0].Error))
+		}
+	})
+}
+
+func TestAppStateReadFinishingAfterReconfigureIsDropped(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		slow := fakeReader{id: "r", interval: time.Minute, read: func(ctx context.Context) (carried.Values, error) {
+			<-release
+			return valuesOf("old", "1"), nil
+		}}
+		observer, store := newTestObserver(t, slow)
+		ctx, cancel := context.WithCancel(context.Background())
+		observer.Start(ctx)
+		synctest.Wait()
+		_ = observer.Reconfigure(nil)
+		_ = observer.Reconfigure([]sdk.Detector{fakeReader{id: "r", interval: time.Hour, read: func(context.Context) (carried.Values, error) { return valuesOf("new", "1"), nil }}})
+		close(release)
+		synctest.Wait()
+		if res, ok := store.Result("r"); ok && res.Recent[0].Values.Len() > 0 {
+			if _, stale := res.Recent[0].Values.Get("old"); stale {
+				t.Fatal("a read from the previous revision was recorded")
+			}
+		}
+		cancel()
+		observer.Stop()
+	})
 }

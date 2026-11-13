@@ -320,6 +320,7 @@ func parseUsageSummary(data []byte, namespace string, pods []corev1.Pod, now tim
 	})
 	return r, nil
 }
+
 // lastOOMKilled reads the Pod status the observer already holds: the finish
 // time of the container's previous termination when its reason was OOMKilled.
 func lastOOMKilled(p corev1.Pod, container string) time.Time {

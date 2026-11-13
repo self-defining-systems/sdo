@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -139,6 +140,26 @@ func (r *RemoteMemory) ReadState(ctx context.Context, id string) (carried.Values
 		return carried.Values{}, err
 	}
 	return values, nil
+}
+
+// appStateObservationBudget bounds one reader's result on the wire: 16 readers
+// at the worst-case key and value sizes would exceed the host's 16 MiB message
+// limit and fail every evaluation.
+const appStateObservationBudget = 512 << 10
+
+// boundAppState drops the oldest healthy history, then the oldest ring
+// snapshots (keeping the newest), until the result fits budget bytes.
+func boundAppState(r carried.Result, budget int) carried.Result {
+	size := func() int { raw, _ := json.Marshal(r); return len(raw) }
+	r.HealthyHistory = slices.Clone(r.HealthyHistory)
+	r.Recent = slices.Clone(r.Recent)
+	for size() > budget && len(r.HealthyHistory) > 0 {
+		r.HealthyHistory = r.HealthyHistory[1:]
+	}
+	for size() > budget && len(r.Recent) > 1 {
+		r.Recent = r.Recent[1:]
+	}
+	return r
 }
 
 // appStateReaderClue is the reader detector's whole output: an info finding
@@ -367,7 +388,7 @@ func (r *RemoteMemory) buildObservation(view sdk.DetectionContext) (*pb.MemoryOb
 	for _, spec := range r.registrations {
 		for _, id := range spec.AppStateReaders {
 			if v, ok := source.AppStateResult(id); ok {
-				if out.AppState[id], err = wireStruct(v); err != nil {
+				if out.AppState[id], err = wireStruct(boundAppState(v, appStateObservationBudget)); err != nil {
 					return nil, err
 				}
 			}

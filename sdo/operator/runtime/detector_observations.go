@@ -92,12 +92,19 @@ func (o detectorObservations) compose(base SnapshotProvider, detectors []sdk.Det
 		provider = VantageSnapshotProvider{Base: provider, Observer: vantageObserver, Baseline: o.VantageBaseline}
 	}
 	if o.AppState != nil {
+		provider = AppStateSnapshotProvider{Base: provider, Observer: o.AppState}
+	}
+	composed, metricsObserver, err := withMetrics(provider, detectors, o.Telemetry, designerSources, o.RequireMetrics, clock)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Last, so a rejected revision never leaves its readers running.
+	if o.AppState != nil {
 		if err := o.AppState.Reconfigure(detectors); err != nil {
 			return nil, nil, err
 		}
-		provider = AppStateSnapshotProvider{Base: provider, Observer: o.AppState}
 	}
-	return withMetrics(provider, detectors, o.Telemetry, designerSources, o.RequireMetrics, clock)
+	return composed, metricsObserver, nil
 }
 
 func (o detectorObservations) exec() kubereads.PodExec {

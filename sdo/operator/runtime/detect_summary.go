@@ -497,13 +497,13 @@ func objectOfFinding(finding sdk.Finding) []sdk.ObjectRef {
 // `sdo detect` and the built-in restore playbook's candidates read it, so they
 // name the same suspects.
 type detectSuspectSet struct {
-	m                              program.AppMap
-	failing                        []failingTest
-	passing, unevaluated           []string
-	passingServices                map[string]bool
-	openingFindings, clues         []sdk.Finding
-	onset                          time.Time
-	suspects                       []*detectSuspect
+	m                      program.AppMap
+	failing                []failingTest
+	passing, unevaluated   []string
+	passingServices        map[string]bool
+	openingFindings, clues []sdk.Finding
+	onset                  time.Time
+	suspects               []*detectSuspect
 }
 
 func buildSuspectSet(in detectInput) detectSuspectSet {

@@ -66,8 +66,10 @@ func TestAppStateStoreLastHealthyUsesTheSettleRule(t *testing.T) {
 	store.Retain(map[string][]string{"r": nil})
 	at := func(d time.Duration) time.Time { return storeT0.Add(d) }
 
-	store.Record("r", stateSnap(0, "limit", "10"))
+	// A snapshot read before the stretch began (possibly while unhealthy) is no reference.
+	store.Record("r", stateSnap(-30*time.Second, "limit", "stale"))
 	store.Observe(at(0), true)
+	store.Record("r", stateSnap(10*time.Second, "limit", "10"))
 	if r, _ := store.Result("r"); r.Healthy != nil {
 		t.Fatal("the first clear evaluation must not be a baseline")
 	}
@@ -76,15 +78,16 @@ func TestAppStateStoreLastHealthyUsesTheSettleRule(t *testing.T) {
 	store.Record("r", stateSnap(DefaultStateSettle, "limit", "10"))
 	store.Observe(at(DefaultStateSettle), true)
 	r, _ := store.Result("r")
-	if r.Healthy == nil || !r.Healthy.At.Equal(at(0)) {
-		t.Fatalf("healthy = %+v, want the snapshot from the start of the settled stretch", r.Healthy)
+	if r.Healthy == nil || !r.Healthy.At.Equal(at(10*time.Second)) {
+		t.Fatalf("healthy = %+v, want the first snapshot read inside the settled stretch", r.Healthy)
 	}
 
 	// A fault that changes the value never becomes the baseline.
 	store.Record("r", stateSnap(DefaultStateSettle+time.Minute, "limit", "1"))
 	store.Observe(at(DefaultStateSettle+time.Minute), false)
-	store.Record("r", stateSnap(DefaultStateSettle+2*time.Minute, "limit", "1"))
 	store.Observe(at(DefaultStateSettle+2*time.Minute), true)
+	store.Record("r", stateSnap(DefaultStateSettle+2*time.Minute+time.Second, "limit", "1"))
+	store.Observe(at(DefaultStateSettle+2*time.Minute+time.Minute), true)
 	r, _ = store.Result("r")
 	if v, _ := r.Healthy.Values.Get("limit"); v != "10" {
 		t.Fatalf("an unhealthy stretch changed last-healthy to %s", v)
@@ -95,10 +98,10 @@ func TestAppStateStoreHealthyHistoryMakesAKeyNoisy(t *testing.T) {
 	store := NewAppStateStore(DefaultStateSettle)
 	store.Retain(map[string][]string{"r": {"declared*"}})
 	step := DefaultStateSettle / 2
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 8; i++ {
 		d := time.Duration(i) * step
-		store.Record("r", stateSnap(d, "stable", "1", "flaps", fmt.Sprint(i%2), "declared_x", "1"))
 		store.Observe(storeT0.Add(d), true)
+		store.Record("r", stateSnap(d, "stable", "1", "flaps", fmt.Sprint(i%2), "declared_x", "1"))
 	}
 	result, _ := store.Result("r")
 	state := carried.State{Result: result}

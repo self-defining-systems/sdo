@@ -23,17 +23,15 @@ type AppStateStore struct {
 	mu      sync.Mutex
 	stretch healthyStretch
 	readers map[string]*appStateReaderState
-	// candidate is each reader's newest usable snapshot at the start of the
-	// current healthy stretch; samples are the usable snapshots since.
-	candidate map[string]carried.Snapshot
-	samples   map[string][]carried.Snapshot
-	active    bool
+	// samples are each reader's usable snapshots since the current healthy
+	// stretch began; the first becomes last-healthy when the stretch settles.
+	samples map[string][]carried.Snapshot
+	active  bool
 }
 
 type appStateReaderState struct {
 	declared []string
 	ring     []carried.Snapshot
-	latest   *carried.Snapshot // newest usable snapshot
 	healthy  *carried.Snapshot
 	history  []carried.Snapshot
 }
@@ -76,7 +74,6 @@ func (s *AppStateStore) Retain(readers map[string][]string) {
 	for id := range s.readers {
 		if !keep[id] {
 			delete(s.readers, id)
-			delete(s.candidate, id)
 			delete(s.samples, id)
 		}
 	}
@@ -100,7 +97,6 @@ func (s *AppStateStore) Record(id string, snap carried.Snapshot) {
 	if snap.Error != "" {
 		return
 	}
-	state.latest = &snap
 	if s.active {
 		s.samples[id] = append(s.samples[id], snap)
 	}
@@ -113,31 +109,24 @@ func (s *AppStateStore) Observe(now time.Time, healthy bool) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	latest := func() map[string]carried.Snapshot {
-		out := map[string]carried.Snapshot{}
-		for id, state := range s.readers {
-			if state.latest != nil {
-				out[id] = *state.latest
-			}
-		}
-		return out
-	}
 	switch event, _ := s.stretch.observe(now, healthy); event {
 	case stretchBroken:
-		s.candidate, s.samples, s.active = nil, nil, false
+		s.samples, s.active = nil, false
 	case stretchStarted:
-		s.candidate, s.samples, s.active = latest(), map[string][]carried.Snapshot{}, true
+		s.samples, s.active = map[string][]carried.Snapshot{}, true
 	case stretchSettled:
-		for id, snap := range s.candidate {
-			state := s.readers[id]
-			if state == nil {
+		// The reference is the first snapshot read inside the stretch: a
+		// snapshot from before it may have been read while unhealthy.
+		for id, state := range s.readers {
+			samples := s.samples[id]
+			if len(samples) == 0 {
 				continue
 			}
-			promoted := snap
+			promoted := samples[0]
 			state.healthy = &promoted
-			state.history = spreadByTime(append(state.history, s.samples[id]...), func(x carried.Snapshot) time.Time { return x.At }, appStateHistoryLimit)
+			state.history = spreadByTime(append(state.history, samples...), func(x carried.Snapshot) time.Time { return x.At }, appStateHistoryLimit)
 		}
-		s.candidate, s.samples, s.active = latest(), map[string][]carried.Snapshot{}, true
+		s.samples, s.active = map[string][]carried.Snapshot{}, true
 	}
 }
 

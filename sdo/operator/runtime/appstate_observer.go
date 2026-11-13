@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sort"
 	"sync"
 	"time"
 
@@ -48,6 +49,7 @@ type AppStateObserver struct {
 	readers []appStateReader
 	running map[string]bool
 	next    map[string]time.Time
+	gen     uint64
 	slots   chan struct{}
 	cancel  context.CancelFunc
 	wait    sync.WaitGroup
@@ -92,6 +94,7 @@ func (o *AppStateObserver) Reconfigure(detectors []sdk.Detector) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.readers = readers
+	o.gen++
 	for id := range o.next {
 		if _, ok := declared[id]; !ok {
 			delete(o.next, id)
@@ -144,7 +147,15 @@ func (o *AppStateObserver) dispatch(ctx context.Context) {
 	now := o.now()
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	for _, r := range slices.Clone(o.readers) {
+	// Longest-waiting first, so slow reads of early readers cannot starve later ones.
+	due := slices.Clone(o.readers)
+	sort.SliceStable(due, func(i, j int) bool {
+		if a, b := o.next[due[i].id], o.next[due[j].id]; !a.Equal(b) {
+			return a.Before(b)
+		}
+		return due[i].id < due[j].id
+	})
+	for _, r := range due {
 		if o.running[r.id] || now.Before(o.next[r.id]) {
 			continue
 		}
@@ -156,26 +167,38 @@ func (o *AppStateObserver) dispatch(ctx context.Context) {
 		o.running[r.id] = true
 		o.next[r.id] = now.Add(r.interval)
 		o.wait.Add(1)
-		go o.run(ctx, r)
+		go o.run(ctx, r, o.gen)
 	}
 }
 
-func (o *AppStateObserver) run(ctx context.Context, r appStateReader) {
+func (o *AppStateObserver) run(ctx context.Context, r appStateReader, gen uint64) {
 	defer o.wait.Done()
 	readCtx, cancel := context.WithTimeout(ctx, AppStateReadTimeout)
 	values, err := r.read(readCtx)
 	cancel()
 	snap := carried.Snapshot{At: o.now().UTC(), Values: values}
 	if err != nil {
-		snap = carried.Snapshot{At: snap.At, Error: err.Error()}
-	}
-	if ctx.Err() == nil {
-		o.store.Record(r.id, snap)
+		snap = carried.Snapshot{At: snap.At, Error: boundedAppStateError(err)}
 	}
 	o.mu.Lock()
+	// A read that outlived its revision (or a Stop) is dropped, never recorded
+	// against a reader that was removed and added back.
+	if ctx.Err() == nil && gen == o.gen {
+		o.store.Record(r.id, snap)
+	}
 	delete(o.running, r.id)
 	o.mu.Unlock()
 	<-o.slots
+}
+
+// boundedAppStateError keeps a reader's error to carried.MaxValueBytes: it
+// reaches clues and the observation, so it is as bounded as a value.
+func boundedAppStateError(err error) string {
+	text := err.Error()
+	if len(text) > carried.MaxValueBytes {
+		text = text[:carried.MaxValueBytes]
+	}
+	return text
 }
 
 // AppStateSnapshotProvider attaches each reader's last finished result to the
