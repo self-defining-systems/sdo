@@ -177,16 +177,11 @@ def _incident_result_schema() -> dict[str, object]:
 
 
 def recent_changes_block(request: IncidentRequest) -> str:
-    """The changes nearest onset Go listed, newest first, or the commands that list them on demand."""
+    """The candidate block Go rendered (the ``recent_changes`` slot), or the commands that show it on demand."""
     lines = list(request.recent_changes)
     if not lines:
-        return "Recent changes: `sdo changes`; signals over time: `sdo timeline`."
-    *changes, pointer = lines
-    if not changes:
-        return pointer
-    return "\n".join(
-        ["Changes nearest onset (newest first, time from onset):", *(f"- {line}" for line in changes), pointer]
-    )
+        return "Candidates: `sdo detect`; every change: `sdo changes`; signals over time: `sdo timeline`."
+    return "\n".join(lines)
 
 
 def _responder_prompt(request: IncidentRequest) -> RenderedPrompt:

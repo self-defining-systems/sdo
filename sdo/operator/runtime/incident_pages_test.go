@@ -144,14 +144,14 @@ func TestIncidentChangesListDeparturesWithWriterInTheWindow(t *testing.T) {
 	appState := &staticAppState{rows: []IncidentChange{{At: onset.Add(-time.Minute), Component: "db", ReaderOrObject: "settings", Key: "rate_limit", Before: "100", After: "1", Noisy: true}}}
 	changes := buildIncidentChanges(incidentPageInput{Request: request, View: view, Signals: newIncidentSignals(), AppState: appState, Now: onset.Add(time.Minute), Since: 30 * time.Minute})
 	rows := parseCSV(t, changes)
-	if strings.Join(rows[0], ",") != "t_rel_s,at_utc,source,component,reader_or_object,key,before,after,writer,noisy" {
+	if strings.Join(rows[0], ",") != "t_rel_s,at_utc,source,component,reader_or_object,key,before,after,writer,noisy,read_at_utc" {
 		t.Fatalf("header = %v", rows[0])
 	}
 	if len(rows) != 3 {
 		t.Fatalf("rows:\n%s", changes)
 	}
 	state, departure := rows[1], rows[2]
-	if strings.Join(state, ",") != "-60,"+onset.Add(-time.Minute).Format(time.RFC3339)+",app-state,db,settings,rate_limit,100,1,,true" {
+	if strings.Join(state, ",") != "-60,"+onset.Add(-time.Minute).Format(time.RFC3339)+",app-state,db,settings,rate_limit,100,1,,true," {
 		t.Fatalf("app-state row = %v", state)
 	}
 	if departure[0] != "-4" || departure[2] != "kubernetes" || departure[3] != "db" || departure[4] != "NetworkPolicy/restrict-db" || departure[5] != "spec.egress" || departure[8] != "kubectl" || departure[9] != "false" {
@@ -191,14 +191,14 @@ func TestIncidentChangesNeverCarrySecretValuesAndAreCapped(t *testing.T) {
 	}
 }
 
-func TestStoreChangeRowsUseTheObservedTimeAndBoundedValues(t *testing.T) {
+func TestStoreChangeRowsCarryTheReadTimeNotAChangeTimeAndBoundedValues(t *testing.T) {
 	observed := detectOnset.Add(-time.Minute)
 	stores := []storestate.StoreChanges{{
 		Component: "db", Engine: "postgres", Pod: sdk.ObjectRef{Kind: "Pod", Namespace: "app", Name: "db-0"}, ObservedAt: observed, Baselined: true,
 		Changes: []storestate.Change{{Before: &storestate.Item{Kind: "setting", Name: "max_connections", Value: "100"}, After: &storestate.Item{Kind: "setting", Name: "max_connections", Value: "5"}}},
 	}, {Component: "cache", Error: "no readings"}}
 	rows := storeChangeRows(stores)
-	if len(rows) != 1 || rows[0].Source != "store" || rows[0].Component != "db" || rows[0].ReaderOrObject != "Pod/db-0" || rows[0].Before != "100" || rows[0].After != "5" || !rows[0].At.Equal(observed) {
+	if len(rows) != 1 || rows[0].Source != "store" || rows[0].Component != "db" || rows[0].ReaderOrObject != "Pod/db-0" || rows[0].Before != "100" || rows[0].After != "5" || !rows[0].At.IsZero() || !rows[0].ReadAt.Equal(observed) {
 		t.Fatalf("store rows = %+v", rows)
 	}
 }
@@ -230,7 +230,7 @@ func TestChangesAndTimelineCommandsPrintCSVAndWriteNoFiles(t *testing.T) {
 		t.Fatalf("changes error: %s", response.Error)
 	}
 	rows := parseCSV(t, []byte(response.Text))
-	if strings.Join(rows[0], ",") != "t_rel_s,at_utc,source,component,reader_or_object,key,before,after,writer,noisy" {
+	if strings.Join(rows[0], ",") != "t_rel_s,at_utc,source,component,reader_or_object,key,before,after,writer,noisy,read_at_utc" {
 		t.Fatalf("header = %v", rows[0])
 	}
 	if len(rows) != 2 || rows[1][5] != "rate_limit" {
@@ -258,12 +258,12 @@ func TestChangesAndTimelineCommandsPrintCSVAndWriteNoFiles(t *testing.T) {
 	}
 }
 
-func TestDetectShowsRecentChangesInlineNewestFirst(t *testing.T) {
+func TestDetectPlacesAppStateRowsOnTheirComponentAndKeepsOldRowsInElsewhere(t *testing.T) {
 	view := detectApp("create")
 	onset := detectNow().Add(-time.Minute)
-	var rows []IncidentChange
-	for index := range 12 {
-		rows = append(rows, IncidentChange{At: onset.Add(-time.Duration(index+1) * 30 * time.Second), Component: "db", ReaderOrObject: "settings", Key: fmt.Sprintf("k%d", index), Before: "1", After: "2", Writer: "churn"})
+	rows := []IncidentChange{
+		{At: onset.Add(-30 * time.Second), Source: "app-state", Component: "db", ReaderOrObject: "settings", Key: "rate_limit", Before: "100", After: "1"},
+		{At: onset.Add(-90 * time.Second), Source: "app-state", Component: "jobs", ReaderOrObject: "cron", Key: "interval", Before: "5", After: "9"},
 	}
 	loop, _ := onDemandLoop(t, view, &staticAppState{rows: rows})
 	loop.Request.DetectedAt = onset
@@ -271,50 +271,34 @@ func TestDetectShowsRecentChangesInlineNewestFirst(t *testing.T) {
 	if response.Error != "" {
 		t.Fatal(response.Error)
 	}
-	if strings.Contains(response.Text, "files:") {
-		t.Fatalf("detect still names files:\n%s", response.Text)
+	if strings.Contains(response.Text, "files:") || strings.Contains(response.Text, "changes (newest first") {
+		t.Fatalf("the inline change list is gone:\n%s", response.Text)
 	}
-	if !strings.Contains(response.Text, "-30s app-state db settings k0: 1 → 2 by: churn") || strings.Contains(response.Text, " k10:") {
-		t.Fatalf("inline changes:\n%s", response.Text)
+	db := strings.Index(response.Text, "\ndb  ")
+	if db < 0 || !strings.Contains(response.Text[db:], "-30s app-state settings rate_limit: 100 → 1") {
+		t.Fatalf("the db row sits under db:\n%s", response.Text)
 	}
-	if strings.Index(response.Text, " k0:") > strings.Index(response.Text, " k1:") || !strings.Contains(response.Text, incidentPointer) {
-		t.Fatalf("newest first, then the pointer:\n%s", response.Text)
+	if !strings.Contains(response.Text, "elsewhere: 1 row on 1 components (jobs)") {
+		t.Fatalf("jobs is off the failing path:\n%s", response.Text)
 	}
 }
 
-func TestRecentChangeLinesAreCappedAndMaskCredentials(t *testing.T) {
+func TestCandidateBlockMasksCredentialValues(t *testing.T) {
 	onset := detectOnset
-	rows := []IncidentChange{
-		{Component: "db", ReaderOrObject: "ConfigMap/lost", After: "missing"},
-		{At: onset.Add(-125 * time.Second), Source: "app-state", Component: "cache", ReaderOrObject: "config", Key: "requirepass", Before: "old", After: "hunter2"},
-		{At: onset.Add(5 * time.Second), Source: "kubernetes", Component: "api", ReaderOrObject: "Deployment/api", Key: "spec.image", Before: "accepted-source", After: "drifted", Writer: "kubectl-patch"},
-	}
-	lines := recentChangeLines(rows, onset)
-	want := []string{
-		"+5s kubernetes api Deployment/api spec.image: accepted-source → drifted by: kubectl-patch",
-		"-2m05s app-state cache config requirepass: [redacted] → [redacted]",
-		"? db ConfigMap/lost: (none) → missing",
-		incidentPointer,
-	}
-	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("lines:\n%s", strings.Join(lines, "\n"))
-	}
-	var many []IncidentChange
-	for index := range 30 {
-		many = append(many, IncidentChange{At: onset.Add(-time.Duration(index) * time.Second), Component: "db"})
-	}
-	if got := len(recentChangeLines(many, onset)); got != incidentInlineChanges+1 {
-		t.Fatalf("%d lines, want %d", got, incidentInlineChanges+1)
+	rows := []IncidentChange{{At: onset.Add(-125 * time.Second), Source: "app-state", Component: "db", ReaderOrObject: "config", Key: "requirepass", Before: "old", After: "hunter2"}}
+	block := strings.Join(incidentCandidateBlock(incidentPageInput{Request: IncidentRequest{IncidentID: "i", DetectedAt: onset}, Findings: []sdk.Finding{probeFinding("create")}, View: detectApp("create"), AppState: &staticAppState{rows: rows}, Now: detectNow()}), "\n")
+	if strings.Contains(block, "hunter2") || !strings.Contains(block, "requirepass: [redacted] → [redacted]") {
+		t.Fatalf("block:\n%s", block)
 	}
 }
 
-// The controller carries the inline changes in the incident request, so the
-// first message shows them without any file.
-func TestDispatchCarriesRecentChanges(t *testing.T) {
+// The controller carries the candidate block in the incident request, so the
+// first message shows it without any file.
+func TestDispatchCarriesTheCandidateBlock(t *testing.T) {
 	fault := classedDetector("workload-health", sdk.DetectorClassHealth, true)
 	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
 	config := testControllerConfig()
-	config.AppStateChanges = &staticAppState{rows: []IncidentChange{{At: time.Unix(0, 0).UTC(), Component: "db", ReaderOrObject: "settings", Key: "rate_limit", Before: "100", After: "1"}}}
+	config.AppStateChanges = &staticAppState{rows: []IncidentChange{{At: time.Unix(0, 0).UTC(), Source: "app-state", Component: "db", ReaderOrObject: "settings", Key: "rate_limit", Before: "100", After: "1"}}}
 	controller, err := NewController(config, []sdk.Detector{fault}, staticProvider{snapshot: detectApp("create")}, dispatcher, time.Unix(0, 0))
 	if err != nil {
 		t.Fatal(err)
@@ -327,9 +311,12 @@ func TestDispatchCarriesRecentChanges(t *testing.T) {
 	}
 	executePendingEffect(t, controller)
 	request := awaitRequest(t, dispatcher.requests)
-	last := len(request.RecentChanges) - 1
-	if last < 1 || request.RecentChanges[last] != incidentPointer || !strings.Contains(strings.Join(request.RecentChanges, "\n"), "settings rate_limit: 100 → 1") {
+	block := strings.Join(request.RecentChanges, "\n")
+	if len(request.RecentChanges) < 2 || !strings.Contains(request.RecentChanges[len(request.RecentChanges)-1], "sdo detect") || !strings.Contains(block, "CANDIDATES") || !strings.Contains(block, "settings rate_limit: 100 → 1") {
 		t.Fatalf("recent changes = %q", request.RecentChanges)
+	}
+	if len(block) > candidateRenderCap {
+		t.Fatalf("the block is %d bytes", len(block))
 	}
 }
 

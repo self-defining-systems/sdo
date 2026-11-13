@@ -138,17 +138,16 @@ func TestDetectSummaryShowsUsersFirstThenSuspects(t *testing.T) {
 	if strings.Contains(text, "hunter2") {
 		t.Fatalf("credential leaked:\n%s", text)
 	}
-	// db has the latest change before onset, so it leads; front is on a passing path.
-	db, api, front := strings.Index(text, "\ndb  StatefulSet/db"), strings.Index(text, "\napi  Deployment/api"), strings.Index(text, "\nfront  Deployment/front")
+	// db carries unexplained evidence, so it leads; front serves a passing test but stays listed.
+	db, api, front := strings.Index(text, "\ndb  "), strings.Index(text, "\napi  "), strings.Index(text, "\nfront  ")
 	if db < 0 || api < 0 || front < 0 || !(db < api && db < front) {
-		t.Fatalf("suspect order (db, then the path order):\n%s", text)
+		t.Fatalf("candidate order (db first):\n%s", text)
 	}
-	if !strings.Contains(text, "front  Deployment/front  (also on passing paths)") {
-		t.Fatalf("front must be marked:\n%s", text)
+	if !strings.Contains(text, "front  on every failing path; serves passing ops") || strings.Contains(text, "also on passing paths") {
+		t.Fatalf("front is labelled, not cleared:\n%s", text)
 	}
 	for _, want := range []string{
-		"change: NetworkPolicy/restrict-db spec.egress changed at 07:28:05Z by kubectl (not sdo)",
-		"more: sdo source NetworkPolicy/app/restrict-db",
+		"-4s NetworkPolicy/restrict-db changed vs accepted source (spec.egress) by kubectl",
 		`logs: 2 error lines since onset, 1 before: "ERROR dial tcp 10.0.0.1:5432: i/o timeout"`,
 		"clue: db Unhealthy readiness probe 2x",
 	} {
@@ -213,7 +212,7 @@ func TestDetectSummaryWorstCaseFitsAndCountsWhatItDrops(t *testing.T) {
 	if shown+atoi(t, dropped) != 8 {
 		t.Fatalf("%d tests shown, dropped note %v; want all 8 counted:\n%s", shown, dropped, summary.Text)
 	}
-	clues := regexp.MustCompile(`\+(\d+) more: sdo detect --finding background`).FindStringSubmatch(summary.Text)
+	clues := regexp.MustCompile(`clues elsewhere: (\d+)`).FindStringSubmatch(summary.Text)
 	if atoi(t, clues) < 18 {
 		t.Fatalf("clues must be counted when dropped (%v):\n%s", clues, summary.Text)
 	}
@@ -250,7 +249,7 @@ func assertMoreLinesParse(t *testing.T, summary detectSummary) {
 			if _, ok := summary.item(id); !ok {
 				t.Fatalf("handle %q resolves to nothing:\n%s", id, summary.Text)
 			}
-		case strings.HasPrefix(command, "sdo source "), strings.HasPrefix(command, "sdo diagnose "), strings.HasPrefix(command, "kubectl "):
+		case strings.HasPrefix(command, "sdo source "), strings.HasPrefix(command, "sdo diagnose "), strings.HasPrefix(command, "sdo map near "), command == "sdo changes", strings.HasPrefix(command, "kubectl "):
 		default:
 			t.Fatalf("more: line is not a command: %q", line)
 		}
@@ -264,7 +263,7 @@ func TestDetectSummaryItemsResolve(t *testing.T) {
 	request.OpeningKeys = []string{findingKey(request.Findings[0])}
 	summary := buildDetectSummary(detectInput{Request: request, Findings: request.Findings, View: detectApp("create"), Now: detectNow()})
 	assertMoreLinesParse(t, summary)
-	for id, want := range map[string]string{"create": "write-row", "tests": "create", "db": "change:", "background": "queue backlog", shortID(FindingFingerprint(finding))[:4]: "depth 900"} {
+	for id, want := range map[string]string{"create": "write-row", "tests": "create", "db": "db", "background": "queue backlog", shortID(FindingFingerprint(finding))[:4]: "depth 900"} {
 		text, ok := summary.item(id)
 		if !ok || !strings.Contains(text, want) {
 			t.Fatalf("item %q = %q, %v; want %q", id, text, ok, want)
@@ -282,7 +281,7 @@ func TestDetectSummaryForAKubernetesCondition(t *testing.T) {
 	request.Findings = []sdk.Finding{finding}
 	request.OpeningKeys = []string{findingKey(finding)}
 	text := buildDetectSummary(detectInput{Request: request, Findings: request.Findings, View: view, Now: detectNow()}).Text
-	for _, want := range []string{"opened on: Kubernetes condition", "Deployment/api  1 of 2 Pods CrashLoopBackOff", "more: kubectl -n app describe deployment api", "passing: create list", "api  Deployment/api"} {
+	for _, want := range []string{"opened on: Kubernetes condition", "Deployment/api  1 of 2 Pods CrashLoopBackOff", "more: kubectl -n app describe deployment api", "passing: create list", "api  the opening condition's component"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q:\n%s", want, text)
 		}

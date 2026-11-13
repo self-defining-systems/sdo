@@ -138,7 +138,7 @@ func TestDetectChangeLineShowsTheSourceDepartureAndHowToRestoreIt(t *testing.T) 
 	request.Findings = []sdk.Finding{probeFinding("create")}
 	request.OpeningKeys = []string{findingKey(request.Findings[0])}
 	text := buildDetectSummary(detectInput{Request: request, Findings: request.Findings, View: view, Now: detectNow()}).Text
-	for _, want := range []string{"NetworkPolicy/restrict-db present at 07:28:05Z by kubectl (not sdo); absent from accepted source", "more: sdo mitigate DeleteObject --bind ref=NetworkPolicy/app/restrict-db"} {
+	for _, want := range []string{"-4s NetworkPolicy/restrict-db present, absent from accepted source (spec.egress) by kubectl", "more: sdo mitigate DeleteObject --bind ref=NetworkPolicy/app/restrict-db"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q:\n%s", want, text)
 		}
