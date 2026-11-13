@@ -687,6 +687,9 @@ message RecoveryVerification {
   repeated string opening_keys = 6;
   // When Recovered was first seen holding; unset while it does not.
   google.protobuf.Timestamp stable_since = 7;
+  // User tests that started failing while the incident was open and joined its
+  // alert set (opening_keys plus these); Recovered also waited on them.
+  repeated string joined_keys = 8;
 }
 
 // When one SDO write settled: the plan's completion, or the latest Ready

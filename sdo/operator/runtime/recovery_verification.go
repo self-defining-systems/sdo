@@ -119,7 +119,7 @@ func recovered(in verificationInput) recoveryCheck {
 		windows = set.TrafficWindows()
 	}
 	opening := openingKeys(&in.request)
-	record := &contracts.RecoveryVerification{OpeningKeys: append([]string(nil), opening...)}
+	record := &contracts.RecoveryVerification{OpeningKeys: append([]string(nil), opening...), JoinedKeys: append([]string(nil), in.request.JoinedKeys...)}
 	check := recoveryCheck{record: record}
 	writes, since, settled := sdoWrites(in, newComponentResolver(in.m, in.view, in.request.Namespace))
 	record.Since = timestamppb.New(since)

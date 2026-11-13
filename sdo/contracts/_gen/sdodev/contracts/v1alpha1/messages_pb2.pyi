@@ -847,18 +847,20 @@ class IncidentClosure(_message.Message):
     def __init__(self, request: _Optional[_Union[IncidentRequest, _Mapping]] = ..., result: _Optional[_Union[IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., final_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., incident_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., detector_timeline: _Optional[_Iterable[_Union[DetectorTimelineEntry, _Mapping]]] = ..., incident_detector_fired_before_dispatch: _Optional[bool] = ..., incident_detector_fired_after_dispatch: _Optional[bool] = ..., no_incident_detector_fired: _Optional[bool] = ..., final_state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verified_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., health_cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cleaned_helpers: _Optional[_Iterable[str]] = ..., observation_generation: _Optional[str] = ..., partial_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., verified_while_responder_running: _Optional[bool] = ..., closure_stability_window: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., unconfirmed_reason: _Optional[_Union[ClosureUnconfirmedReason, str]] = ..., unconfirmed_detail: _Optional[str] = ..., source_check_notes: _Optional[_Iterable[str]] = ..., state_persistence_failure: _Optional[_Union[StatePersistenceFailure, _Mapping]] = ..., frozen: _Optional[bool] = ..., recovery_verification: _Optional[_Union[RecoveryVerification, _Mapping]] = ..., escalated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class RecoveryVerification(_message.Message):
-    __slots__ = ("since", "writes_settled", "writes", "opening_keys", "stable_since")
+    __slots__ = ("since", "writes_settled", "writes", "opening_keys", "stable_since", "joined_keys")
     SINCE_FIELD_NUMBER: _ClassVar[int]
     WRITES_SETTLED_FIELD_NUMBER: _ClassVar[int]
     WRITES_FIELD_NUMBER: _ClassVar[int]
     OPENING_KEYS_FIELD_NUMBER: _ClassVar[int]
     STABLE_SINCE_FIELD_NUMBER: _ClassVar[int]
+    JOINED_KEYS_FIELD_NUMBER: _ClassVar[int]
     since: _timestamp_pb2.Timestamp
     writes_settled: bool
     writes: _containers.RepeatedCompositeFieldContainer[WriteSettlement]
     opening_keys: _containers.RepeatedScalarFieldContainer[str]
     stable_since: _timestamp_pb2.Timestamp
-    def __init__(self, since: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., writes_settled: _Optional[bool] = ..., writes: _Optional[_Iterable[_Union[WriteSettlement, _Mapping]]] = ..., opening_keys: _Optional[_Iterable[str]] = ..., stable_since: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+    joined_keys: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, since: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., writes_settled: _Optional[bool] = ..., writes: _Optional[_Iterable[_Union[WriteSettlement, _Mapping]]] = ..., opening_keys: _Optional[_Iterable[str]] = ..., stable_since: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., joined_keys: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class WriteSettlement(_message.Message):
     __slots__ = ("application_id", "settled_at", "settled")

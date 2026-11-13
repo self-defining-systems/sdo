@@ -168,14 +168,14 @@ latency. The controller logs `recovery_wait_exit` with the exit and the branch
 that ended the wait. `response.after_playbook` (agent, escalate, wait; see docs/config.md) decides what follows an applied
 playbook whose wait did not exit `CLEARED`: `escalate` and `wait` log `after_playbook_withheld` and dispatch no agent, so a
 withheld incident has a deterministic stage report with remaining findings and no responder session, and closes
-recovered or `failed` by ordinary closure. After its first write the stage observes only the opening alerts: a clue or a later alert neither holds
+recovered or `failed` by ordinary closure. After its first write the stage observes only the alert set (opening alerts plus joined user tests): a clue or a later alert neither holds
 the wait nor reaches the agent. `NOTHING_APPLIED` means no learned playbook applied while
 findings remained; it is not a coverage verdict (before it existed, these waits
 exited `UNCOVERED`, which is why historical stage tables show mostly
 `UNCOVERED`). The wait asks the same recovered test as closure
 (`runtime/recovery_verification.go`, see closure-recovery.md) over the
-incident's opening alerts and the stage's writes: once every finding is clear
-it exits `CLEARED` when Recovered holds (every opening user test passed again
+incident's alert set and the stage's writes: once every finding is clear
+it exits `CLEARED` when Recovered holds (every user test of the alert set passed again
 after the writes settled). An applied program whose post-apply diagnose still
 `MATCH`es keeps the wait open for the incident detectors' longest rolling
 window, then hands off. Historical receipts may carry `restored_source` and

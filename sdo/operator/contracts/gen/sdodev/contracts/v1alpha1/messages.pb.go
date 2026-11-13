@@ -4378,7 +4378,10 @@ type RecoveryVerification struct {
 	// stayed clear for the stability window after SDO's last write settled.
 	OpeningKeys []string `protobuf:"bytes,6,rep,name=opening_keys,json=openingKeys,proto3" json:"opening_keys,omitempty"`
 	// When Recovered was first seen holding; unset while it does not.
-	StableSince   *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=stable_since,json=stableSince,proto3" json:"stable_since,omitempty"`
+	StableSince *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=stable_since,json=stableSince,proto3" json:"stable_since,omitempty"`
+	// User tests that started failing while the incident was open and joined its
+	// alert set (opening_keys plus these); Recovered also waited on them.
+	JoinedKeys    []string `protobuf:"bytes,8,rep,name=joined_keys,json=joinedKeys,proto3" json:"joined_keys,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4444,6 +4447,13 @@ func (x *RecoveryVerification) GetOpeningKeys() []string {
 func (x *RecoveryVerification) GetStableSince() *timestamppb.Timestamp {
 	if x != nil {
 		return x.StableSince
+	}
+	return nil
+}
+
+func (x *RecoveryVerification) GetJoinedKeys() []string {
+	if x != nil {
+		return x.JoinedKeys
 	}
 	return nil
 }
@@ -5562,13 +5572,15 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x15recovery_verification\x18\x1d \x01(\v2/.sdodev.contracts.v1alpha1.RecoveryVerificationR\x14recoveryVerification\x12=\n" +
 	"\fescalated_at\x18\x1e \x01(\v2\x1a.google.protobuf.TimestampR\vescalatedAtB\x11\n" +
 	"\x0f_dispatch_errorB\x14\n" +
-	"\x12_health_cleared_atJ\x04\b\x10\x10\x11J\x04\b\x11\x10\x12J\x04\b\x12\x10\x13R\x16observed_state_changesR\x1bdetector_review_required_atR\x16detector_review_reason\"\xb5\x02\n" +
+	"\x12_health_cleared_atJ\x04\b\x10\x10\x11J\x04\b\x11\x10\x12J\x04\b\x12\x10\x13R\x16observed_state_changesR\x1bdetector_review_required_atR\x16detector_review_reason\"\xd6\x02\n" +
 	"\x14RecoveryVerification\x120\n" +
 	"\x05since\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\x12%\n" +
 	"\x0ewrites_settled\x18\x03 \x01(\bR\rwritesSettled\x12B\n" +
 	"\x06writes\x18\x05 \x03(\v2*.sdodev.contracts.v1alpha1.WriteSettlementR\x06writes\x12!\n" +
 	"\fopening_keys\x18\x06 \x03(\tR\vopeningKeys\x12=\n" +
-	"\fstable_since\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\vstableSinceJ\x04\b\x01\x10\x02J\x04\b\x04\x10\x05R\x06probedR\n" +
+	"\fstable_since\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\vstableSince\x12\x1f\n" +
+	"\vjoined_keys\x18\b \x03(\tR\n" +
+	"joinedKeysJ\x04\b\x01\x10\x02J\x04\b\x04\x10\x05R\x06probedR\n" +
 	"components\"\x8d\x01\n" +
 	"\x0fWriteSettlement\x12%\n" +
 	"\x0eapplication_id\x18\x01 \x01(\tR\rapplicationId\x129\n" +

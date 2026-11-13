@@ -105,7 +105,7 @@ type Agent struct {
 // it is stamped into every detector observation and bound into the operability report's subject (DetectionDigest).
 type Detection struct {
 	SelfHealHold     Duration `yaml:"self_heal_hold" doc:"how long a Kubernetes condition without a give-up signal must hold before it opens an incident; carried in every detector observation and bound into the operability report"`
-	StabilityWindow  Duration `yaml:"stability_window" doc:"how long the opening alerts must stay clear after SDO's last write settled before the incident counts as recovered"`
+	StabilityWindow  Duration `yaml:"stability_window" doc:"how long the alert set (opening alerts and user tests that failed during the incident) must stay clear after SDO's last write settled before the incident counts as recovered"`
 	DriftBatchWindow Duration `yaml:"drift_batch_window" doc:"batch window for unexplained drift"`
 }
 
@@ -139,8 +139,8 @@ type Response struct {
 	DiagnosisDeadline    Duration `yaml:"diagnosis_deadline" doc:"shared deadline of candidate diagnosis in the automatic stage"`
 	StageBudget          Duration `yaml:"stage_budget" doc:"scheduling bound of one automatic-stage pass; a pass re-run on the responder's loop may take twice this"`
 	RepairPolicy         string   `yaml:"repair_policy" doc:"the evidence the controller requires for a responder repair: commit (a source repair is committed through the broker; production) or recorded-actions (live cluster repairs are recorded as actions without a source commit; benchmark runs)"`
-	AfterPlaybook        string   `yaml:"after_playbook" doc:"what happens when a learned playbook applied and the opening alerts did not recover within the stage's bound: agent (dispatch the agent, told what the playbook did), escalate (no agent; the incident stays open under ordinary closure and closes failed at the verification timeout if the alerts never clear) or wait (keep waiting for recovery up to after_playbook_wait, then escalate). When recovery holds, no agent runs in any setting; an alert that did not open the incident never dispatches the agent after an applied playbook"`
-	AfterPlaybookWait    Duration `yaml:"after_playbook_wait" doc:"how long after_playbook: wait keeps waiting for the opening alerts to recover after the playbook applied, capped by the response timeout"`
+	AfterPlaybook        string   `yaml:"after_playbook" doc:"what happens when a learned playbook applied and the alert set did not recover within the stage's bound: agent (dispatch the agent, told what the playbook did), escalate (no agent; the incident stays open under ordinary closure and closes failed at the verification timeout if the alerts never clear) or wait (keep waiting for recovery up to after_playbook_wait, then escalate). When recovery holds, no agent runs in any setting; an alert that did not open the incident never dispatches the agent after an applied playbook"`
+	AfterPlaybookWait    Duration `yaml:"after_playbook_wait" doc:"how long after_playbook: wait keeps waiting for the alert set to recover after the playbook applied, capped by the response timeout"`
 	Standby              bool     `yaml:"standby" doc:"pre-start a responder worker; false forces cold Jobs"`
 	Menu                 bool     `yaml:"menu" doc:"offer the responder its tool menu"`
 	BuiltinRestoreAuto   bool     `yaml:"builtin_restore_auto" doc:"let the automatic stage apply the built-in source-restore playbook (put a component's non-SDO departures from accepted source back) when its diagnosis matches; off, it is only offered like any playbook and the responder decides"`

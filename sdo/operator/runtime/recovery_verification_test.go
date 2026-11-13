@@ -306,4 +306,7 @@ func TestRecoveredJudgesUserTestsThatJoinedTheAlertSet(t *testing.T) {
 	if check := run(always, joinedKeys); check.verdict != recoveryVerified {
 		t.Fatalf("a joined user test that passes held Recovered: %v %s", check.verdict, check.reason)
 	}
+	if got := run(always, joinedKeys).record.GetJoinedKeys(); len(got) != 1 || got[0] != joinedKeys[0] {
+		t.Fatalf("the recovery record names joined keys %v, want %v", got, joinedKeys)
+	}
 }
