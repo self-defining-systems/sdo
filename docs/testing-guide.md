@@ -501,6 +501,23 @@ bash scripts/run_sdo_example_kind.sh
 
 It requires Docker, Kind, `kubectl`, `jq`, and Go. Typed fixture workers exercise the Go-owned broker without model credentials. The smoke verifies accepted lifecycle commits, a deployed workload, and clear detector evaluations. Incident response and outcome commits remain a separate live validation gate.
 
+### Pre-merge live smoke (toy lane)
+
+```bash
+bash scripts/live_smoke.sh
+```
+
+Run it before merging a PR that touches incident dispatch, `IncidentRequest`, external incidents, install and onboarding, investigators or app-state readers. It needs Docker, kind, kubectl and Go, with no model credentials. Commit first: the image build refuses a dirty image source.
+
+It reuses the warm toy lane at `SDO_SMOKE_LANE` (default `~/.cache/sdo-live-smoke/lane`; `up` creates the lane when missing and only redelivers changed images to a warm one), builds this commit's controller and scripted-worker images, resets the lane, injects one toy fault (`toy_image_catalog` by default; override with `SDO_SMOKE_PROBLEM`), and lets the seeded user test (the toy seed's probe scenarios on its entry Services) open the incident. The scripted responder calls `sdo detect` and `sdo investigations`, records both outputs as `verification_evidence`, and repairs the fault from accepted source. The script then asserts:
+
+- the responder Job started and returned a result;
+- no `state_persistence_invalid` or contract validation errors in the controller log;
+- `sdo detect` returned the candidate view (`CANDIDATES`);
+- the controller restart count is 0.
+
+Evidence lands in `$SDO_SMOKE_LANE.out/` (build, up, reset, run and controller logs). A cold lane takes about 10 minutes more than a warm one. Keep the lane between runs; delete it with `uv run python -m benchmarks.sregym.fastloop down --run-dir "$SDO_SMOKE_LANE" --delete-cluster`. Check host load first (`uptime`); the toy lane uses one small kind node.
+
 A green unit suite establishes repository contracts. It does not establish that every target application deploys successfully or that an agent repairs every incident.
 
 ## Go core architecture

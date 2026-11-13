@@ -740,3 +740,26 @@ def test_install_adopts_the_plan_bearing_commit_as_the_reset_seed():
     assert saved == ["b" * 40]
     toy.adopt_installed_seed(environment, "b" * 40)
     assert saved == ["b" * 40], "an unchanged seed is not rewritten"
+
+
+def test_toy_seed_declares_user_tests_on_every_service_entry():
+    """A toy fault must open an incident: the seed map probes an operation at each entry Service."""
+    import re
+
+    import yaml
+
+    seed = ROOT / "apps/toy/seed/.sdo"
+    arch = (seed / "arch.md").read_text()
+    region = arch.split("<!-- sdo:application-map:begin -->")[1].split("```yaml")[1].split("```")[0]
+    application_map = yaml.safe_load(region)
+    entries = {operation["entry"]["service"] for operation in application_map["operations"]}
+    assert entries == {"frontend", "catalog"}
+    workload = yaml.safe_load((seed / "diagnostics/traffic/workloads/probe-call.yaml").read_text())
+    assert workload["purpose"] == "health-probe"
+    scenarios = {item["id"] for item in workload["scenarios"]}
+    assert scenarios == {probe["scenario"] for probe in application_map["probes"]}
+    generators = (seed / "diagnostics/traffic/generators/generators.go").read_text()
+    assert scenarios == set(re.findall(r'ID: "([a-z-]+)"', generators))
+    for kind in ("Deployment", "Service"):
+        for component in application_map["components"]:
+            assert f"- {kind}/default/{component['name']} (source:" in arch

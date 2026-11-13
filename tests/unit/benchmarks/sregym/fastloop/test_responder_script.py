@@ -470,3 +470,11 @@ def test_generator_cli_reads_typed_task_without_side_effects(tmp_path, monkeypat
     assert data["turns"][0]["incident"] == "cli"
     assert all(step["input_json"] == "{{request}}" for step in data["turns"][0]["steps"])
     assert {path.name for path in tmp_path.iterdir()} == {"task.json", "script.json"}
+
+
+def test_script_records_the_candidate_view_and_investigations(tmp_path):
+    request = IncidentRequest(incident_id="example", namespace="app", repository_worktree=str(tmp_path))
+    steps = responder_script(request).turns[0].steps
+    assert '_tool("detect")' in steps[0].command
+    assert '_tool("investigations")' in steps[0].command
+    assert "sdo detect" in steps[3].command and "CANDIDATES" in steps[3].command
