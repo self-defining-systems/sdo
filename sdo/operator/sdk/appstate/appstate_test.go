@@ -162,14 +162,28 @@ func TestInvalidQueryIsRefusedBeforeTheHost(t *testing.T) {
 	}
 }
 
-func TestCredentialNamedKeyFailsTheCall(t *testing.T) {
-	_, err := appstate.Run(context.Background(), readerFunc(func(context.Context, appstate.View) (appstate.Values, error) {
+func TestWithheldKeyDoesNotFailTheCall(t *testing.T) {
+	got, err := appstate.Run(context.Background(), readerFunc(func(context.Context, appstate.View) (appstate.Values, error) {
 		var out appstate.Values
-		out.Set("admin_password", "x")
+		out.Set("admin_password", "hunter2")
+		out.Set("minimum_password_length", "12")
+		out.Set("otp_required_for_login", "true")
 		return out, nil
 	}), &base{})
-	if err == nil || !strings.Contains(err.Error(), "admin_password") {
+	if err != nil {
 		t.Fatalf("err = %v", err)
+	}
+	if _, ok := got.Get("admin_password"); ok {
+		t.Fatal("secret-looking value kept")
+	}
+	if v, _ := got.Get("minimum_password_length"); v != "12" {
+		t.Fatalf("integer dropped: %q", v)
+	}
+	if v, _ := got.Get("otp_required_for_login"); v != "true" {
+		t.Fatalf("boolean dropped: %q", v)
+	}
+	if v, _ := got.Get("keys.withheld"); v != "1" {
+		t.Fatalf("keys.withheld = %q, want 1", v)
 	}
 }
 

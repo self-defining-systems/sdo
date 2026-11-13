@@ -25,7 +25,7 @@ func snap(at time.Duration, kv ...string) carried.Snapshot {
 	return carried.Snapshot{At: t0.Add(at), Values: values(kv...)}
 }
 
-func TestValuesRefuseCredentialNamedKeysAndKeepNoValue(t *testing.T) {
+func TestValuesWithholdCredentialNamedStringsAndKeepNoValue(t *testing.T) {
 	var v carried.Values
 	v.Set("rate_limit", "10")
 	v.Set("db_password", "hunter2")
@@ -33,19 +33,53 @@ func TestValuesRefuseCredentialNamedKeysAndKeepNoValue(t *testing.T) {
 	if _, ok := v.Get("db_password"); ok {
 		t.Fatal("credential-named key was stored")
 	}
-	if v.Len() != 1 {
-		t.Fatalf("len = %d, want 1", v.Len())
-	}
-	err := v.Err()
-	if err == nil || !strings.Contains(err.Error(), "db_password") {
-		t.Fatalf("Err = %v, want refusal naming the key", err)
-	}
-	if strings.Contains(err.Error(), "hunter2") {
-		t.Fatalf("refusal leaked the value: %v", err)
+	if v.Len() != 1 || v.Withheld() != 2 {
+		t.Fatalf("len=%d withheld=%d, want 1 and 2", v.Len(), v.Withheld())
 	}
 	data, _ := json.Marshal(v)
 	if strings.Contains(string(data), "hunter2") {
 		t.Fatalf("serialised values leaked: %s", data)
+	}
+}
+
+func TestValuesKeepBooleansAndIntegersUnderCredentialNames(t *testing.T) {
+	var v carried.Values
+	for k, val := range map[string]string{
+		"password_authentication_enabled_for_web": "true",
+		"disable_personal_access_tokens":          "f",
+		"minimum_password_length":                 "8",
+		"otp_required_for_login":                  "False",
+		"enable_hashjoin":                         "t",
+		"token_ttl":                               "-30",
+	} {
+		v.Set(k, val)
+		if got, ok := v.Get(k); !ok || got != val {
+			t.Fatalf("%s = %q, %v; want kept as %q", k, got, ok, val)
+		}
+	}
+	if v.Withheld() != 0 {
+		t.Fatalf("withheld = %d", v.Withheld())
+	}
+}
+
+func TestValuesWithholdSecretLookingValuesUnderCredentialNames(t *testing.T) {
+	var v carried.Values
+	for _, val := range []string{"hunter2", "12ab", "1.5", "--1", "+", "", "yes", "1234567890123456789012", "tt"} {
+		v.Set("api_token", val)
+	}
+	if v.Len() != 0 || v.Withheld() != 9 {
+		t.Fatalf("len=%d withheld=%d, want 0 and 9", v.Len(), v.Withheld())
+	}
+}
+
+func TestReportWithheldCountsUnderKeysWithheldPastTheCap(t *testing.T) {
+	var v carried.Values
+	for i := 0; i < carried.MaxKeys+2; i++ {
+		v.Set(fmt.Sprintf("k%03d", i), "v")
+	}
+	v.ReportWithheld()
+	if got, _ := v.Get(carried.WithheldKey); got != "2" {
+		t.Fatalf("keys.withheld = %q, want 2", got)
 	}
 }
 
@@ -54,14 +88,14 @@ func TestValuesBounds(t *testing.T) {
 	for i := 0; i < carried.MaxKeys+5; i++ {
 		v.Set(fmt.Sprintf("k%03d", i), "v")
 	}
-	if v.Len() != carried.MaxKeys || v.Err() == nil {
-		t.Fatalf("len=%d err=%v, want %d keys and an error", v.Len(), v.Err(), carried.MaxKeys)
+	if v.Len() != carried.MaxKeys || v.Withheld() != 5 {
+		t.Fatalf("len=%d withheld=%d, want %d keys and 5 withheld", v.Len(), v.Withheld(), carried.MaxKeys)
 	}
 	var long carried.Values
 	long.Set(strings.Repeat("k", carried.MaxKeyBytes+1), "v")
 	long.Set("k", strings.Repeat("v", carried.MaxValueBytes+1))
-	if long.Len() != 0 || long.Err() == nil {
-		t.Fatalf("oversize accepted: len=%d err=%v", long.Len(), long.Err())
+	if long.Len() != 0 || long.Withheld() != 2 {
+		t.Fatalf("oversize accepted: len=%d withheld=%d", long.Len(), long.Withheld())
 	}
 }
 

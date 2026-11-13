@@ -14,7 +14,7 @@ result through Require and its predicates.
 
 A reader gets the narrow View, not program.ReadView: no command execution,
 no authenticated HTTP, no writes. Every read refuses credentials, and Values
-refuses credential-named keys, so Secret values are never read.
+withholds a credential-named key unless its value is a boolean or an integer, so Secret values are never read; withheld keys are counted under keys.withheld.
 
 CONSTANTS
 
