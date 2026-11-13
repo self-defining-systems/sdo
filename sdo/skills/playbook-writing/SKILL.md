@@ -15,6 +15,7 @@ A playbook is `.sdo/playbooks/<id>/` with `diagnose.go` and `mitigate.go`. Copy 
   state first; `v.Logs` costs a read, so call it only for the few objects that pass, as
   `Evidence`. Return `program.Match`, `program.NoMatch`, or `program.Unknown` if a read fails.
   It must stay `NoMatch` on a healthy install and on other faults, within seconds.
+  If sub-agent investigators confirmed the cause, follow their "How to diagnose" notes for it.
 - `Mitigate`: the changes that fixed it, in order, as you made them: `program.DeletePod`,
   `program.RestartRollout`, `program.SetField`; for an `sdo mitigate X`, the same
   `program.X` with the same fields.
