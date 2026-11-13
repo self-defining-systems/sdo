@@ -10,10 +10,10 @@ passing operations), each with its changes near onset, state against last health
 what it could not observe and what lies elsewhere. `more:` lines expand one. `.sdo/arch.md` is the app map.
 
 - `sdo detect [--finding ID|COMPONENT]`
-- `sdo map [path OP | near COMPONENT]`: the map, a path, a component's neighbours
-- `sdo changes`, `sdo timeline`: CSV; `--since 30m`, `--limit N`
+- `sdo map [path OP | near COMPONENT]`: the map, a path, neighbours
+- `sdo changes`, `sdo timeline`: CSV; `--since 30m`, `--component NODE`, `--limit N`
 - `sdo source Kind/ns/name`: intended state
-- `sdo try [TEST]`: user tests; one test's request, response, status (read-only)
+- `sdo try [TEST]`: user tests; one test's request, response, status
 - `sdo diagnose NAME --bind ROLE=Kind/ns/name`: test a learned playbook
 - `sdo menu [NAME]`: list fixes. `sdo mitigate NAME --bind ROLE=Kind/ns/name`: apply one
 - `sdo mitigate ReconcileFromSource --bind ref=Deployment/shop/api`: restore from source
