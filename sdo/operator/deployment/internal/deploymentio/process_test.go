@@ -27,6 +27,7 @@ func TestCallsReturnWhenDescendantHoldsOutputPipe(t *testing.T) {
 	}
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 			defer cancel()
 			guard, stop := context.WithTimeout(context.Background(), 15*time.Second)
