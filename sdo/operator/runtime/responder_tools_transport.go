@@ -324,7 +324,12 @@ func (l *ResponderLoop) detect(ctx context.Context, ids []string, finding string
 	}
 	response.Summary = fmt.Sprintf("%d detectors evaluated; %d current findings", len(response.DetectorStates), len(response.Findings)) + pendingEvaluationSummary(response.DetectorStates)
 	if reads, ok := any(view).(detectReads); ok && len(selected) == 0 {
-		summary := buildDetectSummary(detectInput{Request: l.Request, Findings: response.Findings, View: reads, Now: l.clock().UTC(), Recovered: l.detectIncidentRecovered()})
+		now := l.clock().UTC()
+		var files []string
+		if l.IncidentPages != nil {
+			files = l.IncidentPages(incidentPageInput{Request: l.Request, Findings: response.Findings, View: reads, Now: now})
+		}
+		summary := buildDetectSummary(detectInput{Request: l.Request, Findings: response.Findings, View: reads, Now: now, Recovered: l.detectIncidentRecovered(), Files: files})
 		response.Text = summary.Text
 		if finding != "" {
 			text, found := summary.item(finding)
