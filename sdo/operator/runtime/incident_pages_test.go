@@ -213,6 +213,9 @@ func TestDetectWritesIncidentPagesAndNamesThem(t *testing.T) {
 	mount := t.TempDir()
 	signals := newIncidentSignals()
 	signals.Observe(detectNow(), view)
+	if _, err := memory.PrepareIncidentSession(mount, "", request.IncidentID); err != nil {
+		t.Fatal(err)
+	}
 	controller := &Controller{signals: signals, config: ControllerConfig{PageSessionRoot: mount}}
 	loop.IncidentPages = controller.IncidentPages(context.Background())
 	response := loop.Handle(context.Background(), ToolRequest{Command: "detect"})
@@ -229,7 +232,6 @@ func TestDetectWritesIncidentPagesAndNamesThem(t *testing.T) {
 		}
 	}
 }
-
 
 // The controller writes both pages into the responder's session when it opens
 // the incident, before any `sdo detect`.
@@ -271,4 +273,29 @@ func mustRead(t *testing.T, name string) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+// A value is masked when its key (or the row's object) names a credential,
+// even though the value itself carries no credential shape.
+func TestIncidentChangesMaskValuesOfCredentialNamedKeys(t *testing.T) {
+	onset := detectOnset
+	rows := []IncidentChange{{At: onset, Component: "cache", ReaderOrObject: "config", Key: "requirepass", Before: "old-pass", After: "hunter2"}}
+	pages := buildIncidentPages(incidentPageInput{Request: IncidentRequest{IncidentID: "i", DetectedAt: onset}, View: detectApp(), Signals: newIncidentSignals(), AppState: &staticAppState{rows: rows}, Now: onset})
+	if text := string(pages.Changes); strings.Contains(text, "hunter2") || strings.Contains(text, "old-pass") || !strings.Contains(text, "requirepass") {
+		t.Fatalf("changes.csv:\n%s", text)
+	}
+}
+
+// The cap drops the oldest timed rows, never an untimed (missing object) row.
+func TestIncidentChangesCapKeepsUntimedRows(t *testing.T) {
+	onset := detectOnset
+	rows := []IncidentChange{{Component: "db", ReaderOrObject: "ConfigMap/lost", After: "missing"}}
+	for index := range incidentChangesCap + 5 {
+		rows = append(rows, IncidentChange{At: onset.Add(-time.Duration(index) * time.Second), Component: "db", Key: fmt.Sprintf("k%d", index)})
+	}
+	pages := buildIncidentPages(incidentPageInput{Request: IncidentRequest{IncidentID: "i", DetectedAt: onset}, View: detectApp(), Signals: newIncidentSignals(), AppState: &staticAppState{rows: rows}, Now: onset})
+	parsed := parseCSV(t, pages.Changes)
+	if len(parsed)-1 != incidentChangesCap || !strings.Contains(string(pages.Changes), "ConfigMap/lost") {
+		t.Fatalf("%d rows; untimed row kept: %v", len(parsed)-1, strings.Contains(string(pages.Changes), "ConfigMap/lost"))
+	}
 }

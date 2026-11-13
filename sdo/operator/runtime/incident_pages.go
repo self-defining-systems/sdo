@@ -16,6 +16,7 @@ import (
 
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/storeops"
 	"sdo.dev/operator/sdk/storestate"
 	"sdo.dev/operator/sdk/traffic"
 )
@@ -115,7 +116,7 @@ func (s *incidentSignals) Observe(now time.Time, view sdk.DetectionContext) {
 		}
 		sort.SliceStable(samples, func(i, j int) bool { return samples[i].At.Before(samples[j].At) })
 		for _, sample := range samples {
-			if sample.Outcome == traffic.OutcomeInvalid || !sample.At.After(last) {
+			if sample.Outcome == traffic.OutcomeInvalid || sample.At.Before(last) || sample.At.Equal(last) && heldAt(held, sample.At, sample.Outcome != traffic.OutcomeOK) {
 				continue
 			}
 			held = append(held, operationSample{at: sample.At, failed: sample.Outcome != traffic.OutcomeOK})
@@ -148,6 +149,11 @@ func (s *incidentSignals) Observe(now time.Time, view sdk.DetectionContext) {
 		s.operations[id] = held
 	}
 	for name, held := range s.workloads {
+		// A workload gone from the snapshot whose last state left the horizon is dropped.
+		if _, present := workloads[name]; !present && held[len(held)-1].at.Before(horizon) {
+			delete(s.workloads, name)
+			continue
+		}
 		// Keep the last state before the horizon: it holds until the next change.
 		cut := sort.Search(len(held), func(i int) bool { return !held[i].at.Before(horizon) }) - 1
 		cut = max(cut, len(held)-incidentSignalSamples)
@@ -155,6 +161,17 @@ func (s *incidentSignals) Observe(now time.Time, view sdk.DetectionContext) {
 			s.workloads[name] = append([]workloadSample(nil), held[cut:]...)
 		}
 	}
+}
+
+// heldAt reports whether held ends with a sample at at with the same outcome:
+// windows overlap between evaluations, so the same sample is seen again.
+func heldAt(held []operationSample, at time.Time, failed bool) bool {
+	for index := len(held) - 1; index >= 0 && held[index].at.Equal(at); index-- {
+		if held[index].failed == failed {
+			return true
+		}
+	}
+	return false
 }
 
 // history is a copy of the ring for rendering.
@@ -315,12 +332,11 @@ func renderTimeline(set detectSuspectSet, history incidentSignalHistory, request
 		row := []string{strconv.FormatInt(int64(start.Sub(onset)/time.Second), 10), start.UTC().Format(time.RFC3339)}
 		for _, id := range operations {
 			failed, total := 0, 0
-			for _, sample := range history.operations[id] {
-				if !sample.at.Before(start) && sample.at.Before(end) {
-					total++
-					if sample.failed {
-						failed++
-					}
+			held := history.operations[id]
+			for index := sort.Search(len(held), func(i int) bool { return !held[i].at.Before(start) }); index < len(held) && held[index].at.Before(end); index++ {
+				total++
+				if held[index].failed {
+					failed++
 				}
 			}
 			cell := ""
@@ -396,12 +412,19 @@ func incidentChangeRows(in incidentPageInput, set detectSuspectSet, onset time.T
 	sort.SliceStable(rows, func(i, j int) bool {
 		a, b := rows[i], rows[j]
 		if a.At.IsZero() != b.At.IsZero() {
-			return a.At.IsZero()
+			return b.At.IsZero()
 		}
 		return a.At.Before(b.At)
 	})
+	// The cap drops the oldest timed rows; untimed rows (missing objects) sort last and stay.
 	if len(rows) > incidentChangesCap {
-		rows = rows[len(rows)-incidentChangesCap:]
+		untimed := 0
+		for untimed < len(rows) && rows[len(rows)-1-untimed].At.IsZero() {
+			untimed++
+		}
+		timed := max(incidentChangesCap-untimed, 0)
+		rows = append(rows[len(rows)-untimed-timed:len(rows)-untimed], rows[len(rows)-untimed:]...)
+		rows = rows[:min(len(rows), incidentChangesCap)]
 	}
 	return rows
 }
@@ -432,6 +455,15 @@ func renderChanges(rows []IncidentChange, onset time.Time) []byte {
 	out := [][]string{{"t_rel_s", "at_utc", "source", "component", "reader_or_object", "key", "before", "after", "writer", "noisy"}}
 	clean := func(text string) string { return redactDetectText(text, incidentPageValue) }
 	for _, row := range rows {
+		// A credential-named key or object masks its values whatever they look like.
+		if pageCredentialName(row.Key) || pageCredentialName(row.ReaderOrObject) {
+			if row.Before != "" {
+				row.Before = "[redacted]"
+			}
+			if row.After != "" {
+				row.After = "[redacted]"
+			}
+		}
 		relative, at := "", ""
 		if !row.At.IsZero() {
 			relative = strconv.FormatInt(int64(row.At.Sub(onset)/time.Second), 10)
@@ -442,6 +474,21 @@ func renderChanges(rows []IncidentChange, onset time.Time) []byte {
 	return encodeCSV(out)
 }
 
+// pageCredentialName is storeops.CredentialName widened toward refusing: a
+// page row's key also counts when it names a pass, pwd, auth or private key.
+func pageCredentialName(name string) bool {
+	lower := strings.ToLower(name)
+	if storeops.CredentialName(lower) {
+		return true
+	}
+	for _, word := range []string{"pass", "pwd", "auth", "privatekey", "private_key", "secretkey"} {
+		if strings.Contains(lower, word) {
+			return true
+		}
+	}
+	return false
+}
+
 func encodeCSV(rows [][]string) []byte {
 	var buffer bytes.Buffer
 	writer := csv.NewWriter(&buffer)
@@ -450,10 +497,15 @@ func encodeCSV(rows [][]string) []byte {
 }
 
 // writeIncidentPages builds the pages and writes them into the incident's
-// session under the repository mount; it returns the paths the agent sees.
-func writeIncidentPages(repositoryMount string, in incidentPageInput) ([]string, error) {
+// session under the repository mount; it returns the paths the agent sees. A
+// rewrite (each `sdo detect`) needs the session to exist; dispatch prepares it.
+func writeIncidentPages(repositoryMount string, in incidentPageInput, rewrite bool) ([]string, error) {
 	pages := buildIncidentPages(in)
-	if err := memory.WriteIncidentPages(repositoryMount, in.Request.IncidentID, pages.files()); err != nil {
+	write := memory.WriteIncidentPages
+	if rewrite {
+		write = memory.RewriteIncidentPages
+	}
+	if err := write(repositoryMount, in.Request.IncidentID, pages.files()); err != nil {
 		return nil, fmt.Errorf("write incident pages: %w", err)
 	}
 	paths := make([]string, 0, len(incidentPageNames))

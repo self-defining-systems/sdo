@@ -33,3 +33,21 @@ func TestWriteIncidentPagesRefusesNamesOutsideTheDirectory(t *testing.T) {
 		}
 	}
 }
+
+// A rewrite after the session was removed must not recreate it.
+func TestRewriteIncidentPagesNeedsAnExistingSession(t *testing.T) {
+	mount := t.TempDir()
+	if err := RewriteIncidentPages(mount, "inc-1", map[string][]byte{"timeline.csv": nil}); err == nil {
+		t.Fatal("a rewrite created a removed session")
+	}
+	sub, _ := IncidentSessionSubPath("", "inc-1")
+	if _, err := os.Stat(filepath.Join(mount, sub)); !os.IsNotExist(err) {
+		t.Fatalf("session tree exists: %v", err)
+	}
+	if err := WriteIncidentPages(mount, "inc-1", map[string][]byte{"timeline.csv": nil}); err != nil {
+		t.Fatal(err)
+	}
+	if err := RewriteIncidentPages(mount, "inc-1", map[string][]byte{"timeline.csv": []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+}

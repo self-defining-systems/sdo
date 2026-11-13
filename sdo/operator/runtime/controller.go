@@ -964,7 +964,7 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	c.beginIncident(now, request, batch)
 	request.DetectedAt = now.UTC()
 	if reads, ok := snapshot.(detectReads); ok {
-		c.writeIncidentPages(ctx, incidentPageInput{Request: request, Findings: batch, View: reads, Now: now.UTC()})
+		c.writeIncidentPages(ctx, incidentPageInput{Request: request, Findings: batch, View: reads, Now: now.UTC()}, false)
 	}
 	// The batcher is drained, so the incident is open before any file I/O: an
 	// observer exporting state mid-capture reads the work, never an idle gap.
@@ -2436,12 +2436,12 @@ func passingTests(snapshot sdk.DetectionContext) []string {
 
 // writeIncidentPages writes the incident's page files into its session; a
 // failure is logged, never fatal: the pages are information.
-func (c *Controller) writeIncidentPages(ctx context.Context, in incidentPageInput) []string {
+func (c *Controller) writeIncidentPages(ctx context.Context, in incidentPageInput, rewrite bool) []string {
 	if c.config.PageSessionRoot == "" {
 		return nil
 	}
 	in.Signals, in.AppState = c.signals, c.config.AppStateChanges
-	files, err := writeIncidentPages(c.config.PageSessionRoot, in)
+	files, err := writeIncidentPages(c.config.PageSessionRoot, in, rewrite)
 	if err != nil {
 		slog.WarnContext(ctx, "incident_pages_unavailable", "incident_id", in.Request.IncidentID, "error", err)
 	}
@@ -2451,5 +2451,5 @@ func (c *Controller) writeIncidentPages(ctx context.Context, in incidentPageInpu
 // IncidentPages is the responder loop's hook that rewrites the page files on
 // each `sdo detect`.
 func (c *Controller) IncidentPages(ctx context.Context) func(incidentPageInput) []string {
-	return func(in incidentPageInput) []string { return c.writeIncidentPages(ctx, in) }
+	return func(in incidentPageInput) []string { return c.writeIncidentPages(ctx, in, true) }
 }
