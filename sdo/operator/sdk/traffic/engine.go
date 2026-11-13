@@ -36,6 +36,12 @@ const (
 	OutcomeInvalid Outcome = "invalid"
 )
 
+// DefectResponseTruncated marks an invalid sample whose step response was
+// longer than MaxResponseBody and failed its check on the cut body. The probe
+// cannot judge such a response, so it says nothing about the application: the
+// step must request less data (a smaller page).
+const DefectResponseTruncated = "response_truncated"
+
 // Sample is the observed result of one scenario iteration.
 type Sample struct {
 	At        time.Time     `json:"at"`
@@ -55,6 +61,11 @@ type Sample struct {
 	// Error explains a failed sample: the transport error, the check's
 	// reason, or a bounded excerpt of the unexpected response body.
 	Error string `json:"error,omitempty"`
+	// Defect is the machine-readable probe-authoring defect behind an invalid
+	// sample (DefectResponseTruncated), and ByteCap the response cap it names.
+	// A defect is never an application failure.
+	Defect  string `json:"defect,omitempty"`
+	ByteCap int    `json:"byteCap,omitempty"`
 	// Observed is what the other side answered, apart from the probe's own
 	// Error: a bounded, redacted excerpt of the server's response body, or the
 	// transport error cause without the client's method and URL prefix.
@@ -269,6 +280,7 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 		if result.outcome != OutcomeOK {
 			sample.Outcome, sample.Step, sample.Request, sample.Error = result.outcome, step.Name, result.request, result.err
 			sample.Observed, sample.DialFailed = result.observed, result.dial
+			sample.Defect, sample.ByteCap = result.defect, result.byteCap
 			break
 		}
 		if endpoint, ok := step.Endpoint.(*HTTPEndpoint); ok && endpoint.MarksExistingRecords() {
@@ -321,6 +333,7 @@ func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, s
 			if result.outcome != OutcomeOK {
 				sample.Outcome, sample.Step, sample.Request, sample.Error = result.outcome, step.Name, result.request, result.err
 				sample.Observed, sample.DialFailed = result.observed, result.dial
+				sample.Defect, sample.ByteCap = result.defect, result.byteCap
 				sample.Latency = e.since(started)
 				return true
 			}
@@ -360,6 +373,8 @@ type stepResult struct {
 	// observed is the server's body excerpt or the bare transport cause.
 	observed string
 	dial     bool
+	defect   string
+	byteCap  int
 }
 
 // record adds a step's request count and last answer to the sample.
@@ -410,7 +425,7 @@ func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *ra
 		return stepResult{outcome: OutcomeError, sent: 1, request: line, err: err.Error(), observed: cause, dial: dial}
 	}
 	defer response.Body.Close()
-	body, readErr := io.ReadAll(io.LimitReader(response.Body, MaxResponseBody))
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, MaxResponseBody+1))
 	if readErr != nil {
 		outcome := OutcomeError
 		if isTimeout(requestCtx, readErr) {
@@ -418,7 +433,17 @@ func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *ra
 		}
 		return stepResult{outcome: outcome, status: response.StatusCode, sent: 1, request: line, err: readErr.Error()}
 	}
+	truncated := len(body) > MaxResponseBody
+	if truncated {
+		body = body[:MaxResponseBody]
+	}
 	verdict := step.Endpoint.Check(Response{Status: response.StatusCode, Header: response.Header.Clone(), Body: body}, state)
+	if !verdict.OK && truncated {
+		return stepResult{
+			outcome: OutcomeInvalid, status: response.StatusCode, sent: 1, request: line, defect: DefectResponseTruncated, byteCap: MaxResponseBody,
+			err: fmt.Sprintf("%s: step %q response exceeded the %d-byte cap, so its check could not be judged; probe defect, not an application failure: reduce page size (request at most 20 records)", DefectResponseTruncated, step.Name, MaxResponseBody),
+		}
+	}
 	if !verdict.OK {
 		reason := verdict.Reason
 		if strings.TrimSpace(reason) == "" {

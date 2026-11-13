@@ -297,6 +297,9 @@ func latestFailure(o ScenarioObservations) string {
 		if sample.Outcome == OutcomeOK {
 			continue
 		}
+		if sample.Defect != "" {
+			return "probe defect " + sample.Defect + " (not an application failure; reduce page size or response volume): step " + sample.Step + ", byte cap " + strconv.Itoa(sample.ByteCap)
+		}
 		var parts []string
 		if sample.Step != "" {
 			parts = append(parts, "step "+sample.Step)

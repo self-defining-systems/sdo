@@ -144,6 +144,12 @@ const DefaultHealthMinDuration = 9 * time.Second
     detected in 3-5s. Nine seconds clears the observed stalls with headroom
     while adding at most one more poll beyond real-fault detection.
 
+const DefectResponseTruncated = "response_truncated"
+    DefectResponseTruncated marks an invalid sample whose step response was
+    longer than MaxResponseBody and failed its check on the cut body. The probe
+    cannot judge such a response, so it says nothing about the application:
+    the step must request less data (a smaller page).
+
 const ExistingMembersKey = "sdo.existing-members"
     ExistingMembersKey is the State key a ReadsExistingRecords step saves the
     JSON array of the member values it read, for the engine's exercised note.

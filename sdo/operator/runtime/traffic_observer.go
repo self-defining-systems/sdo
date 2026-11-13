@@ -315,10 +315,14 @@ func (o *TrafficObserver) Summary() map[string]any {
 		}
 		scenarios := make(map[string]any, len(window.Scenarios))
 		for _, observed := range window.Scenarios {
-			scenarios[observed.Scenario.ID] = map[string]any{
+			entry := map[string]any{
 				"samples": len(observed.Samples), "qualified": observed.Qualified, "invalid": observed.Invalid,
 				"target": observed.Scenario.Target.Service, "depends_on": observed.Scenario.DependsOn,
 			}
+			if observed.Defect != "" {
+				entry["probe_defect"], entry["byte_cap"] = observed.Defect, observed.ByteCap
+			}
+			scenarios[observed.Scenario.ID] = entry
 		}
 		if len(window.Links) > 0 {
 			links := make(map[string]any, len(window.Links))

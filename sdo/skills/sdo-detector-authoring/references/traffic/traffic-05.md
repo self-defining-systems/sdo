@@ -80,6 +80,11 @@ type Sample struct {
 	// Error explains a failed sample: the transport error, the check's
 	// reason, or a bounded excerpt of the unexpected response body.
 	Error string `json:"error,omitempty"`
+	// Defect is the machine-readable probe-authoring defect behind an invalid
+	// sample (DefectResponseTruncated), and ByteCap the response cap it names.
+	// A defect is never an application failure.
+	Defect  string `json:"defect,omitempty"`
+	ByteCap int    `json:"byteCap,omitempty"`
 	// Observed is what the other side answered, apart from the probe's own
 	// Error: a bounded, redacted excerpt of the server's response body, or the
 	// transport error cause without the client's method and URL prefix.
@@ -172,6 +177,10 @@ type ScenarioObservations struct {
 	// safety rule; LastInvalid explains the latest one.
 	Invalid     int    `json:"invalid,omitempty"`
 	LastInvalid string `json:"lastInvalid,omitempty"`
+	// Defect is the probe-authoring defect (DefectResponseTruncated) of the
+	// latest invalid iteration that had one; ByteCap is the cap it names.
+	Defect  string `json:"defect,omitempty"`
+	ByteCap int    `json:"byteCap,omitempty"`
 	// IdentityWait is set while the latest sample waited for a probe user to
 	// be provisioned: how long one provisioning run may take.
 	IdentityWait time.Duration `json:"identityWait,omitempty"`
@@ -230,7 +239,4 @@ type Verdict struct {
 
 func Fail(format string, args ...any) Verdict
     Fail rejects a response with a reason that names what was wrong.
-
-func Pass() Verdict
-    Pass accepts a response.
 ```
