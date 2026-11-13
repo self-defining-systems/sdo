@@ -3,8 +3,10 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
@@ -153,5 +155,44 @@ func TestExternalCompletionSchedulesClosureImmediately(t *testing.T) {
 	}
 	if c.incidentOpen || c.pendingClosure == nil {
 		t.Fatal("external completion did not close on its wake")
+	}
+}
+
+// A malformed alert is the producer's error: the controller rejects it, keeps
+// running, and opens the next valid alert. It never stops on inbox content.
+func TestAnInvalidExternalAlertIsRejectedWithoutStoppingTheController(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	cfg := testControllerConfig()
+	cfg.ExternalIncidentsOnly = true
+	c, err := NewController(cfg, nil, externalUnavailableSnapshots{}, &recordingDispatcher{}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inbox := []func() (*ExternalIncident, error){
+		func() (*ExternalIncident, error) {
+			return &ExternalIncident{ID: "too-long", Namespace: cfg.Namespace, Message: strings.Repeat("x", 4097)}, nil
+		},
+		func() (*ExternalIncident, error) {
+			return nil, fmt.Errorf("decode inbox: %w", ErrInvalidExternalIncident)
+		},
+		func() (*ExternalIncident, error) {
+			return &ExternalIncident{ID: "ok", Namespace: cfg.Namespace, Message: "users see failures"}, nil
+		},
+	}
+	next := 0
+	c.ExternalIncidents = func(context.Context) (*ExternalIncident, error) { next++; return inbox[next-1]() }
+	for step := 0; step < 2; step++ {
+		if err := c.Step(context.Background(), now, nil); err != nil {
+			t.Fatalf("step %d stopped the controller: %v", step, err)
+		}
+		if c.currentIncidentRequest != nil {
+			t.Fatalf("step %d opened an incident from an invalid alert", step)
+		}
+	}
+	if err := c.Step(context.Background(), now, nil); err != nil {
+		t.Fatal(err)
+	}
+	if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != "ok" {
+		t.Fatal("the next valid alert did not open")
 	}
 }

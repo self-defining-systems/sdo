@@ -15,6 +15,11 @@ import (
 // ErrExternalIncidentBusy tells an ingress to retain the alert and retry.
 var ErrExternalIncidentBusy = errors.New("an incident is already open")
 
+// ErrInvalidExternalIncident marks an alert the contract refuses (malformed,
+// over a bound, another namespace). It is the producer's error: the controller
+// logs and skips it and keeps operating; it never stops on inbox content.
+var ErrInvalidExternalIncident = errors.New("invalid external incident")
+
 // ExternalIncident is a caller's alert, without detector or benchmark authority.
 // ID must be stable across retries. A namespace has at most one open incident.
 type ExternalIncident struct{ ID, Namespace, Message string }
@@ -36,10 +41,10 @@ func (c *Controller) openExternalIncident(now time.Time, alert ExternalIncident)
 		return fmt.Errorf("external incident entry is disabled")
 	}
 	if err := wire.Validate(&contracts.ExternalIncident{Id: alert.ID, Namespace: alert.Namespace, Message: alert.Message}); err != nil {
-		return err
+		return fmt.Errorf("%w %q: %w", ErrInvalidExternalIncident, alert.ID, err)
 	}
 	if strings.TrimSpace(alert.Message) == "" || alert.Namespace != c.config.Namespace {
-		return fmt.Errorf("external incident must name this namespace and a message")
+		return fmt.Errorf("%w %q: it must name this namespace and a message", ErrInvalidExternalIncident, alert.ID)
 	}
 	c.mu.Lock()
 	if alert.ID == c.lastAcknowledgedIncidentID {

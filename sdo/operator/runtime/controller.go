@@ -198,15 +198,18 @@ type Controller struct {
 	// detectorClearSince maps each detector to the start of its current
 	// streak of clear evaluations; a firing or erroring evaluation ends
 	// the streak. Guarded by mu.
-	detectorClearSince                 map[string]time.Time
-	pendingClosure                     *IncidentClosure
-	closureState                       contracts.ClosureState
-	closureReceipt                     *ClosureReceipt
-	closureFailure                     *ClosureFailure
-	failedClosures                     []*contracts.FailedIncidentClosure
-	dispatchFailureAttempts            int
-	dispatchNextRetryAt                time.Time
-	lastAcknowledgedIncidentID         string
+	detectorClearSince         map[string]time.Time
+	pendingClosure             *IncidentClosure
+	closureState               contracts.ClosureState
+	closureReceipt             *ClosureReceipt
+	closureFailure             *ClosureFailure
+	failedClosures             []*contracts.FailedIncidentClosure
+	dispatchFailureAttempts    int
+	dispatchNextRetryAt        time.Time
+	lastAcknowledgedIncidentID string
+	// rejectedExternalIncident is the last invalid inbox alert logged, so a
+	// retained bad alert is reported once rather than every cycle.
+	rejectedExternalIncident           string
 	lastAcknowledgedExternalIncidentID string
 	incidentView                       *IncidentView
 	broker                             IncidentBroker
@@ -515,13 +518,19 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		c.maybeCloseIncident(ctx, now, nil)
 		if c.ExternalIncidents != nil {
 			alert, err := c.ExternalIncidents(ctx)
-			if err != nil {
-				return err
+			if err == nil && alert != nil {
+				err = c.openExternalIncident(now, *alert)
 			}
-			if alert != nil {
-				if err := c.openExternalIncident(now, *alert); err != nil && !errors.Is(err, ErrExternalIncidentBusy) {
-					return err
+			switch {
+			case err == nil || errors.Is(err, ErrExternalIncidentBusy):
+				c.rejectedExternalIncident = ""
+			case errors.Is(err, ErrInvalidExternalIncident):
+				if reason := err.Error(); reason != c.rejectedExternalIncident {
+					c.rejectedExternalIncident = reason
+					slog.Warn("external_incident_rejected", "error", reason)
 				}
+			default:
+				return err
 			}
 		}
 		if !c.config.ExternalClues {

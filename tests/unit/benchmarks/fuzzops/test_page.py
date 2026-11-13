@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 import yaml
 
-from benchmarks.fuzzops.page import PageConfig, Pager, inbox_manifest, parse_trace
+from benchmarks.fuzzops.page import MAX_MESSAGE, PageConfig, Pager, inbox_manifest, page_message, parse_trace
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -99,3 +99,23 @@ def test_inbox_manifest_is_the_external_incident_inbox() -> None:
     manifest = inbox_manifest("c", "i", "n", "m")
     assert manifest["kind"] == "ConfigMap"
     assert manifest["metadata"]["name"] == "sdo-external-incident"
+
+
+def test_a_page_with_many_failing_operations_stays_within_the_external_incident_contract() -> None:
+    """The controller's inbox refuses an alert over 4096 characters, so the page fits: every failing operation
+    keeps its bullet and the passing list stays; only how-to-check lines past the bound are counted."""
+    names = [f"operation-{i:02d}-with-a-long-name" for i in range(30)]
+    journeys = {
+        "login": {"header": {"PRIVATE-TOKEN": "t0ken"}},
+        "journeys": [
+            {"name": n, "request": {"method": "POST", "path": f"/api/v4/projects/{{{{id}}}}/{n}/long/path"}}
+            for n in names
+        ],
+    }
+    failing = {n: {"failed": 3, "total": 47, "sample": '403 {"message":"403 Forbidden"}'} for n in names[:24]}
+    message = page_message("app", "2026-01-01T00:00:00Z", failing, names, journeys)
+    assert len(message) <= MAX_MESSAGE == 4096
+    assert all(f"  - {n}: 403" in message for n in failing)
+    assert "These still work: " + ", ".join(names[24:]) + "." in message
+    assert "more operations: the same form" in message
+    assert message.endswith("(run from a pod in the namespace, e.g. kubectl exec deploy/gitlab-toolbox -- ...)")
