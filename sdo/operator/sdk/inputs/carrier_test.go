@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/appstate/carried"
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
@@ -47,6 +48,8 @@ func TestSDKInputInterfaceInventory(t *testing.T) {
 		"sdk.ScopedObservationSource":      reflect.TypeFor[sdk.ScopedObservationSource](),
 		"vantage.Source":                   reflect.TypeFor[vantage.Source](),
 		"vantage.ResultSet":                reflect.TypeFor[vantage.ResultSet](),
+		"carried.Source":                   reflect.TypeFor[carried.Source](),
+		"carried.ResultSet":                reflect.TypeFor[carried.ResultSet](),
 	}
 	seen := map[string]bool{}
 	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
@@ -148,5 +151,22 @@ func TestCarrierUpdatesAreCopyOnWrite(t *testing.T) {
 		}
 	}
 	visit(empty, 0)
+}
+
+// The permutation walk above doubles per input (and runs about 45 s at nine),
+// so app state, added later, is checked on its own.
+func TestCarrierAppStateUpdateIsCopyOnWrite(t *testing.T) {
+	source := sdktest.Snapshot{AppState: map[string]carried.Result{"q": {Reader: "q"}}}
+	empty := inputs.New(struct{ sdk.DetectionContext }{})
+	next := empty.WithAppState(source)
+	if _, ok := empty.AppStateResult("q"); ok {
+		t.Fatal("WithAppState mutated its predecessor")
+	}
+	if got, ok := next.AppStateResult("q"); !ok || got.Reader != "q" {
+		t.Fatalf("lost app state: %+v", got)
+	}
+	if len(inputs.New(source).AppStateResults()) != 1 {
+		t.Fatal("results not listed")
+	}
 }
 func ptrTime(at time.Time) *time.Time { return &at }

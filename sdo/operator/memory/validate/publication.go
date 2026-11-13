@@ -329,6 +329,7 @@ func publicationChecks(ctx context.Context, r Request, structurallyValid bool) (
 	ds = append(ds, liveObjectNameDiagnostics(r.Root, paths)...)
 	ds = append(ds, normalizedReadDiagnostics(r.Root, paths)...)
 	ds = append(ds, unscopedBindingDiagnostics(r.Root, paths)...)
+	ds = append(ds, readerClassDiagnostics(r.Root, paths)...)
 	if structurallyValid {
 		duplicates, err := duplicateRepairDiagnostics(ctx, r, paths)
 		if err != nil {

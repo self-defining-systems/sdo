@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/appstate/carried"
 	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/podread"
@@ -75,6 +76,9 @@ type Snapshot struct {
 	PodReads map[string]podread.Result `json:"pod_reads,omitempty"`
 	// Vantage holds frozen vantage probe readings by probe ID.
 	Vantage map[string]vantage.Result `json:"vantage,omitempty"`
+	// AppState holds frozen app-state reader results (the snapshot ring, the
+	// last-healthy snapshot and declared noisy keys) by reader ID.
+	AppState map[string]carried.Result `json:"app_state,omitempty"`
 	// Alerts holds the frozen alerts of the evaluation cycle.
 	Alerts *metrics.AlertsResult `json:"alerts,omitempty"`
 	// ApplicationMap is a synthetic accepted application map; nil replays the
@@ -437,6 +441,15 @@ func (s Snapshot) VantageResult(id string) (vantage.Result, bool) {
 
 // VantageResults implements vantage.ResultSet: the recorded results.
 func (s Snapshot) VantageResults() map[string]vantage.Result { return maps.Clone(s.Vantage) }
+
+// AppStateResult implements carried.Source.
+func (s Snapshot) AppStateResult(id string) (carried.Result, bool) {
+	r, ok := s.AppState[id]
+	return r, ok
+}
+
+// AppStateResults implements carried.ResultSet: the recorded results.
+func (s Snapshot) AppStateResults() map[string]carried.Result { return maps.Clone(s.AppState) }
 
 func (s Snapshot) QueryMetrics(q metrics.Query) metrics.Result {
 	if err := q.Validate(); err != nil {
