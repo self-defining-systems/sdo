@@ -7,14 +7,10 @@ import (
 )
 
 // Mitigate deletes each crashing Pod, as the responder did, so the controller replaces it.
-func (Program) Mitigate(_ context.Context, v program.ReadView, b program.Bindings) (program.Plan, error) {
-	pods, err := crashing(v, b)
-	if err != nil {
-		return program.Plan{}, err
-	}
+func (Program) Mitigate(_ context.Context, v program.ReadView, _ program.Bindings) (program.Plan, error) {
 	var actions []program.Action
-	for _, pod := range pods {
-		actions = append(actions, program.DeletePod{Ref: pod})
+	for _, c := range crashing(v) {
+		actions = append(actions, program.DeletePod{Ref: c.pod})
 	}
 	return program.Plan{Actions: actions}, nil
 }

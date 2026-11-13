@@ -166,12 +166,23 @@ The copy rules catch the second incident, but reflection could still "refine" by
 (`id == "home-timeline-read" || id == "user-timeline-read"`), and the first incident still taught a literal
 form. So the generalized form is checked too:
 
-- `playbook.component-literal` (blocking): a changed program that declares a role adds a component name to a
+- `playbook.component-literal` (blocking): a changed program, with or without a role, adds a component name to a
   string literal outside its Spec, prose and error text. `detector.component-literal` (blocking): the same for a
   changed incident detector that binds roles (`ParameterBindings`, `localize.BindSuspects`). Names the accepted
   version of that playbook or detector already had are left alone, so editing old memory needs no rewrite; a
-  new playbook must take its component from the role from the first incident. This restores, for
+  new playbook must take its component from the role (or, role-less, from relation) from the first incident. This restores, for
   generalization rather than leakage, the literal-binding check dropped above.
+- Learned playbooks are role-less. The closing turn's `playbook-writing` skill declares no object role: a role of
+  kind K binds only from a finding that names exactly one K, and opening findings often name Pods or Services, so
+  a required `Deployment`/`StatefulSet` role never bound and the playbook was never a candidate. A role-less
+  program is a candidate for every active finding and is diagnosed once per pass, so its `Diagnose` finds its
+  subject by relation (application map, owners, `DiffAgainstSource`), tests the state its fix changed, filters on
+  object state before any `Logs` call and returns `NoMatch` when the subject is absent. The validator does not ban
+  roles (a Service-targetPort playbook binds correctly from the Service finding); `sdo-playbook-authoring`, about
+  designer and oracle playbooks, keeps its role-bound examples. `skillexamples` runs each example's `Diagnose` on
+  a healthy install and on another fault's state and requires `NoMatch` and a short `Duration`. Trust gates nothing,
+  so wrong-cause protection comes from the examples' Diagnose discipline alone; the next step if models ignore it is
+  a closing-check that the playbook binds from the incident's own findings.
 - Skill: `programs.md` "Localized components" shows the generalized pair (container from the bound workload;
   a detector that accepts every scenario finding and calls `localize.BindSuspects`); the detector rules link it.
 - The playbook rule was refused at the first incident on the P8 pair as well (`home-timeline-redis-acl`

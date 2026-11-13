@@ -6,16 +6,20 @@ description: Turn the fix you just made into a playbook SDO can run by itself ne
 # Writing a playbook
 
 A playbook is `.sdo/playbooks/<id>/` with `diagnose.go` and `mitigate.go`. Copy the closer of
-`examples/stale-process/` and `examples/stuck-pods/` and edit it. Write only Go.
+`examples/template-drift/` and `examples/stuck-pods/` and edit it. Write only Go.
 
-- `Spec()`: the `ID` and one role, `component`: the workload you fixed. Reach its Pods and
-  neighbors through `ReadView` (`v.Pods()`, `v.Deployments()`), never by name.
-- `Diagnose`: the check that confirmed the cause: `v.Logs`, a Pod status, an object field.
-  Return `program.Match` with `Evidence`, `program.NoMatch`, or `program.Unknown` if a read fails.
+- `Spec()`: the `ID` and no object role. SDO tries a role-less playbook on every incident and
+  on every pass, so `Diagnose` finds its own subject through `ReadView` by relation (app map,
+  owners, `DiffAgainstSource`), never by name, and returns `program.NoMatch` when it is absent.
+- `Diagnose`: test the state your fix changed (the cause), not a symptom. Filter on object
+  state first; `v.Logs` costs a read, so call it only for the few objects that pass, as
+  `Evidence`. Return `program.Match`, `program.NoMatch`, or `program.Unknown` if a read fails.
+  It must stay `NoMatch` on a healthy install and on other faults, within seconds.
 - `Mitigate`: the changes that fixed it, in order, as you made them: `program.DeletePod`,
-  `program.RestartRollout`, `program.PatchObject`; for an `sdo mitigate X`, the same
+  `program.RestartRollout`, `program.SetField`; for an `sdo mitigate X`, the same
   `program.X` with the same fields.
-- Leave out restores to accepted source (SDO does those) and changes that did not help.
+- Restoring accepted source is not automatic: carry a restore you ran as `program.SetField`
+  with `program.FromSource`. Leave out changes that did not help.
 - No `RunScript`, no app names, no passwords.
 
 Check:

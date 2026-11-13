@@ -192,10 +192,21 @@ var componentLiteralRows = []gateRow{
 	gateComponentLiteral("playbook edit keeps the component names it had", true, []string{"orders-cache-acl"}, func(t *testing.T, r string) {
 		edit(t, r, ".sdo/playbooks/orders-cache-acl/diagnose.go", `"NOPERM"`, `"NOPERM "`)
 	}),
+	gateComponentLiteral("new role-less playbook names a component", false, []string{"orders-cache-acl"},
+		writePlaybook("orders-cache-acl", rolelessLiteral.Replace(componentDiagnose), componentMitigate), RulePlaybookComponentLiteral),
+	gateComponentLiteral("new role-less playbook names no component", false, []string{"cache-acl-restore"},
+		writePlaybook("cache-acl-restore", strings.Replace(rolelessLiteral.Replace(genericDiagnose), `"orders-cache"`, `"cache"`, 1), genericMitigate)),
 	gateComponentLiteral("new incident detector binds a component by name", true, nil,
 		writeDetector("cache-acl", strings.NewReplacer(`ID: "orders-cache-acl"`, `ID: "cache-acl"`, "orderscacheacldetector", "cacheacldetector", `OriginatingIncident: "inc-0"`, `OriginatingIncident: "inc-1"`).Replace(componentDetector)),
 		RuleDetectorComponentLiteral),
 	gateComponentLiteral("new incident detector binds every suspect", true, nil, writeDetector("cache-acl", genericDetector)),
 }
+
+// rolelessLiteral is the same diagnose with no object role: the playbook finds
+// its subject by relation, so a literal component name is as much an over-fit
+// as it is beside a role.
+var rolelessLiteral = strings.NewReplacer(`, Params: []program.ParamSpec{{Name: "cacheDeployment", Kind: "Deployment", Required: true}}`, "",
+	`ref := b.Objects["cacheDeployment"]`, `ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "shop", Name: "orders-cache"}`,
+	`"sdo.dev/operator/sdk/program"`, "\"sdo.dev/operator/sdk\"\n\t\"sdo.dev/operator/sdk/program\"")
 
 func init() { gateRows = append(gateRows, componentLiteralRows...) }

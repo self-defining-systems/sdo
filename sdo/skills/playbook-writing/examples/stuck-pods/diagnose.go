@@ -1,57 +1,58 @@
-// Package stuckpods replaces the Pods of a workload that are stuck terminating or crash looping.
+// Package stuckpods replaces Pods that crash loop under a Deployment.
 package stuckpods
 
 import (
 	"context"
-	"fmt"
+	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
 
 type Program struct{}
 
-func (Program) Spec() program.ProgramSpec {
-	return program.ProgramSpec{ID: "stuck-pods", Params: []program.ParamSpec{{Name: "component", Kind: "Deployment", Required: true}}}
+// Spec declares no object role: the program is tried on every incident and finds its subject itself.
+func (Program) Spec() program.ProgramSpec { return program.ProgramSpec{ID: "stuck-pods"} }
+
+type crashed struct {
+	pod       sdk.ObjectRef
+	container string
 }
 
-// crashing lists the component's Pods that are crash looping, found by relation (the selector), not by name.
-func crashing(v program.ReadView, b program.Bindings) ([]sdk.ObjectRef, error) {
-	ref := b.Objects["component"]
-	for _, deployment := range v.Deployments() {
-		if deployment.Namespace != ref.Namespace || deployment.Name != ref.Name || deployment.Spec.Selector == nil {
+// crashing finds the cause by relation (Pod -> ReplicaSet -> Deployment owners), filtering on Pod state only.
+func crashing(v program.ReadView) []crashed {
+	owned := map[string]bool{}
+	for _, rs := range v.ReplicaSets() {
+		for _, owner := range rs.OwnerReferences {
+			if owner.Kind == "Deployment" {
+				owned[rs.Namespace+"/"+rs.Name] = true
+			}
+		}
+	}
+	var found []crashed
+	for _, pod := range v.Pods() {
+		if len(pod.OwnerReferences) == 0 || !owned[pod.Namespace+"/"+pod.OwnerReferences[0].Name] {
 			continue
 		}
-		selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
-		if err != nil {
-			return nil, err
-		}
-		var pods []sdk.ObjectRef
-		for _, pod := range v.Pods() {
-			if pod.Namespace != ref.Namespace || !selector.Matches(labels.Set(pod.Labels)) {
-				continue
-			}
-			for _, status := range pod.Status.ContainerStatuses {
-				if status.State.Waiting != nil && status.State.Waiting.Reason == "CrashLoopBackOff" {
-					pods = append(pods, sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: pod.Namespace, Name: pod.Name})
-					break
-				}
+		for _, status := range pod.Status.ContainerStatuses {
+			if w := status.State.Waiting; w != nil && w.Reason == "CrashLoopBackOff" && status.RestartCount >= 3 {
+				found = append(found, crashed{sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: pod.Namespace, Name: pod.Name}, status.Name})
+				break
 			}
 		}
-		return pods, nil
 	}
-	return nil, fmt.Errorf("component %s/%s is not in the snapshot", ref.Namespace, ref.Name)
+	return found
 }
 
-func (Program) Diagnose(_ context.Context, v program.ReadView, b program.Bindings) (program.Verdict, error) {
-	pods, err := crashing(v, b)
-	if err != nil {
-		return program.Verdict{}, err
-	}
+func (Program) Diagnose(_ context.Context, v program.ReadView, _ program.Bindings) (program.Verdict, error) {
+	pods := crashing(v)
 	if len(pods) == 0 {
-		return program.Verdict{Result: program.NoMatch}, nil
+		return program.Verdict{Result: program.NoMatch}, nil // no subject: not this fault
 	}
-	return program.Verdict{Result: program.Match, Evidence: []program.Evidence{{Resource: b.Objects["component"], Fact: "Pods are crash looping", Observed: pods[0].Name, Expected: "running"}}}, nil
+	observed := ""
+	// Logs cost a read: one call, after the state filter, only as supporting Evidence.
+	if logs, err := v.Logs(pods[0].pod, pods[0].container, time.Minute); err == nil {
+		observed = logs
+	}
+	return program.Verdict{Result: program.Match, Evidence: []program.Evidence{{Resource: pods[0].pod, Fact: "a Pod is crash looping", Observed: observed, Expected: "running"}}}, nil
 }
