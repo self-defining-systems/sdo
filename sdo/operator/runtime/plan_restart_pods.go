@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -239,7 +240,7 @@ func (e PlanExecutor) replaceRevisionStuckPods(ctx context.Context, refs []sdk.O
 	if !ok || len(refs) == 0 {
 		return nil
 	}
-	now := time.Now
+	now := lifecycleio.Now
 	if e.Now != nil {
 		now = e.Now
 	}
@@ -266,20 +267,18 @@ func (e PlanExecutor) replaceRevisionStuckPods(ctx context.Context, refs []sdk.O
 // awaitObservedStatefulSet reads the StatefulSet once its controller has
 // observed the restored template, so status.updateRevision names that template.
 func (e PlanExecutor) awaitObservedStatefulSet(ctx context.Context, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
-	deadline := time.Now().Add(templateRolloutWaitBound)
+	deadline := lifecycleio.Now().Add(templateRolloutWaitBound)
 	for {
 		set, err := e.Client.Get(ctx, ref)
 		if err != nil {
 			return nil, err
 		}
 		observed, _, _ := unstructured.NestedInt64(set.Object, "status", "observedGeneration")
-		if observed >= set.GetGeneration() || !time.Now().Before(deadline) {
+		if observed >= set.GetGeneration() || !lifecycleio.Now().Before(deadline) {
 			return set, nil
 		}
-		select {
-		case <-ctx.Done():
+		if lifecycleio.Wait(ctx, 250*time.Millisecond) != nil {
 			return set, nil
-		case <-time.After(250 * time.Millisecond):
 		}
 	}
 }
