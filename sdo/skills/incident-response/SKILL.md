@@ -12,9 +12,9 @@ Habits, not a procedure.
   read the exact response.
 - Survey: `sdo detect`, `sdo changes`, `sdo timeline`, logs, the data the operations touch. An unexplained
   row near onset outranks a readable one off that path.
-- Reason over `.sdo/arch.md`: trace each failing operation's path through components, edges and data holders.
-  Prefer causes on that path, not the passing operations'; an upstream dependency or data holder can break what
-  is downstream. Hypothesize from different points on the path, including the data it reads and writes.
+- Reason over the app map: `sdo map diff` shows what only failing paths touch; `sdo map path OP` and
+  `sdo map near C` show a path and neighbours. Prefer causes on the failing path; an upstream dependency or data
+  holder can break what is downstream. Hypothesize along the path, including the data it reads and writes.
 - Before acting, hold two to four explanations differing in component, layer or timing, each with a check that
   could refute it. Drop what evidence refutes.
 - For longer checks spawn a sub-agent per hypothesis. It reads `sdo-investigator/SKILL.md` first; tell it the
