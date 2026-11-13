@@ -9,8 +9,10 @@ You were given one hypothesis about an application incident, what to expect if i
 observations behind it, and a time box. Find out whether it is true. Do not fix anything. You start with no other
 context; read the rest yourself.
 
-Read only. Do not run `sdo mitigate`, edit or delete cluster objects, restart anything, exec into a Pod, or
-commit source. If a check needs a change or an exec, name it in your report; the responder runs it.
+Read only. Never change data, config or processes: do not run `sdo mitigate`, edit or delete cluster objects,
+restart anything, write through a client, or commit source. Reading is fine, including `kubectl exec` to run
+a read in a Pod (a SELECT, a cache GET, listing files). If a check needs a change, name it in your report; the
+responder runs it.
 
 Safe reads: `sdo detect`, `sdo changes`, `sdo timeline`, `sdo source`, `kubectl get/describe/logs`, the app map
 `.sdo/arch.md`. Do not call `sdo status`, `sdo diagnose`, `sdo menu` or `sdo verify`: they change state the

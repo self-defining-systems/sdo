@@ -112,6 +112,9 @@ class ClaudeBill:
     ttl_complete: bool = True
     source: str = "unique API requests"
     evidence: tuple[dict[str, Any], ...] = ()
+    # The part of ``tokens``/``requests`` that sub-agents spent; the rest is the main session.
+    subagent_tokens: TokenUsage = field(default_factory=TokenUsage)
+    subagent_requests: int = 0
 
     def usage(self) -> dict[str, int | float]:
         result = token_mapping(self.tokens, self.requests)
@@ -126,8 +129,9 @@ class ClaudeLedger:
     states: list[BillingState] = field(default_factory=list[BillingState])
     last_assistant_time: float | None = None
     invalid: bool = False
+    subagent_ids: set[str] = field(default_factory=set[str])
 
-    def observe(self, record: dict[str, Any], *, model: str | None = None) -> None:
+    def observe(self, record: dict[str, Any], *, model: str | None = None, subagent: bool = False) -> None:
         if record.get("type") == "cost-state":
             if isinstance(record.get("totalCostUSD"), (int, float)):
                 state = BillingState(
@@ -146,6 +150,8 @@ class ClaudeLedger:
         if not identity:
             self.invalid = True
             identity = "unidentified:" + hashlib.sha256(json.dumps(message, sort_keys=True).encode()).hexdigest()
+        if subagent or record.get("isSidechain") or record.get("parent_tool_use_id"):
+            self.subagent_ids.add(identity)
         timestamp = epoch(record.get("timestamp"))
         if timestamp is not None:
             self.last_assistant_time = max(self.last_assistant_time or timestamp, timestamp)
@@ -154,11 +160,11 @@ class ClaudeLedger:
         if previous is None or request.tokens.output_tokens >= previous.tokens.output_tokens:
             self.requests[identity] = request
 
-    def merge_file(self, path: Path) -> None:
+    def merge_file(self, path: Path, *, subagent: bool = False) -> None:
         # Anchors belong to this file's ordering, not to the previous export.
         self.last_assistant_time = None
         for record in json_records(path):
-            self.observe(record)
+            self.observe(record, subagent=subagent)
 
     def before(self, timestamp: float) -> ClaudeLedger:
         return ClaudeLedger(
@@ -169,6 +175,7 @@ class ClaudeLedger:
             },
             states=[state for state in self.states if state.anchor is not None and state.anchor < timestamp],
             invalid=self.invalid,
+            subagent_ids=set(self.subagent_ids),
         )
 
     def through(self, timestamp: float) -> ClaudeLedger:
@@ -180,11 +187,16 @@ class ClaudeLedger:
             },
             states=[state for state in self.states if state.anchor is not None and state.anchor <= timestamp],
             invalid=self.invalid,
+            subagent_ids=set(self.subagent_ids),
         )
 
     def since(self, before: ClaudeLedger, pricing: PricingTable) -> ClaudeBill:
         selected = [value for key, value in self.requests.items() if key not in before.requests]
         tokens = sum((value.tokens for value in selected), TokenUsage())
+        sub_selected = [
+            value for key, value in self.requests.items() if key not in before.requests and key in self.subagent_ids
+        ]
+        sub_tokens = sum((value.tokens for value in sub_selected), TokenUsage())
 
         def request_price() -> float | None:
             total = 0.0
@@ -286,13 +298,40 @@ class ClaudeLedger:
             },
         )
         return ClaudeBill(
-            tokens, len(selected), dollars if complete else None, complete, ttl_complete, source, evidence
+            tokens,
+            len(selected),
+            dollars if complete else None,
+            complete,
+            ttl_complete,
+            source,
+            evidence,
+            sub_tokens,
+            len(sub_selected),
         )
+
+
+def session_transcripts(home: Path, session_id: str) -> tuple[list[Path], list[Path]]:
+    """Main and sub-agent transcripts of one Claude session.
+
+    Claude Code writes the main transcript at ``projects/<project>/<sid>.jsonl`` and each sub-agent's at
+    ``projects/<project>/<sid>/subagents/agent-<id>.jsonl``.
+    """
+    projects = home / "projects"
+    main = sorted(projects.glob(f"**/{session_id}.jsonl"))
+    subagents = sorted(projects.glob(f"**/{session_id}/subagents/*.jsonl"))
+    return main, subagents
+
+
+def merge_session(ledger: ClaudeLedger, home: Path, session_id: str) -> None:
+    main, subagents = session_transcripts(home, session_id)
+    for path in main:
+        ledger.merge_file(path)
+    for path in subagents:
+        ledger.merge_file(path, subagent=True)
 
 
 def session_ledger(home: Path, session_id: str | None) -> ClaudeLedger:
     ledger = ClaudeLedger()
     if session_id:
-        for path in sorted((home / "projects").glob(f"**/{session_id}.jsonl")):
-            ledger.merge_file(path)
+        merge_session(ledger, home, session_id)
     return ledger

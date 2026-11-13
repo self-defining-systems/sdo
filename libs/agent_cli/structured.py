@@ -64,7 +64,14 @@ from agentshim.execution.host import ProcessCommandHandle
 from agentshim.providers.codex import install_rules
 
 from libs.agent_cli.claude_accounts import AccountRouter, is_claude_auth_failure
-from libs.agent_cli.claude_usage import ClaudeBill, ClaudeLedger, api_tokens, session_ledger, token_mapping
+from libs.agent_cli.claude_usage import (
+    ClaudeBill,
+    ClaudeLedger,
+    api_tokens,
+    merge_session,
+    session_ledger,
+    token_mapping,
+)
 from libs.agent_cli.errors import (
     AccountAuthenticationFailed,
     AccountExhausted,
@@ -607,8 +614,8 @@ def _run_structured_turn_once(
         with usage_lock:
             if claude_home is not None:
                 sid = recorder.session_id or resume_session_id
-                for path in sorted((claude_home / "projects").glob(f"**/{sid}.jsonl")) if sid else []:
-                    claude_ledger.merge_file(path)
+                if sid:
+                    merge_session(claude_ledger, claude_home, sid)
             return claude_ledger.since(claude_before, default_pricing())
 
     def capture_stdout(line: str) -> None:
