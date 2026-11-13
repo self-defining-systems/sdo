@@ -22,6 +22,15 @@ const (
 
 	DefaultReachabilityInterval = 1 * time.Second
 	DefaultReachabilityTimeout  = 1 * time.Second
+	// DefaultReachabilityIdleInterval spaces the dials of a target whose last
+	// Failures dials succeeded. Every dial is a connection the application's
+	// server sees and may count against the prober's source address (sshd
+	// per-source penalties, fail2ban-like and connection-rate limiters), so a
+	// healthy target is dialed at a tenth of the failure cadence. A failed
+	// dial returns the target to DefaultReachabilityInterval at once, so a
+	// real unreachable edge is confirmed within IdleInterval plus
+	// Failures-1 intervals.
+	DefaultReachabilityIdleInterval = 10 * time.Second
 	// DefaultReachabilityFailures consecutive failed dials span four seconds
 	// at the default cadence, clearing three-second data-plane stalls with
 	// margin while reporting sustained failures within five seconds.
@@ -211,12 +220,15 @@ type ReachabilityWindow struct {
 	ObjectiveDigest string                `json:"objectiveDigest,omitempty"`
 	// BaselinePending says the controller could not measure a current baseline
 	// yet. A never-served target is then unknown rather than failing.
-	BaselinePending bool                 `json:"baselinePending,omitempty"`
-	ObservedAt      time.Time            `json:"observedAt"`
-	Interval        time.Duration        `json:"intervalNs"`
-	Timeout         time.Duration        `json:"timeoutNs"`
-	Failures        int                  `json:"failures"`
-	Targets         []TargetObservations `json:"targets"`
+	BaselinePending bool          `json:"baselinePending,omitempty"`
+	ObservedAt      time.Time     `json:"observedAt"`
+	Interval        time.Duration `json:"intervalNs"`
+	// IdleInterval is the spacing of dials of a healthy target; zero means
+	// Interval (every target is dialed at the one cadence).
+	IdleInterval time.Duration        `json:"idleIntervalNs,omitempty"`
+	Timeout      time.Duration        `json:"timeoutNs"`
+	Failures     int                  `json:"failures"`
+	Targets      []TargetObservations `json:"targets"`
 	// Omitted counts derived targets beyond MaxReachabilityTargets.
 	Omitted int            `json:"omitted,omitempty"`
 	Prober  ProberIdentity `json:"prober"`
@@ -224,17 +236,4 @@ type ReachabilityWindow struct {
 	LoadError string `json:"loadError,omitempty"`
 }
     ReachabilityWindow is what the controller has observed at ObservedAt.
-
-func ReachabilityFrom(ctx sdk.DetectionContext) (ReachabilityWindow, bool)
-    ReachabilityFrom returns the dial observations, when the context carries
-    them.
-
-type TargetObservations struct {
-	Target  ReachabilityTarget `json:"target"`
-	Samples []DialSample       `json:"samples"`
-	// LastSuccess is the latest successful dial the controller has seen, which
-	// may be older than every retained sample.
-	LastSuccess *time.Time `json:"lastSuccess,omitempty"`
-}
-    TargetObservations are one target's recent samples, oldest first.
 ```

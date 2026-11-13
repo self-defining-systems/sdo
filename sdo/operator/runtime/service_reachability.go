@@ -56,6 +56,11 @@ type ServiceReachabilityConfig struct {
 	Interval time.Duration
 	Timeout  time.Duration
 	Failures int
+	// IdleInterval spaces the dials of a target that is known healthy: its
+	// last Failures dials succeeded. Targets that are failing, unknown (fewer
+	// than Failures samples) or catching up are dialed every Interval. Zero
+	// selects servicehealth.DefaultReachabilityIdleInterval.
+	IdleInterval time.Duration
 	// Capacity bounds the samples kept per target.
 	Capacity int
 	// CatchUpSpacing spaces the extra dials of targets whose clearing window
@@ -70,14 +75,22 @@ type reachabilityHistory struct {
 	// holdUntil defers a target whose catch-up dial failed to the first full
 	// round one interval later, so a failure run keeps the normal spacing.
 	holdUntil time.Time
+	// lastDial is when the controller last started a dial of the target. It
+	// spaces dials per target, so a stalled loop never fires queued rounds.
+	lastDial time.Time
 	// catchUps counts catch-up dials since the last full round or Pod
 	// change. At most Failures run in between, so a Ready time the dials
 	// never pass (clock skew) cannot keep the prober dialing.
 	catchUps int
 }
 
-// ServiceReachabilityObserver dials every derived Service port once per
-// interval through the prober and keeps the recent samples. Between rounds
+// ServiceReachabilityObserver dials every derived Service port through the
+// prober and keeps the recent samples. A target that is failing or unknown is
+// dialed once per interval; one whose last Failures dials succeeded only once
+// per IdleInterval, so the observer's own connections stay far below the
+// per-source abuse limits of the servers it dials (connection-rate limiters,
+// sshd per-source penalties). No target is dialed twice within half an
+// interval, so a stalled loop never catches up with a burst. Between rounds
 // it dials, CatchUpSpacing apart, only the targets whose clearing window a
 // readiness transition restarted (servicehealth.ReachabilityCatchingUp), so
 // a repaired Service proves reachability in seconds with the same number of
@@ -109,6 +122,10 @@ func NewServiceReachabilityObserver(config ServiceReachabilityConfig) *ServiceRe
 	if config.Failures < 2 {
 		config.Failures = servicehealth.DefaultReachabilityFailures
 	}
+	if config.IdleInterval <= 0 {
+		config.IdleInterval = servicehealth.DefaultReachabilityIdleInterval
+	}
+	config.IdleInterval = max(config.IdleInterval, config.Interval)
 	if config.Capacity < config.Failures+1 {
 		config.Capacity = 2 * config.Failures
 	}
@@ -159,9 +176,10 @@ func (o *ServiceReachabilityObserver) catchingUp(snapshot sdk.DetectionContext) 
 	pending := servicehealth.ReachabilityCatchingUp(snapshot, window)
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	now := timerClock(o.config.Clock).Now()
 	return slices.DeleteFunc(pending, func(target servicehealth.ReachabilityTarget) bool {
 		state := o.history[target.ID()]
-		return state != nil && state.catchUps >= o.config.Failures
+		return state != nil && (state.catchUps >= o.config.Failures || now.Sub(state.lastDial) < o.config.Interval/2)
 	})
 }
 
@@ -175,6 +193,7 @@ func (o *ServiceReachabilityObserver) round(ctx context.Context, catchUp bool) (
 	for _, target := range targets {
 		current[target.ID()] = true
 	}
+	started := timerClock(o.config.Clock).Now()
 	dial := targets
 	if catchUp {
 		dial = o.catchingUp(snapshot)
@@ -200,7 +219,7 @@ func (o *ServiceReachabilityObserver) round(ctx context.Context, catchUp bool) (
 		o.mu.Unlock()
 		return false, false
 	}
-	notify := o.record(response, current, omitted, catchUp)
+	notify := o.record(response, current, omitted, catchUp, started)
 	o.mu.Unlock()
 	if catchUp {
 		return true, len(o.catchingUp(snapshot)) > 0
@@ -208,13 +227,25 @@ func (o *ServiceReachabilityObserver) round(ctx context.Context, catchUp bool) (
 	return notify, len(o.catchingUp(snapshot)) > 0
 }
 
+// unheld selects the targets due for a dial now: never one dialed within half
+// an interval or held after a failed catch-up dial, a failing, unknown or
+// recently failed one every interval, and a healthy one every IdleInterval.
 func (o *ServiceReachabilityObserver) unheld(targets []servicehealth.ReachabilityTarget) []servicehealth.ReachabilityTarget {
 	now := timerClock(o.config.Clock).Now()
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	dial := make([]servicehealth.ReachabilityTarget, 0, len(targets))
 	for _, target := range targets {
-		if state := o.history[target.ID()]; state != nil && now.Before(state.holdUntil) {
+		state := o.history[target.ID()]
+		if state == nil {
+			dial = append(dial, target)
+			continue
+		}
+		gap := now.Sub(state.lastDial)
+		if now.Before(state.holdUntil) || gap < o.config.Interval/2 {
+			continue
+		}
+		if o.healthy(state) && gap < o.config.IdleInterval-o.config.Interval/2 {
 			continue
 		}
 		dial = append(dial, target)
@@ -222,8 +253,21 @@ func (o *ServiceReachabilityObserver) unheld(targets []servicehealth.Reachabilit
 	return dial
 }
 
+// healthy reports whether the target's last Failures dials all succeeded; o.mu is held.
+func (o *ServiceReachabilityObserver) healthy(state *reachabilityHistory) bool {
+	if len(state.samples) < o.config.Failures {
+		return false
+	}
+	for _, sample := range state.samples[len(state.samples)-o.config.Failures:] {
+		if !sample.OK {
+			return false
+		}
+	}
+	return true
+}
+
 // record stores a round's samples; o.mu is held.
-func (o *ServiceReachabilityObserver) record(response prober.DialResponse, current map[string]bool, omitted int, catchUp bool) bool {
+func (o *ServiceReachabilityObserver) record(response prober.DialResponse, current map[string]bool, omitted int, catchUp bool, started time.Time) bool {
 	o.failure, o.omitted, o.observed = "", omitted, timerClock(o.config.Clock).Now().UTC()
 	for id := range o.history {
 		if !current[id] {
@@ -239,7 +283,7 @@ func (o *ServiceReachabilityObserver) record(response prober.DialResponse, curre
 			state = &reachabilityHistory{}
 			o.history[result.Target.ID()] = state
 		}
-		state.target = result.Target
+		state.target, state.lastDial = result.Target, started
 		if catchUp {
 			state.catchUps++
 		} else {
@@ -375,7 +419,7 @@ func (o *ServiceReachabilityObserver) Window() (servicehealth.ReachabilityWindow
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	window := servicehealth.ReachabilityWindow{
-		ObservedAt: timerClock(o.config.Clock).Now().UTC(), Interval: o.config.Interval, Timeout: o.config.Timeout, Failures: o.config.Failures,
+		ObservedAt: timerClock(o.config.Clock).Now().UTC(), Interval: o.config.Interval, IdleInterval: o.config.IdleInterval, Timeout: o.config.Timeout, Failures: o.config.Failures,
 		Omitted: o.omitted, Prober: o.config.Identity, Targets: make([]servicehealth.TargetObservations, 0, len(o.history)),
 	}
 	if o.failure != "" {
