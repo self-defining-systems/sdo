@@ -45,9 +45,14 @@ Keep revisions that applied cleanly unless this incident shows failure or incomp
 ## Program rules
 
 - [One playbook per repair method](references/rules.md#one-playbook-per-repair-method), not per symptom or service.
-- Roles come from findings: one `ParamSpec` per object Kind. Read other objects through ReadView by
-  relation (selector, owner, mount), never by app name; put unavoidable app facts in the README.
-- Write values only as `FromSource`, `FromObserved` or `FromParam` (a declared scalar with a default).
+- Roles come from findings: one `ParamSpec` per object Kind, each bound by an opening finding; declare no role
+  the repair did not need. Read other objects through ReadView by relation (selector, owner, mount), never by
+  app name; put unavoidable app facts in the README.
+- Generalize: Diagnose matches a deviation from accepted source or captured evidence, never a value seen in
+  this incident ([example](references/programs.md#bindings-and-values)). Write values only as `FromSource`,
+  `FromObserved` or `FromParam` (a declared scalar with a default).
+- The program should Match its origin incident's captured evidence without `NeedsJudgement`; ask only for
+  facts that evidence lacks.
 - Diagnose returns Match on positive evidence about the bound component, NoMatch when absent, an error
   (Unknown) when a read is unavailable. A healthy, source-matching object is no evidence. Confirm the fault class on the
   bound target (image, ports, a read or exec); NoMatch on a workload of the wrong kind, with a near-miss test.
@@ -92,7 +97,4 @@ A case is `.sdo/corpus/<case-id>/`. Use a new ID; never edit or delete an accept
   [recorded client](references/kubernetes-client.md).
 - Stalled rollouts, database catalogs, routing probes, Service ports, per-cause work:
   [program notes](references/programs.md).
-- Full generated API: [program SDK](references/program-sdk.md), sections
-  [01](references/program-sdk/program-01.md), [02](references/program-sdk/program-02.md),
-  [03](references/program-sdk/program-03.md), [04](references/program-sdk/program-04.md),
-  [routing](references/program-sdk/routing-01.md).
+- Full generated API: [program SDK](references/program-sdk.md), an index of topic files.
