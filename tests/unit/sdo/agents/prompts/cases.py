@@ -178,7 +178,15 @@ def rendered_cases(*, scale: int = 1) -> dict[str, str]:
             patch.delenv(name, raising=False)
         prompts["responder_cold_two"] = responder_prompt(scaled(memory=False))
         patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "Use the toy incident transport.")
-        prompts["responder_optional"] = responder_prompt(scaled())
+        with_changes = scaled()
+        with_changes.recent_changes.extend(
+            [
+                "+2m settings api rate_limit: 100 → 1 by: operator",
+                "-1m kubectl Deployment/toy/api spec.replicas: 3 → 0",
+                "full list: sdo changes; signals over time: sdo timeline",
+            ]
+        )
+        prompts["responder_optional"] = responder_prompt(with_changes)
         patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", _responder_instructions())
         prompts["responder_transport"] = responder_prompt(scaled())
         patch.setenv("SDO_RESPONDER_EXTRA_INSTRUCTIONS", "Use the toy incident transport.")

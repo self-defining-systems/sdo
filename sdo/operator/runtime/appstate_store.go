@@ -202,7 +202,7 @@ const AppStateAbsent = "(absent)"
 // read failed; its After is the error.
 const AppStateReadKey = "(read)"
 
-// AppStateChanges adapts the store to changes.csv's app-state seam
+// AppStateChanges adapts the store to the app-state seam of `sdo changes`
 // (AppStateChangeSource): each reader's key moves in (since, now]; a key that
 // differs between the reader's last-healthy snapshot and its newest one (when
 // the ring holds no move of it; a key on one side only shows (absent)); and one row for each reader whose

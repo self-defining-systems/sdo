@@ -176,6 +176,19 @@ def _incident_result_schema() -> dict[str, object]:
     return model_output_schema(IncidentResult.DESCRIPTOR, omit=_MODEL_OMITS)
 
 
+def recent_changes_block(request: IncidentRequest) -> str:
+    """The changes nearest onset Go listed, newest first, or the commands that list them on demand."""
+    lines = list(request.recent_changes)
+    if not lines:
+        return "Recent changes: `sdo changes`; signals over time: `sdo timeline`."
+    *changes, pointer = lines
+    if not changes:
+        return pointer
+    return "\n".join(
+        ["Changes nearest onset (newest first, time from onset):", *(f"- {line}" for line in changes), pointer]
+    )
+
+
 def _responder_prompt(request: IncidentRequest) -> RenderedPrompt:
     if not request.HasField("memory_snapshot"):
         raise ValueError("incident responder requires a logical memory snapshot")
@@ -186,6 +199,7 @@ def _responder_prompt(request: IncidentRequest) -> RenderedPrompt:
         incident_id=request.incident_id,
         namespace=request.namespace,
         symptom=symptom(request),
+        recent_changes=recent_changes_block(request),
         skills_root=selected_skills_root(SKILLS_ROOT),
         branch_instruction=branch_instruction("incident_result"),
     )

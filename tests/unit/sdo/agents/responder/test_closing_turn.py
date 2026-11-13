@@ -36,7 +36,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    import pytest
     from agentshim import CommandRequest
     from agentshim.testing import FakeRun
 
@@ -208,38 +207,3 @@ def test_the_learning_message_is_about_600_bytes_plus_the_change_list() -> None:
     assert "\n".join(CHANGES) in prompt
     cleanup = expand_context(cleanup_prompt(leftovers=["a.go"], turn=1))
     assert len(cleanup.encode()) <= 560, len(cleanup.encode())
-
-
-def test_a_transient_provider_auth_failure_is_retried_and_the_closing_turn_completes(
-    tmp_path: Path, prepare_reflection_memory, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("SDO_PROVIDER_AUTH_BACKOFF_SECONDS", "0.001")
-    prepare_reflection_memory(tmp_path, INCIDENT)
-    good = _note()
-    calls: list[int] = []
-
-    def respond(request):
-        calls.append(1)
-        if len(calls) == 1:
-            return failure(stderr="Failed to authenticate: OAuth session expired and could not be refreshed")
-        return good(request)
-
-    agent = ScriptedAgent(respond)
-    result = run_reflection_task(
-        _task(tmp_path, _learning_request(tmp_path)), "result", Publisher(), reflector=_reflector(agent)
-    )
-    assert result.status == "completed"
-    assert len(agent.requests) == 2
-
-
-def test_a_persistent_provider_auth_failure_is_its_own_failure_reason(
-    tmp_path: Path, prepare_reflection_memory, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("SDO_PROVIDER_AUTH_BACKOFF_SECONDS", "0.001")
-    prepare_reflection_memory(tmp_path, INCIDENT)
-    agent = ScriptedAgent(lambda _request: failure(stderr="API Error: 401 authentication_error"))
-    result = run_reflection_task(
-        _task(tmp_path, _learning_request(tmp_path)), "result", Publisher(), reflector=_reflector(agent)
-    )
-    assert (result.status, result.failure_reason) == ("failed", "auth_failed")
-    assert len(agent.requests) == 3

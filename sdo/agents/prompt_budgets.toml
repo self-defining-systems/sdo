@@ -77,8 +77,8 @@ max_chars = 744
 reason = "Actual benchmark transport appendix: 676 Unicode code points, with 10 percent headroom."
 
 [responder.instructions]
-max_chars = 1800
-reason = "The responder's first message: the symptom block of at most 1100 code points (failing user tests grouped by status and server error with failed counts, first failing sample, passing tests, sdo verify), plus the identity line and the two skill lines (about 330 code points with a long skills root), plus headroom."
+max_chars = 6600
+reason = "The responder's first message (the inline changes nearest onset add at most 4800 code points; without them 1800 holds): the symptom block of at most 1100 code points (failing user tests grouped by status and server error with failed counts, first failing sample, passing tests, sdo verify), plus the identity line and the two skill lines (about 330 code points with a long skills root), plus headroom."
 
 [session.incident_data]
 max_chars = 100
@@ -136,6 +136,10 @@ reason = "Compact high-level continuation principles; required progress is count
 max_chars = 1600
 reason = "CTXFAIL1: required ten-receipt progress with a verification error and rollback needs 1444 characters before preserving complete finding fingerprints. Keep every progress row and exact action/finding identity; the total continuation allowance is derived from these manifest caps."
 
+[tool_stdout.changes]
+max_chars = 24000
+reason = "On-demand CSV of the changes from onset-since to now, at most 200 rows (Go incidentChangesCap) of about 120 characters; --limit N keeps the newest N. Beyond the cap cap_text saves the full text to a context file."
+
 [tool_stdout.check]
 max_chars = 1400
 reason = "Measured production rendering 1123 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
@@ -175,6 +179,10 @@ reason = "Measured default stdout 384 Unicode characters, including bounded cont
 [tool_stdout.status]
 max_chars = 1550
 reason = "Measured production rendering 1264 Unicode characters across three-fault and 100-finding fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.timeline]
+max_chars = 16000
+reason = "On-demand CSV of signals over time at fixed steps for at most 24 operations and 8 workloads (Go incidentPageOps/incidentPageWorkloads); beyond the cap cap_text saves the full text to a context file."
 
 [tool_stdout.verify]
 max_chars = 1400
@@ -340,6 +348,10 @@ reason = "Explicit template-placeholder cap; preserve small identities inline an
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
+[template_data.responder-incident_prompt-recent_changes]
+max_chars = 4800
+reason = "At most ten change lines of at most about 400 code points each (Go caps every value at 60) plus the header and the pointer line; the cap keeps the list inline in the first message."
+
 [template_data.responder-incident_prompt-symptom]
 max_chars = 1200
 reason = "The symptom block is bounded to 1100 code points by the renderer; the cap leaves headroom so it is never spilled to a context file."
@@ -355,6 +367,10 @@ reason = "Explicit template-placeholder cap; preserve small identities inline an
 [template_data.responder-incident_shell-incident_id]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_shell-recent_changes]
+max_chars = 4800
+reason = "At most ten change lines of at most about 400 code points each (Go caps every value at 60) plus the header and the pointer line; the cap keeps the list inline in the first message."
 
 [template_data.responder-incident_shell-skills_root]
 max_chars = 256

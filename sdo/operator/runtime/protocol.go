@@ -89,7 +89,10 @@ type IncidentRequest struct {
 	DeploymentInFlight bool
 	// PassingTests are the user tests judged healthy when the incident opened,
 	// sorted, for the responder's first message.
-	PassingTests         []string
+	PassingTests []string
+	// RecentChanges are the changes nearest onset, newest first, and the
+	// pointer to the full commands, for the responder's first message.
+	RecentChanges        []string
 	RepositoryWorktree   string
 	RepositoryBaseCommit string
 	ResponseDeadline     time.Time

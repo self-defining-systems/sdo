@@ -325,11 +325,8 @@ func (l *ResponderLoop) detect(ctx context.Context, ids []string, finding string
 	response.Summary = fmt.Sprintf("%d detectors evaluated; %d current findings", len(response.DetectorStates), len(response.Findings)) + pendingEvaluationSummary(response.DetectorStates)
 	if reads, ok := any(view).(detectReads); ok && len(selected) == 0 {
 		now := l.clock().UTC()
-		var files []string
-		if l.IncidentPages != nil {
-			files = l.IncidentPages(incidentPageInput{Request: l.Request, Findings: response.Findings, View: reads, Now: now})
-		}
-		summary := buildDetectSummary(detectInput{Request: l.Request, Findings: response.Findings, View: reads, Now: now, Recovered: l.detectIncidentRecovered(), Files: files})
+		recent := incidentRecentChanges(l.pageInput(reads, response.Findings, now))
+		summary := buildDetectSummary(detectInput{Request: l.Request, Findings: response.Findings, View: reads, Now: now, Recovered: l.detectIncidentRecovered(), RecentChanges: recent})
 		response.Text = summary.Text
 		if finding != "" {
 			text, found := summary.item(finding)
@@ -340,4 +337,56 @@ func (l *ResponderLoop) detect(ctx context.Context, ids []string, finding string
 			response.Text = text
 		}
 	}
+}
+
+// pageInput is what the on-demand pages are built from.
+func (l *ResponderLoop) pageInput(view detectReads, findings []sdk.Finding, now time.Time) incidentPageInput {
+	in := incidentPageInput{Request: l.Request, Findings: findings, View: view, Now: now}
+	if l.IncidentSources != nil {
+		in.Signals, in.AppState = l.IncidentSources()
+	}
+	return in
+}
+
+// incidentPage answers `sdo changes` and `sdo timeline` from the controller's
+// current state: the evidence the incident holds and a fresh snapshot.
+func (l *ResponderLoop) incidentPage(ctx context.Context, request ToolRequest, response *ToolResponse) {
+	var since time.Duration
+	if request.Since != "" {
+		parsed, err := time.ParseDuration(request.Since)
+		if err != nil || parsed <= 0 {
+			response.Error = fmt.Sprintf("--since %q is not a positive duration such as 30m", request.Since)
+			return
+		}
+		since = parsed
+	}
+	if request.Limit < 0 {
+		response.Error = "--limit must not be negative"
+		return
+	}
+	if l.Provider == nil {
+		response.Error = "fresh snapshot provider is unavailable"
+		return
+	}
+	snapshot, err := l.Provider.Snapshot(ctx)
+	if err != nil {
+		response.Error = err.Error()
+		return
+	}
+	readView := program.ReadFrom(snapshot)
+	if l.ReadView != nil {
+		readView = l.ReadView(snapshot)
+	}
+	reads, ok := any(NewCycleReadView(readView)).(detectReads)
+	if !ok {
+		response.Error = "the snapshot cannot be read for " + request.Command
+		return
+	}
+	in := l.pageInput(reads, l.Request.Findings, l.clock().UTC())
+	in.Since, in.Limit = since, request.Limit
+	if request.Command == "timeline" {
+		response.Text = string(buildIncidentTimeline(in))
+		return
+	}
+	response.Text = string(buildIncidentChanges(in))
 }
