@@ -60,7 +60,11 @@ type IncidentRequest struct {
 	OpeningKeys []string
 	// StandingKeys are the finding keys of the clues already active when the
 	// incident opened: baseline, never evidence the incident caused them.
-	StandingKeys           []string
+	StandingKeys []string
+	// JoinedKeys are the finding keys of user tests that started failing while
+	// the incident was open, within AlertJoinWindow of detection. With
+	// OpeningKeys they are the alert set Recovered waits on (alertKeys).
+	JoinedKeys             []string
 	ExternalMessage        string
 	Telemetry              *contracts.TelemetryContext
 	DisabledSetupDetectors []*contracts.DisabledSetupDetector

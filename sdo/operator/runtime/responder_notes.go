@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -144,4 +145,29 @@ func appendNote(response *ToolResponse, note string) {
 	} else {
 		response.Summary += "; " + note
 	}
+}
+
+// liveRequest is the loop's request with the alert set the controller holds
+// now: user tests that joined the incident after the request was taken.
+func (l *ResponderLoop) liveRequest() IncidentRequest {
+	request := l.Request
+	if l.CurrentEvidence == nil {
+		return request
+	}
+	current := l.CurrentEvidence()
+	if current == nil || current.IncidentID != request.IncidentID {
+		return request
+	}
+	request.JoinedKeys = current.JoinedKeys
+	request.Findings = append(slices.Clone(request.Findings), current.Findings...)
+	var seen []string
+	request.Findings = slices.DeleteFunc(request.Findings, func(finding sdk.Finding) bool {
+		key := findingKey(finding)
+		if slices.Contains(seen, key) {
+			return true
+		}
+		seen = append(seen, key)
+		return false
+	})
+	return request
 }

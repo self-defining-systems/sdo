@@ -367,6 +367,10 @@ message IncidentRequest {
   // Go-owned: the changes nearest onset, newest first, one line each, then the
   // line that names the full commands, for the responder's first message.
   repeated string recent_changes = 41 [(buf.validate.field).repeated = {max_items: 11, items: {string: {max_len: 600}}}];
+  // Go-owned: the finding keys of user tests that started failing while the
+  // incident was open (within the join window of detection). With opening_keys
+  // they form the alert set Recovered waits on; clues never join.
+  repeated string joined_keys = 42;
 }
 
 message ResponseProgress {

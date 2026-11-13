@@ -547,7 +547,7 @@ func architectureOf(view any) (doc string, ok bool, err error) {
 func buildSuspectSet(in detectInput) detectSuspectSet {
 	g, m, note := loadCandidateGraph(in.View)
 	judged := judgedTests(in.View, m, g)
-	opening := openingKeys(&in.Request)
+	opening := alertKeys(&in.Request)
 	var openingFindings, clues []sdk.Finding
 	for _, finding := range in.Findings {
 		if slices.Contains(opening, findingKey(finding)) {
@@ -796,7 +796,10 @@ func buildDetectSummary(in detectInput) detectSummary {
 	}
 	header := []string{
 		fmt.Sprintf("incident %s  opened on: %s  onset %s  now %s", in.Request.IncidentID, opened, hms(onset), hms(in.Now)),
-		fmt.Sprintf("recovered: %s (%d opening alerts active)", state, active),
+		fmt.Sprintf("recovered: %s (%d alerts active)", state, active),
+	}
+	if line := alertSetLine(&in.Request); line != "" {
+		header = append(header, line)
 	}
 	for _, note := range in.Request.PriorStages {
 		for _, mitigation := range note.GetMitigations() {
@@ -978,4 +981,20 @@ func (s detectSummary) item(id string) (string, bool) {
 // detectIncidentRecovered reports whether the incident's verified marker is set.
 func (l *ResponderLoop) detectIncidentRecovered() bool {
 	return l.IncidentStatus != nil && l.IncidentStatus() != nil
+}
+
+// alertSetLine says what Recovered waits on when user tests joined the
+// opening alerts: the whole set must clear and stay clear. "" when none joined.
+func alertSetLine(request *IncidentRequest) string {
+	if request == nil || len(request.JoinedKeys) == 0 {
+		return ""
+	}
+	var names []string
+	for _, finding := range request.Findings {
+		if slices.Contains(request.JoinedKeys, findingKey(finding)) {
+			names = append(names, strings.TrimPrefix(finding.RuleID, traffic.RuleIDPrefix))
+		}
+	}
+	sort.Strings(names)
+	return fmt.Sprintf("alert set: %d opening + %d joined user tests (%s); recovered needs all of them clear and staying clear", len(openingKeys(request)), len(names), strings.Join(names, ", "))
 }

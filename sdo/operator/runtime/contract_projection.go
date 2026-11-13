@@ -208,6 +208,7 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 	result := &contracts.IncidentRequest{
 		OpeningKeys:           append([]string(nil), request.OpeningKeys...),
 		StandingKeys:          append([]string(nil), request.StandingKeys...),
+		JoinedKeys:            append([]string(nil), request.JoinedKeys...),
 		PassingTests:          append([]string(nil), request.PassingTests...),
 		RecentChanges:         append([]string(nil), request.RecentChanges...),
 		ExternalMessage:       request.ExternalMessage,
@@ -542,6 +543,7 @@ func incidentRequestState(message *contracts.IncidentRequest) *IncidentRequest {
 	result := &IncidentRequest{
 		OpeningKeys:            append([]string(nil), message.GetOpeningKeys()...),
 		StandingKeys:           append([]string(nil), message.GetStandingKeys()...),
+		JoinedKeys:             append([]string(nil), message.GetJoinedKeys()...),
 		PassingTests:           append([]string(nil), message.GetPassingTests()...),
 		RecentChanges:          append([]string(nil), message.GetRecentChanges()...),
 		ExternalMessage:        message.GetExternalMessage(),

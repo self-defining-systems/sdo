@@ -85,7 +85,7 @@ func (d KubernetesJobDispatcher) beforeFirstResponderClaim(ctx context.Context, 
 	}
 	// A claim follows an applied write: only the opening alerts decide whether a
 	// worker is still needed.
-	scope := newRecoveryScope(openingKeys(&state.Request))
+	scope := newRecoveryScope(alertKeys(&state.Request))
 	state.Findings = holdingFindings(scope, state.Findings)
 	state.refreshUnexplained()
 	openingDetectors := map[string]bool{}

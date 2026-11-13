@@ -345,6 +345,17 @@ func (c *Controller) markNewSinceDispatchLocked(response *ToolResponse) {
 	}
 }
 
+// markAlertSetLocked tells the responder what Recovered waits on when user
+// tests joined the opening alerts after dispatch.
+func (c *Controller) markAlertSetLocked(response *ToolResponse) {
+	if c.currentIncidentRequest == nil || len(c.currentIncidentRequest.JoinedKeys) == 0 {
+		return
+	}
+	if line := alertSetLine(c.currentIncidentRequest); line != "" {
+		response.Summary += "; " + line
+	}
+}
+
 func (c *Controller) cacheVerificationLocked(response ToolResponse) {
 	prior := map[string]bool{}
 	if c.cachedVerification != nil {
@@ -360,6 +371,7 @@ func (c *Controller) cacheVerificationLocked(response ToolResponse) {
 	}
 	copy := cloneVerification(response)
 	c.markNewSinceDispatchLocked(&copy)
+	c.markAlertSetLocked(&copy)
 	c.cachedVerification = &copy
 	if c.currentIncidentRequest != nil {
 		c.cachedIncidentID = c.currentIncidentRequest.IncidentID

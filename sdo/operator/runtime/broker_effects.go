@@ -192,7 +192,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 			if effect.Closure.ClosureStabilityWindow == 0 && observation.Status == DetectorEvaluationClear {
 				continue
 			}
-			c.recordRecoveryObservation(actionCtx, observation.ID, c.clock(), observation.Findings, observation.Status, observation.Error, observation.Reason, newRecoveryScope(openingKeys(&effect.Closure.Request)))
+			c.recordRecoveryObservation(actionCtx, observation.ID, c.clock(), observation.Findings, observation.Status, observation.Error, observation.Reason, newRecoveryScope(alertKeys(&effect.Closure.Request)))
 		}
 		if len(effect.Closure.FinalDetectorStates) > 0 {
 			c.mu.Lock()
@@ -599,7 +599,7 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		}
 	}
 	reads := readRecoveryDetectors(ctx, toRead, snapshot)
-	scope := newRecoveryScope(openingKeys(&closure.Request))
+	scope := newRecoveryScope(alertKeys(&closure.Request))
 	for _, id := range ordered {
 		detector := c.detectors[id]
 		if detector == nil && !slices.Contains(c.healthDetectorIDs, id) {

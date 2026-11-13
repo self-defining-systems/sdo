@@ -681,14 +681,14 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		if c.config.ConfirmationInterval > 0 && c.tracker.HasPendingDetector(spec.ID) {
 			c.scheduler.Expedite(spec.ID, now.Add(c.config.ConfirmationInterval))
 		}
+		for _, finding := range changes.Activated {
+			c.admitActivation(ctx, finding, now, c.detectorSpecs[spec.ID])
+		}
 		c.mu.Lock()
 		if len(c.recoveryScopeLocked().blocking(changes.Activated)) > 0 {
 			c.closureStableSince = time.Time{}
 		}
 		c.mu.Unlock()
-		for _, finding := range changes.Activated {
-			c.admitActivation(ctx, finding, now, c.detectorSpecs[spec.ID])
-		}
 		c.recordFiring(spec, now, validFindings, changes)
 		if len(changes.Activated) == 0 || len(pending) == 0 || !earlyDispatchSafe() {
 			return nil
@@ -825,8 +825,13 @@ func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, n
 		}
 		return
 	}
-	// A later opener never joins a launched incident: it opens the next one.
 	if c.attachBeforeLaunch([]sdk.Finding{finding}, true) {
+		return
+	}
+	// A user test that starts failing early in a launched incident joins its
+	// alert set (Recovered waits on it); any other later opener, or a test
+	// after the join window, opens the next incident.
+	if c.joinAlertSet(finding, now) {
 		return
 	}
 	if spec.Class == "" {
@@ -1692,7 +1697,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			// first agent task takes over through the stage hand-off.
 			if now.Before(c.currentIncidentRequest.ResponseDeadline) &&
 				stageHandoffWarranted(c.config.AfterPlaybook, c.currentIncidentRequest.PriorStages, c.recoveryScopeLocked(), verification.Findings, graceOver,
-					c.tracker.HasActiveKeys(openingKeys(c.currentIncidentRequest)), len(c.activeHealthDetectors()) > 0) {
+					c.tracker.HasActiveKeys(alertKeys(c.currentIncidentRequest)), len(c.activeHealthDetectors()) > 0) {
 				request := *cloneIncidentRequest(c.currentIncidentRequest)
 				request.Findings = append([]sdk.Finding(nil), verification.Findings...)
 				if len(request.Findings) == 0 {

@@ -326,7 +326,7 @@ func (l *ResponderLoop) detect(ctx context.Context, ids []string, finding string
 	if reads, ok := any(view).(detectReads); ok && len(selected) == 0 {
 		now := l.clock().UTC()
 		page := l.pageInput(reads, response.Findings, now)
-		summary := buildDetectSummary(detectInput{Request: l.Request, Findings: response.Findings, View: reads, Now: now, Recovered: l.detectIncidentRecovered(), AppState: page.AppState})
+		summary := buildDetectSummary(detectInput{Request: l.liveRequest(), Findings: response.Findings, View: reads, Now: now, Recovered: l.detectIncidentRecovered(), AppState: page.AppState})
 		response.Text = summary.Text
 		if finding != "" {
 			text, found := summary.item(finding)
