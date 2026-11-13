@@ -50,6 +50,7 @@ def test_incident_schema_is_the_proto_message_minus_declared_omissions() -> None
         "proposed_artifact_ids",
         "usage",
         "responder_session_id",
+        "investigation_report",
         "error",
         "program_tool_calls",
         "repair_actions",

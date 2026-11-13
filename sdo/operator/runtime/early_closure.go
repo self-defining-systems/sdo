@@ -278,6 +278,13 @@ func (d KubernetesJobDispatcher) responderJobNames(ctx context.Context, id strin
 // Request termination for every owned worker, then independently re-read the
 // same inventory used by restart retirement. Delete acceptance is not quiescence.
 func (d KubernetesJobDispatcher) StopResponder(ctx context.Context, id string, attempts int) error {
+	// Investigators end before anything else: the closing turn and the seal come after this stop.
+	investigatorErr := d.stopInvestigators(ctx, id)
+	return errors.Join(investigatorErr, d.stopExecutions(ctx, id, attempts))
+}
+
+// stopExecutions deletes every Job and Pod of one session identity and re-reads until none is active.
+func (d KubernetesJobDispatcher) stopExecutions(ctx context.Context, id string, attempts int) error {
 	inventory, err := d.responderExecutions(ctx, id, attempts)
 	if err != nil {
 		return err
