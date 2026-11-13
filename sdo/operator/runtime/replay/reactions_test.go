@@ -2,6 +2,7 @@ package replay
 
 import (
 	"context"
+	ktesting "k8s.io/client-go/testing"
 	"strings"
 	"testing"
 
@@ -94,5 +95,31 @@ func TestReplayRestartRolloutReplacesStuckStatefulSetPod(t *testing.T) {
 	}
 	if len(reasons) != 1 || reasons[0] == "" {
 		t.Fatalf("Pod delete receipts = %v, want one with a reason", reasons)
+	}
+}
+
+// A template change makes the modelled StatefulSet controller publish a new
+// updateRevision, so the executor can tell the Pods stuck on the old one.
+func TestReplayTemplateChangeAdvancesStatefulSetUpdateRevision(t *testing.T) {
+	ctx := context.Background()
+	c, setRef, podRef := stuckStatefulSetCluster(t)
+	for _, ref := range []sdk.ObjectRef{setRef, podRef} {
+		object, _ := c.Get(ctx, ref)
+		if ref == setRef {
+			_ = unstructured.SetNestedField(object.Object, "store-old", "status", "updateRevision")
+		} else {
+			object.SetLabels(map[string]string{"controller-revision-hash": "store-old"})
+			_ = unstructured.SetNestedSlice(object.Object, []any{map[string]any{"type": "Ready", "status": "False", "lastTransitionTime": "2020-01-01T00:00:00Z"}}, "status", "conditions")
+		}
+		if _, err := c.fake.Invokes(ktesting.NewUpdateAction(fixtureResource(ref), ref.Namespace, object), &unstructured.Unstructured{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.Patch(ctx, setRef, types.MergePatchType, []byte(`{"spec":{"template":{"spec":{"containers":[{"name":"main","image":"registry.example/synthetic:2"}]}}}}`)); err != nil {
+		t.Fatal(err)
+	}
+	set, _ := c.Get(ctx, setRef)
+	if revision, _, _ := unstructured.NestedString(set.Object, "status", "updateRevision"); revision == "" || revision == "store-old" {
+		t.Fatalf("updateRevision = %q, want a new revision after a template change", revision)
 	}
 }
