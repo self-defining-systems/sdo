@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/csv"
 	"fmt"
-	"path"
 	"slices"
 	"sort"
 	"strconv"
@@ -14,38 +13,39 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/storeops"
 	"sdo.dev/operator/sdk/storestate"
 	"sdo.dev/operator/sdk/traffic"
 )
 
-// Page-time files: at dispatch and on each `sdo detect` the controller writes
-// incident/timeline.csv and incident/changes.csv into the responder's session.
-// They are information, never a verdict: no row is scored or ranked.
+// On-demand pages: `sdo changes` and `sdo timeline` print CSV computed from the
+// controller's current state when called, and the first message and `sdo detect`
+// show the few changes nearest onset inline. They are information, never a
+// verdict: no row is scored or ranked beyond time order.
 const (
 	// incidentSignalHorizon is how much per-operation and workload history the
 	// controller keeps; traffic windows alone hold only about 30 s.
 	incidentSignalHorizon = 15 * time.Minute
-	incidentTimelineLead  = 3 * time.Minute
 	incidentTimelineStep  = 10 * time.Second
-	// incidentChangesWindow is how far before onset changes.csv reaches.
-	incidentChangesWindow = 30 * time.Minute
-	incidentChangesCap    = 200
+	// incidentDefaultLead is how far before onset `sdo changes` and `sdo timeline`
+	// reach unless --since says otherwise.
+	incidentDefaultLead = 10 * time.Minute
+	incidentChangesCap  = 200
+	// incidentInlineChanges is how many changes the first message and `sdo detect` list.
+	incidentInlineChanges = 10
+	incidentInlineValue   = 60
 	incidentPageOps       = 24
 	incidentPageWorkloads = 8
 	incidentPageValue     = 120
 	incidentSignalSamples = 4096
 	incidentSignalSeries  = 128
-	// incidentSessionMount is where the agent sees its session directory.
-	incidentSessionMount = "/sdo/session"
 )
 
-// incidentPageNames are the files, in the order `sdo detect` names them.
-var incidentPageNames = []string{"timeline.csv", "changes.csv"}
+// incidentPointer is the line after the inline changes.
+const incidentPointer = "full list: sdo changes; signals over time: sdo timeline"
 
-// IncidentChange is one row of changes.csv.
+// IncidentChange is one row of `sdo changes`.
 type IncidentChange struct {
 	At             time.Time
 	Source         string // kubernetes, store or app-state
@@ -59,7 +59,7 @@ type IncidentChange struct {
 
 // AppStateChangeSource is the seam app-state readers plug into: the controller
 // asks it for the app-state changes between since and now, and lists them in
-// changes.csv with source "app-state". Values must already exclude credentials;
+// `sdo changes` with source "app-state". Values must already exclude credentials;
 // the page redacts credential-shaped text again. Nil lists none.
 type AppStateChangeSource interface {
 	AppStateChanges(since, now time.Time) []IncidentChange
@@ -242,7 +242,7 @@ func workloadStates(view sdk.DetectionContext) map[string]workloadSample {
 	return states
 }
 
-// incidentPageInput is what the page files are built from.
+// incidentPageInput is what the pages are built from.
 type incidentPageInput struct {
 	Request  IncidentRequest
 	Findings []sdk.Finding
@@ -250,32 +250,51 @@ type incidentPageInput struct {
 	Signals  *incidentSignals
 	AppState AppStateChangeSource
 	Now      time.Time
+	// Since is how far before onset the page reaches; zero is incidentDefaultLead.
+	Since time.Duration
+	// Limit keeps only the newest rows of the changes page; zero is the cap.
+	Limit int
 }
 
-type incidentPages struct {
-	Timeline []byte
-	Changes  []byte
+func (in incidentPageInput) lead() time.Duration {
+	if in.Since > 0 {
+		return in.Since
+	}
+	return incidentDefaultLead
 }
 
-func (p incidentPages) files() map[string][]byte {
-	return map[string][]byte{"timeline.csv": p.Timeline, "changes.csv": p.Changes}
-}
-
-// buildIncidentPages renders both files. Onset, the failing tests and the
-// suspects are the ones `sdo detect` shows.
-func buildIncidentPages(in incidentPageInput) incidentPages {
+// incidentSet is the suspect set `sdo detect` shows and the onset every page
+// is measured from.
+func incidentSet(in incidentPageInput) (detectSuspectSet, time.Time) {
 	set := buildSuspectSet(detectInput{Request: in.Request, Findings: in.Findings, View: in.View, Now: in.Now})
-	onset := set.onset
-	if onset.IsZero() {
-		onset = in.Now
+	if set.onset.IsZero() {
+		return set, in.Now
 	}
-	return incidentPages{
-		Timeline: renderTimeline(set, in.Signals.history(), in.Request, in.View, onset, in.Now),
-		Changes:  renderChanges(incidentChangeRows(in, set, onset), onset),
-	}
+	return set, set.onset
 }
 
-func renderTimeline(set detectSuspectSet, history incidentSignalHistory, request IncidentRequest, view detectReads, onset, now time.Time) []byte {
+// buildIncidentTimeline renders `sdo timeline`.
+func buildIncidentTimeline(in incidentPageInput) []byte {
+	set, onset := incidentSet(in)
+	return renderTimeline(set, in.Signals.history(), in.Request, in.View, onset, in.Now, in.lead())
+}
+
+// buildIncidentChanges renders `sdo changes`.
+func buildIncidentChanges(in incidentPageInput) []byte {
+	set, onset := incidentSet(in)
+	return renderChanges(incidentChangeRows(in, set, onset), onset)
+}
+
+// incidentRecentChanges are the lines the first message and `sdo detect` show:
+// the changes from onset-10 min to now, newest first, at most
+// incidentInlineChanges, then the pointer to the full commands.
+func incidentRecentChanges(in incidentPageInput) []string {
+	in.Since, in.Limit = 0, 0
+	set, onset := incidentSet(in)
+	return recentChangeLines(incidentChangeRows(in, set, onset), onset)
+}
+
+func renderTimeline(set detectSuspectSet, history incidentSignalHistory, request IncidentRequest, view detectReads, onset, now time.Time, lead time.Duration) []byte {
 	// Operations: the failing tests first, then the rest by name; no ranking.
 	var operations []string
 	for _, test := range set.failing {
@@ -323,7 +342,7 @@ func renderTimeline(set detectSuspectSet, history incidentSignalHistory, request
 		return q
 	}
 	// Buckets are aligned on onset and start no earlier than the ring holds.
-	first := max(-int64(incidentTimelineLead/incidentTimelineStep), -floor(onset.Sub(now.Add(-incidentSignalHorizon))))
+	first := max(-int64(lead/incidentTimelineStep), -floor(onset.Sub(now.Add(-incidentSignalHorizon))))
 	last := floor(now.Sub(onset))
 	rows := [][]string{header}
 	for bucket := first; bucket <= last; bucket++ {
@@ -364,10 +383,10 @@ func renderTimeline(set detectSuspectSet, history incidentSignalHistory, request
 }
 
 // incidentChangeRows are the source departures of every component (with the
-// writer), the store-state changes and the app-state changes, from
-// onset-30 min to now. Every value passes the summary's redaction.
+// writer), the store-state changes and the app-state changes, from onset minus
+// the lead to now, oldest first. Every value passes the summary's redaction when rendered.
 func incidentChangeRows(in incidentPageInput, set detectSuspectSet, onset time.Time) []IncidentChange {
-	since := onset.Add(-incidentChangesWindow)
+	since := onset.Add(-in.lead())
 	var rows []IncidentChange
 	if in.View != nil {
 		namespace := in.Request.Namespace
@@ -417,14 +436,18 @@ func incidentChangeRows(in incidentPageInput, set detectSuspectSet, onset time.T
 		return a.At.Before(b.At)
 	})
 	// The cap drops the oldest timed rows; untimed rows (missing objects) sort last and stay.
-	if len(rows) > incidentChangesCap {
+	limit := incidentChangesCap
+	if in.Limit > 0 {
+		limit = min(limit, in.Limit)
+	}
+	if len(rows) > limit {
 		untimed := 0
 		for untimed < len(rows) && rows[len(rows)-1-untimed].At.IsZero() {
 			untimed++
 		}
-		timed := max(incidentChangesCap-untimed, 0)
+		timed := max(limit-untimed, 0)
 		rows = append(rows[len(rows)-untimed-timed:len(rows)-untimed], rows[len(rows)-untimed:]...)
-		rows = rows[:min(len(rows), incidentChangesCap)]
+		rows = rows[:min(len(rows), limit)]
 	}
 	return rows
 }
@@ -455,15 +478,7 @@ func renderChanges(rows []IncidentChange, onset time.Time) []byte {
 	out := [][]string{{"t_rel_s", "at_utc", "source", "component", "reader_or_object", "key", "before", "after", "writer", "noisy"}}
 	clean := func(text string) string { return redactDetectText(text, incidentPageValue) }
 	for _, row := range rows {
-		// A credential-named key or object masks its values whatever they look like.
-		if pageCredentialName(row.Key) || pageCredentialName(row.ReaderOrObject) {
-			if row.Before != "" {
-				row.Before = "[redacted]"
-			}
-			if row.After != "" {
-				row.After = "[redacted]"
-			}
-		}
+		row = maskCredentialValues(row)
 		relative, at := "", ""
 		if !row.At.IsZero() {
 			relative = strconv.FormatInt(int64(row.At.Sub(onset)/time.Second), 10)
@@ -472,6 +487,84 @@ func renderChanges(rows []IncidentChange, onset time.Time) []byte {
 		out = append(out, []string{relative, at, row.Source, clean(row.Component), clean(row.ReaderOrObject), clean(row.Key), clean(row.Before), clean(row.After), clean(row.Writer), strconv.FormatBool(row.Noisy)})
 	}
 	return encodeCSV(out)
+}
+
+// maskCredentialValues masks a row's values when its key or object names a
+// credential, whatever the values look like.
+func maskCredentialValues(row IncidentChange) IncidentChange {
+	if pageCredentialName(row.Key) || pageCredentialName(row.ReaderOrObject) {
+		if row.Before != "" {
+			row.Before = "[redacted]"
+		}
+		if row.After != "" {
+			row.After = "[redacted]"
+		}
+	}
+	return row
+}
+
+// relativeOffset is a time relative to onset, such as -4s, +2m05s.
+func relativeOffset(d time.Duration) string {
+	sign := "+"
+	if d < 0 {
+		sign, d = "-", -d
+	}
+	seconds := int64(d / time.Second)
+	if seconds < 60 {
+		return fmt.Sprintf("%s%ds", sign, seconds)
+	}
+	return fmt.Sprintf("%s%dm%02ds", sign, seconds/60, seconds%60)
+}
+
+// recentChangeLines lists up to incidentInlineChanges of rows (oldest first, as
+// incidentChangeRows returns them) newest first, untimed rows last, then the
+// pointer to the full commands.
+func recentChangeLines(rows []IncidentChange, onset time.Time) []string {
+	ordered := make([]IncidentChange, 0, len(rows))
+	for index := len(rows) - 1; index >= 0; index-- {
+		if !rows[index].At.IsZero() {
+			ordered = append(ordered, rows[index])
+		}
+	}
+	for _, row := range rows {
+		if row.At.IsZero() {
+			ordered = append(ordered, row)
+		}
+	}
+	if len(ordered) > incidentInlineChanges {
+		ordered = ordered[:incidentInlineChanges]
+	}
+	clean := func(text string) string { return redactDetectText(text, incidentInlineValue) }
+	lines := make([]string, 0, len(ordered)+1)
+	for _, row := range ordered {
+		row = maskCredentialValues(row)
+		when := "?"
+		if !row.At.IsZero() {
+			when = relativeOffset(row.At.Sub(onset))
+		}
+		parts := []string{when}
+		for _, text := range []string{row.Source, row.Component, row.ReaderOrObject, row.Key} {
+			if text != "" {
+				parts = append(parts, clean(text))
+			}
+		}
+		line := strings.Join(parts, " ")
+		if row.Before != "" || row.After != "" {
+			line += ": " + orNone(clean(row.Before)) + " → " + orNone(clean(row.After))
+		}
+		if row.Writer != "" {
+			line += " by: " + clean(row.Writer)
+		}
+		lines = append(lines, line)
+	}
+	return append(lines, incidentPointer)
+}
+
+func orNone(text string) string {
+	if text == "" {
+		return "(none)"
+	}
+	return text
 }
 
 // pageCredentialName is storeops.CredentialName widened toward refusing: a
@@ -494,23 +587,4 @@ func encodeCSV(rows [][]string) []byte {
 	writer := csv.NewWriter(&buffer)
 	_ = writer.WriteAll(rows)
 	return buffer.Bytes()
-}
-
-// writeIncidentPages builds the pages and writes them into the incident's
-// session under the repository mount; it returns the paths the agent sees. A
-// rewrite (each `sdo detect`) needs the session to exist; dispatch prepares it.
-func writeIncidentPages(repositoryMount string, in incidentPageInput, rewrite bool) ([]string, error) {
-	pages := buildIncidentPages(in)
-	write := memory.WriteIncidentPages
-	if rewrite {
-		write = memory.RewriteIncidentPages
-	}
-	if err := write(repositoryMount, in.Request.IncidentID, pages.files()); err != nil {
-		return nil, fmt.Errorf("write incident pages: %w", err)
-	}
-	paths := make([]string, 0, len(incidentPageNames))
-	for _, name := range incidentPageNames {
-		paths = append(paths, path.Join(incidentSessionMount, memory.IncidentPagesDir, name))
-	}
-	return paths, nil
 }

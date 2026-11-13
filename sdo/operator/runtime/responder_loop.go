@@ -37,21 +37,25 @@ const maxRecordedToolResponse = 2048
 const maxRecordedApplyResponse = 8192
 
 type ToolRequest struct {
-	Workload            string                                 `json:"workload,omitempty"`
-	Scenarios           []string                               `json:"scenarios,omitempty"`
-	SelectionSet        *contracts.MitigationSelectionSet      `json:"-"`
-	WaitSeconds         float64                                `json:"wait_seconds,omitempty"`
-	PreviousFindings    []sdk.Finding                          `json:"previous_findings,omitempty"`
-	FindingFingerprints []string                               `json:"finding_fingerprints,omitempty"`
-	DetectorIDs         []string                               `json:"detector_ids,omitempty"`
-	Finding             string                                 `json:"finding,omitempty"`
-	Parameters          map[string]string                      `json:"parameters,omitempty"`
-	Selection           *contracts.MitigationSelection         `json:"-"`
-	ReportQuery         *contracts.MitigationReportQuery       `json:"-"`
-	Checkpoint          *contracts.MitigationSessionCheckpoint `json:"-"`
-	Command             string                                 `json:"command"`
-	Ref                 *sdk.ObjectRef                         `json:"ref,omitempty"`
-	ProgramID           string                                 `json:"program_id,omitempty"`
+	Workload            string                            `json:"workload,omitempty"`
+	Scenarios           []string                          `json:"scenarios,omitempty"`
+	SelectionSet        *contracts.MitigationSelectionSet `json:"-"`
+	WaitSeconds         float64                           `json:"wait_seconds,omitempty"`
+	PreviousFindings    []sdk.Finding                     `json:"previous_findings,omitempty"`
+	FindingFingerprints []string                          `json:"finding_fingerprints,omitempty"`
+	DetectorIDs         []string                          `json:"detector_ids,omitempty"`
+	Finding             string                            `json:"finding,omitempty"`
+	// Since is how far before onset `changes` and `timeline` reach, a Go
+	// duration such as 30m; Limit keeps the newest N changes.
+	Since       string                                 `json:"since,omitempty"`
+	Limit       int                                    `json:"limit,omitempty"`
+	Parameters  map[string]string                      `json:"parameters,omitempty"`
+	Selection   *contracts.MitigationSelection         `json:"-"`
+	ReportQuery *contracts.MitigationReportQuery       `json:"-"`
+	Checkpoint  *contracts.MitigationSessionCheckpoint `json:"-"`
+	Command     string                                 `json:"command"`
+	Ref         *sdk.ObjectRef                         `json:"ref,omitempty"`
+	ProgramID   string                                 `json:"program_id,omitempty"`
 	// Targets are the playbooks or built-in actions a mitigate call applies,
 	// named as the responder typed them. Go resolves each to its exact selection.
 	Targets       []MitigateTarget `json:"targets,omitempty"`
@@ -213,17 +217,17 @@ type ResponderLoop struct {
 	VerifyClosure      func(context.Context) ToolResponse
 	VerifyResult       func(context.Context, IncidentResult) ToolResponse
 	CurrentEvidence    func() *IncidentRequest
-	// IncidentPages rewrites the incident's page files (timeline.csv,
-	// changes.csv) on each `sdo detect` and returns the paths the agent sees.
-	IncidentPages func(incidentPageInput) []string
-	Request            IncidentRequest
-	Programs           program.ProgramRegistry
-	Traffic            ProberAPI
-	Provider           SnapshotProvider
-	Detectors          []sdk.Detector
-	Executor           PlanExecutor
-	ReadView           func(sdk.DetectionContext) program.ReadView
-	DiagnosisDeadline  time.Duration
+	// IncidentSources supplies the signal ring and app-state source behind
+	// `sdo changes`, `sdo timeline` and the inline changes; nil reads none.
+	IncidentSources   func() (*incidentSignals, AppStateChangeSource)
+	Request           IncidentRequest
+	Programs          program.ProgramRegistry
+	Traffic           ProberAPI
+	Provider          SnapshotProvider
+	Detectors         []sdk.Detector
+	Executor          PlanExecutor
+	ReadView          func(sdk.DetectionContext) program.ReadView
+	DiagnosisDeadline time.Duration
 	// ProgramFollowUpSettle bounds each wait before a program follow-up plan;
 	// PendingStallTimeout bounds how long a pending application holds its writes.
 	ProgramFollowUpSettle time.Duration
@@ -655,6 +659,8 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		l.selectionReport(ctx, request.ReportQuery, &response)
 	case "detect":
 		l.detect(ctx, request.DetectorIDs, request.Finding, &response)
+	case "changes", "timeline":
+		l.incidentPage(ctx, request, &response)
 	case "status":
 		response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
 		response.Trust = l.Trust

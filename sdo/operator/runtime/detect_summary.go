@@ -52,8 +52,8 @@ type detectInput struct {
 	Now      time.Time
 	// Recovered is the incident's verified marker.
 	Recovered bool
-	// Files are the page files written for this summary, as the agent sees them.
-	Files []string
+	// RecentChanges are the inline change lines and the pointer line shown under the header.
+	RecentChanges []string
 }
 
 // detectSummary is the compact text and the full text of each item a `more:`
@@ -657,8 +657,11 @@ func buildDetectSummary(in detectInput) detectSummary {
 		fmt.Sprintf("incident %s  opened on: %s  onset %s  now %s", in.Request.IncidentID, opened, hms(onset), hms(in.Now)),
 		fmt.Sprintf("recovered: %s (%d opening alerts active)", state, active),
 	}
-	if len(in.Files) > 0 {
-		header = append(header, "files: "+strings.Join(in.Files, " "))
+	if len(in.RecentChanges) > 0 {
+		header = append(header, "changes (newest first, time from onset):")
+		for _, line := range in.RecentChanges {
+			header = append(header, "  "+line)
+		}
 	}
 	for _, note := range in.Request.PriorStages {
 		for _, mitigation := range note.GetMitigations() {

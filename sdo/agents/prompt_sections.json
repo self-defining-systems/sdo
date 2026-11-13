@@ -60,6 +60,7 @@
   },
   "responder/incident_shell": {
     "incident_id": "template_data.responder-incident_shell-incident_id",
+    "recent_changes": "template_data.responder-incident_shell-recent_changes",
     "skills_root": "template_data.responder-incident_shell-skills_root",
     "branch_instruction": "template_data.responder-incident_shell-branch_instruction"
   },
@@ -82,6 +83,7 @@
     "incident_id": "template_data.responder-incident_prompt-incident_id",
     "namespace": "template_data.responder-incident_prompt-namespace",
     "symptom": "template_data.responder-incident_prompt-symptom",
+    "recent_changes": "template_data.responder-incident_prompt-recent_changes",
     "skills_root": "template_data.responder-incident_prompt-skills_root",
     "branch_instruction": "template_data.responder-incident_prompt-branch_instruction"
   },

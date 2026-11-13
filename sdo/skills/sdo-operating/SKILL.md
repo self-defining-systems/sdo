@@ -10,6 +10,7 @@ errors, clues), other clues, and learned playbooks as advice. Each `more:` line 
 The app map is `.sdo/arch.md`: components, edges, user operations, what holds data.
 
 - `sdo detect [--finding ID]`
+- `sdo changes [--since 30m] [--limit N]`: changes as CSV from before onset to now (default 10m before); `sdo timeline [--since 30m]`: failing tests and workload readiness over time as CSV
 - `sdo source Kind/ns/name`: intended state, e.g. `sdo source Deployment/shop/api`
 - `sdo diagnose NAME --bind ROLE=Kind/ns/name`: test a learned playbook
 - `sdo menu [NAME]`: list fixes. `sdo mitigate NAME --bind ROLE=Kind/ns/name`: apply one

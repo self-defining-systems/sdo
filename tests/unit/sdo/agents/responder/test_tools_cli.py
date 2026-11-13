@@ -374,3 +374,29 @@ def test_sdo_act_is_not_a_command_and_mitigate_still_is(capsys: pytest.CaptureFi
     with pytest.raises(SystemExit):
         tools_cli.main(["mitigate", "--help"])
     assert "mitigate" in capsys.readouterr().out
+
+
+def test_changes_and_timeline_send_their_window_and_print_the_csv(monkeypatch, capsys):
+    seen = []
+
+    def exchange(request, _directory):
+        seen.append(request)
+        return {"command": request["command"], "text": "t_rel_s,at_utc\n-60,10:00:00\n"}
+
+    monkeypatch.setattr(tools_cli, "_exchange", exchange)
+
+    assert tools_cli.main(["changes"]) == 0
+    assert tools_cli.main(["changes", "--since", "30m", "--limit", "5"]) == 0
+    assert tools_cli.main(["timeline", "--since", "1h"]) == 0
+    assert seen == [
+        {"command": "changes"},
+        {"command": "changes", "since": "30m", "limit": 5},
+        {"command": "timeline", "since": "1h"},
+    ]
+    assert capsys.readouterr().out == "t_rel_s,at_utc\n-60,10:00:00\n\n" * 3
+
+
+def test_changes_limit_must_be_positive(monkeypatch, capsys):
+    monkeypatch.setattr(tools_cli, "_exchange", lambda *_: pytest.fail("no request for an invalid limit"))
+    assert tools_cli.main(["changes", "--limit", "0"]) == 1
+    assert "--limit must be at least 1" in capsys.readouterr().err

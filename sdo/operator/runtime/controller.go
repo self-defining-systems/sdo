@@ -47,18 +47,14 @@ type ControllerConfig struct {
 	CodePath         CodePathConfig
 	CodePathRegistry *CodePathRegistry
 
-	Application            string
-	Namespace              string
-	SourceCommit           string
-	DeployedCommit         string
-	RepositoryWorktree     string
-	CorpusSessionRoot      string
-	// PageSessionRoot is the repository mount the incident page files
-	// (incident/timeline.csv, incident/changes.csv) are written under; empty
-	// writes none.
-	PageSessionRoot string
-	// AppStateChanges supplies changes.csv's app-state rows; nil lists none.
-	AppStateChanges AppStateChangeSource
+	Application        string
+	Namespace          string
+	SourceCommit       string
+	DeployedCommit     string
+	RepositoryWorktree string
+	CorpusSessionRoot  string
+	// AppStateChanges supplies `sdo changes` app-state rows; nil lists none.
+	AppStateChanges        AppStateChangeSource
 	ResponseTimeout        time.Duration
 	VerificationTimeout    time.Duration
 	ClosureStabilityWindow time.Duration
@@ -97,7 +93,7 @@ type dispatchCompletion struct {
 
 type Controller struct {
 	// signals is the 15-minute ring the incident timeline is drawn from.
-	signals *incidentSignals
+	signals           *incidentSignals
 	ExternalIncidents func(context.Context) (*ExternalIncident, error)
 	memoryRefresh     func(context.Context) (bool, error)
 	config            ControllerConfig
@@ -965,11 +961,12 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 		request.StateChanges = cloneStateChanges(c.Baseline.Changes(now))
 	}
 	request.StateChanges = withStoreChanges(request.StateChanges, snapshot, now)
-	c.beginIncident(now, request, batch)
 	request.DetectedAt = now.UTC()
 	if reads, ok := snapshot.(detectReads); ok {
-		c.writeIncidentPages(ctx, incidentPageInput{Request: request, Findings: batch, View: reads, Now: now.UTC()}, false)
+		signals, appState := c.IncidentSources()
+		request.RecentChanges = incidentRecentChanges(incidentPageInput{Request: request, Findings: batch, View: reads, Signals: signals, AppState: appState, Now: now.UTC()})
 	}
+	c.beginIncident(now, request, batch)
 	// The batcher is drained, so the incident is open before any file I/O: an
 	// observer exporting state mid-capture reads the work, never an idle gap.
 	// The responder starts only after this step returns, so it still finds the
@@ -2438,22 +2435,8 @@ func passingTests(snapshot sdk.DetectionContext) []string {
 	return slices.Compact(passing)
 }
 
-// writeIncidentPages writes the incident's page files into its session; a
-// failure is logged, never fatal: the pages are information.
-func (c *Controller) writeIncidentPages(ctx context.Context, in incidentPageInput, rewrite bool) []string {
-	if c.config.PageSessionRoot == "" {
-		return nil
-	}
-	in.Signals, in.AppState = c.signals, c.config.AppStateChanges
-	files, err := writeIncidentPages(c.config.PageSessionRoot, in, rewrite)
-	if err != nil {
-		slog.WarnContext(ctx, "incident_pages_unavailable", "incident_id", in.Request.IncidentID, "error", err)
-	}
-	return files
-}
-
-// IncidentPages is the responder loop's hook that rewrites the page files on
-// each `sdo detect`.
-func (c *Controller) IncidentPages(ctx context.Context) func(incidentPageInput) []string {
-	return func(in incidentPageInput) []string { return c.writeIncidentPages(ctx, in, true) }
+// IncidentSources are what `sdo changes`, `sdo timeline` and the inline
+// changes read besides the snapshot: the signal ring and the app-state source.
+func (c *Controller) IncidentSources() (*incidentSignals, AppStateChangeSource) {
+	return c.signals, c.config.AppStateChanges
 }
