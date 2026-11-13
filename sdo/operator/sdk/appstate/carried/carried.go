@@ -7,6 +7,7 @@ package carried
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -15,7 +16,6 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/storeops"
 )
 
 // Bounds of one reader's state and of the history the controller keeps.
@@ -31,58 +31,38 @@ const (
 )
 
 // Values is one reader's state: key to value. The zero value is empty and
-// ready. A credential-named key whose value could carry a secret is withheld
-// (its value is never stored), and so is a key or value past the bounds; a
-// withheld key is only counted (Withheld), so one odd key never fails the
-// ReadState call. A boolean or plain-integer value is kept under any key name:
-// it cannot carry a secret.
+// ready. Prototype: no secret filtering; readers must not select secret
+// columns. A key or value past the bounds is refused and reported by Err,
+// which fails the ReadState call.
 type Values struct {
-	items    map[string]string
-	withheld int
+	items   map[string]string
+	refused []string
 }
 
-// WithheldKey is the value key under which a reader's withheld count is
-// reported once any key was withheld.
-const WithheldKey = "keys.withheld"
-
-// nonSecret reports whether a value is a boolean (true, false, t, f in any
-// case) or a plain integer (optional sign, digits only, at most 18 digits).
-func nonSecret(value string) bool {
-	switch strings.ToLower(value) {
-	case "true", "false", "t", "f":
-		return true
-	}
-	digits := strings.TrimLeft(value, "+-")
-	if len(value)-len(digits) > 1 || digits == "" || len(digits) > 18 {
-		return false
-	}
-	for _, r := range digits {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
-}
-
-// Set records one key. It never stores the value of a credential-named key
-// unless the value is a boolean or a plain integer.
+// Set records one key.
 func (v *Values) Set(key, value string) {
 	switch {
 	case key == "":
-		v.withheld++
-	case storeops.CredentialName(key) && !nonSecret(value):
-		v.withheld++
-	case len(key) > MaxKeyBytes, len(value) > MaxValueBytes:
-		v.withheld++
+		v.refuse("empty key")
+	case len(key) > MaxKeyBytes:
+		v.refuse(fmt.Sprintf("key %q exceeds %d bytes", key[:32]+"...", MaxKeyBytes))
+	case len(value) > MaxValueBytes:
+		v.refuse(fmt.Sprintf("value of key %q exceeds %d bytes", key, MaxValueBytes))
 	default:
 		if _, exists := v.items[key]; !exists && len(v.items) >= MaxKeys {
-			v.withheld++
+			v.refuse(fmt.Sprintf("more than %d keys", MaxKeys))
 			return
 		}
 		if v.items == nil {
 			v.items = map[string]string{}
 		}
 		v.items[key] = value
+	}
+}
+
+func (v *Values) refuse(reason string) {
+	if len(v.refused) < 8 {
+		v.refused = append(v.refused, reason)
 	}
 }
 
@@ -102,19 +82,12 @@ func (v Values) Keys() []string {
 	return keys
 }
 
-// Withheld is the number of Set calls that stored nothing.
-func (v Values) Withheld() int { return v.withheld }
-
-// ReportWithheld stores the withheld count under WithheldKey when it is not
-// zero, whatever the key cap, replacing any value a reader set there.
-func (v *Values) ReportWithheld() {
-	if v.withheld == 0 {
-		return
+// Err reports every refused Set, or nil.
+func (v Values) Err() error {
+	if len(v.refused) == 0 {
+		return nil
 	}
-	if v.items == nil {
-		v.items = map[string]string{}
-	}
-	v.items[WithheldKey] = strconv.Itoa(v.withheld)
+	return errors.New("app-state values refused: " + strings.Join(v.refused, "; "))
 }
 
 // MarshalJSON writes the values as a plain key-to-value object.
@@ -126,8 +99,7 @@ func (v Values) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON reads a plain object, applying the same bounds as Set. A key
-// the current rules refuse is dropped, so a stored snapshot still loads after
-// the credential-name filter grows.
+// the current rules refuse is dropped.
 func (v *Values) UnmarshalJSON(data []byte) error {
 	var items map[string]string
 	if err := json.Unmarshal(data, &items); err != nil {
@@ -137,6 +109,7 @@ func (v *Values) UnmarshalJSON(data []byte) error {
 	for _, k := range sortedKeys(items) {
 		v.Set(k, items[k])
 	}
+	v.refused = nil
 	return nil
 }
 
@@ -149,9 +122,9 @@ func sortedKeys(items map[string]string) []string {
 	return keys
 }
 
-// Clone returns an independent copy, including the withheld count.
+// Clone returns an independent copy, including any refusals.
 func (v Values) Clone() Values {
-	out := Values{withheld: v.withheld}
+	out := Values{refused: append([]string(nil), v.refused...)}
 	if v.items != nil {
 		out.items = make(map[string]string, len(v.items))
 		for k, val := range v.items {

@@ -6,10 +6,9 @@
 // playbooks read that result through Require and its predicates.
 //
 // A reader gets the narrow View, not program.ReadView: no command execution,
-// no authenticated HTTP, no writes. Every read refuses credentials, and
-// Values withholds a credential-named key unless its value is a boolean or an
-// integer, so Secret values are never read; withheld keys are counted under
-// keys.withheld.
+// no authenticated HTTP, no writes. Every read refuses credentials.
+// Prototype: no secret filtering on Values; readers must not select secret
+// columns.
 package appstate
 
 import (
@@ -80,8 +79,8 @@ type NoisyDeclarer interface{ NoisyKeys() []string }
 
 // Run calls reader.ReadState over a budgeted narrow view of base. A failed
 // read fails the call even when the reader ignores the error, so a partial
-// answer is never taken for the application's state. A panic fails the call too; a key
-// Values withheld does not, it is counted under keys.withheld.
+// answer is never taken for the application's state. A refused Values.Set
+// and a panic fail the call too.
 func Run(ctx context.Context, reader Reader, base program.ReadView) (values Values, err error) {
 	view := &budgeted{detectionContext: base, clock: base, base: base, ctx: ctx}
 	defer func() {
@@ -96,10 +95,11 @@ func Run(ctx context.Context, reader Reader, base program.ReadView) (values Valu
 	if err != nil {
 		return Values{}, err
 	}
+	if err := values.Err(); err != nil {
+		return Values{}, err
+	}
 	// The reader may keep the Values it returned; the caller gets its own copy.
-	out := values.Clone()
-	out.ReportWithheld()
-	return out, nil
+	return values.Clone(), nil
 }
 
 // detectionContext is embedded under an unexported name so reflection cannot
