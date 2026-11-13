@@ -13,6 +13,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
+from libs.agent_cli.errors import AccountAuthenticationFailed
 from libs.agent_cli.provider_capacity import OpusPool, ProviderCapacity, ProviderRateLimited, RateLimitPolicy
 from libs.agent_cli.structured import StructuredTurnError, run_structured_turn
 from tests.structured_turns import ScriptedAgent, failure, reply
@@ -523,3 +524,76 @@ print(json.dumps({{"type":"result","subtype":"success","is_error":False,"session
     )
     assert turn.session_id == "fake-session"
     assert turn.rate_limit_wait_seconds == 30
+
+
+# Real credential failures of the Claude, Codex and Vertex-backed CLIs.
+AUTH_FAILURES = [
+    "Failed to authenticate: OAuth session expired and could not be refreshed",
+    'API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}',
+    "API Error: 403 Forbidden",
+    "unexpected status 401 Unauthorized: Your access token could not be refreshed",
+    "google.auth.exceptions.RefreshError: invalid_grant: Token has been expired or revoked",
+]
+
+
+@pytest.mark.parametrize("text", AUTH_FAILURES)
+def test_a_transient_provider_auth_failure_is_retried_on_the_same_session(tmp_path: Path, text: str) -> None:
+    provider = "claude"
+    clock = Clock()
+    calls = 0
+
+    def respond(_request):
+        nonlocal calls
+        calls += 1
+        return failure(stderr=text) if calls == 1 else reply(provider, {"answer": "ok"}, session_id="s-1")
+
+    agent = ScriptedAgent(respond)
+    turn = run_structured_turn(
+        provider,
+        "prompt",
+        output_schema=SCHEMA,
+        cwd=tmp_path,
+        access="read-only",
+        model="sonnet",
+        executor=agent.executor,
+        provider_capacity=capacity(tmp_path, clock),
+        resume_session_id="s-1",
+    )
+    assert json.loads(turn.output_json) == {"answer": "ok"}
+    assert len(agent.requests) == 2
+    assert clock.seconds == 5
+
+
+def test_a_persistent_provider_auth_failure_stops_after_a_bounded_number_of_retries(tmp_path: Path) -> None:
+    clock = Clock()
+    agent = ScriptedAgent(lambda _: failure(stderr=AUTH_FAILURES[0]))
+    with pytest.raises(AccountAuthenticationFailed, match="auth_failed"):
+        run_structured_turn(
+            "claude",
+            "prompt",
+            output_schema=SCHEMA,
+            cwd=tmp_path,
+            access="read-only",
+            model="sonnet",
+            executor=agent.executor,
+            provider_capacity=capacity(tmp_path, clock),
+        )
+    assert len(agent.requests) == 3, "one attempt and two retries"
+    assert clock.seconds == 5 + 10
+
+
+def test_an_ordinary_failure_is_not_a_provider_auth_failure(tmp_path: Path) -> None:
+    agent = ScriptedAgent(lambda _: failure(stderr="Permission denied"))
+    with pytest.raises(StructuredTurnError, match="Permission denied") as raised:
+        run_structured_turn(
+            "claude",
+            "prompt",
+            output_schema=SCHEMA,
+            cwd=tmp_path,
+            access="read-only",
+            model="sonnet",
+            executor=agent.executor,
+            provider_capacity=capacity(tmp_path, Clock()),
+        )
+    assert not isinstance(raised.value, AccountAuthenticationFailed)
+    assert len(agent.requests) == 1

@@ -278,6 +278,7 @@
     "account_exhausted",
     "agent_failed",
     "agent_timeout",
+    "auth_failed",
     "rate_limited",
     "request_too_large",
     "result_too_large",

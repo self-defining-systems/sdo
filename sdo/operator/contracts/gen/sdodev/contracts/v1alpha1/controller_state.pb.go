@@ -2116,7 +2116,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\bbound_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\aboundAt\x12A\n" +
 	"\x0eestablished_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\restablishedAt\x12D\n" +
 	"\x10bound_reached_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x0eboundReachedAt\x12>\n" +
-	"\x0eskipped_reason\x18\x05 \x01(\tB\x17\xbaH\x14r\x12R\x00R\x0erestored-stateR\rskippedReason\"\xa7\x05\n" +
+	"\x0eskipped_reason\x18\x05 \x01(\tB\x17\xbaH\x14r\x12R\x00R\x0erestored-stateR\rskippedReason\"\xb4\x05\n" +
 	"\x12ReflectionDecision\x12W\n" +
 	"\x11learning_decision\x18\x01 \x01(\tB*\xbaH'r%R\aupdatedR\tno_changeR\asdk_gapR\x06failedR\x10learningDecision\x12(\n" +
 	"\x10no_change_reason\x18\x02 \x01(\tR\x0enoChangeReason\x12!\n" +
@@ -2124,8 +2124,8 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x05error\x18\x04 \x01(\tR\x05error\x12<\n" +
 	"\bsdk_gaps\x18\x05 \x03(\v2!.sdodev.contracts.v1alpha1.SdkGapR\asdkGaps\x12=\n" +
 	"\x05usage\x18\x06 \x01(\v2'.sdodev.contracts.v1alpha1.UsageMetricsR\x05usage\x12B\n" +
-	"\x0edecline_reason\x18\a \x01(\tB\x1b\xbaH\x18r\x16R\x00R\x12no_recorded_repairR\rdeclineReason\x12\x93\x02\n" +
-	"\x0efailure_reason\x18\b \x01(\tB\xeb\x01\xbaH\xe7\x01r\xe4\x01R\x00R\atimeoutR\ragent_timeoutR\fagent_failedR\frate_limitedR\x11account_exhaustedR\x17session_handoff_timeoutR\x17session_handoff_invalidR\x13session_unavailableR\x10result_too_largeR\x11request_too_largeR\x11worker_oom_killedR\x1aworker_resources_rewrittenR\rfailureReason\"\xaa\x01\n" +
+	"\x0edecline_reason\x18\a \x01(\tB\x1b\xbaH\x18r\x16R\x00R\x12no_recorded_repairR\rdeclineReason\x12\xa0\x02\n" +
+	"\x0efailure_reason\x18\b \x01(\tB\xf8\x01\xbaH\xf4\x01r\xf1\x01R\x00R\atimeoutR\ragent_timeoutR\fagent_failedR\frate_limitedR\vauth_failedR\x11account_exhaustedR\x17session_handoff_timeoutR\x17session_handoff_invalidR\x13session_unavailableR\x10result_too_largeR\x11request_too_largeR\x11worker_oom_killedR\x1aworker_resources_rewrittenR\rfailureReason\"\xaa\x01\n" +
 	"\x14ProposalRejectionLog\x12(\n" +
 	"\vproposal_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
 	"proposalId\x12L\n" +

@@ -158,7 +158,13 @@ capacity. The credential bundle remains private (directory0700/files0600); the
 pool contains no credentials. Host workers additionally set
 `SDO_CLAUDE_ACCOUNTS_DIR=/private/claude-accounts`.
 
-Authentication failures, including real CLI401/403, expired/revoked tokens and
+Outside an account pool (no `SDO_CLAUDE_ACCOUNTS_DIR`), a provider credential failure
+(for Claude, Codex or Vertex-backed CLIs) is retried in the same session up to
+`SDO_PROVIDER_AUTH_RETRIES` times (default 2, doubling from
+`SDO_PROVIDER_AUTH_BACKOFF_SECONDS`, default 5) and then fails as typed `auth_failed`,
+never `agent_failed`. The request never reached the model, so no prompt is repeated.
+
+With an account pool, authentication failures, including real CLI401/403, expired/revoked tokens and
 invalid-key/login diagnostics, disable that registration until human
 re-registration. A rate/overload retries once after the short backoff, then cools
 down that account and tries the next healthy one. Busy healthy accounts wait
