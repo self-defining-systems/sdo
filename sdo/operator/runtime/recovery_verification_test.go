@@ -277,3 +277,36 @@ func TestClosureCommitsTheRecoveredVerdict(t *testing.T) {
 		})
 	}
 }
+
+// The side-effect case: the incident opened on a condition that is gone, while
+// a user test that joined the alert set still fails. Recovered waits on the
+// whole set; without the join (the old rule) it held at once. A joined test
+// that passes does not hold it.
+func TestRecoveredJudgesUserTestsThatJoinedTheAlertSet(t *testing.T) {
+	write := verifyT0.Add(30 * time.Second)
+	now := write.Add(time.Minute)
+	condition := verifyFinding("workload-health", "Deployment", "api", sdk.SeverityCritical)
+	joined := browseTest()
+	findings := []sdk.Finding{condition, joined}
+	run := func(probeOK func(time.Time) bool, joinedKeys []string) recoveryCheck {
+		region, _, _ := appmap.Find(verifyArch)
+		m, _ := appmap.Parse(region.YAML)
+		request := IncidentRequest{Namespace: "app", Findings: findings, OpeningKeys: findingKeys(findings[:1]), JoinedKeys: joinedKeys}
+		return recovered(verificationInput{m: m, view: verifyWorld{now: now, probeOK: probeOK}.view(), request: request,
+			result: restartOf("StatefulSet", "db", write), detected: verifyT0, stability: 10 * time.Second})
+	}
+	failing := func(time.Time) bool { return false }
+	joinedKeys := findingKeys([]sdk.Finding{joined})
+	if check := run(failing, nil); check.verdict != recoveryVerified {
+		t.Fatalf("without the join the failing test was never judged: %v %s", check.verdict, check.reason)
+	}
+	if check := run(failing, joinedKeys); check.verdict != recoveryPending || !strings.Contains(check.reason, "browse-items") {
+		t.Fatalf("Recovered held while a joined user test failed: %v %s", check.verdict, check.reason)
+	}
+	if check := run(always, joinedKeys); check.verdict != recoveryVerified {
+		t.Fatalf("a joined user test that passes held Recovered: %v %s", check.verdict, check.reason)
+	}
+	if got := run(always, joinedKeys).record.GetJoinedKeys(); len(got) != 1 || got[0] != joinedKeys[0] {
+		t.Fatalf("the recovery record names joined keys %v, want %v", got, joinedKeys)
+	}
+}

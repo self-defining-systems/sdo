@@ -328,13 +328,16 @@ the action's engine and the Pod belongs to its workload); `RepairData` refuses o
 expected bounds or a named backup that is not one of this incident, and `RestoreBackup` needs the ID of
 the backup to put back.
 Readiness is not recovery. One predicate, Recovered (`runtime/recovery_verification.go`), closes an incident,
-clears the automatic stage and ends the responder session: the alerts the incident opened on (`opening_keys`) cleared
+clears the automatic stage and ends the responder session: the incident's alert set cleared
 and stayed clear for the stability window after SDO's last change settled. `since` is the later of detection and the
 settle time of SDO's last write (plan completion or the written workload's latest Pod Ready transition; a workload
 still rolling out holds a user test). An opening user test recovers when its fresh samples since `since` meet its SLO,
 so do those in the trailing stability window, and its latest sample is good; its detector clearing is not enough,
 because its SLO window can still hold samples from before the fix. An opening Kubernetes condition recovers when its
-finding is inactive with a clear streak of the stability window. Clues never hold it. The controller asks it before
+finding is inactive with a clear streak of the stability window. The alert set is `opening_keys` plus `joined_keys`: user tests that started failing while the incident was open, within
+`AlertJoinWindow` (5 minutes) of detection (no map needed; a later test is more likely an independent fault and opens the
+next incident). A joined test is judged like an opening one; clues and Kubernetes conditions never join, and joining never
+re-prompts the agent. Credit and symptom matching keep `opening_keys`. Clues never hold it. The controller asks it before
 closing and before marking the responder verified; the broker asks it again at freeze (a user test that has not
 passed by its horizon plus the stability window commits `unconfirmed`, `OBSERVATION_INCOMPLETE`); the stage's
 recovery wait and the claim-time check (`stageRecoveryCheck`) exit `CLEARED` on it, keep waiting while a program

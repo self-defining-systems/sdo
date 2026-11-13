@@ -22,7 +22,7 @@ func (c *Controller) recoveryScopeLocked() recoveryScope {
 	if !c.incidentOpen || c.currentIncidentRequest == nil {
 		return nil
 	}
-	return newRecoveryScope(openingKeys(c.currentIncidentRequest))
+	return newRecoveryScope(alertKeys(c.currentIncidentRequest))
 }
 
 func (c *Controller) recoveryScope() recoveryScope {

@@ -40,9 +40,9 @@ func (c *Controller) recoveryDetectorIDs(request IncidentRequest) []string {
 // second stability clock. Caller holds c.mu.
 func (c *Controller) recoveryTrackersClear(request IncidentRequest) bool {
 	if len(c.healthDetectorIDs) == 0 {
-		return !c.tracker.HasActiveKeys(openingKeys(&request))
+		return !c.tracker.HasActiveKeys(alertKeys(&request))
 	}
-	scope := newRecoveryScope(openingKeys(&request))
+	scope := newRecoveryScope(alertKeys(&request))
 	return len(scope.blocking(c.tracker.ActiveFindings(c.healthDetectorIDs, nil))) == 0
 }
 

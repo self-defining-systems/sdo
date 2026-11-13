@@ -106,7 +106,8 @@ func openingUserTest(request IncidentRequest, key string) (workload, scenario st
 
 // recovered is Recovered, the one predicate that closes an incident, clears
 // the automatic stage and ends the responder session: no SDO write is still
-// rolling out, and every opening user test passed in a sustained way since
+// rolling out, and every user test of the incident's alert set (opening
+// alerts and joined tests, alertKeys) passed in a sustained way since
 // the later of detection and the settle time of SDO's last write (fresh
 // samples meet its SLO, the trailing stability window too, the latest sample
 // is good). An opening Kubernetes condition recovers when its finding is
@@ -118,7 +119,7 @@ func recovered(in verificationInput) recoveryCheck {
 		windows = set.TrafficWindows()
 	}
 	opening := openingKeys(&in.request)
-	record := &contracts.RecoveryVerification{OpeningKeys: append([]string(nil), opening...)}
+	record := &contracts.RecoveryVerification{OpeningKeys: append([]string(nil), opening...), JoinedKeys: append([]string(nil), in.request.JoinedKeys...)}
 	check := recoveryCheck{record: record}
 	writes, since, settled := sdoWrites(in, newComponentResolver(in.m, in.view, in.request.Namespace))
 	record.Since = timestamppb.New(since)
@@ -128,7 +129,7 @@ func recovered(in verificationInput) recoveryCheck {
 	}
 	var pending []string
 	userTests := 0
-	for _, key := range opening {
+	for _, key := range alertKeys(&in.request) {
 		workload, scenario, ok := openingUserTest(in.request, key)
 		if !ok {
 			continue

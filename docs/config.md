@@ -74,8 +74,8 @@ that show nothing missing without it are the case for removing it.
 | `response.diagnosis_deadline` | `SDO_RESPONSE_DIAGNOSIS_DEADLINE` | duration | `10s` | shared deadline of candidate diagnosis in the automatic stage |
 | `response.stage_budget` | `SDO_RESPONSE_STAGE_BUDGET` | duration | `45s` | scheduling bound of one automatic-stage pass; a pass re-run on the responder's loop may take twice this |
 | `response.repair_policy` | `SDO_RESPONSE_REPAIR_POLICY` | string | `commit` | the evidence the controller requires for a responder repair: commit (a source repair is committed through the broker; production) or recorded-actions (live cluster repairs are recorded as actions without a source commit; benchmark runs) |
-| `response.after_playbook` | `SDO_RESPONSE_AFTER_PLAYBOOK` | string | `agent` | what happens when a learned playbook applied and the opening alerts did not recover within the stage's bound: agent (dispatch the agent, told what the playbook did), escalate (no agent; the incident stays open under ordinary closure and closes failed at the verification timeout if the alerts never clear) or wait (keep waiting for recovery up to after_playbook_wait, then escalate). When recovery holds, no agent runs in any setting; an alert that did not open the incident never dispatches the agent after an applied playbook |
-| `response.after_playbook_wait` | `SDO_RESPONSE_AFTER_PLAYBOOK_WAIT` | duration | `5m0s` | how long after_playbook: wait keeps waiting for the opening alerts to recover after the playbook applied, capped by the response timeout |
+| `response.after_playbook` | `SDO_RESPONSE_AFTER_PLAYBOOK` | string | `agent` | what happens when a learned playbook applied and the alert set did not recover within the stage's bound: agent (dispatch the agent, told what the playbook did), escalate (no agent; the incident stays open under ordinary closure and closes failed at the verification timeout if the alerts never clear) or wait (keep waiting for recovery up to after_playbook_wait, then escalate). When recovery holds, no agent runs in any setting; an alert that did not open the incident never dispatches the agent after an applied playbook |
+| `response.after_playbook_wait` | `SDO_RESPONSE_AFTER_PLAYBOOK_WAIT` | duration | `5m0s` | how long after_playbook: wait keeps waiting for the alert set to recover after the playbook applied, capped by the response timeout |
 | `response.standby` | `SDO_RESPONSE_STANDBY` | bool | `true` | pre-start a responder worker; false forces cold Jobs |
 | `response.menu` | `SDO_RESPONSE_MENU` | bool | `true` | offer the responder its tool menu |
 | `response.builtin_restore_auto` | `SDO_RESPONSE_BUILTIN_RESTORE_AUTO` | bool | `false` | let the automatic stage apply the built-in source-restore playbook (put a component's non-SDO departures from accepted source back) when its diagnosis matches; off, it is only offered like any playbook and the responder decides |
@@ -89,7 +89,7 @@ that show nothing missing without it are the case for removing it.
 | Key | Env | Type | Default | Description |
 |---|---|---|---|---|
 | `detection.self_heal_hold` | `SDO_DETECTION_SELF_HEAL_HOLD` | duration | `5m0s` | how long a Kubernetes condition without a give-up signal must hold before it opens an incident; carried in every detector observation and bound into the operability report |
-| `detection.stability_window` | `SDO_DETECTION_STABILITY_WINDOW` | duration | `15s` | how long the opening alerts must stay clear after SDO's last write settled before the incident counts as recovered |
+| `detection.stability_window` | `SDO_DETECTION_STABILITY_WINDOW` | duration | `15s` | how long the alert set (opening alerts and user tests that failed during the incident) must stay clear after SDO's last write settled before the incident counts as recovered |
 | `detection.drift_batch_window` | `SDO_DETECTION_DRIFT_BATCH_WINDOW` | duration | `20s` | batch window for unexplained drift |
 
 ### `learning`

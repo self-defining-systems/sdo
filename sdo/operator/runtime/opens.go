@@ -3,8 +3,10 @@ package runtime
 import (
 	"context"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/appmap"
@@ -38,12 +40,57 @@ func (c *Controller) opens(finding sdk.Finding) bool {
 	if slices.Contains(memory.KubernetesConditionDetectorIDs(), finding.DetectorID) {
 		return true
 	}
+	return c.isUserTest(finding)
+}
+
+// isUserTest is the probe half of opens: a failing user test.
+func (c *Controller) isUserTest(finding sdk.Finding) bool {
 	scenario, ok := strings.CutPrefix(finding.RuleID, traffic.RuleIDPrefix)
 	if !ok || !strings.HasPrefix(finding.DetectorID, memory.TrafficDetectorPrefix) {
 		return false
 	}
 	tests := c.userTests()
 	return tests == nil || tests[scenario]
+}
+
+// AlertJoinWindow bounds how long after detection a user test that starts
+// failing joins the open incident's alert set. The live side-effect cases had
+// a second test failing within seconds to about a minute of onset; a test that
+// begins failing later is more likely an independent fault and opens the next
+// incident. The set only grows inside the window, so it cannot hold an
+// incident forever.
+const AlertJoinWindow = 5 * time.Minute
+
+// joinAlertSet adds a user test that activated while the open incident is
+// inside its join window to the incident's alert set instead of the batcher.
+// It reports whether the finding is now (or already was) in the set. It never
+// dispatches or re-prompts the agent.
+func (c *Controller) joinAlertSet(finding sdk.Finding, now time.Time) bool {
+	if !c.isUserTest(finding) {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.incidentOpen || c.currentIncidentRequest == nil {
+		return false
+	}
+	request := c.currentIncidentRequest
+	key := FindingStateKey(finding.DetectorID, FindingFingerprint(finding))
+	if slices.Contains(alertKeys(request), key) {
+		return true
+	}
+	if now.Sub(c.incidentDetectedAt) > AlertJoinWindow {
+		return false
+	}
+	request.JoinedKeys = append(request.JoinedKeys, key)
+	sort.Strings(request.JoinedKeys)
+	// The finding rides in the request so Recovered can judge the test's
+	// samples (openingUserTest resolves a key through request.Findings).
+	finding.Fingerprint = FindingFingerprint(finding)
+	request.Findings = append(request.Findings, finding)
+	sortFindings(request.Findings)
+	c.closureStableSince = time.Time{}
+	return true
 }
 
 // userTests reads the accepted map once per source commit.
@@ -80,6 +127,20 @@ func openingKeys(request *IncidentRequest) []string {
 		return request.OpeningKeys
 	}
 	return findingKeys(request.Findings)
+}
+
+// alertKeys are the incident's alert set: its opening alerts plus the user
+// tests that joined while it was open. Recovered waits on all of them; credit
+// and symptom matching keep openingKeys.
+func alertKeys(request *IncidentRequest) []string {
+	if request == nil {
+		return nil
+	}
+	keys := openingKeys(request)
+	if len(request.JoinedKeys) == 0 {
+		return keys
+	}
+	return append(slices.Clone(keys), request.JoinedKeys...)
 }
 
 // activeClues returns the confirmed active findings the tracker holds that do

@@ -2572,6 +2572,10 @@ type IncidentRequest struct {
 	// Go-owned: the changes nearest onset, newest first, one line each, then the
 	// line that names the full commands, for the responder's first message.
 	RecentChanges []string `protobuf:"bytes,41,rep,name=recent_changes,json=recentChanges,proto3" json:"recent_changes,omitempty"`
+	// Go-owned: the finding keys of user tests that started failing while the
+	// incident was open (within the join window of detection). With opening_keys
+	// they form the alert set Recovered waits on; clues never join.
+	JoinedKeys    []string `protobuf:"bytes,42,rep,name=joined_keys,json=joinedKeys,proto3" json:"joined_keys,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2854,6 +2858,13 @@ func (x *IncidentRequest) GetPassingTests() []string {
 func (x *IncidentRequest) GetRecentChanges() []string {
 	if x != nil {
 		return x.RecentChanges
+	}
+	return nil
+}
+
+func (x *IncidentRequest) GetJoinedKeys() []string {
+	if x != nil {
+		return x.JoinedKeys
 	}
 	return nil
 }
@@ -4367,7 +4378,10 @@ type RecoveryVerification struct {
 	// stayed clear for the stability window after SDO's last write settled.
 	OpeningKeys []string `protobuf:"bytes,6,rep,name=opening_keys,json=openingKeys,proto3" json:"opening_keys,omitempty"`
 	// When Recovered was first seen holding; unset while it does not.
-	StableSince   *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=stable_since,json=stableSince,proto3" json:"stable_since,omitempty"`
+	StableSince *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=stable_since,json=stableSince,proto3" json:"stable_since,omitempty"`
+	// User tests that started failing while the incident was open and joined its
+	// alert set (opening_keys plus these); Recovered also waited on them.
+	JoinedKeys    []string `protobuf:"bytes,8,rep,name=joined_keys,json=joinedKeys,proto3" json:"joined_keys,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4433,6 +4447,13 @@ func (x *RecoveryVerification) GetOpeningKeys() []string {
 func (x *RecoveryVerification) GetStableSince() *timestamppb.Timestamp {
 	if x != nil {
 		return x.StableSince
+	}
+	return nil
+}
+
+func (x *RecoveryVerification) GetJoinedKeys() []string {
+	if x != nil {
+		return x.JoinedKeys
 	}
 	return nil
 }
@@ -5318,7 +5339,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x02id\x12%\n" +
 	"\tnamespace\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12$\n" +
 	"\amessage\x18\x03 \x01(\tB\n" +
-	"\xbaH\ar\x05\x10\x01\x18\x80 R\amessage\"\xb2\x16\n" +
+	"\xbaH\ar\x05\x10\x01\x18\x80 R\amessage\"\xd3\x16\n" +
 	"\x0fIncidentRequest\x12>\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
 	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12)\n" +
@@ -5361,7 +5382,9 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\rstanding_keys\x18& \x03(\tR\fstandingKeys\x120\n" +
 	"\x14deployment_in_flight\x18' \x01(\bR\x12deploymentInFlight\x12#\n" +
 	"\rpassing_tests\x18( \x03(\tR\fpassingTests\x126\n" +
-	"\x0erecent_changes\x18) \x03(\tB\x0f\xbaH\f\x92\x01\t\x10\v\"\x05r\x03\x18\xd8\x04R\rrecentChanges:\xff\x02\xbaH\xfb\x02\x1a\xf8\x02\n" +
+	"\x0erecent_changes\x18) \x03(\tB\x0f\xbaH\f\x92\x01\t\x10\v\"\x05r\x03\x18\xd8\x04R\rrecentChanges\x12\x1f\n" +
+	"\vjoined_keys\x18* \x03(\tR\n" +
+	"joinedKeys:\xff\x02\xbaH\xfb\x02\x1a\xf8\x02\n" +
 	"\x10incident.trigger\x12^detected incidents require findings and history; external incidents carry no detector evidence\x1a\x83\x02this.external_message == '' ? (size(this.findings) > 0 && size(this.detector_history) > 0) : (size(this.findings) == 0 && size(this.detector_history) == 0 && size(this.drift_events) == 0 && !has(this.state_changes) && size(this.disabled_setup_detectors) == 0)J\x04\b\v\x10\fJ\x04\b\f\x10\rJ\x04\b\x13\x10\x14J\x04\b\x18\x10\x19J\x04\b!\x10\"R\x19architecture_summary_pathR\x15health_objective_pathR\tfollow_upR\x0emetrics_source\"\xb8\x02\n" +
 	"\x10ResponseProgress\x12\x1f\n" +
 	"\vincident_id\x18\x01 \x01(\tR\n" +
@@ -5549,13 +5572,15 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x15recovery_verification\x18\x1d \x01(\v2/.sdodev.contracts.v1alpha1.RecoveryVerificationR\x14recoveryVerification\x12=\n" +
 	"\fescalated_at\x18\x1e \x01(\v2\x1a.google.protobuf.TimestampR\vescalatedAtB\x11\n" +
 	"\x0f_dispatch_errorB\x14\n" +
-	"\x12_health_cleared_atJ\x04\b\x10\x10\x11J\x04\b\x11\x10\x12J\x04\b\x12\x10\x13R\x16observed_state_changesR\x1bdetector_review_required_atR\x16detector_review_reason\"\xb5\x02\n" +
+	"\x12_health_cleared_atJ\x04\b\x10\x10\x11J\x04\b\x11\x10\x12J\x04\b\x12\x10\x13R\x16observed_state_changesR\x1bdetector_review_required_atR\x16detector_review_reason\"\xd6\x02\n" +
 	"\x14RecoveryVerification\x120\n" +
 	"\x05since\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\x12%\n" +
 	"\x0ewrites_settled\x18\x03 \x01(\bR\rwritesSettled\x12B\n" +
 	"\x06writes\x18\x05 \x03(\v2*.sdodev.contracts.v1alpha1.WriteSettlementR\x06writes\x12!\n" +
 	"\fopening_keys\x18\x06 \x03(\tR\vopeningKeys\x12=\n" +
-	"\fstable_since\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\vstableSinceJ\x04\b\x01\x10\x02J\x04\b\x04\x10\x05R\x06probedR\n" +
+	"\fstable_since\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\vstableSince\x12\x1f\n" +
+	"\vjoined_keys\x18\b \x03(\tR\n" +
+	"joinedKeysJ\x04\b\x01\x10\x02J\x04\b\x04\x10\x05R\x06probedR\n" +
 	"components\"\x8d\x01\n" +
 	"\x0fWriteSettlement\x12%\n" +
 	"\x0eapplication_id\x18\x01 \x01(\tR\rapplicationId\x129\n" +

@@ -543,7 +543,7 @@ func updateStageFindings(state *IncidentState, response ToolResponse) {
 	if state.afterWrite {
 		// After a write the stage answers for what it was meant to clear: the
 		// opening alerts. A clue or a later alert is not its work.
-		findings = holdingFindings(newRecoveryScope(openingKeys(&state.Request)), findings)
+		findings = holdingFindings(newRecoveryScope(alertKeys(&state.Request)), findings)
 	}
 	sortFindings(findings)
 	state.Findings = findings
@@ -845,7 +845,7 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 	// could not prove recovery hands back to the responder.
 	// Recovered, and so the hand-off, is judged on the alerts that opened the
 	// incident; a clue or a later alert is never what waits or dispatches.
-	scope := newRecoveryScope(openingKeys(&state.Request))
+	scope := newRecoveryScope(alertKeys(&state.Request))
 	state.afterWrite = state.afterWrite || playbookWrote(report)
 	seen := map[string]sdk.Finding{}
 	for _, finding := range append(append([]sdk.Finding(nil), state.Request.Findings...), state.Findings...) {
