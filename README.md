@@ -70,6 +70,8 @@ Build the images into your local Docker image store, or push them to a registry 
 bash scripts/build_sdo_images.sh
 ```
 
+For benchmark hosts, `scripts/build_push_bench_images.sh <sha> <host>...` builds the controller, responder and script-tools images for a commit (`fz-<sha8>`) and distributes them through each host's local registry, moving only changed layers. It prints per-step timings and skips work that is already done.
+
 Point the Go host at a clean Git repository, a health objective, and the cluster resources it will use:
 
 ```bash

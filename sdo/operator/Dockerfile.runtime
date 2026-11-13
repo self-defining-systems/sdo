@@ -146,7 +146,9 @@ RUN cd sdo/operator/runtime && go build -buildvcs=false -ldflags="-s -w" -o /usr
 
 # Only compiler-bearing roles need offline archive/vet warming. Workers consume
 # the binaries directly so their builds do not depend on the validator seed.
-FROM go-binaries AS go-runtime
+FROM go-deps AS go-runtime
+# Built beside go-binaries rather than on top of it, so the two compile in parallel.
+COPY sdo/operator ./sdo/operator
 # Test suites own test-binary linking; the image needs production archives and vet facts.
 RUN cd sdo/operator/sdk && go build ./... && go vet ./...
 RUN cd sdo/operator/core && go build ./... && go vet ./...
@@ -177,9 +179,9 @@ COPY --from=go-deps /go/build-cache /go/build-cache
 COPY --from=go-runtime /go/build-cache-delta/ /go/build-cache/
 
 FROM compiler-base AS runtime-sources
-COPY --from=go-runtime /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
-COPY --from=go-runtime /usr/local/bin/sdo-observation-check /usr/local/bin/sdo-observation-check
-COPY --from=go-runtime /opt/sdo/sdo/operator /opt/sdo/sdo/operator
+COPY --from=go-binaries /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
+COPY --from=go-binaries /usr/local/bin/sdo-observation-check /usr/local/bin/sdo-observation-check
+COPY --from=go-binaries /opt/sdo/sdo/operator /opt/sdo/sdo/operator
 
 FROM runtime-sources AS controller
 COPY --from=go-runtime /usr/local/bin/sdo-shell-controller /usr/local/bin/sdo-shell-controller
@@ -243,5 +245,5 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
 FROM script-tools-base AS script-tools
-COPY --from=go-runtime /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
+COPY --from=go-binaries /usr/local/bin/sdo-operator /usr/local/bin/sdo-operator
 CMD ["/usr/local/bin/sdo-operator", "script-runner"]
