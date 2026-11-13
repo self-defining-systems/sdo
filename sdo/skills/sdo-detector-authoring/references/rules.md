@@ -86,6 +86,9 @@ Advice, not validator-checked: tests and recorded-state replay run as informatio
   `localize.BindSuspects` ([example](../../sdo-playbook-authoring/references/programs.md#localized-components)).
   Names the accepted version already had are left alone. Enforced by:
   `detector.component-literal`.
+- An app-state reader (a package implementing `appstate.Reader`, see [app-state readers](app-state.md)) is a health
+  detector: an incident detector that implements it is rejected; incident detectors read a reader's state with
+  `appstate.Require`. Enforced by: `detector.reader-class`.
 
 ## Ownership
 
