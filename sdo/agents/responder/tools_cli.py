@@ -28,6 +28,8 @@ OBJECT_REFERENCE_HELP = (
 )
 
 MUTATION_COMMANDS = frozenset({"mitigate", "rollback"})
+# Commands whose response carries the Go-rendered text (detect summary, CSV pages), printed as is.
+TEXT_COMMANDS = frozenset({"detect", "changes", "timeline"})
 
 # Key response paths are part of the CLI help contract, shared with the generated
 # responder reference. Fields are conditional, not a promise of success/presence.
@@ -35,6 +37,8 @@ RESPONSE_FIELDS = {
     "status": "healthy, findings[], detector_states[], drift[], drift_events[], program_runs[]",
     "detect": "healthy, findings[], detector_states[]",
     "check": "healthy, findings[], detector_states[], detection (fresh detect response)",
+    "changes": "text (CSV, oldest first; columns in its header row)",
+    "timeline": "text (CSV, oldest first; columns in its header row)",
     "diagnose": "program_runs[].{program_id, program_revision, verdict, can_mitigate, mitigate_command}, "
     "program_revisions",
     "menu": "menu.options[].{command, program_id, program_revision, disabled_reason, parameters}, "
@@ -133,6 +137,35 @@ def _parser() -> argparse.ArgumentParser:
                 metavar="ID",
                 help="print one item of the summary in full: a test ID, component, clue ID, tests or background",
             )
+    changes = commands.add_parser(
+        "changes",
+        help="list recent changes (CSV) from the incident onset window",
+        description=(
+            "Print the changes (CSV, oldest first) that SDO observed from --since before incident onset until now: "
+            "application state, configuration and Kubernetes writes with before/after values and the writer "
+            "when known. "
+            "Computed from the controller's state each time you call it."
+        ),
+    )
+    changes.add_argument(
+        "--since",
+        metavar="DURATION",
+        help="how far before onset to reach, a Go duration such as 30m (default: 10m)",
+    )
+    changes.add_argument("--limit", type=int, metavar="N", help="keep only the newest N changes")
+    timeline = commands.add_parser(
+        "timeline",
+        help="show signals over time (CSV) around the incident onset",
+        description=(
+            "Print failing operations and workload readiness, desired replicas and restarts over time (CSV, "
+            "oldest first), from --since before incident onset until now. Computed when you call it."
+        ),
+    )
+    timeline.add_argument(
+        "--since",
+        metavar="DURATION",
+        help="how far before onset to reach, a Go duration such as 30m (default: 10m)",
+    )
     for name in ("diagnose", "menu"):
         command = commands.add_parser(
             name,
@@ -332,6 +365,13 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
             request["detector_ids"] = args.detector
         if args.finding:
             request["finding"] = args.finding
+    elif args.command in ("changes", "timeline"):
+        if args.since:
+            request["since"] = args.since
+        if args.command == "changes" and args.limit is not None:
+            if args.limit < 1:
+                raise ValueError("--limit must be at least 1")
+            request["limit"] = args.limit
     elif args.command in ("diagnose", "menu"):
         if args.program_id:
             request["program_id"] = args.program_id
@@ -423,8 +463,8 @@ def _print_response(response: dict[str, Any], *, full_json: bool) -> None:
             print(text)
         return
     output = write_response(response)
-    if response.get("command") == "detect" and response.get("text") and not full_json:
-        print(cap_text(str(response["text"]), budget_for("tool_stdout.detect") - 1))
+    if response.get("command") in TEXT_COMMANDS and response.get("text") and not full_json:
+        print(cap_text(str(response["text"]), budget_for("tool_stdout." + str(response["command"])) - 1))
         return
     text = json.dumps(response, ensure_ascii=False, sort_keys=True) if full_json else render_summary(output)
     limit = budget_for("tool_stdout." + str(response["command"]))

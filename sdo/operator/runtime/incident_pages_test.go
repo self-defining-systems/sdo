@@ -5,7 +5,6 @@ import (
 	"encoding/csv"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +12,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 
-	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/storestate"
@@ -87,14 +85,14 @@ func TestIncidentSignalsBucketFailRatiosAndWorkloadsOnOnset(t *testing.T) {
 	now := onset.Add(40 * time.Second)
 	request := detectRequest()
 	request.DetectedAt = onset
-	pages := buildIncidentPages(incidentPageInput{Request: request, View: detectApp("create"), Signals: signals, Now: now})
-	rows := parseCSV(t, pages.Timeline)
+	timeline := buildIncidentTimeline(incidentPageInput{Request: request, View: detectApp("create"), Signals: signals, Now: now, Since: 3 * time.Minute})
+	rows := parseCSV(t, timeline)
 	if rows[0][0] != "t_rel_s" || rows[0][1] != "at_utc" {
 		t.Fatalf("header = %v", rows[0])
 	}
 	// onset-180 s .. onset+40 s in 10 s buckets aligned on onset.
 	if got := len(rows) - 1; got != 23 {
-		t.Fatalf("%d buckets, want 23:\n%s", got, pages.Timeline)
+		t.Fatalf("%d buckets, want 23:\n%s", got, timeline)
 	}
 	if rows[1][0] != "-180" || rows[len(rows)-1][0] != "40" {
 		t.Fatalf("buckets %s..%s", rows[1][0], rows[len(rows)-1][0])
@@ -144,13 +142,13 @@ func TestIncidentChangesListDeparturesWithWriterInTheWindow(t *testing.T) {
 		departureEvent(dref("Service", "api"), "helm", onset.Add(-31*time.Minute), "spec.ports"),
 	}
 	appState := &staticAppState{rows: []IncidentChange{{At: onset.Add(-time.Minute), Component: "db", ReaderOrObject: "settings", Key: "rate_limit", Before: "100", After: "1", Noisy: true}}}
-	pages := buildIncidentPages(incidentPageInput{Request: request, View: view, Signals: newIncidentSignals(), AppState: appState, Now: onset.Add(time.Minute)})
-	rows := parseCSV(t, pages.Changes)
+	changes := buildIncidentChanges(incidentPageInput{Request: request, View: view, Signals: newIncidentSignals(), AppState: appState, Now: onset.Add(time.Minute), Since: 30 * time.Minute})
+	rows := parseCSV(t, changes)
 	if strings.Join(rows[0], ",") != "t_rel_s,at_utc,source,component,reader_or_object,key,before,after,writer,noisy" {
 		t.Fatalf("header = %v", rows[0])
 	}
 	if len(rows) != 3 {
-		t.Fatalf("rows:\n%s", pages.Changes)
+		t.Fatalf("rows:\n%s", changes)
 	}
 	state, departure := rows[1], rows[2]
 	if strings.Join(state, ",") != "-60,"+onset.Add(-time.Minute).Format(time.RFC3339)+",app-state,db,settings,rate_limit,100,1,,true" {
@@ -159,7 +157,7 @@ func TestIncidentChangesListDeparturesWithWriterInTheWindow(t *testing.T) {
 	if departure[0] != "-4" || departure[2] != "kubernetes" || departure[3] != "db" || departure[4] != "NetworkPolicy/restrict-db" || departure[5] != "spec.egress" || departure[8] != "kubectl" || departure[9] != "false" {
 		t.Fatalf("departure row = %v", departure)
 	}
-	if !appState.since.Equal(onset.Add(-incidentChangesWindow)) {
+	if !appState.since.Equal(onset.Add(-30 * time.Minute)) {
 		t.Fatalf("app-state source asked from %s", appState.since)
 	}
 }
@@ -180,16 +178,16 @@ func TestIncidentChangesNeverCarrySecretValuesAndAreCapped(t *testing.T) {
 	for index := range incidentChangesCap + 50 {
 		many = append(many, IncidentChange{At: onset.Add(-time.Duration(index) * time.Second), Component: "db", ReaderOrObject: "settings", Key: fmt.Sprintf("k%d", index), Before: "password=hunter2", After: "x"})
 	}
-	pages := buildIncidentPages(incidentPageInput{Request: IncidentRequest{IncidentID: "i", DetectedAt: onset}, View: detectApp(), Signals: newIncidentSignals(), AppState: &staticAppState{rows: many}, Now: onset})
-	rows := parseCSV(t, pages.Changes)
+	changes := buildIncidentChanges(incidentPageInput{Request: IncidentRequest{IncidentID: "i", DetectedAt: onset}, View: detectApp(), Signals: newIncidentSignals(), AppState: &staticAppState{rows: many}, Now: onset})
+	rows := parseCSV(t, changes)
 	if len(rows)-1 != incidentChangesCap {
 		t.Fatalf("%d rows, want the cap %d", len(rows)-1, incidentChangesCap)
 	}
 	if rows[len(rows)-1][0] != "0" {
 		t.Fatalf("the cap keeps the newest rows; last = %v", rows[len(rows)-1])
 	}
-	if strings.Contains(string(pages.Changes), "hunter2") {
-		t.Fatal("a credential-shaped value reached changes.csv")
+	if strings.Contains(string(changes), "hunter2") {
+		t.Fatal("a credential-shaped value reached sdo changes")
 	}
 }
 
@@ -205,41 +203,118 @@ func TestStoreChangeRowsUseTheObservedTimeAndBoundedValues(t *testing.T) {
 	}
 }
 
-func TestDetectWritesIncidentPagesAndNamesThem(t *testing.T) {
-	view := detectApp("create")
+func onDemandLoop(t *testing.T, view detectFake, appState AppStateChangeSource) (*ResponderLoop, string) {
+	t.Helper()
 	request := detectRequest()
 	loop := NewResponderLoop(request, nil, staticProvider{view.Snapshot}, nil, PlanExecutor{}, 10)
 	loop.ReadView = func(v sdk.DetectionContext) program.ReadView { return program.ReadFrom(v) }
 	mount := t.TempDir()
+	loop.CorpusSessionRoot = mount
 	signals := newIncidentSignals()
 	signals.Observe(detectNow(), view)
-	if _, err := memory.PrepareIncidentSession(mount, "", request.IncidentID); err != nil {
-		t.Fatal(err)
+	loop.IncidentSources = func() (*incidentSignals, AppStateChangeSource) { return signals, appState }
+	return loop, mount
+}
+
+func TestChangesAndTimelineCommandsPrintCSVAndWriteNoFiles(t *testing.T) {
+	view := detectApp("create")
+	onset := detectNow().Add(-time.Minute)
+	appState := &staticAppState{rows: []IncidentChange{
+		{At: onset.Add(-2 * time.Minute), Component: "db", ReaderOrObject: "settings", Key: "rate_limit", Before: "100", After: "1"},
+		{At: onset.Add(-20 * time.Minute), Component: "db", ReaderOrObject: "settings", Key: "old", Before: "a", After: "b"},
+	}}
+	loop, mount := onDemandLoop(t, view, appState)
+	loop.Request.DetectedAt = onset
+	response := loop.Handle(context.Background(), ToolRequest{Command: "changes"})
+	if response.Error != "" {
+		t.Fatalf("changes error: %s", response.Error)
 	}
-	controller := &Controller{signals: signals, config: ControllerConfig{PageSessionRoot: mount}}
-	loop.IncidentPages = controller.IncidentPages(context.Background())
-	response := loop.Handle(context.Background(), ToolRequest{Command: "detect"})
-	if response.Error != "" || !strings.Contains(response.Text, "files: /sdo/session/incident/timeline.csv /sdo/session/incident/changes.csv") {
-		t.Fatalf("detect text = %q, error %q", response.Text, response.Error)
+	rows := parseCSV(t, []byte(response.Text))
+	if strings.Join(rows[0], ",") != "t_rel_s,at_utc,source,component,reader_or_object,key,before,after,writer,noisy" {
+		t.Fatalf("header = %v", rows[0])
 	}
-	sub, err := memory.IncidentSessionSubPath("", request.IncidentID)
-	if err != nil {
-		t.Fatal(err)
+	if len(rows) != 2 || rows[1][5] != "rate_limit" {
+		t.Fatalf("default window is 10 minutes before onset; rows:\n%s", response.Text)
 	}
-	for _, name := range []string{"timeline.csv", "changes.csv"} {
-		if _, err := os.Stat(filepath.Join(mount, sub, memory.IncidentPagesDir, name)); err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
+	response = loop.Handle(context.Background(), ToolRequest{Command: "changes", Since: "30m"})
+	if got := len(parseCSV(t, []byte(response.Text))); got != 3 {
+		t.Fatalf("--since 30m lists %d rows:\n%s", got-1, response.Text)
+	}
+	response = loop.Handle(context.Background(), ToolRequest{Command: "changes", Since: "30m", Limit: 1})
+	if rows := parseCSV(t, []byte(response.Text)); len(rows) != 2 || rows[1][5] != "rate_limit" {
+		t.Fatalf("--limit 1 keeps the newest row:\n%s", response.Text)
+	}
+	response = loop.Handle(context.Background(), ToolRequest{Command: "timeline"})
+	if response.Error != "" || !strings.HasPrefix(response.Text, "t_rel_s,at_utc,") {
+		t.Fatalf("timeline = %q, error %q", response.Text, response.Error)
+	}
+	column(t, parseCSV(t, []byte(response.Text)), "fail:create")
+	if response = loop.Handle(context.Background(), ToolRequest{Command: "changes", Since: "soon"}); response.Error == "" {
+		t.Fatal("a malformed --since is refused")
+	}
+	entries, err := os.ReadDir(mount)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("nothing is written into the session mount: %v, %v", entries, err)
 	}
 }
 
-// The controller writes both pages into the responder's session when it opens
-// the incident, before any `sdo detect`.
-func TestDispatchWritesIncidentPages(t *testing.T) {
+func TestDetectShowsRecentChangesInlineNewestFirst(t *testing.T) {
+	view := detectApp("create")
+	onset := detectNow().Add(-time.Minute)
+	var rows []IncidentChange
+	for index := range 12 {
+		rows = append(rows, IncidentChange{At: onset.Add(-time.Duration(index+1) * 30 * time.Second), Component: "db", ReaderOrObject: "settings", Key: fmt.Sprintf("k%d", index), Before: "1", After: "2", Writer: "churn"})
+	}
+	loop, _ := onDemandLoop(t, view, &staticAppState{rows: rows})
+	loop.Request.DetectedAt = onset
+	response := loop.Handle(context.Background(), ToolRequest{Command: "detect"})
+	if response.Error != "" {
+		t.Fatal(response.Error)
+	}
+	if strings.Contains(response.Text, "files:") {
+		t.Fatalf("detect still names files:\n%s", response.Text)
+	}
+	if !strings.Contains(response.Text, "-30s app-state db settings k0: 1 → 2 by: churn") || strings.Contains(response.Text, " k10:") {
+		t.Fatalf("inline changes:\n%s", response.Text)
+	}
+	if strings.Index(response.Text, " k0:") > strings.Index(response.Text, " k1:") || !strings.Contains(response.Text, incidentPointer) {
+		t.Fatalf("newest first, then the pointer:\n%s", response.Text)
+	}
+}
+
+func TestRecentChangeLinesAreCappedAndMaskCredentials(t *testing.T) {
+	onset := detectOnset
+	rows := []IncidentChange{
+		{Component: "db", ReaderOrObject: "ConfigMap/lost", After: "missing"},
+		{At: onset.Add(-125 * time.Second), Source: "app-state", Component: "cache", ReaderOrObject: "config", Key: "requirepass", Before: "old", After: "hunter2"},
+		{At: onset.Add(5 * time.Second), Source: "kubernetes", Component: "api", ReaderOrObject: "Deployment/api", Key: "spec.image", Before: "accepted-source", After: "drifted", Writer: "kubectl-patch"},
+	}
+	lines := recentChangeLines(rows, onset)
+	want := []string{
+		"+5s kubernetes api Deployment/api spec.image: accepted-source → drifted by: kubectl-patch",
+		"-2m05s app-state cache config requirepass: [redacted] → [redacted]",
+		"? db ConfigMap/lost: (none) → missing",
+		incidentPointer,
+	}
+	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("lines:\n%s", strings.Join(lines, "\n"))
+	}
+	var many []IncidentChange
+	for index := range 30 {
+		many = append(many, IncidentChange{At: onset.Add(-time.Duration(index) * time.Second), Component: "db"})
+	}
+	if got := len(recentChangeLines(many, onset)); got != incidentInlineChanges+1 {
+		t.Fatalf("%d lines, want %d", got, incidentInlineChanges+1)
+	}
+}
+
+// The controller carries the inline changes in the incident request, so the
+// first message shows them without any file.
+func TestDispatchCarriesRecentChanges(t *testing.T) {
 	fault := classedDetector("workload-health", sdk.DetectorClassHealth, true)
 	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
 	config := testControllerConfig()
-	config.PageSessionRoot = t.TempDir()
+	config.AppStateChanges = &staticAppState{rows: []IncidentChange{{At: time.Unix(0, 0).UTC(), Component: "db", ReaderOrObject: "settings", Key: "rate_limit", Before: "100", After: "1"}}}
 	controller, err := NewController(config, []sdk.Detector{fault}, staticProvider{snapshot: detectApp("create")}, dispatcher, time.Unix(0, 0))
 	if err != nil {
 		t.Fatal(err)
@@ -252,27 +327,10 @@ func TestDispatchWritesIncidentPages(t *testing.T) {
 	}
 	executePendingEffect(t, controller)
 	request := awaitRequest(t, dispatcher.requests)
-	sub, err := memory.IncidentSessionSubPath("", request.IncidentID)
-	if err != nil {
-		t.Fatal(err)
+	last := len(request.RecentChanges) - 1
+	if last < 1 || request.RecentChanges[last] != incidentPointer || !strings.Contains(strings.Join(request.RecentChanges, "\n"), "settings rate_limit: 100 → 1") {
+		t.Fatalf("recent changes = %q", request.RecentChanges)
 	}
-	for _, name := range incidentPageNames {
-		data, err := os.ReadFile(filepath.Join(config.PageSessionRoot, sub, memory.IncidentPagesDir, name))
-		if err != nil || !strings.HasPrefix(string(data), "t_rel_s,at_utc,") {
-			t.Fatalf("%s = %q, %v", name, data, err)
-		}
-	}
-	timeline := parseCSV(t, mustRead(t, filepath.Join(config.PageSessionRoot, sub, memory.IncidentPagesDir, "timeline.csv")))
-	column(t, timeline, "fail:create")
-}
-
-func mustRead(t *testing.T, name string) []byte {
-	t.Helper()
-	data, err := os.ReadFile(name)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return data
 }
 
 // A value is masked when its key (or the row's object) names a credential,
@@ -280,9 +338,9 @@ func mustRead(t *testing.T, name string) []byte {
 func TestIncidentChangesMaskValuesOfCredentialNamedKeys(t *testing.T) {
 	onset := detectOnset
 	rows := []IncidentChange{{At: onset, Component: "cache", ReaderOrObject: "config", Key: "requirepass", Before: "old-pass", After: "hunter2"}}
-	pages := buildIncidentPages(incidentPageInput{Request: IncidentRequest{IncidentID: "i", DetectedAt: onset}, View: detectApp(), Signals: newIncidentSignals(), AppState: &staticAppState{rows: rows}, Now: onset})
-	if text := string(pages.Changes); strings.Contains(text, "hunter2") || strings.Contains(text, "old-pass") || !strings.Contains(text, "requirepass") {
-		t.Fatalf("changes.csv:\n%s", text)
+	changes := buildIncidentChanges(incidentPageInput{Request: IncidentRequest{IncidentID: "i", DetectedAt: onset}, View: detectApp(), Signals: newIncidentSignals(), AppState: &staticAppState{rows: rows}, Now: onset})
+	if text := string(changes); strings.Contains(text, "hunter2") || strings.Contains(text, "old-pass") || !strings.Contains(text, "requirepass") {
+		t.Fatalf("sdo changes:\n%s", text)
 	}
 }
 
@@ -293,9 +351,9 @@ func TestIncidentChangesCapKeepsUntimedRows(t *testing.T) {
 	for index := range incidentChangesCap + 5 {
 		rows = append(rows, IncidentChange{At: onset.Add(-time.Duration(index) * time.Second), Component: "db", Key: fmt.Sprintf("k%d", index)})
 	}
-	pages := buildIncidentPages(incidentPageInput{Request: IncidentRequest{IncidentID: "i", DetectedAt: onset}, View: detectApp(), Signals: newIncidentSignals(), AppState: &staticAppState{rows: rows}, Now: onset})
-	parsed := parseCSV(t, pages.Changes)
-	if len(parsed)-1 != incidentChangesCap || !strings.Contains(string(pages.Changes), "ConfigMap/lost") {
-		t.Fatalf("%d rows; untimed row kept: %v", len(parsed)-1, strings.Contains(string(pages.Changes), "ConfigMap/lost"))
+	changes := buildIncidentChanges(incidentPageInput{Request: IncidentRequest{IncidentID: "i", DetectedAt: onset}, View: detectApp(), Signals: newIncidentSignals(), AppState: &staticAppState{rows: rows}, Now: onset})
+	parsed := parseCSV(t, changes)
+	if len(parsed)-1 != incidentChangesCap || !strings.Contains(string(changes), "ConfigMap/lost") {
+		t.Fatalf("%d rows; untimed row kept: %v", len(parsed)-1, strings.Contains(string(changes), "ConfigMap/lost"))
 	}
 }

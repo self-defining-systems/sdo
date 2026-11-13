@@ -735,7 +735,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				loop.DiagnosisDeadline = time.Duration(policy.Response.DiagnosisDeadline)
 				if controller != nil {
-					loop.IncidentPages = controller.IncidentPages(ctx)
+					loop.IncidentSources = controller.IncidentSources
 				}
 				loop.BuiltinRestoreAuto = policy.Response.BuiltinRestoreAuto
 				if options.NativeBroker != nil {
@@ -791,7 +791,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		CodePath: selectedPathConfig, CodePathRegistry: codePathRegistry,
 		Application: *application, Namespace: *namespace,
 		SourceCommit: resolvedSourceCommit, DeployedCommit: resolvedDeployedCommit,
-		RepositoryWorktree: resolvedRoot, CorpusSessionRoot: corpusSessionRoot, PageSessionRoot: corpusSessionRoot,
+		RepositoryWorktree: resolvedRoot, CorpusSessionRoot: corpusSessionRoot,
 		BatchDebounce:        500 * time.Millisecond,
 		ConfirmationInterval: time.Second,
 		// The submit gate confirms a clearing finding on 3 fresh evaluations

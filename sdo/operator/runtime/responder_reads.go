@@ -13,7 +13,7 @@ import (
 
 func concurrentRead(command string) bool {
 	switch command {
-	case "status", "detect", "diagnose", "menu", "source":
+	case "status", "detect", "diagnose", "menu", "source", "changes", "timeline":
 		return true
 	}
 	return false
@@ -36,7 +36,7 @@ func (l *ResponderLoop) handleRead(ctx context.Context, request ToolRequest) (re
 			Request: l.Request, Programs: l.Programs, Provider: l.Provider, Detectors: l.Detectors,
 			Executor: l.Executor, ReadView: l.ReadView, DiagnosisDeadline: l.DiagnosisDeadline,
 			Now: l.Now, GitRead: l.GitRead, Trust: l.Trust, MenuConfig: l.MenuConfig,
-			IncidentStatus: l.IncidentStatus, CurrentEvidence: l.CurrentEvidence, MutationGate: l.MutationGate, IncidentPages: l.IncidentPages,
+			IncidentStatus: l.IncidentStatus, CurrentEvidence: l.CurrentEvidence, MutationGate: l.MutationGate, IncidentSources: l.IncidentSources,
 			CorpusSessionRoot: l.CorpusSessionRoot, sessionID: l.sessionID, MaxBatches: l.MaxBatches,
 			batches: l.batches, loopOpen: l.loopOpen, applySeq: l.applySeq, continuation: l.continuation,
 			findings: append([]sdk.Finding(nil), l.findings...), preApplyCaptured: l.preApplyCaptured,

@@ -73,3 +73,32 @@ def test_the_repair_policy_stays_in_the_request_not_the_prompt() -> None:
 @pytest.mark.parametrize("skill", ["sdo-incident-response", "sdo-memory"])
 def test_the_old_skill_pointers_are_gone(skill: str) -> None:
     assert skill not in str(_responder_prompt(incident(1)))
+
+
+def test_the_first_message_lists_the_changes_nearest_onset_then_the_commands() -> None:
+    request = _opened_by_a_test("login")
+    request.recent_changes.extend(
+        [
+            "+2m settings api rate_limit: 100 → 1",
+            "-1m kubectl Deployment/toy/api spec.replicas: 3 → 0",
+            "full list: sdo changes; signals over time: sdo timeline",
+        ]
+    )
+    prompt = str(_responder_prompt(request))
+
+    assert (
+        "Changes nearest onset (newest first, time from onset):\n"
+        "- +2m settings api rate_limit: 100 → 1\n"
+        "- -1m kubectl Deployment/toy/api spec.replicas: 3 → 0\n"
+        "full list: sdo changes; signals over time: sdo timeline\n"
+    ) in prompt
+    assert "timeline.csv" not in prompt
+    assert "changes.csv" not in prompt
+
+
+def test_the_first_message_names_the_commands_when_no_change_is_listed() -> None:
+    prompt = str(_responder_prompt(_opened_by_a_test("login")))
+
+    assert "`sdo changes`" in prompt
+    assert "`sdo timeline`" in prompt
+    assert "Changes nearest onset" not in prompt

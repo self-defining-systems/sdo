@@ -41,6 +41,9 @@
   "opening_keys": [
     "workload-health\u0000cause"
   ],
+  "recent_changes": [
+    "full list: sdo changes; signals over time: sdo timeline"
+  ],
   "repair_policy": "recorded-actions",
   "repository_base_commit": "source",
   "repository_worktree": "/tmp/demo",

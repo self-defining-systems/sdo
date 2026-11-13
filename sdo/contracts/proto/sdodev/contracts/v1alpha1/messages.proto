@@ -364,6 +364,9 @@ message IncidentRequest {
   bool deployment_in_flight = 39;
   // Go-owned: the user tests judged healthy when the incident opened, sorted.
   repeated string passing_tests = 40;
+  // Go-owned: the changes nearest onset, newest first, one line each, then the
+  // line that names the full commands, for the responder's first message.
+  repeated string recent_changes = 41 [(buf.validate.field).repeated = {max_items: 11, items: {string: {max_len: 600}}}];
 }
 
 message ResponseProgress {
