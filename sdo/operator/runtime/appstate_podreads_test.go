@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -32,7 +34,7 @@ func (podReader) AppStateNoisy() []string { return nil }
 func (r podReader) PodReads() []podread.Query {
 	return []podread.Query{{ID: r.queryID(), Target: podread.Target{Image: "synthetic-store"}, Args: []string{"store-cli", "get", r.id}, Interval: time.Minute}}
 }
-func (r podReader) AppStateRead(_ context.Context, reads map[string]podread.Result) (carried.Values, error) {
+func (r podReader) AppStateRead(_ context.Context, _ sdk.DetectionContext, reads map[string]podread.Result) (carried.Values, error) {
 	result, ok := reads[r.queryID()]
 	if !ok {
 		return carried.Values{}, fmt.Errorf("pod read %q unavailable", r.queryID())
@@ -124,7 +126,7 @@ func runReaderOnce(t *testing.T, observer *AppStateObserver) carried.Snapshot {
 		if err := observer.Reconfigure(podReaders(1)); err != nil {
 			t.Fatal(err)
 		}
-		observer.observe(storeSnapshot(pod))
+		observer.UseSnapshots(stubSnapshots{snapshot: storeSnapshot(pod)})
 		ctx, cancel := context.WithCancel(context.Background())
 		observer.Start(ctx)
 		time.Sleep(20 * time.Second)
@@ -157,4 +159,95 @@ func TestAppStateReaderNamesWhyItCouldNotRun(t *testing.T) {
 			t.Fatalf("latest = %+v", got)
 		}
 	})
+}
+
+type flakySnapshots struct {
+	stubSnapshots
+	failures int
+	calls    int
+}
+
+func (f *flakySnapshots) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
+	f.calls++
+	if f.calls <= f.failures {
+		return nil, fmt.Errorf("cache not synced")
+	}
+	return f.stubSnapshots.Snapshot(ctx)
+}
+
+// A reader whose first reads fail on a startup race is retried within seconds
+// and reaches its first value, instead of waiting a whole interval per try.
+func TestAppStateReaderRetriesAStartupRaceUntilItHasAResult(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		pod := runningStorePod("store-0")
+		observer := NewAppStateObserver(NewAppStateStore(0), lifecycleio.Clock(), lifecycleio.Clock().Now)
+		observer.UsePodReads(fake.NewSimpleClientset(&pod), answering("value"), "")
+		observer.UseSnapshots(&flakySnapshots{stubSnapshots: stubSnapshots{snapshot: storeSnapshot(pod)}, failures: 2})
+		if err := observer.Reconfigure(podReaders(1)); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		observer.Start(ctx)
+		time.Sleep(50 * time.Second) // well under the reader's interval
+		synctest.Wait()
+		cancel()
+		observer.Stop()
+		result, _ := observer.Store().Result("reader-00")
+		latest, ok := result.Latest()
+		if !ok || latest.Error != "" {
+			t.Fatalf("latest = %+v, want a value after the retries", latest)
+		}
+	})
+}
+
+type captureHandler struct {
+	mu    *sync.Mutex
+	lines *[]string
+}
+
+func (h captureHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h captureHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	line := r.Message
+	r.Attrs(func(a slog.Attr) bool { line += " " + a.Key + "=" + a.Value.String(); return true })
+	*h.lines = append(*h.lines, line)
+	return nil
+}
+func (h captureHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h captureHandler) WithGroup(string) slog.Handler      { return h }
+
+// A reader that records nothing for AppStateFirstResultBound is itself logged,
+// with the reason.
+func TestAppStateReaderStallIsLogged(t *testing.T) {
+	var mu sync.Mutex
+	var lines []string
+	previous := slog.Default()
+	slog.SetDefault(slog.New(captureHandler{mu: &mu, lines: &lines}))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	synctest.Test(t, func(t *testing.T) {
+		release := make(chan struct{})
+		observer, _ := newTestObserver(t, fakeReader{id: "stuck", interval: time.Minute, read: func(context.Context) (carried.Values, error) {
+			<-release // ignores its deadline: a read that never returns
+			return carried.Values{}, nil
+		}})
+		ctx, cancel := context.WithCancel(context.Background())
+		observer.Start(ctx)
+		time.Sleep(AppStateFirstResultBound + 5*time.Second)
+		synctest.Wait()
+		close(release)
+		cancel()
+		observer.Stop()
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	found := false
+	for _, line := range lines {
+		if strings.Contains(line, "app_state_reader_stalled") && strings.Contains(line, "reader=stuck") && strings.Contains(line, "reason=") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no stall line in %q", lines)
+	}
 }

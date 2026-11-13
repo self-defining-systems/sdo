@@ -104,6 +104,7 @@ func (o detectorObservations) compose(base SnapshotProvider, detectors []sdk.Det
 	}
 	// Last, so a rejected revision never leaves its readers running.
 	if o.AppState != nil {
+		o.AppState.UseSnapshots(base)
 		if o.Client != nil {
 			o.AppState.UsePodReads(o.Client, o.exec(), o.ProtectedNamespace)
 		}
