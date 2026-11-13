@@ -29,6 +29,15 @@ const (
 	// appStateMinInterval floors a reader's interval.
 	appStateMinInterval = 10 * time.Second
 	appStateTick        = time.Second
+	// appStateRetryBase is the first retry delay of a reader whose read failed;
+	// it doubles per consecutive failure up to the reader's own interval, so a
+	// startup race (no snapshot, no Ready Pod yet) is retried within seconds
+	// without a permanently broken reader hammering the application.
+	appStateRetryBase = 10 * time.Second
+	// AppStateFirstResultBound is how long a configured reader may go without any
+	// recorded result before the observer logs app_state_reader_stalled for it
+	// (repeated at the same period until it has one).
+	AppStateFirstResultBound = 90 * time.Second
 )
 
 // appStateReaderDetector is a registered detector that is an app-state reader.
@@ -37,9 +46,10 @@ type appStateReaderDetector interface {
 	sdk.Detector
 	AppStateReader() bool
 	AppStateNoisy() []string
-	// AppStateRead runs the reader against the frozen results of the pod reads
-	// it declares (nil when it declares none).
-	AppStateRead(context.Context, map[string]podread.Result) (carried.Values, error)
+	// AppStateRead runs the reader against the controller's current cluster
+	// snapshot (nil when the observer has no source) and the frozen results of
+	// the pod reads it declares (nil when it declares none).
+	AppStateRead(context.Context, sdk.DetectionContext, map[string]podread.Result) (carried.Values, error)
 }
 
 // AppStateObserver reads every registered app-state reader on its own interval
@@ -68,10 +78,14 @@ type AppStateObserver struct {
 	cancel  context.CancelFunc
 	wait    sync.WaitGroup
 
-	podReads  podReadEnv
-	podTurn   chan struct{}
-	latest    sdk.DetectionContext
-	logged    map[string]string
+	podReads   podReadEnv
+	podTurn    chan struct{}
+	source     SnapshotProvider
+	logged     map[string]string
+	failures   map[string]int
+	configured time.Time
+	stallLog   map[string]time.Time
+	skip       map[string]string // why a reader was last not started
 }
 
 // podReadEnv is what a reader's pod reads run with.
@@ -84,7 +98,7 @@ type podReadEnv struct {
 type appStateReader struct {
 	id       string
 	interval time.Duration
-	read     func(context.Context, map[string]podread.Result) (carried.Values, error)
+	read     func(context.Context, sdk.DetectionContext, map[string]podread.Result) (carried.Values, error)
 	pods     *PodReadObserver // nil when the reader declares no pod reads
 	podsErr  string           // why its pod reads cannot run, when they cannot
 }
@@ -92,7 +106,7 @@ type appStateReader struct {
 // NewAppStateObserver returns an observer that records into store. clock
 // drives its ticker and now stamps snapshots.
 func NewAppStateObserver(store *AppStateStore, clock kclock.WithTicker, now func() time.Time) *AppStateObserver {
-	return &AppStateObserver{store: store, clock: timerClock(clock), now: now, running: map[string]bool{}, next: map[string]time.Time{}, slots: make(chan struct{}, AppStateMaxConcurrent), podTurn: make(chan struct{}, 1), logged: map[string]string{}}
+	return &AppStateObserver{store: store, clock: timerClock(clock), now: now, running: map[string]bool{}, next: map[string]time.Time{}, slots: make(chan struct{}, AppStateMaxConcurrent), podTurn: make(chan struct{}, 1), logged: map[string]string{}, failures: map[string]int{}, stallLog: map[string]time.Time{}, skip: map[string]string{}}
 }
 
 // UsePodReads gives the observer what it needs to run the pod reads readers
@@ -103,12 +117,14 @@ func (o *AppStateObserver) UsePodReads(client kubernetes.Interface, exec kuberea
 	o.podReads = podReadEnv{client: client, exec: exec, protected: protected}
 }
 
-// observe keeps the newest cluster snapshot, which names the Pods a reader's
-// pod reads target.
-func (o *AppStateObserver) observe(base sdk.DetectionContext) {
+// UseSnapshots sets where a read takes the cluster snapshot it runs against: the
+// Kubernetes cache, independent of detection cycles. A reader's pod reads are
+// targeted from it and it is published to the memory host before the read, so
+// readers never wait for an evaluation to have run.
+func (o *AppStateObserver) UseSnapshots(source SnapshotProvider) {
 	o.mu.Lock()
-	o.latest = base
-	o.mu.Unlock()
+	defer o.mu.Unlock()
+	o.source = source
 }
 
 // Store is the state the observer records into.
@@ -156,6 +172,10 @@ func (o *AppStateObserver) Reconfigure(detectors []sdk.Detector) error {
 	o.readers = readers
 	o.gen++
 	clear(o.logged)
+	clear(o.failures)
+	clear(o.stallLog)
+	clear(o.skip)
+	o.configured = o.now()
 	ids := make([]string, len(readers))
 	for i, r := range readers {
 		ids[i] = r.id
@@ -221,18 +241,18 @@ func (o *AppStateObserver) dispatch(ctx context.Context) {
 		}
 		return due[i].id < due[j].id
 	})
+	o.reportStalled(now)
 	for _, r := range due {
 		if o.running[r.id] || now.Before(o.next[r.id]) {
 			continue
 		}
-		if r.pods != nil && o.latest == nil {
-			continue // its pod reads have no target before the first snapshot
-		}
 		select {
 		case o.slots <- struct{}{}:
 		default:
+			o.skip[r.id] = "waiting for a free read slot"
 			continue
 		}
+		delete(o.skip, r.id)
 		o.running[r.id] = true
 		o.next[r.id] = now.Add(r.interval)
 		o.wait.Add(1)
@@ -240,13 +260,40 @@ func (o *AppStateObserver) dispatch(ctx context.Context) {
 	}
 }
 
+// reportStalled logs each configured reader that has recorded no result within
+// AppStateFirstResultBound of the configuration, with why, and again every
+// bound until it has one. Called with o.mu held.
+func (o *AppStateObserver) reportStalled(now time.Time) {
+	if o.configured.IsZero() || now.Sub(o.configured) < AppStateFirstResultBound {
+		return
+	}
+	for _, r := range o.readers {
+		if _, has := o.logged[r.id]; has || now.Sub(o.stallLog[r.id]) < AppStateFirstResultBound {
+			continue
+		}
+		o.stallLog[r.id] = now
+		reason := o.skip[r.id]
+		switch {
+		case o.running[r.id]:
+			reason = "a read has been running since it was last started"
+		case reason == "":
+			reason = "no read has finished; next due " + o.next[r.id].UTC().Format(time.RFC3339)
+		}
+		slog.Warn("app_state_reader_stalled", "reader", r.id, "waiting", now.Sub(o.configured).Round(time.Second).String(), "reason", reason)
+	}
+}
+
 func (o *AppStateObserver) run(ctx context.Context, r appStateReader, gen uint64) {
 	defer o.wait.Done()
-	reads, err := o.collectPodReads(ctx, r)
+	view, err := o.view(ctx)
+	var reads map[string]podread.Result
+	if err == nil {
+		reads, err = o.collectPodReads(ctx, r, view)
+	}
 	var values carried.Values
 	if err == nil {
 		readCtx, cancel := context.WithTimeout(ctx, AppStateReadTimeout)
-		values, err = r.read(readCtx, reads)
+		values, err = r.read(readCtx, view, reads)
 		cancel()
 	}
 	snap := carried.Snapshot{At: o.now().UTC(), Values: values}
@@ -259,25 +306,47 @@ func (o *AppStateObserver) run(ctx context.Context, r appStateReader, gen uint64
 	if ctx.Err() == nil && gen == o.gen {
 		o.store.Record(r.id, snap)
 		o.logRead(r.id, snap)
+		if err != nil {
+			o.failures[r.id]++
+			// A failed reader is retried soon, backing off to its own interval.
+			delay := min(r.interval, appStateRetryBase<<min(o.failures[r.id]-1, 8))
+			o.next[r.id] = o.now().Add(delay)
+		} else {
+			delete(o.failures, r.id)
+		}
 	}
 	delete(o.running, r.id)
 	o.mu.Unlock()
 	<-o.slots
 }
 
+// view takes the cluster snapshot a read runs against; nil without a source.
+func (o *AppStateObserver) view(ctx context.Context) (sdk.DetectionContext, error) {
+	o.mu.Lock()
+	source := o.source
+	o.mu.Unlock()
+	if source == nil {
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, AppStateReadTimeout)
+	defer cancel()
+	view, err := source.Snapshot(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("skipped: cluster snapshot unavailable: %w", err)
+	}
+	return view, nil
+}
+
 // collectPodReads runs the reader's own pod reads, or says why it cannot.
-func (o *AppStateObserver) collectPodReads(ctx context.Context, r appStateReader) (map[string]podread.Result, error) {
+func (o *AppStateObserver) collectPodReads(ctx context.Context, r appStateReader, base sdk.DetectionContext) (map[string]podread.Result, error) {
 	if r.podsErr != "" {
 		return nil, errors.New(r.podsErr)
 	}
 	if r.pods == nil {
 		return nil, nil
 	}
-	o.mu.Lock()
-	base := o.latest
-	o.mu.Unlock()
 	if base == nil {
-		return nil, errors.New("skipped: no cluster snapshot has been observed yet, so the reader's pod reads have no target")
+		return nil, errors.New("skipped: no cluster snapshot source, so the reader's pod reads have no target")
 	}
 	select {
 	case o.podTurn <- struct{}{}:
@@ -329,7 +398,6 @@ func (p AppStateSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCo
 	if err != nil {
 		return base, err
 	}
-	p.Observer.observe(base)
 	return inputs.New(base).WithAppState(appStateResults(p.Observer.store.Results())), nil
 }
 

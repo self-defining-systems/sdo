@@ -75,7 +75,7 @@ func TestObservationCarriesTheReadersADetectorConsumes(t *testing.T) {
 func TestRemoteReadStateDecodesValuesAndFailures(t *testing.T) {
 	rpc := &stateRPC{response: &pb.ReadStateResponse{Values: map[string]string{"a": "1"}}}
 	remote := &RemoteMemory{rpc: rpc}
-	values, err := remote.ReadState(context.Background(), "settings", nil)
+	values, err := remote.ReadState(context.Background(), nil, "settings", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,11 +83,11 @@ func TestRemoteReadStateDecodesValuesAndFailures(t *testing.T) {
 		t.Fatalf("values=%v asked=%q", values, rpc.asked)
 	}
 	rpc.response = &pb.ReadStateResponse{Error: "store down"}
-	if _, err := remote.ReadState(context.Background(), "settings", nil); err == nil || err.Error() != "store down" {
+	if _, err := remote.ReadState(context.Background(), nil, "settings", nil); err == nil || err.Error() != "store down" {
 		t.Fatalf("err = %v", err)
 	}
 	rpc.response = &pb.ReadStateResponse{Values: map[string]string{"admin_password": "x"}}
-	values, err = remote.ReadState(context.Background(), "settings", nil)
+	values, err = remote.ReadState(context.Background(), nil, "settings", nil)
 	if err != nil {
 		t.Fatalf("prototype: no secret filtering, got %v", err)
 	}
@@ -100,6 +100,27 @@ type stateRPC struct {
 	MirroredMemoryRPC
 	response *pb.ReadStateResponse
 	asked    string
+
+	published []sdk.DetectionContext
+}
+
+func (s *stateRPC) Capture(_ context.Context, view sdk.DetectionContext) (memoryhost.Host, uint64, func(), error) {
+	s.published = append(s.published, view)
+	return nil, 0, func() {}, nil
+}
+
+// A read first publishes the controller's snapshot to the host's mirror, so a
+// reader never runs against a mirror no evaluation has refreshed.
+func TestReadStatePublishesTheSnapshotBeforeTheRead(t *testing.T) {
+	rpc := &stateRPC{response: &pb.ReadStateResponse{Values: map[string]string{"a": "1"}}}
+	remote := &RemoteMemory{rpc: rpc}
+	view := viewWith(nil)
+	if _, err := remote.ReadState(context.Background(), view, "settings", nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(rpc.published) != 1 || rpc.asked != "settings" {
+		t.Fatalf("published=%d asked=%q, want the view published once before the read", len(rpc.published), rpc.asked)
+	}
 }
 
 func (s *stateRPC) ReadState(_ context.Context, r *pb.ReadStateRequest) (*pb.ReadStateResponse, error) {

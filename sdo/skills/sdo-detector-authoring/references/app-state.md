@@ -19,3 +19,4 @@ collects them for that reader alone, just before each read, on their own budget:
 cannot run, the reader's error says why (`skipped: ...`, or the failing Pod's own reading error). The controller log
 shows `app_state_readers_configured` at load and one `app_state_reader` line per reader on its first result and on each
 change from ok to an error (or to another error), so every reader's state is visible outside an incident.
+Each read runs against the controller's current cluster snapshot, published to the host first, so a reader never waits for a detection cycle. A failed reader is retried after 10 s, doubling up to its interval. A reader with no result 90 s after load is logged as `app_state_reader_stalled` with the reason.

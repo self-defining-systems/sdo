@@ -175,6 +175,9 @@ func (v *LiveReadView) ProbeHTTP(ref sdk.ObjectRef, p program.HTTPProbe) (progra
 			port = s.Spec.Ports[0].Port
 		}
 	}
+	if port == 0 {
+		return program.ProbeResult{}, fmt.Errorf("probe target Service %s/%s has no port in the memory host's mirror (the Service is absent from the mirror or declares no port)", ref.Namespace, ref.Name)
+	}
 	target, err := v.target(ref, port)
 	if err != nil {
 		return program.ProbeResult{}, err

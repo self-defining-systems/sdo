@@ -118,7 +118,19 @@ func NewRemoteMemory(ready *pb.ReadyResponse, rpc MirroredMemoryRPC) (*RemoteMem
 // ReadState asks the host to run one app-state reader. The failure of the call
 // or of the read is returned as an error: the observer records it as the
 // reader's read error, never as state.
-func (r *RemoteMemory) ReadState(ctx context.Context, id string, reads map[string]podread.Result) (carried.Values, error) {
+//
+// view is the controller's current cluster snapshot. It is published to the
+// host's mirror first (the step every detector evaluation takes), so a reader
+// never runs against a mirror that no evaluation has refreshed, such as the
+// one right after a memory revision's activation.
+func (r *RemoteMemory) ReadState(ctx context.Context, view sdk.DetectionContext, id string, reads map[string]podread.Result) (carried.Values, error) {
+	if view != nil {
+		_, _, release, err := r.rpc.Capture(ctx, view)
+		if err != nil {
+			return carried.Values{}, fmt.Errorf("publish the cluster snapshot to the memory host: %w", err)
+		}
+		release()
+	}
 	rpc, ok := r.rpc.(interface {
 		ReadState(context.Context, *pb.ReadStateRequest) (*pb.ReadStateResponse, error)
 	})
@@ -201,8 +213,8 @@ func (d *remoteDetector) Spec() sdk.DetectorSpec    { return d.DetectorSpec }
 func (d *remoteDetector) AppStateReader() bool      { return d.Registration.AppStateReader }
 func (d *remoteDetector) AppStateNoisy() []string   { return d.Registration.AppStateNoisy }
 func (d *remoteDetector) AppStateReaders() []string { return d.Registration.AppStateReaders }
-func (d *remoteDetector) AppStateRead(ctx context.Context, reads map[string]podread.Result) (carried.Values, error) {
-	return d.remote.ReadState(ctx, d.ID, reads)
+func (d *remoteDetector) AppStateRead(ctx context.Context, view sdk.DetectionContext, reads map[string]podread.Result) (carried.Values, error) {
+	return d.remote.ReadState(ctx, view, d.ID, reads)
 }
 func (d *remoteDetector) MetricQueries() []metrics.Query        { return d.Metrics }
 func (d *remoteDetector) LogQueries() []logs.Query              { return d.Logs }
