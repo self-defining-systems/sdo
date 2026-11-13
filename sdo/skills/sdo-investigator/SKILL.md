@@ -14,7 +14,7 @@ restart anything, write through a client, or commit source. Reading is fine, inc
 a read in a Pod (a SELECT, a cache GET, listing files). If a check needs a change, name it in your report; the
 responder runs it.
 
-Safe reads: `sdo detect`, `sdo changes`, `sdo timeline`,
+Safe reads: `sdo detect`, `sdo changes [--component NODE]`, `sdo timeline [--component NODE]`,
 `sdo map [path OP | near COMPONENT]`, `sdo try`, `sdo source`, `kubectl get/describe/logs`, `.sdo/arch.md`.
 Do not call `sdo status`, `sdo diagnose`, `sdo menu` or `sdo verify`: they change state the responder shares.
 

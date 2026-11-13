@@ -1,13 +1,16 @@
 package runtime
 
 import (
+	"fmt"
 	"maps"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"sdo.dev/operator/sdk/appstate/carried"
+	"sdo.dev/operator/sdk/podread"
 )
 
 // AppStateStore is the controller's in-memory state for app-state readers: per
@@ -31,9 +34,12 @@ type AppStateStore struct {
 
 type appStateReaderState struct {
 	declared []string
-	ring     []carried.Snapshot
-	healthy  *carried.Snapshot
-	history  []carried.Snapshot
+	// targets are the Pods the reader's own pod reads select: the only link
+	// from a reader to a component of the application map.
+	targets []podread.Target
+	ring    []carried.Snapshot
+	healthy *carried.Snapshot
+	history []carried.Snapshot
 }
 
 // NewAppStateStore returns an empty store whose promotions settle for settle
@@ -77,6 +83,48 @@ func (s *AppStateStore) Retain(readers map[string][]string) {
 			delete(s.samples, id)
 		}
 	}
+}
+
+// SetTargets records the pod-read targets of a retained reader.
+func (s *AppStateStore) SetTargets(id string, targets []podread.Target) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if state := s.readers[id]; state != nil {
+		state.targets = slices.Clone(targets)
+	}
+}
+
+// AppStateReaderStatus is what one retained reader has observed: the targets
+// its pod reads select, whether it has read at all, why its newest read gave
+// no answer and whether a last-healthy baseline exists to diff against.
+type AppStateReaderStatus struct {
+	Reader    string
+	Targets   []podread.Target
+	Read      bool
+	Err       string
+	Baselined bool
+}
+
+// AppStateReaders lists every retained reader's status, by reader ID.
+func (s *AppStateStore) AppStateReaders() []AppStateReaderStatus {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []AppStateReaderStatus
+	for _, id := range slices.Sorted(maps.Keys(s.readers)) {
+		state := s.readers[id]
+		status := AppStateReaderStatus{Reader: id, Targets: slices.Clone(state.targets), Read: len(state.ring) > 0, Baselined: state.healthy != nil}
+		if n := len(state.ring); n > 0 {
+			status.Err = state.ring[n-1].Error
+		}
+		out = append(out, status)
+	}
+	return out
 }
 
 // Record adds one finished read of a retained reader.
@@ -247,8 +295,52 @@ func (s *AppStateStore) AppStateChanges(since, now time.Time) []IncidentChange {
 			case carried.Removed:
 				after = AppStateAbsent
 			}
-			out = append(out, IncidentChange{At: c.At, Source: "app-state", ReaderOrObject: id, Key: c.Key, Before: before, After: after, Noisy: c.Noisy})
+			// A difference from the last-healthy snapshot has no change time: the
+			// row carries when the reader read it, never an onset-relative time.
+			out = append(out, IncidentChange{ReadAt: c.At, Source: "app-state", ReaderOrObject: id, Key: c.Key, Before: before, After: after, Noisy: c.Noisy, FirstSeen: c.Kind == carried.Added})
 		}
 	}
-	return out
+	return collapseFirstSeen(out)
+}
+
+// firstSeenKeep is how many first-seen keys of one reader stay as rows.
+const firstSeenKeep = 2
+
+// collapseFirstSeen replaces a reader's many `(absent) -> value` rows from the
+// last-healthy diff (keys the baseline read never held, as when a reader's
+// first read was partial) by one summary row, so they neither crowd out the
+// reader's real changes nor read as change at a time.
+func collapseFirstSeen(rows []IncidentChange) []IncidentChange {
+	byReader := map[string][]int{}
+	for index, row := range rows {
+		if row.FirstSeen {
+			byReader[row.ReaderOrObject] = append(byReader[row.ReaderOrObject], index)
+		}
+	}
+	drop := map[int]bool{}
+	var summaries []IncidentChange
+	for _, reader := range slices.Sorted(maps.Keys(byReader)) {
+		indexes := byReader[reader]
+		if len(indexes) <= firstSeenKeep {
+			continue
+		}
+		var keys []string
+		for _, index := range indexes {
+			drop[index] = true
+			keys = append(keys, rows[index].Key)
+		}
+		first := rows[indexes[0]]
+		after := fmt.Sprintf("%d keys, e.g. %s", len(keys), strings.Join(keys[:min(3, len(keys))], ", "))
+		summaries = append(summaries, IncidentChange{ReadAt: first.ReadAt, Source: "app-state", ReaderOrObject: reader, Key: "(keys absent at the last healthy read)", Before: AppStateAbsent, After: after, FirstSeen: true})
+	}
+	if len(drop) == 0 {
+		return rows
+	}
+	kept := make([]IncidentChange, 0, len(rows))
+	for index, row := range rows {
+		if !drop[index] {
+			kept = append(kept, row)
+		}
+	}
+	return append(kept, summaries...)
 }

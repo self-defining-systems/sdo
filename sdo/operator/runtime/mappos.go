@@ -3,7 +3,9 @@ package runtime
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
+	"strings"
 
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/sdk/program"
@@ -270,4 +272,44 @@ func (g mapGraph) programMap() program.AppMap {
 		m.Edges = append(m.Edges, program.AppEdge{From: e.From, To: e.To})
 	}
 	return m
+}
+
+// testsThrough are the scenario IDs of the probes whose operations' paths
+// include the component, in map order.
+func (g mapGraph) testsThrough(component string) []string {
+	var out []string
+	for _, p := range g.m.Probes {
+		if slices.Contains(g.testPath(p.Scenario), component) && !slices.Contains(out, p.Scenario) {
+			out = append(out, p.Scenario)
+		}
+	}
+	return out
+}
+
+// checkedComponents validates `--component` names against the map. With no
+// map there is nothing to validate against, so the names filter whatever
+// Component the rows carry.
+func checkedComponents(view detectReads, names []string) ([]string, error) {
+	var out []string
+	for _, raw := range names {
+		for _, name := range strings.Split(raw, ",") {
+			if name = strings.TrimSpace(name); name != "" && !slices.Contains(out, name) {
+				out = append(out, name)
+			}
+		}
+	}
+	g, _, _ := loadCandidateGraph(view)
+	if g == nil {
+		return out, nil
+	}
+	for _, name := range out {
+		if !g.hasComponent(name) {
+			valid := make([]string, 0, len(g.comps))
+			for n := range g.comps {
+				valid = append(valid, n)
+			}
+			return nil, errors.New(unknownName("component", name, valid))
+		}
+	}
+	return out, nil
 }

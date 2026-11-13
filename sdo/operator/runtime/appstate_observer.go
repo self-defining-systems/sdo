@@ -138,6 +138,7 @@ func (o *AppStateObserver) Reconfigure(detectors []sdk.Detector) error {
 	env := o.podReads
 	o.mu.Unlock()
 	declared := map[string][]string{}
+	targets := map[string][]podread.Target{}
 	for _, d := range detectors {
 		r, ok := d.(appStateReaderDetector)
 		if !ok || !r.AppStateReader() {
@@ -153,6 +154,9 @@ func (o *AppStateObserver) Reconfigure(detectors []sdk.Detector) error {
 		if err != nil {
 			return fmt.Errorf("app-state reader %q: %w", spec.ID, err)
 		}
+		for _, query := range queries {
+			targets[spec.ID] = append(targets[spec.ID], query.Target)
+		}
 		if len(queries) > 0 {
 			reader.interval = max(reader.interval, podread.MinInterval)
 			if env.client == nil {
@@ -167,6 +171,9 @@ func (o *AppStateObserver) Reconfigure(detectors []sdk.Detector) error {
 		return fmt.Errorf("%d app-state readers exceed the limit of %d", len(readers), carried.MaxReaders)
 	}
 	o.store.Retain(declared)
+	for id, list := range targets {
+		o.store.SetTargets(id, list)
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.readers = readers

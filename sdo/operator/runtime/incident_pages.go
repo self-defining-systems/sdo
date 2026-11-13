@@ -56,6 +56,9 @@ type IncidentChange struct {
 	Noisy          bool
 	// Command is the command that expands or restores the row's object, when there is one.
 	Command string
+	// FirstSeen marks an app-state row for a key the last-healthy read never
+	// held: not seen healthy, which is weaker than changed.
+	FirstSeen bool
 }
 
 // AppStateChangeSource is the seam app-state readers plug into: the controller
@@ -255,6 +258,9 @@ type incidentPageInput struct {
 	Since time.Duration
 	// Limit keeps only the newest rows of the changes page; zero is the cap.
 	Limit int
+	// Components restricts `changes` to the rows of these map components and
+	// `timeline` to the operations through them plus their workload columns.
+	Components []string
 }
 
 func (in incidentPageInput) lead() time.Duration {
@@ -277,16 +283,20 @@ func incidentSet(in incidentPageInput) (detectSuspectSet, time.Time) {
 // buildIncidentTimeline renders `sdo timeline`.
 func buildIncidentTimeline(in incidentPageInput) []byte {
 	set, onset := incidentSet(in)
-	return renderTimeline(set, in.Signals.history(), in.Request, in.View, onset, in.Now, in.lead())
+	return renderTimeline(set, in.Signals.history(), in.Request, in.View, onset, in.Now, in.lead(), in.Components)
 }
 
 // buildIncidentChanges renders `sdo changes`.
 func buildIncidentChanges(in incidentPageInput) []byte {
 	set, onset := incidentSet(in)
-	return renderChanges(incidentChangeRows(in, set, onset), onset)
+	rows := incidentChangeRows(in, set, onset)
+	if len(in.Components) > 0 {
+		rows = slices.DeleteFunc(rows, func(row IncidentChange) bool { return !slices.Contains(in.Components, row.Component) })
+	}
+	return renderChanges(rows, onset)
 }
 
-func renderTimeline(set detectSuspectSet, history incidentSignalHistory, request IncidentRequest, view detectReads, onset, now time.Time, lead time.Duration) []byte {
+func renderTimeline(set detectSuspectSet, history incidentSignalHistory, request IncidentRequest, view detectReads, onset, now time.Time, lead time.Duration, components []string) []byte {
 	// Operations: the failing tests first, then the rest by name; no ranking.
 	var operations []string
 	for _, test := range set.failing {
@@ -302,6 +312,21 @@ func renderTimeline(set detectSuspectSet, history incidentSignalHistory, request
 	}
 	sort.Strings(rest)
 	operations = append(operations, rest...)
+	// --component keeps the operations whose map path contains one of the
+	// components; a map that names no probe through them leaves the default.
+	if len(components) > 0 && set.graph != nil {
+		var through []string
+		for _, name := range components {
+			for _, id := range set.graph.testsThrough(name) {
+				if !slices.Contains(through, id) {
+					through = append(through, id)
+				}
+			}
+		}
+		if len(through) > 0 {
+			operations = slices.DeleteFunc(operations, func(id string) bool { return !slices.Contains(through, id) })
+		}
+	}
 	if len(operations) > incidentPageOps {
 		operations = operations[:incidentPageOps]
 	}
@@ -317,6 +342,15 @@ func renderTimeline(set detectSuspectSet, history incidentSignalHistory, request
 		}
 		ref := node.Component.WorkloadRef(namespace)
 		workloads = append(workloads, workloadColumn{component: node.Name, key: ref.Kind + "/" + ref.Name})
+	}
+	// A listed component gets its columns even when it is not a candidate.
+	for _, name := range components {
+		component, ok := set.m.Component(name)
+		if !ok || component.Workload == "" || slices.ContainsFunc(workloads, func(c workloadColumn) bool { return c.component == name }) {
+			continue
+		}
+		ref := component.WorkloadRef(namespace)
+		workloads = append(workloads, workloadColumn{component: name, key: ref.Kind + "/" + ref.Name})
 	}
 	header := []string{"t_rel_s", "at_utc"}
 	for _, id := range operations {
@@ -407,8 +441,15 @@ func incidentChangeRows(in incidentPageInput, set detectSuspectSet, onset time.T
 		rows = append(rows, storeChangeRows(storestate.Changes(in.View))...)
 	}
 	if in.AppState != nil {
+		var components map[string]string
+		if source, ok := in.AppState.(appStateReaderSource); ok && in.View != nil {
+			components = readerComponents(in.View, set.m, in.Request.Namespace, source.AppStateReaders())
+		}
 		for _, row := range in.AppState.AppStateChanges(since, in.Now) {
 			row.Source = "app-state"
+			if row.Component == "" {
+				row.Component = components[row.ReaderOrObject]
+			}
 			rows = append(rows, row)
 		}
 	}

@@ -242,14 +242,22 @@ func assertMoreLinesParse(t *testing.T, summary detectSummary) {
 		if match == nil {
 			continue
 		}
-		command := match[1]
+		for _, command := range strings.Split(match[1], "; ") {
+			assertMoreCommand(t, summary, line, command)
+		}
+	}
+}
+
+func assertMoreCommand(t *testing.T, summary detectSummary, line, command string) {
+	t.Helper()
+	{
 		switch {
 		case strings.HasPrefix(command, "sdo detect --finding "):
 			id := strings.TrimPrefix(command, "sdo detect --finding ")
 			if _, ok := summary.item(id); !ok {
 				t.Fatalf("handle %q resolves to nothing:\n%s", id, summary.Text)
 			}
-		case strings.HasPrefix(command, "sdo source "), strings.HasPrefix(command, "sdo diagnose "), strings.HasPrefix(command, "sdo map near "), command == "sdo changes", strings.HasPrefix(command, "kubectl "):
+		case strings.HasPrefix(command, "sdo source "), strings.HasPrefix(command, "sdo diagnose "), strings.HasPrefix(command, "sdo map near "), command == "sdo changes", strings.HasPrefix(command, "sdo changes --component "), strings.HasPrefix(command, "sdo timeline --component "), strings.HasPrefix(command, "kubectl "):
 		default:
 			t.Fatalf("more: line is not a command: %q", line)
 		}

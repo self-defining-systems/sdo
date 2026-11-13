@@ -384,6 +384,14 @@ func (l *ResponderLoop) incidentPage(ctx context.Context, request ToolRequest, r
 	}
 	in := l.pageInput(reads, l.Request.Findings, l.clock().UTC())
 	in.Since, in.Limit = since, request.Limit
+	if len(request.Components) > 0 {
+		components, err := checkedComponents(reads, request.Components)
+		if err != nil {
+			response.Error = err.Error()
+			return
+		}
+		in.Components = components
+	}
 	if request.Command == "timeline" {
 		response.Text = string(buildIncidentTimeline(in))
 		return

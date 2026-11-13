@@ -388,12 +388,16 @@ def test_changes_and_timeline_send_their_window_and_print_the_csv(monkeypatch, c
     assert tools_cli.main(["changes"]) == 0
     assert tools_cli.main(["changes", "--since", "30m", "--limit", "5"]) == 0
     assert tools_cli.main(["timeline", "--since", "1h"]) == 0
+    assert tools_cli.main(["changes", "--component", "db,cache"]) == 0
+    assert tools_cli.main(["timeline", "--component", "db"]) == 0
     assert seen == [
         {"command": "changes"},
         {"command": "changes", "since": "30m", "limit": 5},
         {"command": "timeline", "since": "1h"},
+        {"command": "changes", "components": ["db", "cache"]},
+        {"command": "timeline", "components": ["db"]},
     ]
-    assert capsys.readouterr().out == "t_rel_s,at_utc\n-60,10:00:00\n\n" * 3
+    assert capsys.readouterr().out == "t_rel_s,at_utc\n-60,10:00:00\n\n" * 5
 
 
 def test_try_lists_or_names_one_user_test(monkeypatch, capsys):

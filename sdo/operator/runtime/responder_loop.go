@@ -52,7 +52,10 @@ type ToolRequest struct {
 	Name    string `json:"name,omitempty"`
 	// Since is how far before onset `changes` and `timeline` reach, a Go
 	// duration such as 30m; Limit keeps the newest N changes.
-	Since       string                                 `json:"since,omitempty"`
+	Since string `json:"since,omitempty"`
+	// Components keeps only the rows and columns of these map components in
+	// `changes` and `timeline`.
+	Components  []string                               `json:"components,omitempty"`
 	Limit       int                                    `json:"limit,omitempty"`
 	Parameters  map[string]string                      `json:"parameters,omitempty"`
 	Selection   *contracts.MitigationSelection         `json:"-"`

@@ -439,23 +439,24 @@ func routineChange(row IncidentChange) bool {
 func rowEvidence(row IncidentChange, onset time.Time) (candidateEvidence, bool) {
 	row = maskCredentialValues(row)
 	clean := func(text string) string { return redactDetectText(text, incidentInlineValue) }
-	object := row.ReaderOrObject
+	// An object name is not a secret: the token redaction would mask a long one.
+	object := plainName(row.ReaderOrObject, 70)
 	var body string
 	switch row.Source {
 	case "kubernetes":
 		switch row.After {
 		case string(DepartureExtra):
-			body = clean(object) + " present, absent from accepted source"
+			body = object + " present, absent from accepted source"
 		case string(DepartureMissing):
-			body = clean(object) + " missing, accepted source declares it"
+			body = object + " missing, accepted source declares it"
 		default:
-			body = clean(object) + " " + clean(row.After) + " vs accepted source"
+			body = object + " " + clean(row.After) + " vs accepted source"
 		}
 		if row.Key != "" {
 			body += " (" + clean(row.Key) + ")"
 		}
 	default:
-		body = row.Source + " " + clean(object)
+		body = row.Source + " " + object
 		if row.Key != "" {
 			body += " " + clean(row.Key)
 		}
@@ -475,12 +476,25 @@ func rowEvidence(row IncidentChange, onset time.Time) (candidateEvidence, bool) 
 	default:
 		body += "  (untimed)"
 	}
+	if row.FirstSeen {
+		e.Unexplained, e.Routine = false, true
+		body += " (not in the last healthy read)"
+	}
 	if routineChange(row) {
 		e.Unexplained, e.Routine = false, true
 		body += " (rollout churn)"
 	}
 	e.Text = body
 	return e, true
+}
+
+// plainName bounds a Kind/name without credential redaction.
+func plainName(name string, limit int) string {
+	name = strings.Join(strings.Fields(name), " ")
+	if runes := []rune(name); len(runes) > limit {
+		return string(runes[:limit-1]) + "…"
+	}
+	return name
 }
 
 func rows(n int) string {
@@ -531,7 +545,7 @@ func (n *candidateNode) nodeLines(full bool, evidenceLines int) []string {
 		if len(n.Evidence) > 0 {
 			line += fmt.Sprintf("  +%d evidence", len(n.Evidence))
 		}
-		return []string{line + "  more: sdo detect --finding " + n.Name}
+		return []string{line + "  more: sdo changes --component " + n.Name}
 	}
 	lines := []string{n.title()}
 	shown := 0
@@ -549,7 +563,7 @@ func (n *candidateNode) nodeLines(full bool, evidenceLines int) []string {
 	if hidden := len(n.Evidence) - shown; hidden > 0 && shown > 0 && n.Evidence[len(n.Evidence)-1].Kind != "playbook" {
 		lines = append(lines, fmt.Sprintf("  +%d more evidence lines", hidden))
 	}
-	return append(lines, "    more: sdo detect --finding "+n.Name)
+	return append(lines, "    more: sdo changes --component "+n.Name+"; sdo timeline --component "+n.Name)
 }
 
 // header is the CANDIDATES line; it claims "every failing path" only when a

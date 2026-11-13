@@ -738,6 +738,13 @@ func candidateViewFor(in detectInput, set detectSuspectSet) (candidateView, map[
 	input := set.candidateInput(in, rows)
 	input.Extra = extra
 	input.Observed = storeObservation(in.View)
+	if source, ok := in.AppState.(appStateReaderSource); ok && in.View != nil {
+		for component, reason := range appStateCoverage(in.View, set.m, namespace, source.AppStateReaders()) {
+			if _, seen := input.Observed[component]; !seen || reason == "" {
+				input.Observed[component] = reason
+			}
+		}
+	}
 	view := computeCandidates(input)
 	for _, clue := range other {
 		view.otherClues = append(view.otherClues, redactDetectText(clue.Summary, 90))

@@ -329,3 +329,10 @@ func indexOf(items []string, want string) int {
 	}
 	return -1
 }
+
+func TestLongObjectNamesAreNotMistakenForTokens(t *testing.T) {
+	e, _ := rowEvidence(IncidentChange{At: candidateOnset.Add(-time.Second), Source: "kubernetes", Component: "web", ReaderOrObject: "Deployment/shop-webservice-default", Key: "spec.image", After: "changed", Writer: "kubectl-patch"}, candidateOnset)
+	if !strings.Contains(e.Text, "Deployment/shop-webservice-default changed vs accepted source") {
+		t.Fatalf("object name redacted: %q", e.Text)
+	}
+}

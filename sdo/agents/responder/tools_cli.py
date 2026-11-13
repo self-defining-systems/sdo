@@ -155,6 +155,11 @@ def _parser() -> argparse.ArgumentParser:
         help="how far before onset to reach, a Go duration such as 30m (default: 10m)",
     )
     changes.add_argument("--limit", type=int, metavar="N", help="keep only the newest N changes")
+    changes.add_argument(
+        "--component",
+        metavar="NODE[,NODE]",
+        help="keep only the rows of these application-map components (see `sdo map`)",
+    )
     timeline = commands.add_parser(
         "timeline",
         help="show signals over time (CSV) around the incident onset",
@@ -167,6 +172,11 @@ def _parser() -> argparse.ArgumentParser:
         "--since",
         metavar="DURATION",
         help="how far before onset to reach, a Go duration such as 30m (default: 10m)",
+    )
+    timeline.add_argument(
+        "--component",
+        metavar="NODE[,NODE]",
+        help="show the operations whose map path contains these components, and their workload columns",
     )
     try_command = commands.add_parser(
         "try",
@@ -410,6 +420,8 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
     elif args.command in ("changes", "timeline"):
         if args.since:
             request["since"] = args.since
+        if args.component:
+            request["components"] = [name for name in args.component.split(",") if name.strip()]
         if args.command == "changes" and args.limit is not None:
             if args.limit < 1:
                 raise ValueError("--limit must be at least 1")
