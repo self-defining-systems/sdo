@@ -36,11 +36,25 @@ def test_responder_first_message_for_many_findings_and_stage_actions_fits() -> N
         report.mitigations.add(
             playbook_id=f"repair-{index}-" + "p" * 200, program_revision="rev", result="apply_error", error="e" * 2000
         )
-    request.external_message = "operator note " * 400
     rendered = str(responder_prompt(request))
     assert len(rendered.encode()) <= 800
     assert request.incident_id in rendered
     assert "repair-0-" not in rendered
+
+
+def test_responder_first_message_carries_an_external_alert_at_the_contract_bound_whole() -> None:
+    """An external incident has no findings; its alert (``max_len`` 4096 in the contract) is the whole symptom,
+    stated verbatim inside the symptom budget, never clipped or spilled to a context file."""
+    request = incident(0)
+    del request.findings[:]
+    del request.detector_history[:]
+    request.external_message = ("operator note\n" * 400)[:4096]
+    prompt = responder_prompt(request)
+    rendered = str(prompt)
+    _fits(prompt)
+    assert not prompt.context_files
+    assert request.external_message.strip() in rendered
+    assert len(rendered.encode()) <= 5000
 
 
 def test_responder_first_message_names_every_failing_test_within_a_measured_bound() -> None:
