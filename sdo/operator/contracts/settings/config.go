@@ -97,7 +97,7 @@ type Agent struct {
 	MemoryCheckTimeout Duration `yaml:"memory_check_timeout" doc:"limit of one memory check a worker runs on its checkout"`
 	CodePath           string   `yaml:"code_path" doc:"programming-model plugin set: go or shell"`
 	CodePathOverrides  string   `yaml:"code_path_overrides" doc:"CodePathOverrides as a JSON object (for example {\"response_stages\":[\"agent\"]}); empty selects the code path's own seams"`
-	ExtraEnv           []string `yaml:"extra_env" doc:"extra NAME=VALUE environment of responder workers"`
+	ExtraEnv           []string `yaml:"extra_env" doc:"extra NAME=VALUE environment of every agent worker the controller launches (responders, standby, reflection and closing turn, health refresh, lifecycle agents)"`
 }
 
 // Detection is the operator timing detectors and closure apply. It never says what is broken (accepted memory does);
@@ -214,12 +214,17 @@ func Default() Config {
 	}
 }
 
-var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
 // ownedWorkerEnvironment are worker variables another setting or the installer owns; agent.extra_env cannot set them.
 var ownedWorkerEnvironment = map[string]string{
 	"SDO_OBSERVATION_CEILING": "the installer",
+	"SDO_REQUEST_CONFIGMAP":   "the controller",
+	"SDO_RESULT_CONFIGMAP":    "the controller",
+	"SDO_NAMESPACE":           "the controller",
+	"SDO_CONTROLLER_STATE":    "the controller",
 }
+
+// workerEnvName is the shape of an agent.extra_env name: workers read upper-case variables only.
+var workerEnvName = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
 // Validate is the only place a configuration value is checked: ranges, enums and cross-field rules.
 func (c Config) Validate() error {
@@ -254,7 +259,7 @@ func (c Config) Validate() error {
 	}
 	for _, value := range c.Agent.ExtraEnv {
 		name, content, found := strings.Cut(value, "=")
-		if !found || !envName.MatchString(name) || strings.ContainsAny(content, "\r\n") {
+		if !found || !workerEnvName.MatchString(name) || strings.ContainsAny(content, "\r\n") {
 			bad("agent.extra_env", "%q is not NAME=VALUE", value)
 		}
 		if owner, owned := ownedWorkerEnvironment[name]; owned {

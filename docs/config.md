@@ -59,7 +59,7 @@ stage's default 90 seconds), then the incident escalates. Production keeps `agen
 | `agent.memory_check_timeout` | `SDO_AGENT_MEMORY_CHECK_TIMEOUT` | duration | `5m0s` | limit of one memory check a worker runs on its checkout |
 | `agent.code_path` | `SDO_AGENT_CODE_PATH` | string | `go` | programming-model plugin set: go or shell |
 | `agent.code_path_overrides` | `SDO_AGENT_CODE_PATH_OVERRIDES` | string | `""` | CodePathOverrides as a JSON object (for example {"response_stages":["agent"]}); empty selects the code path's own seams |
-| `agent.extra_env` | `SDO_AGENT_EXTRA_ENV` | list (JSON) | `[]` | extra NAME=VALUE environment of responder workers |
+| `agent.extra_env` | `SDO_AGENT_EXTRA_ENV` | list (JSON) | `[]` | extra NAME=VALUE environment of every agent worker the controller launches (responders, standby, reflection and closing turn, health refresh, lifecycle agents) |
 
 ### `response`
 

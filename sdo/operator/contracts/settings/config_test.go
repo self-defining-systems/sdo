@@ -177,6 +177,8 @@ func TestValidateCoversTheRetiredParserChecks(t *testing.T) {
 		"response.stage_budget":     func(c *settings.Config) { c.Response.StageBudget = 0 },
 		"agent.code_path_overrides": func(c *settings.Config) { c.Agent.CodePathOverrides = `{"bogus":1}` },
 		"the installer":             func(c *settings.Config) { c.Agent.ExtraEnv = []string{"SDO_OBSERVATION_CEILING={}"} },
+		"the controller":            func(c *settings.Config) { c.Agent.ExtraEnv = []string{"SDO_CONTROLLER_STATE=x"} },
+		"is not NAME=VALUE":         func(c *settings.Config) { c.Agent.ExtraEnv = []string{"lower=x"} },
 	} {
 		cfg := settings.Default()
 		cfg.Agent.Model = "m"
