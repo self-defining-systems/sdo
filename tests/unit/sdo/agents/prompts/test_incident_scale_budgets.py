@@ -6,6 +6,7 @@ import pytest
 
 from sdo.agents.context_output import budget_for
 from sdo.agents.prompt_templates import RenderedPrompt
+from sdo.agents.responder import codex
 from sdo.agents.responder.session_recovery import SessionRecovery
 from sdo.contracts import MitigationReport, MitigationSession
 from tests.context_helpers import expand_context
@@ -17,6 +18,8 @@ WORKLOADS = 60
 @pytest.fixture(autouse=True)
 def _scratch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    # The prompt embeds the skills path; a fixed root keeps byte caps independent of the checkout's location.
+    monkeypatch.setattr(codex, "SKILLS_ROOT", Path("/opt/sdo/skills"))
 
 
 def _fits(prompt: RenderedPrompt) -> None:

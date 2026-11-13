@@ -7,6 +7,7 @@ here with the reason it cannot run there.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -76,3 +77,21 @@ def test_pr_ci_scripts_outside_the_static_job_are_local_or_listed() -> None:
         for step in job["steps"]:
             for script in re.findall(r"scripts/(check_[A-Za-z0-9_]+\.(?:sh|py))", step.get("run", "")):
                 assert script in local or script in NOT_LOCAL, f"{name}: {script} is neither local nor listed"
+
+
+def test_every_test_path_and_node_in_the_gate_exists() -> None:
+    """A renamed or deleted test must fail here, naming the stale entry, not stop the gate mid-run."""
+    stale: list[str] = []
+    for ref in sorted(set(re.findall(r"\btests/[\w/.-]+\.py(?:::\w+)*", (SCRIPTS / ENTRY).read_text()))):
+        path, *nodes = ref.split("::")
+        file = ROOT / path
+        if not file.is_file():
+            stale.append(f"{ref}: file is missing")
+            continue
+        defined = {
+            n.name
+            for n in ast.walk(ast.parse(file.read_text()))
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        }
+        stale.extend(f"{ref}: {node} is not defined" for node in nodes if node not in defined)
+    assert not stale, f"scripts/{ENTRY} names tests that no longer exist; update or remove them:\n" + "\n".join(stale)
