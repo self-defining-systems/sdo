@@ -11,6 +11,7 @@ import (
 	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/appstate/carried"
 	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/podread"
@@ -43,6 +44,8 @@ type Sources interface {
 	sdk.ScopedObservationSource
 	vantage.Source
 	vantage.ResultSet
+	carried.Source
+	carried.ResultSet
 }
 
 // Carrier adds all optional inputs to the Kubernetes view. Its updates return a
@@ -66,6 +69,7 @@ type Carrier struct {
 	scoped       sdk.ScopedObservationSource
 	admission    *sdk.PodAdmissionResult
 	vantage      vantage.Source
+	appState     carried.Source
 }
 
 // New adopts existing optional inputs once, or copies an existing carrier.
@@ -91,6 +95,7 @@ func New(base sdk.DetectionContext) Carrier {
 	c.capture, _ = base.(sdk.ObjectCaptureSource)
 	c.scoped, _ = base.(sdk.ScopedObservationSource)
 	c.vantage, _ = base.(vantage.Source)
+	c.appState, _ = base.(carried.Source)
 	return c
 }
 
@@ -270,6 +275,22 @@ func (c Carrier) VantageResult(id string) (vantage.Result, bool) {
 func (c Carrier) VantageResults() map[string]vantage.Result {
 	if set, ok := c.vantage.(vantage.ResultSet); ok {
 		return set.VantageResults()
+	}
+	return nil
+}
+
+func (c Carrier) WithAppState(source carried.Source) Carrier { c.appState = source; return c }
+func (c Carrier) AppStateResult(id string) (carried.Result, bool) {
+	if c.appState == nil {
+		return carried.Result{}, false
+	}
+	return c.appState.AppStateResult(id)
+}
+
+// AppStateResults lists the carried results when the app-state source can.
+func (c Carrier) AppStateResults() map[string]carried.Result {
+	if set, ok := c.appState.(carried.ResultSet); ok {
+		return set.AppStateResults()
 	}
 	return nil
 }

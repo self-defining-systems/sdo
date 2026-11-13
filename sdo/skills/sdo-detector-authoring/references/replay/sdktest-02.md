@@ -179,6 +179,9 @@ type Snapshot struct {
 	PodReads map[string]podread.Result `json:"pod_reads,omitempty"`
 	// Vantage holds frozen vantage probe readings by probe ID.
 	Vantage map[string]vantage.Result `json:"vantage,omitempty"`
+	// AppState holds frozen app-state reader results (the snapshot ring, the
+	// last-healthy snapshot and declared noisy keys) by reader ID.
+	AppState map[string]carried.Result `json:"app_state,omitempty"`
 	// Alerts holds the frozen alerts of the evaluation cycle.
 	Alerts *metrics.AlertsResult `json:"alerts,omitempty"`
 	// ApplicationMap is a synthetic accepted application map; nil replays the
@@ -207,10 +210,4 @@ func (s Snapshot) AdmissionWebhooksFor(subject sdk.ObjectRef) ([]program.Admissi
 
 func (s Snapshot) AlertsResult() (metrics.AlertsResult, bool)
     AlertsResult implements metrics.AlertSource.
-
-func (s Snapshot) AppMap() (program.AppMap, error)
-
-func (s Snapshot) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error)
-
-func (s Snapshot) ConfigMaps() []corev1.ConfigMap
 ```

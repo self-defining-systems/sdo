@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/appstate/carried"
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
@@ -47,6 +48,8 @@ func TestSDKInputInterfaceInventory(t *testing.T) {
 		"sdk.ScopedObservationSource":      reflect.TypeFor[sdk.ScopedObservationSource](),
 		"vantage.Source":                   reflect.TypeFor[vantage.Source](),
 		"vantage.ResultSet":                reflect.TypeFor[vantage.ResultSet](),
+		"carried.Source":                   reflect.TypeFor[carried.Source](),
+		"carried.ResultSet":                reflect.TypeFor[carried.ResultSet](),
 	}
 	seen := map[string]bool{}
 	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
@@ -104,14 +107,14 @@ func TestSDKInputInterfaceInventory(t *testing.T) {
 }
 
 func TestCarrierUpdatesAreCopyOnWrite(t *testing.T) {
-	source := sdktest.Snapshot{ObservedAtTime: ptrTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), Traffic: map[string]traffic.Window{"q": {LoadError: "traffic"}}, Reachability: &servicehealth.ReachabilityWindow{LoadError: "reachability"}, Metrics: map[string]metrics.Result{"q": {Error: "metrics"}}, Alerts: &metrics.AlertsResult{Error: "alerts"}, Usage: &usage.Result{Error: "usage"}, Logs: map[string]logs.Result{"q": {Error: "logs"}}, PodReads: map[string]podread.Result{"q": {Error: "pod reads"}}}
+	source := sdktest.Snapshot{ObservedAtTime: ptrTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)), Traffic: map[string]traffic.Window{"q": {LoadError: "traffic"}}, Reachability: &servicehealth.ReachabilityWindow{LoadError: "reachability"}, Metrics: map[string]metrics.Result{"q": {Error: "metrics"}}, Alerts: &metrics.AlertsResult{Error: "alerts"}, Usage: &usage.Result{Error: "usage"}, Logs: map[string]logs.Result{"q": {Error: "logs"}}, PodReads: map[string]podread.Result{"q": {Error: "pod reads"}}, AppState: map[string]carried.Result{"q": {Reader: "q"}}}
 	empty := inputs.New(struct{ sdk.DetectionContext }{})
 	full := inputs.New(source)
-	methods := []string{"Clock", "Traffic", "Reachability", "Metrics", "Alerts", "Usage", "Logs", "PodReads"}
-	accessors := []string{"ObservedAt", "TrafficWindow", "ServiceReachability", "MetricResult", "AlertsResult", "UsageResult", "LogResult", "PodReadResult"}
+	methods := []string{"Clock", "Traffic", "Reachability", "Metrics", "Alerts", "Usage", "Logs", "PodReads", "AppState"}
+	accessors := []string{"ObservedAt", "TrafficWindow", "ServiceReachability", "MetricResult", "AlertsResult", "UsageResult", "LogResult", "PodReadResult", "AppStateResult"}
 	read := func(c inputs.Carrier, i int) []reflect.Value {
 		var args []reflect.Value
-		if i == 1 || i == 3 || i == 6 || i == 7 {
+		if i == 1 || i == 3 || i == 6 || i == 7 || i == 8 {
 			args = []reflect.Value{reflect.ValueOf("q")}
 		}
 		return reflect.ValueOf(c).MethodByName(accessors[i]).Call(args)

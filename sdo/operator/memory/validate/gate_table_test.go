@@ -176,6 +176,14 @@ func gateUnscopedBinding(manifestPlaybooks, specPlaybooks string) func(*testing.
 	}
 }
 
+// gateStateReader makes the incident detector an app-state reader, which only
+// a health-class detector may be.
+func gateStateReader(t *testing.T, r string) {
+	edit(t, r, gateCache, "\"sdo.dev/operator/sdk\"\n", "\"sdo.dev/operator/sdk\"\n\t\"sdo.dev/operator/sdk/appstate\"\n")
+	edit(t, r, gateCache, "func (Detector) Detect(", "func (Detector) ReadState(context.Context, appstate.View) (appstate.Values, error) {\n\treturn appstate.Values{}, nil\n}\nfunc (Detector) Detect(")
+	write(t, r, gateCache, gateFormatted(t, gateRead(t, r, gateCache)))
+}
+
 // gateDuplicateRepair adds a second copy of an accepted program, reshaped by
 // change, as a new playbook in reflection.
 func gateDuplicateRepair(name string, change func(diagnose, mitigate string) (string, string), rules ...string) gateRow {
@@ -680,6 +688,7 @@ var gateRows = []gateRow{
 	}),
 	gateReflection("incident detector binds roles without declaring a playbook", gateClean(), gateUpdated(), gateUnscopedBinding("possiblePlaybooks: []", "Playbooks: nil,"), RuleDetectorUnscopedBinding),
 	gateReflection("incident detector binds roles for its declared playbook", gateClean(), gateUpdated(), gateUnscopedBinding("possiblePlaybooks:\n  - base", `Playbooks: []string{"base"},`)),
+	gateReflection("incident detector implements an app-state reader", gateClean(), gateUpdated(), gateStateReader, RuleDetectorReaderClass),
 	{name: "accepted corpus case rewritten", kind: gateCheck, actor: Responder, phase: ReflectionPhase, rules: []string{gateProgramInvalid, RuleCorpusImmutable},
 		prepare: func(t *testing.T, r string) {
 			gateOutcome(gateClean())(t, r)

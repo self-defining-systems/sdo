@@ -27,6 +27,7 @@ const (
 	RuleDetectorComponentLiteral = "detector.component-literal"
 	RuleProgramNormalizedRead    = "program.normalized-read"
 	RuleDetectorUnscopedBinding  = "detector.unscoped-binding"
+	RuleDetectorReaderClass      = "detector.reader-class"
 
 	// Structural.
 	RuleUnknownPath      = "layout.unknown-path"

@@ -8,6 +8,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/appstate/carried"
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/podread"
 	"sdo.dev/operator/sdk/servicehealth"
@@ -43,6 +44,7 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string, refs ...sdk.Ob
 		s.Metrics = original.Metrics
 		s.PodReads = original.PodReads
 		s.Vantage = original.Vantage
+		s.AppState = original.AppState
 		s.Alerts = original.Alerts
 		s.Readings = original.Readings
 		s.Reachability = original.Reachability
@@ -60,6 +62,9 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string, refs ...sdk.Ob
 		}
 		if set, ok := view.(vantage.ResultSet); ok {
 			s.Vantage = set.VantageResults()
+		}
+		if set, ok := view.(carried.ResultSet); ok {
+			s.AppState = set.AppStateResults()
 		}
 		if source, ok := view.(metrics.AlertSource); ok {
 			if alerts, ok := source.AlertsResult(); ok {

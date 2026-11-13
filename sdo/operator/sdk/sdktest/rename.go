@@ -251,6 +251,7 @@ func renameSnapshot(source Snapshot, m *renameMapping) (Snapshot, error) {
 	result.Logs = source.Logs
 	result.PodReads = renamePodReads(source.PodReads, m)
 	result.Vantage = renameVantage(source.Vantage, m)
+	result.AppState = source.AppState
 	result.Usage, result.Reachability = source.Usage, source.Reachability
 	namespace := source.NamespaceName
 	for index := range result.ConfigMapList {
