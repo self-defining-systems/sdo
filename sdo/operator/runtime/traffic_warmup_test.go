@@ -189,3 +189,65 @@ func TestEvaluateOnceUnreadableProberIsUnavailable(t *testing.T) {
 		t.Fatalf("unavailable = %+v, want traffic-probe-call with the prober error", result.Unavailable)
 	}
 }
+
+// identityProber has a probe user whose provisioning takes provisioning of
+// fake time; until then every sample is invalid with a typed identity wait,
+// afterwards ok samples accrue.
+type identityProber struct {
+	pacedProber
+	provisioning time.Duration
+	wait         time.Duration
+}
+
+func (p *identityProber) Windows(context.Context) (map[string]traffic.Window, error) {
+	p.clock.Step(100 * time.Millisecond)
+	now := p.clock.Now()
+	window := traffic.Window{Workload: p.workload, ObservedAt: now}
+	ready := now.Sub(p.started) - p.provisioning
+	for _, scenario := range p.workload.Scenarios {
+		observed := traffic.ScenarioObservations{Scenario: traffic.Descriptor{ID: scenario.ID}}
+		if ready < 0 {
+			observed.Samples = []traffic.Sample{{At: now, Outcome: traffic.OutcomeInvalid, Step: "probe-users", Error: "probe user sdoprobe-a: identity pending: procedure probe-user is provisioning the user"}}
+			observed.Invalid, observed.LastInvalid, observed.IdentityWait = 1, observed.Samples[0].Error, p.wait
+		} else {
+			observed.Qualified = true
+			for i := int(ready / p.interval); i >= 1; i-- {
+				observed.Samples = append(observed.Samples, traffic.Sample{At: now.Add(-time.Duration(i-1) * p.interval), Outcome: traffic.OutcomeOK})
+			}
+		}
+		window.Scenarios = append(window.Scenarios, observed)
+	}
+	return map[string]traffic.Window{p.workload.Name: window}, nil
+}
+
+// A probe-identity procedure slower than the one-shot warm-up is an
+// environment wait the evaluation waits out, never a health failure.
+func TestEvaluateOnceWaitsForAProbeIdentitySlowerThanTheWarmup(t *testing.T) {
+	clock := clocktesting.NewFakeClock(time.Unix(1000, 0).UTC())
+	workload := pacedWorkload(3, 5)
+	api := &identityProber{pacedProber: pacedProber{clock: clock, started: clock.Now(), workload: workload, interval: time.Second},
+		provisioning: 2 * evaluateOnceWarmupBudget, wait: 3 * evaluateOnceWarmupBudget}
+	result, err := evaluateOnceWith(t, api, clock, workload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "clear" {
+		t.Fatalf("status = %q, want clear once provisioning finished: %+v", result.Status, result.DetectorStates)
+	}
+}
+
+// When provisioning outlives even its declared timeout, the verdict is pending
+// and says it is an environment wait.
+func TestEvaluateOnceNamesAnUnfinishedProbeIdentityAsAnEnvironmentWait(t *testing.T) {
+	clock := clocktesting.NewFakeClock(time.Unix(1000, 0).UTC())
+	workload := pacedWorkload(3, 5)
+	api := &identityProber{pacedProber: pacedProber{clock: clock, started: clock.Now(), workload: workload, interval: time.Second},
+		provisioning: time.Hour, wait: time.Minute}
+	result, err := evaluateOnceWith(t, api, clock, workload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "pending" || len(result.DetectorStates) != 1 || !strings.Contains(result.DetectorStates[0].Reason, "environment wait") {
+		t.Fatalf("result = %q %+v, want pending naming an environment wait", result.Status, result.DetectorStates)
+	}
+}

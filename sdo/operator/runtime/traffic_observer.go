@@ -220,9 +220,32 @@ func (o *TrafficObserver) WaitWarm(ctx context.Context, timeout time.Duration) b
 // declare they need. The floor is the caller's least patience (a flag at
 // startup, a constant for a one-shot evaluation). It reports whether the
 // observer is warm.
+//
+// A probe user that is still being provisioned is an environment wait, not a
+// health failure: when the bound expires with such a wait pending, the wait is
+// extended once by the provisioning run's own declared timeout plus the
+// warm-up the samples then need.
 func (o *TrafficObserver) AwaitWarm(ctx context.Context, floor time.Duration) bool {
 	o.Poll(ctx)
-	return o.WaitWarm(ctx, max(floor, o.WarmupBudget()))
+	if o.WaitWarm(ctx, max(floor, o.WarmupBudget())) {
+		return true
+	}
+	if wait := o.IdentityWait(); wait > 0 && ctx.Err() == nil {
+		return o.WaitWarm(ctx, wait+o.WarmupBudget())
+	}
+	return false
+}
+
+// IdentityWait is the longest probe-user provisioning run the consumed
+// workloads' latest samples are still waiting for; zero when none waits.
+func (o *TrafficObserver) IdentityWait() time.Duration {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	var longest time.Duration
+	for _, name := range o.workloads {
+		longest = max(longest, o.windows[name].IdentityWait())
+	}
+	return longest
 }
 
 // Failure is the last prober read error, empty when the last read succeeded.

@@ -66,7 +66,11 @@ type Sample struct {
 	// an application-level error or a slow response, whether the dial
 	// failed outright (Outcome error) or hung until the dial timeout
 	// (Outcome timeout).
-	DialFailed   bool   `json:"dialFailed,omitempty"`
+	DialFailed bool `json:"dialFailed,omitempty"`
+	// IdentityWait is set on an invalid sample whose probe user was still
+	// being provisioned: how long one provisioning run may take. Such a sample
+	// is an environment wait, not a finding about the application.
+	IdentityWait time.Duration `json:"identityWait,omitempty"`
 	Requests     int    `json:"requests"`
 	CleanupError string `json:"cleanupError,omitempty"`
 }
@@ -233,6 +237,7 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 	if err != nil {
 		// The probe cannot measure; that says nothing about the application.
 		sample.Outcome, sample.Step, sample.Error = OutcomeInvalid, "probe-users", bounded(err.Error())
+		sample.IdentityWait = identityWait(err)
 		return scenario.ID, sample
 	}
 	// Texts are kept whole until the passwords are replaced, then bounded, so

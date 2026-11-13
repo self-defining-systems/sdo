@@ -289,6 +289,9 @@ func describeUnproven(window Window, ids []string) []string {
 }
 
 func latestFailure(o ScenarioObservations) string {
+	if o.IdentityWait > 0 {
+		return "environment wait, not an application failure: probe user provisioning has not finished (" + bounded(o.LastInvalid) + "); re-check after it completes"
+	}
 	for i := len(o.Samples) - 1; i >= 0; i-- {
 		sample := o.Samples[i]
 		if sample.Outcome == OutcomeOK {

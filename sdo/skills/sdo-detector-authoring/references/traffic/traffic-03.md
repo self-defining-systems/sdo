@@ -83,6 +83,18 @@ func (e *HTTPEndpoint) WithJSON(template string, params Params) *HTTPEndpoint
     for a JSON string. Write "{key}" for a string and {key} for a number.
     The filled body must be valid JSON.
 
+type IdentityPendingError struct {
+	Reason string
+	Wait   time.Duration
+}
+    IdentityPendingError is what a Passwords or ProbeKeys source returns
+    while the user's provisioning is under way. It is an environment wait,
+    not a measurement of the application: Wait is how long one provisioning run
+    may take, so a one-shot evaluation can wait for it instead of reporting a
+    health failure.
+
+func (e *IdentityPendingError) Error() string
+
 type KnownBroken struct {
 	// Reason says, in one short line, what is broken in the application.
 	Reason string `json:"reason"`
@@ -218,17 +230,4 @@ func (o LinkObservations) EffectiveVantage() LinkVantage
 
 type LinkProtocol string
     LinkProtocol is how an edge is probed.
-
-const (
-	LinkProtocolTCP       LinkProtocol = "tcp"
-	LinkProtocolHTTP      LinkProtocol = "http"
-	LinkProtocolGRPC      LinkProtocol = "grpc"
-	LinkProtocolRedis     LinkProtocol = "redis"
-	LinkProtocolMemcached LinkProtocol = "memcached"
-	LinkProtocolMongoDB   LinkProtocol = "mongodb"
-	LinkProtocolPostgres  LinkProtocol = "postgres"
-	LinkProtocolMySQL     LinkProtocol = "mysql"
-)
-    Link protocols select the credential-free handshake sent on a fresh
-    connection.
 ```

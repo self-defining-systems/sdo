@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 	utilexec "k8s.io/client-go/util/exec"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 const identityMap = `version: 1
@@ -247,5 +248,58 @@ func TestProbeUserSSHKeyIsDerivedFromTheSeed(t *testing.T) {
 	}
 	if strings.Contains(line, ProbeUserPassword(seed, "sdoprobe-writer")) {
 		t.Fatal("the key line must not carry the password")
+	}
+}
+
+// A procedure slower than any one-shot host lives is recognised as done by the
+// next host, which runs nothing: readiness is durable, not process memory. The
+// pending error is typed with the procedure's own timeout.
+func TestProbeUsersReadinessSurvivesTheHost(t *testing.T) {
+	seedPath := filepath.Join(t.TempDir(), "probe-identity", "seed")
+	slow := &recordingExec{release: make(chan struct{})}
+	first := NewProbeUsers(identityMap, seedPath, "app", "sdo-system", identityCluster(), slow)
+	_, err := first.Password(context.Background(), "sdoprobe-writer")
+	var pending *traffic.IdentityPendingError
+	if !errors.As(err, &pending) || pending.Wait != first.Procedure.IdentityTimeout() {
+		t.Fatalf("pending must be typed with the procedure timeout: %v", err)
+	}
+	close(slow.release)
+	waitAttempt(t, first, "sdoprobe-writer")
+	password, err := first.Password(context.Background(), "sdoprobe-writer")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hang := &recordingExec{release: make(chan struct{})}
+	next := NewProbeUsers(identityMap, seedPath, "app", "sdo-system", identityCluster(), hang)
+	_, _ = next.Password(context.Background(), "sdoprobe-writer")
+	waitAttempt(t, next, "sdoprobe-writer")
+	if again, err := next.Password(context.Background(), "sdoprobe-writer"); err != nil || again != password {
+		t.Fatalf("next host must see the user ready: %v", err)
+	}
+	if len(hang.calls) != 0 {
+		t.Fatalf("next host ran the procedure %d times, want none", len(hang.calls))
+	}
+	ready := filepath.Join(filepath.Dir(seedPath), "ready")
+	entries, _ := os.ReadDir(ready)
+	if len(entries) != 1 {
+		t.Fatalf("want one marker, got %d", len(entries))
+	}
+	if data, _ := os.ReadFile(filepath.Join(ready, entries[0].Name())); len(data) != 0 || strings.Contains(entries[0].Name(), password) {
+		t.Fatal("a marker holds no secret")
+	}
+	// A different Pod (the application was redeployed) provisions again.
+	cluster := identityCluster()
+	pods, _ := cluster.CoreV1().Pods("app").List(context.Background(), metav1.ListOptions{})
+	for _, pod := range pods.Items {
+		pod.UID = "new"
+		_, _ = cluster.CoreV1().Pods("app").Update(context.Background(), &pod, metav1.UpdateOptions{})
+	}
+	redo := &recordingExec{}
+	again := NewProbeUsers(identityMap, seedPath, "app", "sdo-system", cluster, redo)
+	_, _ = again.Password(context.Background(), "sdoprobe-writer")
+	waitAttempt(t, again, "sdoprobe-writer")
+	if len(redo.calls) != 1 {
+		t.Fatalf("a replaced Pod must provision again, ran %d", len(redo.calls))
 	}
 }
