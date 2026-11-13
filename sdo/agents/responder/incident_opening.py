@@ -26,11 +26,6 @@ _MAX_NAME = 40
 #: Worst case: 48 failing names (<= 48 chars + counts), 8 groups, 24 passing names; the block is bounded
 #: structurally and this is the final guard, mirrored by the symptom placeholder budget.
 _MAX_SYMPTOM = 5200
-#: What Recovered waits on: the opening alerts plus user tests that start failing while the incident is open.
-_ALERT_SET = (
-    "Recovered waits for these alerts and any user test that starts failing early in the incident to clear;"
-    " `sdo detect` and `sdo verify` show the current set."
-)
 
 
 def _clip(text: str) -> str:
@@ -104,7 +99,7 @@ def symptom(request: IncidentRequest) -> str:
     tests = [] if request.external_message else _failing_tests(request)
     if not tests:
         opened = request.detected_at.ToDatetime(tzinfo=UTC) if request.HasField("detected_at") else None
-        return f"Opened on {opened_on(request)}" + (f" at {_hms(opened)} UTC. " if opened else ". ") + _ALERT_SET
+        return f"Opened on {opened_on(request)}" + (f" at {_hms(opened)} UTC." if opened else ".")
     firsts = [datetime.fromisoformat(meta["first_failure_at"]) for _, meta in tests if meta.get("first_failure_at")]
     since = f" since {_hms(min(firsts))} UTC (first failing sample)" if firsts else ""
     ordered = sorted(tests)
@@ -129,5 +124,5 @@ def symptom(request: IncidentRequest) -> str:
     if len(tests) > _MAX_FAILING:
         lines.append(f"- (+{len(tests) - _MAX_FAILING} more failing tests not listed: sdo detect --finding tests)")
     passing = _names([_name(name) for name in request.passing_tests], _MAX_PASSING) or "none"
-    lines.append(f"Passing: {passing}. Re-check with `sdo verify`. {_ALERT_SET}")
+    lines.append(f"Passing: {passing}. Re-check with `sdo verify`.")
     return "\n".join(lines)[:_MAX_SYMPTOM]
