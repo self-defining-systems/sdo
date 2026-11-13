@@ -81,8 +81,8 @@ max_chars = 4000
 reason = "The responder's first message (the candidate block Go renders adds at most 2048 bytes; without it 1800 holds): the symptom block of at most 1100 code points (failing user tests grouped by status and server error with failed counts, first failing sample, passing tests, sdo verify), plus the identity line and the two skill lines (about 330 code points with a long skills root), plus headroom."
 
 [investigator.instructions]
-max_chars = 3200
-reason = "Go-rendered hypothesis brief (about 1500 characters: node, evidence lines, opening symptom, failing and passing tests, one hypothesis with expectations) plus the skill-path line; 3200 leaves headroom for 8 evidence lines and long test names."
+max_chars = 3800
+reason = "Go-rendered hypothesis brief (about 1500 characters: node, evidence lines, reported symptom, passing tests, one hypothesis with expectations) plus the skill-path line; the page message of an external incident adds up to 1 KB and context failing tests about 550 characters, so 3800 holds."
 
 [session.incident_data]
 max_chars = 100

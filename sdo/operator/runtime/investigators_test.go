@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"k8s.io/client-go/kubernetes/fake"
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 func briefFixture(t *testing.T) []investigatorBrief {
@@ -19,8 +21,9 @@ func briefFixture(t *testing.T) []investigatorBrief {
 	in.Rows = append(in.Rows, IncidentChange{At: candidateOnset.Add(-5 * time.Second), Source: "kubernetes", Component: "web", ReaderOrObject: "ConfigMap/web-env", Key: "data.POOL", Before: "accepted-source", After: "changed", Writer: "kubectl-edit"})
 	view := computeCandidates(in)
 	set := detectSuspectSet{
-		failing: []failingTest{{id: "issue-title", label: "HTTP 500", err: "relation missing", step: "3"}},
-		passing: []string{"project-list", "ssh-call"},
+		failing:         []failingTest{{id: "issue-title", label: "HTTP 500", err: "relation missing", step: "3"}},
+		passing:         []string{"project-list", "ssh-call"},
+		openingFindings: []sdk.Finding{{DetectorID: memory.TrafficDetectorPrefix + "x", RuleID: traffic.RuleIDPrefix + "issue-title"}},
 	}
 	return investigatorBriefs(view, set, IncidentRequest{IncidentID: "inc-1", Namespace: "app"}, 2)
 }
@@ -38,14 +41,14 @@ func TestBriefsAreOnePerTopNodeWithNonRoutineEvidenceAndStateTheHypothesis(t *te
 	}
 	for _, want := range []string{
 		"inc-1", "sdo-investigator/SKILL.md", "Node: ", "+1 table",
-		"Opening symptom: failing user tests; HTTP 500", "Failing tests: issue-title", "Passing tests: project-list, ssh-call",
+		"Opening symptom (the user tests that opened this incident): issue-title: HTTP 500", "Passing tests: project-list, ssh-call",
 		"Hypothesis: the failure is caused by", "at node db.", "If true:", "If false:", "Verdict: supported|refuted|inconclusive",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("brief lacks %q:\n%s", want, text)
 		}
 	}
-	if len(text) > 2200 {
+	if len(text) > 2400 {
 		t.Fatalf("a brief is about 1.5 KB, got %d bytes", len(text))
 	}
 }
@@ -224,4 +227,62 @@ func TestAnInvestigatorReportNeverReachesTheIncidentResult(t *testing.T) {
 		t.Fatalf("the board adds nothing to the result: %+v", result)
 	}
 	_ = sdk.Finding{}
+}
+
+func symptomFixture(message string, failing []failingTest, opening ...string) investigatorSymptom {
+	var findings []sdk.Finding
+	for _, id := range opening {
+		findings = append(findings, sdk.Finding{DetectorID: memory.TrafficDetectorPrefix + "x", RuleID: traffic.RuleIDPrefix + id})
+	}
+	return investigatorSymptomFor(detectSuspectSet{failing: failing, openingFindings: findings}, IncidentRequest{ExternalMessage: message})
+}
+
+func TestExternalIncidentBriefSymptomIsThePageTextAndOldFailingTestsAreContext(t *testing.T) {
+	page := "Users report that an issue title read back after create is truncated; the create call returns 201."
+	got := symptomFixture(page, []failingTest{
+		{id: "pipeline-background-job", label: "HTTP 500", err: "boom", step: "2"},
+		{id: "issue-title", label: "wrong body", err: "title cut", step: "2"},
+	})
+	for _, want := range []string{"Reported symptom (the page that opened this incident, verbatim): " + page,
+		"Failing operations the page names: issue-title: wrong body", "context only, possibly unrelated", "pipeline-background-job"} {
+		if !strings.Contains(got.Text, want) {
+			t.Errorf("symptom lacks %q:\n%s", want, got.Text)
+		}
+	}
+	if strings.Index(got.Text, "pipeline-background-job") < strings.Index(got.Text, "context only") {
+		t.Fatalf("the old failing test must only appear as context:\n%s", got.Text)
+	}
+	if !strings.Contains(got.Operation, "page describes") {
+		t.Fatalf("operation %q", got.Operation)
+	}
+	long := symptomFixture(strings.Repeat("x", 3000), nil)
+	if len(long.Text) > investigatorPageCap+200 {
+		t.Fatalf("page text is bounded to about 1 KB, got %d", len(long.Text))
+	}
+}
+
+func TestSDOOpenedBriefSymptomIsTheOpeningTestsAndOthersAreContext(t *testing.T) {
+	got := symptomFixture("", []failingTest{
+		{id: "pipeline-background-job", label: "HTTP 500", err: "boom", step: "2"},
+		{id: "issue-title", label: "wrong body", err: "title cut", step: "2"},
+	}, "issue-title")
+	if !strings.Contains(got.Text, "Opening symptom (the user tests that opened this incident): issue-title: wrong body") ||
+		!strings.Contains(got.Text, "context only, possibly unrelated") || !strings.Contains(got.Operation, "issue-title") {
+		t.Fatalf("opening tests lead, others are context:\n%s\n%s", got.Text, got.Operation)
+	}
+	opening := got.Text[:strings.Index(got.Text, "Other failing")]
+	if strings.Contains(opening, "pipeline-background-job") {
+		t.Fatalf("an unrelated failing test is not the symptom:\n%s", got.Text)
+	}
+}
+
+func TestBriefHypothesisTiesEvidenceToTheReportedOperation(t *testing.T) {
+	in := issuesTitle(t)
+	set := detectSuspectSet{failing: []failingTest{{id: "issue-title", label: "wrong body", err: "cut", step: "2"}}}
+	briefs := investigatorBriefs(computeCandidates(in), set, IncidentRequest{IncidentID: "p", ExternalMessage: "issue titles come back truncated"}, 1)
+	for _, want := range []string{"If true: reproducing the operation the page describes (exactly as described) shows", "If you cannot reproduce it, the verdict is inconclusive", "Reported symptom"} {
+		if !strings.Contains(briefs[0].Text, want) {
+			t.Errorf("brief lacks %q:\n%s", want, briefs[0].Text)
+		}
+	}
 }

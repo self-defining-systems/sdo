@@ -22,7 +22,7 @@ func TestAReportArrivalIsShownOnceOnTheNextVerifyAndTry(t *testing.T) {
 	}
 	board.finish("i-inv-1", investigatorDone, "Verdict: refuted - the extra row is routine\nbody")
 	first := loop.Handle(context.Background(), ToolRequest{Command: "try"})
-	for _, want := range []string{"investigator report (node db): Verdict: refuted - the extra row is routine", "sdo investigations"} {
+	for _, want := range []string{"investigator report (node db): Verdict: refuted (investigator) - the extra row is routine", "sdo investigations"} {
 		if !strings.Contains(first.Summary, want) || !strings.Contains(first.Text, want) {
 			t.Fatalf("try lacks %q: %q", want, first.Summary)
 		}
