@@ -49,7 +49,7 @@ func TestEveryWorkerCarriesTheConfiguredAgentSettings(t *testing.T) {
 	environment := AgentEnvironment(agent)
 	want := map[string]string{
 		ProviderEnvironment: "codex", EffortEnvironment: "medium", ReasoningSummaryEnvironment: "auto",
-		LifecycleTimeoutEnvironment: "900", MemoryCheckTimeoutEnvironment: "300",
+		LifecycleTimeoutEnvironment: "3600", MemoryCheckTimeoutEnvironment: "300",
 	}
 	for _, name := range ModelEnvironments {
 		want[name] = "m"
