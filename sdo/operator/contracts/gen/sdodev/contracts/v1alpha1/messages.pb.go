@@ -2577,9 +2577,13 @@ type IncidentRequest struct {
 	// Go-owned: the finding keys of user tests that started failing while the
 	// incident was open (within the join window of detection). With opening_keys
 	// they form the alert set Recovered waits on; clues never join.
-	JoinedKeys    []string `protobuf:"bytes,42,rep,name=joined_keys,json=joinedKeys,proto3" json:"joined_keys,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	JoinedKeys []string `protobuf:"bytes,42,rep,name=joined_keys,json=joinedKeys,proto3" json:"joined_keys,omitempty"`
+	// Go-owned: when set, the task is a read-only hypothesis investigation, not
+	// the incident response. The text is Go's brief; the session runs the
+	// investigator skill and returns its report in IncidentResult.investigation_report.
+	InvestigatorBrief string `protobuf:"bytes,43,opt,name=investigator_brief,json=investigatorBrief,proto3" json:"investigator_brief,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *IncidentRequest) Reset() {
@@ -2869,6 +2873,13 @@ func (x *IncidentRequest) GetJoinedKeys() []string {
 		return x.JoinedKeys
 	}
 	return nil
+}
+
+func (x *IncidentRequest) GetInvestigatorBrief() string {
+	if x != nil {
+		return x.InvestigatorBrief
+	}
+	return ""
 }
 
 type ResponseProgress struct {
@@ -3666,8 +3677,11 @@ type IncidentResult struct {
 	// Controller verification at terminal responder completion, never worker authority.
 	UnresolvedFindings []*Finding     `protobuf:"bytes,27,rep,name=unresolved_findings,json=unresolvedFindings,proto3" json:"unresolved_findings,omitempty"`
 	DriftReprompt      *DriftReprompt `protobuf:"bytes,28,opt,name=drift_reprompt,json=driftReprompt,proto3" json:"drift_reprompt,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// An investigation's report text (its first line is "Verdict: ..."). Display evidence only:
+	// never read by closure, escalation or learning.
+	InvestigationReport string `protobuf:"bytes,29,opt,name=investigation_report,json=investigationReport,proto3" json:"investigation_report,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *IncidentResult) Reset() {
@@ -3866,6 +3880,13 @@ func (x *IncidentResult) GetDriftReprompt() *DriftReprompt {
 		return x.DriftReprompt
 	}
 	return nil
+}
+
+func (x *IncidentResult) GetInvestigationReport() string {
+	if x != nil {
+		return x.InvestigationReport
+	}
+	return ""
 }
 
 // IncidentView is the open incident as the controller's state ConfigMap
@@ -5341,7 +5362,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x02id\x12%\n" +
 	"\tnamespace\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12$\n" +
 	"\amessage\x18\x03 \x01(\tB\n" +
-	"\xbaH\ar\x05\x10\x01\x18\x80 R\amessage\"\xd4\x16\n" +
+	"\xbaH\ar\x05\x10\x01\x18\x80 R\amessage\"\x8d\x17\n" +
 	"\x0fIncidentRequest\x12>\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
 	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12)\n" +
@@ -5387,7 +5408,8 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x0erecent_changes\x18) \x03(\tB\x10\xbaH\r\x92\x01\n" +
 	"\x10\x80\b\"\x05r\x03\x18\x80\x10R\rrecentChanges\x12\x1f\n" +
 	"\vjoined_keys\x18* \x03(\tR\n" +
-	"joinedKeys:\xff\x02\xbaH\xfb\x02\x1a\xf8\x02\n" +
+	"joinedKeys\x127\n" +
+	"\x12investigator_brief\x18+ \x01(\tB\b\xbaH\x05r\x03\x18\x80 R\x11investigatorBrief:\xff\x02\xbaH\xfb\x02\x1a\xf8\x02\n" +
 	"\x10incident.trigger\x12^detected incidents require findings and history; external incidents carry no detector evidence\x1a\x83\x02this.external_message == '' ? (size(this.findings) > 0 && size(this.detector_history) > 0) : (size(this.findings) == 0 && size(this.detector_history) == 0 && size(this.drift_events) == 0 && !has(this.state_changes) && size(this.disabled_setup_detectors) == 0)J\x04\b\v\x10\fJ\x04\b\f\x10\rJ\x04\b\x13\x10\x14J\x04\b\x18\x10\x19J\x04\b!\x10\"R\x19architecture_summary_pathR\x15health_objective_pathR\tfollow_upR\x0emetrics_source\"\xb8\x02\n" +
 	"\x10ResponseProgress\x12\x1f\n" +
 	"\vincident_id\x18\x01 \x01(\tR\n" +
@@ -5478,7 +5500,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x0eResourceOwners\x12H\n" +
 	"\bresource\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\bresource\x12O\n" +
 	"\vowner_chain\x18\x02 \x03(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\b\xbaH\x05\x92\x01\x02\b\x01R\n" +
-	"ownerChain\"\xe3\x0f\n" +
+	"ownerChain\"\xa1\x10\n" +
 	"\x0eIncidentResult\x12>\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
 	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12(\n" +
@@ -5506,7 +5528,8 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x0fresolution_path\x18\x16 \x01(\tB%\xbaH\x1er\x1cR\x00R\tresponderR\rdeterministic\xc8\xf3\x18\x01R\x0eresolutionPath\x12H\n" +
 	"\fdrift_events\x18\x1a \x03(\v2%.sdodev.contracts.v1alpha1.DriftEventR\vdriftEvents\x12Y\n" +
 	"\x13unresolved_findings\x18\x1b \x03(\v2\".sdodev.contracts.v1alpha1.FindingB\x04\xc8\xf3\x18\x01R\x12unresolvedFindings\x12U\n" +
-	"\x0edrift_reprompt\x18\x1c \x01(\v2(.sdodev.contracts.v1alpha1.DriftRepromptB\x04\xc8\xf3\x18\x01R\rdriftReprompt:\xad\x01\xbaH\xa9\x01\x1a\xa6\x01\n" +
+	"\x0edrift_reprompt\x18\x1c \x01(\v2(.sdodev.contracts.v1alpha1.DriftRepromptB\x04\xc8\xf3\x18\x01R\rdriftReprompt\x12<\n" +
+	"\x14investigation_report\x18\x1d \x01(\tB\t\xbaH\x06r\x04\x18\x80\x80\x01R\x13investigationReport:\xad\x01\xbaH\xa9\x01\x1a\xa6\x01\n" +
 	"\x1fresult.unique_repair_action_ids\x12 repair action IDs must be unique\x1aathis.repair_actions.all(a, this.repair_actions.filter(b, b.action_id == a.action_id).size() == 1)B\x17\n" +
 	"\x15_responder_session_idB\b\n" +
 	"\x06_errorJ\x04\b\x0f\x10\x10J\x04\b\x17\x10\x18J\x04\b\x18\x10\x19J\x04\b\x19\x10\x1aR\x12late_findings_pull\"\xe6\x03\n" +

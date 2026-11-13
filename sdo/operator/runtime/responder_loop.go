@@ -233,6 +233,9 @@ type ResponderLoop struct {
 	VerifyClosure   func(context.Context) ToolResponse
 	VerifyResult    func(context.Context, IncidentResult) ToolResponse
 	CurrentEvidence func() *IncidentRequest
+	// Investigations holds the incident's SDO-started investigators and their reports; nil when none can start.
+	// It is display evidence only and never reaches IncidentResult, closure or escalation.
+	Investigations *InvestigationBoard
 	// IncidentSources supplies the signal ring and app-state source behind
 	// `sdo changes`, `sdo timeline` and the inline changes; nil reads none.
 	IncidentSources   func() (*incidentSignals, AppStateChangeSource)

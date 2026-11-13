@@ -18,10 +18,10 @@ A reasoning loop, not a procedure. Move between the parts as the evidence asks.
 - **Hypothesize.** Hold two to four explanations, each a node and a mechanism, from different layers and path
   positions (entry, dependency, data holder). An unexplained observation is a new candidate.
 - **Discriminate.** Pick the check whose outcome differs most between them, ideally one that could refute.
-  With more than one plausible explanation, spawn one sub-agent per hypothesis, in parallel and early, while
-  you keep surveying; skip that only when a single quick read settles it. Each reads
-  `sdo-investigator/SKILL.md`; say what you expect either way and what is ruled out. It only reads. Keep its
-  "How to diagnose" note for closing.
+  With more than one plausible explanation, spawn one read-only sub-agent per hypothesis early (it reads
+  `sdo-investigator/SKILL.md`; say what you expect either way); skip when one read settles it. Keep its
+  "How to diagnose" note for closing. SDO may start investigators: read `sdo investigations`, weigh their
+  reports, above all "observations that don't fit".
 - **Update.** Drop what is refuted. Stop when one explanation covers the failing, the passing and the timing.
 - **Fix as a test.** You alone change things and check the result. Predict the effect; a change that left the
   failure as is counts against its hypothesis. Done when what failed passes and keeps passing; else escalate

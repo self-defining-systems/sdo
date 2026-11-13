@@ -487,10 +487,15 @@ def test_the_experiment_config_cannot_set_what_the_hook_sets(tmp_path: Path) -> 
         OperatorBlock.load(_operator_file(tmp_path, root, model="gpt-x", config={"agent": {"effort": "low"}}))
 
 
-def test_the_benchmark_profile_differs_from_production_in_repair_policy_playbook_follow_up_and_self_heal_hold() -> None:
+def test_the_benchmark_profile_differs_from_production_in_a_few_documented_fields() -> None:
     assert yaml.safe_load(BENCH_PROFILE.read_text()) == {
         "agent": {"recording": False},
-        "response": {"repair_policy": "recorded-actions", "after_playbook": "wait", "after_playbook_wait": "5m"},
+        "response": {
+            "repair_policy": "recorded-actions",
+            "after_playbook": "wait",
+            "after_playbook_wait": "5m",
+            "investigators": 2,
+        },
         "detection": {"self_heal_hold": "60s"},
     }
 

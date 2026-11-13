@@ -15,6 +15,7 @@ from libs.agent_cli.errors import rate_limit_failure
 from libs.agent_cli.startup import mark_startup
 from sdo.agents.responder.codex import ResponderExecutionError, execute_incident
 from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home, skills_for_role
+from sdo.agents.responder.investigation import execute_investigation
 from sdo.agents.responder.job import KubernetesResultPublisher, write_application_kubeconfig
 from sdo.agents.responder.standby import await_standby_claim
 from sdo.agents.responder.termination import record_worker_failure, records_worker_failure
@@ -65,7 +66,8 @@ def run_worker_task(
     mark_startup("worker_ready")
     os.environ["SDO_RESPONDER_TASK_ID"] = task.task_id
     try:
-        result = executor(request)
+        # An investigation is the same task with a Go brief: its own role, and a report instead of a response.
+        result = execute_investigation(request) if request.investigator_brief else executor(request)
     except RuntimeError as exc:
         limited = rate_limit_failure(exc)
         if limited is None:
@@ -98,6 +100,15 @@ def run_worker_task(
     return envelope
 
 
+def task_role(task_path: Path) -> str:
+    """The skill set a task runs with: ``investigator`` when Go put a brief on it, else ``responder``."""
+    task = cast("AgentTask", parse_json(task_path.read_text(encoding="utf-8"), AgentTask()))
+    request = IncidentRequest()
+    if task.request.Unpack(request) and request.investigator_brief:
+        return "investigator"
+    return "responder"
+
+
 @records_worker_failure
 def main() -> int:
     await_standby_claim()
@@ -108,8 +119,9 @@ def main() -> int:
         record_worker_failure(ValueError("SDO_NAMESPACE and SDO_RESULT_CONFIGMAP are required"))
         return 2
     try:
-        prepare_codex_home(skills=skills_for_role("responder"))
-        prepare_claude_home(skills=skills_for_role("responder"))
+        role = task_role(Path(os.environ.get("SDO_TASK_PATH", str(DEFAULT_TASK_PATH))))
+        prepare_codex_home(skills=skills_for_role(role))
+        prepare_claude_home(skills=skills_for_role(role))
         run_worker_task(
             Path(os.environ.get("SDO_TASK_PATH", str(DEFAULT_TASK_PATH))),
             result_name,

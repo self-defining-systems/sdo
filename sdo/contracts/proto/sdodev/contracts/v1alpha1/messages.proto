@@ -373,6 +373,10 @@ message IncidentRequest {
   // incident was open (within the join window of detection). With opening_keys
   // they form the alert set Recovered waits on; clues never join.
   repeated string joined_keys = 42;
+  // Go-owned: when set, the task is a read-only hypothesis investigation, not
+  // the incident response. The text is Go's brief; the session runs the
+  // investigator skill and returns its report in IncidentResult.investigation_report.
+  string investigator_brief = 43 [(buf.validate.field).string.max_len = 4096];
 }
 
 message ResponseProgress {
@@ -581,6 +585,9 @@ message IncidentResult {
   // Controller verification at terminal responder completion, never worker authority.
   repeated Finding unresolved_findings = 27 [(controller_owned) = true];
   DriftReprompt drift_reprompt = 28 [(controller_owned) = true];
+  // An investigation's report text (its first line is "Verdict: ..."). Display evidence only:
+  // never read by closure, escalation or learning.
+  string investigation_report = 29 [(buf.validate.field).string.max_len = 16384];
 }
 
 // IncidentView is the open incident as the controller's state ConfigMap
