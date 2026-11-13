@@ -17,6 +17,30 @@ import (
 // reflection never fails on a gap the designer left.
 func (r Request) mapBlocks() bool { return r.Actor == HealthJudge && r.Phase == InitialPhase }
 
+// coverageRuleV1 lists the rules added after memories were accepted without
+// them: they block only a commit that changes the map, the probes or the health
+// detectors, so restoring or operating with an accepted memory is unaffected.
+func coverageRuleV1(rule string) bool {
+	return rule == RuleMapUnprobedEntry || rule == RuleMapUnprobedShare || rule == RuleMapRecordsUnread
+}
+
+// touchesDesignerPaths reports whether the diff against Base changes the
+// architecture file (the map), traffic generators or workloads, or a health
+// detector; without a Base (onboarding acceptance, a plain memory check) the
+// whole tree is in scope.
+func (s *run) touchesDesignerPaths() bool {
+	if s.changed == nil {
+		return true
+	}
+	health := layout.DetectorsDir + "/" + layout.ClassHealth.Dir() + "/"
+	for _, p := range s.changed {
+		if p == layout.ArchitectureFile || strings.HasPrefix(p, layout.TrafficGeneratorsDir+"/") || strings.HasPrefix(p, layout.TrafficWorkloadsDir+"/") || strings.HasPrefix(p, health) {
+			return true
+		}
+	}
+	return false
+}
+
 // mapAlwaysNote lists the findings that never reject.
 func mapAlwaysNote(rule string) bool {
 	return rule == RuleMapMissing || rule == RuleMapUnprobed || rule == RuleMapPossibleEdge || rule == RuleMapNoUserRecords || rule == RuleMapReaders
@@ -40,7 +64,7 @@ func AgentObligation(rule string) bool {
 // over the same tree, so each is recorded once.
 func (s *run) mapFinding(layer Layer, f appmap.Finding, line int) {
 	d := Diagnostic{Rule: f.Rule, Path: layout.ArchitectureFile, Line: line, Message: f.Message, Hint: f.Hint}
-	if s.req.mapBlocks() && !mapAlwaysNote(f.Rule) {
+	if s.req.mapBlocks() && !mapAlwaysNote(f.Rule) && !(coverageRuleV1(f.Rule) && !s.touchesDesignerPaths()) {
 		s.add(layer, d)
 		return
 	}
