@@ -729,9 +729,9 @@ def test_restart_check_reports_each_failure_instead_of_passing(kwargs, expected)
 
 
 def test_install_adopts_the_plan_bearing_commit_as_the_reset_seed():
-    from benchmarks.sregym.fastloop import toy
-
     from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop import toy
 
     saved = []
     environment = SimpleNamespace(seed_commit="a" * 40, save=lambda: saved.append(environment.seed_commit))

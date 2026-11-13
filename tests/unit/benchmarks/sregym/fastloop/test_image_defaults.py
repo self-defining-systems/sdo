@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-
-import pytest
+from typing import TYPE_CHECKING
 
 from benchmarks.sregym.fastloop.cli import build_parser
 from benchmarks.sregym.fastloop.environment import Images
+
+if TYPE_CHECKING:
+    import pytest
 
 BUILD_SCRIPT = Path(__file__).resolve().parents[5] / "scripts/build_sdo_images.sh"
 
