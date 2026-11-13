@@ -1,7 +1,7 @@
 Incident toy-incident in namespace toy.
 Opened on Service/component-0 unavailable at 22:13:20 UTC.
 Read your skills: /opt/sdo/skills/incident-response/SKILL.md and /opt/sdo/skills/sdo-operating/SKILL.md.
-Start with `sdo detect`.
+Start with `sdo detect`. Test competing hypotheses with parallel sub-agents (see incident-response).
 Changes nearest onset (newest first, time from onset):
 - +2m settings api rate_limit: 100 → 1 by: operator
 - -1m kubectl Deployment/toy/api spec.replicas: 3 → 0
