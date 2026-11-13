@@ -45,8 +45,15 @@ done
 selected_image() { [[ " ${selected[*]} " == *" $1 "* ]]; }
 if [[ "${SDO_SKIP_IMAGE_BUILD:-0}" != "1" ]]; then
   export SDO_IMAGE_TAG="${tag}"
+  bake_start=${SECONDS}
   (cd "${repo_root}" && docker buildx bake --file scripts/sdo-images.hcl --load "${selected[@]}")
+  echo "timing: bake+load ${selected[*]}: $((SECONDS - bake_start))s" >&2
 fi
+# Callers that run the gates themselves (build_push_bench_images.sh) skip them here.
+if [[ "${SDO_IMAGE_SMOKE:-1}" == "0" ]]; then
+  exit 0
+fi
+smoke_start=${SECONDS}
 for target in "${selected[@]}"; do
   case "${target}" in
   controller)
@@ -98,6 +105,7 @@ for target in "${selected[@]}"; do
       python3 -c "from sdo.agents.responder import run_worker_task" >/dev/null
   fi
 done
+echo "timing: smoke gates: $((SECONDS - smoke_start))s" >&2
 if selected_image benchmark; then
   docker run --rm --user 65532:65532 \
     sdo-sregym-responder:${tag} \
