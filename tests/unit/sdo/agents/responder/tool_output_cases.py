@@ -76,6 +76,7 @@ def rendered_stdout_cases() -> dict[str, str]:
         "changes": [],
         "timeline": [],
         "try": ["browse"],
+        "map": ["diff"],
         "menu": [],
         "diagnose": ["repair-0"],
         "mitigate": ["repair-0"],
