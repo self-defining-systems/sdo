@@ -12,9 +12,10 @@ import (
 	"sync"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/storestate"
 	"sdo.dev/operator/sdk/traffic"
 )
@@ -196,8 +197,22 @@ func workloadStates(view sdk.DetectionContext) map[string]workloadSample {
 		}
 		states["StatefulSet/"+statefulSet.Name] = workloadSample{ready: int64(statefulSet.Status.ReadyReplicas), desired: desired}
 	}
+	// One pass over ReplicaSets and Pods: this runs on every evaluation.
+	replicaSets := map[string]string{}
+	for _, replicaSet := range view.ReplicaSets() {
+		if owner := metav1.GetControllerOf(&replicaSet); owner != nil {
+			replicaSets[replicaSet.Name] = owner.Kind + "/" + owner.Name
+		}
+	}
 	for _, pod := range view.Pods() {
-		owner := program.WorkloadOf(view, sdk.ObjectRef{Kind: "Pod", Namespace: pod.Namespace, Name: pod.Name})
+		controller := metav1.GetControllerOf(&pod)
+		if controller == nil {
+			continue
+		}
+		owner := controller.Kind + "/" + controller.Name
+		if controller.Kind == "ReplicaSet" {
+			owner = replicaSets[controller.Name]
+		}
 		state, ok := states[owner]
 		if !ok {
 			continue
