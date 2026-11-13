@@ -140,6 +140,10 @@ responder incident/playbooks, and controller outcomes. Check reflection paths an
 accepted commits to identify learned files. Do not infer Go-program credit from
 shell notes. Script timeouts/crashes are detector errors, never repaired faults.
 
+With `agent.recording` off (the default) there is no recording: the outcome's repair actions hold only plan applications and
+menu repairs, no `sdo-api-*` receipt exists, `unbound_write` items come only from those, and the closing turn carried no change
+list (a `success` closure learns unless every known change is a plain restore). Below describes the recording on.
+
 The agent's writes are derived by Go from the recording of its Kubernetes calls (`memory.AgentWrites`, the one reader;
 settle detection, the closure guard, the outcome's repair records and reflection's change list all use it, never an
 agent-written journal). Receipts have stable `sdo-api-<digest>` IDs and `kind=api-<verb>` (`api-create`,

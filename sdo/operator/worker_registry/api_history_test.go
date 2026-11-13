@@ -16,7 +16,13 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
+// launchedWithSession launches with agent.recording on, the path these tests cover.
 func launchedWithSession(t *testing.T, message proto.Message, taskID string) (*batchv1.Job, string) {
+	t.Helper()
+	return launchedWithRecording(t, message, taskID, true)
+}
+
+func launchedWithRecording(t *testing.T, message proto.Message, taskID string, recording bool) (*batchv1.Job, string) {
 	t.Helper()
 	request, err := anypb.New(message)
 	if err != nil {
@@ -24,7 +30,7 @@ func launchedWithSession(t *testing.T, message proto.Message, taskID string) (*b
 	}
 	mount := t.TempDir()
 	client := fake.NewSimpleClientset()
-	executor := KubernetesExecutor{Client: client, Namespace: "sdo", RepositoryPVC: "repo", RepositoryMountPath: mount, SessionPVCSubPath: "sessions/s1", APIProxyImage: "operator-image"}
+	executor := KubernetesExecutor{Client: client, Namespace: "sdo", RepositoryPVC: "repo", RepositoryMountPath: mount, SessionPVCSubPath: "sessions/s1", APIProxyImage: "operator-image", Recording: recording}
 	task := &contracts.AgentTask{TaskId: taskID, Request: request, Workspace: &contracts.ProposalWorkspace{CheckoutPath: "/work", BaseCommit: "abc"}}
 	if err := executor.ensureJob(context.Background(), task, &contracts.KubernetesJobLaunch{Image: "worker"}, "job-1", requestSource{ConfigMap: "req"}, "job-1-result", ""); err != nil {
 		t.Fatal(err)
@@ -108,5 +114,44 @@ func TestLifecycleTaskRecordsUnderItsOwnSession(t *testing.T) {
 	}
 	if sidecar(job) == nil {
 		t.Fatal("no sidecar")
+	}
+}
+
+// With agent.recording off (the default) the proxy still fronts every agent Job, so the field manager, the
+// read-only scopes and the incident fence hold, but the sidecar is not asked to record.
+func TestAgentProxyDoesNotRecordWhenRecordingIsOff(t *testing.T) {
+	for name, message := range map[string]proto.Message{
+		"responder":  &contracts.IncidentRequest{IncidentId: "inc-1"},
+		"reflection": &contracts.ReflectionRequest{},
+		"deployer":   &contracts.SourceDeploymentRequest{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			job, _ := launchedWithRecording(t, message, "task-1", false)
+			side := sidecar(job)
+			if side == nil {
+				t.Fatal("no kube-api-history sidecar: the fence and the read-only scope need the proxy")
+			}
+			if slices.Contains(side.Command, "--recording") {
+				t.Fatalf("sidecar asked to record with recording off: %v", side.Command)
+			}
+			if jobEnvironment(job)["SDO_API_PROXY_URL"] != "http://127.0.0.1:18080" {
+				t.Fatalf("agent does not point at the proxy: %v", jobEnvironment(job))
+			}
+		})
+	}
+	job, _ := launchedWithRecording(t, &contracts.ReflectionRequest{}, "task-1", false)
+	if got := jobEnvironment(job)["SDO_API_HISTORY_DIR"]; got != "" {
+		t.Fatalf("reflection told to read a recording that does not exist: %q", got)
+	}
+	job, _ = launchedWithRecording(t, &contracts.IncidentRequest{IncidentId: "inc-1"}, "task-1", false)
+	if got := jobEnvironment(job)["SDO_API_HISTORY_DIR"]; got == "" {
+		t.Fatal("the responder keeps the history directory: it carries the incident fence marker")
+	}
+}
+
+func TestAgentProxyRecordsWhenRecordingIsOn(t *testing.T) {
+	job, _ := launchedWithSession(t, &contracts.IncidentRequest{IncidentId: "inc-1"}, "task-1")
+	if !slices.Contains(sidecar(job).Command, "--recording") {
+		t.Fatalf("sidecar not asked to record with recording on: %v", sidecar(job).Command)
 	}
 }

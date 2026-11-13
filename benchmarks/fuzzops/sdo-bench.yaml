@@ -1,6 +1,8 @@
 # SDO benchmark profile: only fields that differ from production defaults (see docs/config.md).
 # Every benchmark harness passes this file first (`--config`), then its own overlay; per-experiment, per-lane and
 # per-run values (agent provider, model and effort, evidence host path and run ID, mode) come from SDO_* env.
+agent:
+  recording: false                  # the agent-cluster recording is off (the production default too); set true to record every agent Kubernetes call for one experiment
 response:
   repair_policy: recorded-actions   # benchmarks repair live state without a source commit (D6)
   after_playbook: wait              # upper bound: a playbook that applied is never followed by the agent; recovery gets the whole bound, then the incident escalates

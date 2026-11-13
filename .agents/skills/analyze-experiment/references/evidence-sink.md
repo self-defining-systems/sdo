@@ -25,7 +25,10 @@ Completeness:
   files are the prefix mirrored up to then, at most ~10 s behind. That is evidence, not a closed incident.
 - `sha256sum seal.json` equals the index record's `sha256`; each file's digest is listed inside it. A file whose
   digest differs from `seal.json` changed after the seal; prefer the later record.
-- The sink copies only allowlisted evidence; caches and credentials are never there. The agent API recording is there
+- The agent API recording is off by default (`agent.recording`, config snapshot in the run directory): with it off there is
+  no `api-history/events.jsonl`, the agent's raw writes and execs appear nowhere in the evidence, and a missing recording is
+  expected, not a sink fault. Check `agent.recording` in the recorded config before reading its absence as a gap.
+- The sink copies only allowlisted evidence; caches and credentials are never there. With `agent.recording: true` the agent API recording is there
   only as the redacted `api-history/events.jsonl` and `manifest.json` (`incidents/<d>/api-history/` for the responder,
   `incidents/<d>/api-history-reflection/` for reflection, `lifecycle/<key>/api-history/` for lifecycle tasks); blobs,
   the identity key and the mutation fence never are. Each write has `start` and `end` events with the changed field

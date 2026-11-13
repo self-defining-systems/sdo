@@ -29,6 +29,7 @@ func RunStandby(ctx context.Context, args []string) error {
 func RunStandbyHistory(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("standby-history", flag.ContinueOnError)
 	directory := flags.String("directory", "", "private history directory")
+	recording := flags.Bool("recording", false, "record the agent's Kubernetes calls")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -43,7 +44,11 @@ func RunStandbyHistory(ctx context.Context, args []string) error {
 	if err := task.GetRequest().UnmarshalTo(request); err != nil {
 		return err
 	}
-	return RunAPIProxy(ctx, []string{"--scope", "incident:" + request.GetIncidentId(), "--directory", *directory})
+	proxyArgs := []string{"--scope", "incident:" + request.GetIncidentId(), "--directory", *directory}
+	if *recording {
+		proxyArgs = append(proxyArgs, "--recording")
+	}
+	return RunAPIProxy(ctx, proxyArgs)
 }
 
 func RunStandbyReady(args []string) error {

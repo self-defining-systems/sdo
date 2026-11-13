@@ -131,15 +131,22 @@ def reflection_output_schema() -> dict[str, object]:
     }
 
 
+def _changes_section(changes: Sequence[str]) -> str:
+    """The recorded-changes section, or nothing when agent.recording is off: the session knows what it did."""
+    if not changes:
+        return ""
+    return "Your recorded changes:\n" + "\n".join(changes)
+
+
 def closing_prompt(*, incident_id: str, changes: Sequence[str]) -> RenderedPrompt:
-    """The learning turn: about 600 bytes plus the change list Go rendered from the recording."""
+    """The learning turn: about 600 bytes plus the change list Go rendered from the recording, when there is one."""
     return render_prompt(
         "responder",
         "scriptify",
         part="reflection.scriptify",
         incident_id=incident_id,
         skills_root=selected_skills_root(SKILLS_ROOT),
-        changes=named_prompt("reflection.changes", "\n".join(changes) or "(none recorded)"),
+        changes=named_prompt("reflection.changes", _changes_section(changes)),
         branch_instruction=branch_instruction("reflection"),
     )
 

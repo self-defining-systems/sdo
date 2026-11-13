@@ -64,7 +64,9 @@ environment; use ` + "`SDO_AGENT_CODE_PATH`" + ` and ` + "`SDO_RESPONSE_MENU`" +
 defaults above: ` + "`response.repair_policy: recorded-actions`" + `, ` + "`detection.self_heal_hold: 60s`" + `, and, to measure the upper bound of what
 learned playbooks achieve alone, ` + "`response.after_playbook: wait`" + ` with ` + "`response.after_playbook_wait: 5m`" + `: after a playbook applied,
 the agent is never dispatched; recovery gets the whole bound (slow readiness and windowed detectors need more than the
-stage's default 90 seconds), then the incident escalates. Production keeps ` + "`agent`" + `.
+stage's default 90 seconds), then the incident escalates. Production keeps ` + "`agent`" + `. It also names ` + "`agent.recording: false`" + `
+(the production default, written out so an experiment can set it to ` + "`true`" + `): the agent-cluster recording is off, and a few runs
+that show nothing missing without it are the case for removing it.
 
 ## Keys
 `)

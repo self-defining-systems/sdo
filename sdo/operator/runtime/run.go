@@ -650,6 +650,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			AcceptedRepository: resolvedRoot,
 			CoverageProvider:   selectedCodePath.Coverage,
 			APIProxyImage:      apiProxyImage,
+			Recording:          policy.Agent.Recording,
 			ToolchainImage:     *toolchainImage,
 			Client:             bootstrapProvider.Client, Namespace: *controlNamespace, Registry: registeredWorkers, AgentID: *responderAgentID,
 			ServiceAccount: "sdo-responder", RepositoryPVC: *repositoryPVC,
@@ -716,9 +717,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					}
 				}
 				loop.CachedFindings = func() ToolResponse { return controller.cachedFindingView(request.IncidentID) }
-				loop.ExternalReceipts = func() ([]RepairActionReceipt, bool, string, error) {
-					return agentWriteReceipts(*repositoryMountPath, request.IncidentID, controller.clock())
-				}
+				loop.ExternalReceipts = externalReceiptsSource(policy.Agent.Recording, *repositoryMountPath, request.IncidentID, controller.clock)
 				loop.VerifyResult = func(ctx context.Context, result IncidentResult) ToolResponse {
 					if controller == nil {
 						return ToolResponse{Command: "verify", Error: "controller verification is unavailable"}
@@ -739,7 +738,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				loop.BuiltinRestoreAuto = policy.Response.BuiltinRestoreAuto
 				if options.NativeBroker != nil {
-					loop.RecoverySessionRoot = options.NativeBroker.SessionRoot
+					if policy.Agent.Recording {
+						loop.RecoverySessionRoot = options.NativeBroker.SessionRoot
+					}
 					if replayMode != "off" {
 						loop.CorpusSessionRoot = options.NativeBroker.SessionRoot
 					}
@@ -760,7 +761,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if !clientInjected && jobDispatch && isJobDispatcher && policy.Response.Standby && standbyEnabled(jobEnvironment) {
 		d := jobDispatcher
 		standbyEnvironment := standbyWorkerEnvironment(jobEnvironment)
-		pool := worker_registry.NewStandbyPool(worker_registry.KubernetesExecutor{APIProxyImage: d.APIProxyImage, ToolchainImage: d.ToolchainImage, Client: d.Client, Namespace: d.Namespace, Registry: d.Registry, ServiceAccount: d.ServiceAccount, RepositoryPVC: d.RepositoryPVC, RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath, CredentialsSecret: d.CredentialsSecret, Environment: standbyEnvironment, CapturedCorpusReadOnly: true}, d.AgentID, *application)
+		pool := worker_registry.NewStandbyPool(worker_registry.KubernetesExecutor{Recording: d.Recording, APIProxyImage: d.APIProxyImage, ToolchainImage: d.ToolchainImage, Client: d.Client, Namespace: d.Namespace, Registry: d.Registry, ServiceAccount: d.ServiceAccount, RepositoryPVC: d.RepositoryPVC, RepositoryMountPath: d.RepositoryMountPath, RepositoryPVCSubPath: d.RepositoryPVCSubPath, CredentialsSecret: d.CredentialsSecret, Environment: standbyEnvironment, CapturedCorpusReadOnly: true}, d.AgentID, *application)
 		standbyCtx, stopStandby := context.WithCancel(renewalCtx)
 		if err := pool.Start(standbyCtx); err != nil {
 			stopStandby()

@@ -207,3 +207,13 @@ def test_the_learning_message_is_about_600_bytes_plus_the_change_list() -> None:
     assert "\n".join(CHANGES) in prompt
     cleanup = expand_context(cleanup_prompt(leftovers=["a.go"], turn=1))
     assert len(cleanup.encode()) <= 560, len(cleanup.encode())
+
+
+def test_the_learning_message_omits_the_changes_section_when_nothing_was_recorded() -> None:
+    """agent.recording is off: Go sends no change list, and the session knows what it did."""
+    prompt = expand_context(closing_prompt(incident_id="0123456789abcdef", changes=[]))
+    assert "recorded changes" not in prompt
+    assert "none recorded" not in prompt
+    assert "closed as success" in prompt
+    with_changes = expand_context(closing_prompt(incident_id="0123456789abcdef", changes=CHANGES))
+    assert "Your recorded changes:\n" + "\n".join(CHANGES) in with_changes

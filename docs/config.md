@@ -37,7 +37,9 @@ environment; use `SDO_AGENT_CODE_PATH` and `SDO_RESPONSE_MENU`.
 defaults above: `response.repair_policy: recorded-actions`, `detection.self_heal_hold: 60s`, and, to measure the upper bound of what
 learned playbooks achieve alone, `response.after_playbook: wait` with `response.after_playbook_wait: 5m`: after a playbook applied,
 the agent is never dispatched; recovery gets the whole bound (slow readiness and windowed detectors need more than the
-stage's default 90 seconds), then the incident escalates. Production keeps `agent`.
+stage's default 90 seconds), then the incident escalates. Production keeps `agent`. It also names `agent.recording: false`
+(the production default, written out so an experiment can set it to `true`): the agent-cluster recording is off, and a few runs
+that show nothing missing without it are the case for removing it.
 
 ## Keys
 
@@ -59,6 +61,7 @@ stage's default 90 seconds), then the incident escalates. Production keeps `agen
 | `agent.memory_check_timeout` | `SDO_AGENT_MEMORY_CHECK_TIMEOUT` | duration | `5m0s` | limit of one memory check a worker runs on its checkout |
 | `agent.code_path` | `SDO_AGENT_CODE_PATH` | string | `go` | programming-model plugin set: go or shell |
 | `agent.code_path_overrides` | `SDO_AGENT_CODE_PATH_OVERRIDES` | string | `""` | CodePathOverrides as a JSON object (for example {"response_stages":["agent"]}); empty selects the code path's own seams |
+| `agent.recording` | `SDO_AGENT_RECORDING` | bool | `false` | whether the proxy every agent Kubernetes call goes through records those calls (the agent-cluster recording that memory.AgentWrites reads). Off by default and a candidate for removal: with it off the proxy still forwards, forces the responder field manager and applies the incident mutation fence, but keeps no history, so Recovered is timed from SDO's own plan writes and the controller's observed settle, the closing turn carries no recorded-changes list and learns on any success closure, and an exec or raw write by the agent moves no clock |
 | `agent.extra_env` | `SDO_AGENT_EXTRA_ENV` | list (JSON) | `[]` | extra NAME=VALUE environment of every agent worker the controller launches (responders, standby, reflection and closing turn, health refresh, lifecycle agents) |
 
 ### `response`
