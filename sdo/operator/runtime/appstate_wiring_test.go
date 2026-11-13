@@ -75,7 +75,7 @@ func TestObservationCarriesTheReadersADetectorConsumes(t *testing.T) {
 func TestRemoteReadStateDecodesValuesAndFailures(t *testing.T) {
 	rpc := &stateRPC{response: &pb.ReadStateResponse{Values: map[string]string{"a": "1"}}}
 	remote := &RemoteMemory{rpc: rpc}
-	values, err := remote.ReadState(context.Background(), "settings")
+	values, err := remote.ReadState(context.Background(), "settings", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,11 +83,11 @@ func TestRemoteReadStateDecodesValuesAndFailures(t *testing.T) {
 		t.Fatalf("values=%v asked=%q", values, rpc.asked)
 	}
 	rpc.response = &pb.ReadStateResponse{Error: "store down"}
-	if _, err := remote.ReadState(context.Background(), "settings"); err == nil || err.Error() != "store down" {
+	if _, err := remote.ReadState(context.Background(), "settings", nil); err == nil || err.Error() != "store down" {
 		t.Fatalf("err = %v", err)
 	}
 	rpc.response = &pb.ReadStateResponse{Values: map[string]string{"admin_password": "x"}}
-	values, err = remote.ReadState(context.Background(), "settings")
+	values, err = remote.ReadState(context.Background(), "settings", nil)
 	if err != nil {
 		t.Fatalf("prototype: no secret filtering, got %v", err)
 	}

@@ -13,6 +13,7 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/appstate/carried"
 	"sdo.dev/operator/sdk/inputs"
+	"sdo.dev/operator/sdk/podread"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -32,7 +33,9 @@ func (fakeReader) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, 
 }
 func (f fakeReader) AppStateReader() bool                                     { return true }
 func (f fakeReader) AppStateNoisy() []string                                  { return f.noisy }
-func (f fakeReader) AppStateRead(ctx context.Context) (carried.Values, error) { return f.read(ctx) }
+func (f fakeReader) AppStateRead(ctx context.Context, _ map[string]podread.Result) (carried.Values, error) {
+	return f.read(ctx)
+}
 
 func valuesOf(kv ...string) carried.Values {
 	var v carried.Values

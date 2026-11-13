@@ -307,6 +307,19 @@ func (s *Server) readState(ctx context.Context, request *pb.ReadStateRequest) (a
 		observed := at.AsTime()
 		snapshot.ObservedAtTime = &observed
 	}
+	// The reader's pod reads were collected by the controller for this reader
+	// alone; the mirror holds none, so without them every pod read the reader
+	// requires would be missing.
+	snapshot.PodReads = map[string]podread.Result{}
+	for queryID, wire := range request.GetPodReads() {
+		got, err := decode[podread.Result](wire)
+		if err != nil {
+			return appstate.Values{}, fmt.Errorf("pod read %q: %w", queryID, err)
+		}
+		if got != nil {
+			snapshot.PodReads[queryID] = *got
+		}
+	}
 	ctx, cancel := withinTransportBudget(ctx)
 	defer cancel()
 	key := "readstate:" + id

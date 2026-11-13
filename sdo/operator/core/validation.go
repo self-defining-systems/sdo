@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/appstate"
 	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/podread"
 	"sdo.dev/operator/sdk/vantage"
@@ -44,8 +45,17 @@ func ValidateDetectors(detectors []sdk.Detector) error {
 	if _, err := logs.Queries(detectors); err != nil {
 		return err
 	}
-	if _, err := podread.Queries(detectors); err != nil {
+	// App-state readers collect their pod reads on their own budget, so the cap
+	// of podread.MaxQueries applies to the detection cycle's reads and to each
+	// reader separately, never to their sum.
+	readers, others := appstate.Split(detectors)
+	if _, err := podread.Queries(others); err != nil {
 		return err
+	}
+	for _, reader := range readers {
+		if _, err := podread.Queries([]sdk.Detector{reader}); err != nil {
+			return fmt.Errorf("detector %q: %w", reader.Spec().ID, err)
+		}
 	}
 	_, err := vantage.Probes(detectors)
 	return err

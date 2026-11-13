@@ -6,6 +6,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/podread"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -100,7 +101,15 @@ func (s *Server) objectReads(base sdk.ObjectReader, scoped sdk.ScopedObservation
 // programObjects layers the same reads over a program's read view.
 type programObjects struct {
 	program.ReadView
-	reads objectReads
+	reads    objectReads
+	podReads map[string]podread.Result
+}
+
+// PodReadResult implements podread.Source over the pod reads the controller
+// collected for the reader being run.
+func (v programObjects) PodReadResult(id string) (podread.Result, bool) {
+	r, ok := v.podReads[id]
+	return r, ok
 }
 
 func (v programObjects) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
@@ -111,5 +120,5 @@ func (v programObjects) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Uns
 }
 
 func (s *Server) programObjects(view program.ReadView, snapshot sdktest.Snapshot) program.ReadView {
-	return programObjects{ReadView: view, reads: s.objectReads(view, view, view, snapshot)}
+	return programObjects{ReadView: view, reads: s.objectReads(view, view, view, snapshot), podReads: snapshot.PodReads}
 }

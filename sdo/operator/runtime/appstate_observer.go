@@ -2,17 +2,22 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"sort"
 	"sync"
 	"time"
 
+	"k8s.io/client-go/kubernetes"
 	kclock "k8s.io/utils/clock"
 
+	"sdo.dev/operator/kubereads"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/appstate/carried"
 	"sdo.dev/operator/sdk/inputs"
+	"sdo.dev/operator/sdk/podread"
 )
 
 // Bounds of background app-state reads.
@@ -32,7 +37,9 @@ type appStateReaderDetector interface {
 	sdk.Detector
 	AppStateReader() bool
 	AppStateNoisy() []string
-	AppStateRead(context.Context) (carried.Values, error)
+	// AppStateRead runs the reader against the frozen results of the pod reads
+	// it declares (nil when it declares none).
+	AppStateRead(context.Context, map[string]podread.Result) (carried.Values, error)
 }
 
 // AppStateObserver reads every registered app-state reader on its own interval
@@ -40,6 +47,13 @@ type appStateReaderDetector interface {
 // AppStateReadTimeout, at most AppStateMaxConcurrent run at once, a reader
 // still running is skipped (never queued) and only the last finished result is
 // kept. A snapshot attaches what is already finished and never waits.
+//
+// A reader's pod reads belong to the reader, not to the detection cycle: the
+// observer collects them for that reader alone just before each read, under a
+// full podread.CollectionBudget and podread.MaxConcurrent, one reader's
+// collection at a time (podTurn), so any number of readers neither starve each
+// other nor the detection designer's own pod reads. The reader's interval is
+// at least podread.MinInterval, which bounds the exec load.
 type AppStateObserver struct {
 	store *AppStateStore
 	clock kclock.WithTicker
@@ -53,18 +67,48 @@ type AppStateObserver struct {
 	slots   chan struct{}
 	cancel  context.CancelFunc
 	wait    sync.WaitGroup
+
+	podReads  podReadEnv
+	podTurn   chan struct{}
+	latest    sdk.DetectionContext
+	logged    map[string]string
+}
+
+// podReadEnv is what a reader's pod reads run with.
+type podReadEnv struct {
+	client    kubernetes.Interface
+	exec      kubereads.PodExec
+	protected string
 }
 
 type appStateReader struct {
 	id       string
 	interval time.Duration
-	read     func(context.Context) (carried.Values, error)
+	read     func(context.Context, map[string]podread.Result) (carried.Values, error)
+	pods     *PodReadObserver // nil when the reader declares no pod reads
+	podsErr  string           // why its pod reads cannot run, when they cannot
 }
 
 // NewAppStateObserver returns an observer that records into store. clock
 // drives its ticker and now stamps snapshots.
 func NewAppStateObserver(store *AppStateStore, clock kclock.WithTicker, now func() time.Time) *AppStateObserver {
-	return &AppStateObserver{store: store, clock: timerClock(clock), now: now, running: map[string]bool{}, next: map[string]time.Time{}, slots: make(chan struct{}, AppStateMaxConcurrent)}
+	return &AppStateObserver{store: store, clock: timerClock(clock), now: now, running: map[string]bool{}, next: map[string]time.Time{}, slots: make(chan struct{}, AppStateMaxConcurrent), podTurn: make(chan struct{}, 1), logged: map[string]string{}}
+}
+
+// UsePodReads gives the observer what it needs to run the pod reads readers
+// declare. Without it a reader that declares one reports why it cannot run.
+func (o *AppStateObserver) UsePodReads(client kubernetes.Interface, exec kubereads.PodExec, protected string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.podReads = podReadEnv{client: client, exec: exec, protected: protected}
+}
+
+// observe keeps the newest cluster snapshot, which names the Pods a reader's
+// pod reads target.
+func (o *AppStateObserver) observe(base sdk.DetectionContext) {
+	o.mu.Lock()
+	o.latest = base
+	o.mu.Unlock()
 }
 
 // Store is the state the observer records into.
@@ -74,6 +118,9 @@ func (o *AppStateObserver) Store() *AppStateStore { return o.store }
 // refuses duplicate readers and more than carried.MaxReaders.
 func (o *AppStateObserver) Reconfigure(detectors []sdk.Detector) error {
 	var readers []appStateReader
+	o.mu.Lock()
+	env := o.podReads
+	o.mu.Unlock()
 	declared := map[string][]string{}
 	for _, d := range detectors {
 		r, ok := d.(appStateReaderDetector)
@@ -85,7 +132,20 @@ func (o *AppStateObserver) Reconfigure(detectors []sdk.Detector) error {
 			return fmt.Errorf("duplicate app-state reader %q", spec.ID)
 		}
 		declared[spec.ID] = r.AppStateNoisy()
-		readers = append(readers, appStateReader{id: spec.ID, interval: max(spec.Interval, appStateMinInterval), read: r.AppStateRead})
+		reader := appStateReader{id: spec.ID, interval: max(spec.Interval, appStateMinInterval), read: r.AppStateRead}
+		queries, err := podread.Queries([]sdk.Detector{d})
+		if err != nil {
+			return fmt.Errorf("app-state reader %q: %w", spec.ID, err)
+		}
+		if len(queries) > 0 {
+			reader.interval = max(reader.interval, podread.MinInterval)
+			if env.client == nil {
+				reader.podsErr = "skipped: no Kubernetes client to run the reader's pod reads"
+			} else {
+				reader.pods = newPodReadObserver(env.client, env.exec, env.protected, queries, o.now)
+			}
+		}
+		readers = append(readers, reader)
 	}
 	if len(readers) > carried.MaxReaders {
 		return fmt.Errorf("%d app-state readers exceed the limit of %d", len(readers), carried.MaxReaders)
@@ -95,6 +155,12 @@ func (o *AppStateObserver) Reconfigure(detectors []sdk.Detector) error {
 	defer o.mu.Unlock()
 	o.readers = readers
 	o.gen++
+	clear(o.logged)
+	ids := make([]string, len(readers))
+	for i, r := range readers {
+		ids[i] = r.id
+	}
+	slog.Info("app_state_readers_configured", "count", len(ids), "readers", ids)
 	for id := range o.next {
 		if _, ok := declared[id]; !ok {
 			delete(o.next, id)
@@ -159,6 +225,9 @@ func (o *AppStateObserver) dispatch(ctx context.Context) {
 		if o.running[r.id] || now.Before(o.next[r.id]) {
 			continue
 		}
+		if r.pods != nil && o.latest == nil {
+			continue // its pod reads have no target before the first snapshot
+		}
 		select {
 		case o.slots <- struct{}{}:
 		default:
@@ -173,9 +242,13 @@ func (o *AppStateObserver) dispatch(ctx context.Context) {
 
 func (o *AppStateObserver) run(ctx context.Context, r appStateReader, gen uint64) {
 	defer o.wait.Done()
-	readCtx, cancel := context.WithTimeout(ctx, AppStateReadTimeout)
-	values, err := r.read(readCtx)
-	cancel()
+	reads, err := o.collectPodReads(ctx, r)
+	var values carried.Values
+	if err == nil {
+		readCtx, cancel := context.WithTimeout(ctx, AppStateReadTimeout)
+		values, err = r.read(readCtx, reads)
+		cancel()
+	}
 	snap := carried.Snapshot{At: o.now().UTC(), Values: values}
 	if err != nil {
 		snap = carried.Snapshot{At: snap.At, Error: boundedAppStateError(err)}
@@ -185,10 +258,53 @@ func (o *AppStateObserver) run(ctx context.Context, r appStateReader, gen uint64
 	// against a reader that was removed and added back.
 	if ctx.Err() == nil && gen == o.gen {
 		o.store.Record(r.id, snap)
+		o.logRead(r.id, snap)
 	}
 	delete(o.running, r.id)
 	o.mu.Unlock()
 	<-o.slots
+}
+
+// collectPodReads runs the reader's own pod reads, or says why it cannot.
+func (o *AppStateObserver) collectPodReads(ctx context.Context, r appStateReader) (map[string]podread.Result, error) {
+	if r.podsErr != "" {
+		return nil, errors.New(r.podsErr)
+	}
+	if r.pods == nil {
+		return nil, nil
+	}
+	o.mu.Lock()
+	base := o.latest
+	o.mu.Unlock()
+	if base == nil {
+		return nil, errors.New("skipped: no cluster snapshot has been observed yet, so the reader's pod reads have no target")
+	}
+	select {
+	case o.podTurn <- struct{}{}:
+		defer func() { <-o.podTurn }()
+	case <-ctx.Done():
+		return nil, fmt.Errorf("skipped: waiting for another reader's pod reads: %w", ctx.Err())
+	}
+	return r.pods.collectFresh(ctx, base), nil
+}
+
+// logRead logs a reader's first result and each change of its outcome, so the
+// controller log shows every reader's state outside an incident without a line
+// per read. Called with o.mu held.
+func (o *AppStateObserver) logRead(id string, snap carried.Snapshot) {
+	outcome := "ok"
+	if snap.Error != "" {
+		outcome = "error: " + snap.Error
+	}
+	if prev, seen := o.logged[id]; seen && prev == outcome {
+		return
+	}
+	o.logged[id] = outcome
+	if snap.Error != "" {
+		slog.Warn("app_state_reader", "reader", id, "outcome", "error", "error", snap.Error)
+		return
+	}
+	slog.Info("app_state_reader", "reader", id, "outcome", "ok", "keys", len(snap.Values.Keys()))
 }
 
 // boundedAppStateError keeps a reader's error to carried.MaxValueBytes: it
@@ -213,6 +329,7 @@ func (p AppStateSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionCo
 	if err != nil {
 		return base, err
 	}
+	p.Observer.observe(base)
 	return inputs.New(base).WithAppState(appStateResults(p.Observer.store.Results())), nil
 }
 

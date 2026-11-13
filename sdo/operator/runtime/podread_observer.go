@@ -47,12 +47,16 @@ func NewPodReadObserver(client kubernetes.Interface, exec kubereads.PodExec, pro
 	if err != nil || len(queries) == 0 {
 		return nil, err
 	}
+	return newPodReadObserver(client, exec, protected, queries, clock), nil
+}
+
+func newPodReadObserver(client kubernetes.Interface, exec kubereads.PodExec, protected string, queries []podread.Query, clock func() time.Time) *PodReadObserver {
 	return &PodReadObserver{
 		queries: queries, exec: exec, protected: protected, clock: clock, last: map[string]podReadRun{},
 		get: func(ctx context.Context, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
 			return kubereads.GetPod(ctx, client, protected, ref)
 		},
-	}, nil
+	}
 }
 
 // PodReadsSnapshotProvider adds the frozen pod reads to a snapshot, each with
@@ -90,7 +94,7 @@ func (r podReadResults) PodReadResults() map[string]podread.Result {
 	return out
 }
 
-const podReadNotStarted = "not read within the collection budget"
+const podReadNotStarted = "skipped: pod-read collection budget ended before this read started"
 
 // podReadJob is one command in one selected container.
 type podReadJob struct {
@@ -144,6 +148,16 @@ func (o *PodReadObserver) collect(ctx context.Context, base sdk.DetectionContext
 		}
 	}
 	return results
+}
+
+// collectFresh runs every query now, ignoring retained answers. An app-state
+// reader owns its observer and its interval, so each of its reads sees current
+// output rather than an answer kept from the previous interval.
+func (o *PodReadObserver) collectFresh(ctx context.Context, base sdk.DetectionContext) map[string]podread.Result {
+	o.mu.Lock()
+	clear(o.last)
+	o.mu.Unlock()
+	return o.collect(ctx, base)
 }
 
 // retained reports whether the query has an answer from within its interval.

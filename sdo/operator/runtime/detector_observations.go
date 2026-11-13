@@ -12,6 +12,7 @@ import (
 	"sdo.dev/operator/kubereads"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/appstate"
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/podread"
@@ -77,7 +78,10 @@ func (o detectorObservations) compose(base SnapshotProvider, detectors []sdk.Det
 	if logsObserver != nil {
 		provider = LogsSnapshotProvider{Base: provider, Observer: logsObserver}
 	}
-	podReads, err := NewPodReadObserver(o.Client, o.exec(), o.ProtectedNamespace, detectors, clock)
+	// App-state readers run their pod reads on their own budget (see
+	// AppStateObserver), so the detection cycle's budget is the designer's alone.
+	_, cycleDetectors := appstate.Split(detectors)
+	podReads, err := NewPodReadObserver(o.Client, o.exec(), o.ProtectedNamespace, cycleDetectors, clock)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -100,6 +104,9 @@ func (o detectorObservations) compose(base SnapshotProvider, detectors []sdk.Det
 	}
 	// Last, so a rejected revision never leaves its readers running.
 	if o.AppState != nil {
+		if o.Client != nil {
+			o.AppState.UsePodReads(o.Client, o.exec(), o.ProtectedNamespace)
+		}
 		if err := o.AppState.Reconfigure(detectors); err != nil {
 			return nil, nil, err
 		}

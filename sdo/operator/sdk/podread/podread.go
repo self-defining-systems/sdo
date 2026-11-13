@@ -375,7 +375,7 @@ func ResultFrom(ctx sdk.DetectionContext, id string) (Result, bool) {
 func Require(ctx sdk.DetectionContext, id string) (Result, error) {
 	r, ok := ResultFrom(ctx, id)
 	if !ok {
-		return r, fmt.Errorf("pod read %q unavailable", id)
+		return r, fmt.Errorf("pod read %q has no collected result: its query is not declared by a loaded detector, or its collection has not run for this view", id)
 	}
 	return r, complete(r, id)
 }
