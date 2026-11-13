@@ -364,9 +364,11 @@ message IncidentRequest {
   bool deployment_in_flight = 39;
   // Go-owned: the user tests judged healthy when the incident opened, sorted.
   repeated string passing_tests = 40;
-  // Go-owned: the changes nearest onset, newest first, one line each, then the
-  // line that names the full commands, for the responder's first message.
-  repeated string recent_changes = 41 [(buf.validate.field).repeated = {max_items: 11, items: {string: {max_len: 600}}}];
+  // Go-owned: the candidate block of the responder's first message, one
+  // rendered line per item. The renderer caps the whole block at 2048 bytes
+  // (candidateRenderCap), so at most 1024 lines (one byte plus a newline each)
+  // of at most 2048 bytes.
+  repeated string recent_changes = 41 [(buf.validate.field).repeated = {max_items: 1024, items: {string: {max_len: 2048}}}];
   // Go-owned: the finding keys of user tests that started failing while the
   // incident was open (within the join window of detection). With opening_keys
   // they form the alert set Recovered waits on; clues never join.
