@@ -101,17 +101,41 @@ func (v Values) MarshalJSON() ([]byte, error) {
 	return json.Marshal(v.items)
 }
 
-// UnmarshalJSON reads a plain object, applying the same bounds as Set.
+// UnmarshalJSON reads a plain object, applying the same bounds as Set. A key
+// the current rules refuse is dropped, so a stored snapshot still loads after
+// the credential-name filter grows.
 func (v *Values) UnmarshalJSON(data []byte) error {
 	var items map[string]string
 	if err := json.Unmarshal(data, &items); err != nil {
 		return err
 	}
 	*v = Values{}
-	for k, val := range items {
-		v.Set(k, val)
+	for _, k := range sortedKeys(items) {
+		v.Set(k, items[k])
 	}
-	return v.Err()
+	v.refused = nil
+	return nil
+}
+
+func sortedKeys(items map[string]string) []string {
+	keys := make([]string, 0, len(items))
+	for k := range items {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// Clone returns an independent copy, including any refusals.
+func (v Values) Clone() Values {
+	out := Values{refused: append([]string(nil), v.refused...)}
+	if v.items != nil {
+		out.items = make(map[string]string, len(v.items))
+		for k, val := range v.items {
+			out.items[k] = val
+		}
+	}
+	return out
 }
 
 // Snapshot is one finished ReadState call. Error is the read error of a call
@@ -292,6 +316,22 @@ func (r Result) noisy() map[string]bool {
 	return NoisyKeys(history, r.Declared)
 }
 
+// flag marks a change noisy when the key is noisy in healthy history or
+// matches a declared glob, whether or not healthy history ever held the key.
+func (r Result) flag(changes []Change, noisy map[string]bool) {
+	for i := range changes {
+		if noisy[changes[i].Key] {
+			changes[i].Noisy = true
+			continue
+		}
+		for _, glob := range r.Declared {
+			if Match(glob, changes[i].Key) {
+				changes[i].Noisy = true
+			}
+		}
+	}
+}
+
 func filter(changes []Change, glob string) []Change {
 	var out []Change
 	for _, c := range changes {
@@ -311,43 +351,70 @@ func (s State) DiffersFromHealthy(glob string) (changes []Change, ok bool) {
 		return nil, false
 	}
 	diff := Diff(s.Healthy.Values, latest.Values, s.noisy())
+	s.flag(diff, nil)
 	for i := range diff {
 		diff[i].At = latest.At
 	}
 	return filter(diff, glob), true
 }
 
-// ChangedWithin lists changes between consecutive ring snapshots whose later
-// snapshot lies in (now-d, now], for keys matching glob. ok is false when the
-// ring is empty. now comes from the observation clock.
+// usable lists the ring's snapshots that hold values, oldest first.
+func (s State) usable() []Snapshot {
+	var out []Snapshot
+	for _, snap := range s.Recent {
+		if snap.Error == "" {
+			out = append(out, snap)
+		}
+	}
+	return out
+}
+
+// ChangedWithin lists changes between consecutive usable ring snapshots (a
+// failed read in between does not hide a change) whose later snapshot lies in
+// (now-d, now], for keys matching glob. ok is false when fewer than two
+// snapshots are usable or the ring does not reach back to now-d: the changes
+// it did see are returned, but the caller must not read an empty list as "no
+// change". now comes from the observation clock.
 func (s State) ChangedWithin(glob string, now time.Time, d time.Duration) (changes []Change, ok bool) {
-	if len(s.Recent) == 0 {
+	snaps := s.usable()
+	if len(snaps) < 2 {
 		return nil, false
 	}
 	noisy := s.noisy()
-	for i := 1; i < len(s.Recent); i++ {
-		prev, next := s.Recent[i-1], s.Recent[i]
-		if prev.Error != "" || next.Error != "" || next.At.After(now) || !next.At.After(now.Add(-d)) {
+	for i := 1; i < len(snaps); i++ {
+		prev, next := snaps[i-1], snaps[i]
+		if next.At.After(now) || !next.At.After(now.Add(-d)) {
 			continue
 		}
 		diff := Diff(prev.Values, next.Values, noisy)
+		s.flag(diff, nil)
 		for j := range diff {
 			diff[j].At = next.At
 		}
 		changes = append(changes, filter(diff, glob)...)
 	}
-	return changes, true
+	return changes, !snaps[0].At.After(now.Add(-d))
 }
 
-// HeldAbove reports whether the numeric value of key exceeded n in every ring
-// snapshot taken in [now-d, now]. ok is false when the window holds no
-// snapshot, or a snapshot there lacks the key or holds a non-numeric value.
+// HeldAbove reports whether the numeric value of key exceeded n for the whole
+// window [now-d, now]: the value in force at now-d (the last snapshot at or
+// before it) and every later snapshot. ok is false when no snapshot is at or
+// before now-d (the ring does not reach back far enough), or a snapshot in
+// the window failed, lacks the key or holds a non-numeric value.
 func (s State) HeldAbove(key string, n float64, now time.Time, d time.Duration) (held, ok bool) {
+	start := -1
+	for i, snap := range s.Recent {
+		if !snap.At.After(now.Add(-d)) {
+			start = i
+		}
+	}
+	if start < 0 {
+		return false, false
+	}
 	held = true
-	seen := false
-	for _, snap := range s.Recent {
-		if snap.At.After(now) || snap.At.Before(now.Add(-d)) {
-			continue
+	for _, snap := range s.Recent[start:] {
+		if snap.At.After(now) {
+			break
 		}
 		raw, present := snap.Values.Get(key)
 		if snap.Error != "" || !present {
@@ -357,13 +424,9 @@ func (s State) HeldAbove(key string, n float64, now time.Time, d time.Duration) 
 		if err != nil {
 			return false, false
 		}
-		seen = true
 		if !(value > n) {
 			held = false
 		}
-	}
-	if !seen {
-		return false, false
 	}
 	return held, true
 }

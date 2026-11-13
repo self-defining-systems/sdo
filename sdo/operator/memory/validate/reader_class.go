@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"sdo.dev/operator/memory/layout"
@@ -61,11 +62,27 @@ func readerClassDiagnostics(root string, paths []string) []Diagnostic {
 }
 
 // implementsReader reports whether Go source declares a ReadState method or
-// names appstate.Reader.
+// names the appstate package's Reader, however it imports the package.
 func implementsReader(file string) bool {
 	parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, parser.SkipObjectResolution)
 	if err != nil {
 		return false
+	}
+	names := map[string]bool{}
+	dot := false
+	for _, spec := range parsed.Imports {
+		path, err := strconv.Unquote(spec.Path.Value)
+		if err != nil || path != "sdo.dev/operator/sdk/appstate" {
+			continue
+		}
+		switch {
+		case spec.Name == nil:
+			names["appstate"] = true
+		case spec.Name.Name == ".":
+			dot = true
+		default:
+			names[spec.Name.Name] = true
+		}
 	}
 	found := false
 	ast.Inspect(parsed, func(node ast.Node) bool {
@@ -73,9 +90,11 @@ func implementsReader(file string) bool {
 		case *ast.FuncDecl:
 			found = found || n.Recv != nil && n.Name.Name == "ReadState"
 		case *ast.SelectorExpr:
-			if pkg, ok := n.X.(*ast.Ident); ok && pkg.Name == "appstate" && n.Sel.Name == "Reader" {
+			if pkg, ok := n.X.(*ast.Ident); ok && names[pkg.Name] && n.Sel.Name == "Reader" {
 				found = true
 			}
+		case *ast.Ident:
+			found = found || dot && n.Name == "Reader"
 		}
 		return !found
 	})

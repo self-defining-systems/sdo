@@ -138,34 +138,85 @@ func TestChangedWithinUsesTheRingAndTheGivenClock(t *testing.T) {
 	if !ok || len(changes) != 1 || changes[0].After != "3" || !changes[0].At.Equal(t0) {
 		t.Fatalf("changes = %v ok=%v", changes, ok)
 	}
-	wide, _ := state.ChangedWithin("a", t0, 20*time.Minute)
-	if len(wide) != 2 {
-		t.Fatalf("wide = %v", wide)
+	wide, ok := state.ChangedWithin("a", t0, 10*time.Minute)
+	if !ok || len(wide) != 2 {
+		t.Fatalf("wide = %v ok=%v", wide, ok)
 	}
 	if _, ok := (carried.State{}).ChangedWithin("a", t0, time.Minute); ok {
 		t.Fatal("an empty ring must be ok=false")
 	}
 }
 
-func TestHeldAboveRequiresEverySnapshotInTheWindow(t *testing.T) {
+func TestChangedWithinIsAGapWhenTheRingDoesNotCoverTheWindow(t *testing.T) {
+	state := carried.State{Result: carried.Result{Recent: []carried.Snapshot{snap(-2*time.Minute, "a", "1"), snap(0, "a", "2")}}}
+	changes, ok := state.ChangedWithin("a", t0, 20*time.Minute)
+	if ok || len(changes) != 1 {
+		t.Fatalf("a window longer than the ring must report the changes it saw with ok=false: %v ok=%v", changes, ok)
+	}
+	single := carried.State{Result: carried.Result{Recent: []carried.Snapshot{snap(0, "a", "1")}}}
+	if _, ok := single.ChangedWithin("a", t0, 0); ok {
+		t.Fatal("one snapshot cannot show a change: ok=false")
+	}
+}
+
+func TestChangedWithinSeesAChangeAcrossAFailedRead(t *testing.T) {
+	state := carried.State{Result: carried.Result{Recent: []carried.Snapshot{
+		snap(-4*time.Minute, "a", "1"), {At: t0.Add(-2 * time.Minute), Error: "store down"}, snap(0, "a", "2"),
+	}}}
+	changes, ok := state.ChangedWithin("a", t0, 4*time.Minute)
+	if !ok || len(changes) != 1 || changes[0].Before != "1" || changes[0].After != "2" {
+		t.Fatalf("changes = %v ok=%v", changes, ok)
+	}
+}
+
+func TestDeclaredNoisyKeysAreFlaggedEvenWhenFirstSeenAfterTheBaseline(t *testing.T) {
+	healthy := snap(-10*time.Minute, "limit", "10")
+	state := carried.State{Result: carried.Result{
+		Healthy: &healthy, Declared: []string{"jitter*"},
+		Recent: []carried.Snapshot{snap(0, "limit", "10", "jitter_ms", "5")},
+	}}
+	changes, ok := state.DiffersFromHealthy("*")
+	if !ok || len(changes) != 1 || !changes[0].Noisy {
+		t.Fatalf("changes = %v ok=%v", changes, ok)
+	}
+}
+
+func TestHeldAboveCoversTheWholeWindow(t *testing.T) {
 	state := carried.State{Result: carried.Result{Reader: "r", Recent: []carried.Snapshot{
 		snap(-5*time.Minute, "q", "1"), snap(-3*time.Minute, "q", "9"), snap(-2*time.Minute, "q", "8"), snap(0, "q", "7"),
 	}}}
-	if held, ok := state.HeldAbove("q", 5, t0, 4*time.Minute); !ok || !held {
+	// The value in force at now-d counts: 9 since -3m.
+	if held, ok := state.HeldAbove("q", 5, t0, 3*time.Minute); !ok || !held {
 		t.Fatalf("held=%v ok=%v, want true", held, ok)
 	}
-	if held, ok := state.HeldAbove("q", 5, t0, 6*time.Minute); !ok || held {
-		t.Fatalf("a low value inside the window must break the hold: held=%v ok=%v", held, ok)
+	// At -4m the value in force was 1.
+	if held, ok := state.HeldAbove("q", 5, t0, 4*time.Minute); !ok || held {
+		t.Fatalf("a low value in force inside the window must break the hold: held=%v ok=%v", held, ok)
+	}
+	// Nothing at or before now-6m: the ring does not reach back far enough.
+	if _, ok := state.HeldAbove("q", 5, t0, 6*time.Minute); ok {
+		t.Fatal("a window older than the ring is ok=false, not held")
 	}
 	if _, ok := state.HeldAbove("missing", 5, t0, time.Minute); ok {
 		t.Fatal("a key absent from the window is ok=false")
 	}
-	if _, ok := state.HeldAbove("q", 5, t0.Add(time.Hour), time.Minute); ok {
-		t.Fatal("a window with no snapshot is ok=false")
-	}
 	text := carried.State{Result: carried.Result{Recent: []carried.Snapshot{snap(0, "q", "high")}}}
-	if _, ok := text.HeldAbove("q", 5, t0, time.Minute); ok {
+	if _, ok := text.HeldAbove("q", 5, t0, 0); ok {
 		t.Fatal("a non-numeric value is ok=false")
+	}
+	fresh := carried.State{Result: carried.Result{Recent: []carried.Snapshot{snap(0, "q", "9")}}}
+	if _, ok := fresh.HeldAbove("q", 5, t0, time.Minute); ok {
+		t.Fatal("a reader that just started cannot claim a hold for a minute")
+	}
+}
+
+func TestValuesLoadTolerantlyWhenAKeyIsNowRefused(t *testing.T) {
+	var v carried.Values
+	if err := json.Unmarshal([]byte(`{"ok":"1","old_password":"x"}`), &v); err != nil {
+		t.Fatalf("a stored snapshot with a now-refused key must still load: %v", err)
+	}
+	if _, ok := v.Get("old_password"); ok || v.Len() != 1 {
+		t.Fatalf("refused key kept: %v", v.Keys())
 	}
 }
 

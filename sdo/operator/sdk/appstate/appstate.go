@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -80,7 +81,7 @@ type NoisyDeclarer interface{ NoisyKeys() []string }
 // answer is never taken for the application's state. A refused Values.Set
 // and a panic fail the call too.
 func Run(ctx context.Context, reader Reader, base program.ReadView) (values Values, err error) {
-	view := &budgeted{DetectionContext: base, clock: base, base: base, ctx: ctx}
+	view := &budgeted{detectionContext: base, clock: base, base: base, ctx: ctx}
 	defer func() {
 		if r := recover(); r != nil {
 			values, err = Values{}, fmt.Errorf("app-state reader panicked: %v", r)
@@ -96,11 +97,16 @@ func Run(ctx context.Context, reader Reader, base program.ReadView) (values Valu
 	if err := values.Err(); err != nil {
 		return Values{}, err
 	}
-	return values, nil
+	// The reader may keep the Values it returned; the caller gets its own copy.
+	return values.Clone(), nil
 }
 
+// detectionContext is embedded under an unexported name so reflection cannot
+// reach the full read view behind it: a reader may import reflect.
+type detectionContext = sdk.DetectionContext
+
 type budgeted struct {
-	sdk.DetectionContext
+	detectionContext
 	clock sdk.ObservationClock
 	base  program.ReadView
 	ctx   context.Context
@@ -163,6 +169,14 @@ func (v *budgeted) Read(q program.Query) (program.Observation, error) {
 func (v *budgeted) KubernetesRead(r program.KubernetesRequest) (json.RawMessage, error) {
 	if err := program.ValidateKubernetesRead(r); err != nil {
 		return nil, v.fail(err)
+	}
+	// A proxy subresource returns a whole application response and a log holds
+	// whatever the process printed: neither passes the credential rules every
+	// other read here obeys.
+	for _, segment := range strings.Split(r.Path, "/") {
+		if segment == "proxy" || segment == "log" {
+			return nil, v.fail(fmt.Errorf("app-state readers do not read the %q subresource", segment))
+		}
 	}
 	if err := v.admit(); err != nil {
 		return nil, err

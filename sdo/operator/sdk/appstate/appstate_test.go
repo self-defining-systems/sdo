@@ -193,3 +193,58 @@ func TestRunRecoversAPanickingReader(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestViewHoldsNoReachableFullReadView(t *testing.T) {
+	var view appstate.View
+	_, _ = appstate.Run(context.Background(), readerFunc(func(_ context.Context, v appstate.View) (appstate.Values, error) {
+		view = v
+		return appstate.Values{}, nil
+	}), &base{})
+	elem := reflect.ValueOf(view).Elem()
+	for i := 0; i < elem.NumField(); i++ {
+		if elem.Field(i).CanInterface() {
+			t.Errorf("field %s is reachable by reflection", elem.Type().Field(i).Name)
+		}
+	}
+	if _, ok := view.(program.ReadView); ok {
+		t.Fatal("the view is a program.ReadView")
+	}
+}
+
+func TestKubernetesReadRefusesProxyAndLogSubresources(t *testing.T) {
+	b := &base{}
+	for _, path := range []string{
+		"/api/v1/namespaces/app/services/web/proxy/admin",
+		"/api/v1/namespaces/app/pods/web-0/proxy",
+		"/api/v1/nodes/n1/proxy/stats",
+		"/api/v1/namespaces/app/pods/web-0/log",
+	} {
+		_, err := appstate.Run(context.Background(), readerFunc(func(_ context.Context, v appstate.View) (appstate.Values, error) {
+			_, err := v.KubernetesRead(program.KubernetesRequest{Method: "GET", Path: path})
+			return appstate.Values{}, err
+		}), b)
+		if err == nil {
+			t.Errorf("GET %s was allowed", path)
+		}
+	}
+	if b.reads != 0 {
+		t.Fatalf("refused reads reached the host: %d", b.reads)
+	}
+}
+
+func TestValuesReturnedByRunAreACopyTheReaderCannotMutate(t *testing.T) {
+	var kept *appstate.Values
+	got, err := appstate.Run(context.Background(), readerFunc(func(context.Context, appstate.View) (appstate.Values, error) {
+		var out appstate.Values
+		out.Set("a", "1")
+		kept = &out
+		return out, nil
+	}), &base{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept.Set("late", "x")
+	if _, ok := got.Get("late"); ok {
+		t.Fatal("a late Set by the reader reached the returned values")
+	}
+}

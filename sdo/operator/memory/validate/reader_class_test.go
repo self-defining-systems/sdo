@@ -17,6 +17,8 @@ func TestReaderClassRuleBindsReadersToHealthDetectors(t *testing.T) {
 	}{
 		{"incident reader", "incidents", readerSource, true},
 		{"incident reader through the interface name", "incidents", "package detector\n\nimport \"sdo.dev/operator/sdk/appstate\"\n\nvar _ appstate.Reader = Reader{}\n", true},
+		{"incident reader through an import alias", "incidents", "package detector\n\nimport as \"sdo.dev/operator/sdk/appstate\"\n\nvar _ as.Reader = Reader{}\n", true},
+		{"incident reader through a dot import", "incidents", "package detector\n\nimport . \"sdo.dev/operator/sdk/appstate\"\n\nvar _ Reader = reader{}\n", true},
 		{"health reader", "health", readerSource, false},
 		{"incident detector that only requires a reader's state", "incidents", requireSource, false},
 	} {
