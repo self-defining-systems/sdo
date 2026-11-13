@@ -152,4 +152,21 @@ func TestCarrierUpdatesAreCopyOnWrite(t *testing.T) {
 	}
 	visit(empty, 0)
 }
+
+// The permutation walk above doubles per input (and runs about 45 s at nine),
+// so app state, added later, is checked on its own.
+func TestCarrierAppStateUpdateIsCopyOnWrite(t *testing.T) {
+	source := sdktest.Snapshot{AppState: map[string]carried.Result{"q": {Reader: "q"}}}
+	empty := inputs.New(struct{ sdk.DetectionContext }{})
+	next := empty.WithAppState(source)
+	if _, ok := empty.AppStateResult("q"); ok {
+		t.Fatal("WithAppState mutated its predecessor")
+	}
+	if got, ok := next.AppStateResult("q"); !ok || got.Reader != "q" {
+		t.Fatalf("lost app state: %+v", got)
+	}
+	if len(inputs.New(source).AppStateResults()) != 1 {
+		t.Fatal("results not listed")
+	}
+}
 func ptrTime(at time.Time) *time.Time { return &at }
