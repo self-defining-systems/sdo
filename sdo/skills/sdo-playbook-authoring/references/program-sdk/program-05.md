@@ -58,11 +58,16 @@ type ReconcileFromSource struct{ Ref sdk.ObjectRef }
     removing additions SourceDiff reports; prefer SetField for one field.
     For a Secret the controller writes the literal data of the accepted render
     (the keys the source declares; other keys stay) and nothing records a value:
-    the receipt names the keys. It refuses a Secret whose source has no
-    literal data or whose render is not deterministic (a generated password);
-    then Escalate. Restart the readers that started after the foreign change
-    with RestartRollout later in the same plan, because a running Pod keeps the
-    value it started with (finding secret-readers-predate-change names them).
+    the receipt names the keys. It refuses a Secret whose source has no literal
+    data or whose render is not deterministic (a generated password); then
+    Escalate. Restart the readers that started after the foreign change with
+    RestartRollout later in the same plan, because a running Pod keeps the value
+    it started with (finding secret-readers-predate-change names them). After it
+    restores a StatefulSet's pod template, each Pod still on another revision
+    than status.updateRevision that is failing (ImagePullBackOff, ErrImagePull,
+    CrashLoopBackOff) or not Ready past a short bound is deleted, one at a time
+    in ordinal order, so the controller recreates it at the restored revision;
+    the receipt names each deleted Pod and why.
 
 type RemoveServicePort struct {
 	Ref        sdk.ObjectRef
@@ -228,13 +233,4 @@ func (r Row) Bool(name string) (bool, bool)
 
 func (r Row) Float(name string) (float64, bool)
     Float reads a numeric field.
-
-func (r Row) Int(name string) (int64, bool)
-    Int reads an integer field.
-
-func (r Row) IsNull(name string) bool
-    IsNull reports whether the field is present and null.
-
-func (r Row) String(name string) (string, bool)
-    String reads a string field.
 ```
