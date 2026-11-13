@@ -76,23 +76,25 @@ def test_the_old_skill_pointers_are_gone(skill: str) -> None:
     assert skill not in str(_responder_prompt(incident(1)))
 
 
-def test_the_first_message_lists_the_changes_nearest_onset_then_the_commands() -> None:
+def test_the_first_message_carries_the_candidate_block_then_the_live_pointer() -> None:
     request = _opened_by_a_test("login")
     request.recent_changes.extend(
         [
-            "+2m settings api rate_limit: 100 → 1",
-            "-1m kubectl Deployment/toy/api spec.replicas: 3 → 0",
-            "full list: sdo changes; signals over time: sdo timeline",
+            "CANDIDATES (on every failing path unless marked k of n, plus one hop upstream)",
+            "db  on every failing path; serves passing ops",
+            "  store db: schema changed  (read 06:52:40Z, change untimed)",
+            "live: sdo detect (this view); sdo changes and sdo timeline list every row",
         ]
     )
     prompt = str(_responder_prompt(request))
 
     assert (
-        "Changes nearest onset (newest first, time from onset):\n"
-        "- +2m settings api rate_limit: 100 → 1\n"
-        "- -1m kubectl Deployment/toy/api spec.replicas: 3 → 0\n"
-        "full list: sdo changes; signals over time: sdo timeline\n"
+        "CANDIDATES (on every failing path unless marked k of n, plus one hop upstream)\n"
+        "db  on every failing path; serves passing ops\n"
+        "  store db: schema changed  (read 06:52:40Z, change untimed)\n"
+        "live: sdo detect (this view); sdo changes and sdo timeline list every row\n"
     ) in prompt
+    assert "Changes nearest onset" not in prompt
     assert "timeline.csv" not in prompt
     assert "changes.csv" not in prompt
 
@@ -100,6 +102,7 @@ def test_the_first_message_lists_the_changes_nearest_onset_then_the_commands() -
 def test_the_first_message_names_the_commands_when_no_change_is_listed() -> None:
     prompt = str(_responder_prompt(_opened_by_a_test("login")))
 
+    assert "`sdo detect`" in prompt
     assert "`sdo changes`" in prompt
     assert "`sdo timeline`" in prompt
-    assert "Changes nearest onset" not in prompt
+    assert "CANDIDATES" not in prompt

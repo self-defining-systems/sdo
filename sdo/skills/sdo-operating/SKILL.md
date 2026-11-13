@@ -9,9 +9,9 @@ description: Reading and changing an application through SDO's `sdo` command.
 passing operations), each with its changes near onset, state against last healthy, log errors and clues, then
 what it could not observe and what lies elsewhere. `more:` lines expand one. `.sdo/arch.md` is the app map.
 
-- `sdo detect [--finding ID|NODE]`
-- `sdo map [path OP | near NODE]`: the map's operations, a node's neighbours
-- `sdo changes`, `sdo timeline`: CSV; `--since 30m`, `--component NODE`, `--limit N`
+- `sdo detect [--finding ID|COMPONENT]`
+- `sdo map [path OP | near COMPONENT]`: the map, a path, a component's neighbours
+- `sdo changes`, `sdo timeline`: CSV; `--since 30m`, `--limit N`
 - `sdo source Kind/ns/name`: intended state
 - `sdo try [TEST]`: user tests; one test's request, response, status (read-only)
 - `sdo diagnose NAME --bind ROLE=Kind/ns/name`: test a learned playbook

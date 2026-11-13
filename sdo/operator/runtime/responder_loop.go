@@ -47,6 +47,9 @@ type ToolRequest struct {
 	Finding             string                            `json:"finding,omitempty"`
 	// Test names the user test `try` shows; empty lists them.
 	Test string `json:"test,omitempty"`
+	// MapView is the `map` subcommand ("", path, diff or near); Name is the operation or component it names.
+	MapView string `json:"map_view,omitempty"`
+	Name    string `json:"name,omitempty"`
 	// Since is how far before onset `changes` and `timeline` reach, a Go
 	// duration such as 30m; Limit keeps the newest N changes.
 	Since       string                                 `json:"since,omitempty"`
@@ -671,6 +674,8 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		l.incidentPage(ctx, request, &response)
 	case "try":
 		l.tryUserTest(ctx, request.Test, &response)
+	case "map":
+		l.applicationMap(ctx, request, &response)
 	case "status":
 		response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
 		response.Trust = l.Trust

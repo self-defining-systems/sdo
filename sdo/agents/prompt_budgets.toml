@@ -77,8 +77,8 @@ max_chars = 744
 reason = "Actual benchmark transport appendix: 676 Unicode code points, with 10 percent headroom."
 
 [responder.instructions]
-max_chars = 6600
-reason = "The responder's first message (the inline changes nearest onset add at most 4800 code points; without them 1800 holds): the symptom block of at most 1100 code points (failing user tests grouped by status and server error with failed counts, first failing sample, passing tests, sdo verify), plus the identity line and the two skill lines (about 330 code points with a long skills root), plus headroom."
+max_chars = 4000
+reason = "The responder's first message (the candidate block Go renders adds at most 2048 bytes; without it 1800 holds): the symptom block of at most 1100 code points (failing user tests grouped by status and server error with failed counts, first failing sample, passing tests, sdo verify), plus the identity line and the two skill lines (about 330 code points with a long skills root), plus headroom."
 
 [session.incident_data]
 max_chars = 100
@@ -159,6 +159,10 @@ reason = "Lists copy-pasteable commands (up to ten for menu, three fix commands 
 [tool_stdout.incident]
 max_chars = 5400
 reason = "Measured production rendering 4776 Unicode characters across three-/five-fault, 100-finding and overflow incident fixtures; 10 percent plus 128 characters of path/identity headroom."
+
+[tool_stdout.map]
+max_chars = 4000
+reason = "sdo map prints at most 30 component and 30 operation lines of about 100 characters, or one operation path, one failing-versus-passing diff, or one component's two-hop neighbourhood (at most 12 names per direction), all bounded by Go; beyond the cap cap_text saves the full text to a context file."
 
 [tool_stdout.menu]
 max_chars = 1800
@@ -357,8 +361,8 @@ max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
 [template_data.responder-incident_prompt-recent_changes]
-max_chars = 4800
-reason = "At most ten change lines of at most about 400 code points each (Go caps every value at 60) plus the header and the pointer line; the cap keeps the list inline in the first message."
+max_chars = 2100
+reason = "The candidate block Go renders (the recent_changes proto slot keeps its name): at most 2048 bytes including the live pointer line; the cap keeps it inline in the first message."
 
 [template_data.responder-incident_prompt-symptom]
 max_chars = 5600
@@ -377,8 +381,8 @@ max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
 [template_data.responder-incident_shell-recent_changes]
-max_chars = 4800
-reason = "At most ten change lines of at most about 400 code points each (Go caps every value at 60) plus the header and the pointer line; the cap keeps the list inline in the first message."
+max_chars = 2100
+reason = "The candidate block Go renders (the recent_changes proto slot keeps its name): at most 2048 bytes including the live pointer line; the cap keeps it inline in the first message."
 
 [template_data.responder-incident_shell-skills_root]
 max_chars = 256

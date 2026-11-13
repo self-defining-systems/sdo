@@ -43,6 +43,20 @@ func (v LiveReadView) AppMap() (program.AppMap, error) {
 	return acceptedProgramMap(v.context(), read, repository, commit)
 }
 
+// ArchitectureText reads the accepted architecture document, which holds the
+// application map region and the possible-edge lines `sdo map` reads.
+func (v LiveReadView) ArchitectureText() (string, error) {
+	read, repository, commit, err := v.acceptedRead()
+	if err != nil {
+		return "", err
+	}
+	document, err := read(v.context(), repository, "show", commit+":"+layout.ArchitectureFile)
+	if err != nil {
+		return "", fmt.Errorf("accepted architecture unreadable: %w", err)
+	}
+	return string(document), nil
+}
+
 // DataChecks reads the accepted data-check files by check ID.
 func (v LiveReadView) DataChecks() (map[string]string, error) {
 	read, repository, commit, err := v.acceptedRead()

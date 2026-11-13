@@ -325,8 +325,8 @@ func (l *ResponderLoop) detect(ctx context.Context, ids []string, finding string
 	response.Summary = fmt.Sprintf("%d detectors evaluated; %d current findings", len(response.DetectorStates), len(response.Findings)) + pendingEvaluationSummary(response.DetectorStates)
 	if reads, ok := any(view).(detectReads); ok && len(selected) == 0 {
 		now := l.clock().UTC()
-		recent := incidentRecentChanges(l.pageInput(reads, response.Findings, now))
-		summary := buildDetectSummary(detectInput{Request: l.Request, Findings: response.Findings, View: reads, Now: now, Recovered: l.detectIncidentRecovered(), RecentChanges: recent})
+		page := l.pageInput(reads, response.Findings, now)
+		summary := buildDetectSummary(detectInput{Request: l.Request, Findings: response.Findings, View: reads, Now: now, Recovered: l.detectIncidentRecovered(), AppState: page.AppState})
 		response.Text = summary.Text
 		if finding != "" {
 			text, found := summary.item(finding)

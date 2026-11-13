@@ -43,7 +43,7 @@ def test_the_first_message_template_renders_strictly() -> None:
         "incident_id": "inc-1",
         "namespace": "ns",
         "symptom": "Failing user tests since 10:00:00 UTC (first failing sample):",
-        "recent_changes": "Recent changes: `sdo changes`; signals over time: `sdo timeline`.",
+        "recent_changes": "Candidates: `sdo detect`; every change: `sdo changes`; signals over time: `sdo timeline`.",
         "skills_root": "/opt/sdo/sdo/skills",
         "branch_instruction": "Return incident_result and leave reflection null.",
     }
