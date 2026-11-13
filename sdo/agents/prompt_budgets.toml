@@ -353,8 +353,8 @@ max_chars = 4800
 reason = "At most ten change lines of at most about 400 code points each (Go caps every value at 60) plus the header and the pointer line; the cap keeps the list inline in the first message."
 
 [template_data.responder-incident_prompt-symptom]
-max_chars = 1200
-reason = "The symptom block is bounded to 1100 code points by the renderer; the cap leaves headroom so it is never spilled to a context file."
+max_chars = 5600
+reason = "The symptom block is bounded to 5200 code points by the renderer (every failing user test by name, up to 48, grouped by shared status and error, plus passing names); the cap leaves headroom so it is never spilled to a context file."
 
 [template_data.responder-incident_prompt-skills_root]
 max_chars = 256
