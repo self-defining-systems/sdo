@@ -97,6 +97,20 @@ fuzzops run --pack <dir>/pack --namespace <ns> --skip-reset --operator exec:sdo 
 Baselines (`noop`, `codex`) run on a copy of the same pack deployed by fuzzops itself in another namespace of the
 same cluster, so SDO never sees their namespaces.
 
+## Harness-paged arm (diagnosis decoupled from detection)
+
+`settings.harness_page` in the operator block (`true` = B1's schedule, or `{after, check_after, check_duration, rate}`
+seconds) pages SDO's responder from the harness the way the vanilla baseline B1 is paged. `watch` (`observe.py --page`)
+starts `page.Pager` at its start (about the inject): at `check_after` (20 s) a `check_duration` (10 s) `fuzzops check
+--trace` (binary: `FUZZOPS_BIN` or `PATH`; entry URL: `BENCH_PAGE_ENTRY`), at `after` (30 s) one incident through the
+external-incident inbox (`sdo-external-incident` ConfigMap) whose message is B1's page: failing operations with a sample
+error and counts, the operations that still work, how to try one (`page.py`; `page.json` and `page-live-check.txt` land
+in `$FUZZOPS_OUT`). The hook installs SDO with `mode: external` and `response.external_clues: true` (`OperatorBlock.
+effective_config`; the experiment's `config` may not set `mode`): detectors, synthetic traffic and the state baseline keep
+observing and `sdo detect` serves the candidate view, but their findings never open, join or close the incident; the
+responder's completion closes it (frozen memory). Page to first write and page to fixed are measured from the
+page time in `page.json`, comparable with B1.
+
 ## Dashboard view
 
 `view.py` writes what the fuzzops-bench dashboard shows for a run: `operator/view.json` (`fuzzops.view/v1`, contract in

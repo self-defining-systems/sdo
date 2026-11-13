@@ -82,6 +82,7 @@ that show nothing missing without it are the case for removing it.
 | `response.permissive` | `SDO_RESPONSE_PERMISSIVE` | bool | `false` | broad lane repair permissions excluding Secret and credential APIs |
 | `response.permissive_namespaces` | `SDO_RESPONSE_PERMISSIVE_NAMESPACES` | list (JSON) | `[]` | additional lane namespaces the permissive responder may repair |
 | `response.cleanup_turns` | `SDO_RESPONSE_CLEANUP_TURNS` | int | `2` | how many times the responder's session is asked, after Recovered, to keep or remove the app-file edits it left uncaptured; edits still left after that are discarded and recorded as source_repair_uncaptured. 0 asks no cleanup turn |
+| `response.external_clues` | `SDO_RESPONSE_EXTERNAL_CLUES` | bool | `false` | with mode external: keep the detectors, synthetic traffic and state baseline running as clues (sdo detect, the candidate view). Their findings never open, join or close an external incident; the caller opens it and the responder's completion closes it. Default off: an external controller observes nothing |
 | `response.startup_bound` | `SDO_RESPONSE_STARTUP_BOUND` | duration | `30m0s` | how long a new install waits for SDO to see its application healthy (2 min with no opener firing) before incidents open anyway; until then no incident opens. 0s turns the start-up period off |
 
 ### `detection`
