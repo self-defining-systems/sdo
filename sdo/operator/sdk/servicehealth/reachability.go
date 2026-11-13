@@ -42,6 +42,15 @@ const (
 
 	DefaultReachabilityInterval = 1 * time.Second
 	DefaultReachabilityTimeout  = 1 * time.Second
+	// DefaultReachabilityIdleInterval spaces the dials of a target whose last
+	// Failures dials succeeded. Every dial is a connection the application's
+	// server sees and may count against the prober's source address (sshd
+	// per-source penalties, fail2ban-like and connection-rate limiters), so a
+	// healthy target is dialed at a tenth of the failure cadence. A failed
+	// dial returns the target to DefaultReachabilityInterval at once, so a
+	// real unreachable edge is confirmed within IdleInterval plus
+	// Failures-1 intervals.
+	DefaultReachabilityIdleInterval = 10 * time.Second
 	// DefaultReachabilityFailures consecutive failed dials span four seconds
 	// at the default cadence, clearing three-second data-plane stalls with
 	// margin while reporting sustained failures within five seconds.
@@ -123,12 +132,15 @@ type ReachabilityWindow struct {
 	ObjectiveDigest string                `json:"objectiveDigest,omitempty"`
 	// BaselinePending says the controller could not measure a current baseline
 	// yet. A never-served target is then unknown rather than failing.
-	BaselinePending bool                 `json:"baselinePending,omitempty"`
-	ObservedAt      time.Time            `json:"observedAt"`
-	Interval        time.Duration        `json:"intervalNs"`
-	Timeout         time.Duration        `json:"timeoutNs"`
-	Failures        int                  `json:"failures"`
-	Targets         []TargetObservations `json:"targets"`
+	BaselinePending bool          `json:"baselinePending,omitempty"`
+	ObservedAt      time.Time     `json:"observedAt"`
+	Interval        time.Duration `json:"intervalNs"`
+	// IdleInterval is the spacing of dials of a healthy target; zero means
+	// Interval (every target is dialed at the one cadence).
+	IdleInterval time.Duration        `json:"idleIntervalNs,omitempty"`
+	Timeout      time.Duration        `json:"timeoutNs"`
+	Failures     int                  `json:"failures"`
+	Targets      []TargetObservations `json:"targets"`
 	// Omitted counts derived targets beyond MaxReachabilityTargets.
 	Omitted int            `json:"omitted,omitempty"`
 	Prober  ProberIdentity `json:"prober"`
@@ -274,7 +286,11 @@ func (d reachabilityDetector) Confirmed(ctx sdk.DetectionContext) bool {
 				continue
 			}
 			recent := o.Samples[len(o.Samples)-count:]
-			if w.ObservedAt.Sub(recent[len(recent)-1].At) > 3*interval+w.Timeout {
+			age := 3*interval + w.Timeout
+			if recent[len(recent)-1].OK && w.IdleInterval > interval {
+				age = w.IdleInterval + 3*interval + w.Timeout // a healthy target is dialed once per idle interval
+			}
+			if w.ObservedAt.Sub(recent[len(recent)-1].At) > age {
 				continue
 			}
 			valid := true
