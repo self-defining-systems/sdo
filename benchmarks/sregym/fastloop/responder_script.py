@@ -21,6 +21,11 @@ from sdo.contracts import AgentTask, IncidentRequest
 PLAN = r"""
 started = _now()
 diagnosis = _tool("diagnose")
+detect_text = str(_tool("detect").get("text", ""))
+try:
+    investigations_text = str(_tool("investigations").get("text", ""))
+except RuntimeError as error:
+    investigations_text = f"unavailable: {error}"
 plan_ids, programs = _matched_plans(diagnosis)
 if plan_ids:
     _tool("apply", *plan_ids)
@@ -165,7 +170,19 @@ result = json_format.ParseDict(
                 "passed": healthy,
                 "details": verification.get("summary") or "detector verification",
                 "observed_at": completed,
-            }
+            },
+            {
+                "name": "sdo detect",
+                "passed": "CANDIDATES" in detect_text,
+                "details": (detect_text or "empty")[:6000],
+                "observed_at": completed,
+            },
+            {
+                "name": "sdo investigations",
+                "passed": bool(investigations_text) and not investigations_text.startswith("unavailable"),
+                "details": (investigations_text or "empty")[:3000],
+                "observed_at": completed,
+            },
         ],
         "usage": {"llm_calls": 0, "input_tokens": 0, "output_tokens": 0},
         "timing": {"started_at": started, "completed_at": completed},
@@ -207,7 +224,8 @@ def responder_script(request: IncidentRequest) -> AgentScript:
     save = "\nstate_path.write_text(json.dumps(state))\n"
     load = "state = json.loads(state_path.read_text())\n"
     phases = [
-        PLAN + "\nstate = dict(started=started, plan_ids=plan_ids, programs=programs)" + save,
+        PLAN + "\nstate = dict(started=started, plan_ids=plan_ids, programs=programs, detect_text=detect_text, "
+        "investigations_text=investigations_text)" + save,
         load + DRIFT + "\nstate.update(repairs=repairs, labels=[json_format.MessageToDict(x, "
         "preserving_proto_field_name=True) for x in labels], unsure=list(unsure))" + save,
         load
@@ -215,8 +233,9 @@ def responder_script(request: IncidentRequest) -> AgentScript:
         + REPAIR
         + "\nstate.update(repairs=repairs, first=first)"
         + save,
-        load + "started, plan_ids, programs, repairs, first, unsure = (state[k] for k in ('started', "
-        "'plan_ids', 'programs', 'repairs', 'first', 'unsure'))\nlabels = "
+        load + "started, plan_ids, programs, repairs, first, unsure, detect_text, investigations_text = "
+        "(state[k] for k in ('started', 'plan_ids', 'programs', 'repairs', 'first', 'unsure', 'detect_text', "
+        "'investigations_text'))\nlabels = "
         "[json_format.ParseDict(x, DriftEvent()) for x in state['labels']]\n"
         + VERIFY
         + "\nstate_path.unlink()\nprint(json_format.MessageToJson(result, "

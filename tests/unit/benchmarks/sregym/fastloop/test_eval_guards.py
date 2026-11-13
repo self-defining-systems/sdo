@@ -404,6 +404,10 @@ def _bootstrap_repository(repository: Path) -> str:
     """Identical accepted inputs for cache preparation and the fresh-guard contract."""
     root = Path(__file__).resolve().parents[5]
     shutil.copytree(root / "apps/toy/seed", repository)
+    # This repository has no rendered source for the seed's application map and user tests to name.
+    shutil.rmtree(repository / ".sdo/diagnostics/traffic")
+    arch = repository / ".sdo/arch.md"
+    arch.write_text(arch.read_text().split("<!-- sdo:application-map:begin -->")[0])
     (repository / "service.yaml").write_text(
         "apiVersion: v1\nkind: Service\nmetadata:\n  name: frontend\nspec:\n  ports:\n  - port: 80\n"
     )

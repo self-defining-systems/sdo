@@ -1,0 +1,10 @@
+apiVersion: sdo.dev/v1alpha1
+kind: TrafficWorkload
+name: verify
+purpose: verify-burst
+ratePerSecond: 4
+duration: 3s
+scenarios:
+  - {id: frontend-home, weight: 1}
+  - {id: frontend-journey, weight: 1}
+  - {id: catalog-home, weight: 1}

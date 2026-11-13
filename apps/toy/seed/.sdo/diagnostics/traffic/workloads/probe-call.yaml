@@ -1,0 +1,18 @@
+apiVersion: sdo.dev/v1alpha1
+kind: TrafficWorkload
+name: probe-call
+purpose: health-probe
+ratePerSecond: 1
+timeout: 2s
+slo:
+  window: 30
+  minSamples: 3
+  maxAge: 30s
+  maxErrorRate: 0.5
+  maxTimeoutRate: 0.5
+  latencyPercentile: 50
+  maxLatency: 1s
+scenarios:
+  - {id: frontend-home, weight: 1}
+  - {id: frontend-journey, weight: 1}
+  - {id: catalog-home, weight: 1}
