@@ -608,9 +608,10 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	c.evaluationIteration++
 	c.evaluationAt = now.UTC()
 	c.mu.Unlock()
-	// Evaluate the batch concurrently, then apply the results below in batch
-	// order: a hung detector must not delay the others, and what the controller
-	// decides must not depend on which detector answered first.
+	// Evaluate the batch concurrently and apply each result as its detector
+	// returns, so a hung or slow detector never delays another's finding. Each
+	// detector's tracker state is its own; the one cross-detector step, opening
+	// an incident early, is gated by earlyDispatchSafe.
 	skipLearned := onboardingCandidate == nil && (c.pendingOnboarding != nil || setupSweep && !confirmed && !confirmationExpired)
 	var fresh []sdk.Detector
 	for _, detector := range detectors {
@@ -622,22 +623,31 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			fresh = append(fresh, detector)
 		}
 	}
-	evaluated := evaluateDetectors(ctx, fresh, snapshot)
-	for _, detector := range detectors {
+	var dispatchErr error // first early-dispatch error; the step still finishes
+	pending := make(map[string]time.Duration, len(fresh))
+	for _, detector := range fresh {
+		pending[detector.Spec().ID] = detector.Spec().Interval
+	}
+	// earlyDispatchSafe reports that only slow detectors are still running and
+	// none of them holds a firing opener a clean result could still clear, so
+	// opening the incident now cannot differ from opening it at the end.
+	earlyDispatchSafe := func() bool {
+		for id, interval := range pending {
+			if interval < slowDetectorInterval || c.openerFiring(id) {
+				return false
+			}
+		}
+		return true
+	}
+	apply := func(detector sdk.Detector, result setupDetection) error {
 		spec := detector.Spec()
-		if skipLearned && learnedIncidentDetector(spec) {
-			continue
-		}
-		result, cached := setupResults[spec.ID]
-		if !cached {
-			result = evaluated[spec.ID]
-		}
+		delete(pending, spec.ID)
 		findings, status, detectErr := validateDetectorObservation(detector, snapshot, result.findings, result.err)
 		if detectErr != nil {
 			c.resetGate(spec.ID)
 			c.recordDetectorError(spec.ID, now, detectErr)
 			errored = true
-			continue
+			return nil
 		}
 		if status == DetectorEvaluationPending {
 			c.resetGate(spec.ID)
@@ -646,11 +656,11 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 				c.history = append([]DetectorEvaluation(nil), c.history[len(c.history)-100:]...)
 			}
 			c.trackClearStreak(spec.ID, now, false)
-			continue
+			return nil
 		}
 		validFindings := findings
 		if setupHealthy && learnedIncidentDetector(spec) && c.disableSetupDetector(spec, validFindings, now, onboardingCandidate) {
-			continue
+			return nil
 		}
 		changes := c.tracker.Observe(now, spec.ID, validFindings)
 		c.observeGate(spec.ID, now, validFindings)
@@ -671,7 +681,33 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			c.admitActivation(ctx, finding, now, c.detectorSpecs[spec.ID])
 		}
 		c.recordFiring(spec, now, validFindings, changes)
+		if len(changes.Activated) == 0 || len(pending) == 0 || !earlyDispatchSafe() {
+			return nil
+		}
+		// Every fast detector is applied and only slow ones remain: the
+		// incident opens now rather than after the slowest returns.
+		return c.dispatchReady(ctx, now, snapshot)
 	}
+	// Results cached by setup health apply first, in batch order; the rest
+	// apply in completion order, so a fast detector's finding never waits for
+	// a slow one. Each detector owns its own tracker state, so the order
+	// between detectors changes no decision; sampleFindings is sorted below.
+	for _, detector := range detectors {
+		spec := detector.Spec()
+		if skipLearned && learnedIncidentDetector(spec) {
+			continue
+		}
+		if result, cached := setupResults[spec.ID]; cached {
+			if err := apply(detector, result); err != nil && dispatchErr == nil {
+				dispatchErr = err
+			}
+		}
+	}
+	evaluateDetectorsEach(ctx, fresh, snapshot, func(detector sdk.Detector, result setupDetection) {
+		if err := apply(detector, result); err != nil && dispatchErr == nil {
+			dispatchErr = err
+		}
+	})
 	if setupHealthy {
 		c.mu.Lock()
 		c.setupEvaluatedRevision = c.config.SourceCommit
@@ -723,8 +759,15 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	c.maybeCloseIncident(ctx, now, snapshot)
 	err = c.dispatchReady(ctx, now, snapshot)
 	c.refreshIncidentView(now, true)
+	if err == nil {
+		err = dispatchErr
+	}
 	return err
 }
+
+// slowDetectorInterval is the interval from which a detector counts as slow:
+// the controller opens an incident without waiting for it.
+const slowDetectorInterval = 30 * time.Second
 
 // quiet reports that nothing is wrong or pending: no incident or closure, no
 // active or confirming opener, and nothing waiting in the batcher. Clues do
@@ -2006,10 +2049,10 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		History: evaluationsContract(history), IncidentOpen: c.incidentOpen, ResponderDone: c.responderDone,
 		DispatchError: c.dispatchError, IncidentDetectedAt: optionalTimestamp(c.incidentDetectedAt),
 		IncidentDispatchedAt: optionalTimestamp(c.incidentDispatchedAt), ResponderCompletedAt: optionalTimestamp(c.responderCompletedAt),
-		EscalatedAt: optionalTimestamp(c.escalatedAt),
-		DetectorClearSince:     timestampsContract(c.detectorClearSince),
-		DispatchState:          dispatchState,
-		IncidentFindingKeys:    append([]string(nil), c.incidentFindingKeys...), ClosureState: c.closureState,
+		EscalatedAt:         optionalTimestamp(c.escalatedAt),
+		DetectorClearSince:  timestampsContract(c.detectorClearSince),
+		DispatchState:       dispatchState,
+		IncidentFindingKeys: append([]string(nil), c.incidentFindingKeys...), ClosureState: c.closureState,
 		ClosureReceipt: closureReceiptContract(c.closureReceipt), ClosureFailure: closureFailureContract(c.closureFailure), FailedClosures: cloneFailedClosures(c.failedClosures),
 		LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID, LastAcknowledgedExternalIncidentId: c.lastAcknowledgedExternalIncidentID, QueuedReflectionIncidentIds: append([]string(nil), c.reflections.queued...), QueuedReflectionsUnknown: c.reflections.unknown,
 		EvaluationIteration: int32(c.evaluationIteration), StepCount: c.stepCount, DetectorTimeline: timeline, IncidentView: view,
