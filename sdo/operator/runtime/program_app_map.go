@@ -71,22 +71,7 @@ func acceptedProgramMap(ctx context.Context, read gitRead, repository, commit st
 	return programMap(parsed), nil
 }
 
-// programMap projects the map onto the SDK's read-only form.
-func programMap(m appmap.Map) program.AppMap {
-	out := program.AppMap{Components: []program.AppComponent{}}
-	for _, c := range m.Components {
-		component := program.AppComponent{Name: c.Name, Workload: c.Workload, Services: append([]string(nil), c.Services...), HoldsData: c.HoldsData}
-		if c.Data != nil {
-			component.Data = &program.DataRole{Engine: c.Data.Engine, Role: c.Data.Role, DerivedFrom: append([]string(nil), c.Data.DerivedFrom...)}
-		}
-		out.Components = append(out.Components, component)
-	}
-	for _, e := range m.Edges {
-		out.Edges = append(out.Edges, program.AppEdge{From: e.From, To: e.To})
-	}
-	out.Procedures = m.ProgramProcedures()
-	return out
-}
+func programMap(m appmap.Map) program.AppMap { return m.Program() }
 
 func acceptedDataChecks(ctx context.Context, read gitRead, repository, commit string) (map[string]string, error) {
 	checks := map[string]string{}
