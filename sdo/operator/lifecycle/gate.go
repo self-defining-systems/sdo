@@ -104,7 +104,15 @@ func failing(checks []operability.Check) bool {
 // authored is detector_fault first. A failing verdict that names no firing
 // detector cannot be attributed to the designer, so it is the application's.
 func verdictChecks(verdict HealthVerdict) []operability.Check {
-	return append(detectorVerdictChecks(verdict), coverageNoteChecks(verdict.CoverageNotes)...)
+	checks := append(detectorVerdictChecks(verdict), coverageNoteChecks(verdict.CoverageNotes)...)
+	if verdict.Outcome == VerificationClear && verdict.ExistingRecords.Required && verdict.ExistingRecords.Exercised == 0 {
+		checks = append(checks, operability.Check{
+			ID: "O4.existing-records", Phase: operability.PhaseLive, Status: operability.StatusFail, Cause: operability.CauseDetectorFault,
+			Detail: "no marked step returned a record the probe did not write; grant the probe identity read access to existing user records (e.g. via the probe-identity procedure) or declare no_user_records: <why>",
+			Paths:  []string{layout.ArchitectureFile},
+		})
+	}
+	return checks
 }
 
 // coverageNoteChecks records the detectors that cleared without observing part

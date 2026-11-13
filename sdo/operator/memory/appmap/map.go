@@ -844,3 +844,18 @@ func (m Map) CheckPossibleEdges(doc string) []Finding {
 	}
 	return out
 }
+
+// NeedsExistingRecords reports whether acceptance must see a marked step
+// return a record the probe did not write: the map holds data and does not
+// declare no_user_records.
+func (m Map) NeedsExistingRecords() bool {
+	if strings.TrimSpace(m.NoUserRecords) != "" {
+		return false
+	}
+	for _, comp := range m.Components {
+		if comp.HoldsData {
+			return true
+		}
+	}
+	return false
+}

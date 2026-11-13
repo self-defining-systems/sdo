@@ -58,6 +58,9 @@ type Verdict struct {
 	Status         Status                `json:"status"`
 	Unavailable    []UnavailableDetector `json:"unavailable,omitempty"`
 	DetectorStates []DetectorState       `json:"detector_states,omitempty"`
+	// ExistingRecordsExercised counts the probe samples in which a step marked
+	// as reading existing records returned a record the probe did not write.
+	ExistingRecordsExercised int `json:"existing_records_exercised,omitempty"`
 }
 
 // Decode parses the verdict strictly: an unknown field or status means the two

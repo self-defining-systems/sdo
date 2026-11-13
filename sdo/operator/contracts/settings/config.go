@@ -41,8 +41,10 @@ var AgentEfforts = []string{"low", "medium", "high", "xhigh", "max"}
 // set, and a test keeps the two equal.
 var ReasoningSummaries = []string{"auto", "concise", "detailed", "none"}
 
-// DefaultLifecycleTimeout is the limit of one lifecycle (detection designer) session.
-const DefaultLifecycleTimeout = 900 * time.Second
+// DefaultLifecycleTimeout is the limit of one lifecycle (detection designer) session. A from-scratch
+// onboarding judge spends 13+ minutes reading before it authors (36-52 calls at 900 s timed out with
+// no writes in 3 of 3 runs) and the retry needs 8-10 minutes, so one session needs generous headroom over 900 s (quality over onboarding speed).
+const DefaultLifecycleTimeout = 3600 * time.Second
 
 // DefaultMemoryCheckTimeout bounds one `sdo-operator memory check` run inside a worker.
 const DefaultMemoryCheckTimeout = 300 * time.Second

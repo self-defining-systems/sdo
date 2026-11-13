@@ -17,6 +17,7 @@ import (
 	"sdo.dev/operator/evaluation"
 	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
@@ -55,6 +56,9 @@ type HealthEvaluation struct {
 	// CoverageNotes are clear detectors that named what they could not
 	// observe; they never hold the verdict.
 	CoverageNotes []lifecycle.DetectorState
+	// ExistingRecordsExercised counts probe samples whose marked step
+	// returned a record the probe did not write.
+	ExistingRecordsExercised int
 }
 
 type AcceptedDetectorProbe struct {
@@ -132,7 +136,7 @@ func decodeHealthVerdict(stdout, stderr []byte) (HealthEvaluation, error) {
 	if err != nil {
 		return HealthEvaluation{}, fmt.Errorf("decode health detector verdict: %w (stdout=%q stderr=%q)", err, boundedHealthOutput(stdout), boundedHealthOutput(stderr))
 	}
-	result := HealthEvaluation{Status: string(verdict.Status)}
+	result := HealthEvaluation{Status: string(verdict.Status), ExistingRecordsExercised: verdict.ExistingRecordsExercised}
 	for _, state := range verdict.DetectorStates {
 		if state.Status == "clear" && state.Reason != "" {
 			result.CoverageNotes = append(result.CoverageNotes, lifecycle.DetectorState{DetectorID: state.DetectorID, Status: state.Status, Reason: state.Reason})
@@ -275,7 +279,9 @@ func (v IndependentHealthVerifier) VerifyCandidate(ctx context.Context, root, co
 	if err != nil {
 		return lifecycle.HealthVerdict{}, err
 	}
-	if verdict := verdictOf(evaluation); verdict.Outcome != lifecycle.VerificationClear {
+	verdict := verdictOf(evaluation)
+	verdict.ExistingRecords = lifecycle.ExistingRecordsEvidence{Required: recordsRequired(root), Exercised: evaluation.ExistingRecordsExercised}
+	if verdict.Outcome != lifecycle.VerificationClear {
 		return verdict, nil
 	}
 	if got, err := git("rev-parse", "HEAD:"+layout.DiagnosticsDir); err != nil || got != detectorTree {
@@ -284,7 +290,23 @@ func (v IndependentHealthVerifier) VerifyCandidate(ctx context.Context, root, co
 	if status, err := git("status", "--porcelain"); err != nil || status != "" {
 		return lifecycle.HealthVerdict{}, errors.New("verified repository changed during health verification")
 	}
-	return verdictOf(evaluation), nil
+	return verdict, nil
+}
+
+// recordsRequired reports whether the candidate's application map needs a
+// marked step to read records the probe did not write. An unreadable or
+// unparsable map requires nothing here: the shared validator owns that finding.
+func recordsRequired(root string) bool {
+	data, err := os.ReadFile(filepath.Join(root, layout.ArchitectureFile))
+	if err != nil {
+		return false
+	}
+	region, found, err := appmap.Find(string(data))
+	if err != nil || !found {
+		return false
+	}
+	parsed, err := appmap.Parse(region.YAML)
+	return err == nil && parsed.NeedsExistingRecords()
 }
 
 // Verify the configured operator root before a build can import any modules.

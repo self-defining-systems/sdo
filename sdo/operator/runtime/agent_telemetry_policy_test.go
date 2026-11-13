@@ -44,7 +44,7 @@ func TestAgentWorkerEnvironmentCarriesTheBrokersTelemetryPolicy(t *testing.T) {
 		// The operator configuration's agent section and replay travel with every worker, defaults included.
 		for variable, value := range map[string]string{
 			worker_registry.ProviderEnvironment: "codex", worker_registry.EffortEnvironment: "medium", "SDO_RESPONDER_MODEL": "m",
-			worker_registry.LifecycleTimeoutEnvironment: "900", worker_registry.MemoryCheckTimeoutEnvironment: "300", settings.ReplayEnvironment: "off",
+			worker_registry.LifecycleTimeoutEnvironment: "3600", worker_registry.MemoryCheckTimeoutEnvironment: "300", settings.ReplayEnvironment: "off",
 		} {
 			if environment[variable] != value {
 				t.Errorf("%s: %s = %q, want %q", name, variable, environment[variable], value)

@@ -51,6 +51,16 @@ type HealthVerdict struct {
 	// could not observe (a store Go reads but never read healthy). They never
 	// hold the verdict; the operability report records them under O3.
 	CoverageNotes []DetectorState
+	// ExistingRecords is what the probes' existing-records steps saw. It gates
+	// onboarding acceptance only; steady-state evaluation never reads it.
+	ExistingRecords ExistingRecordsEvidence
+}
+
+// ExistingRecordsEvidence says whether the accepted map needs an exercised
+// existing-records step and how many probe samples exercised one.
+type ExistingRecordsEvidence struct {
+	Required  bool
+	Exercised int
 }
 
 // Feedback words the verdict, with each detector's state, for a reader that
