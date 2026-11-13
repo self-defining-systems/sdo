@@ -1,6 +1,84 @@
 package storestate
 
-import "strings"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+// A postgres group value carries, after the table count and definition digest,
+// the group's index, constraint and trigger counts ("137 89f0cb69 i412 c88
+// t14"), so a changed group says what kind of object was added or dropped.
+// Other engines' values carry the first two fields only.
+var groupKinds = []struct{ tag, one, many string }{{"i", "index", "indexes"}, {"c", "constraint", "constraints"}, {"t", "trigger", "triggers"}}
+
+// groupCounts parses a group value into its table count and the per-kind
+// counts, which are ok only when the value carries them.
+func groupCounts(value string) (tables int, kinds [3]int, ok bool) {
+	fields := strings.Fields(value)
+	if len(fields) != 5 {
+		return 0, kinds, false
+	}
+	tables, err := strconv.Atoi(fields[0])
+	if err != nil {
+		return 0, kinds, false
+	}
+	for i, kind := range groupKinds {
+		n, err := strconv.Atoi(strings.TrimPrefix(fields[2+i], kind.tag))
+		if err != nil || !strings.HasPrefix(fields[2+i], kind.tag) {
+			return 0, kinds, false
+		}
+		kinds[i] = n
+	}
+	return tables, kinds, true
+}
+
+func signedCount(n int, one, many string) string {
+	if n == 1 || n == -1 {
+		return fmt.Sprintf("%+d %s", n, one)
+	}
+	return fmt.Sprintf("%+d %s", n, many)
+}
+
+// describeGroup renders a changed group digest in readable terms: the database,
+// the group, and which kind of object was added or dropped. ok is false when
+// the change is not a group digest.
+func describeGroup(c Change) (key, before, after string, ok bool) {
+	k := c.Key()
+	db, object, scoped := strings.Cut(k.Scope, ".")
+	if !scoped || !isCatalogGroup(object) || k.Name != catalogGroupName {
+		return "", "", "", false
+	}
+	group, _, _ := strings.Cut(strings.TrimSuffix(strings.TrimPrefix(object, catalogGroupPrefix), "}"), " ")
+	key = fmt.Sprintf("%s definitions (table group %s of %s)", db, group, catalogGroups)
+	if c.Before == nil || c.After == nil {
+		if c.After == nil {
+			return key + " removed", "", "", true
+		}
+		return key + " added", "", "", true
+	}
+	bt, bk, bok := groupCounts(c.Before.Value)
+	at, ak, aok := groupCounts(c.After.Value)
+	if !bok || !aok {
+		return key + ": a definition changed", "", "", true
+	}
+	var deltas []string
+	if at != bt {
+		deltas = append(deltas, signedCount(at-bt, "table", "tables"))
+	}
+	for i, kind := range groupKinds {
+		if ak[i] != bk[i] {
+			deltas = append(deltas, signedCount(ak[i]-bk[i], kind.one, kind.many))
+		}
+	}
+	if len(deltas) == 0 {
+		deltas = []string{"a definition changed in place (same object counts)"}
+	}
+	counts := func(tables int, kinds [3]int) string {
+		return fmt.Sprintf("%d tables, %d indexes, %d constraints, %d triggers", tables, kinds[0], kinds[1], kinds[2])
+	}
+	return key + ": " + strings.Join(deltas, ", "), counts(bt, bk), counts(at, ak), true
+}
 
 // A catalog too large for the read's output budget (hundreds of tables, a
 // thousand constraints and indexes) is not cut: the read digests it by group

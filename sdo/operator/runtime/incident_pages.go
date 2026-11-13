@@ -461,14 +461,8 @@ func storeChangeRows(stores []storestate.StoreChanges) []IncidentChange {
 			continue
 		}
 		for _, change := range store.Changes {
-			row := IncidentChange{At: store.ObservedAt, Source: "store", Component: store.Component, ReaderOrObject: store.Pod.Kind + "/" + store.Pod.Name, Key: change.Key().String()}
-			if change.Before != nil {
-				row.Before = bounded(change.Before.Value)
-			}
-			if change.After != nil {
-				row.After = bounded(change.After.Value)
-			}
-			rows = append(rows, row)
+			key, before, after := change.Describe()
+			rows = append(rows, IncidentChange{At: store.ObservedAt, Source: "store", Component: store.Component, ReaderOrObject: store.Pod.Kind + "/" + store.Pod.Name, Key: key, Before: bounded(before), After: bounded(after), Noisy: change.Noisy})
 		}
 	}
 	return rows
@@ -520,14 +514,16 @@ func relativeOffset(d time.Duration) string {
 // incidentChangeRows returns them) newest first, untimed rows last, then the
 // pointer to the full commands.
 func recentChangeLines(rows []IncidentChange, onset time.Time) []string {
+	// Noisy rows (counters that moved all the while healthy) stay in `sdo changes`
+	// and never take an inline slot.
 	ordered := make([]IncidentChange, 0, len(rows))
 	for index := len(rows) - 1; index >= 0; index-- {
-		if !rows[index].At.IsZero() {
+		if !rows[index].At.IsZero() && !rows[index].Noisy {
 			ordered = append(ordered, rows[index])
 		}
 	}
 	for _, row := range rows {
-		if row.At.IsZero() {
+		if row.At.IsZero() && !row.Noisy {
 			ordered = append(ordered, row)
 		}
 	}

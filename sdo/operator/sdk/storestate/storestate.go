@@ -244,6 +244,25 @@ func (f Facts) Lookup(k Key) (Item, bool) {
 type Change struct {
 	Before *Item `json:"before,omitempty"`
 	After  *Item `json:"after,omitempty"`
+	// Noisy is set when the item changed in most of the store's healthy
+	// readings (a key count, an offset): its change says nothing by itself.
+	Noisy bool `json:"noisy,omitempty"`
+}
+
+// Describe renders the change for a reader: the item's key and its before and
+// after values. A digest of a large catalog's table group (catalog_group.go) is
+// described by what it says, such as "+1 trigger", never by its hashes.
+func (c Change) Describe() (key, before, after string) {
+	if key, before, after, ok := describeGroup(c); ok {
+		return key, before, after
+	}
+	if c.Before != nil {
+		before = c.Before.Value
+	}
+	if c.After != nil {
+		after = c.After.Value
+	}
+	return c.Key().String(), before, after
 }
 
 // Key returns the changed item's identity.

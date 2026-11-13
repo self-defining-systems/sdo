@@ -228,16 +228,16 @@ func withStoreChanges(state *StateChanges, view sdk.DetectionContext, now time.T
 			if len(change.Fields) == maxStateFields {
 				break
 			}
-			field := StateFieldChange{Field: item.Key().String()}
-			if item.Before != nil {
-				field.Before = bounded(item.Before.Value)
+			if item.Noisy {
+				continue
 			}
-			if item.After != nil {
-				field.After = bounded(item.After.Value)
-			}
+			key, before, after := item.Describe()
+			field := StateFieldChange{Field: key, Before: bounded(before), After: bounded(after)}
 			change.Fields = append(change.Fields, field)
 		}
-		added = append(added, change)
+		if len(change.Fields) > 0 {
+			added = append(added, change)
+		}
 	}
 	if len(added) == 0 {
 		return state

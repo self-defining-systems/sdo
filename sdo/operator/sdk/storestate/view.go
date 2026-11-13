@@ -91,6 +91,7 @@ func storeChanges(view sdk.DetectionContext, adapter Adapter, component string, 
 		return []StoreChanges{{Component: component, Engine: engine, Error: reason}}
 	}
 	baselines := promotedBaselines(adapter, component, result)
+	history := promotedHistory(adapter, component, result)
 	out := make([]StoreChanges, 0, len(result.Readings))
 	for _, reading := range result.Readings {
 		entry := StoreChanges{Component: component, Engine: engine, Pod: reading.Ref(), ObservedAt: reading.ObservedAt}
@@ -103,6 +104,7 @@ func storeChanges(view sdk.DetectionContext, adapter Adapter, component string, 
 		if baseline, ok := pick(baselines, reading.Pod); ok {
 			entry.Baselined, entry.BaselineAt = true, baseline.At
 			entry.Changes = Diff(baseline, current)
+			markNoisy(entry.Changes, pickHistory(history, reading.Pod))
 		}
 		if current.Holders != nil {
 			entry.Holders = ResolveHolders(view, entry.Pod, current.Holders)
@@ -189,6 +191,46 @@ func UsableAsBaseline(id string, result podread.Result) error {
 		}
 	}
 	return nil
+}
+
+// pickHistory returns the healthy readings of pod, or the only Pod's.
+func pickHistory(history map[string][]Facts, pod string) []Facts {
+	if h, ok := history[pod]; ok {
+		return h
+	}
+	if len(history) == 1 {
+		for _, h := range history {
+			return h
+		}
+	}
+	return nil
+}
+
+// minNoisySamples is how many healthy readings decide that an item is noisy.
+const minNoisySamples = 4
+
+// markNoisy flags each change whose item changed value between most pairs of
+// consecutive healthy readings: a counter moves with every sample, while a
+// setting or a definition does not. It reads the history, never the item's name.
+func markNoisy(changes []Change, history []Facts) {
+	if len(history) < minNoisySamples {
+		return
+	}
+	for i := range changes {
+		key := changes[i].Key()
+		moved, prev := 0, ""
+		for j, f := range history {
+			value := ""
+			if item, ok := f.Lookup(key); ok {
+				value = item.Value
+			}
+			if j > 0 && value != prev {
+				moved++
+			}
+			prev = value
+		}
+		changes[i].Noisy = moved*2 > len(history)-1
+	}
 }
 
 // pick returns the baseline of pod, or the only baseline when there is one, so
