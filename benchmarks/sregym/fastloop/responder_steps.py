@@ -110,7 +110,12 @@ def _matched_plans(diagnosis: dict[str, Any]) -> tuple[list[str], list[str]]:
         if not program_id or not isinstance(bindings, dict) or key in seen:
             continue
         seen.add(key)
-        planned = _tool("plan", program_id, *_binding_args(bindings))
+        try:
+            binding_args = _binding_args(bindings)
+        except ValueError:
+            # The scripted CLI binds objects only: leave this playbook to the source-restore repair below.
+            continue
+        planned = _tool("plan", program_id, *binding_args)
         if planned.get("plan_id"):
             plan_ids.append(planned["plan_id"])
             programs.append(program_id)

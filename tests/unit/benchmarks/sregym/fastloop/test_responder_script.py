@@ -478,3 +478,13 @@ def test_script_records_the_candidate_view_and_investigations(tmp_path):
     assert '_tool("detect")' in steps[0].command
     assert '_tool("investigations")' in steps[0].command
     assert "sdo detect" in steps[3].command and "CANDIDATES" in steps[3].command
+
+
+def test_matched_plan_with_scalar_bindings_is_left_to_the_source_repair(monkeypatch):
+    from benchmarks.sregym.fastloop import responder_steps
+
+    monkeypatch.setattr(responder_steps, "_tool", lambda *args: pytest.fail(f"planned {args}"))
+    diagnosis = {
+        "program_runs": [{"program_id": "p", "verdict": {"result": "Match"}, "bindings": {"values": {"port": 80}}}]
+    }
+    assert responder_steps._matched_plans(diagnosis) == ([], [])
