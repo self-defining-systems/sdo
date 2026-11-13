@@ -13,7 +13,7 @@ import (
 
 func concurrentRead(command string) bool {
 	switch command {
-	case "status", "detect", "diagnose", "menu", "source", "changes", "timeline":
+	case "status", "detect", "diagnose", "menu", "source", "changes", "timeline", "try":
 		return true
 	}
 	return false
@@ -29,12 +29,13 @@ func (l *ResponderLoop) handleRead(ctx context.Context, request ToolRequest) (re
 	var read *ResponderLoop
 	var prepareErr error
 	l.locked(func() {
+		l.startNotes()
 		if request.Command == "menu" || request.Command == "diagnose" {
 			prepareErr = l.loadWorkingPrograms(ctx, request.ProgramID)
 		}
 		read = &ResponderLoop{
 			Request: l.Request, Programs: l.Programs, Provider: l.Provider, Detectors: l.Detectors,
-			Executor: l.Executor, ReadView: l.ReadView, DiagnosisDeadline: l.DiagnosisDeadline,
+			Executor: l.Executor, Traffic: l.Traffic, ReadView: l.ReadView, DiagnosisDeadline: l.DiagnosisDeadline,
 			Now: l.Now, GitRead: l.GitRead, Trust: l.Trust, MenuConfig: l.MenuConfig,
 			IncidentStatus: l.IncidentStatus, CurrentEvidence: l.CurrentEvidence, MutationGate: l.MutationGate, IncidentSources: l.IncidentSources,
 			CorpusSessionRoot: l.CorpusSessionRoot, sessionID: l.sessionID, MaxBatches: l.MaxBatches,
@@ -80,6 +81,9 @@ func (l *ResponderLoop) handleRead(ctx context.Context, request ToolRequest) (re
 				lines[i] = note.String()
 			}
 			response.Summary = "automatic stage ran while you worked: " + strings.Join(lines, "; ") + ". " + response.Summary
+		}
+		if request.Command == "detect" && request.Finding == "" && len(request.DetectorIDs) == 0 && response.Error == "" {
+			appendNote(&response, l.detectNote(response.Findings))
 		}
 		raw, _ := json.Marshal(request)
 		l.calls = append(l.calls, ToolCall{Command: request.Command, At: l.clock().UTC(), RequestJSON: string(raw), ResponseJSON: string(recordedToolResponseJSON(response, nil)), Error: response.Error, Summary: response.Summary})

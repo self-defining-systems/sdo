@@ -45,6 +45,8 @@ type ToolRequest struct {
 	FindingFingerprints []string                          `json:"finding_fingerprints,omitempty"`
 	DetectorIDs         []string                          `json:"detector_ids,omitempty"`
 	Finding             string                            `json:"finding,omitempty"`
+	// Test names the user test `try` shows; empty lists them.
+	Test string `json:"test,omitempty"`
 	// Since is how far before onset `changes` and `timeline` reach, a Go
 	// duration such as 30m; Limit keeps the newest N changes.
 	Since       string                                 `json:"since,omitempty"`
@@ -203,20 +205,25 @@ type ResponderLoop struct {
 	CachedFindings     func() ToolResponse
 	IncidentStatus     func() *apihistory.IncidentVerified
 	WaitClosure        func(context.Context, time.Duration) ToolResponse
-	ExternalReceipts   func() ([]RepairActionReceipt, bool, string, error)
-	gateError          error
-	closureReceipts    []RepairActionReceipt
-	continuation       responderContinuation
-	MenuConfig         *ResponderMenuConfig
-	menu               *contracts.MitigationMenu
-	menuEntries        menuCatalog
-	menuSession        *contracts.MitigationSession
-	menuReports        []*contracts.MitigationReport
-	menuExecutions     map[string][]MenuRoundExecution
-	menuRepairs        []RepairActionReceipt
-	VerifyClosure      func(context.Context) ToolResponse
-	VerifyResult       func(context.Context, IncidentResult) ToolResponse
-	CurrentEvidence    func() *IncidentRequest
+	// ExternalReceipts is the write recording the responder's writes are read from; nil when no recording
+	// exists, in which case the contradiction notes omit their write clause.
+	ExternalReceipts func() ([]RepairActionReceipt, bool, string, error)
+	// noteStart and noteLog are the per-session call history behind the verify and detect notes.
+	noteStart       time.Time
+	noteLog         map[string][]noteObservation
+	gateError       error
+	closureReceipts []RepairActionReceipt
+	continuation    responderContinuation
+	MenuConfig      *ResponderMenuConfig
+	menu            *contracts.MitigationMenu
+	menuEntries     menuCatalog
+	menuSession     *contracts.MitigationSession
+	menuReports     []*contracts.MitigationReport
+	menuExecutions  map[string][]MenuRoundExecution
+	menuRepairs     []RepairActionReceipt
+	VerifyClosure   func(context.Context) ToolResponse
+	VerifyResult    func(context.Context, IncidentResult) ToolResponse
+	CurrentEvidence func() *IncidentRequest
 	// IncidentSources supplies the signal ring and app-state source behind
 	// `sdo changes`, `sdo timeline` and the inline changes; nil reads none.
 	IncidentSources   func() (*incidentSignals, AppStateChangeSource)
@@ -495,6 +502,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	defer l.operationMu.Unlock()
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.startNotes()
 	started := l.clock()
 	mutating := request.Command == "rollback" || request.Command == "apply" || request.Command == "mitigate" || request.Command == "act-result"
 	var before []sdk.Finding
@@ -661,6 +669,8 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		l.detect(ctx, request.DetectorIDs, request.Finding, &response)
 	case "changes", "timeline":
 		l.incidentPage(ctx, request, &response)
+	case "try":
+		l.tryUserTest(ctx, request.Test, &response)
 	case "status":
 		response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
 		response.Trust = l.Trust
@@ -809,6 +819,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		if response.Error == "" {
 			l.closeLoop()
 			response.DataEffects = l.incidentDataEffects(ctx)
+			appendNote(&response, l.verifyNote(response.Findings))
 		}
 	case "rollback":
 		l.rollbackApplication(ctx, request, &response)
