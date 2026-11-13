@@ -112,3 +112,27 @@ func TestDetectNotesUnchangedFindingsSinceLastCall(t *testing.T) {
 		t.Fatalf("text:\n%s\nsummary: %s", second.Text, second.Summary)
 	}
 }
+
+// The wiring hands the loop a nil source with the recording off; a non-nil one returning no rows would read as
+// "no write happened" and make verify claim a contradiction that is not known.
+func TestRecordingOffLeavesExternalReceiptsNilAndVerifyNotesUseApplicationsOnly(t *testing.T) {
+	clock := time.Now
+	if source := externalReceiptsSource(false, t.TempDir(), "incident", clock); source != nil {
+		t.Fatal("recording off must leave ExternalReceipts nil")
+	}
+	if source := externalReceiptsSource(true, t.TempDir(), "incident", clock); source == nil {
+		t.Fatal("recording on must read the recording")
+	}
+	current := []sdk.Finding{noteFinding("a")}
+	loop, c := noteLoop(&current, nil)
+	loop.ExternalReceipts = externalReceiptsSource(false, t.TempDir(), "incident", clock)
+	verifyOnce(loop, c, time.Minute)
+	got := verifyOnce(loop, c, time.Minute)
+	if strings.Contains(got, "no write since") || strings.Contains(got, "last write") || !strings.Contains(got, "unchanged since your last verify") {
+		t.Fatalf("summary = %q, want the unchanged-since-last-verify form with no write claim", got)
+	}
+	loop.applicationsLog = append(loop.applicationsLog, RecordedPlanApplication{ID: "app", CompletedAt: c.now.Add(time.Second)})
+	if got := verifyOnce(loop, c, time.Minute); !strings.Contains(got, "since your last write at") {
+		t.Fatalf("summary = %q, want the plan application as the write signal", got)
+	}
+}

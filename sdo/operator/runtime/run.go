@@ -717,11 +717,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					}
 				}
 				loop.CachedFindings = func() ToolResponse { return controller.cachedFindingView(request.IncidentID) }
-				if policy.Agent.Recording {
-					loop.ExternalReceipts = func() ([]RepairActionReceipt, bool, string, error) {
-						return agentWriteReceipts(*repositoryMountPath, request.IncidentID, controller.clock())
-					}
-				}
+				loop.ExternalReceipts = externalReceiptsSource(policy.Agent.Recording, *repositoryMountPath, request.IncidentID, controller.clock)
 				loop.VerifyResult = func(ctx context.Context, result IncidentResult) ToolResponse {
 					if controller == nil {
 						return ToolResponse{Command: "verify", Error: "controller verification is unavailable"}
