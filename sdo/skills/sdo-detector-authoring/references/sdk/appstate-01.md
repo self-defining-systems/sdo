@@ -36,6 +36,12 @@ var ErrReadBudget = fmt.Errorf("app-state reader read budget of %d exhausted", M
     ErrReadBudget is returned by a read past MaxReads.
 
 
+FUNCTIONS
+
+func ValidateID(id string) error
+    ValidateID checks a reader identifier.
+
+
 TYPES
 
 type Change = carried.Change

@@ -51,6 +51,9 @@ const (
 	Removed = carried.Removed
 )
 
+// ValidateID checks a reader identifier.
+func ValidateID(id string) error { return carried.ValidateID(id) }
+
 // Require returns a reader's state, or an error when it is unavailable.
 func Require(ctx sdk.DetectionContext, id string) (State, error) { return carried.Require(ctx, id) }
 

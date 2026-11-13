@@ -166,6 +166,7 @@ type continuationRepair struct {
 	Error         string              `json:"error,omitempty"`
 	Receipt       continuationReceipt `json:"receipt"`
 }
+
 // Caller holds l.mu. This projection contains immutable repair facts only;
 // execution plans, live handles and rollback preimages never enter tool state.
 func (l *ResponderLoop) applicationRepairsLocked() []continuationRepair {

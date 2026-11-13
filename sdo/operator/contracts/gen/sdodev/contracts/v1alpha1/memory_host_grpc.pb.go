@@ -19,12 +19,13 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	MemoryHostService_Traffic_FullMethodName  = "/sdodev.contracts.v1alpha1.MemoryHostService/Traffic"
-	MemoryHostService_Ready_FullMethodName    = "/sdodev.contracts.v1alpha1.MemoryHostService/Ready"
-	MemoryHostService_Mirror_FullMethodName   = "/sdodev.contracts.v1alpha1.MemoryHostService/Mirror"
-	MemoryHostService_Evaluate_FullMethodName = "/sdodev.contracts.v1alpha1.MemoryHostService/Evaluate"
-	MemoryHostService_Diagnose_FullMethodName = "/sdodev.contracts.v1alpha1.MemoryHostService/Diagnose"
-	MemoryHostService_Mitigate_FullMethodName = "/sdodev.contracts.v1alpha1.MemoryHostService/Mitigate"
+	MemoryHostService_Traffic_FullMethodName   = "/sdodev.contracts.v1alpha1.MemoryHostService/Traffic"
+	MemoryHostService_Ready_FullMethodName     = "/sdodev.contracts.v1alpha1.MemoryHostService/Ready"
+	MemoryHostService_Mirror_FullMethodName    = "/sdodev.contracts.v1alpha1.MemoryHostService/Mirror"
+	MemoryHostService_Evaluate_FullMethodName  = "/sdodev.contracts.v1alpha1.MemoryHostService/Evaluate"
+	MemoryHostService_Diagnose_FullMethodName  = "/sdodev.contracts.v1alpha1.MemoryHostService/Diagnose"
+	MemoryHostService_Mitigate_FullMethodName  = "/sdodev.contracts.v1alpha1.MemoryHostService/Mitigate"
+	MemoryHostService_ReadState_FullMethodName = "/sdodev.contracts.v1alpha1.MemoryHostService/ReadState"
 )
 
 // MemoryHostServiceClient is the client API for MemoryHostService service.
@@ -40,6 +41,9 @@ type MemoryHostServiceClient interface {
 	Evaluate(ctx context.Context, in *EvaluateRequest, opts ...grpc.CallOption) (*EvaluateResponse, error)
 	Diagnose(ctx context.Context, in *DiagnoseRequest, opts ...grpc.CallOption) (*DiagnoseResponse, error)
 	Mitigate(ctx context.Context, in *MitigateRequest, opts ...grpc.CallOption) (*MitigateResponse, error)
+	// ReadState runs one app-state reader (appstate.Reader) over the host's live
+	// read factory and returns the key-value state it read.
+	ReadState(ctx context.Context, in *ReadStateRequest, opts ...grpc.CallOption) (*ReadStateResponse, error)
 }
 
 type memoryHostServiceClient struct {
@@ -113,6 +117,16 @@ func (c *memoryHostServiceClient) Mitigate(ctx context.Context, in *MitigateRequ
 	return out, nil
 }
 
+func (c *memoryHostServiceClient) ReadState(ctx context.Context, in *ReadStateRequest, opts ...grpc.CallOption) (*ReadStateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReadStateResponse)
+	err := c.cc.Invoke(ctx, MemoryHostService_ReadState_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MemoryHostServiceServer is the server API for MemoryHostService service.
 // All implementations must embed UnimplementedMemoryHostServiceServer
 // for forward compatibility.
@@ -126,6 +140,9 @@ type MemoryHostServiceServer interface {
 	Evaluate(context.Context, *EvaluateRequest) (*EvaluateResponse, error)
 	Diagnose(context.Context, *DiagnoseRequest) (*DiagnoseResponse, error)
 	Mitigate(context.Context, *MitigateRequest) (*MitigateResponse, error)
+	// ReadState runs one app-state reader (appstate.Reader) over the host's live
+	// read factory and returns the key-value state it read.
+	ReadState(context.Context, *ReadStateRequest) (*ReadStateResponse, error)
 	mustEmbedUnimplementedMemoryHostServiceServer()
 }
 
@@ -153,6 +170,9 @@ func (UnimplementedMemoryHostServiceServer) Diagnose(context.Context, *DiagnoseR
 }
 func (UnimplementedMemoryHostServiceServer) Mitigate(context.Context, *MitigateRequest) (*MitigateResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Mitigate not implemented")
+}
+func (UnimplementedMemoryHostServiceServer) ReadState(context.Context, *ReadStateRequest) (*ReadStateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReadState not implemented")
 }
 func (UnimplementedMemoryHostServiceServer) mustEmbedUnimplementedMemoryHostServiceServer() {}
 func (UnimplementedMemoryHostServiceServer) testEmbeddedByValue()                           {}
@@ -272,6 +292,24 @@ func _MemoryHostService_Mitigate_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MemoryHostService_ReadState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReadStateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MemoryHostServiceServer).ReadState(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MemoryHostService_ReadState_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MemoryHostServiceServer).ReadState(ctx, req.(*ReadStateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MemoryHostService_ServiceDesc is the grpc.ServiceDesc for MemoryHostService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -298,6 +336,10 @@ var MemoryHostService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Mitigate",
 			Handler:    _MemoryHostService_Mitigate_Handler,
+		},
+		{
+			MethodName: "ReadState",
+			Handler:    _MemoryHostService_ReadState_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

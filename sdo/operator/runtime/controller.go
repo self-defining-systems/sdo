@@ -53,6 +53,12 @@ type ControllerConfig struct {
 	DeployedCommit         string
 	RepositoryWorktree     string
 	CorpusSessionRoot      string
+	// PageSessionRoot is the repository mount the incident page files
+	// (incident/timeline.csv, incident/changes.csv) are written under; empty
+	// writes none.
+	PageSessionRoot string
+	// AppStateChanges supplies changes.csv's app-state rows; nil lists none.
+	AppStateChanges AppStateChangeSource
 	ResponseTimeout        time.Duration
 	VerificationTimeout    time.Duration
 	ClosureStabilityWindow time.Duration
@@ -90,6 +96,8 @@ type dispatchCompletion struct {
 }
 
 type Controller struct {
+	// signals is the 15-minute ring the incident timeline is drawn from.
+	signals *incidentSignals
 	ExternalIncidents func(context.Context) (*ExternalIncident, error)
 	memoryRefresh     func(context.Context) (bool, error)
 	config            ControllerConfig
@@ -225,6 +233,9 @@ type Controller struct {
 	// VantageBaseline, when set, receives the client dial readings of each
 	// promoted healthy baseline.
 	VantageBaseline *VantageBaseline
+	// AppState, when set, receives each evaluation's health so last-healthy
+	// app state settles like the other baselines.
+	AppState *AppStateStore
 	// Helpers, when set, deletes responder helper objects once the
 	// responder completes, before recovery is verified.
 	Helpers HelperCleaner
@@ -390,7 +401,8 @@ func NewController(
 		startup = newStartupPeriod(start.UTC(), start.UTC().Add(config.StartupBound))
 	}
 	return &Controller{
-		config: config, codePath: resolvedPath, startedAt: start, scheduler: NewScheduler(detectors, start, config.Namespace), detectors: byID,
+		signals: newIncidentSignals(),
+		config:  config, codePath: resolvedPath, startedAt: start, scheduler: NewScheduler(detectors, start, config.Namespace), detectors: byID,
 		tracker: tracker, startup: startup,
 		gateClears: make(map[string]*gateClear), gateProbes: make(map[string]time.Time),
 		batcher: NewDebouncedBatcher(config.BatchDebounce), provider: provider, dispatcher: dispatcher,
@@ -553,6 +565,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		return fmt.Errorf("create detection snapshot: %w", err)
 	}
 	c.processDrift(ctx, now, snapshot, objectChanges)
+	c.signals.Observe(now, snapshot)
 
 	// Startup's full batch may precede confirmation. Once the observation
 	// windows are ready, evaluate every detector together on this snapshot;
@@ -738,6 +751,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		}
 		c.captureHealthyMemoryBaseline(ctx, now, snapshot, healthy)
 		c.promotePodReadBaseline(now, snapshot, healthy)
+		c.observeAppState(now, healthy)
 		c.promoteObservationBaselines(now, snapshot, healthy)
 		c.observeStartup(now)
 	}
@@ -952,6 +966,10 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 	}
 	request.StateChanges = withStoreChanges(request.StateChanges, snapshot, now)
 	c.beginIncident(now, request, batch)
+	request.DetectedAt = now.UTC()
+	if reads, ok := snapshot.(detectReads); ok {
+		c.writeIncidentPages(ctx, incidentPageInput{Request: request, Findings: batch, View: reads, Now: now.UTC()}, false)
+	}
 	// The batcher is drained, so the incident is open before any file I/O: an
 	// observer exporting state mid-capture reads the work, never an idle gap.
 	// The responder starts only after this step returns, so it still finds the
@@ -2418,4 +2436,24 @@ func passingTests(snapshot sdk.DetectionContext) []string {
 	}
 	sort.Strings(passing)
 	return slices.Compact(passing)
+}
+
+// writeIncidentPages writes the incident's page files into its session; a
+// failure is logged, never fatal: the pages are information.
+func (c *Controller) writeIncidentPages(ctx context.Context, in incidentPageInput, rewrite bool) []string {
+	if c.config.PageSessionRoot == "" {
+		return nil
+	}
+	in.Signals, in.AppState = c.signals, c.config.AppStateChanges
+	files, err := writeIncidentPages(c.config.PageSessionRoot, in, rewrite)
+	if err != nil {
+		slog.WarnContext(ctx, "incident_pages_unavailable", "incident_id", in.Request.IncidentID, "error", err)
+	}
+	return files
+}
+
+// IncidentPages is the responder loop's hook that rewrites the page files on
+// each `sdo detect`.
+func (c *Controller) IncidentPages(ctx context.Context) func(incidentPageInput) []string {
+	return func(in incidentPageInput) []string { return c.writeIncidentPages(ctx, in, true) }
 }

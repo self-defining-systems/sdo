@@ -213,6 +213,9 @@ type ResponderLoop struct {
 	VerifyClosure      func(context.Context) ToolResponse
 	VerifyResult       func(context.Context, IncidentResult) ToolResponse
 	CurrentEvidence    func() *IncidentRequest
+	// IncidentPages rewrites the incident's page files (timeline.csv,
+	// changes.csv) on each `sdo detect` and returns the paths the agent sees.
+	IncidentPages func(incidentPageInput) []string
 	Request            IncidentRequest
 	Programs           program.ProgramRegistry
 	Traffic            ProberAPI
