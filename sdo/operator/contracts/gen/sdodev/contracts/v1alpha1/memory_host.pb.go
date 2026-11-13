@@ -619,10 +619,14 @@ func (x *MemoryObservation) GetAppState() map[string]*structpb.Struct {
 // implements appstate.Reader). The host reads against its latest complete
 // mirror; no frozen view is needed because the controller never waits on the
 // reader. observed_at is the controller clock's time for the reader's view.
+// pod_reads are the frozen results of the pod reads the reader declares, which
+// the controller collects for that reader alone (its own budget, never the
+// detection cycle's), keyed by query ID.
 type ReadStateRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ReaderId      string                 `protobuf:"bytes,1,opt,name=reader_id,json=readerId,proto3" json:"reader_id,omitempty"`
-	ObservedAt    *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
+	state         protoimpl.MessageState      `protogen:"open.v1"`
+	ReaderId      string                      `protobuf:"bytes,1,opt,name=reader_id,json=readerId,proto3" json:"reader_id,omitempty"`
+	ObservedAt    *timestamppb.Timestamp      `protobuf:"bytes,2,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
+	PodReads      map[string]*structpb.Struct `protobuf:"bytes,3,rep,name=pod_reads,json=podReads,proto3" json:"pod_reads,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -667,6 +671,13 @@ func (x *ReadStateRequest) GetReaderId() string {
 func (x *ReadStateRequest) GetObservedAt() *timestamppb.Timestamp {
 	if x != nil {
 		return x.ObservedAt
+	}
+	return nil
+}
+
+func (x *ReadStateRequest) GetPodReads() map[string]*structpb.Struct {
+	if x != nil {
+		return x.PodReads
 	}
 	return nil
 }
@@ -1604,11 +1615,15 @@ const file_sdodev_contracts_v1alpha1_memory_host_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x05value:\x028\x01\x1aT\n" +
 	"\rAppStateEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12-\n" +
-	"\x05value\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x05value:\x028\x01J\x04\b\b\x10\tJ\x04\b\r\x10\x0eR\bsnapshotR\bplatform\"l\n" +
+	"\x05value\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x05value:\x028\x01J\x04\b\b\x10\tJ\x04\b\r\x10\x0eR\bsnapshotR\bplatform\"\x9a\x02\n" +
 	"\x10ReadStateRequest\x12\x1b\n" +
 	"\treader_id\x18\x01 \x01(\tR\breaderId\x12;\n" +
 	"\vobserved_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"observedAt\"\xb6\x01\n" +
+	"observedAt\x12V\n" +
+	"\tpod_reads\x18\x03 \x03(\v29.sdodev.contracts.v1alpha1.ReadStateRequest.PodReadsEntryR\bpodReads\x1aT\n" +
+	"\rPodReadsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12-\n" +
+	"\x05value\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x05value:\x028\x01\"\xb6\x01\n" +
 	"\x11ReadStateResponse\x12P\n" +
 	"\x06values\x18\x01 \x03(\v28.sdodev.contracts.v1alpha1.ReadStateResponse.ValuesEntryR\x06values\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x1a9\n" +
@@ -1722,7 +1737,7 @@ func file_sdodev_contracts_v1alpha1_memory_host_proto_rawDescGZIP() []byte {
 }
 
 var file_sdodev_contracts_v1alpha1_memory_host_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
+var file_sdodev_contracts_v1alpha1_memory_host_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
 var file_sdodev_contracts_v1alpha1_memory_host_proto_goTypes = []any{
 	(TrafficRequest_Operation)(0),      // 0: sdodev.contracts.v1alpha1.TrafficRequest.Operation
 	(*ReadyRequest)(nil),               // 1: sdodev.contracts.v1alpha1.ReadyRequest
@@ -1752,94 +1767,97 @@ var file_sdodev_contracts_v1alpha1_memory_host_proto_goTypes = []any{
 	nil,                                // 25: sdodev.contracts.v1alpha1.MemoryObservation.PodReadsEntry
 	nil,                                // 26: sdodev.contracts.v1alpha1.MemoryObservation.VantageEntry
 	nil,                                // 27: sdodev.contracts.v1alpha1.MemoryObservation.AppStateEntry
-	nil,                                // 28: sdodev.contracts.v1alpha1.ReadStateResponse.ValuesEntry
-	nil,                                // 29: sdodev.contracts.v1alpha1.TrafficRequest.HttpHeadersEntry
-	nil,                                // 30: sdodev.contracts.v1alpha1.TrafficRequest.HttpFieldsEntry
-	nil,                                // 31: sdodev.contracts.v1alpha1.TrafficResponse.WindowsEntry
-	(*ProgramSpec)(nil),                // 32: sdodev.contracts.v1alpha1.ProgramSpec
-	(*structpb.Struct)(nil),            // 33: google.protobuf.Struct
-	(*ObjectRef)(nil),                  // 34: sdodev.contracts.v1alpha1.ObjectRef
-	(*timestamppb.Timestamp)(nil),      // 35: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),        // 36: google.protobuf.Duration
-	(*Finding)(nil),                    // 37: sdodev.contracts.v1alpha1.Finding
-	(*structpb.Value)(nil),             // 38: google.protobuf.Value
-	(*Binding)(nil),                    // 39: sdodev.contracts.v1alpha1.Binding
-	(*Verdict)(nil),                    // 40: sdodev.contracts.v1alpha1.Verdict
-	(*Plan)(nil),                       // 41: sdodev.contracts.v1alpha1.Plan
+	nil,                                // 28: sdodev.contracts.v1alpha1.ReadStateRequest.PodReadsEntry
+	nil,                                // 29: sdodev.contracts.v1alpha1.ReadStateResponse.ValuesEntry
+	nil,                                // 30: sdodev.contracts.v1alpha1.TrafficRequest.HttpHeadersEntry
+	nil,                                // 31: sdodev.contracts.v1alpha1.TrafficRequest.HttpFieldsEntry
+	nil,                                // 32: sdodev.contracts.v1alpha1.TrafficResponse.WindowsEntry
+	(*ProgramSpec)(nil),                // 33: sdodev.contracts.v1alpha1.ProgramSpec
+	(*structpb.Struct)(nil),            // 34: google.protobuf.Struct
+	(*ObjectRef)(nil),                  // 35: sdodev.contracts.v1alpha1.ObjectRef
+	(*timestamppb.Timestamp)(nil),      // 36: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),        // 37: google.protobuf.Duration
+	(*Finding)(nil),                    // 38: sdodev.contracts.v1alpha1.Finding
+	(*structpb.Value)(nil),             // 39: google.protobuf.Value
+	(*Binding)(nil),                    // 40: sdodev.contracts.v1alpha1.Binding
+	(*Verdict)(nil),                    // 41: sdodev.contracts.v1alpha1.Verdict
+	(*Plan)(nil),                       // 42: sdodev.contracts.v1alpha1.Plan
 }
 var file_sdodev_contracts_v1alpha1_memory_host_proto_depIdxs = []int32{
 	3,  // 0: sdodev.contracts.v1alpha1.ReadyResponse.detectors:type_name -> sdodev.contracts.v1alpha1.MemoryDetectorRegistration
-	32, // 1: sdodev.contracts.v1alpha1.ReadyResponse.programs:type_name -> sdodev.contracts.v1alpha1.ProgramSpec
-	33, // 2: sdodev.contracts.v1alpha1.MemoryDetectorRegistration.specification:type_name -> google.protobuf.Struct
+	33, // 1: sdodev.contracts.v1alpha1.ReadyResponse.programs:type_name -> sdodev.contracts.v1alpha1.ProgramSpec
+	34, // 2: sdodev.contracts.v1alpha1.MemoryDetectorRegistration.specification:type_name -> google.protobuf.Struct
 	5,  // 3: sdodev.contracts.v1alpha1.MirrorRequest.upserts:type_name -> sdodev.contracts.v1alpha1.MemoryObject
-	34, // 4: sdodev.contracts.v1alpha1.MirrorRequest.deletes:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	34, // 5: sdodev.contracts.v1alpha1.MemoryObject.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	33, // 6: sdodev.contracts.v1alpha1.MemoryObject.object:type_name -> google.protobuf.Struct
-	35, // 7: sdodev.contracts.v1alpha1.MemoryObservation.observed_at:type_name -> google.protobuf.Timestamp
+	35, // 4: sdodev.contracts.v1alpha1.MirrorRequest.deletes:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	35, // 5: sdodev.contracts.v1alpha1.MemoryObject.ref:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	34, // 6: sdodev.contracts.v1alpha1.MemoryObject.object:type_name -> google.protobuf.Struct
+	36, // 7: sdodev.contracts.v1alpha1.MemoryObservation.observed_at:type_name -> google.protobuf.Timestamp
 	22, // 8: sdodev.contracts.v1alpha1.MemoryObservation.traffic:type_name -> sdodev.contracts.v1alpha1.MemoryObservation.TrafficEntry
-	33, // 9: sdodev.contracts.v1alpha1.MemoryObservation.reachability:type_name -> google.protobuf.Struct
+	34, // 9: sdodev.contracts.v1alpha1.MemoryObservation.reachability:type_name -> google.protobuf.Struct
 	23, // 10: sdodev.contracts.v1alpha1.MemoryObservation.metrics:type_name -> sdodev.contracts.v1alpha1.MemoryObservation.MetricsEntry
-	33, // 11: sdodev.contracts.v1alpha1.MemoryObservation.alerts:type_name -> google.protobuf.Struct
-	33, // 12: sdodev.contracts.v1alpha1.MemoryObservation.usage:type_name -> google.protobuf.Struct
+	34, // 11: sdodev.contracts.v1alpha1.MemoryObservation.alerts:type_name -> google.protobuf.Struct
+	34, // 12: sdodev.contracts.v1alpha1.MemoryObservation.usage:type_name -> google.protobuf.Struct
 	24, // 13: sdodev.contracts.v1alpha1.MemoryObservation.logs:type_name -> sdodev.contracts.v1alpha1.MemoryObservation.LogsEntry
-	33, // 14: sdodev.contracts.v1alpha1.MemoryObservation.scoped:type_name -> google.protobuf.Struct
-	33, // 15: sdodev.contracts.v1alpha1.MemoryObservation.pod_admission:type_name -> google.protobuf.Struct
+	34, // 14: sdodev.contracts.v1alpha1.MemoryObservation.scoped:type_name -> google.protobuf.Struct
+	34, // 15: sdodev.contracts.v1alpha1.MemoryObservation.pod_admission:type_name -> google.protobuf.Struct
 	25, // 16: sdodev.contracts.v1alpha1.MemoryObservation.pod_reads:type_name -> sdodev.contracts.v1alpha1.MemoryObservation.PodReadsEntry
 	26, // 17: sdodev.contracts.v1alpha1.MemoryObservation.vantage:type_name -> sdodev.contracts.v1alpha1.MemoryObservation.VantageEntry
-	36, // 18: sdodev.contracts.v1alpha1.MemoryObservation.self_heal_hold:type_name -> google.protobuf.Duration
+	37, // 18: sdodev.contracts.v1alpha1.MemoryObservation.self_heal_hold:type_name -> google.protobuf.Duration
 	27, // 19: sdodev.contracts.v1alpha1.MemoryObservation.app_state:type_name -> sdodev.contracts.v1alpha1.MemoryObservation.AppStateEntry
-	35, // 20: sdodev.contracts.v1alpha1.ReadStateRequest.observed_at:type_name -> google.protobuf.Timestamp
-	28, // 21: sdodev.contracts.v1alpha1.ReadStateResponse.values:type_name -> sdodev.contracts.v1alpha1.ReadStateResponse.ValuesEntry
-	7,  // 22: sdodev.contracts.v1alpha1.EvaluateRequest.observation:type_name -> sdodev.contracts.v1alpha1.MemoryObservation
-	13, // 23: sdodev.contracts.v1alpha1.EvaluateRequest.reads:type_name -> sdodev.contracts.v1alpha1.MemoryReadReceipt
-	37, // 24: sdodev.contracts.v1alpha1.MemoryDetectorResult.findings:type_name -> sdodev.contracts.v1alpha1.Finding
-	11, // 25: sdodev.contracts.v1alpha1.EvaluateResponse.results:type_name -> sdodev.contracts.v1alpha1.MemoryDetectorResult
-	38, // 26: sdodev.contracts.v1alpha1.MemoryReadReceipt.arguments:type_name -> google.protobuf.Value
-	38, // 27: sdodev.contracts.v1alpha1.MemoryReadReceipt.result:type_name -> google.protobuf.Value
-	39, // 28: sdodev.contracts.v1alpha1.MemoryProgramInput.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
-	7,  // 29: sdodev.contracts.v1alpha1.MemoryProgramInput.observation:type_name -> sdodev.contracts.v1alpha1.MemoryObservation
-	13, // 30: sdodev.contracts.v1alpha1.MemoryProgramInput.reads:type_name -> sdodev.contracts.v1alpha1.MemoryReadReceipt
-	14, // 31: sdodev.contracts.v1alpha1.DiagnoseRequest.input:type_name -> sdodev.contracts.v1alpha1.MemoryProgramInput
-	40, // 32: sdodev.contracts.v1alpha1.DiagnoseResponse.verdict:type_name -> sdodev.contracts.v1alpha1.Verdict
-	13, // 33: sdodev.contracts.v1alpha1.DiagnoseResponse.reads:type_name -> sdodev.contracts.v1alpha1.MemoryReadReceipt
-	14, // 34: sdodev.contracts.v1alpha1.MitigateRequest.input:type_name -> sdodev.contracts.v1alpha1.MemoryProgramInput
-	41, // 35: sdodev.contracts.v1alpha1.MitigateResponse.plan:type_name -> sdodev.contracts.v1alpha1.Plan
-	13, // 36: sdodev.contracts.v1alpha1.MitigateResponse.reads:type_name -> sdodev.contracts.v1alpha1.MemoryReadReceipt
-	0,  // 37: sdodev.contracts.v1alpha1.TrafficRequest.operation:type_name -> sdodev.contracts.v1alpha1.TrafficRequest.Operation
-	34, // 38: sdodev.contracts.v1alpha1.TrafficRequest.target:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	29, // 39: sdodev.contracts.v1alpha1.TrafficRequest.http_headers:type_name -> sdodev.contracts.v1alpha1.TrafficRequest.HttpHeadersEntry
-	21, // 40: sdodev.contracts.v1alpha1.TrafficRequest.dial_targets:type_name -> sdodev.contracts.v1alpha1.TrafficDialTarget
-	30, // 41: sdodev.contracts.v1alpha1.TrafficRequest.http_fields:type_name -> sdodev.contracts.v1alpha1.TrafficRequest.HttpFieldsEntry
-	31, // 42: sdodev.contracts.v1alpha1.TrafficResponse.windows:type_name -> sdodev.contracts.v1alpha1.TrafficResponse.WindowsEntry
-	33, // 43: sdodev.contracts.v1alpha1.TrafficResponse.burst:type_name -> google.protobuf.Struct
-	33, // 44: sdodev.contracts.v1alpha1.TrafficResponse.dials:type_name -> google.protobuf.Struct
-	33, // 45: sdodev.contracts.v1alpha1.TrafficResponse.fields:type_name -> google.protobuf.Struct
-	33, // 46: sdodev.contracts.v1alpha1.MemoryObservation.TrafficEntry.value:type_name -> google.protobuf.Struct
-	33, // 47: sdodev.contracts.v1alpha1.MemoryObservation.MetricsEntry.value:type_name -> google.protobuf.Struct
-	33, // 48: sdodev.contracts.v1alpha1.MemoryObservation.LogsEntry.value:type_name -> google.protobuf.Struct
-	33, // 49: sdodev.contracts.v1alpha1.MemoryObservation.PodReadsEntry.value:type_name -> google.protobuf.Struct
-	33, // 50: sdodev.contracts.v1alpha1.MemoryObservation.VantageEntry.value:type_name -> google.protobuf.Struct
-	33, // 51: sdodev.contracts.v1alpha1.MemoryObservation.AppStateEntry.value:type_name -> google.protobuf.Struct
-	33, // 52: sdodev.contracts.v1alpha1.TrafficResponse.WindowsEntry.value:type_name -> google.protobuf.Struct
-	19, // 53: sdodev.contracts.v1alpha1.MemoryHostService.Traffic:input_type -> sdodev.contracts.v1alpha1.TrafficRequest
-	1,  // 54: sdodev.contracts.v1alpha1.MemoryHostService.Ready:input_type -> sdodev.contracts.v1alpha1.ReadyRequest
-	4,  // 55: sdodev.contracts.v1alpha1.MemoryHostService.Mirror:input_type -> sdodev.contracts.v1alpha1.MirrorRequest
-	10, // 56: sdodev.contracts.v1alpha1.MemoryHostService.Evaluate:input_type -> sdodev.contracts.v1alpha1.EvaluateRequest
-	15, // 57: sdodev.contracts.v1alpha1.MemoryHostService.Diagnose:input_type -> sdodev.contracts.v1alpha1.DiagnoseRequest
-	17, // 58: sdodev.contracts.v1alpha1.MemoryHostService.Mitigate:input_type -> sdodev.contracts.v1alpha1.MitigateRequest
-	8,  // 59: sdodev.contracts.v1alpha1.MemoryHostService.ReadState:input_type -> sdodev.contracts.v1alpha1.ReadStateRequest
-	20, // 60: sdodev.contracts.v1alpha1.MemoryHostService.Traffic:output_type -> sdodev.contracts.v1alpha1.TrafficResponse
-	2,  // 61: sdodev.contracts.v1alpha1.MemoryHostService.Ready:output_type -> sdodev.contracts.v1alpha1.ReadyResponse
-	6,  // 62: sdodev.contracts.v1alpha1.MemoryHostService.Mirror:output_type -> sdodev.contracts.v1alpha1.MirrorResponse
-	12, // 63: sdodev.contracts.v1alpha1.MemoryHostService.Evaluate:output_type -> sdodev.contracts.v1alpha1.EvaluateResponse
-	16, // 64: sdodev.contracts.v1alpha1.MemoryHostService.Diagnose:output_type -> sdodev.contracts.v1alpha1.DiagnoseResponse
-	18, // 65: sdodev.contracts.v1alpha1.MemoryHostService.Mitigate:output_type -> sdodev.contracts.v1alpha1.MitigateResponse
-	9,  // 66: sdodev.contracts.v1alpha1.MemoryHostService.ReadState:output_type -> sdodev.contracts.v1alpha1.ReadStateResponse
-	60, // [60:67] is the sub-list for method output_type
-	53, // [53:60] is the sub-list for method input_type
-	53, // [53:53] is the sub-list for extension type_name
-	53, // [53:53] is the sub-list for extension extendee
-	0,  // [0:53] is the sub-list for field type_name
+	36, // 20: sdodev.contracts.v1alpha1.ReadStateRequest.observed_at:type_name -> google.protobuf.Timestamp
+	28, // 21: sdodev.contracts.v1alpha1.ReadStateRequest.pod_reads:type_name -> sdodev.contracts.v1alpha1.ReadStateRequest.PodReadsEntry
+	29, // 22: sdodev.contracts.v1alpha1.ReadStateResponse.values:type_name -> sdodev.contracts.v1alpha1.ReadStateResponse.ValuesEntry
+	7,  // 23: sdodev.contracts.v1alpha1.EvaluateRequest.observation:type_name -> sdodev.contracts.v1alpha1.MemoryObservation
+	13, // 24: sdodev.contracts.v1alpha1.EvaluateRequest.reads:type_name -> sdodev.contracts.v1alpha1.MemoryReadReceipt
+	38, // 25: sdodev.contracts.v1alpha1.MemoryDetectorResult.findings:type_name -> sdodev.contracts.v1alpha1.Finding
+	11, // 26: sdodev.contracts.v1alpha1.EvaluateResponse.results:type_name -> sdodev.contracts.v1alpha1.MemoryDetectorResult
+	39, // 27: sdodev.contracts.v1alpha1.MemoryReadReceipt.arguments:type_name -> google.protobuf.Value
+	39, // 28: sdodev.contracts.v1alpha1.MemoryReadReceipt.result:type_name -> google.protobuf.Value
+	40, // 29: sdodev.contracts.v1alpha1.MemoryProgramInput.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
+	7,  // 30: sdodev.contracts.v1alpha1.MemoryProgramInput.observation:type_name -> sdodev.contracts.v1alpha1.MemoryObservation
+	13, // 31: sdodev.contracts.v1alpha1.MemoryProgramInput.reads:type_name -> sdodev.contracts.v1alpha1.MemoryReadReceipt
+	14, // 32: sdodev.contracts.v1alpha1.DiagnoseRequest.input:type_name -> sdodev.contracts.v1alpha1.MemoryProgramInput
+	41, // 33: sdodev.contracts.v1alpha1.DiagnoseResponse.verdict:type_name -> sdodev.contracts.v1alpha1.Verdict
+	13, // 34: sdodev.contracts.v1alpha1.DiagnoseResponse.reads:type_name -> sdodev.contracts.v1alpha1.MemoryReadReceipt
+	14, // 35: sdodev.contracts.v1alpha1.MitigateRequest.input:type_name -> sdodev.contracts.v1alpha1.MemoryProgramInput
+	42, // 36: sdodev.contracts.v1alpha1.MitigateResponse.plan:type_name -> sdodev.contracts.v1alpha1.Plan
+	13, // 37: sdodev.contracts.v1alpha1.MitigateResponse.reads:type_name -> sdodev.contracts.v1alpha1.MemoryReadReceipt
+	0,  // 38: sdodev.contracts.v1alpha1.TrafficRequest.operation:type_name -> sdodev.contracts.v1alpha1.TrafficRequest.Operation
+	35, // 39: sdodev.contracts.v1alpha1.TrafficRequest.target:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	30, // 40: sdodev.contracts.v1alpha1.TrafficRequest.http_headers:type_name -> sdodev.contracts.v1alpha1.TrafficRequest.HttpHeadersEntry
+	21, // 41: sdodev.contracts.v1alpha1.TrafficRequest.dial_targets:type_name -> sdodev.contracts.v1alpha1.TrafficDialTarget
+	31, // 42: sdodev.contracts.v1alpha1.TrafficRequest.http_fields:type_name -> sdodev.contracts.v1alpha1.TrafficRequest.HttpFieldsEntry
+	32, // 43: sdodev.contracts.v1alpha1.TrafficResponse.windows:type_name -> sdodev.contracts.v1alpha1.TrafficResponse.WindowsEntry
+	34, // 44: sdodev.contracts.v1alpha1.TrafficResponse.burst:type_name -> google.protobuf.Struct
+	34, // 45: sdodev.contracts.v1alpha1.TrafficResponse.dials:type_name -> google.protobuf.Struct
+	34, // 46: sdodev.contracts.v1alpha1.TrafficResponse.fields:type_name -> google.protobuf.Struct
+	34, // 47: sdodev.contracts.v1alpha1.MemoryObservation.TrafficEntry.value:type_name -> google.protobuf.Struct
+	34, // 48: sdodev.contracts.v1alpha1.MemoryObservation.MetricsEntry.value:type_name -> google.protobuf.Struct
+	34, // 49: sdodev.contracts.v1alpha1.MemoryObservation.LogsEntry.value:type_name -> google.protobuf.Struct
+	34, // 50: sdodev.contracts.v1alpha1.MemoryObservation.PodReadsEntry.value:type_name -> google.protobuf.Struct
+	34, // 51: sdodev.contracts.v1alpha1.MemoryObservation.VantageEntry.value:type_name -> google.protobuf.Struct
+	34, // 52: sdodev.contracts.v1alpha1.MemoryObservation.AppStateEntry.value:type_name -> google.protobuf.Struct
+	34, // 53: sdodev.contracts.v1alpha1.ReadStateRequest.PodReadsEntry.value:type_name -> google.protobuf.Struct
+	34, // 54: sdodev.contracts.v1alpha1.TrafficResponse.WindowsEntry.value:type_name -> google.protobuf.Struct
+	19, // 55: sdodev.contracts.v1alpha1.MemoryHostService.Traffic:input_type -> sdodev.contracts.v1alpha1.TrafficRequest
+	1,  // 56: sdodev.contracts.v1alpha1.MemoryHostService.Ready:input_type -> sdodev.contracts.v1alpha1.ReadyRequest
+	4,  // 57: sdodev.contracts.v1alpha1.MemoryHostService.Mirror:input_type -> sdodev.contracts.v1alpha1.MirrorRequest
+	10, // 58: sdodev.contracts.v1alpha1.MemoryHostService.Evaluate:input_type -> sdodev.contracts.v1alpha1.EvaluateRequest
+	15, // 59: sdodev.contracts.v1alpha1.MemoryHostService.Diagnose:input_type -> sdodev.contracts.v1alpha1.DiagnoseRequest
+	17, // 60: sdodev.contracts.v1alpha1.MemoryHostService.Mitigate:input_type -> sdodev.contracts.v1alpha1.MitigateRequest
+	8,  // 61: sdodev.contracts.v1alpha1.MemoryHostService.ReadState:input_type -> sdodev.contracts.v1alpha1.ReadStateRequest
+	20, // 62: sdodev.contracts.v1alpha1.MemoryHostService.Traffic:output_type -> sdodev.contracts.v1alpha1.TrafficResponse
+	2,  // 63: sdodev.contracts.v1alpha1.MemoryHostService.Ready:output_type -> sdodev.contracts.v1alpha1.ReadyResponse
+	6,  // 64: sdodev.contracts.v1alpha1.MemoryHostService.Mirror:output_type -> sdodev.contracts.v1alpha1.MirrorResponse
+	12, // 65: sdodev.contracts.v1alpha1.MemoryHostService.Evaluate:output_type -> sdodev.contracts.v1alpha1.EvaluateResponse
+	16, // 66: sdodev.contracts.v1alpha1.MemoryHostService.Diagnose:output_type -> sdodev.contracts.v1alpha1.DiagnoseResponse
+	18, // 67: sdodev.contracts.v1alpha1.MemoryHostService.Mitigate:output_type -> sdodev.contracts.v1alpha1.MitigateResponse
+	9,  // 68: sdodev.contracts.v1alpha1.MemoryHostService.ReadState:output_type -> sdodev.contracts.v1alpha1.ReadStateResponse
+	62, // [62:69] is the sub-list for method output_type
+	55, // [55:62] is the sub-list for method input_type
+	55, // [55:55] is the sub-list for extension type_name
+	55, // [55:55] is the sub-list for extension extendee
+	0,  // [0:55] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_memory_host_proto_init() }
@@ -1856,7 +1874,7 @@ func file_sdodev_contracts_v1alpha1_memory_host_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sdodev_contracts_v1alpha1_memory_host_proto_rawDesc), len(file_sdodev_contracts_v1alpha1_memory_host_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   31,
+			NumMessages:   32,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -118,14 +118,22 @@ func NewRemoteMemory(ready *pb.ReadyResponse, rpc MirroredMemoryRPC) (*RemoteMem
 // ReadState asks the host to run one app-state reader. The failure of the call
 // or of the read is returned as an error: the observer records it as the
 // reader's read error, never as state.
-func (r *RemoteMemory) ReadState(ctx context.Context, id string) (carried.Values, error) {
+func (r *RemoteMemory) ReadState(ctx context.Context, id string, reads map[string]podread.Result) (carried.Values, error) {
 	rpc, ok := r.rpc.(interface {
 		ReadState(context.Context, *pb.ReadStateRequest) (*pb.ReadStateResponse, error)
 	})
 	if !ok {
 		return carried.Values{}, errors.New("memory host state reads unavailable")
 	}
-	response, err := rpc.ReadState(ctx, &pb.ReadStateRequest{ReaderId: id, ObservedAt: timestamppb.New(lifecycleio.Now())})
+	request := &pb.ReadStateRequest{ReaderId: id, ObservedAt: timestamppb.New(lifecycleio.Now()), PodReads: map[string]*structpb.Struct{}}
+	for queryID, result := range reads {
+		wire, err := wireStruct(result)
+		if err != nil {
+			return carried.Values{}, fmt.Errorf("encode pod read %q: %w", queryID, err)
+		}
+		request.PodReads[queryID] = wire
+	}
+	response, err := rpc.ReadState(ctx, request)
 	if err != nil {
 		return carried.Values{}, fmt.Errorf("memory host read state: %w", err)
 	}
@@ -193,8 +201,8 @@ func (d *remoteDetector) Spec() sdk.DetectorSpec    { return d.DetectorSpec }
 func (d *remoteDetector) AppStateReader() bool      { return d.Registration.AppStateReader }
 func (d *remoteDetector) AppStateNoisy() []string   { return d.Registration.AppStateNoisy }
 func (d *remoteDetector) AppStateReaders() []string { return d.Registration.AppStateReaders }
-func (d *remoteDetector) AppStateRead(ctx context.Context) (carried.Values, error) {
-	return d.remote.ReadState(ctx, d.ID)
+func (d *remoteDetector) AppStateRead(ctx context.Context, reads map[string]podread.Result) (carried.Values, error) {
+	return d.remote.ReadState(ctx, d.ID, reads)
 }
 func (d *remoteDetector) MetricQueries() []metrics.Query        { return d.Metrics }
 func (d *remoteDetector) LogQueries() []logs.Query              { return d.Logs }

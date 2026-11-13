@@ -99,9 +99,13 @@ message MemoryObservation {
 // implements appstate.Reader). The host reads against its latest complete
 // mirror; no frozen view is needed because the controller never waits on the
 // reader. observed_at is the controller clock's time for the reader's view.
+// pod_reads are the frozen results of the pod reads the reader declares, which
+// the controller collects for that reader alone (its own budget, never the
+// detection cycle's), keyed by query ID.
 message ReadStateRequest {
   string reader_id = 1;
   google.protobuf.Timestamp observed_at = 2;
+  map<string, google.protobuf.Struct> pod_reads = 3;
 }
 // ReadStateResponse carries the state, or the reason the call failed. A failed
 // read is data, not a transport error.

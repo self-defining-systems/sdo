@@ -150,12 +150,21 @@ class MemoryObservation(_message.Message):
     def __init__(self, observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., traffic: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., reachability: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., metrics: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., alerts: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., usage: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., logs: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., scoped: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., pod_admission: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., pod_reads: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., vantage: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., self_heal_hold: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., app_state: _Optional[_Mapping[str, _struct_pb2.Struct]] = ...) -> None: ...
 
 class ReadStateRequest(_message.Message):
-    __slots__ = ("reader_id", "observed_at")
+    __slots__ = ("reader_id", "observed_at", "pod_reads")
+    class PodReadsEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: _struct_pb2.Struct
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...) -> None: ...
     READER_ID_FIELD_NUMBER: _ClassVar[int]
     OBSERVED_AT_FIELD_NUMBER: _ClassVar[int]
+    POD_READS_FIELD_NUMBER: _ClassVar[int]
     reader_id: str
     observed_at: _timestamp_pb2.Timestamp
-    def __init__(self, reader_id: _Optional[str] = ..., observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+    pod_reads: _containers.MessageMap[str, _struct_pb2.Struct]
+    def __init__(self, reader_id: _Optional[str] = ..., observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., pod_reads: _Optional[_Mapping[str, _struct_pb2.Struct]] = ...) -> None: ...
 
 class ReadStateResponse(_message.Message):
     __slots__ = ("values", "error")

@@ -21,6 +21,7 @@ import (
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/appstate/carried"
+	"sdo.dev/operator/sdk/podread"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -120,6 +121,15 @@ type budgeted struct {
 	failed error
 }
 
+// PodReadResult forwards the frozen pod-read results of the reader's view, which
+// the embedded interface alone would hide.
+func (v *budgeted) PodReadResult(id string) (podread.Result, bool) {
+	if source, ok := v.detectionContext.(podread.Source); ok {
+		return source.PodReadResult(id)
+	}
+	return podread.Result{}, false
+}
+
 func (v *budgeted) ObservedAt() time.Time { return v.clock.ObservedAt() }
 
 func (v *budgeted) failure() error {
@@ -187,4 +197,26 @@ func (v *budgeted) KubernetesRead(r program.KubernetesRequest) (json.RawMessage,
 	}
 	raw, err := v.base.KubernetesRead(r)
 	return raw, v.fail(err)
+}
+
+// IsReader reports whether d is an app-state reader: the authored detector that
+// implements Reader, or the controller's proxy of one (AppStateReader).
+func IsReader(d sdk.Detector) bool {
+	if marked, ok := d.(interface{ AppStateReader() bool }); ok {
+		return marked.AppStateReader()
+	}
+	_, ok := d.(Reader)
+	return ok
+}
+
+// Split separates the app-state readers from the other detectors, in order.
+func Split(detectors []sdk.Detector) (readers, others []sdk.Detector) {
+	for _, d := range detectors {
+		if IsReader(d) {
+			readers = append(readers, d)
+		} else {
+			others = append(others, d)
+		}
+	}
+	return readers, others
 }

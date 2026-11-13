@@ -12,3 +12,10 @@ The controller runs each reader on its detector manifest `interval` (at least 10
 deadline and at most 4 reads at once; a detector sees the last finished result. A restarted controller has no
 last-healthy state until health has held for the settle window, so `DiffersFromHealthy` reports `ok=false` until then.
 A reader whose read fails produces an info clue; declare keys that move on their own with `NoisyKeys() []string`.
+
+A reader may also declare pod reads (`PodReads()`, read back with `podread.Require` in `ReadState`). The controller
+collects them for that reader alone, just before each read, on their own budget: they never share the detection cycle's
+`podread.MaxQueries` and are capped at that many per reader. A reader with pod reads runs at most every 30 s. When they
+cannot run, the reader's error says why (`skipped: ...`, or the failing Pod's own reading error). The controller log
+shows `app_state_readers_configured` at load and one `app_state_reader` line per reader on its first result and on each
+change from ok to an error (or to another error), so every reader's state is visible outside an incident.

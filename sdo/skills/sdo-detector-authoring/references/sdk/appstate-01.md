@@ -38,6 +38,13 @@ var ErrReadBudget = fmt.Errorf("app-state reader read budget of %d exhausted", M
 
 FUNCTIONS
 
+func IsReader(d sdk.Detector) bool
+    IsReader reports whether d is an app-state reader: the authored detector
+    that implements Reader, or the controller's proxy of one (AppStateReader).
+
+func Split(detectors []sdk.Detector) (readers, others []sdk.Detector)
+    Split separates the app-state readers from the other detectors, in order.
+
 func ValidateID(id string) error
     ValidateID checks a reader identifier.
 
