@@ -18,13 +18,19 @@ Safe reads: `sdo detect`, `sdo changes [--component NODE]`, `sdo timeline [--com
 `sdo map [path OP | near COMPONENT]`, `sdo try`, `sdo source`, `kubectl get/describe/logs`, `.sdo/arch.md`.
 Do not call `sdo status`, `sdo diagnose`, `sdo menu` or `sdo verify`: they change state the responder shares.
 
-- Reproduce the failing operation first and read the exact response. A hypothesis that does not match what the
-  operation returns is wrong, whatever else looks suspicious.
+- Reproduce the reported failing operation first, exactly as the brief's symptom describes it (same input,
+  then read back what the user would see), and read the exact response. A hypothesis that does not match what
+  that operation returns is wrong, whatever else looks suspicious.
+- The brief's other failing tests are context and may be unrelated. Never refute a hypothesis only by timing
+  against a different failing test.
+- If you cannot reproduce the reported symptom, the verdict is inconclusive, not refuted. Refute only with a
+  check of the reported operation itself.
 - Run the check that separates your hypothesis from the alternatives, not one any of them would pass. Start
   with the prediction most likely to prove it false.
 - Ask what else would produce the same symptom, and what your component's neighbours (`sdo map near`) would
   show if it were innocent. Look for evidence against it as hard as for it.
-- You may follow a side lead briefly; say that you did and what you saw. Stop at the time box.
+- You may follow a side lead briefly; say that you did and what you saw. When the evidence is ambiguous, use the
+  time box to run more checks rather than stopping early. Stop at the time box.
 - If your checks keep contradicting the hypothesis, stop and report that.
 
 Report, in this order, in about 15 lines:

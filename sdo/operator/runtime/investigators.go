@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 // SDO-started investigators. When the responder has made no write for the investigator delay, Go starts up to
@@ -59,21 +60,81 @@ func cappedList(names []string, limit int) string {
 	return text
 }
 
+// investigatorSymptom is the brief's symptom block and how the hypothesis names the operation to reproduce.
+type investigatorSymptom struct {
+	Text      string
+	Operation string
+}
+
+const (
+	// investigatorPageCap bounds the page text of an external incident in a brief.
+	investigatorPageCap = 1024
+	// investigatorContextTests bounds the other failing tests a brief lists.
+	investigatorContextTests = 5
+)
+
+// investigatorSymptomFor builds the symptom from what opened the incident: for an external incident the page
+// message verbatim (bounded) and the failing tests it names; for an SDO-opened one the opening user tests, or
+// the Kubernetes condition. Other failing tests are context, marked as possibly unrelated.
+func investigatorSymptomFor(set detectSuspectSet, request IncidentRequest) investigatorSymptom {
+	opening := map[string]bool{}
+	for _, finding := range set.openingFindings {
+		if scenario, ok := strings.CutPrefix(finding.RuleID, traffic.RuleIDPrefix); ok && isProbeFinding(finding) {
+			opening[scenario] = true
+		}
+	}
+	page := strings.ToLower(request.ExternalMessage)
+	spaced := strings.NewReplacer("-", " ", "_", " ")
+	var named, rest []failingTest
+	for _, test := range set.failing {
+		id := strings.ToLower(test.id)
+		switch {
+		case request.ExternalMessage != "" && (strings.Contains(page, id) || strings.Contains(page, spaced.Replace(id))):
+			named = append(named, test)
+		case request.ExternalMessage == "" && opening[test.id]:
+			named = append(named, test)
+		default:
+			rest = append(rest, test)
+		}
+	}
+	lines := func(tests []failingTest, limit int) string {
+		items := make([]string, len(tests))
+		for i, test := range tests {
+			items[i] = fmt.Sprintf("%s: %s %q at step %s", test.id, test.label, redactDetectText(test.err, 80), orQuestion(redactDetectText(test.step, 30)))
+		}
+		return cappedList(items, limit)
+	}
+	var out strings.Builder
+	var result investigatorSymptom
+	switch {
+	case request.ExternalMessage != "":
+		fmt.Fprintf(&out, "Reported symptom (the page that opened this incident, verbatim): %s\n", redactDetectText(request.ExternalMessage, investigatorPageCap))
+		if len(named) > 0 {
+			fmt.Fprintf(&out, "Failing operations the page names: %s\n", lines(named, investigatorTestNames))
+		}
+		result.Operation = "the operation the page describes (exactly as described)"
+	case len(named) > 0:
+		fmt.Fprintf(&out, "Opening symptom (the user tests that opened this incident): %s\n", lines(named, investigatorTestNames))
+		result.Operation = "the opening failing test " + named[0].id
+	default:
+		text := "Kubernetes condition"
+		if len(set.openingFindings) > 0 {
+			text += ": " + redactDetectText(set.openingFindings[0].Summary, 120)
+		}
+		fmt.Fprintf(&out, "Opening symptom: %s\n", text)
+		result.Operation = "the failing condition above"
+	}
+	if len(rest) > 0 {
+		fmt.Fprintf(&out, "Other failing tests (context only, possibly unrelated to the symptom; do not judge by them): %s\n", lines(rest, investigatorContextTests))
+	}
+	result.Text = strings.TrimRight(out.String(), "\n")
+	return result
+}
+
 // investigatorBriefs renders one brief per top candidate node with non-routine evidence, at most max, in the
 // view's ranked order. A lone candidate still gets one.
 func investigatorBriefs(view candidateView, set detectSuspectSet, request IncidentRequest, max int) []investigatorBrief {
-	var failing []string
-	for _, test := range set.failing {
-		failing = append(failing, test.id)
-	}
-	symptom := "Kubernetes condition"
-	if len(set.openingFindings) > 0 {
-		symptom += ": " + redactDetectText(set.openingFindings[0].Summary, 120)
-	}
-	if len(set.failing) > 0 {
-		first := set.failing[0]
-		symptom = fmt.Sprintf("failing user tests; %s %q at step %s", first.label, redactDetectText(first.err, 80), orQuestion(redactDetectText(first.step, 30)))
-	}
+	symptom := investigatorSymptomFor(set, request)
 	var briefs []investigatorBrief
 	for _, node := range view.Nodes {
 		evidence := nonRoutineEvidence(node)
@@ -95,11 +156,10 @@ func investigatorBriefs(view candidateView, set detectSuspectSet, request Incide
 			}
 			fmt.Fprintf(&text, "  %s\n", e.Text)
 		}
-		fmt.Fprintf(&text, "\nOpening symptom: %s\nFailing tests: %s\nPassing tests: %s\n\n",
-			symptom, cappedList(failing, investigatorTestNames), cappedList(set.passing, investigatorTestNames))
+		fmt.Fprintf(&text, "\n%s\nPassing tests: %s\n\n", symptom.Text, cappedList(set.passing, investigatorTestNames))
 		fmt.Fprintf(&text, "Hypothesis: the failure is caused by %q at node %s.\n", plainName(evidence[0].Text, 200), node.Name)
-		text.WriteString("If true: reproducing the failing operation shows that evidence in its response or path, and the passing tests do not depend on it.\n")
-		text.WriteString("If false: the failing operation returns the same error with that object in its accepted state, or the passing path depends on it equally.\n")
+		fmt.Fprintf(&text, "If true: reproducing %s shows the effect of that evidence (in its response, data or path), and the passing tests do not depend on it.\n", symptom.Operation)
+		fmt.Fprintf(&text, "If false: reproducing %s gives the same wrong result with that object in its accepted state, or the passing path depends on it equally. If you cannot reproduce it, the verdict is inconclusive.\n", symptom.Operation)
 		text.WriteString("Reply with the report only; its first line must be `Verdict: supported|refuted|inconclusive - <one sentence>`.")
 		briefs = append(briefs, investigatorBrief{Node: node.Name, Text: text.String()})
 	}
@@ -193,7 +253,11 @@ func (b *InvestigationBoard) ReportNotes() []string {
 			notes = append(notes, fmt.Sprintf("investigator report arrived (node %s, no Verdict line); read: sdo investigations", entry.Node))
 			continue
 		}
-		notes = append(notes, fmt.Sprintf("investigator report (node %s): %s; full text: sdo investigations", entry.Node, verdict))
+		label := verdict
+		if strings.HasPrefix(strings.TrimSpace(strings.TrimPrefix(verdict, "Verdict:")), "refuted") {
+			label = strings.Replace(verdict, "refuted", "refuted (investigator)", 1)
+		}
+		notes = append(notes, fmt.Sprintf("investigator report (node %s): %s; full text: sdo investigations", entry.Node, label))
 		rest := strings.TrimSpace(strings.TrimPrefix(verdict, "Verdict:"))
 		if hypothesis, ok := strings.CutPrefix(rest, "supported"); ok {
 			hypothesis = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(hypothesis), "-:\u2013\u2014"))
