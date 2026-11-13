@@ -185,6 +185,8 @@ func (c *checker) coverageRule(inv Inventory, workloads []Workload) {
 		got := cov.Components[comp.Name]
 		reason := got.Unprobed
 		switch {
+		case reason != "" && got.Entry && len(got.Probes) == 0:
+			c.add(RuleUnprobedEntry, fmt.Sprintf("declare an operation whose entry is %s (EXEC for SSH commands) and a probe that exercises it; unprobed is not allowed on an entry", strings.Join(comp.Services, ", ")), "component %s owns user entry Service %s and cannot be unprobed (%s)", comp.Name, strings.Join(comp.Services, ", "), reason)
 		case reason != "" && len(got.Probes) > 0:
 			c.add(RuleSchema, "remove unprobed: a probed user operation already covers it", "component %s is recorded unprobed (%s) but probe %s covers it", comp.Name, reason, strings.Join(got.Probes, ", "))
 		case reason != "":
@@ -192,6 +194,29 @@ func (c *checker) coverageRule(inv Inventory, workloads []Workload) {
 		case got.Obligation():
 			c.add(RuleCoverage, fmt.Sprintf("add an operation entering at a user entry Service (%s) whose path includes %s, and a probe that exercises it; only when no synthetic request can, set `unprobed: <why>` on the component", strings.Join(via, ", "), comp.Name), "component %s is on the user path but no probed operation entering at a user entry Service includes it", comp.Name)
 		}
+	}
+}
+
+// unprobedShare reports whether more than half of the user-path components are
+// recorded unprobed (the knownBrokenOperations precedent): free text never
+// stands in for coverage of most of the user path.
+func (c *checker) unprobedShare(inv Inventory, workloads []Workload) {
+	cov := c.m.Coverage(inv, workloads)
+	var names []string
+	total := 0
+	for _, comp := range c.m.Components {
+		got := cov.Components[comp.Name]
+		if !got.OnUserPath {
+			continue
+		}
+		total++
+		if got.Unprobed != "" {
+			names = append(names, comp.Name)
+		}
+	}
+	if 2*len(names) > total {
+		sort.Strings(names)
+		c.add(RuleUnprobedShare, "cover the components with operations whose path includes them and probes that exercise them; unprobed is for the few components no synthetic request can reach", "%d of %d user-path components are unprobed (%s); at most half may be", len(names), total, strings.Join(names, ", "))
 	}
 }
 

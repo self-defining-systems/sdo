@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 
+	"gopkg.in/yaml.v3"
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
 )
@@ -36,6 +39,17 @@ func generateApplicationMapTest(applicationRoot, workspace string) error {
 	// The memory host reads the map's probe-identity procedure, so the
 	// constant exists, empty, without a well-formed map.
 	source := "package generated\n\n// ApplicationMapYAML is the application map of the accepted architecture; empty without one.\nconst ApplicationMapYAML = " + strconv.Quote(document) + "\n"
+	if document != "" {
+		broken, err := knownBrokenScenarios(applicationRoot)
+		if err != nil {
+			return err
+		}
+		source += "\n// KnownBrokenScenarios are the scenarios the traffic workloads declare knownBroken.\nvar KnownBrokenScenarios = []string{"
+		for _, id := range broken {
+			source += strconv.Quote(id) + ", "
+		}
+		source += "}\n"
+	}
 	if err := os.WriteFile(filepath.Join(workspace, "generated", "application_map.go"), []byte(source), 0o644); err != nil {
 		return err
 	}
@@ -43,6 +57,45 @@ func generateApplicationMapTest(applicationRoot, workspace string) error {
 		return nil
 	}
 	return os.WriteFile(filepath.Join(workspace, "generated", "application_map_test.go"), []byte(applicationMapTest), 0o644)
+}
+
+// knownBrokenScenarios lists, sorted, the scenario IDs the checkout's traffic
+// workloads declare knownBroken: they are not gated probes.
+func knownBrokenScenarios(applicationRoot string) ([]string, error) {
+	directory := filepath.Join(applicationRoot, filepath.FromSlash(layout.TrafficWorkloadsDir))
+	entries, err := os.ReadDir(directory)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
+			continue
+		}
+		content, err := os.ReadFile(filepath.Join(directory, entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		var decoded struct {
+			Scenarios []struct {
+				ID          string `yaml:"id"`
+				KnownBroken any    `yaml:"knownBroken"`
+			} `yaml:"scenarios"`
+		}
+		if yaml.Unmarshal(content, &decoded) != nil {
+			continue // the yaml rule reports it
+		}
+		for _, scenario := range decoded.Scenarios {
+			if scenario.KnownBroken != nil {
+				out = append(out, scenario.ID)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 const applicationMapTest = `package generated
@@ -66,7 +119,13 @@ func TestApplicationMapMatchesScenarios(t *testing.T) {
     for _, s := range TrafficCatalog() {
         users := []string{}
         for _, u := range s.Users { users = append(users, u.Name) }
-        scenarios = append(scenarios, appmap.Scenario{ID: s.ID, SideEffect: string(s.SideEffect), DependsOn: s.DependsOn, SetupSteps: len(s.Setup), StatusOnly: s.StatusOnly(), Users: users})
+        existing := []appmap.ExistingRecordsStep{}
+        for _, step := range s.ExistingRecordsSteps() {
+            existing = append(existing, appmap.ExistingRecordsStep{Name: step.Name, ChecksContent: step.ChecksContent, OwnKeys: step.OwnKeys})
+        }
+        broken := false
+        for _, id := range KnownBrokenScenarios { broken = broken || id == s.ID }
+        scenarios = append(scenarios, appmap.Scenario{ID: s.ID, SideEffect: string(s.SideEffect), DependsOn: s.DependsOn, SetupSteps: len(s.Setup), StatusOnly: s.StatusOnly(), Users: users, KnownBroken: broken, ExistingRecords: existing})
     }
     findings := m.CheckScenarios(scenarios)
     if findings == nil { findings = []appmap.Finding{} }

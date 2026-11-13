@@ -107,8 +107,10 @@ func TestApplicationMapRuleIDsMatchTheParser(t *testing.T) {
 		RuleMapPathMismatch: appmap.RulePathMismatch, RuleMapUncoveredOp: appmap.RuleUncoveredOp,
 		RuleMapUncoveredWrite: appmap.RuleUncoveredWrite, RuleMapUncoveredData: appmap.RuleUncoveredData,
 		RuleMapCoverage: appmap.RuleCoverage, RuleMapKnownBroken: appmap.RuleKnownBroken,
-		RuleMapUnprobed: appmap.RuleUnprobed,
-		RuleMapPossibleEdge: appmap.RulePossibleEdge,
+		RuleMapUnprobed:      appmap.RuleUnprobed,
+		RuleMapPossibleEdge:  appmap.RulePossibleEdge,
+		RuleMapUnprobedEntry: appmap.RuleUnprobedEntry, RuleMapUnprobedShare: appmap.RuleUnprobedShare,
+		RuleMapRecordsUnread: appmap.RuleRecordsUnread, RuleMapNoUserRecords: appmap.RuleNoUserRecords,
 	} {
 		if got != want {
 			t.Errorf("rule %q != %q", got, want)
@@ -352,7 +354,7 @@ func TestSeededApplicationMapIsAccepted(t *testing.T) {
 			t.Fatalf("%s: seeded map rejected: %v", actor, blocking)
 		}
 		for _, d := range notes {
-			if strings.HasPrefix(d.Rule, "map.") && d.Rule != RuleMapCoverage {
+			if strings.HasPrefix(d.Rule, "map.") && d.Rule != RuleMapCoverage && d.Rule != RuleMapReaders {
 				t.Fatalf("%s: unexpected note %v", actor, d)
 			}
 		}

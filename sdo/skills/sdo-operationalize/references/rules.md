@@ -50,6 +50,16 @@ see them as notes. The diagnostic names the operation, component, edge or probe 
   (`map.schema`). An exposed Service users never use (an operator or observability UI) records the reason on its
   component. `unprobed` on an edge is an informational note only and satisfies nothing. Enforced by:
   `map.unprobed`.
+- A component that owns a user entry Service cannot be `unprobed`: declare an operation entering at its Service
+  (`EXEC` for SSH commands) and probe it. More than half of the user-path components `unprobed` is rejected.
+  Enforced by: `map.unprobed-entry`, `map.unprobed-share`.
+- A map with a data component has at least one gated probe with a step built with
+  `ReadsExistingRecords(path, field, pattern)`: it lists records users made or the deployment seeded (an empty
+  list passes, a fresh install is healthy), checks every member's shape, and templates no key a write step of the
+  scenario saved (open ids a list step saved). The one escape is the map-level `no_user_records: <why>`, recorded as a
+  note. Enforced by: `map.records-unread`, `map.no-user-records`.
+- A map with an authoritative store and no health detector implementing `appstate.Reader` is noted, never
+  rejected. Enforced by: `map.readers`.
 - A possible edge Go lists above the map (a Secret reference names the callee's Service; the address is unread) is
   noted until the map has the edge: confirm the call on the live application and add it. Enforced by:
   `map.possible-edge`.

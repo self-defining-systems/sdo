@@ -130,6 +130,9 @@ func TestProbeUsersProvisionOnceThroughTheIdentityProcedure(t *testing.T) {
 	if second, _ := users.Password(context.Background(), "sdoprobe-reader"); second == password {
 		t.Fatal("two users share a password")
 	}
+	// The reader's background run writes its readiness marker; wait for it so
+	// it never races the temporary directory's removal.
+	waitAttempt(t, users, "sdoprobe-reader")
 }
 
 // A failed run makes the user unavailable, naming the exit, and is retried

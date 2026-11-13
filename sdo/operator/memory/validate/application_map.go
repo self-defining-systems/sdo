@@ -2,7 +2,10 @@ package validate
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 	"sdo.dev/operator/memory/appmap"
@@ -14,9 +17,33 @@ import (
 // reflection never fails on a gap the designer left.
 func (r Request) mapBlocks() bool { return r.Actor == HealthJudge && r.Phase == InitialPhase }
 
+// coverageRuleV1 lists the rules added after memories were accepted without
+// them: they block only a commit that changes the map, the probes or the health
+// detectors, so restoring or operating with an accepted memory is unaffected.
+func coverageRuleV1(rule string) bool {
+	return rule == RuleMapUnprobedEntry || rule == RuleMapUnprobedShare || rule == RuleMapRecordsUnread
+}
+
+// touchesDesignerPaths reports whether the diff against Base changes the
+// architecture file (the map), traffic generators or workloads, or a health
+// detector; without a Base (onboarding acceptance, a plain memory check) the
+// whole tree is in scope.
+func (s *run) touchesDesignerPaths() bool {
+	if s.changed == nil {
+		return true
+	}
+	health := layout.DetectorsDir + "/" + layout.ClassHealth.Dir() + "/"
+	for _, p := range s.changed {
+		if p == layout.ArchitectureFile || strings.HasPrefix(p, layout.TrafficGeneratorsDir+"/") || strings.HasPrefix(p, layout.TrafficWorkloadsDir+"/") || strings.HasPrefix(p, health) {
+			return true
+		}
+	}
+	return false
+}
+
 // mapAlwaysNote lists the findings that never reject.
 func mapAlwaysNote(rule string) bool {
-	return rule == RuleMapMissing || rule == RuleMapUnprobed || rule == RuleMapPossibleEdge
+	return rule == RuleMapMissing || rule == RuleMapUnprobed || rule == RuleMapPossibleEdge || rule == RuleMapNoUserRecords || rule == RuleMapReaders
 }
 
 // AgentObligation reports whether a diagnostic names work the agent's edit is
@@ -26,7 +53,7 @@ func mapAlwaysNote(rule string) bool {
 // base check never reports them; the designer's proposal is still held to them.
 func AgentObligation(rule string) bool {
 	switch rule {
-	case RuleEmptyDiff, RuleMapUncoveredOp, RuleMapUncoveredWrite, RuleMapUncoveredData, RuleMapCoverage:
+	case RuleEmptyDiff, RuleMapUncoveredOp, RuleMapUncoveredWrite, RuleMapUncoveredData, RuleMapCoverage, RuleMapRecordsUnread:
 		return true
 	}
 	return false
@@ -37,7 +64,7 @@ func AgentObligation(rule string) bool {
 // over the same tree, so each is recorded once.
 func (s *run) mapFinding(layer Layer, f appmap.Finding, line int) {
 	d := Diagnostic{Rule: f.Rule, Path: layout.ArchitectureFile, Line: line, Message: f.Message, Hint: f.Hint}
-	if s.req.mapBlocks() && !mapAlwaysNote(f.Rule) {
+	if s.req.mapBlocks() && !mapAlwaysNote(f.Rule) && !(coverageRuleV1(f.Rule) && !s.touchesDesignerPaths()) {
 		s.add(layer, d)
 		return
 	}
@@ -99,6 +126,41 @@ func (s *run) applicationMap(ctx context.Context) {
 	for _, f := range parsed.CheckPossibleEdges(source) {
 		s.mapFinding(Semantic, f, 0)
 	}
+	if f, ok := readerCoverageNote(s.req.Root, parsed); ok {
+		s.mapFinding(Semantic, f, 0)
+	}
+}
+
+// readerCoverageNote notes, without ever rejecting, a map that holds data
+// while no health detector implements appstate.Reader: nothing then exposes
+// application-defined settings or flags held in the store.
+func readerCoverageNote(root string, m appmap.Map) (appmap.Finding, bool) {
+	var stores []string
+	for _, comp := range m.Components {
+		if comp.Data != nil && comp.Data.Role == appmap.RoleAuthoritative {
+			stores = append(stores, comp.Name)
+		}
+	}
+	if len(stores) == 0 || root == "" {
+		return appmap.Finding{}, false
+	}
+	base := filepath.Join(root, filepath.FromSlash(layout.DetectorsDir), layout.ClassHealth.Dir())
+	dirs, _ := os.ReadDir(base)
+	readers := 0
+	for _, dir := range dirs {
+		files, _ := os.ReadDir(filepath.Join(base, dir.Name()))
+		for _, file := range files {
+			name := file.Name()
+			if !file.IsDir() && strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go") && implementsReader(filepath.Join(base, dir.Name(), name)) {
+				readers++
+				break
+			}
+		}
+	}
+	if readers > 0 {
+		return appmap.Finding{}, false
+	}
+	return appmap.Finding{Rule: RuleMapReaders, Message: "no health detector implements appstate.Reader, so settings and flags held in the authoritative store(s) " + strings.Join(stores, ", ") + " are not exposed", Hint: "note only: see references/app-state.md; write a reader for application-defined settings or flags, and a detector that uses appstate.Require"}, true
 }
 
 // mapInventory is the inventory the map's names resolve against: the manifest

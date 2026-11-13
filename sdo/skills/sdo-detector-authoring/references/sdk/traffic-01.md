@@ -28,11 +28,13 @@ strict timeout sensitivity). Nothing here knows about a particular application,
 and nothing calls an LLM.
 
 const MaxErrorExcerpt = 240 ...
+const ExistingRecordsExercised = "exercised" ...
 const LinkRuleIDPrefix = "link-reachability." ...
 const SyntheticHeader = "X-SDO-Synthetic" ...
 const APIVersion = "sdo.dev/v1alpha1" ...
 const DateLayout = "2006-01-02"
 const DefaultHealthMinDuration = 9 * time.Second
+const ExistingMembersKey = "sdo.existing-members"
 const MaxExecStderr = 512
 const MaxKnownBrokenReason = 200
 const MaxLinkExcerpt = 256
@@ -68,6 +70,7 @@ type Engine struct{ ... }
 type Exec struct{ ... }
 type ExecResult struct{ ... }
 type Execer interface{ ... }
+type ExistingRecordsStep struct{ ... }
 type FailureMatch struct{ ... }
     func MatchFailures(window Window, patterns ...logs.Pattern) ([]FailureMatch, error)
 type FaultClass string

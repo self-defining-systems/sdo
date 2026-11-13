@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"net/http"
@@ -244,6 +245,8 @@ type HTTPEndpoint struct {
 	cookies map[string]string
 	// basicUser and basicPassword are the WithBasicAuth templates.
 	basicUser, basicPassword string
+	// existingRecords is set by ReadsExistingRecords.
+	existingRecords *existingRecordsRead
 }
 
 type existingAnswer struct {
@@ -413,6 +416,54 @@ func (e *HTTPEndpoint) Each(path string, field string, pattern string) *HTTPEndp
 	})
 	return e
 }
+
+// ExistingMembersKey is the State key a ReadsExistingRecords step saves the
+// JSON array of the member values it read, for the engine's exercised note.
+const ExistingMembersKey = "sdo.existing-members"
+
+type existingRecordsRead struct {
+	path, field, pattern string
+	compiled             *regexp.Regexp
+	compileErr           error
+}
+
+// ReadsExistingRecords marks the step as one that reads records users made or
+// the deployment seeded, which the probe never wrote: the JSON array at dotted
+// path ("" for the whole body) lists them, and field ("" for the element
+// itself) is the member value, which must match the RE2 pattern for every
+// member. An empty array passes, because a fresh install has no user data and
+// is healthy; the engine records whether the step ever saw a record the probe
+// did not create (Sample.ExistingRecords). Unlike Each, emptiness is not a
+// failure. The step must not template a key a write step of the scenario saved.
+func (e *HTTPEndpoint) ReadsExistingRecords(path string, field string, pattern string) *HTTPEndpoint {
+	compiled, compileErr := regexp.Compile(pattern)
+	if strings.TrimSpace(pattern) == "" {
+		compileErr = errors.New("the pattern is empty")
+	}
+	e.existingRecords = &existingRecordsRead{path: path, field: field, pattern: pattern, compiled: compiled, compileErr: compileErr}
+	e.jsonChecks = append(e.jsonChecks, func(document any, state State) error {
+		if compileErr != nil {
+			return fmt.Errorf("ReadsExistingRecords pattern %q: %w", pattern, compileErr)
+		}
+		members, err := jsonMembers(document, path, field)
+		if err != nil {
+			return err
+		}
+		for index, member := range members {
+			if !compiled.MatchString(member) {
+				return fmt.Errorf("%q member %d is %q, which does not match %q", path, index, bounded(member), pattern)
+			}
+		}
+		encoded, _ := json.Marshal(members)
+		state[ExistingMembersKey] = string(encoded)
+		return nil
+	})
+	return e
+}
+
+// MarksExistingRecords reports whether the step was built with
+// ReadsExistingRecords.
+func (e *HTTPEndpoint) MarksExistingRecords() bool { return e.existingRecords != nil }
 
 // ChecksContent reports whether the endpoint checks anything beyond the
 // status: body text, saved JSON fields or cookies, or exact JSON content.

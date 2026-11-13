@@ -71,8 +71,12 @@ type Sample struct {
 	// being provisioned: how long one provisioning run may take. Such a sample
 	// is an environment wait, not a finding about the application.
 	IdentityWait time.Duration `json:"identityWait,omitempty"`
-	Requests     int    `json:"requests"`
-	CleanupError string `json:"cleanupError,omitempty"`
+	Requests     int           `json:"requests"`
+	// ExistingRecords says what the scenario's ReadsExistingRecords step saw
+	// on an iteration that passed: exercised, own-only or empty. It is an
+	// operability note, never a failure: a fresh install has no user data.
+	ExistingRecords string `json:"existingRecords,omitempty"`
+	CleanupError    string `json:"cleanupError,omitempty"`
 }
 
 // Doer sends HTTP requests; *http.Client satisfies it.
@@ -266,6 +270,9 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 			sample.Outcome, sample.Step, sample.Request, sample.Error = result.outcome, step.Name, result.request, result.err
 			sample.Observed, sample.DialFailed = result.observed, result.dial
 			break
+		}
+		if endpoint, ok := step.Endpoint.(*HTTPEndpoint); ok && endpoint.MarksExistingRecords() {
+			sample.ExistingRecords = existingRecordsOutcome(state[ExistingMembersKey], scenario.Marker)
 		}
 	}
 	sample.Latency = e.since(started)

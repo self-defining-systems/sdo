@@ -89,7 +89,8 @@ probes:
 	if err := os.WriteFile(path, append(first, []byte("\n"+covered)...), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if brief := memory.CoverageObligations(checkout); brief != "" {
-		t.Fatalf("a fully covered map has no obligations:\n%s", brief)
+	brief = memory.CoverageObligations(checkout)
+	if strings.Contains(brief, "- blobs") || !strings.Contains(brief, "ReadsExistingRecords") || !strings.Contains(brief, "no_user_records") {
+		t.Fatalf("a fully covered map owes only the existing-records probe, up front:\n%s", brief)
 	}
 }

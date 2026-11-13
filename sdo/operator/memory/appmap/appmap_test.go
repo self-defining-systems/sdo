@@ -139,7 +139,7 @@ func TestShopMapIsClean(t *testing.T) {
 		t.Fatalf("findings: %+v", got)
 	}
 	scenarios := []Scenario{
-		{ID: "call-all", SideEffect: "read", DependsOn: []string{"web", "api", "db"}},
+		{ID: "call-all", SideEffect: "read", DependsOn: []string{"web", "api", "db"}, ExistingRecords: []ExistingRecordsStep{{Name: "list", ChecksContent: true}}},
 		{ID: "write-item", SideEffect: "write-with-cleanup", DependsOn: []string{"web", "api", "db-headless"}},
 		{ID: "items-later", SideEffect: "read", DependsOn: []string{"web", "api", "db"}, SetupSteps: 1},
 	}
@@ -238,7 +238,7 @@ func TestScenariosInWrongWorkloadOrWithoutProbe(t *testing.T) {
 func TestCheckScenariosComparesTheCatalogWithTheMap(t *testing.T) {
 	m := mustParse(t, shopYAML)
 	good := []Scenario{
-		{ID: "call-all", SideEffect: "read", DependsOn: []string{"web", "api", "db"}},
+		{ID: "call-all", SideEffect: "read", DependsOn: []string{"web", "api", "db"}, ExistingRecords: []ExistingRecordsStep{{Name: "list", ChecksContent: true}}},
 		{ID: "write-item", SideEffect: "idempotent-write", DependsOn: []string{"web", "api", "db"}},
 		{ID: "items-later", SideEffect: "read", DependsOn: []string{"web", "api", "db"}, SetupSteps: 1},
 	}
