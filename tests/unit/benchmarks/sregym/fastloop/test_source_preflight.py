@@ -202,3 +202,24 @@ def test_toy_preflight_needs_no_sregym_sources(tmp_path, monkeypatch):
             responder_image=None,
         )
     )
+
+
+def test_preflight_command_for_toy_needs_no_sregym_submodule(tmp_path, monkeypatch):
+    import shutil
+
+    from benchmarks.sregym.fastloop import cli
+
+    (tmp_path / "sdo/operator").mkdir(parents=True)
+    (tmp_path / "sdo/operator/go.mod").touch()
+    monkeypatch.setattr(shutil, "which", lambda _: "/fixture/tool")
+    monkeypatch.setattr(cli, "check_host_capacity", lambda _: None)
+    monkeypatch.setattr(cli.subprocess, "run", lambda argv, **kwargs: subprocess.CompletedProcess(argv, 0, ""))
+    empty = tmp_path / "third_party/sregym"  # an uninitialized submodule
+    empty.mkdir(parents=True)
+    args = cli.build_parser().parse_args(
+        ["preflight", "--app", "toy", "--dev-mount", str(tmp_path), "--sregym-dir", str(empty), "--allow-stale-images"]
+    )
+    cli.up_preflight(args)
+    args = cli.build_parser().parse_args(["preflight", "--dev-mount", str(tmp_path), "--sregym-dir", str(empty)])
+    with pytest.raises(ValueError, match="SREGym"):
+        cli.up_preflight(args)

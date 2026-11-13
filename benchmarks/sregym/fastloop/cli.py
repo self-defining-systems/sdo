@@ -1729,6 +1729,7 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     preflight = commands.add_parser("preflight", help="fail fast on host prerequisites before building images")
+    preflight.add_argument("--app", choices=("sregym", "toy", "gitlab"), default="sregym")
     preflight.add_argument("--dev-mount", type=Path, nargs="?", const=REPO_ROOT, default=REPO_ROOT)
     preflight.add_argument("--kind-worker-nodes", type=int, default=1)
     for role in ("controller", "responder"):

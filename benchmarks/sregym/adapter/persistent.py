@@ -47,6 +47,7 @@ from benchmarks.sregym.adapter.eval_guards import (
     busy_until,
     idle_standby_jobs,
     incident_work_open,
+    incident_work_pending,
     queued_reflection_ids,
     terminal_incident_ids,
 )
@@ -740,7 +741,7 @@ class KubectlClusterOps:
     def set_maintenance(
         self, control_namespace: str, *, paused: bool, generation: str, preserve_baseline: bool = False
     ) -> None:
-        if paused and incident_work_open(self.runtime_state(control_namespace)):
+        if paused and incident_work_pending(self.runtime_state(control_namespace)):
             raise PersistentControllerError("eval: cannot pause SDO while incident closure work is pending")
         kubeconfig = os.getenv("KUBECONFIG", "").strip()
         go_set_maintenance(

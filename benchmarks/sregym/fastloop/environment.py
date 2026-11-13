@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import MutableMapping  # noqa: TC003
 from pathlib import Path  # noqa: TC003 - Pydantic resolves this annotation at runtime.
@@ -15,11 +16,21 @@ ENVIRONMENT_FILENAME = "fastloop.json"
 DEFAULT_PROBLEM = "missing_configmap_hotel_reservation"
 
 
+DEFAULT_IMAGE_TAG = "fastloop"
+
+
+def _image_tag() -> str:
+    """The tag ``scripts/build_sdo_images.sh`` builds (its ``SDO_IMAGE_TAG``), so build and up agree."""
+    return os.environ.get("SDO_IMAGE_TAG") or DEFAULT_IMAGE_TAG
+
+
 class Images(BaseModel):
+    """Lane images; defaults are the names the image build script produces for the same ``SDO_IMAGE_TAG``."""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    controller: str = "sdo-controller:fastloop"
-    responder: str = "sdo-sregym-responder:fastloop"
+    controller: str = Field(default_factory=lambda: f"sdo-controller:{_image_tag()}")
+    responder: str = Field(default_factory=lambda: f"sdo-sregym-responder:{_image_tag()}")
 
 
 class FastloopEnvironment(BaseModel):

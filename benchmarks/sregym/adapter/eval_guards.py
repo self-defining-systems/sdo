@@ -205,6 +205,40 @@ def incident_work_open(state: dict[str, Any]) -> bool:
     return busy_until(state) is not None
 
 
+def startup_hold_bound(state: dict[str, Any]) -> datetime | None:
+    """The bound of a start-up period that still holds the controller's openers, else None.
+
+    While it holds, the controller publishes that bound as ``busy_until`` although no incident exists or can
+    open: observers that wait for idle should wait it out, but it is not incident work.
+    """
+    startup = state.get("startup") or {}
+    bound = startup.get("bound_at") or startup.get("boundAt")
+    if not (startup.get("began_at") or startup.get("beganAt")) or not bound:
+        return None
+    ended = ("established_at", "establishedAt", "bound_reached_at", "boundReachedAt", "skipped_reason", "skippedReason")
+    if any(startup.get(key) for key in ended):
+        return None
+    return datetime.fromisoformat(str(bound).replace("Z", "+00:00"))
+
+
+def incident_work_pending(state: dict[str, Any]) -> bool:
+    """Incident work SDO owns, not counting a start-up hold that is the only reason ``busy_until`` is set.
+
+    A restarted controller re-enters its persisted start-up period, so its ``busy_until`` is the period's bound
+    with nothing to close. Pausing it then is safe; refusing would be a harness error, not a controller fact.
+    """
+    until = busy_until(state)
+    if until is None:
+        return False
+    return not (
+        startup_hold_bound(state) == until
+        and not state.get("incident_open")
+        and not state.get("pending_closure")
+        and not state.get("queued_reflection_incident_ids")
+        and not state.get("queued_reflections_unknown")
+    )
+
+
 def busy_remaining_seconds(state: dict[str, Any], now: datetime | None = None) -> float | None:
     """Seconds until the controller's own bound on its work (negative once passed); None when idle."""
     until = busy_until(state)
