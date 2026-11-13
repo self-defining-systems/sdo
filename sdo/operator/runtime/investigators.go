@@ -124,6 +124,8 @@ type investigatorEntry struct {
 	State   investigatorState
 	Report  string
 	Started time.Time
+	// Pushed is set once the report was appended to a detect, verify or try output.
+	Pushed bool
 }
 
 // verdictLine is the report's first line when it is "Verdict: ..."; Go parses nothing else.
@@ -141,6 +143,9 @@ type InvestigationBoard struct {
 	mu        sync.Mutex
 	entries   []*investigatorEntry
 	announced bool
+	// Persist, when set, stores a finished report outside the board (the incident's evidence). A failure is
+	// logged and never reaches the incident.
+	Persist func(id, node, report string) error
 }
 
 func (b *InvestigationBoard) start(id, node string, at time.Time) {
@@ -151,12 +156,54 @@ func (b *InvestigationBoard) start(id, node string, at time.Time) {
 
 func (b *InvestigationBoard) finish(id string, state investigatorState, report string) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	var node string
+	var finished bool
 	for _, entry := range b.entries {
 		if entry.ID == id && entry.State == investigatorRunning {
 			entry.State, entry.Report = state, report
+			node, finished = entry.Node, true
 		}
 	}
+	persist := b.Persist
+	b.mu.Unlock()
+	if finished && state == investigatorDone && strings.TrimSpace(report) != "" && persist != nil {
+		if err := persist(id, node, report); err != nil {
+			slog.Warn("investigator_report_persist", "investigator", id, "error", err)
+		}
+	}
+}
+
+// ReportNotes are the lines a report arrival adds to the responder's next detect, verify or try output: its
+// Verdict line with the node, once per report, and for a "supported" verdict one line naming the hypothesis.
+// Reports already shown are not repeated; `sdo investigations` still prints them in full.
+func (b *InvestigationBoard) ReportNotes() []string {
+	if b == nil {
+		return nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var notes []string
+	for _, entry := range b.entries {
+		if entry.State != investigatorDone || entry.Pushed || strings.TrimSpace(entry.Report) == "" {
+			continue
+		}
+		entry.Pushed = true
+		verdict := verdictLine(entry.Report)
+		if verdict == "" {
+			notes = append(notes, fmt.Sprintf("investigator report arrived (node %s, no Verdict line); read: sdo investigations", entry.Node))
+			continue
+		}
+		notes = append(notes, fmt.Sprintf("investigator report (node %s): %s; full text: sdo investigations", entry.Node, verdict))
+		rest := strings.TrimSpace(strings.TrimPrefix(verdict, "Verdict:"))
+		if hypothesis, ok := strings.CutPrefix(rest, "supported"); ok {
+			hypothesis = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(hypothesis), "-:\u2013\u2014"))
+			if hypothesis == "" {
+				hypothesis = "the failure is caused at node " + entry.Node
+			}
+			notes = append(notes, fmt.Sprintf("investigator supports: %s - read `sdo investigations` before acting", hypothesis))
+		}
+	}
+	return notes
 }
 
 // DetectLine is the one line the first `sdo detect` after the investigators started ends with; "" before

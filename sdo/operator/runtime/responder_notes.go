@@ -133,6 +133,16 @@ func (l *ResponderLoop) detectNote(findings []sdk.Finding) string {
 	return ""
 }
 
+// appendReportNotes shows each newly arrived investigator report once, on a successful response.
+func (l *ResponderLoop) appendReportNotes(response *ToolResponse) {
+	if response.Error != "" {
+		return
+	}
+	for _, note := range l.Investigations.ReportNotes() {
+		appendNote(response, note)
+	}
+}
+
 func appendNote(response *ToolResponse, note string) {
 	if note == "" {
 		return

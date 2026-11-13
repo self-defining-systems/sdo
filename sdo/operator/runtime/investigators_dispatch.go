@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -26,8 +27,10 @@ const investigatorStopTimeout = 30 * time.Second
 // startInvestigators arms the incident's investigators once the responder's session is running. Nothing starts
 // until the delay passes with no write; the returned stop ends them and deletes their Jobs, and the dispatcher
 // calls it when the responder returns.
-func (d KubernetesJobDispatcher) startInvestigators(ctx context.Context, request IncidentRequest, task *contracts.AgentTask, loop *ResponderLoop) (stop func()) {
-	board := &InvestigationBoard{}
+func (d KubernetesJobDispatcher) startInvestigators(ctx context.Context, request IncidentRequest, task *contracts.AgentTask, loop *ResponderLoop, reportDir string) (stop func()) {
+	board := &InvestigationBoard{Persist: func(id, node, report string) error {
+		return persistInvestigatorReport(reportDir, id, node, report)
+	}}
 	loop.Investigations = board
 	d.Investigators.begin(ctx, investigatorPlan{
 		IncidentID: request.IncidentID,
@@ -45,6 +48,38 @@ func (d KubernetesJobDispatcher) startInvestigators(ctx context.Context, request
 			slog.Warn("investigator_stop", "incident_id", request.IncidentID, "error", err)
 		}
 	}
+}
+
+// investigationsDirName is the responder session's directory of investigator reports; the evidence allowlist
+// admits its .txt files, so a grader reads each report beside the incident's other evidence.
+const investigationsDirName = "investigations"
+
+// persistInvestigatorReport writes one finished report under the incident's session directory (dir), atomically.
+// An empty dir stores nothing.
+func persistInvestigatorReport(dir, id, node, report string) error {
+	if dir == "" {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o777); err != nil {
+		return err
+	}
+	text := fmt.Sprintf("investigator: %s\nnode: %s\n\n%s\n", id, node, strings.TrimSpace(report))
+	temp, err := os.CreateTemp(dir, ".report-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(temp.Name())
+	if _, err := temp.WriteString(text); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(temp.Name(), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(temp.Name(), filepath.Join(dir, id+".txt"))
 }
 
 // stopInvestigators ends the incident's investigators and deletes their Jobs; with none running it does nothing.

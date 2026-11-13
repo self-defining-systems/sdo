@@ -834,6 +834,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			l.closeLoop()
 			response.DataEffects = l.incidentDataEffects(ctx)
 			appendNote(&response, l.verifyNote(response.Findings))
+			l.appendReportNotes(&response)
 		}
 	case "rollback":
 		l.rollbackApplication(ctx, request, &response)

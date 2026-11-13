@@ -61,6 +61,9 @@ func Allowed(name string) bool {
 	if len(parts) == 6 && parts[2] == "scratch" && parts[3] == "sdo-reports" {
 		return commandReportName.MatchString(parts[5])
 	}
+	if len(parts) == 4 && parts[2] == "investigations" {
+		return strings.HasSuffix(base, ".txt")
+	}
 	if len(parts) == 4 && parts[2] == "corpus" {
 		return strings.HasSuffix(base, ".json")
 	}
@@ -129,7 +132,7 @@ func descend(relative string) bool {
 		}
 		if len(parts) >= 3 {
 			switch parts[2] {
-			case "scratch", "startup", "startup-workers", "corpus", "checkpoints", "model_io", "codex", "claude":
+			case "scratch", "startup", "startup-workers", "investigations", "corpus", "checkpoints", "model_io", "codex", "claude":
 				return true
 			case "api-history", "api-history-reflection":
 				return len(parts) == 3

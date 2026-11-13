@@ -90,6 +90,9 @@ func (l *ResponderLoop) handleRead(ctx context.Context, request ToolRequest) (re
 			appendNote(&response, l.detectNote(response.Findings))
 			appendNote(&response, l.Investigations.DetectLine())
 		}
+		if request.Command == "detect" || request.Command == "try" {
+			l.appendReportNotes(&response)
+		}
 		raw, _ := json.Marshal(request)
 		l.calls = append(l.calls, ToolCall{Command: request.Command, At: l.clock().UTC(), RequestJSON: string(raw), ResponseJSON: string(recordedToolResponseJSON(response, nil)), Error: response.Error, Summary: response.Summary})
 		if err := l.persistToolState(ctx); err != nil {

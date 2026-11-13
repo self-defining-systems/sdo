@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -358,9 +359,13 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 	}
 
 	if d.Investigators.Enabled() && sessionSubPath != "" && loop.hasCandidateView(request) {
+		reportDir := ""
+		if relative, pathErr := filepath.Rel(cmp.Or(d.RepositoryPVCSubPath, "."), sessionSubPath); pathErr == nil && !strings.HasPrefix(relative, "..") {
+			reportDir = filepath.Join(d.RepositoryMountPath, relative, investigationsDirName)
+		}
 		// Armed with the responder's session: they start only if it makes no write within the delay, and end
 		// when it returns (or earlier, at Recovered, through StopResponder).
-		defer d.startInvestigators(ctx, request, task, loop)()
+		defer d.startInvestigators(ctx, request, task, loop, reportDir)()
 	}
 	result, err := d.executeResponder(ctx, executor, task, loop, request)
 	if err != nil {
