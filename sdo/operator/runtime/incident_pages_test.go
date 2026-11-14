@@ -144,17 +144,17 @@ func TestIncidentChangesListDeparturesWithWriterInTheWindow(t *testing.T) {
 	appState := &staticAppState{rows: []IncidentChange{{At: onset.Add(-time.Minute), Component: "db", ReaderOrObject: "settings", Key: "rate_limit", Before: "100", After: "1", Noisy: true}}}
 	changes := buildIncidentChanges(incidentPageInput{Request: request, View: view, Signals: newIncidentSignals(), AppState: appState, Now: onset.Add(time.Minute), Since: 30 * time.Minute})
 	rows := parseCSV(t, changes)
-	if strings.Join(rows[0], ",") != "t_rel_s,at_utc,source,component,reader_or_object,key,before,after,writer,noisy,read_at_utc" {
+	if strings.Join(rows[0], ",") != "t_rel_s,at_utc,source,component,reader_or_object,key,before,after,writer,actor,noisy,read_at_utc" {
 		t.Fatalf("header = %v", rows[0])
 	}
 	if len(rows) != 3 {
 		t.Fatalf("rows:\n%s", changes)
 	}
 	state, departure := rows[1], rows[2]
-	if strings.Join(state, ",") != "-60,"+onset.Add(-time.Minute).Format(time.RFC3339)+",app-state,db,settings,rate_limit,100,1,,true," {
+	if strings.Join(state, ",") != "-60,"+onset.Add(-time.Minute).Format(time.RFC3339)+",app-state,db,settings,rate_limit,100,1,,unknown,true," {
 		t.Fatalf("app-state row = %v", state)
 	}
-	if departure[0] != "-4" || departure[2] != "kubernetes" || departure[3] != "db" || departure[4] != "NetworkPolicy/restrict-db" || departure[5] != "spec.egress" || departure[8] != "kubectl" || departure[9] != "false" {
+	if departure[0] != "-4" || departure[2] != "kubernetes" || departure[3] != "db" || departure[4] != "NetworkPolicy/restrict-db" || departure[5] != "spec.egress" || departure[8] != "kubectl" || departure[9] != "other" || departure[10] != "false" {
 		t.Fatalf("departure row = %v", departure)
 	}
 	if !appState.since.Equal(onset.Add(-30 * time.Minute)) {
@@ -230,7 +230,7 @@ func TestChangesAndTimelineCommandsPrintCSVAndWriteNoFiles(t *testing.T) {
 		t.Fatalf("changes error: %s", response.Error)
 	}
 	rows := parseCSV(t, []byte(response.Text))
-	if strings.Join(rows[0], ",") != "t_rel_s,at_utc,source,component,reader_or_object,key,before,after,writer,noisy,read_at_utc" {
+	if strings.Join(rows[0], ",") != "t_rel_s,at_utc,source,component,reader_or_object,key,before,after,writer,actor,noisy,read_at_utc" {
 		t.Fatalf("header = %v", rows[0])
 	}
 	if len(rows) != 2 || rows[1][5] != "rate_limit" {

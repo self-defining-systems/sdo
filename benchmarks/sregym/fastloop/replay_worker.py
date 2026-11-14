@@ -122,7 +122,7 @@ class CapturedKubernetesAPI:
                     if key in self.fixed:
                         self.objects[key] = json.loads(json.dumps(self.fixed[key]))
             return {"applied": True}
-        if args[0] == "verify":
+        if args[0] == "detect":
             healthy = all(
                 _relevant(self.objects.get(key), key[0]) == _relevant(value, key[0])
                 for key, value in self.fixed.items()

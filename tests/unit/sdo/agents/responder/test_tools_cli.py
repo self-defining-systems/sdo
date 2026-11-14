@@ -162,7 +162,7 @@ def test_local_help_is_a_concise_capability_index() -> None:
     help_text = tools_cli._parser().format_help()
     assert "accepted source" in help_text
     assert "mitigate" in help_text
-    assert "verify" in help_text
+    assert "detect" in help_text
     assert len(help_text) < 2000
 
 
@@ -186,17 +186,49 @@ def test_incident_command_index_keeps_details_in_help(monkeypatch: pytest.Monkey
     assert tools_cli.command_surface() == surface
 
 
-def test_detect_repeated_detector_selection(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_detect_sends_its_name_and_wait(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[dict[str, object]] = []
     monkeypatch.setattr(tools_cli, "_exchange", lambda request, _: seen.append(request) or {"summary": "fresh"})
     assert tools_cli.main(["--json", "detect"]) == 0
-    assert tools_cli.main(["--json", "detect", "--detector", "a", "b", "--detector", "c"]) == 0
-    assert seen == [{"command": "detect"}, {"command": "detect", "detector_ids": ["a", "b", "c"]}]
+    assert tools_cli.main(["--json", "detect", "create"]) == 0
+    assert tools_cli.main(["--json", "detect", "--wait", "30"]) == 0
+    assert tools_cli.main(["--json", "detect", "workload-health", "--wait", "5"]) == 0
+    assert seen == [
+        {"command": "detect"},
+        {"command": "detect", "name": "create"},
+        {"command": "detect", "wait_seconds": 30.0},
+        {"command": "detect", "name": "workload-health", "wait_seconds": 5.0},
+    ]
+
+
+@pytest.mark.parametrize("value", ["-1", "nan", "inf", "601"])
+def test_detect_wait_rejects_invalid_timeouts(value, monkeypatch):
+    monkeypatch.setattr(tools_cli, "_exchange", lambda *_: pytest.fail("invalid wait reached controller"))
+    assert tools_cli.main(["detect", "--wait", value]) == 1
+
+
+def test_detect_wait_client_deadline_outlasts_the_wait(monkeypatch, tmp_path):
+    for name in ("requests", "responses"):
+        (tmp_path / name).mkdir()
+    clock = iter([0.0, 0.0, 599.0, 609.0, 611.0])
+    monkeypatch.setattr(tools_cli.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(tools_cli.time, "sleep", lambda _: None)
+    with pytest.raises(TimeoutError):
+        tools_cli._exchange({"command": "detect", "wait_seconds": 600}, tmp_path)
+
+
+@pytest.mark.parametrize("removed", ["verify", "try", "check"])
+def test_verify_try_and_check_are_not_commands(removed, capsys):
+    assert removed not in tools_cli.command_surface()["commands"]
+    with pytest.raises(SystemExit) as unknown:
+        tools_cli.main([removed])
+    assert unknown.value.code == 2
+    assert f"invalid choice: '{removed}'" in capsys.readouterr().err
 
 
 def test_detect_prints_the_compact_summary_and_expands_one_item(monkeypatch, capsys, tmp_path):
     seen: list[dict[str, object]] = []
-    summary = "incident inc-1\nOPENED ON\ncreate  HTTP 429\n  more: sdo detect --finding create"
+    summary = "incident inc-1\nOPENED ON\ncreate  HTTP 429\n  more: sdo detect create"
     monkeypatch.setenv("SDO_API_HISTORY_DIR", str(tmp_path))
     monkeypatch.setattr(
         tools_cli,
@@ -206,8 +238,8 @@ def test_detect_prints_the_compact_summary_and_expands_one_item(monkeypatch, cap
     )
     assert tools_cli.main(["detect"]) == 0
     assert capsys.readouterr().out.strip() == summary
-    assert tools_cli.main(["detect", "--finding", "create"]) == 0
-    assert seen == [{"command": "detect"}, {"command": "detect", "finding": "create"}]
+    assert tools_cli.main(["detect", "create"]) == 0
+    assert seen == [{"command": "detect"}, {"command": "detect", "name": "create"}]
     assert tools_cli.main(["--json", "detect"]) == 0
     assert json.loads(capsys.readouterr().out.splitlines()[-1])["findings"] == [{"summary": "x"}]
 
@@ -218,46 +250,6 @@ def test_mitigate_cli_preserves_explicit_target_finding_fingerprints(monkeypatch
     argv = ["--json", "mitigate", "repair", "--finding", "health/api/config", "--finding", "health/api/ready"]
     assert tools_cli.main(argv) == 0
     assert seen[-1]["targets"][0]["finding_fingerprints"] == ["health/api/config", "health/api/ready"]
-
-
-@pytest.mark.parametrize("detection_error", [False, True])
-def test_check_retains_fresh_detection_and_independent_closure(monkeypatch, capsys, detection_error):
-    seen = []
-    detection = {"command": "detect", "findings": [{"fingerprint": "peer"}], "summary": "fresh peer"}
-    if detection_error:
-        detection["error"] = "one detector failed"
-    closure = {"command": "verify", "healthy": False, "summary": "peer remains", "findings": [{"fingerprint": "peer"}]}
-
-    def exchange(request, _directory):
-        seen.append(request)
-        return detection if request["command"] == "detect" else closure
-
-    monkeypatch.setattr(tools_cli, "_exchange", exchange)
-    assert tools_cli.main(["--json", "check", "--detector", "routing", "--detector", "availability"]) == int(
-        detection_error
-    )
-    assert seen == [{"command": "detect", "detector_ids": ["routing", "availability"]}, {"command": "verify"}]
-    output = json.loads(expand_context(capsys.readouterr().out).splitlines()[0])
-    assert output["command"] == "check"
-    assert output["detection"] == detection
-    assert all(output[key] == value for key, value in closure.items() if key != "command")
-    assert output["healthy"] is False
-    assert output["findings"] == closure["findings"]
-
-
-def test_check_does_not_report_health_when_detection_failed(monkeypatch, capsys):
-    responses = iter(
-        [
-            {"command": "detect", "error": "read unavailable", "summary": "read unavailable"},
-            {"command": "verify", "healthy": True, "summary": "closure clear"},
-        ]
-    )
-    monkeypatch.setattr(tools_cli, "_exchange", lambda *_: next(responses))
-    assert tools_cli.main(["--json", "check"]) == 1
-    output = json.loads(expand_context(capsys.readouterr().out).splitlines()[0])
-    assert output["healthy"] is False
-    assert output["error"] == "read unavailable"
-    assert output["detection"]["error"] == "read unavailable"
 
 
 @pytest.mark.parametrize("command", ["menu", "detect", "mitigate", "source"])
@@ -309,22 +301,22 @@ def test_cli_bounds_stdout_and_preserves_full_response_in_private_json(monkeypat
 
 
 def test_cli_persists_small_responses_too(monkeypatch, capsys):
-    response = {"command": "verify", "healthy": True, "summary": "clear"}
+    response = {"command": "status", "healthy": True, "summary": "clear"}
     monkeypatch.setattr(tools_cli, "_exchange", lambda *_: response)
-    assert tools_cli.main(["verify"]) == 0
+    assert tools_cli.main(["status"]) == 0
     output = expand_context(capsys.readouterr().out)
     details = Path(output.split("Full JSON: ", 1)[1].splitlines()[0])
     try:
-        assert "sdo verify: clear" in output
+        assert "sdo status: clear" in output
         assert "healthy=true" in output.split()
         assert json.loads(details.read_text()) == response
     finally:
         details.unlink()
 
 
-@pytest.mark.parametrize("arguments", [["--json", "verify"], ["verify", "--json"]])
+@pytest.mark.parametrize("arguments", [["--json", "status"], ["status", "--json"]])
 def test_json_flag_works_before_or_after_the_subcommand(monkeypatch, capsys, arguments):
-    response = {"command": "verify", "healthy": False, "findings": [{"evidence": "full live fact"}]}
+    response = {"command": "status", "healthy": False, "findings": [{"evidence": "full live fact"}]}
     monkeypatch.setattr(tools_cli, "_exchange", lambda *_: response)
     assert tools_cli.main(arguments) == 0
     assert json.loads(expand_context(capsys.readouterr().out)) == response
@@ -340,20 +332,6 @@ def test_client_side_failures_also_produce_compact_output_and_complete_json(monk
         assert "menu read failed" in text
     finally:
         details.unlink()
-
-
-def test_verify_wait_uses_cached_controller_protocol(monkeypatch, capsys):
-    seen = []
-    monkeypatch.setattr(tools_cli, "_exchange", lambda request, _: seen.append(request) or {"summary": "cached"})
-    assert tools_cli.main(["verify", "--wait", "0.25"]) == 0
-    assert seen == [{"command": "verify", "wait_seconds": 0.25}]
-    assert "cached" in expand_context(capsys.readouterr().out)
-
-
-@pytest.mark.parametrize("value", ["-1", "nan", "inf", "86401"])
-def test_verify_wait_rejects_invalid_timeouts(value, monkeypatch):
-    monkeypatch.setattr(tools_cli, "_exchange", lambda *_: pytest.fail("invalid wait reached controller"))
-    assert tools_cli.main(["verify", "--wait", value]) == 1
 
 
 def test_mitigate_passes_structured_values_as_json_text(monkeypatch):
@@ -398,22 +376,6 @@ def test_changes_and_timeline_send_their_window_and_print_the_csv(monkeypatch, c
         {"command": "timeline", "components": ["db"]},
     ]
     assert capsys.readouterr().out == "t_rel_s,at_utc\n-60,10:00:00\n\n" * 5
-
-
-def test_try_lists_or_names_one_user_test(monkeypatch, capsys):
-    seen = []
-
-    def exchange(request, _directory):
-        seen.append(request)
-        return {"command": "try", "text": "FAIL       browse\n", "healthy": False}
-
-    monkeypatch.setattr(tools_cli, "_exchange", exchange)
-
-    assert tools_cli.main(["try"]) == 0
-    assert tools_cli.main(["try", "browse"]) == 0
-    assert seen == [{"command": "try"}, {"command": "try", "test": "browse"}]
-    assert capsys.readouterr().out == "FAIL       browse\n\n" * 2
-    assert "healthy" in tools_cli.RESPONSE_FIELDS["try"]
 
 
 def test_map_sends_its_view_and_name_and_prints_the_text(monkeypatch, capsys):

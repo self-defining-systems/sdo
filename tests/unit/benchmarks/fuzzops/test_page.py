@@ -78,8 +78,25 @@ def test_a_clean_check_still_pages_with_the_users_report(tmp_path: Path) -> None
     assert parse_trace("traffic: requests=5\n", "", ["a"]) == {}
     clock, submitted = Clock(), []
     pager = _pager(tmp_path, clock, PageConfig(), submitted)
-    pager.live_check = lambda: ("traffic: requests=5\n", "")
-    assert "users still report failures" in pager.run(1000.0)
+    checks = []
+    pager.live_check = lambda: checks.append(clock.now) or ("traffic: requests=5\n", "")
+    message = pager.run(1000.0)
+    # A clean check is repeated before paging, and the page never claims an operation works or that none fails.
+    assert len(checks) == 1 + PageConfig().rechecks
+    assert "users still report failures" in message
+    assert "not reproduced: 3 short live checks" in message
+    assert "These still work" not in message
+    assert "no failing operation" not in message
+
+
+def test_a_recheck_that_reproduces_the_failure_names_it(tmp_path: Path) -> None:
+    clock, submitted = Clock(), []
+    pager = _pager(tmp_path, clock, PageConfig(), submitted)
+    results = iter([("traffic: requests=5\n", ""), (STDOUT, STDERR)])
+    pager.live_check = lambda: next(results)
+    message = pager.run(1000.0)
+    assert "issue-create: 500 internal server error" in message
+    assert "These still work: api-user, sign-in-page." in message
 
 
 def test_page_config_defaults_to_b1_schedule_and_validates() -> None:

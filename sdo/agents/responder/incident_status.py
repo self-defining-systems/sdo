@@ -46,7 +46,7 @@ class IncidentStatusReport:
 
 
 def live_incident_status() -> IncidentStatusReport:
-    """Benchmark submission adapters use the same incident tool as `sdo verify`."""
+    """Benchmark submission adapters read the controller's recovery verification through the incident tools."""
     try:
         response = tools_cli.verify_incident()
     except (OSError, ValueError, TimeoutError) as exc:

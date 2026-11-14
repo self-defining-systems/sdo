@@ -207,8 +207,8 @@ func TestDetectSummaryWorstCaseFitsAndCountsWhatItDrops(t *testing.T) {
 	if len(summary.Text) > detectSummaryCap {
 		t.Fatalf("worst case is %d bytes:\n%s", len(summary.Text), summary.Text)
 	}
-	shown := strings.Count(summary.Text, "more: sdo detect --finding test-")
-	dropped := regexp.MustCompile(`\+(\d+) more: sdo detect --finding tests`).FindStringSubmatch(summary.Text)
+	shown := strings.Count(summary.Text, "more: sdo detect test-")
+	dropped := regexp.MustCompile(`\+(\d+) more: sdo detect tests`).FindStringSubmatch(summary.Text)
 	if shown+atoi(t, dropped) != 8 {
 		t.Fatalf("%d tests shown, dropped note %v; want all 8 counted:\n%s", shown, dropped, summary.Text)
 	}
@@ -252,8 +252,8 @@ func assertMoreCommand(t *testing.T, summary detectSummary, line, command string
 	t.Helper()
 	{
 		switch {
-		case strings.HasPrefix(command, "sdo detect --finding "):
-			id := strings.TrimPrefix(command, "sdo detect --finding ")
+		case strings.HasPrefix(command, "sdo detect "):
+			id := strings.TrimPrefix(command, "sdo detect ")
 			if _, ok := summary.item(id); !ok {
 				t.Fatalf("handle %q resolves to nothing:\n%s", id, summary.Text)
 			}

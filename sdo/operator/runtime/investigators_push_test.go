@@ -6,31 +6,30 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
-func TestAReportArrivalIsShownOnceOnTheNextVerifyAndTry(t *testing.T) {
+func TestAReportArrivalIsShownOnceOnTheNextVerifyAndDetect(t *testing.T) {
 	board := &InvestigationBoard{}
 	board.start("i-inv-1", "db", candidateOnset)
 	board.start("i-inv-2", "cache", candidateOnset)
-	loop := tryLoop(tryProber(time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)))
+	loop, _ := detectWorldLoop(&detectWorld{sendOK: true})
 	loop.Investigations = board
 	loop.VerifyClosure = func(context.Context) ToolResponse { return ToolResponse{Command: "verify", Summary: "not recovered"} }
-	before := loop.Handle(context.Background(), ToolRequest{Command: "try"})
+	before := loop.Handle(context.Background(), ToolRequest{Command: "detect", Name: "list"})
 	if strings.Contains(before.Summary, "investigator") {
 		t.Fatalf("nothing arrived yet: %q", before.Summary)
 	}
 	board.finish("i-inv-1", investigatorDone, "Verdict: refuted - the extra row is routine\nbody")
-	first := loop.Handle(context.Background(), ToolRequest{Command: "try"})
+	first := loop.Handle(context.Background(), ToolRequest{Command: "detect", Name: "list"})
 	for _, want := range []string{"investigator report (node db): Verdict: refuted (investigator) - the extra row is routine", "sdo investigations"} {
 		if !strings.Contains(first.Summary, want) || !strings.Contains(first.Text, want) {
-			t.Fatalf("try lacks %q: %q", want, first.Summary)
+			t.Fatalf("detect lacks %q: %q", want, first.Summary)
 		}
 	}
 	if strings.Contains(first.Summary, "investigator supports") {
 		t.Fatalf("a refuted report adds no support line: %q", first.Summary)
 	}
-	if again := loop.Handle(context.Background(), ToolRequest{Command: "try"}); strings.Contains(again.Summary, "investigator") {
+	if again := loop.Handle(context.Background(), ToolRequest{Command: "detect", Name: "list"}); strings.Contains(again.Summary, "investigator") {
 		t.Fatalf("shown once: %q", again.Summary)
 	}
 	board.finish("i-inv-2", investigatorDone, "Verdict: supported - a trigger truncates titles\nbody")

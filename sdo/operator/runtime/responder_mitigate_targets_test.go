@@ -152,7 +152,7 @@ func TestAppliedFixWithClearedDiagnosisReportsWaitingNotUnresolved(t *testing.T)
 	if response.Report.ReasonCode != AppliedAwaitingRecovery {
 		t.Fatalf("reason = %q, want %q (status %s)", response.Report.ReasonCode, AppliedAwaitingRecovery, response.Report.Status)
 	}
-	if want := "fix applied; waiting for traffic to recover; next: sdo verify --wait 60"; response.Summary != want {
+	if want := "fix applied; waiting for traffic to recover; next: sdo detect --wait 60"; response.Summary != want {
 		t.Fatalf("summary = %q, want %q", response.Summary, want)
 	}
 	if response.TargetedHealthy {

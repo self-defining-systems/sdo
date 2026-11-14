@@ -252,7 +252,8 @@ func (s *SessionToolServer) process(ctx context.Context) error {
 
 // detect takes one fresh snapshot and runs only the selected deterministic
 // detectors. It never diagnoses programs, prepares plans or consumes a batch.
-func (l *ResponderLoop) detect(ctx context.Context, ids []string, finding string, response *ToolResponse) {
+// It returns the summary it built: nil for a detector selection or an error.
+func (l *ResponderLoop) detect(ctx context.Context, ids []string, finding string, response *ToolResponse) *detectSummary {
 	selected := map[string]bool{}
 	valid := make([]string, 0, len(l.Detectors))
 	for _, detector := range l.Detectors {
@@ -262,18 +263,18 @@ func (l *ResponderLoop) detect(ctx context.Context, ids []string, finding string
 	for _, id := range ids {
 		if !slices.Contains(valid, id) {
 			response.Error = fmt.Sprintf("unknown detector %q; valid detector IDs: %s", id, strings.Join(valid, ", "))
-			return
+			return nil
 		}
 		selected[id] = true
 	}
 	if l.Provider == nil {
 		response.Error = "fresh detector snapshot provider is unavailable"
-		return
+		return nil
 	}
 	snapshot, err := l.Provider.Snapshot(ctx)
 	if err != nil {
 		response.Error = err.Error()
-		return
+		return nil
 	}
 	readView := program.ReadFrom(snapshot)
 	if l.ReadView != nil {
@@ -323,25 +324,28 @@ func (l *ResponderLoop) detect(ctx context.Context, ids []string, finding string
 		response.Healthy = response.Healthy && state.Status == DetectorEvaluationClear
 	}
 	response.Summary = fmt.Sprintf("%d detectors evaluated; %d current findings", len(response.DetectorStates), len(response.Findings)) + pendingEvaluationSummary(response.DetectorStates)
-	if reads, ok := any(view).(detectReads); ok && len(selected) == 0 {
-		now := l.clock().UTC()
-		page := l.pageInput(reads, response.Findings, now)
-		summary := buildDetectSummary(detectInput{Request: l.liveRequest(), Findings: response.Findings, View: reads, Now: now, Recovered: l.detectIncidentRecovered(), AppState: page.AppState})
-		response.Text = summary.Text
-		if finding != "" {
-			text, found := summary.item(finding)
-			if !found {
-				response.Error = fmt.Sprintf("no current item matches %q; sdo detect lists the current ones", finding)
-				return
-			}
-			response.Text = text
-		}
+	reads, ok := any(view).(detectReads)
+	if !ok || len(selected) > 0 {
+		return nil
 	}
+	now := l.clock().UTC()
+	page := l.pageInput(reads, response.Findings, now)
+	summary := buildDetectSummary(detectInput{Request: l.liveRequest(), Findings: response.Findings, View: reads, Now: now, Recovered: l.detectIncidentRecovered(), AppState: page.AppState})
+	response.Text = summary.Text
+	if finding != "" {
+		text, found := summary.item(finding)
+		if !found {
+			response.Error = fmt.Sprintf("no current item matches %q; sdo detect lists the current ones", finding)
+			return &summary
+		}
+		response.Text = text
+	}
+	return &summary
 }
 
 // pageInput is what the on-demand pages are built from.
 func (l *ResponderLoop) pageInput(view detectReads, findings []sdk.Finding, now time.Time) incidentPageInput {
-	in := incidentPageInput{Request: l.Request, Findings: findings, View: view, Now: now}
+	in := incidentPageInput{Request: l.Request, Findings: findings, View: view, Now: now, Writes: l.incidentWrites()}
 	if l.IncidentSources != nil {
 		in.Signals, in.AppState = l.IncidentSources()
 	}

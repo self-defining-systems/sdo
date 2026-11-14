@@ -239,7 +239,7 @@ def _responder_instructions() -> str:
         "verification, run `python3 -m benchmarks.sregym.adapter.submission mitigation '<mitigation>'`. "
         "The controller alone determines closure from live detectors. Do not begin repair until diagnosis is "
         "acknowledged. Before mitigation, wait for affected rollouts, verify representative requests, and run "
-        "`sdo verify` until it reports healthy. "
+        "`sdo detect` until the tests pass. "
         "Submit mitigation once; return the incident "
         "result after the benchmark accepts it."
     )

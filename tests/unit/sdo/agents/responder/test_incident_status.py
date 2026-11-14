@@ -12,6 +12,6 @@ def test_status_cli_forwards_the_selection_to_the_controller(monkeypatch):
     assert calls == [{"command": "verify", "workload": "verify", "scenarios": ["read"]}]
 
 
-def test_verify_selection_is_an_incident_tool_request():
-    args = tools_cli._parser().parse_args(["verify", "--workload", "check", "--scenario", "read"])
-    assert tools_cli._request(args) == {"command": "verify", "workload": "check", "scenarios": ["read"]}
+def test_verification_is_not_an_agent_command():
+    """The adapters' status check reads the controller's verification; the agent's sdo command has no verify."""
+    assert "verify" not in tools_cli.command_surface()["commands"]

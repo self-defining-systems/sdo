@@ -138,7 +138,7 @@ def test_scripted_entry_points_complete_on_seed_copy_with_fake_kubernetes_api(
             return {
                 "source": {"spec": {"template": {"spec": {"containers": [{"name": name, "image": "built:source"}]}}}}
             }
-        if args[0] == "verify":
+        if args[0] == "detect":
             service = api.objects["Service", "reservation"]["spec"]["ports"][0]
             image = api.objects["Deployment", "rate"]["spec"]["template"]["spec"]["containers"][0]["image"]
             return {"healthy": service["targetPort"] != 9999 and image != "missing:tag", "summary": "checked fake API"}
@@ -325,7 +325,7 @@ def test_respond_returns_typed_result_after_source_repair(monkeypatch: pytest.Mo
     assert not result.repair_actions  # the recording of the scripted kubectl calls is the receipt
     assert result.verification_evidence[0].passed
     assert result.usage.llm_calls == 0
-    assert calls == ["diagnose", "verify", "verify"]
+    assert calls == ["diagnose", "detect", "detect"]
     assert repairs[0]["name"] == "front"
 
 

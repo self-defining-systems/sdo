@@ -683,7 +683,7 @@ func candidateEvidenceFor(in detectInput, set detectSuspectSet, rows []IncidentC
 		placed := false
 		for _, ref := range objectOfFinding(clue) {
 			if component, ok := set.m.ComponentOf(in.View, ref); ok && byName[component.Name] != nil {
-				extra[component.Name] = append(extra[component.Name], candidateEvidence{Kind: "clue", Unexplained: true, Text: "clue: " + redactDetectText(clue.Summary, 100) + "  more: sdo detect --finding " + shortID(FindingFingerprint(clue))})
+				extra[component.Name] = append(extra[component.Name], candidateEvidence{Kind: "clue", Unexplained: true, Text: "clue: " + redactDetectText(clue.Summary, 100) + "  more: sdo detect " + shortID(FindingFingerprint(clue))})
 				placed = true
 				break
 			}
@@ -798,11 +798,15 @@ func buildDetectSummary(in detectInput) detectSummary {
 		active = 0
 	}
 	opened := "Kubernetes condition"
-	if len(failing) > 0 {
+	switch {
+	case in.Request.ExternalMessage != "":
+		opened = "page"
+	case len(failing) > 0:
 		opened = "user tests"
 	}
 	header := []string{
 		fmt.Sprintf("incident %s  opened on: %s  onset %s  now %s", in.Request.IncidentID, opened, hms(onset), hms(in.Now)),
+		freshnessLine(in.View, in.Now),
 		fmt.Sprintf("recovered: %s (%d alerts active)", state, active),
 	}
 	if line := alertSetLine(&in.Request); line != "" {
@@ -824,7 +828,7 @@ func buildDetectSummary(in detectInput) detectSummary {
 		lines := []string{
 			fmt.Sprintf("%s%s  %s %q  step %s", test.id, role, test.label, redactDetectText(test.err, 60), orQuestion(redactDetectText(test.step, 30))),
 			fmt.Sprintf("  %s  %d/%d failing%s", orQuestion(redactDetectText(strings.Join(test.path, ">"), 100)), test.failures, test.samples, since),
-			"  more: sdo detect --finding " + test.id,
+			"  more: sdo detect " + test.id,
 		}
 		var detail strings.Builder
 		fmt.Fprintf(&detail, "%s: %s\npath: %s\nsince %s, %d/%d failing\nlast failing samples:\n", test.id, test.scenarios.Description, strings.Join(test.path, ">"), hms(test.onset), test.failures, test.samples)
@@ -880,19 +884,19 @@ func buildDetectSummary(in detectInput) detectSummary {
 			out = append(out, block...)
 		}
 		if dropped := len(testBlocks) - shownTests; dropped > 0 {
-			out = append(out, fmt.Sprintf("+%d more: sdo detect --finding tests", dropped))
+			out = append(out, fmt.Sprintf("+%d more: sdo detect tests", dropped))
 		}
 		for _, block := range conditionBlocks[:shownConditions] {
 			out = append(out, block...)
 		}
 		if dropped := len(conditionBlocks) - shownConditions; dropped > 0 {
-			out = append(out, fmt.Sprintf("+%d more: sdo detect --finding conditions", dropped))
+			out = append(out, fmt.Sprintf("+%d more: sdo detect conditions", dropped))
 		}
 		for _, block := range alsoBlocks[:shownAlso] {
 			out = append(out, block...)
 		}
 		if dropped := len(alsoBlocks) - shownAlso; dropped > 0 {
-			out = append(out, fmt.Sprintf("+%d more also failing: sdo detect --finding tests", dropped))
+			out = append(out, fmt.Sprintf("+%d more also failing: sdo detect tests", dropped))
 		}
 		if showPassing && len(passing) > 0 {
 			out = append(out, "passing: "+redactDetectText(strings.Join(passing, " "), 160))
@@ -933,6 +937,26 @@ shrink:
 	return detectSummary{Text: text, Items: items}
 }
 
+// freshnessLine says how current the summary is: the detectors ran on reads
+// taken now, and the newest user-test request the prober recorded.
+func freshnessLine(view detectReads, now time.Time) string {
+	var newest time.Time
+	for _, window := range view.TrafficWindows() {
+		for _, observed := range window.Scenarios {
+			for _, sample := range observed.Samples {
+				if sample.At.After(newest) {
+					newest = sample.At
+				}
+			}
+		}
+	}
+	line := "fresh: detectors ran on reads taken " + hms(now)
+	if newest.IsZero() {
+		return line + "; no user-test request recorded yet"
+	}
+	return fmt.Sprintf("%s; newest user-test request %s (%s ago)", line, hms(newest), now.Sub(newest).Round(time.Second))
+}
+
 // playbookFor is the first playbook whose Diagnose matched on the component.
 func playbookFor(in detectInput, m program.AppMap, component string) *contracts.PlaybookMatch {
 	for _, match := range in.Request.PlaybookCoverage.GetMatches() {
@@ -964,7 +988,7 @@ func orQuestion(text string) string {
 	return text
 }
 
-// detectItem resolves an `--finding ID`: a test, component, clue prefix,
+// item resolves `sdo detect NAME` to a summary item: a test, component, clue prefix,
 // `tests` or `background`.
 func (s detectSummary) item(id string) (string, bool) {
 	if text, ok := s.Items[id]; ok {

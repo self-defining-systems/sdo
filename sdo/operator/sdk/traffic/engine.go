@@ -201,6 +201,19 @@ func (e *Engine) ScenarioAt(iteration uint64) Scenario {
 	return e.scenarios[e.plan.Schedule[iteration%uint64(len(e.plan.Schedule))]]
 }
 
+// IterationOf is the first iteration at or after from that runs scenario: the
+// request the schedule would send for it, so running it now repeats a
+// scheduled request. ok is false for a scenario the workload does not run.
+func (e *Engine) IterationOf(scenario string, from uint64) (uint64, bool) {
+	cycle := uint64(len(e.plan.Schedule))
+	for offset := uint64(0); offset < cycle; offset++ {
+		if e.plan.Schedule[(from+offset)%cycle] == scenario {
+			return from + offset, true
+		}
+	}
+	return 0, false
+}
+
 // Rate is the iterations per second the engine starts: the workload's rate,
 // raised when its scenarios' sampling floor needs more.
 func (e *Engine) Rate() float64 { return e.plan.Rate }
