@@ -223,3 +223,26 @@ func (w *World) ActiveWorkers() []string {
 	}
 	return names
 }
+
+// EngineerRepair is a person fixing a toy target-port fault by hand: it puts the Service's target port back.
+func (w *World) EngineerRepair(problem string) {
+	w.T.Helper()
+	w.python("import sys; from apps.toy.faults import fault_spec, command; f = fault_spec(sys.argv[1]); assert f.kind == 'target-port'; command(sys.argv[2], sys.argv[3], 'patch', 'service', f.service, '--type=merge', '-p', '{\"spec\":{\"ports\":[{\"port\":8080,\"targetPort\":8080}]}}')", problem, w.Cluster.Kubeconfig, AppNamespace)
+}
+
+// RestartStandbys deletes the warm responder standbys so the controller starts new ones, which read the current
+// agent mode when they start (a standby already waiting for a task keeps the mode it started with).
+func (w *World) RestartStandbys() {
+	w.T.Helper()
+	jobs, err := w.Cluster.Client.BatchV1().Jobs(ControlNamespace).List(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		w.T.Fatal(err)
+	}
+	background := metav1.DeletePropagationBackground
+	for _, job := range jobs.Items {
+		if job.Spec.Template.Labels["sdo.dev/standby"] == "true" {
+			_ = w.Cluster.Client.BatchV1().Jobs(ControlNamespace).Delete(context.Background(), job.Name, metav1.DeleteOptions{PropagationPolicy: &background})
+		}
+	}
+	time.Sleep(20 * time.Second)
+}

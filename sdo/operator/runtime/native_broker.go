@@ -743,7 +743,7 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 			return nil, err
 		}
 		if selected.Selection.MemoryValidation != "go" {
-			if closedShell := incidentClosureState(effect.Closure); hasResponderSession(closedShell) && !ClosingLearns(effect.Outcome.GetClassification(), closingChangesOf(closedShell), n.Recording) {
+			if closedShell := incidentClosureState(effect.Closure); hasResponderSession(closedShell) && !ClosingLearns(effect.Outcome.GetClassification(), closingChangesOf(closureWithRecordedActions(closedShell, effect.Outcome)), n.Recording) {
 				return noLearningDecision(effect.Outcome.GetClassification(), false), nil
 			}
 			if n.Reflector == nil {
@@ -772,7 +772,7 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 			}
 			capturedProposals = len(created) > 0
 		}
-		closed := incidentClosureState(effect.Closure)
+		closed := closureWithRecordedActions(incidentClosureState(effect.Closure), effect.Outcome)
 		noLearning := hasResponderSession(closed) && !ClosingLearns(effect.Outcome.GetClassification(), closingChangesOf(closed), n.Recording)
 		if !noLearning && effect.Attempt == 1 && !n.ForceReflection && !capturedProposals && coveredRepeatCandidate(effect.Outcome) {
 			decision := &contracts.ReflectionDecision{LearningDecision: "no_change", NoChangeReason: "accepted_programs_no_new_evidence"}

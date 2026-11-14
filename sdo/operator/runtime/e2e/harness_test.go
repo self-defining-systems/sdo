@@ -330,6 +330,8 @@ func (w *World) InstallController(configure ...func(*settings.Config)) {
 	w.publishRegistrations()
 	policy := settings.Default()
 	policy.Agent.Model, policy.Response.RepairPolicy = "gpt-6-luna", "recorded-actions"
+	// recorded-actions credits only writes the recording proxy saw: the scripted agents repair with kubectl.
+	policy.Agent.Recording = true
 	policy.Response.Timeout, policy.Response.VerificationTimeout = settings.Duration(300*time.Second), settings.Duration(120*time.Second)
 	// Scenarios inject at once; the start-up period has its own tests.
 	policy.Response.StartupBound = 0
