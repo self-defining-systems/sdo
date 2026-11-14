@@ -215,3 +215,73 @@ def test_copy_interval_refuses_a_missing_sink(tmp_path: Path) -> None:
 def test_parse_time_accepts_protojson_nanoseconds() -> None:
     assert sink.parse_time("2026-11-12T10:01:00.123456789Z") == datetime(2026, 11, 12, 10, 1, 0, 123456, tzinfo=UTC)
     assert sink.parse_time("bad") is None
+
+
+# ---- pull mode (provider vcluster: no host mount) ------------------------------------------------------------
+
+
+PULL_ENV = {"BENCH_EVIDENCE_MODE": "pull", "BENCH_EVIDENCE_RUN": "exp-lane-7"}
+
+
+def test_install_env_in_pull_mode_names_the_evidence_claim_and_needs_no_node_path() -> None:
+    env = sink.install_env(PULL_ENV)
+    assert json.loads(env["SDO_EVIDENCE_VOLUME"]) == {"persistentVolumeClaim": {"claimName": sink.EVIDENCE_CLAIM}}
+    assert env["SDO_EVIDENCE_RUN_ID"] == "exp-lane-7"
+    assert "SDO_EVIDENCE_HOST_PATH" not in env
+    with pytest.raises(sink.SinkError, match="BENCH_EVIDENCE_RUN"):
+        sink.install_env({"BENCH_EVIDENCE_MODE": "pull"})
+
+
+def test_the_pull_pod_fits_the_restricted_pod_security_level() -> None:
+    pod = sink.puller_manifest("ns-sdo", "p")["spec"]
+    container = pod["containers"][0]
+    assert pod["securityContext"]["runAsNonRoot"] is True
+    assert pod["securityContext"]["seccompProfile"] == {"type": "RuntimeDefault"}
+    assert container["securityContext"] == {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}}
+    assert container["volumeMounts"][0]["readOnly"] is True
+    assert "hostPath" not in json.dumps(pod)
+
+
+def _fake_kubectl(
+    tmp: Path, monkeypatch: pytest.MonkeyPatch, sink_dir: Path | None, *, exec_fails: bool = False
+) -> Path:
+    """A kubectl that logs its calls and serves ``tar`` of ``sink_dir`` for ``exec``."""
+    log = tmp / "kubectl.log"
+    script = tmp / "bin" / "kubectl"
+    script.parent.mkdir()
+    exec_body = "exit 1" if exec_fails or sink_dir is None else f'exec tar -C "{sink_dir}" -cf - .'
+    script.write_text(
+        '#!/bin/sh\necho "$*" >> "$CALLS"\n'
+        'for a in "$@"; do [ "$a" = exec ] && { ' + exec_body + "; }; done\ncat >/dev/null 2>&1 </dev/null\nexit 0\n"
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{script.parent}:{os.environ['PATH']}")
+    monkeypatch.setenv("CALLS", str(log))
+    return log
+
+
+def test_pull_run_dir_copies_the_claim_out_and_removes_its_pod(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    served = tmp_path / "served"
+    (served / "incidents" / "a").mkdir(parents=True)
+    (served / "layout.json").write_text('{"schema": "sdo.evidence/v1"}')
+    (served / "incidents" / "a" / "ledger.json").write_text("{}")
+    log = _fake_kubectl(tmp_path, monkeypatch, served)
+    env = {**PULL_ENV, "BENCH_EVIDENCE_HOST": str(tmp_path / "host")}
+    sink.pull_run_dir(env, lambda *a: ["kubectl", "--context", "kind-l", *a], "ns-sdo")
+    dest = tmp_path / "host" / "exp-lane-7"
+    assert (dest / "layout.json").is_file()
+    assert (dest / "incidents" / "a" / "ledger.json").is_file()
+    calls = log.read_text().splitlines()
+    assert any("exec" in c and "/sink/exp-lane-7" in c for c in calls)
+    assert "delete pod" in calls[-1]
+    assert "--ignore-not-found" in calls[-1]
+
+
+def test_pull_run_dir_reports_a_missing_run_directory_and_still_removes_its_pod(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = _fake_kubectl(tmp_path, monkeypatch, None)
+    env = {**PULL_ENV, "BENCH_EVIDENCE_HOST": str(tmp_path / "host")}
+    with pytest.raises(sink.SinkError, match="evidence pull"):
+        sink.pull_run_dir(env, lambda *a: ["kubectl", *a], "ns-sdo")
+    assert "delete pod" in log.read_text().splitlines()[-1]

@@ -52,6 +52,18 @@ fuzzops-bench.md`). It runs `uv run -q python -m benchmarks.fuzzops.hooks <verb>
 | `teardown` | delete the control namespace with `--wait` first (its Pods get SIGTERM, so the evidence sidecar runs its final pass), then the `sdo-admin-<control namespace>` ClusterRole and binding; never the app namespace. The bench waits for `idle` before it |
 | `transcripts` | read-only, 2 min, only `$BENCH_EVIDENCE_HOST/$BENCH_EVIDENCE_RUN` on the host: exit 0 when `layout.json` has schema `sdo.evidence/v1` and every `incidents/*/` with a `ledger.json` holds a `rollout-*.jsonl` (anywhere below it) unless no agent ran; else exit 1 with `no sink: <why>` or `transcripts missing: N (<short ids>)` first. The bench runs it at the end of every build check (the lane is not ready until it passes) and after every teardown (a failure is recorded; the reset proceeds) |
 
+### Lanes without a host mount (provider `vcluster`)
+
+A host with `provider: vcluster` (fuzzops-bench) makes each lane a virtual cluster on a shared cluster: no kind node, no
+host mount. The bench sets `BENCH_LANE_PROVIDER=vcluster` and `BENCH_EVIDENCE_MODE=pull`, and the hooks adapt:
+`prepare` pushes `sdo-{controller,responder,script-tools}:<image_tag>` to the shared registry (`BENCH_REGISTRY` up, push,
+ref) and passes the `localhost:<port>/...` names to `install-existing` (no `kind load`, no node image digest names); the
+evidence sink is a PersistentVolumeClaim `sdo-evidence` of the control namespace (`SDO_EVIDENCE_VOLUME`, not a host
+path). `collect` and `transcripts` first copy the sink run directory to `$BENCH_EVIDENCE_HOST/$BENCH_EVIDENCE_RUN`
+through a throwaway pod that mounts the claim (`sink.pull_run_dir`), and `teardown` stops the operator's workloads
+(the sidecar's final pass), pulls, and only then deletes the namespace; a failed pull is logged and the teardown goes
+on. Everything that reads evidence still reads the host copy only.
+
 `BENCH_OPERATOR` names the baseline directory and the settings (`model`, `effort`, `provider` default `codex`,
 `image_tag` default `fz-<revision[:8]>`, `auth_file` default `~/.codex/auth.json`, and an optional `config` object: an
 operator config overlay passed after the baseline's; it may not set `agent.provider`, `agent.model`, `agent.effort`
