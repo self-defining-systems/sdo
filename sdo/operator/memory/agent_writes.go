@@ -162,6 +162,12 @@ func objectKey(apiVersion, kind, namespace, name string) string {
 }
 
 func writeReceipt(history apihistory.History, incident string, start, end apihistory.Event, completed time.Time, session bool) *contracts.RepairActionReceipt {
+	receipt := buildWriteReceipt(history, incident, start, end, completed, session)
+	receipt.RunningCommit, receipt.RunningDirty = start.RunningCommit, start.RunningDirty
+	return receipt
+}
+
+func buildWriteReceipt(history apihistory.History, incident string, start, end apihistory.Event, completed time.Time, session bool) *contracts.RepairActionReceipt {
 	digest := sha256.Sum256([]byte(incident + "\x00" + history.Manifest.Generation + "\x00" + start.RequestID))
 	apiVersion := start.Version
 	if start.Group != "" {

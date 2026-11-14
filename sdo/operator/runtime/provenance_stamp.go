@@ -25,22 +25,26 @@ func (l *ResponderLoop) stampProvenance(ctx context.Context, request ToolRequest
 	if !runsRepositoryCode(request.Command) {
 		return
 	}
-	record := &provenance.Record{OperatorBuild: provenance.OperatorBuild()}
-	switch {
-	case request.stage:
-		record.Commit = l.Request.SourceCommit
-	case l.WorkingProgramRoot != "":
-		read := l.RepositoryState
-		if read == nil {
-			read = lifecycleio.RepositoryState
-		}
-		state, err := read(ctx, l.WorkingProgramRoot)
-		if err != nil {
-			slog.WarnContext(ctx, "tool_provenance_unavailable", "command", request.Command, "error", err)
-		}
-		record.Commit, record.Dirty, record.Snapshot = state.Commit, state.Dirty, state.Snapshot
-	default:
-		record.Commit = l.Request.SourceCommit
-	}
+	commit, dirty, snapshot := l.checkoutState(ctx, request.stage, request.Command)
+	record := &provenance.Record{OperatorBuild: provenance.OperatorBuild(), Commit: commit, Dirty: dirty, Snapshot: snapshot}
 	response.Provenance = record
+}
+
+// checkoutState names the code a command is running: the accepted commit for
+// the automatic stage (it runs accepted programs), otherwise the responder's
+// checkout HEAD, whether the tree differs from it, and a snapshot commit of
+// that tree.
+func (l *ResponderLoop) checkoutState(ctx context.Context, stage bool, command string) (commit string, dirty bool, snapshot string) {
+	if stage || l.WorkingProgramRoot == "" {
+		return l.Request.SourceCommit, false, ""
+	}
+	read := l.RepositoryState
+	if read == nil {
+		read = lifecycleio.RepositoryState
+	}
+	state, err := read(ctx, l.WorkingProgramRoot)
+	if err != nil {
+		slog.WarnContext(ctx, "tool_provenance_unavailable", "command", command, "error", err)
+	}
+	return state.Commit, state.Dirty, state.Snapshot
 }

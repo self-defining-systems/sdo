@@ -3468,7 +3468,11 @@ type RepairActionReceipt struct {
 	// never generated names.
 	Owners []*ResourceOwners `protobuf:"bytes,12,rep,name=owners,proto3" json:"owners,omitempty"`
 	// Controller-recorded SHA256 of the exact executed RunScript bytes.
-	ScriptDigest  string `protobuf:"bytes,13,opt,name=script_digest,json=scriptDigest,proto3" json:"script_digest,omitempty"`
+	ScriptDigest string `protobuf:"bytes,13,opt,name=script_digest,json=scriptDigest,proto3" json:"script_digest,omitempty"`
+	// The commit the writer's checkout was at when a recorded write happened, and whether its
+	// working tree differed from it. Empty for writes with no checkout (SDO's own stage).
+	RunningCommit string `protobuf:"bytes,14,opt,name=running_commit,json=runningCommit,proto3" json:"running_commit,omitempty"`
+	RunningDirty  bool   `protobuf:"varint,15,opt,name=running_dirty,json=runningDirty,proto3" json:"running_dirty,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3592,6 +3596,20 @@ func (x *RepairActionReceipt) GetScriptDigest() string {
 		return x.ScriptDigest
 	}
 	return ""
+}
+
+func (x *RepairActionReceipt) GetRunningCommit() string {
+	if x != nil {
+		return x.RunningCommit
+	}
+	return ""
+}
+
+func (x *RepairActionReceipt) GetRunningDirty() bool {
+	if x != nil {
+		return x.RunningDirty
+	}
+	return false
 }
 
 // ResourceOwners is one written resource's controller owner chain, nearest
@@ -5477,7 +5495,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\n" +
 	"started_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\tstartedAt\x12E\n" +
 	"\fcompleted_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\vcompletedAt:g\xbaHd\x1ab\n" +
-	"\x0etiming.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\xd8\a\n" +
+	"\x0etiming.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\xa4\b\n" +
 	"\x13RepairActionReceipt\x12$\n" +
 	"\taction_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bactionId\x12\x1b\n" +
 	"\x04kind\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04kind\x12\x1f\n" +
@@ -5495,7 +5513,9 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"reversible\x12\xaa\x02\n" +
 	"\x0efailure_reason\x18\v \x01(\tB\x82\x02\xbaH\xfe\x01r\xfb\x01R\x00R\x14authorization_deniedR\x10execution_failedR\x14delete_not_confirmedR\x0foutcome_unknownR\x11incident_verifiedR\x0fsource_residualR\x14script_unprovenancedR\vrolled_backR\x0frollback_failedR\x11application_errorR\x13settlement_rejectedR\x13application_pendingR\x13verification_failedR\rfailureReason\x12G\n" +
 	"\x06owners\x18\f \x03(\v2).sdodev.contracts.v1alpha1.ResourceOwnersB\x04\xc8\xf3\x18\x01R\x06owners\x12)\n" +
-	"\rscript_digest\x18\r \x01(\tB\x04\xc8\xf3\x18\x01R\fscriptDigest:n\xbaHk\x1ai\n" +
+	"\rscript_digest\x18\r \x01(\tB\x04\xc8\xf3\x18\x01R\fscriptDigest\x12%\n" +
+	"\x0erunning_commit\x18\x0e \x01(\tR\rrunningCommit\x12#\n" +
+	"\rrunning_dirty\x18\x0f \x01(\bR\frunningDirty:n\xbaHk\x1ai\n" +
 	"\x15repair_action.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\xab\x01\n" +
 	"\x0eResourceOwners\x12H\n" +
 	"\bresource\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefB\x06\xbaH\x03\xc8\x01\x01R\bresource\x12O\n" +

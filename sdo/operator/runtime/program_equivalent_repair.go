@@ -111,7 +111,7 @@ func (l *ResponderLoop) CreditEquivalentRepairs(ctx context.Context, repairs []R
 		applicationID := fmt.Sprintf("equivalent-repair-%d", len(l.applicationsLog)+1)
 		planID := applicationID + "-plan"
 		l.applicationsLog = append(l.applicationsLog, RecordedPlanApplication{
-			ID: applicationID, ProgramIDs: []string{run.ProgramID}, Result: preview, CompletedAt: completed,
+			ID: applicationID, ProgramIDs: []string{run.ProgramID}, Result: preview, CompletedAt: completed, RunningCommit: l.Request.SourceCommit,
 		})
 		verified := ProgramRun{ProgramID: run.ProgramID, ProgramRevision: run.ProgramRevision, Bindings: cloneProgramBindings(run.Bindings), Verdict: verdict}
 		l.runs = append(l.runs, verified)

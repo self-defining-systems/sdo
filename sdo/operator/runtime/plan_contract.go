@@ -155,7 +155,7 @@ func planApplicationState(application *contracts.PlanApplication) RecordedPlanAp
 		result.Duration = application.GetDuration().AsDuration()
 	}
 	return RecordedPlanApplication{ID: application.GetApplicationId(), ProgramIDs: append([]string(nil), application.GetProgramIds()...), Result: result,
-		StartedAt: controllerTime(application.GetStartedAt()), CompletedAt: controllerTime(application.GetCompletedAt()), Error: application.GetError(), RolledBack: application.GetRolledBack(), RollbackError: application.GetRollbackError()}
+		StartedAt: controllerTime(application.GetStartedAt()), CompletedAt: controllerTime(application.GetCompletedAt()), Error: application.GetError(), RolledBack: application.GetRolledBack(), RollbackError: application.GetRollbackError(), RunningCommit: application.GetRunningCommit(), RunningDirty: application.GetRunningDirty()}
 }
 
 // observedObjectEffects carries UID-bound direct write evidence across the

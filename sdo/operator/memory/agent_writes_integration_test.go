@@ -50,6 +50,8 @@ type call struct {
 	command                                                      []string
 	container                                                    string
 	open                                                         bool
+	runningCommit                                                string
+	runningDirty                                                 bool
 }
 
 func (r *recording) do(c call) {
@@ -57,7 +59,7 @@ func (r *recording) do(c call) {
 	r.next++
 	id := strings.Repeat("a", 8) + string(rune('a'+r.next))
 	r.now = r.now.Add(time.Minute)
-	start := apihistory.Event{RequestID: id, Phase: "start", Started: r.now, Verb: c.verb, Group: c.group, Version: c.version, Resource: c.resource, Namespace: c.namespace, Name: c.name, Subresource: c.subresource, Container: c.container, Command: c.command, Reserved: true}
+	start := apihistory.Event{RequestID: id, Phase: "start", Started: r.now, Verb: c.verb, Group: c.group, Version: c.version, Resource: c.resource, Namespace: c.namespace, Name: c.name, Subresource: c.subresource, Container: c.container, Command: c.command, Reserved: true, RunningCommit: c.runningCommit, RunningDirty: c.runningDirty}
 	r.store.Record(start, nil)
 	if c.open {
 		return
@@ -102,6 +104,20 @@ func TestAgentWritesDerivesARawPatchFromTheRecording(t *testing.T) {
 	}
 	if len(w.GetResources()) != 1 || w.GetResources()[0].GetKind() != "Deployment" || w.GetResources()[0].GetApiVersion() != "apps/v1" || w.GetResources()[0].GetName() != "api" || w.GetResources()[0].GetNamespace() != "app" {
 		t.Fatalf("the written object is named from the request: %v", w.GetResources())
+	}
+}
+
+func TestAgentWriteReceiptsNameTheCommitTheWriteRanOn(t *testing.T) {
+	r := newRecording(t, "inc")
+	r.do(call{verb: "patch", group: "apps", version: "v1", resource: "deployments", namespace: "app", name: "api", status: 200, runningCommit: "abc123"})
+	r.do(call{verb: "patch", group: "apps", version: "v1", resource: "deployments", namespace: "app", name: "web", status: 200, runningCommit: "abc123", runningDirty: true})
+	r.store.Close()
+	got, _, _, err := AgentWrites(r.root, "inc", time.Now().UTC())
+	if err != nil || len(got) != 2 {
+		t.Fatalf("err %v receipts %v", err, got)
+	}
+	if got[0].GetRunningCommit() != "abc123" || got[0].GetRunningDirty() || got[1].GetRunningCommit() != "abc123" || !got[1].GetRunningDirty() {
+		t.Fatalf("receipts = %v", got)
 	}
 }
 

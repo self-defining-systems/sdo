@@ -199,5 +199,5 @@ func (l *ResponderLoop) ApplicationRepairReceipts(existing []RepairActionReceipt
 // repairActionFromContinuation is shared by normal and early closure so the
 // same persisted controller facts reach either outcome path.
 func repairActionFromContinuation(receipt continuationReceipt) RepairActionReceipt {
-	return RepairActionReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: append([]sdk.ObjectRef(nil), receipt.Resources...), Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible, ScriptDigest: receipt.ScriptDigest, FailureReason: receipt.FailureReason, Owners: append([]ResourceOwners(nil), receipt.Owners...)}
+	return RepairActionReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: append([]sdk.ObjectRef(nil), receipt.Resources...), Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible, ScriptDigest: receipt.ScriptDigest, FailureReason: receipt.FailureReason, Owners: append([]ResourceOwners(nil), receipt.Owners...), RunningCommit: receipt.RunningCommit, RunningDirty: receipt.RunningDirty}
 }

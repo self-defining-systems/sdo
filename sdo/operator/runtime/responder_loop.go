@@ -185,6 +185,10 @@ type RecordedPlanApplication struct {
 	RollbackError string
 	PlanIDs       []string
 	Pending       bool
+	// RunningCommit is the checkout commit the application ran on (the accepted
+	// commit for the automatic stage); RunningDirty marks a differing tree.
+	RunningCommit string
+	RunningDirty  bool
 }
 
 type selectedPlan struct {
@@ -1251,6 +1255,7 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		programIDs = append(programIDs, plan.programID)
 	}
 	entry := RecordedPlanApplication{ID: id, ProgramIDs: programIDs, PlanIDs: append([]string(nil), request.PlanIDs...), Result: PlanApplicationResult{Plan: batch}, StartedAt: started, Pending: true}
+	entry.RunningCommit, entry.RunningDirty, _ = l.checkoutState(ctx, request.stage, request.Command)
 	if l.applicationBindings == nil {
 		l.applicationBindings = map[string][]recoveryBinding{}
 	}
