@@ -242,8 +242,12 @@ class GoPackage:
 
 
 def private_go_caches(base: Path) -> dict[str, str]:
-    """Environment placing the module and build caches under ``base`` instead of the shared CI caches."""
-    return {"GOMODCACHE": str(base / "gomod"), "GOCACHE": str(base / "gobuild")}
+    """Environment placing the module and build caches under ``base`` instead of the shared CI caches.
+
+    The proxy is off: ``go list -e`` reports the import lists the planner reads without any dependency source,
+    so nothing is downloaded (1 s instead of ~30 s cold) and nothing lands in a module cache.
+    """
+    return {"GOMODCACHE": str(base / "gomod"), "GOCACHE": str(base / "gobuild"), "GOPROXY": "off"}
 
 
 def go_packages(root: Path, modules: list[str]) -> dict[str, GoPackage]:
@@ -251,7 +255,7 @@ def go_packages(root: Path, modules: list[str]) -> dict[str, GoPackage]:
 
     Resolving imports extracts dependency modules, and this runs before the job restores its Go cache. Writing
     them into the shared module cache makes the later tar restore fail ("Cannot open: File exists" over
-    read-only module files), so the listing uses private cache directories the job never saves or restores.
+    read-only module files), so the listing uses private cache directories and downloads nothing.
     """
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp) / "go.work"

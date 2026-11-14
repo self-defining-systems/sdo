@@ -317,5 +317,7 @@ def test_the_workflow_selects_on_pull_requests_and_keeps_one_aggregate_check() -
 def test_the_planner_never_writes_the_shared_go_caches(tmp_path: Path) -> None:
     """The plan runs before the job restores its Go cache; files it left in the module cache break the restore."""
     env = select.private_go_caches(tmp_path)
-    assert {Path(v).parent for v in env.values()} == {tmp_path}
-    assert not {Path(v) for v in env.values()} & {Path.home() / "go/pkg/mod", Path.home() / ".cache/go-build"}
+    assert env["GOPROXY"] == "off"
+    dirs = {Path(env["GOMODCACHE"]), Path(env["GOCACHE"])}
+    assert {d.parent for d in dirs} == {tmp_path}
+    assert not dirs & {Path.home() / "go/pkg/mod", Path.home() / ".cache/go-build"}
