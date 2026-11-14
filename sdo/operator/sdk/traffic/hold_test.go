@@ -106,3 +106,44 @@ func TestExplicitMinDurationIsNotHeldByTheDetector(t *testing.T) {
 		t.Fatalf("findings=%+v err=%v, want one", findings, err)
 	}
 }
+
+// At the default workload cadence a scenario is sampled every second or
+// faster, so the five-sample SLO window spans only a few seconds. A fault that
+// has failed every sample for longer than the hold must still fire: the hold
+// counts the failure episode, not just the samples the SLO window keeps.
+func TestHoldCountsTheFailureEpisodeBeyondTheSLOWindow(t *testing.T) {
+	var ok, fail []time.Duration
+	for i := 1; i <= 6; i++ {
+		ok = append(ok, -time.Duration(i)*750*time.Millisecond)
+	}
+	for at := time.Duration(0); at <= 8*time.Second; at += 750 * time.Millisecond {
+		fail = append(fail, at)
+	}
+	if got := holdFindings(t, holdWindow(ok, fail)); len(got) != 0 {
+		t.Fatalf("a failure episode of 8s fired before the hold: %+v", got)
+	}
+	fail = append(fail, 9*time.Second)
+	if got := holdFindings(t, holdWindow(ok, fail)); len(got) != 1 {
+		t.Fatalf("a failure episode of 9s did not fire: %+v", got)
+	}
+}
+
+// An old failure does not join a new episode: it ends once a full SLO window
+// of samples passed.
+func TestHoldEpisodeEndsAfterAFullWindowOfSuccesses(t *testing.T) {
+	var ok []time.Duration
+	for at := -20 * time.Second; at < 6*time.Second; at += time.Second {
+		ok = append(ok, at)
+	}
+	fail := []time.Duration{-12 * time.Second, 6 * time.Second, 7 * time.Second, 8 * time.Second, 9 * time.Second, 10 * time.Second}
+	// ok samples at -12s coincide with the failure; drop that one.
+	filtered := ok[:0]
+	for _, at := range ok {
+		if at != -12*time.Second {
+			filtered = append(filtered, at)
+		}
+	}
+	if got := holdFindings(t, holdWindow(filtered, fail)); len(got) != 0 {
+		t.Fatalf("an old failure joined a new episode across a full window of successes: %+v", got)
+	}
+}

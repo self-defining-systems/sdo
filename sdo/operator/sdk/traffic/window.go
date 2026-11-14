@@ -95,11 +95,11 @@ type SLOVerdict struct {
 	StatusCounts   map[string]int
 	RecentFailures []Sample
 	Span           time.Duration
-	// FirstFailureAt is when the first failing sample of the judged window
-	// happened; zero when none failed.
+	// FirstFailureAt is when the failure episode of the newest failing sample
+	// began (see failureEpisode); zero when none failed.
 	FirstFailureAt time.Time
-	// FailureSpan is the time from the first to the last failing sample in
-	// the judged window; zero with fewer than two failing samples.
+	// FailureSpan is the time from the start of that episode to its newest
+	// failing sample; zero with fewer than two failing samples.
 	FailureSpan time.Duration
 }
 
@@ -115,6 +115,7 @@ func Evaluate(scenarioID string, slo SLO, samples []Sample, now time.Time) SLOVe
 			recent = append(recent, sample)
 		}
 	}
+	verdict.FirstFailureAt, verdict.FailureSpan = failureEpisode(recent, slo.Window)
 	if len(recent) > slo.Window {
 		recent = recent[len(recent)-slo.Window:]
 	}
@@ -125,15 +126,7 @@ func Evaluate(scenarioID string, slo SLO, samples []Sample, now time.Time) SLOVe
 	verdict.Evaluated = true
 	verdict.Span = recent[len(recent)-1].At.Sub(recent[0].At)
 	latencies := make([]time.Duration, 0, len(recent))
-	var firstFailure time.Time
 	for _, sample := range recent {
-		if sample.Outcome != OutcomeOK {
-			if firstFailure.IsZero() {
-				firstFailure = sample.At
-				verdict.FirstFailureAt = sample.At
-			}
-			verdict.FailureSpan = sample.At.Sub(firstFailure)
-		}
 		switch sample.Outcome {
 		case OutcomeTimeout:
 			verdict.Timeouts++
@@ -181,6 +174,36 @@ func Evaluate(scenarioID string, slo SLO, samples []Sample, now time.Time) SLOVe
 	}
 	verdict.Healthy = len(verdict.Violations) == 0
 	return verdict
+}
+
+// failureEpisode is when the newest failing sample's failure episode began
+// and how long it lasted (zero with fewer than two failing samples). It reads
+// every usable sample inside maxAge, not only the SLO window: a workload sampled
+// faster than the hold keeps a window of a few seconds, and a fault that
+// failed every sample for longer than the hold must still be reported. An
+// episode ends where a full window of successes separates two failures.
+func failureEpisode(samples []Sample, window int) (start time.Time, span time.Duration) {
+	last := len(samples) - 1
+	for last >= 0 && samples[last].Outcome == OutcomeOK {
+		last--
+	}
+	if last < 0 {
+		return time.Time{}, 0
+	}
+	start = samples[last].At
+	okRun := 0
+	for i := last; i >= 0; i-- {
+		if samples[i].Outcome == OutcomeOK {
+			okRun++
+			if okRun >= window {
+				break
+			}
+			continue
+		}
+		okRun = 0
+		start = samples[i].At
+	}
+	return start, samples[last].At.Sub(start)
 }
 
 // statusKey is the SLOVerdict.StatusCounts key of one sample.

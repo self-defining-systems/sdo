@@ -72,6 +72,19 @@ func closingChangesOf(closure IncidentClosure) []ClosingChange {
 	return ClosingChanges(closure.Result.RepairActions, applied)
 }
 
+// closureWithRecordedActions is closure with the outcome's repair actions as the result's when the worker's own
+// result carries none: the agent's Kubernetes writes reach the outcome from the recording, not from the worker. The
+// closure is copied, never modified.
+func closureWithRecordedActions(closure IncidentClosure, derived *contracts.OutcomeRecord) IncidentClosure {
+	if closure.Result == nil || len(closure.Result.RepairActions) > 0 || len(derived.GetRepairActions()) == 0 {
+		return closure
+	}
+	result := *closure.Result
+	result.RepairActions = incidentResultState(&contracts.IncidentResult{RepairActions: derived.GetRepairActions()}).RepairActions
+	closure.Result = &result
+	return closure
+}
+
 // closingSkipReason names why a responder session's closing turn does not learn.
 func closingSkipReason(classification string) string {
 	if classification == outcome.Escalated {

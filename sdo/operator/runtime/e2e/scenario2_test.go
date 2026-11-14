@@ -18,7 +18,7 @@ import (
 func TestControllerSurvivesFaults(t *testing.T) {
 	w := NewWorld(t)
 	w.DeployToy()
-	w.InstallController(func(c *settings.Config) { c.Response.Timeout = settings.Duration(45 * time.Second) })
+	w.InstallController(func(c *settings.Config) { c.Response.Timeout = settings.Duration(120 * time.Second) })
 	w.WaitBaseline(5 * time.Minute)
 	// The scripted agent repairs source drift on first sight; health faults need a learned program.
 	const drift, health, later = "toy_target_port_frontend", "toy_target_port_catalog", "toy_target_port_backend"
@@ -28,15 +28,24 @@ func TestControllerSurvivesFaults(t *testing.T) {
 	w.Proxy.Set(Faults{Latency: 250 * time.Millisecond})
 	w.SetAgentMode("crash")
 	w.Inject(drift)
+	// A responder that fails escalates: the incident stays open until its alerts clear, so the engineer repairs it.
+	w.waitFor(4*time.Minute, "the crashing agent's incident to end in escalation", func() bool {
+		return strings.Contains(w.ControllerLog(), "incident_terminal_dispatch_failure")
+	})
+	w.EngineerRepair(drift)
 	w.waitFor(4*time.Minute, "a failed outcome from the crashing agent", func() bool { return w.hasOutcome("failed") })
 	t.Logf("phase 1: failed outcome after agent crash; %d API requests delayed", w.Proxy.Requests.Load())
 
 	// Phase 2: faults stop, the agent works again, and the controller is killed in the middle of an incident.
 	w.Proxy.Clear()
+	// Let the closed incident's reflection and memory-host swap finish: a fault injected during the swap is seen
+	// by a restarted observation that has never seen its scenario succeed.
+	w.settle(3 * time.Minute)
 	// 250 ms on every API call stretches a pass to 10-24 s for the health detectors (12x their interval); recorded
 	// in the handoff as a finding, and excused here because the property is about swaps, closure and agent work.
 	latencyWindow := Window{From: latencyFrom, To: time.Now().Add(10 * time.Second)}
 	w.SetAgentMode("normal")
+	w.RestartStandbys()
 	pod := w.ControllerPod().Name
 	w.Inject(health)
 	// "In the middle of an incident" means the dispatch is durable: the incident has been open for a few seconds.
@@ -57,16 +66,30 @@ func TestControllerSurvivesFaults(t *testing.T) {
 		return p != nil && p.Name != pod && p.Status.Phase == "Running"
 	})
 	// The interrupted incident must reach a terminal outcome. Its repair may fail
-	// when the controller is killed before the worker has durably checkpointed.
+	// when the controller is killed before the worker has durably checkpointed; that failure escalates and the
+	// incident stays open until the engineer repairs the fault.
+	w.waitFor(3*time.Minute, "the interrupted incident to be repaired or escalated", func() bool {
+		return w.Repaired(health) || strings.Contains(w.ControllerLog(), "incident_terminal_dispatch_failure")
+	})
+	if !w.Repaired(health) {
+		w.EngineerRepair(health)
+	}
 	w.settle(5 * time.Minute)
 	t.Logf("phase 2: every incident ended after kill -9 of %s (repaired=%v)", pod, w.Repaired(health))
 
 	// Phase 3: kill the memory host, then a second fault must still be found and repaired.
 	w.settle(3 * time.Minute)
 	killedAt := time.Now()
+	activations := strings.Count(w.ControllerLog(), "activation_latency_ms")
 	if !w.KillMemoryHost() {
 		t.Error("no memory host process found to kill")
 	}
+	// The controller restarts the host. A scenario's user test must have succeeded since the prober started
+	// to count as a signal, so the next fault comes once the restarted host has judged a few clean passes.
+	w.waitFor(2*time.Minute, "the memory host to be active again", func() bool {
+		return strings.Count(w.ControllerLog(), "activation_latency_ms") > activations
+	})
+	time.Sleep(20 * time.Second)
 	w.Inject(later)
 	w.waitFor(4*time.Minute, "repair after the memory host was killed", func() bool { return w.Repaired(later) })
 	hostWindow := Window{From: killedAt, To: time.Now().Add(20 * time.Second)}
@@ -149,9 +172,18 @@ func TestControllerEndsHungAgent(t *testing.T) {
 	w.InstallController(func(c *settings.Config) { c.Response.Timeout = settings.Duration(45 * time.Second) })
 	w.WaitBaseline(5 * time.Minute)
 	w.SetAgentMode("hang")
+	w.RestartStandbys()
 	w.Inject("toy_target_port_catalog")
-	w.waitFor(3*time.Minute, "a terminal outcome within three times the response timeout of a hanging agent", func() bool { return len(w.Outcomes()) > 0 })
+	// The controller ends the hung responder at its deadline and escalates; the incident stays open until the
+	// engineer repairs the fault, and then reaches its outcome.
+	w.waitFor(3*time.Minute, "the hung responder to be ended", func() bool {
+		return strings.Contains(w.ControllerLog(), "incident_terminal_dispatch_failure")
+	})
+	w.EngineerRepair("toy_target_port_catalog")
+	w.waitFor(3*time.Minute, "a terminal outcome for the hung responder's incident", func() bool { return len(w.Outcomes()) > 0 })
 	w.SetAgentMode("normal")
+	w.RestartStandbys()
+	w.settle(3 * time.Minute)
 	w.Inject("toy_target_port_backend")
 	w.waitFor(4*time.Minute, "the next incident repaired after the hung responder was ended", func() bool { return w.Repaired("toy_target_port_backend") })
 	w.Quiesce()

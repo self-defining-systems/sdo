@@ -1,0 +1,12 @@
+apiVersion: sdo.dev/v1alpha1
+kind: TrafficWorkload
+name: health
+description: Continuous low-rate probe of each toy Service.
+purpose: health-probe
+arrival: uniform
+ratePerSecond: 4
+timeout: 2s
+scenarios:
+  - id: frontend-home
+  - id: backend-home
+  - id: catalog-home
