@@ -242,9 +242,10 @@ func Run(ctx context.Context, name string, request []byte, limits Limits) ([]byt
 // threadFailures are the runtime's fatal messages when it cannot get memory
 // for a new OS thread (its stack counts against RLIMIT_DATA, like the heap).
 var threadFailures = []string{
-	"pthread_create failed",          // cgo runtime
-	"failed to create new OS thread", // pure-Go runtime
-	"cannot allocate memory",         // mmap/ENOMEM fatals
+	"pthread_create failed",              // cgo runtime
+	"failed to create new OS thread",     // pure-Go runtime
+	"cannot allocate memory",             // mmap/ENOMEM fatals
+	"ThreadSanitizer failed to allocate", // race-enabled runtime, errno 12
 }
 
 // classify names why a started child failed. Running into RLIMIT_DATA is

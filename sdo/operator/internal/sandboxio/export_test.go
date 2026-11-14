@@ -35,3 +35,6 @@ const MaxChildren = maxChildren
 func ClassifyKill(peak int64, limits Limits) error {
 	return classify("t", errors.New("signal: killed"), "", peak, true, limits.withDefaults())
 }
+
+// RaceBuild reports whether the race detector is compiled in, which slows child start-up.
+const RaceBuild = dataHeadroom != 0

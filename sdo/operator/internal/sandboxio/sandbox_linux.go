@@ -15,7 +15,7 @@ import (
 // (RLIMIT_DATA also counts heap the runtime has released but not unmapped)
 // and makes it the OOM killer's first choice inside the controller's cgroup.
 func limitSelf(memory int64) error {
-	data := uint64(memory) * 2
+	data := uint64(memory)*2 + dataHeadroom
 	if err := syscall.Setrlimit(syscall.RLIMIT_DATA, &syscall.Rlimit{Cur: data, Max: data}); err != nil {
 		return fmt.Errorf("set RLIMIT_DATA: %w", err)
 	}
