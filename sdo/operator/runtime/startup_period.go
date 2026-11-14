@@ -69,8 +69,11 @@ func restoredStartupPeriod(state *contracts.StartupPeriod) *startupPeriod {
 }
 
 // openerDetector reports whether a detector's findings can open an incident
-// (Controller.opens): a Kubernetes-condition or health-probe traffic detector.
-func openerDetector(id string) bool {
+// (Controller.opens): a Kubernetes-condition, health-probe traffic or (out of shadow mode) request-metrics detector.
+func (c *Controller) openerDetector(id string) bool {
+	if id == memory.RequestMetricsDetectorID {
+		return c.config.RequestMetricsOpens
+	}
 	return slices.Contains(memory.KubernetesConditionDetectorIDs(), id) || strings.HasPrefix(id, memory.TrafficDetectorPrefix)
 }
 
@@ -78,7 +81,7 @@ func openerDetector(id string) bool {
 func (c *Controller) noteStartupEvaluation(detectorID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.startup.holding(c.evaluationAt) && openerDetector(detectorID) {
+	if c.startup.holding(c.evaluationAt) && c.openerDetector(detectorID) {
 		c.startup.ran[detectorID] = true
 	}
 }
@@ -96,7 +99,7 @@ func (c *Controller) observeStartup(now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for id := range c.detectors {
-		if openerDetector(id) && !c.setupDetectorDisabled(id) && !c.startup.ran[id] {
+		if c.openerDetector(id) && !c.setupDetectorDisabled(id) && !c.startup.ran[id] {
 			quiet = false
 		}
 	}
