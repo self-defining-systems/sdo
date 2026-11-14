@@ -241,3 +241,84 @@ func TestInvalidConfigIsReported(t *testing.T) {
 		t.Fatal("zero rule must be invalid")
 	}
 }
+
+const otherRoute = "/api/:version/projects/:id/archive/*"
+
+func undeclaredDetector(max int) sdk.Detector {
+	return requestmetrics.NewDetector(requestmetrics.Config{
+		Spec:                sdk.DetectorSpec{ID: "request-metrics"},
+		Entries:             []requestmetrics.Entry{entry()},
+		Operations:          []requestmetrics.Operation{{ID: "project-show", Service: "web", Route: webRoute, Method: "GET"}},
+		Rule:                requestmetrics.DefaultRule(),
+		MaxUndeclaredRoutes: max,
+	})
+}
+
+func detectWith(t *testing.T, d sdk.Detector, s sdktest.Snapshot) []sdk.Finding {
+	t.Helper()
+	got, err := d.Detect(context.Background(), s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func TestUndeclaredRoutePackageStuckPatternRaisesNamingTheRoute(t *testing.T) {
+	recent := []metrics.Series{
+		series(pkgRoute, "200", steady(11, 7)...),
+		series(pkgRoute, "404", 0, 0, 0, 5, 8, 8, 8),
+		series(webRoute, "200", steady(40, 7)...),
+	}
+	got := detectWith(t, undeclaredDetector(0), snapshot(recent, healthyBaseline(), presence()))
+	if len(got) != 1 {
+		t.Fatalf("findings = %+v", got)
+	}
+	f := got[0]
+	if f.RuleID != requestmetrics.RuleErrors || f.Metadata["route"] != pkgRoute || f.Metadata["undeclared_route"] != true {
+		t.Fatalf("finding does not name the undeclared route: %+v", f)
+	}
+	if !strings.Contains(f.Evidence, "undeclared route") || !strings.Contains(f.Summary, pkgRoute) {
+		t.Fatalf("not marked: %q / %q", f.Summary, f.Evidence)
+	}
+}
+
+func TestHealthyUndeclaredRoutesDoNotRaise(t *testing.T) {
+	recent := []metrics.Series{
+		series(pkgRoute, "200", steady(30, 7)...),
+		series(pkgRoute, "404", steady(1, 7)...),
+		series(otherRoute, "200", steady(30, 7)...),
+		series(webRoute, "200", steady(40, 7)...),
+	}
+	if got := detectWith(t, undeclaredDetector(0), snapshot(recent, healthyBaseline(), presence())); len(got) != 0 {
+		t.Fatalf("healthy undeclared routes raised: %+v", got)
+	}
+}
+
+func TestUndeclaredRoutesAreCappedBusiestFirst(t *testing.T) {
+	// Both routes fail; with a cap of one only the busier is evaluated, and says so.
+	recent := []metrics.Series{
+		series(pkgRoute, "200", steady(50, 7)...),
+		series(pkgRoute, "500", steady(30, 7)...),
+		series(otherRoute, "200", steady(2, 7)...),
+		series(otherRoute, "500", steady(20, 7)...),
+	}
+	s := snapshot(recent, healthyBaseline(), presence())
+	got := detectWith(t, undeclaredDetector(1), s)
+	if len(got) != 1 || got[0].Metadata["route"] != pkgRoute {
+		t.Fatalf("findings = %+v", got)
+	}
+	if !strings.Contains(got[0].Evidence, "only the 1 busiest of 2") || got[0].Metadata["undeclared_truncated"] == nil {
+		t.Fatalf("truncation not stated: %+v", got[0])
+	}
+	if all := detectWith(t, undeclaredDetector(2), s); len(all) != 2 || all[0].Metadata["undeclared_truncated"] != nil {
+		t.Fatalf("cap 2 findings = %+v", all)
+	}
+}
+
+func TestDeclaredOperationIsNotAlsoEvaluatedAsUndeclared(t *testing.T) {
+	recent := []metrics.Series{series(webRoute, "200", steady(40, 7)...), series(webRoute, "500", 0, 0, 0, 0, 0, 9, 9)}
+	got := detectWith(t, undeclaredDetector(0), snapshot(recent, healthyBaseline(), presence()))
+	if len(got) != 1 || got[0].Metadata["operation"] != "project-show" || got[0].Metadata["undeclared_route"] != nil {
+		t.Fatalf("findings = %+v", got)
+	}
+}
