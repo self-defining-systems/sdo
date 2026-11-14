@@ -388,7 +388,8 @@ def test_resumed_reflection_accounts_its_tokens_and_edits_final_files(
     assert turn.usage["input_tokens"] == own["input_tokens"]
     assert turn.usage["output_tokens"] == own["output_tokens"]
     assert turn.usage["model_requests"] == reflection["requests"]
-    assert turn.playbook_ids == ["deny-all-networkpolicy-isolation"]
+    # The closing turn returns one line; Go derives the playbook IDs from the checkout diff.
+    assert turn.note == "Encoded deny-all-networkpolicy-isolation"
     manifest = (
         worktree / ".sdo/diagnostics/detectors/incidents/deny-all-networkpolicy-isolation/manifest.yaml"
     ).read_text()
@@ -515,7 +516,8 @@ def test_reflection_scripts_consume_turns_across_checkouts(
         [1, 1] if mode == "crash_always" else [1, 0] if mode == "crash_once" else [0, 0]
     )
     if mode == "no_change":
-        assert "no_change" in results[0].stdout
+        # The closing turn answers with one note line; Go derives no_change from the empty diff.
+        assert "No new learning" in results[0].stdout
 
 
 def test_missing_configmap_restores_source_init_script_without_manifest(
