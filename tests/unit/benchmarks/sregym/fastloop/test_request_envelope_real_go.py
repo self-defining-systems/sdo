@@ -89,7 +89,9 @@ def test_large_reflection_record_ingest_load_and_replay(tmp_path: Path, monkeypa
             assert kwargs["outcome_commit"] == base
             closure = kwargs["closure"]
             assert isinstance(closure, IncidentClosure)
-            assert closure.request.memory_snapshot.architecture_markdown == ("Synthetic architecture.\n" * 12000)
+            # The closing turn gets the closure as dispatched; the large snapshot only binds the outcome commit.
+            assert closure.result.responder_session_id == "responder-session-0001"
+            assert closure.request.memory_snapshot.architecture_markdown == "Architecture"
             return ReflectionTurn(note="Synthetic replay")
 
     monkeypatch.setattr(recording_worker, "KubernetesResultPublisher", lambda **_: Publisher())
