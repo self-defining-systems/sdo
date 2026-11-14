@@ -489,9 +489,11 @@ def test_a_selected_file_the_caller_ignores_is_not_run(tmp_path: Path) -> None:
     assert "tests/unit/slow_test.py" not in pytest_line.replace("--ignore=tests/unit/slow_test.py", "")
 
     calls.unlink()
+    env["SDO_PYTEST_LOG"] = str(tmp_path / "pytest.log")
     result = run("--ignore=tests/unit/slow_test.py", "--ignore=tests/unit/a_test.py")
     assert result.returncode == 0, result.stderr
     assert "no Python tests selected" in result.stdout
+    assert (tmp_path / "pytest.log").read_text() == "", "the budget step reads this log even for an empty shard"
     assert not calls.exists(), "nothing selected after the exclusions: pytest must not start"
 
 
