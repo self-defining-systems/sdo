@@ -78,6 +78,16 @@ touched the affected records.
   the probe user the lowest role that can do the above, never admin; a failed grant must not stop the user from
   being provisioned.
 
+## What traffic cannot show
+
+- Wrong content (exact checks), operations users rarely call, and each
+  protocol and direction an entry serves (upload and download, non-HTTP).
+- Background work: a worker, scheduler or consumer (often a workload with no Service) exists because some user
+  operation hands work to it. Find that hand-off in source and config, start the work through the user
+  operation and poll for its effect (a status moves on, a result becomes readable) within a bound. A
+  worker is never `unprobed` because its effect arrives after the request returns.
+- Existing records: besides listing them, open them and make the writes users make into them.
+
 ## Cost
 
 Without a delete or overwrite route, keep every write on the fixed test identity, declare

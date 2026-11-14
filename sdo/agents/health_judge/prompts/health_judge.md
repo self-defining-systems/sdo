@@ -34,7 +34,7 @@ Edit files directly in this checkout:
   checks every scenario's fault classes (do not call traffic.CheckDetects from detector_test.go);
 - `.sdo/playbooks/health-objective/README.md` with front matter schema_version: 1, owner: responder,
   fault_class: health-objective-failure, originating_incident: lifecycle-bootstrap, then repair guidance with
-  logical IDs and placeholders such as <AFFECTED_RESOURCE>, plus the skill's Fixtures, Probe costs and
+  logical IDs and placeholders such as <AFFECTED_RESOURCE>, plus the skill's Request metrics, Fixtures, Probe costs and
   Calibration sections; and the index `.sdo/playbooks/README.md` listing the playbooks.
 Preserve incident detectors, other playbooks, the human goal, outcomes, schema-version and diagnostics go.mod.
 Never put physical operational-memory paths in Go, the map or narrative; use logical IDs.
