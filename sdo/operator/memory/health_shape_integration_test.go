@@ -231,3 +231,23 @@ func TestInstallWindowRejectsUnrelatedCommitAfterMigration(t *testing.T) {
 		t.Fatalf("a non-migration commit in the window must contradict: ok=%v err=%v", ok, err)
 	}
 }
+
+// An install whose lineage has no initial health_judge commit (a restored
+// baseline) still needs the Go schema migration commit to leave it intact.
+func TestInstallWithoutJudgeSurvivesUpkeepSchemaMigration(t *testing.T) {
+	dir := t.TempDir()
+	gitIn(t, dir, "init", "-q")
+	writeFile(t, dir, ".sdo/goal.md", goalFile)
+	writeFile(t, dir, ".sdo/schema-version", "7\n")
+	writeFile(t, dir, "main.go", "package main // v1\n")
+	gitIn(t, dir, "add", "-A")
+	gitIn(t, dir, "commit", "-qm", "baseline without a judge")
+	installed := headOf(t, dir)
+	writeFile(t, dir, ".sdo/schema-version", "8\n")
+	gitIn(t, dir, "add", "-A")
+	gitIn(t, dir, "commit", "-q", "-m", "sdo(memory-migration): validated initial"+upkeepTrailers)
+	ok, err := memory.HealthRefreshPreservesInstall(context.Background(), dir, installed, headOf(t, dir))
+	if err != nil || !ok {
+		t.Fatalf("a migration-only commit must preserve an unjudged install: ok=%v err=%v", ok, err)
+	}
+}
