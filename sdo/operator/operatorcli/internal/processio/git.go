@@ -45,3 +45,9 @@ func HeadCommit(ctx context.Context, root string) string {
 	}
 	return ""
 }
+
+// Dirty reports whether the checkout differs from its HEAD, untracked files included.
+func Dirty(ctx context.Context, root string) bool {
+	output, err := exec.CommandContext(ctx, "git", "-C", root, "status", "--porcelain", "--untracked-files=all").Output()
+	return err != nil || len(strings.TrimSpace(string(output))) != 0
+}

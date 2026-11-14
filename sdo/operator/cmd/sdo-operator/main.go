@@ -11,6 +11,7 @@ import (
 	"sdo.dev/operator/install"
 	"sdo.dev/operator/operatorcli"
 	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
+	"sdo.dev/operator/provenance"
 	"sdo.dev/operator/shellpath"
 )
 
@@ -31,6 +32,12 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "build-id" && len(os.Args) <= 3 {
+		// The build ID grading rows and evidence name; an optional operator
+		// source root is hashed when the binary carries no VCS stamp.
+		fmt.Println(provenance.OperatorBuild(os.Args[2:]...))
 		return
 	}
 	if len(os.Args) == 2 && os.Args[1] == "source-hash" {

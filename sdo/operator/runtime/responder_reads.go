@@ -107,6 +107,7 @@ func (l *ResponderLoop) publishRead(ctx context.Context, request ToolRequest, re
 		if request.Command == "detect" {
 			l.appendReportNotes(&response)
 		}
+		l.stampProvenance(ctx, request, &response)
 		raw, _ := json.Marshal(request)
 		l.calls = append(l.calls, ToolCall{Command: request.Command, At: l.clock().UTC(), RequestJSON: string(raw), ResponseJSON: string(recordedToolResponseJSON(response, nil)), Error: response.Error, Summary: response.Summary})
 		if err := l.persistToolState(ctx); err != nil {
