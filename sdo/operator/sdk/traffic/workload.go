@@ -25,6 +25,8 @@ const (
 	DefaultWindow            = 5
 	DefaultMinSamples        = 3
 	DefaultMaxAge            = 30 * time.Second
+	// MaxWriteSampleInterval bounds Workload.WriteSampleInterval.
+	MaxWriteSampleInterval = 5 * time.Minute
 	DefaultMaxErrorRate      = 0.5
 	DefaultMaxTimeoutRate    = 0.5
 	DefaultMinTimeouts       = 2
@@ -110,6 +112,10 @@ type WorkloadScenario struct {
 	// unconfirmed; the detector notes when it starts working or fails
 	// differently from FailsWith.
 	KnownBroken *KnownBroken `json:"knownBroken,omitempty"`
+	// Writes is derived, never authored: the engine sets it from the catalog
+	// for a scenario with a write side effect, so the sampling plan can give
+	// writes their longer floor. Authored values are overwritten.
+	Writes bool `json:"writes,omitempty"`
 }
 
 // KnownBroken is why a scenario fails at baseline and how.
@@ -156,6 +162,10 @@ type Workload struct {
 	IterationTimeout Duration           `json:"iterationTimeout,omitempty"`
 	Seed             uint64             `json:"seed,omitempty"`
 	SLO              SLO                `json:"slo,omitempty"`
+	// WriteSampleInterval is the longest time between samples of a health-probe
+	// scenario that writes. Zero means DefaultWriteSampleInterval; values below
+	// MinSampleInterval act as MinSampleInterval.
+	WriteSampleInterval Duration `json:"writeSampleInterval,omitempty"`
 	Scenarios        []WorkloadScenario `json:"scenarios,omitempty"`
 	// Links, Interval and Failures configure a link-probe workload: the
 	// dependency edges to dial afresh, how often, and how many consecutive
@@ -288,6 +298,9 @@ func (w Workload) Validate() error {
 	if err := validateSLO(w.SLO); err != nil {
 		return fmt.Errorf("traffic workload %s: %w", w.Name, err)
 	}
+	if interval := w.WriteSampleInterval.Duration(); interval < 0 || interval > MaxWriteSampleInterval {
+		return fmt.Errorf("traffic workload %s: writeSampleInterval must be in [0, %s]", w.Name, MaxWriteSampleInterval)
+	}
 	if err := w.validateLinks(); err != nil {
 		return err
 	}
@@ -363,6 +376,13 @@ func (w Workload) ScenarioSLO(id string) SLO {
 	for _, scenario := range w.Scenarios {
 		if scenario.ID == id && scenario.SLO != nil {
 			slo = mergeSLO(slo, *scenario.SLO)
+		}
+	}
+	// A scenario sampled less often than MaxAge / MinSamples must still be
+	// able to hold MinSamples samples inside its window.
+	if w.Purpose == PurposeHealthProbe {
+		if need := time.Duration(slo.MinSamples) * w.ScenarioArrival(id); need > slo.MaxAge.Duration() {
+			slo.MaxAge = Duration(min(need, 10*time.Minute))
 		}
 	}
 	return slo

@@ -62,9 +62,11 @@ Three probe kinds, each a set of traffic scenarios in its own continuous health 
   fixture, on an identity no other scenario writes, through the writing operation whose data it checks; its
   steps read it back. List setup's identities and fixtures under `Fixtures` in the health-objective playbook.
 - Keep the link workload for every map edge between Services (traffic authoring rules).
-- Rates: every scenario is sampled at least every 10 s whatever its weight (the prober raises the rate to
-  `scenarios / 10` per second); weight shares the rest. Keep probe requests under 5% of the app's request rate,
-  else under 3 per second (`_probe_load.over_cap` in the controller log).
+- Rates: every read-only scenario is sampled at least every 10 s whatever its weight, and every scenario
+  that writes at least every 20 s (the prober raises the rate to fit; weight shares the rest). A write often
+  fans out into background work in the app, and a write-only fault takes about three write intervals to
+  confirm. Set `writeSampleInterval` on a workload to change the 20 s. Keep probe requests under 5% of the
+  app's request rate, else under 3 per second (`_probe_load.over_cap` in the controller log).
 
 ## 3. Calibrate on the live application
 

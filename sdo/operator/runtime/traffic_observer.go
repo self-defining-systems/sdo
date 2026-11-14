@@ -324,7 +324,7 @@ func (o *TrafficObserver) Summary() map[string]any {
 	if load := traffic.MeasureProbeLoad(probes, requests); len(load.Raised) > 0 || load.OverCap() {
 		entry := map[string]any{"requests_per_second": load.RequestsPerSecond, "cap": load.Cap, "rate_raised_for_floor": load.Raised}
 		if load.OverCap() {
-			entry["over_cap"] = fmt.Sprintf("meeting the %s per-scenario sampling floor sends %.1f requests/s, above the %.0f/s cap; no scenario was starved: remove or merge scenarios", traffic.MinSampleInterval, load.RequestsPerSecond, load.Cap)
+			entry["over_cap"] = fmt.Sprintf("meeting the per-scenario sampling floors (%s for reads, %s for scenarios that write) sends %.1f requests/s, above the %.0f/s cap; no scenario was starved: remove or merge scenarios", traffic.MinSampleInterval, traffic.DefaultWriteSampleInterval, load.RequestsPerSecond, load.Cap)
 		}
 		summary["_probe_load"] = entry
 	}

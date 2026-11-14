@@ -107,6 +107,12 @@ const (
 	// confirm a failure within 30 s of it starting, where a weight-1 scenario
 	// sampled once a minute needed two more minutes.
 	MinSampleInterval = 10 * time.Second
+	// DefaultWriteSampleInterval is how often a health probe samples every
+	// scenario that writes (any non-GET step) at least. A write fans out into
+	// background work in the application (a commit or a pipeline queues about
+	// seventeen jobs in one application), so writes are sampled less often than
+	// reads; a write-only fault takes MinSamples of these intervals to confirm.
+	DefaultWriteSampleInterval = 30 * time.Second
 	// ProbeRateCap is the most requests per second all continuous probes
 	// together should send when the application's own request rate is not
 	// measurable. Meeting the floor for many scenarios can exceed it; the
@@ -124,17 +130,19 @@ const (
 	APIVersion   = "sdo.dev/v1alpha1"
 	WorkloadKind = "TrafficWorkload"
 
-	DefaultRatePerSecond     = 4.0
-	MaxRatePerSecond         = 20.0
-	DefaultTimeout           = 2 * time.Second
-	MaxTimeout               = 10 * time.Second
-	DefaultIterationTimeout  = 10 * time.Second
-	MaxIterationTimeout      = 30 * time.Second
-	MaxBurstDuration         = 60 * time.Second
-	MaxInFlight              = 8
-	DefaultWindow            = 5
-	DefaultMinSamples        = 3
-	DefaultMaxAge            = 30 * time.Second
+	DefaultRatePerSecond    = 4.0
+	MaxRatePerSecond        = 20.0
+	DefaultTimeout          = 2 * time.Second
+	MaxTimeout              = 10 * time.Second
+	DefaultIterationTimeout = 10 * time.Second
+	MaxIterationTimeout     = 30 * time.Second
+	MaxBurstDuration        = 60 * time.Second
+	MaxInFlight             = 8
+	DefaultWindow           = 5
+	DefaultMinSamples       = 3
+	DefaultMaxAge           = 30 * time.Second
+	// MaxWriteSampleInterval bounds Workload.WriteSampleInterval.
+	MaxWriteSampleInterval   = 5 * time.Minute
 	DefaultMaxErrorRate      = 0.5
 	DefaultMaxTimeoutRate    = 0.5
 	DefaultMinTimeouts       = 2
@@ -221,8 +229,4 @@ func CheckDetects(ctx context.Context, scenario Scenario, class FaultClass) erro
     CheckDetects runs scenario once against a simulated fault of class and
     returns an error unless the scenario fails the way a probe must: with an
     error or timeout, not by being unable to build its requests.
-
-func DefaultLatencyNote(id string) string
-    DefaultLatencyNote is the non-blocking memory-check note for a scenario
-    DefaultLatencyScenarios returns.
 ```

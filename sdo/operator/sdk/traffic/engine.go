@@ -164,10 +164,13 @@ func NewEngine(workload Workload, catalog Catalog, client Doer, baseURL func(Tar
 		clock = RealClock
 	}
 	scenarios := make(map[string]Scenario, len(workload.Scenarios))
-	for _, selected := range workload.Scenarios {
+	selection := append([]WorkloadScenario(nil), workload.Scenarios...)
+	for index, selected := range selection {
 		scenario, _ := catalog.Scenario(selected.ID)
 		scenarios[selected.ID] = scenario
+		selection[index].Writes = scenario.SideEffect != SideEffectRead
 	}
+	workload.Scenarios = selection
 	return &Engine{
 		workload: workload, scenarios: scenarios, plan: workload.SamplingPlan(),
 		client: client, baseURL: baseURL, clock: clock, setups: &setupRecord{progress: map[string]setupProgress{}},

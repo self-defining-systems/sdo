@@ -13,6 +13,12 @@ const (
 	// confirm a failure within 30 s of it starting, where a weight-1 scenario
 	// sampled once a minute needed two more minutes.
 	MinSampleInterval = 10 * time.Second
+	// DefaultWriteSampleInterval is how often a health probe samples every
+	// scenario that writes (any non-GET step) at least. A write fans out into
+	// background work in the application (a commit or a pipeline queues about
+	// seventeen jobs in one application), so writes are sampled less often than
+	// reads; a write-only fault takes MinSamples of these intervals to confirm.
+	DefaultWriteSampleInterval = 20 * time.Second
 	// ProbeRateCap is the most requests per second all continuous probes
 	// together should send when the application's own request rate is not
 	// measurable. Meeting the floor for many scenarios can exceed it; the
@@ -34,11 +40,14 @@ type SamplingPlan struct {
 }
 
 // SamplingPlan builds the workload's plan. A health probe samples every
-// scenario at least once per MinSampleInterval regardless of weight: each cycle
-// starts with one iteration of every scenario, and the iterations the workload's
-// rate leaves over in that interval are shared by weight. When the rate cannot
-// cover every scenario once per interval it is raised to do so. Other
-// workloads (bursts, journeys) follow their weights only.
+// read-only scenario at least once per MinSampleInterval and every scenario
+// that writes at least once per its write interval (WriteInterval), whatever
+// their weights. The plan is a cycle of k sub-cycles, each MinSampleInterval
+// long: every sub-cycle starts with one iteration of every read scenario, the
+// write scenarios are spread over the sub-cycles, and the iterations the
+// workload's rate leaves over are shared by weight. When the rate cannot cover
+// the floors it is raised to do so. Other workloads (bursts, journeys) follow
+// their weights only.
 func (w Workload) SamplingPlan() SamplingPlan {
 	scenarios := w.Scenarios
 	if len(scenarios) == 0 {
@@ -51,18 +60,60 @@ func (w Workload) SamplingPlan() SamplingPlan {
 		}
 		return SamplingPlan{Rate: w.RatePerSecond, Schedule: weightedCycle(scenarios, total)}
 	}
+	var reads, writes []string
+	for _, scenario := range scenarios {
+		if scenario.Writes {
+			writes = append(writes, scenario.ID)
+		} else {
+			reads = append(reads, scenario.ID)
+		}
+	}
+	subCycles := 1
+	if len(writes) > 0 {
+		subCycles = int(math.Ceil(w.WriteInterval().Seconds()/MinSampleInterval.Seconds() - 1e-9))
+	}
+	subCycles = max(subCycles, 1)
+	size := len(reads) + (len(writes)+subCycles-1)/subCycles
 	slots := int(math.Floor(w.RatePerSecond*MinSampleInterval.Seconds() + 1e-9))
 	plan := SamplingPlan{Rate: w.RatePerSecond}
-	if slots < len(scenarios) {
-		slots = len(scenarios)
-		plan.Rate = float64(len(scenarios)) / MinSampleInterval.Seconds()
+	if slots < size {
+		slots = size
+		plan.Rate = float64(size) / MinSampleInterval.Seconds()
 		plan.Raised = true
 	}
-	for _, scenario := range scenarios {
-		plan.Schedule = append(plan.Schedule, scenario.ID)
+	// Every sub-cycle holds slots iterations: all reads, its share of the
+	// writes, and extras shared by weight (writes spread over fewer
+	// sub-cycles leave room for extras too).
+	fixed := make([][]string, subCycles)
+	for index := range fixed {
+		fixed[index] = append(fixed[index], reads...)
 	}
-	plan.Schedule = append(plan.Schedule, weightedCycle(scenarios, slots-len(scenarios))...)
+	for index, id := range writes {
+		fixed[index%subCycles] = append(fixed[index%subCycles], id)
+	}
+	extras := 0
+	for _, part := range fixed {
+		extras += slots - len(part)
+	}
+	picks := weightedCycle(scenarios, extras)
+	for _, part := range fixed {
+		take := min(slots-len(part), len(picks))
+		plan.Schedule = append(plan.Schedule, part...)
+		plan.Schedule = append(plan.Schedule, picks[:take]...)
+		picks = picks[take:]
+	}
 	return plan
+}
+
+// WriteInterval is how often a health probe samples each scenario that writes
+// at least: the workload's WriteSampleInterval, DefaultWriteSampleInterval when
+// unset, and never below MinSampleInterval.
+func (w Workload) WriteInterval() time.Duration {
+	interval := w.WriteSampleInterval.Duration()
+	if interval == 0 {
+		interval = DefaultWriteSampleInterval
+	}
+	return max(interval, MinSampleInterval)
 }
 
 // weightedCycle is count picks of smooth weighted round-robin: scenarios are

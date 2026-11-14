@@ -108,19 +108,23 @@ type WindowSet interface {
     a source without traffic returns an empty map.
 
 type Workload struct {
-	APIVersion       string             `json:"apiVersion"`
-	Kind             string             `json:"kind"`
-	Name             string             `json:"name"`
-	Description      string             `json:"description,omitempty"`
-	Purpose          Purpose            `json:"purpose"`
-	Arrival          Arrival            `json:"arrival,omitempty"`
-	RatePerSecond    float64            `json:"ratePerSecond,omitempty"`
-	Duration         Duration           `json:"duration,omitempty"`
-	Timeout          Duration           `json:"timeout,omitempty"`
-	IterationTimeout Duration           `json:"iterationTimeout,omitempty"`
-	Seed             uint64             `json:"seed,omitempty"`
-	SLO              SLO                `json:"slo,omitempty"`
-	Scenarios        []WorkloadScenario `json:"scenarios,omitempty"`
+	APIVersion       string   `json:"apiVersion"`
+	Kind             string   `json:"kind"`
+	Name             string   `json:"name"`
+	Description      string   `json:"description,omitempty"`
+	Purpose          Purpose  `json:"purpose"`
+	Arrival          Arrival  `json:"arrival,omitempty"`
+	RatePerSecond    float64  `json:"ratePerSecond,omitempty"`
+	Duration         Duration `json:"duration,omitempty"`
+	Timeout          Duration `json:"timeout,omitempty"`
+	IterationTimeout Duration `json:"iterationTimeout,omitempty"`
+	Seed             uint64   `json:"seed,omitempty"`
+	SLO              SLO      `json:"slo,omitempty"`
+	// WriteSampleInterval is the longest time between samples of a health-probe
+	// scenario that writes. Zero means DefaultWriteSampleInterval; values below
+	// MinSampleInterval act as MinSampleInterval.
+	WriteSampleInterval Duration           `json:"writeSampleInterval,omitempty"`
+	Scenarios           []WorkloadScenario `json:"scenarios,omitempty"`
 	// Links, Interval and Failures configure a link-probe workload: the
 	// dependency edges to dial afresh, how often, and how many consecutive
 	// failed dials report an edge.
@@ -140,11 +144,14 @@ func (w Workload) KnownBrokenScenario(id string) *KnownBroken
 
 func (w Workload) SamplingPlan() SamplingPlan
     SamplingPlan builds the workload's plan. A health probe samples every
-    scenario at least once per MinSampleInterval regardless of weight: each
-    cycle starts with one iteration of every scenario, and the iterations the
-    workload's rate leaves over in that interval are shared by weight. When the
-    rate cannot cover every scenario once per interval it is raised to do so.
-    Other workloads (bursts, journeys) follow their weights only.
+    read-only scenario at least once per MinSampleInterval and every scenario
+    that writes at least once per its write interval (WriteInterval), whatever
+    their weights. The plan is a cycle of k sub-cycles, each MinSampleInterval
+    long: every sub-cycle starts with one iteration of every read scenario,
+    the write scenarios are spread over the sub-cycles, and the iterations the
+    workload's rate leaves over are shared by weight. When the rate cannot cover
+    the floors it is raised to do so. Other workloads (bursts, journeys) follow
+    their weights only.
 
 func (w Workload) ScenarioArrival(id string) time.Duration
     ScenarioArrival is the expected time between samples of one scenario under
@@ -163,6 +170,11 @@ func (w Workload) ValidateAgainst(catalog Catalog) error
 func (w Workload) WithDefaults() Workload
     WithDefaults fills unset fields.
 
+func (w Workload) WriteInterval() time.Duration
+    WriteInterval is how often a health probe samples each scenario that writes
+    at least: the workload's WriteSampleInterval, DefaultWriteSampleInterval
+    when unset, and never below MinSampleInterval.
+
 type WorkloadScenario struct {
 	ID string `json:"id"`
 	// Weight shares the iterations a health probe has above its per-scenario
@@ -175,6 +187,10 @@ type WorkloadScenario struct {
 	// unconfirmed; the detector notes when it starts working or fails
 	// differently from FailsWith.
 	KnownBroken *KnownBroken `json:"knownBroken,omitempty"`
+	// Writes is derived, never authored: the engine sets it from the catalog
+	// for a scenario with a write side effect, so the sampling plan can give
+	// writes their longer floor. Authored values are overwritten.
+	Writes bool `json:"writes,omitempty"`
 }
     WorkloadScenario selects one catalog scenario with a weight and optional SLO
     override.
