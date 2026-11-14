@@ -80,6 +80,10 @@ def journeys(pack: Path) -> dict[str, Any]:
     return yaml.safe_load((pack / "journeys.yaml").read_text())
 
 
+#: ``verify:`` section lines of ``check --trace``: a write whose read-back failed, with the read-back path and result.
+_VERIFY_LINE = re.compile(r"^\s+(missing|wrong|unreachable): (\S+) (\S+): (.*)$")
+
+
 def parse_trace(stdout: str, stderr: str, names: Sequence[str]) -> dict[str, dict[str, Any]]:
     """Per failing journey: failed count, total requests and one sample error, from ``check --trace`` output."""
     res: dict[str, dict[str, Any]] = {}
@@ -90,6 +94,12 @@ def parse_trace(stdout: str, stderr: str, names: Sequence[str]) -> dict[str, dic
                 entry["failed"] += 1
                 entry["sample"] = entry["sample"] or re.sub(r"\s+", " ", line.split(name, 1)[1]).strip(" :-")[:120]
                 break
+    for line in stdout.splitlines():
+        found = _VERIFY_LINE.match(line)
+        if found and found[2] in res:
+            res[found[2]].setdefault("records", []).append(
+                {"kind": found[1], "path": found[3], "detail": found[4].strip()}
+            )
     match = re.search(r"traffic: requests=(\d+)", stdout)
     for entry in res.values():
         entry["total"] = int(match[1]) if match else 0
@@ -97,22 +107,96 @@ def parse_trace(stdout: str, stderr: str, names: Sequence[str]) -> dict[str, dic
     return res
 
 
+def _bind(template: str, actual: str) -> dict[str, str] | None:
+    """Template variables (``{{p}}``) bound by matching ``template`` against a real path, else ``None``."""
+    pattern = ""
+    for piece in re.split(r"(\{\{\s*\w+\s*\}\})", template):
+        var = re.fullmatch(r"\{\{\s*(\w+)\s*\}\}", piece)
+        pattern += f"(?P<{var[1]}>[^/?]+)" if var else re.escape(piece)
+    found = re.fullmatch(pattern, actual)
+    return found.groupdict() if found else None
+
+
+def _fill(template: str, bound: Mapping[str, str]) -> str | None:
+    """``template`` with its variables replaced, or ``None`` when one is not bound."""
+    missing = False
+
+    def sub(m: re.Match[str]) -> str:
+        nonlocal missing
+        if m[1] in bound:
+            return bound[m[1]]
+        missing = True
+        return m[0]
+
+    out = re.sub(r"\{\{\s*(\w+)\s*\}\}", sub, template)
+    return None if missing else out
+
+
+def _curl(method: str, flags: str, entry: str, path: str, body: str | None = None) -> str:
+    data = f" --data '{body}'" if body is not None and method != "GET" else ""
+    return f"curl -s -w ' [%{{http_code}}]' -X {method}{flags}{data} '{entry}{path}'"
+
+
+def _sample_steps(journey: Mapping[str, Any], record: Mapping[str, str], flags: str, entry: str) -> str:
+    """The failing sample's own requests: the write the read-back depends on (when its path is recoverable from
+    the read-back path), then the read-back that failed, with the real path and the response the user got."""
+    request = journey.get("request") or {}
+    readback = ((journey.get("readback") or {}).get("request")) or {}
+    bound = _bind(readback.get("path", ""), record["path"]) if readback else None
+    steps = []
+    write_path = _fill(request.get("path", ""), bound) if bound is not None else None
+    if write_path is not None and request.get("method", "GET") != "GET":
+        body = _fill(str(request["body"]), bound or {}) if request.get("body") is not None else None
+        steps.append(f"1. {_curl(request['method'], flags, entry, write_path, body)} (the write succeeded)")
+    method = readback.get("method", "GET")
+    steps.append(f"{len(steps) + 1}. {_curl(method, flags, entry, record['path'])} -> user got {record['detail']}")
+    return " ".join(steps)
+
+
+def _sample_part(name: str, journey: Mapping[str, Any], result: Mapping[str, Any], flags: str, entry: str) -> str:
+    """A failing operation whose check recorded real read-back failures: replay those, not a template request."""
+    records = list(result["records"])
+    readback = ((journey.get("readback") or {}).get("request")) or {}
+    binds = [_bind(readback.get("path", ""), r["path"]) or {} for r in records]
+    shared = {k: v for k, v in binds[0].items() if len(records) > 1 and all(b.get(k) == v for b in binds)}
+    involved = " (all with " + ", ".join(f"{k}={v}" for k, v in shared.items()) + ")" if shared else ""
+    plural = "s" if len(records) > 1 else ""
+    head = (
+        f"{name}: the users' test does the write, then reads it back; {len(records)} read-back{plural} failed in "
+        f"the last check{involved}. Replay the failing sample itself (these records, not another one): "
+        f"{_sample_steps(journey, records[0], flags, entry)}"
+    )
+    if len(records) > 1:
+        head += f"; also failed: {records[1]['path']} -> {records[1]['detail']}"
+    return head
+
+
 def recipe(
-    pack_journeys: Mapping[str, Any], failing: Sequence[str], entry: str = DEFAULT_ENTRY, budget: int | None = None
+    pack_journeys: Mapping[str, Any],
+    failing: Sequence[str],
+    entry: str = DEFAULT_ENTRY,
+    budget: int | None = None,
+    results: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> str:
-    """One line: how to try each failing operation against the entry Service (from the pack's journeys). With a
-    ``budget`` (characters), operations past it are counted instead of spelled out."""
+    """One line: how to try each failing operation against the entry Service (from the pack's journeys). An
+    operation whose check recorded failing read-backs is shown as the failing sample's own requests (real
+    records and the response); the others as the journey's request with a placeholder record. With a ``budget``
+    (characters), operations past it are counted instead of spelled out."""
     by_name = {j["name"]: j for j in pack_journeys["journeys"]}
     header = ((pack_journeys.get("login") or {}).get("header")) or {}
     flags = "".join(f" -H '{k}: {v}'" for k, v in header.items())
     parts = []
     for name in failing:
+        result = (results or {}).get(name) or {}
+        if result.get("records"):
+            parts.append(_sample_part(name, by_name.get(name) or {}, result, flags, entry))
+            continue
         request = (by_name.get(name) or {}).get("request") or {}
         method = request.get("method", "GET")
         path = re.sub(r"\{\{[^}]*\}\}", "1", request.get("path", ""))
         parts.append(
-            f"{name}: curl -s -w ' [%{{http_code}}]' -X {method}{flags} '{entry}{path}'"
-            + (" (a write; JSON body)" if method != "GET" else "")
+            f"{name}: {_curl(method, flags, entry, path)} (a generic request, record 1 is a placeholder: the "
+            "failing requests' records were not captured" + ("; a write, JSON body)" if method != "GET" else ")")
         )
     shown = len(parts)
     while budget is not None and shown and len(_recipe_line(parts, shown)) > budget:
@@ -167,7 +251,9 @@ def page_message(
     )
     # B1's page has no bound; the contract does. The failing and passing operations are kept whole and only
     # how-to-check lines that do not fit are counted, so the alert is never refused.
-    return (head + recipe(pack_journeys, list(failing), entry, budget=MAX_MESSAGE - len(head)))[:MAX_MESSAGE]
+    return (head + recipe(pack_journeys, list(failing), entry, budget=MAX_MESSAGE - len(head), results=failing))[
+        :MAX_MESSAGE
+    ]
 
 
 def inbox_manifest(control_namespace: str, incident_id: str, namespace: str, message: str) -> dict[str, Any]:
