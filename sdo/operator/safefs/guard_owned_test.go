@@ -86,6 +86,7 @@ var operatorOwned = map[string]string{
 	"runtime/event_stream.go":                        reasonLedger,
 	"runtime/internal/lifecycleio/state_evidence.go": reasonLedger,
 	"runtime/internal/lifecycleio/task_store.go":     reasonLedger,
+	"runtime/investigators_dispatch.go":              reasonState,
 	"runtime/jitview/cmd/gen/main.go":                reasonTool,
 	"runtime/native_broker.go":                       reasonLedger,
 	"runtime/routing_capture.go":                     reasonLedger,
