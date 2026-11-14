@@ -241,12 +241,22 @@ class GoPackage:
     test_imports: frozenset[str]
 
 
+def private_go_caches(base: Path) -> dict[str, str]:
+    """Environment placing the module and build caches under ``base`` instead of the shared CI caches."""
+    return {"GOMODCACHE": str(base / "gomod"), "GOCACHE": str(base / "gobuild")}
+
+
 def go_packages(root: Path, modules: list[str]) -> dict[str, GoPackage]:
-    """List every package of the CI workspace modules; no dependency download is needed."""
+    """List every package of the CI workspace modules.
+
+    Resolving imports extracts dependency modules, and this runs before the job restores its Go cache. Writing
+    them into the shared module cache makes the later tar restore fail ("Cannot open: File exists" over
+    read-only module files), so the listing uses private cache directories the job never saves or restores.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp) / "go.work"
         work.write_text("go 1.26.8\nuse (\n" + "".join(f"    {root / m}\n" for m in modules) + ")\n")
-        env = {**os.environ, "GOWORK": str(work), "GOFLAGS": "-trimpath"}
+        env = {**os.environ, **private_go_caches(Path(tmp)), "GOWORK": str(work), "GOFLAGS": "-trimpath"}
         patterns = [f"./{m}/..." for m in modules]
         out = subprocess.run(
             [
