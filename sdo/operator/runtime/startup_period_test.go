@@ -312,3 +312,24 @@ func TestNoPeriodForExternalModeOrAZeroBound(t *testing.T) {
 		t.Fatalf("external mode: period = %v", period)
 	}
 }
+
+// unprovenProbe is a user-test probe whose workload has a scenario that never
+// qualified: it reports nothing and cannot confirm health.
+type unprovenProbe struct{ *sequenceDetector }
+
+func (unprovenProbe) Confirmed(sdk.DetectionContext) bool { return false }
+
+// The start-up period does not hinge on every probe scenario qualifying: a
+// detector that stays pending on one unqualified scenario still counts as
+// evaluated, so a quiet install is established after one settle window.
+func TestStartupDoesNotHingeOnAnUnqualifiedScenario(t *testing.T) {
+	probe := unprovenProbe{controllerDetector("traffic-probe", time.Second, sdk.Finding{})}
+	c := startupController(t, 30*time.Minute, 0, probe)
+	for second := int64(0); second <= 130; second++ {
+		step(t, c, second)
+	}
+	period := startupState(t, c)
+	if period.GetEstablishedAt() == nil || period.GetBoundReachedAt() != nil {
+		t.Fatalf("period = %v, want established by the settle window", period)
+	}
+}
