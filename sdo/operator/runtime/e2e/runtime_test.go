@@ -416,8 +416,31 @@ func (r *Runtime) sandboxArgs(pod *corev1.Pod, c corev1.Container, podDir string
 	args := []string{"--die-with-parent", "--unshare-pid", "--unshare-ipc", "--tmpfs", "/",
 		"--ro-bind", "/usr", "/usr", "--symlink", "usr/bin", "/bin", "--symlink", "usr/sbin", "/sbin",
 		"--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64",
-		"--ro-bind", "/etc", "/etc", "--ro-bind", r.kubelet.net.hostsPath, "/etc/hosts", "--ro-bind", "/mnt", "/mnt", "--ro-bind", "/home", "/home",
-		"--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/usr/local", "--tmpfs", "/go"}
+		"--tmpfs", "/etc"}
+	// /etc is a writable tmpfs holding read-only binds of the host's entries, so a Pod volume can mount at a
+	// path the host lacks (the controller's /etc/sdo config) without bubblewrap needing to create it on a
+	// read-only /etc.
+	etcEntries, err := os.ReadDir("/etc")
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range etcEntries {
+		path := filepath.Join("/etc", entry.Name())
+		if entry.Name() == "hosts" {
+			continue
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, "--symlink", target, path)
+			continue
+		}
+		args = append(args, "--ro-bind", path, path)
+	}
+	args = append(args, "--ro-bind", r.kubelet.net.hostsPath, "/etc/hosts", "--ro-bind", "/mnt", "/mnt", "--ro-bind", "/home", "/home",
+		"--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/usr/local", "--tmpfs", "/go")
 	type mount struct {
 		src, dst string
 		ro       bool
