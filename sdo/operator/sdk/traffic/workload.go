@@ -99,9 +99,11 @@ type SLO struct {
 // WorkloadScenario selects one catalog scenario with a weight and optional
 // SLO override.
 type WorkloadScenario struct {
-	ID     string `json:"id"`
-	Weight int    `json:"weight,omitempty"`
-	SLO    *SLO   `json:"slo,omitempty"`
+	ID string `json:"id"`
+	// Weight shares the iterations a health probe has above its per-scenario
+	// floor (MinSampleInterval); it never lowers a scenario below the floor.
+	Weight int  `json:"weight,omitempty"`
+	SLO    *SLO `json:"slo,omitempty"`
 	// KnownBroken declares a health-probe scenario that already fails on the
 	// application as deployed (a route broken in the application itself). It
 	// is still probed and observed, but never fires and never holds health

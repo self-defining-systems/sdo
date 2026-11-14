@@ -238,21 +238,20 @@ func scenarioHasEnoughSamples(window Window, observed ScenarioObservations) bool
 	return Evaluate(id, window.Workload.ScenarioSLO(id), observed.Samples, window.ObservedAt).Evaluated
 }
 
-// ScenarioArrival is the expected time between samples of one scenario: its
-// share of the workload rate. Zero when the rate or the scenario is unknown.
+// ScenarioArrival is the expected time between samples of one scenario under
+// the workload's SamplingPlan. Zero when the rate or the scenario is unknown.
 func (w Workload) ScenarioArrival(id string) time.Duration {
-	total := 0
-	weight := 0
-	for _, scenario := range w.Scenarios {
-		total += scenario.Weight
-		if scenario.ID == id {
-			weight = scenario.Weight
+	plan := w.SamplingPlan()
+	count := 0
+	for _, scheduled := range plan.Schedule {
+		if scheduled == id {
+			count++
 		}
 	}
-	if w.RatePerSecond <= 0 || weight <= 0 {
+	if plan.Rate <= 0 || count == 0 {
 		return 0
 	}
-	return time.Duration(float64(time.Second) * float64(total) / (float64(weight) * w.RatePerSecond))
+	return time.Duration(float64(time.Second) * float64(len(plan.Schedule)) / (float64(count) * plan.Rate))
 }
 
 // Ready reports whether the window holds what its own detectors need to judge

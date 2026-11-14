@@ -112,7 +112,7 @@ var RealClock Clock = realClock{}
 type Engine struct {
 	workload  Workload
 	scenarios map[string]Scenario
-	schedule  []string
+	plan      SamplingPlan
 	client    Doer
 	baseURL   func(Target) string
 	clock     Clock
@@ -169,7 +169,7 @@ func NewEngine(workload Workload, catalog Catalog, client Doer, baseURL func(Tar
 		scenarios[selected.ID] = scenario
 	}
 	return &Engine{
-		workload: workload, scenarios: scenarios, schedule: weightedSchedule(workload.Scenarios),
+		workload: workload, scenarios: scenarios, plan: workload.SamplingPlan(),
 		client: client, baseURL: baseURL, clock: clock, setups: &setupRecord{progress: map[string]setupProgress{}},
 	}, nil
 }
@@ -194,12 +194,16 @@ func (e *Engine) Descriptors() []Descriptor {
 	return descriptors
 }
 
-// ScenarioAt is the scenario iteration runs. The schedule is a smooth
-// weighted round-robin cycle, so every scenario runs at its weight's share
-// and the choice depends only on the iteration number.
+// ScenarioAt is the scenario iteration runs. The choice depends only on the
+// iteration number: it follows the workload's SamplingPlan, which gives every
+// scenario of a health probe its floor and shares the rest by weight.
 func (e *Engine) ScenarioAt(iteration uint64) Scenario {
-	return e.scenarios[e.schedule[iteration%uint64(len(e.schedule))]]
+	return e.scenarios[e.plan.Schedule[iteration%uint64(len(e.plan.Schedule))]]
 }
+
+// Rate is the iterations per second the engine starts: the workload's rate,
+// raised when its scenarios' sampling floor needs more.
+func (e *Engine) Rate() float64 { return e.plan.Rate }
 
 // Rand is the random source of iteration: the same workload seed and
 // iteration always yield the same values, so a failing probe replays exactly.
@@ -497,7 +501,7 @@ func (e *Engine) Run(ctx context.Context, first uint64, emit func(scenario strin
 }
 
 func (e *Engine) gap(rng *rand.Rand) time.Duration {
-	mean := float64(time.Second) / e.workload.RatePerSecond
+	mean := float64(time.Second) / e.plan.Rate
 	if e.workload.Arrival == ArrivalPoisson {
 		// Bound the tail so one long gap cannot stall detection.
 		return time.Duration(math.Min(rng.ExpFloat64()*mean, 4*mean))
@@ -571,28 +575,6 @@ func requestLine(request Request, target *Target) string {
 		line += "?" + encoded
 	}
 	return line
-}
-
-// weightedSchedule is one cycle of smooth weighted round-robin.
-func weightedSchedule(scenarios []WorkloadScenario) []string {
-	total := 0
-	for _, scenario := range scenarios {
-		total += scenario.Weight
-	}
-	current := make([]int, len(scenarios))
-	schedule := make([]string, 0, total)
-	for len(schedule) < total {
-		best := 0
-		for index, scenario := range scenarios {
-			current[index] += scenario.Weight
-			if current[index] > current[best] {
-				best = index
-			}
-		}
-		current[best] -= total
-		schedule = append(schedule, scenarios[best].ID)
-	}
-	return schedule
 }
 
 func isTimeout(ctx context.Context, err error) bool {

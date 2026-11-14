@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kclock "k8s.io/utils/clock"
 	"maps"
@@ -308,7 +309,26 @@ func (o *TrafficObserver) Windows() map[string]traffic.Window {
 // Summary describes each consumed workload for the controller log.
 func (o *TrafficObserver) Summary() map[string]any {
 	summary := make(map[string]any)
-	for name, window := range o.Windows() {
+	windows := o.Windows()
+	var probes []traffic.Workload
+	requests := map[string]int{}
+	for _, window := range windows {
+		if window.LoadError != "" || len(window.Links) > 0 {
+			continue
+		}
+		probes = append(probes, window.Workload)
+		for _, observed := range window.Scenarios {
+			requests[observed.Scenario.ID] = len(observed.Scenario.Steps)
+		}
+	}
+	if load := traffic.MeasureProbeLoad(probes, requests); len(load.Raised) > 0 || load.OverCap() {
+		entry := map[string]any{"requests_per_second": load.RequestsPerSecond, "cap": load.Cap, "rate_raised_for_floor": load.Raised}
+		if load.OverCap() {
+			entry["over_cap"] = fmt.Sprintf("meeting the %s per-scenario sampling floor sends %.1f requests/s, above the %.0f/s cap; no scenario was starved: remove or merge scenarios", traffic.MinSampleInterval, load.RequestsPerSecond, load.Cap)
+		}
+		summary["_probe_load"] = entry
+	}
+	for name, window := range windows {
 		if window.LoadError != "" {
 			summary[name] = map[string]any{"error": window.LoadError}
 			continue
@@ -333,7 +353,7 @@ func (o *TrafficObserver) Summary() map[string]any {
 			continue
 		}
 		summary[name] = map[string]any{
-			"rate_per_second": window.Workload.RatePerSecond, "seed": window.Workload.Seed, "scenarios": scenarios,
+			"rate_per_second": window.Workload.SamplingPlan().Rate, "seed": window.Workload.Seed, "scenarios": scenarios,
 		}
 	}
 	return summary

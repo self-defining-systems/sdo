@@ -30,6 +30,7 @@ and nothing calls an LLM.
 const MaxErrorExcerpt = 240 ...
 const ExistingRecordsExercised = "exercised" ...
 const LinkRuleIDPrefix = "link-reachability." ...
+const MinSampleInterval = 10 * time.Second ...
 const SyntheticHeader = "X-SDO-Synthetic" ...
 const APIVersion = "sdo.dev/v1alpha1" ...
 const DateLayout = "2006-01-02"
@@ -115,6 +116,8 @@ type Param interface{ ... }
 type Params map[string]Param
 type Passwords interface{ ... }
 type ProbeKeys interface{ ... }
+type ProbeLoad struct{ ... }
+    func MeasureProbeLoad(workloads []Workload, requestsPerIteration map[string]int) ProbeLoad
 type ProbeUser struct{ ... }
 type Purpose string
     const PurposeHealthProbe Purpose = "health-probe" ...
@@ -125,6 +128,7 @@ type SLOVerdict struct{ ... }
     func Evaluate(scenarioID string, slo SLO, samples []Sample, now time.Time) SLOVerdict
     func Judge(window Window) []SLOVerdict
 type Sample struct{ ... }
+type SamplingPlan struct{ ... }
 type Scenario struct{ ... }
 type ScenarioObservations struct{ ... }
 type SideEffect string
