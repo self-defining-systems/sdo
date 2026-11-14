@@ -10,7 +10,7 @@ import (
 
 // telemetryReference is the designer's schema reference for the two binding
 // files; agents copy its examples, so they must parse with the strict decoders.
-var telemetryReference = filepath.Join("..", "..", "..", "skills", "sdo-operationalize", "references", "telemetry.md")
+var telemetryReference = filepath.Join("..", "..", "..", "skills", "sdo-observability", "references", "telemetry.md")
 
 var yamlBlock = regexp.MustCompile("(?s)```yaml\n(.*?)```")
 

@@ -7,8 +7,8 @@ from sdo.contracts import TelemetryContext, TelemetrySource
 Reader = Literal["designer", "responder"]
 
 _INSTRUMENTATION = (
-    "Needed instrumentation is a source repair a responder commits (sdo-patching); "
-    "the designer never edits application source; use sdo-operationalize for it."
+    "Needed instrumentation is a source repair a responder commits (sdo-serving); "
+    "the designer never edits application source; use sdo-operations-map for it."
 )
 
 
@@ -67,7 +67,7 @@ def _authority(mode: str, reader: Reader, context: TelemetryContext) -> str:
 
 
 def _designer_open(context: TelemetryContext, reads: str) -> str:
-    schema = "schema: sdo-operationalize references/telemetry.md"
+    schema = "schema: sdo-observability references/telemetry.md"
     if any(source.origin == "operator" for source in context.sources):
         bind = (
             "Operator-provided sources are already bound: name them by id in detector queries; "

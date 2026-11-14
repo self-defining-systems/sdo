@@ -50,7 +50,7 @@ def _skills(root: Path, *names: str) -> Path:
 
 
 def test_prepare_codex_home_installs_only_the_requested_skills_without_credentials(tmp_path: Path) -> None:
-    source = _skills(tmp_path / "skills", "sdo-memory", "sdo-detector-authoring")
+    source = _skills(tmp_path / "skills", "sdo-memory", "sdo-detectors")
     codex_home = tmp_path / "home" / ".codex"
 
     prepare_codex_home(
@@ -92,10 +92,24 @@ def test_no_skills_leaves_the_home_without_a_skills_directory(tmp_path: Path) ->
 @pytest.mark.parametrize(
     ("agent", "skills"),
     [
-        ("responder", {"incident-response", "sdo-operating", "sdo-patching", "sdo-investigator"}),
+        (
+            "responder",
+            {
+                "incident-response",
+                "sdo-operating",
+                "sdo-serving",
+                "sdo-observability",
+                "sdo-operations-map",
+                "sdo-investigator",
+            },
+        ),
+        ("onboarding", {"sdo-onboarding", "sdo-serving", "sdo-observability", "sdo-operations-map", "sdo-detectors"}),
         ("reflector", {"playbook-writing"}),
-        ("health-judge", {"sdo-memory", "sdo-detector-authoring", "sdo-playbook-authoring", "sdo-operationalize"}),
-        ("source_deployment", {"sdo-memory", "sdo-deploy", "sdo-patching"}),
+        (
+            "health-judge",
+            {"sdo-memory", "sdo-detectors", "sdo-playbook-authoring", "sdo-operations-map", "sdo-observability"},
+        ),
+        ("source_deployment", {"sdo-memory", "sdo-serving"}),
     ],
 )
 def test_each_agent_worker_declares_the_skills_it_installs(agent: str, skills: set[str]) -> None:

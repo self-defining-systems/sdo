@@ -92,9 +92,9 @@ reason = "Baseline synthetic fixture maximum: 40 Unicode code points; byte-ident
 max_chars = 240
 reason = "Baseline synthetic fixture maximum: 129 Unicode code points; byte-identical template extraction. Raised for the verified-recovery patch-capture clause (about 90 characters): source edits are patches, not commits."
 
-[skills.sdo-detector-authoring]
+[skills.sdo-detectors]
 max_chars = 200
-reason = "Baseline synthetic fixture maximum: 187 Unicode code points; byte-identical template extraction."
+reason = "Probe and detector skill description; shares the existing 200-character skill-index allowance."
 
 [skills.sdo-memory]
 max_chars = 200
@@ -108,9 +108,17 @@ reason = "Baseline synthetic fixture maximum: 191 Unicode code points; byte-iden
 max_chars = 200
 reason = "Baseline synthetic fixture maximum: 191 Unicode code points; byte-identical template extraction."
 
-[skills.sdo-operationalize]
+[skills.sdo-operations-map]
 max_chars = 200
-reason = "Operationalization skill description; shares the existing 200-character skill-index allowance."
+reason = "Operations-map skill description; shares the existing 200-character skill-index allowance."
+
+[skills.sdo-observability]
+max_chars = 200
+reason = "Observability skill description; shares the existing 200-character skill-index allowance."
+
+[skills.sdo-onboarding]
+max_chars = 200
+reason = "Onboarding orchestration skill description; shares the existing 200-character skill-index allowance."
 
 [skills.incident-response]
 max_chars = 200
@@ -124,13 +132,9 @@ reason = "Hypothesis-investigator skill description; shares the existing 200-cha
 max_chars = 200
 reason = "Responder SDO command skill description; shares the existing 200-character skill-index allowance."
 
-[skills.sdo-patching]
+[skills.sdo-serving]
 max_chars = 200
-reason = "Patch-capture skill description; shares the existing 200-character skill-index allowance."
-
-[skills.sdo-deploy]
-max_chars = 200
-reason = "Deployment-authoring skill description; shares the existing 200-character skill-index allowance."
+reason = "Serving skill description (layout, plan, images, failed builds); shares the existing 200-character skill-index allowance."
 
 [skills.sdo-source-advance]
 max_chars = 200

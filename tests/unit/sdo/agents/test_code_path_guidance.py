@@ -25,7 +25,7 @@ def test_shell_guidance_is_free_form_and_points_at_sdo_detect(monkeypatch: pytes
     assert "sdo detect" in prompt
     assert "Go SDK" not in prompt
     assert "sdo-shell-authoring" in skills_for_role("responder")
-    assert "sdo-detector-authoring" not in skills_for_role("reflector")
+    assert "sdo-detectors" not in skills_for_role("reflector")
     assert skills_for_role("reflector") == ("playbook-writing",)
 
 

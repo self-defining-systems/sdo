@@ -19,16 +19,30 @@ def agent_guidance() -> Literal["go", "shell"]:
 
 AGENT_SKILLS = MappingProxyType(
     {
-        "responder": ("incident-response", "sdo-operating", "sdo-patching", "sdo-investigator"),
+        "responder": (
+            "incident-response",
+            "sdo-operating",
+            "sdo-serving",
+            "sdo-observability",
+            "sdo-operations-map",
+            "sdo-investigator",
+        ),
         "investigator": ("sdo-investigator",),
         "reflector": ("playbook-writing",),
-        "health-judge": ("sdo-memory", "sdo-detector-authoring", "sdo-playbook-authoring", "sdo-operationalize"),
-        "source_deployment": ("sdo-memory", "sdo-deploy", "sdo-patching"),
+        "onboarding": ("sdo-onboarding", "sdo-serving", "sdo-observability", "sdo-operations-map", "sdo-detectors"),
+        "health-judge": (
+            "sdo-memory",
+            "sdo-detectors",
+            "sdo-playbook-authoring",
+            "sdo-operations-map",
+            "sdo-observability",
+        ),
+        "source_deployment": ("sdo-memory", "sdo-serving"),
     }
 )
 
 
 def skills_for_role(role: str) -> tuple[str, ...]:
-    if agent_guidance() == "shell" and role not in {"source_deployment", "reflector", "investigator"}:
+    if agent_guidance() == "shell" and role not in {"onboarding", "source_deployment", "reflector", "investigator"}:
         return ("sdo-shell-authoring",)
     return AGENT_SKILLS[role]

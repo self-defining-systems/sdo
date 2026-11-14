@@ -18,7 +18,7 @@ from sdo.agents.responder.credentials import prepare_claude_home
 
 
 def main() -> None:
-    prepare_claude_home(skills=("sdo-memory", "sdo-detector-authoring"))
+    prepare_claude_home(skills=("sdo-memory", "sdo-detectors"))
     with tempfile.TemporaryDirectory(prefix="sdo-health-worker-") as temporary:
         workspace = Path(temporary)
         (workspace / "app.yaml").write_text(

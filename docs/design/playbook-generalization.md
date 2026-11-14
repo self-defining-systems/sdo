@@ -73,7 +73,7 @@ validating until edited):
   instead of adding a per-symptom or per-service copy.
 ### (c) Skill guidance (same PRs as the behavior)
 
-`sdo-playbook-authoring` and `sdo-detector-authoring`: a playbook is one repair method, named for the
+`sdo-playbook-authoring` and `sdo-detectors`: a playbook is one repair method, named for the
 repair (`redis-acl-restore`, `workload-restart`), not for a symptom or service; its roles bind the
 component; a new cause for an existing repair widens that playbook's `Diagnose`; a new repair method is
 a new playbook, not an extra action in a symptom playbook; never add a required role no detector binds

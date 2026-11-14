@@ -17,7 +17,7 @@ def test_lifecycle_accepts_provided_resource_reads(
     repository = tmp_path / "app"
     repository.mkdir()
     # Synthetic command events only: no shell command or model is executed.
-    resource = tmp_path / root / "sdo-detector-authoring/references/sdk.md"
+    resource = tmp_path / root / "sdo-detectors/references/sdk.md"
     resource.parent.mkdir(parents=True)
     resource.write_text("synthetic SDK reference\n")
     output = {"failure_patterns": ["synthetic failure"], "detector_ids": ["app-config"]}
@@ -49,7 +49,7 @@ def test_external_read_does_not_bypass_handoff_validation(
             provider,
             {"source_commit": "missing-required-fields"},
             session_id="fresh-session",
-            commands=["cat /tmp/sdo-skills-off-turn/sdo-detector-authoring/references/sdk.md"],
+            commands=["cat /tmp/sdo-skills-off-turn/sdo-detectors/references/sdk.md"],
         )
     )
     backend_type = CodexLifecycleBackend if provider == "codex" else ClaudeLifecycleBackend

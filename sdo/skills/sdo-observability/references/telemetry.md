@@ -13,7 +13,7 @@ authority; this page says how to use it. The validator rules are listed in [rule
   block. The dialect names the query language of that source: [PromQL](dialects/promql.md), [LogQL](dialects/logql.md).
 - `capabilities[]`: cluster reads the installer granted (`pod-discovery`, `node-proxy`, `pod-logs`). You may rely on a
   listed one; you can never create or widen one.
-- Responders get the same block read-only. A needed binding is recorded for the next designer pass, not edited.
+- Responders get the same block read-only. A needed binding is recorded for the next onboarding pass, not edited.
 
 ## Operator-provided sources
 
@@ -74,7 +74,7 @@ manifests, RBAC and cluster-scoped objects are not accepted.
 
 ## Instrumentation
 
-Instrumentation is a source repair a responder commits or a deployer captures as a patch, never an edit of application source by
-you. Use the source's `publish` block: annotate pod templates for scraping when `scrape.annotations` is set, or send
+Instrumentation is a source repair the onboarding agent or a responder commits in its repository.
+Use the source's `publish` block: annotate pod templates for scraping when `scrape.annotations` is set, or send
 OTLP HTTP to its full metrics URL. A deployment overlay under `overlays/telemetry/` may carry the annotations. Do not
 infer publishing support from a query endpoint.

@@ -200,12 +200,13 @@ RUN test -f /opt/sdo/sdo/skills/sdo-memory/SKILL.md \
     && test -f /opt/sdo/sdo/skills/incident-response/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-operating/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-investigator/SKILL.md \
-    && test -f /opt/sdo/sdo/skills/sdo-detector-authoring/SKILL.md \
+    && test -f /opt/sdo/sdo/skills/sdo-detectors/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-playbook-authoring/SKILL.md \
     && test -f /opt/sdo/sdo/skills/playbook-writing/SKILL.md \
-    && test -f /opt/sdo/sdo/skills/sdo-operationalize/SKILL.md \
-    && test -f /opt/sdo/sdo/skills/sdo-deploy/SKILL.md \
-    && test -f /opt/sdo/sdo/skills/sdo-patching/SKILL.md \
+    && test -f /opt/sdo/sdo/skills/sdo-operations-map/SKILL.md \
+    && test -f /opt/sdo/sdo/skills/sdo-serving/SKILL.md \
+    && test -f /opt/sdo/sdo/skills/sdo-observability/SKILL.md \
+    && test -f /opt/sdo/sdo/skills/sdo-onboarding/SKILL.md \
     && command -v sdo-operator
 RUN printf '#!/bin/sh\nexec python3 -m sdo.agents.responder.tools_cli "$@"\n' > /usr/local/bin/sdo \
     && chmod 755 /usr/local/bin/sdo
@@ -228,12 +229,13 @@ RUN test -f /opt/sdo/sdo/skills/sdo-memory/SKILL.md \
     && test -f /opt/sdo/sdo/skills/incident-response/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-operating/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-investigator/SKILL.md \
-    && test -f /opt/sdo/sdo/skills/sdo-detector-authoring/SKILL.md \
+    && test -f /opt/sdo/sdo/skills/sdo-detectors/SKILL.md \
     && test -f /opt/sdo/sdo/skills/sdo-playbook-authoring/SKILL.md \
     && test -f /opt/sdo/sdo/skills/playbook-writing/SKILL.md \
-    && test -f /opt/sdo/sdo/skills/sdo-operationalize/SKILL.md \
-    && test -f /opt/sdo/sdo/skills/sdo-deploy/SKILL.md \
-    && test -f /opt/sdo/sdo/skills/sdo-patching/SKILL.md \
+    && test -f /opt/sdo/sdo/skills/sdo-operations-map/SKILL.md \
+    && test -f /opt/sdo/sdo/skills/sdo-serving/SKILL.md \
+    && test -f /opt/sdo/sdo/skills/sdo-observability/SKILL.md \
+    && test -f /opt/sdo/sdo/skills/sdo-onboarding/SKILL.md \
     && command -v sdo-operator
 RUN printf '#!/bin/sh\nexec python3 -m sdo.agents.responder.tools_cli "$@"\n' > /usr/local/bin/sdo \
     && chmod 755 /usr/local/bin/sdo

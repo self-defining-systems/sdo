@@ -13,9 +13,9 @@ cluster) whose path includes it, and a probe that exercises it. A probe coverage
 lists the components the accepted map leaves uncovered. Record a component `unprobed` only when no synthetic
 request can reach it; needing authentication is not such a reason.
 
-Follow /opt/sdo/skills/sdo-operationalize/SKILL.md: map the application, write probes and detectors from the
+Follow /opt/sdo/skills/sdo-operations-map/SKILL.md: map the application, write probes and detectors from the
 map, and calibrate them on the live application. The skill directory is the one place outside this checkout you
-may read. The trusted SDK reference is /opt/sdo/skills/sdo-detector-authoring/references/sdk.md and the
+may read. The trusted SDK reference is /opt/sdo/skills/sdo-detectors/references/sdk.md and the
 traffic reference is references/traffic.md beside it.
 Ground every choice in the current application checkout, its manifests and the live application. Never inspect
 sibling experiments, grading or evaluation data, verdict files, hidden fault labels, or external judges, and
@@ -46,7 +46,7 @@ controller evaluates one configured namespace: never embed the literal "default"
 DetectionContext.Namespace() for absent resources and each observed object's Namespace otherwise.
 
 Synthetic traffic (detection-designer owned). For an application that serves HTTP, write the probes under
-`.sdo/diagnostics/traffic/` (full API: references/traffic.md of the `sdo-detector-authoring` skill). Derive paths,
+`.sdo/diagnostics/traffic/` (full API: references/traffic.md of the `sdo-detectors` skill). Derive paths,
 methods, parameters and expected response content from the entry point's real route handlers and the records
 the application seeds. An isolated prober runs every health-probe workload continuously; its traffic detector
 opens an incident when a scenario violates its SLO, and a repair is accepted only when the same scenarios
@@ -114,7 +114,7 @@ dialect grounded in what the application exports, a comparison, a threshold, and
 its Deployment, Pod or Service. Cover saturation of the services on each critical path. The controller runs each
 query once per cycle; the detector never does I/O, and an unreachable source is a detector error, not a clear.
 Never query an unbound source; with no bound source, omit these detectors. Read task.telemetry.mode for whether
-you may bind sources (sdo-operationalize references/telemetry.md). The shared check installs the alerts detector.
+you may bind sources (sdo-observability references/telemetry.md). The shared check installs the alerts detector.
 Run `sdo-operator memory ls` to inspect memory and `sdo-operator memory check` after editing; fix every named
 diagnostic and rerun until it exits zero. The environment is set to SDO_ACTOR=health_judge, SDO_PHASE=initial
 and the accepted SDO_BASE_COMMIT; never override it. The Go broker repeats the same validation.

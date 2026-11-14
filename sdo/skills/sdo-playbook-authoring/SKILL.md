@@ -8,7 +8,7 @@ description: Start here for reflection. Turn recorded hand repairs into validate
 Work in the proposal checkout, in this order. Open other files only when a step or a diagnostic names them.
 
 1. **Add detection.** A new or materially changed playbook with a program ships with a cause-specific incident detector
-   in this reflection ([how](../sdo-detector-authoring/references/cause-specific.md)); skip it only when just the generic symptom exists, and say so in the outcome reason. Health detectors stay designer-owned.
+   in this reflection ([how](../sdo-detectors/references/cause-specific.md)); skip it only when just the generic symptom exists, and say so in the outcome reason. Health detectors stay designer-owned.
    **Ask the check what is left.** Use supplied diagnostics without repeating a rejected probe. Otherwise call `check_memory` with `learning_decision: no_change` and a one-line `no_change_reason`.
    If it passes and no detection gap remains, return that decision immediately. Its diagnostics identify required work: uncovered hand
    repairs (`reflection.program-required`), applied playbooks that failed, left findings unresolved or needed a later hand repair

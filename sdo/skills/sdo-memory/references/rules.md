@@ -1,7 +1,7 @@
 # Memory layout and ownership rules
 
 Every rule names the validator rule IDs that enforce it. The detector and playbook rules are in the
-`sdo-detector-authoring` and `sdo-playbook-authoring` skills.
+`sdo-detectors` and `sdo-playbook-authoring` skills.
 
 ## Layout
 

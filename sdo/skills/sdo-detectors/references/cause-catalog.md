@@ -21,7 +21,7 @@ Each item says what to check, which source fact it comes from, and the input tha
   task lists a metrics source ([telemetry](telemetry.md)). Use only series whose exporter you can find in source, and
   the source's explicit `publish` block.
 
-The `sdo-detector-authoring` skill has the exact types: its SDK reference, and its traffic reference for
+The [SDK reference](sdk.md) and [traffic reference](traffic.md) have the exact types: its SDK reference, and its traffic reference for
 scenarios, workloads and links.
 
 ## Already covered (do not author)
@@ -67,7 +67,7 @@ Spend your detectors on what only the source can tell: the layers below list tho
 - Each internal HTTP API: a scenario aimed at that Service directly, with `DependsOn` naming its downstream
   Services. When a journey fails, these show which hop broke.
 - Each service-to-service call the source declares, data stores included: a link with the protocol the caller
-  uses, following the link rules in the detection designer task. Use `tcp` only when no protocol fits.
+  uses, following the link rules in the onboarding agent task. Use `tcp` only when no protocol fits.
 - A grpc link works on any gRPC server: one without the health service answers UNIMPLEMENTED, which counts as
   reachable.
 - Not expressible yet: request-level calls to gRPC, Thrift or other non-HTTP APIs, and UDP. A grpc link proves

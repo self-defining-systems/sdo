@@ -1,44 +1,39 @@
----
-name: sdo-detector-authoring
-description: Author or refine deterministic Go health and incident detectors from observed resource state. Covers SDK discovery, matching and near-miss tests, and independently validated memory edits.
----
-
-# Authoring a detector
+# Writing detector code
 
 A detector reads the runtime snapshot and returns findings. Keep it deterministic: no model, environment,
-clock, network access or benchmark data. Measure ages with `sdk.ObservationTime(ctx)`, never `time.Now()`. Read the [memory principles](../sdo-memory/SKILL.md#memory-principles) for evidence, reuse and generalization; that skill also explains ownership and logical IDs. To decide which detectors an application needs, use the `sdo-operationalize` skill.
+clock, network access or benchmark data. Measure ages with `sdk.ObservationTime(ctx)`, never `time.Now()`. Read the [memory principles](../../sdo-memory/SKILL.md#memory-principles) for evidence, reuse and generalization; that skill also explains ownership and logical IDs. To decide which detectors an application needs, start from the [detectors skill](../SKILL.md).
 
 1. Compare the confirmed mechanism with accepted detectors using the memory principles. The installed `service-endpoints` and
    `workload-health` detectors cover generic symptoms; their grace periods do not replace prompt cause-specific coverage.
-   A playbook with a program ships with a detector on its cause ([how](references/cause-specific.md)); refine a matching one first. Health detectors stay designer-owned.
+   A playbook with a program ships with a detector on its cause ([how](cause-specific.md)); refine a matching one first. Health detectors belong to the onboarding agent.
    `pod-admission` checks a frozen server-side dry-run Pod create via `ctx.PodAdmission()`; API rejections fire,
    while missing observations and transport failures are errors. Test with `sdktest.Snapshot.Admission`.
-2. Before implementing, read the [generated SDK](references/sdk.md). Keep the detector's manifest and Spec
+2. Before implementing, read the [generated SDK](sdk.md). Keep the detector's manifest and Spec
    identical, including watches, persistence, playbook IDs and accepted provenance.
 3. Derive relationships from observed objects. Use the context namespace for absent resources and emit
    stable fingerprints and role bindings. Observed evaluation supplies an omitted `DetectorID` from
    the emitting detector's `Spec.ID`; an authored identity must still match that detector.
 <!-- replay:on -->
-4. Explore matching cases and near misses with the [generated replay API](references/replay.md).
+4. Explore matching cases and near misses with the [generated replay API](replay.md).
 <!-- /replay:on -->
    Replay and test verdicts are information, never a save gate; keep unavailable observations explicit.
-   The [restart-loop source](assets/restart-loop/detector.go) and [tests](assets/restart-loop/detector_test.go) show the interface.
+   The [restart-loop source](../assets/restart-loop/detector.go) and [tests](../assets/restart-loop/detector_test.go) show the interface.
 5. Use shell tools to inspect and edit the proposal; run the complete memory check before returning. The broker repeats it independently.
 
-For synthetic traffic scenarios, workloads and links, read the [traffic reference](references/traffic.md).
+For synthetic traffic scenarios, workloads and links, read the [traffic reference](traffic.md).
 
-Read [validator rules](references/rules.md) before changing a manifest or when a diagnostic names a detector rule.
+Read [validator rules](rules.md) before changing a manifest or when a diagnostic names a detector rule.
 
 ## Cause-specific detectors
 
 A new or changed playbook with a program ships with an incident detector keyed on its cause, unless only the generic
-symptom exists (say so in the outcome reason): [cause-specific detectors](references/cause-specific.md).
+symptom exists (say so in the outcome reason): [cause-specific detectors](cause-specific.md).
 
 ## Runtime reads
 
 Use `program.ReadFrom(ctx)` for the shared detector/Diagnose surface; read the
-[generated program SDK](../sdo-playbook-authoring/references/program-sdk.md) before using it.
-Use the [recorded Kubernetes client](../sdo-playbook-authoring/references/kubernetes-client.md) for typed or dynamic API reads.
+[generated program SDK](../../sdo-playbook-authoring/references/program-sdk.md) before using it.
+Use the [recorded Kubernetes client](../../sdo-playbook-authoring/references/kubernetes-client.md) for typed or dynamic API reads.
 Detectors can call `ctx.DiffAgainstSource(ref)` directly.
 `Changed` covers field drift and source-absent objects; `SourceAbsent` requires a successful accepted-source lookup.
 Bind playbooks through findings, to the faulty component only: for a journey failure embed `localize.Inputs` and
@@ -48,11 +43,11 @@ The runtime caches reads per snapshot and records results and failures for repla
 Logs cap at 64 KiB/5 s, probes at 5 s. Read failures are errors/Unknown, never clearance;
 a successful probe with `Success:false` is an observed failure. Keep always-on reads cheap and use Diagnose for depth.
 To judge state only a running process knows (a store's config, role or access list), even before users are affected,
-declare [pod reads](references/pod-reads.md). Go already dials every mapped edge from its client Pods (`client-links`);
-for another edge use `vantage.NewClientLinkDetector` ([reference](references/sdk/vantage-01.md)), which shares the
+declare [pod reads](pod-reads.md). Go already dials every mapped edge from its client Pods (`client-links`);
+for another edge use `vantage.NewClientLinkDetector` ([reference](sdk/vantage-01.md)), which shares the
 16-probe budget. `ctx.PodAdmission()` records `Latency`, the `Mutations` admission made to a template-built Pod and the
 `Webhooks` that select it.
-To expose state the application itself defines (an admin setting, a database setting), write an [app-state reader](references/app-state.md): a health detector.
+To expose state the application itself defines (an admin setting, a database setting), write an [app-state reader](app-state.md): a health detector.
 Test using `sdktest.Snapshot.Readings` plus phase recordings; never fill absent evidence with healthy answers.
 
 ## Synthetic traffic confirmation
@@ -60,7 +55,7 @@ Test using `sdktest.Snapshot.Readings` plus phase recordings; never fill absent 
 Steady traffic remains pending until every scenario has succeeded since observation began and has enough recent usable SLO samples. Pending carries a reason naming unproven scenarios, establishes no health and never opens an incident by itself. Qualified violations still fire alongside unproven peers. Process restarts lose qualification; recovery requires fresh observations and the controller's ordinary clearing check. A verify burst reports present scenario evidence, while controller verification owns incident closure.
 
 Health traffic sees only what it calls: give every `links.yaml` edge a continuous scenario that crosses it, writes
-included, bound each scenario's latency and cover every seeded record and request small pages (at most 20 records; a response over 64 KiB is a `response_truncated` probe defect); see [traffic coverage](references/traffic-coverage.md).
+included, bound each scenario's latency and cover every seeded record and request small pages (at most 20 records; a response over 64 KiB is a `response_truncated` probe defect); see [traffic coverage](traffic-coverage.md).
 
 ## Logs and usage detectors
 
@@ -84,12 +79,12 @@ a source exists.
 - The runtime freezes each declared query's result into the snapshot once per cycle. The detector does no I/O; read results with `metrics.ResultFrom` and test with `sdktest.Snapshot.Metrics`.
 - An unreachable source, a failed query or a missing result is a detector error, never a clear and never a finding.
 - Findings carry the query, value, threshold and labels as evidence, so each series is a distinct finding.
-- `Query.Source` (optional): [metrics sources](references/metrics-sources.md).
+- `Query.Source` (optional): [metrics sources](metrics-sources.md).
 - `memory.PrepareHealth` installs the generic `metrics-alerts` detector (`metrics.NewAlertsDetector`: firing alerts of
   the application namespace, one finding each) only when a bound source serves alerts; do not author it.
 
 ## Generic reachability baseline
 
-Service reachability needs five consecutive 1s failures, and exclusions are measured in cluster state, never `.sdo/`: [reachability baseline](references/reachability-baseline.md).
+Service reachability needs five consecutive 1s failures, and exclusions are measured in cluster state, never `.sdo/`: [reachability baseline](reachability-baseline.md).
 
-For kinds outside the typed getters, use the [generic object interface](references/generic-objects.md).
+For kinds outside the typed getters, use the [generic object interface](generic-objects.md).
