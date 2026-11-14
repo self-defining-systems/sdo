@@ -100,6 +100,20 @@ const (
 	HostStallBound = 25.0
 )
 const (
+	// MinSampleInterval is how often a health probe samples every one of its
+	// scenarios at least, whatever its weight. The SLO needs MinSamples (3 by
+	// default) failing samples inside MaxAge (30 s by default), and a page
+	// waits for them: three samples 10 s apart span 20 s of a 30 s window and
+	// confirm a failure within 30 s of it starting, where a weight-1 scenario
+	// sampled once a minute needed two more minutes.
+	MinSampleInterval = 10 * time.Second
+	// ProbeRateCap is the most requests per second all continuous probes
+	// together should send when the application's own request rate is not
+	// measurable. Meeting the floor for many scenarios can exceed it; the
+	// prober then says so (ProbeLoad) instead of starving a scenario.
+	ProbeRateCap = 3.0
+)
+const (
 	// SyntheticHeader marks every synthetic request so application logs and
 	// workload analysis can tell it apart from users.
 	SyntheticHeader = "X-SDO-Synthetic"
@@ -211,19 +225,4 @@ func CheckDetects(ctx context.Context, scenario Scenario, class FaultClass) erro
 func DefaultLatencyNote(id string) string
     DefaultLatencyNote is the non-blocking memory-check note for a scenario
     DefaultLatencyScenarios returns.
-
-func DefaultLatencyScenarios(workloads []Workload) []string
-    DefaultLatencyScenarios returns, sorted, the scenarios of health-probe
-    workloads whose effective SLO keeps DefaultMaxLatency. The default bound
-    is generous so that any application starts green; a saturated service
-    often slows its path many times over long before it fails, and a read that
-    normally takes tens of milliseconds can stay under the default while its
-    service is pinned at its CPU limit. Each scenario returned is a critical
-    path whose slowdown health cannot see.
-
-func FailingUserScenarios(ctx sdk.DetectionContext) []string
-    FailingUserScenarios lists, as "workload/scenario" sorted, every qualified
-    health-probe scenario of the context's carried windows that violates its SLO
-    now: the user-facing failures a cause-only detector may gate on. It is empty
-    when the context carries no traffic.
 ```

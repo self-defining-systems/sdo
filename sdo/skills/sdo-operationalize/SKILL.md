@@ -59,9 +59,9 @@ Three probe kinds, each a set of traffic scenarios in its own continuous health 
   fixture, on an identity no other scenario writes, through the writing operation whose data it checks; its
   steps read it back. List setup's identities and fixtures under `Fixtures` in the health-objective playbook.
 - Keep the link workload for every map edge between Services (traffic authoring rules).
-- Rates: give every scenario (workload rate times its weight share) at least 0.2 iterations per second, twice
-  the SLO default of 3 samples in 30s, or health is never confirmed; chain operations rather than lower rates.
-  Keep all probe requests under 5% of the app's request rate when measurable, else under 3 per second.
+- Rates: a probe samples every scenario at least every 10 s whatever its weight (the prober raises the rate
+  to `scenarios / 10` per second if needed); weight shares the rest. Keep probe requests under 5% of the app's
+  request rate when measurable, else under 3 per second; the controller log reports `_probe_load.over_cap`.
 
 ## 3. Calibrate on the live application
 
