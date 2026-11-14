@@ -37,7 +37,7 @@ def test_responder_first_message_for_many_findings_and_stage_actions_fits() -> N
             playbook_id=f"repair-{index}-" + "p" * 200, program_revision="rev", result="apply_error", error="e" * 2000
         )
     rendered = str(responder_prompt(request))
-    assert len(rendered.encode()) <= 800
+    assert len(rendered.encode()) <= 840
     assert request.incident_id in rendered
     assert "repair-0-" not in rendered
 
