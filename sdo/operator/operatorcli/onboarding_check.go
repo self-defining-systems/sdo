@@ -14,9 +14,12 @@ import (
 	"strings"
 	"time"
 
+	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/onboardcheck"
+	"sdo.dev/operator/onboardcheck/kubebreak"
 	"sdo.dev/operator/operatorcli/internal/processio"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/telemetry"
 	"sdo.dev/operator/telemetry/prometheus"
@@ -26,9 +29,25 @@ import (
 const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --namespace NS --prometheus URL|NS/SERVICE:PORT
                                     [--kubeconfig FILE] [--context NAME] [--requests 5]
                                     [--settle 90s] [--json]
+                                    [--quiet-window 10m] [--quiet-interval 1m]
+                                    [--break] [--break-bound 60s] [--break-mode scale|network]
+                                    [--operator-root DIR] [--telemetry-environment FILE] [--settings FILE]
 
-  check  Run the metric items of the onboarding check against a running
-         environment. SDO builds each operation's request and error series from
+  check  Run the onboarding check against a running environment: the metric
+         items, then quiet-when-healthy, then (with --break) fails-under-break.
+         quiet-when-healthy evaluates the memory's detectors (test-request
+         scenarios and the request-metrics detector included) against the live
+         application every --quiet-interval for --quiet-window (0 skips) and is
+         red if any raises, naming the detector, scenario and step.
+         fails-under-break breaks, one at a time, each component on an
+         operation's path (scale the workload to zero; with --break-mode network
+         a deny-ingress NetworkPolicy when the CNI enforces it, else scale to
+         zero, said in the report), waits up to --break-bound for a detector that
+         names the component or one of its operations, and restores it. It is red
+         for an operation nothing notices, and red (stopping) if a restore cannot
+         be verified. Run it only on a target the agent owns, with no users.
+         Each live item reports its duration.
+         The metric items: SDO builds each operation's request and error series from
          the application map's entries (metric, route, method and status labels),
          sends --requests requests to every operation's entry through the API
          server's Service proxy, and verifies each series carries the operation's
@@ -73,6 +92,31 @@ func (p promAdapter) Query(ctx context.Context, text string) ([]metrics.Series, 
 	return result.Series, nil
 }
 
+// detectorEvaluator evaluates the memory's compiled detectors once per call.
+type detectorEvaluator struct{ prepared *deployment.PreparedProbe }
+
+func (e detectorEvaluator) Evaluate(ctx context.Context) (onboardcheck.Verdict, error) {
+	verdict, err := e.prepared.Verdict(ctx)
+	if err != nil {
+		return onboardcheck.Verdict{}, err
+	}
+	out := onboardcheck.Verdict{Status: string(verdict.Status)}
+	for _, f := range verdict.Findings {
+		if f.Status != sdk.FindingActive {
+			continue
+		}
+		resources := []string{f.PrimaryResource.Name}
+		for _, r := range f.RelatedResources {
+			resources = append(resources, r.Name)
+		}
+		out.Raised = append(out.Raised, onboardcheck.Raise{DetectorID: f.DetectorID, Rule: f.RuleID, Summary: f.Summary, Evidence: f.Evidence, Resources: resources, Fingerprint: sdk.FindingFingerprint(f)})
+	}
+	for _, u := range verdict.Unavailable {
+		out.Unavailable = append(out.Unavailable, u.DetectorID+": "+u.Reason)
+	}
+	return out, nil
+}
+
 // httpSender sends requests to an operation's entry Service through the proxy.
 type httpSender struct {
 	cluster   *processio.KubeCluster
@@ -112,6 +156,14 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	requests := flags.Int("requests", 5, "requests sent to each operation")
 	settle := flags.Duration("settle", 90*time.Second, "wait for scrapes after sending")
 	asJSON := flags.Bool("json", false, "print the report as JSON")
+	quietWindow := flags.Duration("quiet-window", 10*time.Minute, "quiet-when-healthy window; 0 skips the item")
+	quietInterval := flags.Duration("quiet-interval", time.Minute, "wait between detector evaluations in the quiet window")
+	breakItem := flags.Bool("break", false, "run fails-under-break: briefly break each component on an operation's path (only on a target without users)")
+	breakBound := flags.Duration("break-bound", 60*time.Second, "how long to wait for a detector to notice each break")
+	breakMode := flags.String("break-mode", kubebreak.ModeScale, "how to break: scale (to zero) or network (deny-ingress NetworkPolicy; scale when the CNI does not enforce it)")
+	operatorRoot := flags.String("operator-root", operatorRootDefault(processio.Environment), "operator source tree detectors are built from")
+	telemetryEnv := flags.String("telemetry-environment", "", "telemetry environment document the detector evaluation reads")
+	settingsFile := flags.String("settings", "", "operator configuration file the detector evaluation runs under")
 	if err := flags.Parse(args); err != nil {
 		return 0, err
 	}
@@ -156,13 +208,35 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	for _, e := range exposed {
 		exposures = append(exposures, onboardcheck.Exposure{Service: e.Service, Via: e.Via})
 	}
-	report, err := onboardcheck.Run(ctx, onboardcheck.Config{
+	config := onboardcheck.Config{
 		Map: m, Commit: commit,
 		Prom:     promAdapter{prometheus.Client{BaseURL: base, HTTPClient: cluster}},
 		Sender:   httpSender{cluster: cluster, namespace: *namespace},
 		Exposed:  exposures,
 		Requests: *requests, Settle: *settle, Poll: 5 * time.Second, Wait: processio.Wait,
-	})
+		Now: processio.Now,
+	}
+	if *quietWindow > 0 || *breakItem {
+		probe := deployment.AcceptedDetectorProbe{Settings: *settingsFile, TelemetryEnvironment: *telemetryEnv, Kubeconfig: *kubeconfig}
+		fmt.Fprintln(os.Stderr, "building the memory's detectors ...")
+		prepared, err := probe.Prepare(ctx, *repo, *operatorRoot, *namespace, deployment.HealthScope{})
+		if err != nil {
+			return 0, fmt.Errorf("build detectors for the live items: %w", err)
+		}
+		defer prepared.Close()
+		eval := detectorEvaluator{prepared: prepared}
+		if *quietWindow > 0 {
+			config.Quiet = &onboardcheck.QuietConfig{Eval: eval, Window: *quietWindow, Interval: *quietInterval}
+		}
+		if *breakItem {
+			breaker, err := kubebreak.New(ctx, kubebreak.Config{Client: cluster.Kube(), Namespace: *namespace, Mode: *breakMode, Bound: 2 * *breakBound, Interval: 5 * time.Second, Wait: processio.Wait})
+			if err != nil {
+				return 0, err
+			}
+			config.Break = &onboardcheck.BreakConfig{Eval: eval, Breaker: breaker, Bound: *breakBound, Interval: 5 * time.Second}
+		}
+	}
+	report, err := onboardcheck.Run(ctx, config)
 	if err != nil {
 		return 0, err
 	}

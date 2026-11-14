@@ -81,28 +81,52 @@ func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, o
 	}
 	bounded, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
-	projected, err := memory.AcceptedDiagnostics(bounded, acceptedRoot)
+	prepared, err := probe.Prepare(bounded, acceptedRoot, operatorRoot, namespace, scope)
 	if err != nil {
-		return HealthEvaluation{}, fmt.Errorf("resolve accepted diagnostics: %w", err)
+		return HealthEvaluation{}, err
+	}
+	defer prepared.Close()
+	stdout, stderr, err := prepared.run(bounded)
+	if err != nil {
+		return HealthEvaluation{}, fmt.Errorf("evaluate accepted health detectors: %w (stdout=%q stderr=%q)", err, boundedHealthOutput(stdout), boundedHealthOutput(stderr))
+	}
+	return decodeHealthVerdict(stdout, stderr)
+}
+
+// PreparedProbe is the accepted detectors compiled once, so the same
+// evaluation can run repeatedly against a live namespace without rebuilding.
+type PreparedProbe struct {
+	workspace *builder.Workspace
+	binary    string
+	args      []string
+	env       []string
+}
+
+// Prepare compiles the accepted detectors and memory host of acceptedRoot.
+// Close releases the build workspace.
+func (probe AcceptedDetectorProbe) Prepare(ctx context.Context, acceptedRoot, operatorRoot, namespace string, scope HealthScope) (*PreparedProbe, error) {
+	projected, err := memory.AcceptedDiagnostics(ctx, acceptedRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve accepted diagnostics: %w", err)
 	}
 	policy := settings.Default()
 	if probe.Settings != "" {
 		if policy, err = settings.Read(probe.Settings); err != nil {
-			return HealthEvaluation{}, err
+			return nil, err
 		}
 	}
-	workspace, err := builder.BuildWorkspace(bounded, builder.Config{Replay: policy.Learning.Replay, ApplicationRoot: acceptedRoot, DiagnosticsRoot: projected.Directory, OperatorRoot: operatorRoot})
+	workspace, err := builder.BuildWorkspace(ctx, builder.Config{Replay: policy.Learning.Replay, ApplicationRoot: acceptedRoot, DiagnosticsRoot: projected.Directory, OperatorRoot: operatorRoot})
 	if err != nil {
-		return HealthEvaluation{}, fmt.Errorf("stage accepted diagnostics: %w", err)
+		return nil, fmt.Errorf("stage accepted diagnostics: %w", err)
 	}
-	defer workspace.Close()
-	binary, err := workspace.ValidateAndBuild(bounded)
-	if err != nil {
-		return HealthEvaluation{}, fmt.Errorf("compile accepted health detectors: %w", err)
+	prepared := &PreparedProbe{workspace: workspace}
+	fail := func(err error) (*PreparedProbe, error) { workspace.Close(); return nil, err }
+	if prepared.binary, err = workspace.ValidateAndBuild(ctx); err != nil {
+		return fail(fmt.Errorf("compile accepted health detectors: %w", err))
 	}
-	artifact, err := workspace.BuildMemoryHost(bounded)
+	artifact, err := workspace.BuildMemoryHost(ctx)
 	if err != nil {
-		return HealthEvaluation{}, fmt.Errorf("compile accepted memory host: %w", err)
+		return fail(fmt.Errorf("compile accepted memory host: %w", err))
 	}
 	pinsFile := ""
 	if len(scope.Pins.Images) > 0 {
@@ -112,20 +136,35 @@ func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, o
 			err = os.WriteFile(pinsFile, encoded, 0o600)
 		}
 		if err != nil {
-			return HealthEvaluation{}, fmt.Errorf("write image pins: %w", err)
+			return fail(fmt.Errorf("write image pins: %w", err))
 		}
 	}
-	args := append(probe.evaluationArgs(acceptedRoot, namespace, scope, pinsFile), "--memory-host-binary", artifact.Path, "--memory-host-digest", artifact.Digest, "--memory-commit", projected.AcceptedRevision)
-	var environment []string
+	prepared.args = append(probe.evaluationArgs(acceptedRoot, namespace, scope, pinsFile), "--memory-host-binary", artifact.Path, "--memory-host-digest", artifact.Digest, "--memory-commit", projected.AcceptedRevision)
 	if probe.Kubeconfig != "" {
-		environment = append(environment, "KUBECONFIG="+probe.Kubeconfig)
+		prepared.env = append(prepared.env, "KUBECONFIG="+probe.Kubeconfig)
 	}
-	stdout, stderr, err := deploymentio.Evaluate(bounded, workspace.Directory, binary, args, environment)
+	return prepared, nil
+}
 
+// Close releases the build workspace.
+func (p *PreparedProbe) Close() { p.workspace.Close() }
+
+func (p *PreparedProbe) run(ctx context.Context) ([]byte, []byte, error) {
+	return deploymentio.Evaluate(ctx, p.workspace.Directory, p.binary, p.args, p.env)
+}
+
+// Verdict runs one evaluation of the accepted detectors and returns the whole
+// verdict, findings included.
+func (p *PreparedProbe) Verdict(ctx context.Context) (evaluation.Verdict, error) {
+	stdout, stderr, err := p.run(ctx)
 	if err != nil {
-		return HealthEvaluation{}, fmt.Errorf("evaluate accepted health detectors: %w (stdout=%q stderr=%q)", err, boundedHealthOutput(stdout), boundedHealthOutput(stderr))
+		return evaluation.Verdict{}, fmt.Errorf("evaluate accepted detectors: %w (stdout=%q stderr=%q)", err, boundedHealthOutput(stdout), boundedHealthOutput(stderr))
 	}
-	return decodeHealthVerdict(stdout, stderr)
+	verdict, err := evaluation.Decode(stdout)
+	if err != nil {
+		return evaluation.Verdict{}, fmt.Errorf("decode detector verdict: %w (stdout=%q stderr=%q)", err, boundedHealthOutput(stdout), boundedHealthOutput(stderr))
+	}
+	return verdict, nil
 }
 
 // decodeHealthVerdict keeps the per-detector evidence --evaluate-once reports:
