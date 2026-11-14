@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/operatorcli/internal/processio"
+	"sdo.dev/operator/provenance"
 	"strconv"
 	"strings"
 
@@ -208,6 +209,26 @@ func writeJSON(stdout io.Writer, message proto.Message) error {
 	return err
 }
 
+// stampCheck names the commit the check ran on and the operator build, so a
+// result can be traced to the exact code it judged.
+func stampCheck(ctx context.Context, report *contracts.MemoryCheckReport, root string) *contracts.MemoryCheckReport {
+	report.Commit = processio.HeadCommit(ctx, root)
+	report.Dirty = processio.Dirty(ctx, root)
+	report.OperatorBuild = provenance.OperatorBuild()
+	return report
+}
+
+func checkedLabel(report *contracts.MemoryCheckReport) string {
+	label := report.GetCommit()
+	if label == "" {
+		label = "no commit"
+	}
+	if report.GetDirty() {
+		label += " plus uncommitted changes"
+	}
+	return label
+}
+
 func memoryCheck(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) (int, error) {
 	flags := flag.NewFlagSet("memory check", flag.ContinueOnError)
 	replayFlag := flags.String("replay", getenv(settings.ReplayEnvironment), "replay policy: on or off")
@@ -243,7 +264,7 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 			return exitInfra, err
 		}
 		if *asJSON {
-			if err := writeJSON(stdout, &contracts.MemoryCheckReport{Root: absolute, Diagnostics: validate.ProtoDiagnostics(diagnostics)}); err != nil {
+			if err := writeJSON(stdout, stampCheck(ctx, &contracts.MemoryCheckReport{Root: absolute, Diagnostics: validate.ProtoDiagnostics(diagnostics)}, absolute)); err != nil {
 				return exitInfra, err
 			}
 		} else {
@@ -273,9 +294,9 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 				return exitInfra, err
 			}
 			if *asJSON {
-				if err := writeJSON(stdout, &contracts.MemoryCheckReport{
+				if err := writeJSON(stdout, stampCheck(ctx, &contracts.MemoryCheckReport{
 					Diagnostics: validate.ProtoDiagnostics(failure.Diagnostics), Root: absolute, Actor: actor, Phase: phase, Base: base,
-				}); err != nil {
+				}, absolute)); err != nil {
 					return exitInfra, err
 				}
 			} else {
@@ -295,7 +316,7 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 			return exitInfra, err
 		}
 		if *asJSON {
-			if err := writeJSON(stdout, report); err != nil {
+			if err := writeJSON(stdout, stampCheck(ctx, report, absolute)); err != nil {
 				return exitInfra, err
 			}
 		} else {
@@ -351,6 +372,7 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 	}
 	if *asJSON {
 		report := &contracts.MemoryCheckReport{MitigationReplayNotes: validate.ProtoMitigationReplayNotes(replayNotes), Diagnostics: validate.ProtoDiagnostics(diagnostics), CoverageGaps: validate.ProtoDiagnostics(coverageGaps), Root: absolute, Actor: actor, Phase: phase, Base: base}
+		stampCheck(ctx, report, absolute)
 		if err := writeJSON(stdout, report); err != nil {
 			return exitInfra, err
 		}
@@ -556,6 +578,7 @@ func memoryTest(ctx context.Context, args []string, getenv func(string) string, 
 		return exitInfra, fmt.Errorf("read memory check report: %w", err)
 	}
 	fmt.Fprintf(stdout, "playbook %s\n", id)
+	fmt.Fprintf(stdout, "  checked %s\n", checkedLabel(checked))
 	replayed := 0
 	for _, note := range checked.GetMitigationReplayNotes() {
 		if note.GetProgramId() == id {

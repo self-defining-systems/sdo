@@ -192,3 +192,22 @@ def retarget_dev_mount(cluster: str, worktree: Path) -> None:
         )
         if identity(target) != identity("/opt/sdo-dev"):
             raise ValueError(f"eval: dev mount identity differs after retarget on {node}")
+
+
+def operator_build(worktree: Path) -> str | None:
+    """Build ID of the operator prepared for ``worktree``: the binary hashes the mounted operator source."""
+
+    binary = worktree / ".fastloop" / "sdo-operator"
+    if not binary.is_file():
+        return None
+    try:
+        done = subprocess.run(
+            [str(binary), "build-id", str(worktree / "sdo" / "operator")],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return done.stdout.strip() or None
