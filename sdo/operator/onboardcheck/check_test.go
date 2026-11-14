@@ -30,7 +30,7 @@ type fakeSeries struct {
 }
 
 var (
-	queryShape   = regexp.MustCompile(`^sum(?: by \((\w+)\) \()?\(?([a-zA-Z_:][a-zA-Z0-9_:]*)\{(.*)\}\)\)?$`)
+	queryShape   = regexp.MustCompile(`^sum(?: by \((\w+)\) \()?\(?([a-zA-Z_:][a-zA-Z0-9_:]*)\{(.*)\}\)\)?(?: > 0)?$`)
 	matcherShape = regexp.MustCompile(`(\w+)(=~|=)("(?:[^"\\]|\\.)*")`)
 )
 

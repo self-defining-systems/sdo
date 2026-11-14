@@ -116,9 +116,10 @@ func (e MetricEntry) routeMatchers(route, method string, extra ...string) string
 // All is the total of the entry metric over its selector.
 func (e MetricEntry) All() string { return "sum(" + e.Metric + e.matchers() + ")" }
 
-// ByRoute is the metric total per route label value.
+// ByRoute is the metric total per route label value; series that never counted
+// (applications pre-register zero series) are left out.
 func (e MetricEntry) ByRoute() string {
-	return "sum by (" + e.Labels.Route + ") (" + e.Metric + e.matchers() + ")"
+	return "sum by (" + e.Labels.Route + ") (" + e.Metric + e.matchers() + ") > 0"
 }
 
 // Requests is the request count of one operation.
