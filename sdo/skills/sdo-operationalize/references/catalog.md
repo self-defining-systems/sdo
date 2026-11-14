@@ -33,6 +33,7 @@ scenarios, workloads and links.
 - `service-reachability`: Service ports that refuse connections while their pods are Ready.
 - `traffic-health` and `traffic-links`: generated from the workloads you author.
 - `metrics-alerts`: firing alerts of alert-capable sources in the application namespace, when a bound telemetry source serves alerts.
+- `request-metrics`: per user operation, failed requests of the app's own request metric (from the map's `entries` and each operation's `route`) that are numerous, a real share and far above the healthy share. Shadow mode: a clue, never an incident. An operation without the declared labels or series is reported `not-instrumented`; make the onboarding check's metric items green.
   This includes alert rules the application ships, once its backend loads them.
 - `cluster-wiring`: Service selectors matching no pods or several workloads, named target ports no container
   declares, missing pod-template references and keys (ConfigMap, Secret, PVC, ServiceAccount), unbound PVCs,

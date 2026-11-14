@@ -11,6 +11,7 @@ import (
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/requestmetrics"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -33,10 +34,16 @@ type openers struct {
 //     self-healing: any finding of the generic condition detectors, which
 //     report a rule only after its give-up signal or its self-heal hold.
 //
+// A request-metrics error finding opens only when shadow mode is off
+// (detection.request_metrics_shadow); in shadow mode it is a clue.
+//
 // Every other finding (drift, wiring, events, saturation, links, store state,
 // data checks, metrics alerts, authored and learned detectors) is a clue: it
 // never opens or holds an incident.
 func (c *Controller) opens(finding sdk.Finding) bool {
+	if finding.DetectorID == memory.RequestMetricsDetectorID {
+		return c.config.RequestMetricsOpens && finding.RuleID == requestmetrics.RuleErrors
+	}
 	if slices.Contains(memory.KubernetesConditionDetectorIDs(), finding.DetectorID) {
 		return true
 	}

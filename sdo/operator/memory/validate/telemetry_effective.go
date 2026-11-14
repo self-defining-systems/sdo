@@ -76,3 +76,11 @@ func EffectiveTelemetrySources(root string, policy telemetry.Policy, registry *t
 func HasAlertSource(sources []telemetry.Source) bool {
 	return slices.ContainsFunc(sources, telemetry.Source.ServesAlerts)
 }
+
+// HasRangeSource reports whether an effective source answers range queries on
+// metrics: the condition for installing the generic request-metrics detector.
+func HasRangeSource(sources []telemetry.Source) bool {
+	return slices.ContainsFunc(sources, func(s telemetry.Source) bool {
+		return s.Serves(telemetry.KindMetrics) && s.Has(telemetry.CapRange)
+	})
+}

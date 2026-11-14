@@ -39,6 +39,9 @@ type ControllerConfig struct {
 	// ExternalClues keeps detectors observing in an external-incidents
 	// controller; their findings are clues and never open, join or close.
 	ExternalClues bool
+	// RequestMetricsOpens lets a request-metrics finding open an incident. The
+	// zero value is shadow mode: those findings are clues and never open one.
+	RequestMetricsOpens bool
 	// WatchOnly detects, opens, verifies and closes incidents as usual but never
 	// responds: the controller's dispatcher is replaced by one that idles until
 	// the incident ends, and no automatic stage is selected.
@@ -304,6 +307,7 @@ func (c ControllerConfig) WithSettings(policy settings.Config) ControllerConfig 
 	c.AfterPlaybook = policy.Response.AfterPlaybook
 	c.AfterPlaybookWait = time.Duration(policy.Response.AfterPlaybookWait)
 	c.ExternalClues = policy.Response.ExternalClues
+	c.RequestMetricsOpens = !policy.Detection.RequestMetricsShadow
 	return c
 }
 

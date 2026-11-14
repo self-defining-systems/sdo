@@ -116,7 +116,7 @@ func (Recipe) Build(p telemetry.BackendParams) telemetry.BackendObjects {
 // labels makes all pods on one node deduplicate to one kubelet/cAdvisor scrape.
 func scrapeConfig(namespace string) string {
 	return fmt.Sprintf(`global:
-  scrape_interval: 15s
+  scrape_interval: 5s
 scrape_configs:
 - job_name: application-pods
   kubernetes_sd_configs:
