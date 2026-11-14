@@ -133,22 +133,30 @@ def page_message(
     names: Sequence[str],
     pack_journeys: Mapping[str, Any],
     entry: str = DEFAULT_ENTRY,
-    checks: int = 1,
+    clean_checks: Sequence[str] = (),
 ) -> str:
-    """B1's page: the failing and passing user operations of the live check and how to try them. When no check
-    reproduced a failure the page never says an operation works: users still see failures somewhere."""
+    """B1's page: the failing and passing user operations of the live check and how to try them.
+
+    The page always states that users have been failing since onset. A live check that saw no error is an extra
+    fact with its time, never "nothing is failing"; "These still work" is listed only from a check that reproduced
+    the failure, since after clean checks alone it would name the failing operations as working."""
+    clean = ""
+    if clean_checks:
+        clean = f"live check{'s' if len(clean_checks) > 1 else ''} at {', '.join(clean_checks)} saw no error status"
     if failing:
         bullets = "\n".join(
             f"  - {n}: {r['sample'] or 'request failed'} "
             f"({r['failed']} failed of {r['total']} requests in the last 10 s)"
             for n, r in failing.items()
         )
+        if clean:
+            bullets += f"\n  (an earlier {clean}; a later check reproduced the failures above)"
         ok = ", ".join(n for n in names if n not in failing)
         works = f"These still work: {ok}.\n"
     else:
         bullets = (
-            f"  - (not reproduced: {checks} short live checks of every operation returned no error; users still "
-            "report failures, so any operation may be affected, including writes whose data is lost or wrong)"
+            f"  - users have been failing since {onset}; the {clean or 'live check saw no error status'}, and a "
+            "check sees error statuses, not wrong or lost data, so which operations fail is not yet known"
         )
         works = ""
     head = (
@@ -197,17 +205,18 @@ class Pager:
         pack_journeys = journeys(self.pack)
         names = [j["name"] for j in pack_journeys["journeys"]]
         self.sleep(max(0.0, t0 + self.config.check_after - self.clock()))
-        stdout, stderr = self.live_check()
-        (self.out / "page-live-check.txt").write_text(stdout + "\n--- stderr\n" + stderr)
-        failing = parse_trace(stdout, stderr, names)
-        checks = 1
-        while not failing and checks <= self.config.rechecks:
+        clean: list[str] = []
+        for attempt in range(1 + self.config.rechecks):
+            at = _stamp(self.clock())
             stdout, stderr = self.live_check()
-            checks += 1
-            (self.out / f"page-live-check-{checks}.txt").write_text(stdout + "\n--- stderr\n" + stderr)
+            name = "page-live-check.txt" if attempt == 0 else f"page-live-check-{attempt + 1}.txt"
+            (self.out / name).write_text(stdout + "\n--- stderr\n" + stderr)
             failing = parse_trace(stdout, stderr, names)
+            if failing:
+                break
+            clean.append(at)
         self.sleep(max(0.0, t0 + self.config.after - self.clock()))
-        message = page_message(self.namespace, _stamp(t0), failing, names, pack_journeys, self.entry, checks)
+        message = page_message(self.namespace, _stamp(t0), failing, names, pack_journeys, self.entry, clean)
         sent = self.clock()
         self.submit(inbox_manifest(self.control_namespace, self.incident_id, self.namespace, message))
         (self.out / "page.json").write_text(

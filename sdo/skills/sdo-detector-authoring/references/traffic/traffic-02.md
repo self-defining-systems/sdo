@@ -160,6 +160,11 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
     scenario run after any request was sent, even when a step failed; their
     failures are reported in CleanupError and do not change the outcome.
 
+func (e *Engine) IterationOf(scenario string, from uint64) (uint64, bool)
+    IterationOf is the first iteration at or after from that runs scenario:
+    the request the schedule would send for it, so running it now repeats a
+    scheduled request. ok is false for a scenario the workload does not run.
+
 func (e *Engine) Plan(ctx context.Context, iteration uint64) ([]Request, error)
     Plan builds, without sending, the requests of iteration assuming every step
     succeeds without saving state. It is meant for replay and review.
@@ -223,12 +228,4 @@ type ExecResult struct {
 }
     ExecResult is a finished command: its exit status, standard output (at most
     MaxResponseBody bytes) and standard error (at most MaxExecStderr bytes).
-
-type Execer interface {
-	Exec(ctx context.Context, exec Exec) (ExecResult, error)
-}
-    Execer runs EXEC requests over SSH; the prober supplies it, like the HTTP
-    Doer. A failure to connect returns the dial error (a *net.OpError with
-    Op "dial"), a deadline returns an error wrapping the context's error,
-    and a session that ends without an exit status is an error.
 ```

@@ -79,23 +79,35 @@ def test_a_clean_check_still_pages_with_the_users_report(tmp_path: Path) -> None
     clock, submitted = Clock(), []
     pager = _pager(tmp_path, clock, PageConfig(), submitted)
     checks = []
-    pager.live_check = lambda: checks.append(clock.now) or ("traffic: requests=5\n", "")
+
+    def clean_check() -> tuple[str, str]:
+        checks.append(clock.now)
+        clock.now += 10
+        return "traffic: requests=5\n", ""
+
+    pager.live_check = clean_check
     message = pager.run(1000.0)
-    # A clean check is repeated before paging, and the page never claims an operation works or that none fails.
+    # A clean check is repeated before paging. The page still states that users have been failing since onset,
+    # reports each clean check as a timed extra fact, and never says nothing is failing or that everything works.
     assert len(checks) == 1 + PageConfig().rechecks
-    assert "users still report failures" in message
-    assert "not reproduced: 3 short live checks" in message
-    assert "These still work" not in message
-    assert "no failing operation" not in message
+    assert "Since 1970-01-01T00:16:40Z, users are seeing failures:" in message
+    assert "users have been failing since 1970-01-01T00:16:40Z" in message
+    assert "live checks at 1970-01-01T00:17:00Z, 1970-01-01T00:17:10Z, 1970-01-01T00:17:20Z saw no error status" in (
+        message
+    )
+    for claim in ("These still work", "no failing operation", "nothing is failing", "not failing"):
+        assert claim not in message
 
 
-def test_a_recheck_that_reproduces_the_failure_names_it(tmp_path: Path) -> None:
+def test_a_recheck_that_reproduces_the_failure_names_it_and_the_clean_check(tmp_path: Path) -> None:
     clock, submitted = Clock(), []
     pager = _pager(tmp_path, clock, PageConfig(), submitted)
     results = iter([("traffic: requests=5\n", ""), (STDOUT, STDERR)])
     pager.live_check = lambda: next(results)
     message = pager.run(1000.0)
     assert "issue-create: 500 internal server error" in message
+    assert "an earlier live check at 1970-01-01T00:17:00Z saw no error status" in message
+    # The reproducing check is what the remaining operations are judged on, as in B1's page.
     assert "These still work: api-user, sign-in-page." in message
 
 
