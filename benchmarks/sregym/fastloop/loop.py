@@ -184,6 +184,7 @@ class LoopConfig:
     delivery_record_path: Path | None = None
     image_delivery: str = "unknown"
     image_delivery_reason: str = ""
+    operator_build: str | None = None
     stream: tuple[tuple[str, ...], ...] = ()
     continue_on_error: bool = False
     slot_offset: int = 0
@@ -557,6 +558,7 @@ def _run_one(
                 }
             )
             checkpoint = IncidentRecord(
+                operator_build=config.operator_build,
                 pre_injection_responder_tokens=getattr(agent, "pre_injection_responder_tokens", None),
                 pre_injection_usage_error=getattr(agent, "pre_injection_usage_error", None),
                 run_id=config.run_id,
@@ -602,6 +604,7 @@ def _run_one(
             except Exception as recovery_exc:
                 cleanup_error = f"invalid injection cleanup failed: {_describe(recovery_exc)}"
         return IncidentRecord(
+            operator_build=config.operator_build,
             pre_injection_responder_tokens=getattr(agent, "pre_injection_responder_tokens", None),
             pre_injection_usage_error=getattr(agent, "pre_injection_usage_error", None),
             opus_pool=config.opus_pool,
@@ -730,6 +733,7 @@ def _run_one(
         opus_pool=config.opus_pool,
         image_delivery=delivery,
         image_delivery_reason=reason,
+        operator_build=config.operator_build,
         run_id=config.run_id,
         index=index,
         agent=agent.name,

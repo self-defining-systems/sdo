@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sdo.dev/operator/provenance"
 	"strings"
 	"sync"
 	"time"
@@ -103,10 +104,13 @@ type ToolResponse struct {
 	MemoryCheckReport   json.RawMessage     `json:"memory_check_report,omitempty"`
 	MemoryCheckTimedOut bool                `json:"memory_check_timed_out,omitempty"`
 
-	VerificationBlockers       []VerificationBlocker         `json:"verification_blockers,omitempty"`
-	DataEffects                []string                      `json:"data_effects,omitempty"`
-	ActionReports              []PlanActionReport            `json:"action_reports,omitempty"`
-	ProgramRevisions           map[string]string             `json:"program_revisions,omitempty"`
+	VerificationBlockers []VerificationBlocker `json:"verification_blockers,omitempty"`
+	DataEffects          []string              `json:"data_effects,omitempty"`
+	ActionReports        []PlanActionReport    `json:"action_reports,omitempty"`
+	ProgramRevisions     map[string]string     `json:"program_revisions,omitempty"`
+	// Provenance names the repository commit (or working-tree snapshot) a
+	// command that runs playbook code ran on, and the operator build.
+	Provenance                 *provenance.Record            `json:"provenance,omitempty"`
 	OptionReports              []*contracts.MitigationReport `json:"-"`
 	UnexplainedRemovalBlockers []UnexplainedRemovalBlocker   `json:"unexplained_removal_blockers,omitempty"`
 	Drift                      []sdk.Finding                 `json:"drift,omitempty"`
@@ -212,13 +216,16 @@ type ResponderLoop struct {
 	// WorkingProgramRoot is set by the production loop factory to the mounted
 	// proposal checkout. Embedders with an in-memory registry may leave it empty.
 	WorkingProgramRoot string
-	workingPrograms    []*workingProgram
-	pendingWrites      map[string]pendingMitigation
-	MutationGate       *apihistory.MutationGate
-	Now                func() time.Time
-	CachedFindings     func() ToolResponse
-	IncidentStatus     func() *apihistory.IncidentVerified
-	WaitClosure        func(context.Context, time.Duration) ToolResponse
+	// RepositoryState reads the HEAD and cleanliness of WorkingProgramRoot;
+	// tests replace it. Production reads the checkout.
+	RepositoryState func(ctx context.Context, dir string) (provenance.Repository, error)
+	workingPrograms []*workingProgram
+	pendingWrites   map[string]pendingMitigation
+	MutationGate    *apihistory.MutationGate
+	Now             func() time.Time
+	CachedFindings  func() ToolResponse
+	IncidentStatus  func() *apihistory.IncidentVerified
+	WaitClosure     func(context.Context, time.Duration) ToolResponse
 	// WaitClock paces `sdo detect --wait`; nil uses production timers.
 	WaitClock kclock.WithTicker
 	// ExternalReceipts is the write recording the responder's writes are read from; nil when no recording
@@ -601,6 +608,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		if request.isolatedRead {
 			return
 		}
+		l.stampProvenance(ctx, request, &response)
 		responseJSON := recordedToolResponseJSON(response, applied)
 		l.calls = append(l.calls, ToolCall{Command: request.Command, At: l.clock().UTC(), RequestJSON: string(requestJSON), ResponseJSON: string(responseJSON), Error: response.Error, Summary: response.Summary})
 		persistStarted := l.clock()
@@ -883,7 +891,7 @@ func recordedToolResponseJSON(response ToolResponse, applied []selectedPlan) []b
 		return responseJSON
 	}
 	record := truncatedToolResponse{
-		ToolResponse: ToolResponse{Command: response.Command, Summary: boundedToolText(response.Summary), Error: boundedToolText(response.Error), PlanID: response.PlanID, ApplicationID: response.ApplicationID, LoopsUsed: response.LoopsUsed, LoopsAllowed: response.LoopsAllowed, Healthy: response.Healthy, TargetedHealthy: response.TargetedHealthy, Unresolved: response.Unresolved, RolloutPending: compactRolloutPending(response.RolloutPending)},
+		ToolResponse: ToolResponse{Command: response.Command, Summary: boundedToolText(response.Summary), Error: boundedToolText(response.Error), PlanID: response.PlanID, ApplicationID: response.ApplicationID, LoopsUsed: response.LoopsUsed, LoopsAllowed: response.LoopsAllowed, Healthy: response.Healthy, TargetedHealthy: response.TargetedHealthy, Unresolved: response.Unresolved, RolloutPending: compactRolloutPending(response.RolloutPending), Provenance: response.Provenance},
 		Truncated:    true, ProgramRevisionsCount: len(response.ProgramRevisions), FindingsCount: len(response.Findings), ProgramRunsCount: len(response.ProgramRuns), DetectorStatesCount: len(response.DetectorStates), PatchesCount: len(response.Patches),
 	}
 	if response.Command == "verify" {

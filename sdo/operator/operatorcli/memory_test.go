@@ -154,6 +154,25 @@ func TestMemoryCheckCleanJSONHasEmptyDiagnosticList(t *testing.T) {
 	}
 }
 
+func TestMemoryCheckReportNamesTheCommitItChecked(t *testing.T) {
+	root := copyFixture(t, goodFixture)
+	head, err := exec.Command("git", "-C", root, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".sdo/schema-version"), []byte("9\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, stdout, _ := runMemory(t, memoryCheckEnv(t), "check", "--root", root, "--json")
+	report := &contracts.MemoryCheckReport{}
+	if err := protojson.Unmarshal([]byte(stdout), report); err != nil {
+		t.Fatalf("not a MemoryCheckReport: %v\n%s", err, stdout)
+	}
+	if report.Commit != strings.TrimSpace(string(head)) || !report.Dirty || report.OperatorBuild == "" {
+		t.Fatalf("commit=%q dirty=%v operator_build=%q, want %q dirty", report.Commit, report.Dirty, report.OperatorBuild, head)
+	}
+}
+
 func TestMemoryCheckInfrastructureErrorsExitTwo(t *testing.T) {
 	root := copyFixture(t, goodFixture)
 	for name, args := range map[string][]string{

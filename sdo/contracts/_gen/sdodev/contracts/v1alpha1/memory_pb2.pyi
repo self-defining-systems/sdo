@@ -33,7 +33,7 @@ class MitigationReplayNote(_message.Message):
     def __init__(self, program_id: _Optional[str] = ..., case_id: _Optional[str] = ..., status: _Optional[_Union[MitigationReplayNote.Status, str]] = ..., effects: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class MemoryCheckReport(_message.Message):
-    __slots__ = ("diagnostics", "root", "actor", "phase", "base", "mitigation_replay_notes", "coverage_gaps")
+    __slots__ = ("diagnostics", "root", "actor", "phase", "base", "mitigation_replay_notes", "coverage_gaps", "commit", "dirty", "operator_build")
     DIAGNOSTICS_FIELD_NUMBER: _ClassVar[int]
     ROOT_FIELD_NUMBER: _ClassVar[int]
     ACTOR_FIELD_NUMBER: _ClassVar[int]
@@ -41,6 +41,9 @@ class MemoryCheckReport(_message.Message):
     BASE_FIELD_NUMBER: _ClassVar[int]
     MITIGATION_REPLAY_NOTES_FIELD_NUMBER: _ClassVar[int]
     COVERAGE_GAPS_FIELD_NUMBER: _ClassVar[int]
+    COMMIT_FIELD_NUMBER: _ClassVar[int]
+    DIRTY_FIELD_NUMBER: _ClassVar[int]
+    OPERATOR_BUILD_FIELD_NUMBER: _ClassVar[int]
     diagnostics: _containers.RepeatedCompositeFieldContainer[_memory_diagnostic_pb2.MemoryDiagnostic]
     root: str
     actor: str
@@ -48,7 +51,10 @@ class MemoryCheckReport(_message.Message):
     base: str
     mitigation_replay_notes: _containers.RepeatedCompositeFieldContainer[MitigationReplayNote]
     coverage_gaps: _containers.RepeatedCompositeFieldContainer[_memory_diagnostic_pb2.MemoryDiagnostic]
-    def __init__(self, diagnostics: _Optional[_Iterable[_Union[_memory_diagnostic_pb2.MemoryDiagnostic, _Mapping]]] = ..., root: _Optional[str] = ..., actor: _Optional[str] = ..., phase: _Optional[str] = ..., base: _Optional[str] = ..., mitigation_replay_notes: _Optional[_Iterable[_Union[MitigationReplayNote, _Mapping]]] = ..., coverage_gaps: _Optional[_Iterable[_Union[_memory_diagnostic_pb2.MemoryDiagnostic, _Mapping]]] = ...) -> None: ...
+    commit: str
+    dirty: bool
+    operator_build: str
+    def __init__(self, diagnostics: _Optional[_Iterable[_Union[_memory_diagnostic_pb2.MemoryDiagnostic, _Mapping]]] = ..., root: _Optional[str] = ..., actor: _Optional[str] = ..., phase: _Optional[str] = ..., base: _Optional[str] = ..., mitigation_replay_notes: _Optional[_Iterable[_Union[MitigationReplayNote, _Mapping]]] = ..., coverage_gaps: _Optional[_Iterable[_Union[_memory_diagnostic_pb2.MemoryDiagnostic, _Mapping]]] = ..., commit: _Optional[str] = ..., dirty: _Optional[bool] = ..., operator_build: _Optional[str] = ...) -> None: ...
 
 class MemoryArtifact(_message.Message):
     __slots__ = ("kind", "id", "path", "detector_class")
