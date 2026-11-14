@@ -132,6 +132,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "deployment" {
 		os.Exit(operatorcli.RunDeployment(context.Background(), os.Args[2:], nil, os.Stdout, os.Stderr))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "onboarding" {
+		os.Exit(operatorcli.RunOnboarding(context.Background(), os.Args[2:], os.Stdout, os.Stderr))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "operability" {
 		os.Exit(operatorcli.RunOperability(context.Background(), os.Args[2:], nil, os.Stdout, os.Stderr))
 	}
