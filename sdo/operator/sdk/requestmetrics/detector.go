@@ -97,7 +97,17 @@ type Operation struct {
 	// Unmeasurable, when set, says why the map cannot tell this operation's
 	// requests apart; the detector then reports it as not instrumented.
 	Unmeasurable string
+
+	// undeclared marks an operation the detector derived from a route of the
+	// entry's metric that no declared operation covers.
+	undeclared bool
+	// truncated says how the undeclared routes were capped (empty when not).
+	truncated string
 }
+
+// DefaultMaxUndeclaredRoutes is how many undeclared routes per entry the
+// detector evaluates when Config.MaxUndeclaredRoutes is zero.
+const DefaultMaxUndeclaredRoutes = 20
 
 // Config configures the detector.
 type Config struct {
@@ -105,6 +115,10 @@ type Config struct {
 	Entries    []Entry
 	Operations []Operation
 	Rule       Rule
+	// MaxUndeclaredRoutes bounds how many route values per entry that no
+	// declared operation covers are evaluated (busiest first); zero means
+	// DefaultMaxUndeclaredRoutes.
+	MaxUndeclaredRoutes int
 }
 
 type entryPlan struct {
@@ -237,6 +251,9 @@ func (d *detector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Fi
 			findings = append(findings, f)
 		}
 	}
+	for _, e := range d.cfg.Entries {
+		findings = append(findings, d.undeclared(ctx, d.entries[e.Service], results)...)
+	}
 	sort.Slice(findings, func(i, j int) bool { return findings[i].Fingerprint < findings[j].Fingerprint })
 	return findings, nil
 }
@@ -257,6 +274,62 @@ func (p entryPlan) instrumentation(results map[string]metrics.Result) string {
 		}
 	}
 	return ""
+}
+
+// undeclared judges every route value of the entry's request metric that no
+// declared operation covers, with the same rule, busiest routes first up to the
+// configured bound. The application map need not be complete for the detector
+// to see a failing route.
+func (d *detector) undeclared(ctx sdk.DetectionContext, plan entryPlan, results map[string]metrics.Result) []sdk.Finding {
+	if plan.instrumentation(results) != "" {
+		return nil // declared operations report it; with none there is nothing to name
+	}
+	declared := map[string]bool{}
+	for _, op := range d.cfg.Operations {
+		if op.Service == plan.Service {
+			declared[op.Route] = true
+		}
+	}
+	volume := map[string]float64{}
+	for _, s := range results[plan.recent.ID].Series {
+		route := s.Labels[plan.RouteLabel]
+		if declared[route] {
+			continue
+		}
+		if _, seen := volume[route]; !seen {
+			volume[route] = 0
+		}
+		if v, ok := s.Last(); ok {
+			volume[route] += plan.classify(s.Labels, v.Value).total
+		}
+	}
+	routes := make([]string, 0, len(volume))
+	for route := range volume {
+		routes = append(routes, route)
+	}
+	sort.Slice(routes, func(i, j int) bool {
+		if volume[routes[i]] != volume[routes[j]] {
+			return volume[routes[i]] > volume[routes[j]]
+		}
+		return routes[i] < routes[j]
+	})
+	limit := d.cfg.MaxUndeclaredRoutes
+	if limit <= 0 {
+		limit = DefaultMaxUndeclaredRoutes
+	}
+	truncated := ""
+	if len(routes) > limit {
+		truncated = fmt.Sprintf("only the %d busiest of %d undeclared routes of %s were evaluated", limit, len(routes), plan.Service)
+		routes = routes[:limit]
+	}
+	var out []sdk.Finding
+	for _, route := range routes {
+		op := Operation{ID: "undeclared route " + route, Service: plan.Service, Route: route, undeclared: true, truncated: truncated}
+		if f, ok := d.judge(ctx, op, plan, results); ok {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 func (d *detector) notInstrumented(ctx sdk.DetectionContext, op Operation, why string) sdk.Finding {
@@ -353,19 +426,34 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 		method = "any"
 	}
 	window := r.Window.String()
-	return sdk.Finding{
+	fingerprint, note := "requestmetrics/errors/"+op.ID, ""
+	meta := map[string]any{}
+	if op.undeclared {
+		fingerprint = "requestmetrics/errors/undeclared/" + op.Service + "/" + op.Route
+		note = " This is an undeclared route: the application map declares no operation for it."
+		meta["undeclared_route"] = true
+		if op.truncated != "" {
+			note += " Truncated: " + op.truncated + "."
+			meta["undeclared_truncated"] = op.truncated
+		}
+	}
+	f := sdk.Finding{
 		DetectorID: d.cfg.Spec.ID, RuleID: RuleErrors, Status: sdk.FindingActive, Severity: sdk.SeverityWarning,
 		Summary: fmt.Sprintf("operation %s: %.0f of %.0f requests failed in %s (%s)", op.ID, best.failed, best.total, window, best.class),
 		Evidence: fmt.Sprintf("operation %s (route %q, method %s) had %.0f failed of %.0f requests over %s, %.1f%% against a healthy %.1f%% (%s), on %d consecutive %s steps; newest step at %s.",
-			op.ID, op.Route, method, best.failed, best.total, window, best.share*100, best.healthy*100, best.class, r.Consecutive, r.Step, times[len(times)-1].UTC().Format(time.RFC3339)),
+			op.ID, op.Route, method, best.failed, best.total, window, best.share*100, best.healthy*100, best.class, r.Consecutive, r.Step, times[len(times)-1].UTC().Format(time.RFC3339)) + note,
 		PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: ctx.Namespace(), Name: op.Service},
 		Playbooks:       append([]string(nil), d.cfg.Spec.Playbooks...),
-		Fingerprint:     "requestmetrics/errors/" + op.ID,
+		Fingerprint:     fingerprint,
 		Metadata: map[string]any{
 			"operation": op.ID, "route": op.Route, "method": op.Method, "service": op.Service, "class": best.class,
 			"failed": best.failed, "total": best.total, "share": best.share, "healthy_share": best.healthy,
 			"window": window, "step": r.Step.String(), "consecutive": r.Consecutive,
 			"observed_at": recent.ObservedAt.UTC().Format(time.RFC3339),
 		},
-	}, true
+	}
+	for k, v := range meta {
+		f.Metadata[k] = v
+	}
+	return f, true
 }
