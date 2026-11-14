@@ -30,24 +30,33 @@ type openers struct {
 //     traffic detector whose scenario covers an operation entering at a user
 //     entry Service (appmap.Coverage). Without a readable accepted map (or a
 //     git reader) every health-probe scenario counts;
+//
 //   - a Kubernetes failure condition that outlived Kubernetes' own
 //     self-healing: any finding of the generic condition detectors, which
 //     report a rule only after its give-up signal or its self-heal hold.
 //
-// A request-metrics error finding opens only when shadow mode is off
-// (detection.request_metrics_shadow); in shadow mode it is a clue.
+//   - failing real user traffic: a request-metrics error finding of a declared
+//     operation or an undeclared route, unless shadow mode is on
+//     (detection.request_metrics_shadow), where it is a clue. A
+//     not-instrumented note is always a clue.
 //
 // Every other finding (drift, wiring, events, saturation, links, store state,
 // data checks, metrics alerts, authored and learned detectors) is a clue: it
 // never opens or holds an incident.
 func (c *Controller) opens(finding sdk.Finding) bool {
-	if finding.DetectorID == memory.RequestMetricsDetectorID {
-		return c.config.RequestMetricsOpens && finding.RuleID == requestmetrics.RuleErrors
+	if c.isUserTraffic(finding) {
+		return true
 	}
 	if slices.Contains(memory.KubernetesConditionDetectorIDs(), finding.DetectorID) {
 		return true
 	}
 	return c.isUserTest(finding)
+}
+
+// isUserTraffic is the real-traffic half of opens: the request-metrics error
+// rule, keyed by operation or route through the finding fingerprint.
+func (c *Controller) isUserTraffic(finding sdk.Finding) bool {
+	return c.config.RequestMetricsOpens && finding.DetectorID == memory.RequestMetricsDetectorID && finding.RuleID == requestmetrics.RuleErrors
 }
 
 // isUserTest is the probe half of opens: a failing user test.
@@ -68,12 +77,12 @@ func (c *Controller) isUserTest(finding sdk.Finding) bool {
 // incident forever.
 const AlertJoinWindow = 5 * time.Minute
 
-// joinAlertSet adds a user test that activated while the open incident is
+// joinAlertSet adds a user test or failing user traffic that activated while the open incident is
 // inside its join window to the incident's alert set instead of the batcher.
 // It reports whether the finding is now (or already was) in the set. It never
 // dispatches or re-prompts the agent.
 func (c *Controller) joinAlertSet(finding sdk.Finding, now time.Time) bool {
-	if !c.isUserTest(finding) {
+	if !c.isUserTest(finding) && !c.isUserTraffic(finding) {
 		return false
 	}
 	c.mu.Lock()

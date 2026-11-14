@@ -109,7 +109,7 @@ type Detection struct {
 	SelfHealHold         Duration `yaml:"self_heal_hold" doc:"how long a Kubernetes condition without a give-up signal must hold before it opens an incident; carried in every detector observation and bound into the operability report"`
 	StabilityWindow      Duration `yaml:"stability_window" doc:"how long the alert set (opening alerts and user tests that failed during the incident) must stay clear after SDO's last write settled before the incident counts as recovered"`
 	DriftBatchWindow     Duration `yaml:"drift_batch_window" doc:"batch window for unexplained drift"`
-	RequestMetricsShadow bool     `yaml:"request_metrics_shadow" doc:"shadow mode of the request-metrics detector: its per-operation findings are recorded as clues in sdo detect and the evidence sink but never open or hold an incident. Turn off only to let a failing operation open an incident"`
+	RequestMetricsShadow bool     `yaml:"request_metrics_shadow" doc:"shadow mode of the request-metrics detector: its per-operation findings are recorded as clues in sdo detect and the evidence sink but never open or hold an incident. Off by default: a failing operation or route in real user traffic opens an incident"`
 }
 
 // DefaultSelfHealHold is written here, not referenced from the SDK, because the contracts module cannot depend on
@@ -209,7 +209,7 @@ func Default() Config {
 			CleanupTurns: 2, InvestigatorDelay: Duration(60 * time.Second), Standby: true, Menu: true, StartupBound: Duration(30 * time.Minute),
 		},
 		Detection: Detection{
-			SelfHealHold: Duration(DefaultSelfHealHold), StabilityWindow: Duration(15 * time.Second), DriftBatchWindow: Duration(20 * time.Second), RequestMetricsShadow: true,
+			SelfHealHold: Duration(DefaultSelfHealHold), StabilityWindow: Duration(15 * time.Second), DriftBatchWindow: Duration(20 * time.Second), RequestMetricsShadow: false,
 		},
 		Learning: Learning{Replay: "on", ReflectionGuidance: "baseline"},
 		Deployment: Deployment{

@@ -94,7 +94,7 @@ that show nothing missing without it are the case for removing it.
 | `detection.self_heal_hold` | `SDO_DETECTION_SELF_HEAL_HOLD` | duration | `5m0s` | how long a Kubernetes condition without a give-up signal must hold before it opens an incident; carried in every detector observation and bound into the operability report |
 | `detection.stability_window` | `SDO_DETECTION_STABILITY_WINDOW` | duration | `15s` | how long the alert set (opening alerts and user tests that failed during the incident) must stay clear after SDO's last write settled before the incident counts as recovered |
 | `detection.drift_batch_window` | `SDO_DETECTION_DRIFT_BATCH_WINDOW` | duration | `20s` | batch window for unexplained drift |
-| `detection.request_metrics_shadow` | `SDO_DETECTION_REQUEST_METRICS_SHADOW` | bool | `true` | shadow mode of the request-metrics detector: its per-operation findings are recorded as clues in sdo detect and the evidence sink but never open or hold an incident. Turn off only to let a failing operation open an incident |
+| `detection.request_metrics_shadow` | `SDO_DETECTION_REQUEST_METRICS_SHADOW` | bool | `false` | shadow mode of the request-metrics detector: its per-operation findings are recorded as clues in sdo detect and the evidence sink but never open or hold an incident. Off by default: a failing operation or route in real user traffic opens an incident |
 
 ### `learning`
 
