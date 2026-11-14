@@ -323,6 +323,12 @@ class TestClaudeAccess:
         ]
         assert confined == [[str((tmp_path / "work").resolve()), str(tmp_path / "claude-home" / "skills")]]
 
+    @pytest.mark.parametrize("access", ["read-only", "workspace-write", "danger-full-access"])
+    def test_claude_turns_wait_for_background_subagents(self, access: str, tmp_path: Path) -> None:
+        _, agent = _run("claude", tmp_path, access=access)
+        (request,) = agent.requests
+        assert request.env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] == "0"
+
     def test_workspace_write_routes_compilation_through_the_detector_gateway(self, tmp_path: Path) -> None:
         _, agent = _run("claude", tmp_path, access="workspace-write")
         (request,) = agent.requests
