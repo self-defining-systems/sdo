@@ -29,6 +29,7 @@ func RunAPIProxy(ctx context.Context, args []string) error {
 	flags.SetOutput(io.Discard)
 	scopeFlag := flags.String("scope", "", "incident:<id> for a responder, task:<key> for any other agent (read-only)")
 	directory := flags.String("directory", "", "runtime history directory")
+	worktree := flags.String("worktree", "", "the responder's checkout; each recorded write names its commit")
 	recording := flags.Bool("recording", false, "record every Kubernetes call in the history directory (agent.recording)")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -79,7 +80,13 @@ func RunAPIProxy(ctx context.Context, args []string) error {
 			return err
 		}
 	}
-	return processio.ServeHTTP(ctx, APIProxyAddress, kubeproxy.NewRecording(upstream, reads, writes, scope.config(recorder, gate)))
+	proxyConfig := scope.config(recorder, gate)
+	if *worktree != "" && scope.Kind == "incident" {
+		proxyConfig.Checkout = func() (string, bool) {
+			return processio.HeadCommit(ctx, *worktree), processio.Dirty(ctx, *worktree)
+		}
+	}
+	return processio.ServeHTTP(ctx, APIProxyAddress, kubeproxy.NewRecording(upstream, reads, writes, proxyConfig))
 }
 
 // proxyScope is whom the proxy fronts. An incident scope is a responder: it may write, every write is forced to

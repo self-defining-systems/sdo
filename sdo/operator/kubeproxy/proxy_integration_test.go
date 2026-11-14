@@ -183,6 +183,39 @@ func TestWriteRecordsFieldPathsForcesTheManagerAndStoresNoBody(t *testing.T) {
 	}
 }
 
+func TestWritesNameTheCheckoutCommitAtWriteTimeAndReadsDoNot(t *testing.T) {
+	for _, dirty := range []bool{false, true} {
+		store, dir := openStore(t)
+		proxy, _ := serve(t, kubeproxy.Config{Recorder: store, FieldManager: "sdo-responder",
+			Checkout: func() (string, bool) { return "abc123", dirty }})
+		do(t, "GET", proxy.URL+"/api/v1/namespaces/app/configmaps/x", "", "")
+		do(t, "PATCH", proxy.URL+"/api/v1/namespaces/app/configmaps/x", "application/merge-patch+json", `{"data":{"a":"b"}}`)
+		for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+			ended := 0
+			for _, e := range historySnapshot(t, store, dir).Events {
+				if e.Phase == "end" {
+					ended++
+				}
+			}
+			if ended == 2 {
+				break
+			}
+		}
+		for _, e := range history(t, store, dir).Events {
+			if e.Phase == "before" {
+				continue // the preimage read belongs to the write that triggered it
+			}
+			wantCommit := ""
+			if e.Verb == "patch" {
+				wantCommit = "abc123"
+			}
+			if e.RunningCommit != wantCommit || e.RunningDirty != (dirty && e.Verb == "patch") {
+				t.Fatalf("dirty=%v: %s %s event running = %q dirty=%v", dirty, e.Phase, e.Verb, e.RunningCommit, e.RunningDirty)
+			}
+		}
+	}
+}
+
 func TestManagerIsNotForcedWithoutAConfiguredManager(t *testing.T) {
 	proxy, upstream := serve(t, kubeproxy.Config{})
 	do(t, "PATCH", proxy.URL+"/api/v1/namespaces/app/configmaps/x?fieldManager=kubectl", "application/merge-patch+json", `{"data":{"a":"b"}}`)

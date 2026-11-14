@@ -94,7 +94,7 @@ func (l *ResponderLoop) incidentWrites() []IncidentChange {
 					continue
 				}
 				rows = append(rows, IncidentChange{At: at(receipt), Source: "write", ReaderOrObject: object(receipt), Key: receipt.Kind,
-					After: receipt.Summary, Writer: sdk.ResponderFieldManager, Actor: ActorAgent})
+					After: receipt.Summary, Writer: sdk.ResponderFieldManager, Actor: ActorAgent, RunningCommit: receipt.RunningCommit, RunningDirty: receipt.RunningDirty})
 			}
 		}
 	}
@@ -107,7 +107,7 @@ func (l *ResponderLoop) incidentWrites() []IncidentChange {
 		}
 		for _, receipt := range ProgramRepairReceipts([]RecordedPlanApplication{application}, nil) {
 			rows = append(rows, IncidentChange{At: at(receipt), Source: "write", ReaderOrObject: object(receipt), Key: "mitigation",
-				After: "playbook " + strings.Join(application.ProgramIDs, ","), Writer: writer, Actor: actor})
+				After: "playbook " + strings.Join(application.ProgramIDs, ","), Writer: writer, Actor: actor, RunningCommit: application.RunningCommit, RunningDirty: application.RunningDirty})
 		}
 	}
 	return rows

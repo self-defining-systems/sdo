@@ -286,6 +286,7 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 		}
 		encoded.ApplicationId, encoded.ProgramIds, encoded.Duration, encoded.Error = application.ID, append([]string(nil), application.ProgramIDs...), durationpb.New(application.Result.Duration), application.Error
 		encoded.RolledBack, encoded.RollbackError = application.RolledBack, application.RollbackError
+		encoded.RunningCommit, encoded.RunningDirty = application.RunningCommit, application.RunningDirty
 		encoded.StartedAt, encoded.CompletedAt = optionalTimestamp(application.StartedAt), optionalTimestamp(application.CompletedAt)
 		message.PlanApplications = append(message.PlanApplications, encoded)
 	}
@@ -328,7 +329,7 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 			ActionId: action.ActionID, Kind: action.Kind, Target: action.Target, Resources: objectRefsContract(action.Resources),
 			Summary: action.Summary, Details: action.Details, StartedAt: optionalTimestamp(action.StartedAt),
 			CompletedAt: optionalTimestamp(action.CompletedAt), Success: action.Success, Reversible: action.Reversible, FailureReason: action.FailureReason, ScriptDigest: action.ScriptDigest,
-			Owners: resourceOwnersContract(action.Owners),
+			Owners: resourceOwnersContract(action.Owners), RunningCommit: action.RunningCommit, RunningDirty: action.RunningDirty,
 		})
 	}
 	for _, evidence := range result.VerificationEvidence {
@@ -404,7 +405,7 @@ func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 			ActionID: action.GetActionId(), Kind: action.GetKind(), Target: action.GetTarget(), Resources: objectRefsState(action.GetResources()),
 			Summary: action.GetSummary(), Details: action.GetDetails(), StartedAt: controllerTime(action.GetStartedAt()),
 			CompletedAt: controllerTime(action.GetCompletedAt()), Success: action.GetSuccess(), Reversible: action.GetReversible(), FailureReason: action.GetFailureReason(), ScriptDigest: action.GetScriptDigest(),
-			Owners: resourceOwnersState(action.GetOwners()),
+			Owners: resourceOwnersState(action.GetOwners()), RunningCommit: action.GetRunningCommit(), RunningDirty: action.GetRunningDirty(),
 		})
 	}
 	for _, evidence := range message.GetVerificationEvidence() {

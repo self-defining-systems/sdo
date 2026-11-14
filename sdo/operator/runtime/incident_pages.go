@@ -56,7 +56,12 @@ type IncidentChange struct {
 	// Actor is who made the change: agent, sdo, kubernetes, other or
 	// unknown; empty derives it from Writer.
 	Actor string
-	Noisy bool
+	// RunningCommit is the commit the writer's checkout was at when an agent
+	// write happened, with RunningDirty when the tree differed; empty for
+	// writers with no checkout (Kubernetes, engineers).
+	RunningCommit string
+	RunningDirty  bool
+	Noisy         bool
 	// Command is the command that expands or restores the row's object, when there is one.
 	Command string
 	// FirstSeen marks an app-state row for a key the last-healthy read never
@@ -524,7 +529,7 @@ func storeChangeRows(stores []storestate.StoreChanges) []IncidentChange {
 }
 
 func renderChanges(rows []IncidentChange, onset time.Time) []byte {
-	out := [][]string{{"t_rel_s", "at_utc", "source", "component", "reader_or_object", "key", "before", "after", "writer", "actor", "noisy", "read_at_utc"}}
+	out := [][]string{{"t_rel_s", "at_utc", "source", "component", "reader_or_object", "key", "before", "after", "writer", "actor", "running_commit", "noisy", "read_at_utc"}}
 	clean := func(text string) string { return redactDetectText(text, incidentPageValue) }
 	for _, row := range rows {
 		row = maskCredentialValues(row)
@@ -541,7 +546,7 @@ func renderChanges(rows []IncidentChange, onset time.Time) []byte {
 		if actor == "" {
 			actor = changeActor(row.Writer)
 		}
-		out = append(out, []string{relative, at, row.Source, clean(row.Component), clean(row.ReaderOrObject), clean(row.Key), clean(row.Before), clean(row.After), clean(row.Writer), actor, strconv.FormatBool(row.Noisy), readAt})
+		out = append(out, []string{relative, at, row.Source, clean(row.Component), clean(row.ReaderOrObject), clean(row.Key), clean(row.Before), clean(row.After), clean(row.Writer), actor, runningCommitCell(row), strconv.FormatBool(row.Noisy), readAt})
 	}
 	return encodeCSV(out)
 }
@@ -670,4 +675,13 @@ func encodeCSV(rows [][]string) []byte {
 	writer := csv.NewWriter(&buffer)
 	_ = writer.WriteAll(rows)
 	return buffer.Bytes()
+}
+
+// runningCommitCell is the changes column naming the code the writer had checked
+// out: the commit, marked +dirty when the tree differed from it.
+func runningCommitCell(row IncidentChange) string {
+	if row.RunningCommit != "" && row.RunningDirty {
+		return row.RunningCommit + "+dirty"
+	}
+	return row.RunningCommit
 }

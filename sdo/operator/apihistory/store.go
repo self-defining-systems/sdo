@@ -80,6 +80,10 @@ type Event struct {
 	Partial         bool      `json:"partial,omitempty"`
 	// FieldManager is the manager the proxy forced on a write.
 	FieldManager string `json:"field_manager,omitempty"`
+	// RunningCommit is the commit of the writer's checkout when the write happened; RunningDirty marks a
+	// working tree that differed from it.
+	RunningCommit string `json:"running_commit,omitempty"`
+	RunningDirty  bool   `json:"running_dirty,omitempty"`
 	// ChangedPaths are the field paths a write changed, keys only. PathsOmitted marks a write whose body could
 	// not be read, so the paths are unknown rather than empty.
 	ChangedPaths []string `json:"changed_paths,omitempty"`

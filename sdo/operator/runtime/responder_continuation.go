@@ -142,6 +142,8 @@ func (l *ResponderLoop) saveContinuation(ctx context.Context, state responderCon
 // finding identity. A pending observation window is not an unhealthy finding.
 type continuationReceipt struct {
 	ScriptDigest  string          `json:"script_digest,omitempty"`
+	RunningCommit string          `json:"running_commit,omitempty"`
+	RunningDirty  bool            `json:"running_dirty,omitempty"`
 	FailureReason string          `json:"failure_reason,omitempty"`
 	ActionID      string          `json:"action_id"`
 	Kind          string          `json:"kind"`
@@ -194,7 +196,7 @@ func (l *ResponderLoop) applicationRepairsLocked() []continuationRepair {
 }
 
 func feedbackReceipt(receipt RepairActionReceipt) continuationReceipt {
-	return continuationReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: receipt.Resources, Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible, FailureReason: receipt.FailureReason, ScriptDigest: receipt.ScriptDigest, Owners: receipt.Owners}
+	return continuationReceipt{ActionID: receipt.ActionID, Kind: receipt.Kind, Target: receipt.Target, Resources: receipt.Resources, Summary: receipt.Summary, Details: receipt.Details, StartedAt: receipt.StartedAt, CompletedAt: receipt.CompletedAt, Success: receipt.Success, Reversible: receipt.Reversible, FailureReason: receipt.FailureReason, ScriptDigest: receipt.ScriptDigest, Owners: receipt.Owners, RunningCommit: receipt.RunningCommit, RunningDirty: receipt.RunningDirty}
 }
 
 // Caller holds c.mu. Closure drift has already been freshly checked against

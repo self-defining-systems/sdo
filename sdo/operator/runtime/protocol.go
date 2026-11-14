@@ -176,6 +176,9 @@ type RepairActionReceipt struct {
 	// Owners are written resources' controller owner chains read at write
 	// time; cause attribution follows them instead of generated names.
 	Owners []ResourceOwners
+	// RunningCommit is the checkout commit a recorded write ran on; RunningDirty marks a differing tree.
+	RunningCommit string
+	RunningDirty  bool
 }
 
 // ResourceOwners is one written resource's owner chain, nearest owner first.
