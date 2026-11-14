@@ -160,6 +160,10 @@ _CODEX_API_KEY_ENV = ("CODEX_API_KEY", "OPENAI_API_KEY")
 #: Refuses direct execution of the executables named on its argv.
 DENY_EXECUTABLES_HOOK = str(Path(__file__).absolute().parent / "hooks" / "deny_bash_executables.py")
 
+#: Headless ``claude -p`` ends a session after this many ms without waiting on
+#: background subagents; ``0`` waits for them (the turn timeout still bounds the turn).
+CLAUDE_BG_WAIT_ENV = "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"
+
 #: A loaded host can take longer than agentshim's default to answer ``--help``.
 _CLI_CHECK_TIMEOUT_S = 60.0
 
@@ -708,6 +712,10 @@ def _run_structured_turn_once(
             if startup.endpoint:
                 executor = startup.executor(executor)
             effective_environment = {**os.environ, **(environment or {}), **extra_env}
+            if provider == "claude":
+                # Headless Claude Code stops waiting for background subagents after a
+                # ceiling and kills them; 0 waits. The turn timeout stays authoritative.
+                effective_environment.setdefault(CLAUDE_BG_WAIT_ENV, "0")
             if provider == "claude":
                 claude_home = Path(effective_environment.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
                 claude_before = session_ledger(claude_home, resume_session_id)
