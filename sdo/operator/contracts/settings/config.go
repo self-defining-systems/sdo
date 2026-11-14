@@ -82,6 +82,12 @@ type Config struct {
 	Evidence   Evidence   `yaml:"evidence"`
 	Telemetry  Telemetry  `yaml:"telemetry"`
 	Source     Source     `yaml:"source"`
+	Onboarding Onboarding `yaml:"onboarding"`
+}
+
+// Onboarding bounds the host environments an onboarding session works in.
+type Onboarding struct {
+	Sandboxes int `yaml:"sandboxes" doc:"the most sandboxes (kind clusters on the host, all deleted at session end) that exist at once; sdo sandbox add refuses past it"`
 }
 
 // Source is the one branch of the application repository SDO commits to and deploys from.
@@ -215,8 +221,9 @@ func Default() Config {
 			MaxAttempts: 3, BuildTimeout: Duration(DefaultBuildTimeout), BuildBudget: Duration(DefaultBuildBudget),
 			RolloutTimeout: Duration(DefaultRolloutTimeout),
 		},
-		Telemetry: Telemetry{Profile: "prometheus-default"},
-		Source:    Source{PollInterval: Duration(30 * time.Second)},
+		Telemetry:  Telemetry{Profile: "prometheus-default"},
+		Source:     Source{PollInterval: Duration(30 * time.Second)},
+		Onboarding: Onboarding{Sandboxes: 3},
 	}
 }
 
@@ -307,6 +314,9 @@ func (c Config) Validate() error {
 	}
 	if c.Mode != ModeOperate && c.Learning.ForceReflection {
 		bad("learning.force_reflection", "conflicts with mode %s, which keeps memory frozen", c.Mode)
+	}
+	if c.Onboarding.Sandboxes < 1 {
+		bad("onboarding.sandboxes", "%d must be at least 1", c.Onboarding.Sandboxes)
 	}
 	if c.Deployment.MaxAttempts < 1 {
 		bad("deployment.max_attempts", "%d must be at least 1", c.Deployment.MaxAttempts)

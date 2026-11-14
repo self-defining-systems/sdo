@@ -114,6 +114,7 @@ func TestValidateIsTheOnePlaceValuesAreChecked(t *testing.T) {
 		"learning.replay":               func(c *settings.Config) { c.Learning.Replay = "maybe" },
 		"learning.reflection_guidance":  func(c *settings.Config) { c.Learning.ReflectionGuidance = "other" },
 		"force_reflection":              func(c *settings.Config) { c.Mode = settings.ModeFrozen; c.Learning.ForceReflection = true },
+		"onboarding.sandboxes":          func(c *settings.Config) { c.Onboarding.Sandboxes = 0 },
 		"deployment.max_attempts":       func(c *settings.Config) { c.Deployment.MaxAttempts = 0 },
 		"build_timeout":                 func(c *settings.Config) { c.Deployment.BuildTimeout = settings.Duration(2 * time.Hour) },
 		"evidence":                      func(c *settings.Config) { c.Evidence.HostPath, c.Evidence.Volume = "/a", "{}" },

@@ -135,6 +135,12 @@ that show nothing missing without it are the case for removing it.
 |---|---|---|---|---|
 | `source.poll_interval` | `SDO_SOURCE_POLL_INTERVAL` | duration | `30s` | how often the controller looks for a branch head SDO did not write (an engineer's push), to deploy and verify it |
 
+### `onboarding`
+
+| Key | Env | Type | Default | Description |
+|---|---|---|---|---|
+| `onboarding.sandboxes` | `SDO_ONBOARDING_SANDBOXES` | int | `3` | the most sandboxes (kind clusters on the host, all deleted at session end) that exist at once; sdo sandbox add refuses past it |
+
 ## App-memory defaults
 
 These are not operator configuration. Each is authored per detector or probe in app memory; the SDK constant is the
