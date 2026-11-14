@@ -325,10 +325,12 @@ func (p *Prober) Reset() {
 	}
 }
 
-// BurstRequest asks for a verify burst.
+// BurstRequest asks for a verify burst, or for user tests to run now.
 type BurstRequest struct {
 	// Workload names a verify-burst or journey workload; empty selects the
-	// first verify-burst workload by name.
+	// first verify-burst workload by name. A health-probe workload's name
+	// runs each named scenario's scheduled request once now and records the
+	// sample in the steady window (`sdo detect TEST`).
 	Workload string `json:"workload,omitempty"`
 	// Scenarios restricts the burst, for example to an incident's failing
 	// scenarios; empty runs all of the workload's scenarios.
@@ -367,6 +369,12 @@ type BurstResult struct {
 // Burst runs a bounded verify workload now and judges every scenario from
 // the burst's own samples.
 func (p *Prober) Burst(ctx context.Context, request BurstRequest) (BurstResult, error) {
+	p.mu.Lock()
+	steady, isSteady := p.probes[request.Workload]
+	p.mu.Unlock()
+	if isSteady {
+		return p.probeNow(ctx, request.Workload, steady, request.Scenarios)
+	}
 	workload, err := p.burstWorkload(request)
 	if err != nil {
 		return BurstResult{}, err
@@ -426,6 +434,48 @@ func (p *Prober) Burst(ctx context.Context, request BurstRequest) (BurstResult, 
 			result.Healthy = false
 		}
 	}
+	result.Window = window
+	return result, nil
+}
+
+// probeNow sends each named scenario's scheduled request once, now, and
+// records the sample in the health-probe window as a scheduled one would be:
+// it is the same request, from a fresh iteration range, so the detectors and
+// Recovered see it like any other sample.
+func (p *Prober) probeNow(ctx context.Context, name string, state *probe, scenarios []string) (BurstResult, error) {
+	if len(scenarios) == 0 {
+		return BurstResult{}, fmt.Errorf("health-probe workload %s runs named scenarios only", name)
+	}
+	started := p.config.Clock.Now()
+	result := BurstResult{Workload: name, Healthy: true, StartedAt: started.UTC()}
+	window := traffic.Window{Workload: state.engine.Workload()}
+	for _, id := range scenarios {
+		p.mu.Lock()
+		observed, known := state.scenarios[id]
+		first := p.next
+		p.next += 1 << 32
+		p.mu.Unlock()
+		iteration, scheduled := state.engine.IterationOf(id, first)
+		if !known || !scheduled {
+			return BurstResult{}, fmt.Errorf("workload %s does not run scenario %s", name, id)
+		}
+		scenario, sample := state.engine.Iterate(ctx, iteration)
+		if ctx.Err() != nil {
+			return BurstResult{}, ctx.Err()
+		}
+		p.record(name, scenario, sample)
+		ok := sample.Outcome == traffic.OutcomeOK
+		window.Scenarios = append(window.Scenarios, traffic.ScenarioObservations{Scenario: observed.descriptor, Samples: []traffic.Sample{sample}, Qualified: true})
+		verdict := ScenarioVerdict{Scenario: id, Healthy: ok, Qualified: true, Evaluated: true, Samples: 1, LatencyMS: sample.Latency.Milliseconds()}
+		if !ok {
+			verdict.ErrorRate = 1
+			verdict.Failures = []string{fmt.Sprintf("iteration %d step %s %s: %s", sample.Iteration, sample.Step, sample.Request, sample.Error)}
+			result.Healthy = false
+		}
+		result.Verdicts = append(result.Verdicts, verdict)
+	}
+	window.ObservedAt = p.config.Clock.Now().UTC()
+	result.Duration = p.config.Clock.Now().Sub(started)
 	result.Window = window
 	return result, nil
 }

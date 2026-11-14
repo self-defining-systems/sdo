@@ -400,7 +400,7 @@ def test_full_generated_result_and_calls(tmp_path, monkeypatch, scenario):
         actual = IncidentResult()
         assert result.response.Unpack(actual)
     assert calls[0] == ["sdo", "diagnose"]
-    assert calls[-1] == ["sdo", "verify"]
+    assert calls[-1] == ["sdo", "detect"]
 
     assert actual.status == ("failed" if scenario in {"unsure", "exhausted"} else "completed")
     assert actual.incident_id == request.incident_id

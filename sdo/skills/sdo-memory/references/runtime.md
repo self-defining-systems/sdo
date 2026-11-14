@@ -117,7 +117,7 @@ The menu is a convenience over direct commands. It lists accepted Mitigators wit
 
 ## Controller verification and command reports
 
-Plain verification returns the cached controller verdict immediately. Waiting returns on stable independent closure, a new or reactivated finding, or timeout, without running detectors. Fresh detector evaluation remains the detect path. After verified closure, incident_verified adds an informational timestamp and message to every normal result; reads and reports continue. New mutations receive a typed incident_verified rejection receipt.
+`sdo detect` runs the detectors on reads taken now; `sdo detect TEST` sends that user test's scheduled request now; `sdo detect --wait SECONDS` returns when a failing test or alert changes, a new alert raises, the incident recovers, or the time passes. SDO ends the incident work when Recovered holds; the agent returns only to give up. After verified closure, incident_verified adds an informational timestamp and message to every normal result; reads and reports continue. New mutations receive a typed incident_verified rejection receipt.
 
 Mutating commands always store complete per-action results, evidence, program runs, reports and receipts under $SDO_SESSION_SCRATCH/sdo-reports/<incident>/<sequence>-<command>.json. Their compact output states action and incident verdicts separately, compares controller cached finding sets by fingerprint and evidence (fixed/new/unchanged), and prints the file path and generated schema. A failed action line names the failure reason, exit code and first error line.
 
@@ -131,41 +131,6 @@ Mutating commands always store complete per-action results, evidence, program ru
   "unchanged": "array of Finding (findings[] shape): same fingerprint and evidence"
 }
 ```
-
-usage: sdo verify [-h] [--workload WORKLOAD] [--scenario SCENARIO]
-                  [--wait SECONDS]
-
-External incidents have no detector gate: return your completed result after
-live checks. Otherwise reads the controller's shared recovery proof: fresh
-health after the last repair, observed write effects, and the unchanged
-15-second stability window. drift[] lists objects that still differ from
-accepted source and never decides healthy.
-verification_status=awaiting_responder_completion: fresh health is clear; SDO
-ends your work when Recovered holds. Pending observation windows, including
-unproven synthetic scenarios, are not healthy. Settling traffic SLOs wait.
-verification_blockers names incomplete detectors and reasons. Fresh
-deployment-rollout-pending findings name owned ReplicaSet/Pod blockers and
-old-template Pods, including after recorded actions; inspect their evidence
-before repeating workload writes. Wait on SDO's verification instead of
-sleeping. After closure, incident_verified is an informational warning on
-every response; reads and reports remain available, while mutations are
-rejected. Verified recovery fences writes and publishes the outcome without
-waiting for final narration; worker quiescence and outcome/reflection work
-continue during maintenance pauses.
-
-options:
-  -h, --help           show this help message and exit
-  --workload WORKLOAD  traffic workload to burst (default: the detection
-                       designer's verify workload)
-  --scenario SCENARIO  traffic scenario ID to burst; repeatable
-  --wait SECONDS       wait for stable verification, a new/reactivated
-                       finding, or this timeout (0: cached and instant)
-
-Key JSON fields: healthy, verification_status, findings[],
-new_since_dispatch[], detector_states[],
-verification_blockers[{detector_id,reason}], drift[], drift_events[],
-data_effects[]
-
 
 <!-- replay:on -->
 ## Supported open phase selections

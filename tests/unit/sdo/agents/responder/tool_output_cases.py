@@ -34,7 +34,7 @@ def large_response(command: str, count: int) -> dict[str, Any]:
         "loops_used": 2,
         "loops_allowed": 5,
     }
-    if command in ("status", "detect", "verify"):
+    if command in ("status", "detect"):
         response.update(findings=findings, drift_events=[{"summary": "drift " * 1000}] * count)
     if command in ("status", "diagnose"):
         response["program_runs"] = [
@@ -72,17 +72,14 @@ def rendered_stdout_cases() -> dict[str, str]:
     arguments = {
         "status": [],
         "detect": [],
-        "check": [],
         "changes": [],
         "timeline": [],
-        "try": ["browse"],
         "investigations": [],
         "map": ["near", "api"],
         "menu": [],
         "diagnose": ["repair-0"],
         "mitigate": ["repair-0"],
         "source": ["Service/toy/api"],
-        "verify": [],
         "rollback": ["application"],
         "report": ["attempt", "--incident-id", "toy", "--session-id", "session", "--epoch", "1"],
     }
@@ -109,7 +106,7 @@ def rendered_stdout_cases() -> dict[str, str]:
                     full = full["actions"][0]
                 assert full["command"] == command
                 assert "healthy=true" not in text.split()
-                if command in ("detect", "status", "verify"):
+                if command in ("detect", "status"):
                     assert len(full["findings"]) == count
                 samples[f"{command}.{count}"] = output.getvalue()
         for command, args in arguments.items():

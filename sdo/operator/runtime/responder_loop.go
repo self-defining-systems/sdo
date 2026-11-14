@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	kclock "k8s.io/utils/clock"
+
 	"sdo.dev/operator/memory/layout"
 
 	"sdo.dev/operator/apihistory"
@@ -45,9 +47,9 @@ type ToolRequest struct {
 	FindingFingerprints []string                          `json:"finding_fingerprints,omitempty"`
 	DetectorIDs         []string                          `json:"detector_ids,omitempty"`
 	Finding             string                            `json:"finding,omitempty"`
-	// Test names the user test `try` shows; empty lists them.
-	Test string `json:"test,omitempty"`
-	// MapView is the `map` subcommand ("", path, diff or near); Name is the operation or component it names.
+	// MapView is the `map` subcommand ("", path, diff or near); Name is the
+	// operation or component it names, or what `detect` runs or shows: a user
+	// test, a detector or an item of the summary.
 	MapView string `json:"map_view,omitempty"`
 	Name    string `json:"name,omitempty"`
 	// Since is how far before onset `changes` and `timeline` reach, a Go
@@ -76,6 +78,9 @@ type ToolRequest struct {
 	// never takes the notes queued for the agent and waits for rollouts inline.
 	stage        bool
 	isolatedRead bool
+	// noSend marks a `detect --wait` poll after the first read: a user test
+	// was sent once and the wait reads the scheduled requests.
+	noSend bool
 	// rolloutTimeout bounds a stage apply's rollout wait; it is not decodable
 	// either, and an agent call keeps the executor's own timeout.
 	rolloutTimeout time.Duration
@@ -214,6 +219,8 @@ type ResponderLoop struct {
 	CachedFindings     func() ToolResponse
 	IncidentStatus     func() *apihistory.IncidentVerified
 	WaitClosure        func(context.Context, time.Duration) ToolResponse
+	// WaitClock paces `sdo detect --wait`; nil uses production timers.
+	WaitClock kclock.WithTicker
 	// ExternalReceipts is the write recording the responder's writes are read from; nil when no recording
 	// exists, in which case the contradiction notes omit their write clause.
 	ExternalReceipts func() ([]RepairActionReceipt, bool, string, error)
@@ -678,11 +685,9 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	case "report":
 		l.selectionReport(ctx, request.ReportQuery, &response)
 	case "detect":
-		l.detect(ctx, request.DetectorIDs, request.Finding, &response)
+		l.detectNamed(ctx, request, &response)
 	case "changes", "timeline":
 		l.incidentPage(ctx, request, &response)
-	case "try":
-		l.tryUserTest(ctx, request.Test, &response)
 	case "map":
 		l.applicationMap(ctx, request, &response)
 	case "status":

@@ -40,6 +40,9 @@ class PageConfig:
     check_after: float = 20.0
     check_duration: float = 10.0
     rate: int = 6
+    #: Further live checks when one saw no failing operation: a page states what users see failing, so a clean
+    #: check is repeated (delaying the page) before the page says the failures were not reproduced.
+    rechecks: int = 2
 
     def __post_init__(self) -> None:
         for name in ("after", "check_after", "check_duration"):
@@ -49,6 +52,8 @@ class PageConfig:
             raise ValueError("harness_page: the live check must end about when the page is sent")
         if self.rate < 1:
             raise ValueError("harness_page.rate must be at least 1")
+        if self.rechecks < 0:
+            raise ValueError("harness_page.rechecks must not be negative")
 
     @classmethod
     def from_settings(cls, raw: Any) -> PageConfig | None:
@@ -59,7 +64,7 @@ class PageConfig:
             return cls()
         if not isinstance(raw, Mapping):
             raise TypeError("harness_page must be true or an object")
-        unknown = set(raw) - {"after", "check_after", "check_duration", "rate"}
+        unknown = set(raw) - {"after", "check_after", "check_duration", "rate", "rechecks"}
         if unknown:
             raise ValueError(f"harness_page has unknown keys {sorted(unknown)}")
         return cls(
@@ -67,6 +72,7 @@ class PageConfig:
             check_after=float(raw.get("check_after", 20.0)),
             check_duration=float(raw.get("check_duration", 10.0)),
             rate=int(raw.get("rate", 6)),
+            rechecks=int(raw.get("rechecks", 2)),
         )
 
 
@@ -127,21 +133,36 @@ def page_message(
     names: Sequence[str],
     pack_journeys: Mapping[str, Any],
     entry: str = DEFAULT_ENTRY,
+    clean_checks: Sequence[str] = (),
 ) -> str:
-    """B1's page: the failing and passing user operations of the live check and how to try them."""
-    bullets = (
-        "\n".join(
+    """B1's page: the failing and passing user operations of the live check and how to try them.
+
+    The page always states that users have been failing since onset. A live check that saw no error is an extra
+    fact with its time, never "nothing is failing"; "These still work" is listed only from a check that reproduced
+    the failure, since after clean checks alone it would name the failing operations as working."""
+    clean = ""
+    if clean_checks:
+        clean = f"live check{'s' if len(clean_checks) > 1 else ''} at {', '.join(clean_checks)} saw no error status"
+    if failing:
+        bullets = "\n".join(
             f"  - {n}: {r['sample'] or 'request failed'} "
             f"({r['failed']} failed of {r['total']} requests in the last 10 s)"
             for n, r in failing.items()
         )
-        or "  - (the 10 s check at dispatch saw no failing operation; users still report failures)"
-    )
-    ok = ", ".join(n for n in names if n not in failing)
+        if clean:
+            bullets += f"\n  (an earlier {clean}; a later check reproduced the failures above)"
+        ok = ", ".join(n for n in names if n not in failing)
+        works = f"These still work: {ok}.\n"
+    else:
+        bullets = (
+            f"  - users have been failing since {onset}; the {clean or 'live check saw no error status'}, and a "
+            "check sees error statuses, not wrong or lost data, so which operations fail is not yet known"
+        )
+        works = ""
     head = (
         f"Page for the application in Kubernetes namespace {namespace}.\n"
         f"Since {onset}, users are seeing failures:\n{bullets}\n"
-        f"These still work: {ok}.\n"
+        f"{works}"
         f"To check an operation yourself: "
     )
     # B1's page has no bound; the contract does. The failing and passing operations are kept whole and only
@@ -184,11 +205,19 @@ class Pager:
         pack_journeys = journeys(self.pack)
         names = [j["name"] for j in pack_journeys["journeys"]]
         self.sleep(max(0.0, t0 + self.config.check_after - self.clock()))
-        stdout, stderr = self.live_check()
-        (self.out / "page-live-check.txt").write_text(stdout + "\n--- stderr\n" + stderr)
-        failing = parse_trace(stdout, stderr, names)
+        clean: list[str] = []
+        failing: dict[str, dict[str, Any]] = {}
+        for attempt in range(1 + self.config.rechecks):
+            at = _stamp(self.clock())
+            stdout, stderr = self.live_check()
+            name = "page-live-check.txt" if attempt == 0 else f"page-live-check-{attempt + 1}.txt"
+            (self.out / name).write_text(stdout + "\n--- stderr\n" + stderr)
+            failing = parse_trace(stdout, stderr, names)
+            if failing:
+                break
+            clean.append(at)
         self.sleep(max(0.0, t0 + self.config.after - self.clock()))
-        message = page_message(self.namespace, _stamp(t0), failing, names, pack_journeys, self.entry)
+        message = page_message(self.namespace, _stamp(t0), failing, names, pack_journeys, self.entry, clean)
         sent = self.clock()
         self.submit(inbox_manifest(self.control_namespace, self.incident_id, self.namespace, message))
         (self.out / "page.json").write_text(

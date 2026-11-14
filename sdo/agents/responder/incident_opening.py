@@ -127,9 +127,9 @@ def symptom(request: IncidentRequest) -> str:
     for (status, observed), members in ranked[:_MAX_GROUPS]:
         lines.append(f"- {status}" + (f" {observed}" if observed else "") + f" ({len(members)}): " + ", ".join(members))
     if len(ranked) > _MAX_GROUPS:
-        lines.append(f"- (+{len(ranked) - _MAX_GROUPS} more error groups: sdo detect --finding tests)")
+        lines.append(f"- (+{len(ranked) - _MAX_GROUPS} more error groups: sdo detect tests)")
     if len(tests) > _MAX_FAILING:
-        lines.append(f"- (+{len(tests) - _MAX_FAILING} more failing tests not listed: sdo detect --finding tests)")
+        lines.append(f"- (+{len(tests) - _MAX_FAILING} more failing tests not listed: sdo detect tests)")
     passing = _names([_name(name) for name in request.passing_tests], _MAX_PASSING) or "none"
-    lines.append(f"Passing: {passing}. Re-check with `sdo verify`.")
+    lines.append(f"Passing: {passing}. Re-check one with `sdo detect TEST`.")
     return "\n".join(lines)[:_MAX_SYMPTOM]

@@ -113,5 +113,5 @@ def test_responder_home_ships_the_investigator_skill_its_method_names(tmp_path: 
     method = (claude_home / "skills" / "incident-response" / "SKILL.md").read_text(encoding="utf-8")
     investigator = (claude_home / "skills" / "sdo-investigator" / "SKILL.md").read_text(encoding="utf-8")
     assert "sdo-investigator/SKILL.md" in method
-    assert "Do not call `sdo status`, `sdo diagnose`, `sdo menu` or `sdo verify`" in investigator
+    assert "Do not call `sdo status`, `sdo diagnose` or `sdo menu`" in investigator
     assert "How to diagnose" in investigator

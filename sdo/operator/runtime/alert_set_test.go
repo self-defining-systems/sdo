@@ -131,7 +131,7 @@ func TestOnlyUserTestsInTheJoinWindowJoinTheAlertSet(t *testing.T) {
 	}
 }
 
-// sdo detect and sdo verify name the alert set Recovered waits on.
+// sdo detect and the controller verification name the alert set Recovered waits on.
 func TestAlertSetLineNamesJoinedUserTests(t *testing.T) {
 	opening := (&switchedProbe{id: memory.TrafficDetectorPrefix + "opening", scenario: "ssh"}).finding()
 	joined := (&switchedProbe{id: memory.TrafficDetectorPrefix + "hurt", scenario: "clone"}).finding()

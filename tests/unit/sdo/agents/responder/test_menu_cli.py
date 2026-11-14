@@ -175,7 +175,7 @@ def test_report_uses_existing_session(monkeypatch, tmp_path) -> None:
 
 
 def test_applied_fix_waiting_for_recovery_is_not_reported_as_unresolved(monkeypatch, capsys) -> None:
-    summary = "fix applied; waiting for traffic to recover; next: sdo verify --wait 60"
+    summary = "fix applied; waiting for traffic to recover; next: sdo detect --wait 60"
     _capture(
         monkeypatch,
         {

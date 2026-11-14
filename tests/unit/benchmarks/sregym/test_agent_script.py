@@ -50,7 +50,7 @@ def test_recording_conversion_preserves_command_order_and_answer(tmp_path: Path)
         "returncode": 0,
         "turn_index": 2,
         "events": [
-            event({"type": "command_execution", "command": "sdo verify", "exit_code": 0}),
+            event({"type": "command_execution", "command": "sdo detect", "exit_code": 0}),
             event({"type": "agent_message", "text": '{"status":"completed"}'}),
         ],
     }
@@ -59,7 +59,7 @@ def test_recording_conversion_preserves_command_order_and_answer(tmp_path: Path)
     converted = convert_recording([path], role="responder")
     assert converted.turns[0].index == 2
     assert converted.turns[0].result == {"status": "completed"}
-    assert converted.turns[0].steps[0].command == "sdo verify"
+    assert converted.turns[0].steps[0].command == "sdo detect"
 
 
 @pytest.fixture

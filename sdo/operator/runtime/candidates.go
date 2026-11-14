@@ -718,7 +718,7 @@ func (v candidateView) render(cap int) string {
 			out = append(out, n.nodeLines(index < full, evidenceLines)...)
 		}
 		if dropped := len(v.Nodes) - shown; dropped > 0 {
-			out = append(out, fmt.Sprintf("+%d more candidates: sdo detect --finding candidates", dropped))
+			out = append(out, fmt.Sprintf("+%d more candidates: sdo detect candidates", dropped))
 		}
 		if serves {
 			out = append(out, "serves passing ops: alive for them, not shown right for the failing operation")
@@ -729,7 +729,7 @@ func (v candidateView) render(cap int) string {
 			if detail {
 				first = fmt.Sprintf(", first %q", v.otherClues[0])
 			}
-			out = append(out, fmt.Sprintf("clues elsewhere: %d%s  more: sdo detect --finding background", n, first))
+			out = append(out, fmt.Sprintf("clues elsewhere: %d%s  more: sdo detect background", n, first))
 		}
 		if line := v.notObserved(); line != "" {
 			out = append(out, line)
@@ -760,7 +760,7 @@ func (v candidateView) render(cap int) string {
 	return assemble()
 }
 
-// items are the drill-down texts of `sdo detect --finding NODE`: every node's
+// items are the drill-down texts of `sdo detect NODE`: every node's
 // whole evidence, uncapped.
 func (v candidateView) items() map[string]string {
 	items := map[string]string{}

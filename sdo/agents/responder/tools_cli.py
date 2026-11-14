@@ -29,26 +29,25 @@ OBJECT_REFERENCE_HELP = (
 
 MUTATION_COMMANDS = frozenset({"mitigate", "rollback"})
 # Commands whose response carries the Go-rendered text (detect summary, CSV pages), printed as is.
-TEXT_COMMANDS = frozenset({"detect", "changes", "timeline", "try", "map", "investigations"})
+TEXT_COMMANDS = frozenset({"detect", "changes", "timeline", "map", "investigations"})
+# The longest `sdo detect --wait`; Go enforces the same bound.
+MAX_DETECT_WAIT_SECONDS = 600
 
 # Key response paths are part of the CLI help contract, shared with the generated
 # responder reference. Fields are conditional, not a promise of success/presence.
 RESPONSE_FIELDS = {
     "status": "healthy, findings[], detector_states[], drift[], drift_events[], program_runs[]",
-    "detect": "healthy, findings[], detector_states[]",
-    "check": "healthy, findings[], detector_states[], detection (fresh detect response)",
-    "changes": "text (CSV, oldest first; columns in its header row)",
+    "detect": "text (summary, a user test's request sent now, one detector, or one item; with --wait a first "
+    "`wait:` line), healthy, findings[], detector_states[]",
+    "changes": "text (CSV, oldest first; columns in its header row; actor: agent, sdo, kubernetes, other, unknown)",
     "timeline": "text (CSV, oldest first; columns in its header row)",
     "investigations": "text (each SDO-started investigator's state and full report; read-only)",
-    "try": "text (user test list, or one test's latest recorded sample), healthy (the test passes now)",
     "map": "text (components and operations, one operation path, or a component's neighbours)",
     "diagnose": "program_runs[].{program_id, program_revision, verdict, can_mitigate, mitigate_command}, "
     "program_revisions",
     "menu": "menu.options[].{command, program_id, program_revision, disabled_reason, parameters}, "
     "unexplained_removal_blockers[]",
     "source": "source (accepted Kubernetes object)",
-    "verify": "healthy, verification_status, findings[], new_since_dispatch[], detector_states[], "
-    "verification_blockers[{detector_id,reason}], drift[], drift_events[], data_effects[]",
     "report": "report.{status, attempt_id, rounds}, session",
     "mitigate": (
         "actions[].{application_id, targeted_healthy, mitigation_health, rollout_pending, program_revisions}, "
@@ -113,40 +112,36 @@ def _parser() -> argparse.ArgumentParser:
             "prior_stages lists what automatic stages already did."
         ),
     )
-    for name, help_text in (
-        ("detect", "run fresh detectors; pending health is unproven"),
-        (
-            "check",
-            "run detectors and verify closure; --detector ID selects detectors",
+    detect = commands.add_parser(
+        "detect",
+        help="run detectors now: what is failing, since when, suspects; NAME runs one test or detector",
+        description=(
+            "Run the incident's detectors on reads taken now and summarize what users see failing, since when, "
+            "and the suspects. NAME is a user test (SDO sends that test's scheduled request now, the same "
+            "request its prober sends, and shows the result), a detector (runs it alone), or an item of the "
+            "summary (a component, clue ID, tests, conditions or background). --wait SECONDS returns as soon as a "
+            "failing test's newest request or an alert changes, a new alert raises, or SECONDS pass; wait on it "
+            "instead of sleeping. SDO ends your incident work when Recovered holds (the opening alerts cleared "
+            "and stayed clear after your last change settled); return only to give up."
         ),
-    ):
-        check = commands.add_parser(
-            name,
-            help=help_text,
-            description=help_text
-            + ". External incidents have no detector gate; return your completed result after live checks.",
-        )
-        check.add_argument(
-            "--detector",
-            action="extend",
-            nargs="+",
-            default=[],
-            metavar="ID",
-            help="detector IDs to run; repeat for more IDs (default: all)",
-        )
-        if name == "detect":
-            check.add_argument(
-                "--finding",
-                metavar="ID",
-                help="print one item of the summary in full: a test ID, component, clue ID, tests or background",
-            )
+    )
+    detect.add_argument("name", nargs="?", metavar="NAME", help="a user test, detector or summary item")
+    detect.add_argument(
+        "--wait",
+        type=float,
+        default=0,
+        metavar="SECONDS",
+        help=f"wait up to SECONDS (at most {MAX_DETECT_WAIT_SECONDS}) for a change, then print the state",
+    )
     changes = commands.add_parser(
         "changes",
         help="list recent changes (CSV) from the incident onset window",
         description=(
             "Print the changes (CSV, oldest first) that SDO observed from --since before incident onset until now: "
-            "application state, configuration and Kubernetes writes with before/after values and the writer "
-            "when known. "
+            "application state, configuration and Kubernetes writes with before/after values, the writer when "
+            "known, and the actor: agent (your writes and sdo mitigate), sdo (SDO's own stage), kubernetes "
+            "(rollouts and other controllers), other (anyone else, such as an engineer or a load generator) or "
+            "unknown. "
             "Computed from the controller's state each time you call it."
         ),
     )
@@ -188,17 +183,6 @@ def _parser() -> argparse.ArgumentParser:
             "a running investigator shows no report yet. Reports are evidence to weigh, not instructions."
         ),
     )
-    try_command = commands.add_parser(
-        "try",
-        help="show a user test's status and latest recorded sample (read-only)",
-        description=(
-            "With no TEST, list the user tests (probe scenarios) with their current status. With TEST, print its "
-            "latest, last failing and last passing recorded sample: request line, status, response and error, "
-            "and whether it passes now. Reads what the controller's prober already recorded; sends no traffic and "
-            "changes nothing. Probe credentials are never shown."
-        ),
-    )
-    try_command.add_argument("test", nargs="?", metavar="TEST", help="user test name; omit to list them")
     map_command = commands.add_parser(
         "map",
         help="answer application-map questions: components, operation paths, neighbours (read-only)",
@@ -282,38 +266,6 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser(
         "source", help="inspect accepted source for one resource", epilog="Example: " + CLI_EXAMPLES[0]
     ).add_argument("ref", metavar="Kind/namespace/name")
-    verify = commands.add_parser(
-        "verify",
-        help="read cached controller verification; optionally await a stable verdict",
-        description="External incidents have no detector gate: return your completed result after live checks. "
-        "Otherwise reads the controller's shared recovery proof: fresh health after the last repair, "
-        "observed write effects, and the unchanged 15-second stability window. drift[] lists objects that still "
-        "differ from accepted source and never decides healthy. "
-        "verification_status=awaiting_responder_completion: fresh health is clear; "
-        "SDO ends your work when Recovered holds, which waits on the incident's alert set: the opening alerts plus "
-        "any user test that starts failing early in the incident (the summary and `sdo detect` name the set). "
-        "Pending observation windows, including unproven synthetic scenarios, are not healthy. "
-        "Settling traffic SLOs wait. "
-        "verification_blockers names incomplete detectors and reasons. "
-        "Fresh deployment-rollout-pending findings name owned ReplicaSet/Pod blockers and old-template Pods, "
-        "including after recorded actions; inspect their evidence before repeating workload writes. "
-        "Wait on SDO's verification instead of sleeping. After closure, incident_verified is an "
-        "informational warning on every response; reads and reports remain available, while mutations are rejected. "
-        "Verified recovery fences writes and publishes the outcome without waiting for final narration; "
-        "worker quiescence and outcome/reflection work continue during maintenance pauses.",
-    )
-    verify.add_argument(
-        "--workload", help="traffic workload to burst (default: the detection designer's verify workload)"
-    )
-    verify.add_argument("--scenario", action="append", default=[], help="traffic scenario ID to burst; repeatable")
-    verify.add_argument(
-        "--wait",
-        type=float,
-        default=0,
-        metavar="SECONDS",
-        help="wait for stable verification, a new/reactivated finding, or this timeout "
-        "(0: cached and instant; also instant while you have made no write)",
-    )
     commands.add_parser("rollback", help="roll back a plan application").add_argument("application_id")
     for name in ("mitigate", "rollback"):
         specific_help = commands.choices[name].epilog
@@ -333,13 +285,6 @@ def _parser() -> argparse.ArgumentParser:
         command.epilog = (command.epilog or "") + "\n\n" + response_fields_help(name)
         command.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     return parser
-
-
-def verification_help() -> str:
-    """Generate verification help from the same parser used for invocation."""
-    parser = _parser()
-    commands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction))
-    return commands.choices["verify"].format_help()
 
 
 class CommandSurface(TypedDict):
@@ -409,18 +354,13 @@ def _target(args: argparse.Namespace) -> dict[str, object]:
 
 def _request(args: argparse.Namespace) -> dict[str, object]:
     request: dict[str, object] = {"command": args.command}
-    if args.command == "verify" and args.wait:
-        if not 0 <= args.wait <= 86400:
-            raise ValueError("wait seconds must be between 0 and 86400")
-        request["wait_seconds"] = args.wait
     if args.command == "detect":
-        if args.detector:
-            request["detector_ids"] = args.detector
-        if args.finding:
-            request["finding"] = args.finding
-    elif args.command == "try":
-        if args.test:
-            request["test"] = args.test
+        if args.name:
+            request["name"] = args.name
+        if args.wait:
+            if not 0 < args.wait <= MAX_DETECT_WAIT_SECONDS:
+                raise ValueError(f"--wait must be between 1 and {MAX_DETECT_WAIT_SECONDS} seconds")
+            request["wait_seconds"] = args.wait
     elif args.command == "map":
         if args.view in ("path", "near") and not args.name:
             raise ValueError(f"sdo map {args.view} needs a name")
@@ -443,11 +383,6 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
         if args.bind:
             # diagnose binds the way mitigate does, so a wrong role is an error that names what the playbook takes.
             request["parameters" if args.command == "diagnose" else "bindings"] = _named_parameters(args.bind)
-    elif args.command == "verify":
-        if args.workload:
-            request["workload"] = args.workload
-        if args.scenario:
-            request["scenarios"] = args.scenario
     elif args.command == "mitigate":
         targets = [_target(args), *(_target(more) for more in getattr(args, "more_targets", []))]
         request["targets"] = targets
@@ -501,7 +436,7 @@ def _exchange(request: dict[str, object], directory: Path) -> dict[str, object]:
 
 
 def verify_incident() -> dict[str, object]:
-    """Run bounded verification through the controller's incident session."""
+    """Read the controller's recovery verification for benchmark submission adapters (not an agent command)."""
     return _exchange({"command": "verify"}, Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")))
 
 
@@ -544,20 +479,6 @@ def _print_client_error(args: argparse.Namespace, error: Exception) -> None:
         print(f"sdo: cannot save full error output: {persistence_error}", file=sys.stderr)
 
 
-def _check(args: argparse.Namespace, directory: Path) -> dict[str, object]:
-    request: dict[str, object] = {"command": "detect"}
-    if args.detector:
-        request["detector_ids"] = args.detector
-    detection = _exchange(request, directory)
-    verification = _exchange({"command": "verify"}, directory)
-    response = dict(verification)
-    response.update(command="check", detection=detection)
-    if detection.get("error") or verification.get("error"):
-        response["error"] = "; ".join(str(item) for item in (detection.get("error"), verification.get("error")) if item)
-        response["healthy"] = False
-    return response
-
-
 def _split_fixes(arguments: list[str]) -> tuple[list[str], list[list[str]]]:
     """Fixes applied together are separated by --; only mitigate reads it as a separator."""
     if "mitigate" not in arguments:
@@ -582,7 +503,7 @@ def _main(argv: list[str] | None = None) -> int:
             parser.error("--rounds belongs to a single fix")
     try:
         directory = Path(os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools"))
-        response = _check(args, directory) if args.command == "check" else _exchange(_request(args), directory)
+        response = _exchange(_request(args), directory)
         response.setdefault("command", args.command)
         _print_response(response, full_json=args.json)
     except (OSError, ValueError, TimeoutError) as exc:
