@@ -39,8 +39,8 @@ generated from Go/proto types. Large inventories explicitly point to the full
 arrays if their finding lines exceed the bounded display; verdicts and all set
 counts remain visible. `incident_verified` adds an informational timestamp/message
 to normal responses; it does not replace findings, states, reports or receipts.
-Plain verify uses cached state; `verify --wait SECONDS` waits for stable closure,
-a new/reactivated finding, or timeout. Detect remains the fresh evaluation path.
+`sdo verify` is no longer an agent command (adapters read verification through `status_cli`). `sdo detect --wait SECONDS` re-reads every 2 s and returns on a failing test's newest request or an alert changing,
+a new alert, Recovered, or timeout; its first line starts `wait:`. `sdo changes` rows carry an `actor` (agent, sdo, kubernetes, other, unknown).
 
 Mutation output accounting includes the emitted UTF-8 bytes, JSON envelope/escaping and final newline for apply, mitigate and rollback. Controller progress is authoritative; absent snapshots are unknown, while explicit empty arrays remain empty. Action-local findings never substitute for controller observations. Full errors remain in the complete report; long-path fallback copies retain the original session-scratch report for export.
 

@@ -206,6 +206,7 @@ class Pager:
         names = [j["name"] for j in pack_journeys["journeys"]]
         self.sleep(max(0.0, t0 + self.config.check_after - self.clock()))
         clean: list[str] = []
+        failing: dict[str, dict[str, Any]] = {}
         for attempt in range(1 + self.config.rechecks):
             at = _stamp(self.clock())
             stdout, stderr = self.live_check()
