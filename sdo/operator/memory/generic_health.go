@@ -65,7 +65,7 @@ func PreparedHealthDetectorIDs(options HealthOptions, workloadFiles map[string][
 // or a store-state detector Go installs from the application map: both are
 // Go's policy floor, not the judge's authorship.
 func IsGenericHealthDetector(id string) bool {
-	return slices.Contains(GenericHealthDetectorIDs(), id) || isStoreStateDetector(id) || id == ClientLinksDetectorID
+	return slices.Contains(GenericHealthDetectorIDs(), id) || isStoreStateDetector(id) || id == ClientLinksDetectorID || id == RequestMetricsDetectorID
 }
 
 // HealthOptions selects the optional generic policy detectors.
@@ -77,6 +77,10 @@ type HealthOptions struct {
 	// checked and the environment policy, so the judge's check and the broker
 	// agree.
 	AlertSources bool
+	// RequestMetrics installs the request-metrics detector. It reads range
+	// queries of the default metrics source, so the caller sets it only where an
+	// effective source answers them.
+	RequestMetrics bool
 }
 
 // PrepareHealth installs the default generic policy detectors.
@@ -107,6 +111,9 @@ func PrepareHealthWith(root string, options HealthOptions) error {
 		return err
 	}
 	if err := prepareTrafficDetectors(root); err != nil {
+		return err
+	}
+	if err := prepareRequestMetricsDetector(root, options.RequestMetrics); err != nil {
 		return err
 	}
 	if err := prepareClientLinksDetector(root); err != nil {

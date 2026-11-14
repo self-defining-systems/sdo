@@ -87,6 +87,7 @@ a source exists.
 - `Query.Source` (optional): [metrics sources](references/metrics-sources.md).
 - `memory.PrepareHealth` installs the generic `metrics-alerts` detector (`metrics.NewAlertsDetector`: firing alerts of
   the application namespace, one finding each) only when a bound source serves alerts; do not author it.
+- Go installs `request-metrics` (shadow): [details](references/request-metrics.md).
 
 ## Generic reachability baseline
 

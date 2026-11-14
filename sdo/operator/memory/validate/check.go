@@ -63,7 +63,7 @@ func Check(ctx context.Context, request Request, compile CompileRunner) ([]Diagn
 		if err != nil {
 			return []Diagnostic{{Rule: RuleTelemetrySchema, Path: layout.TelemetryDir, Message: err.Error(), Hint: "fix the telemetry bindings so the effective sources can be computed"}}, nil
 		}
-		if err := memory.PrepareHealthWith(request.Root, memory.HealthOptions{AlertSources: HasAlertSource(sources)}); err != nil {
+		if err := memory.PrepareHealthWith(request.Root, memory.HealthOptions{AlertSources: HasAlertSource(sources), RequestMetrics: HasRangeSource(sources)}); err != nil {
 			return []Diagnostic{{Rule: RuleGenericHealth, Path: layout.DiagnosticsDir, Message: err.Error(), Hint: "preserve Go-owned generic detectors and valid final workload files"}}, nil
 		}
 		// Validate the prepared tree too; publication gates and compilation

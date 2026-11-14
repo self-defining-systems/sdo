@@ -1,0 +1,104 @@
+package memory
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"sdo.dev/operator/memory/appmap"
+	"sdo.dev/operator/memory/layout"
+)
+
+func writeEntriesMap(t *testing.T, root, body string) {
+	t.Helper()
+	doc := "# Architecture\n\n" + appmap.BeginMarker + "\n```yaml\nversion: 1\ncomponents: []\nedges: []\n" + body + "\nprobes: []\n```\n" + appmap.EndMarker + "\n"
+	path := filepath.Join(root, layout.ArchitectureFile)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+const syntheticRequestMap = `operations:
+  - {id: list-items, entry: {service: web, port: 80, method: GET, path: /items}, route: "GET /items", path: [web]}
+  - {id: legacy-feed, entry: {service: edge, port: 80, method: GET, path: /feed}, path: [edge]}
+entries:
+  - {service: web, metric: http_requests_total, selector: {job: web}, labels: {route: route, method: method, status: code}, errors: "5.."}
+`
+
+func TestRequestMetricsDetectorIsInstalledFromTheMapEntries(t *testing.T) {
+	root := t.TempDir()
+	writeEntriesMap(t, root, syntheticRequestMap)
+	if err := PrepareHealthWith(root, HealthOptions{RequestMetrics: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !detectorExists(root, RequestMetricsDetectorID) {
+		t.Fatal("request-metrics detector not installed")
+	}
+	source, err := os.ReadFile(filepath.Join(root, layout.DetectorDir(layout.ClassHealth, RequestMetricsDetectorID), layout.DetectorFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`Route: "GET /items"`, `Method: "GET"`, `StatusLabel: "code"`,
+		`sum by (route, method, code) (increase(http_requests_total{job=\"web\"}[30s]))`,
+		`offset 2m`,
+		// An operation with no entries record is reported, not dropped.
+		`ID: "legacy-feed"`, `no entries record for service edge`,
+	} {
+		if !strings.Contains(string(source), want) {
+			t.Errorf("generated source lacks %s:\n%s", want, source)
+		}
+	}
+	if !IsGenericHealthDetector(RequestMetricsDetectorID) {
+		t.Error("request-metrics is Go's floor, not the judge's authorship")
+	}
+	// Idempotent, and removed when the environment cannot answer range queries.
+	if err := PrepareHealthWith(root, HealthOptions{RequestMetrics: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := PrepareHealthWith(root, HealthOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if detectorExists(root, RequestMetricsDetectorID) {
+		t.Fatal("detector kept without a range-capable source")
+	}
+}
+
+func TestRequestMetricsDetectorNeedsMapOperations(t *testing.T) {
+	root := t.TempDir()
+	writeEntriesMap(t, root, "operations: []")
+	if err := PrepareHealthWith(root, HealthOptions{RequestMetrics: true}); err != nil {
+		t.Fatal(err)
+	}
+	if detectorExists(root, RequestMetricsDetectorID) {
+		t.Fatal("installed without operations")
+	}
+}
+
+func TestRequestMetricsEntriesAreCappedAndRestReported(t *testing.T) {
+	root := t.TempDir()
+	var ops, entries []string
+	for i := 0; i < MaxRequestMetricEntries+2; i++ {
+		s := string(rune('a' + i))
+		ops = append(ops, "  - {id: op-"+s+", entry: {service: svc"+s+", port: 80, method: GET, path: /"+s+"}, path: [svc"+s+"]}")
+		entries = append(entries, "  - {service: svc"+s+", metric: m, labels: {route: r, status: s}, errors: \"5..\"}")
+	}
+	writeEntriesMap(t, root, "operations:\n"+strings.Join(ops, "\n")+"\nentries:\n"+strings.Join(entries, "\n"))
+	cfg, ok := plannedRequestMetrics(root)
+	if !ok || len(cfg.Entries) != MaxRequestMetricEntries {
+		t.Fatalf("entries = %d, ok %v", len(cfg.Entries), ok)
+	}
+	var unmeasured int
+	for _, o := range cfg.Operations {
+		if o.Unmeasurable != "" {
+			unmeasured++
+		}
+	}
+	if unmeasured != 2 {
+		t.Fatalf("unmeasured operations = %d", unmeasured)
+	}
+}

@@ -147,6 +147,36 @@ func (e MetricEntry) RateErrors(route, method, window string) string {
 	return "sum(increase(" + e.Metric + e.routeMatchers(route, method, e.Labels.Status+"=~"+quote(e.Errors)) + "[" + window + "]))"
 }
 
+// groupBy lists the entry's route, method and status labels that exist.
+func (e MetricEntry) groupBy() string {
+	var labels []string
+	for _, l := range []string{e.Labels.Route, e.Labels.Method, e.Labels.Status} {
+		if l != "" {
+			labels = append(labels, l)
+		}
+	}
+	return strings.Join(labels, ", ")
+}
+
+// IncreaseByOperation is the windowed request increase per route, method and
+// status value over the entry's selector; offset (empty for none) moves the
+// window into the past. The request-metrics detector reads it.
+func (e MetricEntry) IncreaseByOperation(window, offset string) string {
+	if offset != "" {
+		offset = " offset " + offset
+	}
+	return "sum by (" + e.groupBy() + ") (increase(" + e.Metric + e.matchers() + "[" + window + "]" + offset + "))"
+}
+
+// SeriesByOperation is the metric total per route, method and status value,
+// including series that never counted; it shows whether the metric exists.
+func (e MetricEntry) SeriesByOperation() string {
+	return "sum by (" + e.groupBy() + ") (" + e.Metric + e.matchers() + ")"
+}
+
+// SelectorText renders the selector for messages.
+func (e MetricEntry) SelectorText() string { return e.matchers() }
+
 // CheckEntries applies only the entries and reasons rules, so the onboarding
 // check can validate a map without a source inventory.
 func (m Map) CheckEntries() []Finding {
