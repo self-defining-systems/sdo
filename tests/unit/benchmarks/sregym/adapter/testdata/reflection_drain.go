@@ -63,20 +63,27 @@ func main() {
 	workspace, err := native.PrepareIncident(ctx, "incident-1")
 	must(err)
 	now := time.Now().UTC()
+	app := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "demo", Name: "app"}
+	clear := []runtime.DetectorEvaluation{{DetectorID: "health", EvaluatedAt: now.Add(time.Second), Status: runtime.DetectorEvaluationClear}}
 	closure := runtime.IncidentClosure{
 		Request: runtime.IncidentRequest{
 			SchemaVersion: runtime.ProtocolSchemaVersion, Application: "synthetic", Namespace: "demo", IncidentID: workspace.IncidentID,
 			SourceCommit: workspace.BaseCommit, DeployedCommit: workspace.BaseCommit,
-			Findings:           []sdk.Finding{{DetectorID: "health", RuleID: "health", Status: sdk.FindingActive, Severity: sdk.SeverityWarning, Summary: "synthetic fault", Evidence: "synthetic evidence", PrimaryResource: sdk.ObjectRef{Kind: "Deployment", Name: "app"}, Fingerprint: "health"}},
+			Findings:           []sdk.Finding{{DetectorID: "health", RuleID: "health", Status: sdk.FindingActive, Severity: sdk.SeverityWarning, Summary: "synthetic fault", Evidence: "synthetic evidence", PrimaryResource: app, Fingerprint: "health"}},
 			DetectorHistory:    []runtime.DetectorEvaluation{{DetectorID: "health", EvaluatedAt: now, Status: runtime.DetectorEvaluationFiring}},
 			RepositoryWorktree: workspace.Worktree, RepositoryBaseCommit: workspace.BaseCommit,
 			ResponseDeadline: now.Add(time.Minute), CancellationToken: "synthetic", RepairPolicy: "recorded-actions",
 		},
 		Result: &runtime.IncidentResult{
 			SchemaVersion: runtime.ProtocolSchemaVersion, IncidentID: workspace.IncidentID,
-			Status: runtime.IncidentFailed, ResponderSessionID: "synthetic-session",
-			Timing: runtime.TimingMetrics{StartedAt: now, CompletedAt: now.Add(time.Second)},
+			Status: runtime.IncidentCompleted, ResponderSessionID: "synthetic-session",
+			// A verified success is the only close the worker is asked to learn from; a failed, escalated or
+			// unconfirmed close is decided by Go without a worker turn.
+			RepairActions:       []runtime.RepairActionReceipt{{ActionID: "sdo-api-1", Kind: "api-patch", Target: "Deployment/demo/app", Resources: []sdk.ObjectRef{app}, Summary: "restart", Details: "synthetic receipt", Success: true, StartedAt: now, CompletedAt: now}},
+			FinalDetectorStates: clear,
+			Timing:              runtime.TimingMetrics{StartedAt: now, CompletedAt: now.Add(time.Second)},
 		},
+		FinalDetectorStates: clear,
 		DetectedAt: now, DispatchedAt: now, ResponderCompletedAt: now.Add(time.Second), VerifiedAt: now.Add(time.Second),
 	}
 	receipt, err := native.ProcessClosure(ctx, closure)
