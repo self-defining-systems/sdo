@@ -76,11 +76,11 @@ type SLOVerdict struct {
 	StatusCounts   map[string]int
 	RecentFailures []Sample
 	Span           time.Duration
-	// FirstFailureAt is when the first failing sample of the judged window
-	// happened; zero when none failed.
+	// FirstFailureAt is when the failure episode of the newest failing sample
+	// began (see failureEpisode); zero when none failed.
 	FirstFailureAt time.Time
-	// FailureSpan is the time from the first to the last failing sample in
-	// the judged window; zero with fewer than two failing samples.
+	// FailureSpan is the time from the start of that episode to its newest
+	// failing sample; zero with fewer than two failing samples.
 	FailureSpan time.Duration
 }
     SLOVerdict is one scenario's SLO judgement over its recent samples.
