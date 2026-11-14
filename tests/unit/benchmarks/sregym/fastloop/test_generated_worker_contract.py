@@ -215,7 +215,7 @@ def test_tool_reads_json_and_follows_a_capped_reply_to_its_details_file(
 
 
 def test_verify_loop_stops_when_detectors_clear_while_the_responder_still_runs() -> None:
-    """`sdo verify` says awaiting_responder_completion until this worker exits; waiting for healthy burns 2 minutes."""
+    """Verification says awaiting_responder_completion until this worker exits; waiting for healthy burns 2 minutes."""
     import time
 
     from benchmarks.sregym.fastloop import responder_script

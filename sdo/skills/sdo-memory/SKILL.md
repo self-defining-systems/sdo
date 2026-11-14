@@ -28,11 +28,9 @@ The [generated runtime contract](references/runtime.md) defines decision fields,
 
 ## Incident verification
 
-Run `sdo verify` before returning a completed repair. It sends an incident tool
-request to the controller, which independently evaluates current health, including
-the accepted bounded traffic workload run in the active memory host. Optional
-`--workload NAME` and repeated `--scenario ID` select the bounded workload. The
-response states `healthy` and `verification_status`; the exit code is 1 only when
-the request itself fails. The host is read-only; only the controller applies
+The controller decides recovery and ends the incident work when Recovered holds.
+`sdo detect` runs the detectors on reads taken now, `sdo detect TEST` sends one
+user test's scheduled request now, and `sdo detect --wait SECONDS` returns when
+the state changes. The host is read-only; only the controller applies
 plans. Agents must reach accepted memory only through `sdo` incident tools, never
 a host socket or a prober URL.

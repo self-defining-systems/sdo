@@ -380,7 +380,7 @@ _README = """# {title}
 
 This playbook was learned from an incident whose cause the controller confirmed: the incident detector
 `{detector_id}` encodes the cause, the health detectors that fired at dispatch cleared after the repair, and
-`sdo verify` reported healthy before the responder returned.
+the opening alerts cleared and stayed clear (Recovered) after the repair.
 """
 
 _NP_DETECT = """
@@ -611,10 +611,10 @@ Repair (`-` finds the missing ConfigMap from the Deployment's volumes):
 sh {playbook_dir}/scripts/repair.sh <NAMESPACE> <DEPLOYMENT> <CONFIGMAP>
 ```
 
-Then verify together with `sdo verify`:
+Then check it, and watch the user tests with `sdo detect --wait 60`:
 
 ```sh
-sh {playbook_dir}/scripts/verify.sh <NAMESPACE> <DEPLOYMENT> && sdo verify
+sh {playbook_dir}/scripts/verify.sh <NAMESPACE> <DEPLOYMENT> && sdo detect --wait 60
 ```
 """
 

@@ -78,7 +78,7 @@ reason = "Actual benchmark transport appendix: 676 Unicode code points, with 10 
 
 [responder.instructions]
 max_chars = 4000
-reason = "The responder's first message (the candidate block Go renders adds at most 2048 bytes; without it 1800 holds): the symptom block of at most 1100 code points (failing user tests grouped by status and server error with failed counts, first failing sample, passing tests, sdo verify), plus the identity line and the two skill lines (about 330 code points with a long skills root), plus headroom."
+reason = "The responder's first message (the candidate block Go renders adds at most 2048 bytes; without it 1800 holds): the symptom block of at most 1100 code points (failing user tests grouped by status and server error with failed counts, first failing sample, passing tests, sdo detect TEST), plus the identity line and the two skill lines (about 330 code points with a long skills root), plus headroom."
 
 [investigator.instructions]
 max_chars = 3800

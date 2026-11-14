@@ -13,7 +13,7 @@ import (
 
 func concurrentRead(command string) bool {
 	switch command {
-	case "status", "detect", "diagnose", "menu", "source", "changes", "timeline", "try", "map", "investigations":
+	case "status", "detect", "diagnose", "menu", "source", "changes", "timeline", "map", "investigations":
 		return true
 	}
 	return false
@@ -28,9 +28,18 @@ func (l *ResponderLoop) handleRead(ctx context.Context, request ToolRequest) (re
 		// A pure read of the board; it is not a loop call and records nothing.
 		return ToolResponse{Command: request.Command, Text: l.Investigations.Text(), Summary: "investigator reports"}
 	}
+	if request.Command == "detect" && request.WaitSeconds != 0 {
+		return l.waitDetect(ctx, request)
+	}
 	l.operationMu.RLock()
 	defer l.operationMu.RUnlock()
-	var read *ResponderLoop
+	read, response, prepared := l.readOnce(ctx, request)
+	return l.publishRead(ctx, request, read, response, prepared)
+}
+
+// readOnce evaluates one read on a private copy of the loop. The caller holds
+// operationMu for reading; prepared is false when program preparation failed.
+func (l *ResponderLoop) readOnce(ctx context.Context, request ToolRequest) (read *ResponderLoop, response ToolResponse, prepared bool) {
 	var prepareErr error
 	l.locked(func() {
 		l.startNotes()
@@ -42,6 +51,7 @@ func (l *ResponderLoop) handleRead(ctx context.Context, request ToolRequest) (re
 			Executor: l.Executor, Traffic: l.Traffic, ReadView: l.ReadView, DiagnosisDeadline: l.DiagnosisDeadline,
 			Now: l.Now, GitRead: l.GitRead, Trust: l.Trust, MenuConfig: l.MenuConfig,
 			IncidentStatus: l.IncidentStatus, CurrentEvidence: l.CurrentEvidence, MutationGate: l.MutationGate, IncidentSources: l.IncidentSources,
+			ExternalReceipts: l.ExternalReceipts, applicationsLog: append([]RecordedPlanApplication(nil), l.applicationsLog...),
 			CorpusSessionRoot: l.CorpusSessionRoot, sessionID: l.sessionID, MaxBatches: l.MaxBatches,
 			batches: l.batches, loopOpen: l.loopOpen, applySeq: l.applySeq, continuation: l.continuation,
 			findings: append([]sdk.Finding(nil), l.findings...), preApplyCaptured: l.preApplyCaptured,
@@ -53,16 +63,20 @@ func (l *ResponderLoop) handleRead(ctx context.Context, request ToolRequest) (re
 	})
 	request.isolatedRead = true
 	if prepareErr != nil {
-		response = ToolResponse{Command: request.Command, Error: prepareErr.Error(), Summary: prepareErr.Error()}
-	} else {
-		response = read.Handle(ctx, request)
+		return read, ToolResponse{Command: request.Command, Error: prepareErr.Error(), Summary: prepareErr.Error()}, false
 	}
+	return read, read.Handle(ctx, request), true
+}
+
+// publishRead merges what a read learned into the loop and records the call
+// once. The caller holds operationMu for reading.
+func (l *ResponderLoop) publishRead(ctx context.Context, request ToolRequest, read *ResponderLoop, response ToolResponse, prepared bool) ToolResponse {
 	l.locked(func() {
-		if prepareErr == nil {
+		if prepared {
 			l.Request.Findings = read.Request.Findings
 			l.Request.DriftEvents = read.Request.DriftEvents
 		}
-		if prepareErr == nil && (request.Command == "status" || request.Command == "diagnose" && request.ProgramID == "") {
+		if prepared && (request.Command == "status" || request.Command == "diagnose" && request.ProgramID == "") {
 			l.findings = read.findings
 			l.drift = read.drift
 		}
@@ -86,11 +100,11 @@ func (l *ResponderLoop) handleRead(ctx context.Context, request ToolRequest) (re
 			}
 			response.Summary = "automatic stage ran while you worked: " + strings.Join(lines, "; ") + ". " + response.Summary
 		}
-		if request.Command == "detect" && request.Finding == "" && len(request.DetectorIDs) == 0 && response.Error == "" {
+		if request.Command == "detect" && request.Name == "" && request.Finding == "" && len(request.DetectorIDs) == 0 && response.Error == "" {
 			appendNote(&response, l.detectNote(response.Findings))
 			appendNote(&response, l.Investigations.DetectLine())
 		}
-		if request.Command == "detect" || request.Command == "try" {
+		if request.Command == "detect" {
 			l.appendReportNotes(&response)
 		}
 		raw, _ := json.Marshal(request)

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"sdo.dev/operator/apihistory"
 	"sdo.dev/operator/sdk"
 )
 
@@ -67,6 +68,49 @@ func (l *ResponderLoop) writeTimes() (times []time.Time, known bool) {
 	}
 	sort.Slice(times, func(i, j int) bool { return times[i].Before(times[j]) })
 	return times, known
+}
+
+// incidentWrites are the incident's own writes as `sdo changes` lists them:
+// the responder's recorded writes and its `sdo mitigate` applications (actor
+// agent) and SDO's automatic-stage and verification applications (actor sdo).
+func (l *ResponderLoop) incidentWrites() []IncidentChange {
+	var rows []IncidentChange
+	object := func(receipt RepairActionReceipt) string {
+		if len(receipt.Resources) > 0 {
+			return receipt.Resources[0].Kind + "/" + receipt.Resources[0].Name
+		}
+		return receipt.Target
+	}
+	at := func(receipt RepairActionReceipt) time.Time {
+		if receipt.CompletedAt.IsZero() {
+			return receipt.StartedAt
+		}
+		return receipt.CompletedAt
+	}
+	if l.ExternalReceipts != nil {
+		if receipts, _, _, err := l.ExternalReceipts(); err == nil {
+			for _, receipt := range receipts {
+				if apihistory.HelperKind(receipt.Kind) || receipt.Kind == apihistory.GapKind {
+					continue
+				}
+				rows = append(rows, IncidentChange{At: at(receipt), Source: "write", ReaderOrObject: object(receipt), Key: receipt.Kind,
+					After: receipt.Summary, Writer: sdk.ResponderFieldManager, Actor: ActorAgent})
+			}
+		}
+	}
+	for _, application := range l.applicationsLog {
+		// The agent applies through `sdo mitigate` (menu attempts); SDO's
+		// automatic stage applies plans and verification records equivalent repairs.
+		actor, writer := ActorAgent, "sdo mitigate"
+		if strings.HasPrefix(application.ID, "application-") || strings.HasPrefix(application.ID, "equivalent-repair-") {
+			actor, writer = ActorSDO, "sdo playbook stage"
+		}
+		for _, receipt := range ProgramRepairReceipts([]RecordedPlanApplication{application}, nil) {
+			rows = append(rows, IncidentChange{At: at(receipt), Source: "write", ReaderOrObject: object(receipt), Key: "mitigation",
+				After: "playbook " + strings.Join(application.ProgramIDs, ","), Writer: writer, Actor: actor})
+		}
+	}
+	return rows
 }
 
 // startNotes fixes the session's start and seeds the verify history with the alerts the incident opened with.

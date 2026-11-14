@@ -53,7 +53,10 @@ type IncidentChange struct {
 	Key            string
 	Before, After  string
 	Writer         string
-	Noisy          bool
+	// Actor is who made the change: agent, sdo, kubernetes, other or
+	// unknown; empty derives it from Writer.
+	Actor string
+	Noisy bool
 	// Command is the command that expands or restores the row's object, when there is one.
 	Command string
 	// FirstSeen marks an app-state row for a key the last-healthy read never
@@ -261,6 +264,12 @@ type incidentPageInput struct {
 	// Components restricts `changes` to the rows of these map components and
 	// `timeline` to the operations through them plus their workload columns.
 	Components []string
+	// Writes are this incident's own writes: the responder's recorded writes
+	// and SDO's plan applications, with their actor.
+	Writes []IncidentChange
+	// everyActor adds the rows `sdo changes` alone lists: Writes and the
+	// rollouts Kubernetes started. The candidate view keeps the departures.
+	everyActor bool
 }
 
 func (in incidentPageInput) lead() time.Duration {
@@ -289,6 +298,7 @@ func buildIncidentTimeline(in incidentPageInput) []byte {
 // buildIncidentChanges renders `sdo changes`.
 func buildIncidentChanges(in incidentPageInput) []byte {
 	set, onset := incidentSet(in)
+	in.everyActor = true
 	rows := incidentChangeRows(in, set, onset)
 	if len(in.Components) > 0 {
 		rows = slices.DeleteFunc(rows, func(row IncidentChange) bool { return !slices.Contains(in.Components, row.Component) })
@@ -439,6 +449,17 @@ func incidentChangeRows(in incidentPageInput, set detectSuspectSet, onset time.T
 			}
 		}
 		rows = append(rows, storeChangeRows(storestate.Changes(in.View))...)
+		if in.everyActor {
+			rows = append(rows, rolloutRows(in.View, set, namespace)...)
+		}
+	}
+	if in.everyActor {
+		for _, write := range in.Writes {
+			if write.Component == "" && in.View != nil {
+				write.Component = componentOfObject(in.View, set, in.Request.Namespace, write.ReaderOrObject)
+			}
+			rows = append(rows, write)
+		}
 	}
 	if in.AppState != nil {
 		var components map[string]string
@@ -503,7 +524,7 @@ func storeChangeRows(stores []storestate.StoreChanges) []IncidentChange {
 }
 
 func renderChanges(rows []IncidentChange, onset time.Time) []byte {
-	out := [][]string{{"t_rel_s", "at_utc", "source", "component", "reader_or_object", "key", "before", "after", "writer", "noisy", "read_at_utc"}}
+	out := [][]string{{"t_rel_s", "at_utc", "source", "component", "reader_or_object", "key", "before", "after", "writer", "actor", "noisy", "read_at_utc"}}
 	clean := func(text string) string { return redactDetectText(text, incidentPageValue) }
 	for _, row := range rows {
 		row = maskCredentialValues(row)
@@ -516,9 +537,83 @@ func renderChanges(rows []IncidentChange, onset time.Time) []byte {
 		if !row.ReadAt.IsZero() {
 			readAt = row.ReadAt.UTC().Format(time.RFC3339)
 		}
-		out = append(out, []string{relative, at, row.Source, clean(row.Component), clean(row.ReaderOrObject), clean(row.Key), clean(row.Before), clean(row.After), clean(row.Writer), strconv.FormatBool(row.Noisy), readAt})
+		actor := row.Actor
+		if actor == "" {
+			actor = changeActor(row.Writer)
+		}
+		out = append(out, []string{relative, at, row.Source, clean(row.Component), clean(row.ReaderOrObject), clean(row.Key), clean(row.Before), clean(row.After), clean(row.Writer), actor, strconv.FormatBool(row.Noisy), readAt})
 	}
 	return encodeCSV(out)
+}
+
+// Actors of `sdo changes`.
+const (
+	ActorAgent      = "agent"
+	ActorSDO        = "sdo"
+	ActorKubernetes = "kubernetes"
+	ActorOther      = "other"
+	ActorUnknown    = "unknown"
+)
+
+// changeActor attributes a change by its writer (a field manager): the
+// responder's recording proxy is the agent, SDO's other managers are SDO,
+// Kubernetes' own controllers are kubernetes, any other named writer (an
+// engineer's kubectl, CI, a load generator) is other.
+func changeActor(writer string) string {
+	switch {
+	case writer == "" || writer == "?":
+		return ActorUnknown
+	case writer == sdk.ResponderFieldManager:
+		return ActorAgent
+	case sdk.IsSDOFieldManager(writer):
+		return ActorSDO
+	case writer == "kubelet", strings.HasPrefix(writer, "kube-"), strings.HasSuffix(writer, "-controller"), strings.HasSuffix(writer, " controller"):
+		return ActorKubernetes
+	}
+	return ActorOther
+}
+
+// rolloutRows are the ReplicaSets a component's Deployment created in the
+// window: a rollout Kubernetes runs, whoever changed the template.
+func rolloutRows(view detectReads, set detectSuspectSet, namespace string) []IncidentChange {
+	owners := map[string]string{}
+	for _, component := range set.m.Components {
+		if component.Workload == "" {
+			continue
+		}
+		if ref := component.WorkloadRef(namespace); ref.Kind == "Deployment" {
+			owners[ref.Name] = component.Name
+		}
+	}
+	var rows []IncidentChange
+	for _, replicaSet := range view.ReplicaSets() {
+		owner := metav1.GetControllerOf(&replicaSet)
+		if owner == nil || owner.Kind != "Deployment" || owners[owner.Name] == "" || replicaSet.CreationTimestamp.IsZero() {
+			continue
+		}
+		after := "created"
+		if revision := replicaSet.Annotations["deployment.kubernetes.io/revision"]; revision != "" {
+			after = "revision " + revision
+		}
+		rows = append(rows, IncidentChange{At: replicaSet.CreationTimestamp.UTC(), Source: "kubernetes", Component: owners[owner.Name],
+			ReaderOrObject: "ReplicaSet/" + replicaSet.Name, Key: "rollout", After: after, Writer: "deployment controller", Actor: ActorKubernetes})
+	}
+	return rows
+}
+
+// componentOfObject names the map component of a Kind/Name object, or "".
+func componentOfObject(view detectReads, set detectSuspectSet, namespace, object string) string {
+	kind, name, ok := strings.Cut(object, "/")
+	if !ok || set.m.Components == nil {
+		return ""
+	}
+	if namespace == "" {
+		namespace = view.Namespace()
+	}
+	if component, found := set.m.ComponentOf(view, sdk.ObjectRef{Kind: kind, Namespace: namespace, Name: name}); found {
+		return component.Name
+	}
+	return ""
 }
 
 // maskCredentialValues masks a row's values when its key or object names a

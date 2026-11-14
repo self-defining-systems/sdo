@@ -13,9 +13,9 @@ import (
 // moves none of the responder's state.
 func (l *ResponderLoop) HandleInvestigatorRead(ctx context.Context, request ToolRequest) ToolResponse {
 	switch request.Command {
-	case "detect", "changes", "timeline", "map", "try", "source":
+	case "detect", "changes", "timeline", "map", "source":
 	default:
-		return ToolResponse{Command: request.Command, Error: "investigators may only read: sdo detect, changes, timeline, map, try, source", Summary: "not allowed for an investigator"}
+		return ToolResponse{Command: request.Command, Error: "investigators may only read: sdo detect, changes, timeline, map, source", Summary: "not allowed for an investigator"}
 	}
 	l.operationMu.RLock()
 	defer l.operationMu.RUnlock()
@@ -27,6 +27,7 @@ func (l *ResponderLoop) HandleInvestigatorRead(ctx context.Context, request Tool
 			Executor: l.Executor, Traffic: l.Traffic, ReadView: l.ReadView, DiagnosisDeadline: l.DiagnosisDeadline,
 			Now: l.Now, GitRead: l.GitRead, Trust: l.Trust, MenuConfig: l.MenuConfig,
 			IncidentStatus: l.IncidentStatus, CurrentEvidence: l.CurrentEvidence, MutationGate: l.MutationGate, IncidentSources: l.IncidentSources,
+			ExternalReceipts: l.ExternalReceipts, applicationsLog: append([]RecordedPlanApplication(nil), l.applicationsLog...),
 			CorpusSessionRoot: l.CorpusSessionRoot, sessionID: l.sessionID, MaxBatches: l.MaxBatches,
 			batches: l.batches, loopOpen: l.loopOpen, applySeq: l.applySeq, continuation: l.continuation,
 			findings: append([]sdk.Finding(nil), l.findings...), preApplyCaptured: l.preApplyCaptured,

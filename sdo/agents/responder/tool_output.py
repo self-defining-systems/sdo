@@ -180,11 +180,11 @@ def summarize_response(response: dict[str, Any], details_file: str) -> dict[str,
     elif response.get("healthy"):
         summary["next_commands"] = []
     elif response.get("command") == "mitigate":
-        summary["next_commands"] = ["sdo verify --wait 60"]
+        summary["next_commands"] = ["sdo detect --wait 60"]
     elif summary.get("to_fix"):
         summary["next_commands"] = []
     else:
-        summary["next_commands"] = ["sdo check"]
+        summary["next_commands"] = ["sdo detect"]
     summary["details"] = "Full findings, options, source and receipts are in details_file; extract only what you need."
     # If several large sections coexist, retain the repair verdict and counts;
     # all per-item evidence is still available in the complete JSON.

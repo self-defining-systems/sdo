@@ -63,7 +63,7 @@ def test_failing_tests_sharing_a_status_and_error_are_grouped_with_their_counts(
         " samples in the window. Shared symptom per group:\n"
         '- HTTP 429 text "Retry later" (2): commit-call 3/6, user-api 4/6\n'
         "- timeout i/o timeout (1): git-over-ssh 3/5\n"
-        "Passing: fixture-read, pipeline-call. Re-check with `sdo verify`."
+        "Passing: fixture-read, pipeline-call. Re-check one with `sdo detect TEST`."
     )
 
 
@@ -81,7 +81,7 @@ def test_the_error_excerpt_is_short_and_the_block_stays_bounded() -> None:
     block = symptom(_request(*findings, passing=tuple(f"ok-{i}" for i in range(80))))
     assert len(block) <= 5200
     assert "e" * 120 not in block
-    assert "sdo verify" in block
+    assert "sdo detect TEST" in block
     assert "(+22 more error groups" in block
 
 
@@ -106,7 +106,7 @@ def test_twenty_five_failing_tests_in_three_groups_are_all_named_under_their_sha
         assert finding.rule_id.removeprefix("scenario-slo.") + " " in block
     assert "429-op-11 12/20" in block
     assert "more" not in block
-    assert lines[-1] == "Passing: fixture-read. Re-check with `sdo verify`."
+    assert lines[-1] == "Passing: fixture-read. Re-check one with `sdo detect TEST`."
 
 
 def test_failing_tests_beyond_the_hard_cap_are_counted_not_dropped_silently() -> None:
@@ -114,7 +114,7 @@ def test_failing_tests_beyond_the_hard_cap_are_counted_not_dropped_silently() ->
     block = symptom(_request(*findings))
     assert "op-047" in block
     assert "op-048" not in block
-    assert "(+12 more failing tests not listed: sdo detect --finding tests)" in block
+    assert "(+12 more failing tests not listed: sdo detect tests)" in block
     assert len(block) <= 5200
 
 
@@ -124,7 +124,7 @@ def test_a_worst_case_block_fits_the_symptom_budget_without_truncation() -> None
         for i in range(60)
     ]
     block = symptom(_request(*findings, passing=tuple("p" * 80 + str(i) for i in range(80))))
-    assert block.endswith("Re-check with `sdo verify`.")
+    assert block.endswith("Re-check one with `sdo detect TEST`.")
 
 
 def test_no_passing_tests_says_so() -> None:

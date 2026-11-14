@@ -57,7 +57,7 @@ for event in request.drift_events:
 """
 
 REPAIR = r"""
-first = _tool("verify")
+first = _tool("detect")
 if not first.get("healthy"):
     seen: set[tuple[str, str]] = set(unsure)
     seen.update((ref["kind"], ref["name"]) for repair in repairs for ref in repair["resources"])
@@ -107,7 +107,7 @@ if not first.get("healthy"):
 VERIFY = r"""
 verification = first
 for _ in range(0 if unsure else 24):
-    verification = _tool("verify")
+    verification = _tool("detect")
     if verification.get("healthy") or verification.get("verification_status") == "awaiting_responder_completion":
         break
     time.sleep(5)
@@ -161,7 +161,7 @@ result = json_format.ParseDict(
         "repair_changes": [item["summary"] for item in repairs],
         "verification_evidence": [
             {
-                "name": "sdo verify",
+                "name": "sdo detect",
                 "passed": healthy,
                 "details": verification.get("summary") or "detector verification",
                 "observed_at": completed,

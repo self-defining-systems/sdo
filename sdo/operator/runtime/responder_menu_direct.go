@@ -441,7 +441,7 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 	response.Report = report
 	response.Summary = "mitigation " + report.Status.String()
 	if report.ReasonCode == AppliedAwaitingRecovery {
-		response.Summary = "fix applied; waiting for traffic to recover; next: sdo verify --wait 60"
+		response.Summary = "fix applied; waiting for traffic to recover; next: sdo detect --wait 60"
 	}
 }
 

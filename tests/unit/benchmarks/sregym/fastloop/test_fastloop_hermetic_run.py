@@ -628,7 +628,7 @@ class Controller(FakeOps):
             assert self.sweep_result is not None
             self.app.objects["Service", "geo"]["spec"]["ports"][0]["targetPort"] = self.sweep_result["value"]
             return {"healthy": False}
-        if args[0] == "verify":
+        if args[0] == "detect":
             return {"healthy": self.app.healthy(), "summary": "fake detector sweep"}
         raise AssertionError(args)
 
