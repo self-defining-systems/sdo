@@ -686,6 +686,10 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 				c.history = append([]DetectorEvaluation(nil), c.history[len(c.history)-100:]...)
 			}
 			c.trackClearStreak(spec.ID, now, false)
+			// A detector that cannot confirm health (an unqualified scenario) has
+			// still evaluated and reported nothing: the start-up period must not
+			// wait on it. It cannot open anything until it qualifies.
+			c.noteStartupEvaluation(spec.ID)
 			return nil
 		}
 		validFindings := findings
