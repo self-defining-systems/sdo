@@ -35,6 +35,8 @@ if [[ -n "${SDO_CI_PLAN:-}" && "$(python3 scripts/ci_select.py mode --plan "$SDO
     selected=("${kept[@]}")
     if [[ ${#selected[@]} -eq 0 ]]; then
         echo "no Python tests selected for the ${SDO_PYTEST_SHARD:-core} shard"
+        # The log is an output the CI budget step reads; an empty shard still produces it (empty).
+        [[ -n "${SDO_PYTEST_LOG:-}" ]] && : > "$SDO_PYTEST_LOG"
         exit 0
     fi
     echo "==> selected ${#selected[@]} Python test files"

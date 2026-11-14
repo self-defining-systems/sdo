@@ -217,6 +217,9 @@ class IncidentRecord(_PersistedModel):
     memory_host_activations: list[ActivationContinuity] = Field(default_factory=list)
     image_delivery: str = "unknown"
     image_delivery_reason: str = ""
+    #: Build ID of the SDO operator that ran the row (the VCS stamp, or a hash of the mounted
+    #: operator source on the dev-mount path); ``None`` when the run did not report one.
+    operator_build: str | None = None
     schema_version: Literal["sdo.fastloop-incident/v2"] = SCHEMA_VERSION
     infra_error: str | None = None
     provider_waits: list[ProviderWaitInterval] = Field(default_factory=list)

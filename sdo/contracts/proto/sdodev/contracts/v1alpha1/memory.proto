@@ -36,6 +36,11 @@ message MemoryCheckReport {
   // Non-blocking notes about learning the check left out, such as a verified
   // cause with no program or a skipped healthy replay. They never reject.
   repeated MemoryDiagnostic coverage_gaps = 7;
+  // The commit the checked checkout was at, whether its working tree differed
+  // from it, and the operator build that ran the check.
+  string commit = 8;
+  bool dirty = 9;
+  string operator_build = 10;
 }
 
 // One artifact of operational memory, identified by its logical ID.

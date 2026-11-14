@@ -179,9 +179,13 @@ func TestWallClockLimitIsOurDeadline(t *testing.T) {
 // once the slot is held, and the wait is bounded by the caller's context.
 func TestWallClockStartsAfterTheSlot(t *testing.T) {
 	limits := small
-	limits.Wall = 600 * time.Millisecond
+	scale := time.Duration(1)
+	if sandboxio.RaceBuild {
+		scale = 6 // a race-enabled child needs seconds, not milliseconds, to start
+	}
+	limits.Wall = 600 * time.Millisecond * scale
 	release := sandboxio.HoldSlots(sandboxio.MaxChildren)
-	clock, stop := context.WithTimeout(t.Context(), 800*time.Millisecond) // longer than Wall
+	clock, stop := context.WithTimeout(t.Context(), 800*time.Millisecond*scale) // longer than Wall
 	defer stop()
 	go func() { <-clock.Done(); release() }()
 	out, err := sandboxio.Run(t.Context(), "test-echo", []byte("late"), limits)

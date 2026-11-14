@@ -24,23 +24,17 @@ type CommitCatalogReader interface {
 	SnapshotAt(context.Context, string) (*contracts.OperationalMemorySnapshot, error)
 }
 
-// SnapshotAt requests the exact proposal revision. Readers without historical
-// storage retain the equality check rather than silently returning newer bytes.
+// SnapshotAt requests the exact proposal revision from a reader with
+// historical storage; a reader without it cannot honour a pinned commit.
 func SnapshotAt(ctx context.Context, reader CatalogReader, commit string) (*contracts.OperationalMemorySnapshot, error) {
 	if reader == nil {
 		return nil, errors.New("operational memory reader is required")
 	}
-	if pinned, ok := reader.(CommitCatalogReader); ok {
-		return pinned.SnapshotAt(ctx, commit)
+	pinned, ok := reader.(CommitCatalogReader)
+	if !ok {
+		return nil, fmt.Errorf("operational memory reader %T cannot read a pinned commit", reader)
 	}
-	snapshot, err := reader.Snapshot(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if snapshot.GetAcceptedCommit() != commit {
-		return nil, errors.New("memory snapshot differs from broker proposal base commit")
-	}
-	return snapshot, nil
+	return pinned.SnapshotAt(ctx, commit)
 }
 
 var fullCommitPattern = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)

@@ -55,6 +55,11 @@ type Map struct {
 	Edges      []Edge      `yaml:"edges"`
 	Operations []Operation `yaml:"operations"`
 	Probes     []Probe     `yaml:"probes"`
+	// Entries declare, per entry service, the request metric and the label
+	// names that tell operations apart (see MetricEntry).
+	Entries []MetricEntry `yaml:"entries,omitempty"`
+	// Reasons explain onboarding check items the author cannot make green.
+	Reasons []Reason `yaml:"reasons,omitempty"`
 	// Procedures are the operations procedures the application ships.
 	Procedures []Procedure `yaml:"procedures,omitempty"`
 	// NoUserRecords is the one escape from map.records-unread: why users keep
@@ -152,6 +157,11 @@ type Operation struct {
 	Writes bool     `yaml:"writes"`
 	Entry  Entry    `yaml:"entry"`
 	Path   []string `yaml:"path"`
+	// Route is the value of the entry metric's route label for this
+	// operation; empty means entry.path.
+	Route string `yaml:"route,omitempty"`
+	// Correct says what a correct result of the operation looks like.
+	Correct string `yaml:"correct,omitempty"`
 }
 
 // Probe is one probe scenario and the operations its steps exercise.
@@ -292,6 +302,7 @@ func opPaths(ops []Operation) map[string]Operation {
 func (m Map) Check(inv Inventory, workloads []Workload) []Finding {
 	c := &checker{m: m, byName: map[string]Component{}, ops: map[string]Operation{}, knownBroken: map[string]bool{}, broken: map[string]bool{}}
 	c.schema()
+	c.entries()
 	c.dataRoles()
 	c.inventory(inv)
 	c.paths()
@@ -367,7 +378,11 @@ func (c *checker) schema() {
 		}
 		seenOp[op.ID] = true
 		c.ops[op.ID] = op
-		if op.Entry.Method == MethodExec {
+		if c.internalEntry(op) {
+			if strings.TrimSpace(op.Entry.Path) == "" {
+				c.add(RuleSchema, "an internal entry's path is the queue, job or schedule name the entry metric's route label carries", "operation %s: internal entry has no path", op.ID)
+			}
+		} else if op.Entry.Method == MethodExec {
 			// An operation users reach over SSH: path is the command name.
 			if !commandPattern.MatchString(op.Entry.Path) {
 				c.add(RuleSchema, "an EXEC entry's path is the command name users run over SSH, such as receive-data", "operation %s: EXEC entry path %q is not a command name", op.ID, op.Entry.Path)
@@ -377,7 +392,9 @@ func (c *checker) schema() {
 		} else if !strings.HasPrefix(op.Entry.Path, "/") {
 			c.add(RuleSchema, "an HTTP entry's path starts with /", "operation %s: entry path %q does not start with /", op.ID, op.Entry.Path)
 		}
-		if op.Entry.Port < 1 || op.Entry.Port > 65535 || op.Entry.Service == "" {
+		if c.internalEntry(op) {
+			// background work has no port
+		} else if op.Entry.Port < 1 || op.Entry.Port > 65535 || op.Entry.Service == "" {
 			c.add(RuleSchema, "entry needs a service and a port in 1-65535", "operation %s: entry %+v is incomplete", op.ID, op.Entry)
 		}
 		if len(op.Path) == 0 {

@@ -39,6 +39,9 @@ type Config struct {
 	Gate *apihistory.MutationGate
 	// FieldManager, when set, replaces the fieldManager of every write the proxy forwards.
 	FieldManager string
+	// Checkout, when set, names the commit the writer's checkout is at; the proxy stamps it, with a dirty
+	// flag, on every write it records.
+	Checkout func() (commit string, dirty bool)
 	// ReadOnly refuses writes and exec, attach and port-forward sessions with 403, recording each refusal.
 	ReadOnly bool
 }
@@ -79,6 +82,9 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 		}
 		if write && !session && config.FieldManager != "" {
 			e.FieldManager = config.FieldManager
+		}
+		if write && config.Checkout != nil {
+			e.RunningCommit, e.RunningDirty = config.Checkout()
 		}
 		if session {
 			query := r.URL.Query()

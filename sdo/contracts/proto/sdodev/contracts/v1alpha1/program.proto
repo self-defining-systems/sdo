@@ -370,6 +370,10 @@ message PlanApplication {
   SettlementRejectionReason settlement_rejection_reason = 23 [(buf.validate.field).enum.defined_only = true];
   reserved 25;
   reserved "restored_source";
+  // The responder checkout commit (and dirty flag) when the application ran; for the automatic
+  // stage, the accepted commit.
+  string running_commit = 26;
+  bool running_dirty = 27;
 }
 
 message ProgramToolCall {

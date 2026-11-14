@@ -662,13 +662,16 @@ class Controller(FakeOps):
         commands = self.commands_by_incident[incident_id]
         receipt.update(
             {
-                "repair_actions": self.results[incident_id]["repair_actions"],
+                "repair_actions": self.results[incident_id].get("repair_actions", []),
                 "usage": {"input_tokens": 0, "output_tokens": 0},
                 "reflection_usage": {"input_tokens": 0, "output_tokens": 0},
                 "reflection_attempts": 1,
                 "recorded_at": now(),
                 "native_ledger": {
                     "outcome_document": {
+                        # Go stamps mitigation from the recording of the agent's writes; the script's result
+                        # carries no repair_actions.
+                        "timestamps": {"mitigated_at": now()},
                         "program_runs": self.program_runs_by_incident[incident_id],
                         "program_tool_calls": [{"command": command} for command in commands],
                         "response_loops_used": 1,

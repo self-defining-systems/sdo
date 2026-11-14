@@ -62,13 +62,26 @@ func (e KubernetesExecutor) addAPIHistory(job *batchv1.Job, task *contracts.Agen
 	if e.Recording {
 		command = append(command, "--recording")
 	}
+	sidecarMounts := []corev1.VolumeMount{{Name: "repository", MountPath: "/sdo/history", SubPath: sub}, {Name: "repository", MountPath: "/sdo/history.generation", SubPath: sub + ".generation"}}
+	if incident {
+		// The sidecar reads the responder's checkout (read-only) so each recorded write names the commit it ran on.
+		checkout := task.GetWorkspace().GetCheckoutPath()
+		for _, mount := range agent.VolumeMounts {
+			if checkout != "" && mount.MountPath == checkout {
+				mount.ReadOnly = true
+				sidecarMounts = append(sidecarMounts, mount)
+				command = append(command, "--worktree", checkout)
+				break
+			}
+		}
+	}
 	always := corev1.ContainerRestartPolicyAlways
 	sidecar := corev1.Container{
 		Name: "kube-api-history", Image: image,
 		Command:         command,
 		RestartPolicy:   &always,
 		StartupProbe:    &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"/usr/local/bin/sdo-operator", "api-proxy", "ready"}}}, PeriodSeconds: 1, TimeoutSeconds: 2, FailureThreshold: 60},
-		VolumeMounts:    []corev1.VolumeMount{{Name: "repository", MountPath: "/sdo/history", SubPath: sub}, {Name: "repository", MountPath: "/sdo/history.generation", SubPath: sub + ".generation"}},
+		VolumeMounts:    sidecarMounts,
 		SecurityContext: agent.SecurityContext.DeepCopy(),
 		Resources:       corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("32Mi")}, Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("256Mi")}},
 	}

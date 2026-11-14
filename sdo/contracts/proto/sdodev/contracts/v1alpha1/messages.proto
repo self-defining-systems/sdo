@@ -538,6 +538,10 @@ message RepairActionReceipt {
   repeated ResourceOwners owners = 12 [(controller_owned) = true];
   // Controller-recorded SHA256 of the exact executed RunScript bytes.
   string script_digest = 13 [(controller_owned) = true];
+  // The commit the writer's checkout was at when a recorded write happened, and whether its
+  // working tree differed from it. Empty for writes with no checkout (SDO's own stage).
+  string running_commit = 14;
+  bool running_dirty = 15;
 }
 
 // ResourceOwners is one written resource's controller owner chain, nearest

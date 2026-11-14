@@ -370,6 +370,7 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 		if applyErr != nil {
 			application.Error = applyErr.Error()
 		}
+		application.RunningCommit, application.RunningDirty, _ = l.checkoutState(ctx, false, "mitigate")
 		l.applicationsLog = append(l.applicationsLog, application)
 		if hasAppliedScript(plan.Actions) && entry.action == nil {
 			l.recordScriptInvocation(application, entry.programID, bindings, targetVerdict)

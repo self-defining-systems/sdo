@@ -226,3 +226,5 @@ recovery message. A late open follow-on incident receives its controller-publish
 closure budget, frozen when the fence observes it; a queued reflection alone retains its
 reflection-attempt cap. A pause-admission race goes through the same bounded fence, without
 another problem injection or grading attempt.
+
+Every incident row carries `operator_build`, the build ID of the SDO operator that ran it: the VCS stamp for a stamped binary, else `src-<16 hex>`, a digest of the operator's non-test source (`sdo-operator build-id <source-root>`). On the dev-mount path it hashes the mounted worktree source, so two rows with the same ID ran the same operator code and a changed ID means changed operator source. `null` on rows from image runs and older lanes.

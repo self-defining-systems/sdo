@@ -312,3 +312,12 @@ def test_the_workflow_selects_on_pull_requests_and_keeps_one_aggregate_check() -
     assert jobs["required-pr-ci"]["needs"] == ["checks", "python", "tests"]
     assert jobs["checks"]["name"] == "static checks"
     assert not any("ci_select" in step.get("run", "") for step in jobs["checks"]["steps"])
+
+
+def test_the_planner_never_writes_the_shared_go_caches(tmp_path: Path) -> None:
+    """The plan runs before the job restores its Go cache; files it left in the module cache break the restore."""
+    env = select.private_go_caches(tmp_path)
+    assert env["GOPROXY"] == "off"
+    dirs = {Path(env["GOMODCACHE"]), Path(env["GOCACHE"])}
+    assert {d.parent for d in dirs} == {tmp_path}
+    assert not dirs & {Path.home() / "go/pkg/mod", Path.home() / ".cache/go-build"}

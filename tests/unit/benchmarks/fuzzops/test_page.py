@@ -148,3 +148,56 @@ def test_a_page_with_many_failing_operations_stays_within_the_external_incident_
     assert "These still work: " + ", ".join(names[24:]) + "." in message
     assert "more operations: the same form" in message
     assert message.endswith("(run from a pod in the namespace, e.g. kubectl exec deploy/gitlab-toolbox -- ...)")
+
+
+PACKAGE_JOURNEYS = {
+    "login": {"header": {"PRIVATE-TOKEN": "t0ken"}},
+    "journeys": [
+        {"name": "list-projects", "request": {"method": "GET", "path": "/api/v4/projects"}},
+        {
+            "name": "package-upload",
+            "request": {
+                "method": "PUT",
+                "path": "/api/v4/projects/root%2Ffuzz-{{p}}/packages/generic/fuzzops/1.0.0/{{marker}}.txt",
+                "body": "package {{marker}}",
+            },
+            "readback": {
+                "request": {
+                    "method": "GET",
+                    "path": "/api/v4/projects/root%2Ffuzz-{{p}}/packages/generic/fuzzops/1.0.0/{{marker}}.txt",
+                }
+            },
+        },
+    ],
+}
+PACKAGE_STDOUT = """traffic: requests=58 ok=56 failed=0 wrong=0 lost=2
+verify: checked=14 missing=2 wrong=0 unreachable=0
+  missing: package-upload /api/v4/projects/root%2Ffuzz-3/packages/generic/fuzzops/1.0.0/fz-aaa.txt: 404
+  missing: package-upload /api/v4/projects/root%2Ffuzz-3/packages/generic/fuzzops/1.0.0/fz-bbb.txt: 404
+"""
+PACKAGE_STDERR = '08:05:55.358 readback of package-upload: 404 (missing) {"message":"404 Not found"}\n'
+PACKAGE_PATH = "/api/v4/projects/root%2Ffuzz-3/packages/generic/fuzzops/1.0.0"
+
+
+def test_the_page_reproduces_the_failing_sample_not_a_template_request() -> None:
+    """A read-back failure is replayed as the users' own requests: the write to the failing record, then the
+    read-back of it with the response users got; never a fixed file in the one healthy project."""
+    names = [j["name"] for j in PACKAGE_JOURNEYS["journeys"]]
+    failing = parse_trace(PACKAGE_STDOUT, PACKAGE_STDERR, names)
+    assert [r["path"][-11:] for r in failing["package-upload"]["records"]] == ["/fz-aaa.txt", "/fz-bbb.txt"]
+    message = page_message("app", "2026-01-01T00:00:00Z", failing, names, PACKAGE_JOURNEYS)
+    assert "1. curl -s -w ' [%{http_code}]' -X PUT -H 'PRIVATE-TOKEN: t0ken' --data 'package fz-aaa'" in message
+    assert f"{PACKAGE_PATH}/fz-aaa.txt'" in message
+    assert "2. curl -s -w ' [%{http_code}]' -X GET" in message
+    assert f"{PACKAGE_PATH}/fz-aaa.txt' -> user got 404" in message
+    assert "(all with p=3)" in message
+    assert f"also failed: {PACKAGE_PATH}/fz-bbb.txt -> 404" in message
+    assert "fuzz-1" not in message
+    assert len(message) <= MAX_MESSAGE
+
+
+def test_a_failure_without_captured_records_is_labelled_as_a_generic_request() -> None:
+    names = [j["name"] for j in PACKAGE_JOURNEYS["journeys"]]
+    failing = {"package-upload": {"failed": 1, "total": 5, "sample": "404"}}
+    message = page_message("app", "2026-01-01T00:00:00Z", failing, names, PACKAGE_JOURNEYS)
+    assert "a generic request, record 1 is a placeholder" in message

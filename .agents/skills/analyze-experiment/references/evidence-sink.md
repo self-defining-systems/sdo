@@ -32,7 +32,8 @@ Completeness:
   only as the redacted `api-history/events.jsonl` and `manifest.json` (`incidents/<d>/api-history/` for the responder,
   `incidents/<d>/api-history-reflection/` for reflection, `lifecycle/<key>/api-history/` for lifecycle tasks); blobs,
   the identity key and the mutation fence never are. Each write has `start` and `end` events with the changed field
-  paths (keys only), `field_manager` `sdo-responder` for responder writes, and for exec/attach/port-forward the
+  paths (keys only), `field_manager` `sdo-responder` for responder writes, `running_commit` (and `running_dirty` when the
+  checkout differed from it) naming the responder checkout `HEAD` read when the write happened, and for exec/attach/port-forward the
   container, a redacted `command` (`<withheld>` marks an argument outside the safe-token grammar) and `session_end`.
   A refusal is an `end` event with status 403 and omission `scope_read_only` (non-responder agents are read-only).
   A write the proxy could not record is answered 503 `recording_unavailable` and never reaches the API server, so it

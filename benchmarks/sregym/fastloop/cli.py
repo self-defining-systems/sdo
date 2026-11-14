@@ -1010,6 +1010,14 @@ def _run_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQueue 
         raise
 
 
+def _operator_build(environment: Any) -> str | None:
+    if environment.dev_mount is None:
+        return None
+    from benchmarks.sregym.fastloop.dev import operator_build
+
+    return operator_build(environment.dev_mount)
+
+
 def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQueue | None = None) -> int:
     run_started = time.monotonic()
     environment = FastloopEnvironment.load(args.run_dir.resolve())
@@ -1161,6 +1169,7 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
         delivery_record_path=environment.run_dir / "image_delivery.jsonl",
         image_delivery=environment.image_delivery,
         image_delivery_reason=environment.image_delivery_reason,
+        operator_build=_operator_build(environment),
         run_id=run_id,
         problems=problems,
         incidents=len(stream) if stream else args.incidents,
