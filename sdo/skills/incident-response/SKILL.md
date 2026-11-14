@@ -19,10 +19,10 @@ A reasoning loop, not a procedure. Move between the parts as the evidence asks.
   positions (entry, dependency, data holder). An unexplained observation is a new candidate.
 - **Discriminate.** Pick the check whose outcome differs most between them, ideally one that could refute.
   After the first look, name your lead explanation and the runner-up. Unless a failing response or recorded change
-  already states the cause, launch a read-only sub-agent for the runner-up (and each other open explanation, about
-  three at most; they read `sdo-investigator/SKILL.md`) before you act on the lead, and keep working. Launch also
-  during a slow action, and when a change left the failure as is or an observation is unexplained. You alone
-  change things. Brief each with the symptom users see failing and one explanation; ask for evidence, or
+  already states the cause, launch a read-only sub-agent for the runner-up (one per explanation still open, only if
+  its answer could change your next step; they read `sdo-investigator/SKILL.md`) before you act on the lead, and
+  keep working. Launch also during a slow action, and when a change left the failure as is or an
+  observation is unexplained. You alone change things. Brief each with the symptom users see failing and one explanation; ask for evidence, or
   "inconclusive" if it cannot reproduce. Weigh the reports; do not return while any are pending. Keep their
   "How to diagnose" notes for closing. SDO may start investigators: read `sdo investigations`, weigh their
   reports, above all "observations that don't fit".
