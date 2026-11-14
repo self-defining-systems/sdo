@@ -37,6 +37,13 @@ func (c pathsCatalog) Snapshot(context.Context) (*contracts.OperationalMemorySna
 	return c.snapshot, nil
 }
 
+func (c pathsCatalog) SnapshotAt(_ context.Context, commit string) (*contracts.OperationalMemorySnapshot, error) {
+	if c.snapshot.GetAcceptedCommit() != commit {
+		return nil, errors.New("memory snapshot differs from broker proposal base commit")
+	}
+	return c.snapshot, nil
+}
+
 var errPathsCaptured = errors.New("task captured")
 
 type pathsExecutor struct{ task *contracts.AgentTask }
