@@ -205,7 +205,7 @@ def operator_build(worktree: Path) -> str | None:
             [str(binary), "build-id", str(worktree / "sdo" / "operator")],
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=wait_for(WaitKind.COMMAND),
             check=True,
         )
     except (OSError, subprocess.SubprocessError):
