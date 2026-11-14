@@ -18,11 +18,16 @@ func HealthRefreshPreservesInstall(ctx context.Context, repository, installed, c
 	if repository == "" || installed == "" || current == "" {
 		return false, nil
 	}
-	accepted, err := AcceptedHealthRevision(ctx, repository, nil)
+	// The walk below proves every commit since the install keeps the install's
+	// source inputs and objective, so the install's health standing carries
+	// over unchanged. That includes a lineage with no initial judge commit (a
+	// restored baseline), which AcceptedHealthRevision always reports as
+	// needing refresh.
+	head, err := healthGit(ctx, repository, "rev-parse", "HEAD")
 	if err != nil {
 		return false, err
 	}
-	if accepted.NeedsRefresh || accepted.Commit != current {
+	if strings.TrimSpace(string(head)) != current {
 		return false, nil
 	}
 	original, err := HealthInputs(ctx, repository, installed)
