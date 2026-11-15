@@ -1580,6 +1580,10 @@ def set_controller_suspended(kube: Kube, control: str, suspended: bool, timeout:
     raise HookError(f"the controller pod did not end within {timeout:.0f}s")
 
 
+#: Where the restore pod receives a memory bundle: its own emptyDir (the controller image has a read-only root).
+BUNDLE_DIR = "/seed"
+
+
 def restore_repository(kube: Kube, control: str, head: str, bundle: Path | None = None) -> None:
     """With the controller stopped, put the accepted repository on its volume back at ``head`` with no other file
     (outcomes and playbooks it learned go), in a short-lived pod that mounts the volume as the controller does.
@@ -1602,8 +1606,8 @@ def restore_repository(kube: Kube, control: str, head: str, bundle: Path | None 
     steps = [f"cd {APPLICATION_ROOT}"]
     if bundle is not None:
         # the pod waits for the bundle, streamed in by exec (the image need not hold tar for a copy)
-        steps.insert(0, "until [ -e /tmp/memory.ready ]; do sleep 1; done")
-        steps.append(f"{git} fetch -q /tmp/memory.bundle")
+        steps.insert(0, f"until [ -e {BUNDLE_DIR}/memory.ready ]; do sleep 1; done")
+        steps.append(f"{git} fetch -q {BUNDLE_DIR}/memory.bundle")
     steps += [f"{git} reset -q --hard {head}", f"{git} clean -q -fdx", f"{git} rev-parse HEAD"]
     script = " && ".join(steps)
     pod = {
@@ -1620,10 +1624,10 @@ def restore_repository(kube: Kube, control: str, head: str, bundle: Path | None 
                     "imagePullPolicy": "IfNotPresent",
                     "command": ["sh", "-c", script],
                     "securityContext": container.get("securityContext") or {},
-                    "volumeMounts": [mount],
+                    "volumeMounts": [mount, {"name": "seed", "mountPath": BUNDLE_DIR}],
                 }
             ],
-            "volumes": [volume],
+            "volumes": [volume, {"name": "seed", "emptyDir": {}}],
         },
     }
     _run(
@@ -1665,7 +1669,7 @@ def restore_repository(kube: Kube, control: str, head: str, bundle: Path | None 
 
 
 def send_bundle(kube: Kube, control: str, pod: str, bundle: Path) -> None:
-    """Stream ``bundle`` into the running restore pod at /tmp/memory.bundle and tell it to go on."""
+    """Stream ``bundle`` into the running restore pod at BUNDLE_DIR/memory.bundle and tell it to go on."""
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
         phase = subprocess.run(
@@ -1691,7 +1695,7 @@ def send_bundle(kube: Kube, control: str, pod: str, bundle: Path) -> None:
                 "--",
                 "sh",
                 "-c",
-                "cat > /tmp/memory.bundle && touch /tmp/memory.ready",
+                f"cat > {BUNDLE_DIR}/memory.bundle && touch {BUNDLE_DIR}/memory.ready",
             ),
             stdin=handle,
             capture_output=True,

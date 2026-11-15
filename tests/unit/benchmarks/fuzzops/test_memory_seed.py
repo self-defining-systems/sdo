@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -82,3 +84,45 @@ def test_the_operator_block_carries_the_seed(tmp_path: Path) -> None:
     assert hooks.OperatorBlock.load(path).seed == Path("/s")
     path.write_text(json.dumps({"hooks": "sdo", "revision": "abcdef12", "baseline": "/b", "settings": {}}))
     assert hooks.OperatorBlock.load(path).seed is None
+
+
+def test_the_restore_pod_receives_the_bundle_in_its_own_writable_volume(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The controller image runs with a read-only root: the bundle goes to an emptyDir, never to /tmp."""
+    head = "a" * 40
+    job = {
+        "spec": {
+            "template": {
+                "spec": {
+                    "volumes": [{"name": "repository", "persistentVolumeClaim": {"claimName": "repo"}}],
+                    "containers": [
+                        {
+                            "name": hooks.CONTROLLER_CONTAINER,
+                            "image": "img",
+                            "securityContext": {"readOnlyRootFilesystem": True},
+                            "volumeMounts": [{"name": "repository", "mountPath": "/repo"}],
+                        }
+                    ],
+                }
+            }
+        }
+    }
+    applied: list[dict[str, Any]] = []
+
+    def fake_run(cmd: list[str], what: str, timeout: float, **kw: Any) -> Any:
+        if kw.get("input") is not None:
+            applied.append(json.loads(kw["input"]))
+        return SimpleNamespace(stdout=head, stderr="")
+
+    monkeypatch.setattr(hooks, "_run", fake_run)
+    monkeypatch.setattr(hooks, "send_bundle", lambda *a, **k: None)
+    monkeypatch.setattr(
+        hooks.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout="Succeeded", stderr="", returncode=0)
+    )
+    kube = SimpleNamespace(_json=lambda *a: job, cmd=lambda *a: list(a))
+    hooks.restore_repository(kube, "ctl", head, bundle=Path("b"))  # type: ignore[arg-type]
+    pod = applied[0]["spec"]
+    container = pod["containers"][0]
+    assert {"name": "seed", "mountPath": hooks.BUNDLE_DIR} in container["volumeMounts"]
+    assert {"name": "seed", "emptyDir": {}} in pod["volumes"]
+    assert "/tmp/" not in container["command"][2]
+    assert f"{hooks.BUNDLE_DIR}/memory.bundle" in container["command"][2]
