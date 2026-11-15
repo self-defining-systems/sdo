@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -299,4 +300,42 @@ func TestResumedSetupStepSeesProbeUserPasswords(t *testing.T) {
 	if _, sample := engine.Iterate(ctx, 1); sample.Outcome != OutcomeOK {
 		t.Fatalf("a resumed step lost the probe user's password: %+v", sample)
 	}
+}
+
+// Iterations of one scenario run concurrently; its setup must still write the
+// fixture once, not once per iteration that started before the first finished.
+func TestConcurrentIterationsRunSetupOnce(t *testing.T) {
+	store := &gatedCreateStore{itemStore: itemStore{items: map[string]bool{}}, release: make(chan struct{})}
+	engine := setupEngine(t, laterScenario(), store)
+	var wg sync.WaitGroup
+	for iteration := uint64(0); iteration < 8; iteration++ {
+		wg.Add(1)
+		go func(iteration uint64) {
+			defer wg.Done()
+			engine.Iterate(context.Background(), iteration)
+		}(iteration)
+	}
+	// Let every iteration reach the held create (or the setup lock) first.
+	for i := 0; i < 2000; i++ {
+		runtime.Gosched()
+	}
+	close(store.release)
+	wg.Wait()
+	if store.posts != 1 {
+		t.Fatalf("setup wrote the fixture %d times, want once", store.posts)
+	}
+}
+
+// gatedCreateStore holds every create until release is closed, so concurrent
+// iterations overlap like they do against an application that is slow to answer.
+type gatedCreateStore struct {
+	itemStore
+	release chan struct{}
+}
+
+func (s *gatedCreateStore) Do(request *http.Request) (*http.Response, error) {
+	if request.Method == http.MethodPost {
+		<-s.release
+	}
+	return s.itemStore.Do(request)
 }
