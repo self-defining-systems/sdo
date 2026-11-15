@@ -136,24 +136,35 @@ func ParseInstallExistingLaunchEnv(args []string, environ []string) (InstallExis
 	return InstallExistingConfig{AdoptExistingMemory: *adopt, OperatorRoot: *operatorRoot, Repository: *repository, Kubeconfig: *kubeconfig, DeploymentSource: deploymentSource, Duration: *duration, Install: config}, nil
 }
 
+// PrepareInstallTree makes the launch repository's accepted head the tree an
+// install of this build would start the controller on (generic detectors added
+// or regenerated to the current template, committed), and returns the head. It
+// is the step install-existing runs first and `sdo-operator prepare-tree`
+// replays for a lane whose memory was made by an earlier build. A shell-path
+// install has no Go-installed detectors and returns an empty head.
+func PrepareInstallTree(ctx context.Context, launch InstallExistingConfig) (string, error) {
+	if memoryCodePath(launch.Install.CodePathSelection()) == "shell" {
+		return "", nil
+	}
+	control := launch.Install.ControlNamespace
+	if control == "" {
+		control = launch.Install.Namespace
+	}
+	derived, err := installTelemetry(launch.Install, telemetryRegistry(), launch.Install.Namespace, control)
+	if err != nil {
+		return "", err
+	}
+	return prepareInstallTree(ctx, launch.Repository, derived)
+}
+
 func RunInstallExisting(ctx context.Context, launch InstallExistingConfig) (InstallExistingResult, error) {
 	source, err := recordInstallDeploymentSource(ctx, launch)
 	if err != nil {
 		return InstallExistingResult{}, err
 	}
 	launch.DeploymentSource = source
-	if memoryCodePath(launch.Install.CodePathSelection()) != "shell" {
-		control := launch.Install.ControlNamespace
-		if control == "" {
-			control = launch.Install.Namespace
-		}
-		derived, err := installTelemetry(launch.Install, telemetryRegistry(), launch.Install.Namespace, control)
-		if err != nil {
-			return InstallExistingResult{}, err
-		}
-		if _, err := prepareInstallTree(ctx, launch.Repository, derived); err != nil {
-			return InstallExistingResult{}, err
-		}
+	if _, err := PrepareInstallTree(ctx, launch); err != nil {
+		return InstallExistingResult{}, err
 	}
 	commit, err := prepareInstallExistingRepository(ctx, launch)
 	if err != nil {
