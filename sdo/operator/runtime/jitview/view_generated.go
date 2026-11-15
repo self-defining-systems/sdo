@@ -131,6 +131,13 @@ func (v *View) Events() (r0 []p5.Event) {
 	}
 	return
 }
+func (v *View) HeldAlertKeys() (r0 []string) {
+	err := v.call("HeldAlertKeys", []any{}, []any{&r0})
+	if err != nil {
+		panic(err)
+	}
+	return
+}
 func (v *View) HorizontalPodAutoscalers() (r0 []p9.HorizontalPodAutoscaler) {
 	err := v.call("HorizontalPodAutoscalers", []any{}, []any{&r0})
 	if err != nil {

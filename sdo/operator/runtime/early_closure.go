@@ -163,9 +163,10 @@ func (c *Controller) earlyReportPendingLocked() bool {
 	return !c.incidentOpen && c.currentIncidentRequest != nil && c.pendingClosure != nil && c.pendingClosure.VerifiedWhileResponderRunning && c.pendingClosure.Request.IncidentID == c.currentIncidentRequest.IncidentID
 }
 
-// Both active and paused scheduling retire verified responders immediately.
-// Uncertain quiescence retries retain their own deadline. Narration never holds
-// the outcome; mutation fencing and independently observed quiescence do.
+// A verified closure waits for a running session's final result, bounded by the
+// response deadline, then retires it. Uncertain quiescence retries retain their
+// own deadline. Mutation fencing and independently observed quiescence hold the
+// outcome.
 func (c *Controller) earlyReportWakeLocked() time.Time {
 	if !c.earlyReportPendingLocked() {
 		return time.Time{}
@@ -176,7 +177,18 @@ func (c *Controller) earlyReportWakeLocked() time.Time {
 	if c.responderDone {
 		return c.clock()
 	}
-	return c.pendingClosure.VerifiedAt
+	return c.finalResultDeadlineLocked()
+}
+
+// finalResultDeadlineLocked is how long a verified closure waits for the
+// running session's final result: the incident's response deadline (never
+// before verification).
+func (c *Controller) finalResultDeadlineLocked() time.Time {
+	deadline := c.currentIncidentRequest.ResponseDeadline
+	if deadline.Before(c.pendingClosure.VerifiedAt) {
+		return c.pendingClosure.VerifiedAt
+	}
+	return deadline
 }
 
 func (c *Controller) finishEarlyReport(ctx context.Context, now time.Time) {
@@ -190,6 +202,14 @@ func (c *Controller) finishEarlyReport(ctx context.Context, now time.Time) {
 		return
 	}
 	done := c.responderDone
+	// The session's final result is the one result SDO acts on: an earlier
+	// structured result is provisional, and the changes made after it are in the
+	// final one. Wait for the session to finish, bounded by the response
+	// deadline.
+	if !done && now.Before(c.finalResultDeadlineLocked()) {
+		c.mu.Unlock()
+		return
+	}
 	id := c.currentIncidentRequest.IncidentID
 	cancel := c.responderCancel
 	attempts := max(0, c.currentIncidentRequest.MaxResponseLoops)

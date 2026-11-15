@@ -171,6 +171,9 @@ type Snapshot struct {
 	// SelfHealHoldTime is the controller's self-heal hold at capture; nil
 	// replays with sdk.DefaultSelfHealHold.
 	SelfHealHoldTime *time.Duration `json:"selfHealHold,omitempty"`
+	// HeldKeys are the alert keys of the incident open at capture
+	// (sdk.HeldAlertSource); nil replays with none held.
+	HeldKeys []string `json:"heldKeys,omitempty"`
 	// Traffic holds synthetic-traffic observations by workload name.
 	Traffic map[string]traffic.Window `json:"traffic,omitempty"`
 	// Metrics holds frozen metric query results by query ID.
@@ -205,9 +208,4 @@ func LoadSnapshots(dir string) ([]Snapshot, error)
     one Snapshot (see the json tags on Snapshot), returned in file-name order.
     An empty directory or a file with unknown fields is an error, so a baseline
     that silently stops checking anything cannot pass.
-
-func (s Snapshot) AdmissionWebhooksFor(subject sdk.ObjectRef) ([]program.AdmissionWebhook, error)
-
-func (s Snapshot) AlertsResult() (metrics.AlertsResult, bool)
-    AlertsResult implements metrics.AlertSource.
 ```

@@ -98,6 +98,11 @@ func FormatObjectRef(ref ObjectRef) (string, error)
     namespace/kind ordering, so parsing the formatted value preserves every
     ObjectRef field.
 
+func HeldFingerprints(ctx DetectionContext, detectorID string) map[string]bool
+    HeldFingerprints returns the fingerprints of the detector's findings that
+    hold the open incident (its opening and joined alerts); empty when no
+    incident is open or the context carries none.
+
 func HeldPastSelfHeal(ctx DetectionContext, since time.Time) bool
     HeldPastSelfHeal reports whether a condition that has held since since
     outlived Kubernetes' own self-healing: at least the context's self-heal

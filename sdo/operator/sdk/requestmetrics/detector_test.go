@@ -2,7 +2,9 @@ package requestmetrics_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -203,6 +205,108 @@ func TestUnlabelledFirstSeriesDoesNotHideAnInstrumentedMetric(t *testing.T) {
 		if f.RuleID == requestmetrics.RuleNotInstrumented {
 			t.Fatalf("instrumented metric reported as not instrumented: %+v", f)
 		}
+	}
+}
+
+// An alert that has opened an incident leaves the alert set only through
+// confirmed recovery. A reclassification keeps the operation's error
+// fingerprint, so an open incident keeps holding on it; the rule stays a clue,
+// so a fresh install still opens nothing.
+func TestJumpWithAThinBaselineHoldsUntilHealthyRequestsReturn(t *testing.T) {
+	baseline := []metrics.Series{instant(pkgRoute, "200", 10), instant(webRoute, "200", 400)}
+	held := func(fail, ok []float64) []sdk.Finding {
+		recent := []metrics.Series{series(pkgRoute, "200", ok...), series(pkgRoute, "404", fail...), series(webRoute, "200", steady(40, len(ok))...)}
+		return detect(t, snapshot(recent, baseline, presence()))
+	}
+	for name, got := range map[string][]sdk.Finding{
+		"failing":            held([]float64{0, 0, 5, 8, 8, 8}, steady(11, 6)),
+		"quiet after":        held([]float64{0, 0, 5, 8, 8, 0, 0}, []float64{11, 11, 11, 11, 11, 1, 1}),
+		"quiet and no 404 s": held([]float64{0, 0, 5, 8, 8, 0, 0}, []float64{11, 11, 11, 11, 11, 2, 0}),
+	} {
+		if len(got) != 1 || got[0].RuleID != requestmetrics.RuleInsufficientBaseline || got[0].Fingerprint != "requestmetrics/errors/package-download" {
+			t.Fatalf("%s: findings = %+v", name, got)
+		}
+	}
+	if got := held([]float64{0, 0, 5, 8, 8, 0, 0}, []float64{11, 11, 11, 11, 11, 11, 11}); len(got) != 0 {
+		t.Fatalf("healthy requests returned but the finding stays: %+v", got)
+	}
+}
+
+func TestOperationThatStopsBeingInstrumentedKeepsItsErrorFingerprint(t *testing.T) {
+	for _, f := range detect(t, snapshot(nil, nil, nil)) {
+		if f.RuleID != requestmetrics.RuleNotInstrumented || f.Fingerprint != "requestmetrics/errors/"+f.Metadata["operation"].(string) {
+			t.Fatalf("finding %+v", f)
+		}
+	}
+}
+
+const pkgErrorsKey = "request-metrics\x00requestmetrics/errors/package-download"
+
+// pollutedBaseline is a baseline that has absorbed the ongoing fault: the
+// route's healthy client share reads 60%.
+func pollutedBaseline() []metrics.Series {
+	return []metrics.Series{instant(pkgRoute, "200", 40), instant(pkgRoute, "404", 60), instant(webRoute, "200", 400)}
+}
+
+func failingFor(steps int) []metrics.Series {
+	return []metrics.Series{
+		series(pkgRoute, "200", steady(11, steps)...),
+		series(pkgRoute, "404", steady(8, steps)...),
+		series(webRoute, "200", steady(40, steps)...),
+	}
+}
+
+// A persistent fault, long after its failures entered the baseline, stays
+// raised while the incident it opened is open, and leaves only on healthy
+// requests. Without the held key the polluted baseline hides it.
+func TestPersistentFaultStaysRaisedWhileItsIncidentIsOpen(t *testing.T) {
+	long := failingFor(60) // a 5 s step: five minutes of lookback, 15 minutes into the fault
+	free := snapshot(long, pollutedBaseline(), presence())
+	if got := detect(t, free); len(got) != 0 {
+		t.Fatalf("an unheld finding is judged against the polluted baseline: %+v", got)
+	}
+	held := snapshot(long, pollutedBaseline(), presence())
+	held.HeldKeys = []string{pkgErrorsKey}
+	got := detect(t, held)
+	if len(got) != 1 || got[0].RuleID != requestmetrics.RuleErrors || got[0].Fingerprint != "requestmetrics/errors/package-download" {
+		t.Fatalf("held fault dropped: %+v", got)
+	}
+	// Quiet traffic does not confirm recovery.
+	quiet := []metrics.Series{series(pkgRoute, "200", steady(1, 60)...), series(webRoute, "200", steady(40, 60)...)}
+	held = snapshot(quiet, pollutedBaseline(), presence())
+	held.HeldKeys = []string{pkgErrorsKey}
+	if got := detect(t, held); len(got) != 1 {
+		t.Fatalf("no traffic confirmed recovery: %+v", got)
+	}
+	// Enough healthy requests do.
+	healthy := []metrics.Series{series(pkgRoute, "200", steady(11, 60)...), series(webRoute, "200", steady(40, 60)...)}
+	held = snapshot(healthy, pollutedBaseline(), presence())
+	held.HeldKeys = []string{pkgErrorsKey}
+	if got := detect(t, held); len(got) != 0 {
+		t.Fatalf("healthy requests did not clear it: %+v", got)
+	}
+}
+
+// The held keys are a recorded input: a snapshot written and read back gives
+// the same verdicts.
+func TestHeldKeysReplayWithTheSnapshot(t *testing.T) {
+	held := snapshot(failingFor(60), pollutedBaseline(), presence())
+	held.HeldKeys = []string{pkgErrorsKey}
+	raw, err := json.Marshal(held)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var replayed sdktest.Snapshot
+	if err := json.Unmarshal(raw, &replayed); err != nil {
+		t.Fatal(err)
+	}
+	want, got := detect(t, held), detect(t, replayed)
+	if len(want) != 1 || !reflect.DeepEqual(want, got) {
+		t.Fatalf("replay differs:\nrecorded %+v\nreplayed %+v", want, got)
+	}
+	captured, err := sdktest.CaptureSnapshot(held, "app")
+	if err != nil || !reflect.DeepEqual(captured.HeldKeys, held.HeldKeys) {
+		t.Fatalf("capture lost the held keys: %v %v", captured.HeldKeys, err)
 	}
 }
 

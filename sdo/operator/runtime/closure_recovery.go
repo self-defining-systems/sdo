@@ -34,6 +34,7 @@ func (c *Controller) resumeClosureVerification(ctx context.Context, effect Closu
 	}
 	c.incidentOpen = true
 	c.currentIncidentRequest = cloneIncidentRequest(&closure.Request)
+	c.publishHeldLocked()
 	c.currentIncidentResult = cloneIncidentResult(closure.Result)
 	c.incidentDetectedAt = closure.DetectedAt
 	c.incidentDispatchedAt = closure.DispatchedAt

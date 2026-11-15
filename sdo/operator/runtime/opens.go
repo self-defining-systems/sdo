@@ -105,6 +105,7 @@ func (c *Controller) joinAlertSet(finding sdk.Finding, now time.Time) bool {
 	finding.Fingerprint = FindingFingerprint(finding)
 	request.Findings = append(request.Findings, finding)
 	sortFindings(request.Findings)
+	c.publishHeldLocked()
 	c.closureStableSince = time.Time{}
 	return true
 }

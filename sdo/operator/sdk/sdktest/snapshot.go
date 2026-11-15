@@ -68,6 +68,9 @@ type Snapshot struct {
 	// SelfHealHoldTime is the controller's self-heal hold at capture; nil
 	// replays with sdk.DefaultSelfHealHold.
 	SelfHealHoldTime *time.Duration `json:"selfHealHold,omitempty"`
+	// HeldKeys are the alert keys of the incident open at capture
+	// (sdk.HeldAlertSource); nil replays with none held.
+	HeldKeys []string `json:"heldKeys,omitempty"`
 	// Traffic holds synthetic-traffic observations by workload name.
 	Traffic map[string]traffic.Window `json:"traffic,omitempty"`
 	// Metrics holds frozen metric query results by query ID.
@@ -99,6 +102,9 @@ func (s Snapshot) ObservedAt() time.Time {
 	}
 	return *s.ObservedAtTime
 }
+
+// HeldAlertKeys implements sdk.HeldAlertSource.
+func (s Snapshot) HeldAlertKeys() []string { return s.HeldKeys }
 
 // SelfHealHold implements sdk.SelfHealPolicy; it is zero when unrecorded.
 func (s Snapshot) SelfHealHold() time.Duration {

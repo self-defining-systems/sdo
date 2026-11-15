@@ -81,6 +81,9 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string, refs ...sdk.Ob
 		observed := clock.ObservedAt().UTC()
 		s.ObservedAtTime = &observed
 	}
+	if held, ok := view.(sdk.HeldAlertSource); ok && len(held.HeldAlertKeys()) > 0 {
+		s.HeldKeys = append([]string(nil), held.HeldAlertKeys()...)
+	}
 	if policy, ok := view.(sdk.SelfHealPolicy); ok && policy.SelfHealHold() > 0 {
 		hold := policy.SelfHealHold()
 		s.SelfHealHoldTime = &hold
