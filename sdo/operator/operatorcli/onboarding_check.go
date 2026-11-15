@@ -179,7 +179,8 @@ func (e detectorEvaluator) Evaluate(ctx context.Context) (onboardcheck.Verdict, 
 		for _, r := range f.RelatedResources {
 			resources = append(resources, r.Name)
 		}
-		out.Raised = append(out.Raised, onboardcheck.Raise{DetectorID: f.DetectorID, Rule: f.RuleID, Summary: f.Summary, Evidence: f.Evidence, Resources: resources, Fingerprint: sdk.FindingFingerprint(f)})
+		operation, _ := f.Metadata["operation"].(string)
+		out.Raised = append(out.Raised, onboardcheck.Raise{Operation: operation, DetectorID: f.DetectorID, Rule: f.RuleID, Summary: f.Summary, Evidence: f.Evidence, Resources: resources, Fingerprint: sdk.FindingFingerprint(f)})
 	}
 	for _, p := range verdict.Progress {
 		out.Progress = append(out.Progress, onboardcheck.DetectorProgress{DetectorID: p.DetectorID, Interval: p.Interval, Horizon: p.Horizon, Evaluations: p.Evaluations, PastHorizon: p.PastHorizon})

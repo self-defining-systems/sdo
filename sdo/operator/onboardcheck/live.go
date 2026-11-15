@@ -28,6 +28,9 @@ type Raise struct {
 	// Resources are the names of the objects the finding is about.
 	Resources   []string
 	Fingerprint string
+	// Operation is the declared operation a request-metrics finding is about,
+	// when the detector says so.
+	Operation string
 }
 
 func (r Raise) key() string {
@@ -77,20 +80,90 @@ const (
 	SignalAbsence = "absence"
 )
 
+// Rules whose kind does not depend on their wording: a scenario finding is a
+// failing probe (whatever its steps say, "not found" included), the
+// request-metrics instrumentation rule is only an absence.
+const (
+	notInstrumentedRule = "request-metrics.not-instrumented"
+	scenarioRulePrefix  = "scenario-slo."
+)
+
 // signalKind says which kind of signal a raise is.
 func signalKind(r Raise) string {
-	if absenceSignal.MatchString(r.Rule + " " + r.Summary) {
+	switch {
+	case r.Rule == notInstrumentedRule:
+		return SignalAbsence
+	case strings.HasPrefix(r.Rule, scenarioRulePrefix):
+		return SignalFailure
+	case absenceSignal.MatchString(r.Rule + " " + r.Summary):
 		return SignalAbsence
 	}
 	return SignalFailure
 }
 
-// signalNote says whether a real failing-request signal named the operation.
+// signalNote says which failing-request signal named the operation.
 func signalNote(out *breakOutcome, opID string) string {
-	if f := out.opFailure[opID]; f != nil {
-		return fmt.Sprintf("; failing-request signal: %s after %s", f.raise.DetectorID, f.after.Round(time.Second))
+	f := out.opFailure[opID]
+	if f == nil {
+		// A generic break whose own fault is a silence (a quiet worker) is
+		// judged on absence; component breaks never reach here without a failure.
+		return "; absence signal only: no detector reported failing requests of this operation"
 	}
-	return "; absence signal only: no detector reported failing requests of this operation"
+	return fmt.Sprintf("; failing-request signal: %s after %s", f.raise.DetectorID, f.after.Round(time.Second))
+}
+
+// notInstrumentedOps lists the declared operations a request-metrics
+// not-instrumented raise is about, with the line that names it. The map is
+// keyed by operation ID.
+func notInstrumentedOps(m appmap.Map, raised []Raise) map[string]string {
+	out := map[string]string{}
+	for _, r := range raised {
+		if r.Rule != notInstrumentedRule {
+			continue
+		}
+		for _, op := range m.Operations {
+			if r.Operation == op.ID || (r.Operation == "" && named(r.text(), op.ID)) {
+				if _, seen := out[op.ID]; !seen {
+					out[op.ID] = fmt.Sprintf("request-metrics reports operation %s is not instrumented for request metrics, so no error or latency series can tell it apart: %s", op.ID, clip(r.Evidence+" "+r.Summary, 300))
+				}
+			}
+		}
+	}
+	return out
+}
+
+// markNotInstrumented records the operations the raises report as not
+// instrumented on the healthy application; Run turns them red in
+// operations-observed and latency-per-operation, reasons notwithstanding.
+func (r *Report) markNotInstrumented(m appmap.Map, raised []Raise) {
+	for id, line := range notInstrumentedOps(m, raised) {
+		if r.notInstrumented == nil {
+			r.notInstrumented = map[string]string{}
+		}
+		r.notInstrumented[id] = line
+	}
+}
+
+// applyNotInstrumented makes the reported operations red in both items,
+// replacing a green line the metric items wrote.
+func (r *Report) applyNotInstrumented(m appmap.Map) {
+	for _, op := range m.Operations {
+		line, bad := r.notInstrumented[op.ID]
+		if !bad {
+			continue
+		}
+		for _, item := range []string{ItemObserved, ItemLatency} {
+			set := false
+			for i := range r.Results {
+				if x := &r.Results[i]; x.Item == item && x.Subject == op.ID {
+					x.Status, x.Detail, set = Red, line, true
+				}
+			}
+			if !set {
+				r.add(item, op.ID, Red, line)
+			}
+		}
+	}
 }
 
 func clip(s string, n int) string {
@@ -242,6 +315,7 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 		elapsed := cfg.Now().Sub(start).Round(time.Second)
 		verdict.Raised, warm = splitWarmup(verdict.Raised, warm)
 		if len(verdict.Raised) > 0 {
+			report.markNotInstrumented(cfg.Map, verdict.Raised)
 			for _, r := range verdict.Raised {
 				report.add(ItemQuiet, r.DetectorID, Red, fmt.Sprintf("raised on the healthy application at sample %d (%s in): %s", samples, elapsed, r.describe()))
 			}
@@ -483,6 +557,7 @@ func runBreak(ctx context.Context, cfg Config, report *Report) {
 			}
 			haveBaseline = true
 			baseline = fingerprints(v.Raised)
+			report.markNotInstrumented(cfg.Map, v.Raised)
 		}
 		cfg.say("fails-under-break: wave %d of %d: breaking %s", i+1, len(waves), strings.Join(names, ", "))
 		var restoreFailed bool
@@ -583,12 +658,13 @@ func namesOperation(text string, m appmap.Map, op appmap.Operation) bool {
 }
 
 // opStatus is green when breaking some component on the operation's path made
-// a raise that names the operation or one of its test scenarios: a generic
-// detector that only names the broken component does not show that a test of
-// the operation fails.
+// a failure signal name the operation or one of its test scenarios (failing
+// requests, a failing probe step). A generic detector that only names the
+// broken component, or a raise that only says the operation's series or
+// endpoints are absent, does not show that a test of the operation fails.
 func opStatus(op appmap.Operation, outcomes map[string]*breakOutcome) string {
 	for _, name := range op.Path {
-		if out := outcomes[name]; out != nil && out.opHit[op.ID] != nil {
+		if out := outcomes[name]; out != nil && out.opFailure[op.ID] != nil {
 			return Green
 		}
 	}
@@ -596,14 +672,17 @@ func opStatus(op appmap.Operation, outcomes map[string]*breakOutcome) string {
 }
 
 func opDetail(m appmap.Map, op appmap.Operation, outcomes map[string]*breakOutcome, bound, horizon time.Duration) string {
-	var tried, generic []string
+	var tried, generic, absent []string
 	for _, name := range op.Path {
 		out := outcomes[name]
 		if out == nil || out.how == "no workload" || out.err != "" {
 			continue
 		}
-		if f := out.opHit[op.ID]; f != nil {
+		if f := out.opFailure[op.ID]; f != nil {
 			return fmt.Sprintf("breaking %s (%s) was noticed by %s after %s: %s%s", name, out.how, f.raise.DetectorID, f.after.Round(time.Second), clip(f.raise.Summary, 160), signalNote(out, op.ID))
+		}
+		if f := out.opHit[op.ID]; f != nil {
+			absent = append(absent, fmt.Sprintf("%s after %s on breaking %s: %s", f.raise.DetectorID, f.after.Round(time.Second), name, clip(f.raise.Summary, 160)))
 		}
 		tried = append(tried, name)
 		if out.hit != nil {
@@ -620,6 +699,9 @@ func opDetail(m appmap.Map, op appmap.Operation, outcomes map[string]*breakOutco
 	detail := fmt.Sprintf("breaking %s raised nothing that names %s or its test scenarios (%s)", strings.Join(tried, ", "), op.ID, scenarios)
 	if len(generic) > 0 {
 		detail += "; only generic detectors noticed the component (" + strings.Join(generic, "; ") + ")"
+	}
+	if len(absent) > 0 {
+		detail += "; absence signal only, no detector reported failing requests or a failing probe step of this operation (" + strings.Join(absent, "; ") + ")"
 	}
 	detail += fmt.Sprintf(": no test or request metric of this operation catches it (waited up to %s per component", bound.Round(time.Second))
 	if horizon > 0 {
@@ -726,7 +808,9 @@ func breakWave(ctx context.Context, cfg Config, members []waveMember, baseline m
 		m.out.err = "could not break: " + err.Error()
 	})
 	waveStart := cfg.Now()
+	var judged time.Duration
 	defer func() {
+		cfg.phases.add(PhaseBreakJudge, judged)
 		inParallel(broken, func(m waveMember) {
 			if rerr := b.Breaker.Restore(context.WithoutCancel(ctx), m.c); rerr != nil {
 				mu.Lock()
@@ -735,10 +819,14 @@ func breakWave(ctx context.Context, cfg Config, members []waveMember, baseline m
 				mu.Unlock()
 			}
 		})
-		cfg.say("fails-under-break: restored after %s", cfg.Now().Sub(waveStart).Round(time.Second))
+		restored := cfg.Now().Sub(waveStart)
+		cfg.phases.add(PhaseBreakRestore, restored-judged)
+		cfg.say("fails-under-break: restored after %s", restored.Round(time.Second))
 		// Only a later wave needs the standing raises cleared (its baseline).
 		if !restoreFailed && more {
+			settleStart := cfg.Now()
 			next = waitClear(ctx, cfg, next)
+			cfg.phases.add(PhaseBreakSettle, cfg.Now().Sub(settleStart))
 			cfg.say("fails-under-break: detectors settled after %s", cfg.Now().Sub(waveStart).Round(time.Second))
 		}
 	}()
@@ -790,11 +878,12 @@ func breakWave(ctx context.Context, cfg Config, members []waveMember, baseline m
 		tested := true
 		for _, m := range broken {
 			for _, op := range m.ops {
-				tested = tested && m.out.opHit[op.ID] != nil
+				tested = tested && m.out.opFailure[op.ID] != nil
 			}
 		}
 		if tested || after >= b.Bound {
-			cfg.say("fails-under-break: wave judged after %s (bound %s, every operation noticed: %v)", after.Round(time.Second), b.Bound, tested)
+			judged = after
+			cfg.say("fails-under-break: wave judged after %s (bound %s, every operation failed a request or probe: %v)", after.Round(time.Second), b.Bound, tested)
 			return next, restoreFailed
 		}
 		if err := cfg.Wait(ctx, b.Interval); err != nil {
@@ -823,4 +912,57 @@ func waitClear(ctx context.Context, cfg Config, fallback map[string]bool) map[st
 			return fingerprints(v.Raised)
 		}
 	}
+}
+
+// Phases of the check that the report times separately, so a trial can see
+// which one dominates its wall time.
+const (
+	PhaseMetrics      = "metric-items"
+	PhaseBreakJudge   = "fails-under-break:judge"
+	PhaseBreakRestore = "fails-under-break:restore"
+	PhaseBreakSettle  = "fails-under-break:settle"
+)
+
+// phaseLog sums the time spent per phase across waves.
+type phaseLog struct {
+	mu    sync.Mutex
+	order []string
+	total map[string]time.Duration
+}
+
+func (p *phaseLog) add(name string, d time.Duration) {
+	if p == nil || d <= 0 {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.total == nil {
+		p.total = map[string]time.Duration{}
+	}
+	if _, ok := p.total[name]; !ok {
+		p.order = append(p.order, name)
+	}
+	p.total[name] += d
+}
+
+func (p *phaseLog) durations() []ItemDuration {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	var out []ItemDuration
+	for _, name := range p.order {
+		out = append(out, ItemDuration{Item: name, Seconds: p.total[name].Seconds()})
+	}
+	return out
+}
+
+// timingSummary is the one line that lists every timed phase.
+func timingSummary(ds []ItemDuration) string {
+	var parts []string
+	for _, d := range ds {
+		parts = append(parts, fmt.Sprintf("%s %s", d.Item, time.Duration(d.Seconds*float64(time.Second)).Round(time.Second)))
+	}
+	return strings.Join(parts, ", ")
 }
