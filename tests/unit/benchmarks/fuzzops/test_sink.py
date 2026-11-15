@@ -285,3 +285,63 @@ def test_pull_run_dir_reports_a_missing_run_directory_and_still_removes_its_pod(
     with pytest.raises(sink.SinkError, match="evidence pull"):
         sink.pull_run_dir(env, lambda *a: ["kubectl", *a], "ns-sdo")
     assert "delete pod" in log.read_text().splitlines()[-1]
+
+
+# ---- pushing a tree into the evidence claim (dev mount without a node directory) -------------------------------
+
+
+def test_the_push_pod_mounts_the_claim_writable_and_fits_the_restricted_level() -> None:
+    pod = sink.pusher_manifest("ns-sdo", "p")["spec"]
+    assert pod["securityContext"]["runAsNonRoot"] is True
+    mount = pod["containers"][0]["volumeMounts"][0]
+    assert mount["mountPath"] == "/sink"
+    assert not mount.get("readOnly")
+    assert pod["volumes"][0]["persistentVolumeClaim"] == {"claimName": sink.EVIDENCE_CLAIM}
+    assert "hostPath" not in json.dumps(pod)
+
+
+def _fake_pushing_kubectl(tmp: Path, monkeypatch: pytest.MonkeyPatch, landing: Path) -> Path:
+    """A kubectl that logs its calls and unpacks the stdin of ``exec ... tar -xf`` into ``landing``."""
+    log = tmp / "kubectl.log"
+    script = tmp / "bin" / "kubectl"
+    script.parent.mkdir()
+    script.write_text(
+        '#!/bin/sh\necho "$*" >> "$CALLS"\n'
+        'case "$*" in *" -xf "*) exec tar -C "$LANDING" -xf - ;; esac\n'
+        "cat >/dev/null 2>&1 </dev/null\nexit 0\n"
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{script.parent}:{os.environ['PATH']}")
+    monkeypatch.setenv("CALLS", str(log))
+    monkeypatch.setenv("LANDING", str(landing))
+    return log
+
+
+def test_push_paths_empties_the_wiped_directories_in_place_unpacks_the_tree_and_removes_its_pod(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "stage"
+    (root / ".dev" / "sdo").mkdir(parents=True)
+    (root / ".dev" / "sdo" / "a.py").write_text("x")
+    landing = tmp_path / "claim"
+    landing.mkdir()
+    log = _fake_pushing_kubectl(tmp_path, monkeypatch, landing)
+    sink.push_paths(lambda *a: ["kubectl", *a], "ns-sdo", root, [".dev"], wipe=[".dev/sdo"])
+    assert (landing / ".dev" / "sdo" / "a.py").read_text() == "x"
+    calls = log.read_text().splitlines()
+    wipe = next(c for c in calls if "find" in c)
+    assert "-mindepth 1 -delete" in wipe  # emptied, not removed: running pods keep their mount
+    assert "/sink/.dev/sdo" in wipe
+    assert "delete pod" in calls[-1]
+    assert "--ignore-not-found" in calls[-1]
+
+
+def test_push_paths_reports_a_failed_unpack_and_still_removes_its_pod(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "stage"
+    root.mkdir()
+    log = _fake_pushing_kubectl(tmp_path, monkeypatch, tmp_path / "missing")
+    with pytest.raises(sink.SinkError, match="push"):
+        sink.push_paths(lambda *a: ["kubectl", *a], "ns-sdo", root, ["."])
+    assert "delete pod" in log.read_text().splitlines()[-1]

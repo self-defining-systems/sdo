@@ -64,6 +64,9 @@ path). `collect` and `transcripts` first copy the sink run directory to `$BENCH_
 through a throwaway pod that mounts the claim (`sink.pull_run_dir`), and `teardown` stops the operator's workloads
 (the sidecar's final pass), pulls, and only then deletes the namespace; a failed pull is logged and the teardown goes
 on. Everything that reads evidence still reads the host copy only.
+`settings.dev_mount` works there too: with no node directory the projected tree (and the operator binary) is pushed into the
+`sdo-evidence` claim under `.dev` (`sink.push_paths`, a throwaway pod) and the pods mount it by subPath
+(`SDO_DEV_MOUNT_CLAIM`); `swap` empties the source directories in place and pushes again, so running pods see the change.
 
 `BENCH_OPERATOR` names the baseline directory and the settings (`model`, `effort`, `provider` default `codex`,
 `image_tag` default `fz-<revision[:8]>`, `dev_mount` (default false; needs `image_tag`: the base images) runs the pods from those images with the checkout's Python sources and the host-built `sdo-operator` projected from `$BENCH_EVIDENCE_HOST/.dev` (`SDO_DEV_MOUNT`, `SDO_DEV_MOUNT_PATH`) so a revision needs no image build, `auth_file` default `~/.codex/auth.json`, and an optional `config` object: an

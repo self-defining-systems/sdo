@@ -20,11 +20,22 @@ func NodePath() string {
 	return DefaultNodePath
 }
 
+// Claim is the PersistentVolumeClaim that holds the projected sources when the lane has no node mount (a lane on a
+// shared multi-node cluster): SDO_DEV_MOUNT_CLAIM. Then NodePath is the directory inside the claim and every mount
+// is a subPath of it. Empty for a node directory.
+func Claim() string { return os.Getenv("SDO_DEV_MOUNT_CLAIM") }
+
+// claimVolume is the one volume of a claim-backed pod.
+const claimVolume = "dev-tree"
+
 // Environment is what the controller container needs to launch dev-mounted workers like itself.
 func Environment() []corev1.EnvVar {
 	env := []corev1.EnvVar{{Name: "SDO_DEV_MOUNT", Value: "1"}}
 	if path := os.Getenv("SDO_DEV_MOUNT_PATH"); path != "" {
 		env = append(env, corev1.EnvVar{Name: "SDO_DEV_MOUNT_PATH", Value: path})
+	}
+	if claim := Claim(); claim != "" {
+		env = append(env, corev1.EnvVar{Name: "SDO_DEV_MOUNT_CLAIM", Value: claim})
 	}
 	return env
 }
@@ -66,22 +77,11 @@ var benchmarkFiles = []string{
 func Apply(pod *corev1.PodSpec) {
 	directory, file := corev1.HostPathDirectory, corev1.HostPathFile
 	for _, name := range []string{"sdo", "libs", "examples"} {
-		pod.Volumes = append(pod.Volumes, corev1.Volume{
-			Name:         "dev-" + name,
-			VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: NodePath() + "/" + name, Type: &directory}},
-		})
+		addVolume(pod, "dev-"+name, name, &directory)
 	}
-	pod.Volumes = append(pod.Volumes, corev1.Volume{
-		Name:         "dev-operator",
-		VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: NodePath() + "/.fastloop/sdo-operator", Type: &file}},
-	})
+	addVolume(pod, "dev-operator", ".fastloop/sdo-operator", &file)
 	if os.Getenv("SDO_DEV_MODULE_DOWNLOADS") == "1" {
-		pod.Volumes = append(pod.Volumes, corev1.Volume{
-			Name: "dev-module-downloads",
-			VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{
-				Path: NodePath() + "/.fastloop/go-mod-download", Type: &directory,
-			}},
-		})
+		addVolume(pod, "dev-module-downloads", ".fastloop/go-mod-download", &directory)
 	}
 	for index := range pod.InitContainers {
 		mount(&pod.InitContainers[index])
@@ -93,18 +93,44 @@ func Apply(pod *corev1.PodSpec) {
 
 func mount(container *corev1.Container) {
 	if os.Getenv("SDO_DEV_MODULE_DOWNLOADS") == "1" {
-		container.VolumeMounts = append(container.VolumeMounts,
-			corev1.VolumeMount{Name: "dev-module-downloads", MountPath: "/go/pkg/mod/cache/download", ReadOnly: true})
+		addMount(container, "dev-module-downloads", "/go/pkg/mod/cache/download", ".fastloop/go-mod-download")
 		container.Env = append(container.Env, corev1.EnvVar{Name: "SDO_DEV_MODULE_DOWNLOADS", Value: "1"})
 	}
 	for _, name := range []string{"sdo", "libs", "examples"} {
-		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
-			Name: "dev-" + name, MountPath: "/opt/sdo/" + name, ReadOnly: true,
-		})
+		addMount(container, "dev-"+name, "/opt/sdo/"+name, name)
 	}
-	container.VolumeMounts = append(container.VolumeMounts,
-		corev1.VolumeMount{Name: "dev-operator", MountPath: "/usr/local/bin/sdo-operator", ReadOnly: true})
+	addMount(container, "dev-operator", "/usr/local/bin/sdo-operator", ".fastloop/sdo-operator")
+}
 
+// addVolume makes the path rel of the projected tree available to the pod as volume name: a hostPath of the node
+// directory, or (a claim-backed lane) the claim's single volume, which a mount then narrows to rel by subPath.
+func addVolume(pod *corev1.PodSpec, name, rel string, kind *corev1.HostPathType) {
+	if Claim() != "" {
+		for _, v := range pod.Volumes {
+			if v.Name == claimVolume {
+				return
+			}
+		}
+		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: claimVolume, VolumeSource: corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: Claim(), ReadOnly: true},
+		}})
+		return
+	}
+	pod.Volumes = append(pod.Volumes, corev1.Volume{
+		Name:         name,
+		VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: NodePath() + "/" + rel, Type: kind}},
+	})
+}
+
+// addMount mounts volume name (made by addVolume for rel) read-only at path.
+func addMount(container *corev1.Container, name, path, rel string) {
+	if Claim() != "" {
+		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
+			Name: claimVolume, MountPath: path, ReadOnly: true, SubPath: NodePath() + "/" + rel,
+		})
+		return
+	}
+	container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: name, MountPath: path, ReadOnly: true})
 }
 
 // ApplyWorker adds only the benchmark worker entry points to a development
@@ -113,10 +139,10 @@ func ApplyWorker(pod *corev1.PodSpec) {
 	Apply(pod)
 	directory, file := corev1.HostPathDirectory, corev1.HostPathFile
 	for index, path := range benchmarkFiles {
-		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: fmt.Sprintf("dev-bench-%d", index), VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: NodePath() + "/" + path, Type: &file}}})
+		addVolume(pod, fmt.Sprintf("dev-bench-%d", index), path, &file)
 	}
-	for index, name := range []string{"scripted_program", "scripted_networkpolicy_program"} {
-		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: fmt.Sprintf("dev-script-%d", index), VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: NodePath() + "/benchmarks/sregym/fastloop/" + name, Type: &directory}}})
+	for index, name := range scriptDirectories {
+		addVolume(pod, fmt.Sprintf("dev-script-%d", index), scriptRoot+name, &directory)
 	}
 
 	for index := range pod.Containers {
@@ -127,12 +153,15 @@ func ApplyWorker(pod *corev1.PodSpec) {
 	}
 }
 
+const scriptRoot = "benchmarks/sregym/fastloop/"
+
+var scriptDirectories = []string{"scripted_program", "scripted_networkpolicy_program"}
+
 func mountWorker(container *corev1.Container) {
 	for index, path := range benchmarkFiles {
-		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: fmt.Sprintf("dev-bench-%d", index), MountPath: "/opt/sdo/" + path, ReadOnly: true})
+		addMount(container, fmt.Sprintf("dev-bench-%d", index), "/opt/sdo/"+path, path)
 	}
-	for index, name := range []string{"scripted_program", "scripted_networkpolicy_program"} {
-		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: fmt.Sprintf("dev-script-%d", index), MountPath: "/opt/sdo/benchmarks/sregym/fastloop/" + name, ReadOnly: true})
+	for index, name := range scriptDirectories {
+		addMount(container, fmt.Sprintf("dev-script-%d", index), "/opt/sdo/"+scriptRoot+name, scriptRoot+name)
 	}
-
 }

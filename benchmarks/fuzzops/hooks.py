@@ -805,11 +805,31 @@ def dev_mount_env(
     variables that make the install mount it. Empty for an image-built operator."""
     if not block.dev_mount:
         return {}
+    if sink.pull_mode(env):
+        # no node directory: the tree is pushed into the evidence claim (push_dev_tree) and mounted from there
+        return {"SDO_DEV_MOUNT": "1", "SDO_DEV_MOUNT_PATH": DEV_DIRECTORY, "SDO_DEV_MOUNT_CLAIM": sink.EVIDENCE_CLAIM}
     host, node = _need(env, "BENCH_EVIDENCE_HOST"), _need(env, "BENCH_EVIDENCE_NODE")
     started = time.monotonic()
     devtree.sync(Path.cwd(), Path(host) / DEV_DIRECTORY, binary)
     log(f"projected the checkout over the base images in {time.monotonic() - started:.1f}s")
     return {"SDO_DEV_MOUNT": "1", "SDO_DEV_MOUNT_PATH": f"{node}/{DEV_DIRECTORY}"}
+
+
+def push_dev_tree(
+    env: Mapping[str, str], kube: Kube, control: str, lane_dir: Path, binary: Path | None, log: Callable[[str], None]
+) -> None:
+    """Pull mode: project the checkout (and the operator binary, when given) into the lane's evidence claim, where the
+    dev-mounted pods read it. The source directories are emptied in place first so running pods see the new files."""
+    started = time.monotonic()
+    stage = lane_dir / "dev-stage"
+    shutil.rmtree(stage, ignore_errors=True)
+    devtree.sync(Path.cwd(), stage / DEV_DIRECTORY, binary)
+    wipe = [f"{DEV_DIRECTORY}/{rel}" for rel in devtree.PROJECTED if (stage / DEV_DIRECTORY / rel).is_dir()]
+    try:
+        sink.push_paths(kube.cmd, control, stage, [DEV_DIRECTORY], wipe=wipe)
+    except sink.SinkError as exc:
+        raise HookError(str(exc)) from exc
+    log(f"pushed the checkout into the evidence claim in {time.monotonic() - started:.1f}s")
 
 
 def clone_baseline(baseline: Baseline, repo: Path) -> str:
@@ -952,6 +972,8 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
         _run(
             kube.cmd("apply", "-f", "-"), "evidence claim", 120, input=json.dumps(sink.claim_manifest(baseline.control))
         )
+        if block.dev_mount:
+            push_dev_tree(env, kube, baseline.control, lane_dir, binary, out)
     else:
         for line in declare_node_images(cfg, images(source.manifests())):
             out(f"declared {line}")
@@ -1235,8 +1257,11 @@ def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     if why := devtree.swap_problem(Path.cwd(), record.get("compiled") or {}):
         raise HookError(why)
     started = time.monotonic()
-    devtree.sync(Path.cwd(), Path(_need(env, "BENCH_EVIDENCE_HOST")) / DEV_DIRECTORY, None)
     kube, control = _kube(env), control_namespace(env)
+    if sink.pull_mode(env):
+        push_dev_tree(env, kube, control, lane_dir, None, lambda _m: None)
+    else:
+        devtree.sync(Path.cwd(), Path(_need(env, "BENCH_EVIDENCE_HOST")) / DEV_DIRECTORY, None)
     retire_standby(kube, control)
     wait_standby(kube, control, SWAP_STANDBY_WAIT_S)
     if "state" not in record:
