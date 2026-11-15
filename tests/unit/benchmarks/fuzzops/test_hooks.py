@@ -893,3 +893,85 @@ def test_without_harness_page_the_operator_mode_is_untouched(tmp_path: Path) -> 
 def test_harness_page_refuses_an_experiment_mode(tmp_path: Path) -> None:
     with pytest.raises(HookError, match="mode"):
         OperatorBlock.load(_operator_file(tmp_path, tmp_path, model="m", harness_page=True, config={"mode": "frozen"}))
+
+
+# ---- provider vcluster: registry images and pulled evidence --------------------------------------------------
+
+
+def test_lane_registry_images_push_and_name_images_as_every_node_pulls_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = _fake_tools(tmp_path, monkeypatch)
+    script = tmp_path / "registry.sh"
+    script.write_text(
+        '#!/bin/sh\necho "registry $*" >> "$CALLS"\n[ "$1" = ref ] && echo "localhost:30500/library/$2"\nexit 0\n'
+    )
+    lines: list[str] = []
+    refs = hooks.lane_registry_images(script, ["sdo-controller:t", "sdo-responder:t"], lines.append)
+    assert refs == {
+        "sdo-controller:t": "localhost:30500/library/sdo-controller:t",
+        "sdo-responder:t": "localhost:30500/library/sdo-responder:t",
+    }
+    calls = log.read_text().splitlines()
+    assert "registry up" in calls
+    assert "registry push sdo-controller:t sdo-responder:t" in calls
+    assert not any(call.startswith("kind") for call in calls)
+
+
+def test_a_lane_without_nodes_cannot_fall_back_to_loading_images() -> None:
+    with pytest.raises(HookError, match="registry script"):
+        hooks.lane_registry_images(None, ["sdo-controller:t"], lambda _line: None)
+
+
+def test_pull_mode_teardown_stops_the_operator_and_pulls_before_deleting_the_namespace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _baseline_dir(tmp_path)
+    events: list[str] = []
+
+    def run(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        words = " ".join(cmd)
+        if "delete deployments,jobs,statefulsets" in words:
+            events.append("stop")
+        elif "delete namespace" in words:
+            events.append("delete namespace")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(hooks.subprocess, "run", run)
+    monkeypatch.setattr(hooks.sink, "pull_run_dir", lambda *_: events.append("pull"))
+    env = {
+        "FUZZOPS_NAMESPACE": "ns1",
+        "KUBECONFIG": "/k",
+        "BENCH_OPERATOR": str(_operator_file(tmp_path, root)),
+        "BENCH_EVIDENCE_MODE": "pull",
+        "BENCH_EVIDENCE_RUN": "e-l-1",
+        "BENCH_EVIDENCE_HOST": str(tmp_path / "ev"),
+    }
+    assert hooks.teardown(env, out=lambda _: None) == 0
+    assert events == ["stop", "pull", "delete namespace"]
+
+
+def test_pull_mode_teardown_goes_on_when_the_pull_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = _baseline_dir(tmp_path)
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        hooks.subprocess,
+        "run",
+        lambda cmd, **_: deleted.append(" ".join(cmd)) or subprocess.CompletedProcess(cmd, 0, "", ""),
+    )
+
+    def broken(*_: Any) -> None:
+        raise hooks.sink.SinkError("no pod")
+
+    monkeypatch.setattr(hooks.sink, "pull_run_dir", broken)
+    lines: list[str] = []
+    env = {
+        "FUZZOPS_NAMESPACE": "ns1",
+        "BENCH_OPERATOR": str(_operator_file(tmp_path, root)),
+        "BENCH_EVIDENCE_MODE": "pull",
+        "BENCH_EVIDENCE_RUN": "e-l-1",
+        "BENCH_EVIDENCE_HOST": str(tmp_path / "ev"),
+    }
+    assert hooks.teardown(env, out=lines.append) == 0
+    assert any("delete namespace ns1-sdo" in d for d in deleted)
+    assert any("evidence pull failed" in line for line in lines)

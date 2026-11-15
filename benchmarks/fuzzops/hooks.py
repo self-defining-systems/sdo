@@ -675,13 +675,16 @@ def install_existing_launch(
     kubeconfig: Path,
     evidence_env: Mapping[str, str],
     config_dir: Path,
+    image: Mapping[str, str] | None = None,
 ) -> tuple[list[str], dict[str, str]]:
     """The production ``sdo-operator install-existing`` command restoring the baseline on the lane and its
     ``SDO_*`` environment: the benchmark profile, then the baseline's and the experiment's overlays (written to
     ``config_dir``), the settings' agent and the lane's evidence sink (``sink.install_env``)."""
-    if not evidence_env.get("SDO_EVIDENCE_HOST_PATH") or not evidence_env.get("SDO_EVIDENCE_RUN_ID"):
+    if not (
+        evidence_env.get("SDO_EVIDENCE_HOST_PATH") or evidence_env.get("SDO_EVIDENCE_VOLUME")
+    ) or not evidence_env.get("SDO_EVIDENCE_RUN_ID"):
         raise HookError("install-existing needs the lane's evidence sink and run ID")
-    image = block.images()
+    image = image or block.images()
     if not block.model:
         raise HookError("the operator block's settings need a model")
     args = [
@@ -768,6 +771,22 @@ def load_images(cluster: str, wanted: list[str], log: Callable[[str], None], reg
         log(f"loaded {image} on {','.join(workers)}")
 
 
+def lane_registry_images(registry: Path | None, wanted: list[str], log: Callable[[str], None]) -> dict[str, str]:
+    """The operator images of a lane whose nodes cannot be loaded (provider vcluster): each is pushed to the shared
+    cluster's registry by the pinned fuzzops checkout's ``registry.sh`` and named as every node pulls it
+    (``registry.sh ref IMAGE``); returns image -> reference. There is no fallback."""
+    if registry is None:
+        raise HookError("a lane without nodes to load needs the host registry script (BENCH_REGISTRY)")
+    for image in wanted:
+        if subprocess.run(["docker", "image", "inspect", image], capture_output=True, check=False).returncode != 0:
+            raise HookError(f"image {image} does not exist on this host (build it with scripts/build_sdo_images.sh)")
+    _run(["bash", str(registry), "up"], "registry up", 300)
+    _run(["bash", str(registry), "push", *wanted], "registry push", 1800)
+    refs = {i: _run(["bash", str(registry), "ref", i], f"registry ref {i}", 60).stdout.strip() for i in wanted}
+    log(f"pushed {', '.join(wanted)} to the shared registry: {', '.join(refs.values())}")
+    return refs
+
+
 def clone_baseline(baseline: Baseline, repo: Path) -> str:
     """Clone the baseline bundle's branch into ``repo`` as ``main`` with no remote; returns HEAD."""
     shutil.rmtree(repo, ignore_errors=True)
@@ -782,9 +801,30 @@ def clone_baseline(baseline: Baseline, repo: Path) -> str:
     return head
 
 
-def remove_operator(kube: Kube, control: str, log: Callable[[str], None]) -> None:
+def pull_evidence(env: Mapping[str, str], kube: Kube, control: str) -> None:
+    """Copy the lane's evidence claim into the host sink directory (pull mode only)."""
+    sink.pull_run_dir(env, kube.cmd, control)
+
+
+def remove_operator(kube: Kube, control: str, log: Callable[[str], None], env: Mapping[str, str] | None = None) -> None:
     """Delete the control namespace first, waiting until it is gone (its Pods get SIGTERM, so the evidence sidecar
-    runs its final pass), then the cluster grant install-existing made for it."""
+    runs its final pass), then the cluster grant install-existing made for it. A pull-mode lane (``env``) stops the
+    operator's workloads first, copies the evidence claim out and only then deletes the namespace that holds it."""
+    if env is not None and sink.pull_mode(env):
+        has_ns = subprocess.run(kube.cmd("get", "namespace", control), capture_output=True, timeout=60, check=False)
+        if has_ns.returncode == 0:
+            _run(
+                kube.cmd(
+                    "-n", control, "delete", "deployments,jobs,statefulsets", "--all", "--wait=true", "--timeout=600s"
+                ),
+                f"stop the operator in {control}",
+                660,
+            )
+            try:
+                pull_evidence(env, kube, control)
+                log(f"pulled the evidence of {control} into the host sink")
+            except sink.SinkError as exc:
+                log(f"evidence pull failed (the namespace is deleted anyway): {exc}")
     _run(
         kube.cmd("delete", "namespace", control, "--ignore-not-found", "--wait=true", "--timeout=600s"),
         f"delete namespace {control}",
@@ -844,12 +884,13 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     # (e) the operator images on the workers
     image = block.images()
     registry = Path(env["BENCH_REGISTRY"]) if env.get("BENCH_REGISTRY") else None
-    load_images(
-        cluster,
-        [image["controller"], image["responder"], image["script"]],
-        out,
-        registry=registry if registry is not None and registry.is_file() else None,
-    )
+    registry = registry if registry is not None and registry.is_file() else None
+    pulled = sink.pull_mode(env)
+    if pulled:
+        refs = lane_registry_images(registry, list(image.values()), out)
+        image = {name: refs[tag] for name, tag in image.items()}
+    else:
+        load_images(cluster, [image["controller"], image["responder"], image["script"]], out, registry=registry)
     kube = _kube(env)
     if (
         subprocess.run(
@@ -858,7 +899,7 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
         == 0
     ):
         # A previous attempt left an operator: start over from the baseline.
-        remove_operator(kube, baseline.control, out)
+        remove_operator(kube, baseline.control, out, env)
     # (f) namespaces, credentials by file reference, node image digest names
     cfg = InstallConfig(
         pack=source.root,
@@ -880,13 +921,19 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     if not cfg.auth_file.is_file():
         raise HookError(f"agent credentials file {cfg.auth_file} is missing")
     provision_namespaces(cfg)
-    for line in declare_node_images(cfg, images(source.manifests())):
-        out(f"declared {line}")
+    if pulled:
+        # no node holds the app's images by tag: they are pulled from their registries, nothing to declare
+        _run(
+            kube.cmd("apply", "-f", "-"), "evidence claim", 120, input=json.dumps(sink.claim_manifest(baseline.control))
+        )
+    else:
+        for line in declare_node_images(cfg, images(source.manifests())):
+            out(f"declared {line}")
     # (g) the baseline memory as the accepted repository
     memory = clone_baseline(baseline, lane_dir / "app")
     # (h) production restore: install-existing, history kept, no install-time agents
     args, launch_env = install_existing_launch(
-        binary.resolve(), lane_dir / "app", baseline, block, kubeconfig, evidence_env, lane_dir / "sdo-config"
+        binary.resolve(), lane_dir / "app", baseline, block, kubeconfig, evidence_env, lane_dir / "sdo-config", image
     )
     (lane_dir / "install-existing-args.json").write_text(json.dumps(args, indent=1) + "\n")
     (lane_dir / "install-existing-env.json").write_text(json.dumps(launch_env, indent=1, sort_keys=True) + "\n")
@@ -1043,6 +1090,8 @@ def collect(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
         return "ok"
 
     def evidence() -> str:
+        if sink.pull_mode(env):
+            pull_evidence(env, kube, control)
         copied = sink.copy_interval(
             sink.host_run_dir(env),
             dest / "evidence",
@@ -1089,12 +1138,23 @@ def collect(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
 
 
 def teardown(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
-    remove_operator(_kube(env), control_namespace(env), out)
+    remove_operator(_kube(env), control_namespace(env), out, env)
     return 0
 
 
 def transcripts(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     try:
+        if sink.pull_mode(env):
+            control = control_namespace(env)
+            kube = _kube(env)
+            # after the teardown the claim is gone and the host copy it left is what counts
+            if (
+                subprocess.run(
+                    kube.cmd("get", "namespace", control), capture_output=True, timeout=60, check=False
+                ).returncode
+                == 0
+            ):
+                pull_evidence(env, kube, control)
         why = sink.transcripts_verdict(sink.host_run_dir(env))
     except sink.SinkError as exc:
         why = f"no sink: {exc}"

@@ -17,13 +17,14 @@ import json
 import os
 import re
 import shutil
+import subprocess
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Callable, Iterable, Mapping
 
 LAYOUT_SCHEMA = "sdo.evidence/v1"
 LAYOUT_FILE = "layout.json"
@@ -55,8 +56,106 @@ def _need(env: Mapping[str, str], *names: str) -> list[str]:
     return values
 
 
+#: A lane without a host mount (provider vcluster) keeps its evidence on this claim of the control namespace and the
+#: hooks pull it into the host directory (``BENCH_EVIDENCE_MODE=pull``).
+EVIDENCE_CLAIM = "sdo-evidence"
+EVIDENCE_CLAIM_SIZE = "5Gi"
+PULL_IMAGE = "busybox:1.36"
+PULL_UID = 65532
+PULL_READY_TIMEOUT = "180s"
+
+
+def pull_mode(env: Mapping[str, str]) -> bool:
+    """Whether the lane's evidence is pulled from the cluster instead of written to a mounted host directory."""
+    return env.get("BENCH_EVIDENCE_MODE", "") == "pull"
+
+
+def claim_manifest(control: str) -> dict[str, Any]:
+    """The PersistentVolumeClaim that holds the sink of a pull-mode lane."""
+    return {
+        "apiVersion": "v1",
+        "kind": "PersistentVolumeClaim",
+        "metadata": {"name": EVIDENCE_CLAIM, "namespace": control},
+        "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": EVIDENCE_CLAIM_SIZE}}},
+    }
+
+
+def puller_manifest(control: str, name: str) -> dict[str, Any]:
+    """A throwaway pod that mounts the sink claim read-only (restricted pod security compatible)."""
+    return {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {"name": name, "namespace": control},
+        "spec": {
+            "restartPolicy": "Never",
+            "terminationGracePeriodSeconds": 0,
+            "securityContext": {
+                "runAsNonRoot": True,
+                "runAsUser": PULL_UID,
+                "seccompProfile": {"type": "RuntimeDefault"},
+            },
+            "containers": [
+                {
+                    "name": "pull",
+                    "image": PULL_IMAGE,
+                    "command": ["sleep", "600"],
+                    "securityContext": {"allowPrivilegeEscalation": False, "capabilities": {"drop": ["ALL"]}},
+                    "volumeMounts": [{"name": "sink", "mountPath": "/sink", "readOnly": True}],
+                }
+            ],
+            "volumes": [{"name": "sink", "persistentVolumeClaim": {"claimName": EVIDENCE_CLAIM, "readOnly": True}}],
+        },
+    }
+
+
+def pull_run_dir(env: Mapping[str, str], kube_cmd: Callable[..., list[str]], control: str) -> None:
+    """Copy the sink run directory out of the lane's evidence claim into ``host_run_dir(env)``.
+
+    A pod mounts the claim (it shares the node of the controller's pod, the claim being node-local), ``tar`` streams
+    the run directory out and the pod is deleted. Safe to repeat: files are overwritten, the sink only appends.
+    Raises ``SinkError`` when the claim, the pod or the run directory is not there."""
+    run = _need(env, "BENCH_EVIDENCE_RUN")[0]
+    dest = host_run_dir(env)
+    name = f"evidence-pull-{os.getpid()}"
+    manifest = json.dumps(puller_manifest(control, name))
+
+    def kube(*args: str, **kw: Any) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.run(kube_cmd("-n", control, *args), capture_output=True, check=False, **kw)
+
+    try:
+        created = subprocess.run(
+            kube_cmd("apply", "-f", "-"), input=manifest.encode(), capture_output=True, check=False, timeout=120
+        )
+        if created.returncode != 0:
+            raise SinkError(f"evidence pull pod: {created.stderr.decode()[-200:].strip()}")
+        ready = kube("wait", f"pod/{name}", "--for=condition=Ready", f"--timeout={PULL_READY_TIMEOUT}", timeout=240)
+        if ready.returncode != 0:
+            raise SinkError(f"evidence pull pod not ready: {ready.stderr.decode()[-200:].strip()}")
+        dest.mkdir(parents=True, exist_ok=True)
+        tar = subprocess.Popen(
+            kube_cmd("-n", control, "exec", name, "-c", "pull", "--", "tar", "-C", f"/sink/{run}", "-cf", "-", "."),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        extract = subprocess.run(
+            ["tar", "-C", str(dest), "-xf", "-"], stdin=tar.stdout, capture_output=True, check=False, timeout=600
+        )
+        assert tar.stdout is not None
+        tar.stdout.close()
+        err = (tar.stderr.read() if tar.stderr else b"").decode()[-200:].strip()
+        if tar.wait() != 0 or extract.returncode != 0:
+            raise SinkError(f"evidence pull of {run}: {err or extract.stderr.decode()[-200:].strip()}")
+    finally:
+        kube("delete", "pod", name, "--ignore-not-found", "--wait=false", "--grace-period=0", "--force", timeout=120)
+
+
 def install_env(env: Mapping[str, str]) -> dict[str, str]:
-    """The ``install-existing`` variables that point SDO's evidence sink at the lane's node mount."""
+    """The ``install-existing`` variables that point SDO's evidence sink at the lane's node mount (or, in pull mode,
+    at the lane's evidence claim)."""
+    if pull_mode(env):
+        (run,) = _need(env, "BENCH_EVIDENCE_RUN")
+        volume = json.dumps({"persistentVolumeClaim": {"claimName": EVIDENCE_CLAIM}}, separators=(",", ":"))
+        return {"SDO_EVIDENCE_VOLUME": volume, "SDO_EVIDENCE_RUN_ID": run}
     node, run = _need(env, "BENCH_EVIDENCE_NODE", "BENCH_EVIDENCE_RUN")
     if not node.startswith("/"):
         raise SinkError(f"BENCH_EVIDENCE_NODE must be an absolute node path, got {node!r}")
