@@ -2,6 +2,7 @@ package requestmetrics_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -315,6 +316,22 @@ func TestUndeclaredRoutesAreCappedBusiestFirst(t *testing.T) {
 	}
 	if all := detectWith(t, undeclaredDetector(2), s); len(all) != 2 || all[0].Metadata["undeclared_truncated"] != nil {
 		t.Fatalf("cap 2 findings = %+v", all)
+	}
+}
+
+// Routes that carry failures are evaluated before routes that are merely busy: a failing route must not drop out
+// of the cap, and so clear without recovery evidence, because healthy routes got busier.
+func TestFailingUndeclaredRouteIsNotCappedOutByBusyHealthyRoutes(t *testing.T) {
+	recent := []metrics.Series{
+		series(pkgRoute, "200", steady(11, 7)...),
+		series(pkgRoute, "500", 0, 0, 0, 5, 8, 8, 8),
+	}
+	for i := 0; i < requestmetrics.DefaultMaxUndeclaredRoutes+5; i++ {
+		recent = append(recent, series(fmt.Sprintf("GET /busy/%d", i), "200", steady(500, 7)...))
+	}
+	got := detectWith(t, undeclaredDetector(0), snapshot(recent, healthyBaseline(), presence()))
+	if len(got) != 1 || got[0].Metadata["route"] != pkgRoute {
+		t.Fatalf("the failing route was capped out: %+v", got)
 	}
 }
 
