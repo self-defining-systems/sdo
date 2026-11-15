@@ -3,12 +3,12 @@ package operatorcli
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"testing"
 
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/operatorcli/internal/processio"
 )
 
 // The live items judge the detectors the controller will run: the traffic
@@ -25,8 +25,8 @@ func TestPreparedTreeInstallsTheTrafficDetectorOfAProbeWorkload(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{{"init", "-q"}, {"add", "-A"}, {"-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x"}} {
-		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, out)
+		if _, err := processio.Git(context.Background(), append([]string{"-C", repo}, args...)...); err != nil {
+			t.Fatal(err)
 		}
 	}
 	tree, cleanup, err := preparedTree(context.Background(), repo, "")

@@ -5,12 +5,11 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
+	"sdo.dev/operator/operatorcli/internal/processio"
 	"sdo.dev/operator/telemetry"
 )
 
@@ -27,15 +26,12 @@ func preparedTree(ctx context.Context, repo, telemetryEnvironment string) (strin
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
 	run := func(args ...string) error {
-		out, err := exec.CommandContext(ctx, "git", append([]string{"-c", "user.name=sdo", "-c", "user.email=sdo@invalid", "-C", dir}, args...)...).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-		}
-		return nil
+		_, err := processio.Git(ctx, append([]string{"-c", "user.name=sdo", "-c", "user.email=sdo@invalid", "-C", dir}, args...)...)
+		return err
 	}
-	if out, err := exec.CommandContext(ctx, "git", "clone", "-q", repo, dir).CombinedOutput(); err != nil {
+	if _, err := processio.Git(ctx, "clone", "-q", repo, dir); err != nil {
 		cleanup()
-		return "", nil, fmt.Errorf("clone %s: %w: %s", repo, err, strings.TrimSpace(string(out)))
+		return "", nil, err
 	}
 	env := telemetry.Environment{Version: telemetry.EnvironmentVersion}
 	if telemetryEnvironment != "" {
