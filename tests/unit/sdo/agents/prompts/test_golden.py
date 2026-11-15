@@ -1,6 +1,8 @@
 """Byte goldens captured from production builders before template extraction."""
 
 import re
+
+import pytest
 import tempfile
 from pathlib import Path
 
@@ -59,13 +61,20 @@ def test_production_instructions_never_spill_to_context_files() -> None:
         assert not normalize_prompt(prompt).startswith("Full: <context file>\nSummary ("), name
 
 
-def test_closing_guidance_says_memory_is_per_application() -> None:
-    from pathlib import Path
-
-    sentence = "Memory is for this application: a playbook may name its own tables, resources and commands."
+@pytest.mark.parametrize(
+    "path",
+    [
+        "sdo/agents/responder/prompts/scriptify.md",
+        "sdo/skills/playbook-writing/SKILL.md",
+        "sdo/skills/sdo-memory/SKILL.md",
+        "sdo/skills/sdo-playbook-authoring/SKILL.md",
+    ],
+)
+def test_memory_authoring_text_says_memory_is_per_application(path: str) -> None:
     root = Path(__file__).resolve().parents[5]
-    assert sentence in (root / "sdo/agents/responder/prompts/scriptify.md").read_text()
-    skill = (root / "sdo/skills/playbook-writing/SKILL.md").read_text()
-    assert "may name its tables, resources and commands" in skill
-    assert "never by name" not in skill
-    assert "no app names" not in skill
+    text = " ".join((root / path).read_text().split())
+    assert "this application" in text
+    assert "tables, resources and commands" in text
+    assert "not away from the application" in text
+    for stale in ("never by name", "no app names", "never by app name", "Avoid hard-coded service or app names"):
+        assert stale not in text

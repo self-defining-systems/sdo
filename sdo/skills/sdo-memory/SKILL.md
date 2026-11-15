@@ -16,7 +16,7 @@ Memory exists so later incidents are fixed faster and cheaper. Read and reason a
 
 - Treat memory as advice and accepted source as intent; check both against live state before acting.
 - Keep one failure mechanism per playbook; refine it when only a resource or parameter differs.
-- Avoid hard-coded service or app names: prefer runtime bindings from findings, Diagnose or responder values; isolate unavoidable names in one logical helper and document app constants in the playbook README.
+- Memory belongs to this application and may name its own tables, resources and commands; generalize over what varies between incidents, not away from the application. Bind what varies (which rows, which workload) from findings, Diagnose or responder values; keep this application's constants in one logical helper and the README. A program for the mechanical part beats none.
 - Use detectors to find problems proactively and playbooks to diagnose and mitigate; their relationship need not be one to one.
 - Refine a playbook whose mitigation failed or was undone, or set `status: retired` and a nonempty `retired_reason` in its front matter; retired playbooks remain in history but are not compiled or offered.
 - Keep memory small and current: give each playbook README a one-line `description:` in its YAML front matter; merge duplicates. SDO generates the playbook index from each README's first heading; never edit it.

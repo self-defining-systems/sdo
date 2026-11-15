@@ -20,7 +20,7 @@ A playbook is `.sdo/playbooks/<id>/` with `diagnose.go` and `mitigate.go`. Copy 
   `program.X` with the same fields.
 - Restoring accepted source is not automatic: carry a restore you ran as `program.SetField`
   with `program.FromSource`. Leave out changes that did not help.
-- Memory belongs to this application and may name its tables, resources and commands; generalize over what varies per incident (rows, workload), not away from the app. A partial program for the mechanical steps is better than none. No `RunScript`, no passwords.
+- Memory belongs to this application and may name its own tables, resources and commands; generalize over what varies between incidents (rows, workload), not away from the application. A partial program for the mechanical steps is better than none. No `RunScript`, no passwords.
 
 Check:
 1. `sdo-operator memory check`
