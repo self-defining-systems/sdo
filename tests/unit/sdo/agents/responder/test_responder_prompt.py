@@ -106,3 +106,11 @@ def test_the_first_message_names_the_commands_when_no_change_is_listed() -> None
     assert "`sdo changes`" in prompt
     assert "`sdo timeline`" in prompt
     assert "CANDIDATES" not in prompt
+
+
+def test_the_operating_skill_forbids_printing_credentials_but_allows_use_in_place() -> None:
+    skill = " ".join((__import__("pathlib").Path("sdo/skills/sdo-operating/SKILL.md")).read_text().split())
+
+    assert "Never print, copy, log or write a credential value" in skill
+    assert "may be used in place" in skill
+    assert "Never read Secret values" not in skill
