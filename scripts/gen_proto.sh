@@ -74,7 +74,8 @@ if ! timeout 240 buf generate "${TEMPLATE[@]}" 2>"${VALIDATE_TMP}/generate-error
     fi
     if ! command -v protoc >/dev/null 2>&1 || [ "$(protoc --version)" != "libprotoc 33.4" ]; then
         echo "BSR unavailable or rate limited: local fallback requires protoc 33.4 on PATH." >&2
-        exit 1
+        # 75 (EX_TEMPFAIL): the toolchain is unavailable, not the contracts wrong.
+        exit 75
     fi
     echo "   BSR unavailable or rate limited; generating locally with pinned protoc 33.4" >&2
     # Preserve the managed Go generation and replace only the remote plugins.

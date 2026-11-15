@@ -36,6 +36,19 @@ echo "==> tracked experiment outputs"
 uv run python scripts/check_experiment_outputs.py
 
 mode="${1:-}"
+if [[ "$mode" != --go-only ]]; then
+    # Stages that cannot run here (e.g. proto without buf/BSR) append a reason;
+    # they are listed once, last, so a skip is never mistaken for a pass.
+    export SDO_SKIPPED_STAGES="$(mktemp)"
+    print_skipped_stages() {
+        if [ -s "$SDO_SKIPPED_STAGES" ]; then
+            echo "==> SKIPPED stages (not checked locally; not a pass for these):" >&2
+            sed 's/^/    - /' "$SDO_SKIPPED_STAGES" >&2
+        fi
+        rm -f "$SDO_SKIPPED_STAGES"
+    }
+    trap print_skipped_stages EXIT
+fi
 case "$mode" in
     --go-only) exec bash "$SCRIPT_DIR/check_go_errors.sh" "${@:2}" ;;
     ""|--fix) check bash "$SCRIPT_DIR/check_go_errors.sh" ;;
