@@ -66,3 +66,24 @@ func TestEnvironmentCarriesTheClaimToTheController(t *testing.T) {
 		t.Fatal("claim not passed on to dev-mounted workers")
 	}
 }
+
+func TestClaimBackedMountsShareThePodsExistingVolumeOnTheClaim(t *testing.T) {
+	// A second volume on the same node-local claim in one pod never mounts: reuse the volume the pod already has.
+	t.Setenv("SDO_DEV_MOUNT_PATH", ".dev")
+	t.Setenv("SDO_DEV_MOUNT_CLAIM", "sdo-evidence")
+	pod := &corev1.PodSpec{
+		Volumes: []corev1.Volume{{Name: "evidence-sink", VolumeSource: corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "sdo-evidence"},
+		}}},
+		Containers: []corev1.Container{{Name: "c"}},
+	}
+	Apply(pod)
+	if len(pod.Volumes) != 1 || pod.Volumes[0].Name != "evidence-sink" {
+		t.Fatalf("want the pod's own claim volume only, got %v", pod.Volumes)
+	}
+	for _, m := range pod.Containers[0].VolumeMounts {
+		if m.Name != "evidence-sink" || m.SubPath == "" {
+			t.Fatalf("mount %v does not use the existing claim volume by subPath", m)
+		}
+	}
+}

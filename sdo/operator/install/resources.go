@@ -231,6 +231,7 @@ func Resources(c Config) (Plan, error) {
 	control := c.controlNamespace()
 	split := control != c.Namespace
 	plan := Plan{PVC: &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: c.RepositoryPVC, Namespace: control}, Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("10Gi")}}}}}
+	plan.PVC.Annotations = devmount.VolumeNodeAnnotations()
 	if split {
 		plan.Namespace = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: control, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo", ControllerNamespaceLabel: "true", ApplicationNamespaceLabel: c.Namespace}}}
 	}
