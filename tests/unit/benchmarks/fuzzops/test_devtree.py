@@ -91,3 +91,11 @@ def test_wipe_problems_name_every_way_the_lane_left_the_prepared_state() -> None
     assert hooks.wipe_problems(before, dict(before)) == []
     found = hooks.wipe_problems(before, {"head": "b" * 40, "status": " M .sdo/x", "outcomes": "outcome.json"})
     assert len(found) == 3
+
+
+def test_swap_receipt_has_the_fields_the_bench_reads_after_prepare(tmp_path: Path) -> None:
+    from benchmarks.fuzzops import hooks
+
+    receipt = hooks.swap_receipt(tmp_path, "abc", "m1", 3.14)
+    assert {"pack", "operator_version", "memory"} <= receipt.keys()
+    assert receipt["pack"] == str((tmp_path / "pack").resolve())

@@ -1247,12 +1247,18 @@ def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
         raise HookError(f"the operator is not idle: {why}")
     record["revision"] = revision
     (lane_dir / PREPARED_RECORD).write_text(json.dumps(record) + "\n")
-    out(
-        json.dumps(
-            {"operator_version": revision, "memory": record["memory"], "swap_s": round(time.monotonic() - started, 1)}
-        )
-    )
+    out(json.dumps(swap_receipt(lane_dir, revision, record["memory"], time.monotonic() - started)))
     return 0
+
+
+def swap_receipt(lane_dir: Path, revision: str, memory: str, seconds: float) -> dict[str, Any]:
+    """The last stdout line of ``swap``: ``prepare``'s fields (the bench reads both alike) plus its duration."""
+    return {
+        "pack": str((lane_dir / "pack").resolve()),
+        "operator_version": revision,
+        "memory": memory,
+        "swap_s": round(seconds, 1),
+    }
 
 
 def standby_jobs(kube: Kube, control: str) -> list[str]:
