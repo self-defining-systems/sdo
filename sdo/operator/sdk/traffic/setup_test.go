@@ -300,3 +300,33 @@ func TestResumedSetupStepSeesProbeUserPasswords(t *testing.T) {
 		t.Fatalf("a resumed step lost the probe user's password: %+v", sample)
 	}
 }
+
+// Iterations of one scenario run concurrently; its setup must still write the
+// fixture once, not once per iteration that started before the first finished.
+func TestConcurrentIterationsRunSetupOnce(t *testing.T) {
+	store := &slowCreateStore{itemStore: itemStore{items: map[string]bool{}}}
+	engine := setupEngine(t, laterScenario(), store)
+	var wg sync.WaitGroup
+	for iteration := uint64(0); iteration < 8; iteration++ {
+		wg.Add(1)
+		go func(iteration uint64) {
+			defer wg.Done()
+			engine.Iterate(context.Background(), iteration)
+		}(iteration)
+	}
+	wg.Wait()
+	if store.posts != 1 {
+		t.Fatalf("setup wrote the fixture %d times, want once", store.posts)
+	}
+}
+
+// slowCreateStore keeps a create in flight long enough for concurrent
+// iterations to overlap, like an application that takes a moment to answer.
+type slowCreateStore struct{ itemStore }
+
+func (s *slowCreateStore) Do(request *http.Request) (*http.Response, error) {
+	if request.Method == http.MethodPost {
+		time.Sleep(50 * time.Millisecond)
+	}
+	return s.itemStore.Do(request)
+}

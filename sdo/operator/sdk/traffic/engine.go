@@ -135,6 +135,26 @@ func (e *Engine) UsePasswords(source Passwords) { e.passwords = source }
 type setupRecord struct {
 	mu       sync.Mutex
 	progress map[string]setupProgress
+	// running serializes a scenario's setup: iterations run concurrently, and
+	// two that both saw the setup unfinished would each write its fixture.
+	running map[string]*sync.Mutex
+}
+
+// lock waits for any setup of the scenario in progress and returns the
+// release function.
+func (r *setupRecord) lock(id string) func() {
+	r.mu.Lock()
+	m := r.running[id]
+	if m == nil {
+		if r.running == nil {
+			r.running = map[string]*sync.Mutex{}
+		}
+		m = &sync.Mutex{}
+		r.running[id] = m
+	}
+	r.mu.Unlock()
+	m.Lock()
+	return m.Unlock
 }
 
 // setupProgress is how many of a scenario's setup steps succeeded, in order,
@@ -330,6 +350,7 @@ func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, s
 	if len(scenario.Setup) == 0 {
 		return false
 	}
+	defer e.setups.lock(scenario.ID)()
 	e.setups.mu.Lock()
 	progress := e.setups.progress[scenario.ID]
 	e.setups.mu.Unlock()
