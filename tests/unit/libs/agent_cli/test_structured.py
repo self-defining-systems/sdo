@@ -21,6 +21,7 @@ from agentshim.providers.codex import BYPASS_FLAG, RULES_FILENAME, CodexSandboxC
 from agentshim.testing import FakeExecutor, FakeRun, scripted_turn
 from agentshim.testing.claude_stream import ClaudeFramePeer
 
+from libs.agent_cli.claude_stream import HEADLESS_DISALLOWED_TOOLS
 from libs.agent_cli.structured import (
     ACCESS_MODES,
     AGENT_PROVIDERS,
@@ -289,7 +290,19 @@ class TestClaudeAccess:
         _, agent = _run("claude", tmp_path, access="danger-full-access")
         (argv,) = agent.argvs
         assert _settings(argv) is None
-        assert "--disallowedTools" not in argv
+
+    @pytest.mark.parametrize("access", ACCESS_MODES)
+    def test_every_access_denies_the_tools_a_headless_session_cannot_use(
+        self, access: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-home"))
+        _, agent = _run("claude", tmp_path, access=access)
+        (argv,) = agent.argvs
+        assert argv.count("--disallowedTools") == 1
+        denied = argv[argv.index("--disallowedTools") + 1].split(",")
+        assert set(HEADLESS_DISALLOWED_TOOLS) <= set(denied)
+        assert {"ScheduleWakeup", "CronCreate", "AskUserQuestion", "ExitPlanMode"} <= set(denied)
+        assert not {"Bash", "Agent", "Task", "Monitor", "TaskStop"} & set(denied)
 
     def test_read_only_denies_writes_and_the_edit_tools(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-home"))
@@ -300,7 +313,7 @@ class TestClaudeAccess:
         assert settings is not None
         root = str(tmp_path.resolve())
         assert settings["sandbox"]["filesystem"]["denyWrite"] == [root]
-        assert argv[argv.index("--disallowedTools") + 1] == "Edit,Write,NotebookEdit"
+        assert argv[argv.index("--disallowedTools") + 1].split(",")[-3:] == ["Edit", "Write", "NotebookEdit"]
         assert shlex.split(settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"])[-2:] == [
             root,
             str(tmp_path / "claude-home" / "skills"),
@@ -332,7 +345,7 @@ class TestClaudeAccess:
         assert settings is not None
         assert "filesystem" not in settings["sandbox"]
         assert settings["sandbox"]["excludedCommands"] == [DETECTOR_GATEWAY_COMMAND, MEMORY_CHECK_COMMAND]
-        assert "--disallowedTools" not in argv
+        assert "Edit" not in argv[argv.index("--disallowedTools") + 1].split(",")
         matchers = [entry.get("matcher") for entry in settings["hooks"]["PreToolUse"]]
         assert "Bash" in matchers
         assert request.env["CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR"] == "1"
