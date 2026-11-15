@@ -5,8 +5,9 @@ the checkout's Python sources over them from a node directory (``devmount``, ``S
 responder's prompt, skills or Python agent code reaches a lane by copying files, with no image build or push.
 The directory lives under the lane's evidence mount, which every node already has.
 
-Go code, protobuf contracts and image manifests are compiled or baked in: a swap onto a revision that changed them is
-refused (``swap_problem``) and the lane takes the full build.
+Protobuf contracts and image manifests are baked in: a swap onto a revision that changed them is refused
+(``swap_problem``) and the lane takes the full build. A change to the Go operator source is carried by a rebuilt
+binary (built once per source tree, ``hooks.cached_operator_binary``) and a controller restart.
 """
 
 from __future__ import annotations
@@ -69,9 +70,26 @@ def fingerprint(checkout: Path) -> dict[str, str]:
     return out
 
 
-def swap_problem(checkout: Path, lane: dict[str, str]) -> str:
-    """Why the lane built with fingerprint ``lane`` cannot run the checkout by a swap; empty when it can."""
-    changed = [path for path, ident in fingerprint(checkout).items() if lane.get(path) != ident]
+#: The compiled path a swap can carry by a rebuilt operator binary (the controller restarts on it).
+BINARY_PATH = "sdo/operator"
+
+
+def changed_compiled(checkout: Path, lane: dict[str, str]) -> list[str]:
+    """The ``COMPILED`` paths whose content differs from what the lane was built from."""
+    return [path for path, ident in fingerprint(checkout).items() if lane.get(path) != ident]
+
+
+def binary_changed(checkout: Path, lane: dict[str, str]) -> bool:
+    """Whether the operator binary the lane runs differs from the checkout's source (a swap must rebuild it)."""
+    return BINARY_PATH in changed_compiled(checkout, lane)
+
+
+def swap_problem(checkout: Path, lane: dict[str, str], rebuild_binary: bool = False) -> str:
+    """Why the lane built with fingerprint ``lane`` cannot run the checkout by a swap; empty when it can. With
+    ``rebuild_binary`` a changed operator source is not a problem: the swap builds the binary."""
+    changed = changed_compiled(checkout, lane)
+    if rebuild_binary:
+        changed = [path for path in changed if path != BINARY_PATH]
     if changed:
         return "compiled code changed since the lane was built: " + ", ".join(changed[:5])
     return ""
