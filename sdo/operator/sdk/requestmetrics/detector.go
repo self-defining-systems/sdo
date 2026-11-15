@@ -56,13 +56,34 @@ type Rule struct {
 	// MinBaselineRequests is the fewest healthy requests that make a baseline
 	// share believable; with fewer the healthy share is zero (so the floor applies).
 	MinBaselineRequests float64
+	// Lookback is how far back the steps reach (at least Window). A raised
+	// error finding stays until a step after it confirms recovery, so a quiet
+	// stretch with few requests never clears it.
+	Lookback time.Duration
+	// MinHealthy is the fewest requests, all healthy, that confirm recovery in
+	// one window; zero means MinFailed.
+	MinHealthy float64
+}
+
+func (r Rule) lookback() time.Duration {
+	if r.Lookback > r.Window {
+		return r.Lookback
+	}
+	return r.Window
+}
+
+func (r Rule) minHealthy() float64 {
+	if r.MinHealthy > 0 {
+		return r.MinHealthy
+	}
+	return r.MinFailed
 }
 
 // DefaultRule is the rule the prototype replayed: at least 5 failed requests
 // and 5% of the requests and 5 times the healthy share over 30 s, on two
 // consecutive 5 s steps, healthy share floored at 1%.
 func DefaultRule() Rule {
-	return Rule{Window: 30 * time.Second, Step: 5 * time.Second, Consecutive: 2, MinFailed: 5, MinShare: 0.05, MinRatio: 5, ShareFloor: 0.01, MinBaselineRequests: 20}
+	return Rule{Window: 30 * time.Second, Step: 5 * time.Second, Consecutive: 2, MinFailed: 5, MinShare: 0.05, MinRatio: 5, ShareFloor: 0.01, MinBaselineRequests: 20, Lookback: 5 * time.Minute, MinHealthy: 5}
 }
 
 // Entry is the request metric of one entry service, with the PromQL the
@@ -149,7 +170,7 @@ func (d *detector) build() error {
 	switch {
 	case d.cfg.Spec.ID == "":
 		return errors.New("request-metrics detector needs a spec ID")
-	case r.Window <= 0 || r.Step <= 0 || r.Consecutive < 1 || r.MinFailed < 1 || r.MinShare <= 0 || r.MinRatio < 1 || r.ShareFloor < 0:
+	case r.Window <= 0 || r.Step <= 0 || r.Consecutive < 1 || r.MinFailed < 1 || r.MinShare <= 0 || r.MinRatio < 1 || r.ShareFloor < 0 || r.Lookback < 0 || r.MinHealthy < 0:
 		return fmt.Errorf("request-metrics rule %+v is not valid", r)
 	}
 	for _, e := range d.cfg.Entries {
@@ -168,7 +189,7 @@ func (d *detector) build() error {
 			return fmt.Errorf("request-metrics entry %q: server errors pattern: %w", e.Service, err)
 		}
 		plan := entryPlan{Entry: e, errors: re,
-			recent: metrics.Query{ID: queryID(e.Service, "recent"), Expr: e.Recent, Range: r.Window, Step: r.Step},
+			recent: metrics.Query{ID: queryID(e.Service, "recent"), Expr: e.Recent, Range: r.lookback(), Step: r.Step},
 			base:   metrics.Query{ID: queryID(e.Service, "baseline"), Expr: e.Baseline},
 			pres:   metrics.Query{ID: queryID(e.Service, "presence"), Expr: e.Presence},
 		}
@@ -389,6 +410,11 @@ func (r Rule) judgeStep(c counts, class string, healthyServer, healthyClient flo
 	return v
 }
 
+// confirmsRecovery is a window with enough requests, none of them failed.
+func (r Rule) confirmsRecovery(c counts, healthyClient float64) bool {
+	return c.total >= r.minHealthy() && c.server == 0 && c.client-healthyClient*c.total < 1
+}
+
 func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan, results map[string]metrics.Result) (sdk.Finding, bool) {
 	r := d.cfg.Rule
 	recent := results[plan.recent.ID]
@@ -402,32 +428,57 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 		return sdk.Finding{}, false
 	}
 	healthyServer, healthyClient := plan.healthy(op, results[plan.base.ID].Series, r.MinBaselineRequests)
+	// The newest step at which the rule held on Consecutive steps in a row.
 	var best *verdict
-	for _, class := range []string{ClassServer, ClassClientJump} {
-		held := true
-		for _, t := range times[len(times)-r.Consecutive:] {
-			if !r.judgeStep(steps[t], class, healthyServer, healthyClient).ok {
-				held = false
-				break
+	raisedAt := -1
+	for end := len(times) - 1; end >= r.Consecutive-1 && best == nil; end-- {
+		for _, class := range []string{ClassServer, ClassClientJump} {
+			held := true
+			for _, t := range times[end-r.Consecutive+1 : end+1] {
+				if !r.judgeStep(steps[t], class, healthyServer, healthyClient).ok {
+					held = false
+					break
+				}
 			}
-		}
-		if !held {
-			continue
-		}
-		if v := r.judgeStep(steps[times[len(times)-1]], class, healthyServer, healthyClient); best == nil || v.failed > best.failed {
-			best = &v
+			if !held {
+				continue
+			}
+			if v := r.judgeStep(steps[times[end]], class, healthyServer, healthyClient); best == nil || v.failed > best.failed {
+				best, raisedAt = &v, end
+			}
 		}
 	}
 	if best == nil {
 		return sdk.Finding{}, false
+	}
+	// A finding that stopped holding stays until a later step has enough
+	// requests and none failed: no traffic is not recovery.
+	unconfirmed := ""
+	if raisedAt < len(times)-1 {
+		for _, t := range times[raisedAt+1:] {
+			if r.confirmsRecovery(steps[t], healthyClient) {
+				return sdk.Finding{}, false
+			}
+		}
+		newest := steps[times[len(times)-1]]
+		if newest.total < r.minHealthy() {
+			unconfirmed = fmt.Sprintf(" Insufficient recent traffic to confirm recovery: %.0f requests in the newest window, at least %.0f healthy ones are needed.", newest.total, r.minHealthy())
+		} else {
+			unconfirmed = fmt.Sprintf(" Recovery is not confirmed: the newest window still has failed requests (%.0f of %.0f).", newest.server+math.Max(0, newest.client-healthyClient*newest.total), newest.total)
+		}
 	}
 	method := op.Method
 	if method == "" {
 		method = "any"
 	}
 	window := r.Window.String()
-	fingerprint, note := "requestmetrics/errors/"+op.ID, ""
+	fingerprint, note := "requestmetrics/errors/"+op.ID, unconfirmed
 	meta := map[string]any{}
+	if unconfirmed != "" {
+		meta["recovery_unconfirmed"] = true
+	}
+	samples := failingSamples(ctx, op, best.class)
+	meta["samples"] = samples.metadata()
 	if op.undeclared {
 		fingerprint = "requestmetrics/errors/undeclared/" + op.Service + "/" + op.Route
 		note = " This is an undeclared route: the application map declares no operation for it."
@@ -441,7 +492,7 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 		DetectorID: d.cfg.Spec.ID, RuleID: RuleErrors, Status: sdk.FindingActive, Severity: sdk.SeverityWarning,
 		Summary: fmt.Sprintf("operation %s: %.0f of %.0f requests failed in %s (%s)", op.ID, best.failed, best.total, window, best.class),
 		Evidence: fmt.Sprintf("operation %s (route %q, method %s) had %.0f failed of %.0f requests over %s, %.1f%% against a healthy %.1f%% (%s), on %d consecutive %s steps; newest step at %s.",
-			op.ID, op.Route, method, best.failed, best.total, window, best.share*100, best.healthy*100, best.class, r.Consecutive, r.Step, times[len(times)-1].UTC().Format(time.RFC3339)) + note,
+			op.ID, op.Route, method, best.failed, best.total, window, best.share*100, best.healthy*100, best.class, r.Consecutive, r.Step, times[raisedAt].UTC().Format(time.RFC3339)) + note + samples.text(),
 		PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: ctx.Namespace(), Name: op.Service},
 		Playbooks:       append([]string(nil), d.cfg.Spec.Playbooks...),
 		Fingerprint:     fingerprint,

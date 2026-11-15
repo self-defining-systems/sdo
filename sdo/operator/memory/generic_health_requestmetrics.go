@@ -8,6 +8,7 @@ import (
 
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/requestmetrics"
 )
@@ -99,7 +100,7 @@ func prepareRequestMetricsDetector(root string, enabled bool) error {
 	if !enabled || !ok {
 		return removeBootstrapDetector(root, RequestMetricsDetectorID)
 	}
-	manifest := genericManifest(RequestMetricsDetectorID, requestMetricsInterval.String(), []layout.Watch{{APIVersion: metrics.APIVersion, Kind: "Metrics"}})
+	manifest := genericManifest(RequestMetricsDetectorID, requestMetricsInterval.String(), []layout.Watch{{APIVersion: metrics.APIVersion, Kind: "Metrics"}, {APIVersion: logs.Watch.APIVersion, Kind: logs.Watch.Kind}})
 	manifest.Batching.Severity = string(sdk.SeverityWarning)
 	// The rule carries its own persistence (two consecutive steps), so the
 	// detector fires on its first observation and clears after two.
@@ -121,6 +122,7 @@ func requestMetricsSource(cfg requestmetrics.Config) string {
 import (
 	"time"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/logs"
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/requestmetrics"
 )
@@ -133,7 +135,7 @@ func New() sdk.Detector {
 	return requestmetrics.NewDetector(requestmetrics.Config{
 		Spec: sdk.DetectorSpec{
 			%s
-			Watches: []sdk.WatchKind{metrics.Watch},
+			Watches: []sdk.WatchKind{metrics.Watch, logs.Watch},
 			Interval: %d * time.Second,
 		},
 		Rule: requestmetrics.DefaultRule(),
