@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -14,15 +13,12 @@ import (
 func (v *cachedReadView) LogsWithOptions(ref sdk.ObjectRef, options corev1.PodLogOptions) (string, error) {
 	var r string
 	err := v.read("LogsWithOptions", []any{ref, options}, &r, func() (any, error) {
-		bounded, err := program.BoundedLogOptions(options)
+		_, limit, err := program.BoundedLogOptions(options)
 		if err != nil {
 			return "", err
 		}
 		data, err := call(context.Background(), 5*time.Second, func(context.Context) (string, error) { return v.ReadView.LogsWithOptions(ref, options) })
-		if err == nil && int64(len(data)) > *bounded.LimitBytes {
-			return "", fmt.Errorf("logs exceed byte limit")
-		}
-		return data, err
+		return program.NewestLogBytes(data, limit), err
 	})
 	return r, err
 }

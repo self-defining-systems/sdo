@@ -10,6 +10,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/storestate"
 )
 
@@ -18,6 +19,7 @@ const (
 	credentialCheckDeadline = 60 * time.Second
 	credentialCheckWait     = 90 * time.Second
 	credentialCheckLogBytes = 4096
+	credentialCheckLogLines = 100
 )
 
 // CredentialCheckLabel marks the short-lived Pods of credential checks.
@@ -74,11 +76,11 @@ func (c TypedPlanClient) StoreCredentialCheck(ctx context.Context, probe StoreCr
 		case <-ticker.C:
 		}
 	}
-	logs, err := pods.GetLogs(created.Name, &corev1.PodLogOptions{Container: "check", LimitBytes: ptr.To[int64](credentialCheckLogBytes)}).DoRaw(ctx)
+	logs, err := pods.GetLogs(created.Name, &corev1.PodLogOptions{Container: "check", TailLines: ptr.To[int64](credentialCheckLogLines)}).DoRaw(ctx)
 	if err != nil {
 		return "", fmt.Errorf("check Pod output unreadable: %w", err)
 	}
-	return string(logs), nil
+	return program.NewestLogBytes(string(logs), credentialCheckLogBytes), nil
 }
 
 // credentialCheckPod builds the check Pod from the live store and client Pods.

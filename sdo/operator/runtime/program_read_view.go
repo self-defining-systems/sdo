@@ -90,7 +90,7 @@ func (v LiveReadView) logs(ref sdk.ObjectRef, options corev1.PodLogOptions) (str
 	if ref.Kind != "Pod" || (ref.APIVersion != "" && ref.APIVersion != "v1") || ref.Namespace != v.Namespace() || ref.Name == "" || v.Client == nil {
 		return "", errors.New("pod logs require a Pod in the snapshot namespace and a Kubernetes reader")
 	}
-	bounded, err := program.BoundedLogOptions(options)
+	bounded, limit, err := program.BoundedLogOptions(options)
 	if err != nil {
 		return "", err
 	}
@@ -104,10 +104,7 @@ func (v LiveReadView) logs(ref sdk.ObjectRef, options corev1.PodLogOptions) (str
 	if err != nil {
 		return "", fmt.Errorf("read logs of pod %s/%s: %w", ref.Namespace, ref.Name, err)
 	}
-	if int64(len(data)) > *bounded.LimitBytes {
-		return "", errors.New("logs exceed byte limit")
-	}
-	return string(data), nil
+	return program.NewestLogBytes(string(data), limit), nil
 }
 
 func int64ptr(value int64) *int64 { return &value }
