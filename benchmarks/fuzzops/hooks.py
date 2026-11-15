@@ -447,6 +447,24 @@ def _incident_id(state: dict[str, Any]) -> str:
     return str(request.get("incident_id") or request.get("incidentId") or "")
 
 
+OWN_DETECTED_ENV = "BENCH_OWN_DETECTED_AT"
+
+
+def other_incident(state: dict[str, Any] | None, env: Mapping[str, str]) -> tuple[str, dict[str, Any]] | None:
+    """An open incident that is not the cell's own, with the state as if it were closed. The harness sets
+    ``BENCH_OWN_DETECTED_AT`` to the time the operator said it detected the injected fault, which is the
+    ``detected_at`` of the incident that fault opened; any other open incident is not waited for."""
+    own = _parse_time(env.get(OWN_DETECTED_ENV))
+    if own is None or state is None or idle_reason(state) != "incident open":
+        return None
+    request = state.get("incident_request") or state.get("incidentRequest") or {}
+    detected = _parse_time(request.get("detected_at") or request.get("detectedAt"))
+    if detected is None or abs((detected - own).total_seconds()) < 1.0:
+        return None
+    rest = {k: v for k, v in state.items() if k not in ("incident_open", "incidentOpen")}
+    return _incident_id(state), rest
+
+
 def idle_verdict(state: dict[str, Any] | None, updated: datetime | None, pod_ready: bool, now: datetime) -> str:
     """The ``idle`` hook's answer: "" when idle, else the reason (``alarm:`` first for an open incident)."""
     if state is not None and idle_reason(state) == "incident open":
@@ -1120,6 +1138,15 @@ def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     except (subprocess.SubprocessError, json.JSONDecodeError, OSError) as exc:
         out(f"error: controller read failed: {exc}")
         return 1
+    other = other_incident(state, env)
+    if other is not None:
+        incident, rest = other
+        why = idle_verdict(rest, updated, ready, datetime.now(UTC))
+        if why:
+            out(why)
+            return 1
+        out(f"ignored: incident open {incident}")
+        return 0
     why = idle_verdict(state, updated, ready, datetime.now(UTC))
     if why:
         out(why)
