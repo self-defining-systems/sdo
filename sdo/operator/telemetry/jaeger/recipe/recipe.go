@@ -47,6 +47,12 @@ func OTLPTracesURL(controlNamespace string) string {
 	return fmt.Sprintf("http://%s.%s.svc:4318", Name, controlNamespace)
 }
 
+// ThriftTracesURL is the Jaeger Thrift HTTP collector endpoint, for
+// applications whose tracing library speaks Jaeger rather than OTLP.
+func ThriftTracesURL(controlNamespace string) string {
+	return fmt.Sprintf("http://%s.%s.svc:14268/api/traces", Name, controlNamespace)
+}
+
 // Capabilities implements telemetry.BackendRecipe: the trace store reads
 // nothing from the cluster.
 func (Recipe) Capabilities() []telemetry.ClusterCapability { return nil }
@@ -63,6 +69,7 @@ func (Recipe) Build(p telemetry.BackendParams) telemetry.BackendObjects {
 			{Name: "query", Port: 16686, TargetPort: intstr.FromInt32(16686)},
 			{Name: "otlp-grpc", Port: 4317, TargetPort: intstr.FromInt32(4317)},
 			{Name: "otlp-http", Port: 4318, TargetPort: intstr.FromInt32(4318)},
+			{Name: "thrift-http", Port: 14268, TargetPort: intstr.FromInt32(14268)},
 		}}}},
 		Deployments: []*appsv1.Deployment{{
 			ObjectMeta: meta,
@@ -87,6 +94,7 @@ func (Recipe) Build(p telemetry.BackendParams) telemetry.BackendObjects {
 								{Name: "query", ContainerPort: 16686},
 								{Name: "otlp-grpc", ContainerPort: 4317},
 								{Name: "otlp-http", ContainerPort: 4318},
+								{Name: "thrift-http", ContainerPort: 14268},
 							},
 							SecurityContext: p.ContainerSecurity,
 							Resources: corev1.ResourceRequirements{
