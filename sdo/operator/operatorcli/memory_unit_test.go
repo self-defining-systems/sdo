@@ -104,3 +104,35 @@ func TestMemoryTestTakesExactlyOnePlaybookID(t *testing.T) {
 		}
 	}
 }
+
+func TestMemoryRootDefaultsToTheCheckoutContainingTheCurrentDirectory(t *testing.T) {
+	root := t.TempDir()
+	for name, body := range map[string]string{
+		".git/HEAD":                      "ref: refs/heads/main\n",
+		".sdo/schema-version":            "8\n",
+		".sdo/playbooks/fix/README.md":   "---\nschema_version: 1\nowner: responder\nfault_class: fix\noriginating_incident: synthetic\n---\n# Fix\n",
+		".sdo/playbooks/fix/diagnose.go": "package fix\n",
+	} {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(filepath.Join(root, ".sdo", "playbooks", "fix"))
+	code, stdout, stderr := runMemory(t, nil, "ls", "--json")
+	listing := &contracts.MemoryListing{}
+	if err := wire.UnmarshalDurable([]byte(stdout), listing); err != nil || code != 0 || len(listing.Artifacts) == 0 {
+		t.Fatalf("ls from a subdirectory: %d %v %s %s", code, err, stdout, stderr)
+	}
+}
+
+func TestMemoryCheckOutsideAnyCheckoutNamesTheFix(t *testing.T) {
+	t.Chdir(t.TempDir())
+	code, _, stderr := runMemory(t, memoryCheckEnv(t), "check")
+	if code != 2 || !strings.Contains(stderr, "pass --root") {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+}
