@@ -53,6 +53,8 @@ type Breaker struct {
 	cfg  Config
 	mode string
 	note string
+	// enforced is whether the cluster's CNI enforces NetworkPolicy.
+	enforced bool
 }
 
 // New resolves the effective mode. In ModeNetwork it checks that the CNI
@@ -62,6 +64,7 @@ func New(ctx context.Context, cfg Config) (*Breaker, error) {
 		return nil, errors.New("kubebreak: Client, Namespace, Wait, Bound and Interval are required")
 	}
 	b := &Breaker{cfg: cfg}
+	b.enforced, _ = enforcesNetworkPolicy(ctx, cfg.Client)
 	switch cfg.Mode {
 	case "", ModeScale:
 		b.mode = ModeScale

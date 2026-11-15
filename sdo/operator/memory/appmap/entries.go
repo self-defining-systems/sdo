@@ -246,3 +246,31 @@ func (c *checker) entries() {
 		}
 	}
 }
+
+// DurationFamilies lists, by metric name, the histogram or summary series that
+// carry the entry's route label under the entry's selector. The caller keeps
+// the names that are request durations.
+func (e MetricEntry) DurationFamilies() string {
+	return "count by (__name__) (" + e.durationMatchers(`.+_(bucket|sum)`) + ")"
+}
+
+// DurationRoutes counts, per route label value, the series of the named
+// families that carry the entry's route label.
+func (e MetricEntry) DurationRoutes(names []string) string {
+	quoted := make([]string, len(names))
+	for i, n := range names {
+		quoted[i] = regexp.QuoteMeta(n)
+	}
+	return "count by (" + e.Labels.Route + ") (" + e.durationMatchers(strings.Join(quoted, "|")) + ")"
+}
+
+func (e MetricEntry) durationMatchers(names string) string {
+	m := e.matchers(`__name__=~`+quote(names), e.Labels.Route+`!=""`)
+	return m
+}
+
+// ErrorsByRoute is the error total per route label value; it needs a status
+// label and an errors expression.
+func (e MetricEntry) ErrorsByRoute() string {
+	return "sum by (" + e.Labels.Route + ") (" + e.Metric + e.matchers(e.Labels.Status+"=~"+quote(e.Errors)) + ") > 0"
+}

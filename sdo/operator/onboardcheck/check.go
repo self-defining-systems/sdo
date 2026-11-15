@@ -69,6 +69,9 @@ type Config struct {
 	// nil skips the item.
 	Quiet *QuietConfig
 	Break *BreakConfig
+	// Harm enables probes-do-no-harm; it needs Quiet, whose window is the one
+	// with the probes running.
+	Harm *HarmConfig
 	// NoDetectors says the memory SDO would deploy holds no detector at all,
 	// so the live items have nothing to judge.
 	NoDetectors bool
@@ -165,6 +168,8 @@ func (c Config) validate() error {
 		return errors.New("onboardcheck: Requests must be at least 1")
 	case c.Poll <= 0 || c.Settle < 0:
 		return errors.New("onboardcheck: Poll must be positive and Settle not negative")
+	case c.Harm != nil && (c.Quiet == nil || c.Now == nil || c.Harm.MinRunning <= 0 || !c.Harm.PausedEnd.At.After(c.Harm.PausedStart.At)):
+		return errors.New("onboardcheck: probes-do-no-harm needs the quiet window, a clock, a positive MinRunning and a paused window with positive length")
 	case c.Quick && c.Break != nil:
 		return errors.New("onboardcheck: a quick run does not run fails-under-break")
 	}
@@ -270,7 +275,31 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		return Report{}, err
 	}
 	cfg.say("metric items done: %d results", len(report.Results))
+	var harmStart HarmSample
+	harmOn := cfg.Harm != nil && cfg.Quiet != nil && !cfg.NoDetectors
+	if harmOn {
+		// The probes have been running since the check began; the window that
+		// counts starts now, after the traffic SDO sent.
+		if harmStart, err = SampleHarm(ctx, cfg.Prom, cfg.Map, cfg.Now()); err != nil {
+			cancel()
+			<-quietDone
+			return Report{}, err
+		}
+	}
 	<-quietDone
+	if harmOn {
+		if wait := cfg.Harm.MinRunning - cfg.Now().Sub(harmStart.At); wait > 0 {
+			cfg.say("probes-do-no-harm: waiting %s for a long enough window with the probes running", wait.Round(time.Second))
+			if err := cfg.Wait(ctx, wait); err != nil {
+				return Report{}, err
+			}
+		}
+		harmEnd, herr := SampleHarm(ctx, cfg.Prom, cfg.Map, cfg.Now())
+		if herr != nil {
+			return Report{}, herr
+		}
+		report.Results = append(report.Results, judgeHarm(cfg.Map, *cfg.Harm, harmStart, harmEnd)...)
+	}
 	report.Results = append(report.Results, quiet.Results...)
 	report.Durations = append(report.Durations, quiet.Durations...)
 	if cfg.NoDetectors {
@@ -464,6 +493,16 @@ func runMetrics(ctx context.Context, cfg Config, report *Report) error {
 		default:
 			result(ItemErrorsSeparable, st.op.ID, Green, "status series carry this route: "+keys(byLabel(st.statusSeries, st.entry.Labels.Status)))
 		}
+	}
+
+	journeyRed := map[string]bool{}
+	for _, r := range report.Results {
+		if r.Item == ItemJourneys && r.Status == Red {
+			journeyRed[r.Subject] = true
+		}
+	}
+	if err := runObserved(ctx, cfg, report, ops, entries, journeyRed); err != nil {
+		return err
 	}
 
 	var services []string

@@ -19,6 +19,7 @@ import (
 // KubeCluster reaches one cluster from a kubeconfig: HTTP through the API
 // server's Service proxy, and the exposure facts of its Services.
 type KubeCluster struct {
+	config  *rest.Config
 	client  *http.Client
 	host    string
 	kube    kubernetes.Interface
@@ -48,11 +49,14 @@ func OpenKubeCluster(kubeconfig, kubeContext string) (*KubeCluster, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &KubeCluster{client: client, host: strings.TrimRight(cfg.Host, "/"), kube: kube, dynamic: dyn}, nil
+	return &KubeCluster{config: cfg, client: client, host: strings.TrimRight(cfg.Host, "/"), kube: kube, dynamic: dyn}, nil
 }
 
 // Kube is the typed client of the cluster.
 func (k *KubeCluster) Kube() kubernetes.Interface { return k.kube }
+
+// Config is the REST configuration of the cluster.
+func (k *KubeCluster) Config() *rest.Config { return rest.CopyConfig(k.config) }
 
 // Do sends the request with the cluster credentials.
 func (k *KubeCluster) Do(req *http.Request) (*http.Response, error) { return k.client.Do(req) }

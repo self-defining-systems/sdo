@@ -12,10 +12,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/evaluation"
+	"sdo.dev/operator/kubereads"
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/onboardcheck"
 	"sdo.dev/operator/onboardcheck/kubebreak"
@@ -66,6 +68,23 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
          from the host running the check and are reported as a note, unless
          --cluster-network says this process resolves them (the test-request
          scenarios need it too; a scenario that never succeeded is red). Run it only on a target the agent owns, with no users.
+         With --break the worker-quiet break (a worker's egress denied except DNS:
+         it stays Running and Ready) and the data-wrong break (a text column of
+         the oldest rows of the most-read table of a postgres store overwritten,
+         restored by primary key) run after the component breaks; each is judged
+         like them (a raise must name an operation it hurts) and is always
+         restored, also when the check is interrupted.
+         probes-do-no-harm measures the application's request, error and job
+         failure counters for --harm-window before the memory's probes start
+         (overlapping the detector build) and with them running (the quiet
+         window, at least --harm-window); it is red when the probes raise
+         failures of an operation or job class, or are a large share of the
+         entry's requests, naming them (0 skips).
+         operations-observed, latency-per-operation and background-covered read
+         the application's own metrics: a declared route that never appears
+         (no reason excuses it), an operation without a request-duration series,
+         most of an entry's real traffic on undeclared routes, and background
+         job classes no operation declares are red.
          Each live item reports its duration. The check prints its expected
          duration when it starts and takes minutes (about 20 with --break): run it
          in the background and read the report when it finishes; --report FILE
@@ -119,10 +138,35 @@ func (p promAdapter) Query(ctx context.Context, text string) ([]metrics.Series, 
 // long-running evaluation keeps judging the live application. Evaluate returns
 // the first verdict judged after the call, so a break made just before it is
 // seen.
-type detectorEvaluator struct{ watch *deployment.Watcher }
+//
+// The evaluation (and with it the memory's probes) starts on the first call, so
+// the check can measure the application before any probe has run.
+type detectorEvaluator struct{ lazy *lazyWatch }
+
+// lazyWatch starts the detector evaluation once, when first needed.
+type lazyWatch struct {
+	once     sync.Once
+	prepared *deployment.PreparedProbe
+	ctx      context.Context
+	watch    *deployment.Watcher
+}
+
+func (l *lazyWatch) get() *deployment.Watcher {
+	l.once.Do(func() {
+		fmt.Fprintln(os.Stderr, "warming the detectors (test-request scenarios need their sample window) ...")
+		l.watch = l.prepared.Watch(l.ctx, 5*time.Second)
+	})
+	return l.watch
+}
+
+func (l *lazyWatch) Close() {
+	if l.watch != nil {
+		l.watch.Close()
+	}
+}
 
 func (e detectorEvaluator) Evaluate(ctx context.Context) (onboardcheck.Verdict, error) {
-	verdict, err := e.watch.Next(ctx, processio.Now())
+	verdict, err := e.lazy.get().Next(ctx, processio.Now())
 	if err != nil {
 		return onboardcheck.Verdict{}, err
 	}
@@ -209,6 +253,7 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	quick := flags.Bool("quick", false, "fast iteration: the metric items and a short detector smoke; never clean, never breaks")
 	quietEvaluations := flags.Int("quiet-evaluations", onboardcheck.DefaultQuietEvaluations, "judgements each detector must make past its own horizon for the quiet window to end")
 	quietInterval := flags.Duration("quiet-interval", time.Minute, "wait between detector evaluations in the quiet window")
+	harmWindow := flags.Duration("harm-window", time.Minute, "probes-do-no-harm: how long to measure the application with the memory's probes paused (before they start) and at least with them running; 0 skips the item")
 	breakItem := flags.Bool("break", false, "run fails-under-break: briefly break each component on an operation's path (only on a target without users)")
 	breakBound := flags.Duration("break-bound", 60*time.Second, "least time to wait for a detector to notice each break (at least the time the memory's own probes need to judge a failure)")
 	breakMode := flags.String("break-mode", kubebreak.ModeScale, "how to break: scale (to zero) or network (deny-ingress NetworkPolicy; scale when the CNI does not enforce it)")
@@ -276,6 +321,22 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 		Now: processio.Now, Quick: *quick,
 		Progress: func(line string) { fmt.Fprintln(os.Stderr, processio.Now().Format("15:04:05"), line) },
 	}
+	var paused [2]onboardcheck.HarmSample
+	pausedWindow := make(chan error, 1)
+	if *harmWindow > 0 && *quietWindow > 0 {
+		// Measured while the detectors build, before any probe has run.
+		go func() {
+			var err error
+			if paused[0], err = onboardcheck.SampleHarm(ctx, config.Prom, m, processio.Now()); err != nil {
+				pausedWindow <- err
+				return
+			}
+			if err = processio.Wait(ctx, *harmWindow); err == nil {
+				paused[1], err = onboardcheck.SampleHarm(ctx, config.Prom, m, processio.Now())
+			}
+			pausedWindow <- err
+		}()
+	}
 	if *quietWindow > 0 || *breakItem {
 		probe := deployment.AcceptedDetectorProbe{Settings: *settingsFile, TelemetryEnvironment: *telemetryEnv, Kubeconfig: *kubeconfig, OutsideCluster: !*clusterNetwork, Host: true}
 		fmt.Fprintln(os.Stderr, "building the memory's detectors ...")
@@ -290,10 +351,16 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 			return 0, fmt.Errorf("build detectors for the live items: %w", err)
 		}
 		defer prepared.Close()
-		fmt.Fprintln(os.Stderr, "warming the detectors (test-request scenarios need their sample window) ...")
-		watch := prepared.Watch(ctx, 5*time.Second)
-		defer watch.Close()
-		eval := detectorEvaluator{watch: watch}
+		lazy := &lazyWatch{prepared: prepared, ctx: ctx}
+		defer lazy.Close()
+		eval := detectorEvaluator{lazy: lazy}
+		if *harmWindow > 0 && *quietWindow > 0 && !config.NoDetectors {
+			// The probes have not started: this is the application without them.
+			if err := <-pausedWindow; err != nil {
+				return 0, fmt.Errorf("measure the application with the probes paused: %w", err)
+			}
+			config.Harm = &onboardcheck.HarmConfig{PausedStart: paused[0], PausedEnd: paused[1], MinRunning: *harmWindow}
+		}
 		if *quietWindow > 0 {
 			config.Quiet = &onboardcheck.QuietConfig{Eval: eval, Window: *quietWindow, Interval: *quietInterval, Evaluations: *quietEvaluations}
 		}
@@ -306,7 +373,7 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 			if err != nil {
 				return 0, err
 			}
-			config.Break = &onboardcheck.BreakConfig{Eval: eval, Breaker: breaker, Bound: bound, Horizon: horizon, Interval: 5 * time.Second}
+			config.Break = &onboardcheck.BreakConfig{Eval: eval, Breaker: breaker, Bound: bound, Horizon: horizon, Interval: 5 * time.Second, Faults: genericFaults(m, breaker, cluster)}
 		}
 	}
 	report, err := onboardcheck.Run(ctx, config)
@@ -381,4 +448,28 @@ func startNotice(quick bool, settle, quiet time.Duration, withBreak bool, bound 
 	}
 	return fmt.Sprintf("onboarding check (%s): expected at most %s (the quiet window ends early once every detector has judged enough); run it in the background and keep working; %s",
 		mode, expectedDuration(settle, quiet, withBreak, bound, waves).Round(time.Second), where)
+}
+
+// genericFaults are the breaks that keep every component up: each worker with
+// its egress denied, and the authoritative store with rows made wrong.
+func genericFaults(m appmap.Map, breaker *kubebreak.Breaker, cluster *processio.KubeCluster) []onboardcheck.Fault {
+	workers, store := onboardcheck.FaultTargets(m)
+	var faults []onboardcheck.Fault
+	for _, w := range workers {
+		faults = append(faults, breaker.WorkerQuiet(w, onboardcheck.OperationsThrough(m, w.Name)))
+	}
+	if store != nil {
+		faults = append(faults, breaker.DataWrong(*store, onboardcheck.OperationsThrough(m, store.Name), podExec(cluster)))
+	}
+	return faults
+}
+
+// podExec runs a command in a pod container and returns its standard output.
+func podExec(cluster *processio.KubeCluster) kubebreak.Exec {
+	exec := kubereads.SPDYExec{Client: cluster.Kube(), Config: cluster.Config()}
+	return func(ctx context.Context, namespace, pod, container string, command []string, stdin string) (string, error) {
+		var out strings.Builder
+		err := exec.Stream(ctx, sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: namespace, Name: pod}, container, command, stdin, &out)
+		return out.String(), err
+	}
 }
