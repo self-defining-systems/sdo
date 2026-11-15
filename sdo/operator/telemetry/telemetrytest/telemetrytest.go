@@ -57,6 +57,9 @@ type Harness struct {
 	Query telemetry.Query
 	// Want is the exact normalized result of Query under BehaviorData.
 	Want telemetry.Result
+	// WantTraces is, for KindTraces, the exact listing the client returns under
+	// BehaviorData (Query and Want are unused for traces).
+	WantTraces []telemetry.TraceSummary
 	// New returns a client whose backend behaves as b. It owns cleanup via t.
 	New func(t *testing.T, b Behavior) telemetry.Client
 	// HangGrace bounds how long a cancelled call may take to return. Zero is 2s.
@@ -94,6 +97,10 @@ func TestClient(t *testing.T, h Harness, id string) {
 	}
 	if h.New == nil {
 		t.Fatal("telemetrytest: Harness.New is required")
+	}
+	if h.Kind == telemetry.KindTraces {
+		testTraceClient(t, h)
+		return
 	}
 	if err := h.Query.Validate(); err != nil {
 		t.Fatalf("telemetrytest: Harness.Query is invalid: %v", err)

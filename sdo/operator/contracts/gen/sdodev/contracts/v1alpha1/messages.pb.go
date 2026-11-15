@@ -2192,8 +2192,11 @@ type TelemetryPublish struct {
 	ScrapeAnnotations bool                   `protobuf:"varint,1,opt,name=scrape_annotations,json=scrapeAnnotations,proto3" json:"scrape_annotations,omitempty"`
 	// Full OTLP HTTP metrics URL, not a gRPC endpoint.
 	OtlpMetricsUrl string `protobuf:"bytes,2,opt,name=otlp_metrics_url,json=otlpMetricsUrl,proto3" json:"otlp_metrics_url,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// OTLP HTTP base endpoint applications push traces to
+	// (OTEL_EXPORTER_OTLP_ENDPOINT); empty when none is offered.
+	OtlpTracesUrl string `protobuf:"bytes,3,opt,name=otlp_traces_url,json=otlpTracesUrl,proto3" json:"otlp_traces_url,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *TelemetryPublish) Reset() {
@@ -2236,6 +2239,13 @@ func (x *TelemetryPublish) GetScrapeAnnotations() bool {
 func (x *TelemetryPublish) GetOtlpMetricsUrl() string {
 	if x != nil {
 		return x.OtlpMetricsUrl
+	}
+	return ""
+}
+
+func (x *TelemetryPublish) GetOtlpTracesUrl() string {
+	if x != nil {
+		return x.OtlpTracesUrl
 	}
 	return ""
 }
@@ -5353,10 +5363,11 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\fcapabilities\x18\x06 \x03(\tR\fcapabilities\x12\x16\n" +
 	"\x06origin\x18\a \x01(\tR\x06origin\x12\x1a\n" +
 	"\bendpoint\x18\b \x01(\tR\bendpoint\x12E\n" +
-	"\apublish\x18\t \x01(\v2+.sdodev.contracts.v1alpha1.TelemetryPublishR\apublish\"k\n" +
+	"\apublish\x18\t \x01(\v2+.sdodev.contracts.v1alpha1.TelemetryPublishR\apublish\"\x93\x01\n" +
 	"\x10TelemetryPublish\x12-\n" +
 	"\x12scrape_annotations\x18\x01 \x01(\bR\x11scrapeAnnotations\x12(\n" +
-	"\x10otlp_metrics_url\x18\x02 \x01(\tR\x0eotlpMetricsUrl\"\xbc\x02\n" +
+	"\x10otlp_metrics_url\x18\x02 \x01(\tR\x0eotlpMetricsUrl\x12&\n" +
+	"\x0fotlp_traces_url\x18\x03 \x01(\tR\rotlpTracesUrl\"\xbc\x02\n" +
 	"\x15DisabledSetupDetector\x12(\n" +
 	"\vdetector_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
 	"detectorId\x124\n" +

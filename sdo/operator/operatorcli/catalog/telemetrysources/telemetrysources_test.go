@@ -9,10 +9,10 @@ import (
 )
 
 // implementation maps an adapter name to its package under telemetry/.
-var implementation = map[string]string{"prometheus": "prometheus"}
+var implementation = map[string]string{"prometheus": "prometheus", "jaeger": "jaeger"}
 
 func TestRegistryHoldsBuiltIns(t *testing.T) {
-	if got, want := telemetrysources.Registry().Adapters(), []string{"prometheus"}; !reflect.DeepEqual(got, want) {
+	if got, want := telemetrysources.Registry().Adapters(), []string{"jaeger", "prometheus"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("adapters = %v, want %v", got, want)
 	}
 }

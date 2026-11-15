@@ -25,6 +25,7 @@ import (
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk/inputs"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -742,6 +743,19 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				loop.DiagnosisDeadline = time.Duration(policy.Response.DiagnosisDeadline)
 				if controller != nil {
 					loop.IncidentSources = controller.IncidentSources
+				}
+				loop.Telemetry = func() ApplicationTelemetry {
+					telemetryView := ApplicationTelemetry{Metrics: metricsObserver.API()}
+					telemetryView.Sources = metricsSources(telemetryView.Metrics)
+					if known, ok := telemetryView.Metrics.(interface{ TraceReader() telemetry.TraceReader }); ok {
+						telemetryView.Traces = known.TraceReader()
+					}
+					if client := bootstrapProvider.Client; client != nil {
+						telemetryView.PodLogs = func(ctx context.Context, namespace, pod string, options *corev1.PodLogOptions) (io.ReadCloser, error) {
+							return client.CoreV1().Pods(namespace).GetLogs(pod, options).Stream(ctx)
+						}
+					}
+					return telemetryView
 				}
 				loop.BuiltinRestoreAuto = policy.Response.BuiltinRestoreAuto
 				if options.NativeBroker != nil {

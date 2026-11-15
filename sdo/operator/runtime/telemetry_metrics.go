@@ -112,3 +112,16 @@ func (m *resolverMetrics) Alerts(ctx context.Context) ([]metrics.Alert, error) {
 	}
 	return merged, nil
 }
+
+// Sources are the bound telemetry sources, sorted by id.
+func (m *resolverMetrics) Sources() []telemetry.Source { return m.resolver.Sources() }
+
+// TraceReader is the default trace source's reader, or nil when no bound
+// source serves traces.
+func (m *resolverMetrics) TraceReader() telemetry.TraceReader {
+	reader, err := m.resolver.TraceReader("")
+	if err != nil {
+		return nil
+	}
+	return reader
+}

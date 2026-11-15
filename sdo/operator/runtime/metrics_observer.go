@@ -364,3 +364,12 @@ func (c metricsContext) QueryMetrics(q metrics.Query) metrics.Result {
 }
 
 func metricReadKey(q metrics.Query) metrics.Query { q.ID = ""; q.Step = q.EffectiveStep(); return q }
+
+// API is the metrics source the observer queries, nil when none is bound. A nil
+// observer has none.
+func (o *MetricsObserver) API() MetricsAPI {
+	if o == nil {
+		return nil
+	}
+	return o.api
+}

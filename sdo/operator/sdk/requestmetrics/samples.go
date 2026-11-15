@@ -212,3 +212,7 @@ func (r sampleResult) metadata() []map[string]string {
 	}
 	return out
 }
+
+// ParseFailingLine reads a failing (4xx or 5xx) request from a JSON or
+// common/combined access-log line; ok is false for any other line.
+func ParseFailingLine(line string) (Sample, bool) { return parseLine(line) }

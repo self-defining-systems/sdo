@@ -403,12 +403,14 @@ class TelemetrySource(_message.Message):
     def __init__(self, id: _Optional[str] = ..., kinds: _Optional[_Iterable[str]] = ..., adapter: _Optional[str] = ..., dialect: _Optional[str] = ..., default: _Optional[bool] = ..., capabilities: _Optional[_Iterable[str]] = ..., origin: _Optional[str] = ..., endpoint: _Optional[str] = ..., publish: _Optional[_Union[TelemetryPublish, _Mapping]] = ...) -> None: ...
 
 class TelemetryPublish(_message.Message):
-    __slots__ = ("scrape_annotations", "otlp_metrics_url")
+    __slots__ = ("scrape_annotations", "otlp_metrics_url", "otlp_traces_url")
     SCRAPE_ANNOTATIONS_FIELD_NUMBER: _ClassVar[int]
     OTLP_METRICS_URL_FIELD_NUMBER: _ClassVar[int]
+    OTLP_TRACES_URL_FIELD_NUMBER: _ClassVar[int]
     scrape_annotations: bool
     otlp_metrics_url: str
-    def __init__(self, scrape_annotations: _Optional[bool] = ..., otlp_metrics_url: _Optional[str] = ...) -> None: ...
+    otlp_traces_url: str
+    def __init__(self, scrape_annotations: _Optional[bool] = ..., otlp_metrics_url: _Optional[str] = ..., otlp_traces_url: _Optional[str] = ...) -> None: ...
 
 class DisabledSetupDetector(_message.Message):
     __slots__ = ("detector_id", "accepted_revision", "fingerprints", "disabled_at", "reason")

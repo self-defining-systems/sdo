@@ -29,7 +29,7 @@ OBJECT_REFERENCE_HELP = (
 
 MUTATION_COMMANDS = frozenset({"mitigate", "rollback"})
 # Commands whose response carries the Go-rendered text (detect summary, CSV pages), printed as is.
-TEXT_COMMANDS = frozenset({"detect", "changes", "timeline", "map", "investigations"})
+TEXT_COMMANDS = frozenset({"detect", "changes", "timeline", "map", "investigations", "metrics", "logs", "traces"})
 # The longest `sdo detect --wait`; Go enforces the same bound.
 MAX_DETECT_WAIT_SECONDS = 600
 
@@ -39,10 +39,16 @@ RESPONSE_FIELDS = {
     "status": "healthy, findings[], detector_states[], drift[], drift_events[], program_runs[]",
     "detect": "text (summary, a user test's request sent now, one detector, or one item; with --wait a first "
     "`wait:` line), healthy, findings[], detector_states[]",
-    "changes": "text (CSV, oldest first; columns in its header row; actor: agent, sdo, kubernetes, other, unknown)",
-    "timeline": "text (CSV, oldest first; columns in its header row)",
+    "changes": "text (CSV, nearest incident onset first; columns in its header row; actor: agent, sdo, kubernetes, "
+    "other, unknown)",
+    "timeline": "text (CSV, oldest first; columns in its header row; only signals that changed state)",
+    "metrics": "text (CSV, largest series first; with --list, metric names or one metric's labels)",
+    "logs": "text (matching log lines tagged by pod, oldest first; # lines give counts and failing-request rollup)",
+    "traces": "text (CSV of recent traces: id, root, status, duration, services, first failing span; or one trace's "
+    "span tree), or an error naming what is not bound",
     "investigations": "text (each SDO-started investigator's state and full report; read-only)",
-    "map": "text (components and operations, one operation path, or a component's neighbours)",
+    "map": "text (components and operations, one operation path, or a component's neighbours); with --json the "
+    "map as structured data (components, edges, operations, observability pointers)",
     "diagnose": "program_runs[].{program_id, program_revision, verdict, can_mitigate, mitigate_command}, "
     "program_revisions",
     "menu": "menu.options[].{command, program_id, program_revision, disabled_reason, parameters}, "
@@ -137,7 +143,8 @@ def _parser() -> argparse.ArgumentParser:
         "changes",
         help="list recent changes (CSV) from the incident onset window",
         description=(
-            "Print the changes (CSV, oldest first) that SDO observed from --since before incident onset until now: "
+            "Print the changes (CSV, nearest incident onset first, so cutting the output short with head keeps the "
+            "rows that matter) that SDO observed from --since before incident onset until now: "
             "application state, configuration and Kubernetes writes with before/after values, the writer when "
             "known, and the actor: agent (your writes and sdo mitigate), sdo (SDO's own stage), kubernetes "
             "(rollouts and other controllers), other (anyone else, such as an engineer or a load generator) or "
@@ -150,7 +157,7 @@ def _parser() -> argparse.ArgumentParser:
         metavar="DURATION",
         help="how far before onset to reach, a Go duration such as 30m (default: 10m)",
     )
-    changes.add_argument("--limit", type=int, metavar="N", help="keep only the newest N changes")
+    changes.add_argument("--limit", type=int, metavar="N", help="keep only the N changes nearest onset")
     changes.add_argument(
         "--component",
         metavar="NODE[,NODE]",
@@ -174,6 +181,54 @@ def _parser() -> argparse.ArgumentParser:
         metavar="NODE[,NODE]",
         help="show the operations whose map path contains these components, and their workload columns",
     )
+    metrics = commands.add_parser(
+        "metrics",
+        help="PromQL on the app's metrics; --list names them",
+        description=(
+            "Run a PromQL QUERY on the metrics source SDO's detectors read (SDO's Prometheus or the application's "
+            "own), at the current time, or over --since at --step. Prints CSV, largest series first. "
+            "`--list [MATCH]` lists metric names (MATCH is a substring); a MATCH naming one metric lists its labels. "
+            "Answers in one call what kubectl needs many for: request or error counts per route, restarts per pod, "
+            "latency percentiles, a value before and after a change. Calls are recorded."
+        ),
+    )
+    metrics.add_argument(
+        "query", nargs="?", metavar="QUERY", help="a PromQL expression (with --list: a name substring)"
+    )
+    metrics.add_argument("--list", action="store_true", help="list metric names, or the labels of the one MATCH names")
+    metrics.add_argument("--since", metavar="DURATION", help="make it a range query over this long, such as 15m")
+    metrics.add_argument("--step", metavar="DURATION", help="range resolution such as 15s (needs --since)")
+    logs = commands.add_parser(
+        "logs",
+        help="a component's pod logs, filtered",
+        description=(
+            "Print the log lines of every pod behind COMPONENT (an application-map component, workload or Service) "
+            "from the last --since (default 10m), tagged by pod. --grep keeps lines matching an RE2 expression. "
+            "--failing keeps error lines and access-log requests with a 4xx or 5xx status (JSON or nginx text) and "
+            "adds a count of failing requests by method, path and status. One call replaces `kubectl logs` per pod "
+            "and a grep over each. Calls are recorded."
+        ),
+    )
+    logs.add_argument("component", metavar="COMPONENT")
+    logs.add_argument("--since", metavar="DURATION", help="how far back, such as 30m (default: 10m)")
+    logs.add_argument("--grep", metavar="RE", help="keep lines matching this RE2 expression")
+    logs.add_argument("--failing", action="store_true", help="keep error lines and 4xx/5xx requests")
+    traces = commands.add_parser(
+        "traces",
+        help="traces, or what is missing",
+        description=(
+            "List recent traces from the trace store when one is bound (filter by --operation or --route, --failing, "
+            "--since): trace ID, root operation, status, duration, services touched and the first failing span. "
+            "`sdo traces ID` prints that trace's span tree: service, operation or database statement, status and "
+            "duration per span. When no trace store is bound the command says so and how the application could "
+            "emit traces. A trace shows which hop of a request failed or was slow."
+        ),
+    )
+    traces.add_argument("trace_id", nargs="?", metavar="ID", help="show this trace")
+    traces.add_argument("--operation", metavar="OP", help="keep traces of this operation")
+    traces.add_argument("--route", metavar="R", help="keep traces of this route")
+    traces.add_argument("--failing", action="store_true", help="keep failed traces")
+    traces.add_argument("--since", metavar="DURATION", help="how far back, such as 10m")
     commands.add_parser(
         "investigations",
         help="read the reports of the investigators SDO started (read-only)",
@@ -191,8 +246,11 @@ def _parser() -> argparse.ArgumentParser:
             "holds data), operations and the edge count. `path OPERATION` shows the operation's path through "
             "components and edges in order, data holders marked, the probes covering it and their status. "
             "`near COMPONENT` shows what it depends on and what depends on it within two hops, and the "
-            "operations through it. Possible edges (a Secret reference only suggests them) are labelled. "
-            "Changes nothing."
+            "operations through it. Each component line ends with where to observe it (request metric, logs "
+            "pods, trace service) for `sdo metrics`, `sdo logs` and `sdo traces`. "
+            "Possible edges (a Secret reference only suggests them) are labelled. "
+            "`--json` prints the same answer as structured data (components, edges, operations, per-component "
+            "pointers) for scripts. Changes nothing."
         ),
     )
     map_command.add_argument(
@@ -361,6 +419,35 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
             if not 0 < args.wait <= MAX_DETECT_WAIT_SECONDS:
                 raise ValueError(f"--wait must be between 1 and {MAX_DETECT_WAIT_SECONDS} seconds")
             request["wait_seconds"] = args.wait
+    elif args.command == "metrics":
+        if args.list:
+            request["list"] = True
+            if args.query:
+                request["name"] = args.query
+        elif not args.query:
+            raise ValueError("sdo metrics needs a PromQL QUERY, or --list [MATCH]")
+        else:
+            request["query"] = args.query
+        if args.since:
+            request["since"] = args.since
+        if args.step:
+            request["step"] = args.step
+    elif args.command == "logs":
+        request["name"] = args.component
+        if args.since:
+            request["since"] = args.since
+        if args.grep:
+            request["grep"] = args.grep
+        if args.failing:
+            request["failing"] = True
+    elif args.command == "traces":
+        if args.trace_id:
+            request["name"] = args.trace_id
+        for field, value in (("operation", args.operation), ("route", args.route), ("since", args.since)):
+            if value:
+                request[field] = value
+        if args.failing:
+            request["failing"] = True
     elif args.command == "map":
         if args.view in ("path", "near") and not args.name:
             raise ValueError(f"sdo map {args.view} needs a name")
@@ -368,6 +455,8 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
             request["map_view"] = args.view
         if args.name:
             request["name"] = args.name
+        if getattr(args, "json", False):
+            request["structured"] = True
     elif args.command in ("changes", "timeline"):
         if args.since:
             request["since"] = args.since
@@ -461,6 +550,11 @@ def _print_response(response: dict[str, Any], *, full_json: bool) -> None:
             )
         else:
             print(text)
+        return
+    if full_json and response.get("command") == "map" and response.get("data"):
+        # `sdo map --json` is the map itself (components, edges, operations, pointers), not text in JSON.
+        data = json.dumps(response["data"], ensure_ascii=False, separators=(",", ":"))
+        print(cap_text(data, budget_for("tool_stdout.map") - 1, json_output=True))
         return
     output = write_response(response)
     if response.get("command") in TEXT_COMMANDS and response.get("text") and not full_json:

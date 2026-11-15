@@ -146,7 +146,7 @@ reason = "CTXFAIL1: required ten-receipt progress with a verification error and 
 
 [tool_stdout.changes]
 max_chars = 24000
-reason = "On-demand CSV of the changes from onset-since to now, at most 200 rows (Go incidentChangesCap) of about 120 characters; --limit N keeps the newest N. Beyond the cap cap_text saves the full text to a context file."
+reason = "On-demand CSV of the changes from onset-since to now, at most 200 rows (Go incidentChangesCap) of about 120 characters; --limit N keeps the N nearest onset. Beyond the cap cap_text saves the full text to a context file."
 
 [tool_stdout.check]
 max_chars = 1400
@@ -166,7 +166,7 @@ reason = "Measured production rendering 4776 Unicode characters across three-/fi
 
 [tool_stdout.map]
 max_chars = 4000
-reason = "sdo map prints at most 30 component and 30 operation lines of about 100 characters, or one operation path, one failing-versus-passing diff, or one component's two-hop neighbourhood (at most 12 names per direction), all bounded by Go; beyond the cap cap_text saves the full text to a context file."
+reason = "sdo map prints at most 30 component and 30 operation lines of about 100 characters, or one operation path, one failing-versus-passing diff, or one component's two-hop neighbourhood (at most 12 names per direction), all bounded by Go; beyond the cap cap_text saves the full text to a context file. With --json the same answer is one JSON object under the same cap."
 
 [tool_stdout.menu]
 max_chars = 1800
@@ -455,3 +455,15 @@ reason = "Explicit template-placeholder cap; preserve small identities inline an
 [template_data.responder-cleanup-branch_instruction]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[tool_stdout.metrics]
+max_chars = 8000
+reason = "PromQL CSV of at most 50 series (Go telemetryMetricRows) of about 160 characters, or at most 200 metric names; beyond the cap cap_text saves the full text to a context file."
+
+[tool_stdout.logs]
+max_chars = 40000
+reason = "At most 120 log lines (Go telemetryLogLines) of at most 300 characters plus pod tags and a failing-request rollup; beyond the cap cap_text saves the full text to a context file."
+
+[tool_stdout.traces]
+max_chars = 8000
+reason = "A listing of at most 20 traces (one CSV row of about 250 characters each) or one trace tree of at most 80 span lines, or the one-line error that no trace store is bound; beyond the cap cap_text saves the full text to a context file."

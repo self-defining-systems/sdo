@@ -45,8 +45,12 @@ func TestTelemetryProfileDefaultsToPrometheusDefaultAndInstallsTheStack(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Backend.Deployments) != 1 || plan.Backend.Deployments[0].Name != "sdo-prometheus" {
-		t.Fatalf("the default profile installs today's Prometheus: %+v", plan.Backend)
+	var names []string
+	for _, d := range plan.Backend.Deployments {
+		names = append(names, d.Name)
+	}
+	if strings.Join(names, ",") != "sdo-prometheus,sdo-jaeger" {
+		t.Fatalf("the default profile installs Prometheus and the trace store: %+v", plan.Backend)
 	}
 }
 

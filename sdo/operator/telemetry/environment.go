@@ -35,6 +35,9 @@ type Environment struct {
 	// MetricsPublishURL is the base URL applications may push OTLP metrics to,
 	// informational for agents; empty when the environment offers none.
 	MetricsPublishURL string `json:"metricsPublishUrl,omitempty"`
+	// TracesPublishURL is the base URL applications may push OTLP/HTTP traces
+	// to, informational for agents; empty when the environment offers none.
+	TracesPublishURL string `json:"tracesPublishUrl,omitempty"`
 	// Capabilities are the installer-granted cluster reads agents may rely on.
 	Capabilities []ClusterCapability `json:"capabilities,omitempty"`
 	// The fields below are the environment's grants for designer bindings: the
@@ -142,6 +145,12 @@ func (e Environment) Validate() error {
 		parsed, err := url.Parse(e.MetricsPublishURL)
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 			return fmt.Errorf("telemetry environment metricsPublishUrl %q must be an http or https URL", e.MetricsPublishURL)
+		}
+	}
+	if e.TracesPublishURL != "" {
+		parsed, err := url.Parse(e.TracesPublishURL)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return fmt.Errorf("telemetry environment tracesPublishUrl %q must be an http or https URL", e.TracesPublishURL)
 		}
 	}
 	return nil
