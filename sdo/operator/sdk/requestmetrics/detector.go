@@ -398,25 +398,8 @@ func (d *detector) notInstrumented(ctx sdk.DetectionContext, op Operation, why s
 		Summary:         fmt.Sprintf("operation %s is not instrumented for request metrics", op.ID),
 		Evidence:        fmt.Sprintf("operation %s (route %q) cannot be watched: %s", op.ID, op.Route, why),
 		PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: ctx.Namespace(), Name: op.Service},
-		Fingerprint:     "requestmetrics/not-instrumented/" + op.ID,
+		Fingerprint:     "requestmetrics/errors/" + op.ID,
 		Metadata:        map[string]any{"operation": op.ID, "route": op.Route, "method": op.Method, "service": op.Service, "reason": why},
-	}
-}
-
-// insufficientBaseline says a client-error jump was not judged for lack of
-// healthy history (a fresh install, a rarely used route). It is a clue.
-func (d *detector) insufficientBaseline(ctx sdk.DetectionContext, op Operation, minRequests float64) sdk.Finding {
-	fingerprint := "requestmetrics/insufficient-baseline/" + op.ID
-	if op.undeclared {
-		fingerprint = "requestmetrics/insufficient-baseline/undeclared/" + op.Service + "/" + op.Route
-	}
-	return sdk.Finding{
-		DetectorID: d.cfg.Spec.ID, RuleID: RuleInsufficientBaseline, Status: sdk.FindingActive, Severity: sdk.SeverityInfo,
-		Summary:         fmt.Sprintf("operation %s: insufficient baseline to judge a client-error jump", op.ID),
-		Evidence:        fmt.Sprintf("operation %s (route %q) shows client errors but has fewer than %.0f healthy requests in its baseline window, so the rise cannot be called a jump", op.ID, op.Route, minRequests),
-		PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: ctx.Namespace(), Name: op.Service},
-		Fingerprint:     fingerprint,
-		Metadata:        map[string]any{"operation": op.ID, "route": op.Route, "method": op.Method, "service": op.Service, "min_baseline_requests": minRequests},
 	}
 }
 
@@ -489,8 +472,11 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 	// The newest step at which the rule held on Consecutive steps in a row.
 	var best *verdict
 	raisedAt := -1
+	// unjudged marks a client-error jump held on thin history: it is kept
+	// (a clue under the error fingerprint) rather than dropped, so an incident
+	// it opened or joined holds until recovery is confirmed.
 	unjudged := false
-	for end := len(times) - 1; end >= r.Consecutive-1 && best == nil; end-- {
+	for end := len(times) - 1; end >= r.Consecutive-1 && (best == nil || unjudged); end-- {
 		for _, class := range []string{ClassServer, ClassClientJump} {
 			held := true
 			for _, t := range times[end-r.Consecutive+1 : end+1] {
@@ -503,16 +489,16 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 				continue
 			}
 			if class == ClassClientJump && !enough {
-				unjudged = true
+				if best == nil {
+					v := r.judgeStep(steps[times[end]], class, healthyServer, healthyClient)
+					best, raisedAt, unjudged = &v, end, true
+				}
 				continue
 			}
-			if v := r.judgeStep(steps[times[end]], class, healthyServer, healthyClient); best == nil || v.failed > best.failed {
-				best, raisedAt = &v, end
+			if v := r.judgeStep(steps[times[end]], class, healthyServer, healthyClient); best == nil || unjudged || v.failed > best.failed {
+				best, raisedAt, unjudged = &v, end, false
 			}
 		}
-	}
-	if best == nil && unjudged {
-		return d.insufficientBaseline(ctx, op, r.MinBaselineRequests), true
 	}
 	if best == nil {
 		return sdk.Finding{}, false
@@ -554,9 +540,18 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 			meta["undeclared_truncated"] = op.truncated
 		}
 	}
+	rule, severity := RuleErrors, sdk.SeverityWarning
+	if unjudged {
+		rule, severity = RuleInsufficientBaseline, sdk.SeverityInfo
+		note = fmt.Sprintf(" The baseline holds fewer than %.0f healthy requests, so the rise is not called a jump: this is a clue, and it holds an incident it already belongs to until recovery is confirmed.", r.MinBaselineRequests) + note
+	}
+	summary := fmt.Sprintf("operation %s: %.0f of %.0f requests failed in %s (%s)", op.ID, best.failed, best.total, window, best.class)
+	if unjudged {
+		summary = fmt.Sprintf("operation %s: insufficient baseline to judge a client-error jump (%.0f of %.0f requests failed in %s)", op.ID, best.failed, best.total, window)
+	}
 	f := sdk.Finding{
-		DetectorID: d.cfg.Spec.ID, RuleID: RuleErrors, Status: sdk.FindingActive, Severity: sdk.SeverityWarning,
-		Summary: fmt.Sprintf("operation %s: %.0f of %.0f requests failed in %s (%s)", op.ID, best.failed, best.total, window, best.class),
+		DetectorID: d.cfg.Spec.ID, RuleID: rule, Status: sdk.FindingActive, Severity: severity,
+		Summary: summary,
 		Evidence: fmt.Sprintf("operation %s (route %q, method %s) had %.0f failed of %.0f requests over %s, %.1f%% against a healthy %.1f%% (%s), on %d consecutive %s steps; newest step at %s.",
 			op.ID, op.Route, method, best.failed, best.total, window, best.share*100, best.healthy*100, best.class, r.Consecutive, r.Step, times[raisedAt].UTC().Format(time.RFC3339)) + note + samples.text(),
 		PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: ctx.Namespace(), Name: op.Service},

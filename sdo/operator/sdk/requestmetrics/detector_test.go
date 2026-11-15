@@ -206,6 +206,38 @@ func TestUnlabelledFirstSeriesDoesNotHideAnInstrumentedMetric(t *testing.T) {
 	}
 }
 
+// An alert that has opened an incident leaves the alert set only through
+// confirmed recovery. A reclassification keeps the operation's error
+// fingerprint, so an open incident keeps holding on it; the rule stays a clue,
+// so a fresh install still opens nothing.
+func TestJumpWithAThinBaselineHoldsUntilHealthyRequestsReturn(t *testing.T) {
+	baseline := []metrics.Series{instant(pkgRoute, "200", 10), instant(webRoute, "200", 400)}
+	held := func(fail, ok []float64) []sdk.Finding {
+		recent := []metrics.Series{series(pkgRoute, "200", ok...), series(pkgRoute, "404", fail...), series(webRoute, "200", steady(40, len(ok))...)}
+		return detect(t, snapshot(recent, baseline, presence()))
+	}
+	for name, got := range map[string][]sdk.Finding{
+		"failing":            held([]float64{0, 0, 5, 8, 8, 8}, steady(11, 6)),
+		"quiet after":        held([]float64{0, 0, 5, 8, 8, 0, 0}, []float64{11, 11, 11, 11, 11, 1, 1}),
+		"quiet and no 404 s": held([]float64{0, 0, 5, 8, 8, 0, 0}, []float64{11, 11, 11, 11, 11, 2, 0}),
+	} {
+		if len(got) != 1 || got[0].RuleID != requestmetrics.RuleInsufficientBaseline || got[0].Fingerprint != "requestmetrics/errors/package-download" {
+			t.Fatalf("%s: findings = %+v", name, got)
+		}
+	}
+	if got := held([]float64{0, 0, 5, 8, 8, 0, 0}, []float64{11, 11, 11, 11, 11, 11, 11}); len(got) != 0 {
+		t.Fatalf("healthy requests returned but the finding stays: %+v", got)
+	}
+}
+
+func TestOperationThatStopsBeingInstrumentedKeepsItsErrorFingerprint(t *testing.T) {
+	for _, f := range detect(t, snapshot(nil, nil, nil)) {
+		if f.RuleID != requestmetrics.RuleNotInstrumented || f.Fingerprint != "requestmetrics/errors/"+f.Metadata["operation"].(string) {
+			t.Fatalf("finding %+v", f)
+		}
+	}
+}
+
 func TestUnmeasurableOperationIsReportedWithItsReason(t *testing.T) {
 	d := requestmetrics.NewDetector(requestmetrics.Config{
 		Spec:       sdk.DetectorSpec{ID: "request-metrics"},
