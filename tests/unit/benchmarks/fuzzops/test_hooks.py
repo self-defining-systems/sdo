@@ -357,6 +357,28 @@ def test_idle_reason(state: dict[str, Any] | None, why: str) -> None:
 NOW = datetime(2026, 1, 1, 12, tzinfo=UTC)
 
 
+def _timeline(*rules: str) -> dict[str, Any]:
+    stamp = (NOW - timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {
+        "version": "v",
+        "detector_timeline": [
+            {"detector_id": "request-metrics", "rule_id": rule, "last_seen_at": stamp, "fingerprint": f"f{i}"}
+            for i, rule in enumerate(rules)
+        ],
+    }
+
+
+def test_idle_verdict_is_blind_while_request_metrics_cannot_watch_any_operation() -> None:
+    state = _timeline("request-metrics.not-instrumented", "request-metrics.not-instrumented")
+    assert idle_verdict(state, NOW, True, NOW).startswith("blind:")
+
+
+def test_idle_verdict_is_idle_when_some_operation_is_watched_or_none_is_declared() -> None:
+    mixed = _timeline("request-metrics.not-instrumented", "request-metrics.insufficient-baseline")
+    assert idle_verdict(mixed, NOW, True, NOW) == ""
+    assert idle_verdict(_timeline(), NOW, True, NOW) == ""
+
+
 def test_idle_verdict_is_idle_for_a_ready_fresh_quiet_controller() -> None:
     assert idle_verdict({"version": "v"}, NOW - timedelta(seconds=5), True, NOW) == ""
 

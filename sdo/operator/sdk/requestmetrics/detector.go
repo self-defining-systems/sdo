@@ -295,8 +295,18 @@ func (p entryPlan) instrumentation(results map[string]metrics.Result) string {
 	if p.StatusLabel == "" {
 		return fmt.Sprintf("entry %s declares no status label, so failed requests cannot be counted per operation", p.Service)
 	}
+	// A grouped query leaves a label off a series whose source carries none
+	// (a health check, a scrape), and such a series may sort first: the label
+	// is present when any series carries it.
 	for _, label := range []string{p.RouteLabel, p.StatusLabel} {
-		if _, ok := presence[0].Labels[label]; !ok {
+		found := false
+		for _, s := range presence {
+			if _, ok := s.Labels[label]; ok {
+				found = true
+				break
+			}
+		}
+		if !found {
 			return fmt.Sprintf("metric %s%s carries no %q label", p.Metric, p.Selector, label)
 		}
 	}
