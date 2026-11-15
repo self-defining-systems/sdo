@@ -383,18 +383,22 @@ func TestFailsUnderBreakRestoresEveryBrokenComponentInOrder(t *testing.T) {
 	}
 }
 
-func TestFailsUnderBreakIsSkippedWhenTheHealthyAppAlreadyRaises(t *testing.T) {
+func TestFailsUnderBreakStillRunsWhenTheHealthyAppAlreadyRaises(t *testing.T) {
 	w := newWorld()
 	w.healthyRaise = raiseNaming("traffic-probe-write", "write-commit failed")
+	w.raiseFor["api"] = []Raise{{DetectorID: "traffic-probe-call", Summary: "scenario browse failed: list-items returned 503"}}
 	r := runLiveItems(t, w, true, true)
 	if status(r, ItemQuiet, "traffic-probe-write") != Red {
 		t.Fatalf("%s", r.Text())
 	}
-	if len(w.log) != 0 {
-		t.Fatalf("broke components of an app that is not quiet: %v", w.log)
+	if len(w.log) == 0 {
+		t.Fatalf("a noisy quiet item must not hide the breaks:\n%s", r.Text())
 	}
-	if status(r, ItemBreak, "all") != Note {
-		t.Fatalf("expected a skip note:\n%s", r.Text())
+	if status(r, ItemBreak, "list-items") != Green {
+		t.Fatalf("a new raise under the break names the operation even though the app was noisy:\n%s", r.Text())
+	}
+	if status(r, ItemBreak, "all") != Note || !strings.Contains(r.Text(), "standing raises") {
+		t.Fatalf("expected a note that standing raises are ignored:\n%s", r.Text())
 	}
 }
 
