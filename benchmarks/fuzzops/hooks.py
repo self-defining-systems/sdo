@@ -312,6 +312,9 @@ class OperatorBlock:
     #: ``settings.dev_mount``: run the pods from the base images (``image_tag``) with the checkout's sources and
     #: binary projected over them from the lane's evidence mount (``devtree``): no image build for this revision.
     dev_mount: bool = False
+    #: ``BENCH_OPERATOR.seed``: a baseline-format directory (a learned memory) that ``swap`` imports into the lane's
+    #: accepted repository, on top of the pool's own baseline. Not part of what a pool claim must match.
+    seed: Path | None = None
 
     def __post_init__(self) -> None:
         if not self.revision:
@@ -358,6 +361,7 @@ class OperatorBlock:
                 config=settings.get("config") or {},
                 harness_page=page.PageConfig.from_settings(settings.get("harness_page")),
                 dev_mount=bool(settings.get("dev_mount")),
+                seed=Path(str(raw["seed"])) if raw.get("seed") else None,
             )
         except (TypeError, ValueError) as exc:
             raise HookError(f"BENCH_OPERATOR: {exc}") from exc
@@ -1283,8 +1287,79 @@ def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
         raise HookError(f"the operator is not idle: {why}")
     record["revision"] = revision
     (lane_dir / PREPARED_RECORD).write_text(json.dumps(record) + "\n")
-    out(json.dumps(swap_receipt(lane_dir, revision, record["memory"], time.monotonic() - started)))
+    memory = record["memory"]
+    if block.seed is not None:
+        # The prepared record keeps the pool's own state: a reset returns the lane to it, never to a seed.
+        seed = Baseline.load(block.seed)
+        if why := seed_problem(seed, _baseline(block)):
+            raise HookError(why)
+        binary, kubeconfig = _binary(env), Path(env["KUBECONFIG"]).resolve() if env.get("KUBECONFIG") else None
+        bundle = seed.path(seed.bundle)
+        apply_seed(
+            SeedSteps(
+                reset_incidents=lambda: reset_incidents(binary, control, kubeconfig),
+                retire_standby=lambda: retire_standby(kube, control),
+                stop_controller=lambda: set_controller_suspended(kube, control, True),
+                import_memory=lambda commit: restore_repository(kube, control, commit, bundle),
+                start_controller=lambda: set_controller_suspended(kube, control, False),
+                wait_standby=lambda: wait_standby(kube, control, SWAP_STANDBY_WAIT_S),
+                repository_state=lambda: repository_state(kube, control),
+                controller_idle=lambda: wait_idle(kube, control, RESET_IDLE_WAIT_S),
+            ),
+            seed,
+            out,
+        )
+        memory = seed.commit
+    out(json.dumps(swap_receipt(lane_dir, revision, memory, time.monotonic() - started)))
     return 0
+
+
+@dataclass(frozen=True)
+class SeedSteps:
+    """What ``apply_seed`` does to the lane, one callable per step (tests substitute them)."""
+
+    reset_incidents: Callable[[], object]
+    retire_standby: Callable[[], object]
+    stop_controller: Callable[[], object]
+    import_memory: Callable[[str], object]
+    start_controller: Callable[[], object]
+    wait_standby: Callable[[], object]
+    repository_state: Callable[[], Mapping[str, str]]
+    controller_idle: Callable[[], str]
+
+
+def seed_problem(seed: Baseline, prepared: Baseline) -> str:
+    """Why ``seed`` cannot be imported into a lane prepared from ``prepared``: its memory was made on another render
+    (the lane's app would not be what the memory describes) or in another namespace."""
+    if seed.namespace != prepared.namespace or seed.control != prepared.control:
+        return (
+            f"the seed is for namespace {seed.namespace}/{seed.control}, "
+            f"the lane's is {prepared.namespace}/{prepared.control}"
+        )
+    if seed.path(seed.render).read_text() != prepared.path(prepared.render).read_text():
+        return "the seed's render differs from the lane's baseline render"
+    return ""
+
+
+def apply_seed(steps: SeedSteps, seed: Baseline, out: Callable[[str], None] = _print) -> dict[str, Any]:
+    """Make a prepared, idle lane's accepted repository the seed's memory: close any incident, stop the controller (it
+    caches the accepted commit), import the seed's commit, start it again (the same install, state and images) and
+    assert the repository is the seed's commit, clean, with the operator idle."""
+    started = time.monotonic()
+    steps.reset_incidents()
+    steps.retire_standby()
+    steps.stop_controller()
+    steps.import_memory(seed.commit)
+    steps.start_controller()
+    steps.wait_standby()
+    now = steps.repository_state()
+    if now["head"] != seed.commit or now["status"]:
+        raise HookError(f"the lane's repository is {now['head'][:12]} after the seed, not {seed.commit[:12]}")
+    if why := steps.controller_idle():
+        raise HookError(f"the operator is not idle after the seed: {why}")
+    receipt = {"seed": seed.commit, "seed_s": round(time.monotonic() - started, 1)}
+    out(json.dumps(receipt))
+    return receipt
 
 
 def swap_receipt(lane_dir: Path, revision: str, memory: str, seconds: float) -> dict[str, Any]:
@@ -1441,9 +1516,10 @@ def set_controller_suspended(kube: Kube, control: str, suspended: bool, timeout:
     raise HookError(f"the controller pod did not end within {timeout:.0f}s")
 
 
-def restore_repository(kube: Kube, control: str, head: str) -> None:
+def restore_repository(kube: Kube, control: str, head: str, bundle: Path | None = None) -> None:
     """With the controller stopped, put the accepted repository on its volume back at ``head`` with no other file
-    (outcomes and playbooks it learned go), in a short-lived pod that mounts the volume as the controller does."""
+    (outcomes and playbooks it learned go), in a short-lived pod that mounts the volume as the controller does.
+    With ``bundle`` the commit comes from that git bundle (a learned memory), fetched into the repository first."""
     if not _COMMIT.match(head):
         raise HookError(f"prepared head {head!r} is not a commit")
     job = kube._json("-n", control, "get", "job", CONTROLLER_JOB) or {}
@@ -1458,10 +1534,14 @@ def restore_repository(kube: Kube, control: str, head: str) -> None:
     if volume is None or mount is None:
         raise HookError("the controller job has no repository volume")
     name = "sdo-restore-repository"
-    script = (
-        f"cd {APPLICATION_ROOT} && git -c safe.directory='*' reset -q --hard {head} && "
-        "git -c safe.directory='*' clean -q -fdx && git -c safe.directory='*' rev-parse HEAD"
-    )
+    git = "git -c safe.directory='*'"
+    steps = [f"cd {APPLICATION_ROOT}"]
+    if bundle is not None:
+        # the pod waits for the bundle, streamed in by exec (the image need not hold tar for a copy)
+        steps.insert(0, "until [ -e /tmp/memory.ready ]; do sleep 1; done")
+        steps.append(f"{git} fetch -q /tmp/memory.bundle")
+    steps += [f"{git} reset -q --hard {head}", f"{git} clean -q -fdx", f"{git} rev-parse HEAD"]
+    script = " && ".join(steps)
     pod = {
         "apiVersion": "v1",
         "kind": "Pod",
@@ -1489,6 +1569,8 @@ def restore_repository(kube: Kube, control: str, head: str) -> None:
     )
     _run(kube.cmd("apply", "-f", "-"), "restore pod", 60, input=json.dumps(pod))
     try:
+        if bundle is not None:
+            send_bundle(kube, control, name, bundle)
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
             proc = subprocess.run(
@@ -1516,6 +1598,44 @@ def restore_repository(kube: Kube, control: str, head: str) -> None:
             capture_output=True,
             check=False,
         )
+
+
+def send_bundle(kube: Kube, control: str, pod: str, bundle: Path) -> None:
+    """Stream ``bundle`` into the running restore pod at /tmp/memory.bundle and tell it to go on."""
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        phase = subprocess.run(
+            kube.cmd("-n", control, "get", "pod", pod, "-o", "jsonpath={.status.phase}"),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        ).stdout.strip()
+        if phase == "Running":
+            break
+        time.sleep(1)
+    else:
+        raise HookError(f"restore pod {pod} did not start in 120s")
+    with bundle.open("rb") as handle:
+        proc = subprocess.run(
+            kube.cmd(
+                "-n",
+                control,
+                "exec",
+                "-i",
+                pod,
+                "--",
+                "sh",
+                "-c",
+                "cat > /tmp/memory.bundle && touch /tmp/memory.ready",
+            ),
+            stdin=handle,
+            capture_output=True,
+            timeout=600,
+            check=False,
+        )
+    if proc.returncode != 0:
+        raise HookError(f"sending the memory bundle failed: {proc.stderr.decode()[-300:]}")
 
 
 def fuzzops_app(env: Mapping[str, str], verb: str) -> dict[str, Any]:
