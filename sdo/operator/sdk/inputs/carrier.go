@@ -28,6 +28,7 @@ import (
 type Sources interface {
 	sdk.ObservationClock
 	sdk.SelfHealPolicy
+	sdk.HeldAlertSource
 	traffic.Source
 	traffic.WindowSet
 	metrics.ResultSet
@@ -56,6 +57,7 @@ type Carrier struct {
 	sdk.DetectionContext
 	clock        sdk.ObservationClock
 	selfHeal     sdk.SelfHealPolicy
+	held         sdk.HeldAlertSource
 	traffic      traffic.Source
 	reachability servicehealth.ReachabilitySource
 	metrics      metrics.Source
@@ -83,6 +85,7 @@ func New(base sdk.DetectionContext) Carrier {
 	c := Carrier{DetectionContext: base}
 	c.clock, _ = base.(sdk.ObservationClock)
 	c.selfHeal, _ = base.(sdk.SelfHealPolicy)
+	c.held, _ = base.(sdk.HeldAlertSource)
 	c.traffic, _ = base.(traffic.Source)
 	c.reachability, _ = base.(servicehealth.ReachabilitySource)
 	c.metrics, _ = base.(metrics.Source)
@@ -296,3 +299,21 @@ func (c Carrier) AppStateResults() map[string]carried.Result {
 }
 
 var _ Sources = Carrier{}
+
+type heldKeys []string
+
+func (h heldKeys) HeldAlertKeys() []string { return h }
+
+// WithHeld records the alert keys of the incident open at this snapshot.
+func (c Carrier) WithHeld(keys []string) Carrier {
+	c.held = heldKeys(append([]string(nil), keys...))
+	return c
+}
+
+// HeldAlertKeys is the carried held alert keys; empty when none are recorded.
+func (c Carrier) HeldAlertKeys() []string {
+	if c.held == nil {
+		return nil
+	}
+	return c.held.HeldAlertKeys()
+}

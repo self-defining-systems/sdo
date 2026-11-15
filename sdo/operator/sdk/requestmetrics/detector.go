@@ -465,10 +465,17 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 		times = append(times, t)
 	}
 	sort.Slice(times, func(i, j int) bool { return times[i].Before(times[j]) })
-	if len(times) < r.Consecutive {
+	// A finding that holds the open incident is judged against the share
+	// floor, not the baseline: an ongoing fault must never become its own
+	// healthy share, and it leaves only through confirmed recovery.
+	held := sdk.HeldFingerprints(ctx, d.cfg.Spec.ID)[errorsFingerprint(op)]
+	if len(times) < r.Consecutive && !held {
 		return sdk.Finding{}, false
 	}
 	healthyServer, healthyClient, enough := plan.healthy(op, results[plan.base.ID].Series, r.MinBaselineRequests)
+	if held {
+		healthyServer, healthyClient, enough = 0, 0, true
+	}
 	// The newest step at which the rule held on Consecutive steps in a row.
 	var best *verdict
 	raisedAt := -1
@@ -500,6 +507,20 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 			}
 		}
 	}
+	onset := time.Time{}
+	if best != nil {
+		onset = times[raisedAt]
+	}
+	heldUnconfirmed := ""
+	if best == nil && held {
+		for _, t := range times {
+			if r.confirmsRecovery(steps[t], 0) {
+				return sdk.Finding{}, false
+			}
+		}
+		best, raisedAt, onset = &verdict{class: ClassServer}, len(times)-1, recent.ObservedAt
+		heldUnconfirmed = " The incident this finding holds is open and no recent step had enough requests with none failed, so recovery is not confirmed."
+	}
 	if best == nil {
 		return sdk.Finding{}, false
 	}
@@ -524,9 +545,9 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 		method = "any"
 	}
 	window := r.Window.String()
-	fingerprint, note := "requestmetrics/errors/"+op.ID, unconfirmed
+	fingerprint, note := "requestmetrics/errors/"+op.ID, unconfirmed+heldUnconfirmed
 	meta := map[string]any{}
-	if unconfirmed != "" {
+	if unconfirmed != "" || heldUnconfirmed != "" {
 		meta["recovery_unconfirmed"] = true
 	}
 	samples := failingSamples(ctx, op, best.class)
@@ -553,7 +574,7 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 		DetectorID: d.cfg.Spec.ID, RuleID: rule, Status: sdk.FindingActive, Severity: severity,
 		Summary: summary,
 		Evidence: fmt.Sprintf("operation %s (route %q, method %s) had %.0f failed of %.0f requests over %s, %.1f%% against a healthy %.1f%% (%s), on %d consecutive %s steps; newest step at %s.",
-			op.ID, op.Route, method, best.failed, best.total, window, best.share*100, best.healthy*100, best.class, r.Consecutive, r.Step, times[raisedAt].UTC().Format(time.RFC3339)) + note + samples.text(),
+			op.ID, op.Route, method, best.failed, best.total, window, best.share*100, best.healthy*100, best.class, r.Consecutive, r.Step, onset.UTC().Format(time.RFC3339)) + note + samples.text(),
 		PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: ctx.Namespace(), Name: op.Service},
 		Playbooks:       append([]string(nil), d.cfg.Spec.Playbooks...),
 		Fingerprint:     fingerprint,
@@ -568,4 +589,13 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 		f.Metadata[k] = v
 	}
 	return f, true
+}
+
+// errorsFingerprint is the key an operation's error finding, and every clue
+// that stands in for it, carries.
+func errorsFingerprint(op Operation) string {
+	if op.undeclared {
+		return "requestmetrics/errors/undeclared/" + op.Service + "/" + op.Route
+	}
+	return "requestmetrics/errors/" + op.ID
 }

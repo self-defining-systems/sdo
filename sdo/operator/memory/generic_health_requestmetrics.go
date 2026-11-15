@@ -27,11 +27,10 @@ const MaxRequestMetricEntries = metrics.MaxQueries * 3 / 4 / 3
 const (
 	requestMetricsInterval = 10 * time.Second
 	// requestMetricsBaselineWindow and Offset place the healthy share before
-	// the rule's whole lookback (5 m), so a fault never enters its own
-	// baseline while it is being judged: a baseline that absorbed it would
-	// clear the alert with users still failing.
+	// the 30 s rule window, far enough back that a fault of a few minutes does
+	// not become its own baseline at once.
 	requestMetricsBaselineWindow = "10m"
-	requestMetricsBaselineOffset = "6m"
+	requestMetricsBaselineOffset = "2m"
 )
 
 // plannedRequestMetrics derives the detector configuration from the accepted

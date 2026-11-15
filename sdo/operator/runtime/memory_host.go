@@ -372,6 +372,7 @@ func (r *RemoteMemory) buildObservation(view sdk.DetectionContext) (*pb.MemoryOb
 	if hold := source.SelfHealHold(); hold > 0 {
 		out.SelfHealHold = durationpb.New(hold)
 	}
+	out.HeldKeys = source.HeldAlertKeys()
 	var err error
 	if len(source.ObservationStatuses()) > 0 {
 		scoped, _, e := sdktest.CaptureScoped(source)

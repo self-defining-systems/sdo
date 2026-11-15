@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -24,6 +25,7 @@ import (
 	"sdo.dev/operator/evaluation"
 	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -99,6 +101,8 @@ type dispatchCompletion struct {
 }
 
 type Controller struct {
+	// heldKeys are the open incident's alert keys, published for the snapshot provider (sdk.HeldAlertSource).
+	heldKeys atomic.Pointer[[]string]
 	// signals is the 15-minute ring the incident timeline is drawn from.
 	signals           *incidentSignals
 	ExternalIncidents func(context.Context) (*ExternalIncident, error)
@@ -411,20 +415,55 @@ func NewController(
 	if config.StartupBound > 0 && !config.ExternalIncidentsOnly {
 		startup = newStartupPeriod(start.UTC(), start.UTC().Add(config.StartupBound))
 	}
-	return &Controller{
+	controller := &Controller{
 		signals: newIncidentSignals(),
 		config:  config, codePath: resolvedPath, startedAt: start, scheduler: NewScheduler(detectors, start, config.Namespace), detectors: byID,
 		tracker: tracker, startup: startup,
 		gateClears: make(map[string]*gateClear), gateProbes: make(map[string]time.Time),
-		batcher: NewDebouncedBatcher(config.BatchDebounce), provider: provider, dispatcher: dispatcher,
+		batcher: NewDebouncedBatcher(config.BatchDebounce), dispatcher: dispatcher,
 		results: make(chan dispatchCompletion, 1), healthDetectorIDs: healthDetectorIDs,
 		detectorSpecs:    detectorSpecs,
 		workspaceResults: make(chan workspaceCompletion, 1), closureResults: make(chan closureCompletion, 1), closurePrepared: make(chan struct{}, 1),
 		acknowledgmentResults: make(chan acknowledgmentCompletion, 1),
 		reflectionResults:     make(chan reflectionCompletion, 1), reflections: reflectionQueueState{rescan: true},
 		dispatchJitter: lifecycleio.DispatchJitter,
-	}, nil
+	}
+	controller.provider = heldSnapshotProvider{Base: provider, held: &controller.heldKeys}
+	return controller, nil
 }
+
+// publishHeldLocked records the open incident's alert keys for the snapshots
+// taken from now on. Caller holds c.mu.
+func (c *Controller) publishHeldLocked() {
+	var keys []string
+	if c.incidentOpen && c.currentIncidentRequest != nil {
+		keys = alertKeys(c.currentIncidentRequest)
+	}
+	c.heldKeys.Store(&keys)
+}
+
+// heldSnapshotProvider records the open incident's alert keys in every
+// snapshot, so detectors judge a finding that holds the incident as the
+// controller does and replay reproduces it.
+type heldSnapshotProvider struct {
+	Base SnapshotProvider
+	held *atomic.Pointer[[]string]
+}
+
+func (p heldSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
+	base, err := p.Base.Snapshot(ctx)
+	if err != nil {
+		return base, err
+	}
+	keys := p.held.Load()
+	if keys == nil || len(*keys) == 0 {
+		return base, nil
+	}
+	return heldContext{Carrier: inputs.New(base).WithHeld(*keys)}, nil
+}
+
+// heldContext keeps the wrapped snapshot's other optional inputs visible.
+type heldContext struct{ inputs.Carrier }
 
 func (c *Controller) Step(ctx context.Context, now time.Time, event *sdk.WatchKind) error {
 	if event == nil {
@@ -1034,6 +1073,7 @@ func (c *Controller) beginIncident(now time.Time, request IncidentRequest, batch
 	c.responderDone = false
 	request.DetectedAt = now.UTC()
 	c.currentIncidentRequest = cloneIncidentRequest(&request)
+	c.publishHeldLocked()
 	c.currentIncidentResult = nil
 	c.dispatchError = ""
 	c.incidentDetectedAt = now.UTC()
@@ -1921,6 +1961,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 	if early {
 		c.incidentOpen = false
+		c.publishHeldLocked()
 		warning := apihistory.VerificationWarning(verifiedAt)
 		verification.IncidentVerified = warning
 		c.cacheVerificationLocked(verification)
@@ -2173,6 +2214,7 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	// lock, but treat the old process as finished so detector clears can close it.
 	c.responderDone = state.ResponderDone
 	c.currentIncidentRequest = cloneIncidentRequest(incidentRequestState(state.GetIncidentRequest()))
+	c.publishHeldLocked()
 	c.currentIncidentResult = nil
 	if state.IncidentResult != nil {
 		result := incidentResultState(state.IncidentResult)
@@ -2337,6 +2379,7 @@ func (c *Controller) PersistState(ctx context.Context) error {
 			return ErrStateConflict
 		}
 		c.currentIncidentRequest = cloneIncidentRequest(&prepared)
+		c.publishHeldLocked()
 		c.mu.Unlock()
 		state.IncidentRequest, err = incidentRequestContract(prepared)
 		if err != nil {

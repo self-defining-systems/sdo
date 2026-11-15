@@ -507,6 +507,7 @@ func observe(snapshot *sdktest.Snapshot, o *pb.MemoryObservation) error {
 		at := o.ObservedAt.AsTime()
 		snapshot.ObservedAtTime = &at
 	}
+	snapshot.HeldKeys = append([]string(nil), o.HeldKeys...)
 	if o.SelfHealHold != nil {
 		if err := o.SelfHealHold.CheckValid(); err != nil {
 			return err

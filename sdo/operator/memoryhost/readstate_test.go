@@ -126,3 +126,14 @@ func TestObservationDecodesAppStateIntoTheSnapshot(t *testing.T) {
 		t.Fatalf("limit = %q", limit)
 	}
 }
+
+func TestObservationCarriesTheOpenIncidentsAlertKeysIntoTheSnapshot(t *testing.T) {
+	var snapshot sdktest.Snapshot
+	keys := []string{"request-metrics\x00requestmetrics/errors/op"}
+	if err := observe(&snapshot, &pb.MemoryObservation{HeldKeys: keys}); err != nil {
+		t.Fatal(err)
+	}
+	if held := sdk.HeldFingerprints(snapshot, "request-metrics"); !held["requestmetrics/errors/op"] {
+		t.Fatalf("held = %v", held)
+	}
+}
