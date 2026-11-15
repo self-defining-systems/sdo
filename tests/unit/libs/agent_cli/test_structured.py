@@ -935,10 +935,12 @@ def test_the_reasoning_summary_names_match_the_shared_agent_manifest() -> None:
     assert list(structured.REASONING_SUMMARIES) == manifest["reasoning_summaries"]
 
 
-def _claude_frames(*results: dict[str, Any], tasks_pending_at_first: bool) -> list[dict[str, Any]]:
-    """A process that ends its turn with background tasks pending, then answers once they finish."""
-    task = {"task_id": "t1", "task_type": "local_agent", "description": "check"}
+def _claude_frames(*results: dict[str, Any], working_after_first: bool) -> list[dict[str, Any]]:
+    """A process that ends its turn while its background work runs, then answers; idle ends it."""
     init = {"type": "system", "subtype": "init", "session_id": "s-bg"}
+
+    def state(name: str) -> dict[str, Any]:
+        return {"type": "system", "subtype": "session_state_changed", "state": name}
 
     def result(output: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -956,26 +958,18 @@ def _claude_frames(*results: dict[str, Any], tasks_pending_at_first: bool) -> li
         }
 
     early, *later = results
-    frames = [
-        init,
-        {"type": "system", "subtype": "background_tasks_changed", "tasks": [task] if tasks_pending_at_first else []},
-    ]
-    frames.append(result(early))
+    frames = [state("running"), init, result(early)]
+    if not working_after_first:
+        return [*frames, state("idle")]
     for follow_on in later:
-        frames.append({"type": "system", "subtype": "background_tasks_changed", "tasks": []})
-        frames.append(init)
-        frames.append(result(follow_on))
-    return frames
+        frames += [init, result(follow_on)]
+    return [*frames, state("idle")]
 
 
-def test_a_result_emitted_while_the_agents_background_tasks_run_is_not_the_answer(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The agent ended its turn to wait for its own subagents; the CLI's follow-on turn holds the answer."""
-    monkeypatch.setattr("libs.agent_cli.claude_stream.SETTLE_SECONDS", 0.1)
-    frames = _claude_frames({"answer": "early"}, {"answer": "after the subagents"}, tasks_pending_at_first=True)
-    peer = ClaudeFramePeer([frames])
-    executor = FakeExecutor(FakeRun(), peers=lambda _spawn: peer)
+def test_a_result_emitted_while_the_agents_background_tasks_run_is_not_the_answer(tmp_path: Path) -> None:
+    """The agent ended its turn to wait for its own subagents; the follow-on turn holds the answer."""
+    frames = _claude_frames({"answer": "early"}, {"answer": "after the subagents"}, working_after_first=True)
+    executor = FakeExecutor(FakeRun(), peers=lambda _spawn: ClaudeFramePeer([frames]))
 
     turn = run_structured_turn(
         "claude", "prompt", output_schema=_SCHEMA, cwd=tmp_path, access="danger-full-access", executor=executor
@@ -984,8 +978,8 @@ def test_a_result_emitted_while_the_agents_background_tasks_run_is_not_the_answe
     assert json.loads(turn.output_json) == {"answer": "after the subagents"}
 
 
-def test_a_result_with_no_background_task_is_returned_at_once(tmp_path: Path) -> None:
-    frames = _claude_frames({"answer": "only"}, tasks_pending_at_first=False)
+def test_the_first_result_stands_once_the_cli_says_idle(tmp_path: Path) -> None:
+    frames = _claude_frames({"answer": "only"}, working_after_first=False)
     executor = FakeExecutor(FakeRun(), peers=lambda _spawn: ClaudeFramePeer([frames]))
 
     turn = run_structured_turn(
@@ -993,3 +987,41 @@ def test_a_result_with_no_background_task_is_returned_at_once(tmp_path: Path) ->
     )
 
     assert json.loads(turn.output_json) == {"answer": "only"}
+
+
+def test_a_cli_that_reports_no_session_state_gives_no_signal_so_the_first_result_stands(tmp_path: Path) -> None:
+    frames = [
+        f
+        for f in _claude_frames({"answer": "only"}, {"answer": "later"}, working_after_first=True)
+        if f.get("subtype") != "session_state_changed"
+    ]
+    executor = FakeExecutor(FakeRun(), peers=lambda _spawn: ClaudeFramePeer([frames]))
+
+    turn = run_structured_turn(
+        "claude", "prompt", output_schema=_SCHEMA, cwd=tmp_path, access="danger-full-access", executor=executor
+    )
+
+    assert json.loads(turn.output_json) == {"answer": "only"}
+
+
+def test_claude_turns_ask_the_cli_for_its_session_state(tmp_path: Path) -> None:
+    _, agent = _run("claude", tmp_path, access="danger-full-access")
+    assert agent.executor.spawns[0].env["CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS"] == "1"
+
+
+def test_a_session_named_by_every_cli_turn_is_announced_once(tmp_path: Path) -> None:
+    frames = _claude_frames({"answer": "early"}, {"answer": "late"}, working_after_first=True)
+    executor = FakeExecutor(FakeRun(), peers=lambda _spawn: ClaudeFramePeer([frames]))
+    announced: list[str] = []
+
+    run_structured_turn(
+        "claude",
+        "prompt",
+        output_schema=_SCHEMA,
+        cwd=tmp_path,
+        access="danger-full-access",
+        executor=executor,
+        on_session_started=announced.append,
+    )
+
+    assert announced == ["s-bg"]

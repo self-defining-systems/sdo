@@ -65,7 +65,7 @@ from agentshim.providers.claude.sandbox import build_settings
 from agentshim.providers.codex import install_rules
 
 from libs.agent_cli.claude_accounts import AccountRouter, is_claude_auth_failure
-from libs.agent_cli.claude_stream import ClaudeStreamSession, settings_args, stream_transport
+from libs.agent_cli.claude_stream import SESSION_STATE_ENV, ClaudeStreamSession, settings_args, stream_transport
 from libs.agent_cli.claude_usage import (
     ClaudeBill,
     ClaudeLedger,
@@ -599,7 +599,14 @@ def _run_structured_turn_once(
         else None
     )
 
+    announced: list[str] = []
+
     def session_started(session_id: str) -> None:
+        # The CLI names its session at the start of every turn it runs, including the ones it starts
+        # itself for finished background tasks; ownership and the checkpoint hear it once.
+        if session_id in announced:
+            return
+        announced.append(session_id)
         # Persist ownership before exposing the ID to the controller checkpoint.
         if ownership is not None:
             ownership.claim(session_id, resume=resume_session_id is not None)
@@ -715,6 +722,7 @@ def _run_structured_turn_once(
                 executor = startup.executor(executor)
             effective_environment = {**os.environ, **(environment or {}), **extra_env}
             if provider == "claude":
+                effective_environment.setdefault(SESSION_STATE_ENV, "1")
                 claude_home = Path(effective_environment.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
                 claude_before = session_ledger(claude_home, resume_session_id)
                 claude_ledger = ClaudeLedger(dict(claude_before.requests), list(claude_before.states))

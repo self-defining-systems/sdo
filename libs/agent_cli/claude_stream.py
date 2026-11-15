@@ -7,9 +7,10 @@ turn of its own when a background task finishes, and that later turn holds the a
 counts. A request that is read only up to its first result would hand the early result back
 while the agent's own tasks still run.
 
-``ClaudeStreamSession`` reads on: after the turn ends it keeps reading the process while the
-CLI reports background tasks, and returns the last result once the tasks are gone and the CLI
-has gone quiet. SDO injects no turn and no context; it only does not stop reading.
+``ClaudeStreamSession`` reads on: after the turn ends it keeps reading the process until the CLI
+itself reports ``session_state_changed: idle`` (see ``SESSION_STATE_ENV``), and returns the last
+structured result. SDO injects no turn and no context; it only does not stop reading. A CLI that
+reports no session state gives no such signal, and then the first result stands.
 """
 
 from __future__ import annotations
@@ -42,32 +43,21 @@ if TYPE_CHECKING:
 
     from agentshim import CommandExecutor, IdleConversation
 
-#: How long the CLI must stay quiet, with no background task left, before the last result is final.
-#: A finished task makes the CLI start its follow-on turn within moments; this covers that gap.
-SETTLE_SECONDS = 3.0
+#: Makes the CLI report ``system/session_state_changed`` (``running`` while it works, ``idle`` once
+#: nothing is queued and no background task will start another turn). It is the CLI's own signal that
+#: the agent is done, so no timer decides.
+SESSION_STATE_ENV = "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS"
 
-#: How often the drain looks at the process and the clock.
+#: How often the drain looks at the process again; it decides nothing.
 POLL_SECONDS = 0.2
-
-#: System frames that carry no work: they neither start nor end a turn.
-_BOOKKEEPING = frozenset(
-    {"background_tasks_changed", "thinking_tokens", "commands_changed", "task_progress", "task_updated"}
-)
 
 
 @dataclass
-class BackgroundWatch:
-    """What the CLI's own frames say about its background tasks and results.
+class SessionWatch:
+    """The CLI's own session state and result frames, read from its raw output."""
 
-    Fed every raw frame of the process. ``settled`` is true when the agent has no background
-    task, the last substantive frame was a result and nothing has been written for
-    ``SETTLE_SECONDS``.
-    """
-
-    clock: Callable[[], float] = time.monotonic
-    tasks: int = 0
+    state: str | None = None
     results: list[dict[str, Any]] = field(default_factory=lambda: cast("list[dict[str, Any]]", []))
-    _idle_since: float | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def observe(self, line: str) -> None:
@@ -79,28 +69,21 @@ class BackgroundWatch:
         if not isinstance(frame, dict):
             return
         record = cast("dict[str, Any]", frame)
-        kind, subtype = record.get("type"), record.get("subtype")
         with self._lock:
-            if kind == "system" and subtype == "background_tasks_changed":
-                tasks = record.get("tasks")
-                self.tasks = len(cast("list[object]", tasks)) if isinstance(tasks, list) else 0
-            if kind == "result":
+            if record.get("type") == "system" and record.get("subtype") == "session_state_changed":
+                state = record.get("state")
+                self.state = state if isinstance(state, str) else None
+            elif record.get("type") == "result":
                 self.results.append(record)
-                self._idle_since = self.clock()
-            elif not (kind == "system" and subtype in _BOOKKEEPING) and kind != "rate_limit_event":
-                self._idle_since = None
 
     @property
-    def pending(self) -> bool:
-        """The agent has a background task the CLI still reports."""
-        with self._lock:
-            return self.tasks > 0
+    def working(self) -> bool:
+        """The CLI said it is running and has not said idle since.
 
-    def settled(self, quiet_for: float | None = None) -> bool:
-        """No background task, the last substantive frame was a result, and it is old enough."""
-        quiet = SETTLE_SECONDS if quiet_for is None else quiet_for
+        False when it never reports state (an old CLI): there is no signal to wait for.
+        """
         with self._lock:
-            return self.tasks == 0 and self._idle_since is not None and self.clock() - self._idle_since >= quiet
+            return self.state == "running"
 
     def final_result(self) -> dict[str, Any] | None:
         """The last result frame that carried structured output, if any."""
@@ -124,7 +107,6 @@ class ClaudeStreamSession:
         timeout: float | None,
         on_event: Callable[[AgentEvent], None],
         on_stdout: Callable[[str], None] | None = None,
-        settle_seconds: float | None = None,
     ) -> None:
         self._transport = transport
         self._cwd = cwd
@@ -133,10 +115,9 @@ class ClaudeStreamSession:
         self._timeout = timeout
         self._on_event = on_event
         self._on_stdout = on_stdout
-        self._settle_seconds = settle_seconds
         self._conversation: Conversation | None = None
         self._cancelled = threading.Event()
-        self.watch = BackgroundWatch()
+        self.watch = SessionWatch()
 
     def _raw(self, frame: RawFrame) -> None:
         if frame.direction is not FrameDirection.FROM_PROVIDER:
@@ -175,7 +156,7 @@ class ClaudeStreamSession:
         result = self._conversation.turn(replace(request, timeout=self._timeout), self._on_event)
         if result.interrupted or self._cancelled.is_set():
             raise TurnCancelledError("the turn was interrupted")
-        if not self.watch.pending:
+        if not self.watch.working:
             return result
         self._drain(started)
         final = self.watch.final_result()
@@ -194,7 +175,7 @@ class ClaudeStreamSession:
         deadline = None if self._timeout is None else started + self._timeout
         while not self._cancelled.is_set():
             alive = conversation.poll_idle(self._on_event)
-            if self.watch.settled(self._settle_seconds) or not alive:
+            if not self.watch.working or not alive:
                 return
             if deadline is not None and time.monotonic() >= deadline:
                 raise CliTimeoutError([], self._timeout or 0.0)
@@ -215,7 +196,7 @@ def settings_args(settings: Mapping[str, object], extra: Sequence[str]) -> tuple
 
 
 __all__ = [
-    "BackgroundWatch",
+    "SessionWatch",
     "ClaudeStreamSession",
     "TurnTimeoutError",
     "settings_args",
