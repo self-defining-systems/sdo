@@ -7,6 +7,7 @@ description: A general method for finding and removing what is hurting an applic
 
 A reasoning loop, not a procedure. Move between the parts as the evidence asks.
 
+- **Orchestrate.** Name every plausible explanation for what users see. Start one subagent per explanation (in the background) to test it read-only with evidence, and brief each to check whether the data and state on its component match what the failing operation needs, not only whether it is up. You are the orchestrator: do not investigate yourself, weigh the subagents' evidence, and make the fix only when the evidence points to one cause. Combine facts across reports: data in one component that does not match another's is a finding even when each looks fine alone.
 - **Observe.** What fails, which operations, since when, and what still works. The opening alert can be a side
   effect, so run the operation that is failing (not a neighbour) and read the exact response.
 - **Localize.** The graph (`.sdo/arch.md`, `sdo map`) is a prior, not proof. A cause usually sits on or upstream
@@ -18,14 +19,14 @@ A reasoning loop, not a procedure. Move between the parts as the evidence asks.
   check what else changed in the same window and whether it is on the same path. An unexplained change or
   finding on a failing path stays an open explanation until checked.
 - **Hypothesize.** Hold two to four explanations, each a node and a mechanism, from different layers and path
-  positions (entry, dependency, data holder). An unexplained observation is a new candidate.
+  positions (entry, dependency, data holder). When forming explanations, ask whether the data or state the failing operation needs is right, not only whether components are up. An unexplained observation is a new candidate.
 - **Discriminate.** Pick the check whose outcome differs most between them, ideally one that could refute.
   After the first look, name your lead explanation and the runner-up (an unexplained finding on the failing path is a
   first-choice runner-up). Unless a failing response or recorded change already states the cause, launch a read-only sub-agent for the runner-up (one per explanation still open, only if
   its answer could change your next step; they read `sdo-investigator/SKILL.md`) before you act on the lead, and
   keep working. Launch also during a slow action, and when a change left the failure as is or an
   observation is unexplained. You alone change things. Brief each with the symptom users see failing and one explanation; ask for evidence, or
-  "inconclusive" if it cannot reproduce. Weigh the reports; do not return while any are pending. Keep their
+  "inconclusive" if it cannot reproduce. Weigh the reports. Keep their
   "How to diagnose" notes for closing. SDO may start investigators: read `sdo investigations`, weigh their
   reports, above all "observations that don't fit".
 - **Update.** Drop what is refuted. Stop when one explanation covers the failing, the passing and the timing.

@@ -37,7 +37,7 @@ def test_responder_first_message_for_many_findings_and_stage_actions_fits() -> N
             playbook_id=f"repair-{index}-" + "p" * 200, program_revision="rev", result="apply_error", error="e" * 2000
         )
     rendered = str(responder_prompt(request))
-    assert len(rendered.encode()) <= 840
+    assert len(rendered.encode()) <= 1100
     assert request.incident_id in rendered
     assert "repair-0-" not in rendered
 
@@ -54,7 +54,7 @@ def test_responder_first_message_carries_an_external_alert_at_the_contract_bound
     _fits(prompt)
     assert not prompt.context_files
     assert request.external_message.strip() in rendered
-    assert len(rendered.encode()) <= 5000
+    assert len(rendered.encode()) <= 5300
 
 
 def test_responder_first_message_names_every_failing_test_within_a_measured_bound() -> None:

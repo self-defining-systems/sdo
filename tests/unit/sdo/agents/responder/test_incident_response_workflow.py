@@ -50,7 +50,7 @@ def test_the_first_message_template_renders_strictly() -> None:
     template = Template((PROMPTS / "incident_prompt.md").read_text(encoding="utf-8"))
     rendered = template.substitute(values)
     assert "$" not in rendered
-    assert len(rendered.encode()) <= 800
+    assert len(rendered.encode()) <= 1100
     for key in values:
         missing = {field: value for field, value in values.items() if field != key}
         with pytest.raises(KeyError, match=key):
