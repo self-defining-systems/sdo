@@ -1279,7 +1279,6 @@ def wipe_problems(before: Mapping[str, str], now: Mapping[str, str]) -> list[str
 
 
 SWAP_STANDBY_WAIT_S = 180.0
-SWAP_IDLE_WAIT_S = 60.0
 
 
 def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
@@ -1316,15 +1315,9 @@ def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     wait_standby(kube, control, SWAP_STANDBY_WAIT_S)
     if "state" not in record:
         raise HookError("the lane has no recorded prepared state (no idle verdict since prepare)")
-    if idle_reason(kube.state(control)) == "incident open":
-        # A held lane waits for hours with no one using it; SDO may have opened an incident on a blip of the idle
-        # app. It belongs to nobody: close it as RESET (no learning credit, memory untouched). The checks below still
-        # refuse the lane if that changed the accepted repository or the outcomes.
-        kubeconfig = Path(env["KUBECONFIG"]).resolve() if env.get("KUBECONFIG") else None
-        out(f"closed an incident left open on the held lane: {reset_incidents(_binary(env), control, kubeconfig)}")
     if problems := wipe_problems(record["state"], repository_state(kube, control)):
         raise HookError("the lane is not the baseline's: " + "; ".join(problems))
-    if why := wait_idle(kube, control, SWAP_IDLE_WAIT_S):
+    if why := idle_reason(kube.state(control)):
         raise HookError(f"the operator is not idle: {why}")
     record["revision"] = revision
     (lane_dir / PREPARED_RECORD).write_text(json.dumps(record) + "\n")
