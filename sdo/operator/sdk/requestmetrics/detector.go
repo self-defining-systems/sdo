@@ -29,6 +29,9 @@ import (
 const (
 	RuleErrors          = "request-metrics.errors"
 	RuleNotInstrumented = "request-metrics.not-instrumented"
+	// RuleInsufficientBaseline is a clue: a client-error jump was visible but
+	// the route has too little healthy history to call it a jump.
+	RuleInsufficientBaseline = "request-metrics.insufficient-baseline"
 )
 
 // Failure classes a finding names.
@@ -364,6 +367,23 @@ func (d *detector) notInstrumented(ctx sdk.DetectionContext, op Operation, why s
 	}
 }
 
+// insufficientBaseline says a client-error jump was not judged for lack of
+// healthy history (a fresh install, a rarely used route). It is a clue.
+func (d *detector) insufficientBaseline(ctx sdk.DetectionContext, op Operation, minRequests float64) sdk.Finding {
+	fingerprint := "requestmetrics/insufficient-baseline/" + op.ID
+	if op.undeclared {
+		fingerprint = "requestmetrics/insufficient-baseline/undeclared/" + op.Service + "/" + op.Route
+	}
+	return sdk.Finding{
+		DetectorID: d.cfg.Spec.ID, RuleID: RuleInsufficientBaseline, Status: sdk.FindingActive, Severity: sdk.SeverityInfo,
+		Summary:         fmt.Sprintf("operation %s: insufficient baseline to judge a client-error jump", op.ID),
+		Evidence:        fmt.Sprintf("operation %s (route %q) shows client errors but has fewer than %.0f healthy requests in its baseline window, so the rise cannot be called a jump", op.ID, op.Route, minRequests),
+		PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: ctx.Namespace(), Name: op.Service},
+		Fingerprint:     fingerprint,
+		Metadata:        map[string]any{"operation": op.ID, "route": op.Route, "method": op.Method, "service": op.Service, "min_baseline_requests": minRequests},
+	}
+}
+
 // perStep sums the operation's series per sample time.
 func (p entryPlan) perStep(op Operation, series []metrics.Series) map[time.Time]counts {
 	out := map[time.Time]counts{}
@@ -379,7 +399,9 @@ func (p entryPlan) perStep(op Operation, series []metrics.Series) map[time.Time]
 }
 
 // healthy is the operation's healthy server and client-error shares.
-func (p entryPlan) healthy(op Operation, series []metrics.Series, minRequests float64) (server, client float64) {
+// enough is false when the baseline holds fewer than minRequests requests: the
+// shares are then zero and a client-error jump cannot be judged.
+func (p entryPlan) healthy(op Operation, series []metrics.Series, minRequests float64) (server, client float64, enough bool) {
 	var sum counts
 	for _, s := range series {
 		if v, ok := s.Last(); ok && p.matches(op, s.Labels) {
@@ -387,9 +409,9 @@ func (p entryPlan) healthy(op Operation, series []metrics.Series, minRequests fl
 		}
 	}
 	if sum.total < minRequests || sum.total == 0 {
-		return 0, 0
+		return 0, 0, false
 	}
-	return sum.server / sum.total, sum.client / sum.total
+	return sum.server / sum.total, sum.client / sum.total, true
 }
 
 type verdict struct {
@@ -427,10 +449,11 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 	if len(times) < r.Consecutive {
 		return sdk.Finding{}, false
 	}
-	healthyServer, healthyClient := plan.healthy(op, results[plan.base.ID].Series, r.MinBaselineRequests)
+	healthyServer, healthyClient, enough := plan.healthy(op, results[plan.base.ID].Series, r.MinBaselineRequests)
 	// The newest step at which the rule held on Consecutive steps in a row.
 	var best *verdict
 	raisedAt := -1
+	unjudged := false
 	for end := len(times) - 1; end >= r.Consecutive-1 && best == nil; end-- {
 		for _, class := range []string{ClassServer, ClassClientJump} {
 			held := true
@@ -443,10 +466,17 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 			if !held {
 				continue
 			}
+			if class == ClassClientJump && !enough {
+				unjudged = true
+				continue
+			}
 			if v := r.judgeStep(steps[times[end]], class, healthyServer, healthyClient); best == nil || v.failed > best.failed {
 				best, raisedAt = &v, end
 			}
 		}
+	}
+	if best == nil && unjudged {
+		return d.insufficientBaseline(ctx, op, r.MinBaselineRequests), true
 	}
 	if best == nil {
 		return sdk.Finding{}, false

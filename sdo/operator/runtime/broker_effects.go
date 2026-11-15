@@ -572,7 +572,7 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 	for _, state := range closure.FinalDetectorStates {
 		ids[state.DetectorID] = true
 	}
-	for _, id := range c.healthDetectorIDs {
+	for _, id := range c.alertSetHealthDetectors(closure.Request) {
 		ids[id] = true
 	}
 	ordered := make([]string, 0, len(ids))

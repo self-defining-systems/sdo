@@ -315,6 +315,27 @@ func TestUndeclaredRoutesAreCappedBusiestFirst(t *testing.T) {
 	}
 }
 
+// A fresh install has little healthy history: the 4xx rise is not called a
+// jump, the finding says the baseline is insufficient and is not an error
+// finding. A server-error rise still raises.
+func TestClientJumpNeedsEnoughHealthyBaseline(t *testing.T) {
+	baseline := []metrics.Series{instant(pkgRoute, "200", 10), instant(webRoute, "200", 400)}
+	recent := []metrics.Series{
+		series(pkgRoute, "200", steady(11, 7)...),
+		series(pkgRoute, "404", 0, 0, 0, 5, 8, 8, 8),
+		series(webRoute, "200", steady(40, 7)...),
+	}
+	got := detect(t, snapshot(recent, baseline, presence()))
+	if len(got) != 1 || got[0].RuleID != requestmetrics.RuleInsufficientBaseline || !strings.Contains(got[0].Summary, "insufficient baseline") {
+		t.Fatalf("findings = %+v", got)
+	}
+	server := []metrics.Series{series(pkgRoute, "200", steady(11, 7)...), series(pkgRoute, "500", 0, 0, 0, 5, 8, 8, 8), series(webRoute, "200", steady(40, 7)...)}
+	got = detect(t, snapshot(server, baseline, presence()))
+	if len(got) != 1 || got[0].RuleID != requestmetrics.RuleErrors {
+		t.Fatalf("server errors with a thin baseline = %+v", got)
+	}
+}
+
 func TestDeclaredOperationIsNotAlsoEvaluatedAsUndeclared(t *testing.T) {
 	recent := []metrics.Series{series(webRoute, "200", steady(40, 7)...), series(webRoute, "500", 0, 0, 0, 0, 0, 9, 9)}
 	got := detectWith(t, undeclaredDetector(0), snapshot(recent, healthyBaseline(), presence()))

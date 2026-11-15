@@ -16,7 +16,7 @@ const LogQueryID = "reqmetrics-failing-requests"
 const MaxSamples = 3
 
 // The two patterns select access-log lines whose status is 4xx or 5xx: JSON
-// lines with a "status" field (GitLab production_json.log style) and common or
+// lines with a "status" field (production_json.log style) and common or
 // combined text lines (nginx): `"GET /path HTTP/1.1" 500 12`.
 var failingPatterns = []logs.Pattern{
 	{ID: "json-failed", RE2: `"status"\s*:\s*"?[45]\d\d`},
