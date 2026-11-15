@@ -311,12 +311,14 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	}
 	if cfg.Break != nil {
 		if quietRed {
-			report.add(ItemBreak, "all", Note, "not run: the healthy application already raises, so a raise under a break would prove nothing")
-		} else {
-			start := cfg.Now()
-			runBreak(ctx, cfg, &report)
-			report.Durations = append(report.Durations, ItemDuration{Item: ItemBreak, Seconds: cfg.Now().Sub(start).Seconds()})
+			// The breaks are independent evidence: only a raise that was not
+			// standing before the break counts, so a noisy quiet item does not
+			// hide whether a break gets named.
+			report.add(ItemBreak, "all", Note, "ran although quiet-when-healthy is red: standing raises are ignored and only raises that appear after a break count")
 		}
+		start := cfg.Now()
+		runBreak(ctx, cfg, &report)
+		report.Durations = append(report.Durations, ItemDuration{Item: ItemBreak, Seconds: cfg.Now().Sub(start).Seconds()})
 	}
 	return report, nil
 }
