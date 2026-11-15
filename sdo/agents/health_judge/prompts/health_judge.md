@@ -13,9 +13,9 @@ cluster) whose path includes it, and a probe that exercises it. A probe coverage
 lists the components the accepted map leaves uncovered. Record a component `unprobed` only when no synthetic
 request can reach it; needing authentication is not such a reason.
 
-Follow ${skills_root}/sdo-operationalize/SKILL.md: map the application, write probes and detectors from the
+Follow ${skills_root}/sdo-operations-map/SKILL.md: map the application, write probes and detectors from the
 map, and calibrate them on the live application. The skill directory is the one place outside this checkout you
-may read. The trusted SDK reference is ${skills_root}/sdo-detector-authoring/references/sdk.md and the
+may read. The trusted SDK reference is ${skills_root}/sdo-detectors/references/sdk.md and the
 traffic reference is references/traffic.md beside it.
 Ground every choice in the current application checkout, its manifests and the live application. Never inspect
 sibling experiments, grading or evaluation data, verdict files, hidden fault labels, or external judges, and

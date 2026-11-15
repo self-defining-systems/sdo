@@ -8,7 +8,7 @@ Third-party images the source does not build (redis:6.2.4, mongo) may keep their
 its registry digest. Never write digests or copy third-party images. If a rejection calls the pin transient (rate limit, timeout),
 retry unchanged; change the reference only for "no such tag" or "private".
 
-Read the sdo-deploy and sdo-patching skills. Write only under .sdo/deployment/ (manifests/, build/, values/): authored
+Read the sdo-serving and sdo-serving skills. Write only under .sdo/deployment/ (manifests/, build/, values/): authored
 manifests and Dockerfiles go there, not into the application tree. Application files are never published; edit one only as
 a scratch view, and keep the change by capturing it with `sdo-operator patch create --owner deployer --reason ...`, only
 when an upstream file itself must differ. A publish with uncaptured edits is rejected (patch.uncaptured). Never edit

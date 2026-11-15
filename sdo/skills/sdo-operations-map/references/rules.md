@@ -1,16 +1,16 @@
 # Application map rules
 
 Every rule names the validator rule IDs that enforce it. `sdo-operator memory check` prints the ID of each
-diagnostic; look it up here. The rules block the detection designer's commits once a map exists; other actors
+diagnostic; look it up here. The rules block the onboarding agent's commits once a map exists; other actors
 see them as notes. The diagnostic names the operation, component, edge or probe kind to fix.
 
 ## The map region
 
 - The map is one YAML block between the map markers at the end of the architecture file. Write it there when it
   is absent; until then the check only notes its absence. Enforced by: `map.missing`.
-- The detection designer changes nothing in the architecture file outside the markers and never removes them.
+- The onboarding agent changes nothing in the architecture file outside the markers and never removes them.
   Enforced by: `ownership.map-outside-region`.
-- Only the detection designer changes the map; every other actor leaves the region byte-identical. Enforced by:
+- Only the onboarding agent changes the map; every other actor leaves the region byte-identical. Enforced by:
   `ownership.map-region-owner`.
 
 ## Format and names
@@ -67,7 +67,7 @@ see them as notes. The diagnostic names the operation, component, edge or probe 
 ## Telemetry bindings
 
 Bindings are `.sdo/diagnostics/telemetry/sources.yaml` and `backends.yaml`; see [telemetry](telemetry.md). Only the
-detection designer writes them, in the initial phase, and only in open mode.
+onboarding agent writes them, in the initial phase, and only in open mode.
 
 - A bindings file is one strict YAML document: version 1, no unknown fields or duplicate keys, at most 32 KiB, unique
   well-formed ids, known kinds, and a complete `ready` block when present. Enforced by: `telemetry.schema`.
@@ -76,10 +76,10 @@ detection designer writes them, in the initial phase, and only in open mode.
   `localhost`, userinfo, query or fragment; publish URLs follow the same rule. Enforced by: `telemetry.endpoint`.
 - A credential is a granted name, never a value. Enforced by: `telemetry.credential`.
 - Adapter options contain only keys the adapter defines. Enforced by: `telemetry.options`.
-- At most one default source per kind across operator-provided and designer sources. Enforced by: `telemetry.default`.
+- At most one default source per kind across operator-provided and agent-bound sources. Enforced by: `telemetry.default`.
 - A backend names an offered recipe and uses only capabilities the environment granted and the recipe declares; a
   source's `backend` is defined in `backends.yaml`. Enforced by: `telemetry.backend`.
-- Pinned and floor environments admit no designer bindings. Enforced by: `telemetry.mode`.
+- Pinned and floor environments admit no agent bindings. Enforced by: `telemetry.mode`.
 - Go assigns origins and operator-provided ids are not redefined. Enforced by: `telemetry.origin`.
 - Every detector query resolves to a bound source, and an alerts consumer has an alert-capable source. Enforced by:
   `telemetry.unbound`.
@@ -87,8 +87,8 @@ detection designer writes them, in the initial phase, and only in open mode.
 
 ## Data checks
 
-Data checks are `.sdo/diagnostics/data/<check-id>.yaml`; see [data checks](data-checks.md). Only the detection
-designer writes them, in the initial phase.
+Data checks are `.sdo/diagnostics/data/<check-id>.yaml`; see [data checks](data-checks.md). Only the
+onboarding agent writes them.
 
 - A check is strict YAML: one store, an engine with a reader, a target, exactly one of `ids`, `range` or `first`
   (at most 32 records), 1 to 16 assertions of one kind each, read fields of its engine only, a mongodb filter of

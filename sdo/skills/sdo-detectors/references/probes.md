@@ -6,7 +6,7 @@ can know. The memory check rejects a probe scenario whose steps check nothing bu
 
 ## Check exact content
 
-Use the strictest check the step's data allows (`sdo-detector-authoring` traffic reference for signatures):
+Use the strictest check the step's data allows ([traffic reference](traffic.md) for signatures):
 
 | The step reads | Check |
 |---|---|

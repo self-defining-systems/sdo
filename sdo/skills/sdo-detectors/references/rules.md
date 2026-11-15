@@ -92,9 +92,9 @@ Advice, not validator-checked: tests and recorded-state replay run as informatio
 
 ## Ownership
 
-- The detection designer owns health detectors and the responder owns incident detectors; neither may add, change, or
+- The onboarding agent owns health detectors and the responder owns incident detectors; neither may add, change, or
   remove the other's. Enforced by: `ownership.protected-detector`, `ownership.denied`.
-- The initial detection-designer proposal adds health detectors only. Enforced by: `ownership.initial-health-only`.
+- The initial onboarding proposal adds health detectors only. Enforced by: `ownership.initial-health-only`.
 - A responder keeps the provenance (`originatingIncident`, `originatingCommit`) of an existing detector. Enforced
   by: `ownership.provenance-rewrite`.
 - Detector files are changed only in the phase and by the actor the task names. Enforced by: `ownership.denied`.
@@ -116,6 +116,6 @@ Report degradation (slower but still serving) at warn and loss of service at cri
 holds an incident's closure only when that incident opened on it.
 Use source-specific detectors for config parsing, named peers, journeys, domain logs and metrics.
 
-Detection designers author ordinary health detectors; no detector ID, package, watch set or Spec is reserved
+The onboarding agent author ordinary health detectors; no detector ID, package, watch set or Spec is reserved
 for the human goal. No goal digest or authoring-round metadata is required. Use the health-objective
 playbook as the default repair guide and run the shared memory check before returning logical IDs.

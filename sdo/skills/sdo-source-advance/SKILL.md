@@ -9,7 +9,7 @@ Status: draft. No agent task runs this skill yet; holds wait for a human or a ne
 fixes the vocabulary so the later agent route (and the human reading a hold) share it.
 
 Go follows the upstream repository. For each new revision it replaces the application files with upstream's, then
-re-applies the patch series ([sdo-patching](../sdo-patching/SKILL.md)). A patch that fails to apply holds the advance
+re-applies the patch series ([sdo-serving](../sdo-serving/SKILL.md)). A patch that fails to apply holds the advance
 before any cluster effect; nothing is deployed and the running version stays. The hold names the patch, its owner,
 its paths, the rejecting detail and up to five upstream commits touching those paths.
 
