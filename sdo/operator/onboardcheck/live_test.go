@@ -25,18 +25,19 @@ type world struct {
 	// raiseFor maps a broken component to what the detectors raise.
 	raiseFor map[string][]Raise
 	// ignoredBy lists components whose breakage no detector notices.
-	log        []string
-	evalErr    error
-	restoreErr map[string]error
-	breakErr   map[string]error
-	stuck      map[string]bool // restore succeeds but the component stays broken
-	unavail    bool
-	pending    []string
-	evals      int
-	late       map[string]lateRaise
-	sim        []detectorSim
-	simStart   time.Time
-	brokenAt   map[string]time.Time
+	log          []string
+	evalErr      error
+	restoreErr   map[string]error
+	breakErr     map[string]error
+	stuck        map[string]bool // restore succeeds but the component stays broken
+	unavail      bool
+	pending      []string
+	evals        int
+	late         map[string]lateRaise
+	sim          []detectorSim
+	sinceRestore int
+	simStart     time.Time
+	brokenAt     map[string]time.Time
 }
 
 // lateRaise is a raise that appears only some time after its component broke.
@@ -65,6 +66,7 @@ func (w *world) Evaluate(context.Context) (Verdict, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.evals++
+	w.sinceRestore++
 	w.now = w.now.Add(w.evalDur)
 	if w.evalErr != nil {
 		return Verdict{}, w.evalErr
@@ -109,6 +111,7 @@ func (w *world) Restore(_ context.Context, c appmap.Component) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.log = append(w.log, "restore "+c.Name)
+	w.sinceRestore = 0
 	if err := w.restoreErr[c.Name]; err != nil {
 		return err
 	}
@@ -595,5 +598,13 @@ func TestQuietWindowCapShorterThanHorizonIsRed(t *testing.T) {
 	r := runLiveItems(t, w, true, false)
 	if status(r, ItemQuiet, "slow") != Red {
 		t.Fatalf("a detector that never judged past its horizon is red:\n%s", r.Text())
+	}
+}
+
+func TestFinalWaveDoesNotWaitForDetectorsToClear(t *testing.T) {
+	w := newWorld()
+	runLiveItems(t, w, false, true)
+	if w.sinceRestore != 0 {
+		t.Fatalf("%d evaluations after the final restore: nothing later needs a cleared baseline", w.sinceRestore)
 	}
 }

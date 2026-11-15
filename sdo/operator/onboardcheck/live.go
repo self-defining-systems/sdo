@@ -183,6 +183,8 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 	}
 	var progress []DetectorProgress
 	announced := false
+	var lastSaid string
+	var lastSaidAt time.Duration
 	for {
 		verdict, err := q.Eval.Evaluate(ctx)
 		if err != nil {
@@ -215,7 +217,10 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 		if len(verdict.Unavailable) == 0 && verdict.Status != "unavailable" && len(verdict.Pending) == 0 && judgedEnough(progress, need, cfg.Quick) {
 			break
 		}
-		cfg.say("quiet: sample %d at %s; %s", samples, elapsed, progressSummary(progress, need, cfg.Quick))
+		if summary := progressSummary(progress, need, cfg.Quick); summary != lastSaid || elapsed-lastSaidAt >= 30*time.Second {
+			cfg.say("quiet: sample %d at %s; %s", samples, elapsed, summary)
+			lastSaid, lastSaidAt = summary, elapsed
+		}
 		remaining := end.Sub(cfg.Now())
 		if remaining <= 0 {
 			break
@@ -410,7 +415,7 @@ func runBreak(ctx context.Context, cfg Config, report *Report) {
 		}
 		cfg.say("fails-under-break: wave %d of %d: breaking %s", i+1, len(waves), strings.Join(names, ", "))
 		var restoreFailed bool
-		baseline, restoreFailed = breakWave(ctx, cfg, members, baseline)
+		baseline, restoreFailed = breakWave(ctx, cfg, members, baseline, i < len(waves)-1)
 		for _, m := range members {
 			if strings.HasPrefix(m.out.err, "evaluation failed") {
 				restoreFailed = true
@@ -613,7 +618,7 @@ func inParallel(members []waveMember, f func(waveMember)) {
 // named by a raise (the component, or one of its operations or their test
 // scenarios), and always restores them all. It returns the baseline for the
 // next wave and whether a restore was uncertain.
-func breakWave(ctx context.Context, cfg Config, members []waveMember, baseline map[string]bool) (next map[string]bool, restoreFailed bool) {
+func breakWave(ctx context.Context, cfg Config, members []waveMember, baseline map[string]bool, more bool) (next map[string]bool, restoreFailed bool) {
 	b := cfg.Break
 	next = baseline
 	var broken []waveMember
@@ -637,6 +642,7 @@ func breakWave(ctx context.Context, cfg Config, members []waveMember, baseline m
 		}
 		m.out.err = "could not break: " + err.Error()
 	})
+	waveStart := cfg.Now()
 	defer func() {
 		inParallel(broken, func(m waveMember) {
 			if rerr := b.Breaker.Restore(context.WithoutCancel(ctx), m.c); rerr != nil {
@@ -646,8 +652,11 @@ func breakWave(ctx context.Context, cfg Config, members []waveMember, baseline m
 				mu.Unlock()
 			}
 		})
-		if !restoreFailed {
+		cfg.say("fails-under-break: restored after %s", cfg.Now().Sub(waveStart).Round(time.Second))
+		// Only a later wave needs the standing raises cleared (its baseline).
+		if !restoreFailed && more {
 			next = waitClear(ctx, cfg, next)
+			cfg.say("fails-under-break: detectors settled after %s", cfg.Now().Sub(waveStart).Round(time.Second))
 		}
 	}()
 	if len(broken) == 0 {
@@ -696,6 +705,7 @@ func breakWave(ctx context.Context, cfg Config, members []waveMember, baseline m
 			}
 		}
 		if tested || after >= b.Bound {
+			cfg.say("fails-under-break: wave judged after %s (bound %s, every operation noticed: %v)", after.Round(time.Second), b.Bound, tested)
 			return next, restoreFailed
 		}
 		if err := cfg.Wait(ctx, b.Interval); err != nil {
