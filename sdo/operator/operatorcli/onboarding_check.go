@@ -250,7 +250,12 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	if *quietWindow > 0 || *breakItem {
 		probe := deployment.AcceptedDetectorProbe{Settings: *settingsFile, TelemetryEnvironment: *telemetryEnv, Kubeconfig: *kubeconfig, OutsideCluster: !*clusterNetwork, Host: true}
 		fmt.Fprintln(os.Stderr, "building the memory's detectors ...")
-		prepared, err := probe.Prepare(ctx, *repo, *operatorRoot, *namespace, deployment.HealthScope{})
+		tree, cleanupTree, err := preparedTree(ctx, *repo, *telemetryEnv)
+		if err != nil {
+			return 0, fmt.Errorf("prepare the memory as the controller will run it: %w", err)
+		}
+		defer cleanupTree()
+		prepared, err := probe.Prepare(ctx, tree, *operatorRoot, *namespace, deployment.HealthScope{})
 		if err != nil {
 			return 0, fmt.Errorf("build detectors for the live items: %w", err)
 		}
