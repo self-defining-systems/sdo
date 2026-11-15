@@ -18,6 +18,7 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/logs"
+	"sdo.dev/operator/sdk/requestmetrics"
 )
 
 // LogsObserverOptions supplies the cycle clock; zero uses time.Now.
@@ -190,7 +191,6 @@ func (o *LogsObserver) collect(ctx context.Context, base sdk.DetectionContext) m
 			if n := len(state.window.Cycles); n > 0 {
 				start = state.window.Cycles[n-1].End
 			}
-			budget := int64(logs.LimitBytes)
 			var previous *logs.Cycle
 			// Termination tails have no incremental cursor: the decisive line may
 			// predate our initial observation or the reset of the current window.
@@ -218,8 +218,7 @@ func (o *LogsObserver) collect(ctx context.Context, base sdk.DetectionContext) m
 					}
 				}
 				if found < 0 || state.window.Terminations[found].Tail.Error != "" {
-					tail, used := o.fetch(ctx, pod.Namespace, pod.Name, name, prev, true, &logState{}, at, budget/2)
-					budget -= used
+					tail := o.fetch(ctx, pod.Namespace, pod.Name, name, prev, true, &logState{}, at)
 					observation := logs.Termination{RestartCount: incarnation, FinishedAt: term.FinishedAt.Time, ExitCode: term.ExitCode, Tail: tail}
 					if found < 0 {
 						state.window.Terminations = append(state.window.Terminations, observation)
@@ -242,15 +241,14 @@ func (o *LogsObserver) collect(ctx context.Context, base sdk.DetectionContext) m
 				state.window.Terminations = state.window.Terminations[len(state.window.Terminations)-logs.WindowCycles:]
 			}
 			if o.previous && status.RestartCount > 0 && !state.previousRead && (!o.terminations || status.LastTerminationState.Terminated == nil) {
-				p, used := o.fetch(ctx, pod.Namespace, pod.Name, name, true, true, &logState{}, at, budget/2)
+				p := o.fetch(ctx, pod.Namespace, pod.Name, name, true, true, &logState{}, at)
 				previous = &p
-				budget -= used
 				state.previousRead = p.Error == ""
 			}
 			c := logs.Cycle{End: at, Matches: map[string]logs.Match{}}
 			// Waiting/never-started containers have no current log source.
 			if status.State.Running != nil {
-				c, _ = o.fetch(ctx, pod.Namespace, pod.Name, name, false, false, state, at, budget)
+				c = o.fetch(ctx, pod.Namespace, pod.Name, name, false, false, state, at)
 			}
 			c.Start = start
 			c.Running = status.State.Running != nil
@@ -309,62 +307,36 @@ func noPreviousLog(err error) bool {
 	return apierrors.IsBadRequest(err) && strings.Contains(err.Error(), "previous terminated container") && strings.Contains(err.Error(), "not found")
 }
 
-func (o *LogsObserver) fetch(ctx context.Context, ns, pod, container string, previous, tail bool, state *logState, at time.Time, budget int64) (logs.Cycle, int64) {
+func (o *LogsObserver) fetch(ctx context.Context, ns, pod, container string, previous, tail bool, state *logState, at time.Time) logs.Cycle {
 	c := logs.Cycle{End: at, Matches: map[string]logs.Match{}}
-	opt := &corev1.PodLogOptions{Container: container, Previous: previous, Timestamps: true, LimitBytes: &budget}
+	options := corev1.PodLogOptions{Container: container, Previous: previous}
+	lines := observerIncrementalLines
 	if tail {
-		tail := int64(1000)
-		opt.TailLines = &tail
-	}
-	if !tail {
-		opt.SinceTime = &metav1.Time{Time: state.last.Truncate(time.Second)}
+		lines = observerTailLines
+	} else {
+		options.SinceTime = &metav1.Time{Time: state.last.Truncate(time.Second)}
 	}
 	request, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	stream, err := o.read(request, ns, pod, opt)
-	if err != nil {
-		if previous && noPreviousLog(err) {
-			return c, 0
-		}
-		c.Error = err.Error()
-		return c, 0
-	}
-	defer stream.Close()
-	data, err := io.ReadAll(io.LimitReader(stream, budget))
-	if err != nil {
-		c.Error = err.Error()
-		return c, int64(len(data))
-	}
-	c.Truncated = int64(len(data)) >= budget
 	oldLast, oldEqual := state.last, state.equal
 	newest, equal := oldLast, oldEqual
 	skipped := 0
-	lines := strings.Split(string(data), "\n")
-	for index, line := range lines {
-		if line == "" {
-			continue
-		}
-		// A cut last line is not a complete observation.
-		if c.Truncated && index == len(lines)-1 {
-			break
-		}
+	malformed := false
+	cover, err := readNewestLogs(request, o.read, ns, pod, options, lines, func(line string) {
 		stamp, text, ok := strings.Cut(line, " ")
 		ts, err := time.Parse(time.RFC3339Nano, stamp)
 		if !ok || err != nil {
-			if c.Truncated {
-				continue
-			}
-			c.Error = "malformed timestamped container log"
-			return c, int64(len(data))
+			malformed = true
+			return
 		}
 		if !tail {
 			if ts.Before(oldLast) {
-				continue
+				return
 			}
 			if ts.Equal(oldLast) {
 				skipped++
 				if skipped <= oldEqual {
-					continue
+					return
 				}
 			}
 		}
@@ -379,18 +351,47 @@ func (o *LogsObserver) fetch(ctx context.Context, ns, pod, container string, pre
 			if re.MatchString(text) {
 				m := c.Matches[expr]
 				m.Count++
-				if len(m.Excerpts) < logs.MaxExcerpts {
-					m.Excerpts = append(m.Excerpts, text[:min(len(text), logs.MaxExcerptBytes)])
+				// Lines arrive oldest first; the excerpts kept are the newest.
+				if len(m.Excerpts) == logs.MaxExcerpts {
+					m.Excerpts = append(m.Excerpts[:0:0], m.Excerpts[1:]...)
 				}
+				m.Excerpts = append(m.Excerpts, logExcerpt(text))
 				c.Matches[expr] = m
 			}
 		}
-	}
-	if c.Error == "" {
-		if c.Truncated && newest.Before(at) {
-			newest, equal = at, 0
+	})
+	if err != nil {
+		if previous && noPreviousLog(err) && cover.Lines == 0 {
+			return logs.Cycle{End: at, Matches: map[string]logs.Match{}}
 		}
-		state.last, state.equal = newest, equal
+		c.Error = err.Error()
+		return c
 	}
-	return c, int64(len(data))
+	c.Truncated = cover.Cut
+	if malformed && !c.Truncated {
+		c.Error = "malformed timestamped container log"
+		return c
+	}
+	if c.Truncated && newest.Before(at) {
+		newest, equal = at, 0
+	}
+	state.last, state.equal = newest, equal
+	return c
 }
+
+// logExcerpt keeps a failing request as its method, path, status and time,
+// parsed from the whole line, since a raw cut at the excerpt bound drops the
+// path of a long structured line; any other line is cut at the bound.
+func logExcerpt(text string) string {
+	if compact, ok := requestmetrics.CompactFailingLine(text); ok {
+		return compact
+	}
+	return text[:min(len(text), logs.MaxExcerptBytes)]
+}
+
+const (
+	// observerTailLines bounds a termination or previous-instance tail.
+	observerTailLines = 1000
+	// observerIncrementalLines bounds the newest lines read per cycle.
+	observerIncrementalLines = 5000
+)

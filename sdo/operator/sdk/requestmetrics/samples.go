@@ -1,6 +1,7 @@
 package requestmetrics
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -211,6 +212,20 @@ func (r sampleResult) metadata() []map[string]string {
 		out = append(out, m)
 	}
 	return out
+}
+
+// CompactFailingLine returns a failing request line reduced to the fields a
+// sample needs, as JSON that ParseFailingLine reads back. A raw access-log line
+// may be longer than any excerpt bound and lose its path when cut, so a
+// collector parses the whole line first and keeps this form. ok is false for a
+// line that is not a failing request.
+func CompactFailingLine(line string) (string, bool) {
+	s, ok := parseLine(line)
+	if !ok {
+		return "", false
+	}
+	b, _ := json.Marshal(map[string]string{"method": s.Method, "path": s.Path, "status": s.Status, "time": s.Time})
+	return string(b), true
 }
 
 // ParseFailingLine reads a failing (4xx or 5xx) request from a JSON or

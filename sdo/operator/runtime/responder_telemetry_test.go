@@ -311,3 +311,68 @@ func TestMapStructuredReturnsRealJSON(t *testing.T) {
 		t.Fatalf("text response carries data: %+v", text)
 	}
 }
+
+// kubeLogs behaves like the Kubernetes log API: SinceTime filters, TailLines
+// keeps the newest lines, and LimitBytes keeps the oldest bytes.
+func kubeLogs(all []string) PodLogReader {
+	return func(_ context.Context, _, _ string, o *corev1.PodLogOptions) (io.ReadCloser, error) {
+		lines := all
+		if o.TailLines != nil && int64(len(lines)) > *o.TailLines {
+			lines = lines[int64(len(lines))-*o.TailLines:]
+		}
+		text := strings.Join(lines, "\n") + "\n"
+		if o.LimitBytes != nil && int64(len(text)) > *o.LimitBytes {
+			text = text[:*o.LimitBytes]
+		}
+		return io.NopCloser(strings.NewReader(text)), nil
+	}
+}
+
+func TestLogsWindowLargerThanTheCapReturnsTheNewestLinesAndSaysWhatItCovers(t *testing.T) {
+	var all []string
+	for i := 0; i < 30000; i++ {
+		at := detectNow().Add(-9*time.Minute + time.Duration(i)*10*time.Millisecond)
+		line := at.Format(time.RFC3339Nano) + " level=info handled request padding padding padding padding padding"
+		if i == 29990 {
+			line = at.Format(time.RFC3339Nano) + " ERROR only-in-the-newest-part"
+		}
+		all = append(all, line)
+	}
+	loop := telemetryLoop(t, ApplicationTelemetry{PodLogs: kubeLogs(all)})
+	for _, request := range []ToolRequest{
+		{Command: "logs", Name: "api"},
+		{Command: "logs", Name: "api", Grep: "only-in-the-newest"},
+		{Command: "logs", Name: "api", Failing: true},
+	} {
+		response := loop.Handle(context.Background(), request)
+		if response.Error != "" || !strings.Contains(response.Text, "only-in-the-newest-part") {
+			t.Fatalf("%+v: %s\n%s", request, response.Error, response.Text)
+		}
+		if !strings.Contains(response.Text, "# window: the last 10m0s; matching lines span") || !strings.Contains(response.Text, "older lines of the window were not read") {
+			t.Fatalf("%+v: coverage and cut not stated:\n%s", request, response.Text)
+		}
+	}
+}
+
+func TestMetricsEmptyResultNamesTheMetricsActualLabelsOrCloseNames(t *testing.T) {
+	api := &fakeMetrics{answer: func(q metrics.Query) []metrics.Series {
+		switch {
+		case strings.HasPrefix(q.Expr, "count by"):
+			return []metrics.Series{series(2, map[string]string{"__name__": "http_requests_total"}), series(1, map[string]string{"__name__": "up"})}
+		case q.Expr == "http_requests_total":
+			return []metrics.Series{series(1, map[string]string{"__name__": "http_requests_total", "endpoint_id": "GET /a", "status": "5xx"})}
+		}
+		return nil
+	}}
+	loop := telemetryLoop(t, ApplicationTelemetry{Metrics: api})
+	response := loop.Handle(context.Background(), ToolRequest{Command: "metrics", Query: `sum by (route) (rate(http_requests_total{code="500"}[1m]))`})
+	for _, want := range []string{"no data", "http_requests_total has 1 series", "label endpoint_id: GET /a", "label status: 5xx"} {
+		if !strings.Contains(response.Text, want) {
+			t.Fatalf("missing %q:\n%s", want, response.Text)
+		}
+	}
+	response = loop.Handle(context.Background(), ToolRequest{Command: "metrics", Query: `rate(http_request_count[1m])`})
+	if !strings.Contains(response.Text, "close names: http_requests_total") {
+		t.Fatalf("close names:\n%s", response.Text)
+	}
+}
