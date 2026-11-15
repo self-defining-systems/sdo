@@ -186,3 +186,21 @@ func TestOperateJobDeadlineBudgetsTheConfiguredLimits(t *testing.T) {
 		t.Fatalf("operate Job deadline %s leaves no room for four 3h designer sessions", deadline)
 	}
 }
+
+func TestRepositoryClaimIsBoundToTheVolumeNodeWhenOneIsGiven(t *testing.T) {
+	plan, err := Resources(settingsConfig(t, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := plan.PVC.Annotations["volume.kubernetes.io/selected-node"]; ok {
+		t.Fatalf("a claim without a volume node must not name one: %v", plan.PVC.Annotations)
+	}
+	t.Setenv("SDO_VOLUME_NODE", "node-7")
+	plan, err = Resources(settingsConfig(t, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := plan.PVC.Annotations["volume.kubernetes.io/selected-node"]; got != "node-7" {
+		t.Fatalf("selected-node = %q, want node-7 (a node-local volume must sit with the lane's other claims)", got)
+	}
+}
