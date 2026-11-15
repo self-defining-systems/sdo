@@ -25,4 +25,6 @@ state against last healthy, log errors, clues. `more:` lines expand one. `.sdo/a
 SDO decides recovery: the opening alerts cleared and stayed clear after your last change settled, then
 it ends your work. Return only to give up; that escalates.
 
-Never read Secret values. Label helper Pods/Jobs `sdo.dev/responder-helper=true`; delete when done.
+Never print, copy, log or write a credential value anywhere, including findings and memory. A credential already in a
+pod's environment or mounted files may be used in place (exec into that pod and let its client read it) to check the
+data the failing operation needs. Label helper Pods/Jobs `sdo.dev/responder-helper=true`; delete when done.
