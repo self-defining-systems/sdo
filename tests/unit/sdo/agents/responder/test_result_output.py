@@ -199,3 +199,38 @@ def test_worker_never_validates_any_controller_owned_result_field(field: Any) ->
     for key in {field.name, field.json_name}:
         result = parse_incident_result({**_model_reply(), key: {"invalid": None}}, USAGE)
         assert field.name not in {present.name for present, _ in result.ListFields()}
+
+
+def test_oversize_and_malformed_agent_authored_fields_never_discard_the_result() -> None:
+    reply = _model_reply()
+    change = {"summary": "reset the role", "target": "Pod/ns/db-0", "at": "2026-11-15T11:10:10Z"}
+    reply["agent_changes"] = [
+        change,
+        {"summary": "no time", "target": "x"},
+        {"summary": "bad time", "target": "x", "at": "yesterday"},
+        {"summary": "s" * 400, "target": "t" * 500, "at": "2026-11-15T11:10:18Z"},
+    ]
+    reply["findings"] = [
+        {"kind": "observation", "statement": "x" * 900, "seen_in": "sdo detect"},
+        {"kind": "guess", "statement": "bad kind", "seen_in": "sdo detect"},
+        {"kind": "ruled_out", "statement": "y", "seen_in": "z", "reasoning": "r" * 900, "verdict": "maybe"},
+    ] + [{"kind": "observation", "statement": f"f{i}", "seen_in": "s"} for i in range(20)]
+    reply["investigation_report"] = "r" * 20000
+
+    result = parse_incident_result(reply, USAGE)
+
+    assert len(result.agent_changes) == 2
+    assert result.agent_changes[0].target == "Pod/ns/db-0"
+    assert all(len(c.summary) <= 300 and len(c.target) <= 200 for c in result.agent_changes)
+    assert all(len(f.statement) <= 300 and len(f.reasoning) <= 300 for f in result.findings)
+    assert len(result.findings) <= 12
+    assert len(result.investigation_report) <= 16384
+    assert any("normalized" in f.statement for f in result.findings)
+    validate(result)
+
+
+def test_a_result_missing_its_core_still_fails() -> None:
+    reply = _model_reply()
+    reply["status"] = "mostly"
+    with pytest.raises(ValueError, match="status"):
+        parse_incident_result(reply, USAGE)
