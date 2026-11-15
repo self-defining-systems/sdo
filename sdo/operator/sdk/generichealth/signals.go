@@ -99,6 +99,7 @@ func finish(fs []sdk.Finding, s sdk.DetectorSpec) []sdk.Finding {
 	}
 	return result
 }
+
 // Memory saturation needs a hurt signal beyond a high working set, which
 // includes reclaimable page cache: anonymous (RSS) memory above the threshold,
 // or an OOMKilled termination within the window. A source with neither is
