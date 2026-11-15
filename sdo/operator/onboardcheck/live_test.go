@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 // something waits or evaluates, the set of broken components, and the raises
 // the detectors would produce for them.
 type world struct {
+	mu      sync.Mutex
 	now     time.Time
 	evalDur time.Duration
 	broken  map[string]bool
@@ -32,6 +34,8 @@ type world struct {
 	pending    []string
 	evals      int
 	late       map[string]lateRaise
+	sim        []detectorSim
+	simStart   time.Time
 	brokenAt   map[string]time.Time
 }
 
@@ -45,13 +49,21 @@ func newWorld() *world {
 	return &world{now: time.Unix(1000, 0), evalDur: 2 * time.Second, broken: map[string]bool{}, raiseFor: map[string][]Raise{}, restoreErr: map[string]error{}, breakErr: map[string]error{}, stuck: map[string]bool{}}
 }
 
-func (w *world) Now() time.Time { return w.now }
+func (w *world) Now() time.Time {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.now
+}
 func (w *world) Wait(_ context.Context, d time.Duration) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.now = w.now.Add(d)
 	return nil
 }
 
 func (w *world) Evaluate(context.Context) (Verdict, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.evals++
 	w.now = w.now.Add(w.evalDur)
 	if w.evalErr != nil {
@@ -71,7 +83,7 @@ func (w *world) Evaluate(context.Context) (Verdict, error) {
 		}
 	}
 	if len(raised) == 0 {
-		return Verdict{Status: "clear"}, nil
+		return Verdict{Status: "clear", Progress: w.progress()}, nil
 	}
 	return Verdict{Status: "firing", Raised: raised}, nil
 }
@@ -79,6 +91,8 @@ func (w *world) Evaluate(context.Context) (Verdict, error) {
 func (w *world) Mode() string { return "scale-to-zero" }
 
 func (w *world) Break(_ context.Context, c appmap.Component) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if err := w.breakErr[c.Name]; err != nil {
 		return err
 	}
@@ -92,6 +106,8 @@ func (w *world) Break(_ context.Context, c appmap.Component) error {
 }
 
 func (w *world) Restore(_ context.Context, c appmap.Component) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.log = append(w.log, "restore "+c.Name)
 	if err := w.restoreErr[c.Name]; err != nil {
 		return err
@@ -295,8 +311,8 @@ func TestFailsUnderBreakWaitsUpToBoundThenGivesUp(t *testing.T) {
 	if status(r, ItemBreak, "list-items") != Red {
 		t.Fatalf("%s", r.Text())
 	}
-	// 4 components, each waits at least the bound.
-	if elapsed := w.now.Sub(time.Unix(1000, 0)); elapsed < 4*60*time.Second {
+	// 4 components in 3 waves, each wave waits at least the bound.
+	if elapsed := w.now.Sub(time.Unix(1000, 0)); elapsed < 3*60*time.Second {
 		t.Fatalf("gave up before the bound: %s", elapsed)
 	}
 }
@@ -353,9 +369,14 @@ func TestFailsUnderBreakStopsWhenRestoreIsUncertain(t *testing.T) {
 func TestFailsUnderBreakRestoresEveryBrokenComponentInOrder(t *testing.T) {
 	w := newWorld()
 	runLiveItems(t, w, false, true)
-	want := []string{"break web", "restore web", "break api", "restore api", "break db", "restore db", "break worker", "restore worker"}
-	if strings.Join(w.log, ",") != strings.Join(want, ",") {
-		t.Fatalf("log %v want %v", w.log, want)
+	if len(w.log) != 8 || strings.Join(w.log[:4], ",") != "break web,restore web,break api,restore api" {
+		t.Fatalf("shared components go one at a time: %v", w.log)
+	}
+	// db (list-items) and worker (send-mail) share no operation: one wave, both
+	// broken before either is restored.
+	last := w.log[4:]
+	if !strings.HasPrefix(last[0], "break ") || !strings.HasPrefix(last[1], "break ") || !strings.HasPrefix(last[2], "restore ") || !strings.HasPrefix(last[3], "restore ") {
+		t.Fatalf("disjoint components break together: %v", w.log)
 	}
 }
 
@@ -447,5 +468,132 @@ func TestLiveItemsAreRedWhenNoDetectorWasEvaluated(t *testing.T) {
 	}
 	if status(r, ItemBreak, "all") != Red || w.evals != 0 {
 		t.Fatalf("break must not run or pass without detectors (evaluations %d):\n%s", w.evals, r.Text())
+	}
+}
+
+// detectorSim is a detector judging every interval, with a clearing horizon.
+type detectorSim struct {
+	id                string
+	interval, horizon time.Duration
+}
+
+func (w *world) progress() []DetectorProgress {
+	if len(w.sim) == 0 {
+		return nil
+	}
+	if w.simStart.IsZero() {
+		w.simStart = w.now
+	}
+	elapsed := w.now.Sub(w.simStart)
+	var out []DetectorProgress
+	for _, d := range w.sim {
+		p := DetectorProgress{DetectorID: d.id, Interval: d.interval, Horizon: d.horizon}
+		for at := time.Duration(0); at <= elapsed; at += d.interval {
+			p.Evaluations++
+			if at >= d.horizon {
+				p.PastHorizon++
+			}
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func TestParallelBreaksStillNameTheRightOperation(t *testing.T) {
+	w := newWorld()
+	// Only the worker's break is noticed, by a scenario of send-mail. db is
+	// broken in the same wave but nothing names it or list-items.
+	w.raiseFor["worker"] = raiseNaming("traffic-probe-send", "send-mail failing")
+	r := runLiveItems(t, w, false, true)
+	if status(r, ItemBreak, "send-mail") != Green {
+		t.Fatalf("send-mail is noticed:\n%s", r.Text())
+	}
+	if status(r, ItemBreak, "list-items") != Red {
+		t.Fatalf("a raise naming send-mail must not credit list-items:\n%s", r.Text())
+	}
+	waves := BreakWaves(liveMapParsed(t))
+	if len(waves) != 3 || len(waves[2]) != 2 {
+		t.Fatalf("waves %v", waves)
+	}
+}
+
+func liveMapParsed(t *testing.T) appmap.Map {
+	m, err := appmap.Parse(liveMap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func TestQuickModeNeverReportsClean(t *testing.T) {
+	w := newWorld()
+	w.sim = []detectorSim{{"d1", 30 * time.Second, time.Minute}}
+	cfg := liveConfig(t, w, true, false)
+	cfg.Quick = true
+	r, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Mode != ModeQuick || r.Clean() || status(r, ItemQuiet, "detectors") != Green {
+		t.Fatalf("quick run is never clean:\n%s", r.Text())
+	}
+	if rr := (Report{Mode: ModeQuick}); rr.Clean() || !rr.NoRed() {
+		t.Fatal("a quick report with nothing red has no red item but is not clean")
+	}
+	if rr := (Report{Mode: ModeFull}); !rr.Clean() {
+		t.Fatal("a full report with nothing red is clean")
+	}
+	if !strings.Contains(r.Text(), "mode: quick") {
+		t.Fatalf("report names the mode:\n%s", r.Text())
+	}
+	if elapsed := w.now.Sub(time.Unix(1000, 0)); elapsed > 30*time.Second {
+		t.Fatalf("quick smoke should end once each detector judged: %s", elapsed)
+	}
+	cfg = liveConfig(t, w, true, true)
+	cfg.Quick = true
+	if _, err := Run(context.Background(), cfg); err == nil {
+		t.Fatal("quick mode refuses the break item")
+	}
+}
+
+func TestQuickModeRedWhenNoDetectorEvaluated(t *testing.T) {
+	w := newWorld()
+	cfg := liveConfig(t, w, true, false)
+	cfg.Quick = true
+	cfg.Quiet.Window = time.Minute
+	r, _ := Run(context.Background(), cfg)
+	if status(r, ItemQuiet, "detectors") != Red {
+		t.Fatalf("a smoke that evaluated nothing proves nothing:\n%s", r.Text())
+	}
+}
+
+func TestQuietWindowCoversEveryDetectorsHorizon(t *testing.T) {
+	w := newWorld()
+	w.sim = []detectorSim{{"fast", time.Minute, 30 * time.Second}, {"slow", 30 * time.Second, 4 * time.Minute}}
+	r := runLiveItems(t, w, true, false)
+	if status(r, ItemQuiet, "detectors") != Green {
+		t.Fatalf("expected green:\n%s", r.Text())
+	}
+	elapsed := w.now.Sub(time.Unix(1000, 0))
+	// slow: horizon 4m, then 3 judgements 30s apart.
+	if need := 4*time.Minute + 2*30*time.Second; elapsed < need {
+		t.Fatalf("window ended after %s, before slow judged 3 times past its horizon (%s)", elapsed, need)
+	}
+	if elapsed >= 10*time.Minute {
+		t.Fatalf("window should be derived, not the full cap: %s", elapsed)
+	}
+	for _, p := range w.progress() {
+		if p.PastHorizon < DefaultQuietEvaluations {
+			t.Fatalf("%s judged %d times past its horizon", p.DetectorID, p.PastHorizon)
+		}
+	}
+}
+
+func TestQuietWindowCapShorterThanHorizonIsRed(t *testing.T) {
+	w := newWorld()
+	w.sim = []detectorSim{{"slow", 30 * time.Second, 20 * time.Minute}}
+	r := runLiveItems(t, w, true, false)
+	if status(r, ItemQuiet, "slow") != Red {
+		t.Fatalf("a detector that never judged past its horizon is red:\n%s", r.Text())
 	}
 }

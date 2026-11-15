@@ -21,6 +21,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/apihistory"
 	"sdo.dev/operator/core"
+	"sdo.dev/operator/evaluation"
 	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/traffic"
@@ -118,6 +119,7 @@ type Controller struct {
 	responseStagesRunning       bool
 	midStage                    midIncidentStage
 	history                     []DetectorEvaluation
+	progress                    map[string]*evaluation.DetectorProgress
 	drift                       *DriftControllerConfig
 	driftEvents                 []sdk.DriftEvent
 	sourceInventory             *SourceInventory
@@ -701,6 +703,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		sampleFindings = append(sampleFindings, validFindings...)
 		c.recordEvaluation(spec.ID, now, validFindings, c.recoveryScope())
 		c.history[len(c.history)-1].Reason = detectorConfirmationReason(detector, snapshot)
+		c.noteProgress(detector, snapshot, now)
 		c.noteStartupEvaluation(spec.ID)
 		c.batcher.RemoveKeys(changes.Cleared)
 		if c.config.ConfirmationInterval > 0 && c.tracker.HasPendingDetector(spec.ID) {
@@ -2474,4 +2477,35 @@ func passingTests(snapshot sdk.DetectionContext) []string {
 // changes read besides the snapshot: the signal ring and the app-state source.
 func (c *Controller) IncidentSources() (*incidentSignals, AppStateChangeSource) {
 	return c.signals, c.config.AppStateChanges
+}
+
+// noteProgress counts one judged evaluation of the detector against its own
+// clearing horizon, so a reader can tell when every detector has judged enough
+// times past it.
+func (c *Controller) noteProgress(detector sdk.Detector, snapshot sdk.DetectionContext, now time.Time) {
+	if c.progress == nil {
+		c.progress = map[string]*evaluation.DetectorProgress{}
+	}
+	spec := detector.Spec()
+	p := c.progress[spec.ID]
+	if p == nil {
+		p = &evaluation.DetectorProgress{DetectorID: spec.ID, FirstAt: now.UTC()}
+		c.progress[spec.ID] = p
+	}
+	p.Interval = spec.Interval
+	p.Horizon = detectorClearingHorizon(detector, snapshot)
+	p.Evaluations++
+	if now.Sub(p.FirstAt) >= p.Horizon {
+		p.PastHorizon++
+	}
+}
+
+// DetectorProgress is the judging progress of every detector, ordered by ID.
+func (c *Controller) DetectorProgress() []evaluation.DetectorProgress {
+	out := make([]evaluation.DetectorProgress, 0, len(c.progress))
+	for _, p := range c.progress {
+		out = append(out, *p)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].DetectorID < out[j].DetectorID })
+	return out
 }

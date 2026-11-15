@@ -57,12 +57,30 @@ type DetectorState struct {
 	Reason       string    `json:"Reason,omitempty"`
 }
 
+// DetectorProgress says how far one detector has judged the application since
+// the evaluation began: how often it judged, how many of those judgements came
+// at least its own Horizon after its first, and the Interval and Horizon (how
+// long after a condition resolves a fresh judgement may still report it) it
+// runs with. A reader that wants "judged N times past its horizon" reads
+// PastHorizon.
+type DetectorProgress struct {
+	DetectorID  string        `json:"detector_id"`
+	Interval    time.Duration `json:"interval"`
+	Horizon     time.Duration `json:"horizon"`
+	Evaluations int           `json:"evaluations"`
+	PastHorizon int           `json:"past_horizon"`
+	FirstAt     time.Time     `json:"first_at"`
+}
+
 // Verdict is the whole --evaluate-once output.
 type Verdict struct {
 	Findings       []sdk.Finding         `json:"findings"`
 	Status         Status                `json:"status"`
 	Unavailable    []UnavailableDetector `json:"unavailable,omitempty"`
 	DetectorStates []DetectorState       `json:"detector_states,omitempty"`
+	// Progress lists every detector that has judged at least once (watching
+	// evaluations only).
+	Progress []DetectorProgress `json:"progress,omitempty"`
 	// ExistingRecordsExercised counts the probe samples in which a step marked
 	// as reading existing records returned a record the probe did not write.
 	ExistingRecordsExercised int `json:"existing_records_exercised,omitempty"`
