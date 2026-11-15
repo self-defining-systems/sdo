@@ -91,11 +91,11 @@ func TestOperationWithoutLatencySeriesIsRed(t *testing.T) {
 	}
 }
 
-func TestLatencyFamilyThatMissesTheRouteNamesTheNearestLabel(t *testing.T) {
+func TestLatencyFamilyThatMissesTheRouteIsRed(t *testing.T) {
 	r := runObservedWith(t, observedMap, func(p *fakeProm) {
 		p.add("http_request_duration_seconds_bucket", map[string]string{"job": "web", "route": "/item"}, 1)
 	}, true)
-	if status(r, ItemLatency, "list-items") != Red || !strings.Contains(r.Text(), `nearest latency route label: "/item"`) {
+	if status(r, ItemLatency, "list-items") != Red || !strings.Contains(r.Text(), `carries route="/items"`) {
 		t.Fatalf("expected the nearest label:\n%s", r.Text())
 	}
 }
