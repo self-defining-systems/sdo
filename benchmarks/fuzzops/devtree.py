@@ -54,17 +54,24 @@ def sync(checkout: Path, dest: Path, binary: Path | None) -> None:
     staged.replace(operator)
 
 
-def swap_problem(checkout: Path, lane_revision: str, new_revision: str) -> str:
-    """Why the lane started at ``lane_revision`` cannot run ``new_revision`` by a swap; empty when it can."""
-    out = subprocess.run(
-        ["git", "-C", str(checkout), "diff", "--name-only", lane_revision, new_revision, "--", *COMPILED],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if out.returncode != 0:
-        return f"cannot compare {lane_revision[:12]} with {new_revision[:12]}: {out.stderr.strip()}"
-    changed = out.stdout.split()
+def fingerprint(checkout: Path) -> dict[str, str]:
+    """The git object ids of ``COMPILED`` at the checkout's HEAD (empty for a path the tree lacks): what a lane was
+    built from. A shallow checkout has no older revision to diff against, so ``prepare`` records this instead."""
+    out: dict[str, str] = {}
+    for path in COMPILED:
+        proc = subprocess.run(
+            ["git", "-C", str(checkout), "rev-parse", "--verify", "-q", f"HEAD:{path}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        out[path] = proc.stdout.strip()
+    return out
+
+
+def swap_problem(checkout: Path, lane: dict[str, str]) -> str:
+    """Why the lane built with fingerprint ``lane`` cannot run the checkout by a swap; empty when it can."""
+    changed = [path for path, ident in fingerprint(checkout).items() if lane.get(path) != ident]
     if changed:
         return "compiled code changed since the lane was built: " + ", ".join(changed[:5])
     return ""

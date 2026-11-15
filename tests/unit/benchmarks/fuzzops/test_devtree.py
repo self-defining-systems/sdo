@@ -67,17 +67,21 @@ def test_sync_removes_what_the_new_tree_dropped(repo: Path, tmp_path: Path) -> N
 
 
 def test_python_only_change_may_be_swapped(repo: Path) -> None:
-    base = _git(repo, "rev-parse", "HEAD")
+    lane = devtree.fingerprint(repo)
     (repo / "sdo/agents/x.py").write_text("y\n")
     _git(repo, "commit", "-qam", "py")
-    assert devtree.swap_problem(repo, base, _git(repo, "rev-parse", "HEAD")) == ""
+    assert devtree.swap_problem(repo, lane) == ""
 
 
 def test_go_change_cannot_be_swapped(repo: Path) -> None:
-    base = _git(repo, "rev-parse", "HEAD")
+    lane = devtree.fingerprint(repo)
     (repo / "sdo/operator/a/a.go").write_text("y\n")
     _git(repo, "commit", "-qam", "go")
-    assert "sdo/operator/a/a.go" in devtree.swap_problem(repo, base, _git(repo, "rev-parse", "HEAD"))
+    assert "sdo/operator" in devtree.swap_problem(repo, lane)
+
+
+def test_a_lane_without_a_fingerprint_cannot_be_swapped(repo: Path) -> None:
+    assert devtree.swap_problem(repo, {})
 
 
 def test_wipe_problems_name_every_way_the_lane_left_the_baseline() -> None:

@@ -993,7 +993,9 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     # install-existing returns before the controller runs: the reset waits for it to acknowledge.
     reset = reset_when_running(binary.resolve(), baseline.control, kubeconfig)
     out(f"incidents reset: generation {reset.get('generation')}")
-    (lane_dir / PREPARED_RECORD).write_text(json.dumps({"revision": revision, "memory": memory}) + "\n")
+    (lane_dir / PREPARED_RECORD).write_text(
+        json.dumps({"revision": revision, "memory": memory, "compiled": devtree.fingerprint(Path.cwd())}) + "\n"
+    )
     out(json.dumps({"pack": str(attached), "operator_version": revision, "memory": memory}))
     return 0
 
@@ -1202,7 +1204,7 @@ def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     lane_dir = Path(_need(env, "BENCH_LANE_DIR")).resolve()
     record = json.loads((lane_dir / PREPARED_RECORD).read_text())
     revision = checkout_revision()
-    if why := devtree.swap_problem(Path.cwd(), record["revision"], revision):
+    if why := devtree.swap_problem(Path.cwd(), record.get("compiled") or {}):
         raise HookError(why)
     started = time.monotonic()
     devtree.sync(Path.cwd(), Path(_need(env, "BENCH_EVIDENCE_HOST")) / DEV_DIRECTORY, None)
