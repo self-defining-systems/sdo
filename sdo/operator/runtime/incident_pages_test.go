@@ -150,7 +150,7 @@ func TestIncidentChangesListDeparturesWithWriterInTheWindow(t *testing.T) {
 	if len(rows) != 3 {
 		t.Fatalf("rows:\n%s", changes)
 	}
-	state, departure := rows[1], rows[2]
+	departure, state := rows[1], rows[2]
 	if strings.Join(state, ",") != "-60,"+onset.Add(-time.Minute).Format(time.RFC3339)+",app-state,db,settings,rate_limit,100,1,,unknown,,true," {
 		t.Fatalf("app-state row = %v", state)
 	}
@@ -183,8 +183,8 @@ func TestIncidentChangesNeverCarrySecretValuesAndAreCapped(t *testing.T) {
 	if len(rows)-1 != incidentChangesCap {
 		t.Fatalf("%d rows, want the cap %d", len(rows)-1, incidentChangesCap)
 	}
-	if rows[len(rows)-1][0] != "0" {
-		t.Fatalf("the cap keeps the newest rows; last = %v", rows[len(rows)-1])
+	if rows[1][0] != "0" {
+		t.Fatalf("rows are nearest onset first; first = %v", rows[1])
 	}
 	if strings.Contains(string(changes), "hunter2") {
 		t.Fatal("a credential-shaped value reached sdo changes")
@@ -242,13 +242,12 @@ func TestChangesAndTimelineCommandsPrintCSVAndWriteNoFiles(t *testing.T) {
 	}
 	response = loop.Handle(context.Background(), ToolRequest{Command: "changes", Since: "30m", Limit: 1})
 	if rows := parseCSV(t, []byte(response.Text)); len(rows) != 2 || rows[1][5] != "rate_limit" {
-		t.Fatalf("--limit 1 keeps the newest row:\n%s", response.Text)
+		t.Fatalf("--limit 1 keeps the row nearest onset:\n%s", response.Text)
 	}
 	response = loop.Handle(context.Background(), ToolRequest{Command: "timeline"})
 	if response.Error != "" || !strings.HasPrefix(response.Text, "t_rel_s,at_utc,") {
 		t.Fatalf("timeline = %q, error %q", response.Text, response.Error)
 	}
-	column(t, parseCSV(t, []byte(response.Text)), "fail:create")
 	if response = loop.Handle(context.Background(), ToolRequest{Command: "changes", Since: "soon"}); response.Error == "" {
 		t.Fatal("a malformed --since is refused")
 	}
@@ -342,5 +341,61 @@ func TestIncidentChangesCapKeepsUntimedRows(t *testing.T) {
 	parsed := parseCSV(t, changes)
 	if len(parsed)-1 != incidentChangesCap || !strings.Contains(string(changes), "ConfigMap/lost") {
 		t.Fatalf("%d rows; untimed row kept: %v", len(parsed)-1, strings.Contains(string(changes), "ConfigMap/lost"))
+	}
+}
+
+func TestIncidentChangesListNearestOnsetFirstSoCuttingKeepsTheDecisiveRow(t *testing.T) {
+	onset := detectOnset
+	rows := []IncidentChange{
+		{At: onset.Add(-9 * time.Minute), Component: "db", Key: "far-before"},
+		{At: onset.Add(-3 * time.Second), Component: "db", Key: "decisive"},
+		{At: onset.Add(2 * time.Minute), Component: "db", Key: "after"},
+		{Component: "db", ReaderOrObject: "ConfigMap/lost", After: "missing"},
+	}
+	input := incidentPageInput{Request: IncidentRequest{IncidentID: "i", DetectedAt: onset}, View: detectApp(), Signals: newIncidentSignals(), AppState: &staticAppState{rows: rows}, Now: onset.Add(3 * time.Minute)}
+	parsed := parseCSV(t, buildIncidentChanges(input))
+	var keys []string
+	for _, row := range parsed[1:] {
+		keys = append(keys, row[5])
+	}
+	if got := strings.Join(keys, ","); got != "decisive,after,far-before," {
+		t.Fatalf("order = %q, want nearest onset first, untimed last", got)
+	}
+	input.Limit = 1
+	if parsed := parseCSV(t, buildIncidentChanges(input)); len(parsed) != 2 || parsed[1][5] != "decisive" {
+		t.Fatalf("--limit 1 = %v", parsed)
+	}
+}
+
+func TestIncidentTimelineDropsSignalsThatNeverChangedState(t *testing.T) {
+	signals := newIncidentSignals()
+	onset := detectOnset
+	for second := -60; second <= 30; second += 5 {
+		at := onset.Add(time.Duration(second) * time.Second)
+		ready := int32(2)
+		if second >= 10 {
+			ready = 1
+		}
+		signals.Observe(at, pageSnapshot(at, false, ready, 2, 0))
+	}
+	request := detectRequest()
+	request.DetectedAt = onset
+	rows := parseCSV(t, buildIncidentTimeline(incidentPageInput{Request: request, View: detectApp("create"), Signals: signals, Now: onset.Add(30 * time.Second), Since: time.Minute}))
+	header := strings.Join(rows[0], ",")
+	if strings.Contains(header, "fail:") {
+		t.Fatalf("a test that never failed is a quiet column: %s", header)
+	}
+	column(t, rows, "ready:api")
+}
+
+func TestDropQuietColumnsKeepsFailuresAndMovingOrUnreadyWorkloads(t *testing.T) {
+	rows := [][]string{
+		{"t_rel_s", "at_utc", "fail:quiet", "fail:empty", "fail:bad", "ready:steady", "desired:steady", "restarts:steady", "ready:down", "desired:down", "restarts:down"},
+		{"0", "a", "0.00", "", "0.00", "2", "2", "0", "0", "1", "0"},
+		{"10", "b", "0.00", "", "1.00", "2", "2", "0", "0", "1", "0"},
+	}
+	got := strings.Join(dropQuietColumns(rows, 3)[0], ",")
+	if got != "t_rel_s,at_utc,fail:bad,ready:down,desired:down,restarts:down" {
+		t.Fatalf("header = %s", got)
 	}
 }

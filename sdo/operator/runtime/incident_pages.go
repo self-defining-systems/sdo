@@ -304,11 +304,13 @@ func buildIncidentTimeline(in incidentPageInput) []byte {
 func buildIncidentChanges(in incidentPageInput) []byte {
 	set, onset := incidentSet(in)
 	in.everyActor = true
+	limit := in.Limit
+	in.Limit = 0
 	rows := incidentChangeRows(in, set, onset)
 	if len(in.Components) > 0 {
 		rows = slices.DeleteFunc(rows, func(row IncidentChange) bool { return !slices.Contains(in.Components, row.Component) })
 	}
-	return renderChanges(rows, onset)
+	return renderChanges(nearestOnsetFirst(rows, onset, limit), onset)
 }
 
 func renderTimeline(set detectSuspectSet, history incidentSignalHistory, request IncidentRequest, view detectReads, onset, now time.Time, lead time.Duration, components []string) []byte {
@@ -420,7 +422,58 @@ func renderTimeline(set detectSuspectSet, history incidentSignalHistory, request
 		}
 		rows = append(rows, row)
 	}
+	// A listed component is what the reader asked about: its columns stay.
+	if len(components) == 0 {
+		rows = dropQuietColumns(rows, len(operations))
+	}
 	return encodeCSV(rows)
+}
+
+// dropQuietColumns keeps the time columns and only the signals that changed
+// state in the window: an operation that failed at least once, and a workload
+// whose ready, desired or restarts moved or that is not fully ready. rows[0]
+// is the header; the operation columns follow the two time columns, then three
+// columns per workload.
+func dropQuietColumns(rows [][]string, operations int) [][]string {
+	if len(rows) < 2 {
+		return rows
+	}
+	keep := []int{0, 1}
+	column := func(index int) []string {
+		values := make([]string, 0, len(rows)-1)
+		for _, row := range rows[1:] {
+			values = append(values, row[index])
+		}
+		return values
+	}
+	for index := 2; index < 2+operations; index++ {
+		for _, value := range column(index) {
+			if value != "" && value != "0.00" {
+				keep = append(keep, index)
+				break
+			}
+		}
+	}
+	for start := 2 + operations; start+2 < len(rows[0]); start += 3 {
+		ready, desired, restarts := column(start), column(start+1), column(start+2)
+		changed := false
+		for i := range ready {
+			if ready[i] != ready[0] || desired[i] != desired[0] || restarts[i] != restarts[0] || ready[i] != desired[i] {
+				changed = true
+				break
+			}
+		}
+		if changed {
+			keep = append(keep, start, start+1, start+2)
+		}
+	}
+	out := make([][]string, len(rows))
+	for r, row := range rows {
+		for _, index := range keep {
+			out[r] = append(out[r], row[index])
+		}
+	}
+	return out
 }
 
 // incidentChangeRows are the source departures of every component (with the
@@ -507,6 +560,37 @@ func incidentChangeRows(in incidentPageInput, set detectSuspectSet, onset time.T
 		timed := max(limit-untimed, 0)
 		rows = append(rows[len(rows)-untimed-timed:len(rows)-untimed], rows[len(rows)-untimed:]...)
 		rows = rows[:min(len(rows), limit)]
+	}
+	return rows
+}
+
+// nearestOnsetFirst orders timed rows by distance from onset (an earlier row
+// first on a tie) so a reader that cuts the page short keeps the rows that
+// matter; untimed rows (missing objects) follow. limit keeps the first N.
+func nearestOnsetFirst(rows []IncidentChange, onset time.Time, limit int) []IncidentChange {
+	distance := func(row IncidentChange) time.Duration {
+		d := row.At.Sub(onset)
+		if d < 0 {
+			return -d
+		}
+		return d
+	}
+	rows = slices.Clone(rows)
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		if a.At.IsZero() != b.At.IsZero() {
+			return b.At.IsZero()
+		}
+		if a.At.IsZero() {
+			return false
+		}
+		if da, db := distance(a), distance(b); da != db {
+			return da < db
+		}
+		return a.At.Before(b.At)
+	})
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
 	}
 	return rows
 }
