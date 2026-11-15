@@ -2,6 +2,8 @@ package memory
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"go/format"
@@ -335,6 +337,29 @@ func genericManifest(id, interval string, watches []layout.Watch) layout.Detecto
 	}
 }
 
+// generatedMarker heads every Go-generated detector.go. It carries the digest
+// of the rest of the file, so a later SDO can tell a prior Go generation (the
+// digest matches: regenerate it) from a hand edit (it does not: refuse it).
+const generatedMarker = "// sdo:generated sha256="
+
+func withGeneratedMarker(body []byte) []byte {
+	sum := sha256.Sum256(body)
+	return append([]byte(generatedMarker+hex.EncodeToString(sum[:])+"\n"), body...)
+}
+
+// priorGoGeneration reports whether a stored detector.go is something Go once
+// generated: its marker digest matches the body, or (a file from before the
+// marker existed) there is no marker and the package's manifest is Go's.
+// edited is true when a marker is present but does not match its body.
+func priorGoGeneration(stored []byte, goManifest bool) (prior, edited bool) {
+	line, body, found := bytes.Cut(stored, []byte("\n"))
+	if !found || !bytes.HasPrefix(line, []byte(generatedMarker)) {
+		return goManifest, false
+	}
+	sum := sha256.Sum256(body)
+	return string(line) == generatedMarker+hex.EncodeToString(sum[:]), true
+}
+
 func writeGenericDetector(root string, manifest layout.DetectorManifest, source string) error {
 	// The test shares the source's own package clause, so the two never name
 	// different packages in one directory.
@@ -347,6 +372,7 @@ func writeGenericDetector(root string, manifest layout.DetectorManifest, source 
 	if err != nil {
 		return err
 	}
+	formatted = withGeneratedMarker(formatted)
 	formattedTest, err := format.Source([]byte(test))
 	if err != nil {
 		return err
@@ -357,9 +383,11 @@ func writeGenericDetector(root string, manifest layout.DetectorManifest, source 
 		return err
 	}
 	files = append(files, layout.File{Name: layout.ManifestFileName, Content: encoded})
-	// An existing policy package must match exactly. Never hide a malformed
-	// authored file by overwriting it before validation.
-	base := filepath.Join(root, layout.DetectorDir(layout.ClassHealth, manifest.ID))
+	// A stored package that Go generated is regenerated to the current
+	// template; one that was edited by hand is refused, never overwritten
+	// before validation could see it.
+	dir := layout.DetectorDir(layout.ClassHealth, manifest.ID)
+	base := filepath.Join(root, dir)
 	entries, err := os.ReadDir(base)
 	if err != nil && !os.IsNotExist(err) {
 		return err
@@ -367,7 +395,7 @@ func writeGenericDetector(root string, manifest layout.DetectorManifest, source 
 	for _, entry := range entries {
 		if filepath.Join(base, entry.Name()) == filepath.Join(root, LegacyReachabilityBaselinePath) && !entry.IsDir() {
 			// A pre-move cluster capture: strip it, never require or decode it.
-			if err := safefs.Remove(root, filepath.ToSlash(filepath.Join(layout.DetectorDir(layout.ClassHealth, manifest.ID), entry.Name()))); err != nil {
+			if err := safefs.Remove(root, filepath.ToSlash(filepath.Join(dir, entry.Name()))); err != nil {
 				return err
 			}
 			continue
@@ -376,17 +404,29 @@ func writeGenericDetector(root string, manifest layout.DetectorManifest, source 
 			return fmt.Errorf("generic health package %s contains unexpected file %s", manifest.ID, entry.Name())
 		}
 	}
-	for _, file := range files {
-		path := filepath.Join(base, file.Name)
-		data, err := os.ReadFile(path)
-		if err == nil && !bytes.Equal(data, file.Content) {
-			return fmt.Errorf("generic health file %s differs from Go policy; remove the edit", layout.DetectorDir(layout.ClassHealth, manifest.ID)+"/"+file.Name)
+	storedSource, err := os.ReadFile(filepath.Join(base, layout.DetectorFileName))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err == nil {
+		goManifest := false
+		if data, err := os.ReadFile(filepath.Join(base, layout.ManifestFileName)); err == nil {
+			if stored, err := layout.ParseDetectorManifest(data); err == nil {
+				goManifest = stored.OriginatingCommit == manifest.OriginatingCommit && stored.Owner == manifest.Owner
+			}
 		}
-		if err != nil && !os.IsNotExist(err) {
-			return err
+		if prior, edited := priorGoGeneration(storedSource, goManifest); !prior {
+			reason := "it is not a Go-generated file"
+			if edited {
+				reason = "its generated marker does not match its content"
+			}
+			return fmt.Errorf("generic health file %s differs from Go policy (%s); remove the edit, or delete the package so Go regenerates it", dir+"/"+layout.DetectorFileName, reason)
 		}
 	}
-	return layout.WriteDetector(root, layout.Detector{Class: layout.ClassHealth, Manifest: manifest, Files: files[:2]})
+	if err := layout.WriteDetector(root, layout.Detector{Class: layout.ClassHealth, Manifest: manifest, Files: files[:2]}); err != nil {
+		return err
+	}
+	return nil
 }
 
 // reachabilityWatches mirrors servicehealth.ReachabilityWatches, which the
