@@ -305,7 +305,7 @@ func (p entryPlan) instrumentation(results map[string]metrics.Result) string {
 
 // undeclared judges every route value of the entry's request metric that no
 // declared operation covers, with the same rule, busiest routes first up to the
-// configured bound. The application map need not be complete for the detector
+// configured bound (failing routes first). The application map need not be complete for the detector
 // to see a failing route.
 func (d *detector) undeclared(ctx sdk.DetectionContext, plan entryPlan, results map[string]metrics.Result) []sdk.Finding {
 	if plan.instrumentation(results) != "" {
@@ -317,7 +317,10 @@ func (d *detector) undeclared(ctx sdk.DetectionContext, plan entryPlan, results 
 			declared[op.Route] = true
 		}
 	}
-	volume := map[string]float64{}
+	// Routes that carried failed requests anywhere in the lookback rank first: a failing route must stay judged
+	// (and its finding stay until recovery is confirmed) however busy the healthy routes become. Busiest first
+	// among the rest.
+	volume, failed := map[string]float64{}, map[string]float64{}
 	for _, s := range results[plan.recent.ID].Series {
 		route := s.Labels[plan.RouteLabel]
 		if declared[route] {
@@ -329,12 +332,19 @@ func (d *detector) undeclared(ctx sdk.DetectionContext, plan entryPlan, results 
 		if v, ok := s.Last(); ok {
 			volume[route] += plan.classify(s.Labels, v.Value).total
 		}
+		for _, sample := range s.Samples {
+			c := plan.classify(s.Labels, sample.Value)
+			failed[route] = math.Max(failed[route], c.server+c.client)
+		}
 	}
 	routes := make([]string, 0, len(volume))
 	for route := range volume {
 		routes = append(routes, route)
 	}
 	sort.Slice(routes, func(i, j int) bool {
+		if failed[routes[i]] != failed[routes[j]] {
+			return failed[routes[i]] > failed[routes[j]]
+		}
 		if volume[routes[i]] != volume[routes[j]] {
 			return volume[routes[i]] > volume[routes[j]]
 		}
