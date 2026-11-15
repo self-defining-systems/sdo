@@ -1686,6 +1686,19 @@ def set_controller_suspended(kube: Kube, control: str, suspended: bool, timeout:
 BUNDLE_DIR = "/seed"
 
 
+def restore_script(head: str, with_bundle: bool, root: str = APPLICATION_ROOT, bundle_dir: str = BUNDLE_DIR) -> str:
+    """The restore pod's shell: with a bundle, wait for it and unbundle its objects (whatever its refs are named), then
+    put the repository at ``head`` with no other file."""
+    git = "git -c safe.directory='*'"
+    steps = [f"cd {root}"]
+    if with_bundle:
+        # the pod waits for the bundle, streamed in by exec (the image need not hold tar for a copy)
+        steps.insert(0, f"until [ -e {bundle_dir}/memory.ready ]; do sleep 1; done")
+        steps.append(f"{git} bundle unbundle {bundle_dir}/memory.bundle >/dev/null")
+    steps += [f"{git} reset -q --hard {head}", f"{git} clean -q -fdx", f"{git} rev-parse HEAD"]
+    return " && ".join(steps)
+
+
 def restore_repository(kube: Kube, control: str, head: str, bundle: Path | None = None) -> None:
     """With the controller stopped, put the accepted repository on its volume back at ``head`` with no other file
     (outcomes and playbooks it learned go), in a short-lived pod that mounts the volume as the controller does.
@@ -1704,14 +1717,7 @@ def restore_repository(kube: Kube, control: str, head: str, bundle: Path | None 
     if volume is None or mount is None:
         raise HookError("the controller job has no repository volume")
     name = "sdo-restore-repository"
-    git = "git -c safe.directory='*'"
-    steps = [f"cd {APPLICATION_ROOT}"]
-    if bundle is not None:
-        # the pod waits for the bundle, streamed in by exec (the image need not hold tar for a copy)
-        steps.insert(0, f"until [ -e {BUNDLE_DIR}/memory.ready ]; do sleep 1; done")
-        steps.append(f"{git} fetch -q {BUNDLE_DIR}/memory.bundle")
-    steps += [f"{git} reset -q --hard {head}", f"{git} clean -q -fdx", f"{git} rev-parse HEAD"]
-    script = " && ".join(steps)
+    script = restore_script(head, bundle is not None)
     pod = {
         "apiVersion": "v1",
         "kind": "Pod",
