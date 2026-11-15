@@ -78,3 +78,11 @@ def test_go_change_cannot_be_swapped(repo: Path) -> None:
     (repo / "sdo/operator/a/a.go").write_text("y\n")
     _git(repo, "commit", "-qam", "go")
     assert "sdo/operator/a/a.go" in devtree.swap_problem(repo, base, _git(repo, "rev-parse", "HEAD"))
+
+
+def test_wipe_problems_name_every_way_the_lane_left_the_baseline() -> None:
+    from benchmarks.fuzzops import hooks
+
+    assert hooks.wipe_problems("a" * 40, "a" * 40, "", "") == []
+    found = hooks.wipe_problems("b" * 40, "a" * 40, " M .sdo/x", "outcome.json")
+    assert len(found) == 3

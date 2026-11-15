@@ -30,8 +30,9 @@ COMPILED = (
 _EXCLUDES = ("--exclude=.git", "--exclude=__pycache__", "--exclude=*.pyc", "--exclude=.venv", "--exclude=node_modules")
 
 
-def sync(checkout: Path, dest: Path, binary: Path) -> None:
-    """Make ``dest`` the projection of ``checkout`` plus the host-built operator binary (replacing what was there)."""
+def sync(checkout: Path, dest: Path, binary: Path | None) -> None:
+    """Make ``dest`` the projection of ``checkout`` plus the host-built operator binary (replacing what was there;
+    ``None`` keeps the binary the lane has)."""
     dest.mkdir(parents=True, exist_ok=True)
     dest.chmod(0o755)
     for rel in PROJECTED:
@@ -43,6 +44,8 @@ def sync(checkout: Path, dest: Path, binary: Path) -> None:
         else:
             cmd = ["rsync", "-a", str(source), str(target)]
         subprocess.run(cmd, check=True, capture_output=True)
+    if binary is None:
+        return
     operator = dest / ".fastloop" / "sdo-operator"
     operator.parent.mkdir(parents=True, exist_ok=True)
     staged = operator.with_name("sdo-operator.new")

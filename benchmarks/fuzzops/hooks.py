@@ -285,6 +285,8 @@ def baseline_problem(baseline: Baseline, namespace: str) -> str:
     return bundle_problem(baseline.path(baseline.bundle), baseline.branch, baseline.commit)
 
 
+#: What ``prepare`` leaves in the lane directory for ``swap``: the revision the lane runs and its memory commit.
+PREPARED_RECORD = "prepared.json"
 #: The projected sources under the lane's evidence directory (``devtree``).
 DEV_DIRECTORY = ".dev"
 
@@ -991,6 +993,7 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     # install-existing returns before the controller runs: the reset waits for it to acknowledge.
     reset = reset_when_running(binary.resolve(), baseline.control, kubeconfig)
     out(f"incidents reset: generation {reset.get('generation')}")
+    (lane_dir / PREPARED_RECORD).write_text(json.dumps({"revision": revision, "memory": memory}) + "\n")
     out(json.dumps({"pack": str(attached), "operator_version": revision, "memory": memory}))
     return 0
 
@@ -1173,6 +1176,91 @@ def teardown(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int
     return 0
 
 
+def wipe_problems(head: str, memory: str, status: str, outcomes: str) -> list[str]:
+    """Why a lane's accepted repository is not the baseline's: head moved, uncommitted files, outcomes written."""
+    problems = []
+    if head != memory:
+        problems.append(f"accepted head {head[:12]} is not the baseline's {memory[:12]}")
+    if status.strip():
+        problems.append("uncommitted files in the accepted repository")
+    if outcomes.strip():
+        problems.append("outcomes already written")
+    return problems
+
+
+SWAP_STANDBY_WAIT_S = 180.0
+
+
+def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
+    """Run the hooks checkout's Python sources on a prepared ``dev_mount`` lane without restarting the controller:
+    project them over the lane's base images, retire the idle responder standby so the next one imports them, and
+    assert the lane is still the baseline's (head, files, outcomes) with an idle operator. Refused when the lane
+    was prepared on a revision whose compiled code differs."""
+    block = _operator(env)
+    if not block.dev_mount:
+        raise HookError("swap needs settings.dev_mount")
+    lane_dir = Path(_need(env, "BENCH_LANE_DIR")).resolve()
+    record = json.loads((lane_dir / PREPARED_RECORD).read_text())
+    revision = checkout_revision()
+    if why := devtree.swap_problem(Path.cwd(), record["revision"], revision):
+        raise HookError(why)
+    started = time.monotonic()
+    devtree.sync(Path.cwd(), Path(_need(env, "BENCH_EVIDENCE_HOST")) / DEV_DIRECTORY, None)
+    kube, control = _kube(env), control_namespace(env)
+    retire_standby(kube, control)
+    wait_standby(kube, control, SWAP_STANDBY_WAIT_S)
+    script = (
+        f"cd {APPLICATION_ROOT} && git -c safe.directory='*' rev-parse HEAD && echo -- && "
+        "git -c safe.directory='*' status --porcelain && echo -- && ls .sdo/outcomes 2>/dev/null; true"
+    )
+    head, status, outcomes = (part.strip() for part in kube.exec_controller(control, script).decode().split("--\n"))
+    if problems := wipe_problems(head, record["memory"], status, outcomes):
+        raise HookError("the lane is not the baseline's: " + "; ".join(problems))
+    if why := idle_reason(kube.state(control)):
+        raise HookError(f"the operator is not idle: {why}")
+    record["revision"] = revision
+    (lane_dir / PREPARED_RECORD).write_text(json.dumps(record) + "\n")
+    out(
+        json.dumps(
+            {"operator_version": revision, "memory": record["memory"], "swap_s": round(time.monotonic() - started, 1)}
+        )
+    )
+    return 0
+
+
+def standby_jobs(kube: Kube, control: str) -> list[str]:
+    proc = subprocess.run(
+        kube.cmd("-n", control, "get", "jobs", "-o", "name"), capture_output=True, text=True, timeout=60, check=False
+    )
+    return [line for line in proc.stdout.split() if "sdo-standby-" in line]
+
+
+def retire_standby(kube: Kube, control: str) -> None:
+    for job in standby_jobs(kube, control):
+        _run(kube.cmd("-n", control, "delete", job, "--wait=false"), f"delete {job}", 60)
+
+
+def wait_standby(kube: Kube, control: str, timeout: float) -> None:
+    """Wait until a standby Job's pod is Ready (the controller recreates the standby it lost)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if standby_jobs(kube, control):
+            proc = subprocess.run(
+                kube.cmd("-n", control, "get", "pods", "-o", "json"),
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+            for pod in json.loads(proc.stdout or "{}").get("items", []):
+                name = pod["metadata"]["name"]
+                conditions = pod.get("status", {}).get("conditions", [])
+                if "sdo-standby-" in name and any(c["type"] == "Ready" and c["status"] == "True" for c in conditions):
+                    return
+        time.sleep(2)
+    raise HookError(f"no ready responder standby within {timeout:.0f}s")
+
+
 def transcripts(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     try:
         if sink.pull_mode(env):
@@ -1280,7 +1368,7 @@ def baseline_main(argv: list[str]) -> int:
     return 0
 
 
-VERBS = ("check", "prepare", "idle", "watch", "collect", "teardown", "transcripts")
+VERBS = ("check", "prepare", "swap", "idle", "watch", "collect", "teardown", "transcripts")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1297,6 +1385,7 @@ def main(argv: list[str] | None = None) -> int:
         verbs: dict[str, Callable[[Mapping[str, str]], int]] = {
             "check": check,
             "prepare": prepare,
+            "swap": swap,
             "idle": idle,
             "collect": collect,
             "teardown": teardown,
