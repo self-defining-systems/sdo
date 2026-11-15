@@ -1367,8 +1367,14 @@ def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     if why := idle_reason(kube.state(control)):
         raise HookError(f"the operator is not idle: {why}")
     record["revision"] = revision
-    (lane_dir / PREPARED_RECORD).write_text(json.dumps(record) + "\n")
     memory = record["memory"]
+    if not block.seed:
+        # The pool's own memory, prepared as an install of this build would prepare it; a reset returns to that head.
+        prepared = regenerate_tree(env, kube, control, lane_dir, block, record["state"]["head"], out)
+        if prepared != record["state"]["head"]:
+            record["state"] = {**record["state"], "head": prepared}
+            memory = record["memory"] = prepared
+    (lane_dir / PREPARED_RECORD).write_text(json.dumps(record) + "\n")
     if block.seed is not None:
         # The prepared record keeps the pool's own state: a reset returns the lane to it, never to a seed.
         seed = Baseline.load(block.seed)
@@ -1390,9 +1396,88 @@ def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
             seed,
             out,
         )
-        memory = seed.commit
+        memory = regenerate_tree(env, kube, control, lane_dir, block, seed.commit, out)
     out(json.dumps(swap_receipt(lane_dir, revision, memory, time.monotonic() - started)))
     return 0
+
+
+@dataclass(frozen=True)
+class TreeSteps:
+    """What ``prepare_accepted_tree`` does, one callable per step (tests substitute them)."""
+
+    export: Callable[[], Path]  # the accepted repository as a clone on the host
+    prepare: Callable[[Path], str]  # ``sdo-operator prepare-tree`` on the clone: its head afterwards
+    import_head: Callable[[Path, str], object]  # put the clone's head into the lane's accepted repository
+
+
+def prepare_accepted_tree(steps: TreeSteps, head: str, out: Callable[[str], None] = _print) -> str:
+    """Make the lane's accepted repository the tree an install of this build would start on: the same tree
+    preparation install-existing runs (generic detectors added, or regenerated to this build's template, committed).
+    Returns the resulting head; a tree that is already prepared is left alone. Preparing the result again must
+    change nothing, or the lane would differ from a fresh install."""
+    clone = steps.export()
+    prepared = steps.prepare(clone)
+    if prepared == head:
+        return head
+    again = steps.prepare(clone)
+    if again != prepared:
+        raise HookError(f"tree preparation is not stable: {prepared[:12]} prepares to {again}")
+    out(f"tree prepared: {head[:12]} -> {prepared[:12]}")
+    steps.import_head(clone, prepared)
+    return prepared
+
+
+def regenerate_tree(
+    env: Mapping[str, str],
+    kube: Kube,
+    control: str,
+    lane_dir: Path,
+    block: OperatorBlock,
+    head: str,
+    out: Callable[[str], None] = _print,
+) -> str:
+    """``prepare_accepted_tree`` on the lane: the accepted repository goes to the host as a bundle, the lane's own
+    operator binary prepares it with the settings of this launch, and a changed head is restored into the volume
+    with the controller stopped. Asserts the repository is the new head, clean, with the operator idle."""
+    kubeconfig = Path(env["KUBECONFIG"]).resolve() if env.get("KUBECONFIG") else None
+    work = Path(tempfile.mkdtemp(prefix="sdo-prepare-tree-", dir=lane_dir))
+
+    def export() -> Path:
+        data = kube.exec_controller(
+            control, f"cd {APPLICATION_ROOT} && git -c safe.directory='*' bundle create - HEAD 2>/dev/null"
+        )
+        bundle = work / "accepted.bundle"
+        bundle.write_bytes(data)
+        _run(["git", "clone", "-q", str(bundle), str(work / "tree")], "clone the accepted repository")
+        return work / "tree"
+
+    def prepare(clone: Path) -> str:
+        stored = json.loads((lane_dir / "install-existing-env.json").read_text())
+        args, launch_env = install_existing_launch(
+            _binary(env), clone, _baseline(block), block, kubeconfig or Path("/dev/null"), stored,
+            lane_dir / "sdo-config", block.images(),
+        )  # fmt: skip
+        args[1] = "prepare-tree"
+        proc = _run(args, "sdo-operator prepare-tree", 300, env={**os.environ, **launch_env})
+        return str(json.loads(proc.stdout.strip().splitlines()[-1])["head"])
+
+    def import_head(clone: Path, new_head: str) -> None:
+        bundle = work / "prepared.bundle"
+        _run(["git", "-C", str(clone), "bundle", "create", str(bundle), "HEAD"], "bundle the prepared tree")
+        set_controller_suspended(kube, control, True)
+        restore_repository(kube, control, new_head, bundle)
+        set_controller_suspended(kube, control, False)
+        wait_standby(kube, control, SWAP_STANDBY_WAIT_S)
+        now = repository_state(kube, control)
+        if now["head"] != new_head or now["status"]:
+            raise HookError(f"the lane's repository is {now['head'][:12]} after tree preparation, not {new_head[:12]}")
+        if why := wait_idle(kube, control, RESET_IDLE_WAIT_S):
+            raise HookError(f"the operator is not idle after tree preparation: {why}")
+
+    try:
+        return prepare_accepted_tree(TreeSteps(export, prepare, import_head), head, out)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 @dataclass(frozen=True)
