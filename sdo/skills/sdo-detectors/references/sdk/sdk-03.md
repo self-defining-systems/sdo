@@ -15,6 +15,14 @@ const (
 	FindingActive   FindingStatus = "active"
 	FindingResolved FindingStatus = "resolved"
 )
+type HeldAlertSource interface {
+	HeldAlertKeys() []string
+}
+    HeldAlertSource is implemented by detection contexts that record the alert
+    keys of the incident open when the snapshot was taken. A key is the detector
+    ID and the finding fingerprint joined by NUL. Capture records the keys,
+    so replay judges a held finding exactly as the controller did.
+
 type ObjectCaptureSource interface {
 	CaptureObjects([]ObjectRef) ([]unstructured.Unstructured, error)
 }
