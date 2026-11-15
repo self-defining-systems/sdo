@@ -51,6 +51,9 @@ func OpenKubeCluster(kubeconfig, kubeContext string) (*KubeCluster, error) {
 	return &KubeCluster{client: client, host: strings.TrimRight(cfg.Host, "/"), kube: kube, dynamic: dyn}, nil
 }
 
+// Kube is the typed client of the cluster.
+func (k *KubeCluster) Kube() kubernetes.Interface { return k.kube }
+
 // Do sends the request with the cluster credentials.
 func (k *KubeCluster) Do(req *http.Request) (*http.Response, error) { return k.client.Do(req) }
 

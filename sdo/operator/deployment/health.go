@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"sdo.dev/operator/deployment/internal/deploymentio"
@@ -66,7 +67,15 @@ type AcceptedDetectorProbe struct {
 	// or the controller's record of it); empty evaluates under settings.Default().
 	Settings        string
 	RequireComplete bool
-	Kubeconfig      string
+	// OutsideCluster says the evaluation cannot resolve or dial in-cluster
+	// Service names (it runs on a host outside the cluster network): detectors
+	// that dial them are left out.
+	OutsideCluster bool
+	// Host says the evaluation runs on a host, not in a pod: the probes keep
+	// their identity seed in a directory of the build workspace instead of
+	// /workspace.
+	Host       bool
+	Kubeconfig string
 	// TelemetryEnvironment is the telemetry environment document the probe's
 	// evaluation reads; the accepted tree's own bindings come from the memory
 	// host built from it. Empty provides no operator source.
@@ -81,28 +90,52 @@ func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, o
 	}
 	bounded, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
-	projected, err := memory.AcceptedDiagnostics(bounded, acceptedRoot)
+	prepared, err := probe.Prepare(bounded, acceptedRoot, operatorRoot, namespace, scope)
 	if err != nil {
-		return HealthEvaluation{}, fmt.Errorf("resolve accepted diagnostics: %w", err)
+		return HealthEvaluation{}, err
+	}
+	defer prepared.Close()
+	stdout, stderr, err := prepared.run(bounded)
+	if err != nil {
+		return HealthEvaluation{}, fmt.Errorf("evaluate accepted health detectors: %w (stdout=%q stderr=%q)", err, boundedHealthOutput(stdout), boundedHealthOutput(stderr))
+	}
+	return decodeHealthVerdict(stdout, stderr)
+}
+
+// PreparedProbe is the accepted detectors compiled once, so the same
+// evaluation can run repeatedly against a live namespace without rebuilding.
+type PreparedProbe struct {
+	workspace *builder.Workspace
+	binary    string
+	args      []string
+	env       []string
+}
+
+// Prepare compiles the accepted detectors and memory host of acceptedRoot.
+// Close releases the build workspace.
+func (probe AcceptedDetectorProbe) Prepare(ctx context.Context, acceptedRoot, operatorRoot, namespace string, scope HealthScope) (*PreparedProbe, error) {
+	projected, err := memory.AcceptedDiagnostics(ctx, acceptedRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve accepted diagnostics: %w", err)
 	}
 	policy := settings.Default()
 	if probe.Settings != "" {
 		if policy, err = settings.Read(probe.Settings); err != nil {
-			return HealthEvaluation{}, err
+			return nil, err
 		}
 	}
-	workspace, err := builder.BuildWorkspace(bounded, builder.Config{Replay: policy.Learning.Replay, ApplicationRoot: acceptedRoot, DiagnosticsRoot: projected.Directory, OperatorRoot: operatorRoot})
+	workspace, err := builder.BuildWorkspace(ctx, builder.Config{Replay: policy.Learning.Replay, ApplicationRoot: acceptedRoot, DiagnosticsRoot: projected.Directory, OperatorRoot: operatorRoot})
 	if err != nil {
-		return HealthEvaluation{}, fmt.Errorf("stage accepted diagnostics: %w", err)
+		return nil, fmt.Errorf("stage accepted diagnostics: %w", err)
 	}
-	defer workspace.Close()
-	binary, err := workspace.ValidateAndBuild(bounded)
-	if err != nil {
-		return HealthEvaluation{}, fmt.Errorf("compile accepted health detectors: %w", err)
+	prepared := &PreparedProbe{workspace: workspace}
+	fail := func(err error) (*PreparedProbe, error) { workspace.Close(); return nil, err }
+	if prepared.binary, err = workspace.ValidateAndBuild(ctx); err != nil {
+		return fail(fmt.Errorf("compile accepted health detectors: %w", err))
 	}
-	artifact, err := workspace.BuildMemoryHost(bounded)
+	artifact, err := workspace.BuildMemoryHost(ctx)
 	if err != nil {
-		return HealthEvaluation{}, fmt.Errorf("compile accepted memory host: %w", err)
+		return fail(fmt.Errorf("compile accepted memory host: %w", err))
 	}
 	pinsFile := ""
 	if len(scope.Pins.Images) > 0 {
@@ -112,20 +145,31 @@ func (probe AcceptedDetectorProbe) Evaluate(ctx context.Context, acceptedRoot, o
 			err = os.WriteFile(pinsFile, encoded, 0o600)
 		}
 		if err != nil {
-			return HealthEvaluation{}, fmt.Errorf("write image pins: %w", err)
+			return fail(fmt.Errorf("write image pins: %w", err))
 		}
 	}
-	args := append(probe.evaluationArgs(acceptedRoot, namespace, scope, pinsFile), "--memory-host-binary", artifact.Path, "--memory-host-digest", artifact.Digest, "--memory-commit", projected.AcceptedRevision)
-	var environment []string
+	args := probe.evaluationArgs(acceptedRoot, namespace, scope, pinsFile)
+	if probe.Host {
+		// The probes keep their identity seed under the repository mount, which
+		// is /workspace in the cluster and not writable on a host.
+		mount := filepath.Join(workspace.Directory, "repository")
+		if err := os.MkdirAll(mount, 0o700); err != nil {
+			return fail(fmt.Errorf("create probe identity mount: %w", err))
+		}
+		args = append(args, "--repository-mount-path", mount)
+	}
+	prepared.args = append(args, "--memory-host-binary", artifact.Path, "--memory-host-digest", artifact.Digest, "--memory-commit", projected.AcceptedRevision)
 	if probe.Kubeconfig != "" {
-		environment = append(environment, "KUBECONFIG="+probe.Kubeconfig)
+		prepared.env = append(prepared.env, "KUBECONFIG="+probe.Kubeconfig)
 	}
-	stdout, stderr, err := deploymentio.Evaluate(bounded, workspace.Directory, binary, args, environment)
+	return prepared, nil
+}
 
-	if err != nil {
-		return HealthEvaluation{}, fmt.Errorf("evaluate accepted health detectors: %w (stdout=%q stderr=%q)", err, boundedHealthOutput(stdout), boundedHealthOutput(stderr))
-	}
-	return decodeHealthVerdict(stdout, stderr)
+// Close releases the build workspace.
+func (p *PreparedProbe) Close() { p.workspace.Close() }
+
+func (p *PreparedProbe) run(ctx context.Context) ([]byte, []byte, error) {
+	return deploymentio.Evaluate(ctx, p.workspace.Directory, p.binary, p.args, p.env)
 }
 
 // decodeHealthVerdict keeps the per-detector evidence --evaluate-once reports:
@@ -188,6 +232,92 @@ func verdictOf(evaluation HealthEvaluation) lifecycle.HealthVerdict {
 		verdict.Outcome = lifecycle.VerificationSourceFault
 	}
 	return verdict
+}
+
+// Watcher is one running evaluation of the accepted detectors that judges the
+// live application every interval after a single warm-up, so a caller can ask
+// for a fresh verdict in seconds instead of paying the warm-up per question.
+type Watcher struct {
+	mu      sync.Mutex
+	latest  evaluation.Verdict
+	have    bool
+	err     error
+	changed chan struct{}
+	cancel  context.CancelFunc
+	done    chan struct{}
+}
+
+// Watch starts the evaluation process; Close stops it.
+func (p *PreparedProbe) Watch(ctx context.Context, interval time.Duration) *Watcher {
+	running, cancel := context.WithCancel(ctx)
+	w := &Watcher{changed: make(chan struct{}), cancel: cancel, done: make(chan struct{})}
+	args := append(append([]string(nil), p.args...), "--watch", interval.String())
+	go func() {
+		defer close(w.done)
+		stderr, err := deploymentio.Lines(running, p.workspace.Directory, p.binary, args, p.env, func(line []byte) {
+			verdict, derr := evaluation.Decode(line)
+			w.mu.Lock()
+			defer w.mu.Unlock()
+			if derr != nil {
+				w.err = fmt.Errorf("decode detector verdict: %w (line %q)", derr, boundedHealthOutput(line))
+			} else {
+				w.latest, w.have = verdict, true
+			}
+			w.notify()
+		})
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		if w.err == nil && running.Err() == nil {
+			w.err = fmt.Errorf("detector evaluation ended: %v (stderr tail=%q)", err, boundedTail(stderr))
+		}
+		w.notify()
+	}()
+	return w
+}
+
+func (w *Watcher) notify() {
+	close(w.changed)
+	w.changed = make(chan struct{})
+}
+
+// Next returns the first verdict whose judging began at or after notBefore,
+// waiting for it. It fails when the evaluation process has ended.
+func (w *Watcher) Next(ctx context.Context, notBefore time.Time) (evaluation.Verdict, error) {
+	for {
+		w.mu.Lock()
+		if w.err != nil {
+			err := w.err
+			w.mu.Unlock()
+			return evaluation.Verdict{}, err
+		}
+		if w.have && !w.latest.StartedAt.Before(notBefore) {
+			verdict := w.latest
+			w.mu.Unlock()
+			return verdict, nil
+		}
+		changed := w.changed
+		w.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return evaluation.Verdict{}, ctx.Err()
+		case <-changed:
+		}
+	}
+}
+
+// Close stops the evaluation process and waits for it.
+func (w *Watcher) Close() {
+	w.cancel()
+	<-w.done
+}
+
+// boundedTail keeps the end of a log, where a process says why it stopped.
+func boundedTail(data []byte) string {
+	const limit = 1024
+	if len(data) > limit {
+		return "…" + string(data[len(data)-limit:])
+	}
+	return string(data)
 }
 
 func boundedHealthOutput(data []byte) string {
@@ -336,6 +466,9 @@ func (probe AcceptedDetectorProbe) evaluationArgs(acceptedRoot, namespace string
 	}
 	if probe.RequireComplete {
 		args = append(args, "--accept-seed")
+	}
+	if probe.OutsideCluster {
+		args = append(args, "--outside-cluster")
 	}
 	if probe.TelemetryEnvironment != "" {
 		args = append(args, "--telemetry-environment", probe.TelemetryEnvironment)

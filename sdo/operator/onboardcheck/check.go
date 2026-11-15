@@ -63,6 +63,12 @@ type Config struct {
 	Settle, Poll time.Duration
 	// Wait pauses for d or until ctx ends.
 	Wait func(ctx context.Context, d time.Duration) error
+	// Now is the clock the live items measure durations and windows with.
+	Now func() time.Time
+	// Quiet and Break enable the live items that run the memory's detectors;
+	// nil skips the item.
+	Quiet *QuietConfig
+	Break *BreakConfig
 }
 
 // Result is one line of the report.
@@ -77,6 +83,8 @@ type Result struct {
 type Report struct {
 	Commit  string   `json:"commit"`
 	Results []Result `json:"results"`
+	// Durations is how long each live item took.
+	Durations []ItemDuration `json:"durations,omitempty"`
 }
 
 // Counts returns the number of green, red and note results.
@@ -105,6 +113,9 @@ func (r Report) Text() string {
 	for _, x := range r.Results {
 		fmt.Fprintf(&b, "%s %s %s: %s\n", x.Status, x.Item, x.Subject, x.Detail)
 	}
+	for _, d := range r.Durations {
+		fmt.Fprintf(&b, "time %s %s\n", d.Item, time.Duration(d.Seconds*float64(time.Second)).Round(time.Second))
+	}
 	return b.String()
 }
 
@@ -119,7 +130,7 @@ func (c Config) validate() error {
 	case c.Poll <= 0 || c.Settle < 0:
 		return errors.New("onboardcheck: Poll must be positive and Settle not negative")
 	}
-	return nil
+	return c.validateLive()
 }
 
 type opState struct {
@@ -403,6 +414,7 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 			result(ItemRoutes, name, Green, fmt.Sprintf("entry metric rose by %.0f for %d sent; every moved route is declared", es.allAfter-es.allBefore, es.sent))
 		}
 	}
+	runLive(ctx, cfg, &report)
 	return report, nil
 }
 
