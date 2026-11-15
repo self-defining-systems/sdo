@@ -611,6 +611,20 @@ message IncidentResult {
   // verbatim in the incident's outcome and shows it as an unverified earlier attempt when a later
   // incident opens on the same keys. It never feeds closure, escalation or learning.
   repeated IncidentFinding findings = 30 [(buf.validate.field).repeated.max_items = 12];
+  // The changes this attempt made to the application or cluster, each with when. Go reads them only when the
+  // recording of the agent's own writes is off: a clear counts as the agent's fix when it reported a change and
+  // the alerts cleared after it. Stored in the outcome as agent-reported; never a receipt.
+  repeated AgentChange agent_changes = 31 [(buf.validate.field).repeated.max_items = 24];
+}
+
+// AgentChange is one change the agent reports having made: what, where and when. Unverified.
+message AgentChange {
+  // What was changed, in one line.
+  string summary = 1 [(buf.validate.field).string = {min_len: 1, max_len: 300}];
+  // The object, row or file it was made to.
+  string target = 2 [(buf.validate.field).string = {min_len: 1, max_len: 200}];
+  // When the change took effect (RFC 3339).
+  google.protobuf.Timestamp at = 3 [(buf.validate.field).required = true];
 }
 
 // IncidentFinding is one fact the agent established, or one explanation it ruled out, with how it knows.

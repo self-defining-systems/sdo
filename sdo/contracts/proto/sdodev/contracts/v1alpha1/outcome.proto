@@ -92,6 +92,9 @@ message OutcomeRecord {
   RecoveryVerification recovery_verification = 42;
   // The responder's own findings, copied verbatim from its result (any status).
   repeated IncidentFinding agent_findings = 54;
+  // The changes the responder reported having made, copied verbatim and labelled agent-reported: unverified, and
+  // not receipts. They are what classification reads when the recording of its writes is off.
+  repeated AgentChange agent_changes = 55;
 }
 
 message OutcomeTimestamps {

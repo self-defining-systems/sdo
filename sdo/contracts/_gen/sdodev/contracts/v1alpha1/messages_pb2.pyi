@@ -708,7 +708,7 @@ class ResourceOwners(_message.Message):
     def __init__(self, resource: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., owner_chain: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ...) -> None: ...
 
 class IncidentResult(_message.Message):
-    __slots__ = ("schema_version", "incident_id", "status", "confirmed_root_causes", "applied_playbooks", "repair_changes", "repair_actions", "final_detector_states", "proposed_artifact_ids", "verification_evidence", "usage", "timing", "responder_session_id", "error", "program_tool_calls", "program_runs", "plan_applications", "response_loops_used", "response_loop_exhausted", "program_failure_signals", "resolution_path", "drift_events", "unresolved_findings", "drift_reprompt", "investigation_report", "findings")
+    __slots__ = ("schema_version", "incident_id", "status", "confirmed_root_causes", "applied_playbooks", "repair_changes", "repair_actions", "final_detector_states", "proposed_artifact_ids", "verification_evidence", "usage", "timing", "responder_session_id", "error", "program_tool_calls", "program_runs", "plan_applications", "response_loops_used", "response_loop_exhausted", "program_failure_signals", "resolution_path", "drift_events", "unresolved_findings", "drift_reprompt", "investigation_report", "findings", "agent_changes")
     SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
     INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
@@ -735,6 +735,7 @@ class IncidentResult(_message.Message):
     DRIFT_REPROMPT_FIELD_NUMBER: _ClassVar[int]
     INVESTIGATION_REPORT_FIELD_NUMBER: _ClassVar[int]
     FINDINGS_FIELD_NUMBER: _ClassVar[int]
+    AGENT_CHANGES_FIELD_NUMBER: _ClassVar[int]
     schema_version: str
     incident_id: str
     status: str
@@ -761,7 +762,18 @@ class IncidentResult(_message.Message):
     drift_reprompt: DriftReprompt
     investigation_report: str
     findings: _containers.RepeatedCompositeFieldContainer[IncidentFinding]
-    def __init__(self, schema_version: _Optional[str] = ..., incident_id: _Optional[str] = ..., status: _Optional[str] = ..., confirmed_root_causes: _Optional[_Iterable[_Union[ConfirmedRootCause, _Mapping]]] = ..., applied_playbooks: _Optional[_Iterable[_Union[AppliedPlaybook, _Mapping]]] = ..., repair_changes: _Optional[_Iterable[str]] = ..., repair_actions: _Optional[_Iterable[_Union[RepairActionReceipt, _Mapping]]] = ..., final_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., proposed_artifact_ids: _Optional[_Iterable[str]] = ..., verification_evidence: _Optional[_Iterable[_Union[VerificationEvidence, _Mapping]]] = ..., usage: _Optional[_Union[UsageMetrics, _Mapping]] = ..., timing: _Optional[_Union[TimingMetrics, _Mapping]] = ..., responder_session_id: _Optional[str] = ..., error: _Optional[str] = ..., program_tool_calls: _Optional[_Iterable[_Union[_program_pb2.ProgramToolCall, _Mapping]]] = ..., program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., plan_applications: _Optional[_Iterable[_Union[_program_pb2.PlanApplication, _Mapping]]] = ..., response_loops_used: _Optional[int] = ..., response_loop_exhausted: _Optional[bool] = ..., program_failure_signals: _Optional[_Iterable[str]] = ..., resolution_path: _Optional[str] = ..., drift_events: _Optional[_Iterable[_Union[DriftEvent, _Mapping]]] = ..., unresolved_findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., drift_reprompt: _Optional[_Union[DriftReprompt, _Mapping]] = ..., investigation_report: _Optional[str] = ..., findings: _Optional[_Iterable[_Union[IncidentFinding, _Mapping]]] = ...) -> None: ...
+    agent_changes: _containers.RepeatedCompositeFieldContainer[AgentChange]
+    def __init__(self, schema_version: _Optional[str] = ..., incident_id: _Optional[str] = ..., status: _Optional[str] = ..., confirmed_root_causes: _Optional[_Iterable[_Union[ConfirmedRootCause, _Mapping]]] = ..., applied_playbooks: _Optional[_Iterable[_Union[AppliedPlaybook, _Mapping]]] = ..., repair_changes: _Optional[_Iterable[str]] = ..., repair_actions: _Optional[_Iterable[_Union[RepairActionReceipt, _Mapping]]] = ..., final_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., proposed_artifact_ids: _Optional[_Iterable[str]] = ..., verification_evidence: _Optional[_Iterable[_Union[VerificationEvidence, _Mapping]]] = ..., usage: _Optional[_Union[UsageMetrics, _Mapping]] = ..., timing: _Optional[_Union[TimingMetrics, _Mapping]] = ..., responder_session_id: _Optional[str] = ..., error: _Optional[str] = ..., program_tool_calls: _Optional[_Iterable[_Union[_program_pb2.ProgramToolCall, _Mapping]]] = ..., program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., plan_applications: _Optional[_Iterable[_Union[_program_pb2.PlanApplication, _Mapping]]] = ..., response_loops_used: _Optional[int] = ..., response_loop_exhausted: _Optional[bool] = ..., program_failure_signals: _Optional[_Iterable[str]] = ..., resolution_path: _Optional[str] = ..., drift_events: _Optional[_Iterable[_Union[DriftEvent, _Mapping]]] = ..., unresolved_findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., drift_reprompt: _Optional[_Union[DriftReprompt, _Mapping]] = ..., investigation_report: _Optional[str] = ..., findings: _Optional[_Iterable[_Union[IncidentFinding, _Mapping]]] = ..., agent_changes: _Optional[_Iterable[_Union[AgentChange, _Mapping]]] = ...) -> None: ...
+
+class AgentChange(_message.Message):
+    __slots__ = ("summary", "target", "at")
+    SUMMARY_FIELD_NUMBER: _ClassVar[int]
+    TARGET_FIELD_NUMBER: _ClassVar[int]
+    AT_FIELD_NUMBER: _ClassVar[int]
+    summary: str
+    target: str
+    at: _timestamp_pb2.Timestamp
+    def __init__(self, summary: _Optional[str] = ..., target: _Optional[str] = ..., at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class IncidentFinding(_message.Message):
     __slots__ = ("kind", "statement", "seen_in", "reasoning", "verdict")
