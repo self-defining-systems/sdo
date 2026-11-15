@@ -126,3 +126,34 @@ def test_the_restore_pod_receives_the_bundle_in_its_own_writable_volume(monkeypa
     assert {"name": "seed", "emptyDir": {}} in pod["volumes"]
     assert "/tmp/" not in container["command"][2]
     assert f"{hooks.BUNDLE_DIR}/memory.bundle" in container["command"][2]
+
+
+def test_the_restore_script_imports_a_bundle_whatever_its_refs_are_named(tmp_path: Path) -> None:
+    """A learned memory's bundle names its branch (no HEAD ref); the restore must still find the commit."""
+    import subprocess
+
+    def git(cwd: Path, *args: str) -> str:
+        env = {
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        }
+        return subprocess.run(
+            ["git", "-c", "safe.directory=*", *args], cwd=cwd, env={**__import__("os").environ, **env},
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()  # fmt: skip
+
+    source, lane = tmp_path / "source", tmp_path / "lane"
+    for repo in (source, lane):
+        repo.mkdir()
+        git(repo, "init", "-q", "-b", "main")
+    git(source, "commit", "-q", "--allow-empty", "-m", "learned")
+    head = git(source, "rev-parse", "HEAD")
+    git(source, "branch", "learned-branch")
+    git(source, "bundle", "create", str(tmp_path / "m.bundle"), "learned-branch")
+    (tmp_path / "memory.bundle").write_bytes((tmp_path / "m.bundle").read_bytes())
+    (tmp_path / "memory.ready").touch()
+    script = hooks.restore_script(head, True, root=str(lane), bundle_dir=str(tmp_path))
+    subprocess.run(["sh", "-c", script], check=True, capture_output=True)
+    assert git(lane, "rev-parse", "HEAD") == head
