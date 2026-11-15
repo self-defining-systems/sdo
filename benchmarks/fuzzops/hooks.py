@@ -746,6 +746,29 @@ def checkout_revision() -> str:
     return _run(["git", "rev-parse", "HEAD"], "git rev-parse").stdout.strip()
 
 
+def operator_cache_key(checkout: Path) -> str:
+    """The identity of the operator binary's source: the git tree ids of the compiled paths it is built from."""
+    ident = devtree.fingerprint(checkout)
+    return hashlib.sha256(
+        json.dumps({p: ident[p] for p in (devtree.BINARY_PATH, "sdo/contracts")}).encode()
+    ).hexdigest()[:20]
+
+
+def cached_operator_binary(checkout: Path, out: Callable[[str], None] = _print) -> Path:
+    """The ``sdo-operator`` binary of ``checkout``, built once per source tree on this host (``SDO_BINARY_CACHE``,
+    default ``~/.cache/sdo-operator-bins``): a swap onto a revision with the same operator source copies it."""
+    root = Path(os.environ.get("SDO_BINARY_CACHE") or Path.home() / ".cache" / "sdo-operator-bins")
+    target = root / operator_cache_key(checkout) / "sdo-operator"
+    if target.is_file():
+        out(f"operator binary from the cache: {target.parent.name}")
+        return target
+    started = time.monotonic()
+    staged = build_operator(target.with_name(f"sdo-operator.{os.getpid()}"))
+    staged.replace(target)
+    out(f"built the operator binary in {time.monotonic() - started:.0f}s")
+    return target
+
+
 def build_operator(out: Path) -> Path:
     """``go build`` the pinned checkout's ``sdo-operator`` into ``out``."""
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -1269,14 +1292,25 @@ def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     lane_dir = Path(_need(env, "BENCH_LANE_DIR")).resolve()
     record = json.loads((lane_dir / PREPARED_RECORD).read_text())
     revision = checkout_revision()
-    if why := devtree.swap_problem(Path.cwd(), record.get("compiled") or {}):
+    compiled = record.get("compiled") or {}
+    if why := devtree.swap_problem(Path.cwd(), compiled, rebuild_binary=True):
         raise HookError(why)
     started = time.monotonic()
     kube, control = _kube(env), control_namespace(env)
+    binary = None
+    if devtree.binary_changed(Path.cwd(), compiled):
+        binary = cached_operator_binary(Path.cwd(), out)
+        # the lane's own copy (the hooks' CLI calls) follows the controller's
+        shutil.copy2(binary, lane_dir / "bin" / "sdo-operator")
     if sink.pull_mode(env):
-        push_dev_tree(env, kube, control, lane_dir, None, lambda _m: None)
+        push_dev_tree(env, kube, control, lane_dir, binary, lambda _m: None)
     else:
-        devtree.sync(Path.cwd(), Path(_need(env, "BENCH_EVIDENCE_HOST")) / DEV_DIRECTORY, None)
+        devtree.sync(Path.cwd(), Path(_need(env, "BENCH_EVIDENCE_HOST")) / DEV_DIRECTORY, binary)
+    if binary is not None:
+        # the controller process is the old binary: restart it on the new one (state, repository and install kept)
+        set_controller_suspended(kube, control, True)
+        set_controller_suspended(kube, control, False)
+        record["compiled"] = devtree.fingerprint(Path.cwd())
     retire_standby(kube, control)
     wait_standby(kube, control, SWAP_STANDBY_WAIT_S)
     if "state" not in record:

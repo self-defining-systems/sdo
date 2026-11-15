@@ -80,6 +80,36 @@ def test_go_change_cannot_be_swapped(repo: Path) -> None:
     assert "sdo/operator" in devtree.swap_problem(repo, lane)
 
 
+def test_go_change_can_be_swapped_with_a_rebuilt_binary(repo: Path) -> None:
+    lane = devtree.fingerprint(repo)
+    (repo / "sdo/operator/a/a.go").write_text("y\n")
+    _git(repo, "commit", "-qam", "go")
+    assert devtree.binary_changed(repo, lane)
+    assert devtree.swap_problem(repo, lane, rebuild_binary=True) == ""
+    assert not devtree.binary_changed(repo, devtree.fingerprint(repo))
+
+
+def test_other_compiled_changes_still_refuse_a_binary_swap(repo: Path) -> None:
+    lane = devtree.fingerprint(repo)
+    (repo / "docker").mkdir()
+    (repo / "docker/f").write_text("y\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "image")
+    assert "docker" in devtree.swap_problem(repo, lane, rebuild_binary=True)
+
+
+def test_operator_binary_cache_key_follows_the_operator_source(repo: Path) -> None:
+    from benchmarks.fuzzops import hooks
+
+    before = hooks.operator_cache_key(repo)
+    (repo / "sdo/agents/x.py").write_text("changed\n")
+    _git(repo, "commit", "-qam", "py")
+    assert hooks.operator_cache_key(repo) == before
+    (repo / "sdo/operator/a/a.go").write_text("changed\n")
+    _git(repo, "commit", "-qam", "go")
+    assert hooks.operator_cache_key(repo) != before
+
+
 def test_a_lane_without_a_fingerprint_cannot_be_swapped(repo: Path) -> None:
     assert devtree.swap_problem(repo, {})
 
