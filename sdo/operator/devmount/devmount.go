@@ -130,6 +130,9 @@ func addVolume(pod *corev1.PodSpec, name, rel string, kind *corev1.HostPathType)
 // claim (the controller's evidence sink) is reused: a second volume on the same node-local claim in one pod does not
 // mount (the kubelet waits on the first forever).
 func claimVolumeName(pod *corev1.PodSpec) string {
+	if Claim() == "" {
+		return "" // a node-directory lane mounts hostPath volumes and has no claim
+	}
 	for _, v := range pod.Volumes {
 		if v.PersistentVolumeClaim != nil && v.PersistentVolumeClaim.ClaimName == Claim() {
 			return v.Name
