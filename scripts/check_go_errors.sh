@@ -5,6 +5,21 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_ROOT"
 
+# Stages that could not run here (toolchain unavailable) are listed at the end.
+if [ -z "${SDO_SKIPPED_STAGES:-}" ]; then
+    export SDO_SKIPPED_STAGES="$(mktemp)"
+    trap 'rm -f "$SDO_SKIPPED_STAGES"' EXIT
+    owns_skip_log=1
+else
+    owns_skip_log=0
+fi
+print_skipped_stages() {
+    if [ "$owns_skip_log" = 1 ] && [ -s "$SDO_SKIPPED_STAGES" ]; then
+        echo "==> SKIPPED stages (not checked locally; not a pass for these):" >&2
+        sed 's/^/    - /' "$SDO_SKIPPED_STAGES" >&2
+    fi
+}
+
 echo "==> GitHub Actions workflows"
 bash "$SCRIPT_DIR/check_actions.sh"
 
@@ -36,7 +51,15 @@ bash "$SCRIPT_DIR/gen_kube_read_clients.sh" --check
 export PATH="${GOBIN:-${HOME}/go/bin}:${PATH}"
 if command -v buf >/dev/null 2>&1; then
     echo "==> proto contracts (scripts/check_proto.sh)"
-    "$SCRIPT_DIR/check_proto.sh"
+    proto_status=0
+    "$SCRIPT_DIR/check_proto.sh" || proto_status=$?
+    if [ "$proto_status" -eq 75 ]; then
+        # The registry or pinned protoc is unavailable: say so loudly, keep going.
+        echo "!!! SKIPPED: proto contracts (buf/BSR or pinned protoc unavailable); the proto CI job enforces them" >&2
+        echo "proto contracts: buf/BSR or pinned protoc unavailable" >> "$SDO_SKIPPED_STAGES"
+    elif [ "$proto_status" -ne 0 ]; then
+        exit "$proto_status"
+    fi
 else
     echo "==> proto contracts: skipped (buf not installed; enforced by the proto CI job)"
 fi
@@ -54,3 +77,5 @@ echo "==> go mains (benchmarks/)"
 if [[ "$run_parity" == 1 ]]; then
     "$SCRIPT_DIR/check_contracts_fast.sh" --go-only
 fi
+
+print_skipped_stages
