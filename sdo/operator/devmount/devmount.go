@@ -20,6 +20,16 @@ func NodePath() string {
 	return DefaultNodePath
 }
 
+// VolumeNodeAnnotations binds a claim of a lane on a shared multi-node cluster to SDO_VOLUME_NODE, where the lane's other
+// claims are: a node-local volume (local-path) otherwise binds to the first consumer's node, and a pod that mounts two
+// claims is unschedulable when they differ. Nil when the variable is unset.
+func VolumeNodeAnnotations() map[string]string {
+	if node := os.Getenv("SDO_VOLUME_NODE"); node != "" {
+		return map[string]string{"volume.kubernetes.io/selected-node": node}
+	}
+	return nil
+}
+
 // Claim is the PersistentVolumeClaim that holds the projected sources when the lane has no node mount (a lane on a
 // shared multi-node cluster): SDO_DEV_MOUNT_CLAIM. Then NodePath is the directory inside the claim and every mount
 // is a subPath of it. Empty for a node directory.
