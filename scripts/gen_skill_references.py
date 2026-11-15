@@ -316,7 +316,7 @@ def main() -> None:
     args = parser.parse_args()
     bundles = (
         (
-            "sdo-detector-authoring",
+            "sdo-detectors",
             "SDK",
             (
                 ".",
@@ -335,8 +335,8 @@ def main() -> None:
             ),
             "sdk",
         ),
-        ("sdo-detector-authoring", "Synthetic traffic SDK reference", ("./traffic", "./localize"), "traffic"),
-        ("sdo-detector-authoring", "Detector replay reference", ("./sdktest",), "replay"),
+        ("sdo-detectors", "Synthetic traffic SDK reference", ("./traffic", "./localize"), "traffic"),
+        ("sdo-detectors", "Detector replay reference", ("./sdktest",), "replay"),
         ("sdo-playbook-authoring", "Program SDK", ("./program", "./routing"), "program-sdk"),
     )
     failures = []

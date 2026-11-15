@@ -6,4 +6,4 @@ dialect grounded in what the application exports, a comparison, a threshold, and
 its Deployment, Pod or Service. Cover saturation of the services on each critical path. The controller runs each
 query once per cycle; the detector never does I/O, and an unreachable source is a detector error, not a clear.
 Never query an unbound source; with no bound source, omit these detectors. Read task.telemetry.mode for whether
-you may bind sources (sdo-operationalize references/telemetry.md). The shared check installs the alerts detector.
+you may bind sources (sdo-observability references/telemetry.md). The shared check installs the alerts detector.

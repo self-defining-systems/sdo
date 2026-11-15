@@ -1,5 +1,5 @@
 Synthetic traffic (detection-designer owned). For an application that serves HTTP, write the probes under
-`.sdo/diagnostics/traffic/` (full API: references/traffic.md of the `sdo-detector-authoring` skill). Derive paths,
+`.sdo/diagnostics/traffic/` (full API: references/traffic.md of the `sdo-detectors` skill). Derive paths,
 methods, parameters and expected response content from the entry point's real route handlers and the records
 the application seeds. An isolated prober runs every health-probe workload continuously; its traffic detector
 opens an incident when a scenario violates its SLO, and a repair is accepted only when the same scenarios

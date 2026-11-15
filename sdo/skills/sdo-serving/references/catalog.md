@@ -6,7 +6,7 @@ load (`deployment.invalid`). All paths address the effective tree.
 ## Renderers (plan `source`)
 
 - `raw`: `paths` lists manifest files or directories of plain YAML. A kustomization or chart root is rejected: use the
-  other renderers. The deployer's returned plan always uses `raw` over its manifest paths.
+  other renderers. An agent-authored plan usually uses `raw` over its manifest paths.
 - `kustomize`: `path` is one kustomization directory; its patches and resources may live in `values/`.
 - `helm`: `chart_path`, `value_files` (for example `.sdo/deployment/values/prod.yaml`) and inline `values`.
   Human-provided plans use these; a values file is the way to change a chart's behavior without a patch.

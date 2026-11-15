@@ -7,7 +7,7 @@ Every rule names the validator rule IDs that enforce it.
   The reason is 40 to 2000 characters, numbers are unique, and a series has at most 64 patches (256 KiB each, 2 MiB
   total). No binary hunks, symlinks, submodules or paths with spaces. Create patches with
   `sdo-operator patch create`. Enforced by: `patch.invalid`.
-- The `Owner` header equals the writing actor (`deployer` or `responder`), and only the owner modifies or deletes a
+- The `Owner` header equals the writing actor (`onboarding` or `responder`), and only the owner modifies or deletes a
   patch. Responders only add patches. Enforced by: `patch.owner`.
 - An app file differing from what the series produces is rejected at publish. Capture it or revert it. Enforced by:
   `patch.uncaptured`.

@@ -1,7 +1,7 @@
 # Deciding and thresholds
 
 How each detector decides, kept deterministic and cheap. Validator limits (firing counts, watches) are in the
-`sdo-detector-authoring` rules and override anything here.
+[detector rules](rules.md) and override anything here.
 
 ## Firing and severity
 
@@ -50,8 +50,8 @@ Write `Finding.Evidence` so that a responder can act without re-deriving the che
 ## Application instrumentation
 
 When a health objective or incident cannot be localized with existing inputs, add instrumentation to the
-application's own source as a source repair: a responder or deployer captures it as a reasoned patch
-(a responder commits it, a deployer uses `sdo-operator patch create`; sdo-patching skill). Export request and error counters, latency
+application's own source as a source repair: the onboarding agent or a responder commits it
+([serving](../../sdo-serving/SKILL.md)). Export request and error counters, latency
 histograms and queue depth; keep labels bounded. Reflection records the need for a source repair rather than
 editing source itself. Use the task's typed `telemetry` block: the source's `publish` block says whether pod
 templates are annotated for scraping or OTLP HTTP metrics go to its full URL, and `references/telemetry.md` covers

@@ -74,7 +74,7 @@ var (
 // citedRules maps each rule ID cited by a skill's references/rules.md to the files citing it.
 func citedRules(t *testing.T) map[string][]string {
 	t.Helper()
-	files, err := filepath.Glob(filepath.Join(skillsRoot, "*", "references", "rules.md"))
+	files, err := filepath.Glob(filepath.Join(skillsRoot, "*", "references", "*rules.md"))
 	if err != nil || len(files) != 5 {
 		t.Fatalf("want the five skills' rules.md, got %v (%v)", files, err)
 	}
@@ -144,7 +144,7 @@ func exampleTree(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	memory := filepath.Join(root, ".sdo")
-	copyTree(t, filepath.Join(skillsRoot, "sdo-detector-authoring", "assets", "restart-loop"),
+	copyTree(t, filepath.Join(skillsRoot, "sdo-detectors", "assets", "restart-loop"),
 		filepath.Join(memory, "diagnostics", "detectors", "incidents", "restart-loop"))
 	copyTree(t, filepath.Join(skillsRoot, "sdo-playbook-authoring", "assets", "restart-loop"),
 		filepath.Join(memory, "playbooks", "restart-loop"))
@@ -159,16 +159,16 @@ func TestSkillsShipTheirDocumentedFiles(t *testing.T) {
 	var missing []string
 	for _, rel := range []string{
 		"sdo-memory/SKILL.md", "sdo-memory/references/rules.md",
-		"sdo-detector-authoring/SKILL.md", "sdo-detector-authoring/references/sdk.md",
-		"sdo-detector-authoring/references/traffic.md",
-		"sdo-detector-authoring/references/rules.md", "sdo-detector-authoring/assets/restart-loop/detector.go",
+		"sdo-detectors/SKILL.md", "sdo-detectors/references/sdk.md",
+		"sdo-detectors/references/traffic.md",
+		"sdo-detectors/references/rules.md", "sdo-detectors/assets/restart-loop/detector.go",
 		"sdo-playbook-authoring/SKILL.md", "sdo-playbook-authoring/references/rules.md",
 		"sdo-playbook-authoring/assets/restart-loop/README.md",
-		"sdo-operationalize/SKILL.md", "sdo-operationalize/references/catalog.md",
-		"sdo-operationalize/references/methods.md", "sdo-operationalize/references/map.md",
-		"sdo-operationalize/references/rules.md", "sdo-operationalize/references/probes.md",
-		"sdo-patching/SKILL.md", "sdo-patching/references/rules.md",
-		"sdo-deploy/SKILL.md", "sdo-deploy/references/catalog.md", "sdo-source-advance/SKILL.md",
+		"sdo-operations-map/SKILL.md", "sdo-detectors/references/cause-catalog.md",
+		"sdo-detectors/references/methods.md", "sdo-operations-map/references/map.md",
+		"sdo-operations-map/references/rules.md", "sdo-detectors/references/probes.md",
+		"sdo-serving/SKILL.md", "sdo-serving/references/patch-rules.md",
+		"sdo-serving/SKILL.md", "sdo-serving/references/catalog.md", "sdo-source-advance/SKILL.md",
 	} {
 		if _, err := os.Stat(filepath.Join(skillsRoot, filepath.FromSlash(rel))); err != nil {
 			missing = append(missing, rel)

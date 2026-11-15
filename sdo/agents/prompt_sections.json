@@ -97,5 +97,10 @@
     "leftovers": "reflection.leftovers",
     "turn": "template_data.responder-cleanup-turn",
     "branch_instruction": "template_data.responder-cleanup-branch_instruction"
+  },
+  "onboarding/onboarding": {
+    "application": "template_data.onboarding-onboarding-application",
+    "health_objective": "template_data.onboarding-onboarding-health_objective",
+    "skills_root": "template_data.onboarding-onboarding-skills_root"
   }
 }
