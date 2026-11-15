@@ -90,6 +90,8 @@ message OutcomeRecord {
   // Controller-observed: the closure's recovery verification set, strength
   // per component and whether it recovered after SDO's last write settled.
   RecoveryVerification recovery_verification = 42;
+  // The responder's own findings, copied verbatim from its result (any status).
+  repeated IncidentFinding agent_findings = 54;
 }
 
 message OutcomeTimestamps {

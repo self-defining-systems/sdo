@@ -214,6 +214,9 @@ type IncidentResult struct {
 	ResponseLoopsUsed     int
 	ResponseLoopExhausted bool
 	ResolutionPath        string
+	// Findings are the agent's own account of what it established and ruled out; stored verbatim in
+	// the outcome, never read by closure, escalation or learning.
+	Findings []*contracts.IncidentFinding
 }
 
 type IncidentClosure struct {

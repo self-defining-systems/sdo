@@ -166,6 +166,18 @@ message OperationalMemorySnapshot {
   string playbook_index_markdown = 4;
   repeated MemoryDetector detectors = 5;
   repeated MemoryPlaybook playbooks = 6;
+  // Earlier incidents that opened on the same keys, filled by Go for an incident task only.
+  repeated EarlierAttempt earlier_attempts = 7;
+}
+
+// EarlierAttempt is an earlier incident's own notes, shown unverified. Outcome and changes are Go's
+// (the outcome class and the repair receipts); findings are the agent's.
+message EarlierAttempt {
+  string incident_id = 1;
+  google.protobuf.Timestamp completed_at = 2;
+  string outcome = 3;
+  repeated string changes = 4;
+  repeated IncidentFinding findings = 5;
 }
 
 // Retired wire-only proposal messages. Direct-edit capabilities reject these;
@@ -595,6 +607,24 @@ message IncidentResult {
   // An investigation's report text (its first line is "Verdict: ..."). Display evidence only:
   // never read by closure, escalation or learning.
   string investigation_report = 29 [(buf.validate.field).string.max_len = 16384];
+  // What this attempt established and ruled out, in every result including failed ones. Go stores it
+  // verbatim in the incident's outcome and shows it as an unverified earlier attempt when a later
+  // incident opens on the same keys. It never feeds closure, escalation or learning.
+  repeated IncidentFinding findings = 30 [(buf.validate.field).repeated.max_items = 12];
+}
+
+// IncidentFinding is one fact the agent established, or one explanation it ruled out, with how it knows.
+message IncidentFinding {
+  // observation: a fact and where it was seen. ruled_out: an explanation tested and how it was checked.
+  string kind = 1 [(buf.validate.field).string = {in: ["observation", "ruled_out"]}];
+  // The fact, or the explanation tested.
+  string statement = 2 [(buf.validate.field).string = {min_len: 1, max_len: 300}];
+  // Where the fact was seen, or how the explanation was checked.
+  string seen_in = 3 [(buf.validate.field).string = {min_len: 1, max_len: 200}];
+  // For ruled_out: why, including what was not checked. Empty for an observation.
+  string reasoning = 4 [(buf.validate.field).string.max_len = 300];
+  // For ruled_out: how firmly. Empty for an observation.
+  string verdict = 5 [(buf.validate.field).string = {in: ["", "refuted", "leaning against", "inconclusive"]}];
 }
 
 // IncidentView is the open incident as the controller's state ConfigMap

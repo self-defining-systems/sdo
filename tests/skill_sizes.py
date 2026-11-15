@@ -2,5 +2,5 @@
 
 from __future__ import annotations
 
-SKILL_BYTE_CAPS = {"incident-response": 4096, "sdo-operating": 1536}
+SKILL_BYTE_CAPS = {"incident-response": 4352, "sdo-operating": 1536}
 SKILL_BYTE_FLOOR = 1024

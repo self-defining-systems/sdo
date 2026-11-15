@@ -37,22 +37,24 @@ type KubernetesJobDispatcher struct {
 	AcceptedRepository string
 	APIProxyImage      string
 	// Recording is agent.recording.
-	Recording             bool
-	ToolchainImage        string
-	Client                kubernetes.Interface
-	Namespace             string
-	Registry              *worker_registry.Registry
-	AgentID               string
-	ServiceAccount        string
-	RepositoryPVC         string
-	RepositoryMountPath   string
-	RepositoryPVCSubPath  string
-	CredentialsSecret     string
-	Environment           map[string]string
-	DispatchEnvironment   func(context.Context) map[string]string
-	PollInterval          time.Duration
-	Catalog               memory.CatalogReader
-	Outcomes              memory.Reader
+	Recording            bool
+	ToolchainImage       string
+	Client               kubernetes.Interface
+	Namespace            string
+	Registry             *worker_registry.Registry
+	AgentID              string
+	ServiceAccount       string
+	RepositoryPVC        string
+	RepositoryMountPath  string
+	RepositoryPVCSubPath string
+	CredentialsSecret    string
+	Environment          map[string]string
+	DispatchEnvironment  func(context.Context) map[string]string
+	PollInterval         time.Duration
+	Catalog              memory.CatalogReader
+	Outcomes             memory.Reader
+	// EarlierAttemptMaxAge bounds how old an earlier attempt shown to a new incident may be; zero is seven days.
+	EarlierAttemptMaxAge  time.Duration
 	RequireMemorySnapshot bool
 	LoopFactory           func(IncidentRequest) *ResponderLoop
 	beforeClaim           func()
@@ -150,6 +152,9 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 		finished()
 		if err != nil {
 			return IncidentRequest{}, fmt.Errorf("read logical operational memory: %w", err)
+		}
+		if snapshot, err = d.withEarlierAttempts(ctx, snapshot, request); err != nil {
+			return IncidentRequest{}, err
 		}
 		snapshots = append(snapshots, snapshot)
 	}

@@ -109,7 +109,7 @@ The CLI decision file contains the unwrapped ReflectionResult below. The model's
 
 ## Incident result ownership
 
-Return only the agent-owned fields in the session output schema: `incident_id`, `status`, `confirmed_root_causes`, `applied_playbooks`, `repair_changes`, `verification_evidence`, `timing`, `drift_events`. Controller-owned fields, including drift counts, are derived independently. Contract validation feedback permits one correction in the same session; preserve completed repairs. Receipts and controller facts are never model-authored.
+Return only the agent-owned fields in the session output schema: `incident_id`, `status`, `confirmed_root_causes`, `applied_playbooks`, `repair_changes`, `verification_evidence`, `timing`, `drift_events`, `findings` (observations with where seen, explanations ruled out with how; required in every result, failed ones included; Go stores them in the outcome and shows them as unverified earlier attempts to a later incident with the same opening keys). Controller-owned fields, including drift counts, are derived independently. Contract validation feedback permits one correction in the same session; preserve completed repairs. Receipts and controller facts are never model-authored.
 
 ## Mitigation menu and responder continuity
 

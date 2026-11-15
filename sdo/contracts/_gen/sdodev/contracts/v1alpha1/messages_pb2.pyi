@@ -257,7 +257,7 @@ class MemoryPlaybook(_message.Message):
     def __init__(self, id: _Optional[str] = ..., markdown: _Optional[str] = ..., scripts: _Optional[_Iterable[_Union[MemoryScript, _Mapping]]] = ...) -> None: ...
 
 class OperationalMemorySnapshot(_message.Message):
-    __slots__ = ("code_path", "accepted_commit", "goal_markdown", "architecture_markdown", "playbook_index_markdown", "detectors", "playbooks")
+    __slots__ = ("code_path", "accepted_commit", "goal_markdown", "architecture_markdown", "playbook_index_markdown", "detectors", "playbooks", "earlier_attempts")
     CODE_PATH_FIELD_NUMBER: _ClassVar[int]
     ACCEPTED_COMMIT_FIELD_NUMBER: _ClassVar[int]
     GOAL_MARKDOWN_FIELD_NUMBER: _ClassVar[int]
@@ -265,6 +265,7 @@ class OperationalMemorySnapshot(_message.Message):
     PLAYBOOK_INDEX_MARKDOWN_FIELD_NUMBER: _ClassVar[int]
     DETECTORS_FIELD_NUMBER: _ClassVar[int]
     PLAYBOOKS_FIELD_NUMBER: _ClassVar[int]
+    EARLIER_ATTEMPTS_FIELD_NUMBER: _ClassVar[int]
     code_path: _controller_config_pb2.CodePathConfig
     accepted_commit: str
     goal_markdown: str
@@ -272,7 +273,22 @@ class OperationalMemorySnapshot(_message.Message):
     playbook_index_markdown: str
     detectors: _containers.RepeatedCompositeFieldContainer[MemoryDetector]
     playbooks: _containers.RepeatedCompositeFieldContainer[MemoryPlaybook]
-    def __init__(self, code_path: _Optional[_Union[_controller_config_pb2.CodePathConfig, _Mapping]] = ..., accepted_commit: _Optional[str] = ..., goal_markdown: _Optional[str] = ..., architecture_markdown: _Optional[str] = ..., playbook_index_markdown: _Optional[str] = ..., detectors: _Optional[_Iterable[_Union[MemoryDetector, _Mapping]]] = ..., playbooks: _Optional[_Iterable[_Union[MemoryPlaybook, _Mapping]]] = ...) -> None: ...
+    earlier_attempts: _containers.RepeatedCompositeFieldContainer[EarlierAttempt]
+    def __init__(self, code_path: _Optional[_Union[_controller_config_pb2.CodePathConfig, _Mapping]] = ..., accepted_commit: _Optional[str] = ..., goal_markdown: _Optional[str] = ..., architecture_markdown: _Optional[str] = ..., playbook_index_markdown: _Optional[str] = ..., detectors: _Optional[_Iterable[_Union[MemoryDetector, _Mapping]]] = ..., playbooks: _Optional[_Iterable[_Union[MemoryPlaybook, _Mapping]]] = ..., earlier_attempts: _Optional[_Iterable[_Union[EarlierAttempt, _Mapping]]] = ...) -> None: ...
+
+class EarlierAttempt(_message.Message):
+    __slots__ = ("incident_id", "completed_at", "outcome", "changes", "findings")
+    INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
+    COMPLETED_AT_FIELD_NUMBER: _ClassVar[int]
+    OUTCOME_FIELD_NUMBER: _ClassVar[int]
+    CHANGES_FIELD_NUMBER: _ClassVar[int]
+    FINDINGS_FIELD_NUMBER: _ClassVar[int]
+    incident_id: str
+    completed_at: _timestamp_pb2.Timestamp
+    outcome: str
+    changes: _containers.RepeatedScalarFieldContainer[str]
+    findings: _containers.RepeatedCompositeFieldContainer[IncidentFinding]
+    def __init__(self, incident_id: _Optional[str] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., outcome: _Optional[str] = ..., changes: _Optional[_Iterable[str]] = ..., findings: _Optional[_Iterable[_Union[IncidentFinding, _Mapping]]] = ...) -> None: ...
 
 class ProposedGoSource(_message.Message):
     __slots__ = ("name", "content")
@@ -692,7 +708,7 @@ class ResourceOwners(_message.Message):
     def __init__(self, resource: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., owner_chain: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ...) -> None: ...
 
 class IncidentResult(_message.Message):
-    __slots__ = ("schema_version", "incident_id", "status", "confirmed_root_causes", "applied_playbooks", "repair_changes", "repair_actions", "final_detector_states", "proposed_artifact_ids", "verification_evidence", "usage", "timing", "responder_session_id", "error", "program_tool_calls", "program_runs", "plan_applications", "response_loops_used", "response_loop_exhausted", "program_failure_signals", "resolution_path", "drift_events", "unresolved_findings", "drift_reprompt", "investigation_report")
+    __slots__ = ("schema_version", "incident_id", "status", "confirmed_root_causes", "applied_playbooks", "repair_changes", "repair_actions", "final_detector_states", "proposed_artifact_ids", "verification_evidence", "usage", "timing", "responder_session_id", "error", "program_tool_calls", "program_runs", "plan_applications", "response_loops_used", "response_loop_exhausted", "program_failure_signals", "resolution_path", "drift_events", "unresolved_findings", "drift_reprompt", "investigation_report", "findings")
     SCHEMA_VERSION_FIELD_NUMBER: _ClassVar[int]
     INCIDENT_ID_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
@@ -718,6 +734,7 @@ class IncidentResult(_message.Message):
     UNRESOLVED_FINDINGS_FIELD_NUMBER: _ClassVar[int]
     DRIFT_REPROMPT_FIELD_NUMBER: _ClassVar[int]
     INVESTIGATION_REPORT_FIELD_NUMBER: _ClassVar[int]
+    FINDINGS_FIELD_NUMBER: _ClassVar[int]
     schema_version: str
     incident_id: str
     status: str
@@ -743,7 +760,22 @@ class IncidentResult(_message.Message):
     unresolved_findings: _containers.RepeatedCompositeFieldContainer[Finding]
     drift_reprompt: DriftReprompt
     investigation_report: str
-    def __init__(self, schema_version: _Optional[str] = ..., incident_id: _Optional[str] = ..., status: _Optional[str] = ..., confirmed_root_causes: _Optional[_Iterable[_Union[ConfirmedRootCause, _Mapping]]] = ..., applied_playbooks: _Optional[_Iterable[_Union[AppliedPlaybook, _Mapping]]] = ..., repair_changes: _Optional[_Iterable[str]] = ..., repair_actions: _Optional[_Iterable[_Union[RepairActionReceipt, _Mapping]]] = ..., final_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., proposed_artifact_ids: _Optional[_Iterable[str]] = ..., verification_evidence: _Optional[_Iterable[_Union[VerificationEvidence, _Mapping]]] = ..., usage: _Optional[_Union[UsageMetrics, _Mapping]] = ..., timing: _Optional[_Union[TimingMetrics, _Mapping]] = ..., responder_session_id: _Optional[str] = ..., error: _Optional[str] = ..., program_tool_calls: _Optional[_Iterable[_Union[_program_pb2.ProgramToolCall, _Mapping]]] = ..., program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., plan_applications: _Optional[_Iterable[_Union[_program_pb2.PlanApplication, _Mapping]]] = ..., response_loops_used: _Optional[int] = ..., response_loop_exhausted: _Optional[bool] = ..., program_failure_signals: _Optional[_Iterable[str]] = ..., resolution_path: _Optional[str] = ..., drift_events: _Optional[_Iterable[_Union[DriftEvent, _Mapping]]] = ..., unresolved_findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., drift_reprompt: _Optional[_Union[DriftReprompt, _Mapping]] = ..., investigation_report: _Optional[str] = ...) -> None: ...
+    findings: _containers.RepeatedCompositeFieldContainer[IncidentFinding]
+    def __init__(self, schema_version: _Optional[str] = ..., incident_id: _Optional[str] = ..., status: _Optional[str] = ..., confirmed_root_causes: _Optional[_Iterable[_Union[ConfirmedRootCause, _Mapping]]] = ..., applied_playbooks: _Optional[_Iterable[_Union[AppliedPlaybook, _Mapping]]] = ..., repair_changes: _Optional[_Iterable[str]] = ..., repair_actions: _Optional[_Iterable[_Union[RepairActionReceipt, _Mapping]]] = ..., final_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., proposed_artifact_ids: _Optional[_Iterable[str]] = ..., verification_evidence: _Optional[_Iterable[_Union[VerificationEvidence, _Mapping]]] = ..., usage: _Optional[_Union[UsageMetrics, _Mapping]] = ..., timing: _Optional[_Union[TimingMetrics, _Mapping]] = ..., responder_session_id: _Optional[str] = ..., error: _Optional[str] = ..., program_tool_calls: _Optional[_Iterable[_Union[_program_pb2.ProgramToolCall, _Mapping]]] = ..., program_runs: _Optional[_Iterable[_Union[_program_pb2.ProgramRun, _Mapping]]] = ..., plan_applications: _Optional[_Iterable[_Union[_program_pb2.PlanApplication, _Mapping]]] = ..., response_loops_used: _Optional[int] = ..., response_loop_exhausted: _Optional[bool] = ..., program_failure_signals: _Optional[_Iterable[str]] = ..., resolution_path: _Optional[str] = ..., drift_events: _Optional[_Iterable[_Union[DriftEvent, _Mapping]]] = ..., unresolved_findings: _Optional[_Iterable[_Union[Finding, _Mapping]]] = ..., drift_reprompt: _Optional[_Union[DriftReprompt, _Mapping]] = ..., investigation_report: _Optional[str] = ..., findings: _Optional[_Iterable[_Union[IncidentFinding, _Mapping]]] = ...) -> None: ...
+
+class IncidentFinding(_message.Message):
+    __slots__ = ("kind", "statement", "seen_in", "reasoning", "verdict")
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    STATEMENT_FIELD_NUMBER: _ClassVar[int]
+    SEEN_IN_FIELD_NUMBER: _ClassVar[int]
+    REASONING_FIELD_NUMBER: _ClassVar[int]
+    VERDICT_FIELD_NUMBER: _ClassVar[int]
+    kind: str
+    statement: str
+    seen_in: str
+    reasoning: str
+    verdict: str
+    def __init__(self, kind: _Optional[str] = ..., statement: _Optional[str] = ..., seen_in: _Optional[str] = ..., reasoning: _Optional[str] = ..., verdict: _Optional[str] = ...) -> None: ...
 
 class IncidentView(_message.Message):
     __slots__ = ("incident_id", "observed_at", "blocking_detectors", "blocking_findings", "clearing_findings", "state_changes", "drift_events")
