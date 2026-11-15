@@ -117,7 +117,7 @@ The menu is a convenience over direct commands. It lists accepted Mitigators wit
 
 ## Controller verification and command reports
 
-`sdo detect` runs the detectors on reads taken now; `sdo detect TEST` sends that user test's scheduled request now; `sdo detect --wait SECONDS` returns when a failing test or alert changes, a new alert raises, the incident recovers, or the time passes. SDO ends the incident work when Recovered holds; the agent returns only to give up. After verified closure, incident_verified adds an informational timestamp and message to every normal result; reads and reports continue. New mutations receive a typed incident_verified rejection receipt.
+`sdo detect` runs the detectors on reads taken now; `sdo detect TEST` sends that user test's scheduled request now; `sdo detect --wait SECONDS` returns when a failing test, alert or finding's text or counts change, a new alert raises, the incident recovers, or the time passes. SDO ends the incident work when Recovered holds; the agent returns only to give up. After verified closure, incident_verified adds an informational timestamp and message to every normal result; reads and reports continue. New mutations receive a typed incident_verified rejection receipt.
 
 Mutating commands always store complete per-action results, evidence, program runs, reports and receipts under $SDO_SESSION_SCRATCH/sdo-reports/<incident>/<sequence>-<command>.json. Their compact output states action and incident verdicts separately, compares controller cached finding sets by fingerprint and evidence (fixed/new/unchanged), and prints the file path and generated schema. A failed action line names the failure reason, exit code and first error line.
 

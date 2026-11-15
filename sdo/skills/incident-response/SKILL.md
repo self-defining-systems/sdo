@@ -32,7 +32,8 @@ A reasoning loop, not a procedure. Move between the parts as the evidence asks.
 - **Update.** Drop what is refuted. Stop when one explanation covers the failing, the passing and the timing.
 - **Fix as a test.** You alone change things; each change is an experiment. Before it, say which failing
   operations it should fix and through which part of the map, then check exactly those. Effects take time: know
-  the expected delay; what happened before it was not caused by the change. Judge after the delay, waiting on
-  `sdo detect --wait`, not a fixed sleep. A change that left the failure as is counts against its hypothesis.
+  the expected delay; what happened before it was not caused by the change. Judge after the delay. A change that left the failure as is counts against its hypothesis.
   Done when what failed passes and keeps passing; SDO ends your session when recovery holds. Return only to
   give up (with what you found and excluded), never while users are still failing.
+- Wait on events, not a clock: `sdo detect --wait SECONDS` returns when an alert or finding changes. While your
+  sub-agents run, end your turn to wait: their reports arrive between turns, not during a tool call.
