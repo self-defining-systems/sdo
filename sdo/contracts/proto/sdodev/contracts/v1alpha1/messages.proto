@@ -266,6 +266,9 @@ message TelemetryPublish {
   bool scrape_annotations = 1;
   // Full OTLP HTTP metrics URL, not a gRPC endpoint.
   string otlp_metrics_url = 2;
+  // OTLP HTTP base endpoint applications push traces to
+  // (OTEL_EXPORTER_OTLP_ENDPOINT); empty when none is offered.
+  string otlp_traces_url = 3;
 }
 
 // Controller-owned exclusion, valid only at the exact accepted memory revision.

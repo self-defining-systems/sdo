@@ -48,6 +48,13 @@ func Build(registry *telemetry.Registry, environment telemetry.Environment, desi
 			}
 		}
 	}
+	if base := t.Environment.TracesPublishURL; base != "" {
+		for _, b := range bindings {
+			if b.Default && containsKind(b, telemetry.KindTraces) {
+				publish[b.ID] = &contracts.TelemetryPublish{OtlpTracesUrl: strings.TrimRight(base, "/")}
+			}
+		}
+	}
 	if mode == telemetry.ModeOpen {
 		designer, err := layout.TelemetryBindings(designerSources)
 		if err != nil {

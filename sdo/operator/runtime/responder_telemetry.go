@@ -49,6 +49,8 @@ type ApplicationTelemetry struct {
 	Sources []telemetry.Source
 	// PodLogs reads container logs; nil when the controller has no client.
 	PodLogs PodLogReader
+	// Traces reads the bound trace store; nil when none is bound or readable.
+	Traces telemetry.TraceReader
 }
 
 // metricsSources lists the bound sources of a MetricsAPI that knows them.
@@ -79,7 +81,7 @@ func (l *ResponderLoop) applicationTelemetry(ctx context.Context, request ToolRe
 	case "logs":
 		l.podLogs(ctx, source, since, request, response)
 	default:
-		source.traces(request, response)
+		l.applicationTraces(ctx, source, since, request, response)
 	}
 }
 
@@ -485,22 +487,4 @@ func componentPods(l *ResponderLoop, snapshot sdk.DetectionContext, name string)
 	}
 	sort.Slice(pods, func(i, j int) bool { return pods[i].Name < pods[j].Name })
 	return pods, nil
-}
-
-// traces reports the trace store: SDO binds no trace backend today, so the
-// command says what exists and how the application could emit traces.
-func (t ApplicationTelemetry) traces(request ToolRequest, response *ToolResponse) {
-	var bound []string
-	for _, source := range t.Sources {
-		if source.Serves(telemetry.KindTraces) {
-			bound = append(bound, source.ID)
-		}
-	}
-	if len(bound) > 0 {
-		response.Text = fmt.Sprintf("trace source %s is bound, but this controller has no trace query adapter yet, so SDO cannot read traces from it\n", strings.Join(bound, ", "))
-		response.Error = "traces cannot be queried: no trace adapter"
-		return
-	}
-	response.Error = "no trace store is bound: SDO has no Jaeger, Tempo or OTLP trace backend for this application. " +
-		"The application can emit OpenTelemetry traces to a collector and a trace backend can be bound as a telemetry source; until then use `sdo logs COMPONENT --failing` and `sdo metrics` to compare failing and working requests"
 }

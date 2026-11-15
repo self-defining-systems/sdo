@@ -26,6 +26,7 @@ var Edges = map[string]bool{
 	"sdo/operator/runtime/internal/lifecycleio":              true, // Kubernetes driver
 	"sdo/operator/runtime/prober":                            true, // protocol dial adapter
 	"sdo/operator/telemetry/prometheus":                      true, // Prometheus HTTP adapter
+	"sdo/operator/telemetry/jaeger":                          true, // Jaeger query HTTP adapter
 	"sdo/operator/memoryhost/hostio":                         true, // Memory-host process launcher, Unix socket and read-only network adapter
 	"sdo/operator/toolchain":                                 true, // Go compiler process adapter
 	"sdo/operator/devmount":                                  true, // development mount process adapter

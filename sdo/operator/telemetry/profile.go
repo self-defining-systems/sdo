@@ -36,6 +36,9 @@ type Profile struct {
 	// MetricsPublishURL is the base URL applications may push OTLP metrics to;
 	// empty when the profile offers none.
 	MetricsPublishURL string `json:"metricsPublishUrl,omitempty"`
+	// TracesPublishURL is the base URL applications may push OTLP/HTTP traces
+	// to (OTEL_EXPORTER_OTLP_ENDPOINT); empty when the profile offers none.
+	TracesPublishURL string `json:"tracesPublishUrl,omitempty"`
 }
 
 // ProfileSource is one provided source in a profile document. Credentials are
@@ -126,6 +129,11 @@ func (p Profile) Validate() error {
 			return fmt.Errorf("telemetry profile %q metricsPublishUrl %q must be an http or https URL", p.Name, p.MetricsPublishURL)
 		}
 	}
+	if p.TracesPublishURL != "" {
+		if parsed, err := url.Parse(p.TracesPublishURL); err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return fmt.Errorf("telemetry profile %q tracesPublishUrl %q must be an http or https URL", p.Name, p.TracesPublishURL)
+		}
+	}
 	return nil
 }
 
@@ -153,7 +161,7 @@ func (p Profile) WithSource(s ProfileSource) (Profile, error) {
 
 // Environment is the document the controller reads, derived from the profile.
 func (p Profile) Environment() Environment {
-	env := Environment{Version: EnvironmentVersion, Mode: p.Mode, MetricsPublishURL: p.MetricsPublishURL, Capabilities: slices.Clone(p.Capabilities)}
+	env := Environment{Version: EnvironmentVersion, Mode: p.Mode, MetricsPublishURL: p.MetricsPublishURL, TracesPublishURL: p.TracesPublishURL, Capabilities: slices.Clone(p.Capabilities)}
 	for _, s := range p.Sources {
 		env.Provided = append(env.Provided, s.Binding())
 	}

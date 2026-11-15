@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -145,6 +147,43 @@ func TestLogsResolvesAMapComponentToItsWorkloadPods(t *testing.T) {
 	}
 }
 
+type fakeTraces struct {
+	queries  []telemetry.TraceQuery
+	services []string
+	list     []telemetry.TraceSummary
+	traces   map[string]telemetry.Trace
+}
+
+func (f *fakeTraces) Services(context.Context) ([]string, error) { return f.services, nil }
+func (f *fakeTraces) Traces(_ context.Context, q telemetry.TraceQuery) ([]telemetry.TraceSummary, error) {
+	f.queries = append(f.queries, q)
+	return f.list, nil
+}
+func (f *fakeTraces) Trace(_ context.Context, id string) (telemetry.Trace, error) {
+	if trace, ok := f.traces[id]; ok {
+		return trace, nil
+	}
+	return telemetry.Trace{}, errors.New("trace " + id + " not found")
+}
+
+func sampleTraces() *fakeTraces {
+	start := detectNow()
+	return &fakeTraces{
+		services: []string{"api", "front"},
+		list: []telemetry.TraceSummary{
+			{ID: "aaaa1111", Start: start, Duration: 420 * time.Millisecond, RootService: "front", RootOperation: "POST /items", Route: "/items",
+				Services: []string{"api", "db", "front"}, Spans: 3, Failed: true, FirstFailure: "db INSERT: deadlock detected"},
+			{ID: "bbbb2222", Start: start.Add(-time.Second), Duration: 12 * time.Millisecond, RootService: "front", RootOperation: "GET /health", Route: "/health",
+				Services: []string{"front"}, Spans: 1},
+		},
+		traces: map[string]telemetry.Trace{"aaaa1111": {ID: "aaaa1111", Spans: []telemetry.Span{
+			{ID: "s3", ParentID: "s2", Service: "db", Operation: "INSERT", Statement: "INSERT INTO items (a) VALUES ($1)", Start: start.Add(20 * time.Millisecond), Duration: 380 * time.Millisecond, Failed: true, Error: "deadlock detected"},
+			{ID: "s1", Service: "front", Operation: "POST /items", Start: start, Duration: 420 * time.Millisecond},
+			{ID: "s2", ParentID: "s1", Service: "api", Operation: "create item", Start: start.Add(10 * time.Millisecond), Duration: 400 * time.Millisecond},
+		}}},
+	}
+}
+
 func TestTracesWithoutAStoreSaysSoAndHowToEmit(t *testing.T) {
 	loop := telemetryLoop(t, ApplicationTelemetry{})
 	response := loop.Handle(context.Background(), ToolRequest{Command: "traces", Failing: true})
@@ -155,6 +194,60 @@ func TestTracesWithoutAStoreSaysSoAndHowToEmit(t *testing.T) {
 	response = loop.Handle(context.Background(), ToolRequest{Command: "traces"})
 	if !strings.Contains(response.Text+response.Error, "tempo") {
 		t.Fatalf("a bound but unreadable store is named: %q", response.Error)
+	}
+}
+
+func TestTracesListShowsRootStatusDurationServicesAndFirstFailure(t *testing.T) {
+	store := sampleTraces()
+	loop := telemetryLoop(t, ApplicationTelemetry{Traces: store})
+	response := loop.Handle(context.Background(), ToolRequest{Command: "traces", Failing: true, Since: "5m"})
+	if response.Error != "" {
+		t.Fatal(response.Error)
+	}
+	if q := store.queries[0]; !q.Failing || q.Lookback != 5*time.Minute {
+		t.Fatalf("query = %+v", q)
+	}
+	rows := parseCSV(t, []byte(response.Text))
+	if len(rows) != 2 || rows[0][0] != "trace_id" {
+		t.Fatalf("rows = %v", rows)
+	}
+	wantAll(t, strings.Join(rows[1], "|"), "aaaa1111", "POST /items", "error", "420ms", "api,db,front", "db INSERT: deadlock detected")
+	all := loop.Handle(context.Background(), ToolRequest{Command: "traces"})
+	wantAll(t, all.Text, "bbbb2222", ",ok,12ms,front,")
+}
+
+func TestTracesFilterByRouteAndOperation(t *testing.T) {
+	loop := telemetryLoop(t, ApplicationTelemetry{Traces: sampleTraces()})
+	response := loop.Handle(context.Background(), ToolRequest{Command: "traces", Route: "/health"})
+	if strings.Contains(response.Text, "aaaa1111") || !strings.Contains(response.Text, "bbbb2222") {
+		t.Fatalf("route filter:\n%s", response.Text)
+	}
+	// A map operation is matched by its entry path.
+	loop = mapLoop(mapTestDoc, nil, "create")
+	loop.Telemetry = func() ApplicationTelemetry { return ApplicationTelemetry{Traces: sampleTraces()} }
+	response = loop.Handle(context.Background(), ToolRequest{Command: "traces", Operation: "create"})
+	if response.Error != "" || !strings.Contains(response.Text, "aaaa1111") || strings.Contains(response.Text, "bbbb2222") {
+		t.Fatalf("operation filter: %q\n%s", response.Error, response.Text)
+	}
+	response = loop.Handle(context.Background(), ToolRequest{Command: "traces", Route: "/nothing"})
+	if !strings.Contains(response.Text, "no matching traces") {
+		t.Fatalf("no match is said:\n%s", response.Text)
+	}
+}
+
+func TestTraceByIDPrintsTheSpanTree(t *testing.T) {
+	loop := telemetryLoop(t, ApplicationTelemetry{Traces: sampleTraces()})
+	response := loop.Handle(context.Background(), ToolRequest{Command: "traces", Name: "aaaa1111"})
+	if response.Error != "" {
+		t.Fatal(response.Error)
+	}
+	lines := strings.Split(strings.TrimSpace(response.Text), "\n")
+	if len(lines) < 4 || !strings.HasPrefix(lines[1], "front POST /items") || !strings.HasPrefix(lines[2], "  api create item") || !strings.HasPrefix(lines[3], "    db INSERT") {
+		t.Fatalf("tree:\n%s", response.Text)
+	}
+	wantAll(t, response.Text, "INSERT INTO items (a) VALUES ($1)", "ERROR deadlock detected", "380ms")
+	if response = loop.Handle(context.Background(), ToolRequest{Command: "traces", Name: "zzzz"}); !strings.Contains(response.Error, "not found") {
+		t.Fatalf("unknown trace: %q", response.Error)
 	}
 }
 
@@ -169,8 +262,52 @@ func TestMapShowsWhereToObserveEachComponent(t *testing.T) {
 	}
 	path := mapCall(t, loop, "path", "create")
 	wantAll(t, path.Text, "observe front: metrics http_requests_total", "observe api: logs: sdo logs api (pods api-0)", "observe db: logs: sdo logs db (pods db-0)")
-	loop.Telemetry = func() ApplicationTelemetry {
-		return ApplicationTelemetry{Sources: []telemetry.Source{{ID: "tempo", Kinds: []telemetry.Kind{telemetry.KindTraces}}}}
-	}
+	loop.Telemetry = func() ApplicationTelemetry { return ApplicationTelemetry{Traces: sampleTraces()} }
 	wantAll(t, mapCall(t, loop, "near", "api").Text, "traces: service api")
+	// A component the traces never name has no trace pointer.
+	if db := mapCall(t, loop, "near", "db").Text; strings.Contains(db, "traces:") {
+		t.Fatalf("db emits no traces:\n%s", db)
+	}
+}
+
+func TestMapStructuredReturnsRealJSON(t *testing.T) {
+	doc := strings.Replace(mapTestDoc, "probes:", "entries:\n  - {service: front, metric: http_requests_total, selector: {job: front}, labels: {route: route, status: code}}\nprobes:", 1)
+	loop := mapLoop(doc, nil, "create")
+	loop.Telemetry = func() ApplicationTelemetry { return ApplicationTelemetry{Traces: sampleTraces()} }
+	call := func(view, name string) map[string]any {
+		t.Helper()
+		response := loop.Handle(context.Background(), ToolRequest{Command: "map", MapView: view, Name: name, Structured: true})
+		if response.Error != "" {
+			t.Fatal(response.Error)
+		}
+		var out map[string]any
+		if err := json.Unmarshal(response.Data, &out); err != nil {
+			t.Fatalf("data is not JSON: %v\n%s", err, response.Data)
+		}
+		return out
+	}
+	overview := call("", "")
+	if len(overview["components"].([]any)) != 6 || len(overview["operations"].([]any)) != 2 || len(overview["edges"].([]any)) != 5 {
+		t.Fatalf("overview = %v", overview)
+	}
+	path := call("path", "create")
+	if path["view"] != "path" || path["operation"].(map[string]any)["id"] != "create" {
+		t.Fatalf("path = %v", path)
+	}
+	observe := path["observability"].(map[string]any)["api"].(map[string]any)
+	if observe["traces_service"] != "api" || observe["logs"].(map[string]any)["pods"].([]any)[0] != "api-0" {
+		t.Fatalf("api pointers = %v", observe)
+	}
+	front := path["observability"].(map[string]any)["front"].(map[string]any)
+	if front["metrics"].([]any)[0].(map[string]any)["metric"] != "http_requests_total" {
+		t.Fatalf("front pointers = %v", front)
+	}
+	near := call("near", "api")
+	if near["component"].(map[string]any)["name"] != "api" || len(near["upstream"].([]any)) == 0 || len(near["downstream"].([]any)) == 0 {
+		t.Fatalf("near = %v", near)
+	}
+	// Text mode carries no data.
+	if text := mapCall(t, loop, "near", "api"); len(text.Data) != 0 || text.Text == "" {
+		t.Fatalf("text response carries data: %+v", text)
+	}
 }

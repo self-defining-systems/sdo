@@ -35,3 +35,17 @@ func TestBuildOfOnlyAnOpenEnvironmentOffersNoRecipe(t *testing.T) {
 		t.Fatalf("got %v err %v", got, err)
 	}
 }
+
+func TestBuildOffersTheTraceStoreEndpointOnTheDefaultTraceSource(t *testing.T) {
+	env := telemetry.Environment{
+		Version: telemetry.EnvironmentVersion, Mode: telemetry.ModeOpen, TracesPublishURL: "http://sdo-jaeger.sdo-system.svc:4318/",
+		Provided: []telemetry.Binding{{ID: "traces", Adapter: "jaeger", Kinds: []telemetry.Kind{telemetry.KindTraces}, Default: true, Endpoint: telemetry.Endpoint{URL: "http://sdo-jaeger.sdo-system.svc:16686"}, Origin: telemetry.OriginOperator}},
+	}
+	got, err := Build(nil, env, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Sources) != 1 || got.Sources[0].GetPublish().GetOtlpTracesUrl() != "http://sdo-jaeger.sdo-system.svc:4318" {
+		t.Fatalf("sources = %v", got.Sources)
+	}
+}

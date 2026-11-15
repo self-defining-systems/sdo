@@ -54,6 +54,11 @@ def _source_line(source: TelemetrySource) -> str:
         )
     if source.publish.otlp_metrics_url:
         line += f" OTLP HTTP metrics URL: {source.publish.otlp_metrics_url}."
+    if source.publish.otlp_traces_url:
+        line += (
+            f" OTLP HTTP traces endpoint: {source.publish.otlp_traces_url} "
+            "(OTEL_EXPORTER_OTLP_ENDPOINT; the application's OpenTelemetry SDK appends /v1/traces)."
+        )
     return line
 
 
