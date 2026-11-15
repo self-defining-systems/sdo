@@ -27,6 +27,9 @@ const (
 // Read refuses such names in projections and selectors, and a password hash
 // counts as a Secret value. The filter errs toward refusing.
 func CredentialName(name string) bool {
+	if settingName(name) {
+		return false
+	}
 	lower := strings.ToLower(name)
 	var folded strings.Builder
 	for _, r := range lower {
@@ -47,6 +50,28 @@ func CredentialName(name string) bool {
 		}
 	}
 	return strings.HasSuffix(lower, "_key") || strings.HasPrefix(lower, "key_") || strings.HasSuffix(lower, ".key") || strings.HasSuffix(name, "Key") && len(name) > 3
+}
+
+// settingName reports whether a name says it holds a setting about a
+// credential, not the credential: its last words are a flag or a limit
+// ("password_authentication_enabled_for_web", "otp_required_for_login",
+// "minimum_password_length"). A boolean or a number is not a Secret value.
+func settingName(name string) bool {
+	segments := nameSegments(name)
+	if len(segments) < 2 {
+		return false
+	}
+	flags := map[string]bool{"enabled": true, "disabled": true, "required": true, "allowed": true, "length": true, "count": true, "attempts": true}
+	filler := map[string]bool{"for": true, "on": true, "web": true, "login": true, "git": true, "api": true}
+	for i := len(segments) - 1; i >= 1; i-- {
+		if flags[segments[i]] {
+			return true
+		}
+		if !filler[segments[i]] {
+			return false
+		}
+	}
+	return false
 }
 
 // nameSegments splits a name at non-alphanumerics and at lower-to-upper case

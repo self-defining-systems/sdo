@@ -164,6 +164,8 @@ func TestCredentialName(t *testing.T) {
 		"password": true, "Password_Hash": true, "pwd": true, "passwd": true, "pass": true, "api_key": true, "key_id": true,
 		"apiKey": true, "session_token": true, "authentication_string": true, "salt": true, "otp": true, "digest": true,
 		"encrypted_value": true, "cookie": true, "secret": true, "credential": true, "authorization": true,
+		"password_authentication_enabled_for_web": false, "otp_required_for_login": false, "minimum_password_length": false,
+		"password_enabled_token": true, "password_hash": true, "enabled_password": true,
 		"price": false, "status": false, "created_at": false, "kind": false, "id": false, "name": false, "key": false,
 	} {
 		if got := storeops.CredentialName(name); got != want {
