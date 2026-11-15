@@ -1,10 +1,10 @@
 """Byte goldens captured from production builders before template extraction."""
 
 import re
-
-import pytest
 import tempfile
 from pathlib import Path
+
+import pytest
 
 from tests.unit.sdo.agents.prompts.cases import rendered_cases
 
