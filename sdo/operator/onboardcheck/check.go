@@ -81,6 +81,8 @@ type Config struct {
 	Quick bool
 	// Progress, when set, receives a line as the check advances.
 	Progress func(string)
+
+	phases *phaseLog
 }
 
 func (c Config) say(format string, args ...any) {
@@ -105,6 +107,10 @@ type Report struct {
 	Results []Result `json:"results"`
 	// Durations is how long each live item took.
 	Durations []ItemDuration `json:"durations,omitempty"`
+
+	// notInstrumented are the operations request-metrics reported as not
+	// instrumented while the application was healthy, by operation ID.
+	notInstrumented map[string]string
 }
 
 // Counts returns the number of green, red and note results.
@@ -154,6 +160,9 @@ func (r Report) Text() string {
 	}
 	for _, d := range r.Durations {
 		fmt.Fprintf(&b, "time %s %s\n", d.Item, time.Duration(d.Seconds*float64(time.Second)).Round(time.Second))
+	}
+	if len(r.Durations) > 0 {
+		fmt.Fprintf(&b, "timing: %s\n", timingSummary(r.Durations))
 	}
 	return b.String()
 }
@@ -248,6 +257,7 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	if err := cfg.validate(); err != nil {
 		return Report{}, err
 	}
+	cfg.phases = &phaseLog{}
 	report := Report{Commit: cfg.Commit, Mode: ModeFull}
 	if cfg.Quick {
 		report.Mode = ModeQuick
@@ -268,7 +278,14 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		close(quietDone)
 	}
 	cfg.say("metric items: sending %d requests per operation", cfg.Requests)
+	var metricsStart time.Time
+	if cfg.Now != nil {
+		metricsStart = cfg.Now()
+	}
 	err := runMetrics(ctx, cfg, &report)
+	if cfg.Now != nil && err == nil {
+		report.Durations = append(report.Durations, ItemDuration{Item: PhaseMetrics, Seconds: cfg.Now().Sub(metricsStart).Seconds()})
+	}
 	if err != nil {
 		cancel()
 		<-quietDone
@@ -302,6 +319,12 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	}
 	report.Results = append(report.Results, quiet.Results...)
 	report.Durations = append(report.Durations, quiet.Durations...)
+	for id, line := range quiet.notInstrumented {
+		if report.notInstrumented == nil {
+			report.notInstrumented = map[string]string{}
+		}
+		report.notInstrumented[id] = line
+	}
 	if cfg.NoDetectors {
 		report.add(ItemQuiet, "detectors", Red, "SDO: no detectors were evaluated: the memory SDO would deploy holds none, so silence here proves nothing; author health detectors or traffic workloads")
 		if cfg.Break != nil {
@@ -319,7 +342,9 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		start := cfg.Now()
 		runBreak(ctx, cfg, &report)
 		report.Durations = append(report.Durations, ItemDuration{Item: ItemBreak, Seconds: cfg.Now().Sub(start).Seconds()})
+		report.Durations = append(report.Durations, cfg.phases.durations()...)
 	}
+	report.applyNotInstrumented(cfg.Map)
 	return report, nil
 }
 

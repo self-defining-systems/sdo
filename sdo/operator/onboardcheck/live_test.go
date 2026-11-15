@@ -635,13 +635,93 @@ func TestBreakReportSaysWhetherAFailureOrOnlyAnAbsenceNamedTheOperation(t *testi
 	w := newWorld()
 	w.raiseFor["db"] = []Raise{{DetectorID: "request-metrics", Rule: "request-metrics.not-instrumented", Summary: "operation list-items is not instrumented for request metrics"}}
 	r := runLiveItems(t, w, false, true)
-	if status(r, ItemBreak, "list-items") != Green || !strings.Contains(r.Text(), "absence signal only") {
-		t.Fatalf("expected an absence-only label:\n%s", r.Text())
+	if status(r, ItemBreak, "list-items") != Red || !strings.Contains(r.Text(), "absence signal only") {
+		t.Fatalf("an absence-only signal must not make the operation green, and must be reported:\n%s", r.Text())
 	}
 	w = newWorld()
 	w.raiseFor["db"] = []Raise{{DetectorID: "traffic-probe-call", Summary: "scenario browse: list-items returned 503"}}
 	r = runLiveItems(t, w, false, true)
-	if !strings.Contains(r.Text(), "failing-request signal: traffic-probe-call") {
+	if status(r, ItemBreak, "list-items") != Green || !strings.Contains(r.Text(), "failing-request signal: traffic-probe-call") {
 		t.Fatalf("expected the failure signal named:\n%s", r.Text())
+	}
+}
+
+func TestBreakWaitsForAFailureSignalAfterAnAbsenceSignalNamedTheOperation(t *testing.T) {
+	w := newWorld()
+	w.raiseFor["web"] = []Raise{{DetectorID: "request-metrics", Rule: "request-metrics.not-instrumented", Summary: "operation list-items is not instrumented for request metrics"}}
+	w.late = map[string]lateRaise{"web": {after: 20 * time.Second, raise: []Raise{{DetectorID: "traffic-probe-call", Rule: "scenario-slo.browse", Summary: "synthetic scenario browse violates its SLO: error rate 2/3"}}}}
+	r := runLiveItems(t, w, false, true)
+	if status(r, ItemBreak, "list-items") != Green {
+		t.Fatalf("stopped at the absence signal instead of waiting for the failing probe:\n%s", r.Text())
+	}
+}
+
+func TestProbeFailureSummaryMentioningNotFoundIsStillAFailureSignal(t *testing.T) {
+	w := newWorld()
+	w.raiseFor["db"] = []Raise{{DetectorID: "traffic-probe-call", Rule: "scenario-slo.browse", Summary: "synthetic scenario browse step list: 404 not found, no data returned"}}
+	r := runLiveItems(t, w, false, true)
+	if status(r, ItemBreak, "list-items") != Green {
+		t.Fatalf("a failing probe step is a failure signal whatever its words:\n%s", r.Text())
+	}
+}
+
+func TestOperationReportedNotInstrumentedOnTheHealthyApplicationIsRedInTheMetricItems(t *testing.T) {
+	notInstrumented := Raise{DetectorID: "request-metrics", Rule: "request-metrics.not-instrumented", Summary: "operation list-items is not instrumented for request metrics", Evidence: "metric m has no series"}
+	for name, run := range map[string]func(*world) Report{
+		"quiet window":   func(w *world) Report { return runLiveItems(t, w, true, false) },
+		"break baseline": func(w *world) Report { return runLiveItems(t, w, false, true) },
+	} {
+		w := newWorld()
+		w.healthyRaise = []Raise{notInstrumented}
+		r := run(w)
+		for _, item := range []string{ItemObserved, ItemLatency} {
+			if status(r, item, "list-items") != Red {
+				t.Fatalf("%s: %s must be red for list-items:\n%s", name, item, r.Text())
+			}
+		}
+		if status(r, ItemObserved, "send-mail") == Red {
+			t.Fatalf("%s: send-mail was not reported:\n%s", name, r.Text())
+		}
+		if !strings.Contains(r.Text(), "request-metrics reports operation list-items is not instrumented") {
+			t.Fatalf("%s: the red line must name the operation:\n%s", name, r.Text())
+		}
+	}
+}
+
+func TestNotInstrumentedOperationIsRedEvenWithAReasonInTheMap(t *testing.T) {
+	m, err := appmap.Parse(liveMap + "reasons:\n  - {item: operations-observed, subject: list-items, reason: cannot}\n  - {item: latency-per-operation, subject: list-items, reason: cannot}\n  - {item: journeys-move-own-metrics, subject: list-items, reason: cannot}\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := newWorld()
+	w.healthyRaise = []Raise{{DetectorID: "request-metrics", Rule: "request-metrics.not-instrumented", Summary: "x", Operation: "list-items"}}
+	cfg := liveConfig(t, w, true, false)
+	cfg.Map = m
+	r, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status(r, ItemObserved, "list-items") != Red || status(r, ItemLatency, "list-items") != Red {
+		t.Fatalf("a reason does not excuse an uninstrumented operation:\n%s", r.Text())
+	}
+}
+
+func TestAgentProbeRaisingInTheHealthyWindowIsRed(t *testing.T) {
+	w := newWorld()
+	w.healthyRaise = []Raise{{DetectorID: "traffic-probe-call", Rule: "scenario-slo.call-issue-todo", Summary: "synthetic scenario call-issue-todo violates its SLO: error rate 2/3 >= 50%"}}
+	r := runLiveItems(t, w, true, false)
+	if status(r, ItemQuiet, "traffic-probe-call") != Red || r.Clean() {
+		t.Fatalf("a probe that raises on the healthy application is red:\n%s", r.Text())
+	}
+}
+
+func TestReportTimesEveryBreakPhaseAndPrintsASummary(t *testing.T) {
+	w := newWorld()
+	r := runLiveItems(t, w, true, true)
+	text := r.Text()
+	for _, want := range []string{"time " + PhaseMetrics, "time " + PhaseBreakJudge, "time " + PhaseBreakSettle, "timing: ", ItemQuiet + " ", ItemBreak + " "} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("report lacks %q:\n%s", want, text)
+		}
 	}
 }
