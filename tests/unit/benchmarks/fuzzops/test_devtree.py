@@ -84,9 +84,10 @@ def test_a_lane_without_a_fingerprint_cannot_be_swapped(repo: Path) -> None:
     assert devtree.swap_problem(repo, {})
 
 
-def test_wipe_problems_name_every_way_the_lane_left_the_baseline() -> None:
+def test_wipe_problems_name_every_way_the_lane_left_the_prepared_state() -> None:
     from benchmarks.fuzzops import hooks
 
-    assert hooks.wipe_problems("a" * 40, "a" * 40, "", "") == []
-    found = hooks.wipe_problems("b" * 40, "a" * 40, " M .sdo/x", "outcome.json")
+    before = {"head": "a" * 40, "status": "", "outcomes": ""}
+    assert hooks.wipe_problems(before, dict(before)) == []
+    found = hooks.wipe_problems(before, {"head": "b" * 40, "status": " M .sdo/x", "outcomes": "outcome.json"})
     assert len(found) == 3

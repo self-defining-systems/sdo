@@ -1064,8 +1064,25 @@ def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     if why:
         out(why)
         return 1
+    record_prepared_state(env, kube, control)
     out("idle")
     return 0
+
+
+def record_prepared_state(env: Mapping[str, str], kube: Kube, control: str) -> None:
+    """The first idle after ``prepare`` is the operator finished starting: note the accepted repository as it is
+    then, what ``swap`` later asserts. Best effort: without it ``swap`` refuses."""
+    lane = env.get("BENCH_LANE_DIR")
+    if not lane or not (Path(lane) / PREPARED_RECORD).is_file():
+        return
+    path = Path(lane) / PREPARED_RECORD
+    try:
+        record = json.loads(path.read_text())
+        if "state" not in record:
+            record["state"] = repository_state(kube, control)
+            path.write_text(json.dumps(record) + "\n")
+    except (OSError, ValueError, subprocess.SubprocessError, HookError):
+        return
 
 
 def watch(env: Mapping[str, str]) -> int:
@@ -1178,15 +1195,26 @@ def teardown(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int
     return 0
 
 
-def wipe_problems(head: str, memory: str, status: str, outcomes: str) -> list[str]:
-    """Why a lane's accepted repository is not the baseline's: head moved, uncommitted files, outcomes written."""
+def repository_state(kube: Kube, control: str) -> dict[str, str]:
+    """The accepted repository as the controller holds it: head, uncommitted files and the outcome files."""
+    script = (
+        f"cd {APPLICATION_ROOT} && git -c safe.directory='*' rev-parse HEAD && echo -- && "
+        "git -c safe.directory='*' status --porcelain && echo -- && ls .sdo/outcomes 2>/dev/null; true"
+    )
+    head, status, outcomes = (part.strip() for part in kube.exec_controller(control, script).decode().split("--\n"))
+    return {"head": head, "status": status, "outcomes": outcomes}
+
+
+def wipe_problems(before: Mapping[str, str], now: Mapping[str, str]) -> list[str]:
+    """Why a lane is not what ``prepare`` left (``before``): the accepted head moved, files are uncommitted or
+    outcomes were written. A swapped lane must start every cell from the same memory as a fresh one."""
     problems = []
-    if head != memory:
-        problems.append(f"accepted head {head[:12]} is not the baseline's {memory[:12]}")
-    if status.strip():
+    if now["head"] != before["head"]:
+        problems.append(f"accepted head {now['head'][:12]} is not the prepared {before['head'][:12]}")
+    if now["status"]:
         problems.append("uncommitted files in the accepted repository")
-    if outcomes.strip():
-        problems.append("outcomes already written")
+    if now["outcomes"] != before["outcomes"]:
+        problems.append("outcomes changed since prepare")
     return problems
 
 
@@ -1211,12 +1239,9 @@ def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     kube, control = _kube(env), control_namespace(env)
     retire_standby(kube, control)
     wait_standby(kube, control, SWAP_STANDBY_WAIT_S)
-    script = (
-        f"cd {APPLICATION_ROOT} && git -c safe.directory='*' rev-parse HEAD && echo -- && "
-        "git -c safe.directory='*' status --porcelain && echo -- && ls .sdo/outcomes 2>/dev/null; true"
-    )
-    head, status, outcomes = (part.strip() for part in kube.exec_controller(control, script).decode().split("--\n"))
-    if problems := wipe_problems(head, record["memory"], status, outcomes):
+    if "state" not in record:
+        raise HookError("the lane has no recorded prepared state (no idle verdict since prepare)")
+    if problems := wipe_problems(record["state"], repository_state(kube, control)):
         raise HookError("the lane is not the baseline's: " + "; ".join(problems))
     if why := idle_reason(kube.state(control)):
         raise HookError(f"the operator is not idle: {why}")
