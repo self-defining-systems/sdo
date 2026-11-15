@@ -189,11 +189,11 @@ type Query struct {
 }
     Query is one structured read; exactly one kind is set.
 
-    A Diagnose gets typed rows instead of exit codes: the records of a store
-    the accepted application map grounds, or named fields of an unauthenticated
-    HTTP status response. A read never returns a credential: credential catalogs
-    and credential-named fields are refused, and a password hash counts as a
-    credential.
+    A Diagnose gets typed rows instead of exit codes: the records of a store the
+    accepted application map grounds, or named fields of an unauthenticated HTTP
+    status response. A read never returns a credential: credential catalogs and
+    string values under credential-named fields are refused, and a password hash
+    counts as a credential.
 
 func (q Query) Validate() error
     Validate requires exactly one kind and checks it.

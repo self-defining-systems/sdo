@@ -70,12 +70,16 @@ func TestReadRecordingRefusesAnUnboundedAnswer(t *testing.T) {
 }
 
 func TestReadRecordingCarriesNoCredentialQuery(t *testing.T) {
-	recorder := &sdktest.RecordingReadView{ReadView: rowsView{ReadView: sdktest.Snapshot{NamespaceName: "app"}.RuntimeReadView()}}
+	recorder := &sdktest.RecordingReadView{ReadView: rowsView{ReadView: sdktest.Snapshot{NamespaceName: "app"}.RuntimeReadView(), rows: []program.Row{{"password_hash": "$2a$12$abc"}}}}
 	bad := program.Query{Store: &program.StoreQuery{Target: recordedQuery.Store.Target, Scope: recordedQuery.Store.Scope, Fields: []string{"password_hash"}}}
 	if _, err := recorder.Read(bad); err == nil {
-		t.Fatal("a credential field must be refused before anything is read or recorded")
+		t.Fatal("a string under a credential-like field name must be refused before anything is recorded")
 	}
-	if len(recorder.Calls) != 0 {
-		t.Fatalf("a refused query was recorded: %+v", recorder.Calls)
+	raw, err := json.Marshal(recorder.Calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "$2a$") {
+		t.Fatalf("the refused value was recorded: %s", raw)
 	}
 }

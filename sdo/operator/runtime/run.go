@@ -1995,6 +1995,13 @@ func evaluateOnce(
 			detectors = runnable
 		} else {
 			trafficProvider.Observer = observer
+			if *watch > 0 {
+				// A watch judges the live application for as long as it runs: the
+				// windows it judges must keep following the prober, or the samples
+				// of the warm-up age out and a break is never seen.
+				observer.Start(ctx)
+				defer observer.Stop()
+			}
 		}
 	}
 	if ConsumesServiceReachability(detectors) {
@@ -2012,6 +2019,10 @@ func evaluateOnce(
 				return fmt.Errorf("collect service reachability: %w", err)
 			}
 			trafficProvider.Reachability = reachability
+			if *watch > 0 {
+				reachability.Start(ctx)
+				defer reachability.Stop()
+			}
 		}
 	}
 	if trafficProvider.Observer != nil || trafficProvider.Reachability != nil {

@@ -50,29 +50,30 @@ func TestValidateReadRefusesCredentialCatalogsAndFields(t *testing.T) {
 		fields []string
 		ok     bool
 	}{
-		"postgres pg_shadow":        {"postgres", storeops.Scope{Collection: "pg_shadow"}, []string{"usename"}, false},
-		"postgres pg_authid":        {"postgres", storeops.Scope{Collection: "pg_catalog.pg_authid"}, []string{"rolname"}, false},
-		"postgres pg_user_mapping":  {"postgres", storeops.Scope{Collection: "pg_user_mapping"}, []string{"umuser"}, false},
-		"postgres app table":        {"postgres", storeops.Scope{Collection: "public.items"}, []string{"id", "price"}, true},
-		"mysql mysql.user":          {"mysql", storeops.Scope{Database: "mysql", Collection: "user"}, []string{"User"}, false},
-		"mysql mysql grant table":   {"mysql", storeops.Scope{Database: "mysql", Collection: "db"}, []string{"Db"}, false},
-		"mysql app table":           {"mysql", storeops.Scope{Database: "shop", Collection: "orders"}, []string{"id"}, true},
-		"mongodb system users":      {"mongodb", storeops.Scope{Database: "admin", Collection: "system.users"}, []string{"user"}, false},
-		"mongodb system keys":       {"mongodb", storeops.Scope{Database: "admin", Collection: "system.keys"}, []string{"_id"}, false},
-		"mongodb dotted path":       {"mongodb", storeops.Scope{Database: "app", Collection: "items"}, []string{"a.b.c"}, true},
-		"no fields":                 {"postgres", storeops.Scope{Collection: "items"}, nil, false},
-		"too many fields":           {"postgres", storeops.Scope{Collection: "items"}, strings.Split("a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q", ","), false},
-		"duplicate field":           {"postgres", storeops.Scope{Collection: "items"}, []string{"a", "a"}, false},
-		"password field":            {"postgres", storeops.Scope{Collection: "items"}, []string{"password"}, false},
-		"hash field":                {"mysql", storeops.Scope{Collection: "items"}, []string{"password_hash"}, false},
-		"authentication_string":     {"mysql", storeops.Scope{Collection: "items"}, []string{"authentication_string"}, false},
-		"passwd field":              {"postgres", storeops.Scope{Collection: "items"}, []string{"passwd"}, false},
-		"pwd field":                 {"mysql", storeops.Scope{Collection: "items"}, []string{"pwd"}, false},
-		"token field":               {"postgres", storeops.Scope{Collection: "items"}, []string{"session_token"}, false},
-		"api key suffix":            {"postgres", storeops.Scope{Collection: "items"}, []string{"api_key"}, false},
-		"key prefix":                {"postgres", storeops.Scope{Collection: "items"}, []string{"key_id"}, false},
-		"salt field":                {"postgres", storeops.Scope{Collection: "items"}, []string{"salt"}, false},
-		"otp field":                 {"postgres", storeops.Scope{Collection: "items"}, []string{"otp"}, false},
+		"postgres pg_shadow":       {"postgres", storeops.Scope{Collection: "pg_shadow"}, []string{"usename"}, false},
+		"postgres pg_authid":       {"postgres", storeops.Scope{Collection: "pg_catalog.pg_authid"}, []string{"rolname"}, false},
+		"postgres pg_user_mapping": {"postgres", storeops.Scope{Collection: "pg_user_mapping"}, []string{"umuser"}, false},
+		"postgres app table":       {"postgres", storeops.Scope{Collection: "public.items"}, []string{"id", "price"}, true},
+		"mysql mysql.user":         {"mysql", storeops.Scope{Database: "mysql", Collection: "user"}, []string{"User"}, false},
+		"mysql mysql grant table":  {"mysql", storeops.Scope{Database: "mysql", Collection: "db"}, []string{"Db"}, false},
+		"mysql app table":          {"mysql", storeops.Scope{Database: "shop", Collection: "orders"}, []string{"id"}, true},
+		"mongodb system users":     {"mongodb", storeops.Scope{Database: "admin", Collection: "system.users"}, []string{"user"}, false},
+		"mongodb system keys":      {"mongodb", storeops.Scope{Database: "admin", Collection: "system.keys"}, []string{"_id"}, false},
+		"mongodb dotted path":      {"mongodb", storeops.Scope{Database: "app", Collection: "items"}, []string{"a.b.c"}, true},
+		"no fields":                {"postgres", storeops.Scope{Collection: "items"}, nil, false},
+		"too many fields":          {"postgres", storeops.Scope{Collection: "items"}, strings.Split("a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q", ","), false},
+		"duplicate field":          {"postgres", storeops.Scope{Collection: "items"}, []string{"a", "a"}, false},
+		// A credential-like name is read when its value is a flag or number; ParseRead refuses a string.
+		"password field":            {"postgres", storeops.Scope{Collection: "items"}, []string{"password"}, true},
+		"hash field":                {"mysql", storeops.Scope{Collection: "items"}, []string{"password_hash"}, true},
+		"authentication_string":     {"mysql", storeops.Scope{Collection: "items"}, []string{"authentication_string"}, true},
+		"passwd field":              {"postgres", storeops.Scope{Collection: "items"}, []string{"passwd"}, true},
+		"pwd field":                 {"mysql", storeops.Scope{Collection: "items"}, []string{"pwd"}, true},
+		"token field":               {"postgres", storeops.Scope{Collection: "items"}, []string{"session_token"}, true},
+		"api key suffix":            {"postgres", storeops.Scope{Collection: "items"}, []string{"api_key"}, true},
+		"key prefix":                {"postgres", storeops.Scope{Collection: "items"}, []string{"key_id"}, true},
+		"salt field":                {"postgres", storeops.Scope{Collection: "items"}, []string{"salt"}, true},
+		"otp field":                 {"postgres", storeops.Scope{Collection: "items"}, []string{"otp"}, true},
 		"mongodb dollar field":      {"mongodb", storeops.Scope{Database: "app", Collection: "items"}, []string{"$where"}, false},
 		"sql expression as field":   {"postgres", storeops.Scope{Collection: "items"}, []string{"id, usename"}, false},
 		"sql function as field":     {"postgres", storeops.Scope{Collection: "items"}, []string{"pg_sleep(1)"}, false},
@@ -169,5 +170,24 @@ func TestCredentialName(t *testing.T) {
 		if got := storeops.CredentialName(name); got != want {
 			t.Errorf("CredentialName(%q) = %v, want %v", name, got, want)
 		}
+	}
+}
+
+// What a value is decides, not its field name: a boolean, number or null under a
+// credential-like name is a setting and is read; a string there is refused.
+func TestParseReadDecidesByTheValueNotTheFieldName(t *testing.T) {
+	fields := []string{"password_authentication_enabled_for_web", "password_hash"}
+	end := "\n" + storeops.MarkerEnd + " 1\n"
+	head := storeops.MarkerCount + " 1\n"
+	for _, ok := range []string{`{"password_authentication_enabled_for_web":true}`, `{"password_authentication_enabled_for_web":null}`, `{"password_authentication_enabled_for_web":8}`} {
+		if _, _, err := storeops.ParseRead(head+ok+end, fields); err != nil {
+			t.Errorf("%s refused: %v", ok, err)
+		}
+	}
+	if _, _, err := storeops.ParseRead(head+`{"password_hash":"$2a$12$abc"}`+end, fields); err == nil {
+		t.Error("a string under a credential-like name was returned")
+	}
+	if err := storeops.ValidateRead(engine(t, "postgres"), storeops.Scope{Collection: "application_settings", Selector: "id = 1"}, []string{"password_authentication_enabled_for_web"}); err != nil {
+		t.Errorf("projection refused: %v", err)
 	}
 }

@@ -127,9 +127,8 @@ func readField(engine, field string) error {
 	if !pattern.MatchString(field) {
 		return fmt.Errorf("read field %q is not a plain column or field path", field)
 	}
-	if CredentialName(field) {
-		return fmt.Errorf("read field %q is named like a credential and is never readable", field)
-	}
+	// A credential-like name is not refused here: what the value is decides
+	// (see ParseRead), so a boolean setting such as a sign-in flag is readable.
 	return nil
 }
 
@@ -401,7 +400,9 @@ func (memcached) Read(int, Scope, []string) (Command, error) {
 	return Command{}, fmt.Errorf("memcached records are read by Count only")
 }
 
-// ParseRead reads a Read's output: the matched count, and the rows with every
+// ParseRead reads a Read's output: a string value under a credential-like
+// field name is refused (a boolean, number or null cannot be a credential and
+// is returned), the matched count, and the rows with every
 // value a scalar (int64, float64, bool, string of at most MaxReadValueBytes,
 // or nil). Output without the end marker, with a row count that differs from
 // it, with a key outside fields, or with an array or object value is an
@@ -474,6 +475,9 @@ func parseReadRow(line string, allowed map[string]bool) (map[string]any, error) 
 		case nil, bool:
 			row[key] = v
 		case string:
+			if CredentialName(key) {
+				return nil, fmt.Errorf("read field %q is named like a credential and holds a string, which is never readable", key)
+			}
 			if len(v) > MaxReadValueBytes {
 				return nil, fmt.Errorf("read field %q holds a string of more than %d bytes", key, MaxReadValueBytes)
 			}

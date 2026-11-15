@@ -36,7 +36,7 @@ var ErrDeadline = errors.New("diagnosis read budget exhausted")
 // A Diagnose gets typed rows instead of exit codes: the records of a store the
 // accepted application map grounds, or named fields of an unauthenticated HTTP
 // status response. A read never returns a credential: credential catalogs and
-// credential-named fields are refused, and a password hash counts as a
+// string values under credential-named fields are refused, and a password hash counts as a
 // credential.
 type Query struct {
 	Store *StoreQuery `json:"store,omitempty"`
@@ -243,6 +243,9 @@ func (r Row) normalize() (Row, error) {
 				out[name] = v
 			}
 		case string:
+			if storeops.CredentialName(name) {
+				return nil, fmt.Errorf("field %q is named like a credential and holds a string, which is never readable", name)
+			}
 			if len(v) > MaxScalarBytes {
 				return nil, fmt.Errorf("field %q holds a string of more than %d bytes", name, MaxScalarBytes)
 			}
