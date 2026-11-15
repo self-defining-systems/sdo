@@ -83,37 +83,31 @@ func Apply(pod *corev1.PodSpec) {
 	if os.Getenv("SDO_DEV_MODULE_DOWNLOADS") == "1" {
 		addVolume(pod, "dev-module-downloads", ".fastloop/go-mod-download", &directory)
 	}
+	volume := claimVolumeName(pod)
 	for index := range pod.InitContainers {
-		mount(&pod.InitContainers[index])
+		mount(&pod.InitContainers[index], volume)
 	}
 	for index := range pod.Containers {
-		mount(&pod.Containers[index])
+		mount(&pod.Containers[index], volume)
 	}
 }
 
-func mount(container *corev1.Container) {
+func mount(container *corev1.Container, volume string) {
 	if os.Getenv("SDO_DEV_MODULE_DOWNLOADS") == "1" {
-		addMount(container, "dev-module-downloads", "/go/pkg/mod/cache/download", ".fastloop/go-mod-download")
+		addMount(container, volume, "dev-module-downloads", "/go/pkg/mod/cache/download", ".fastloop/go-mod-download")
 		container.Env = append(container.Env, corev1.EnvVar{Name: "SDO_DEV_MODULE_DOWNLOADS", Value: "1"})
 	}
 	for _, name := range []string{"sdo", "libs", "examples"} {
-		addMount(container, "dev-"+name, "/opt/sdo/"+name, name)
+		addMount(container, volume, "dev-"+name, "/opt/sdo/"+name, name)
 	}
-	addMount(container, "dev-operator", "/usr/local/bin/sdo-operator", ".fastloop/sdo-operator")
+	addMount(container, volume, "dev-operator", "/usr/local/bin/sdo-operator", ".fastloop/sdo-operator")
 }
 
 // addVolume makes the path rel of the projected tree available to the pod as volume name: a hostPath of the node
 // directory, or (a claim-backed lane) the claim's single volume, which a mount then narrows to rel by subPath.
 func addVolume(pod *corev1.PodSpec, name, rel string, kind *corev1.HostPathType) {
 	if Claim() != "" {
-		for _, v := range pod.Volumes {
-			if v.Name == claimVolume {
-				return
-			}
-		}
-		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: claimVolume, VolumeSource: corev1.VolumeSource{
-			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: Claim(), ReadOnly: true},
-		}})
+		claimVolumeName(pod)
 		return
 	}
 	pod.Volumes = append(pod.Volumes, corev1.Volume{
@@ -122,8 +116,23 @@ func addVolume(pod *corev1.PodSpec, name, rel string, kind *corev1.HostPathType)
 	})
 }
 
+// claimVolumeName is the pod's volume on the dev-tree claim, added when the pod has none. A pod that already mounts the
+// claim (the controller's evidence sink) is reused: a second volume on the same node-local claim in one pod does not
+// mount (the kubelet waits on the first forever).
+func claimVolumeName(pod *corev1.PodSpec) string {
+	for _, v := range pod.Volumes {
+		if v.PersistentVolumeClaim != nil && v.PersistentVolumeClaim.ClaimName == Claim() {
+			return v.Name
+		}
+	}
+	pod.Volumes = append(pod.Volumes, corev1.Volume{Name: claimVolume, VolumeSource: corev1.VolumeSource{
+		PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: Claim()},
+	}})
+	return claimVolume
+}
+
 // addMount mounts volume name (made by addVolume for rel) read-only at path.
-func addMount(container *corev1.Container, name, path, rel string) {
+func addMount(container *corev1.Container, claimVolume, name, path, rel string) {
 	if Claim() != "" {
 		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
 			Name: claimVolume, MountPath: path, ReadOnly: true, SubPath: NodePath() + "/" + rel,
@@ -145,11 +154,12 @@ func ApplyWorker(pod *corev1.PodSpec) {
 		addVolume(pod, fmt.Sprintf("dev-script-%d", index), scriptRoot+name, &directory)
 	}
 
+	volume := claimVolumeName(pod)
 	for index := range pod.Containers {
-		mountWorker(&pod.Containers[index])
+		mountWorker(&pod.Containers[index], volume)
 	}
 	for index := range pod.InitContainers {
-		mountWorker(&pod.InitContainers[index])
+		mountWorker(&pod.InitContainers[index], volume)
 	}
 }
 
@@ -157,11 +167,11 @@ const scriptRoot = "benchmarks/sregym/fastloop/"
 
 var scriptDirectories = []string{"scripted_program", "scripted_networkpolicy_program"}
 
-func mountWorker(container *corev1.Container) {
+func mountWorker(container *corev1.Container, volume string) {
 	for index, path := range benchmarkFiles {
-		addMount(container, fmt.Sprintf("dev-bench-%d", index), "/opt/sdo/"+path, path)
+		addMount(container, volume, fmt.Sprintf("dev-bench-%d", index), "/opt/sdo/"+path, path)
 	}
 	for index, name := range scriptDirectories {
-		addMount(container, fmt.Sprintf("dev-script-%d", index), "/opt/sdo/"+scriptRoot+name, scriptRoot+name)
+		addMount(container, volume, fmt.Sprintf("dev-script-%d", index), "/opt/sdo/"+scriptRoot+name, scriptRoot+name)
 	}
 }
