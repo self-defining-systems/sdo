@@ -191,6 +191,21 @@ func TestMissingRouteLabelIsNotInstrumented(t *testing.T) {
 	}
 }
 
+// A sum by (route, method, status) leaves the route label off a series whose
+// source carries none (a health check, a metrics scrape). Such a series may
+// sort first; the metric is instrumented when any series carries the labels.
+func TestUnlabelledFirstSeriesDoesNotHideAnInstrumentedMetric(t *testing.T) {
+	presence := []metrics.Series{
+		{Labels: map[string]string{"method": "GET", "status": "200"}, Samples: []metrics.Sample{{At: t0, Value: 1}}},
+		series(pkgRoute, "200", 1),
+	}
+	for _, f := range detect(t, snapshot(nil, nil, presence)) {
+		if f.RuleID == requestmetrics.RuleNotInstrumented {
+			t.Fatalf("instrumented metric reported as not instrumented: %+v", f)
+		}
+	}
+}
+
 func TestUnmeasurableOperationIsReportedWithItsReason(t *testing.T) {
 	d := requestmetrics.NewDetector(requestmetrics.Config{
 		Spec:       sdk.DetectorSpec{ID: "request-metrics"},

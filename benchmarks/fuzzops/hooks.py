@@ -479,7 +479,24 @@ def idle_verdict(state: dict[str, Any] | None, updated: datetime | None, pod_rea
     if age > FRESH_S:
         return f"stale: state not updated for {age:.0f}s"
     why = idle_reason(state)
-    return f"busy: {why}" if why else ""
+    if why:
+        return f"busy: {why}"
+    return f"blind: {blind}" if (blind := _request_metrics_blind(state, now)) else ""
+
+
+def _request_metrics_blind(state: dict[str, Any], now: datetime) -> str:
+    """Why the request-metrics detector can watch no operation ("" when it can, or plans none): every current
+    request-metrics finding is ``not-instrumented``. A fault injected then is seen only by probes, so the gate holds."""
+    current = []
+    for entry in state.get("detector_timeline") or state.get("detectorTimeline") or []:
+        if entry.get("detector_id") != "request-metrics":
+            continue
+        seen = _parse_time(entry.get("last_seen_at") or entry.get("lastSeenAt"))
+        if seen is not None and (now - seen).total_seconds() <= FRESH_S:
+            current.append(entry.get("rule_id") or entry.get("ruleId"))
+    if current and all(rule == "request-metrics.not-instrumented" for rule in current):
+        return f"request-metrics cannot watch any of {len(current)} operations (not instrumented)"
+    return ""
 
 
 def _parse_time(value: Any) -> datetime | None:
