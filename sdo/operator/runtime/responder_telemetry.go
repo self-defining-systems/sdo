@@ -26,7 +26,7 @@ import (
 // recorded with its response like any other tool call, so a rollout replays.
 const (
 	telemetryDefaultLogWindow = 10 * time.Minute
-	telemetryLogBytes         = 256 * 1024
+	telemetryLogTail          = newestLogLines
 	telemetryLogPods          = 12
 	telemetryLogLines         = 120
 	telemetryLineWidth        = 300
@@ -127,6 +127,9 @@ func (t ApplicationTelemetry) metrics(ctx context.Context, now time.Time, since 
 		return
 	}
 	response.Text = renderMetricSeries(series, since > 0)
+	if strings.HasPrefix(response.Text, "no data") || len(strings.Split(strings.TrimSpace(response.Text), "\n")) == 1 {
+		response.Text += t.emptyQueryHint(ctx, now, request.Query)
+	}
 	response.Summary = fmt.Sprintf("%d series", len(series))
 }
 
@@ -229,36 +232,7 @@ func (t ApplicationTelemetry) listMetrics(ctx context.Context, now time.Time, ma
 		detail, err := t.Metrics.Query(queryCtx, metrics.Query{ID: "sdo-metrics-labels", Expr: names[0]}, now)
 		if err == nil {
 			fmt.Fprintf(&out, "%s: %d series\n", names[0], len(detail))
-			values := map[string]map[string]bool{}
-			for _, s := range detail {
-				for label, value := range s.Labels {
-					if label == "__name__" {
-						continue
-					}
-					if values[label] == nil {
-						values[label] = map[string]bool{}
-					}
-					values[label][value] = true
-				}
-			}
-			labels := make([]string, 0, len(values))
-			for label := range values {
-				labels = append(labels, label)
-			}
-			sort.Strings(labels)
-			for _, label := range labels {
-				var sample []string
-				for value := range values[label] {
-					sample = append(sample, value)
-				}
-				sort.Strings(sample)
-				more := ""
-				if len(sample) > 5 {
-					more = fmt.Sprintf(" (+%d more)", len(sample)-5)
-					sample = sample[:5]
-				}
-				fmt.Fprintf(&out, "  label %s: %s%s\n", label, redactDetectText(strings.Join(sample, ", "), 160), more)
-			}
+			out.WriteString(metricLabelLines(detail))
 			response.Text = out.String()
 			return
 		}
@@ -275,6 +249,130 @@ func (t ApplicationTelemetry) listMetrics(ctx context.Context, now time.Time, ma
 		fmt.Fprintf(&out, "# %d more names not shown; pass a MATCH substring\n", len(names)-telemetryListNames)
 	}
 	response.Text = out.String()
+}
+
+// metricLabelLines lists each label of the series with a few of its values.
+func metricLabelLines(detail []metrics.Series) string {
+	var out strings.Builder
+	values := map[string]map[string]bool{}
+	for _, s := range detail {
+		for label, value := range s.Labels {
+			if label == "__name__" {
+				continue
+			}
+			if values[label] == nil {
+				values[label] = map[string]bool{}
+			}
+			values[label][value] = true
+		}
+	}
+	labels := make([]string, 0, len(values))
+	for label := range values {
+		labels = append(labels, label)
+	}
+	sort.Strings(labels)
+	for _, label := range labels {
+		var sample []string
+		for value := range values[label] {
+			sample = append(sample, value)
+		}
+		sort.Strings(sample)
+		more := ""
+		if len(sample) > 5 {
+			more = fmt.Sprintf(" (+%d more)", len(sample)-5)
+			sample = sample[:5]
+		}
+		fmt.Fprintf(&out, "  label %s: %s%s\n", label, redactDetectText(strings.Join(sample, ", "), 160), more)
+	}
+	return out.String()
+}
+
+var (
+	promString     = regexp.MustCompile(`"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|` + "`[^`]*`")
+	promIdentifier = regexp.MustCompile(`[A-Za-z_:][A-Za-z0-9_:]*`)
+)
+
+// emptyQueryHint says what exists when a query matched nothing: the labels of
+// each metric the query names, or the metric names closest to the ones it
+// names, so the next query uses real names and labels.
+func (t ApplicationTelemetry) emptyQueryHint(ctx context.Context, now time.Time, expr string) string {
+	queryCtx, cancel := context.WithTimeout(ctx, DefaultMetricsQueryTimeout)
+	defer cancel()
+	all, err := t.Metrics.Query(queryCtx, metrics.Query{ID: "sdo-metrics-names", Expr: `count by (__name__) ({__name__=~".+"})`}, now)
+	if err != nil {
+		return ""
+	}
+	exists := map[string]bool{}
+	for _, s := range all {
+		if name := s.Labels["__name__"]; name != "" {
+			exists[name] = true
+		}
+	}
+	tokens := promIdentifier.FindAllString(promString.ReplaceAllString(expr, `""`), -1)
+	var named, missing []string
+	seen := map[string]bool{}
+	for _, token := range tokens {
+		if seen[token] {
+			continue
+		}
+		seen[token] = true
+		if exists[token] {
+			named = append(named, token)
+		} else if len(token) > 3 {
+			missing = append(missing, token)
+		}
+	}
+	var out strings.Builder
+	for i, name := range named {
+		if i == 3 {
+			break
+		}
+		detail, err := t.Metrics.Query(queryCtx, metrics.Query{ID: "sdo-metrics-labels", Expr: name}, now)
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&out, "# %s has %d series and these labels (a label not listed matches nothing):\n%s", name, len(detail), metricLabelLines(detail))
+	}
+	if len(named) == 0 {
+		var close []string
+		for name := range exists {
+			lower := strings.ToLower(name)
+			for _, token := range missing {
+				word := strings.ToLower(token)
+				if strings.Contains(lower, word) || strings.Contains(word, lower) || sharedWords(lower, word) {
+					close = append(close, name)
+					break
+				}
+			}
+		}
+		sort.Strings(close)
+		if len(close) > 8 {
+			close = close[:8]
+		}
+		if len(close) > 0 {
+			fmt.Fprintf(&out, "# no metric of that name exists; close names: %s (--list MATCH shows labels)\n", strings.Join(close, ", "))
+		} else {
+			out.WriteString("# no metric of that name exists; --list [MATCH] shows what does\n")
+		}
+	}
+	return out.String()
+}
+
+// sharedWords reports whether two metric names share an underscore-separated
+// word of four or more letters.
+func sharedWords(a, b string) bool {
+	words := map[string]bool{}
+	for _, w := range strings.Split(a, "_") {
+		if len(w) >= 4 {
+			words[w] = true
+		}
+	}
+	for _, w := range strings.Split(b, "_") {
+		if words[w] {
+			return true
+		}
+	}
+	return false
 }
 
 // errorLine marks a log line an application reported as an error. The request
@@ -326,49 +424,36 @@ func (l *ResponderLoop) podLogs(ctx context.Context, source ApplicationTelemetry
 	now := l.clock().UTC()
 	var lines []logLine
 	var scanned int
-	var unread []string
+	var unread, cut []string
 	for i, pod := range pods {
 		if i == telemetryLogPods {
 			unread = append(unread, fmt.Sprintf("%d more pods not read", len(pods)-i))
 			break
 		}
 		for _, container := range pod.Spec.Containers {
-			limit := int64(telemetryLogBytes)
-			options := &corev1.PodLogOptions{Container: container.Name, Timestamps: true, LimitBytes: &limit, SinceTime: &metav1.Time{Time: now.Add(-since)}}
-			readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			stream, err := source.PodLogs(readCtx, pod.Namespace, pod.Name, options)
-			if err != nil {
-				cancel()
-				unread = append(unread, fmt.Sprintf("%s/%s: %s", pod.Name, container.Name, redactDetectText(err.Error(), 120)))
-				continue
-			}
-			data, readErr := io.ReadAll(io.LimitReader(stream, telemetryLogBytes+1))
-			_ = stream.Close()
-			cancel()
-			if readErr != nil {
-				unread = append(unread, fmt.Sprintf("%s/%s: %s", pod.Name, container.Name, redactDetectText(readErr.Error(), 120)))
-			}
 			name := pod.Name
 			if len(pod.Spec.Containers) > 1 {
 				name += "/" + container.Name
 			}
-			for _, raw := range strings.Split(string(data), "\n") {
-				if strings.TrimSpace(raw) == "" {
-					continue
-				}
+			options := corev1.PodLogOptions{Container: container.Name, SinceTime: &metav1.Time{Time: now.Add(-since)}}
+			readCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			cover, err := readNewestLogs(readCtx, source.PodLogs, pod.Namespace, pod.Name, options, telemetryLogTail, func(raw string) {
 				scanned++
 				at, text := splitLogTimestamp(raw)
-				if grep != nil && !grep.MatchString(text) {
-					continue
+				if (grep == nil || grep.MatchString(text)) && (!request.Failing || failingLogLine(text)) {
+					lines = append(lines, logLine{at: at, pod: name, text: text})
 				}
-				if request.Failing && !failingLogLine(text) {
-					continue
-				}
-				lines = append(lines, logLine{at: at, pod: name, text: text})
+			})
+			cancel()
+			if err != nil {
+				unread = append(unread, fmt.Sprintf("%s: %s", name, redactDetectText(err.Error(), 120)))
+			}
+			if cover.Cut {
+				cut = append(cut, fmt.Sprintf("%s read from %s", name, cover.Oldest.UTC().Format("15:04:05")))
 			}
 		}
 	}
-	response.Text, response.Summary = renderLogs(request, lines, scanned, len(pods), unread)
+	response.Text, response.Summary = renderLogs(request, lines, scanned, len(pods), unread, cut, since)
 }
 
 func failingLogLine(text string) bool {
@@ -390,13 +475,17 @@ func splitLogTimestamp(raw string) (time.Time, string) {
 
 // renderLogs prints the newest lines, each tagged with its pod, and for a
 // failing read a rollup of the failing requests by method, path and status.
-func renderLogs(request ToolRequest, lines []logLine, scanned, pods int, unread []string) (string, string) {
+func renderLogs(request ToolRequest, lines []logLine, scanned, pods int, unread, cut []string, since time.Duration) (string, string) {
 	sort.SliceStable(lines, func(i, j int) bool { return lines[i].at.Before(lines[j].at) })
 	var out strings.Builder
 	summary := fmt.Sprintf("%d of %d lines from %d pods", len(lines), scanned, pods)
 	fmt.Fprintf(&out, "# %s\n", summary)
 	for _, note := range unread {
 		fmt.Fprintf(&out, "# unread: %s\n", note)
+	}
+	fmt.Fprintf(&out, "# window: the last %s; matching lines span %s\n", since, logCoverage(lines))
+	if len(cut) > 0 {
+		fmt.Fprintf(&out, "# older lines of the window were not read (newest %d lines per container only): %s\n", telemetryLogTail, strings.Join(cut, "; "))
 	}
 	if request.Failing {
 		counts := map[string]int{}
@@ -443,6 +532,26 @@ func renderLogs(request ToolRequest, lines []logLine, scanned, pods int, unread 
 		out.WriteString("no matching lines\n")
 	}
 	return out.String(), summary
+}
+
+// logCoverage is the UTC time range of the returned lines.
+func logCoverage(lines []logLine) string {
+	var first, last time.Time
+	for _, line := range lines {
+		if line.at.IsZero() {
+			continue
+		}
+		if first.IsZero() || line.at.Before(first) {
+			first = line.at
+		}
+		if line.at.After(last) {
+			last = line.at
+		}
+	}
+	if first.IsZero() {
+		return "nothing"
+	}
+	return first.UTC().Format("15:04:05") + " to " + last.UTC().Format("15:04:05")
 }
 
 // componentPods are the pods of a component named as an application-map
