@@ -89,3 +89,35 @@ func TestNodeHealthReportsOnlyHeldNotReady(t *testing.T) {
 		t.Fatalf("findings = %v, want node-Ready after the hold", got)
 	}
 }
+
+func TestStatefulSetWithPodInsideStartupAllowanceIsNotUnready(t *testing.T) {
+	at := time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC)
+	hold := 60 * time.Second
+	ago := func(d time.Duration) meta.Time { return meta.NewTime(at.Add(-d)) }
+	one := int32(1)
+	yes := true
+	build := func(age time.Duration) sdktest.Snapshot {
+		return sdktest.Snapshot{NamespaceName: "app", ObservedAtTime: &at, SelfHealHoldTime: &hold,
+			StatefulSetList: []apps.StatefulSet{{ObjectMeta: meta.ObjectMeta{Name: "db", Namespace: "app", CreationTimestamp: ago(72 * time.Hour)}, Spec: apps.StatefulSetSpec{Replicas: &one}}},
+			PodList: []core.Pod{{
+				ObjectMeta: meta.ObjectMeta{Name: "db-0", Namespace: "app", CreationTimestamp: ago(age), OwnerReferences: []meta.OwnerReference{{Kind: "StatefulSet", Name: "db", Controller: &yes}}},
+				Spec:       core.PodSpec{Containers: []core.Container{{Name: "db", StartupProbe: &core.Probe{FailureThreshold: 30, PeriodSeconds: 10}}}},
+				Status: core.PodStatus{Phase: core.PodRunning,
+					Conditions:        []core.PodCondition{{Type: core.PodReady, Status: core.ConditionFalse, LastTransitionTime: ago(age)}},
+					ContainerStatuses: []core.ContainerStatus{{Name: "db", State: core.ContainerState{Running: &core.ContainerStateRunning{StartedAt: ago(age)}}}}},
+			}}}
+	}
+	run := func(s sdktest.Snapshot) int {
+		got, err := NewWorkloads(sdk.DetectorSpec{ID: "workload-controllers"}).Detect(context.Background(), s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(got)
+	}
+	if n := run(build(90 * time.Second)); n != 0 {
+		t.Fatalf("pod 90 s into a 300 s allowance reported %d findings", n)
+	}
+	if n := run(build(400 * time.Second)); n != 1 {
+		t.Fatalf("pod past its allowance reported %d findings, want 1", n)
+	}
+}

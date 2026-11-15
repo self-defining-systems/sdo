@@ -26,7 +26,7 @@ func (e *evaluation) workloads() {
 		}
 		unready, created := e.ownedPodTimes("StatefulSet", v.Name, v.CreationTimestamp.Time)
 		r := ref("StatefulSet", "apps/v1", &v)
-		if v.Status.ReadyReplicas < desired && sdk.HeldPastSelfHeal(e.ctx, unready) {
+		if v.Status.ReadyReplicas < desired && sdk.HeldPastSelfHeal(e.ctx, unready) && !e.ownedPodStarting("StatefulSet", v.Name) {
 			e.emit("statefulset-unready", r, fmt.Sprintf("ready=%d desired=%d unready since %s", v.Status.ReadyReplicas, desired, unready.UTC().Format(time.RFC3339)), true)
 		}
 		// OnDelete and partitioned updates intentionally retain old revisions.
@@ -40,7 +40,7 @@ func (e *evaluation) workloads() {
 		}
 		unready, created := e.ownedPodTimes("DaemonSet", v.Name, v.CreationTimestamp.Time)
 		r := ref("DaemonSet", "apps/v1", &v)
-		if v.Status.NumberReady < v.Status.DesiredNumberScheduled && sdk.HeldPastSelfHeal(e.ctx, unready) {
+		if v.Status.NumberReady < v.Status.DesiredNumberScheduled && sdk.HeldPastSelfHeal(e.ctx, unready) && !e.ownedPodStarting("DaemonSet", v.Name) {
 			e.emit("daemonset-unready", r, fmt.Sprintf("ready=%d desired=%d unready since %s", v.Status.NumberReady, v.Status.DesiredNumberScheduled, unready.UTC().Format(time.RFC3339)), true)
 		}
 		if v.Spec.UpdateStrategy.Type != apps.OnDeleteDaemonSetStrategyType && v.Status.UpdatedNumberScheduled < v.Status.DesiredNumberScheduled && sdk.HeldPastSelfHeal(e.ctx, created) {
@@ -116,6 +116,18 @@ func (e *evaluation) ownedPodTimes(kind, name string, workloadCreated time.Time)
 		unready = created
 	}
 	return unready, created
+}
+
+// ownedPodStarting reports whether an unready pod of the workload is still
+// inside its own startup (sdk.PodStarting), so the workload is starting, not
+// failing past Kubernetes' self-healing.
+func (e *evaluation) ownedPodStarting(kind, name string) bool {
+	for _, p := range e.ctx.Pods() {
+		if p.Namespace == e.ctx.Namespace() && ownedByName(p.OwnerReferences, kind, name) && sdk.PodStarting(e.ctx, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func ownedBy(owners []meta.OwnerReference, kind string) bool {
