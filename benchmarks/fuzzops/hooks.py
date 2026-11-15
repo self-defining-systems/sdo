@@ -1813,18 +1813,59 @@ def restore_moved_repository(
     return True
 
 
+SNAPSHOT_QUIET_S = 90.0
+
+
+def wait_app_ready(kube: Kube, namespace: str, timeout: float = 600.0) -> None:
+    """Block until every Deployment and StatefulSet of the app is rolled out."""
+    for kind in ("deployments", "statefulsets"):
+        proc = subprocess.run(
+            kube.cmd("-n", namespace, "get", kind, "-o", "name"),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        for name in proc.stdout.split():
+            _run(
+                kube.cmd("-n", namespace, "rollout", "status", name, f"--timeout={int(timeout)}s"),
+                f"{name} ready",
+                timeout + 30,
+            )
+
+
+def wait_idle_stable(kube: Kube, control: str, timeout: float, quiet: float) -> str:
+    """Poll until the controller was idle ``quiet`` seconds in a row; the last reason when ``timeout`` passes."""
+    deadline = time.monotonic() + timeout
+    since: float | None = None
+    why = "not idle yet"
+    while time.monotonic() < deadline:
+        why = wait_idle(kube, control, 1.0)
+        if why:
+            since = None
+        elif since is None:
+            since = time.monotonic()
+        elif time.monotonic() - since >= quiet:
+            return ""
+        time.sleep(3)
+    return why or "idle for less than the quiet period"
+
+
 def snapshot(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     """Take the lane's app golden copy while the controller is paused (the copy scales the data stores down).
     Run once on a prepared, idle lane; ``reset`` returns the lane to this state."""
     started = time.monotonic()
     generation = f"snapshot-{int(time.time())}"
     set_maintenance(env, True, generation + "-pause")
+    kube, control = _kube(env), control_namespace(env)
     try:
         app = fuzzops_app(env, "snapshot")
+        # the copy scales the app down and up; SDO resumes only once the app serves again, or its probes open an
+        # incident on the idle lane
+        wait_app_ready(kube, _need(env, "FUZZOPS_NAMESPACE"))
     finally:
         set_maintenance(env, False, generation + "-resume")
-    kube, control = _kube(env), control_namespace(env)
-    if why := wait_idle(kube, control, RESET_IDLE_WAIT_S):
+    if why := wait_idle_stable(kube, control, RESET_IDLE_WAIT_S, SNAPSHOT_QUIET_S):
         raise HookError(f"the operator is not idle after the snapshot: {why}")
     # the app restarting after the copy can open an incident on the idle lane; its outcome must not stay in the pool
     restore_moved_repository(

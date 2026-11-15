@@ -1037,3 +1037,16 @@ def test_another_incident_is_ignored_when_the_cells_own_is_known() -> None:
         {},
     )
     assert idle_verdict(pending, NOW, True, NOW) == "busy: closure pending"
+
+
+def test_wait_idle_stable_restarts_the_quiet_period_when_an_incident_opens(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr(hooks.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(hooks.time, "sleep", lambda s: clock.__setitem__("t", clock["t"] + s))
+    # idle until t=30, an incident from 30 to 60, idle again after
+    monkeypatch.setattr(hooks, "wait_idle", lambda *a, **k: "alarm: incident open i" if 30 <= clock["t"] < 60 else "")
+    kube = SimpleNamespace()
+    assert hooks.wait_idle_stable(kube, "c", 1000, 90) == ""  # type: ignore[arg-type]
+    assert clock["t"] >= 150  # 60 + 90 quiet seconds, not 90
