@@ -72,7 +72,7 @@ WORKDIR /opt/sdo
 
 FROM runtime-base AS python-deps
 RUN python3 -m pip install --break-system-packages --no-cache-dir --no-deps \
-      agentshim==0.7.0 \
+      agentshim==0.28.0 \
       annotated-types==0.7.0 \
       anyio==4.12.1 \
       attrs==25.4.0 \

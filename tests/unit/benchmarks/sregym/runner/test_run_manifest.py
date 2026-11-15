@@ -78,10 +78,10 @@ def test_manifest_records_provenance_versions_models_topology_config_and_host(
     assert manifest["git"]["dirty"] is True
     assert manifest["git"]["submodule"]["recorded_sha"] == "c" * 40
     assert manifest["versions"]["codex_cli"]["pin"] == "0.163.0"
-    assert manifest["versions"]["agentshim"]["host"] == "0.7.0"
+    assert manifest["versions"]["agentshim"]["host"] == "0.28.0"
     responder = manifest["images"]["responder_image:sdo-sregym-responder:v0.1.0"]
     assert responder["id"].startswith("sha256:")
-    assert responder["agentshim"] == "0.7.0"
+    assert responder["agentshim"] == "0.28.0"
     assert manifest["models"][0]["responder"] == {
         "provider": "codex",
         "model": "gpt-6-luna",

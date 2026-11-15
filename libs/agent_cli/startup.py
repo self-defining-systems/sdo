@@ -13,7 +13,15 @@ from typing import TYPE_CHECKING, Any, cast
 from agentshim import HostCommandExecutor
 
 if TYPE_CHECKING:
-    from agentshim import CommandExecutor, CommandHandle, CommandRequest, CommandResult, CommandStreamSink
+    from agentshim import (
+        CommandExecutor,
+        CommandHandle,
+        CommandRequest,
+        CommandResult,
+        CommandStreamSink,
+        Process,
+        SpawnRequest,
+    )
 
 _LOCK = threading.Lock()
 
@@ -139,6 +147,11 @@ class _TimingExecutor:
 
     def check_binary(self, path: str, env: Any, *, timeout: float) -> None:
         self.live.check_binary(path, env, timeout=timeout)
+
+    def spawn(self, request: SpawnRequest) -> Process:
+        process = self.live.spawn(request)
+        self.telemetry.process_started()
+        return process
 
     def run(self, request: CommandRequest, sink: CommandStreamSink) -> CommandResult:
         owner = self

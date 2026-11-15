@@ -164,39 +164,27 @@ def test_interrupted_codex_checkpoints_before_return_and_differences_resumes(
 
 
 def test_interrupted_claude_retains_incremental_assistant_usage(tmp_path: Path) -> None:
-    from agentshim import CliTimeoutError
     from agentshim.testing import FakeExecutor
+    from agentshim.testing.claude_stream import ClaudeFramePeer
 
     checkpoint = UsageCheckpoint(tmp_path / "usage", "incident", "incident", "responder")
 
-    class Worker(FakeExecutor):
-        def run(self, request, sink):
-            for input_tokens in [100, 200]:
-                sink.stdout(
-                    json.dumps(
-                        {
-                            "type": "assistant",
-                            "message": {
-                                "content": [{"type": "text", "text": "working"}],
-                                "usage": {
-                                    "input_tokens": input_tokens,
-                                    "cache_read_input_tokens": 20,
-                                    "cache_creation_input_tokens": 10,
-                                    "output_tokens": 5,
-                                },
-                            },
-                        }
-                    )
-                    + "\n"
-                )
-            snapshot = json.loads((checkpoint.directory / f"{checkpoint.turn_id}.json").read_text())
-            assert snapshot["complete"] is False
-            assert snapshot["usage"]["input_tokens"] == 360
-            assert snapshot["usage"]["cache_read_input_tokens"] == 40
-            assert snapshot["usage"]["llm_calls"] == 2
-            assert snapshot["usage"]["model_requests"] == 2
-            assert "total_cost_usd" not in snapshot["usage"]
-            raise CliTimeoutError(request.argv, 1.0)
+    def assistant(input_tokens: int) -> dict:
+        usage = {
+            "input_tokens": input_tokens,
+            "cache_read_input_tokens": 20,
+            "cache_creation_input_tokens": 10,
+            "output_tokens": 5,
+        }
+        return {
+            "type": "assistant",
+            "message": {"id": f"m{input_tokens}", "content": [{"type": "text", "text": "working"}], "usage": usage},
+        }
+
+    # The CLI streams two model responses and then stalls until the turn's time runs out.
+    peer = ClaudeFramePeer(
+        [[{"type": "system", "subtype": "init", "session_id": "s-1"}, assistant(100), assistant(200)]]
+    )
 
     with pytest.raises(StructuredTurnTimeout):
         run_structured_turn(
@@ -205,9 +193,18 @@ def test_interrupted_claude_retains_incremental_assistant_usage(tmp_path: Path) 
             output_schema={"type": "object"},
             cwd=tmp_path,
             access="danger-full-access",
-            executor=Worker([]),
+            executor=FakeExecutor([], peers=lambda _spawn: peer),
+            timeout_seconds=1.0,
             on_usage=checkpoint.publish,
         )
+
+    snapshot = json.loads((checkpoint.directory / f"{checkpoint.turn_id}.json").read_text())
+    assert snapshot["complete"] is False
+    assert snapshot["usage"]["input_tokens"] == 360
+    assert snapshot["usage"]["cache_read_input_tokens"] == 40
+    assert snapshot["usage"]["llm_calls"] == 2
+    assert snapshot["usage"]["model_requests"] == 2
+    assert "total_cost_usd" not in snapshot["usage"]
 
 
 @pytest.mark.parametrize("unavailable", [True, False])

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from agentshim import CommandExecutor, CommandHandle, CommandRequest, CommandStreamSink
+    from agentshim import CommandExecutor, CommandHandle, CommandRequest, CommandStreamSink, Process, SpawnRequest
 
 # One turn's complete Codex JSONL, which carries every tool result the turn read.
 MAX_MODEL_IO_BYTES = 64 << 20
@@ -35,6 +35,10 @@ class ModelRecorder:
 
     def check_binary(self, path: str, env: Mapping[str, str], *, timeout: float) -> None:
         self.live.check_binary(path, env, timeout=timeout)
+
+    def spawn(self, request: SpawnRequest) -> Process:
+        """Long-lived processes (Claude's stream transport) are not recorded: recording is Codex-only."""
+        raise NotImplementedError("model recording covers one-shot commands; this executor has no long-lived processes")
 
     def run(self, request: CommandRequest, sink: CommandStreamSink) -> CommandResult:
         prompt = request.stdin if request.stdin is not None else request.argv[-1]

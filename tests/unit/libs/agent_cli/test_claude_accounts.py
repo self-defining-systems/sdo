@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import json
 import os
-import sys
 import traceback
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -19,7 +18,7 @@ from libs.agent_cli.claude_accounts import AccountRouter, prepare_accounts, sync
 from libs.agent_cli.errors import AccountExhausted
 from libs.agent_cli.provider_capacity import ProviderCapacity
 from libs.agent_cli.structured import StructuredTurnError, run_structured_turn
-from tests.structured_turns import ScriptedAgent, failure, reply
+from tests.structured_turns import ScriptedAgent, failure, reply, write_stream_claude
 
 AUTH = (
     'API Error: 401 {"error":{"type":"authentication_error","message":"OAuth token has expired. '
@@ -94,7 +93,7 @@ def test_failover_finishes_and_keeps_session_and_config_home(tmp_path: Path, dia
     assert seen[0] == "a01"
     assert seen[-1] == "a02"
     assert turn.session_id == "session-1"
-    assert "--resume" in agent.argvs[-1]
+    assert any(arg.startswith("--resume=") for arg in agent.argvs[-1])
     assert len({r.env.get("CLAUDE_CONFIG_DIR") for r in agent.requests}) == 1
     records = (tmp_path / "provider-waits.jsonl").read_text()
     assert '"account_alias": "a01"' in records
@@ -252,25 +251,24 @@ def test_real_fake_cli_fails_over_then_reflection_resumes_on_another_account(
     env = bundle(tmp_path, count=3)
     script = tmp_path / "claude"
     audit = tmp_path / "calls.jsonl"
-    script.write_text(f"""#!{sys.executable}
-import json, os, pathlib, sys
-if '--help' in sys.argv:
-    raise SystemExit(0)
-sys.stdin.read()
-root = pathlib.Path({str(tmp_path / "secret")!r})
-alias = next(p.stem for p in root.glob('*.token') if p.read_text() == os.environ.get('CLAUDE_CODE_OAUTH_TOKEN'))
-sid = sys.argv[sys.argv.index('--resume') + 1] if '--resume' in sys.argv else 'session-lane'
-with pathlib.Path({str(audit)!r}).open('a') as out:
-    row = {{'alias':alias, 'session_id':sid, 'resumed':'--resume' in sys.argv,
-           'home':os.environ.get('CLAUDE_CONFIG_DIR')}}
-    out.write(json.dumps(row) + '\\n')
-print(json.dumps({{'type':'system','subtype':'init','session_id':sid}}))
-if alias == 'a01':
-    print({diagnostic!r}, file=sys.stderr)
-    raise SystemExit(1)
-print(json.dumps({{'type':'result','subtype':'success','is_error':False,'session_id':sid,'result':'ok','structured_output':{{'answer':'ok'}},'num_turns':1}}))
-""")
-    script.chmod(0o755)
+    write_stream_claude(
+        script,
+        f"""
+        root = pathlib.Path({str(tmp_path / "secret")!r})
+        alias = next(p.stem for p in root.glob('*.token') if p.read_text() == os.environ.get('CLAUDE_CODE_OAUTH_TOKEN'))
+        sid = RESUME or 'session-lane'
+        with pathlib.Path({str(audit)!r}).open('a') as out:
+            row = {{'alias': alias, 'session_id': sid, 'resumed': RESUME is not None,
+                   'home': os.environ.get('CLAUDE_CONFIG_DIR')}}
+            out.write(json.dumps(row) + '\\n')
+        say({{'type': 'system', 'subtype': 'init', 'session_id': sid}})
+        if alias == 'a01':
+            print({diagnostic!r}, file=sys.stderr, flush=True)
+            raise SystemExit(1)
+        say({{'type': 'result', 'subtype': 'success', 'is_error': False, 'session_id': sid, 'result': 'ok',
+              'structured_output': {{'answer': 'ok'}}, 'num_turns': 1}})
+        """,
+    )
     monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
     work = tmp_path / "work"
     work.mkdir()

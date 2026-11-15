@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 CODEX_PIN = "0.163.0"
-AGENTSHIM_PIN = "0.7.0"
+AGENTSHIM_PIN = "0.28.0"
 
 
 @dataclass
