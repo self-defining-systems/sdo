@@ -64,7 +64,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from benchmarks.fuzzops import config, observe, page, sink, view
+from benchmarks.fuzzops import config, devtree, observe, page, sink, view
 from benchmarks.fuzzops.install import (
     CREDENTIALS_SECRET,
     REPOSITORY_PVC,
@@ -285,6 +285,11 @@ def baseline_problem(baseline: Baseline, namespace: str) -> str:
     return bundle_problem(baseline.path(baseline.bundle), baseline.branch, baseline.commit)
 
 
+#: What ``prepare`` leaves in the lane directory for ``swap``: the revision the lane runs and its memory commit.
+PREPARED_RECORD = "prepared.json"
+#: The projected sources under the lane's evidence directory (``devtree``).
+DEV_DIRECTORY = ".dev"
+
 # ---- operator block and lane environment ---------------------------------------------------------------------
 
 
@@ -304,12 +309,17 @@ class OperatorBlock:
     #: ``settings.harness_page``: the harness-paged arm (``page.PageConfig``): the benchmark opens the one SDO
     #: incident through the external-incident inbox at the inject plus ``after`` seconds; detectors only observe.
     harness_page: page.PageConfig | None = None
+    #: ``settings.dev_mount``: run the pods from the base images (``image_tag``) with the checkout's sources and
+    #: binary projected over them from the lane's evidence mount (``devtree``): no image build for this revision.
+    dev_mount: bool = False
 
     def __post_init__(self) -> None:
         if not self.revision:
             raise ValueError("the operator block needs the SDO revision")
         if not self.baseline.is_absolute():
             raise ValueError("the operator block's baseline must be an absolute path")
+        if self.dev_mount and not self.image_tag:
+            raise ValueError("settings.dev_mount needs settings.image_tag (the base images)")
         if not self.image_tag:
             object.__setattr__(self, "image_tag", f"fz-{self.revision[:8]}")
         refuse_hook_keys(self.config, "settings.config")
@@ -347,6 +357,7 @@ class OperatorBlock:
                 auth_file=Path(str(settings.get("auth_file") or Path.home() / ".codex" / "auth.json")).expanduser(),
                 config=settings.get("config") or {},
                 harness_page=page.PageConfig.from_settings(settings.get("harness_page")),
+                dev_mount=bool(settings.get("dev_mount")),
             )
         except (TypeError, ValueError) as exc:
             raise HookError(f"BENCH_OPERATOR: {exc}") from exc
@@ -787,6 +798,20 @@ def lane_registry_images(registry: Path | None, wanted: list[str], log: Callable
     return refs
 
 
+def dev_mount_env(
+    env: Mapping[str, str], block: OperatorBlock, binary: Path, log: Callable[[str], None]
+) -> dict[str, str]:
+    """For a ``dev_mount`` operator: project the checkout over the base images on the lane and return the ``SDO_*``
+    variables that make the install mount it. Empty for an image-built operator."""
+    if not block.dev_mount:
+        return {}
+    host, node = _need(env, "BENCH_EVIDENCE_HOST"), _need(env, "BENCH_EVIDENCE_NODE")
+    started = time.monotonic()
+    devtree.sync(Path.cwd(), Path(host) / DEV_DIRECTORY, binary)
+    log(f"projected the checkout over the base images in {time.monotonic() - started:.1f}s")
+    return {"SDO_DEV_MOUNT": "1", "SDO_DEV_MOUNT_PATH": f"{node}/{DEV_DIRECTORY}"}
+
+
 def clone_baseline(baseline: Baseline, repo: Path) -> str:
     """Clone the baseline bundle's branch into ``repo`` as ``main`` with no remote; returns HEAD."""
     shutil.rmtree(repo, ignore_errors=True)
@@ -881,6 +906,7 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     attached = write_attached_pack(source, lane_dir / "pack").resolve()
     # (d) the operator binary of the pinned checkout
     binary = build_operator(lane_dir / "bin" / "sdo-operator")
+    dev_env = dev_mount_env(env, block, binary, out)
     # (e) the operator images on the workers
     image = block.images()
     registry = Path(env["BENCH_REGISTRY"]) if env.get("BENCH_REGISTRY") else None
@@ -933,7 +959,14 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     memory = clone_baseline(baseline, lane_dir / "app")
     # (h) production restore: install-existing, history kept, no install-time agents
     args, launch_env = install_existing_launch(
-        binary.resolve(), lane_dir / "app", baseline, block, kubeconfig, evidence_env, lane_dir / "sdo-config", image
+        binary.resolve(),
+        lane_dir / "app",
+        baseline,
+        block,
+        kubeconfig,
+        {**evidence_env, **dev_env},
+        lane_dir / "sdo-config",
+        image,
     )
     (lane_dir / "install-existing-args.json").write_text(json.dumps(args, indent=1) + "\n")
     (lane_dir / "install-existing-env.json").write_text(json.dumps(launch_env, indent=1, sort_keys=True) + "\n")
@@ -960,6 +993,9 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     # install-existing returns before the controller runs: the reset waits for it to acknowledge.
     reset = reset_when_running(binary.resolve(), baseline.control, kubeconfig)
     out(f"incidents reset: generation {reset.get('generation')}")
+    (lane_dir / PREPARED_RECORD).write_text(
+        json.dumps({"revision": revision, "memory": memory, "compiled": devtree.fingerprint(Path.cwd())}) + "\n"
+    )
     out(json.dumps({"pack": str(attached), "operator_version": revision, "memory": memory}))
     return 0
 
@@ -1028,8 +1064,25 @@ def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     if why:
         out(why)
         return 1
+    record_prepared_state(env, kube, control)
     out("idle")
     return 0
+
+
+def record_prepared_state(env: Mapping[str, str], kube: Kube, control: str) -> None:
+    """The first idle after ``prepare`` is the operator finished starting: note the accepted repository as it is
+    then, what ``swap`` later asserts. Best effort: without it ``swap`` refuses."""
+    lane = env.get("BENCH_LANE_DIR")
+    if not lane or not (Path(lane) / PREPARED_RECORD).is_file():
+        return
+    path = Path(lane) / PREPARED_RECORD
+    try:
+        record = json.loads(path.read_text())
+        if "state" not in record:
+            record["state"] = repository_state(kube, control)
+            path.write_text(json.dumps(record) + "\n")
+    except (OSError, ValueError, subprocess.SubprocessError, HookError):
+        return
 
 
 def watch(env: Mapping[str, str]) -> int:
@@ -1142,6 +1195,105 @@ def teardown(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int
     return 0
 
 
+def repository_state(kube: Kube, control: str) -> dict[str, str]:
+    """The accepted repository as the controller holds it: head, uncommitted files and the outcome files."""
+    script = (
+        f"cd {APPLICATION_ROOT} && git -c safe.directory='*' rev-parse HEAD && echo -- && "
+        "git -c safe.directory='*' status --porcelain && echo -- && ls .sdo/outcomes 2>/dev/null; true"
+    )
+    head, status, outcomes = (part.strip() for part in kube.exec_controller(control, script).decode().split("--\n"))
+    return {"head": head, "status": status, "outcomes": outcomes}
+
+
+def wipe_problems(before: Mapping[str, str], now: Mapping[str, str]) -> list[str]:
+    """Why a lane is not what ``prepare`` left (``before``): the accepted head moved, files are uncommitted or
+    outcomes were written. A swapped lane must start every cell from the same memory as a fresh one."""
+    problems = []
+    if now["head"] != before["head"]:
+        problems.append(f"accepted head {now['head'][:12]} is not the prepared {before['head'][:12]}")
+    if now["status"]:
+        problems.append("uncommitted files in the accepted repository")
+    if now["outcomes"] != before["outcomes"]:
+        problems.append("outcomes changed since prepare")
+    return problems
+
+
+SWAP_STANDBY_WAIT_S = 180.0
+
+
+def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
+    """Run the hooks checkout's Python sources on a prepared ``dev_mount`` lane without restarting the controller:
+    project them over the lane's base images, retire the idle responder standby so the next one imports them, and
+    assert the lane is still the baseline's (head, files, outcomes) with an idle operator. Refused when the lane
+    was prepared on a revision whose compiled code differs."""
+    block = _operator(env)
+    if not block.dev_mount:
+        raise HookError("swap needs settings.dev_mount")
+    lane_dir = Path(_need(env, "BENCH_LANE_DIR")).resolve()
+    record = json.loads((lane_dir / PREPARED_RECORD).read_text())
+    revision = checkout_revision()
+    if why := devtree.swap_problem(Path.cwd(), record.get("compiled") or {}):
+        raise HookError(why)
+    started = time.monotonic()
+    devtree.sync(Path.cwd(), Path(_need(env, "BENCH_EVIDENCE_HOST")) / DEV_DIRECTORY, None)
+    kube, control = _kube(env), control_namespace(env)
+    retire_standby(kube, control)
+    wait_standby(kube, control, SWAP_STANDBY_WAIT_S)
+    if "state" not in record:
+        raise HookError("the lane has no recorded prepared state (no idle verdict since prepare)")
+    if problems := wipe_problems(record["state"], repository_state(kube, control)):
+        raise HookError("the lane is not the baseline's: " + "; ".join(problems))
+    if why := idle_reason(kube.state(control)):
+        raise HookError(f"the operator is not idle: {why}")
+    record["revision"] = revision
+    (lane_dir / PREPARED_RECORD).write_text(json.dumps(record) + "\n")
+    out(json.dumps(swap_receipt(lane_dir, revision, record["memory"], time.monotonic() - started)))
+    return 0
+
+
+def swap_receipt(lane_dir: Path, revision: str, memory: str, seconds: float) -> dict[str, Any]:
+    """The last stdout line of ``swap``: ``prepare``'s fields (the bench reads both alike) plus its duration."""
+    return {
+        "pack": str((lane_dir / "pack").resolve()),
+        "operator_version": revision,
+        "memory": memory,
+        "swap_s": round(seconds, 1),
+    }
+
+
+def standby_jobs(kube: Kube, control: str) -> list[str]:
+    proc = subprocess.run(
+        kube.cmd("-n", control, "get", "jobs", "-o", "name"), capture_output=True, text=True, timeout=60, check=False
+    )
+    return [line for line in proc.stdout.split() if "sdo-standby-" in line]
+
+
+def retire_standby(kube: Kube, control: str) -> None:
+    for job in standby_jobs(kube, control):
+        _run(kube.cmd("-n", control, "delete", job, "--wait=false"), f"delete {job}", 60)
+
+
+def wait_standby(kube: Kube, control: str, timeout: float) -> None:
+    """Wait until a standby Job's pod is Ready (the controller recreates the standby it lost)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if standby_jobs(kube, control):
+            proc = subprocess.run(
+                kube.cmd("-n", control, "get", "pods", "-o", "json"),
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+            for pod in json.loads(proc.stdout or "{}").get("items", []):
+                name = pod["metadata"]["name"]
+                conditions = pod.get("status", {}).get("conditions", [])
+                if "sdo-standby-" in name and any(c["type"] == "Ready" and c["status"] == "True" for c in conditions):
+                    return
+        time.sleep(2)
+    raise HookError(f"no ready responder standby within {timeout:.0f}s")
+
+
 def transcripts(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     try:
         if sink.pull_mode(env):
@@ -1249,7 +1401,7 @@ def baseline_main(argv: list[str]) -> int:
     return 0
 
 
-VERBS = ("check", "prepare", "idle", "watch", "collect", "teardown", "transcripts")
+VERBS = ("check", "prepare", "swap", "idle", "watch", "collect", "teardown", "transcripts")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1266,6 +1418,7 @@ def main(argv: list[str] | None = None) -> int:
         verbs: dict[str, Callable[[Mapping[str, str]], int]] = {
             "check": check,
             "prepare": prepare,
+            "swap": swap,
             "idle": idle,
             "collect": collect,
             "teardown": teardown,
