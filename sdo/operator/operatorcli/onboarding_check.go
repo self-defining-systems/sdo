@@ -31,7 +31,7 @@ import (
 // OnboardingUsage documents "sdo-operator onboarding".
 const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --namespace NS --prometheus URL|NS/SERVICE:PORT
                                     [--kubeconfig FILE] [--context NAME] [--requests 5]
-                                    [--settle 90s] [--json]
+                                    [--settle 90s] [--json] [--report FILE]
                                     [--quiet-window 10m] [--quiet-interval 1m]
                                     [--break] [--break-bound 60s] [--break-mode scale|network]
                                     [--cluster-network] [--operator-root DIR] [--telemetry-environment FILE] [--settings FILE]
@@ -54,7 +54,10 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
          from the host running the check and are reported as a note, unless
          --cluster-network says this process resolves them (the test-request
          scenarios need it too; a scenario that never succeeded is red). Run it only on a target the agent owns, with no users.
-         Each live item reports its duration.
+         Each live item reports its duration. The check prints its expected
+         duration when it starts and takes minutes (about 20 with --break): run it
+         in the background and read the report when it finishes; --report FILE
+         also writes the report there.
          The metric items: SDO builds each operation's request and error series from
          the application map's entries (metric, route, method and status labels),
          sends --requests requests to every operation's entry through the API
@@ -186,6 +189,7 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	requests := flags.Int("requests", 5, "requests sent to each operation")
 	settle := flags.Duration("settle", 90*time.Second, "wait for scrapes after sending")
 	asJSON := flags.Bool("json", false, "print the report as JSON")
+	reportFile := flags.String("report", "", "also write the report to this file")
 	quietWindow := flags.Duration("quiet-window", 10*time.Minute, "quiet-when-healthy window; 0 skips the item")
 	quietInterval := flags.Duration("quiet-interval", time.Minute, "wait between detector evaluations in the quiet window")
 	breakItem := flags.Bool("break", false, "run fails-under-break: briefly break each component on an operation's path (only on a target without users)")
@@ -239,6 +243,7 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	for _, e := range exposed {
 		exposures = append(exposures, onboardcheck.Exposure{Service: e.Service, Via: e.Via})
 	}
+	fmt.Fprintln(os.Stderr, startNotice(*settle, *quietWindow, *breakItem, max(*breakBound, probeDetectionHorizon(*repo)), len(m.Components), *reportFile))
 	config := onboardcheck.Config{
 		Map: m, Commit: commit,
 		Prom:     promAdapter{prometheus.Client{BaseURL: base, HTTPClient: cluster}},
@@ -284,14 +289,21 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	if err != nil {
 		return 0, err
 	}
+	var rendered string
 	if *asJSON {
 		encoded, err := json.MarshalIndent(report, "", "  ")
 		if err != nil {
 			return 0, err
 		}
-		fmt.Fprintln(stdout, string(encoded))
+		rendered = string(encoded) + "\n"
 	} else {
-		fmt.Fprint(stdout, report.Text())
+		rendered = report.Text()
+	}
+	fmt.Fprint(stdout, rendered)
+	if *reportFile != "" {
+		if err := os.WriteFile(*reportFile, []byte(rendered), 0o600); err != nil {
+			return 0, fmt.Errorf("write --report: %w", err)
+		}
 	}
 	if !report.Clean() {
 		return exitDiagnostics, nil
@@ -318,4 +330,25 @@ func probeDetectionHorizon(repo string) time.Duration {
 		}
 	}
 	return longest
+}
+
+// expectedDuration is a rough length of one check: the metric items' settle,
+// the quiet window, and, with --break, a break and a restore per component.
+func expectedDuration(settle, quiet time.Duration, withBreak bool, bound time.Duration, components int) time.Duration {
+	total := settle + quiet
+	if withBreak {
+		total += time.Duration(components) * (bound + 30*time.Second)
+	}
+	return total
+}
+
+// startNotice is the line printed when a check starts: how long it takes and
+// where the report goes.
+func startNotice(settle, quiet time.Duration, withBreak bool, bound time.Duration, components int, reportFile string) string {
+	where := "the report prints to stdout when the check finishes"
+	if reportFile != "" {
+		where += " and is also written to " + reportFile
+	}
+	return fmt.Sprintf("onboarding check: expected about %s; run it in the background and keep working; %s",
+		expectedDuration(settle, quiet, withBreak, bound, components).Round(time.Minute), where)
 }
