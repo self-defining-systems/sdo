@@ -59,16 +59,17 @@ func TestEvaluateOnceWatchKeepsReadingTheProberSoABreakRaisesTheUserTest(t *test
 	workload.Scenarios = []traffic.WorkloadScenario{{ID: "call-projects", Weight: 1}}
 	api := &liveProber{workload: workload}
 	detector := traffic.NewDetector(sdk.DetectorSpec{ID: "traffic-probe-call", Class: sdk.DetectorClassHealth, Owner: sdk.DetectorOwnerHealthJudge, Batching: sdk.BatchingPolicy{Severity: sdk.SeverityCritical, Debounce: 500 * time.Millisecond}, Interval: time.Second, Persistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1, MinDuration: time.Millisecond}, Playbooks: []string{"health-objective"}, OriginatingCommit: "synthetic"}, workload.Name)
-	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	time.AfterFunc(1500*time.Millisecond, func() { api.broken.Store(true) })
-	var stdout, stderr bytes.Buffer
+	time.AfterFunc(700*time.Millisecond, func() { api.broken.Store(true) })
+	var stderr bytes.Buffer
+	stdout := &stopWhenNamed{cancel: cancel, scenario: "call-projects"}
 	err := RunWithOptions(ctx, []sdk.Detector{detector}, RuntimeOptions{
 		Args:     []string{"--evaluate-once", "--namespace", "shop", "--watch", "200ms"},
 		Provider: staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "shop", PodList: []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "web-0", Namespace: "shop"}}}}},
 		Client:   fake.NewSimpleClientset(),
 		Traffic:  api,
-		Stdout:   &stdout, Stderr: &stderr,
+		Stdout:   stdout, Stderr: &stderr,
 	})
 	if err != nil {
 		t.Fatalf("evaluate-once: %v (stderr=%s)", err, stderr.String())
@@ -94,4 +95,20 @@ func TestEvaluateOnceWatchKeepsReadingTheProberSoABreakRaisesTheUserTest(t *test
 	if !named {
 		t.Fatalf("no verdict named the failing user test call-projects after the application broke: %s", stdout.String())
 	}
+}
+
+// stopWhenNamed collects the verdict lines and cancels the watch once one names
+// the scenario, so the test ends as soon as the break was seen.
+type stopWhenNamed struct {
+	bytes.Buffer
+	cancel   context.CancelFunc
+	scenario string
+}
+
+func (w *stopWhenNamed) Write(p []byte) (int, error) {
+	n, err := w.Buffer.Write(p)
+	if strings.Contains(string(p), `"summary"`) && strings.Contains(string(p), w.scenario) {
+		w.cancel()
+	}
+	return n, err
 }
