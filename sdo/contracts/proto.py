@@ -156,6 +156,8 @@ TelemetrySource = messages_pb2.TelemetrySource
 IncidentRequest = messages_pb2.IncidentRequest
 RootCauseEvidence = messages_pb2.RootCauseEvidence
 ConfirmedRootCause = messages_pb2.ConfirmedRootCause
+EarlierAttempt = messages_pb2.EarlierAttempt
+IncidentFinding = messages_pb2.IncidentFinding
 AppliedPlaybook = messages_pb2.AppliedPlaybook
 VerificationEvidence = messages_pb2.VerificationEvidence
 UsageMetrics = messages_pb2.UsageMetrics
@@ -281,6 +283,8 @@ __all__ = [
     "AppliedPlaybook",
     "Binding",
     "ConfirmedRootCause",
+    "EarlierAttempt",
+    "IncidentFinding",
     "ControllerConfig",
     "DetectorEvaluation",
     "RecoveryVerification",

@@ -72,6 +72,7 @@ var operatorOwned = map[string]string{
 	"memoryhost/hostio/probe_users.go":                 "controller-owned probe-identity seed under .sdo-runtime/probe-identity on the repository volume, a fixed path never in a checkout and never published",
 	"operatorcli/baseline_write.go":                    reasonCLI,
 	"operatorcli/config_cmd.go":                        "controller copies its mounted configuration to its own runtime evidence directory on the repository mount",
+	"operatorcli/onboarding_prepared.go":               reasonCLI,
 	"operatorcli/operability_terminal.go":              reasonCLI,
 	"operatorcli/program.go":                           reasonCLI,
 	"operatorcli/runtime_artifacts.go":                 reasonCLI,

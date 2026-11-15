@@ -96,3 +96,18 @@ func TestEscalationNeedsEscalatedAtAndNeverOverridesVerifiedHealth(t *testing.T)
 		})
 	}
 }
+
+// The agent's findings are stored verbatim whatever its status; they never change the class.
+func TestAgentFindingsAreCopiedIntoTheOutcomeForAnyStatus(t *testing.T) {
+	closure := outOfReachClosure(outcomeclass.ReachOutOfReach, false)
+	closure.Result.Status = "failed"
+	closure.Result.Findings = []*contracts.IncidentFinding{{Kind: "ruled_out", Statement: "cache", SeenIn: "keys", Verdict: "refuted"}}
+	derived, err := Derive(context.Background(), closure, "", "codex", "model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := derived.Record.GetAgentFindings()
+	if len(got) != 1 || got[0].GetStatement() != "cache" || derived.Record.GetClassification() != outcomeclass.Failed {
+		t.Fatalf("findings = %v class = %q", got, derived.Record.GetClassification())
+	}
+}

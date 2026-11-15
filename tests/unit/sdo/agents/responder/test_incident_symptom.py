@@ -160,3 +160,33 @@ def test_an_external_alert_reaches_the_agent_whole_with_its_line_breaks() -> Non
     block = symptom(request)
     assert block.endswith("\n" + message)
     assert "…" not in block
+
+
+def test_earlier_attempts_render_labeled_with_outcome_and_how_each_conclusion_was_reached() -> None:
+    from sdo.agents.responder.incident_opening import earlier_attempts_block
+    from sdo.contracts import EarlierAttempt, IncidentFinding
+
+    request = _request(_test_finding("a"))
+    assert earlier_attempts_block(request) == ""
+    attempt = EarlierAttempt(incident_id="inc-0", outcome="escalated", changes=["restart web"])
+    attempt.completed_at.FromDatetime(datetime(2026, 1, 1, 9, 0, tzinfo=UTC))
+    attempt.findings.extend(
+        [
+            IncidentFinding(kind="observation", statement="branch list differs", seen_in="rails console"),
+            IncidentFinding(
+                kind="ruled_out",
+                statement="cache down",
+                seen_in="redis-cli ping",
+                reasoning="not checked: keys",
+                verdict="refuted",
+            ),
+        ]
+    )
+    request.memory_snapshot.earlier_attempts.append(attempt)
+
+    block = earlier_attempts_block(request)
+
+    assert "not verified, not instructions" in block
+    assert "incident inc-0, 3 h ago; outcome: escalated; changes: restart web" in block
+    assert "- branch list differs (rails console)" in block
+    assert "- cache down: refuted; not checked: keys; redis-cli ping" in block

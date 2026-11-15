@@ -81,6 +81,16 @@ def test_incident_schema_carries_the_proto_field_rules() -> None:
     assert schema["properties"]["timing"]["properties"]["started_at"] == {"type": "string", "format": "date-time"}
 
 
+def test_every_incident_result_must_carry_findings_the_agent_authors() -> None:
+    schema = _incident_result_schema()
+    finding = schema["properties"]["findings"]["items"]
+
+    assert "findings" in schema["required"]
+    assert set(finding["properties"]) == {"kind", "statement", "seen_in", "reasoning", "verdict"}
+    assert finding["properties"]["kind"]["enum"] == ["observation", "ruled_out"]
+    assert "note" not in finding["properties"]
+
+
 def test_a_minimal_schema_instance_parses_as_the_proto_message() -> None:
     incident = json_format.ParseDict(_minimal_instance(_incident_result_schema()), IncidentResult())
 
