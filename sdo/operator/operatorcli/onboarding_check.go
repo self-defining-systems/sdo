@@ -32,18 +32,30 @@ import (
 const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --namespace NS --prometheus URL|NS/SERVICE:PORT
                                     [--kubeconfig FILE] [--context NAME] [--requests 5]
                                     [--settle 90s] [--json] [--report FILE]
-                                    [--quiet-window 10m] [--quiet-interval 1m]
+                                    [--quick] [--quiet-window 10m] [--quiet-interval 1m] [--quiet-evaluations 3]
                                     [--break] [--break-bound 60s] [--break-mode scale|network]
                                     [--cluster-network] [--operator-root DIR] [--telemetry-environment FILE] [--settings FILE]
 
   check  Run the onboarding check against a running environment: the metric
-         items, then quiet-when-healthy, then (with --break) fails-under-break.
+         items with quiet-when-healthy observing alongside, then (with --break)
+         fails-under-break. Progress lines go to stderr; the report is headed
+         by its mode.
+         --quick is the fast loop (about 2-3 minutes after the detectors build):
+         the metric items and a short smoke where every detector judges at
+         least once. It never runs --break and its report is never clean (it
+         says "mode: quick"); exit 0 means no red item. The full check is the
+         gate for "clean".
+         The quiet window ends as soon as every detector has judged
+         --quiet-evaluations (3) times past its own clearing horizon; the derived
+         length is printed when the first verdict arrives, and --quiet-window
+         is only the cap (a detector short of its judgements at the cap is red).
          quiet-when-healthy evaluates the memory's detectors (test-request
          scenarios and the request-metrics detector included) against the live
          application every --quiet-interval for --quiet-window (0 skips) and is
          red if any raises, naming the detector, scenario and step.
-         fails-under-break breaks, one at a time, each component on an
-         operation's path (scale the workload to zero; with --break-mode network
+         fails-under-break breaks each component on an operation's path
+         (components that share no operation are broken together in waves; a
+         raise still has to name the operation or component) (scale the workload to zero; with --break-mode network
          a deny-ingress NetworkPolicy when the CNI enforces it, else scale to
          zero, said in the report), waits up to --break-bound for raises that name
          the component or its operations, and restores it. An operation is green
@@ -125,6 +137,9 @@ func (e detectorEvaluator) Evaluate(ctx context.Context) (onboardcheck.Verdict, 
 		}
 		out.Raised = append(out.Raised, onboardcheck.Raise{DetectorID: f.DetectorID, Rule: f.RuleID, Summary: f.Summary, Evidence: f.Evidence, Resources: resources, Fingerprint: sdk.FindingFingerprint(f)})
 	}
+	for _, p := range verdict.Progress {
+		out.Progress = append(out.Progress, onboardcheck.DetectorProgress{DetectorID: p.DetectorID, Interval: p.Interval, Horizon: p.Horizon, Evaluations: p.Evaluations, PastHorizon: p.PastHorizon})
+	}
 	for _, state := range verdict.DetectorStates {
 		if state.Status == "pending" {
 			out.Pending = append(out.Pending, state.DetectorID+": "+state.Reason)
@@ -191,6 +206,8 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	asJSON := flags.Bool("json", false, "print the report as JSON")
 	reportFile := flags.String("report", "", "also write the report to this file")
 	quietWindow := flags.Duration("quiet-window", 10*time.Minute, "quiet-when-healthy window; 0 skips the item")
+	quick := flags.Bool("quick", false, "fast iteration: the metric items and a short detector smoke; never clean, never breaks")
+	quietEvaluations := flags.Int("quiet-evaluations", onboardcheck.DefaultQuietEvaluations, "judgements each detector must make past its own horizon for the quiet window to end")
 	quietInterval := flags.Duration("quiet-interval", time.Minute, "wait between detector evaluations in the quiet window")
 	breakItem := flags.Bool("break", false, "run fails-under-break: briefly break each component on an operation's path (only on a target without users)")
 	breakBound := flags.Duration("break-bound", 60*time.Second, "least time to wait for a detector to notice each break (at least the time the memory's own probes need to judge a failure)")
@@ -243,14 +260,21 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	for _, e := range exposed {
 		exposures = append(exposures, onboardcheck.Exposure{Service: e.Service, Via: e.Via})
 	}
-	fmt.Fprintln(os.Stderr, startNotice(*settle, *quietWindow, *breakItem, max(*breakBound, probeDetectionHorizon(*repo)), len(m.Components), *reportFile))
+	if *quick && *breakItem {
+		return 0, errors.New("--quick never runs --break: the full check is the gate")
+	}
+	if *quick {
+		*quietWindow = min(*quietWindow, 2*time.Minute)
+	}
+	fmt.Fprintln(os.Stderr, startNotice(*quick, *settle, *quietWindow, *breakItem, max(*breakBound, probeDetectionHorizon(*repo)), len(onboardcheck.BreakWaves(m)), *reportFile))
 	config := onboardcheck.Config{
 		Map: m, Commit: commit,
 		Prom:     promAdapter{prometheus.Client{BaseURL: base, HTTPClient: cluster}},
 		Sender:   httpSender{cluster: cluster, namespace: *namespace},
 		Exposed:  exposures,
 		Requests: *requests, Settle: *settle, Poll: 5 * time.Second, Wait: processio.Wait,
-		Now: processio.Now,
+		Now: processio.Now, Quick: *quick,
+		Progress: func(line string) { fmt.Fprintln(os.Stderr, processio.Now().Format("15:04:05"), line) },
 	}
 	if *quietWindow > 0 || *breakItem {
 		probe := deployment.AcceptedDetectorProbe{Settings: *settingsFile, TelemetryEnvironment: *telemetryEnv, Kubeconfig: *kubeconfig, OutsideCluster: !*clusterNetwork, Host: true}
@@ -271,7 +295,7 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 		defer watch.Close()
 		eval := detectorEvaluator{watch: watch}
 		if *quietWindow > 0 {
-			config.Quiet = &onboardcheck.QuietConfig{Eval: eval, Window: *quietWindow, Interval: *quietInterval}
+			config.Quiet = &onboardcheck.QuietConfig{Eval: eval, Window: *quietWindow, Interval: *quietInterval, Evaluations: *quietEvaluations}
 		}
 		if *breakItem {
 			// Wait for the memory's own tests to judge a failure: their sampling
@@ -305,7 +329,7 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 			return 0, fmt.Errorf("write --report: %w", err)
 		}
 	}
-	if !report.Clean() {
+	if !report.NoRed() {
 		return exitDiagnostics, nil
 	}
 	return exitClean, nil
@@ -332,23 +356,29 @@ func probeDetectionHorizon(repo string) time.Duration {
 	return longest
 }
 
-// expectedDuration is a rough length of one check: the metric items' settle,
-// the quiet window, and, with --break, a break and a restore per component.
-func expectedDuration(settle, quiet time.Duration, withBreak bool, bound time.Duration, components int) time.Duration {
-	total := settle + quiet
+// expectedDuration is an upper bound for one check: the metric items run
+// alongside the quiet window (whose cap is the window), and with --break each
+// wave costs a break, a restore and the wait for detectors to clear. A quick run
+// is the longer of the settle and its short smoke.
+func expectedDuration(settle, quiet time.Duration, withBreak bool, bound time.Duration, waves int) time.Duration {
+	total := max(settle, quiet)
 	if withBreak {
-		total += time.Duration(components) * (bound + 30*time.Second)
+		total += time.Duration(waves) * (bound + 30*time.Second)
 	}
 	return total
 }
 
 // startNotice is the line printed when a check starts: how long it takes and
 // where the report goes.
-func startNotice(settle, quiet time.Duration, withBreak bool, bound time.Duration, components int, reportFile string) string {
+func startNotice(quick bool, settle, quiet time.Duration, withBreak bool, bound time.Duration, waves int, reportFile string) string {
+	mode := "full"
+	if quick {
+		mode = "quick"
+	}
 	where := "the report prints to stdout when the check finishes"
 	if reportFile != "" {
 		where += " and is also written to " + reportFile
 	}
-	return fmt.Sprintf("onboarding check: expected about %s; run it in the background and keep working; %s",
-		expectedDuration(settle, quiet, withBreak, bound, components).Round(time.Minute), where)
+	return fmt.Sprintf("onboarding check (%s): expected at most %s (the quiet window ends early once every detector has judged enough); run it in the background and keep working; %s",
+		mode, expectedDuration(settle, quiet, withBreak, bound, waves).Round(time.Second), where)
 }

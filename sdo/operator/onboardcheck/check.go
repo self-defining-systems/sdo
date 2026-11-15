@@ -72,6 +72,18 @@ type Config struct {
 	// NoDetectors says the memory SDO would deploy holds no detector at all,
 	// so the live items have nothing to judge.
 	NoDetectors bool
+	// Quick is the fast-iteration run: the metric items and a short smoke of
+	// the detectors (each judged at least once). It runs no break item and its
+	// report is never clean.
+	Quick bool
+	// Progress, when set, receives a line as the check advances.
+	Progress func(string)
+}
+
+func (c Config) say(format string, args ...any) {
+	if c.Progress != nil {
+		c.Progress(fmt.Sprintf(format, args...))
+	}
 }
 
 // Result is one line of the report.
@@ -84,7 +96,9 @@ type Result struct {
 
 // Report is the check outcome, tagged with the commit it ran for.
 type Report struct {
-	Commit  string   `json:"commit"`
+	Commit string `json:"commit"`
+	// Mode is "full" or "quick".
+	Mode    string   `json:"mode"`
 	Results []Result `json:"results"`
 	// Durations is how long each live item took.
 	Durations []ItemDuration `json:"durations,omitempty"`
@@ -105,14 +119,33 @@ func (r Report) Counts() (green, red, note int) {
 	return
 }
 
-// Clean is true when nothing is red.
-func (r Report) Clean() bool { _, red, _ := r.Counts(); return red == 0 }
+// Clean is true when nothing is red in a full run. A quick run never is: it
+// proves less than the gate.
+func (r Report) Clean() bool { return r.Mode != ModeQuick && r.NoRed() }
+
+// NoRed is true when no item is red, in either mode.
+func (r Report) NoRed() bool { _, red, _ := r.Counts(); return red == 0 }
+
+// Report modes.
+const (
+	ModeFull  = "full"
+	ModeQuick = "quick"
+)
 
 // Text renders the report, headed by the commit.
 func (r Report) Text() string {
 	g, red, n := r.Counts()
 	var b strings.Builder
 	fmt.Fprintf(&b, "commit %s\ncheck: green %d red %d note %d\n", r.Commit, g, red, n)
+	if r.Mode == ModeQuick {
+		verdict := "no red item"
+		if red > 0 {
+			verdict = "red items"
+		}
+		fmt.Fprintf(&b, "mode: quick (%s; a quick run is never clean, run the full check for the gate)\n", verdict)
+	} else {
+		fmt.Fprintf(&b, "mode: full\n")
+	}
 	for _, x := range r.Results {
 		fmt.Fprintf(&b, "%s %s %s: %s\n", x.Status, x.Item, x.Subject, x.Detail)
 	}
@@ -132,6 +165,8 @@ func (c Config) validate() error {
 		return errors.New("onboardcheck: Requests must be at least 1")
 	case c.Poll <= 0 || c.Settle < 0:
 		return errors.New("onboardcheck: Poll must be positive and Settle not negative")
+	case c.Quick && c.Break != nil:
+		return errors.New("onboardcheck: a quick run does not run fails-under-break")
 	}
 	return c.validateLive()
 }
@@ -200,13 +235,64 @@ func keys(m map[string]float64) string {
 	return strings.Join(out, ", ")
 }
 
-// Run sends known traffic and checks the metric items. An error means the
-// check could not run (a failed query), not that an item is red.
+// Run sends known traffic and checks the metric items; the quiet-when-healthy
+// item observes meanwhile (its sample window is much longer than the traffic).
+// An error means the check could not run (a failed query), not that an item is
+// red.
 func Run(ctx context.Context, cfg Config) (Report, error) {
 	if err := cfg.validate(); err != nil {
 		return Report{}, err
 	}
-	report := Report{Commit: cfg.Commit}
+	report := Report{Commit: cfg.Commit, Mode: ModeFull}
+	if cfg.Quick {
+		report.Mode = ModeQuick
+	}
+	var quiet Report
+	var quietRed bool
+	quietDone := make(chan struct{})
+	qctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if cfg.Quiet != nil && !cfg.NoDetectors {
+		go func() {
+			defer close(quietDone)
+			start := cfg.Now()
+			quietRed = runQuiet(qctx, cfg, &quiet)
+			quiet.Durations = append(quiet.Durations, ItemDuration{Item: ItemQuiet, Seconds: cfg.Now().Sub(start).Seconds()})
+		}()
+	} else {
+		close(quietDone)
+	}
+	cfg.say("metric items: sending %d requests per operation", cfg.Requests)
+	err := runMetrics(ctx, cfg, &report)
+	if err != nil {
+		cancel()
+		<-quietDone
+		return Report{}, err
+	}
+	cfg.say("metric items done: %d results", len(report.Results))
+	<-quietDone
+	report.Results = append(report.Results, quiet.Results...)
+	report.Durations = append(report.Durations, quiet.Durations...)
+	if cfg.NoDetectors {
+		report.add(ItemQuiet, "detectors", Red, "SDO: no detectors were evaluated: the memory SDO would deploy holds none, so silence here proves nothing; author health detectors or traffic workloads")
+		if cfg.Break != nil {
+			report.add(ItemBreak, "all", Red, "SDO: not run: no detectors were evaluated")
+		}
+		return report, nil
+	}
+	if cfg.Break != nil {
+		if quietRed {
+			report.add(ItemBreak, "all", Note, "not run: the healthy application already raises, so a raise under a break would prove nothing")
+		} else {
+			start := cfg.Now()
+			runBreak(ctx, cfg, &report)
+			report.Durations = append(report.Durations, ItemDuration{Item: ItemBreak, Seconds: cfg.Now().Sub(start).Seconds()})
+		}
+	}
+	return report, nil
+}
+
+func runMetrics(ctx context.Context, cfg Config, report *Report) error {
 	add := func(item, subject, status, detail string) {
 		report.Results = append(report.Results, Result{Item: item, Subject: subject, Status: status, Detail: detail})
 	}
@@ -249,19 +335,19 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	for _, st := range ops {
 		series, err := query(st.entry.RequestCount(st.route, st.method))
 		if err != nil {
-			return Report{}, err
+			return err
 		}
 		st.before, _ = scalar(series)
 	}
 	for _, es := range entries {
 		all, err := query(es.entry.All())
 		if err != nil {
-			return Report{}, err
+			return err
 		}
 		es.allBefore, _ = scalar(all)
 		routes, err := query(es.entry.ByRoute())
 		if err != nil {
-			return Report{}, err
+			return err
 		}
 		es.routesBefore = byLabel(routes, es.entry.Labels.Route)
 	}
@@ -305,19 +391,19 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	}
 	for waited := time.Duration(0); ; waited += cfg.Poll {
 		if err := read(); err != nil {
-			return Report{}, err
+			return err
 		}
 		if settled() || waited >= cfg.Settle {
 			break
 		}
 		if err := cfg.Wait(ctx, cfg.Poll); err != nil {
-			return Report{}, err
+			return err
 		}
 	}
 	for _, es := range entries {
 		routes, err := query(es.entry.ByRoute())
 		if err != nil {
-			return Report{}, err
+			return err
 		}
 		es.routesAfter = byLabel(routes, es.entry.Labels.Route)
 	}
@@ -325,7 +411,7 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		if st.entry.Labels.Status != "" {
 			series, err := query(st.entry.ByStatus(st.route, st.method))
 			if err != nil {
-				return Report{}, err
+				return err
 			}
 			st.statusSeries = series
 			_, st.errorsErr = cfg.Prom.Query(ctx, st.entry.ErrorCount(st.route, st.method))
@@ -413,12 +499,11 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 			continue
 		}
 		es := entries[name]
-		if !(es.allAfter-es.allBefore < float64(es.sent)) && !hasRed(report, ItemRoutes, name) {
+		if !(es.allAfter-es.allBefore < float64(es.sent)) && !hasRed(*report, ItemRoutes, name) {
 			result(ItemRoutes, name, Green, fmt.Sprintf("entry metric rose by %.0f for %d sent; every moved route is declared", es.allAfter-es.allBefore, es.sent))
 		}
 	}
-	runLive(ctx, cfg, &report)
-	return report, nil
+	return nil
 }
 
 func hasRed(r Report, item, subject string) bool {

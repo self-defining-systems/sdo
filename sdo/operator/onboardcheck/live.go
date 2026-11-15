@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"sdo.dev/operator/memory/appmap"
@@ -76,7 +77,25 @@ type Verdict struct {
 	// ("id: reason"); one still pending when the quiet window ends has not
 	// shown the application quiet.
 	Pending []string
+	// Progress is how far each detector that has judged got, when the
+	// evaluator can say. Without it the quiet window runs to its full length.
+	Progress []DetectorProgress
 }
+
+// DetectorProgress is one detector's judging so far: its cadence, how long
+// after a condition resolves a fresh judgement may still report it (Horizon),
+// how often it judged and how often at least a Horizon after its first.
+type DetectorProgress struct {
+	DetectorID  string
+	Interval    time.Duration
+	Horizon     time.Duration
+	Evaluations int
+	PastHorizon int
+}
+
+// DefaultQuietEvaluations is how many times each detector must have judged the
+// healthy application past its own horizon for the quiet window to end.
+const DefaultQuietEvaluations = 3
 
 // Evaluator evaluates the memory's detectors, test-request scenarios and the
 // request-metrics detector once against the live application.
@@ -86,9 +105,14 @@ type Evaluator interface {
 
 // QuietConfig is the quiet-when-healthy item.
 type QuietConfig struct {
-	Eval     Evaluator
+	Eval Evaluator
+	// Window is the longest the item observes. With progress from the evaluator
+	// the item ends as soon as every detector has judged Evaluations times past
+	// its own horizon (a quick run: once each has judged at all).
 	Window   time.Duration
 	Interval time.Duration
+	// Evaluations is that count; zero means DefaultQuietEvaluations.
+	Evaluations int
 }
 
 // Breaker breaks and restores one component through Kubernetes.
@@ -126,41 +150,13 @@ func (c Config) validateLive() error {
 	if c.Now == nil {
 		return fmt.Errorf("onboardcheck: Now is required for the live items")
 	}
-	if q := c.Quiet; q != nil && (q.Eval == nil || q.Window <= 0 || q.Interval <= 0) {
+	if q := c.Quiet; q != nil && (q.Eval == nil || q.Window <= 0 || q.Interval <= 0 || q.Evaluations < 0) {
 		return fmt.Errorf("onboardcheck: quiet-when-healthy needs an evaluator, a window and an interval")
 	}
 	if b := c.Break; b != nil && (b.Eval == nil || b.Breaker == nil || b.Bound <= 0 || b.Interval <= 0) {
 		return fmt.Errorf("onboardcheck: fails-under-break needs an evaluator, a breaker, a bound and an interval")
 	}
 	return nil
-}
-
-// runLive runs the live items after the metric items and appends their results.
-func runLive(ctx context.Context, cfg Config, report *Report) {
-	timed := func(item string, f func()) {
-		start := cfg.Now()
-		f()
-		report.Durations = append(report.Durations, ItemDuration{Item: item, Seconds: cfg.Now().Sub(start).Seconds()})
-	}
-	if cfg.NoDetectors {
-		report.add(ItemQuiet, "detectors", Red, "SDO: no detectors were evaluated: the memory SDO would deploy holds none, so silence here proves nothing; author health detectors or traffic workloads")
-		if cfg.Break != nil {
-			report.add(ItemBreak, "all", Red, "SDO: not run: no detectors were evaluated")
-		}
-		return
-	}
-	quietRed := false
-	if cfg.Quiet != nil {
-		timed(ItemQuiet, func() { quietRed = runQuiet(ctx, cfg, report) })
-	}
-	if cfg.Break == nil {
-		return
-	}
-	if quietRed {
-		report.add(ItemBreak, "all", Note, "not run: the healthy application already raises, so a raise under a break would prove nothing")
-		return
-	}
-	timed(ItemBreak, func() { runBreak(ctx, cfg, report) })
 }
 
 func (r *Report) add(item, subject, status, detail string) {
@@ -178,6 +174,17 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 	var stillPending []string
 	unavailable := ""
 	pendingRed := false
+	need := q.Evaluations
+	if need < 1 {
+		need = DefaultQuietEvaluations
+	}
+	if cfg.Quick {
+		need = 1
+	}
+	var progress []DetectorProgress
+	announced := false
+	var lastSaid string
+	var lastSaidAt time.Duration
 	for {
 		verdict, err := q.Eval.Evaluate(ctx)
 		if err != nil {
@@ -186,6 +193,11 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 		}
 		samples++
 		skipped, stillPending = verdict.Skipped, verdict.Pending
+		progress = verdict.Progress
+		if len(progress) > 0 && !announced {
+			announced = true
+			cfg.say("quiet: %s", derivedQuietWindow(progress, need, q.Window, cfg.Quick))
+		}
 		elapsed := cfg.Now().Sub(start).Round(time.Second)
 		if len(verdict.Raised) > 0 {
 			for _, r := range verdict.Raised {
@@ -202,11 +214,22 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 		} else if verdict.Status == "pending" {
 			pending++
 		}
+		if len(verdict.Unavailable) == 0 && verdict.Status != "unavailable" && len(verdict.Pending) == 0 && judgedEnough(progress, need, cfg.Quick) {
+			break
+		}
+		if summary := progressSummary(progress, need, cfg.Quick); summary != lastSaid || elapsed-lastSaidAt >= 30*time.Second {
+			cfg.say("quiet: sample %d at %s; %s", samples, elapsed, summary)
+			lastSaid, lastSaidAt = summary, elapsed
+		}
 		remaining := end.Sub(cfg.Now())
 		if remaining <= 0 {
 			break
 		}
-		if err := cfg.Wait(ctx, min(q.Interval, remaining)); err != nil {
+		wait := q.Interval
+		if len(progress) > 0 {
+			wait = min(wait, 5*time.Second)
+		}
+		if err := cfg.Wait(ctx, min(wait, remaining)); err != nil {
 			report.add(ItemQuiet, "detectors", Red, "interrupted: "+err.Error())
 			return true
 		}
@@ -215,6 +238,20 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 		report.add(ItemQuiet, "skipped", Note, "not judged from here: "+strings.Join(skipped, "; "))
 	}
 	detail := fmt.Sprintf("no detector raised in %d evaluations over %s", samples, cfg.Now().Sub(start).Round(time.Second))
+	if len(progress) > 0 {
+		detail += "; " + progressSummary(progress, need, cfg.Quick)
+	}
+	insufficient := false
+	for _, p := range progress {
+		if !judgedEnough([]DetectorProgress{p}, need, cfg.Quick) {
+			report.add(ItemQuiet, p.DetectorID, Red, fmt.Sprintf("judged %d times (%d past its %s horizon) in the %s window; needs %d past the horizon: raise --quiet-window", p.Evaluations, p.PastHorizon, p.Horizon.Round(time.Second), q.Window, need))
+			insufficient = true
+		}
+	}
+	if cfg.Quick && len(progress) == 0 && len(stillPending) == 0 && unavailable == "" {
+		report.add(ItemQuiet, "detectors", Red, "no detector was evaluated")
+		return false
+	}
 	for _, p := range stillPending {
 		id, reason, _ := strings.Cut(p, ": ")
 		report.add(ItemQuiet, id, Red, "still pending when the window ended, so it never judged the healthy application: "+clip(reason, 400))
@@ -224,7 +261,7 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 		report.add(ItemQuiet, "detectors", Red, unavailable+"; "+detail+" among the others")
 		return false
 	}
-	if pendingRed {
+	if pendingRed || insufficient {
 		return false
 	}
 	if pending > 0 {
@@ -232,6 +269,63 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 	}
 	report.add(ItemQuiet, "detectors", Green, detail)
 	return false
+}
+
+// judgedEnough reports whether every detector has judged need times past its own
+// horizon (a quick run: need times at all). No progress means nothing is known.
+func judgedEnough(progress []DetectorProgress, need int, quick bool) bool {
+	if len(progress) == 0 {
+		return false
+	}
+	for _, p := range progress {
+		got := p.PastHorizon
+		if quick {
+			got = p.Evaluations
+		}
+		if got < need {
+			return false
+		}
+	}
+	return true
+}
+
+func progressSummary(progress []DetectorProgress, need int, quick bool) string {
+	done := 0
+	for _, p := range progress {
+		if judgedEnough([]DetectorProgress{p}, need, quick) {
+			done++
+		}
+	}
+	what := "past its horizon"
+	if quick {
+		what = "at all"
+	}
+	return fmt.Sprintf("%d of %d detectors judged %d times %s", done, len(progress), need, what)
+}
+
+// derivedQuietWindow says how long the item expects to observe: the longest
+// horizon plus the extra evaluations at that detector's cadence, capped by the
+// window.
+func derivedQuietWindow(progress []DetectorProgress, need int, window time.Duration, quick bool) string {
+	var longest time.Duration
+	var by string
+	for _, p := range progress {
+		d := p.Horizon + time.Duration(need-1)*p.Interval
+		if quick {
+			d = 0
+		}
+		if d > longest || by == "" {
+			longest, by = d, p.DetectorID
+		}
+	}
+	if quick {
+		return fmt.Sprintf("quick run, ends once each of %d detectors has judged (at most %s)", len(progress), window)
+	}
+	text := fmt.Sprintf("derived window %s: %d judgements past the horizon of %d detectors, longest %s", longest.Round(time.Second), need, len(progress), by)
+	if longest > window {
+		text += fmt.Sprintf(" (more than the %s cap; detectors that fall short are red)", window)
+	}
+	return text
 }
 
 // named reports whether text mentions name as a whole word.
@@ -284,35 +378,50 @@ func runBreak(ctx context.Context, cfg Config, report *Report) {
 	baseline := map[string]bool{}
 	haveBaseline := false
 	stopped := false
-	for _, name := range order {
-		c, ok := byName[name]
-		out := &breakOutcome{names: []string{name, c.Workload}, opHit: map[string]*foundRaise{}}
-		outcomes[name] = out
-		switch {
-		case stopped:
-			out.err = "not tried: an earlier restore was uncertain"
-			continue
-		case !ok:
-			out.err = "not a declared component"
-			continue
-		case c.Workload == "":
-			report.add(ItemBreak, name, Note, "declares no workload, so it cannot be broken through Kubernetes")
-			out.how = "no workload"
+	waves := BreakWaves(cfg.Map)
+	cfg.say("fails-under-break: %d components in %d waves (components sharing an operation are never broken together)", len(order), len(waves))
+	for i, names := range waves {
+		var members []waveMember
+		for _, name := range names {
+			c, ok := byName[name]
+			out := &breakOutcome{names: []string{name, c.Workload}, opHit: map[string]*foundRaise{}}
+			outcomes[name] = out
+			switch {
+			case stopped:
+				out.err = "not tried: an earlier restore was uncertain"
+			case !ok:
+				out.err = "not a declared component"
+			case c.Workload == "":
+				report.add(ItemBreak, name, Note, "declares no workload, so it cannot be broken through Kubernetes")
+				out.how = "no workload"
+			default:
+				members = append(members, waveMember{c: c, ops: opsOf[name], out: out})
+			}
+		}
+		if len(members) == 0 {
 			continue
 		}
 		if !haveBaseline {
 			v, err := b.Eval.Evaluate(ctx)
 			if err != nil {
-				out.err = "could not evaluate before the break: " + err.Error()
+				for _, m := range members {
+					m.out.err = "could not evaluate before the break: " + err.Error()
+				}
 				stopped = true
 				continue
 			}
 			haveBaseline = true
 			baseline = fingerprints(v.Raised)
 		}
+		cfg.say("fails-under-break: wave %d of %d: breaking %s", i+1, len(waves), strings.Join(names, ", "))
 		var restoreFailed bool
-		baseline, restoreFailed = breakOne(ctx, cfg, c, opsOf[name], baseline, out)
-		if restoreFailed || out.err != "" && strings.HasPrefix(out.err, "evaluation failed") {
+		baseline, restoreFailed = breakWave(ctx, cfg, members, baseline, i < len(waves)-1)
+		for _, m := range members {
+			if strings.HasPrefix(m.out.err, "evaluation failed") {
+				restoreFailed = true
+			}
+		}
+		if restoreFailed {
 			stopped = true
 		}
 	}
@@ -436,37 +545,132 @@ func opDetail(m appmap.Map, op appmap.Operation, outcomes map[string]*breakOutco
 	return detail + ")"
 }
 
-// breakOne breaks c, waits up to the bound for a raise that names it or one
-// of its operations, and always restores it. It returns the baseline for the
-// next component and whether the restore was uncertain.
-func breakOne(ctx context.Context, cfg Config, c appmap.Component, ops []appmap.Operation, baseline map[string]bool, out *breakOutcome) (next map[string]bool, restoreFailed bool) {
-	b := cfg.Break
-	out.how = b.Breaker.Mode()
-	next = baseline
-	if err := b.Breaker.Break(ctx, c); err != nil {
-		// A failed break may have changed the cluster; restore regardless.
-		if rerr := b.Breaker.Restore(context.WithoutCancel(ctx), c); rerr != nil {
-			out.err = fmt.Sprintf("break failed (%v) and restore is uncertain: %v", err, rerr)
-			return next, true
+// BreakWaves groups the components on operation paths into waves that are
+// broken together: components in one wave share no operation, so a raise that
+// names an operation still names one broken component. Order within and across
+// waves follows first appearance in the operations.
+func BreakWaves(m appmap.Map) [][]string {
+	opsOf := map[string]map[string]bool{}
+	var order []string
+	for _, op := range m.Operations {
+		for _, name := range op.Path {
+			if opsOf[name] == nil {
+				opsOf[name] = map[string]bool{}
+				order = append(order, name)
+			}
+			opsOf[name][op.ID] = true
 		}
-		out.err = "could not break: " + err.Error()
-		return next, false
 	}
-	defer func() {
-		if rerr := b.Breaker.Restore(context.WithoutCancel(ctx), c); rerr != nil {
-			out.err = fmt.Sprintf("restore of %s is uncertain, stopping: %v", c.Name, rerr)
+	var waves [][]string
+	var used []map[string]bool
+	for _, name := range order {
+		placed := false
+		for i := range waves {
+			clash := false
+			for id := range opsOf[name] {
+				if used[i][id] {
+					clash = true
+					break
+				}
+			}
+			if clash {
+				continue
+			}
+			waves[i] = append(waves[i], name)
+			for id := range opsOf[name] {
+				used[i][id] = true
+			}
+			placed = true
+			break
+		}
+		if !placed {
+			waves = append(waves, []string{name})
+			ids := map[string]bool{}
+			for id := range opsOf[name] {
+				ids[id] = true
+			}
+			used = append(used, ids)
+		}
+	}
+	return waves
+}
+
+type waveMember struct {
+	c   appmap.Component
+	ops []appmap.Operation
+	out *breakOutcome
+}
+
+// inParallel runs f for every member at once and waits for all.
+func inParallel(members []waveMember, f func(waveMember)) {
+	var wg sync.WaitGroup
+	for _, m := range members {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			f(m)
+		}()
+	}
+	wg.Wait()
+}
+
+// breakWave breaks every member at once, waits up to the bound for each to be
+// named by a raise (the component, or one of its operations or their test
+// scenarios), and always restores them all. It returns the baseline for the
+// next wave and whether a restore was uncertain.
+func breakWave(ctx context.Context, cfg Config, members []waveMember, baseline map[string]bool, more bool) (next map[string]bool, restoreFailed bool) {
+	b := cfg.Break
+	next = baseline
+	var broken []waveMember
+	var mu sync.Mutex
+	inParallel(members, func(m waveMember) {
+		m.out.how = b.Breaker.Mode()
+		err := b.Breaker.Break(ctx, m.c)
+		if err == nil {
+			mu.Lock()
+			broken = append(broken, m)
+			mu.Unlock()
+			return
+		}
+		// A failed break may have changed the cluster; restore regardless.
+		mu.Lock()
+		defer mu.Unlock()
+		if rerr := b.Breaker.Restore(context.WithoutCancel(ctx), m.c); rerr != nil {
+			m.out.err = fmt.Sprintf("break failed (%v) and restore is uncertain: %v", err, rerr)
 			restoreFailed = true
 			return
 		}
-		next = waitClear(ctx, cfg, next)
+		m.out.err = "could not break: " + err.Error()
+	})
+	waveStart := cfg.Now()
+	defer func() {
+		inParallel(broken, func(m waveMember) {
+			if rerr := b.Breaker.Restore(context.WithoutCancel(ctx), m.c); rerr != nil {
+				mu.Lock()
+				m.out.err = fmt.Sprintf("restore of %s is uncertain, stopping: %v", m.c.Name, rerr)
+				restoreFailed = true
+				mu.Unlock()
+			}
+		})
+		cfg.say("fails-under-break: restored after %s", cfg.Now().Sub(waveStart).Round(time.Second))
+		// Only a later wave needs the standing raises cleared (its baseline).
+		if !restoreFailed && more {
+			next = waitClear(ctx, cfg, next)
+			cfg.say("fails-under-break: detectors settled after %s", cfg.Now().Sub(waveStart).Round(time.Second))
+		}
 	}()
+	if len(broken) == 0 {
+		return next, restoreFailed
+	}
 	start := cfg.Now()
 	seen := map[string]bool{}
 	for {
 		v, err := b.Eval.Evaluate(ctx)
 		if err != nil {
-			out.err = "evaluation failed while broken: " + err.Error()
-			return next, false
+			for _, m := range broken {
+				m.out.err = "evaluation failed while broken: " + err.Error()
+			}
+			return next, restoreFailed
 		}
 		after := cfg.Now().Sub(start)
 		for _, r := range v.Raised {
@@ -475,33 +679,40 @@ func breakOne(ctx context.Context, cfg Config, c appmap.Component, ops []appmap.
 			}
 			seen[r.key()] = true
 			f := foundRaise{raise: r, after: after}
-			out.found = append(out.found, f)
 			text := r.text()
-			mine := named(text, c.Name) || named(text, c.Workload)
-			for _, op := range ops {
-				if namesOperation(text, cfg.Map, op) {
-					mine = true
-					if out.opHit[op.ID] == nil {
-						out.opHit[op.ID] = &f
+			for _, m := range broken {
+				m.out.found = append(m.out.found, f)
+				mine := named(text, m.c.Name) || named(text, m.c.Workload)
+				for _, op := range m.ops {
+					if namesOperation(text, cfg.Map, op) {
+						mine = true
+						if m.out.opHit[op.ID] == nil {
+							m.out.opHit[op.ID] = &f
+						}
 					}
 				}
-			}
-			if mine && out.hit == nil {
-				out.hit = &f
+				if mine && m.out.hit == nil {
+					m.out.hit = &f
+				}
 			}
 		}
 		// A generic detector names the component within seconds; the tests of
 		// its operations need their own window, so wait for those up to the bound.
 		tested := true
-		for _, op := range ops {
-			tested = tested && out.opHit[op.ID] != nil
+		for _, m := range broken {
+			for _, op := range m.ops {
+				tested = tested && m.out.opHit[op.ID] != nil
+			}
 		}
 		if tested || after >= b.Bound {
-			return next, false
+			cfg.say("fails-under-break: wave judged after %s (bound %s, every operation noticed: %v)", after.Round(time.Second), b.Bound, tested)
+			return next, restoreFailed
 		}
 		if err := cfg.Wait(ctx, b.Interval); err != nil {
-			out.err = "interrupted: " + err.Error()
-			return next, false
+			for _, m := range broken {
+				m.out.err = "interrupted: " + err.Error()
+			}
+			return next, restoreFailed
 		}
 	}
 }

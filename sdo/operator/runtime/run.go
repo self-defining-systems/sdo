@@ -2134,7 +2134,7 @@ func evaluateOnce(
 				break
 			}
 		}
-		return evaluation.Verdict{Status: status, Findings: findings, Unavailable: unavailableNow, DetectorStates: unconfirmed, ExistingRecordsExercised: exercised, StartedAt: now.UTC()}, nil
+		return evaluation.Verdict{Status: status, Findings: findings, Unavailable: unavailableNow, DetectorStates: unconfirmed, Progress: progressWhenWatching(watching, controller), ExistingRecordsExercised: exercised, StartedAt: now.UTC()}, nil
 	}
 	if *watch > 0 {
 		// The provider warmed above; each pass judges the live application
@@ -2298,4 +2298,11 @@ func hostProtectedNamespace(control, application string) string {
 		return ""
 	}
 	return control
+}
+
+func progressWhenWatching(watching bool, controller *Controller) []evaluation.DetectorProgress {
+	if !watching {
+		return nil
+	}
+	return controller.DetectorProgress()
 }
