@@ -988,3 +988,30 @@ def test_dev_mount_in_pull_mode_projects_over_the_evidence_claim_not_a_node_path
         "SDO_DEV_MOUNT_PATH": ".dev",
         "SDO_DEV_MOUNT_CLAIM": "sdo-evidence",
     }
+
+
+def _incident_state(detected: str, **extra: Any) -> dict[str, Any]:
+    return {
+        "incident_open": True,
+        "incident_request": {"incident_id": "inc-2", "detected_at": detected},
+        **extra,
+    }
+
+
+def test_another_incident_is_ignored_when_the_cells_own_is_known() -> None:
+    from benchmarks.fuzzops.hooks import OWN_DETECTED_ENV, other_incident
+
+    env = {OWN_DETECTED_ENV: "2026-01-01T12:00:02.4Z"}
+    found = other_incident(_incident_state("2026-01-01T12:03:49.1Z"), env)
+    assert found is not None
+    incident, rest = found
+    assert incident == "inc-2"
+    assert idle_verdict(rest, NOW, True, NOW) == ""
+    # The cell's own incident still holds the settle, and so does unfinished closing work of the cell.
+    assert other_incident(_incident_state("2026-01-01T12:00:02.4Z"), env) is None
+    assert other_incident(_incident_state("2026-01-01T12:03:49.1Z"), {}) is None
+    _, pending = other_incident(_incident_state("2026-01-01T12:03:49.1Z", pending_closure={"request": {}}), env) or (
+        "",
+        {},
+    )
+    assert idle_verdict(pending, NOW, True, NOW) == "busy: closure pending"
