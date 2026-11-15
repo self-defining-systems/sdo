@@ -431,3 +431,21 @@ func TestQuietWhenHealthyIsRedForADetectorThatNeverJudged(t *testing.T) {
 		t.Fatalf("the window must still be sampled in full: %s", elapsed)
 	}
 }
+
+// A memory that holds no detector cannot be judged quiet or to fail under a
+// break: silence is SDO's gap, said so, never a pass.
+func TestLiveItemsAreRedWhenNoDetectorWasEvaluated(t *testing.T) {
+	w := newWorld()
+	cfg := liveConfig(t, w, true, true)
+	cfg.NoDetectors = true
+	r, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status(r, ItemQuiet, "detectors") != Red || !strings.Contains(r.Text(), "SDO: no detectors were evaluated") {
+		t.Fatalf("quiet must be red when nothing was evaluated:\n%s", r.Text())
+	}
+	if status(r, ItemBreak, "all") != Red || w.evals != 0 {
+		t.Fatalf("break must not run or pass without detectors (evaluations %d):\n%s", w.evals, r.Text())
+	}
+}

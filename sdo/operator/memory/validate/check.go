@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/internal/memoryio"
 	"sdo.dev/operator/memory/layout"
 )
@@ -59,11 +58,10 @@ func Check(ctx context.Context, request Request, compile CompileRunner) ([]Diagn
 		return nil, err
 	}
 	if len(diagnostics) == 0 && request.Actor == HealthJudge && request.Phase == InitialPhase {
-		sources, err := EffectiveTelemetrySources(request.Root, request.Telemetry, request.TelemetryRegistry)
-		if err != nil {
+		if _, err := EffectiveTelemetrySources(request.Root, request.Telemetry, request.TelemetryRegistry); err != nil {
 			return []Diagnostic{{Rule: RuleTelemetrySchema, Path: layout.TelemetryDir, Message: err.Error(), Hint: "fix the telemetry bindings so the effective sources can be computed"}}, nil
 		}
-		if err := memory.PrepareHealthWith(request.Root, memory.HealthOptions{AlertSources: HasAlertSource(sources), RequestMetrics: HasRangeSource(sources)}); err != nil {
+		if err := PrepareHealthTree(request.Root, request.Telemetry, request.TelemetryRegistry); err != nil {
 			return []Diagnostic{{Rule: RuleGenericHealth, Path: layout.DiagnosticsDir, Message: err.Error(), Hint: "preserve Go-owned generic detectors and valid final workload files"}}, nil
 		}
 		// Validate the prepared tree too; publication gates and compilation

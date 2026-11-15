@@ -134,6 +134,16 @@ func ParseWorkloadJSON(data []byte) (Workload, error)
     ParseWorkloadJSON strictly decodes a workload, applies defaults, and
     validates it on its own; ValidateAgainst checks it against a catalog.
 
+func (w Workload) DetectionHorizon() time.Duration
+    DetectionHorizon is the longest time a health-probe workload can take,
+    from the moment a component its scenarios use stops answering, to raise a
+    failing scenario: the requests that began before the break must time out,
+    the SLO window must hold enough failed samples (at the scenario's arrival
+    rate) for the verdict, the failures must span the hold, and the detector
+    must confirm the violation on consecutive evaluations. A check that waits
+    for a raise must wait at least this long, or a probe that works reads as one
+    that does not. It is zero for a workload that is not a health probe.
+
 func (w Workload) KnownBrokenScenario(id string) *KnownBroken
     KnownBrokenScenario returns the KnownBroken declaration of scenario id,
     or nil when the scenario gates health.

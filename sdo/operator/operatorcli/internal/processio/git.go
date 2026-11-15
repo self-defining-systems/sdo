@@ -51,3 +51,13 @@ func Dirty(ctx context.Context, root string) bool {
 	output, err := exec.CommandContext(ctx, "git", "-C", root, "status", "--porcelain", "--untracked-files=all").Output()
 	return err != nil || len(strings.TrimSpace(string(output))) != 0
 }
+
+// Git runs git with args and returns its combined output; a failure carries it.
+func Git(ctx context.Context, args ...string) (string, error) {
+	output, err := exec.CommandContext(ctx, "git", args...).CombinedOutput()
+	text := strings.TrimSpace(string(output))
+	if err != nil {
+		return text, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, text)
+	}
+	return text, nil
+}
