@@ -243,6 +243,23 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "prepare-tree" {
+		// install-existing's flags; only the tree preparation runs, on the --repository clone (hooks use it for pool lanes)
+		args := append([]string{"install-existing"}, os.Args[2:]...)
+		config, err := operatorcli.ParseInstallExistingLaunch(args)
+		if err == nil {
+			var head string
+			head, err = operatorcli.PrepareInstallTree(context.Background(), config)
+			if err == nil {
+				err = json.NewEncoder(os.Stdout).Encode(map[string]string{"head": head})
+			}
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "inspect-existing" {
 		config, err := operatorcli.ParseInspectExistingLaunch(os.Args[1:])
 		if err == nil {
