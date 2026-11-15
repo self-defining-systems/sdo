@@ -19,13 +19,16 @@ A reasoning loop, not a procedure. Move between the parts as the evidence asks.
   finding on a failing path stays an open explanation until checked.
 - **Hypothesize.** Hold two to four explanations, each a node and a mechanism, from different layers and path
   positions (entry, dependency, data holder). An unexplained observation is a new candidate.
+  Ask whether the data or state the failing operation needs is right (records, cache entries, settings, roles),
+  not only whether components are up.
 - **Discriminate.** Pick the check whose outcome differs most between them, ideally one that could refute.
   After the first look, name your lead explanation and the runner-up (an unexplained finding on the failing path is a
   first-choice runner-up). Unless a failing response or recorded change already states the cause, launch a read-only sub-agent for the runner-up (one per explanation still open, only if
   its answer could change your next step; they read `sdo-investigator/SKILL.md`) before you act on the lead, and
   keep working. Launch also during a slow action, and when a change left the failure as is or an
   observation is unexplained. You alone change things. Brief each with the symptom users see failing and one explanation; ask for evidence, or
-  "inconclusive" if it cannot reproduce. Weigh the reports; do not return while any are pending. Keep their
+  "inconclusive" if it cannot reproduce. Weigh the reports; never return a result while your own
+  sub-agents are still working: wait for them or stop them first. Keep their
   "How to diagnose" notes for closing. SDO may start investigators: read `sdo investigations`, weigh their
   reports, above all "observations that don't fit".
 - **Update.** Drop what is refuted. Stop when one explanation covers the failing, the passing and the timing.
