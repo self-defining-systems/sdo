@@ -20,8 +20,9 @@ type Result struct {
 }
 
 // Derive classifies a controller closure by what the controller observed: the
-// Job's own status and whether the health detectors cleared.
-func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, repairCommit, backend, model string) (Result, error) {
+// Job's own status and whether the health detectors cleared. recorded is agent.recording: with it off the agent's
+// own cluster writes are unknown, so the changes it reports stand in for them (see classify).
+func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, repairCommit, backend, model string, recorded bool) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
@@ -61,7 +62,7 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 			return Result{}, errors.New("outcome timestamps must be chronological")
 		}
 	}
-	classification := classify(closure, repairCommit, healthVerified)
+	classification := classify(closure, repairCommit, healthVerified, recorded)
 	request, result := closure.GetRequest(), closure.GetResult()
 
 	usage := &contractsv1alpha1.UsageMetrics{}
@@ -131,6 +132,7 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 		PriorStages:            cloneMessages(request.GetPriorStages()), SourceCheckNotes: append([]string(nil), closure.GetSourceCheckNotes()...),
 		RecoveryVerification: cloneMessage(closure.GetRecoveryVerification()),
 		AgentFindings:        cloneMessages(result.GetFindings()),
+		AgentChanges:         cloneMessages(result.GetAgentChanges()),
 	}
 	for _, label := range CheckedDriftAssessments(request.GetDriftEvents(), result.GetDriftEvents()) {
 		for i, event := range record.DriftEvents {
@@ -179,7 +181,7 @@ func difference(left, right []string) []string {
 // (unconfirmed), health cleared with no repair mutation (cleared_without_action),
 // or anything else that cleared (success). A closure only freezes verified or
 // failed, so an escalated one closed when its opening alerts cleared.
-func classify(closure *contractsv1alpha1.IncidentClosure, repairCommit string, healthVerified bool) string {
+func classify(closure *contractsv1alpha1.IncidentClosure, repairCommit string, healthVerified, recorded bool) string {
 	result := closure.GetResult()
 	if closure.GetStatePersistenceFailure() != nil || closure.GetRequest() == nil || closure.GetDispatchError() != "" || result == nil {
 		return outcomeclass.Failed
@@ -202,9 +204,32 @@ func classify(closure *contractsv1alpha1.IncidentClosure, repairCommit string, h
 				return outcomeclass.Success
 			}
 		}
+		if !recorded && agentChangeBeforeClear(closure) {
+			return outcomeclass.Success
+		}
 		return outcomeclass.ClearedWithoutAction
 	}
 	return outcomeclass.Success
+}
+
+// agentChangeBeforeClear reports whether the agent reported a change that took effect before the alert set cleared
+// for good. With the recording off the agent's own cluster writes are unknown, so its reported changes stand in for
+// them: a clear the agent did not precede with a change (the harness undoing the fault, a transient that passed) is
+// not its fix. A change time after the verified clear, or after the responder ended, is not a cause of the clear.
+func agentChangeBeforeClear(closure *contractsv1alpha1.IncidentClosure) bool {
+	cleared := closure.GetHealthClearedAt()
+	if cleared == nil || !cleared.IsValid() {
+		cleared = closure.GetVerifiedAt()
+	}
+	if cleared == nil || !cleared.IsValid() {
+		return false
+	}
+	for _, change := range closure.GetResult().GetAgentChanges() {
+		if at := change.GetAt(); at != nil && at.IsValid() && !at.AsTime().After(cleared.AsTime()) && !at.AsTime().Before(closure.GetDetectedAt().AsTime()) {
+			return true
+		}
+	}
+	return false
 }
 
 func cloneMessage[T proto.Message](value T) T {

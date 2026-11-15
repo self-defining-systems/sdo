@@ -40,3 +40,4 @@ A reasoning loop, not a procedure. Move between the parts as the evidence asks.
 - **Record findings.** The result's `findings` are required, also when you give up: what you saw and where, what
   you ruled out and why (and what you did not check), never the probable cause. A later incident on the same
   symptoms reads them as unverified notes.
+- **Record changes.** `agent_changes`: each change you made, what, where, and when (RFC 3339); empty if none.

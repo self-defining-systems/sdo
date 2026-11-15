@@ -45,7 +45,7 @@ func TestEscalatedClosureIsEscalatedNotSuccess(t *testing.T) {
 			closure := outOfReachClosure(outcomeclass.ReachOutOfReach, true)
 			closure.EscalatedAt = timestamppb.New(time.Date(2026, 11, 10, 12, 0, 4, 0, time.UTC))
 			mutate(closure)
-			derived, err := Derive(context.Background(), closure, "", "codex", "model")
+			derived, err := Derive(context.Background(), closure, "", "codex", "model", true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -64,7 +64,7 @@ func TestDispatchFailureStaysFailedEvenWhenEscalated(t *testing.T) {
 	closure.EscalatedAt = timestamppb.New(time.Date(2026, 11, 10, 12, 0, 4, 0, time.UTC))
 	dispatchError := "responder Job failed"
 	closure.DispatchError = &dispatchError
-	derived, err := Derive(context.Background(), closure, "", "codex", "model")
+	derived, err := Derive(context.Background(), closure, "", "codex", "model", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestEscalationNeedsEscalatedAtAndNeverOverridesVerifiedHealth(t *testing.T)
 		"out of reach, recovered":     {outcomeclass.ReachOutOfReach, true, outcomeclass.ClearedWithoutAction},
 	} {
 		t.Run(name, func(t *testing.T) {
-			derived, err := Derive(context.Background(), outOfReachClosure(tc.reach, tc.healthy), "", "codex", "model")
+			derived, err := Derive(context.Background(), outOfReachClosure(tc.reach, tc.healthy), "", "codex", "model", true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -102,12 +102,47 @@ func TestAgentFindingsAreCopiedIntoTheOutcomeForAnyStatus(t *testing.T) {
 	closure := outOfReachClosure(outcomeclass.ReachOutOfReach, false)
 	closure.Result.Status = "failed"
 	closure.Result.Findings = []*contracts.IncidentFinding{{Kind: "ruled_out", Statement: "cache", SeenIn: "keys", Verdict: "refuted"}}
-	derived, err := Derive(context.Background(), closure, "", "codex", "model")
+	derived, err := Derive(context.Background(), closure, "", "codex", "model", true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := derived.Record.GetAgentFindings()
 	if len(got) != 1 || got[0].GetStatement() != "cache" || derived.Record.GetClassification() != outcomeclass.Failed {
 		t.Fatalf("findings = %v class = %q", got, derived.Record.GetClassification())
+	}
+}
+
+// With the recording off, the agent's reported changes stand in for its unknown writes: success needs one that took
+// effect after detection and before the alerts cleared. With the recording on they are ignored.
+func TestAgentReportedChangesDecideSuccessOnlyWithTheRecordingOff(t *testing.T) {
+	at := func(seconds int) *timestamppb.Timestamp {
+		return timestamppb.New(time.Date(2026, 11, 10, 12, 0, seconds, 0, time.UTC))
+	}
+	for name, tc := range map[string]struct {
+		changes  []*contracts.AgentChange
+		recorded bool
+		want     string
+	}{
+		"change before the clear":       {changes: []*contracts.AgentChange{{Summary: "x", Target: "y", At: at(2)}}, want: outcomeclass.Success},
+		"no change":                     {want: outcomeclass.ClearedWithoutAction},
+		"change after the clear":        {changes: []*contracts.AgentChange{{Summary: "x", Target: "y", At: at(9)}}, want: outcomeclass.ClearedWithoutAction},
+		"change before the detection":   {changes: []*contracts.AgentChange{{Summary: "x", Target: "y", At: at(-5)}}, want: outcomeclass.ClearedWithoutAction},
+		"recording on ignores reported": {changes: []*contracts.AgentChange{{Summary: "x", Target: "y", At: at(2)}}, recorded: true, want: outcomeclass.ClearedWithoutAction},
+	} {
+		t.Run(name, func(t *testing.T) {
+			closure := outOfReachClosure(outcomeclass.ReachOutOfReach, true)
+			closure.HealthClearedAt = at(3)
+			closure.Result.AgentChanges = tc.changes
+			derived, err := Derive(context.Background(), closure, "", "codex", "model", tc.recorded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := derived.Record.GetClassification(); got != tc.want {
+				t.Fatalf("classification = %q, want %q", got, tc.want)
+			}
+			if len(derived.Record.GetAgentChanges()) != len(tc.changes) {
+				t.Fatalf("outcome agent_changes = %v", derived.Record.GetAgentChanges())
+			}
+		})
 	}
 }

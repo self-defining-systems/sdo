@@ -518,7 +518,7 @@ var gateRows = []gateRow{
 	{name: "upstream advance cannot change memory", kind: gateOwnership, actor: Upstream, phase: AdvancePhase, rules: []string{RuleOwnershipDenied}, path: layout.GoalFile,
 		edit: gateWrite(layout.GoalFile, "---\nschema_version: 1\nowner: human\n---\nNew goal\n")},
 	{name: "upkeep stamps the schema alone", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, edit: func(t *testing.T, r string) {
-		write(t, r, layout.SchemaVersionFile, "9\n")
+		write(t, r, layout.SchemaVersionFile, "10\n")
 		write(t, r, layout.DiagnosticsGoModFile, "module m\n")
 	}},
 	{name: "upkeep migration drops a retired Go-installed generic detector", kind: gateOwnership, actor: Upkeep, phase: InitialPhase,
@@ -527,7 +527,7 @@ var gateRows = []gateRow{
 			gateStrandedDetector(t, r, "synthetic-retired", "lifecycle-bootstrap")
 		},
 		edit: func(t *testing.T, r string) {
-			write(t, r, layout.SchemaVersionFile, "9\n")
+			write(t, r, layout.SchemaVersionFile, "10\n")
 			remove(t, r, layout.DetectorDir(layout.ClassHealth, "synthetic-retired"))
 		}},
 	{name: "upkeep migration cannot drop an authored detector", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, rules: []string{RuleUpkeepMigration},
@@ -536,7 +536,7 @@ var gateRows = []gateRow{
 			gateStrandedDetector(t, r, "synthetic-authored", "initial")
 		},
 		edit: func(t *testing.T, r string) {
-			write(t, r, layout.SchemaVersionFile, "9\n")
+			write(t, r, layout.SchemaVersionFile, "10\n")
 			remove(t, r, layout.DetectorDir(layout.ClassHealth, "synthetic-authored"))
 		}},
 	{name: "responder cannot edit the goal", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, path: layout.GoalFile,
