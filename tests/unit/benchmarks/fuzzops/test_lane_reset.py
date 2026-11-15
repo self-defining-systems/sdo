@@ -102,3 +102,31 @@ def test_reset_needs_idle_after_the_resume(tmp_path: Path) -> None:
     )
     with pytest.raises(hooks.HookError, match="incident open"):
         hooks.reset_lane(lane(tmp_path), steps)
+
+
+def _steps(rec: Recorder, state: dict[str, str]) -> hooks.ResetSteps:
+    return hooks.ResetSteps(
+        reset_incidents=lambda: rec("incidents"),
+        retire_standby=lambda: rec("retire"),
+        stop_controller=lambda: rec("stop"),
+        restore_repository=lambda head: rec(f"repo {head[:1]}"),
+        app_reset=lambda: (rec("app") or {"match": True}),
+        start_controller=lambda: rec("start"),
+        wait_standby=lambda: rec("standby"),
+        repository_state=lambda: {"head": "h" * 40, "status": "", "outcomes": ""},
+        controller_idle=lambda: "",
+    )
+
+
+def test_a_moved_idle_lane_repository_is_restored(tmp_path: Path) -> None:
+    rec = Recorder()
+    moved = {"head": "x" * 40, "status": "", "outcomes": "o"}
+    assert hooks.restore_moved_repository(lane(tmp_path), _steps(rec, moved), moved, lambda _m: None) is True
+    assert rec.calls == ["incidents", "retire", "stop", "repo h", "app", "start", "standby"]
+
+
+def test_an_unmoved_idle_lane_repository_is_left_alone(tmp_path: Path) -> None:
+    rec = Recorder()
+    same = {"head": "h" * 40, "status": "", "outcomes": ""}
+    assert hooks.restore_moved_repository(lane(tmp_path), _steps(rec, same), same, lambda _m: None) is False
+    assert rec.calls == []
