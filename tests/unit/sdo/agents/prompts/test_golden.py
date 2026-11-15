@@ -57,3 +57,15 @@ def test_production_instructions_never_spill_to_context_files() -> None:
     """
     for name, prompt in rendered_cases().items():
         assert not normalize_prompt(prompt).startswith("Full: <context file>\nSummary ("), name
+
+
+def test_closing_guidance_says_memory_is_per_application() -> None:
+    from pathlib import Path
+
+    sentence = "Memory is for this application: a playbook may name its own tables, resources and commands."
+    root = Path(__file__).resolve().parents[5]
+    assert sentence in (root / "sdo/agents/responder/prompts/scriptify.md").read_text()
+    skill = (root / "sdo/skills/playbook-writing/SKILL.md").read_text()
+    assert "may name its tables, resources and commands" in skill
+    assert "never by name" not in skill
+    assert "no app names" not in skill
