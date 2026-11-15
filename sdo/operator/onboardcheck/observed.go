@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"sdo.dev/operator/memory/appmap"
 )
@@ -222,6 +223,13 @@ func runObserved(ctx context.Context, cfg Config, report *Report, ops []*opState
 			}
 			continue
 		}
+		if cfg.Harm != nil {
+			// The cumulative counters include the memory's own probes, which hit
+			// declared routes by design; coverage is judged on the window the
+			// probes were paused (see judgePausedCoverage).
+			report.foreground = append(report.foreground, name)
+			continue
+		}
 		switch {
 		case total < minRealRequests:
 		case covered/total < minCoverage:
@@ -231,4 +239,66 @@ func runObserved(ctx context.Context, cfg Config, report *Report, ops []*opState
 		}
 	}
 	return nil
+}
+
+// judgePausedCoverage judges, per entry that serves users, the share of the
+// requests of the probes-paused window that went to declared routes: the
+// memory's own probes are not what users do.
+func judgePausedCoverage(m appmap.Map, services []string, h HarmConfig) []Result {
+	var out []Result
+	window := h.PausedEnd.At.Sub(h.PausedStart.At).Round(time.Second)
+	for _, service := range services {
+		declared := map[string]bool{}
+		for _, op := range m.Operations {
+			if op.Entry.Service == service {
+				declared[op.RouteValue()] = true
+			}
+		}
+		type routeCount struct {
+			route string
+			n     float64
+		}
+		var undeclared []routeCount
+		total, covered := 0.0, 0.0
+		prefix := requestsKey(service, "")
+		for k, end := range h.PausedEnd.Counts {
+			route, ok := strings.CutPrefix(k, prefix)
+			if !ok {
+				continue
+			}
+			n := end - h.PausedStart.Counts[k]
+			if n <= 0 {
+				continue
+			}
+			total += n
+			if declared[route] {
+				covered += n
+			} else {
+				undeclared = append(undeclared, routeCount{route, n})
+			}
+		}
+		sort.Slice(undeclared, func(i, j int) bool {
+			if undeclared[i].n != undeclared[j].n {
+				return undeclared[i].n > undeclared[j].n
+			}
+			return undeclared[i].route < undeclared[j].route
+		})
+		var list []string
+		for i, u := range undeclared {
+			if i == 8 {
+				list = append(list, fmt.Sprintf("... %d more", len(undeclared)-8))
+				break
+			}
+			list = append(list, fmt.Sprintf("%s (%.0f)", u.route, u.n))
+		}
+		switch {
+		case total < minRealRequests:
+		case covered/total < minCoverage:
+			out = append(out, Result{Item: ItemObserved, Subject: service, Status: Red, Detail: fmt.Sprintf("only %.0f%% of the %.0f requests the entry served while the probes were paused (%s) go to a declared route; routes seen but undeclared: %s", 100*covered/total, total, window, strings.Join(list, ", "))})
+		default:
+			out = append(out, Result{Item: ItemObserved, Subject: service, Status: Green, Detail: fmt.Sprintf("%.0f%% of %.0f requests go to a declared route while the probes were paused (%s)", 100*covered/total, total, window)})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Subject < out[j].Subject })
+	return out
 }

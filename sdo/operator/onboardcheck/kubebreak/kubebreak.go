@@ -24,6 +24,10 @@ import (
 
 // Modes.
 const (
+	// ModeAuto breaks with a deny-ingress NetworkPolicy where the CNI enforces
+	// it (the component keeps its endpoints, so only a failing request shows
+	// it is down) and scales to zero otherwise. It is the default.
+	ModeAuto    = "auto"
 	ModeScale   = "scale"
 	ModeNetwork = "network"
 )
@@ -66,9 +70,9 @@ func New(ctx context.Context, cfg Config) (*Breaker, error) {
 	b := &Breaker{cfg: cfg}
 	b.enforced, _ = enforcesNetworkPolicy(ctx, cfg.Client)
 	switch cfg.Mode {
-	case "", ModeScale:
+	case ModeScale:
 		b.mode = ModeScale
-	case ModeNetwork:
+	case "", ModeAuto, ModeNetwork:
 		enforced, which := enforcesNetworkPolicy(ctx, cfg.Client)
 		if enforced {
 			b.mode, b.note = ModeNetwork, "deny-ingress NetworkPolicy ("+which+" enforces it)"
