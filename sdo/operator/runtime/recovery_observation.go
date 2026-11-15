@@ -20,10 +20,34 @@ type recoveryObservation struct {
 	Reason   string
 }
 
+// alertSetHealthDetectors are the health detectors that own the incident's
+// alerts (opening and joined). Recovered depends only on the alert set, so a
+// health detector that owns none of them (a probe pending for lack of samples,
+// a reader unavailable) never holds recovery. An incident whose alerts name no
+// health detector waits on all of them.
+func (c *Controller) alertSetHealthDetectors(request IncidentRequest) []string {
+	owners := map[string]bool{}
+	for _, key := range alertKeys(&request) {
+		if id, _, ok := strings.Cut(key, "\x00"); ok {
+			owners[id] = true
+		}
+	}
+	var scoped []string
+	for _, id := range c.healthDetectorIDs {
+		if owners[id] {
+			scoped = append(scoped, id)
+		}
+	}
+	if len(scoped) == 0 {
+		return append([]string(nil), c.healthDetectorIDs...)
+	}
+	return scoped
+}
+
 // recoveryDetectorIDs is the health authority for both recovery publication and
 // the final live recheck. Legacy bundles without health use incident detectors.
 func (c *Controller) recoveryDetectorIDs(request IncidentRequest) []string {
-	ids := append([]string(nil), c.healthDetectorIDs...)
+	ids := c.alertSetHealthDetectors(request)
 	if len(ids) == 0 {
 		for _, f := range request.Findings {
 			if !strings.HasPrefix(f.DetectorID, "drift.") {
