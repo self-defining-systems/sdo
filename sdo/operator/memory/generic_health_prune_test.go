@@ -195,3 +195,23 @@ func TestPruneStrandedKeepsAuthoredDetectorWithRetiredID(t *testing.T) {
 		t.Fatal("an authored detector was removed")
 	}
 }
+
+// The diagnostics module name is the agent's; startup upkeep keeps it, so the
+// accepted head is not rewritten under a pending install.
+func TestWriteSchemaKeepsTheAgentsDiagnosticsModuleName(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, filepath.FromSlash(layout.DiagnosticsGoModFile))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const authored = "module shop-diagnostics\n\ngo 1.24\n\nrequire sdo.dev/operator/sdk v0.0.0\n"
+	if err := os.WriteFile(path, []byte(authored), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteSchema(root); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != authored {
+		t.Fatalf("go.mod = %q, want the agent's %q", got, authored)
+	}
+}
