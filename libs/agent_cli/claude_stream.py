@@ -50,6 +50,33 @@ if TYPE_CHECKING:
 #: the agent is done, so no timer decides.
 SESSION_STATE_ENV = "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS"
 
+#: Claude Code tools that cannot work in a headless one-shot session, denied for every SDO agent.
+#: The first group starts a later turn of the session (a wakeup, a cron job, a remote trigger) that
+#: never begins: the CLI does not count them as background tasks, so the session goes idle and
+#: SDO closes it. The second needs a person (a question, plan approval, a push notification) or moves
+#: the session out of its checkout (worktrees). ``Monitor`` and ``Bash`` ``run_in_background`` do
+#: register as background tasks the CLI keeps the session alive for, and subagents (``Agent``) too,
+#: so they stay available.
+HEADLESS_DISALLOWED_TOOLS = (
+    "ScheduleWakeup",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "RemoteTrigger",
+    "AskUserQuestion",
+    "EnterPlanMode",
+    "ExitPlanMode",
+    "PushNotification",
+    "EnterWorktree",
+    "ExitWorktree",
+)
+
+
+def disallowed_tools_args(extra: Sequence[str] = ()) -> tuple[str, ...]:
+    """The one ``--disallowedTools`` argument: the headless-unusable tools plus *extra*."""
+    return ("--disallowedTools", ",".join((*HEADLESS_DISALLOWED_TOOLS, *extra)))
+
+
 #: How often the drain looks at the process again; it decides nothing.
 POLL_SECONDS = 0.2
 
@@ -213,7 +240,9 @@ def settings_args(settings: Mapping[str, object], extra: Sequence[str]) -> tuple
 
 
 __all__ = [
+    "HEADLESS_DISALLOWED_TOOLS",
     "SessionWatch",
+    "disallowed_tools_args",
     "ClaudeStreamSession",
     "TurnTimeoutError",
     "settings_args",

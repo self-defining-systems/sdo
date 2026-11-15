@@ -65,7 +65,13 @@ from agentshim.providers.claude.sandbox import build_settings
 from agentshim.providers.codex import install_rules
 
 from libs.agent_cli.claude_accounts import AccountRouter, is_claude_auth_failure
-from libs.agent_cli.claude_stream import SESSION_STATE_ENV, ClaudeStreamSession, settings_args, stream_transport
+from libs.agent_cli.claude_stream import (
+    SESSION_STATE_ENV,
+    ClaudeStreamSession,
+    disallowed_tools_args,
+    settings_args,
+    stream_transport,
+)
 from libs.agent_cli.claude_usage import (
     ClaudeBill,
     ClaudeLedger,
@@ -1238,15 +1244,16 @@ def _provider_for(
         )
         home = turn_scope.enter_context(_codex_turn_home(sandbox))
         return CodexProvider(sandbox=sandbox), (), {"CODEX_HOME": str(home)}
+    denied = disallowed_tools_args()
     if access == "danger-full-access":
-        return ClaudeProvider(), (), {}
+        return ClaudeProvider(), denied, {}
     root = str(workspace)
     # The Skill tool loads SKILL.md itself, but a skill's references are read
     # with the native Read tool, which the confinement would otherwise deny.
     readable = [root, str(_claude_skills_dir())]
     if access == "read-only":
         claude = ClaudeProvider(sandbox=SandboxConfig(deny_write=[root], confine_native_reads_to=readable))
-        return claude, ("--disallowedTools", "Edit,Write,NotebookEdit"), claude.sandbox_env
+        return claude, disallowed_tools_args(("Edit", "Write", "NotebookEdit")), claude.sandbox_env
     claude = ClaudeProvider(
         sandbox=SandboxConfig(
             confine_native_reads_to=readable,
@@ -1260,7 +1267,7 @@ def _provider_for(
             )
         ],
     )
-    return claude, (), claude.sandbox_env
+    return claude, denied, claude.sandbox_env
 
 
 @contextmanager
