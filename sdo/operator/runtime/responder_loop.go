@@ -58,8 +58,17 @@ type ToolRequest struct {
 	Since string `json:"since,omitempty"`
 	// Components keeps only the rows and columns of these map components in
 	// `changes` and `timeline`.
-	Components  []string                               `json:"components,omitempty"`
-	Limit       int                                    `json:"limit,omitempty"`
+	Components []string `json:"components,omitempty"`
+	Limit      int      `json:"limit,omitempty"`
+	// Query, Step, Grep, Failing, List, Operation and Route are the inputs of
+	// `metrics`, `logs` and `traces`; Name is the component, match or trace ID.
+	Query       string                                 `json:"query,omitempty"`
+	Step        string                                 `json:"step,omitempty"`
+	Grep        string                                 `json:"grep,omitempty"`
+	Failing     bool                                   `json:"failing,omitempty"`
+	List        bool                                   `json:"list,omitempty"`
+	Operation   string                                 `json:"operation,omitempty"`
+	Route       string                                 `json:"route,omitempty"`
 	Parameters  map[string]string                      `json:"parameters,omitempty"`
 	Selection   *contracts.MitigationSelection         `json:"-"`
 	ReportQuery *contracts.MitigationReportQuery       `json:"-"`
@@ -256,7 +265,11 @@ type ResponderLoop struct {
 	Investigations *InvestigationBoard
 	// IncidentSources supplies the signal ring and app-state source behind
 	// `sdo changes`, `sdo timeline` and the inline changes; nil reads none.
-	IncidentSources   func() (*incidentSignals, AppStateChangeSource)
+	IncidentSources func() (*incidentSignals, AppStateChangeSource)
+	// Telemetry supplies the application-telemetry reads behind `sdo metrics`,
+	// `sdo logs` and `sdo traces`: the controller's own bound sources, so what
+	// the agent reads is what detectors read. Nil reads none.
+	Telemetry         func() ApplicationTelemetry
 	Request           IncidentRequest
 	Programs          program.ProgramRegistry
 	Traffic           ProberAPI
@@ -702,6 +715,8 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		l.incidentPage(ctx, request, &response)
 	case "map":
 		l.applicationMap(ctx, request, &response)
+	case "metrics", "logs", "traces":
+		l.applicationTelemetry(ctx, request, &response)
 	case "status":
 		response.DriftEvents = append([]sdk.DriftEvent(nil), l.Request.DriftEvents...)
 		response.Trust = l.Trust

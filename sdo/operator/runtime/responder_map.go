@@ -3,11 +3,14 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
 	"sdo.dev/operator/memory/appmap"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/telemetry"
 )
 
 const (
@@ -114,7 +117,7 @@ func (l *ResponderLoop) applicationMap(ctx context.Context, request ToolRequest,
 			response.Error = unknownName("operation", request.Name, ids)
 			return
 		}
-		response.Text = g.renderPath(op, l.userTestVerdicts(readView))
+		response.Text = g.renderPath(op, l.userTestVerdicts(readView), l.observability(ctx, g, snapshot))
 	case "near":
 		if _, found := g.comps[request.Name]; !found {
 			names := make([]string, 0, len(g.comps))
@@ -124,7 +127,7 @@ func (l *ResponderLoop) applicationMap(ctx context.Context, request ToolRequest,
 			response.Error = unknownName("component", request.Name, names)
 			return
 		}
-		response.Text = g.renderNear(request.Name)
+		response.Text = g.renderNear(request.Name, l.observability(ctx, g, snapshot))
 	}
 	response.Summary = strings.TrimSpace("sdo map " + request.MapView)
 }
@@ -195,7 +198,7 @@ func (g mapGraph) unadoptedPossible() int {
 	return n
 }
 
-func (g mapGraph) renderPath(op appmap.Operation, verdicts map[string]string) string {
+func (g mapGraph) renderPath(op appmap.Operation, verdicts map[string]string, observe func(string) string) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "operation %s (%s) enters %s:%d %s %s\n", op.ID, opKind(op), op.Entry.Service, op.Entry.Port, op.Entry.Method, op.Entry.Path)
 	labels := make([]string, len(op.Path))
@@ -207,6 +210,9 @@ func (g mapGraph) renderPath(op appmap.Operation, verdicts map[string]string) st
 	fmt.Fprintf(&out, "path: %s\n", strings.Join(labels, " -> "))
 	if edges := g.edgesWithin(in); len(edges) > 0 {
 		fmt.Fprintf(&out, "edges: %s\n", strings.Join(edges, ", "))
+	}
+	for _, name := range op.Path {
+		fmt.Fprintf(&out, "observe %s: %s\n", name, observe(name))
 	}
 	probes := g.probesOf(op.ID)
 	if len(probes) == 0 {
@@ -223,7 +229,7 @@ func (g mapGraph) renderPath(op appmap.Operation, verdicts map[string]string) st
 	return out.String()
 }
 
-func (g mapGraph) renderNear(name string) string {
+func (g mapGraph) renderNear(name string, observe func(string) string) string {
 	var out strings.Builder
 	c := g.comps[name]
 	fmt.Fprintf(&out, "component %s  %s  services: %s\n", g.label(name), c.Workload, strings.Join(c.Services, ","))
@@ -255,5 +261,64 @@ func (g mapGraph) renderNear(name string) string {
 	write("upstream (it depends on, 2 hops)", hopTexts(g.reach(name, true, 2)))
 	write("downstream (depend on it, 2 hops)", hopTexts(g.reach(name, false, 2)))
 	write("operations through it", g.operationsThrough(name))
+	fmt.Fprintf(&out, "observe: %s\n", observe(name))
 	return out.String()
+}
+
+// observability is, per component, where to look: the request metric its
+// services expose (from the map's entries), its pods for `sdo logs`, and its
+// trace service name when a trace store is bound. They are the arguments
+// `sdo metrics`, `sdo logs` and `sdo traces` take, found from the map's
+// components and nothing finer.
+func (l *ResponderLoop) observability(ctx context.Context, g mapGraph, snapshot sdk.DetectionContext) func(string) string {
+	var sources []telemetry.Source
+	if l.Telemetry != nil {
+		sources = l.Telemetry().Sources
+	}
+	traced := slices.ContainsFunc(sources, func(s telemetry.Source) bool { return s.Serves(telemetry.KindTraces) })
+	return func(name string) string {
+		component, ok := g.comps[name]
+		if !ok {
+			return "none"
+		}
+		var parts []string
+		for _, entry := range g.m.Entries {
+			if !slices.Contains(component.Services, entry.Service) {
+				continue
+			}
+			selector := ""
+			if len(entry.Selector) > 0 {
+				keys := make([]string, 0, len(entry.Selector))
+				for key := range entry.Selector {
+					keys = append(keys, key)
+				}
+				sort.Strings(keys)
+				pairs := make([]string, len(keys))
+				for i, key := range keys {
+					pairs[i] = fmt.Sprintf("%s=%q", key, entry.Selector[key])
+				}
+				selector = "{" + strings.Join(pairs, ",") + "}"
+			}
+			labels := "route=" + entry.Labels.Route
+			if entry.Labels.Status != "" {
+				labels += ", status=" + entry.Labels.Status
+			}
+			parts = append(parts, fmt.Sprintf("metrics %s%s (labels %s)", entry.Metric, selector, labels))
+		}
+		logs := "logs: sdo logs " + name
+		if pods, err := componentPods(l, snapshot, name); err == nil {
+			names := make([]string, 0, len(pods))
+			for _, pod := range pods {
+				if len(names) < mapNearCap {
+					names = append(names, pod.Name)
+				}
+			}
+			logs += " (pods " + strings.Join(names, ",") + ")"
+		}
+		parts = append(parts, logs)
+		if traced && len(component.Services) > 0 {
+			parts = append(parts, "traces: service "+component.Services[0])
+		}
+		return strings.Join(parts, "; ")
+	}
 }

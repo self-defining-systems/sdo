@@ -12,8 +12,10 @@ lines expand one. `.sdo/arch.md` is the app map.
 - `sdo detect [NAME] [--wait SECONDS]`: NAME is a user test (sends its request now), a detector or an item;
   `--wait` returns when a failing test or alert changes
 - `sdo map [path OP | near COMPONENT]`: the map, a path, neighbours
-- `sdo changes`, `sdo timeline`: CSV; `--since 30m`, `--component NODE`, `--limit N`; changes name an actor
+- `sdo changes`, `sdo timeline`: CSV; `--since 30m`, `--component NODE`, `--limit N`; changes name an actor and list the rows nearest onset first
   (agent is you, sdo, kubernetes, other)
+- `sdo metrics QUERY [--since 15m]`, `sdo logs COMPONENT [--failing]`, `sdo traces [--failing]`: the application's
+  PromQL, pod logs and traces in one recorded call each; compare failing and working requests
 - `sdo source Kind/ns/name`: intended state
 - `sdo diagnose NAME --bind ROLE=Kind/ns/name`: test a learned playbook
 - `sdo menu [NAME]`: list fixes. `sdo mitigate NAME --bind ROLE=Kind/ns/name`: apply one
