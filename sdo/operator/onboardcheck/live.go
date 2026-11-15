@@ -135,6 +135,9 @@ type BreakConfig struct {
 	// failing scenario; Bound is at least this long. Zero without probes.
 	Horizon  time.Duration
 	Interval time.Duration
+	// Faults are the generic breaks that keep every component up, judged after
+	// the component breaks.
+	Faults []Fault
 }
 
 // ItemDuration is how long one item took.
@@ -423,6 +426,18 @@ func runBreak(ctx context.Context, cfg Config, report *Report) {
 		}
 		if restoreFailed {
 			stopped = true
+		}
+	}
+	if !stopped && len(b.Faults) > 0 {
+		if !haveBaseline {
+			if v, err := b.Eval.Evaluate(ctx); err == nil {
+				baseline, haveBaseline = fingerprints(v.Raised), true
+			} else {
+				report.add(ItemBreak, "faults", Red, "could not evaluate before the generic breaks: "+err.Error())
+			}
+		}
+		if haveBaseline {
+			runFaults(ctx, cfg, report, baseline)
 		}
 	}
 	for _, name := range order {
