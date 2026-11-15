@@ -345,3 +345,32 @@ def test_push_paths_reports_a_failed_unpack_and_still_removes_its_pod(
     with pytest.raises(sink.SinkError, match="push"):
         sink.push_paths(lambda *a: ["kubectl", *a], "ns-sdo", root, ["."])
     assert "delete pod" in log.read_text().splitlines()[-1]
+
+
+def test_the_evidence_claim_names_the_lane_volume_node_when_given() -> None:
+    assert "annotations" not in sink.claim_manifest("ns-sdo")["metadata"]
+    claim = sink.claim_manifest("ns-sdo", node="n2")
+    assert claim["metadata"]["annotations"] == {"volume.kubernetes.io/selected-node": "n2"}
+
+
+def test_volume_node_is_one_schedulable_ready_node_and_stable_per_lane() -> None:
+    nodes = {
+        "items": [
+            {
+                "metadata": {"name": name},
+                "spec": {"unschedulable": cordoned},
+                "status": {"conditions": [{"type": "Ready", "status": ready}]},
+            }
+            for name, cordoned, ready in (
+                ("a", False, "True"),
+                ("b", True, "True"),
+                ("c", False, "False"),
+                ("d", False, "True"),
+            )
+        ]
+    }
+    picked = {sink.volume_node(nodes, f"lane{i}") for i in range(20)}
+    assert picked == {"a", "d"}
+    assert sink.volume_node(nodes, "lane3") == sink.volume_node(nodes, "lane3")
+    with pytest.raises(sink.SinkError, match="no schedulable"):
+        sink.volume_node({"items": []}, "lane1")

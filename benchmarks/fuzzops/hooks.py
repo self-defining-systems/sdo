@@ -932,6 +932,7 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     registry = Path(env["BENCH_REGISTRY"]) if env.get("BENCH_REGISTRY") else None
     registry = registry if registry is not None and registry.is_file() else None
     pulled = sink.pull_mode(env)
+    volume_env: dict[str, str] = {}
     if pulled:
         refs = lane_registry_images(registry, list(image.values()), out)
         image = {name: refs[tag] for name, tag in image.items()}
@@ -969,8 +970,18 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     provision_namespaces(cfg)
     if pulled:
         # no node holds the app's images by tag: they are pulled from their registries, nothing to declare
+        nodes = json.loads(_run(kube.cmd("get", "nodes", "-o", "json"), "nodes", 120).stdout)
+        try:
+            volume_node = sink.volume_node(nodes, _need(env, "BENCH_LANE"))
+        except sink.SinkError as exc:
+            raise HookError(str(exc)) from exc
+        volume_env["SDO_VOLUME_NODE"] = volume_node
+        out(f"the lane's volumes live on {volume_node}")
         _run(
-            kube.cmd("apply", "-f", "-"), "evidence claim", 120, input=json.dumps(sink.claim_manifest(baseline.control))
+            kube.cmd("apply", "-f", "-"),
+            "evidence claim",
+            120,
+            input=json.dumps(sink.claim_manifest(baseline.control, volume_node)),
         )
         if block.dev_mount:
             push_dev_tree(env, kube, baseline.control, lane_dir, binary, out)
@@ -986,7 +997,7 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
         baseline,
         block,
         kubeconfig,
-        {**evidence_env, **dev_env},
+        {**evidence_env, **dev_env, **volume_env},
         lane_dir / "sdo-config",
         image,
     )

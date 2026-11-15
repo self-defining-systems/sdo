@@ -18,6 +18,7 @@ import os
 import re
 import shutil
 import subprocess
+import zlib
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -70,14 +71,34 @@ def pull_mode(env: Mapping[str, str]) -> bool:
     return env.get("BENCH_EVIDENCE_MODE", "") == "pull"
 
 
-def claim_manifest(control: str) -> dict[str, Any]:
-    """The PersistentVolumeClaim that holds the sink of a pull-mode lane."""
+def claim_manifest(control: str, node: str = "") -> dict[str, Any]:
+    """The PersistentVolumeClaim that holds the sink of a pull-mode lane, bound on ``node`` when one is given."""
+    metadata: dict[str, Any] = {"name": EVIDENCE_CLAIM, "namespace": control}
+    if node:
+        metadata["annotations"] = {"volume.kubernetes.io/selected-node": node}
     return {
         "apiVersion": "v1",
         "kind": "PersistentVolumeClaim",
-        "metadata": {"name": EVIDENCE_CLAIM, "namespace": control},
+        "metadata": metadata,
         "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": EVIDENCE_CLAIM_SIZE}}},
     }
+
+
+def volume_node(nodes: Mapping[str, Any], lane: str) -> str:
+    """The node a lane's node-local volumes live on: one Ready, schedulable node of ``kubectl get nodes -o json``,
+    chosen by the lane's name so that lanes spread over the nodes and a lane's choice never changes. All claims of an
+    operator that mounts several (repository, evidence) must sit on one node, or its pod cannot be scheduled."""
+    ready = sorted(
+        item["metadata"]["name"]
+        for item in nodes.get("items", [])
+        if not item.get("spec", {}).get("unschedulable")
+        and any(
+            c.get("type") == "Ready" and c.get("status") == "True" for c in item.get("status", {}).get("conditions", [])
+        )
+    )
+    if not ready:
+        raise SinkError("no schedulable Ready node for the lane's volumes")
+    return ready[zlib.crc32(lane.encode()) % len(ready)]
 
 
 def puller_manifest(control: str, name: str) -> dict[str, Any]:
