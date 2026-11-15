@@ -6,6 +6,9 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/requestmetrics"
@@ -340,6 +343,39 @@ func TestDeclaredOperationIsNotAlsoEvaluatedAsUndeclared(t *testing.T) {
 	recent := []metrics.Series{series(webRoute, "200", steady(40, 7)...), series(webRoute, "500", 0, 0, 0, 0, 0, 9, 9)}
 	got := detectWith(t, undeclaredDetector(0), snapshot(recent, healthyBaseline(), presence()))
 	if len(got) != 1 || got[0].Metadata["operation"] != "project-show" || got[0].Metadata["undeclared_route"] != nil {
+		t.Fatalf("findings = %+v", got)
+	}
+}
+
+func webPod(started time.Time, ready bool) corev1.Pod {
+	return corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "web-1", Namespace: "app", Labels: map[string]string{"app": "web"}, CreationTimestamp: metav1.NewTime(started)},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "web", StartupProbe: &corev1.Probe{FailureThreshold: 30, PeriodSeconds: 10}}}},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{
+			Name: "web", Ready: ready, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: metav1.NewTime(started)}}}}},
+	}
+}
+
+func restartingSnapshot(started time.Time) sdktest.Snapshot {
+	s := snapshot(nil, nil, nil)
+	at := t0.Add(2 * time.Minute)
+	s.ObservedAtTime = &at
+	s.ServiceList = []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "web", Namespace: "app"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "web"}}}}
+	s.PodList = []corev1.Pod{webPod(started, false)}
+	return s
+}
+
+// A metric with no series while the target pod is inside its declared startup
+// allowance is a restart, not missing instrumentation.
+func TestNoSeriesWhileTargetPodIsStartingIsNotReported(t *testing.T) {
+	if got := detect(t, restartingSnapshot(t0.Add(30*time.Second))); len(got) != 0 {
+		t.Fatalf("findings = %+v", got)
+	}
+}
+
+// A target missing beyond its allowance still counts.
+func TestNoSeriesBeyondTheStartupAllowanceIsReported(t *testing.T) {
+	if got := detect(t, restartingSnapshot(t0.Add(-10*time.Minute))); len(got) != 2 {
 		t.Fatalf("findings = %+v", got)
 	}
 }

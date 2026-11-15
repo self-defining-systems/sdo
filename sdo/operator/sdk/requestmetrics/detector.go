@@ -268,6 +268,9 @@ func (d *detector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Fi
 			continue
 		}
 		if why := plan.instrumentation(results); why != "" {
+			if len(results[plan.pres.ID].Series) == 0 && serviceStarting(ctx, op.Service) {
+				continue // the scrape target is a pod still inside its startup, not a missing instrument
+			}
 			findings = append(findings, d.notInstrumented(ctx, op, why))
 			continue
 		}
@@ -354,6 +357,19 @@ func (d *detector) undeclared(ctx sdk.DetectionContext, plan entryPlan, results 
 		}
 	}
 	return out
+}
+
+// serviceStarting reports whether a pod the Service selects is not ready yet
+// but still inside its own startup allowance: a metric with no series then
+// says the target is restarting, not that the application is uninstrumented.
+// A target missing beyond the allowance still counts.
+func serviceStarting(ctx sdk.DetectionContext, service string) bool {
+	for _, pod := range ctx.PodsForService(ctx.Namespace(), service) {
+		if sdk.PodStarting(ctx, pod) {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *detector) notInstrumented(ctx sdk.DetectionContext, op Operation, why string) sdk.Finding {
