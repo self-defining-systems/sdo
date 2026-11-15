@@ -46,8 +46,10 @@ commands:
         [--repository-pvc-subpath PATH] [--kubeconfig FILE] [--context NAME]
         [--operator-root DIR] [--application-namespace NS] [--healthy-baseline]
         Publish through the broker and its isolated Kubernetes validator.
-  check [--replay on|off] [--root .] [--json] [--decision FILE]
+  check [--replay on|off] [--root DIR] [--json] [--decision FILE]
         Run structural, semantic, ownership, compilation and provenance checks.
+        --root defaults to the Git checkout containing the current directory,
+        so run it from anywhere inside your checkout.
         Tests and replay run as information; their verdicts never block saving.
         Like the broker, it derives playbook fault_class and regenerates the
         playbook index from each README's first heading; never edit the index.
@@ -181,6 +183,26 @@ func parseFlags(flags *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
+// checkoutRoot resolves a memory command's --root. An empty root means the Git checkout containing the current
+// directory, so an agent working in a subdirectory of its isolated checkout needs no flag.
+func checkoutRoot(root string) (string, error) {
+	if root != "" {
+		return absRoot(root)
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for current := dir; ; current = filepath.Dir(current) {
+		if _, err := os.Stat(filepath.Join(current, ".git")); err == nil {
+			return current, nil
+		}
+		if filepath.Dir(current) == current {
+			return "", fmt.Errorf("no Git checkout contains %s: run from inside the checkout or pass --root DIR", dir)
+		}
+	}
+}
+
 func absRoot(root string) (string, error) {
 	absolute, err := filepath.Abs(root)
 	if err != nil {
@@ -233,7 +255,7 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 	flags := flag.NewFlagSet("memory check", flag.ContinueOnError)
 	replayFlag := flags.String("replay", getenv(settings.ReplayEnvironment), "replay policy: on or off")
 	decisionPath := flags.String("decision", "", "ReflectionDecision JSON; defaults to .git/sdo-reflection-decision.json")
-	root := flags.String("root", ".", "repository checkout to validate")
+	root := flags.String("root", "", "repository checkout to validate (default: the Git checkout containing the current directory)")
 	asJSON := flags.Bool("json", false, "print a MemoryCheckReport as ProtoJSON")
 	accepted := flags.Bool("accepted", false, "audit a clean accepted checkout without publication context")
 	positional, err := parseFlags(flags, args)
@@ -247,7 +269,7 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 	if err != nil {
 		return exitInfra, err
 	}
-	absolute, err := absRoot(*root)
+	absolute, err := checkoutRoot(*root)
 	if err != nil {
 		return exitInfra, err
 	}
@@ -433,7 +455,7 @@ var listKinds = []string{"goal", "architecture", "playbook", "script", "detector
 
 func memoryList(args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("memory ls", flag.ContinueOnError)
-	root := flags.String("root", ".", "repository checkout")
+	root := flags.String("root", "", "repository checkout (default: the Git checkout containing the current directory)")
 	kind := flags.String("kind", "", "only list this kind: "+strings.Join(listKinds, ", "))
 	asJSON := flags.Bool("json", false, "print a MemoryListing as ProtoJSON")
 	positional, err := parseFlags(flags, args)
@@ -446,7 +468,7 @@ func memoryList(args []string, stdout io.Writer) error {
 	if *kind != "" && !containsString(listKinds, *kind) {
 		return fmt.Errorf("unknown kind %q (%s)", *kind, strings.Join(listKinds, ", "))
 	}
-	absolute, err := absRoot(*root)
+	absolute, err := checkoutRoot(*root)
 	if err != nil {
 		return err
 	}
@@ -502,7 +524,7 @@ func containsString(values []string, want string) bool {
 
 func memoryOutcomes(ctx context.Context, args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("memory outcomes", flag.ContinueOnError)
-	root := flags.String("root", ".", "repository checkout")
+	root := flags.String("root", "", "repository checkout (default: the Git checkout containing the current directory)")
 	asJSON := flags.Bool("json", false, "print MemoryOutcomes as ProtoJSON")
 	positional, err := parseFlags(flags, args)
 	if err != nil {
@@ -511,7 +533,7 @@ func memoryOutcomes(ctx context.Context, args []string, stdout io.Writer) error 
 	if len(positional) != 0 {
 		return fmt.Errorf("outcomes takes no arguments, got %q", positional)
 	}
-	absolute, err := absRoot(*root)
+	absolute, err := checkoutRoot(*root)
 	if err != nil {
 		return err
 	}
@@ -559,7 +581,7 @@ func normalizeCorpusForReplay(root string, paths []string, replay string) ([]str
 func memoryTest(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) (int, error) {
 	flags := flag.NewFlagSet("memory test", flag.ContinueOnError)
 	replayFlag := flags.String("replay", getenv(settings.ReplayEnvironment), "replay policy: on or off")
-	root := flags.String("root", ".", "repository checkout to validate")
+	root := flags.String("root", "", "repository checkout to validate (default: the Git checkout containing the current directory)")
 	positional, err := parseFlags(flags, args)
 	if err != nil {
 		return exitInfra, err

@@ -27,7 +27,7 @@ func (l *stringList) Set(v string) error { *l = append(*l, v); return nil }
 
 func memoryNew(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("memory new", flag.ContinueOnError)
-	root := flags.String("root", ".", "repository checkout")
+	root := flags.String("root", "", "repository checkout (default: the Git checkout containing the current directory)")
 	class := flags.String("class", string(layout.ClassIncident), "detector class: incident or health")
 	incident := flags.String("incident", getenv(memoryIncidentEnv), "originating incident (default $"+memoryIncidentEnv+")")
 	var playbooks stringList
@@ -40,7 +40,7 @@ func memoryNew(ctx context.Context, args []string, getenv func(string) string, s
 		return errors.New("new takes an artifact kind (playbook or detector) and an ID")
 	}
 	kind, id := positional[0], positional[1]
-	absolute, err := absRoot(*root)
+	absolute, err := checkoutRoot(*root)
 	if err != nil {
 		return err
 	}
