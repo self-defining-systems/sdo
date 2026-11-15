@@ -228,15 +228,18 @@ func (l *ResponderLoop) unknownDetectName(ctx context.Context, name string) stri
 }
 
 // detectWatch is what `sdo detect --wait` compares: the active findings and,
-// for every user test, whether its newest request passed.
+// for every user test, whether its newest request passed. A finding that keeps
+// its fingerprint but changes its summary, counts or evidence counts as changed.
 type detectWatch struct {
 	alerts  map[string]string // fingerprint -> label
+	content map[string]string // fingerprint -> the finding's summary and evidence
+	summary map[string]string // fingerprint -> the finding's summary line
 	failing map[string]bool   // user tests with an active finding
 	newest  map[string]bool   // user test -> newest request passed
 }
 
 func (l *ResponderLoop) watchState(ctx context.Context, response ToolResponse, name string) detectWatch {
-	watch := detectWatch{alerts: map[string]string{}, failing: map[string]bool{}, newest: map[string]bool{}}
+	watch := detectWatch{alerts: map[string]string{}, content: map[string]string{}, summary: map[string]string{}, failing: map[string]bool{}, newest: map[string]bool{}}
 	for _, finding := range response.Findings {
 		test, isTest := strings.CutPrefix(finding.RuleID, traffic.RuleIDPrefix)
 		if name != "" && finding.DetectorID != name && test != name {
@@ -247,6 +250,8 @@ func (l *ResponderLoop) watchState(ctx context.Context, response ToolResponse, n
 			fingerprint = FindingFingerprint(finding)
 		}
 		watch.alerts[fingerprint] = detectFindingLabel(finding)
+		watch.content[fingerprint] = finding.Summary + "\x00" + finding.Evidence
+		watch.summary[fingerprint] = finding.Summary
 		if isTest {
 			watch.failing[test] = true
 		}
@@ -299,6 +304,8 @@ func watchChange(before, after detectWatch) string {
 	for fingerprint, label := range after.alerts {
 		if _, ok := before.alerts[fingerprint]; !ok {
 			raised = append(raised, "new alert "+label)
+		} else if before.content[fingerprint] != after.content[fingerprint] {
+			raised = append(raised, "changed "+label+": "+truncateDetectText(after.summary[fingerprint], 120))
 		}
 	}
 	for fingerprint, label := range before.alerts {
@@ -312,9 +319,18 @@ func watchChange(before, after detectWatch) string {
 	return strings.Join(changes, "; ")
 }
 
+// truncateDetectText cuts text to at most n runes for a one-line change note.
+func truncateDetectText(text string, n int) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if runes := []rune(text); len(runes) > n {
+		return string(runes[:n]) + "..."
+	}
+	return text
+}
+
 // waitDetect answers `sdo detect [NAME] --wait SECONDS`: it reads the state
 // now, reads again every detectPollInterval and returns as soon as a failing
-// test or alert changes, a new alert raises, the incident recovers or the time
+// test or alert changes, a new alert raises, a finding's text or counts change, the incident recovers or the time
 // passes. A user-test NAME sends its request once, at the start. The call is
 // recorded once, with the last read.
 func (l *ResponderLoop) waitDetect(ctx context.Context, request ToolRequest) ToolResponse {

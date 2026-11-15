@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -258,5 +259,37 @@ func TestDetectWorksTheSameForAPagedIncident(t *testing.T) {
 	waited := loop.Handle(context.Background(), ToolRequest{Command: "detect", Name: "create", WaitSeconds: 30})
 	if first := strings.SplitN(waited.Text, "\n", 2)[0]; !strings.Contains(first, "create newest request passed") {
 		t.Fatalf("paged wait first line = %q", first)
+	}
+}
+
+// growingDetector keeps one finding (same fingerprint) whose summary counts
+// errors, growing from the third read on.
+type growingDetector struct{ reads *int }
+
+func (growingDetector) Spec() sdk.DetectorSpec {
+	return sdk.DetectorSpec{ID: "growing.errors", Interval: time.Second}
+}
+
+func (d growingDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
+	*d.reads++
+	errors := min(*d.reads, 3)
+	return []sdk.Finding{{RuleID: "errors", Status: sdk.FindingActive, Summary: fmt.Sprintf("%d errors on checkout", errors)}}, nil
+}
+
+func TestDetectWaitReturnsWhenAFindingChangesItsText(t *testing.T) {
+	reads := 0
+	world := &detectWorld{}
+	loop, clock := detectWorldLoop(world)
+	loop.Detectors = []sdk.Detector{growingDetector{reads: &reads}}
+	response := loop.Handle(context.Background(), ToolRequest{Command: "detect", Name: "growing.errors", WaitSeconds: 60})
+	if response.Error != "" {
+		t.Fatal(response.Error)
+	}
+	first := strings.SplitN(response.Text, "\n", 2)[0]
+	if !strings.Contains(first, "changed growing.errors errors: 2 errors on checkout") || strings.Contains(first, "no change") {
+		t.Fatalf("first line = %q, want the changed finding named", first)
+	}
+	if got := clock.Since(detectNow()); got >= 60*time.Second {
+		t.Fatalf("waited %s, want a return at the change, not the cap", got)
 	}
 }

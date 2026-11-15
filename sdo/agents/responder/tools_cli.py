@@ -126,9 +126,9 @@ def _parser() -> argparse.ArgumentParser:
             "and the suspects. NAME is a user test (SDO sends that test's scheduled request now, the same "
             "request its prober sends, and shows the result), a detector (runs it alone), or an item of the "
             "summary (a component, clue ID, tests, conditions or background). --wait SECONDS returns as soon as a "
-            "failing test's newest request or an alert changes, a new alert raises, or SECONDS pass; wait on it "
-            "instead of sleeping. SDO ends your incident work when Recovered holds (the opening alerts cleared "
-            "and stayed clear after your last change settled); return only to give up."
+            "failing test's newest request, an alert or a finding's text or counts changes, a new alert raises, "
+            "or SECONDS pass; wait on it instead of sleeping. SDO ends your incident work "
+            "when Recovered holds (the opening alerts cleared and stayed clear after your last change settled); return only to give up."
         ),
     )
     detect.add_argument("name", nargs="?", metavar="NAME", help="a user test, detector or summary item")
