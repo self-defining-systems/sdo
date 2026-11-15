@@ -32,7 +32,9 @@ def baseline_dir(
     return hooks.Baseline.load(root)
 
 
-def steps(calls: list[str], head: str = COMMIT, status: str = "", idle: str = "") -> hooks.SeedSteps:
+def steps(
+    calls: list[str], head: str = COMMIT, status: str = "", idle: str = "", descends: bool = False
+) -> hooks.SeedSteps:
     return hooks.SeedSteps(
         reset_incidents=lambda: calls.append("incidents"),
         retire_standby=lambda: calls.append("retire"),
@@ -42,6 +44,7 @@ def steps(calls: list[str], head: str = COMMIT, status: str = "", idle: str = ""
         wait_standby=lambda: calls.append("standby"),
         repository_state=lambda: {"head": head, "status": status, "outcomes": ""},
         controller_idle=lambda: idle,
+        is_ancestor=lambda _a, _d: descends,
     )
 
 
@@ -51,6 +54,12 @@ def test_seed_stops_the_controller_around_the_import(tmp_path: Path) -> None:
     receipt = hooks.apply_seed(steps(calls), seed, lambda _line: None)
     assert calls == ["incidents", "retire", "stop", "import a", "start", "standby"]
     assert receipt["seed"] == COMMIT
+
+
+def test_the_controllers_startup_upkeep_on_top_of_the_seed_is_the_seeded_memory(tmp_path: Path) -> None:
+    seed = baseline_dir(tmp_path, "seed", "r")
+    receipt = hooks.apply_seed(steps([], "b" * 40, descends=True), seed, lambda _line: None)
+    assert receipt["head"] == "b" * 40
 
 
 @pytest.mark.parametrize(
@@ -126,6 +135,8 @@ def test_the_restore_pod_receives_the_bundle_in_its_own_writable_volume(monkeypa
     assert {"name": "seed", "emptyDir": {}} in pod["volumes"]
     assert "/tmp/" not in container["command"][2]
     assert f"{hooks.BUNDLE_DIR}/memory.bundle" in container["command"][2]
+    # a memory with another history leaves no broker proposals or ledger describing the old one
+    assert "rm -rf /repo/worktrees/*" in container["command"][2]
 
 
 def test_the_restore_script_imports_a_bundle_whatever_its_refs_are_named(tmp_path: Path) -> None:
