@@ -87,3 +87,16 @@ func TestClaimBackedMountsShareThePodsExistingVolumeOnTheClaim(t *testing.T) {
 		}
 	}
 }
+
+func TestNodeDirectoryMountsAddNoClaimVolume(t *testing.T) {
+	t.Setenv("SDO_DEV_MOUNT_CLAIM", "")
+	for name, apply := range map[string]func(*corev1.PodSpec){"controller": Apply, "worker": ApplyWorker} {
+		pod := &corev1.PodSpec{Containers: []corev1.Container{{Name: "c"}}, InitContainers: []corev1.Container{{Name: "i"}}}
+		apply(pod)
+		for _, v := range pod.Volumes {
+			if v.PersistentVolumeClaim != nil {
+				t.Fatalf("%s: volume %s is a claim volume with claim %q on a node-directory lane", name, v.Name, v.PersistentVolumeClaim.ClaimName)
+			}
+		}
+	}
+}
