@@ -601,7 +601,7 @@ func (v candidateView) groupsLine() string {
 				role = "also failing"
 			}
 			if t.LatestOK {
-				role += ", passes again"
+				role += ", cleared: passes again"
 			}
 			parts = append(parts, fmt.Sprintf("%s (%s, %s, %d/%d)", redactDetectText(t.ID, 40), role, redactDetectText(g.Symptom, 24), t.Failures, t.Samples))
 		}

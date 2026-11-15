@@ -18,6 +18,7 @@ import (
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/requestmetrics"
 	"sdo.dev/operator/sdk/storestate"
 	"sdo.dev/operator/sdk/traffic"
 )
@@ -766,16 +767,42 @@ func incidentCandidateBlock(in incidentPageInput) []string {
 	}
 	view, _ := candidateViewFor(detect, set)
 	const pointer = "live: sdo detect (this view); sdo changes and sdo timeline list every row"
-	text := view.render(candidateRenderCap - len(pointer) - 1)
-	if text == "" {
-		return []string{pointer}
+	// Failing operations lead: the opening alerts' routes first, with their own
+	// counts, then a blip that passes again as cleared.
+	var lead []string
+	for i, op := range requestOperations(in.Findings, alertKeys(&in.Request)) {
+		if i == detectShownTests {
+			break
+		}
+		lead = append(lead, op.lines()...)
 	}
-	return append(strings.Split(text, "\n"), pointer)
+	for _, test := range set.judged.alsoFailing {
+		if test.latestOK {
+			lead = append(lead, clearedLine(test))
+			break
+		}
+	}
+	room := candidateRenderCap - len(pointer) - 1
+	for len(lead) > 0 && len(strings.Join(lead, "\n")) > room/2 {
+		lead = lead[:len(lead)-1]
+	}
+	if len(lead) > 0 {
+		room -= len(strings.Join(lead, "\n")) + 1
+	}
+	text := view.render(room)
+	if text == "" {
+		return append(lead, pointer)
+	}
+	return append(append(lead, strings.Split(text, "\n")...), pointer)
 }
 
 // buildDetectSummary renders the compact incident summary: what users see
 // first, then the candidate nodes with their evidence, what is elsewhere and
 // what was not observed. It never exceeds detectSummaryCap bytes.
+func slicesContainsFunc(f []sdk.Finding, fn func(sdk.Finding) bool) bool {
+	return slices.ContainsFunc(f, fn)
+}
+
 func buildDetectSummary(in detectInput) detectSummary {
 	items := map[string]string{}
 	set := buildSuspectSet(in)
@@ -803,6 +830,8 @@ func buildDetectSummary(in detectInput) detectSummary {
 		opened = "page"
 	case len(failing) > 0:
 		opened = "user tests"
+	case slicesContainsFunc(openingFindings, func(f sdk.Finding) bool { return f.RuleID == requestmetrics.RuleErrors }):
+		opened = "request errors"
 	}
 	header := []string{
 		fmt.Sprintf("incident %s  opened on: %s  onset %s  now %s", in.Request.IncidentID, opened, hms(onset), hms(in.Now)),
@@ -845,17 +874,29 @@ func buildDetectSummary(in detectInput) detectSummary {
 		items[test.id] = detail
 		allTests.WriteString(detail + "\n")
 	}
+	var clearedLines []string
 	for _, test := range set.judged.alsoFailing {
 		lines, detail := testBlock(test, "  (also failing)")
-		alsoBlocks = append(alsoBlocks, lines)
 		items[test.id] = detail
 		allTests.WriteString(detail + "\n")
+		if test.latestOK {
+			clearedLines = append(clearedLines, clearedLine(test))
+			continue
+		}
+		alsoBlocks = append(alsoBlocks, lines)
+	}
+	// Every active request error is an operation failing for users now, the
+	// opening alerts' first; none reaches the page only as a truncated condition.
+	var opBlocks [][]string
+	for _, op := range requestOperations(in.Findings, alertKeys(&in.Request)) {
+		opBlocks = append(opBlocks, op.lines())
+		items[op.ID] = redactDetectText(strings.Join(op.lines(), "\n"), detectItemCap)
 	}
 	items["tests"] = allTests.String()
 	var conditionBlocks [][]string
 	var allConditions strings.Builder
 	for _, finding := range openingFindings {
-		if isProbeFinding(finding) {
+		if isProbeFinding(finding) || finding.RuleID == requestmetrics.RuleErrors {
 			continue
 		}
 		ref := finding.PrimaryResource
@@ -873,12 +914,19 @@ func buildDetectSummary(in detectInput) detectSummary {
 	}
 	items["background"] = backgroundAll.String()
 
+	shownOps := min(len(opBlocks), detectShownTests)
 	shownTests, shownConditions, shownAlso := min(len(testBlocks), detectShownTests), min(len(conditionBlocks), detectShownTests), min(len(alsoBlocks), 2)
 	showPassing := true
 	observation := func() string {
 		out := slices.Clone(header)
-		if len(testBlocks)+len(conditionBlocks) > 0 {
+		if len(testBlocks)+len(conditionBlocks)+len(opBlocks) > 0 {
 			out = append(out, "", "OPENED ON")
+		}
+		for _, block := range opBlocks[:shownOps] {
+			out = append(out, block...)
+		}
+		if dropped := len(opBlocks) - shownOps; dropped > 0 {
+			out = append(out, fmt.Sprintf("+%d more failing routes: sdo detect", dropped))
 		}
 		for _, block := range testBlocks[:shownTests] {
 			out = append(out, block...)
@@ -892,6 +940,7 @@ func buildDetectSummary(in detectInput) detectSummary {
 		if dropped := len(conditionBlocks) - shownConditions; dropped > 0 {
 			out = append(out, fmt.Sprintf("+%d more: sdo detect conditions", dropped))
 		}
+		out = append(out, clearedLines...)
 		for _, block := range alsoBlocks[:shownAlso] {
 			out = append(out, block...)
 		}
@@ -913,6 +962,10 @@ shrink:
 		switch {
 		case shownAlso > 0:
 			shownAlso--
+		case len(clearedLines) > 1:
+			clearedLines = clearedLines[:1]
+		case shownOps > 2:
+			shownOps--
 		case shownConditions > 1:
 			shownConditions--
 		case shownTests > 1:
