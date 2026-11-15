@@ -1474,6 +1474,8 @@ def regenerate_tree(
     def import_head(clone: Path, new_head: str) -> None:
         bundle = work / "prepared.bundle"
         _run(["git", "-C", str(clone), "bundle", "create", str(bundle), "HEAD"], "bundle the prepared tree")
+        # as a reset does: end the idle standby first, so the wait below is for the new controller's own
+        retire_standby(kube, control)
         set_controller_suspended(kube, control, True)
         restore_repository(kube, control, new_head, bundle)
         set_controller_suspended(kube, control, False)
