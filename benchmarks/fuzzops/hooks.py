@@ -1299,6 +1299,15 @@ def teardown(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int
     return 0
 
 
+def is_ancestor(kube: Kube, control: str, ancestor: str, descendant: str) -> bool:
+    """Whether ``ancestor`` is in the history of ``descendant`` in the controller's accepted repository."""
+    script = (
+        f"cd {APPLICATION_ROOT} && git -c safe.directory='*' merge-base --is-ancestor {ancestor} {descendant} "
+        "&& echo yes || echo no"
+    )
+    return kube.exec_controller(control, script).decode().strip() == "yes"
+
+
 def repository_state(kube: Kube, control: str) -> dict[str, str]:
     """The accepted repository as the controller holds it: head, uncommitted files and the outcome files."""
     script = (
@@ -1382,7 +1391,7 @@ def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
             raise HookError(why)
         binary, kubeconfig = _binary(env), Path(env["KUBECONFIG"]).resolve() if env.get("KUBECONFIG") else None
         bundle = seed.path(seed.bundle)
-        apply_seed(
+        seeded = apply_seed(
             SeedSteps(
                 reset_incidents=lambda: reset_incidents(binary, control, kubeconfig),
                 retire_standby=lambda: retire_standby(kube, control),
@@ -1392,11 +1401,12 @@ def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
                 wait_standby=lambda: wait_standby(kube, control, SWAP_STANDBY_WAIT_S),
                 repository_state=lambda: repository_state(kube, control),
                 controller_idle=lambda: wait_idle(kube, control, RESET_IDLE_WAIT_S),
+                is_ancestor=lambda ancestor, descendant: is_ancestor(kube, control, ancestor, descendant),
             ),
             seed,
             out,
         )
-        memory = regenerate_tree(env, kube, control, lane_dir, block, seed.commit, out)
+        memory = regenerate_tree(env, kube, control, lane_dir, block, seeded["head"], out)
     out(json.dumps(swap_receipt(lane_dir, revision, memory, time.monotonic() - started)))
     return 0
 
@@ -1492,6 +1502,7 @@ class SeedSteps:
     wait_standby: Callable[[], object]
     repository_state: Callable[[], Mapping[str, str]]
     controller_idle: Callable[[], str]
+    is_ancestor: Callable[[str, str], bool]  # (ancestor, descendant) in the lane's accepted repository
 
 
 def seed_problem(seed: Baseline, prepared: Baseline) -> str:
@@ -1519,11 +1530,12 @@ def apply_seed(steps: SeedSteps, seed: Baseline, out: Callable[[str], None] = _p
     steps.start_controller()
     steps.wait_standby()
     now = steps.repository_state()
-    if now["head"] != seed.commit or now["status"]:
+    # The controller's startup upkeep (schema, module) may commit on top of the seed; anything else moved the head.
+    if now["status"] or (now["head"] != seed.commit and not steps.is_ancestor(seed.commit, now["head"])):
         raise HookError(f"the lane's repository is {now['head'][:12]} after the seed, not {seed.commit[:12]}")
     if why := steps.controller_idle():
         raise HookError(f"the operator is not idle after the seed: {why}")
-    receipt = {"seed": seed.commit, "seed_s": round(time.monotonic() - started, 1)}
+    receipt = {"seed": seed.commit, "head": now["head"], "seed_s": round(time.monotonic() - started, 1)}
     out(json.dumps(receipt))
     return receipt
 
