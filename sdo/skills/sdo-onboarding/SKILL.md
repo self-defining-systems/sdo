@@ -46,7 +46,8 @@ reports, not raw logs. When a result is wrong, say why and send it back.
 1. Commit, then deploy and wait for the rollout.
 2. Try an operation by hand: send its requests, then read its series in Prometheus and its logs. To see which
    probes and detectors notice a broken component, scale it to zero with `kubectl scale`, watch, and scale back.
-3. `sdo-operator onboarding check --help` lists the flags; run it with `--break`. `sdo-operator memory check`
+3. `sdo-operator onboarding check --help` lists the flags; run it with `--break`. The full check takes about 20
+   minutes: start it in the background, keep working, and read its report when it finishes. `sdo-operator memory check`
    validates memory the way the broker does.
 4. Read the report ([check report](references/check-report.md)), fix the red items, commit and check again.
 
