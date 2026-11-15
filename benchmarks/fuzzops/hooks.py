@@ -1316,7 +1316,10 @@ def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     if "state" not in record:
         raise HookError("the lane has no recorded prepared state (no idle verdict since prepare)")
     if problems := wipe_problems(record["state"], repository_state(kube, control)):
-        raise HookError("the lane is not the baseline's: " + "; ".join(problems))
+        # An idle lane's accepted memory moved (an incident opened and closed while it was held): return it to the
+        # prepared state with the lane's own reset, the same one a used lane gets, instead of refusing the claim.
+        out("the lane moved while held, restoring it: " + "; ".join(problems))
+        reset_lane(env, reset_steps(env, lambda: fuzzops_app(env, "reset")), out)
     if why := idle_reason(kube.state(control)):
         raise HookError(f"the operator is not idle: {why}")
     record["revision"] = revision
@@ -1726,21 +1729,40 @@ def wait_idle(kube: Kube, control: str, timeout: float) -> str:
 
 
 def reset(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
+    steps = reset_steps(env, lambda: fuzzops_app(env, "reset"))
+    out(json.dumps(reset_lane(env, steps, out)))
+    return 0
+
+
+def reset_steps(env: Mapping[str, str], app_reset: Callable[[], dict[str, Any]]) -> ResetSteps:
     kube, control = _kube(env), control_namespace(env)
     binary, kubeconfig = _binary(env), Path(env["KUBECONFIG"]).resolve() if env.get("KUBECONFIG") else None
-    steps = ResetSteps(
+    return ResetSteps(
         reset_incidents=lambda: reset_incidents(binary, control, kubeconfig),
         retire_standby=lambda: retire_standby(kube, control),
         stop_controller=lambda: set_controller_suspended(kube, control, True),
         restore_repository=lambda head: restore_repository(kube, control, head),
-        app_reset=lambda: fuzzops_app(env, "reset"),
+        app_reset=app_reset,
         start_controller=lambda: set_controller_suspended(kube, control, False),
         wait_standby=lambda: wait_standby(kube, control, SWAP_STANDBY_WAIT_S),
         repository_state=lambda: repository_state(kube, control),
         controller_idle=lambda: wait_idle(kube, control, RESET_IDLE_WAIT_S),
     )
-    out(json.dumps(reset_lane(env, steps, out)))
-    return 0
+
+
+def restore_moved_repository(
+    env: Mapping[str, str], steps: ResetSteps, current: Mapping[str, str], out: Callable[[str], None] = _print
+) -> bool:
+    """A lane's accepted repository must equal its prepared state while it is held. If ``current`` differs (the
+    snapshot's own app restart tripped an incident that the idle controller handled and committed), put the prepared
+    head back with ``reset_lane`` and report True. The app is not touched."""
+    lane_dir = Path(_need(env, "BENCH_LANE_DIR")).resolve()
+    record = json.loads((lane_dir / PREPARED_RECORD).read_text())
+    if "state" not in record or not (problems := wipe_problems(record["state"], current)):
+        return False
+    out("the lane's repository moved: " + "; ".join(problems))
+    reset_lane(env, steps, out)
+    return True
 
 
 def snapshot(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
@@ -1756,6 +1778,10 @@ def snapshot(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int
     kube, control = _kube(env), control_namespace(env)
     if why := wait_idle(kube, control, RESET_IDLE_WAIT_S):
         raise HookError(f"the operator is not idle after the snapshot: {why}")
+    # the app restarting after the copy can open an incident on the idle lane; its outcome must not stay in the pool
+    restore_moved_repository(
+        env, reset_steps(env, lambda: {"match": True, "skipped": "app untouched"}), repository_state(kube, control), out
+    )
     out(json.dumps({"snapshot_s": round(time.monotonic() - started, 1), "app": app}))
     return 0
 
