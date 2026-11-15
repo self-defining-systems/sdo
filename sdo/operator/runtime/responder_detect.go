@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -250,7 +251,7 @@ func (l *ResponderLoop) watchState(ctx context.Context, response ToolResponse, n
 			fingerprint = FindingFingerprint(finding)
 		}
 		watch.alerts[fingerprint] = detectFindingLabel(finding)
-		watch.content[fingerprint] = finding.Summary + "\x00" + finding.Evidence
+		watch.content[fingerprint] = stableFindingText(finding.Summary) + "\x00" + stableFindingText(finding.Evidence)
 		watch.summary[fingerprint] = finding.Summary
 		if isTest {
 			watch.failing[test] = true
@@ -317,6 +318,17 @@ func watchChange(before, after detectWatch) string {
 	sort.Strings(cleared)
 	changes = append(append(changes, raised...), cleared...)
 	return strings.Join(changes, "; ")
+}
+
+// tickingText matches what moves with time alone: timestamps, clock times and
+// durations or ages ("3m12s", "45s", "1.5h", "120ms"). Counts and statuses do
+// not match, so a change in them still counts.
+var tickingText = regexp.MustCompile(`\d{4}-\d\d-\d\d[T ]\d\d:\d\d(:\d\d(\.\d+)?)?(Z|[+-]\d\d:?\d\d)?|\b\d\d:\d\d(:\d\d)?Z?\b|\b(\d+(\.\d+)?(ns|us|µs|ms|s|m|h|d|w))+\b`)
+
+// stableFindingText drops the time-driven values from a finding's text so
+// `sdo detect --wait` compares only what is not a clock tick.
+func stableFindingText(text string) string {
+	return tickingText.ReplaceAllString(text, "~")
 }
 
 // truncateDetectText cuts text to at most n runes for a one-line change note.

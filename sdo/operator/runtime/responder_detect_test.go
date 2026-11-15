@@ -293,3 +293,36 @@ func TestDetectWaitReturnsWhenAFindingChangesItsText(t *testing.T) {
 		t.Fatalf("waited %s, want a return at the change, not the cap", got)
 	}
 }
+
+// tickingDetector's only change over reads is an age in its text; from the
+// fourth read its error count and status change too.
+type tickingDetector struct{ reads *int }
+
+func (tickingDetector) Spec() sdk.DetectorSpec {
+	return sdk.DetectorSpec{ID: "ticking.age", Interval: time.Second}
+}
+
+func (d tickingDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
+	*d.reads++
+	errors, status := 5, "degraded"
+	if *d.reads >= 5 {
+		errors, status = 9, "failing"
+	}
+	return []sdk.Finding{{RuleID: "age", Status: sdk.FindingActive,
+		Summary:  fmt.Sprintf("%d errors, %s, failing for %dm%ds since 07:%02d:10Z", errors, status, *d.reads/60, *d.reads%60, *d.reads),
+		Evidence: fmt.Sprintf("oldest error %dms ago", *d.reads*37)}}, nil
+}
+
+func TestDetectWaitIgnoresATickingAgeButNotACountOrStatus(t *testing.T) {
+	reads := 0
+	loop, _ := detectWorldLoop(&detectWorld{})
+	loop.Detectors = []sdk.Detector{tickingDetector{reads: &reads}}
+	response := loop.Handle(context.Background(), ToolRequest{Command: "detect", Name: "ticking.age", WaitSeconds: 60})
+	first := strings.SplitN(response.Text, "\n", 2)[0]
+	if !strings.Contains(first, "changed ticking.age age: 9 errors, failing") {
+		t.Fatalf("first line = %q, want the wait to end on the count and status change, not on the age", first)
+	}
+	if reads < 5 {
+		t.Fatalf("the wait ended after %d reads, on a ticking age alone", reads)
+	}
+}
