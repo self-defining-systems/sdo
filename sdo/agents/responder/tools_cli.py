@@ -128,7 +128,8 @@ def _parser() -> argparse.ArgumentParser:
             "summary (a component, clue ID, tests, conditions or background). --wait SECONDS returns as soon as a "
             "failing test's newest request, an alert or a finding's text or counts changes, a new alert raises, "
             "or SECONDS pass; wait on it instead of sleeping. SDO ends your incident work "
-            "when Recovered holds (the opening alerts cleared and stayed clear after your last change settled); return only to give up."
+            "when Recovered holds (the opening alerts cleared and stayed clear after your last change "
+            "settled); return only to give up."
         ),
     )
     detect.add_argument("name", nargs="?", metavar="NAME", help="a user test, detector or summary item")
