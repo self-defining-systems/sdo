@@ -978,6 +978,105 @@ def test_a_result_emitted_while_the_agents_background_tasks_run_is_not_the_answe
     assert json.loads(turn.output_json) == {"answer": "after the subagents"}
 
 
+def _background_bash_frames() -> list[dict[str, Any]]:
+    """The CLI's own frames for a background Bash task: idle follows the turn's result while it still runs."""
+    init = {"type": "system", "subtype": "init", "session_id": "s-bash"}
+
+    def system(subtype: str, **fields: Any) -> dict[str, Any]:
+        return {"type": "system", "subtype": subtype, **fields}
+
+    def result(answer: str) -> dict[str, Any]:
+        output = {"answer": answer}
+        return {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": json.dumps(output),
+            "structured_output": output,
+            "session_id": "s-bash",
+            "num_turns": 1,
+            "duration_ms": 1,
+            "total_cost_usd": 0,
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "permission_denials": [],
+        }
+
+    task = {"task_id": "b1", "task_type": "local_bash", "description": "the long check"}
+    frames = [
+        system("session_state_changed", state="running"),
+        init,
+        system("background_tasks_changed", tasks=[task]),
+        result("holding until the check finishes"),
+        system("session_state_changed", state="idle"),
+    ]
+    frames += [
+        system("task_notification", task_id="b1", status="completed"),
+        system("background_tasks_changed", tasks=[]),
+        system("session_state_changed", state="running"),
+        init,
+        result("check passed"),
+        system("session_state_changed", state="idle"),
+    ]
+    return frames
+
+
+def test_a_background_bash_task_pending_at_the_result_keeps_the_session_open(tmp_path: Path) -> None:
+    """The CLI says idle after the result while the task runs; its completion wakes the agent for the real answer."""
+    executor = FakeExecutor(FakeRun(), peers=lambda _spawn: ClaudeFramePeer([_background_bash_frames()]))
+
+    turn = run_structured_turn(
+        "claude", "prompt", output_schema=_SCHEMA, cwd=tmp_path, access="danger-full-access", executor=executor
+    )
+
+    assert json.loads(turn.output_json) == {"answer": "check passed"}
+
+
+def _observe(watch: Any, *frames: dict[str, Any]) -> None:
+    for frame in frames:
+        watch.observe(json.dumps(frame))
+
+
+def test_the_cli_saying_idle_while_a_background_task_runs_is_not_the_end() -> None:
+    """Idle is reported after the result even though a registered background task is still running."""
+    from libs.agent_cli.claude_stream import SessionWatch
+
+    watch = SessionWatch()
+    frames = _background_bash_frames()[:5]
+    _observe(watch, *frames)
+    assert watch.working
+
+
+def test_the_session_ends_only_when_the_task_is_done_and_the_follow_on_turn_has_finished() -> None:
+    from libs.agent_cli.claude_stream import SessionWatch
+
+    watch = SessionWatch()
+    frames = _background_bash_frames()
+    _observe(watch, *frames[:5])
+    assert watch.working
+    _observe(watch, frames[5], frames[6])  # completion notice and an empty task list; the wake-up is not yet running
+    assert watch.working
+    _observe(watch, frames[7], frames[8], frames[9])  # follow-on turn runs and answers
+    assert watch.working
+    _observe(watch, frames[10])  # idle
+    assert not watch.working
+
+
+def test_a_task_stopped_during_the_turn_holds_nothing() -> None:
+    from libs.agent_cli.claude_stream import SessionWatch
+
+    watch = SessionWatch()
+    task = {"task_id": "b1", "task_type": "local_bash"}
+    _observe(
+        watch,
+        {"type": "system", "subtype": "session_state_changed", "state": "running"},
+        {"type": "system", "subtype": "background_tasks_changed", "tasks": [task]},
+        {"type": "system", "subtype": "task_notification", "task_id": "b1", "status": "stopped"},
+        {"type": "system", "subtype": "background_tasks_changed", "tasks": []},
+        {"type": "system", "subtype": "session_state_changed", "state": "idle"},
+    )
+    assert not watch.working
+
+
 def test_the_first_result_stands_once_the_cli_says_idle(tmp_path: Path) -> None:
     frames = _claude_frames({"answer": "only"}, working_after_first=False)
     executor = FakeExecutor(FakeRun(), peers=lambda _spawn: ClaudeFramePeer([frames]))
