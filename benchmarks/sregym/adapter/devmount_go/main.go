@@ -22,7 +22,7 @@ func main() {
  for _, volume := range pod.Volumes {
   // The Python import probe never executes the mounted Go binary.
   if volume.Name != "dev-operator" {
-   sources[volume.Name] = strings.TrimPrefix(volume.HostPath.Path, devmount.NodePath+"/")
+   sources[volume.Name] = strings.TrimPrefix(volume.HostPath.Path, devmount.NodePath()+"/")
   }
  }
  mounts := []sourceMount{}
