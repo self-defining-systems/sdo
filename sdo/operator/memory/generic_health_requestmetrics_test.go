@@ -5,9 +5,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/sdk/requestmetrics"
 )
 
 func writeEntriesMap(t *testing.T, root, body string) {
@@ -45,7 +47,7 @@ func TestRequestMetricsDetectorIsInstalledFromTheMapEntries(t *testing.T) {
 	for _, want := range []string{
 		`Route: "GET /items"`, `Method: "GET"`, `StatusLabel: "code"`,
 		`sum by (route, method, code) (increase(http_requests_total{job=\"web\"}[30s]))`,
-		`offset 2m`,
+		`offset 6m`,
 		// Failing request samples come from the entry pods' access logs.
 		`logs.Watch`,
 		// An operation with no entries record is reported, not dropped.
@@ -140,5 +142,18 @@ func TestPrepareRegeneratesAPriorGoGenerationAndRefusesAHandEdit(t *testing.T) {
 	}
 	if err := PrepareHealthWith(root, HealthOptions{RequestMetrics: true}); err == nil || !strings.Contains(err.Error(), "request-metrics/detector.go") {
 		t.Fatalf("a hand-edited generated file = %v, want an error naming it", err)
+	}
+}
+
+// The baseline must not contain the failure it judges: its offset reaches back
+// past the whole lookback window, or the fault would become its own healthy
+// share and clear the alert while users still fail.
+func TestRequestMetricsBaselineStartsBeforeTheLookback(t *testing.T) {
+	offset, err := time.ParseDuration(requestMetricsBaselineOffset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lookback := requestmetrics.DefaultRule().Lookback; offset <= lookback {
+		t.Fatalf("baseline offset %s does not clear the %s lookback", offset, lookback)
 	}
 }
