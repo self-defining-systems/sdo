@@ -1294,6 +1294,282 @@ def wait_standby(kube: Kube, control: str, timeout: float) -> None:
     raise HookError(f"no ready responder standby within {timeout:.0f}s")
 
 
+# ---- reset: the lane goes back to its prepared state in place ------------------------------------------------
+
+
+GOLDEN_DIRECTORY = "app-golden"
+RESET_IDLE_WAIT_S = 300.0
+MAINTENANCE_ACK_WAIT_S = 120.0
+
+
+@dataclass(frozen=True)
+class ResetSteps:
+    """What ``reset_lane`` does to the lane, one callable per step (tests substitute them)."""
+
+    reset_incidents: Callable[[], object]
+    retire_standby: Callable[[], object]
+    stop_controller: Callable[[], object]
+    restore_repository: Callable[[str], object]
+    app_reset: Callable[[], dict[str, Any]]
+    start_controller: Callable[[], object]
+    wait_standby: Callable[[], object]
+    repository_state: Callable[[], Mapping[str, str]]
+    controller_idle: Callable[[], str]
+
+    @classmethod
+    def unused(cls) -> ResetSteps:
+        def refuse(*_: object) -> Any:
+            raise AssertionError("step must not run")
+
+        return cls(*([refuse] * 9))
+
+
+def reset_lane(env: Mapping[str, str], steps: ResetSteps, out: Callable[[str], None] = _print) -> dict[str, Any]:
+    """Return a used, prepared lane to the state ``prepare`` left, with the controller, its images and its startup
+    facts kept: close any incident and end the responder session, stop the controller (its Job is suspended; the
+    process caches the accepted commit, so a repository moved behind a live controller is unsafe), put the accepted
+    repository back to the prepared head, return the app to its golden copy, start the controller again (a new
+    process on the same repository, state and images), and assert the repository equals the prepared state and the
+    operator is idle. Raises ``HookError`` unless the lane is the
+    prepared one (the caller then rebuilds it)."""
+    lane_dir = Path(_need(env, "BENCH_LANE_DIR")).resolve()
+    record = json.loads((lane_dir / PREPARED_RECORD).read_text())
+    if "state" not in record:
+        raise HookError("the lane has no recorded prepared state (no idle verdict since prepare)")
+    prepared = record["state"]
+    started = time.monotonic()
+    steps.reset_incidents()
+    steps.retire_standby()
+    steps.stop_controller()
+    out("controller stopped")
+    steps.restore_repository(prepared["head"])
+    app = steps.app_reset()
+    out(f"app reset: {json.dumps(app)}")
+    steps.start_controller()
+    steps.wait_standby()
+    if problems := wipe_problems(prepared, steps.repository_state()):
+        raise HookError("the lane is not the prepared one after the reset: " + "; ".join(problems))
+    if why := steps.controller_idle():
+        raise HookError(f"the operator is not idle after the reset: {why}")
+    receipt = swap_receipt(lane_dir, record["revision"], record["memory"], time.monotonic() - started)
+    receipt["reset_s"] = receipt.pop("swap_s")
+    receipt["app"] = app
+    return receipt
+
+
+def set_maintenance(env: Mapping[str, str], paused: bool, generation: str) -> None:
+    """``sdo-operator maintenance``; a pause waits for the controller's acknowledgement of the generation (a resume is
+    not acknowledged)."""
+    control = control_namespace(env)
+    kube = _kube(env)
+    args = [str(_binary(env)), "maintenance", "--control-namespace", control, "--generation", generation]
+    if paused:
+        args.append("--paused")
+    if env.get("KUBECONFIG"):
+        args += ["--kubeconfig", str(Path(env["KUBECONFIG"]).resolve())]
+    proc = subprocess.run(args, capture_output=True, text=True, timeout=120, check=False)
+    if proc.returncode != 0:
+        raise HookError(f"maintenance failed ({proc.returncode}): {(proc.stderr or proc.stdout).strip()[-300:]}")
+    if not paused:  # only a pause is acknowledged: the controller resumes by itself
+        return
+    deadline = time.monotonic() + MAINTENANCE_ACK_WAIT_S
+    while time.monotonic() < deadline:
+        done = subprocess.run(
+            kube.cmd("-n", control, "get", "configmap", "sdo-controller-maintenance-ack", "-o", "jsonpath={.data}"),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        if generation in done.stdout:
+            return
+        time.sleep(1)
+    raise HookError(f"the controller did not acknowledge maintenance {generation} within {MAINTENANCE_ACK_WAIT_S:.0f}s")
+
+
+def set_controller_suspended(kube: Kube, control: str, suspended: bool, timeout: float = 300.0) -> None:
+    """Suspend or resume the controller Job. Suspending ends its pod (SIGTERM: the evidence sidecar's final pass runs)
+    and waits until none is left."""
+    _run(
+        kube.cmd("-n", control, "patch", "job", CONTROLLER_JOB, "-p", json.dumps({"spec": {"suspend": suspended}})),
+        "suspend the controller" if suspended else "resume the controller",
+        60,
+    )
+    if not suspended:
+        return
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not kube.controller_pods(control):
+            return
+        time.sleep(2)
+    raise HookError(f"the controller pod did not end within {timeout:.0f}s")
+
+
+def restore_repository(kube: Kube, control: str, head: str) -> None:
+    """With the controller stopped, put the accepted repository on its volume back at ``head`` with no other file
+    (outcomes and playbooks it learned go), in a short-lived pod that mounts the volume as the controller does."""
+    if not _COMMIT.match(head):
+        raise HookError(f"prepared head {head!r} is not a commit")
+    job = kube._json("-n", control, "get", "job", CONTROLLER_JOB) or {}
+    spec = ((job.get("spec") or {}).get("template") or {}).get("spec") or {}
+    container = next((c for c in spec.get("containers", []) if c.get("name") == CONTROLLER_CONTAINER), None)
+    if container is None:
+        raise HookError(f"no controller container in job {CONTROLLER_JOB}")
+    volume = next(
+        (v for v in spec.get("volumes", []) if v.get("persistentVolumeClaim") and v["name"] == "repository"), None
+    )
+    mount = next((m for m in container.get("volumeMounts", []) if m.get("name") == "repository"), None)
+    if volume is None or mount is None:
+        raise HookError("the controller job has no repository volume")
+    name = "sdo-restore-repository"
+    script = (
+        f"cd {APPLICATION_ROOT} && git -c safe.directory='*' reset -q --hard {head} && "
+        "git -c safe.directory='*' clean -q -fdx && git -c safe.directory='*' rev-parse HEAD"
+    )
+    pod = {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {"name": name, "namespace": control},
+        "spec": {
+            "restartPolicy": "Never",
+            "securityContext": spec.get("securityContext") or {},
+            "containers": [
+                {
+                    "name": "restore",
+                    "image": container["image"],
+                    "imagePullPolicy": "IfNotPresent",
+                    "command": ["sh", "-c", script],
+                    "securityContext": container.get("securityContext") or {},
+                    "volumeMounts": [mount],
+                }
+            ],
+            "volumes": [volume],
+        },
+    }
+    _run(
+        kube.cmd("-n", control, "delete", "pod", name, "--ignore-not-found", "--wait=true"),
+        "delete old restore pod",
+        120,
+    )
+    _run(kube.cmd("apply", "-f", "-"), "restore pod", 60, input=json.dumps(pod))
+    try:
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            proc = subprocess.run(
+                kube.cmd("-n", control, "get", "pod", name, "-o", "jsonpath={.status.phase}"),
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+            if proc.stdout.strip() == "Succeeded":
+                logs = _run(kube.cmd("-n", control, "logs", name), "restore pod log", 60).stdout.strip()
+                if logs.splitlines()[-1:] != [head]:
+                    raise HookError(f"repository is at {logs[-50:]!r}, not {head}")
+                return
+            if proc.stdout.strip() == "Failed":
+                logs = subprocess.run(
+                    kube.cmd("-n", control, "logs", name), capture_output=True, text=True, check=False
+                )
+                raise HookError(f"repository restore failed: {(logs.stdout + logs.stderr).strip()[-300:]}")
+            time.sleep(2)
+        raise HookError("repository restore pod did not finish in 180s")
+    finally:
+        subprocess.run(
+            kube.cmd("-n", control, "delete", "pod", name, "--ignore-not-found", "--wait=false"),
+            capture_output=True,
+            check=False,
+        )
+
+
+def fuzzops_app(env: Mapping[str, str], verb: str) -> dict[str, Any]:
+    """``fuzzops app snapshot|reset`` for the lane's app against its golden directory; the receipt is its last
+    stdout line. A nonzero exit (the app is not the golden copy) is a ``HookError``."""
+    binary = env.get("FUZZOPS_BIN") or shutil.which("fuzzops")
+    if not binary:
+        raise HookError("fuzzops binary not found (FUZZOPS_BIN)")
+    golden = Path(_need(env, "BENCH_LANE_DIR")).resolve() / GOLDEN_DIRECTORY
+    if verb == "reset" and not (golden / "meta.json").is_file():
+        raise HookError(f"no golden copy of the app in {golden}: run the snapshot verb on a prepared lane first")
+    proc = subprocess.run(
+        [
+            binary,
+            "app",
+            verb,
+            "--pack",
+            _need(env, "BENCH_PACK"),
+            "--namespace",
+            _need(env, "FUZZOPS_NAMESPACE"),
+            "--dir",
+            str(golden),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=1800,
+        check=False,
+    )
+    lines = [line for line in proc.stdout.splitlines() if line.strip()]
+    if proc.returncode != 0:
+        raise HookError(f"app {verb} failed: {(proc.stderr.strip().splitlines() or ['no output'])[-1][-400:]}")
+    try:
+        return dict(json.loads(lines[-1]))
+    except (IndexError, json.JSONDecodeError) as exc:
+        raise HookError(f"app {verb}: no receipt on stdout") from exc
+
+
+def wait_idle(kube: Kube, control: str, timeout: float) -> str:
+    """Poll until the controller is idle as the ``idle`` verb judges it (fresh state, no incident, closure or
+    reflection, startup done); the last reason otherwise. A state the controller has not written since a pause is
+    stale, never idle."""
+    deadline = time.monotonic() + timeout
+    why = "no controller state yet"
+    while time.monotonic() < deadline:
+        try:
+            state, updated = kube.state_configmap(control)
+            why = idle_verdict(state, updated, kube.controller_ready(control), datetime.now(UTC))
+        except (subprocess.SubprocessError, json.JSONDecodeError, OSError) as exc:
+            why = f"controller read failed: {exc}"
+        if not why:
+            return ""
+        time.sleep(3)
+    return why
+
+
+def reset(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
+    kube, control = _kube(env), control_namespace(env)
+    binary, kubeconfig = _binary(env), Path(env["KUBECONFIG"]).resolve() if env.get("KUBECONFIG") else None
+    steps = ResetSteps(
+        reset_incidents=lambda: reset_incidents(binary, control, kubeconfig),
+        retire_standby=lambda: retire_standby(kube, control),
+        stop_controller=lambda: set_controller_suspended(kube, control, True),
+        restore_repository=lambda head: restore_repository(kube, control, head),
+        app_reset=lambda: fuzzops_app(env, "reset"),
+        start_controller=lambda: set_controller_suspended(kube, control, False),
+        wait_standby=lambda: wait_standby(kube, control, SWAP_STANDBY_WAIT_S),
+        repository_state=lambda: repository_state(kube, control),
+        controller_idle=lambda: wait_idle(kube, control, RESET_IDLE_WAIT_S),
+    )
+    out(json.dumps(reset_lane(env, steps, out)))
+    return 0
+
+
+def snapshot(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
+    """Take the lane's app golden copy while the controller is paused (the copy scales the data stores down).
+    Run once on a prepared, idle lane; ``reset`` returns the lane to this state."""
+    started = time.monotonic()
+    generation = f"snapshot-{int(time.time())}"
+    set_maintenance(env, True, generation + "-pause")
+    try:
+        app = fuzzops_app(env, "snapshot")
+    finally:
+        set_maintenance(env, False, generation + "-resume")
+    kube, control = _kube(env), control_namespace(env)
+    if why := wait_idle(kube, control, RESET_IDLE_WAIT_S):
+        raise HookError(f"the operator is not idle after the snapshot: {why}")
+    out(json.dumps({"snapshot_s": round(time.monotonic() - started, 1), "app": app}))
+    return 0
+
+
 def transcripts(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     try:
         if sink.pull_mode(env):
@@ -1401,7 +1677,7 @@ def baseline_main(argv: list[str]) -> int:
     return 0
 
 
-VERBS = ("check", "prepare", "swap", "idle", "watch", "collect", "teardown", "transcripts")
+VERBS = ("check", "prepare", "swap", "reset", "snapshot", "idle", "watch", "collect", "teardown", "transcripts")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1419,6 +1695,8 @@ def main(argv: list[str] | None = None) -> int:
             "check": check,
             "prepare": prepare,
             "swap": swap,
+            "reset": reset,
+            "snapshot": snapshot,
             "idle": idle,
             "collect": collect,
             "teardown": teardown,
