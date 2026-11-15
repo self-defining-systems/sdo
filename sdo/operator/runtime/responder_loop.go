@@ -62,12 +62,14 @@ type ToolRequest struct {
 	Limit      int      `json:"limit,omitempty"`
 	// Query, Step, Grep, Failing, List, Operation and Route are the inputs of
 	// `metrics`, `logs` and `traces`; Name is the component, match or trace ID.
-	Query       string                                 `json:"query,omitempty"`
-	Step        string                                 `json:"step,omitempty"`
-	Grep        string                                 `json:"grep,omitempty"`
-	Failing     bool                                   `json:"failing,omitempty"`
-	List        bool                                   `json:"list,omitempty"`
-	Operation   string                                 `json:"operation,omitempty"`
+	Query     string `json:"query,omitempty"`
+	Step      string `json:"step,omitempty"`
+	Grep      string `json:"grep,omitempty"`
+	Failing   bool   `json:"failing,omitempty"`
+	List      bool   `json:"list,omitempty"`
+	Operation string `json:"operation,omitempty"`
+	// Structured asks `map` for its answer as JSON in ToolResponse.Data.
+	Structured  bool                                   `json:"structured,omitempty"`
 	Route       string                                 `json:"route,omitempty"`
 	Parameters  map[string]string                      `json:"parameters,omitempty"`
 	Selection   *contracts.MitigationSelection         `json:"-"`
@@ -107,7 +109,9 @@ type VerificationStatus string
 const VerificationAwaitingResponderCompletion VerificationStatus = "awaiting_responder_completion"
 
 type ToolResponse struct {
-	Text                string              `json:"text,omitempty"`
+	Text string `json:"text,omitempty"`
+	// Data is a structured answer (`map` with Structured), never prose in JSON.
+	Data                json.RawMessage     `json:"data,omitempty"`
 	Burst               *prober.BurstResult `json:"burst,omitempty"`
 	VerificationStatus  VerificationStatus  `json:"verification_status,omitempty"`
 	MemoryCheckReport   json.RawMessage     `json:"memory_check_report,omitempty"`

@@ -746,6 +746,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				loop.Telemetry = func() ApplicationTelemetry {
 					telemetryView := ApplicationTelemetry{Metrics: metricsObserver.API()}
 					telemetryView.Sources = metricsSources(telemetryView.Metrics)
+					if known, ok := telemetryView.Metrics.(interface{ TraceReader() telemetry.TraceReader }); ok {
+						telemetryView.Traces = known.TraceReader()
+					}
 					if client := bootstrapProvider.Client; client != nil {
 						telemetryView.PodLogs = func(ctx context.Context, namespace, pod string, options *corev1.PodLogOptions) (io.ReadCloser, error) {
 							return client.CoreV1().Pods(namespace).GetLogs(pod, options).Stream(ctx)

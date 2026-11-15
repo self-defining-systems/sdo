@@ -2,15 +2,16 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
-	"sdo.dev/operator/telemetry"
 )
 
 const (
@@ -76,30 +77,7 @@ func (l *ResponderLoop) applicationMap(ctx context.Context, request ToolRequest,
 		response.Error = fmt.Sprintf("sdo map %s needs a name", request.MapView)
 		return
 	}
-	if l.Provider == nil {
-		response.Error = "fresh snapshot provider is unavailable"
-		return
-	}
-	snapshot, err := l.Provider.Snapshot(ctx)
-	if err != nil {
-		response.Error = err.Error()
-		return
-	}
-	readView := program.ReadFrom(snapshot)
-	if l.ReadView != nil {
-		readView = l.ReadView(snapshot)
-	}
-	reader, ok := readView.(architectureReader)
-	if !ok {
-		response.Error = "no application map: the accepted architecture is unavailable"
-		return
-	}
-	doc, err := reader.ArchitectureText()
-	if err != nil {
-		response.Error = "no application map: " + err.Error()
-		return
-	}
-	g, err := newMapGraph(doc)
+	g, readView, snapshot, err := l.loadMap(ctx)
 	if err != nil {
 		response.Error = err.Error()
 		return
@@ -107,6 +85,9 @@ func (l *ResponderLoop) applicationMap(ctx context.Context, request ToolRequest,
 	switch request.MapView {
 	case "":
 		response.Text = g.renderOverview()
+		if request.Structured {
+			response.Data = marshalMapData(g.overviewData(l.pointers(ctx, g, snapshot)))
+		}
 	case "path":
 		op, found := g.operation(request.Name)
 		if !found {
@@ -118,6 +99,9 @@ func (l *ResponderLoop) applicationMap(ctx context.Context, request ToolRequest,
 			return
 		}
 		response.Text = g.renderPath(op, l.userTestVerdicts(readView), l.observability(ctx, g, snapshot))
+		if request.Structured {
+			response.Data = marshalMapData(g.pathData(op, l.userTestVerdicts(readView), l.pointers(ctx, g, snapshot)))
+		}
 	case "near":
 		if _, found := g.comps[request.Name]; !found {
 			names := make([]string, 0, len(g.comps))
@@ -128,8 +112,40 @@ func (l *ResponderLoop) applicationMap(ctx context.Context, request ToolRequest,
 			return
 		}
 		response.Text = g.renderNear(request.Name, l.observability(ctx, g, snapshot))
+		if request.Structured {
+			response.Data = marshalMapData(g.nearData(request.Name, l.pointers(ctx, g, snapshot)))
+		}
 	}
 	response.Summary = strings.TrimSpace("sdo map " + request.MapView)
+}
+
+// loadMap reads the accepted application map and the fresh snapshot it is
+// looked at through.
+func (l *ResponderLoop) loadMap(ctx context.Context) (mapGraph, program.ReadView, sdk.DetectionContext, error) {
+	if l.Provider == nil {
+		return mapGraph{}, nil, nil, errors.New("fresh snapshot provider is unavailable")
+	}
+	snapshot, err := l.Provider.Snapshot(ctx)
+	if err != nil {
+		return mapGraph{}, nil, nil, err
+	}
+	readView := program.ReadFrom(snapshot)
+	if l.ReadView != nil {
+		readView = l.ReadView(snapshot)
+	}
+	reader, ok := readView.(architectureReader)
+	if !ok {
+		return mapGraph{}, nil, nil, errors.New("no application map: the accepted architecture is unavailable")
+	}
+	doc, err := reader.ArchitectureText()
+	if err != nil {
+		return mapGraph{}, nil, nil, errors.New("no application map: " + err.Error())
+	}
+	g, err := newMapGraph(doc)
+	if err != nil {
+		return mapGraph{}, nil, nil, err
+	}
+	return g, readView, snapshot, nil
 }
 
 // userTestVerdicts maps scenario ID to FAIL or PASS for the tests `sdo detect`
@@ -265,60 +281,117 @@ func (g mapGraph) renderNear(name string, observe func(string) string) string {
 	return out.String()
 }
 
-// observability is, per component, where to look: the request metric its
-// services expose (from the map's entries), its pods for `sdo logs`, and its
-// trace service name when a trace store is bound. They are the arguments
-// `sdo metrics`, `sdo logs` and `sdo traces` take, found from the map's
-// components and nothing finer.
-func (l *ResponderLoop) observability(ctx context.Context, g mapGraph, snapshot sdk.DetectionContext) func(string) string {
-	var sources []telemetry.Source
-	if l.Telemetry != nil {
-		sources = l.Telemetry().Sources
+// mapPointers is, for one component, where to look: the request metrics its
+// services expose, its pods for `sdo logs` and its service name in the trace
+// store. They are the arguments `sdo metrics`, `sdo logs` and `sdo traces`
+// take, found from the map's components and nothing finer.
+type mapPointers struct {
+	Metrics []metricPointer `json:"metrics,omitempty"`
+	Logs    logPointer      `json:"logs"`
+	// TracesService is the trace store's service name for the component, when
+	// traces exist and name it.
+	TracesService string `json:"traces_service,omitempty"`
+}
+
+type metricPointer struct {
+	Metric   string            `json:"metric"`
+	Selector map[string]string `json:"selector,omitempty"`
+	Route    string            `json:"route_label"`
+	Status   string            `json:"status_label,omitempty"`
+}
+
+type logPointer struct {
+	Component string   `json:"component"`
+	Pods      []string `json:"pods,omitempty"`
+}
+
+func (p metricPointer) text() string {
+	selector := ""
+	if len(p.Selector) > 0 {
+		keys := make([]string, 0, len(p.Selector))
+		for key := range p.Selector {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		pairs := make([]string, len(keys))
+		for i, key := range keys {
+			pairs[i] = fmt.Sprintf("%s=%q", key, p.Selector[key])
+		}
+		selector = "{" + strings.Join(pairs, ",") + "}"
 	}
-	traced := slices.ContainsFunc(sources, func(s telemetry.Source) bool { return s.Serves(telemetry.KindTraces) })
-	return func(name string) string {
+	labels := "route=" + p.Route
+	if p.Status != "" {
+		labels += ", status=" + p.Status
+	}
+	return fmt.Sprintf("metrics %s%s (labels %s)", p.Metric, selector, labels)
+}
+
+func (p mapPointers) text() string {
+	var parts []string
+	for _, metric := range p.Metrics {
+		parts = append(parts, metric.text())
+	}
+	logs := "logs: sdo logs " + p.Logs.Component
+	if len(p.Logs.Pods) > 0 {
+		logs += " (pods " + strings.Join(p.Logs.Pods, ",") + ")"
+	}
+	parts = append(parts, logs)
+	if p.TracesService != "" {
+		parts = append(parts, "traces: service "+p.TracesService)
+	}
+	return strings.Join(parts, "; ")
+}
+
+// pointers returns the observation pointers of each component. The trace
+// service is the store's own name for the component: the first of the
+// component's name, workload name and Service names the store lists.
+func (l *ResponderLoop) pointers(ctx context.Context, g mapGraph, snapshot sdk.DetectionContext) func(string) mapPointers {
+	var traced []string
+	if l.Telemetry != nil {
+		if store := l.Telemetry().Traces; store != nil {
+			readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			traced, _ = store.Services(readCtx)
+		}
+	}
+	return func(name string) mapPointers {
 		component, ok := g.comps[name]
 		if !ok {
+			return mapPointers{Logs: logPointer{Component: name}}
+		}
+		var out mapPointers
+		for _, entry := range g.m.Entries {
+			if slices.Contains(component.Services, entry.Service) {
+				out.Metrics = append(out.Metrics, metricPointer{Metric: entry.Metric, Selector: entry.Selector, Route: entry.Labels.Route, Status: entry.Labels.Status})
+			}
+		}
+		out.Logs.Component = name
+		if pods, err := componentPods(l, snapshot, name); err == nil {
+			for _, pod := range pods {
+				if len(out.Logs.Pods) < mapNearCap {
+					out.Logs.Pods = append(out.Logs.Pods, pod.Name)
+				}
+			}
+		}
+		_, short, _ := strings.Cut(component.Workload, "/")
+		candidates := append([]string{name, short}, component.Services...)
+		for _, candidate := range candidates {
+			if i := slices.IndexFunc(traced, func(s string) bool { return strings.EqualFold(s, candidate) }); i >= 0 {
+				out.TracesService = traced[i]
+				break
+			}
+		}
+		return out
+	}
+}
+
+// observability is the text form of pointers.
+func (l *ResponderLoop) observability(ctx context.Context, g mapGraph, snapshot sdk.DetectionContext) func(string) string {
+	point := l.pointers(ctx, g, snapshot)
+	return func(name string) string {
+		if _, ok := g.comps[name]; !ok {
 			return "none"
 		}
-		var parts []string
-		for _, entry := range g.m.Entries {
-			if !slices.Contains(component.Services, entry.Service) {
-				continue
-			}
-			selector := ""
-			if len(entry.Selector) > 0 {
-				keys := make([]string, 0, len(entry.Selector))
-				for key := range entry.Selector {
-					keys = append(keys, key)
-				}
-				sort.Strings(keys)
-				pairs := make([]string, len(keys))
-				for i, key := range keys {
-					pairs[i] = fmt.Sprintf("%s=%q", key, entry.Selector[key])
-				}
-				selector = "{" + strings.Join(pairs, ",") + "}"
-			}
-			labels := "route=" + entry.Labels.Route
-			if entry.Labels.Status != "" {
-				labels += ", status=" + entry.Labels.Status
-			}
-			parts = append(parts, fmt.Sprintf("metrics %s%s (labels %s)", entry.Metric, selector, labels))
-		}
-		logs := "logs: sdo logs " + name
-		if pods, err := componentPods(l, snapshot, name); err == nil {
-			names := make([]string, 0, len(pods))
-			for _, pod := range pods {
-				if len(names) < mapNearCap {
-					names = append(names, pod.Name)
-				}
-			}
-			logs += " (pods " + strings.Join(names, ",") + ")"
-		}
-		parts = append(parts, logs)
-		if traced && len(component.Services) > 0 {
-			parts = append(parts, "traces: service "+component.Services[0])
-		}
-		return strings.Join(parts, "; ")
+		return point(name).text()
 	}
 }

@@ -44,9 +44,11 @@ RESPONSE_FIELDS = {
     "timeline": "text (CSV, oldest first; columns in its header row; only signals that changed state)",
     "metrics": "text (CSV, largest series first; with --list, metric names or one metric's labels)",
     "logs": "text (matching log lines tagged by pod, oldest first; # lines give counts and failing-request rollup)",
-    "traces": "text (trace store reads), or an error naming what is not bound",
+    "traces": "text (CSV of recent traces: id, root, status, duration, services, first failing span; or one trace's "
+    "span tree), or an error naming what is not bound",
     "investigations": "text (each SDO-started investigator's state and full report; read-only)",
-    "map": "text (components and operations, one operation path, or a component's neighbours)",
+    "map": "text (components and operations, one operation path, or a component's neighbours); with --json the "
+    "map as structured data (components, edges, operations, observability pointers)",
     "diagnose": "program_runs[].{program_id, program_revision, verdict, can_mitigate, mitigate_command}, "
     "program_revisions",
     "menu": "menu.options[].{command, program_id, program_revision, disabled_reason, parameters}, "
@@ -215,9 +217,11 @@ def _parser() -> argparse.ArgumentParser:
         "traces",
         help="traces, or what is missing",
         description=(
-            "List traces from the trace store when one is bound (filter by --operation or --route, --failing, "
-            "--since), or show one trace by ID. When no trace store is bound the command says so and how the "
-            "application could emit traces. A trace shows which hop of a request failed or was slow."
+            "List recent traces from the trace store when one is bound (filter by --operation or --route, --failing, "
+            "--since): trace ID, root operation, status, duration, services touched and the first failing span. "
+            "`sdo traces ID` prints that trace's span tree: service, operation or database statement, status and "
+            "duration per span. When no trace store is bound the command says so and how the application could "
+            "emit traces. A trace shows which hop of a request failed or was slow."
         ),
     )
     traces.add_argument("trace_id", nargs="?", metavar="ID", help="show this trace")
@@ -245,7 +249,8 @@ def _parser() -> argparse.ArgumentParser:
             "operations through it. Each component line ends with where to observe it (request metric, logs "
             "pods, trace service) for `sdo metrics`, `sdo logs` and `sdo traces`. "
             "Possible edges (a Secret reference only suggests them) are labelled. "
-            "Changes nothing."
+            "`--json` prints the same answer as structured data (components, edges, operations, per-component "
+            "pointers) for scripts. Changes nothing."
         ),
     )
     map_command.add_argument(
@@ -450,6 +455,8 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
             request["map_view"] = args.view
         if args.name:
             request["name"] = args.name
+        if getattr(args, "json", False):
+            request["structured"] = True
     elif args.command in ("changes", "timeline"):
         if args.since:
             request["since"] = args.since
@@ -543,6 +550,11 @@ def _print_response(response: dict[str, Any], *, full_json: bool) -> None:
             )
         else:
             print(text)
+        return
+    if full_json and response.get("command") == "map" and response.get("data"):
+        # `sdo map --json` is the map itself (components, edges, operations, pointers), not text in JSON.
+        data = json.dumps(response["data"], ensure_ascii=False, separators=(",", ":"))
+        print(cap_text(data, budget_for("tool_stdout.map") - 1, json_output=True))
         return
     output = write_response(response)
     if response.get("command") in TEXT_COMMANDS and response.get("text") and not full_json:

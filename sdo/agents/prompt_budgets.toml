@@ -166,7 +166,7 @@ reason = "Measured production rendering 4776 Unicode characters across three-/fi
 
 [tool_stdout.map]
 max_chars = 4000
-reason = "sdo map prints at most 30 component and 30 operation lines of about 100 characters, or one operation path, one failing-versus-passing diff, or one component's two-hop neighbourhood (at most 12 names per direction), all bounded by Go; beyond the cap cap_text saves the full text to a context file."
+reason = "sdo map prints at most 30 component and 30 operation lines of about 100 characters, or one operation path, one failing-versus-passing diff, or one component's two-hop neighbourhood (at most 12 names per direction), all bounded by Go; beyond the cap cap_text saves the full text to a context file. With --json the same answer is one JSON object under the same cap."
 
 [tool_stdout.menu]
 max_chars = 1800
@@ -466,4 +466,4 @@ reason = "At most 120 log lines (Go telemetryLogLines) of at most 300 characters
 
 [tool_stdout.traces]
 max_chars = 8000
-reason = "Trace listings or one trace, or the one-line error that no trace store is bound; beyond the cap cap_text saves the full text to a context file."
+reason = "A listing of at most 20 traces (one CSV row of about 250 characters each) or one trace tree of at most 80 span lines, or the one-line error that no trace store is bound; beyond the cap cap_text saves the full text to a context file."
