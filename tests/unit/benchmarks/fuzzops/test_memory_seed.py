@@ -126,6 +126,8 @@ def test_the_restore_pod_receives_the_bundle_in_its_own_writable_volume(monkeypa
     assert {"name": "seed", "emptyDir": {}} in pod["volumes"]
     assert "/tmp/" not in container["command"][2]
     assert f"{hooks.BUNDLE_DIR}/memory.bundle" in container["command"][2]
+    # a memory with another history leaves no broker proposals or ledger describing the old one
+    assert "rm -rf /repo/worktrees/*" in container["command"][2]
 
 
 def test_the_restore_script_imports_a_bundle_whatever_its_refs_are_named(tmp_path: Path) -> None:
