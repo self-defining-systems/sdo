@@ -431,7 +431,7 @@ func controllerJob(c Config) *batchv1.Job {
 	// validate already parsed the sink.
 	_ = evidenceSinkSidecar(c, pod)
 	if devmount.Enabled() {
-		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_DEV_MOUNT", Value: "1"})
+		pod.Containers[0].Env = append(pod.Containers[0].Env, devmount.Environment()...)
 		devmount.Apply(pod)
 	}
 	return job

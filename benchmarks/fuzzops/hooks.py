@@ -64,7 +64,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from benchmarks.fuzzops import config, observe, page, sink, view
+from benchmarks.fuzzops import config, devtree, observe, page, sink, view
 from benchmarks.fuzzops.install import (
     CREDENTIALS_SECRET,
     REPOSITORY_PVC,
@@ -285,6 +285,9 @@ def baseline_problem(baseline: Baseline, namespace: str) -> str:
     return bundle_problem(baseline.path(baseline.bundle), baseline.branch, baseline.commit)
 
 
+#: The projected sources under the lane's evidence directory (``devtree``).
+DEV_DIRECTORY = ".dev"
+
 # ---- operator block and lane environment ---------------------------------------------------------------------
 
 
@@ -304,12 +307,17 @@ class OperatorBlock:
     #: ``settings.harness_page``: the harness-paged arm (``page.PageConfig``): the benchmark opens the one SDO
     #: incident through the external-incident inbox at the inject plus ``after`` seconds; detectors only observe.
     harness_page: page.PageConfig | None = None
+    #: ``settings.dev_mount``: run the pods from the base images (``image_tag``) with the checkout's sources and
+    #: binary projected over them from the lane's evidence mount (``devtree``): no image build for this revision.
+    dev_mount: bool = False
 
     def __post_init__(self) -> None:
         if not self.revision:
             raise ValueError("the operator block needs the SDO revision")
         if not self.baseline.is_absolute():
             raise ValueError("the operator block's baseline must be an absolute path")
+        if self.dev_mount and not self.image_tag:
+            raise ValueError("settings.dev_mount needs settings.image_tag (the base images)")
         if not self.image_tag:
             object.__setattr__(self, "image_tag", f"fz-{self.revision[:8]}")
         refuse_hook_keys(self.config, "settings.config")
@@ -347,6 +355,7 @@ class OperatorBlock:
                 auth_file=Path(str(settings.get("auth_file") or Path.home() / ".codex" / "auth.json")).expanduser(),
                 config=settings.get("config") or {},
                 harness_page=page.PageConfig.from_settings(settings.get("harness_page")),
+                dev_mount=bool(settings.get("dev_mount")),
             )
         except (TypeError, ValueError) as exc:
             raise HookError(f"BENCH_OPERATOR: {exc}") from exc
@@ -787,6 +796,20 @@ def lane_registry_images(registry: Path | None, wanted: list[str], log: Callable
     return refs
 
 
+def dev_mount_env(
+    env: Mapping[str, str], block: OperatorBlock, binary: Path, log: Callable[[str], None]
+) -> dict[str, str]:
+    """For a ``dev_mount`` operator: project the checkout over the base images on the lane and return the ``SDO_*``
+    variables that make the install mount it. Empty for an image-built operator."""
+    if not block.dev_mount:
+        return {}
+    host, node = _need(env, "BENCH_EVIDENCE_HOST"), _need(env, "BENCH_EVIDENCE_NODE")
+    started = time.monotonic()
+    devtree.sync(Path.cwd(), Path(host) / DEV_DIRECTORY, binary)
+    log(f"projected the checkout over the base images in {time.monotonic() - started:.1f}s")
+    return {"SDO_DEV_MOUNT": "1", "SDO_DEV_MOUNT_PATH": f"{node}/{DEV_DIRECTORY}"}
+
+
 def clone_baseline(baseline: Baseline, repo: Path) -> str:
     """Clone the baseline bundle's branch into ``repo`` as ``main`` with no remote; returns HEAD."""
     shutil.rmtree(repo, ignore_errors=True)
@@ -881,6 +904,7 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     attached = write_attached_pack(source, lane_dir / "pack").resolve()
     # (d) the operator binary of the pinned checkout
     binary = build_operator(lane_dir / "bin" / "sdo-operator")
+    dev_env = dev_mount_env(env, block, binary, out)
     # (e) the operator images on the workers
     image = block.images()
     registry = Path(env["BENCH_REGISTRY"]) if env.get("BENCH_REGISTRY") else None
@@ -933,7 +957,14 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     memory = clone_baseline(baseline, lane_dir / "app")
     # (h) production restore: install-existing, history kept, no install-time agents
     args, launch_env = install_existing_launch(
-        binary.resolve(), lane_dir / "app", baseline, block, kubeconfig, evidence_env, lane_dir / "sdo-config", image
+        binary.resolve(),
+        lane_dir / "app",
+        baseline,
+        block,
+        kubeconfig,
+        {**evidence_env, **dev_env},
+        lane_dir / "sdo-config",
+        image,
     )
     (lane_dir / "install-existing-args.json").write_text(json.dumps(args, indent=1) + "\n")
     (lane_dir / "install-existing-env.json").write_text(json.dumps(launch_env, indent=1, sort_keys=True) + "\n")

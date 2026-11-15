@@ -184,7 +184,7 @@ func OperateJob(cfg Config, healthObjective, operationID string) (*batchv1.Job, 
 		return nil, err
 	}
 	if devmount.Enabled() {
-		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_DEV_MOUNT", Value: "1"})
+		pod.Containers[0].Env = append(pod.Containers[0].Env, devmount.Environment()...)
 		devmount.Apply(pod)
 	}
 	if err := worker_registry.ApplyProviderCapacity(pod, worker_registry.ProviderCapacityEnvironment()); err != nil {

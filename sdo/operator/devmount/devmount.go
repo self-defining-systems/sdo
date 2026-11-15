@@ -8,7 +8,26 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-const NodePath = "/opt/sdo-dev"
+// DefaultNodePath is where a fastloop lane's kind nodes mount the worktree.
+const DefaultNodePath = "/opt/sdo-dev"
+
+// NodePath is the node directory holding the projected sources: SDO_DEV_MOUNT_PATH when set (a fuzzops lane keeps
+// them under its evidence mount, which every node already has), else DefaultNodePath.
+func NodePath() string {
+	if path := os.Getenv("SDO_DEV_MOUNT_PATH"); path != "" {
+		return path
+	}
+	return DefaultNodePath
+}
+
+// Environment is what the controller container needs to launch dev-mounted workers like itself.
+func Environment() []corev1.EnvVar {
+	env := []corev1.EnvVar{{Name: "SDO_DEV_MOUNT", Value: "1"}}
+	if path := os.Getenv("SDO_DEV_MOUNT_PATH"); path != "" {
+		env = append(env, corev1.EnvVar{Name: "SDO_DEV_MOUNT_PATH", Value: path})
+	}
+	return env
+}
 
 // Enabled is set only for a fastloop lane whose kind nodes mount the worktree.
 func Enabled() bool { return os.Getenv("SDO_DEV_MOUNT") == "1" }
@@ -49,18 +68,18 @@ func Apply(pod *corev1.PodSpec) {
 	for _, name := range []string{"sdo", "libs", "examples"} {
 		pod.Volumes = append(pod.Volumes, corev1.Volume{
 			Name:         "dev-" + name,
-			VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: NodePath + "/" + name, Type: &directory}},
+			VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: NodePath() + "/" + name, Type: &directory}},
 		})
 	}
 	pod.Volumes = append(pod.Volumes, corev1.Volume{
 		Name:         "dev-operator",
-		VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: NodePath + "/.fastloop/sdo-operator", Type: &file}},
+		VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: NodePath() + "/.fastloop/sdo-operator", Type: &file}},
 	})
 	if os.Getenv("SDO_DEV_MODULE_DOWNLOADS") == "1" {
 		pod.Volumes = append(pod.Volumes, corev1.Volume{
 			Name: "dev-module-downloads",
 			VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{
-				Path: NodePath + "/.fastloop/go-mod-download", Type: &directory,
+				Path: NodePath() + "/.fastloop/go-mod-download", Type: &directory,
 			}},
 		})
 	}
@@ -94,10 +113,10 @@ func ApplyWorker(pod *corev1.PodSpec) {
 	Apply(pod)
 	directory, file := corev1.HostPathDirectory, corev1.HostPathFile
 	for index, path := range benchmarkFiles {
-		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: fmt.Sprintf("dev-bench-%d", index), VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: NodePath + "/" + path, Type: &file}}})
+		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: fmt.Sprintf("dev-bench-%d", index), VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: NodePath() + "/" + path, Type: &file}}})
 	}
 	for index, name := range []string{"scripted_program", "scripted_networkpolicy_program"} {
-		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: fmt.Sprintf("dev-script-%d", index), VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: NodePath + "/benchmarks/sregym/fastloop/" + name, Type: &directory}}})
+		pod.Volumes = append(pod.Volumes, corev1.Volume{Name: fmt.Sprintf("dev-script-%d", index), VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: NodePath() + "/benchmarks/sregym/fastloop/" + name, Type: &directory}}})
 	}
 
 	for index := range pod.Containers {
