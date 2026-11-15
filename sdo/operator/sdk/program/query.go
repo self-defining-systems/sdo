@@ -243,6 +243,9 @@ func (r Row) normalize() (Row, error) {
 				out[name] = v
 			}
 		case string:
+			if storeops.CredentialName(name) {
+				return nil, fmt.Errorf("field %q is named like a credential and holds a string, which is never readable", name)
+			}
 			if len(v) > MaxScalarBytes {
 				return nil, fmt.Errorf("field %q holds a string of more than %d bytes", name, MaxScalarBytes)
 			}
