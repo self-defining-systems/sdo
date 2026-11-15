@@ -1,7 +1,6 @@
 package sdktest
 
 import (
-	"fmt"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -17,14 +16,11 @@ func (v *ReplayReadView) LogsWithOptions(ref sdk.ObjectRef, options corev1.PodLo
 	if err != nil {
 		return "", err
 	}
-	bounded, err := program.BoundedLogOptions(options)
+	_, limit, err := program.BoundedLogOptions(options)
 	if err != nil {
 		return "", err
 	}
-	if int64(len(r)) > *bounded.LimitBytes {
-		return "", fmt.Errorf("recorded logs exceed byte limit")
-	}
-	return r, nil
+	return program.NewestLogBytes(r, limit), nil
 }
 func (v *ReplayReadView) PodUsage(ref sdk.ObjectRef) (*metricsv1beta1.PodMetrics, error) {
 	var r *metricsv1beta1.PodMetrics

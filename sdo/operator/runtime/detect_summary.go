@@ -30,7 +30,7 @@ const (
 	detectLogWindow      = 5 * time.Minute
 	detectLogReadTimeout = 2 * time.Second
 	detectLogTotal       = 4 * time.Second
-	detectLogBytes       = 64 << 10
+	detectLogLines       = 2000
 	detectItemCap        = 6000
 	detectFullSuspects   = 2
 	detectShownTests     = 3
@@ -410,7 +410,7 @@ func suspectLogs(in detectInput, workload sdk.ObjectRef, onset time.Time, deadli
 	}
 	before, after, timedOut := 0, 0, false
 	sample := ""
-	limit := int64(detectLogBytes)
+	tail := int64(detectLogLines)
 	for _, item := range reads {
 		if lifecycleio.Now().After(deadline) {
 			timedOut = true
@@ -421,7 +421,7 @@ func suspectLogs(in detectInput, workload sdk.ObjectRef, onset time.Time, deadli
 			err  error
 		}
 		done := make(chan result, 1)
-		options := corev1.PodLogOptions{Container: item.container, SinceTime: &since, Timestamps: true, LimitBytes: &limit, Previous: item.previous}
+		options := corev1.PodLogOptions{Container: item.container, SinceTime: &since, Timestamps: true, TailLines: &tail, Previous: item.previous}
 		go func() {
 			text, err := in.View.LogsWithOptions(pod, options)
 			done <- result{text, err}

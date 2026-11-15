@@ -61,6 +61,10 @@ const (
 )
     Bounds of one structured read.
 
+const DefaultLogTailLines = 1000
+    DefaultLogTailLines is how many of the newest lines a read returns when the
+    program names no tail.
+
 const DefaultProbeIdentityTimeout = 2 * time.Minute
     DefaultProbeIdentityTimeout bounds a probe-identity procedure that declares
     no timeout: an admin CLI may take a minute to boot.
@@ -68,6 +72,9 @@ const DefaultProbeIdentityTimeout = 2 * time.Minute
 const DefaultScriptTimeout = time.Minute
 const MaxAdmissionWebhooks = sdk.MaxAdmissionWebhooks
     MaxAdmissionWebhooks bounds one AdmissionWebhooksFor answer.
+
+const MaxLogBytes = 64 * 1024
+    MaxLogBytes is the most log text one program read returns.
 
 const MaxProbeBodyBytes = 64 << 10
     MaxProbeBodyBytes bounds the response body a probe query reads.
@@ -119,9 +126,12 @@ func ApplySetFieldAction(current map[string]any, a SetField, value any) error
     owns resolution and provenance; this helper owns field and document schema
     checks.
 
-func BoundedLogOptions(options corev1.PodLogOptions) (corev1.PodLogOptions, error)
-    BoundedLogOptions copies upstream options and enforces finite reads of at
-    most 64 KiB.
+func BoundedLogOptions(options corev1.PodLogOptions) (corev1.PodLogOptions, int64, error)
+    BoundedLogOptions copies upstream options into a finite read of the newest
+    lines. A byte limit sent to Kubernetes would return the OLDEST bytes of
+    the window, so the request carries a line tail instead, and the byte bound
+    is returned for the reader to apply with NewestLogBytes. The caller's
+    LimitBytes, when set, lowers that bound.
 
 func CauseClasses() []string
     CauseClasses lists the values Verdict.CauseClass may take besides "".
@@ -186,6 +196,9 @@ func MergeObject(object map[string]any, ref sdk.ObjectRef, desired json.RawMessa
     MergeObject projects apply-style updates using the built-in keyed-list
     schema when available. Custom resources retain JSON merge semantics.
 
+func NewestLogBytes(data string, limit int64) string
+    NewestLogBytes keeps the newest whole lines of data that fit in limit bytes.
+
 func ProjectPatch(object map[string]any, a PatchObject) (map[string]any, error)
     ProjectPatch is the shared atomic projection used by production and replay.
     Errors leave the input untouched. The API server still validates its schema.
@@ -242,8 +255,4 @@ TYPES
 type Action interface {
 	// Has unexported methods.
 }
-
-func DataAction(action Action) Action
-    DataAction returns a store action given by value or pointer as its value,
-    or nil when action is not one.
 ```
