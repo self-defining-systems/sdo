@@ -111,6 +111,8 @@ type Report struct {
 	// notInstrumented are the operations request-metrics reported as not
 	// instrumented while the application was healthy, by operation ID.
 	notInstrumented map[string]string
+	// foreground are the entries whose coverage the probes-paused window judges.
+	foreground []string
 }
 
 // Counts returns the number of green, red and note results.
@@ -316,6 +318,9 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 			return Report{}, herr
 		}
 		report.Results = append(report.Results, judgeHarm(cfg.Map, *cfg.Harm, harmStart, harmEnd)...)
+	}
+	if cfg.Harm != nil {
+		report.Results = append(report.Results, judgePausedCoverage(cfg.Map, report.foreground, *cfg.Harm)...)
 	}
 	report.Results = append(report.Results, quiet.Results...)
 	report.Durations = append(report.Durations, quiet.Durations...)

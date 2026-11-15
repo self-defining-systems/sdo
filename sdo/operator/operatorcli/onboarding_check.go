@@ -35,7 +35,7 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
                                     [--kubeconfig FILE] [--context NAME] [--requests 5]
                                     [--settle 90s] [--json] [--report FILE]
                                     [--quick] [--quiet-window 10m] [--quiet-interval 1m] [--quiet-evaluations 3]
-                                    [--break] [--break-bound 60s] [--break-mode scale|network]
+                                    [--break] [--break-bound 60s] [--break-mode auto|scale|network]
                                     [--cluster-network] [--operator-root DIR] [--telemetry-environment FILE] [--settings FILE]
 
   check  Run the onboarding check against a running environment: the metric
@@ -57,12 +57,13 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
          red if any raises, naming the detector, scenario and step.
          fails-under-break breaks each component on an operation's path
          (components that share no operation are broken together in waves; a
-         raise still has to name the operation or component) (scale the workload to zero; with --break-mode network
-         a deny-ingress NetworkPolicy when the CNI enforces it, else scale to
-         zero, said in the report), waits up to --break-bound for raises that name
+         raise still has to name the operation or component) (by default a deny-ingress NetworkPolicy when the CNI
+         enforces it, else scale the workload to zero; --break-mode scale
+         always scales; the mode that ran is said in the report), waits up to --break-bound for raises that name
          the component or its operations, and restores it. An operation is green
-         only when a raise names it or one of its probe scenarios; a generic
-         detector that names just the component leaves it red, and the report
+         only when a failure signal (failing requests or a failing probe step)
+         names it or one of its probe scenarios; a generic detector that names
+         just the component, or an absence-only raise, leaves it red, and the report
          says which detectors noticed. It is red (stopping) if a restore cannot
          be verified. Detectors that dial in-cluster Service names cannot be judged
          from the host running the check and are reported as a note, unless
@@ -257,7 +258,7 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	harmWindow := flags.Duration("harm-window", time.Minute, "probes-do-no-harm: how long to measure the application with the memory's probes paused (before they start) and at least with them running; 0 skips the item")
 	breakItem := flags.Bool("break", false, "run fails-under-break: briefly break each component on an operation's path (only on a target without users)")
 	breakBound := flags.Duration("break-bound", 60*time.Second, "least time to wait for a detector to notice each break (at least the time the memory's own probes need to judge a failure)")
-	breakMode := flags.String("break-mode", kubebreak.ModeScale, "how to break: scale (to zero) or network (deny-ingress NetworkPolicy; scale when the CNI does not enforce it)")
+	breakMode := flags.String("break-mode", kubebreak.ModeAuto, "how to break: auto (deny-ingress NetworkPolicy when the CNI enforces it, else scale to zero), network (the same) or scale (to zero)")
 	operatorRoot := flags.String("operator-root", operatorRootDefault(processio.Environment), "operator source tree detectors are built from")
 	clusterNetwork := flags.Bool("cluster-network", false, "this process resolves and dials in-cluster Service names (it runs in a pod or on the cluster network); without it, detectors that dial Service names are not judged")
 	telemetryEnv := flags.String("telemetry-environment", "", "telemetry environment document the detector evaluation reads")

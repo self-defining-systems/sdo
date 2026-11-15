@@ -259,3 +259,28 @@ func TestNetworkPolicyNameUsesTheBareWorkloadName(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDefaultModeDeniesIngressWhereTheCNIEnforces(t *testing.T) {
+	for _, mode := range []string{"", ModeAuto} {
+		b := newBreaker(t, fake.NewSimpleClientset(deployment("web", 2), daemonSet("calico-node")), mode)
+		if !strings.Contains(b.Mode(), "deny-ingress NetworkPolicy") || strings.Contains(b.Mode(), "scale") {
+			t.Fatalf("mode %q: default must be the network break on an enforcing CNI, said in the mode: %q", mode, b.Mode())
+		}
+	}
+}
+
+func TestDefaultModeScalesAndSaysWhyWhereTheCNIDoesNotEnforce(t *testing.T) {
+	for _, mode := range []string{"", ModeAuto} {
+		b := newBreaker(t, fake.NewSimpleClientset(deployment("web", 2), daemonSet("kindnet")), mode)
+		if !strings.Contains(b.Mode(), "scale to zero") || !strings.Contains(b.Mode(), "does not enforce") {
+			t.Fatalf("mode %q: %q", mode, b.Mode())
+		}
+	}
+}
+
+func TestExplicitScaleModeStaysScaleOnAnEnforcingCNI(t *testing.T) {
+	b := newBreaker(t, fake.NewSimpleClientset(deployment("web", 2), daemonSet("calico-node")), ModeScale)
+	if strings.Contains(b.Mode(), "NetworkPolicy") {
+		t.Fatalf("%q", b.Mode())
+	}
+}

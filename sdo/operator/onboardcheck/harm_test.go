@@ -11,6 +11,11 @@ import (
 
 func harmRun(t *testing.T, fail, reqs float64, pausedReqs float64) Report {
 	t.Helper()
+	return harmRunWith(t, fail, reqs, map[string]float64{requestsKey("web", "/items"): pausedReqs})
+}
+
+func harmRunWith(t *testing.T, fail, reqs float64, pausedRequests map[string]float64) Report {
+	t.Helper()
 	w := newWorld()
 	m, err := appmap.Parse(liveMap)
 	if err != nil {
@@ -23,8 +28,11 @@ func harmRun(t *testing.T, fail, reqs float64, pausedReqs float64) Report {
 	start := w.Now()
 	paused := HarmConfig{
 		PausedStart: HarmSample{At: start.Add(-2 * time.Minute), Counts: map[string]float64{}},
-		PausedEnd:   HarmSample{At: start.Add(-time.Minute), Counts: map[string]float64{"failures|jobs_failed_total{worker=CreatePipelineWorker}": 0.5, requestsKey("web", "/items"): pausedReqs}},
+		PausedEnd:   HarmSample{At: start.Add(-time.Minute), Counts: map[string]float64{"failures|jobs_failed_total{worker=CreatePipelineWorker}": 0.5}},
 		MinRunning:  time.Minute,
+	}
+	for k, v := range pausedRequests {
+		paused.PausedEnd.Counts[k] = v
 	}
 	// While the probes run, the counters follow the clock at the given rates
 	// per minute.
@@ -88,5 +96,19 @@ func TestHarmNeedsTheQuietWindow(t *testing.T) {
 		Harm: &HarmConfig{MinRunning: time.Minute}})
 	if err == nil {
 		t.Fatal("harm without the quiet window accepted")
+	}
+}
+
+func TestCoverageIsJudgedOnTheProbesPausedWindow(t *testing.T) {
+	// The probes hammer the declared route (cumulative counters look fully
+	// covered); real users, seen with the probes paused, mostly hit routes no
+	// operation declares.
+	r := harmRunWith(t, 0, 200, map[string]float64{requestsKey("web", "/items"): 10, requestsKey("web", "/other"): 90})
+	if status(r, ItemObserved, "web") != Red || !strings.Contains(r.Text(), "probes were paused") || !strings.Contains(r.Text(), "/other (90)") {
+		t.Fatalf("coverage must come from the paused window:\n%s", r.Text())
+	}
+	r = harmRunWith(t, 0, 200, map[string]float64{requestsKey("web", "/items"): 90, requestsKey("web", "/other"): 10})
+	if status(r, ItemObserved, "web") != Green {
+		t.Fatalf("real traffic mostly declared:\n%s", r.Text())
 	}
 }
