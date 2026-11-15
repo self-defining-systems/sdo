@@ -55,6 +55,8 @@ reports, not raw logs. When a result is wrong, say why and send it back.
 - You are done when the full check (not `--quick`, which is never clean) reports clean on the committed tree (with `--break`).
 - A red item you cannot fix gets a `reasons` entry in the map (item, subject, one-line reason). A reason never
   excuses `deployed-healthy` or `quiet-when-healthy`, and the report counts reasons, so use them rarely.
+- Your reply ends the session, and so does any background check or subagent still running. Reply only when you are
+  done or blocked; while a check or a subagent runs, keep waiting (sleep and read its output).
 - Reply with one line: `done`, or `blocked: <why>`.
 
 ## Skills
