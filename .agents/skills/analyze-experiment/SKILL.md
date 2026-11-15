@@ -77,6 +77,7 @@ For missing recordings and offline replay, read [checkpoint recording evidence](
 For replay-on/off measurements, read [replay run policy](references/replay-policy.md).
 For repeat-only ablations, read [variant projections](references/ablation-variants.md) and [frozen memory](references/frozen-memory.md).
 For oversized responder outputs, default stdout budgets and offline size audits, read [tool output audits](references/tool-output-audit.md).
+For where a Claude Code session's wall time went (model vs tool categories vs waiting on subagents; stream-json or session JSONL with subagent sidechains), run `uv run python -m benchmarks.sregym.analysis.agent_wall_time <transcript|dir> [--categories rules.json]`; categories are ordered command regexes, and polls of a check's output file count toward that check.
 When classifying behavior, read [common failures](references/failure-patterns.md); for latent drift or toy lanes,
 also read [drift and toy failures](references/drift-failures.md).
 
