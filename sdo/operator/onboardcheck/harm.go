@@ -160,7 +160,10 @@ func judgeHarm(m appmap.Map, h HarmConfig, runStart, runEnd HarmSample) []Result
 				continue
 			}
 			failed++
-			what := rest
+			what := "job failure counter " + rest
+			if strings.HasSuffix(rest, "{}") {
+				what = "all job failure counters together (" + rest + ")"
+			}
 			if kind == "errors" {
 				service, route, _ := strings.Cut(rest, "|")
 				ids := opsOf(service, route)

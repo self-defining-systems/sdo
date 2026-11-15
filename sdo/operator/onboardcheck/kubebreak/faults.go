@@ -52,7 +52,7 @@ func (f *WorkerQuiet) policy() string {
 
 func (f *WorkerQuiet) NotApplicable(context.Context) string {
 	if !f.b.enforced {
-		return "this cluster's CNI does not enforce NetworkPolicy, so the worker's egress cannot be denied; run the check on a cluster whose CNI does"
+		return "this cluster's CNI does not enforce NetworkPolicy, so the worker's egress cannot be denied; run the check on a cluster whose CNI does. Without NetworkPolicy enforcement the same silence could be made by pointing the worker at a black-holed address for its dependencies (an env override, which restarts it) or by dropping its traffic with iptables in its network namespace; neither is built"
 	}
 	return ""
 }

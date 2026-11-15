@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -54,6 +55,42 @@ func (r Raise) describe() string {
 		out += "; evidence: " + clip(r.Evidence, 300)
 	}
 	return out
+}
+
+// warmupRules are raises of SDO's own detectors that say they cannot judge yet
+// (a request-metrics baseline that has not filled on a fresh install). They
+// are SDO behaviour, not a fault in the memory: the quiet item notes them and
+// a break never counts one as naming an operation.
+var warmupRules = map[string]bool{"request-metrics.insufficient-baseline": true}
+
+func (r Raise) warmup() bool { return warmupRules[r.Rule] }
+
+var absenceSignal = regexp.MustCompile(`(?i)(not[ -]instrumented|no traffic|no[- ]ready|no ready|missing|absent|vanish|disappear|no series|no data|not found)`)
+
+// Kinds of signal that named an operation under a break.
+const (
+	// SignalFailure is evidence that requests of the operation failed (an error
+	// rate, a failing probe scenario).
+	SignalFailure = "failure"
+	// SignalAbsence is evidence that the operation, its series or its endpoints
+	// are gone: it names the operation but not a failing request.
+	SignalAbsence = "absence"
+)
+
+// signalKind says which kind of signal a raise is.
+func signalKind(r Raise) string {
+	if absenceSignal.MatchString(r.Rule + " " + r.Summary) {
+		return SignalAbsence
+	}
+	return SignalFailure
+}
+
+// signalNote says whether a real failing-request signal named the operation.
+func signalNote(out *breakOutcome, opID string) string {
+	if f := out.opFailure[opID]; f != nil {
+		return fmt.Sprintf("; failing-request signal: %s after %s", f.raise.DetectorID, f.after.Round(time.Second))
+	}
+	return "; absence signal only: no detector reported failing requests of this operation"
 }
 
 func clip(s string, n int) string {
@@ -185,6 +222,7 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 		need = 1
 	}
 	var progress []DetectorProgress
+	warm := map[string]string{}
 	announced := false
 	var lastSaid string
 	var lastSaidAt time.Duration
@@ -202,6 +240,7 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 			cfg.say("quiet: %s", derivedQuietWindow(progress, need, q.Window, cfg.Quick))
 		}
 		elapsed := cfg.Now().Sub(start).Round(time.Second)
+		verdict.Raised, warm = splitWarmup(verdict.Raised, warm)
 		if len(verdict.Raised) > 0 {
 			for _, r := range verdict.Raised {
 				report.add(ItemQuiet, r.DetectorID, Red, fmt.Sprintf("raised on the healthy application at sample %d (%s in): %s", samples, elapsed, r.describe()))
@@ -236,6 +275,9 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 			report.add(ItemQuiet, "detectors", Red, "interrupted: "+err.Error())
 			return true
 		}
+	}
+	for _, w := range sortedValues(warm) {
+		report.add(ItemQuiet, "sdo-warm-up", Note, "SDO's own warm-up, not a fault in the memory (it clears as baselines fill): "+w)
 	}
 	if len(skipped) > 0 {
 		report.add(ItemQuiet, "skipped", Note, "not judged from here: "+strings.Join(skipped, "; "))
@@ -272,6 +314,29 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 	}
 	report.add(ItemQuiet, "detectors", Green, detail)
 	return false
+}
+
+// splitWarmup moves SDO's warm-up raises out of the list into warm (keyed by
+// fingerprint) and returns the rest.
+func splitWarmup(raised []Raise, warm map[string]string) ([]Raise, map[string]string) {
+	var rest []Raise
+	for _, r := range raised {
+		if r.warmup() {
+			warm[r.key()] = r.describe()
+			continue
+		}
+		rest = append(rest, r)
+	}
+	return rest, warm
+}
+
+func sortedValues(m map[string]string) []string {
+	var out []string
+	for _, v := range m {
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // judgedEnough reports whether every detector has judged need times past its own
@@ -352,6 +417,9 @@ type breakOutcome struct {
 	// opHit is, per operation, the first raise that names the operation or
 	// one of its test scenarios: what a test of the operation noticed.
 	opHit map[string]*foundRaise
+	// opFailure is, per operation, the first raise that names it with a
+	// failing-request signal (not only an absence).
+	opFailure map[string]*foundRaise
 }
 
 type foundRaise struct {
@@ -448,7 +516,7 @@ func runBreak(ctx context.Context, cfg Config, report *Report) {
 			report.add(ItemBreak, name, Red, out.err)
 		case out.hit != nil:
 			f := out.hit
-			report.add(ItemBreak, name, Green, fmt.Sprintf("%s: %s noticed after %s: %s", out.how, f.raise.DetectorID, f.after.Round(time.Second), clip(f.raise.Summary, 200)))
+			report.add(ItemBreak, name, Green, fmt.Sprintf("%s: %s noticed after %s (%s signal): %s", out.how, f.raise.DetectorID, f.after.Round(time.Second), signalKind(f.raise), clip(f.raise.Summary, 200)))
 		default:
 			report.add(ItemBreak, name, Red, fmt.Sprintf("%s: no detector named %s or its operations (%s) within %s%s", out.how, name, strings.Join(opIDs(opsOf[name]), ", "), b.Bound, otherRaises(out)))
 		}
@@ -535,7 +603,7 @@ func opDetail(m appmap.Map, op appmap.Operation, outcomes map[string]*breakOutco
 			continue
 		}
 		if f := out.opHit[op.ID]; f != nil {
-			return fmt.Sprintf("breaking %s (%s) was noticed by %s after %s: %s", name, out.how, f.raise.DetectorID, f.after.Round(time.Second), clip(f.raise.Summary, 160))
+			return fmt.Sprintf("breaking %s (%s) was noticed by %s after %s: %s%s", name, out.how, f.raise.DetectorID, f.after.Round(time.Second), clip(f.raise.Summary, 160), signalNote(out, op.ID))
 		}
 		tried = append(tried, name)
 		if out.hit != nil {
@@ -689,7 +757,7 @@ func breakWave(ctx context.Context, cfg Config, members []waveMember, baseline m
 		}
 		after := cfg.Now().Sub(start)
 		for _, r := range v.Raised {
-			if baseline[r.key()] || seen[r.key()] {
+			if baseline[r.key()] || seen[r.key()] || r.warmup() {
 				continue
 			}
 			seen[r.key()] = true
@@ -703,6 +771,12 @@ func breakWave(ctx context.Context, cfg Config, members []waveMember, baseline m
 						mine = true
 						if m.out.opHit[op.ID] == nil {
 							m.out.opHit[op.ID] = &f
+						}
+						if signalKind(r) == SignalFailure && m.out.opFailure[op.ID] == nil {
+							if m.out.opFailure == nil {
+								m.out.opFailure = map[string]*foundRaise{}
+							}
+							m.out.opFailure[op.ID] = &f
 						}
 					}
 				}
