@@ -8,3 +8,10 @@ jump over the healthy 4xx share). Its error findings page: a failing operation o
 metric, route or status label is reported as `request-metrics.not-instrumented`; fix the map's `entries` or the
 application's instrumentation instead of ignoring it.
 
+A raised error finding does not clear because a route went quiet: it stays until a later 30 s window has at least 5
+requests and none failed (the detector looks back 5 minutes), and says "Insufficient recent traffic to confirm recovery"
+meanwhile; incident recovery waits on the same finding, so a low-volume route cannot read as recovered. Each error finding
+also carries up to 3 recent failing requests (method, path with record ids, status, time) read from the entry service's pod
+logs through the recorded logs source (JSON access-log lines with a status field, and common/combined text lines;
+query strings are dropped). When none can be read the finding says why (no log result, no pod logs, lines not parseable,
+no failing line for this route). The samples appear in the page and in `sdo detect`.
