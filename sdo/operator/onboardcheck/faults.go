@@ -57,21 +57,26 @@ func FaultTargets(m appmap.Map) (workers []appmap.Component, store *appmap.Compo
 			}
 		}
 	}
-	for i, c := range m.Components {
-		if c.Workload == "" || !onPath[c.Name] || c.HoldsData || entryOf[c.Name] {
+	for _, c := range m.Components {
+		if c.Workload == "" || !onPath[c.Name] || c.HoldsData || c.Data != nil || entryOf[c.Name] {
 			continue
 		}
 		if onInternal[c.Name] || len(c.Services) == 0 {
 			workers = append(workers, c)
 		}
-		if store == nil && c.Data != nil {
-			store = &m.Components[i]
-		}
 	}
+	// The store is the first authoritative postgres component on a path (the
+	// only engine the data-wrong break can act on); another authoritative
+	// store is reported as not applicable only when no postgres one exists.
 	for i, c := range m.Components {
-		if c.Workload != "" && onPath[c.Name] && c.HoldsData && c.Data != nil && c.Data.Role == appmap.RoleAuthoritative {
+		if c.Workload == "" || !onPath[c.Name] || c.Data == nil || c.Data.Role != appmap.RoleAuthoritative {
+			continue
+		}
+		if c.Data.Engine == appmap.EnginePostgres {
+			return workers, &m.Components[i]
+		}
+		if store == nil {
 			store = &m.Components[i]
-			break
 		}
 	}
 	return workers, store
@@ -134,7 +139,7 @@ func runFaults(ctx context.Context, cfg Config, report *Report, baseline map[str
 					first, op = h, id
 				}
 			}
-			report.add(ItemBreak, subject, Green, fmt.Sprintf("%s: %s noticed after %s, naming %s: %s", out.how, first.raise.DetectorID, first.after.Round(time.Second), op, clip(first.raise.Summary, 200)))
+			report.add(ItemBreak, subject, Green, fmt.Sprintf("%s: %s noticed after %s, naming %s: %s%s", out.how, first.raise.DetectorID, first.after.Round(time.Second), op, clip(first.raise.Summary, 200), signalNote(out, op)))
 		default:
 			report.add(ItemBreak, subject, Red, fmt.Sprintf("%s: no detector named %s or its test scenarios within %s%s; every component stayed up, so only a test or request metric of the operation can catch this", out.how, strings.Join(ids, ", "), b.Bound, otherRaises(out)))
 		}

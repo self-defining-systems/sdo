@@ -118,3 +118,30 @@ func TestFaultTargetsFindWorkersAndTheStore(t *testing.T) {
 		t.Fatalf("operations through worker: %s", got)
 	}
 }
+
+func TestFaultTargetsPreferPostgresAndSkipStores(t *testing.T) {
+	m, err := appmap.Parse(`version: 1
+components:
+  - {name: web, workload: web, services: [web]}
+  - {name: git, workload: git, services: [git], holds_data: true, data: {engine: other, role: authoritative}}
+  - {name: db, workload: db, services: [db], holds_data: true, data: {engine: postgres, role: authoritative}}
+  - {name: cache, workload: cache, services: [], data: {engine: redis, role: derived, derived_from: [db]}}
+edges: []
+entries: []
+operations:
+  - id: op
+    entry: {service: web, port: 80, method: GET, path: /x}
+    path: [web, git, db, cache]
+probes: []
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workers, store := FaultTargets(m)
+	if len(workers) != 0 {
+		t.Fatalf("a derived store is not a worker: %v", workers)
+	}
+	if store == nil || store.Name != "db" {
+		t.Fatalf("the postgres store is the target, got %v", store)
+	}
+}
