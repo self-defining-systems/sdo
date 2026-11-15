@@ -18,7 +18,8 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from agentshim import StdioMcpServer, TokenUsage
 from agentshim.providers.codex import BYPASS_FLAG, RULES_FILENAME, CodexSandboxConfig, parse_rules, parse_sandbox
-from agentshim.testing import FakeRun, scripted_turn
+from agentshim.testing import FakeExecutor, FakeRun, scripted_turn
+from agentshim.testing.claude_stream import ClaudeFramePeer
 
 from libs.agent_cli.structured import (
     ACCESS_MODES,
@@ -323,12 +324,6 @@ class TestClaudeAccess:
         ]
         assert confined == [[str((tmp_path / "work").resolve()), str(tmp_path / "claude-home" / "skills")]]
 
-    @pytest.mark.parametrize("access", ["read-only", "workspace-write", "danger-full-access"])
-    def test_claude_turns_wait_for_background_subagents(self, access: str, tmp_path: Path) -> None:
-        _, agent = _run("claude", tmp_path, access=access)
-        (request,) = agent.requests
-        assert request.env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] == "0"
-
     def test_workspace_write_routes_compilation_through_the_detector_gateway(self, tmp_path: Path) -> None:
         _, agent = _run("claude", tmp_path, access="workspace-write")
         (request,) = agent.requests
@@ -382,7 +377,7 @@ def test_a_resumed_turn_continues_the_named_session(provider: str, tmp_path: Pat
     if provider == "codex":
         assert argv[1:5] == ["exec", "resume", "earlier", "-"]
     else:
-        assert argv[argv.index("--resume") + 1] == "earlier"
+        assert "--resume=earlier" in argv
     assert turn.session_id == "earlier"
 
 
@@ -408,8 +403,9 @@ def test_a_failed_cli_reports_both_streams(provider: str, tmp_path: Path) -> Non
         _run(provider, tmp_path, run=failure(stdout="event log detail\n", stderr="the real cause\n"))
     message = str(raised.value)
     assert "the real cause" in message
-    assert "event log detail" in message
-    assert message.index("the real cause") < message.index("event log detail")
+    if provider == "codex":
+        assert "event log detail" in message
+        assert message.index("the real cause") < message.index("event log detail")
 
 
 @pytest.mark.parametrize("provider", AGENT_PROVIDERS)
@@ -763,39 +759,6 @@ def _git(cwd: Path, *args: str) -> str:
     return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout
 
 
-def test_a_claude_turn_keeps_its_mcp_config_out_of_commits_made_during_the_turn(tmp_path: Path) -> None:
-    """Claude writes ``<cwd>/.mcp.json`` for the turn; a responder commit must not capture it."""
-    checkout = tmp_path / "checkout"
-    checkout.mkdir()
-    _git(checkout, "init", "-q")
-    _git(checkout, "config", "user.email", "t@example.com")
-    _git(checkout, "config", "user.name", "t")
-    (checkout / "base.txt").write_text("base\n", encoding="utf-8")
-    committed: list[str] = []
-
-    def respond(_request: CommandRequest) -> FakeRun:
-        assert (checkout / ".mcp.json").exists()
-        (checkout / "fix.txt").write_text("fix\n", encoding="utf-8")
-        _git(checkout, "add", "--all")
-        _git(checkout, "commit", "-q", "-m", "fix")
-        committed.extend(_git(checkout, "show", "--name-only", "--format=", "HEAD").split())
-        return reply("claude", {"answer": "ok"}, session_id="s-1")
-
-    run_structured_turn(
-        "claude",
-        "prompt",
-        output_schema=_SCHEMA,
-        cwd=checkout,
-        access="danger-full-access",
-        executor=ScriptedAgent(respond).executor,
-        mcp_servers=[StdioMcpServer(name="probe", command="probe")],
-    )
-
-    assert sorted(committed) == ["base.txt", "fix.txt"]
-    exclude = _git(checkout, "rev-parse", "--git-path", "info/exclude").strip()
-    assert (checkout / exclude).read_text(encoding="utf-8").split().count("/.mcp.json") == 1
-
-
 def test_a_claude_turn_outside_a_git_checkout_still_runs(tmp_path: Path) -> None:
     turn, _ = _run(
         "claude", tmp_path, access="danger-full-access", mcp_servers=[StdioMcpServer(name="probe", command="probe")]
@@ -970,3 +933,63 @@ def test_the_reasoning_summary_names_match_the_shared_agent_manifest() -> None:
     assert manifest["reasoning_summary"] == structured.REASONING_SUMMARY_ENV
     assert manifest["default_reasoning_summary"] == structured.DEFAULT_REASONING_SUMMARY
     assert list(structured.REASONING_SUMMARIES) == manifest["reasoning_summaries"]
+
+
+def _claude_frames(*results: dict[str, Any], tasks_pending_at_first: bool) -> list[dict[str, Any]]:
+    """A process that ends its turn with background tasks pending, then answers once they finish."""
+    task = {"task_id": "t1", "task_type": "local_agent", "description": "check"}
+    init = {"type": "system", "subtype": "init", "session_id": "s-bg"}
+
+    def result(output: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": json.dumps(output),
+            "structured_output": output,
+            "session_id": "s-bg",
+            "num_turns": 1,
+            "duration_ms": 1,
+            "total_cost_usd": 0,
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+            "permission_denials": [],
+        }
+
+    early, *later = results
+    frames = [
+        init,
+        {"type": "system", "subtype": "background_tasks_changed", "tasks": [task] if tasks_pending_at_first else []},
+    ]
+    frames.append(result(early))
+    for follow_on in later:
+        frames.append({"type": "system", "subtype": "background_tasks_changed", "tasks": []})
+        frames.append(init)
+        frames.append(result(follow_on))
+    return frames
+
+
+def test_a_result_emitted_while_the_agents_background_tasks_run_is_not_the_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The agent ended its turn to wait for its own subagents; the CLI's follow-on turn holds the answer."""
+    monkeypatch.setattr("libs.agent_cli.claude_stream.SETTLE_SECONDS", 0.1)
+    frames = _claude_frames({"answer": "early"}, {"answer": "after the subagents"}, tasks_pending_at_first=True)
+    peer = ClaudeFramePeer([frames])
+    executor = FakeExecutor(FakeRun(), peers=lambda _spawn: peer)
+
+    turn = run_structured_turn(
+        "claude", "prompt", output_schema=_SCHEMA, cwd=tmp_path, access="danger-full-access", executor=executor
+    )
+
+    assert json.loads(turn.output_json) == {"answer": "after the subagents"}
+
+
+def test_a_result_with_no_background_task_is_returned_at_once(tmp_path: Path) -> None:
+    frames = _claude_frames({"answer": "only"}, tasks_pending_at_first=False)
+    executor = FakeExecutor(FakeRun(), peers=lambda _spawn: ClaudeFramePeer([frames]))
+
+    turn = run_structured_turn(
+        "claude", "prompt", output_schema=_SCHEMA, cwd=tmp_path, access="danger-full-access", executor=executor
+    )
+
+    assert json.loads(turn.output_json) == {"answer": "only"}

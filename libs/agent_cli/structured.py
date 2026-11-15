@@ -27,7 +27,6 @@ import math
 import os
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 import threading
@@ -40,12 +39,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from agentshim import (
+    AgentSession,
     AgentShimError,
     ClaudeHook,
     ClaudeProvider,
     CliAgent,
     CliExitError,
-    CliTimeoutError,
     CodexProvider,
     CodexSandboxConfig,
     HostCommandExecutor,
@@ -55,15 +54,18 @@ from agentshim import (
     TokenUsage,
     ToolCall,
     TurnRequest,
+    TurnTimeoutError,
     cost_usd,
     default_pricing,
     normalized_usage,
     price_for,
 )
 from agentshim.execution.host import ProcessCommandHandle
+from agentshim.providers.claude.sandbox import build_settings
 from agentshim.providers.codex import install_rules
 
 from libs.agent_cli.claude_accounts import AccountRouter, is_claude_auth_failure
+from libs.agent_cli.claude_stream import ClaudeStreamSession, settings_args, stream_transport
 from libs.agent_cli.claude_usage import (
     ClaudeBill,
     ClaudeLedger,
@@ -88,6 +90,7 @@ from libs.agent_cli.session_ownership import (
 from libs.agent_cli.startup import StartupTelemetry
 
 if TYPE_CHECKING:
+    import subprocess
     from typing import Any
 
     from agentshim import (
@@ -98,8 +101,10 @@ if TYPE_CHECKING:
         CommandResult,
         CommandStreamSink,
         McpServer,
+        Process,
         Provider,
         ProviderUsage,
+        SpawnRequest,
     )
 
 AgentProvider = Literal["codex", "claude"]
@@ -162,7 +167,6 @@ DENY_EXECUTABLES_HOOK = str(Path(__file__).absolute().parent / "hooks" / "deny_b
 
 #: Headless ``claude -p`` ends a session after this many ms without waiting on
 #: background subagents; ``0`` waits for them (the turn timeout still bounds the turn).
-CLAUDE_BG_WAIT_ENV = "CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"
 
 #: A loaded host can take longer than agentshim's default to answer ``--help``.
 _CLI_CHECK_TIMEOUT_S = 60.0
@@ -696,9 +700,7 @@ def _run_structured_turn_once(
 
     try:
         with ExitStack() as turn_scope:
-            writer = _WriterExecutor(
-                executor or HostCommandExecutor(), capture_stdout if provider == "claude" else None
-            )
+            writer = _WriterExecutor(executor or HostCommandExecutor())
             if ownership is not None:
                 turn_scope.callback(lambda: ownership.close(writer_closed=writer.closed))
                 if resume_session_id is not None:
@@ -713,35 +715,42 @@ def _run_structured_turn_once(
                 executor = startup.executor(executor)
             effective_environment = {**os.environ, **(environment or {}), **extra_env}
             if provider == "claude":
-                # Headless Claude Code stops waiting for background subagents after a
-                # ceiling and kills them; 0 waits. The turn timeout stays authoritative.
-                effective_environment.setdefault(CLAUDE_BG_WAIT_ENV, "0")
-            if provider == "claude":
                 claude_home = Path(effective_environment.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
                 claude_before = session_ledger(claude_home, resume_session_id)
                 claude_ledger = ClaudeLedger(dict(claude_before.requests), list(claude_before.states))
             home_variable = "CODEX_HOME" if provider == "codex" else "CLAUDE_CONFIG_DIR"
             default_home = Path.home() / (".codex" if provider == "codex" else ".claude")
             skill_directory = Path(effective_environment.get(home_variable) or default_home).expanduser() / "skills"
-            agent = CliAgent(
-                selected,
-                model=model,
-                executor=executor,
-                env=effective_environment,
-                event_handler=recorder,
-                check_timeout=_CLI_CHECK_TIMEOUT_S,
-            )
-            if provider == "claude" and mcp_servers:
-                _exclude_claude_mcp_config(workspace)
             # Ownership waiting consumes the existing turn budget.
             remaining_timeout = timeout_seconds
             if ownership is not None and timeout_seconds is not None:
                 remaining_timeout = timeout_seconds - (time.monotonic() - started)
                 if remaining_timeout <= 0:
                     raise StructuredTurnTimeout(timeout_seconds)
-            session = agent.start_session(cwd=str(workspace), timeout=remaining_timeout)
-            if resume_session_id is not None and not session.adopt(resume_session_id):
-                raise StructuredTurnError(f"{provider} cannot resume session {resume_session_id!r}")
+            session: ClaudeStreamSession | AgentSession
+            if provider == "claude":
+                session = ClaudeStreamSession(
+                    stream_transport(executor, effective_environment, check_timeout=_CLI_CHECK_TIMEOUT_S),
+                    cwd=str(workspace),
+                    model=model,
+                    resume_id=resume_session_id,
+                    timeout=remaining_timeout,
+                    on_event=recorder.on_event,
+                    on_stdout=capture_stdout,
+                )
+                turn_scope.callback(session.close)
+                extra_args = settings_args(claude_settings(selected), extra_args)
+            else:
+                session = CliAgent(
+                    selected,
+                    model=model,
+                    executor=executor,
+                    env=effective_environment,
+                    event_handler=recorder,
+                    check_timeout=_CLI_CHECK_TIMEOUT_S,
+                ).start_session(cwd=str(workspace), timeout=remaining_timeout)
+                if resume_session_id is not None and not session.adopt(resume_session_id):
+                    raise StructuredTurnError(f"{provider} cannot resume session {resume_session_id!r}")
             codex_home = _codex_session_home(effective_environment) if provider == "codex" else None
             rollout_before = _codex_rollout_totals(codex_home, resume_session_id)
             if (
@@ -880,7 +889,7 @@ def _run_structured_turn_once(
             # Read the rollout now: a workspace-write Codex home is deleted
             # when the turn scope closes.
             rollout_after = _codex_rollout_totals(codex_home, result.session_id or resume_session_id)
-    except CliTimeoutError as exc:
+    except TurnTimeoutError as exc:
         if interrupted.is_set():
             raise stopped() from exc
         raise StructuredTurnTimeout(exc.timeout) from exc
@@ -977,10 +986,15 @@ class _WriterExecutor:
     after restart; an OS lock disappearing does not manufacture a release.
     """
 
-    def __init__(self, live: CommandExecutor, observe_stdout: Callable[[str], None] | None = None) -> None:
+    def __init__(self, live: CommandExecutor) -> None:
         self.live = live
-        self.observe_stdout = observe_stdout
-        self.closed = True
+        self.spawned: list[Process] = []
+        self._run_closed = True
+
+    @property
+    def closed(self) -> bool:
+        """Every process this executor started has been reaped."""
+        return self._run_closed and all(process.wait(0) is not None for process in self.spawned)
 
     def find_binary(self, name: str, env: Mapping[str, str]) -> str:
         return self.live.find_binary(name, env)
@@ -988,8 +1002,14 @@ class _WriterExecutor:
     def check_binary(self, path: str, env: Mapping[str, str], *, timeout: float) -> None:
         self.live.check_binary(path, env, timeout=timeout)
 
+    def spawn(self, request: SpawnRequest) -> Process:
+        """Start a long-lived process; it is closed once it is reaped."""
+        process = self.live.spawn(request)
+        self.spawned.append(process)
+        return process
+
     def run(self, request: CommandRequest, sink: CommandStreamSink) -> CommandResult:
-        self.closed = False
+        self._run_closed = False
         process: subprocess.Popen[str] | None = None
         terminal = False
 
@@ -1001,14 +1021,11 @@ class _WriterExecutor:
                 sink.started(handle)
 
             def stdout(self, line: str) -> None:
-                if self_observer is not None:
-                    self_observer(line)
                 sink.stdout(line)
 
             def stderr(self, line: str) -> None:
                 sink.stderr(line)
 
-        self_observer = self.observe_stdout
         try:
             result = self.live.run(request, Sink())
             terminal = True
@@ -1020,28 +1037,14 @@ class _WriterExecutor:
             # For local processes, inspect actual reaping even on cancellation
             # or callback failure. A timeout alone never proves writer closure.
             # Remote executors must return a terminal result/exit to release.
-            self.closed = process.poll() is not None if process is not None else terminal
+            self._run_closed = process.poll() is not None if process is not None else terminal
 
 
-def _exclude_claude_mcp_config(workspace: Path) -> None:
-    """Keep the ``.mcp.json`` Claude gets for the turn out of commits the agent makes in the checkout.
+def claude_settings(provider: object) -> dict[str, object]:
+    """The ``--settings`` document of a Claude provider: its sandbox and hooks."""
 
-    A responder may commit source during its turn, and the broker stages the checkout with ``add --all``.
-    """
-
-    probe = subprocess.run(
-        ["git", "rev-parse", "--git-path", "info/exclude"], cwd=workspace, capture_output=True, text=True, check=False
-    )
-    if probe.returncode != 0:
-        return
-    exclude = workspace / probe.stdout.strip()
-    entry = "/.mcp.json"
-    existing = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
-    if entry in existing.split():
-        return
-    exclude.parent.mkdir(parents=True, exist_ok=True)
-    separator = "" if not existing or existing.endswith("\n") else "\n"
-    exclude.write_text(f"{existing}{separator}{entry}\n", encoding="utf-8")
+    assert isinstance(provider, ClaudeProvider)
+    return dict(build_settings(provider.sandbox, hooks=provider.hooks))
 
 
 def _append_turn_usage(

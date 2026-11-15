@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 from libs.agent_cli.provider_capacity import OpusPool, ProviderCapacity, ProviderRateLimited, RateLimitPolicy
 from libs.agent_cli.structured import StructuredTurnError, run_structured_turn
-from tests.structured_turns import ScriptedAgent, failure, reply
+from tests.structured_turns import ScriptedAgent, failure, reply, write_stream_claude
 
 SCHEMA = {"type": "object", "properties": {"answer": {"type": "string"}}}
 # Claude Code 2.1.311's OAuth limit line and Anthropic API error envelopes.
@@ -165,7 +165,7 @@ def capacity(tmp_path: Path, clock: Clock) -> ProviderCapacity:
 
 
 @pytest.mark.parametrize("text", LIMITS)
-@pytest.mark.parametrize("stream", ["stderr", "stdout", "result"])
+@pytest.mark.parametrize("stream", ["stderr", "result"])
 def test_real_claude_throttle_formats_retry_without_losing_the_session(tmp_path: Path, text: str, stream: str) -> None:
     clock = Clock()
     pool = capacity(tmp_path, clock)
@@ -427,7 +427,7 @@ def test_backoff_releases_opus_token_and_retry_resumes_the_existing_session(tmp_
             return failure(
                 stdout=json.dumps({"type": "system", "subtype": "init", "session_id": "s-1"}), stderr=LIMITS[0]
             )
-        assert list(request.argv)[list(request.argv).index("--resume") + 1] == "s-1"
+        assert "--resume=s-1" in request.argv
         return reply("claude", {"answer": "ok"}, session_id="s-1")
 
     agent = ScriptedAgent(respond)
@@ -495,21 +495,19 @@ def test_fake_claude_executable_reports_the_real_cli_limit_line(
 
     script = tmp_path / "claude"
     marker = tmp_path / "called"
-    script.write_text(f"""#!{sys.executable}
-import sys, pathlib, json
-if '--help' in sys.argv:
-    raise SystemExit(0)
-marker = pathlib.Path({str(marker)!r})
-sys.stdin.read()
-if not marker.exists():
-    marker.touch()
-    print({LIMITS[0]!r}, file=sys.stderr)
-    raise SystemExit(1)
-print(json.dumps({{"type":"system","subtype":"init","session_id":"fake-session"}}))
-print(json.dumps({{"type":"result","subtype":"success","is_error":False,"session_id":"fake-session",
-                  "result":"ok","structured_output":{{"answer":"ok"}},"num_turns":1}}))
-""")
-    script.chmod(0o755)
+    write_stream_claude(
+        script,
+        f"""
+        marker = pathlib.Path({str(marker)!r})
+        if not marker.exists():
+            marker.touch()
+            print({LIMITS[0]!r}, file=sys.stderr, flush=True)
+            raise SystemExit(1)
+        say({{"type": "system", "subtype": "init", "session_id": "fake-session"}})
+        say({{"type": "result", "subtype": "success", "is_error": False, "session_id": "fake-session",
+              "result": "ok", "structured_output": {{"answer": "ok"}}, "num_turns": 1}})
+        """,
+    )
     monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ["PATH"])
     clock = Clock()
     turn = run_structured_turn(

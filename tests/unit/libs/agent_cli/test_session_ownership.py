@@ -67,7 +67,7 @@ def test_resume_waits_for_writer_release_and_uses_same_session(tmp_path: Path, p
         assert first.result().session_id == "session-1"
         assert second.result().session_id == "session-1"
     assert resumed.is_set()
-    assert "session-1" in reader.argvs[0]
+    assert "session-1" in reader.argvs[0] or "--resume=session-1" in reader.argvs[0]
 
 
 def test_unreleased_writer_fails_within_bound_without_starting_resume(tmp_path: Path) -> None:
