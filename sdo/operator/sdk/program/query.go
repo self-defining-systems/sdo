@@ -36,7 +36,7 @@ var ErrDeadline = errors.New("diagnosis read budget exhausted")
 // A Diagnose gets typed rows instead of exit codes: the records of a store the
 // accepted application map grounds, or named fields of an unauthenticated HTTP
 // status response. A read never returns a credential: credential catalogs and
-// credential-named fields are refused, and a password hash counts as a
+// string values under credential-named fields are refused, and a password hash counts as a
 // credential.
 type Query struct {
 	Store *StoreQuery `json:"store,omitempty"`

@@ -27,9 +27,6 @@ const (
 // Read refuses such names in projections and selectors, and a password hash
 // counts as a Secret value. The filter errs toward refusing.
 func CredentialName(name string) bool {
-	if settingName(name) {
-		return false
-	}
 	lower := strings.ToLower(name)
 	var folded strings.Builder
 	for _, r := range lower {
@@ -50,28 +47,6 @@ func CredentialName(name string) bool {
 		}
 	}
 	return strings.HasSuffix(lower, "_key") || strings.HasPrefix(lower, "key_") || strings.HasSuffix(lower, ".key") || strings.HasSuffix(name, "Key") && len(name) > 3
-}
-
-// settingName reports whether a name says it holds a setting about a
-// credential, not the credential: its last words are a flag or a limit
-// ("password_authentication_enabled_for_web", "otp_required_for_login",
-// "minimum_password_length"). A boolean or a number is not a Secret value.
-func settingName(name string) bool {
-	segments := nameSegments(name)
-	if len(segments) < 2 {
-		return false
-	}
-	flags := map[string]bool{"enabled": true, "disabled": true, "required": true, "allowed": true, "length": true, "count": true, "attempts": true}
-	filler := map[string]bool{"for": true, "on": true, "web": true, "login": true, "git": true, "api": true}
-	for i := len(segments) - 1; i >= 1; i-- {
-		if flags[segments[i]] {
-			return true
-		}
-		if !filler[segments[i]] {
-			return false
-		}
-	}
-	return false
 }
 
 // nameSegments splits a name at non-alphanumerics and at lower-to-upper case
@@ -152,9 +127,8 @@ func readField(engine, field string) error {
 	if !pattern.MatchString(field) {
 		return fmt.Errorf("read field %q is not a plain column or field path", field)
 	}
-	if CredentialName(field) {
-		return fmt.Errorf("read field %q is named like a credential and is never readable", field)
-	}
+	// A credential-like name is not refused here: what the value is decides
+	// (see ParseRead), so a boolean setting such as a sign-in flag is readable.
 	return nil
 }
 
@@ -426,7 +400,9 @@ func (memcached) Read(int, Scope, []string) (Command, error) {
 	return Command{}, fmt.Errorf("memcached records are read by Count only")
 }
 
-// ParseRead reads a Read's output: the matched count, and the rows with every
+// ParseRead reads a Read's output: a string value under a credential-like
+// field name is refused (a boolean, number or null cannot be a credential and
+// is returned), the matched count, and the rows with every
 // value a scalar (int64, float64, bool, string of at most MaxReadValueBytes,
 // or nil). Output without the end marker, with a row count that differs from
 // it, with a key outside fields, or with an array or object value is an
@@ -499,6 +475,9 @@ func parseReadRow(line string, allowed map[string]bool) (map[string]any, error) 
 		case nil, bool:
 			row[key] = v
 		case string:
+			if CredentialName(key) {
+				return nil, fmt.Errorf("read field %q is named like a credential and holds a string, which is never readable", key)
+			}
 			if len(v) > MaxReadValueBytes {
 				return nil, fmt.Errorf("read field %q holds a string of more than %d bytes", key, MaxReadValueBytes)
 			}

@@ -28,7 +28,7 @@ func TestQueryValidates(t *testing.T) {
 		"neither":                      {program.Query{}, false},
 		"both":                         {program.Query{Store: &store, Probe: &probe}, false},
 		"store credential table":       {program.Query{Store: &program.StoreQuery{Target: queryStore, Scope: program.DataScope{Database: "mysql", Collection: "user"}, Fields: []string{"User"}}}, false},
-		"store credential field":       {program.Query{Store: &program.StoreQuery{Target: queryStore, Scope: store.Scope, Fields: []string{"password_hash"}}}, false},
+		"store credential field":       {program.Query{Store: &program.StoreQuery{Target: queryStore, Scope: store.Scope, Fields: []string{"password_hash"}}}, true},
 		"store function selector":      {program.Query{Store: &program.StoreQuery{Target: queryStore, Scope: program.DataScope{Collection: "items", Selector: "SLEEP(5) = 0"}, Fields: []string{"id"}}}, false},
 		"store without fields":         {program.Query{Store: &program.StoreQuery{Target: queryStore, Scope: store.Scope}}, false},
 		"store on redis":               {program.Query{Store: &program.StoreQuery{Target: redisStore, Fields: []string{"key"}}}, false},
