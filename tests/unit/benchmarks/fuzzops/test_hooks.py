@@ -975,3 +975,16 @@ def test_pull_mode_teardown_goes_on_when_the_pull_fails(tmp_path: Path, monkeypa
     assert hooks.teardown(env, out=lines.append) == 0
     assert any("delete namespace ns1-sdo" in d for d in deleted)
     assert any("evidence pull failed" in line for line in lines)
+
+
+def test_dev_mount_in_pull_mode_projects_over_the_evidence_claim_not_a_node_path(tmp_path: Path) -> None:
+    from benchmarks.fuzzops import hooks
+
+    block = hooks.OperatorBlock.__new__(hooks.OperatorBlock)
+    object.__setattr__(block, "dev_mount", True)
+    env = {"BENCH_EVIDENCE_MODE": "pull", "BENCH_EVIDENCE_RUN": "e-l-1"}
+    assert hooks.dev_mount_env(env, block, tmp_path / "bin", lambda _m: None) == {
+        "SDO_DEV_MOUNT": "1",
+        "SDO_DEV_MOUNT_PATH": ".dev",
+        "SDO_DEV_MOUNT_CLAIM": "sdo-evidence",
+    }

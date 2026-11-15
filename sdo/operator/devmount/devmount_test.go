@@ -31,3 +31,38 @@ func TestEnvironmentCarriesThePathToTheController(t *testing.T) {
 		t.Fatalf("%v", env)
 	}
 }
+
+func TestClaimBackedMountsUseOneVolumeAndSubPaths(t *testing.T) {
+	t.Setenv("SDO_DEV_MOUNT_PATH", ".dev")
+	t.Setenv("SDO_DEV_MOUNT_CLAIM", "sdo-evidence")
+	pod := &corev1.PodSpec{Containers: []corev1.Container{{Name: "c"}}}
+	ApplyWorker(pod)
+	if len(pod.Volumes) != 1 || pod.Volumes[0].PersistentVolumeClaim == nil || pod.Volumes[0].PersistentVolumeClaim.ClaimName != "sdo-evidence" {
+		t.Fatalf("want one claim volume, got %v", pod.Volumes)
+	}
+	seen := map[string]string{}
+	for _, m := range pod.Containers[0].VolumeMounts {
+		if m.Name != pod.Volumes[0].Name || !m.ReadOnly || m.SubPath == "" {
+			t.Fatalf("mount %v is not a read-only subPath of the claim volume", m)
+		}
+		seen[m.MountPath] = m.SubPath
+	}
+	if seen["/opt/sdo/sdo"] != ".dev/sdo" || seen["/usr/local/bin/sdo-operator"] != ".dev/.fastloop/sdo-operator" {
+		t.Fatalf("%v", seen)
+	}
+	if seen["/opt/sdo/benchmarks/sregym/fastloop/scripted_program"] != ".dev/benchmarks/sregym/fastloop/scripted_program" {
+		t.Fatalf("%v", seen)
+	}
+}
+
+func TestEnvironmentCarriesTheClaimToTheController(t *testing.T) {
+	t.Setenv("SDO_DEV_MOUNT_PATH", ".dev")
+	t.Setenv("SDO_DEV_MOUNT_CLAIM", "c")
+	found := false
+	for _, e := range Environment() {
+		found = found || (e.Name == "SDO_DEV_MOUNT_CLAIM" && e.Value == "c")
+	}
+	if !found {
+		t.Fatal("claim not passed on to dev-mounted workers")
+	}
+}

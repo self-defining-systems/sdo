@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 
 LAYOUT_SCHEMA = "sdo.evidence/v1"
 LAYOUT_FILE = "layout.json"
@@ -106,6 +106,63 @@ def puller_manifest(control: str, name: str) -> dict[str, Any]:
             "volumes": [{"name": "sink", "persistentVolumeClaim": {"claimName": EVIDENCE_CLAIM, "readOnly": True}}],
         },
     }
+
+
+def pusher_manifest(control: str, name: str) -> dict[str, Any]:
+    """A throwaway pod that mounts the sink claim writable (restricted pod security compatible)."""
+    manifest = puller_manifest(control, name)
+    container = manifest["spec"]["containers"][0]
+    container["volumeMounts"] = [{"name": "sink", "mountPath": "/sink"}]
+    manifest["spec"]["volumes"] = [{"name": "sink", "persistentVolumeClaim": {"claimName": EVIDENCE_CLAIM}}]
+    return manifest
+
+
+def push_paths(
+    kube_cmd: Callable[..., list[str]], control: str, root: Path, paths: Sequence[str], wipe: Sequence[str] = ()
+) -> None:
+    """Unpack ``paths`` (relative to ``root``) into the lane's evidence claim, after emptying the ``wipe`` directories.
+
+    A directory is emptied in place, never removed: a pod that already mounts it by subPath keeps seeing it. The
+    claim is node-local, so the pod lands on the node the claim is bound to (or binds it). Raises ``SinkError``."""
+    name = f"claim-push-{os.getpid()}"
+
+    def kube(*args: str, **kw: Any) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.run(kube_cmd("-n", control, *args), capture_output=True, check=False, **kw)
+
+    try:
+        created = subprocess.run(
+            kube_cmd("apply", "-f", "-"),
+            input=json.dumps(pusher_manifest(control, name)).encode(),
+            capture_output=True,
+            check=False,
+            timeout=120,
+        )
+        if created.returncode != 0:
+            raise SinkError(f"claim push pod: {created.stderr.decode()[-200:].strip()}")
+        ready = kube("wait", f"pod/{name}", "--for=condition=Ready", f"--timeout={PULL_READY_TIMEOUT}", timeout=240)
+        if ready.returncode != 0:
+            raise SinkError(f"claim push pod not ready: {ready.stderr.decode()[-200:].strip()}")
+        script = "set -e; " + "; ".join(f"mkdir -p /sink/{d}; find /sink/{d} -mindepth 1 -delete" for d in wipe)
+        if wipe:
+            emptied = kube("exec", name, "-c", "pull", "--", "sh", "-c", script, timeout=300)
+            if emptied.returncode != 0:
+                raise SinkError(f"claim push of {', '.join(paths)}: {emptied.stderr.decode()[-200:].strip()}")
+        packed = subprocess.Popen(["tar", "-C", str(root), "-cf", "-", *paths], stdout=subprocess.PIPE)
+        unpacked = subprocess.run(
+            kube_cmd("-n", control, "exec", "-i", name, "-c", "pull", "--", "tar", "-C", "/sink", "-xf", "-"),
+            stdin=packed.stdout,
+            capture_output=True,
+            check=False,
+            timeout=1200,
+        )
+        assert packed.stdout is not None
+        packed.stdout.close()
+        if packed.wait() != 0 or unpacked.returncode != 0:
+            raise SinkError(
+                f"claim push of {', '.join(paths)}: {unpacked.stderr.decode()[-200:].strip() or 'tar failed'}"
+            )
+    finally:
+        kube("delete", "pod", name, "--ignore-not-found", "--wait=false", "--grace-period=0", "--force", timeout=120)
 
 
 def pull_run_dir(env: Mapping[str, str], kube_cmd: Callable[..., list[str]], control: str) -> None:
