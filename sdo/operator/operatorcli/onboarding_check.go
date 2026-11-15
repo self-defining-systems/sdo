@@ -22,8 +22,10 @@ import (
 	"sdo.dev/operator/operatorcli/internal/processio"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/metrics"
+	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/telemetry"
 	"sdo.dev/operator/telemetry/prometheus"
+	"sigs.k8s.io/yaml"
 )
 
 // OnboardingUsage documents "sdo-operator onboarding".
@@ -187,7 +189,7 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	quietWindow := flags.Duration("quiet-window", 10*time.Minute, "quiet-when-healthy window; 0 skips the item")
 	quietInterval := flags.Duration("quiet-interval", time.Minute, "wait between detector evaluations in the quiet window")
 	breakItem := flags.Bool("break", false, "run fails-under-break: briefly break each component on an operation's path (only on a target without users)")
-	breakBound := flags.Duration("break-bound", 60*time.Second, "how long to wait for a detector to notice each break")
+	breakBound := flags.Duration("break-bound", 60*time.Second, "least time to wait for a detector to notice each break (at least the time the memory's own probes need to judge a failure)")
 	breakMode := flags.String("break-mode", kubebreak.ModeScale, "how to break: scale (to zero) or network (deny-ingress NetworkPolicy; scale when the CNI does not enforce it)")
 	operatorRoot := flags.String("operator-root", operatorRootDefault(processio.Environment), "operator source tree detectors are built from")
 	clusterNetwork := flags.Bool("cluster-network", false, "this process resolves and dials in-cluster Service names (it runs in a pod or on the cluster network); without it, detectors that dial Service names are not judged")
@@ -261,11 +263,15 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 			config.Quiet = &onboardcheck.QuietConfig{Eval: eval, Window: *quietWindow, Interval: *quietInterval}
 		}
 		if *breakItem {
-			breaker, err := kubebreak.New(ctx, kubebreak.Config{Client: cluster.Kube(), Namespace: *namespace, Mode: *breakMode, Bound: 2 * *breakBound, Interval: 5 * time.Second, Wait: processio.Wait})
+			// Wait for the memory's own tests to judge a failure: their sampling
+			// and holds set the time, not the flag's default.
+			horizon := probeDetectionHorizon(*repo)
+			bound := max(*breakBound, horizon)
+			breaker, err := kubebreak.New(ctx, kubebreak.Config{Client: cluster.Kube(), Namespace: *namespace, Mode: *breakMode, Bound: 2 * bound, Interval: 5 * time.Second, Wait: processio.Wait})
 			if err != nil {
 				return 0, err
 			}
-			config.Break = &onboardcheck.BreakConfig{Eval: eval, Breaker: breaker, Bound: *breakBound, Interval: 5 * time.Second}
+			config.Break = &onboardcheck.BreakConfig{Eval: eval, Breaker: breaker, Bound: bound, Horizon: horizon, Interval: 5 * time.Second}
 		}
 	}
 	report, err := onboardcheck.Run(ctx, config)
@@ -285,4 +291,25 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 		return exitDiagnostics, nil
 	}
 	return exitClean, nil
+}
+
+// probeDetectionHorizon is the longest time the repository's health-probe
+// workloads can take to raise a failing scenario (zero without any).
+func probeDetectionHorizon(repo string) time.Duration {
+	files, _ := filepath.Glob(filepath.Join(repo, ".sdo", "diagnostics", "traffic", "workloads", "*.yaml"))
+	var longest time.Duration
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		raw, err := yaml.YAMLToJSON(data)
+		if err != nil {
+			continue
+		}
+		if workload, err := traffic.ParseWorkloadJSON(raw); err == nil {
+			longest = max(longest, workload.DetectionHorizon())
+		}
+	}
+	return longest
 }

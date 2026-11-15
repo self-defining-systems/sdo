@@ -104,9 +104,12 @@ type Breaker interface {
 
 // BreakConfig is the fails-under-break item.
 type BreakConfig struct {
-	Eval     Evaluator
-	Breaker  Breaker
-	Bound    time.Duration
+	Eval    Evaluator
+	Breaker Breaker
+	Bound   time.Duration
+	// Horizon is the longest the memory's own probes can take to raise a
+	// failing scenario; Bound is at least this long. Zero without probes.
+	Horizon  time.Duration
 	Interval time.Duration
 }
 
@@ -320,7 +323,7 @@ func runBreak(ctx context.Context, cfg Config, report *Report) {
 		}
 	}
 	for _, op := range cfg.Map.Operations {
-		report.add(ItemBreak, op.ID, opStatus(op, outcomes), opDetail(cfg.Map, op, outcomes))
+		report.add(ItemBreak, op.ID, opStatus(op, outcomes), opDetail(cfg.Map, op, outcomes, b.Bound, b.Horizon))
 	}
 }
 
@@ -393,7 +396,7 @@ func opStatus(op appmap.Operation, outcomes map[string]*breakOutcome) string {
 	return Red
 }
 
-func opDetail(m appmap.Map, op appmap.Operation, outcomes map[string]*breakOutcome) string {
+func opDetail(m appmap.Map, op appmap.Operation, outcomes map[string]*breakOutcome, bound, horizon time.Duration) string {
 	var tried, generic []string
 	for _, name := range op.Path {
 		out := outcomes[name]
@@ -419,7 +422,11 @@ func opDetail(m appmap.Map, op appmap.Operation, outcomes map[string]*breakOutco
 	if len(generic) > 0 {
 		detail += "; only generic detectors noticed the component (" + strings.Join(generic, "; ") + ")"
 	}
-	return detail + ": no test or request metric of this operation catches it"
+	detail += fmt.Sprintf(": no test or request metric of this operation catches it (waited up to %s per component", bound.Round(time.Second))
+	if horizon > 0 {
+		detail += fmt.Sprintf("; the memory's probes need up to %s to judge a failure", horizon.Round(time.Second))
+	}
+	return detail + ")"
 }
 
 // breakOne breaks c, waits up to the bound for a raise that names it or one
