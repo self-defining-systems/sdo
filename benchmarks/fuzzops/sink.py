@@ -61,7 +61,9 @@ def _need(env: Mapping[str, str], *names: str) -> list[str]:
 #: hooks pull it into the host directory (``BENCH_EVIDENCE_MODE=pull``).
 EVIDENCE_CLAIM = "sdo-evidence"
 EVIDENCE_CLAIM_SIZE = "5Gi"
-PULL_IMAGE = "busybox:1.36"
+PULL_IMAGE = (
+    "rancher/mirrored-library-busybox:1.36.1"  # k3s runs its volume helpers from it, so every node already holds it
+)
 PULL_UID = 65532
 PULL_READY_TIMEOUT = "180s"
 
