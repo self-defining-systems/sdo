@@ -142,6 +142,13 @@ func runLive(ctx context.Context, cfg Config, report *Report) {
 		f()
 		report.Durations = append(report.Durations, ItemDuration{Item: item, Seconds: cfg.Now().Sub(start).Seconds()})
 	}
+	if cfg.NoDetectors {
+		report.add(ItemQuiet, "detectors", Red, "SDO: no detectors were evaluated: the memory SDO would deploy holds none, so silence here proves nothing; author health detectors or traffic workloads")
+		if cfg.Break != nil {
+			report.add(ItemBreak, "all", Red, "SDO: not run: no detectors were evaluated")
+		}
+		return
+	}
 	quietRed := false
 	if cfg.Quiet != nil {
 		timed(ItemQuiet, func() { quietRed = runQuiet(ctx, cfg, report) })

@@ -69,6 +69,9 @@ type Config struct {
 	// nil skips the item.
 	Quiet *QuietConfig
 	Break *BreakConfig
+	// NoDetectors says the memory SDO would deploy holds no detector at all,
+	// so the live items have nothing to judge.
+	NoDetectors bool
 }
 
 // Result is one line of the report.

@@ -255,6 +255,7 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 			return 0, fmt.Errorf("prepare the memory as the controller will run it: %w", err)
 		}
 		defer cleanupTree()
+		config.NoDetectors = detectorCount(tree) == 0
 		prepared, err := probe.Prepare(ctx, tree, *operatorRoot, *namespace, deployment.HealthScope{})
 		if err != nil {
 			return 0, fmt.Errorf("build detectors for the live items: %w", err)

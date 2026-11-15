@@ -5,7 +5,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
+
+	"sdo.dev/operator/memory"
 )
 
 // The live items judge the detectors the controller will run: the traffic
@@ -34,6 +37,22 @@ func TestPreparedTreeInstallsTheTrafficDetectorOfAProbeWorkload(t *testing.T) {
 	detector := filepath.Join(tree, ".sdo", "diagnostics", "detectors", "health", "traffic-probe-read", "detector.go")
 	if _, err := os.Stat(detector); err != nil {
 		t.Fatalf("the prepared tree has no traffic detector for the probe workload: %v", err)
+	}
+	// The check judges what publication installs: the same detector set that
+	// validation counts for this tree.
+	var got []string
+	entries, _ := os.ReadDir(filepath.Join(tree, ".sdo", "diagnostics", "detectors", "health"))
+	for _, entry := range entries {
+		got = append(got, entry.Name())
+	}
+	want := memory.PreparedHealthDetectorIDs(memory.HealthOptions{}, map[string][]byte{"probe-read.yaml": []byte(workload)})
+	for _, id := range want {
+		if !slices.Contains(got, id) {
+			t.Fatalf("publication installs %s but the check's tree lacks it (has %v)", id, got)
+		}
+	}
+	if detectorCount(tree) == 0 {
+		t.Fatal("detectorCount is zero for a prepared tree")
 	}
 	if _, err := os.Stat(filepath.Join(repo, ".sdo", "diagnostics", "detectors")); err == nil {
 		t.Fatal("the agent's repository was changed")

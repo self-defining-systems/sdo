@@ -3,11 +3,12 @@ package operatorcli
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
-	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
 	"sdo.dev/operator/telemetry"
@@ -43,12 +44,7 @@ func preparedTree(ctx context.Context, repo, telemetryEnvironment string) (strin
 			return "", nil, err
 		}
 	}
-	sources, err := validate.EffectiveTelemetrySources(dir, env.Policy(), telemetrysources.Registry())
-	if err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("telemetry sources: %w", err)
-	}
-	if err := memory.PrepareHealthWith(dir, memory.HealthOptions{AlertSources: validate.HasAlertSource(sources), RequestMetrics: validate.HasRangeSource(sources)}); err != nil {
+	if err := validate.PrepareHealthTree(dir, env.Policy(), telemetrysources.Registry()); err != nil {
 		cleanup()
 		return "", nil, fmt.Errorf("prepare the generic detectors: %w", err)
 	}
@@ -61,4 +57,16 @@ func preparedTree(ctx context.Context, repo, telemetryEnvironment string) (strin
 		return "", nil, err
 	}
 	return dir, cleanup, nil
+}
+
+// detectorCount is the number of detector packages in a prepared tree.
+func detectorCount(root string) int {
+	count := 0
+	_ = filepath.WalkDir(filepath.Join(root, ".sdo", "diagnostics", "detectors"), func(path string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && d.Name() == "manifest.yaml" {
+			count++
+		}
+		return nil
+	})
+	return count
 }
