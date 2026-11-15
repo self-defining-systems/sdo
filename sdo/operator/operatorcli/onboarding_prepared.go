@@ -6,10 +6,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
-	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/broker"
 	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
 	"sdo.dev/operator/operatorcli/internal/processio"
+	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/telemetry"
 )
 
@@ -40,9 +42,14 @@ func preparedTree(ctx context.Context, repo, telemetryEnvironment string) (strin
 			return "", nil, err
 		}
 	}
-	if err := validate.PrepareHealthTree(dir, env.Policy(), telemetrysources.Registry()); err != nil {
+	derived, err := environmentTelemetry(env, telemetrysources.Registry())
+	if err != nil {
 		cleanup()
-		return "", nil, fmt.Errorf("prepare the generic detectors: %w", err)
+		return "", nil, err
+	}
+	if err := prepareTree(dir, derived); err != nil {
+		cleanup()
+		return "", nil, err
 	}
 	if err := run("add", "-A"); err != nil {
 		cleanup()
@@ -65,4 +72,48 @@ func detectorCount(root string) int {
 		return nil
 	})
 	return count
+}
+
+// environmentTelemetry is the telemetry every tree preparation runs under: the
+// environment's policy with its provided sources, the same derivation the
+// brokers use, so request metrics and metrics alerts join the tree exactly
+// where publication would add them.
+func environmentTelemetry(env telemetry.Environment, registry *telemetry.Registry) (broker.Telemetry, error) {
+	return broker.TelemetryFromEnvironment(env, registry)
+}
+
+// prepareTree installs, under root, the detectors Go adds at publication. The
+// memory check, the onboarding check, publication and install all reach the
+// same validate.PrepareHealthTree through telemetry from environmentTelemetry.
+func prepareTree(root string, derived broker.Telemetry) error {
+	if err := validate.PrepareHealthTree(root, derived.Policy, derived.Registry); err != nil {
+		return fmt.Errorf("prepare the generic detectors: %w", err)
+	}
+	return nil
+}
+
+// prepareInstallTree makes the repository's accepted head a prepared tree: an
+// onboarding memory carries only what the agent authored, and a controller
+// started on it would hold zero health detectors. It commits the Go-installed
+// detectors when they are missing or stale and returns the resulting head.
+func prepareInstallTree(ctx context.Context, repo string, derived broker.Telemetry) (string, error) {
+	if err := prepareTree(repo, derived); err != nil {
+		return "", err
+	}
+	git := func(args ...string) error {
+		_, err := processio.Git(ctx, append([]string{"-c", "user.name=sdo", "-c", "user.email=sdo@invalid", "-C", repo}, args...)...)
+		return err
+	}
+	if err := git("add", "--force", "-A", "--", ".sdo"); err != nil {
+		return "", err
+	}
+	if out, err := processio.Git(ctx, "-C", repo, "status", "--porcelain", "--", ".sdo"); err != nil {
+		return "", err
+	} else if strings.TrimSpace(out) != "" {
+		message := "sdo: prepare the generic detectors\n\nSDO-Actor: human\nSDO-Phase: initial\nSDO-Origin: install-existing"
+		if err := git("commit", "-q", "-m", message); err != nil {
+			return "", err
+		}
+	}
+	return acceptedHead(ctx, repo)
 }

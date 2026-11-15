@@ -66,6 +66,11 @@ func WriteSchema(checkout string) error {
 			return fmt.Errorf("migrate operational memory: %w", err)
 		}
 	}
+	// The module name belongs to whoever authored the module; rewriting it
+	// would change the accepted head under a pending install.
+	if _, err := os.Stat(filepath.Join(checkout, filepath.FromSlash(layout.DiagnosticsGoModFile))); err == nil {
+		return nil
+	}
 	if err := safefs.WriteFile(checkout, layout.DiagnosticsGoModFile, []byte("module app-diagnostics\n\ngo 1.24\n\nrequire sdo.dev/operator/sdk v0.0.0\n"), 0o644); err != nil {
 		return fmt.Errorf("write diagnostics module: %w", err)
 	}

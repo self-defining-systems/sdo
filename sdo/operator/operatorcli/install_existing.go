@@ -142,6 +142,19 @@ func RunInstallExisting(ctx context.Context, launch InstallExistingConfig) (Inst
 		return InstallExistingResult{}, err
 	}
 	launch.DeploymentSource = source
+	if memoryCodePath(launch.Install.CodePathSelection()) != "shell" {
+		control := launch.Install.ControlNamespace
+		if control == "" {
+			control = launch.Install.Namespace
+		}
+		derived, err := installTelemetry(launch.Install, telemetryRegistry(), launch.Install.Namespace, control)
+		if err != nil {
+			return InstallExistingResult{}, err
+		}
+		if _, err := prepareInstallTree(ctx, launch.Repository, derived); err != nil {
+			return InstallExistingResult{}, err
+		}
+	}
 	commit, err := prepareInstallExistingRepository(ctx, launch)
 	if err != nil {
 		return InstallExistingResult{}, err
