@@ -227,3 +227,35 @@ func TestUnknownModeIsRejected(t *testing.T) {
 		t.Fatal("unknown mode accepted")
 	}
 }
+
+func TestWorkloadReferenceMayCarryItsKind(t *testing.T) {
+	client := fake.NewSimpleClientset(deployment("web", 2), statefulSet("db", 1))
+	b := newBreaker(t, client, ModeScale)
+	for _, ref := range []string{"Deployment/web", "StatefulSet/db"} {
+		c := appmap.Component{Name: ref, Workload: ref}
+		if err := b.Break(context.Background(), c); err != nil {
+			t.Fatalf("%s: %v", ref, err)
+		}
+		if err := b.Restore(context.Background(), c); err != nil {
+			t.Fatalf("%s: %v", ref, err)
+		}
+	}
+	if err := b.Break(context.Background(), appmap.Component{Name: "x", Workload: "Deployment/db"}); err == nil {
+		t.Fatal("a StatefulSet must not match a Deployment reference")
+	}
+	if err := b.Break(context.Background(), appmap.Component{Name: "x", Workload: "DaemonSet/web"}); err == nil {
+		t.Fatal("only Deployments and StatefulSets can be scaled")
+	}
+}
+
+func TestNetworkPolicyNameUsesTheBareWorkloadName(t *testing.T) {
+	client := fake.NewSimpleClientset(deployment("web", 2), daemonSet("calico-node"))
+	b := newBreaker(t, client, ModeNetwork)
+	c := appmap.Component{Name: "web", Workload: "Deployment/web"}
+	if err := b.Break(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Restore(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+}

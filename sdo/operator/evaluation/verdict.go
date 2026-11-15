@@ -34,6 +34,11 @@ func (s Status) Valid() bool {
 	return false
 }
 
+// OutsideClusterReason prefixes the reason of a detector an evaluation run
+// outside the cluster (--outside-cluster) leaves out because it needs the
+// cluster's own network, such as one that dials Service names.
+const OutsideClusterReason = "not evaluable outside the cluster: "
+
 // UnavailableDetector names a detector that could not be evaluated and why.
 type UnavailableDetector struct {
 	DetectorID string `json:"detector_id"`
@@ -61,6 +66,10 @@ type Verdict struct {
 	// ExistingRecordsExercised counts the probe samples in which a step marked
 	// as reading existing records returned a record the probe did not write.
 	ExistingRecordsExercised int `json:"existing_records_exercised,omitempty"`
+	// StartedAt is when a watching evaluation (--watch) began judging this
+	// line, so a reader can tell a verdict computed after an event from an
+	// earlier one. A one-shot evaluation leaves it zero.
+	StartedAt time.Time `json:"started_at,omitzero"`
 }
 
 // Decode parses the verdict strictly: an unknown field or status means the two

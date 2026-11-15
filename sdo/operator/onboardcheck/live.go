@@ -69,6 +69,9 @@ type Verdict struct {
 	Status      string
 	Raised      []Raise
 	Unavailable []string
+	// Skipped are detectors this environment cannot judge (they need the
+	// cluster's own network); they are noted, never red.
+	Skipped []string
 }
 
 // Evaluator evaluates the memory's detectors, test-request scenarios and the
@@ -151,12 +154,14 @@ func (r *Report) add(item, subject, status, detail string) {
 }
 
 // runQuiet evaluates the detectors for the whole window with no fault and
-// reports whether it went red.
+// reports whether the healthy application raised or could not be evaluated at all.
 func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 	q := cfg.Quiet
 	start := cfg.Now()
 	end := start.Add(q.Window)
 	samples, pending := 0, 0
+	var skipped []string
+	unavailable := ""
 	for {
 		verdict, err := q.Eval.Evaluate(ctx)
 		if err != nil {
@@ -164,6 +169,7 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 			return true
 		}
 		samples++
+		skipped = verdict.Skipped
 		elapsed := cfg.Now().Sub(start).Round(time.Second)
 		if len(verdict.Raised) > 0 {
 			for _, r := range verdict.Raised {
@@ -172,10 +178,12 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 			return true
 		}
 		if verdict.Status == "unavailable" || len(verdict.Unavailable) > 0 {
-			report.add(ItemQuiet, "detectors", Red, fmt.Sprintf("detectors could not be evaluated at sample %d: %s", samples, strings.Join(verdict.Unavailable, "; ")))
-			return true
-		}
-		if verdict.Status == "pending" {
+			// Not a raise: keep sampling the window for the detectors that evaluate,
+			// and the fails-under-break item can still run on them.
+			if unavailable == "" {
+				unavailable = fmt.Sprintf("detectors could not be evaluated (from sample %d): %s", samples, strings.Join(verdict.Unavailable, "; "))
+			}
+		} else if verdict.Status == "pending" {
 			pending++
 		}
 		remaining := end.Sub(cfg.Now())
@@ -187,7 +195,14 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 			return true
 		}
 	}
+	if len(skipped) > 0 {
+		report.add(ItemQuiet, "skipped", Note, "not judged from here: "+strings.Join(skipped, "; "))
+	}
 	detail := fmt.Sprintf("no detector raised in %d evaluations over %s", samples, cfg.Now().Sub(start).Round(time.Second))
+	if unavailable != "" {
+		report.add(ItemQuiet, "detectors", Red, unavailable+"; "+detail+" among the others")
+		return false
+	}
 	if pending > 0 {
 		detail += fmt.Sprintf(" (%d still pending a window)", pending)
 	}
@@ -213,6 +228,9 @@ type breakOutcome struct {
 	found []foundRaise
 	// hit is the first raise that names the component or one of its operations.
 	hit *foundRaise
+	// opHit is, per operation, the first raise that names the operation or
+	// one of its test scenarios: what a test of the operation noticed.
+	opHit map[string]*foundRaise
 }
 
 type foundRaise struct {
@@ -228,14 +246,14 @@ func runBreak(ctx context.Context, cfg Config, report *Report) {
 	for _, c := range cfg.Map.Components {
 		byName[c.Name] = c
 	}
-	opsOf := map[string][]string{}
+	opsOf := map[string][]appmap.Operation{}
 	var order []string
 	for _, op := range cfg.Map.Operations {
 		for _, name := range op.Path {
 			if _, seen := opsOf[name]; !seen {
 				order = append(order, name)
 			}
-			opsOf[name] = append(opsOf[name], op.ID)
+			opsOf[name] = append(opsOf[name], op)
 		}
 	}
 	outcomes := map[string]*breakOutcome{}
@@ -244,7 +262,7 @@ func runBreak(ctx context.Context, cfg Config, report *Report) {
 	stopped := false
 	for _, name := range order {
 		c, ok := byName[name]
-		out := &breakOutcome{names: []string{name, c.Workload}}
+		out := &breakOutcome{names: []string{name, c.Workload}, opHit: map[string]*foundRaise{}}
 		outcomes[name] = out
 		switch {
 		case stopped:
@@ -269,7 +287,7 @@ func runBreak(ctx context.Context, cfg Config, report *Report) {
 			baseline = fingerprints(v.Raised)
 		}
 		var restoreFailed bool
-		baseline, restoreFailed = breakOne(ctx, cfg, c, opsOf[name], baseline, out, report)
+		baseline, restoreFailed = breakOne(ctx, cfg, c, opsOf[name], baseline, out)
 		if restoreFailed || out.err != "" && strings.HasPrefix(out.err, "evaluation failed") {
 			stopped = true
 		}
@@ -284,11 +302,11 @@ func runBreak(ctx context.Context, cfg Config, report *Report) {
 			f := out.hit
 			report.add(ItemBreak, name, Green, fmt.Sprintf("%s: %s noticed after %s: %s", out.how, f.raise.DetectorID, f.after.Round(time.Second), clip(f.raise.Summary, 200)))
 		default:
-			report.add(ItemBreak, name, Red, fmt.Sprintf("%s: no detector named %s or its operations (%s) within %s%s", out.how, name, strings.Join(opsOf[name], ", "), b.Bound, otherRaises(out)))
+			report.add(ItemBreak, name, Red, fmt.Sprintf("%s: no detector named %s or its operations (%s) within %s%s", out.how, name, strings.Join(opIDs(opsOf[name]), ", "), b.Bound, otherRaises(out)))
 		}
 	}
 	for _, op := range cfg.Map.Operations {
-		report.add(ItemBreak, op.ID, opStatus(op, outcomes), opDetail(op, outcomes))
+		report.add(ItemBreak, op.ID, opStatus(op, outcomes), opDetail(cfg.Map, op, outcomes))
 	}
 }
 
@@ -313,61 +331,87 @@ func fingerprints(raised []Raise) map[string]bool {
 	return out
 }
 
-// noticing returns the raise that names the operation or the broken component.
-func noticing(op appmap.Operation, out *breakOutcome) (foundRaise, bool) {
-	for _, f := range out.found {
-		text := f.raise.text()
-		if named(text, op.ID) {
-			return f, true
-		}
-		for _, n := range out.names {
-			if named(text, n) {
-				return f, true
+func opIDs(ops []appmap.Operation) []string {
+	ids := make([]string, len(ops))
+	for i, op := range ops {
+		ids[i] = op.ID
+	}
+	return ids
+}
+
+// scenariosOf lists the probe scenarios that exercise the operation.
+func scenariosOf(m appmap.Map, op appmap.Operation) []string {
+	var out []string
+	for _, p := range m.Probes {
+		for _, id := range p.Operations {
+			if id == op.ID {
+				out = append(out, p.Scenario)
 			}
 		}
 	}
-	return foundRaise{}, false
+	return out
 }
 
+// namesOperation reports whether a raise's text names the operation or one of
+// the scenarios that test it.
+func namesOperation(text string, m appmap.Map, op appmap.Operation) bool {
+	if named(text, op.ID) {
+		return true
+	}
+	for _, s := range scenariosOf(m, op) {
+		if named(text, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// opStatus is green when breaking some component on the operation's path made
+// a raise that names the operation or one of its test scenarios: a generic
+// detector that only names the broken component does not show that a test of
+// the operation fails.
 func opStatus(op appmap.Operation, outcomes map[string]*breakOutcome) string {
-	status := Red
 	for _, name := range op.Path {
-		out := outcomes[name]
-		if out == nil {
-			continue
-		}
-		if out.how == "no workload" {
-			continue
-		}
-		if _, ok := noticing(op, out); ok {
+		if out := outcomes[name]; out != nil && out.opHit[op.ID] != nil {
 			return Green
 		}
 	}
-	return status
+	return Red
 }
 
-func opDetail(op appmap.Operation, outcomes map[string]*breakOutcome) string {
-	var tried []string
+func opDetail(m appmap.Map, op appmap.Operation, outcomes map[string]*breakOutcome) string {
+	var tried, generic []string
 	for _, name := range op.Path {
 		out := outcomes[name]
-		if out == nil || out.how == "no workload" {
+		if out == nil || out.how == "no workload" || out.err != "" {
 			continue
 		}
-		if f, ok := noticing(op, out); ok {
-			return fmt.Sprintf("breaking %s (%s) was noticed by %s after %s", name, out.how, f.raise.DetectorID, f.after.Round(time.Second))
+		if f := out.opHit[op.ID]; f != nil {
+			return fmt.Sprintf("breaking %s (%s) was noticed by %s after %s: %s", name, out.how, f.raise.DetectorID, f.after.Round(time.Second), clip(f.raise.Summary, 160))
 		}
 		tried = append(tried, name)
+		if out.hit != nil {
+			generic = append(generic, fmt.Sprintf("%s by %s", name, out.hit.raise.DetectorID))
+		}
 	}
 	if len(tried) == 0 {
 		return "no component on its path could be broken"
 	}
-	return fmt.Sprintf("breaking %s raised nothing that names %s or the broken component: its tests and detectors do not catch it", strings.Join(tried, ", "), op.ID)
+	scenarios := "none declared"
+	if s := scenariosOf(m, op); len(s) > 0 {
+		scenarios = strings.Join(s, ", ")
+	}
+	detail := fmt.Sprintf("breaking %s raised nothing that names %s or its test scenarios (%s)", strings.Join(tried, ", "), op.ID, scenarios)
+	if len(generic) > 0 {
+		detail += "; only generic detectors noticed the component (" + strings.Join(generic, "; ") + ")"
+	}
+	return detail + ": no test or request metric of this operation catches it"
 }
 
 // breakOne breaks c, waits up to the bound for a raise that names it or one
 // of its operations, and always restores it. It returns the baseline for the
 // next component and whether the restore was uncertain.
-func breakOne(ctx context.Context, cfg Config, c appmap.Component, ops []string, baseline map[string]bool, out *breakOutcome, report *Report) (next map[string]bool, restoreFailed bool) {
+func breakOne(ctx context.Context, cfg Config, c appmap.Component, ops []appmap.Operation, baseline map[string]bool, out *breakOutcome) (next map[string]bool, restoreFailed bool) {
 	b := cfg.Break
 	out.how = b.Breaker.Mode()
 	next = baseline
@@ -397,7 +441,6 @@ func breakOne(ctx context.Context, cfg Config, c appmap.Component, ops []string,
 			return next, false
 		}
 		after := cfg.Now().Sub(start)
-		hit := false
 		for _, r := range v.Raised {
 			if baseline[r.key()] || seen[r.key()] {
 				continue
@@ -407,17 +450,25 @@ func breakOne(ctx context.Context, cfg Config, c appmap.Component, ops []string,
 			out.found = append(out.found, f)
 			text := r.text()
 			mine := named(text, c.Name) || named(text, c.Workload)
-			for _, id := range ops {
-				mine = mine || named(text, id)
-			}
-			if mine {
-				hit = true
-				if out.hit == nil {
-					out.hit = &f
+			for _, op := range ops {
+				if namesOperation(text, cfg.Map, op) {
+					mine = true
+					if out.opHit[op.ID] == nil {
+						out.opHit[op.ID] = &f
+					}
 				}
 			}
+			if mine && out.hit == nil {
+				out.hit = &f
+			}
 		}
-		if hit || after >= b.Bound {
+		// A generic detector names the component within seconds; the tests of
+		// its operations need their own window, so wait for those up to the bound.
+		tested := true
+		for _, op := range ops {
+			tested = tested && out.opHit[op.ID] != nil
+		}
+		if tested || after >= b.Bound {
 			return next, false
 		}
 		if err := cfg.Wait(ctx, b.Interval); err != nil {

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/deployment"
+	"sdo.dev/operator/evaluation"
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/onboardcheck"
 	"sdo.dev/operator/onboardcheck/kubebreak"
@@ -42,10 +43,13 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
          fails-under-break breaks, one at a time, each component on an
          operation's path (scale the workload to zero; with --break-mode network
          a deny-ingress NetworkPolicy when the CNI enforces it, else scale to
-         zero, said in the report), waits up to --break-bound for a detector that
-         names the component or one of its operations, and restores it. It is red
-         for an operation nothing notices, and red (stopping) if a restore cannot
-         be verified. Run it only on a target the agent owns, with no users.
+         zero, said in the report), waits up to --break-bound for raises that name
+         the component or its operations, and restores it. An operation is green
+         only when a raise names it or one of its probe scenarios; a generic
+         detector that names just the component leaves it red, and the report
+         says which detectors noticed. It is red (stopping) if a restore cannot
+         be verified. Detectors that dial in-cluster Service names cannot be judged
+         from the host running the check and are reported as a note. Run it only on a target the agent owns, with no users.
          Each live item reports its duration.
          The metric items: SDO builds each operation's request and error series from
          the application map's entries (metric, route, method and status labels),
@@ -92,11 +96,14 @@ func (p promAdapter) Query(ctx context.Context, text string) ([]metrics.Series, 
 	return result.Series, nil
 }
 
-// detectorEvaluator evaluates the memory's compiled detectors once per call.
-type detectorEvaluator struct{ prepared *deployment.PreparedProbe }
+// detectorEvaluator reads the memory's compiled detectors, which a single
+// long-running evaluation keeps judging the live application. Evaluate returns
+// the first verdict judged after the call, so a break made just before it is
+// seen.
+type detectorEvaluator struct{ watch *deployment.Watcher }
 
 func (e detectorEvaluator) Evaluate(ctx context.Context) (onboardcheck.Verdict, error) {
-	verdict, err := e.prepared.Verdict(ctx)
+	verdict, err := e.watch.Next(ctx, processio.Now())
 	if err != nil {
 		return onboardcheck.Verdict{}, err
 	}
@@ -112,7 +119,17 @@ func (e detectorEvaluator) Evaluate(ctx context.Context) (onboardcheck.Verdict, 
 		out.Raised = append(out.Raised, onboardcheck.Raise{DetectorID: f.DetectorID, Rule: f.RuleID, Summary: f.Summary, Evidence: f.Evidence, Resources: resources, Fingerprint: sdk.FindingFingerprint(f)})
 	}
 	for _, u := range verdict.Unavailable {
+		if reason, outside := strings.CutPrefix(u.Reason, evaluation.OutsideClusterReason); outside {
+			out.Skipped = append(out.Skipped, u.DetectorID+": "+reason)
+			continue
+		}
 		out.Unavailable = append(out.Unavailable, u.DetectorID+": "+u.Reason)
+	}
+	if verdict.Status == evaluation.Unavailable && len(out.Unavailable) == 0 {
+		out.Status = "clear"
+		if len(out.Raised) > 0 {
+			out.Status = "firing"
+		}
 	}
 	return out, nil
 }
@@ -217,14 +234,17 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 		Now: processio.Now,
 	}
 	if *quietWindow > 0 || *breakItem {
-		probe := deployment.AcceptedDetectorProbe{Settings: *settingsFile, TelemetryEnvironment: *telemetryEnv, Kubeconfig: *kubeconfig}
+		probe := deployment.AcceptedDetectorProbe{Settings: *settingsFile, TelemetryEnvironment: *telemetryEnv, Kubeconfig: *kubeconfig, OutsideCluster: true}
 		fmt.Fprintln(os.Stderr, "building the memory's detectors ...")
 		prepared, err := probe.Prepare(ctx, *repo, *operatorRoot, *namespace, deployment.HealthScope{})
 		if err != nil {
 			return 0, fmt.Errorf("build detectors for the live items: %w", err)
 		}
 		defer prepared.Close()
-		eval := detectorEvaluator{prepared: prepared}
+		fmt.Fprintln(os.Stderr, "warming the detectors (test-request scenarios need their sample window) ...")
+		watch := prepared.Watch(ctx, 5*time.Second)
+		defer watch.Close()
+		eval := detectorEvaluator{watch: watch}
 		if *quietWindow > 0 {
 			config.Quiet = &onboardcheck.QuietConfig{Eval: eval, Window: *quietWindow, Interval: *quietInterval}
 		}

@@ -115,9 +115,26 @@ type workload struct {
 	refresh  func(ctx context.Context) error
 }
 
-func (b *Breaker) find(ctx context.Context, name string) (*workload, error) {
+// split reads a component's workload reference: a bare name, or Kind/name.
+func split(ref string) (kind, name string) {
+	if k, n, ok := strings.Cut(ref, "/"); ok {
+		return k, n
+	}
+	return "", ref
+}
+
+func bare(ref string) string { _, name := split(ref); return name }
+
+func (b *Breaker) find(ctx context.Context, ref string) (*workload, error) {
 	apps := b.cfg.Client.AppsV1()
 	ns := b.cfg.Namespace
+	kind, name := split(ref)
+	if kind != "" && kind != "Deployment" && kind != "StatefulSet" {
+		return nil, fmt.Errorf("workload %s: only a Deployment or StatefulSet can be scaled", ref)
+	}
+	if kind == "StatefulSet" {
+		return b.findStatefulSet(ctx, name)
+	}
 	if d, err := apps.Deployments(ns).Get(ctx, name, metav1.GetOptions{}); err == nil {
 		w := &workload{}
 		load := func(d *appsv1.Deployment) {
@@ -143,7 +160,15 @@ func (b *Breaker) find(ctx context.Context, name string) (*workload, error) {
 		return w, nil
 	} else if !apierrors.IsNotFound(err) {
 		return nil, err
+	} else if kind == "Deployment" {
+		return nil, fmt.Errorf("no Deployment %q in namespace %s", name, ns)
 	}
+	return b.findStatefulSet(ctx, name)
+}
+
+func (b *Breaker) findStatefulSet(ctx context.Context, name string) (*workload, error) {
+	apps := b.cfg.Client.AppsV1()
+	ns := b.cfg.Namespace
 	s, err := apps.StatefulSets(ns).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
@@ -198,7 +223,7 @@ func (b *Breaker) Break(ctx context.Context, c appmap.Component) error {
 			return fmt.Errorf("workload %s has no matchLabels selector to deny traffic to", c.Workload)
 		}
 		policy := &networkingv1.NetworkPolicy{
-			ObjectMeta: metav1.ObjectMeta{Name: policyName(c.Workload), Namespace: b.cfg.Namespace},
+			ObjectMeta: metav1.ObjectMeta{Name: policyName(bare(c.Workload)), Namespace: b.cfg.Namespace},
 			Spec: networkingv1.NetworkPolicySpec{
 				PodSelector: metav1.LabelSelector{MatchLabels: w.selector.MatchLabels},
 				PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
@@ -223,7 +248,7 @@ func (b *Breaker) Restore(ctx context.Context, c appmap.Component) error {
 		return fmt.Errorf("restore %s: %w", c.Workload, err)
 	}
 	if b.mode == ModeNetwork {
-		err := b.cfg.Client.NetworkingV1().NetworkPolicies(b.cfg.Namespace).Delete(ctx, policyName(c.Workload), metav1.DeleteOptions{})
+		err := b.cfg.Client.NetworkingV1().NetworkPolicies(b.cfg.Namespace).Delete(ctx, policyName(bare(c.Workload)), metav1.DeleteOptions{})
 		if err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("restore %s: delete NetworkPolicy: %w", c.Workload, err)
 		}
@@ -242,7 +267,7 @@ func (b *Breaker) Restore(ctx context.Context, c appmap.Component) error {
 			return fmt.Errorf("restore %s: scale back to %d: %w", c.Workload, n, err)
 		}
 	}
-	return b.awaitReady(ctx, c.Workload, w)
+	return b.awaitReady(ctx, bare(c.Workload), w)
 }
 
 func (b *Breaker) awaitReady(ctx context.Context, name string, w *workload) error {

@@ -45,6 +45,7 @@ import (
 	"sdo.dev/operator/render"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/appstate"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/servicehealth"
@@ -1786,6 +1787,8 @@ func evaluateOnce(
 	classesFlag := flags.String("classes", "", "comma-separated detector classes to evaluate (default: every class)")
 	pinsFile := flags.String("image-pins", "", "JSON rendered.ReceiptPins of the deployment under verification: desired state reads return the images it applied")
 	settingsFile := flags.String("settings", "", "operator configuration the evaluation runs under (the sdo-config mount or the controller's record); empty runs the defaults")
+	outsideCluster := flags.Bool("outside-cluster", false, "this process runs outside the cluster: detectors that dial in-cluster Service names are left out and reported unavailable (evaluation.OutsideClusterReason)")
+	watch := flags.Duration("watch", 0, "after the warm-up, judge again every interval and print one verdict per line until cancelled (a detector error is that detector's unavailable entry); 0 evaluates once")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -1941,7 +1944,17 @@ func evaluateOnce(
 	// cluster, so it judges reachability without a recorded baseline.
 	trafficProvider := TrafficSnapshotProvider{Base: provider}
 	var unavailable []evaluation.UnavailableDetector
-	existingRecordsExercised := 0
+	if *outsideCluster {
+		var inside []sdk.Detector
+		for _, detector := range detectors {
+			if ConsumesServiceReachability([]sdk.Detector{detector}) {
+				unavailable = append(unavailable, evaluation.UnavailableDetector{DetectorID: detector.Spec().ID, Reason: evaluation.OutsideClusterReason + "it dials in-cluster Service names"})
+				continue
+			}
+			inside = append(inside, detector)
+		}
+		detectors = inside
+	}
 	if workloads := TrafficWorkloadNames(detectors); len(workloads) > 0 {
 		if trafficAPI == nil {
 			return errors.New("traffic health evaluation requires the active memory host")
@@ -1996,9 +2009,21 @@ func evaluateOnce(
 	}
 	// Without a credential source a declared pod read reports unavailable.
 	execConfig, _ := responderPlanExecConfig()
-	provider, _, err = detectorObservations{Client: client, Clock: clock.Now, RequireMetrics: true, Telemetry: telemetrySources, ExecConfig: execConfig}.compose(provider, detectors, designerSources)
+	// App-state readers carry their state only through the observer the
+	// controller runs; a one-shot evaluation runs it too and waits for each
+	// reader's first read, so a reader detector is judged on what it read.
+	var appState *AppStateObserver
+	if readers, _ := appstate.Split(detectors); len(readers) > 0 {
+		appState = NewAppStateObserver(NewAppStateStore(DefaultStateSettle), clock, clock.Now)
+	}
+	provider, _, err = detectorObservations{AppState: appState, Client: client, Clock: clock.Now, RequireMetrics: true, Telemetry: telemetrySources, ExecConfig: execConfig}.compose(provider, detectors, designerSources)
 	if err != nil {
 		return err
+	}
+	if appState != nil {
+		appState.Start(ctx)
+		defer appState.Stop()
+		awaitAppStateReads(ctx, appState, detectors, evaluateOnceWarmupBudget, clock)
 	}
 	if probes, _ := vantage.Probes(detectors); len(probes) > 0 {
 		awaitVantageHelpers(ctx, provider, evaluateOnceWarmupBudget, func(d time.Duration) { _ = waitOnClock(ctx, clock, d) })
@@ -2027,43 +2052,110 @@ func evaluateOnce(
 	controller.now = clock.Now
 	controller.OnEvaluation = func(sample []sdk.Finding) { findings = append([]sdk.Finding{}, sample...) }
 	controller.OnError = func(err error) { detectorErrors = append(detectorErrors, err) }
-	if err := controller.Step(ctx, start, nil); err != nil {
+	// judge steps the controller once and reports the verdict. When watching,
+	// a detector error is that detector's unavailable entry, so the others
+	// stay judged; a one-shot evaluation fails on it.
+	judge := func(now time.Time, watching bool) (evaluation.Verdict, error) {
+		detectorErrors = nil
+		if err := controller.Step(ctx, now, nil); err != nil {
+			return evaluation.Verdict{}, err
+		}
+		unavailableNow := append([]evaluation.UnavailableDetector(nil), unavailable...)
+		if len(detectorErrors) > 0 && !watching {
+			return evaluation.Verdict{}, fmt.Errorf("health detector evaluation failed: %w", detectorErrors[0])
+		}
+		if watching {
+			// A detector runs on its own interval, so its latest evaluation
+			// (this pass or an earlier one) is what it currently reports.
+			latest := map[string]DetectorEvaluation{}
+			var order []string
+			for _, observed := range controller.history {
+				if _, seen := latest[observed.DetectorID]; !seen {
+					order = append(order, observed.DetectorID)
+				}
+				latest[observed.DetectorID] = observed
+			}
+			for _, id := range order {
+				if latest[id].Status == DetectorEvaluationError {
+					unavailableNow = append(unavailableNow, evaluation.UnavailableDetector{DetectorID: id, Reason: latest[id].Error})
+				}
+			}
+		}
+		status := evaluation.Clear
+		var unconfirmed []evaluation.DetectorState
+		for _, observed := range controller.history {
+			if observed.Status == DetectorEvaluationPending {
+				status = evaluation.Pending
+			}
+			if observed.Status == DetectorEvaluationPending || observed.Reason != "" {
+				unconfirmed = append(unconfirmed, evaluation.DetectorState{DetectorID: observed.DetectorID, EvaluatedAt: observed.EvaluatedAt, Status: string(observed.Status), Fingerprints: observed.Fingerprints, Error: observed.Error, Reason: observed.Reason})
+			}
+		}
+		if len(unavailableNow) > 0 {
+			status = evaluation.Unavailable
+		}
+		exercised := 0
+		if trafficProvider.Observer != nil {
+			for _, window := range trafficProvider.Observer.Windows() {
+				exercised += window.ExistingRecordsExercised()
+			}
+		}
+		for _, finding := range findings {
+			if finding.Status == sdk.FindingActive {
+				status = evaluation.Firing
+				break
+			}
+		}
+		return evaluation.Verdict{Status: status, Findings: findings, Unavailable: unavailableNow, DetectorStates: unconfirmed, ExistingRecordsExercised: exercised, StartedAt: now.UTC()}, nil
+	}
+	if *watch > 0 {
+		// The provider warmed above; each pass judges the live application
+		// again and prints its verdict on a line, until cancelled.
+		encoder := json.NewEncoder(stdout)
+		for {
+			verdict, err := judge(clock.Now(), true)
+			if err != nil {
+				return err
+			}
+			if err := encoder.Encode(verdict); err != nil {
+				return err
+			}
+			if err := waitOnClock(ctx, clock, *watch); err != nil {
+				return nil
+			}
+		}
+	}
+	verdict, err := judge(start, false)
+	if err != nil {
 		return err
 	}
-	if len(detectorErrors) > 0 {
-		return fmt.Errorf("health detector evaluation failed: %w", detectorErrors[0])
-	}
-	status := evaluation.Clear
-	var unconfirmed []evaluation.DetectorState
-	for _, observed := range controller.history {
-		if observed.Status == DetectorEvaluationPending {
-			status = evaluation.Pending
-		}
-		if observed.Status == DetectorEvaluationPending || observed.Reason != "" {
-			unconfirmed = append(unconfirmed, evaluation.DetectorState{DetectorID: observed.DetectorID, EvaluatedAt: observed.EvaluatedAt, Status: string(observed.Status), Fingerprints: observed.Fingerprints, Error: observed.Error, Reason: observed.Reason})
-		}
-	}
-	if len(unavailable) > 0 {
-		status = evaluation.Unavailable
-	}
-	if trafficProvider.Observer != nil {
-		for _, window := range trafficProvider.Observer.Windows() {
-			existingRecordsExercised += window.ExistingRecordsExercised()
-		}
-	}
-	for _, finding := range findings {
-		if finding.Status == sdk.FindingActive {
-			status = evaluation.Firing
-			break
-		}
-	}
-	if err := json.NewEncoder(stdout).Encode(evaluation.Verdict{Status: status, Findings: findings, Unavailable: unavailable, DetectorStates: unconfirmed, ExistingRecordsExercised: existingRecordsExercised}); err != nil {
+	verdict.StartedAt = time.Time{}
+	if err := json.NewEncoder(stdout).Encode(verdict); err != nil {
 		return err
 	}
-	if *acceptSeed && status != evaluation.Clear {
-		return fmt.Errorf("seed acceptance rejected: status %s; %d detector finding(s); unavailable: %v", status, len(findings), unavailable)
+	if *acceptSeed && verdict.Status != evaluation.Clear {
+		return fmt.Errorf("seed acceptance rejected: status %s; %d detector finding(s); unavailable: %v", verdict.Status, len(verdict.Findings), verdict.Unavailable)
 	}
 	return nil
+}
+
+// awaitAppStateReads waits until every reader has finished a read (success or
+// recorded failure) or the budget ends; a reader still silent then reports
+// unavailable through its detector.
+func awaitAppStateReads(ctx context.Context, observer *AppStateObserver, detectors []sdk.Detector, budget time.Duration, clock kclock.WithTicker) {
+	readers, _ := appstate.Split(detectors)
+	for waited := time.Duration(0); waited < budget; waited += 100 * time.Millisecond {
+		results := observer.Store().Results()
+		done := true
+		for _, reader := range readers {
+			if _, ok := results[reader.Spec().ID]; !ok {
+				done = false
+			}
+		}
+		if done || waitOnClock(ctx, clock, 100*time.Millisecond) != nil {
+			return
+		}
+	}
 }
 
 // detectorsOfClasses keeps the detectors of the given classes; no classes keeps

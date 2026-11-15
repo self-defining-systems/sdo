@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"sdo.dev/operator/deployment/internal/deploymentio"
@@ -66,7 +67,10 @@ type AcceptedDetectorProbe struct {
 	// or the controller's record of it); empty evaluates under settings.Default().
 	Settings        string
 	RequireComplete bool
-	Kubeconfig      string
+	// OutsideCluster says the evaluation runs on a host outside the cluster
+	// (the onboarding check), where Service names do not resolve.
+	OutsideCluster bool
+	Kubeconfig     string
 	// TelemetryEnvironment is the telemetry environment document the probe's
 	// evaluation reads; the accepted tree's own bindings come from the memory
 	// host built from it. Empty provides no operator source.
@@ -153,20 +157,6 @@ func (p *PreparedProbe) run(ctx context.Context) ([]byte, []byte, error) {
 	return deploymentio.Evaluate(ctx, p.workspace.Directory, p.binary, p.args, p.env)
 }
 
-// Verdict runs one evaluation of the accepted detectors and returns the whole
-// verdict, findings included.
-func (p *PreparedProbe) Verdict(ctx context.Context) (evaluation.Verdict, error) {
-	stdout, stderr, err := p.run(ctx)
-	if err != nil {
-		return evaluation.Verdict{}, fmt.Errorf("evaluate accepted detectors: %w (stdout=%q stderr=%q)", err, boundedHealthOutput(stdout), boundedHealthOutput(stderr))
-	}
-	verdict, err := evaluation.Decode(stdout)
-	if err != nil {
-		return evaluation.Verdict{}, fmt.Errorf("decode detector verdict: %w (stdout=%q stderr=%q)", err, boundedHealthOutput(stdout), boundedHealthOutput(stderr))
-	}
-	return verdict, nil
-}
-
 // decodeHealthVerdict keeps the per-detector evidence --evaluate-once reports:
 // pending and unavailable detectors with their reasons, and each active
 // finding with its summary, so the verdict can say which detector and why.
@@ -227,6 +217,92 @@ func verdictOf(evaluation HealthEvaluation) lifecycle.HealthVerdict {
 		verdict.Outcome = lifecycle.VerificationSourceFault
 	}
 	return verdict
+}
+
+// Watcher is one running evaluation of the accepted detectors that judges the
+// live application every interval after a single warm-up, so a caller can ask
+// for a fresh verdict in seconds instead of paying the warm-up per question.
+type Watcher struct {
+	mu      sync.Mutex
+	latest  evaluation.Verdict
+	have    bool
+	err     error
+	changed chan struct{}
+	cancel  context.CancelFunc
+	done    chan struct{}
+}
+
+// Watch starts the evaluation process; Close stops it.
+func (p *PreparedProbe) Watch(ctx context.Context, interval time.Duration) *Watcher {
+	running, cancel := context.WithCancel(ctx)
+	w := &Watcher{changed: make(chan struct{}), cancel: cancel, done: make(chan struct{})}
+	args := append(append([]string(nil), p.args...), "--watch", interval.String())
+	go func() {
+		defer close(w.done)
+		stderr, err := deploymentio.Lines(running, p.workspace.Directory, p.binary, args, p.env, func(line []byte) {
+			verdict, derr := evaluation.Decode(line)
+			w.mu.Lock()
+			defer w.mu.Unlock()
+			if derr != nil {
+				w.err = fmt.Errorf("decode detector verdict: %w (line %q)", derr, boundedHealthOutput(line))
+			} else {
+				w.latest, w.have = verdict, true
+			}
+			w.notify()
+		})
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		if w.err == nil && running.Err() == nil {
+			w.err = fmt.Errorf("detector evaluation ended: %v (stderr tail=%q)", err, boundedTail(stderr))
+		}
+		w.notify()
+	}()
+	return w
+}
+
+func (w *Watcher) notify() {
+	close(w.changed)
+	w.changed = make(chan struct{})
+}
+
+// Next returns the first verdict whose judging began at or after notBefore,
+// waiting for it. It fails when the evaluation process has ended.
+func (w *Watcher) Next(ctx context.Context, notBefore time.Time) (evaluation.Verdict, error) {
+	for {
+		w.mu.Lock()
+		if w.err != nil {
+			err := w.err
+			w.mu.Unlock()
+			return evaluation.Verdict{}, err
+		}
+		if w.have && !w.latest.StartedAt.Before(notBefore) {
+			verdict := w.latest
+			w.mu.Unlock()
+			return verdict, nil
+		}
+		changed := w.changed
+		w.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return evaluation.Verdict{}, ctx.Err()
+		case <-changed:
+		}
+	}
+}
+
+// Close stops the evaluation process and waits for it.
+func (w *Watcher) Close() {
+	w.cancel()
+	<-w.done
+}
+
+// boundedTail keeps the end of a log, where a process says why it stopped.
+func boundedTail(data []byte) string {
+	const limit = 1024
+	if len(data) > limit {
+		return "…" + string(data[len(data)-limit:])
+	}
+	return string(data)
 }
 
 func boundedHealthOutput(data []byte) string {
@@ -375,6 +451,9 @@ func (probe AcceptedDetectorProbe) evaluationArgs(acceptedRoot, namespace string
 	}
 	if probe.RequireComplete {
 		args = append(args, "--accept-seed")
+	}
+	if probe.OutsideCluster {
+		args = append(args, "--outside-cluster")
 	}
 	if probe.TelemetryEnvironment != "" {
 		args = append(args, "--telemetry-environment", probe.TelemetryEnvironment)

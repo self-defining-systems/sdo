@@ -2,6 +2,7 @@
 package deploymentio
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"os"
@@ -49,6 +50,33 @@ func Evaluate(ctx context.Context, directory, binary string, args, extraEnv []st
 	c.Stdout, c.Stderr = &out, &stderr
 	err := c.Run()
 	return out.Bytes(), stderr.Bytes(), err
+}
+
+// Lines runs binary in directory with the process environment plus extraEnv
+// and calls onLine for every line it prints, until it exits or ctx ends. It
+// returns the process's standard error.
+func Lines(ctx context.Context, directory, binary string, args, extraEnv []string, onLine func([]byte)) ([]byte, error) {
+	c := command(ctx, binary, args)
+	c.Dir = directory
+	if len(extraEnv) > 0 {
+		c.Env = append(os.Environ(), extraEnv...)
+	}
+	var stderr bytes.Buffer
+	c.Stderr = &stderr
+	out, err := c.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := c.Start(); err != nil {
+		return nil, err
+	}
+	scanner := bufio.NewScanner(out)
+	scanner.Buffer(make([]byte, 0, 64*1024), 16<<20)
+	for scanner.Scan() {
+		onLine(append([]byte(nil), scanner.Bytes()...))
+	}
+	err = c.Wait()
+	return stderr.Bytes(), err
 }
 
 // Output runs a process and returns its standard output.

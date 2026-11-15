@@ -30,6 +30,14 @@ type world struct {
 	stuck      map[string]bool // restore succeeds but the component stays broken
 	unavail    bool
 	evals      int
+	late       map[string]lateRaise
+	brokenAt   map[string]time.Time
+}
+
+// lateRaise is a raise that appears only some time after its component broke.
+type lateRaise struct {
+	after time.Duration
+	raise []Raise
 }
 
 func newWorld() *world {
@@ -54,6 +62,9 @@ func (w *world) Evaluate(context.Context) (Verdict, error) {
 	raised := append([]Raise(nil), w.healthyRaise...)
 	for c := range w.broken {
 		raised = append(raised, w.raiseFor[c]...)
+		if l, ok := w.late[c]; ok && w.now.Sub(w.brokenAt[c]) >= l.after {
+			raised = append(raised, l.raise...)
+		}
 	}
 	if len(raised) == 0 {
 		return Verdict{Status: "clear"}, nil
@@ -69,6 +80,10 @@ func (w *world) Break(_ context.Context, c appmap.Component) error {
 	}
 	w.log = append(w.log, "break "+c.Name)
 	w.broken[c.Name] = true
+	if w.brokenAt == nil {
+		w.brokenAt = map[string]time.Time{}
+	}
+	w.brokenAt[c.Name] = w.now
 	return nil
 }
 
@@ -102,7 +117,8 @@ operations:
     writes: true
     entry: {service: web, port: 80, method: POST, path: /mail}
     path: [web, api, worker]
-probes: []
+probes:
+  - {scenario: browse, kind: call, operations: [list-items]}
 `
 
 func liveConfig(t *testing.T, w *world, quiet, brk bool) Config {
@@ -187,25 +203,58 @@ func raiseNaming(detector, text string) []Raise {
 	return []Raise{{DetectorID: detector, Rule: "r", Summary: text}}
 }
 
-func TestFailsUnderBreakGreenWhenDetectorNamesComponent(t *testing.T) {
+func TestFailsUnderBreakGreenWhenATestNamesTheOperationOrItsScenario(t *testing.T) {
 	w := newWorld()
-	w.raiseFor["web"] = raiseNaming("workload-health", "workload web has no ready pods")
+	w.raiseFor["web"] = raiseNaming("traffic-probe-call", "scenario browse failed at step list")
 	w.raiseFor["api"] = raiseNaming("workload-health", "workload api has no ready pods")
 	w.raiseFor["db"] = raiseNaming("store-state", "postgres db is unreachable")
-	w.raiseFor["worker"] = nil // nothing notices the worker
+	w.raiseFor["worker"] = raiseNaming("request-metrics", "send-mail failed 12 of 12 requests")
 	r := runLiveItems(t, w, false, true)
 	if status(r, ItemBreak, "list-items") != Green {
-		t.Fatalf("list-items is noticed:\n%s", r.Text())
+		t.Fatalf("a scenario of list-items fails when web is down:\n%s", r.Text())
 	}
-	// send-mail still has web and api on its path, which are noticed.
 	if status(r, ItemBreak, "send-mail") != Green {
-		t.Fatalf("send-mail path has noticed components:\n%s", r.Text())
+		t.Fatalf("a raise names send-mail when worker is down:\n%s", r.Text())
 	}
-	if status(r, ItemBreak, "worker") != Red {
-		t.Fatalf("the unnoticed component is red:\n%s", r.Text())
+	for _, c := range []string{"web", "api", "db", "worker"} {
+		if status(r, ItemBreak, c) != Green {
+			t.Fatalf("component %s was noticed:\n%s", c, r.Text())
+		}
 	}
 	if len(w.broken) != 0 {
 		t.Fatalf("components left broken: %v", w.broken)
+	}
+}
+
+func TestFailsUnderBreakRedWhenOnlyGenericDetectorsNameTheComponent(t *testing.T) {
+	w := newWorld()
+	for _, c := range []string{"web", "api", "db", "worker"} {
+		w.raiseFor[c] = raiseNaming("service-endpoints", "Service "+c+" has no ready endpoints")
+	}
+	r := runLiveItems(t, w, false, true)
+	for _, c := range []string{"web", "api", "db", "worker"} {
+		if status(r, ItemBreak, c) != Green {
+			t.Fatalf("the generic detector noticed component %s:\n%s", c, r.Text())
+		}
+	}
+	for _, op := range []string{"list-items", "send-mail"} {
+		if status(r, ItemBreak, op) != Red {
+			t.Fatalf("%s: no test of the operation noticed, expected red:\n%s", op, r.Text())
+		}
+	}
+	if !strings.Contains(r.Text(), "only generic detectors noticed") || !strings.Contains(r.Text(), "service-endpoints") {
+		t.Fatalf("report must say that only generic detectors noticed:\n%s", r.Text())
+	}
+}
+
+func TestFailsUnderBreakWaitsForTestsAfterAGenericDetectorHasNoticed(t *testing.T) {
+	w := newWorld()
+	// The generic detector raises at once; the scenario raise appears only after 20 s broken.
+	w.late = map[string]lateRaise{"web": {after: 20 * time.Second, raise: raiseNaming("traffic-probe-call", "scenario browse failed")}}
+	w.raiseFor["web"] = raiseNaming("service-endpoints", "Service web has no ready endpoints")
+	r := runLiveItems(t, w, false, true)
+	if status(r, ItemBreak, "list-items") != Green {
+		t.Fatalf("stopped at the first generic hit instead of waiting for the test:\n%s", r.Text())
 	}
 }
 
@@ -352,5 +401,17 @@ func TestDurationsAreReportedPerItem(t *testing.T) {
 	}
 	if !got[ItemQuiet] || !got[ItemBreak] {
 		t.Fatalf("durations: %+v\n%s", r.Durations, r.Text())
+	}
+}
+
+func TestFailsUnderBreakStillRunsWhenSomeDetectorsCannotBeEvaluated(t *testing.T) {
+	w := newWorld()
+	w.unavail = true
+	r := runLiveItems(t, w, true, true)
+	if status(r, ItemQuiet, "detectors") != Red {
+		t.Fatalf("%s", r.Text())
+	}
+	if len(w.log) == 0 {
+		t.Fatalf("the break item must still run: unavailable detectors are not a raise")
 	}
 }
