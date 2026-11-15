@@ -1686,15 +1686,21 @@ def set_controller_suspended(kube: Kube, control: str, suspended: bool, timeout:
 BUNDLE_DIR = "/seed"
 
 
-def restore_script(head: str, with_bundle: bool, root: str = APPLICATION_ROOT, bundle_dir: str = BUNDLE_DIR) -> str:
+def restore_script(
+    head: str, with_bundle: bool, root: str = APPLICATION_ROOT, bundle_dir: str = BUNDLE_DIR, broker_state: str = ""
+) -> str:
     """The restore pod's shell: with a bundle, wait for it and unbundle its objects (whatever its refs are named), then
-    put the repository at ``head`` with no other file."""
+    put the repository at ``head`` with no other file. ``broker_state`` is the broker's worktree root: a memory with
+    another history (a seed) leaves it describing the old one (a resumed proposal whose base is not an ancestor of
+    the new head), so it is emptied, as on a fresh install."""
     git = "git -c safe.directory='*'"
     steps = [f"cd {root}"]
     if with_bundle:
         # the pod waits for the bundle, streamed in by exec (the image need not hold tar for a copy)
         steps.insert(0, f"until [ -e {bundle_dir}/memory.ready ]; do sleep 1; done")
         steps.append(f"{git} bundle unbundle {bundle_dir}/memory.bundle >/dev/null")
+    if broker_state:
+        steps.append(f"rm -rf {broker_state}/* {broker_state}/.[!.]*")
     steps += [f"{git} reset -q --hard {head}", f"{git} clean -q -fdx", f"{git} rev-parse HEAD"]
     return " && ".join(steps)
 
@@ -1717,7 +1723,9 @@ def restore_repository(kube: Kube, control: str, head: str, bundle: Path | None 
     if volume is None or mount is None:
         raise HookError("the controller job has no repository volume")
     name = "sdo-restore-repository"
-    script = restore_script(head, bundle is not None)
+    script = restore_script(
+        head, bundle is not None, broker_state=f"{mount['mountPath']}/worktrees" if bundle is not None else ""
+    )
     pod = {
         "apiVersion": "v1",
         "kind": "Pod",
