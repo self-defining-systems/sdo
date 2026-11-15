@@ -32,7 +32,7 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
                                     [--settle 90s] [--json]
                                     [--quiet-window 10m] [--quiet-interval 1m]
                                     [--break] [--break-bound 60s] [--break-mode scale|network]
-                                    [--operator-root DIR] [--telemetry-environment FILE] [--settings FILE]
+                                    [--cluster-network] [--operator-root DIR] [--telemetry-environment FILE] [--settings FILE]
 
   check  Run the onboarding check against a running environment: the metric
          items, then quiet-when-healthy, then (with --break) fails-under-break.
@@ -49,7 +49,9 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
          detector that names just the component leaves it red, and the report
          says which detectors noticed. It is red (stopping) if a restore cannot
          be verified. Detectors that dial in-cluster Service names cannot be judged
-         from the host running the check and are reported as a note. Run it only on a target the agent owns, with no users.
+         from the host running the check and are reported as a note, unless
+         --cluster-network says this process resolves them (the test-request
+         scenarios need it too; a scenario that never succeeded is red). Run it only on a target the agent owns, with no users.
          Each live item reports its duration.
          The metric items: SDO builds each operation's request and error series from
          the application map's entries (metric, route, method and status labels),
@@ -118,6 +120,11 @@ func (e detectorEvaluator) Evaluate(ctx context.Context) (onboardcheck.Verdict, 
 		}
 		out.Raised = append(out.Raised, onboardcheck.Raise{DetectorID: f.DetectorID, Rule: f.RuleID, Summary: f.Summary, Evidence: f.Evidence, Resources: resources, Fingerprint: sdk.FindingFingerprint(f)})
 	}
+	for _, state := range verdict.DetectorStates {
+		if state.Status == "pending" {
+			out.Pending = append(out.Pending, state.DetectorID+": "+state.Reason)
+		}
+	}
 	for _, u := range verdict.Unavailable {
 		if reason, outside := strings.CutPrefix(u.Reason, evaluation.OutsideClusterReason); outside {
 			out.Skipped = append(out.Skipped, u.DetectorID+": "+reason)
@@ -163,6 +170,10 @@ func (s httpSender) Send(ctx context.Context, op appmap.Operation, n int) (int, 
 }
 
 func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int, error) {
+	// An interrupt cancels the check but never skips a restore: a broken
+	// component is undone on a context that outlives the cancellation.
+	ctx, stop := processio.TerminationContext(ctx)
+	defer stop()
 	flags := flag.NewFlagSet("onboarding check", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	repo := flags.String("repo", "", "application repository (git root) holding .sdo/arch.md")
@@ -179,6 +190,7 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	breakBound := flags.Duration("break-bound", 60*time.Second, "how long to wait for a detector to notice each break")
 	breakMode := flags.String("break-mode", kubebreak.ModeScale, "how to break: scale (to zero) or network (deny-ingress NetworkPolicy; scale when the CNI does not enforce it)")
 	operatorRoot := flags.String("operator-root", operatorRootDefault(processio.Environment), "operator source tree detectors are built from")
+	clusterNetwork := flags.Bool("cluster-network", false, "this process resolves and dials in-cluster Service names (it runs in a pod or on the cluster network); without it, detectors that dial Service names are not judged")
 	telemetryEnv := flags.String("telemetry-environment", "", "telemetry environment document the detector evaluation reads")
 	settingsFile := flags.String("settings", "", "operator configuration file the detector evaluation runs under")
 	if err := flags.Parse(args); err != nil {
@@ -234,7 +246,7 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 		Now: processio.Now,
 	}
 	if *quietWindow > 0 || *breakItem {
-		probe := deployment.AcceptedDetectorProbe{Settings: *settingsFile, TelemetryEnvironment: *telemetryEnv, Kubeconfig: *kubeconfig, OutsideCluster: true}
+		probe := deployment.AcceptedDetectorProbe{Settings: *settingsFile, TelemetryEnvironment: *telemetryEnv, Kubeconfig: *kubeconfig, OutsideCluster: !*clusterNetwork, Host: true}
 		fmt.Fprintln(os.Stderr, "building the memory's detectors ...")
 		prepared, err := probe.Prepare(ctx, *repo, *operatorRoot, *namespace, deployment.HealthScope{})
 		if err != nil {

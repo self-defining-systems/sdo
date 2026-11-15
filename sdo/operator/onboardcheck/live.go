@@ -72,6 +72,10 @@ type Verdict struct {
 	// Skipped are detectors this environment cannot judge (they need the
 	// cluster's own network); they are noted, never red.
 	Skipped []string
+	// Pending are detectors that have not been able to judge yet, with why
+	// ("id: reason"); one still pending when the quiet window ends has not
+	// shown the application quiet.
+	Pending []string
 }
 
 // Evaluator evaluates the memory's detectors, test-request scenarios and the
@@ -161,7 +165,9 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 	end := start.Add(q.Window)
 	samples, pending := 0, 0
 	var skipped []string
+	var stillPending []string
 	unavailable := ""
+	pendingRed := false
 	for {
 		verdict, err := q.Eval.Evaluate(ctx)
 		if err != nil {
@@ -169,7 +175,7 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 			return true
 		}
 		samples++
-		skipped = verdict.Skipped
+		skipped, stillPending = verdict.Skipped, verdict.Pending
 		elapsed := cfg.Now().Sub(start).Round(time.Second)
 		if len(verdict.Raised) > 0 {
 			for _, r := range verdict.Raised {
@@ -199,8 +205,16 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 		report.add(ItemQuiet, "skipped", Note, "not judged from here: "+strings.Join(skipped, "; "))
 	}
 	detail := fmt.Sprintf("no detector raised in %d evaluations over %s", samples, cfg.Now().Sub(start).Round(time.Second))
+	for _, p := range stillPending {
+		id, reason, _ := strings.Cut(p, ": ")
+		report.add(ItemQuiet, id, Red, "still pending when the window ended, so it never judged the healthy application: "+clip(reason, 400))
+		pendingRed = true
+	}
 	if unavailable != "" {
 		report.add(ItemQuiet, "detectors", Red, unavailable+"; "+detail+" among the others")
+		return false
+	}
+	if pendingRed {
 		return false
 	}
 	if pending > 0 {

@@ -67,10 +67,15 @@ type AcceptedDetectorProbe struct {
 	// or the controller's record of it); empty evaluates under settings.Default().
 	Settings        string
 	RequireComplete bool
-	// OutsideCluster says the evaluation runs on a host outside the cluster
-	// (the onboarding check), where Service names do not resolve.
+	// OutsideCluster says the evaluation cannot resolve or dial in-cluster
+	// Service names (it runs on a host outside the cluster network): detectors
+	// that dial them are left out.
 	OutsideCluster bool
-	Kubeconfig     string
+	// Host says the evaluation runs on a host, not in a pod: the probes keep
+	// their identity seed in a directory of the build workspace instead of
+	// /workspace.
+	Host       bool
+	Kubeconfig string
 	// TelemetryEnvironment is the telemetry environment document the probe's
 	// evaluation reads; the accepted tree's own bindings come from the memory
 	// host built from it. Empty provides no operator source.
@@ -143,7 +148,17 @@ func (probe AcceptedDetectorProbe) Prepare(ctx context.Context, acceptedRoot, op
 			return fail(fmt.Errorf("write image pins: %w", err))
 		}
 	}
-	prepared.args = append(probe.evaluationArgs(acceptedRoot, namespace, scope, pinsFile), "--memory-host-binary", artifact.Path, "--memory-host-digest", artifact.Digest, "--memory-commit", projected.AcceptedRevision)
+	args := probe.evaluationArgs(acceptedRoot, namespace, scope, pinsFile)
+	if probe.Host {
+		// The probes keep their identity seed under the repository mount, which
+		// is /workspace in the cluster and not writable on a host.
+		mount := filepath.Join(workspace.Directory, "repository")
+		if err := os.MkdirAll(mount, 0o700); err != nil {
+			return fail(fmt.Errorf("create probe identity mount: %w", err))
+		}
+		args = append(args, "--repository-mount-path", mount)
+	}
+	prepared.args = append(args, "--memory-host-binary", artifact.Path, "--memory-host-digest", artifact.Digest, "--memory-commit", projected.AcceptedRevision)
 	if probe.Kubeconfig != "" {
 		prepared.env = append(prepared.env, "KUBECONFIG="+probe.Kubeconfig)
 	}

@@ -2064,6 +2064,7 @@ func evaluateOnce(
 		if len(detectorErrors) > 0 && !watching {
 			return evaluation.Verdict{}, fmt.Errorf("health detector evaluation failed: %w", detectorErrors[0])
 		}
+		observations := controller.history
 		if watching {
 			// A detector runs on its own interval, so its latest evaluation
 			// (this pass or an earlier one) is what it currently reports.
@@ -2075,7 +2076,9 @@ func evaluateOnce(
 				}
 				latest[observed.DetectorID] = observed
 			}
+			observations = nil
 			for _, id := range order {
+				observations = append(observations, latest[id])
 				if latest[id].Status == DetectorEvaluationError {
 					unavailableNow = append(unavailableNow, evaluation.UnavailableDetector{DetectorID: id, Reason: latest[id].Error})
 				}
@@ -2083,7 +2086,7 @@ func evaluateOnce(
 		}
 		status := evaluation.Clear
 		var unconfirmed []evaluation.DetectorState
-		for _, observed := range controller.history {
+		for _, observed := range observations {
 			if observed.Status == DetectorEvaluationPending {
 				status = evaluation.Pending
 			}

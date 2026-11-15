@@ -29,6 +29,7 @@ type world struct {
 	breakErr   map[string]error
 	stuck      map[string]bool // restore succeeds but the component stays broken
 	unavail    bool
+	pending    []string
 	evals      int
 	late       map[string]lateRaise
 	brokenAt   map[string]time.Time
@@ -58,6 +59,9 @@ func (w *world) Evaluate(context.Context) (Verdict, error) {
 	}
 	if w.unavail {
 		return Verdict{Status: "unavailable", Unavailable: []string{"traffic prober unavailable"}}, nil
+	}
+	if len(w.pending) > 0 {
+		return Verdict{Status: "pending", Pending: w.pending}, nil
 	}
 	raised := append([]Raise(nil), w.healthyRaise...)
 	for c := range w.broken {
@@ -413,5 +417,17 @@ func TestFailsUnderBreakStillRunsWhenSomeDetectorsCannotBeEvaluated(t *testing.T
 	}
 	if len(w.log) == 0 {
 		t.Fatalf("the break item must still run: unavailable detectors are not a raise")
+	}
+}
+
+func TestQuietWhenHealthyIsRedForADetectorThatNeverJudged(t *testing.T) {
+	w := newWorld()
+	w.pending = []string{"traffic-probe-write: no synthetic scenario has succeeded since observation began: write-commit (last failure: identity unavailable)"}
+	r := runLiveItems(t, w, true, false)
+	if status(r, ItemQuiet, "traffic-probe-write") != Red || !strings.Contains(r.Text(), "identity unavailable") {
+		t.Fatalf("a detector still pending at the end proves nothing about quiet:\n%s", r.Text())
+	}
+	if elapsed := w.now.Sub(time.Unix(1000, 0)); elapsed < 10*time.Minute {
+		t.Fatalf("the window must still be sampled in full: %s", elapsed)
 	}
 }
