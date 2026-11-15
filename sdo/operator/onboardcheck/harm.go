@@ -17,7 +17,7 @@ const ItemHarm = "probes-do-no-harm"
 
 // FailureCounters selects the application's own job and task failure counters
 // by name; the check compares them with the probes running and paused.
-const FailureCounters = `{__name__=~"(?i).*(job|task|worker|queue).*(fail|dead|error).*"}`
+const FailureCounters = `sum without (instance, pod, pod_name, container, endpoint, service, job, namespace, uid, node) ({__name__=~"(?i).*(job|task|worker|queue).*(fail|dead|error).*"} > 0)`
 
 const (
 	// harmFailureFloor is the least extra failures per minute with the probes
@@ -160,7 +160,10 @@ func judgeHarm(m appmap.Map, h HarmConfig, runStart, runEnd HarmSample) []Result
 				continue
 			}
 			failed++
-			what := rest
+			what := "job failure counter " + rest
+			if strings.HasSuffix(rest, "{}") {
+				what = "all job failure counters together (" + rest + ")"
+			}
 			if kind == "errors" {
 				service, route, _ := strings.Cut(rest, "|")
 				ids := opsOf(service, route)

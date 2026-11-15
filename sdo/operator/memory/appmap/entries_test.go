@@ -83,8 +83,8 @@ func TestDurationQueriesCarryTheSelectorAndRoute(t *testing.T) {
 	if got, want := e.DurationFamilies(), `count by (__name__) ({job="web",__name__=~".+_(bucket|sum)",route!=""})`; got != want {
 		t.Fatalf("families %s", got)
 	}
-	if got, want := e.DurationRoutes([]string{"a_seconds_bucket", "b.x"}), `count by (route) ({job="web",__name__=~"a_seconds_bucket|b\\.x",route!=""})`; got != want {
-		t.Fatalf("routes %s", got)
+	if got, want := e.DurationRoute([]string{"a_seconds_bucket", "b.x"}, "/items"), `count({job="web",__name__=~"a_seconds_bucket|b\\.x",route="/items"})`; got != want {
+		t.Fatalf("route %s", got)
 	}
 	if got, want := e.ErrorsByRoute(), `sum by (route) (m{job="web",code=~"5.."}) > 0`; got != want {
 		t.Fatalf("errors %s", got)

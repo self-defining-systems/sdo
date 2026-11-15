@@ -254,14 +254,15 @@ func (e MetricEntry) DurationFamilies() string {
 	return "count by (__name__) (" + e.durationMatchers(`.+_(bucket|sum)`) + ")"
 }
 
-// DurationRoutes counts, per route label value, the series of the named
-// families that carry the entry's route label.
-func (e MetricEntry) DurationRoutes(names []string) string {
+// DurationRoute counts the series of the named families that carry one route
+// label value. One query per route keeps each answer a single series, however
+// many route values the families carry.
+func (e MetricEntry) DurationRoute(names []string, route string) string {
 	quoted := make([]string, len(names))
 	for i, n := range names {
 		quoted[i] = regexp.QuoteMeta(n)
 	}
-	return "count by (" + e.Labels.Route + ") (" + e.durationMatchers(strings.Join(quoted, "|")) + ")"
+	return "count(" + e.matchers(`__name__=~`+quote(strings.Join(quoted, "|")), e.Labels.Route+"="+quote(route)) + ")"
 }
 
 func (e MetricEntry) durationMatchers(names string) string {

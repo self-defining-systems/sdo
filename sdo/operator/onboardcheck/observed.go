@@ -114,7 +114,6 @@ func runObserved(ctx context.Context, cfg Config, report *Report, ops []*opState
 	}
 	sort.Strings(services)
 	families := map[string][]string{}
-	latencyRoutes := map[string]map[string]float64{}
 	for _, name := range services {
 		es := entries[name]
 		if es.entry.Labels.Route == "" {
@@ -133,11 +132,6 @@ func runObserved(ctx context.Context, cfg Config, report *Report, ops []*opState
 		if len(families[name]) == 0 {
 			continue
 		}
-		routes, err := cfg.Prom.Query(ctx, es.entry.DurationRoutes(families[name]))
-		if err != nil {
-			return fmt.Errorf("query %s: %w", es.entry.DurationRoutes(families[name]), err)
-		}
-		latencyRoutes[name] = byLabel(routes, es.entry.Labels.Route)
 	}
 
 	sentTo := map[string]map[string]float64{}
@@ -162,13 +156,26 @@ func runObserved(ctx context.Context, cfg Config, report *Report, ops []*opState
 		if st.entry.Labels.Route == "" {
 			continue
 		}
-		switch seen := latencyRoutes[st.entry.Service]; {
-		case len(families[st.entry.Service]) == 0:
+		if len(families[st.entry.Service]) == 0 {
 			report.add(ItemLatency, st.op.ID, Red, fmt.Sprintf("no request-duration histogram carries the %s label for entry %s: expose latency per route so a slowdown of %s is visible", st.entry.Labels.Route, st.entry.Service, st.op.ID))
-		case route != "" && (seen[route] > 0 || seen[strings.TrimPrefix(route, st.op.Entry.Method+" ")] > 0):
+			continue
+		}
+		have := false
+		for _, r := range []string{route, strings.TrimPrefix(route, st.op.Entry.Method+" ")} {
+			if r == "" || have {
+				continue
+			}
+			series, err := cfg.Prom.Query(ctx, st.entry.DurationRoute(families[st.entry.Service], r))
+			if err != nil {
+				return fmt.Errorf("query %s: %w", st.entry.DurationRoute(families[st.entry.Service], r), err)
+			}
+			n, _ := scalar(series)
+			have = n > 0
+		}
+		if have {
 			report.add(ItemLatency, st.op.ID, Green, fmt.Sprintf("%s carries route %q", strings.Join(families[st.entry.Service], ", "), route))
-		default:
-			report.add(ItemLatency, st.op.ID, Red, fmt.Sprintf("no series of %s carries %s=%q; nearest latency route label: %s", strings.Join(families[st.entry.Service], ", "), st.entry.Labels.Route, route, nearest(route, seen, nil)))
+		} else {
+			report.add(ItemLatency, st.op.ID, Red, fmt.Sprintf("no series of %s carries %s=%q", strings.Join(families[st.entry.Service], ", "), st.entry.Labels.Route, route))
 		}
 	}
 

@@ -383,18 +383,22 @@ func TestFailsUnderBreakRestoresEveryBrokenComponentInOrder(t *testing.T) {
 	}
 }
 
-func TestFailsUnderBreakIsSkippedWhenTheHealthyAppAlreadyRaises(t *testing.T) {
+func TestFailsUnderBreakStillRunsWhenTheHealthyAppAlreadyRaises(t *testing.T) {
 	w := newWorld()
 	w.healthyRaise = raiseNaming("traffic-probe-write", "write-commit failed")
+	w.raiseFor["api"] = []Raise{{DetectorID: "traffic-probe-call", Summary: "scenario browse failed: list-items returned 503"}}
 	r := runLiveItems(t, w, true, true)
 	if status(r, ItemQuiet, "traffic-probe-write") != Red {
 		t.Fatalf("%s", r.Text())
 	}
-	if len(w.log) != 0 {
-		t.Fatalf("broke components of an app that is not quiet: %v", w.log)
+	if len(w.log) == 0 {
+		t.Fatalf("a noisy quiet item must not hide the breaks:\n%s", r.Text())
 	}
-	if status(r, ItemBreak, "all") != Note {
-		t.Fatalf("expected a skip note:\n%s", r.Text())
+	if status(r, ItemBreak, "list-items") != Green {
+		t.Fatalf("a new raise under the break names the operation even though the app was noisy:\n%s", r.Text())
+	}
+	if status(r, ItemBreak, "all") != Note || !strings.Contains(r.Text(), "standing raises") {
+		t.Fatalf("expected a note that standing raises are ignored:\n%s", r.Text())
 	}
 }
 
@@ -606,5 +610,38 @@ func TestFinalWaveDoesNotWaitForDetectorsToClear(t *testing.T) {
 	runLiveItems(t, w, false, true)
 	if w.sinceRestore != 0 {
 		t.Fatalf("%d evaluations after the final restore: nothing later needs a cleared baseline", w.sinceRestore)
+	}
+}
+
+func TestWarmUpRaisesAreANoteNotRedInTheQuietItem(t *testing.T) {
+	w := newWorld()
+	w.healthyRaise = []Raise{{DetectorID: "request-metrics", Rule: "request-metrics.insufficient-baseline", Summary: "operation list-items: insufficient baseline to judge a client-error jump"}}
+	r := runLiveItems(t, w, true, false)
+	if status(r, ItemQuiet, "detectors") != Green || status(r, ItemQuiet, "sdo-warm-up") != Note {
+		t.Fatalf("SDO warm-up must be a note, not red:\n%s", r.Text())
+	}
+}
+
+func TestWarmUpRaiseNeverNamesAnOperationUnderABreak(t *testing.T) {
+	w := newWorld()
+	w.raiseFor["db"] = []Raise{{DetectorID: "request-metrics", Rule: "request-metrics.insufficient-baseline", Summary: "operation list-items: insufficient baseline"}}
+	r := runLiveItems(t, w, false, true)
+	if status(r, ItemBreak, "list-items") != Red {
+		t.Fatalf("a warm-up raise is not evidence:\n%s", r.Text())
+	}
+}
+
+func TestBreakReportSaysWhetherAFailureOrOnlyAnAbsenceNamedTheOperation(t *testing.T) {
+	w := newWorld()
+	w.raiseFor["db"] = []Raise{{DetectorID: "request-metrics", Rule: "request-metrics.not-instrumented", Summary: "operation list-items is not instrumented for request metrics"}}
+	r := runLiveItems(t, w, false, true)
+	if status(r, ItemBreak, "list-items") != Green || !strings.Contains(r.Text(), "absence signal only") {
+		t.Fatalf("expected an absence-only label:\n%s", r.Text())
+	}
+	w = newWorld()
+	w.raiseFor["db"] = []Raise{{DetectorID: "traffic-probe-call", Summary: "scenario browse: list-items returned 503"}}
+	r = runLiveItems(t, w, false, true)
+	if !strings.Contains(r.Text(), "failing-request signal: traffic-probe-call") {
+		t.Fatalf("expected the failure signal named:\n%s", r.Text())
 	}
 }

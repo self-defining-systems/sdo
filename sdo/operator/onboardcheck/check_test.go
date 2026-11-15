@@ -58,7 +58,7 @@ func sameLabels(a, b map[string]string) bool {
 	return true
 }
 
-var countShape = regexp.MustCompile(`^count by \((\w+)\) \(\{(.*)\}\)$`)
+var countShape = regexp.MustCompile(`^count(?: by \((\w+)\) )?\(\{(.*)\}\)$`)
 
 // countBy answers the duration-family queries: series counted by one label
 // over every metric whose name matches.
@@ -96,6 +96,16 @@ func (p *fakeProm) countBy(by, matchers string) []metrics.Series {
 		}
 	}
 	var out []metrics.Series
+	if by == "" {
+		total := 0.0
+		for _, v := range groups {
+			total += v
+		}
+		if total == 0 {
+			return nil
+		}
+		return []metrics.Series{{Labels: map[string]string{}, Samples: []metrics.Sample{{At: time.Unix(0, 0), Value: total}}}}
+	}
 	for key, v := range groups {
 		out = append(out, metrics.Series{Labels: map[string]string{by: key}, Samples: []metrics.Sample{{At: time.Unix(0, 0), Value: v}}})
 	}
