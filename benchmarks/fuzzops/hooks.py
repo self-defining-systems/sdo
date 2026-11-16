@@ -1600,8 +1600,10 @@ def apply_seed(steps: SeedSteps, seed: Baseline, out: Callable[[str], None] = _p
     assert the repository is the seed's commit, clean, with the operator idle."""
     started = time.monotonic()
     steps.reset_incidents()
-    steps.retire_standby()
     steps.stop_controller()
+    # With the controller stopped nothing recreates the standby: the next one starts from the new configuration. Retired
+    # before the stop, a running controller would start a replacement from the old environment that the restart adopts.
+    steps.retire_standby()
     steps.apply_config(seed.lane_overlay)
     steps.import_memory(seed.commit)
     steps.start_controller()
