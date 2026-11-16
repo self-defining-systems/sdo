@@ -99,7 +99,11 @@ touched the affected records.
 Without a delete or overwrite route, keep every write on the fixed test identity, declare
 `SideEffectIdempotentWrite`, use the lowest rate that fills the window, and record the growth under
 `Probe costs` in the health-objective playbook.
-Probe load is harm: for numerous or expensive scenarios, lengthen the workload's `sampleInterval` (30 s to 120 s).
+Every probe must sample often enough to qualify: enough usable samples inside its window to give a verdict, within
+about a minute of a fault. A probe sampled every 45 to 60 s never collects them, stays pending and detects nothing,
+so never stretch `sampleInterval` past qualification to save load. Reduce cost by making each iteration cheap (fewer
+and smaller requests, a lighter read-back, no needless fan-out) and by trimming scenarios, not by sampling less often.
+The onboarding check is red for a scenario that stays pending or under-sampled through the healthy window.
 
 ## Identities and sessions
 

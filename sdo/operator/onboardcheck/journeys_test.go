@@ -279,3 +279,25 @@ func TestGivenJourneysNeedAnOperationAndOperationsNeedAKnownJourney(t *testing.T
 		t.Fatalf("no list, no item:\n%s", r.Text())
 	}
 }
+
+// An operation that enters through the job metric declares its own class as a
+// route, but that is not attribution: no operation triggers the class, so the
+// background work is still unattributed (the grader's attribution follows
+// triggers).
+func TestAnOperationEnteringAtTheJobMetricDoesNotAttributeItsOwnClass(t *testing.T) {
+	text := strings.Replace(journeyMap, "routes:\n  list:", "  - id: vacuum\n    route: VacuumWorker\n    entry: {service: queue}\n    path: [worker]\nroutes:\n  list:", 1)
+	m, err := appmap.Parse(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &fakeProm{}
+	p.add("jobs_total", map[string]string{"job": "web", "class": "MailWorker", "outcome": "done"}, 5)
+	p.add("jobs_total", map[string]string{"job": "web", "class": "VacuumWorker", "outcome": "done"}, 9)
+	r, err := Run(context.Background(), Config{Map: m, Commit: "c", Prom: p, Sender: fakeSender{prom: p, emit: perRoute}, Requests: 1, Settle: time.Second, Poll: time.Second, Wait: p.wait})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status(r, ItemBackground, "queue") != Red || !strings.Contains(r.Text(), "VacuumWorker (9)") {
+		t.Fatalf("a class only its own operation declares is unattributed:\n%s", r.Text())
+	}
+}

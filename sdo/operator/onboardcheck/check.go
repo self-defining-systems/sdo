@@ -247,6 +247,10 @@ type entryState struct {
 	routesAfter  map[string]float64
 	sent         int
 	declared     map[string]bool
+	// attributed are the background classes an operation triggers or a reason
+	// excludes: declared routes of operations entering at a job metric are not
+	// attribution, since nothing says which operation causes that work.
+	attributed   map[string]bool
 	hasDrivenOps bool
 }
 
@@ -434,7 +438,7 @@ func runMetrics(ctx context.Context, cfg Config, report *Report) error {
 		duplicate[key] = append(duplicate[key], op.ID)
 		es := entries[entry.Service]
 		if es == nil {
-			es = &entryState{entry: entry, declared: map[string]bool{}}
+			es = &entryState{entry: entry, declared: map[string]bool{}, attributed: map[string]bool{}}
 			entries[entry.Service] = es
 		}
 		es.declared[st.route] = true
@@ -444,18 +448,20 @@ func runMetrics(ctx context.Context, cfg Config, report *Report) error {
 	// no operation enters through them.
 	for _, e := range cfg.Map.Entries {
 		if _, ok := entries[e.Service]; !ok && backgroundMetric.MatchString(e.Metric) && e.Labels.Route != "" {
-			entries[e.Service] = &entryState{entry: e, declared: map[string]bool{}}
+			entries[e.Service] = &entryState{entry: e, declared: map[string]bool{}, attributed: map[string]bool{}}
 		}
 	}
 	for _, es := range entries {
 		for _, op := range cfg.Map.Operations {
 			for _, class := range op.Triggers {
 				es.declared[class] = true
+				es.attributed[class] = true
 			}
 		}
 		for _, r := range cfg.Map.Reasons {
 			if r.Item == ItemBackground {
 				es.declared[r.Subject] = true
+				es.attributed[r.Subject] = true
 			}
 		}
 	}

@@ -568,11 +568,25 @@ func TestQuietWhenHealthyIsRedForADetectorThatNeverJudged(t *testing.T) {
 	w := newWorld()
 	w.pending = []string{"traffic-probe-write: no synthetic scenario has succeeded since observation began: write-commit (last failure: identity unavailable)"}
 	r := runLiveItems(t, w, true, false)
-	if status(r, ItemQuiet, "traffic-probe-write") != Red || !strings.Contains(r.Text(), "identity unavailable") {
+	if status(r, ItemQuiet, "write-commit") != Red || !strings.Contains(r.Text(), "identity unavailable") {
 		t.Fatalf("a detector still pending at the end proves nothing about quiet:\n%s", r.Text())
 	}
 	if elapsed := w.now.Sub(time.Unix(1000, 0)); elapsed < 10*time.Minute {
 		t.Fatalf("the window must still be sampled in full: %s", elapsed)
+	}
+}
+
+func TestQuietWhenHealthyNamesEachProbeScenarioThatStaysPendingOrUnderSampled(t *testing.T) {
+	w := newWorld()
+	w.pending = []string{"traffic-probe-slow: no synthetic scenario has succeeded since observation began: warm (last failure: a, b); insufficient usable synthetic samples: checkout, search"}
+	r := runLiveItems(t, w, true, false)
+	for _, scenario := range []string{"warm", "checkout", "search"} {
+		if status(r, ItemQuiet, scenario) != Red {
+			t.Fatalf("scenario %s must be red by name:\n%s", scenario, r.Text())
+		}
+	}
+	if !strings.Contains(r.Text(), "make each iteration cheaper") {
+		t.Fatalf("the remedy is a cheaper iteration, not a longer interval:\n%s", r.Text())
 	}
 }
 

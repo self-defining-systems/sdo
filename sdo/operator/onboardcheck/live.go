@@ -376,8 +376,14 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 	}
 	for _, p := range stillPending {
 		id, reason, _ := strings.Cut(p, ": ")
-		report.add(ItemQuiet, id, Red, "still pending when the window ended, so it never judged the healthy application: "+clip(reason, 400))
 		pendingRed = true
+		if scenarios := pendingScenarios(reason); len(scenarios) > 0 {
+			for _, sc := range scenarios {
+				report.add(ItemQuiet, sc.id, Red, fmt.Sprintf("probe scenario %s (detector %s) %s through the healthy window, so it cannot give a verdict: make each iteration cheaper and sample often enough to qualify (enough usable samples inside its window, within about a minute of a fault); a longer interval does not fix it%s", sc.id, id, sc.why, sc.detail))
+			}
+			continue
+		}
+		report.add(ItemQuiet, id, Red, "still pending when the window ended, so it never judged the healthy application: "+clip(reason, 400))
 	}
 	if unavailable != "" {
 		report.add(ItemQuiet, "detectors", Red, unavailable+"; "+detail+" among the others")
@@ -1152,4 +1158,55 @@ func onWavePath(op appmap.Operation, wave []waveMember) bool {
 		}
 	}
 	return false
+}
+
+type pendingScenario struct{ id, why, detail string }
+
+// pendingScenarios reads the scenario IDs out of a traffic detector's pending
+// reason: "...have not succeeded since observation began: a (detail), b" and
+// "insufficient usable synthetic samples: c, d". It returns nil for any other
+// reason.
+func pendingScenarios(reason string) []pendingScenario {
+	var out []pendingScenario
+	for _, seg := range strings.Split(reason, "; ") {
+		var why string
+		var list string
+		switch {
+		case strings.Contains(seg, "insufficient usable synthetic samples: "):
+			why = "stayed under-sampled (insufficient usable synthetic samples)"
+			_, list, _ = strings.Cut(seg, "insufficient usable synthetic samples: ")
+		case strings.Contains(seg, "synthetic scenario") && strings.Contains(seg, "succeeded since observation began: "):
+			why = "stayed pending (no successful sample since observation began)"
+			_, list, _ = strings.Cut(seg, "succeeded since observation began: ")
+		default:
+			continue
+		}
+		depth, start := 0, 0
+		add := func(item string) {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				return
+			}
+			id, detail, _ := strings.Cut(item, " (")
+			if detail != "" {
+				detail = "; " + clip(strings.TrimSuffix(detail, ")"), 300)
+			}
+			out = append(out, pendingScenario{id: id, why: why, detail: detail})
+		}
+		for i, r := range list {
+			switch r {
+			case '(':
+				depth++
+			case ')':
+				depth--
+			case ',':
+				if depth == 0 {
+					add(list[start:i])
+					start = i + 1
+				}
+			}
+		}
+		add(list[start:])
+	}
+	return out
 }
