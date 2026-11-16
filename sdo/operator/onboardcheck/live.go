@@ -224,6 +224,15 @@ type QuietConfig struct {
 	Interval time.Duration
 	// Evaluations is that count; zero means DefaultQuietEvaluations.
 	Evaluations int
+	// DetectorKey keys a detector by the inputs that decide its healthy
+	// verdict. With Cache, a detector that judged the healthy application
+	// quiet on the same key needs only one judgement past its horizon (a
+	// short window for the whole set); a raise is red whatever was recorded.
+	DetectorKey func(id string) string
+	// Cache holds the detectors that judged quiet in earlier runs; Reuse lets
+	// this run take them (--full clears it). A green run records its detectors.
+	Cache *Cache
+	Reuse bool
 }
 
 // Breaker breaks and restores one component through Kubernetes.
@@ -249,6 +258,15 @@ type BreakConfig struct {
 	// Faults are the generic breaks that keep every component up, judged after
 	// the component breaks.
 	Faults []Fault
+	// Keys keys each item (a component, a generic fault) by the inputs that
+	// decide its verdict; an item without a key is always broken.
+	Keys map[string]string
+	// Cache holds the verdicts of earlier runs. A green verdict recorded for
+	// the same key is reused when Reuse is set; every fresh green one is
+	// recorded either way. Nil records nothing.
+	Cache *Cache
+	// Reuse lets a run take verdicts from Cache (the default; --full clears it).
+	Reuse bool
 	// OneAtATime breaks every component and fault in a wave of its own, even
 	// ones that share no operation: the slower path the waves must agree with.
 	OneAtATime bool
@@ -291,12 +309,12 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 	var stillPending []string
 	unavailable := ""
 	pendingRed := false
-	need := q.Evaluations
-	if need < 1 {
-		need = DefaultQuietEvaluations
+	need := needs{n: q.Evaluations}
+	if need.n < 1 {
+		need.n = DefaultQuietEvaluations
 	}
 	if cfg.Quick {
-		need = 1
+		need.n = 1
 	}
 	var progress []DetectorProgress
 	warm := map[string]string{}
@@ -312,8 +330,13 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 		samples++
 		skipped, stillPending = verdict.Skipped, verdict.Pending
 		progress = verdict.Progress
+		need.reused = reusedDetectors(q, progress)
+		if len(need.reused) > 0 {
+			report.Mode = ModeIncremental
+		}
 		if len(progress) > 0 && !announced {
 			announced = true
+
 			cfg.say("quiet: %s", derivedQuietWindow(progress, need, q.Window, cfg.Quick))
 		}
 		elapsed := cfg.Now().Sub(start).Round(time.Second)
@@ -321,6 +344,9 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 		if len(verdict.Raised) > 0 {
 			report.markNotInstrumented(cfg.Map, verdict.Raised)
 			for _, r := range verdict.Raised {
+				if q.Cache != nil {
+					delete(q.Cache.Detectors, r.DetectorID)
+				}
 				report.add(ItemQuiet, r.DetectorID, Red, fmt.Sprintf("raised on the healthy application at sample %d (%s in): %s", samples, elapsed, r.describe()))
 			}
 			return true
@@ -367,8 +393,11 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 	insufficient := false
 	for _, p := range progress {
 		if !judgedEnough([]DetectorProgress{p}, need, cfg.Quick) {
-			report.add(ItemQuiet, p.DetectorID, Red, fmt.Sprintf("judged %d times (%d past its %s horizon) in the %s window; needs %d past the horizon: raise --quiet-window", p.Evaluations, p.PastHorizon, p.Horizon.Round(time.Second), q.Window, need))
+			report.add(ItemQuiet, p.DetectorID, Red, fmt.Sprintf("judged %d times (%d past its %s horizon) in the %s window; needs %d past the horizon: raise --quiet-window", p.Evaluations, p.PastHorizon, p.Horizon.Round(time.Second), q.Window, need.of(p.DetectorID)))
 			insufficient = true
+			if q.Cache != nil {
+				delete(q.Cache.Detectors, p.DetectorID)
+			}
 		}
 	}
 	if cfg.Quick && len(progress) == 0 && len(stillPending) == 0 && unavailable == "" {
@@ -396,6 +425,11 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 	if pending > 0 {
 		detail += fmt.Sprintf(" (%d still pending a window)", pending)
 	}
+	if len(need.reused) > 0 {
+		report.Mode = ModeIncremental
+		detail += fmt.Sprintf("; %d detectors unchanged since their clean healthy window judged once (%s)", len(need.reused), reusedLabel(oldestOf(need.reused)))
+	}
+	recordDetectors(q, progress, need.reused, cfg.Now())
 	report.add(ItemQuiet, "detectors", Green, detail)
 	return false
 }
@@ -423,9 +457,23 @@ func sortedValues(m map[string]string) []string {
 	return out
 }
 
+// needs is how many judgements past its horizon each detector must make: n,
+// or one for a detector whose verdict is reused.
+type needs struct {
+	n      int
+	reused map[string]time.Time
+}
+
+func (n needs) of(id string) int {
+	if _, ok := n.reused[id]; ok {
+		return 1
+	}
+	return n.n
+}
+
 // judgedEnough reports whether every detector has judged need times past its own
 // horizon (a quick run: need times at all). No progress means nothing is known.
-func judgedEnough(progress []DetectorProgress, need int, quick bool) bool {
+func judgedEnough(progress []DetectorProgress, need needs, quick bool) bool {
 	if len(progress) == 0 {
 		return false
 	}
@@ -434,14 +482,14 @@ func judgedEnough(progress []DetectorProgress, need int, quick bool) bool {
 		if quick {
 			got = p.Evaluations
 		}
-		if got < need {
+		if got < need.of(p.DetectorID) {
 			return false
 		}
 	}
 	return true
 }
 
-func progressSummary(progress []DetectorProgress, need int, quick bool) string {
+func progressSummary(progress []DetectorProgress, need needs, quick bool) string {
 	done := 0
 	for _, p := range progress {
 		if judgedEnough([]DetectorProgress{p}, need, quick) {
@@ -452,17 +500,20 @@ func progressSummary(progress []DetectorProgress, need int, quick bool) string {
 	if quick {
 		what = "at all"
 	}
-	return fmt.Sprintf("%d of %d detectors judged %d times %s", done, len(progress), need, what)
+	if len(need.reused) > 0 {
+		return fmt.Sprintf("%d of %d detectors judged %d times %s (%d reused detectors need one)", done, len(progress), need.n, what, len(need.reused))
+	}
+	return fmt.Sprintf("%d of %d detectors judged %d times %s", done, len(progress), need.n, what)
 }
 
 // derivedQuietWindow says how long the item expects to observe: the longest
 // horizon plus the extra evaluations at that detector's cadence, capped by the
 // window.
-func derivedQuietWindow(progress []DetectorProgress, need int, window time.Duration, quick bool) string {
+func derivedQuietWindow(progress []DetectorProgress, need needs, window time.Duration, quick bool) string {
 	var longest time.Duration
 	var by string
 	for _, p := range progress {
-		d := p.Horizon + time.Duration(need-1)*p.Interval
+		d := p.Horizon + time.Duration(need.of(p.DetectorID)-1)*p.Interval
 		if quick {
 			d = 0
 		}
@@ -473,7 +524,10 @@ func derivedQuietWindow(progress []DetectorProgress, need int, window time.Durat
 	if quick {
 		return fmt.Sprintf("quick run, ends once each of %d detectors has judged (at most %s)", len(progress), window)
 	}
-	text := fmt.Sprintf("derived window %s: %d judgements past the horizon of %d detectors, longest %s", longest.Round(time.Second), need, len(progress), by)
+	text := fmt.Sprintf("derived window %s: %d judgements past the horizon of %d detectors, longest %s", longest.Round(time.Second), need.n, len(progress), by)
+	if len(need.reused) > 0 {
+		text += fmt.Sprintf("; %d detectors unchanged since a clean run need one", len(need.reused))
+	}
 	if longest > window {
 		text += fmt.Sprintf(" (more than the %s cap; detectors that fall short are red)", window)
 	}
@@ -509,6 +563,8 @@ type breakOutcome struct {
 	// broken: a missing edge. wave lists the components broken together.
 	stray map[string]*foundRaise
 	wave  []string
+	// reusedAt is when a reused outcome was recorded; zero for a fresh one.
+	reusedAt time.Time
 }
 
 type foundRaise struct {
@@ -543,7 +599,13 @@ func runBreak(ctx context.Context, cfg Config, report *Report) {
 	// The generic faults join the plan as members that hurt the operations they
 	// name: one that shares no operation with a component wave is judged in it.
 	items := make([]planItem, 0, len(order))
+	reused := 0
 	for _, name := range order {
+		if out := cachedOutcome(b, name); out != nil && byName[name].Workload != "" {
+			outcomes[name] = out
+			reused++
+			continue
+		}
 		items = append(items, planItem{name: name, ops: opIDs(opsOf[name])})
 	}
 	faultOut := map[string]*breakOutcome{}
@@ -570,10 +632,18 @@ func runBreak(ctx context.Context, cfg Config, report *Report) {
 		}
 		faults = append(faults, f)
 		faultOps[subject] = ids
+		if out := cachedOutcome(b, subject); out != nil {
+			faultOut[subject] = out
+			reused++
+			continue
+		}
 		items = append(items, planItem{name: subject, ops: opIDs(ops), fault: f})
 	}
 	waves := planWaves(items, b.OneAtATime)
-	cfg.say("fails-under-break: %d components and %d generic breaks in %d waves (breaks that share an operation are never made together)", len(order), len(faults), len(waves))
+	cfg.say("fails-under-break: %d components and %d generic breaks in %d waves (breaks that share an operation are never made together); %d verdicts reused from an earlier run", len(order), len(faults), len(waves), reused)
+	if reused > 0 && report.Mode == ModeFull {
+		report.Mode = ModeIncremental
+	}
 	step := 0
 	// doWave breaks the planned items together. Components that cannot be
 	// broken get their outcome here.
@@ -654,6 +724,7 @@ func runBreak(ctx context.Context, cfg Config, report *Report) {
 			reportFault(report, f, out, faultOps[f.Name()], b.Bound)
 		}
 	}
+	recordBreaks(b, outcomes, faultOut, cfg.Now())
 	for _, name := range order {
 		out := outcomes[name]
 		switch {
@@ -662,13 +733,13 @@ func runBreak(ctx context.Context, cfg Config, report *Report) {
 			report.add(ItemBreak, name, Red, out.err)
 		case out.hit != nil:
 			f := out.hit
-			report.add(ItemBreak, name, Green, fmt.Sprintf("%s: %s noticed after %s (%s signal): %s", out.how, f.raise.DetectorID, f.after.Round(time.Second), signalKind(f.raise), clip(f.raise.Summary, 200)))
+			report.add(ItemBreak, name, Green, fmt.Sprintf("%s: %s noticed after %s (%s signal): %s%s", out.how, f.raise.DetectorID, f.after.Round(time.Second), signalKind(f.raise), clip(f.raise.Summary, 200), reusedSuffix(out)))
 		default:
 			report.add(ItemBreak, name, Red, fmt.Sprintf("%s: no detector named %s or its operations (%s) within %s%s", out.how, name, strings.Join(opIDs(opsOf[name]), ", "), b.Bound, otherRaises(out)))
 		}
 	}
 	for _, op := range cfg.Map.Operations {
-		report.add(ItemBreak, op.ID, opStatus(op, outcomes), opDetail(cfg.Map, op, outcomes, b.Bound, b.Horizon))
+		report.add(ItemBreak, op.ID, opStatus(op, outcomes), opDetail(cfg.Map, op, outcomes, b.Bound, b.Horizon)+opReuseNote(op, outcomes))
 	}
 	judgeMapAccuracy(cfg.Map, order, outcomes, report)
 }
@@ -1184,4 +1255,120 @@ func pendingScenarios(reason string) []pendingScenario {
 		add(p.list[start:])
 	}
 	return out
+}
+
+// cachedOutcome is the recorded outcome of an item whose key has not changed,
+// when the run may reuse verdicts.
+func cachedOutcome(b *BreakConfig, name string) *breakOutcome {
+	if !b.Reuse || b.Cache == nil {
+		return nil
+	}
+	key := b.Keys[name]
+	rec, ok := b.Cache.Breaks[name]
+	if key == "" || !ok || rec.Key != key {
+		return nil
+	}
+	return rec.Outcome.outcome(rec.At)
+}
+
+// recordBreaks records the green verdicts this run judged, under the keys of
+// their inputs, and forgets the items it judged that are not green. A reused
+// verdict keeps the time it was first recorded.
+func recordBreaks(b *BreakConfig, outcomes, faultOut map[string]*breakOutcome, now time.Time) {
+	if b.Cache == nil {
+		return
+	}
+	if b.Cache.Breaks == nil {
+		b.Cache.Breaks = map[string]BreakRecord{}
+	}
+	for name, key := range b.Keys {
+		out, fault := outcomes[name], false
+		if out == nil {
+			out, fault = faultOut[name], true
+		}
+		if out == nil || !out.reusedAt.IsZero() {
+			continue
+		}
+		if reusable(out, fault) {
+			b.Cache.Breaks[name] = BreakRecord{Key: key, At: now, Outcome: storeOutcome(out)}
+		} else {
+			delete(b.Cache.Breaks, name)
+		}
+	}
+}
+
+func reusedSuffix(out *breakOutcome) string {
+	if out.reusedAt.IsZero() {
+		return ""
+	}
+	return " (" + reusedLabel(out.reusedAt) + ")"
+}
+
+// opReuseNote says an operation's verdict rests on a reused break.
+func opReuseNote(op appmap.Operation, outcomes map[string]*breakOutcome) string {
+	// opDetail quotes the first component whose break failed the operation; the
+	// note follows that one, and else covers every component it tried.
+	var oldest time.Time
+	for _, name := range op.Path {
+		if out := outcomes[name]; out != nil && out.opFailure[op.ID] != nil {
+			if !out.reusedAt.IsZero() {
+				return " (includes a break " + reusedLabel(out.reusedAt) + ")"
+			}
+			return ""
+		}
+	}
+	for _, name := range op.Path {
+		if out := outcomes[name]; out != nil && !out.reusedAt.IsZero() && (oldest.IsZero() || out.reusedAt.Before(oldest)) {
+			oldest = out.reusedAt
+		}
+	}
+	if oldest.IsZero() {
+		return ""
+	}
+	return " (includes a break " + reusedLabel(oldest) + ")"
+}
+
+// reusedDetectors are the detectors whose inputs have not changed since a run
+// in which they judged the healthy application quiet.
+func reusedDetectors(q *QuietConfig, progress []DetectorProgress) map[string]time.Time {
+	if !q.Reuse || q.Cache == nil || q.DetectorKey == nil {
+		return nil
+	}
+	out := map[string]time.Time{}
+	for _, p := range progress {
+		if rec, ok := q.Cache.Detectors[p.DetectorID]; ok && rec.Key != "" && rec.Key == q.DetectorKey(p.DetectorID) {
+			out[p.DetectorID] = rec.At
+		}
+	}
+	return out
+}
+
+func oldestOf(m map[string]time.Time) time.Time {
+	var oldest time.Time
+	for _, t := range m {
+		if oldest.IsZero() || t.Before(oldest) {
+			oldest = t
+		}
+	}
+	return oldest
+}
+
+// recordDetectors records the detectors a clean window judged quiet; one
+// reused keeps the time it was first recorded.
+func recordDetectors(q *QuietConfig, progress []DetectorProgress, reused map[string]time.Time, now time.Time) {
+	if q.Cache == nil || q.DetectorKey == nil {
+		return
+	}
+	if q.Cache.Detectors == nil {
+		q.Cache.Detectors = map[string]DetectorRecord{}
+	}
+	for _, p := range progress {
+		at, was := reused[p.DetectorID]
+		if !was {
+			at = now
+		}
+		if key := q.DetectorKey(p.DetectorID); key != "" {
+			q.Cache.Detectors[p.DetectorID] = DetectorRecord{Key: key, At: at}
+		}
+	}
 }

@@ -107,7 +107,7 @@ type Result struct {
 // Report is the check outcome, tagged with the commit it ran for.
 type Report struct {
 	Commit string `json:"commit"`
-	// Mode is "full" or "quick".
+	// Mode is "full", "quick" or "incremental".
 	Mode    string   `json:"mode"`
 	Results []Result `json:"results"`
 	// Durations is how long each live item took.
@@ -140,12 +140,12 @@ func (r Report) Counts() (green, red, note int) {
 	return
 }
 
-// Clean is true when nothing is red in a full run. A quick run never is: it
-// proves less than the gate.
+// Clean is true when nothing is red in a full run. A quick or incremental run
+// never is: it proves less than the gate.
 // Every journey must also be complete on mapping, errors, latency, probe,
 // detection and map.
 func (r Report) Clean() bool {
-	if r.Mode == ModeQuick || !r.NoRed() {
+	if r.Mode == ModeQuick || r.Mode == ModeIncremental || !r.NoRed() {
 		return false
 	}
 	for _, j := range r.Journeys {
@@ -175,6 +175,9 @@ func (r Report) NoRed() bool {
 const (
 	ModeFull  = "full"
 	ModeQuick = "quick"
+	// ModeIncremental is a run that reused verdicts of an earlier run for
+	// unchanged items. It is never clean: the gate is a full run (--full).
+	ModeIncremental = "incremental"
 )
 
 // Text renders the report, headed by the commit.
@@ -188,6 +191,8 @@ func (r Report) Text() string {
 			verdict = "red items"
 		}
 		fmt.Fprintf(&b, "mode: quick (%s; a quick run is never clean, run the full check for the gate)\n", verdict)
+	} else if r.Mode == ModeIncremental {
+		fmt.Fprintf(&b, "mode: incremental (verdicts of unchanged items are reused and labelled; an incremental run is never clean, run with --full for the gate)\n")
 	} else {
 		fmt.Fprintf(&b, "mode: full\n")
 	}
@@ -373,6 +378,9 @@ func runChecks(ctx context.Context, cfg Config) (Report, error) {
 	}
 	if cfg.Harm != nil {
 		report.Results = append(report.Results, judgePausedCoverage(cfg.Map, report.foreground, *cfg.Harm)...)
+	}
+	if quiet.Mode == ModeIncremental && report.Mode == ModeFull {
+		report.Mode = ModeIncremental
 	}
 	report.Results = append(report.Results, quiet.Results...)
 	report.Durations = append(report.Durations, quiet.Durations...)

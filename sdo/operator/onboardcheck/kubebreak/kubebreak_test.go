@@ -284,3 +284,9 @@ func TestExplicitScaleModeStaysScaleOnAnEnforcingCNI(t *testing.T) {
 		t.Fatalf("%q", b.Mode())
 	}
 }
+
+func TestBreakPoliciesAreRecognisedByName(t *testing.T) {
+	if !IsBreakPolicy(policyName("web")) || !IsBreakPolicy("sdo-onboarding-check-worker-egress-sidekiq") || IsBreakPolicy("allow-web") {
+		t.Fatal("only the policies a break creates are break policies")
+	}
+}
