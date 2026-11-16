@@ -61,6 +61,9 @@ func (s *run) semantic(ctx context.Context) error {
 }
 
 func (s *run) completeness() {
+	if s.goal == nil && !s.hasFile(layout.GoalFile) {
+		s.req.noteGaps(Diagnostic{Rule: RuleGoalMissing, Path: layout.GoalFile, Message: "goal.md is missing; install will supply SDO's standard goal (the goal is human-owned, so do not write one)"})
+	}
 	if !s.complete() {
 		return
 	}

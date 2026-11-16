@@ -47,6 +47,9 @@ type InstallExistingResult struct {
 	Reused         bool   `json:"reused"`
 	Fingerprint    string `json:"fingerprint"`
 	AcceptedCommit string `json:"accepted_commit"`
+	// GoalSupplied is set when the accepted memory had no .sdo/goal.md and
+	// install recorded SDO's standard goal in a human commit.
+	GoalSupplied   bool   `json:"goal_supplied,omitempty"`
 	ControllerLogs string `json:"controller_logs,omitempty"`
 }
 
@@ -163,6 +166,10 @@ func RunInstallExisting(ctx context.Context, launch InstallExistingConfig) (Inst
 		return InstallExistingResult{}, err
 	}
 	launch.DeploymentSource = source
+	goalSupplied, err := memory.EnsureGoal(ctx, launch.Repository, launch.Install.Application)
+	if err != nil {
+		return InstallExistingResult{}, fmt.Errorf("install-existing: supply the standard goal: %w", err)
+	}
 	if _, err := PrepareInstallTree(ctx, launch); err != nil {
 		return InstallExistingResult{}, err
 	}
@@ -196,7 +203,7 @@ func RunInstallExisting(ctx context.Context, launch InstallExistingConfig) (Inst
 	if err != nil {
 		return InstallExistingResult{}, err
 	}
-	return InstallExistingResult{Installed: true, Reused: result.Reused, Fingerprint: result.Fingerprint, AcceptedCommit: commit, ControllerLogs: result.ControllerLogs}, nil
+	return InstallExistingResult{Installed: true, Reused: result.Reused, Fingerprint: result.Fingerprint, AcceptedCommit: commit, GoalSupplied: goalSupplied, ControllerLogs: result.ControllerLogs}, nil
 }
 
 // recordInstallDeploymentSource settles the deployment source before any

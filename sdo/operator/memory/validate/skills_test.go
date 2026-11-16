@@ -25,6 +25,7 @@ var internalRules = map[string]string{
 	RuleLegacyManifest:          "only the current schema is supported; authoring agents never see a legacy manifest",
 	RuleSchemaVersion:           "the schema-version file is controller metadata, changed only by Upkeep",
 	RuleArchitectureMissing:     "Go generates the manifest inventory; no authoring skill edits it",
+	RuleGoalMissing:             "a non-blocking note; the goal is human-owned and install supplies the standard one",
 	RuleGoalOwner:               "goal.md is human-owned and no skill flow edits it",
 	RuleSourcesInvalid:          "sources.yaml is human goal-class input written by the controller; no skill flow edits it",
 	RuleUnknownActor:            "the controller supplies the actor; an agent cannot choose it",
