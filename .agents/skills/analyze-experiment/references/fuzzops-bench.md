@@ -38,6 +38,10 @@ run's cap) and the `collect` hook. Later positions of a sequence run on the memo
       incidents-reset.json                      receipt of collect's operator reset between problems
                                                  ({control_namespace, generation, acknowledged}); an incident still
                                                  open after the settle closed as RESET (no learning credit)
+      build.json, host-load.json                build identity (SDO revision, image tag, baseline and seed commit) and host load at collect
+      observability.json, observability/, applogs/   capture receipt, Prometheus/Jaeger stores for the window, pod logs (gzip)
+      evidence-manifest.json                    sdo.cell-evidence/v1: grader, timelines, sessions with sub-agent files, items, problems;
+                                                 `python -m benchmarks.fuzzops.cellevidence backfill <exp dir>` re-checks any cell
       view.json                                 dashboard view (fuzzops.view/v1): summary, hide, events, panels;
                                                  written by collect's `view` part or `python -m
                                                  benchmarks.fuzzops.view <run dir>`
