@@ -111,6 +111,10 @@ func TestChangesListsEachStoreDiffAgainstItsBaseline(t *testing.T) {
 	if len(unbaselined) != 1 || unbaselined[0].Baselined || len(unbaselined[0].Changes) != 0 {
 		t.Fatalf("without a baseline: %+v", unbaselined)
 	}
+	// An empty diff would say "nothing changed"; without a baseline the answer is unknown.
+	if unbaselined[0].Error != storestate.NoBaseline {
+		t.Fatalf("without a baseline the store is unknown, not unchanged: %+v", unbaselined[0])
+	}
 	failed := storestate.Changes(snapshot(t, d, podread.Reading{Namespace: "shop", Pod: "cache-0", Error: "exec timed out"}))
 	if len(failed) != 1 || failed[0].Error == "" || failed[0].Pod != (sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "shop", Name: "cache-0"}) {
 		t.Fatalf("failed read: %+v", failed)

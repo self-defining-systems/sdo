@@ -137,8 +137,9 @@ type StoreChanges struct {
 }
     StoreChanges is one store Pod's facts against the controller's promoted
     healthy baseline. Baselined is false when no usable baseline reading exists
-    for the Pod; Changes is then empty. Error is set when the current read gave
-    no answer, and the other fields are then unknown.
+    for the Pod; Changes is then empty and Error is NoBaseline, so a reader that
+    checks Error treats the Pod as unknown, not unchanged. Error is also set
+    when the current read gave no answer; the other fields are then unknown.
 
 func Changes(view sdk.DetectionContext) []StoreChanges
     Changes is the read-only diff of every store whose store-state pod read the

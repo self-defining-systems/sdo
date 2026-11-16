@@ -13,7 +13,7 @@ A playbook is `.sdo/playbooks/<id>/` with `diagnose.go` and `mitigate.go`. Copy 
 - `Diagnose`: test the state your fix changed, not a symptom. Filter on object
   state first; `v.Logs` costs a read, so call it only for the few objects that pass, as
   `Evidence`. Return `program.Match`, `program.NoMatch`, or `program.Unknown` if a read fails.
-  Stay `NoMatch` on a healthy install and other faults, within seconds.
+  Stay `NoMatch` on a healthy install and other faults, within seconds. Check live state where you can: a store with no healthy baseline yet has no diff (`storestate.Changes` gives it `Error`), which is unknown, not unchanged.
 - `Mitigate`: the changes that fixed it, in order, as you made them: `program.DeletePod`,
   `program.RestartRollout`, `program.SetField`; for an `sdo mitigate X`, the same
   `program.X` with the same fields.
