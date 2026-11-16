@@ -97,6 +97,29 @@ def contracts_snapshot(checkout: Path) -> str:
     return contractdiff.encode(contractdiff.from_directory(checkout))
 
 
+def legacy_snapshot(checkout: Path, lane: dict[str, str]) -> str:
+    """The contract descriptors of a lane built before lanes recorded them: found by the git tree id of
+    ``sdo/contracts`` the lane recorded, in the sibling hooks checkouts (``bench-sdo-hooks-*`` beside ``checkout``,
+    where every revision a pool was built from is kept). Empty when no sibling has that tree."""
+    want = lane.get(CONTRACTS_PATH)
+    if not want:
+        return ""
+    for sibling in sorted(checkout.parent.glob("bench-sdo-hooks-*")):
+        if sibling == checkout or not (sibling / ".git").exists():
+            continue
+        proc = subprocess.run(
+            ["git", "-C", str(sibling), "rev-parse", "--verify", "-q", f"HEAD:{CONTRACTS_PATH}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.stdout.strip() == want:
+            files = contractdiff.from_directory(sibling)
+            if files.file:
+                return contractdiff.encode(files)
+    return ""
+
+
 def contract_problems(checkout: Path, snapshot: str) -> list[str]:
     """How the checkout's contracts break the ones the lane was built with (``snapshot``); with no snapshot, that the
     lane cannot say."""
