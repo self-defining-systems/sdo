@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import subprocess
 from typing import TYPE_CHECKING
 
 from google.protobuf import json_format
@@ -141,6 +142,30 @@ def test_a_changed_playbook_derives_an_update_naming_exactly_that_playbook(
     assert result.response.Unpack(decision)
     assert (decision.learning_decision, list(decision.proposed_artifact_ids)) == ("updated", ["stale-process"])
     assert changed_playbooks(tmp_path) == ["stale-process"]
+
+
+def test_a_committed_playbook_is_still_an_update_naming_that_playbook(
+    tmp_path: Path, prepare_reflection_memory
+) -> None:
+    prepare_reflection_memory(tmp_path, INCIDENT)
+
+    def commit_playbook(_: CommandRequest) -> FakeRun:
+        playbook = tmp_path / ".sdo/playbooks/stale-process/diagnose.go"
+        playbook.parent.mkdir(parents=True)
+        playbook.write_text("package staleprocess\n")
+        subprocess.run(["git", "-C", str(tmp_path), "add", "-f", ".sdo"], check=True)
+        subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "playbook"], check=True)
+        return reply("codex", {"note": "restarts it"}, session_id=RESPONDER_SESSION, branch="reflection")
+
+    result = run_reflection_task(
+        _task(tmp_path, _learning_request(tmp_path)),
+        "result",
+        Publisher(),
+        reflector=_reflector(ScriptedAgent(commit_playbook)),
+    )
+    decision = ReflectionResult()
+    assert result.response.Unpack(decision)
+    assert (decision.learning_decision, list(decision.proposed_artifact_ids)) == ("updated", ["stale-process"])
 
 
 def test_the_cleanup_turn_resumes_the_same_session_with_the_leftovers_and_no_outcome(
