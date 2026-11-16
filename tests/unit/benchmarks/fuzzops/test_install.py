@@ -70,3 +70,15 @@ def test_the_command_line_requires_a_model(capsys: pytest.CaptureFixture[str]) -
     with pytest.raises(SystemExit):
         main(required)
     assert "--model" in capsys.readouterr().err
+
+
+def test_journeys_file_is_passed_to_host_only_when_given() -> None:
+    assert "--journeys-file" not in _config().host_args(Path("/w/app"), {})
+    args = _config(journeys_file=Path("/synthetic/journeys.txt")).host_args(Path("/w/app"), {})
+    assert args[args.index("--journeys-file") + 1] == "/synthetic/journeys.txt"
+    assert args.index("--journeys-file") < args.index("--config")
+
+
+def test_journeys_file_must_be_absolute() -> None:
+    with pytest.raises(ValueError, match="journeys_file"):
+        _config(journeys_file=Path("journeys.txt"))
