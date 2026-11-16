@@ -18,6 +18,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"sdo.dev/operator/imagesrc/buildkit"
 	"sdo.dev/operator/install"
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/worker_registry"
@@ -96,6 +97,9 @@ func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 			return HostConfig{}, errors.New("goal file exceeds 1 MiB")
 		}
 		*objective = strings.TrimSpace(string(data))
+	}
+	if strings.TrimSpace(*objective) == "" {
+		*objective = memory.DefaultHealthObjective
 	}
 	for name, value := range map[string]string{
 		"repository": *repository, "namespace": *namespace, "application": *application,
