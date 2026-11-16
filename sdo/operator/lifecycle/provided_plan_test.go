@@ -108,3 +108,16 @@ func TestProvidedPlanThatVerifiesUnhealthyIsTerminal(t *testing.T) {
 		t.Fatalf("deploy calls=%d agent attempts=%d installs=%d", h.readiness.calls, h.workers.deployerAttempts(), h.installer.installs)
 	}
 }
+
+func TestStopAfterArchitectureEndsBeforeTheJudgeAndInstall(t *testing.T) {
+	h := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{clear}})
+	cfg := providedConfig(providedPlans(t)["raw"])
+	cfg.StopAfterArchitecture = true
+	result, err := h.coordinator.Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.GoalCommit == "" || result.SchemaCommit == "" || result.SourceCommit == "" || result.ArchitectureCommit == "" || result.JudgeCommit != "" || h.workers.judgeRuns != 0 || h.installer.installs != 0 {
+		t.Fatalf("result %+v judge runs=%d installs=%d: want goal, schema, source and architecture only", result, h.workers.judgeRuns, h.installer.installs)
+	}
+}

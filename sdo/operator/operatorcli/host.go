@@ -69,6 +69,7 @@ func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 	registrationConfigMap := flags.String("agent-registration-configmap", "", "registration ConfigMap name")
 	controllerDuration := flags.Duration("controller-duration", 0, "bounded controller run duration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "stop after first closure")
+	stopAfterArchitecture := flags.Bool("stop-after-architecture", false, "end after the goal, schema, source and architecture commits (no health judge, no controller install); the onboarding agent starts from that accepted head")
 	registryInsecure := flags.Bool("registry-insecure", false, "allow an explicitly configured HTTP image registry")
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes client and kubectl config")
 	if err := flags.Parse(args[1:]); err != nil {
@@ -165,7 +166,7 @@ func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 		RepositoryPVC: *repositoryPVC, CredentialsSecret: *credentialsSecret,
 		RegistryPushSecret: *registrySecret, RegistryHost: *registryHost,
 		RegistryInsecure:          *registryInsecure,
-		ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
+		ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, StopAfterArchitecture: *stopAfterArchitecture, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
 		NativeCommand:         []string{"/usr/local/bin/sdo-operator"},
 		RegistrationConfigMap: *registrationConfigMap,
 		MemoryUpstreamURL:     *sourceBranchURL, MemoryUpstreamBranch: *sourceBranch,

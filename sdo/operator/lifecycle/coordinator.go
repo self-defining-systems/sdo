@@ -202,6 +202,10 @@ type Config struct {
 	DeploymentSource  *contracts.DeploymentSource
 	RenderEnvironment *contracts.RenderEnvironment
 	MaxAttempts       int
+	// StopAfterArchitecture ends Run once the goal, schema, accepted source and
+	// seeded architecture are committed: no health judge and no controller
+	// install. The onboarding agent starts from that accepted head.
+	StopAfterArchitecture bool
 	// SettingsDigest is settings.Config.DetectionDigest of the configuration the operator runs under; it joins
 	// every operability report subject this run builds.
 	SettingsDigest string
@@ -292,6 +296,9 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 			continue
 		}
 		result.ArchitectureCommit = architectureReceipt.Commit
+		if cfg.StopAfterArchitecture {
+			return result, nil
+		}
 		judgeID := fmt.Sprintf("%s-judge-%d", cfg.OperationID, attempt)
 		// A judge commit accepted by an earlier run was verified before it was
 		// accepted; only a crash between acceptance and install gets here.
