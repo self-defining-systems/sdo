@@ -158,29 +158,14 @@ def test_codex_failure_reports_structured_events_and_stderr() -> None:
     assert "PATH warning" in str(captured.value)
 
 
-def test_codex_output_schema_is_strict_and_requires_defaulted_fields() -> None:
+def test_codex_output_schema_is_findings_and_changes_only() -> None:
     schema = _incident_result_schema()
 
     assert schema["required"] == list(schema["properties"])
     assert schema["additionalProperties"] is False
-    applied = schema["properties"]["applied_playbooks"]["items"]
-    assert applied["required"] == ["playbook_id"]
-    assert "parameter_bindings" not in applied["properties"]
-    assert "responder_session_id" not in schema["properties"]
-    assert "usage" not in schema["properties"]
-    assert "repair_actions" not in schema["properties"]
-    cause = schema["properties"]["confirmed_root_causes"]["items"]
-    assert cause["required"] == list(cause["properties"])
-    assert cause["additionalProperties"] is False
-    evidence = cause["properties"]["evidence"]["items"]
-    assert evidence["required"] == list(evidence["properties"])
-    assert "static-artifact" not in evidence["properties"]["kind"]["enum"]
-    assert set(evidence["properties"]["kind"]["enum"]) == {
-        "detector-finding",
-        "synthetic-traffic",
-        "state-change",
-        "live-observation",
-    }
+    assert list(schema["properties"]) == ["findings", "agent_changes"]
+    finding = schema["properties"]["findings"]["items"]
+    assert finding["required"] == list(finding["properties"])
 
 
 INCIDENT_PLAYBOOK = "missing-configmap"

@@ -9,6 +9,7 @@ repair action IDs).
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import protovalidate
@@ -19,6 +20,21 @@ from sdo.contracts import SCHEMA_VERSION, AgentChange, IncidentFinding, Incident
 
 class IncidentResultValidationError(ValueError):
     """The model reply violates the worker incident-result contract."""
+
+
+def with_worker_facts(payload: dict[str, Any], incident_id: str, started_at: datetime) -> dict[str, Any]:
+    """The model's reply plus what the worker knows: the incident, a completed turn and its start and end.
+
+    The model supplies only ``findings`` and ``agent_changes``; a field it did supply is kept.
+    """
+
+    now = datetime.now(UTC)
+    facts = {
+        "incident_id": incident_id,
+        "status": "completed",
+        "timing": {"started_at": started_at.isoformat(), "completed_at": now.isoformat()},
+    }
+    return {**facts, **payload}
 
 
 def parse_incident_result(

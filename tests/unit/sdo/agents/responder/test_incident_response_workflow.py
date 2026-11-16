@@ -50,7 +50,7 @@ def test_the_first_message_template_renders_strictly() -> None:
     template = Template((PROMPTS / "incident_prompt.md").read_text(encoding="utf-8"))
     rendered = template.substitute(values)
     assert "$" not in rendered
-    assert len(rendered.encode()) <= 1100
+    assert len(rendered.encode()) <= 520
     for key in values:
         missing = {field: value for field, value in values.items() if field != key}
         with pytest.raises(KeyError, match=key):
@@ -89,7 +89,7 @@ def test_workflow_is_visible_in_the_real_provider_turn(tmp_path: Path, monkeypat
         assert installed.read_text(encoding="utf-8") == (SKILLS_ROOT / WORKFLOW / "SKILL.md").read_text(
             encoding="utf-8"
         )
-        assert str(SKILLS_ROOT / WORKFLOW / "SKILL.md") in command.stdin
+        assert "SKILL.md" not in command.stdin
         return reply(provider, output, session_id="workflow-session", branch="incident_result")
 
     agent = ScriptedAgent(respond)
@@ -113,13 +113,14 @@ def _responder_instructions() -> str:
     return "\n".join(texts).lower()
 
 
-def test_the_responder_works_the_incident_itself_and_subagents_are_optional() -> None:
+def test_the_responder_works_the_incident_itself_and_nothing_prescribes_subagents() -> None:
     text = _responder_instructions()
 
     for forced in ("you are the orchestrator", "do not investigate yourself", "one subagent per explanation"):
         assert forced not in text
     assert "before you act on the lead" not in text
-    assert "you may start read-only" in text
+    assert "subagent" not in text
+    assert "sub-agent" not in text
 
 
 def test_nothing_tells_the_responder_to_end_a_turn_to_wait() -> None:
@@ -129,7 +130,7 @@ def test_nothing_tells_the_responder_to_end_a_turn_to_wait() -> None:
 
     assert "end your turn to wait" not in text
     assert "between turns" not in text
-    assert "ending your turn submits your result" in text
+    assert "return only to give up" in text
     assert "only when you give up" in text
 
 

@@ -61,24 +61,22 @@ def test_incident_schema_is_the_proto_message_minus_declared_omissions() -> None
         "program_failure_signals",
         "resolution_path",
         "drift_reprompt",
+        "incident_id",
+        "status",
+        "timing",
+        "confirmed_root_causes",
+        "applied_playbooks",
+        "repair_changes",
+        "verification_evidence",
+        "drift_events",
     }
 
 
 def test_incident_schema_carries_the_proto_field_rules() -> None:
-    schema = _incident_result_schema()
-    cause = schema["properties"]["confirmed_root_causes"]["items"]
-    evidence = cause["properties"]["evidence"]["items"]
+    changes = _incident_result_schema()["properties"]["agent_changes"]["items"]
 
-    assert schema["properties"]["status"]["enum"] == ["completed", "failed", "cancelled"]
-    assert set(evidence["properties"]["kind"]["enum"]) == {
-        "detector-finding",
-        "synthetic-traffic",
-        "state-change",
-        "live-observation",
-    }
-    assert evidence["properties"]["source"]["minLength"] == 1
-    assert cause["properties"]["resources"]["minItems"] == 1
-    assert schema["properties"]["timing"]["properties"]["started_at"] == {"type": "string", "format": "date-time"}
+    assert changes["properties"]["at"] == {"type": "string", "format": "date-time"}
+    assert changes["properties"]["summary"]["minLength"] == 1
 
 
 def test_every_incident_result_must_carry_findings_the_agent_authors() -> None:
@@ -94,7 +92,7 @@ def test_every_incident_result_must_carry_findings_the_agent_authors() -> None:
 def test_a_minimal_schema_instance_parses_as_the_proto_message() -> None:
     incident = json_format.ParseDict(_minimal_instance(_incident_result_schema()), IncidentResult())
 
-    assert incident.status == "completed"
+    assert not incident.findings
     assert _minimal_instance(reflection_output_schema()) == {"note": ""}
 
 
@@ -169,18 +167,6 @@ def test_worker_projection_drops_every_annotated_field_recursively() -> None:
 
     sweep(IncidentResult.DESCRIPTOR)
     sweep(ReflectionResult.DESCRIPTOR)
-
-
-def test_incident_schema_requires_a_chosen_cause_class_and_reach() -> None:
-    cause = _incident_result_schema()["properties"]["confirmed_root_causes"]["items"]
-
-    assert {"cause_class", "reach"} <= set(cause["required"])
-    assert cause["properties"]["reach"]["enum"] == ["in-scope", "out-of-reach"]
-    classes = cause["properties"]["cause_class"]["enum"]
-    assert "" not in classes
-    assert {"network-delay", "network-loss", "config-value-wrong", "data-corrupt", "code-defect", "other"} <= set(
-        classes
-    )
 
 
 @pytest.mark.parametrize(("field", "value"), [("cause_class", "gremlins"), ("reach", "outside")])
