@@ -210,7 +210,7 @@ func offlineMemory(ctx context.Context, root string, getenv func(string) string)
 	if err != nil {
 		return offline.Memory{}, err
 	}
-	request := validate.Request{Telemetry: policy, TelemetryRegistry: telemetryRegistry(), Root: root, Layers: validate.Structural | validate.Semantic, PlanCatalogs: planCatalogs(), Replay: "off"}
+	request := validate.Request{Telemetry: policy, TelemetryRegistry: telemetryRegistry(), Root: root, Layers: validate.Structural | validate.Semantic, PlanCatalogs: planCatalogs(), Renderers: renderers.Catalog(), Replay: "off"}
 	base, actor, phase := getenv("SDO_BASE_COMMIT"), getenv(memoryActorEnv), getenv(memoryPhaseEnv)
 	checkedOwnership := base != "" && actor != "" && phase != ""
 	if checkedOwnership {

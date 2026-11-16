@@ -15,6 +15,7 @@ import (
 	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/planfile"
+	"sdo.dev/operator/render"
 	"sort"
 	"strings"
 
@@ -101,6 +102,11 @@ type Request struct {
 	// A nil registry leaves that lookup unchecked; the structural decode of
 	// plan.yaml always runs.
 	PlanCatalogs planfile.Catalogs `json:"-"`
+	// Renderers is the renderer catalog the plan's source renders through. With
+	// it, map rules derive the manifest inventory from the checkout's committed
+	// deployment source instead of reading the section in arch.md. Caller-owned
+	// wiring; nil keeps the section.
+	Renderers *render.Catalog `json:"-"`
 	// Telemetry is the environment's telemetry policy and TelemetryRegistry the
 	// adapter registry the bindings under .sdo/diagnostics/telemetry are checked
 	// against. Both are caller-owned wiring, never candidate input; the

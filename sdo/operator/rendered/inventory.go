@@ -36,11 +36,23 @@ type Inventory struct {
 
 // AcceptedInventory lists the accepted source objects, Secrets excluded.
 func (s Source) AcceptedInventory(ctx context.Context, revision, namespace string) (Inventory, error) {
+	return s.acceptedInventory(ctx, revision, namespace, false)
+}
+
+// AcceptedInventoryAllNamespaces is AcceptedInventory including objects in
+// namespaces other than the application's, for a reader that has no
+// application namespace and judges logical names only.
+func (s Source) AcceptedInventoryAllNamespaces(ctx context.Context, revision, namespace string) (Inventory, error) {
+	return s.acceptedInventory(ctx, revision, namespace, true)
+}
+
+func (s Source) acceptedInventory(ctx context.Context, revision, namespace string, qualified bool) (Inventory, error) {
 	result := Inventory{}
-	raw, err := s.RawManifests(ctx, revision, namespace)
+	raw, err := s.rawManifests(ctx, revision, namespace, qualified)
 	if err != nil {
 		return result, err
 	}
+	raw = copyManifests(raw)
 	for _, object := range raw {
 		if strings.EqualFold(object.GetKind(), "Secret") {
 			continue

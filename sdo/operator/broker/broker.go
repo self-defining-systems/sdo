@@ -26,6 +26,7 @@ import (
 	"sdo.dev/operator/operability"
 	"sdo.dev/operator/patchset"
 	"sdo.dev/operator/planfile"
+	"sdo.dev/operator/render"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
 )
@@ -130,6 +131,11 @@ type Broker struct {
 	// PlanCatalogs are the registries a deployment plan in .sdo/deployment is
 	// decoded against by the shared check. Unset, only the structural decode runs.
 	PlanCatalogs planfile.Catalogs
+
+	// Renderers is the renderer catalog the shared check renders the committed
+	// deployment source through to derive the manifest inventory. Unset, the
+	// check reads the arch.md section.
+	Renderers *render.Catalog
 
 	observationCeiling   sdk.ObservationScope
 	settingsDigest       string
