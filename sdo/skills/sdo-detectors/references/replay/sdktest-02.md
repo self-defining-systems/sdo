@@ -11,6 +11,8 @@ func (v *RecordingReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, 
 
 func (v *RecordingReadView) KubernetesRead(q program.KubernetesRequest) (json.RawMessage, error)
 
+func (v *RecordingReadView) LogMatches(ref sdk.ObjectRef, container string, since time.Duration, pattern string, max int) (program.LogMatchResult, error)
+
 func (v *RecordingReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error)
 
 func (v *RecordingReadView) LogsWithOptions(ref sdk.ObjectRef, options corev1.PodLogOptions) (string, error)
@@ -106,6 +108,8 @@ func (v *ReplayReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, e
 func (v *ReplayReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 
 func (v *ReplayReadView) KubernetesRead(q program.KubernetesRequest) (json.RawMessage, error)
+
+func (v *ReplayReadView) LogMatches(ref sdk.ObjectRef, container string, since time.Duration, pattern string, max int) (program.LogMatchResult, error)
 
 func (v *ReplayReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error)
 

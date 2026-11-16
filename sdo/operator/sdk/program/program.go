@@ -168,6 +168,11 @@ type ReadView interface {
 	Logs(pod sdk.ObjectRef, container string, since time.Duration) (string, error)
 	// LogsWithOptions reads bounded container logs; Previous selects the last terminated instance.
 	LogsWithOptions(pod sdk.ObjectRef, options corev1.PodLogOptions) (string, error)
+	// LogMatches is `kubectl logs --since=<window> | grep <pattern>`: it scans the whole window (up to
+	// MaxLogScanLines newest lines) and returns the newest max matching lines (at most MaxLogMatchLines), oldest
+	// first. pattern is an RE2 regular expression. ScanTruncated says the scan did not cover the window, so an empty
+	// answer then means unknown, not absent. Prefer it to Logs when a Diagnose looks for a particular line.
+	LogMatches(pod sdk.ObjectRef, container string, since time.Duration, pattern string, max int) (LogMatchResult, error)
 	metrics.UsageSource
 	// ProbeTCP connects to one port of a Pod or Service and records whether it accepted.
 	ProbeTCP(to sdk.ObjectRef, port int32) (ProbeResult, error)

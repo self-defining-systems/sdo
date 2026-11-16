@@ -220,3 +220,23 @@ func (v *LiveReadView) ProbeHTTP(ref sdk.ObjectRef, p program.HTTPProbe) (progra
 	}
 	return result, nil
 }
+
+// LogMatches scans the container's whole log window live and returns only the matching lines.
+func (v *LiveReadView) LogMatches(ref sdk.ObjectRef, container string, since time.Duration, pattern string, max int) (program.LogMatchResult, error) {
+	re, err := program.ValidateLogMatchRequest(since, pattern, max)
+	if err != nil {
+		return program.LogMatchResult{}, err
+	}
+	if ref.Kind != "Pod" || ref.Namespace != v.Namespace() || ref.Name == "" || v.client == nil || container == "" {
+		return program.LogMatchResult{}, errors.New("log matches require a namespace-scoped Pod, a container and a Kubernetes reader")
+	}
+	ctx, cancel := context.WithTimeout(v.ctx, 15*time.Second)
+	defer cancel()
+	options := program.LogMatchOptions(container, since)
+	stream, err := v.client.CoreV1().Pods(ref.Namespace).GetLogs(ref.Name, &options).Stream(ctx)
+	if err != nil {
+		return program.LogMatchResult{}, err
+	}
+	defer stream.Close()
+	return program.ScanLogMatches(stream, re, max)
+}
