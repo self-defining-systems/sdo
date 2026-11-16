@@ -244,4 +244,14 @@ type RawMergeSchemaError struct{ Path, Reason string }
     target schema. Use a typed object action for unknown kinds or subresources.
 
 func (e *RawMergeSchemaError) Error() string
+
+type ReadStep struct {
+	// Op is the read kind: logs, log_matches, observe, read, database_users or kubernetes_read.
+	Op string `json:"op"`
+	// Target names what was read: namespace/pod/container, a store collection or an API path.
+	Target string `json:"target"`
+	// Outcome is the result: a count, an exit code or "error: ...".
+	Outcome string `json:"outcome"`
+}
+    ReadStep is one external read a Diagnose made and what it returned.
 ```

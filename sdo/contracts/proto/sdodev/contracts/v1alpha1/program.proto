@@ -276,6 +276,19 @@ message ProgramRun {
   string binding_source = 8 [(buf.validate.field).string = {in: ["", "finding", "hint", "sweep", "suspect", "credited"]}];
   // Registry capability, not plan validity or trust. Absent on older runs.
   optional bool can_mitigate = 9;
+  // The external reads the Diagnose made, in order, each with what it
+  // returned. A NoMatch is attributed to the condition behind its last read:
+  // a trace that ends at a log read means the command after it never ran.
+  repeated ReadStep read_trace = 10;
+}
+
+message ReadStep {
+  // logs, log_matches, observe, read, database_users or kubernetes_read.
+  string op = 1 [(buf.validate.field).string.min_len = 1];
+  // namespace/pod/container, a store collection or an API path.
+  string target = 2;
+  // A count, an exit code or "error: ...".
+  string outcome = 3;
 }
 
 // A landed mutation whose rollout is blocked. This never supplies repair credit.

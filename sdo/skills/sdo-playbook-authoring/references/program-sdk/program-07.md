@@ -105,6 +105,12 @@ type Verdict struct {
 	Question   string     `json:"question,omitempty"`
 	CauseClass string     `json:"cause_class,omitempty"`
 	Reach      string     `json:"reach,omitempty"`
+	// Reads is the trace of the external reads the Diagnose made, in order,
+	// each with what it returned. RunDiagnose fills it; a program never sets
+	// it. It is how a NoMatch is attributed to the condition that produced it:
+	// a trace that ends at a log read means the log condition failed and the
+	// command after it never ran.
+	Reads []ReadStep `json:"reads,omitempty"`
 }
     Verdict is what Diagnose returns; NeedsJudgement requires a Question.
     CauseClass and Reach state the diagnosed cause in the responder's closed

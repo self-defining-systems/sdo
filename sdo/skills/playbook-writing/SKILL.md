@@ -10,7 +10,7 @@ A playbook is `.sdo/playbooks/<id>/` with `diagnose.go` and `mitigate.go`. Copy 
 
 - `Spec()`: the `ID` and no object role. SDO tries it on every pass, so `Diagnose` finds its own subject through `ReadView` (app map,
   owners, `DiffAgainstSource`) and returns `program.NoMatch` when it is absent.
-- `Diagnose`: test the state your fix changed, not a symptom. Filter on object
+- `Diagnose`: test the state your fix changed (a row, a catalog entry, a setting, a key, an object field), read live, not a symptom. A log line is the symptom's echo: it can be rotated away, land on another pod or container, fall outside the window or never be written on a repeat, so never make it a condition the match requires; at most attach it as `Evidence` after the state matched. Write each state check so it selects the fault's own state exactly as you saw it (the same column type, constraint text or key you read), and say in your reply when you could not run it against the fault. Filter on object
   state first; `v.Logs` costs a read, so call it only for the few objects that pass, as
   `Evidence`. Return `program.Match`, `program.NoMatch`, or `program.Unknown` (failed read, unbaselined store).
   Stay `NoMatch` on a healthy install and other faults. To find a log line use `v.LogMatches` (grep over the whole window); `v.Logs` keeps only the newest 64 KiB. Unscanned (`ScanTruncated`) is `Unknown`, not `NoMatch`.
