@@ -78,6 +78,8 @@ For replay-on/off measurements, read [replay run policy](references/replay-polic
 For repeat-only ablations, read [variant projections](references/ablation-variants.md) and [frozen memory](references/frozen-memory.md).
 For oversized responder outputs, default stdout budgets and offline size audits, read [tool output audits](references/tool-output-audit.md).
 For where a Claude Code session's wall time went (model vs tool categories vs waiting on subagents; stream-json or session JSONL with subagent sidechains), run `uv run python -m benchmarks.sregym.analysis.agent_wall_time <transcript|dir> [--categories rules.json]`; categories are ordered command regexes, and polls of a check's output file count toward that check.
+
+For a batch of cells run `uv run python -m benchmarks.sregym.analysis <wall-time|learning-economics|sweep|all> <cell dirs> [--manifest m.json --pool dir] [--out dir]`: `learning-economics` gives per fault the first try's responder and closing-turn cost and time, each repeat's page-to-applied and page-to-recovered, break-even recurrences and median repeat/first ratios; `sweep` gives the per-kind table; `all` is the end-of-batch hook that writes both as markdown and JSON.
 When classifying behavior, read [common failures](references/failure-patterns.md); for latent drift or toy lanes,
 also read [drift and toy failures](references/drift-failures.md).
 
