@@ -60,7 +60,7 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
          application every --quiet-interval for --quiet-window (0 skips) and is
          red if any raises, naming the detector, scenario and step.
          fails-under-break breaks each component on an operation's path
-         (components that share no operation are broken together in waves; a
+         (components that share no operation are broken together in waves, and the components behind the entries are first broken together once, then alone only where their pooled break leaves it unclear which one an operation followed; a
          raise still has to name the operation or component) (by default a deny-ingress NetworkPolicy when the CNI
          enforces it, else scale the workload to zero; --break-mode scale
          always scales; the mode that ran is said in the report), waits up to --break-bound for raises that name
@@ -324,7 +324,7 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	if *quick {
 		*quietWindow = min(*quietWindow, 2*time.Minute)
 	}
-	fmt.Fprintln(os.Stderr, startNotice(*quick, *settle, *quietWindow, *breakItem, max(*breakBound, probeDetectionHorizon(*repo)), len(onboardcheck.BreakWaves(m)), *reportFile))
+	fmt.Fprintln(os.Stderr, startNotice(*quick, *settle, *quietWindow, *breakItem, max(*breakBound, probeDetectionHorizon(*repo)), onboardcheck.PlannedBreakWaves(m), *reportFile))
 	var given []appmap.GivenJourney
 	if goal, err := os.ReadFile(filepath.Join(*repo, ".sdo", "goal.md")); err == nil {
 		if given, err = appmap.ParseGoalJourneys(goal); err != nil {

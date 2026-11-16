@@ -98,8 +98,9 @@ func OperationsThrough(m appmap.Map, component string) []string {
 
 // runFaults breaks each fault once, one at a time, and reports whether a
 // detector named a hurt operation. It returns the baseline for later items and
-// whether a restore was uncertain.
-func runFaults(ctx context.Context, cfg Config, report *Report, baseline map[string]bool) bool {
+// whether a restore was uncertain. dirty says a restored break's raises may
+// still stand; each fault waits for them (and the previous fault's) to clear.
+func runFaults(ctx context.Context, cfg Config, report *Report, baseline map[string]bool, dirty bool) bool {
 	b := cfg.Break
 	for _, f := range b.Faults {
 		subject := f.Name()
@@ -127,7 +128,11 @@ func runFaults(ctx context.Context, cfg Config, report *Report, baseline map[str
 		fcfg.Break = &fb
 		cfg.say("fails-under-break: %s: %s", subject, f.Describe())
 		var restoreFailed bool
-		baseline, restoreFailed = breakWave(ctx, fcfg, []waveMember{{c: appmap.Component{Name: subject}, ops: ops, out: out}}, baseline, true)
+		if dirty {
+			baseline = settleBaseline(ctx, cfg, baseline)
+		}
+		dirty = true
+		baseline, restoreFailed = breakWave(ctx, fcfg, []waveMember{{c: appmap.Component{Name: subject}, ops: ops, out: out}}, baseline)
 		switch {
 		case out.err != "":
 			report.add(ItemBreak, subject, Red, out.err)
