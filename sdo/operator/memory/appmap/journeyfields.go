@@ -127,8 +127,10 @@ const maxGivenJourneys = 100
 // gives each listed journey the stable id an operation's journey field names,
 // so the given-journeys check can match them without an agent invention.
 //
-// Items are separated by newlines and semicolons, a leading bullet or number
-// is dropped, and an input that is a single line is also split at commas. An
+// A journey is one non-empty line or bullet, whatever punctuation it holds
+// (semicolons, commas, colons and brackets stay inside it); a leading bullet
+// or number is dropped. Only an input that is a single line (no newline) is
+// split, at semicolons and commas. An
 // id is the item's first words as a slug; a repeat gets a numeric suffix.
 func JourneysFromText(text string) ([]GivenJourney, error) {
 	var items []string
@@ -140,7 +142,7 @@ func JourneysFromText(text string) ([]GivenJourney, error) {
 		}
 	}
 	for _, line := range nonEmpty {
-		parts := strings.Split(line, ";")
+		parts := []string{line}
 		if len(nonEmpty) == 1 {
 			parts = splitAny(line, ";,")
 		}

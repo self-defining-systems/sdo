@@ -90,7 +90,7 @@ sdo-operator host --repository /path/to/application \
   --model gpt-6-luna
 ```
 
-The journeys are free text from the people running the application (one per line, or comma-separated: "users sign in, browse projects, push code"); `onboarding.journeys_required` (default true, see [docs/config.md](docs/config.md)) makes `host` refuse to start without them, and a `journeys:` list in the goal file's front matter works too. Set it to false to let the onboarding agent discover the journeys. The journey ids derive from the text, so re-run `host` with the same text to keep them.
+The journeys are free text from the people running the application (one per line or bullet; a single line with no newline is split at commas and semicolons: "users sign in, browse projects, push code"); `onboarding.journeys_required` (default true, see [docs/config.md](docs/config.md)) makes `host` refuse to start without them, and a `journeys:` list in the goal file's front matter works too. Set it to false to let the onboarding agent discover the journeys. The journey ids derive from the text, so re-run `host` with the same text to keep them.
 
 The full interface:
 
