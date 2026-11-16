@@ -131,3 +131,17 @@ def test_nothing_tells_the_responder_to_end_a_turn_to_wait() -> None:
     assert "between turns" not in text
     assert "ending your turn submits your result" in text
     assert "only when you give up" in text
+
+
+def test_a_result_submitted_while_background_work_runs_is_told_to_be_interim() -> None:
+    """Whatever ends a turn mid-incident (a background command, a monitor, a subagent), the wake-up follows.
+
+    The transport already returns the last result once the CLI is idle (see the background Bash and subagent
+    drain tests in ``test_structured``); the agent must not treat the earlier one as final.
+    """
+
+    text = _responder_instructions()
+
+    assert "interim" in text
+    assert "keep working" in text
+    assert "the last result stands" in text

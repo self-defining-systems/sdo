@@ -34,7 +34,9 @@ A reasoning loop, not a procedure. Move between the parts as the evidence asks.
   Done when what failed passes and keeps passing; SDO ends your session when recovery holds. Return only to
   give up (with what you found and excluded), never while users are still failing.
 - Wait on events, not a clock: `sdo detect --wait SECONDS` returns when an alert or finding changes. While your
-  sub-agents run, keep them in the foreground. Ending your turn submits your result, which is for giving up.
+  sub-agents run, keep them in the foreground. Ending your turn submits your result, which is for giving up. A
+  result submitted while a background command or sub-agent still runs is interim: you are woken when it finishes
+  and must keep working; the last result stands.
 - **Record findings.** The result's `findings` are required, also when you give up: what you saw and where, what
   you ruled out and why (and what you did not check), never the probable cause. A later incident on the same
   symptoms reads them as unverified notes.
