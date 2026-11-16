@@ -154,6 +154,9 @@ func OperateJob(cfg Config, healthObjective, operationID string) (*batchv1.Job, 
 	if cfg.ExitAfterClosure {
 		args = append(args, "--exit-after-closure")
 	}
+	if cfg.StopAfterArchitecture {
+		args = append(args, "--stop-after-architecture")
+	}
 	if cfg.RegistrationConfigMap != "" {
 		args = append(args, "--agent-registration-configmap", cfg.RegistrationConfigMap, "--agent-registration-directory", cfg.registrationDirectory())
 	}
@@ -317,7 +320,7 @@ func (i Installer) WaitOperate(ctx context.Context, cfg Config, operationID stri
 		}
 		for _, line := range strings.Split(string(raw), "\n") {
 			var result OperateResult
-			if json.Unmarshal([]byte(line), &result) == nil && result.OperationID == operationID && result.Installed && result.SourceCommit != "" && result.JudgeCommit != "" {
+			if json.Unmarshal([]byte(line), &result) == nil && result.OperationID == operationID && result.SourceCommit != "" && ((result.Installed && result.JudgeCommit != "") || (cfg.StopAfterArchitecture && !result.Installed && result.ArchitectureCommit != "")) {
 				return result, nil
 			}
 		}

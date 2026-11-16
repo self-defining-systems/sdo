@@ -155,7 +155,7 @@ func main() {
 			err = runErr
 			if err == nil {
 				encoded := json.NewEncoder(os.Stdout)
-				err = encoded.Encode(install.OperateResult{OperationID: config.Lifecycle.OperationID, GoalCommit: result.GoalCommit, SchemaCommit: result.SchemaCommit, SourceCommit: result.SourceCommit, ArchitectureCommit: result.ArchitectureCommit, JudgeCommit: result.JudgeCommit, Attempts: result.Attempts, Installed: true})
+				err = encoded.Encode(install.OperateResult{OperationID: config.Lifecycle.OperationID, GoalCommit: result.GoalCommit, SchemaCommit: result.SchemaCommit, SourceCommit: result.SourceCommit, ArchitectureCommit: result.ArchitectureCommit, JudgeCommit: result.JudgeCommit, Attempts: result.Attempts, Installed: result.JudgeCommit != ""})
 			}
 		}
 		if err != nil {

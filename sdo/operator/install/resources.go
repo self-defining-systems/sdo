@@ -44,14 +44,16 @@ type Config struct {
 	// their argv) and binds its hash into the install fingerprint.
 	Settings *settings.Config
 
-	ObservationCeiling                           sdk.ObservationScope
-	Namespace, ControlNamespace, Application     string
-	ControllerImage, ResponderImage              string
-	ScriptImage                                  string
-	RepositoryPVC, CredentialsSecret             string
-	AcceptedCommit                               string
-	ControllerDurationSeconds                    int
-	ExitAfterClosure                             bool
+	ObservationCeiling                       sdk.ObservationScope
+	Namespace, ControlNamespace, Application string
+	ControllerImage, ResponderImage          string
+	ScriptImage                              string
+	RepositoryPVC, CredentialsSecret         string
+	AcceptedCommit                           string
+	ControllerDurationSeconds                int
+	ExitAfterClosure                         bool
+	// StopAfterArchitecture ends the operate Job after the goal, schema, source and architecture commits: no health judge, no controller install.
+	StopAfterArchitecture                        bool
 	NativeCommand, NativeArgs                    []string
 	ExtraControllerArgs                          []string
 	Credentials                                  map[string][]byte
