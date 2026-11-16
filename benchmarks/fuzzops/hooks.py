@@ -1124,7 +1124,15 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     reset = reset_when_running(binary.resolve(), baseline.control, kubeconfig)
     out(f"incidents reset: generation {reset.get('generation')}")
     (lane_dir / PREPARED_RECORD).write_text(
-        json.dumps({"revision": revision, "memory": memory, "compiled": devtree.fingerprint(Path.cwd())}) + "\n"
+        json.dumps(
+            {
+                "revision": revision,
+                "memory": memory,
+                "compiled": devtree.fingerprint(Path.cwd()),
+                "contracts": devtree.contracts_snapshot(Path.cwd()),
+            }
+        )
+        + "\n"
     )
     if block.seed is not None:
         # A claim that fell back to a full build still runs on the seed's memory and settings. The controller has not
@@ -1469,7 +1477,7 @@ def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     record = json.loads((lane_dir / PREPARED_RECORD).read_text())
     revision = checkout_revision()
     compiled = record.get("compiled") or {}
-    if why := devtree.swap_problem(Path.cwd(), compiled, rebuild_binary=True):
+    if why := devtree.swap_problem(Path.cwd(), compiled, rebuild_binary=True, contracts=record.get("contracts", "")):
         raise HookError(why)
     started = time.monotonic()
     kube, control = _kube(env), control_namespace(env)
@@ -1487,6 +1495,7 @@ def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
         set_controller_suspended(kube, control, True)
         set_controller_suspended(kube, control, False)
         record["compiled"] = devtree.fingerprint(Path.cwd())
+        record["contracts"] = devtree.contracts_snapshot(Path.cwd())
     retire_standby(kube, control)
     wait_standby(kube, control, SWAP_STANDBY_WAIT_S)
     if "state" not in record:
