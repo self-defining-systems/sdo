@@ -370,10 +370,10 @@ func TestFailsUnderBreakStopsWhenRestoreIsUncertain(t *testing.T) {
 	}
 }
 
-func runBreakItem(t *testing.T, w *world, noPool bool) Report {
+func runBreakItem(t *testing.T, w *world, oneAtATime bool) Report {
 	t.Helper()
 	cfg := liveConfig(t, w, false, true)
-	cfg.Break.NoPool = noPool
+	cfg.Break.OneAtATime = oneAtATime
 	r, err := Run(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -383,7 +383,7 @@ func runBreakItem(t *testing.T, w *world, noPool bool) Report {
 
 func TestFailsUnderBreakRestoresEveryBrokenComponentInOrder(t *testing.T) {
 	w := newWorld()
-	runBreakItem(t, w, true)
+	runBreakItem(t, w, false)
 	if len(w.log) != 8 || strings.Join(w.log[:4], ",") != "break web,restore web,break api,restore api" {
 		t.Fatalf("shared components go one at a time: %v", w.log)
 	}
@@ -395,66 +395,48 @@ func TestFailsUnderBreakRestoresEveryBrokenComponentInOrder(t *testing.T) {
 	}
 }
 
-// Components behind the entry whose break moves no operation and that a
-// detector names are judged by one break together, not one each.
-func TestFailsUnderBreakPoolsComponentsBehindTheEntry(t *testing.T) {
-	w := newWorld()
-	w.raiseFor["api"] = raiseNaming("workload-health", "workload api has no ready pods")
-	w.raiseFor["db"] = raiseNaming("store-state", "postgres db is unreachable")
-	w.raiseFor["worker"] = raiseNaming("workload-health", "workload worker has no ready pods")
-	r := runBreakItem(t, w, false)
-	if len(w.log) != 8 || strings.Join(w.log[:2], ",") != "break web,restore web" {
-		t.Fatalf("entry alone, then one pooled break: %v", w.log)
+// Breaking several components that serve one operation together cannot say
+// which of them a failure of the operation follows, and nearly always fails
+// the operation, so the check never spends a wave on the attempt: each
+// component is broken exactly once, whatever the detectors raise.
+func TestFailsUnderBreakNeverBreaksAComponentTwiceOrSpendsAWaveOnPooling(t *testing.T) {
+	worlds := map[string]func(*world){
+		"nothing noticed": func(w *world) {},
+		"every operation fails under every break": func(w *world) {
+			for _, c := range []string{"web", "api", "db", "worker"} {
+				w.raiseFor[c] = append(raiseNaming("traffic-probe-call", "scenario browse failed: list-items"), raiseNaming("traffic-probe-send", "send-mail failing")...)
+			}
+		},
+		"components named by their own raises": func(w *world) {
+			w.raiseFor["api"] = raiseNaming("workload-health", "workload api has no ready pods")
+			w.raiseFor["db"] = raiseNaming("store-state", "postgres db is unreachable")
+			w.raiseFor["worker"] = raiseNaming("workload-health", "workload worker has no ready pods")
+		},
 	}
-	for _, e := range w.log[2:5] {
-		if !strings.HasPrefix(e, "break ") {
-			t.Fatalf("api, db and worker are broken together: %v", w.log)
-		}
-	}
-	for _, name := range []string{"api", "db", "worker"} {
-		if status(r, ItemBreak, name) != Green {
-			t.Fatalf("%s is named by its own raise:\n%s", name, r.Text())
-		}
-	}
-	if status(r, ItemBreak, "list-items") != Red {
-		t.Fatalf("no operation failed, so list-items stays red:\n%s", r.Text())
-	}
-}
-
-// An operation that fails while the pool is broken cannot be pinned on one
-// pooled component, so the components that serve it are broken alone.
-func TestFailsUnderBreakBreaksPooledComponentsAloneWhenAnOperationFails(t *testing.T) {
-	w := newWorld()
-	w.raiseFor["api"] = raiseNaming("workload-health", "workload api has no ready pods")
-	w.raiseFor["db"] = append(raiseNaming("store-state", "postgres db is unreachable"), raiseNaming("traffic-probe-call", "scenario browse failed: list-items")...)
-	w.raiseFor["worker"] = raiseNaming("workload-health", "workload worker has no ready pods")
-	r := runBreakItem(t, w, false)
-	var breaks []string
-	for _, e := range w.log {
-		if strings.HasPrefix(e, "break ") {
-			breaks = append(breaks, strings.TrimPrefix(e, "break "))
-		}
-	}
-	// web, then the pool, then api and db again (they serve list-items); the
-	// worker's break moved nothing, so it is not repeated.
-	if len(breaks) != 6 {
-		t.Fatalf("breaks %v", breaks)
-	}
-	count := map[string]int{}
-	for _, name := range breaks {
-		count[name]++
-	}
-	if count["worker"] != 1 || count["api"] != 2 || count["db"] != 2 {
-		t.Fatalf("breaks %v", breaks)
-	}
-	if status(r, ItemBreak, "list-items") != Green {
-		t.Fatalf("list-items failed under a break:\n%s", r.Text())
+	for name, setup := range worlds {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld()
+			setup(w)
+			runBreakItem(t, w, false)
+			count := map[string]int{}
+			for _, e := range w.log {
+				if c, ok := strings.CutPrefix(e, "break "); ok {
+					count[c]++
+				}
+			}
+			if len(count) != 4 || count["web"] != 1 || count["api"] != 1 || count["db"] != 1 || count["worker"] != 1 {
+				t.Fatalf("each of the 4 components is broken once: %v", w.log)
+			}
+			if len(w.log) != 8 {
+				t.Fatalf("three waves (web, api, db with worker): %v", w.log)
+			}
+		})
 	}
 }
 
-// Pooling only decides how many breaks it takes: every verdict is the one the
-// one-component-at-a-time check gives on the same detectors.
-func TestPooledBreaksGiveTheVerdictsOfSeparateBreaks(t *testing.T) {
+// Breaking disjoint components together only decides how many waves it takes:
+// every verdict is the one the one-at-a-time check gives on the same detectors.
+func TestWavesGiveTheVerdictsOfSeparateBreaks(t *testing.T) {
 	worlds := map[string]func(*world){
 		"nothing noticed": func(w *world) {},
 		"all named": func(w *world) {
@@ -468,7 +450,7 @@ func TestPooledBreaksGiveTheVerdictsOfSeparateBreaks(t *testing.T) {
 		"only worker fails send-mail": func(w *world) {
 			w.raiseFor["worker"] = raiseNaming("traffic-probe-send", "send-mail failing")
 		},
-		"one raise names two pooled": func(w *world) {
+		"one raise names two components": func(w *world) {
 			w.raiseFor["db"] = raiseNaming("store-state", "postgres db is unreachable from api")
 		},
 		"web fails everything": func(w *world) {
@@ -477,12 +459,12 @@ func TestPooledBreaksGiveTheVerdictsOfSeparateBreaks(t *testing.T) {
 	}
 	for name, setup := range worlds {
 		t.Run(name, func(t *testing.T) {
-			pooled, separate := newWorld(), newWorld()
-			setup(pooled)
+			waved, separate := newWorld(), newWorld()
+			setup(waved)
 			setup(separate)
-			a, b := runBreakItem(t, pooled, false), runBreakItem(t, separate, true)
+			a, b := runBreakItem(t, waved, false), runBreakItem(t, separate, true)
 			if got, want := verdicts(a), verdicts(b); got != want {
-				t.Fatalf("pooled:\n%s\nseparate:\n%s", got, want)
+				t.Fatalf("waves:\n%s\nseparate:\n%s", got, want)
 			}
 		})
 	}
