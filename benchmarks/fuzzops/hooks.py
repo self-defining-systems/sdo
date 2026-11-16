@@ -1210,13 +1210,14 @@ def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     other = other_incident(state, env)
     if other is not None:
         incident, rest = other
-        why = idle_verdict(rest, updated, ready, datetime.now(UTC))
+        why = idle_verdict(rest, updated, ready, datetime.now(UTC), baselines=False)
         if why:
             out(why)
             return 1
         out(f"ignored: incident open {incident}")
         return 0
-    why = idle_verdict(state, updated, ready, datetime.now(UTC))
+    # No log yet: baselines are judged by the second verdict, after the log read an otherwise idle controller earns.
+    why = idle_verdict(state, updated, ready, datetime.now(UTC), baselines=False)
     if not why:
         # Only an otherwise idle controller is worth the full log read the baselines need.
         try:

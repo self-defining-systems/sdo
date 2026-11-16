@@ -438,6 +438,29 @@ def test_idle_reads_the_pod_the_state_configmap_and_the_controller_log_once_each
     assert all(c[c.index("-n") + 1] == "ns1-sdo" for c in calls)
 
 
+def test_idle_is_idle_once_the_log_shows_every_store_in_the_state_history_promoted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The first verdict has no log; it must not hold on baselines it cannot read (the log read comes after it)."""
+    fresh = (datetime.now(UTC) - timedelta(seconds=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    state = {
+        "version": "sdo.controller/v1",
+        "history": [{"detector_id": "store-state-redis", "evaluated_at": fresh, "status": "clear"}],
+    }
+    configmap = {
+        "metadata": {"managedFields": [{"time": fresh}]},
+        "data": {"runtime-state.json": json.dumps(state)},
+    }
+    pods = {"items": [{"metadata": {"name": "p"}, "status": {"conditions": [{"type": "Ready", "status": "True"}]}}]}
+    logs = "INFO store_baseline_promoted component=redis"
+    monkeypatch.setattr(
+        hooks.subprocess, "run", _fake_kubectl({"configmap": configmap, "pods": pods, "logs": logs}, [])
+    )
+    env = {"FUZZOPS_NAMESPACE": "ns1", "FUZZOPS_KUBE_CONTEXT": "kind-c", "KUBECONFIG": "/k"}
+    lines: list[str] = []
+    assert hooks.idle(env, out=lines.append) == 0, lines
+
+
 def test_idle_reports_a_missing_controller_as_busy(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(hooks.subprocess, "run", _fake_kubectl({}, []))
     env = {"FUZZOPS_NAMESPACE": "ns1", "FUZZOPS_KUBE_CONTEXT": "kind-c", "KUBECONFIG": "/k"}
