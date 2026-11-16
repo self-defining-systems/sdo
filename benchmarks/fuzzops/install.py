@@ -67,6 +67,9 @@ class InstallConfig:
     #: Free-text user journeys the people running the app give (``host --journeys-file``); ``None``: the
     #: onboarding agent discovers them (the benchmark profile does not require them).
     journeys_file: Path | None = None
+    #: ``False``: no provided plan; SDO's deployer agent writes it from the repository (the production path), so
+    #: it can add what the app lacks (request metrics, a telemetry overlay). ``True`` (default): the benchmark path.
+    provided_plan: bool = True
 
     def __post_init__(self) -> None:
         self.host_env()
@@ -114,8 +117,11 @@ class InstallConfig:
             CREDENTIALS_SECRET,
             "--registry-push-secret",
             REGISTRY_SECRET,
-            "--deployment-plan",
-            json.dumps(plan, separators=(",", ":"), sort_keys=True),
+            *(
+                ["--deployment-plan", json.dumps(plan, separators=(",", ":"), sort_keys=True)]
+                if self.provided_plan
+                else []
+            ),
             "--kubeconfig",
             str(self.kubeconfig),
         ]
@@ -287,6 +293,11 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help="file of free-text user journeys, passed to `sdo-operator host --journeys-file` (default: discovered)",
     )
+    p.add_argument(
+        "--deployer",
+        action="store_true",
+        help="no provided plan: SDO's deployer agent deploys from the repository (needs --source for the app's code)",
+    )
     a = p.parse_args(argv)
     cfg = InstallConfig(
         pack=a.pack.resolve(),
@@ -311,6 +322,7 @@ def main(argv: list[str] | None = None) -> int:
         evidence_run_id=a.evidence_run_id,
         config_files=tuple(path.resolve() for path in a.config),
         journeys_file=a.journeys_file.resolve() if a.journeys_file else None,
+        provided_plan=not a.deployer,
     )
     cfg.work.mkdir(parents=True, exist_ok=True)
     return install(cfg, description=a.description)
