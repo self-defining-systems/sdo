@@ -199,8 +199,15 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 	native.Reflector = worker
 	native.Cleaner = worker
 	native.CleanupTurns = policy.Response.CleanupTurns
+	native.PageOnly = policy.Response.PageOnly
+	if native.PageOnly {
+		native.CleanupTurns = 0
+	}
 	return nil
 }
+
+// PageOnlyEnvironment tells the responder worker (response.page_only) to run as a plain agent on the incident page.
+const PageOnlyEnvironment = "SDO_RESPONDER_PAGE_ONLY"
 
 // AgentWorkerEnvironment is the agent section of the operator configuration
 // (agent.extra_env, then provider, model, effort and limits, always set), the replay policy, plus the
@@ -219,6 +226,9 @@ func AgentWorkerEnvironment(config *contracts.ControllerConfig, policy settings.
 	}
 	for name, value := range telemetryPolicy {
 		environment[name] = value
+	}
+	if policy.Response.PageOnly {
+		environment[PageOnlyEnvironment] = "1"
 	}
 	selected, err := codePathFromContract(config.GetCodePath())
 	if err != nil {

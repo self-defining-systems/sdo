@@ -52,3 +52,24 @@ func TestAgentWorkerEnvironmentCarriesTheBrokersTelemetryPolicy(t *testing.T) {
 		}
 	}
 }
+
+func TestPageOnlyResponseMarksTheAgentWorkerEnvironment(t *testing.T) {
+	launch := &contracts.ControllerConfig{Namespace: "shop", ControlNamespace: "sdo-system"}
+	policy := settings.Default()
+	policy.Agent.Model, policy.Learning.Replay = "m", "off"
+	environment, err := AgentWorkerEnvironment(launch, policy, telemetry.NewRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, set := environment[PageOnlyEnvironment]; set {
+		t.Errorf("%s is set without response.page_only", PageOnlyEnvironment)
+	}
+	policy.Response.PageOnly = true
+	environment, err = AgentWorkerEnvironment(launch, policy, telemetry.NewRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if environment[PageOnlyEnvironment] != "1" {
+		t.Errorf("%s = %q, want 1", PageOnlyEnvironment, environment[PageOnlyEnvironment])
+	}
+}

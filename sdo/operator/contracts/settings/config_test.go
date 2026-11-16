@@ -314,3 +314,17 @@ func TestAfterPlaybookDefaultsFileEnvironmentAndValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestPageOnlyResponseRefusesInvestigators(t *testing.T) {
+	cfg := settings.Default()
+	cfg.Agent.Model = "m"
+	cfg.Response.PageOnly = true
+	cfg.Response.Investigators = 1
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "response.page_only") {
+		t.Fatalf("Validate = %v, want a response.page_only error", err)
+	}
+	cfg.Response.Investigators = 0
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}

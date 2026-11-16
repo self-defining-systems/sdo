@@ -14,6 +14,7 @@ from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_pro
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 from sdo.agents.provider import MODEL_ENV, agent_effort, resolve_agent
 from sdo.agents.replay import selected_skills_root
+from sdo.agents.responder import page_only
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.incident_opening import earlier_attempts_block, symptom
 from sdo.agents.responder.result_output import parse_incident_result
@@ -74,7 +75,8 @@ def execute_incident(
             model, effort = model or os.getenv(MODEL_ENV["responder"]) or None, agent_effort()
     except ValueError as exc:
         raise ResponderExecutionError(str(exc)) from exc
-    prompt = _responder_prompt(request)
+    plain = page_only.enabled()
+    prompt = page_only.prompt(request, branch_instruction("incident_result")) if plain else _responder_prompt(request)
     try:
         recovery = open_recovery(request.incident_id, selected_provider)
         resume_session_id = recovery.resume_session_id() if recovery is not None else None
@@ -85,7 +87,15 @@ def execute_incident(
     corrected_result = False
     usage: dict[str, int | float] = {}
     options = session_turn_options(selected_provider, Path(request.repository_worktree))
-    options["environment"] = {**(options.get("environment") or {}), "SDO_INCIDENT_ID": request.incident_id}
+    working_directory = request.repository_worktree
+    if plain:
+        working_directory = str(page_only.scratch_directory())
+        options["environment"] = {
+            **(options.get("environment") or {}),
+            "PATH": page_only.path_without_sdo(os.environ.get("PATH", ""), Path(working_directory) / ".bin"),
+        }
+    else:
+        options["environment"] = {**(options.get("environment") or {}), "SDO_INCIDENT_ID": request.incident_id}
     while True:
         checkpoint_directory = os.environ.get("SDO_RESPONDER_USAGE_DIR", "")
         checkpoint = (
@@ -102,7 +112,7 @@ def execute_incident(
             completed = run_structured_turn(
                 selected_provider,  # type: ignore[arg-type]
                 prompt,
-                cwd=request.repository_worktree,
+                cwd=working_directory,
                 access="danger-full-access",
                 model=model,
                 reasoning_effort=effort,
