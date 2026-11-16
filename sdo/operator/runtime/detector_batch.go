@@ -103,12 +103,12 @@ type recoveryRead struct {
 
 // readRecoveryDetectors evaluates detectors concurrently and validates each
 // result, keyed by detector ID (see evaluateDetectors).
-func readRecoveryDetectors(ctx context.Context, detectors []sdk.Detector, snapshot sdk.DetectionContext) map[string]recoveryRead {
+func readRecoveryDetectors(ctx context.Context, detectors []sdk.Detector, snapshot sdk.DetectionContext, scope recoveryScope) map[string]recoveryRead {
 	raw := evaluateDetectors(ctx, detectors, snapshot)
 	reads := make(map[string]recoveryRead, len(detectors))
 	for _, detector := range detectors {
 		id := detector.Spec().ID
-		findings, status, err := validateDetectorObservation(detector, snapshot, raw[id].findings, raw[id].err)
+		findings, status, err := validateDetectorObservation(detector, snapshot, raw[id].findings, raw[id].err, scope)
 		reads[id] = recoveryRead{findings, status, err}
 	}
 	return reads

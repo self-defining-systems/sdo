@@ -717,7 +717,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	apply := func(detector sdk.Detector, result setupDetection) error {
 		spec := detector.Spec()
 		delete(pending, spec.ID)
-		findings, status, detectErr := validateDetectorObservation(detector, snapshot, result.findings, result.err)
+		findings, status, detectErr := validateDetectorObservation(detector, snapshot, result.findings, result.err, nil)
 		if detectErr != nil {
 			c.resetGate(spec.ID)
 			c.recordDetectorError(spec.ID, now, detectErr)

@@ -342,7 +342,7 @@ re-prompts the agent. A joined alert (or a clue) that a learned playbook can bin
 (`maxMidIncidentPasses`; a symptom arriving while the first pipeline or a pass runs queues one more pass, and a pass diagnoses live detector findings, not the loop's last observation), so a playbook is judged against the fault's own symptom even when routine churn opened the incident. The verification grace
 after the responder returns never escalates an incident whose alerts are clear while the stability window is still running. Credit and symptom matching keep `opening_keys`. Clues never hold it. The controller asks it before
 closing and before marking the responder verified; the broker asks it again at freeze (a user test that has not
-passed by its horizon plus the stability window commits `unconfirmed`, `OBSERVATION_INCOMPLETE`); the stage's
+passed by its horizon plus the stability window commits `unconfirmed`, `OBSERVATION_INCOMPLETE`). That confirmation judges only the alert set: of a probe workload, only the scenarios whose findings are opening or joined alerts must have enough usable samples, and a sibling scenario that never alerted neither blocks nor counts; the stage's
 recovery wait and the claim-time check (`stageRecoveryCheck`) exit `CLEARED` on it, keep waiting while a program
 still diagnoses its fault, hand off when the stage budget ends (under `response.after_playbook: wait` the bound is `response.after_playbook_wait` and only a refuted or failed write ends the wait early), and exit `NOTHING_APPLIED` when no learned playbook
 applied. The closure and outcome carry `RecoveryVerification`: `since`, `writes_settled`, per-write settle times,
