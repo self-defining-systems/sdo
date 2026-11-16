@@ -30,8 +30,10 @@ const (
 	LimitBytes       = 4 * 1024
 	MaxConcurrent    = 4
 	MinInterval      = 30 * time.Second
-	ExecTimeout      = 3 * time.Second
-	CollectionBudget = 5 * time.Second
+	// ExecTimeout covers a kubectl-exec of a store client (psql, redis-cli) on a loaded node, which
+	// measured above 3 s; CollectionBudget leaves room for a second wave of reads (the first can use ExecTimeout).
+	ExecTimeout      = 10 * time.Second
+	CollectionBudget = 15 * time.Second
 )
 
 // Target selects Pods by role from observed objects in the application
