@@ -1,5 +1,7 @@
 package deployment
 
+//ci:scoped reads the render/helm testdata charts as fixtures
+
 import (
 	"bytes"
 	"context"

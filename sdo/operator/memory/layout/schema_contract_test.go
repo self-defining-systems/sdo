@@ -19,6 +19,8 @@ import (
 // Pin the physical path constants and serialized fields that define this edge.
 // It deliberately ignores functions and comments, so ordinary fixes don't need
 // a version bump. Semantic validation changes still require human review.
+//
+//ci:whole-tree
 func TestSchemaContractVersionAndMigration(t *testing.T) {
 	for version := 1; version <= CurrentSchemaVersion; version++ {
 		if schemaMigrations[version] == nil {

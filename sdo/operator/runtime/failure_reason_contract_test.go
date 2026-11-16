@@ -112,6 +112,7 @@ func checkFailureReason(file *ast.File, expr ast.Expr, message proto.Message) er
 	return check(expr)
 }
 
+//ci:whole-tree
 func TestFailureReasonProducersClosedEnums(t *testing.T) {
 	t.Run("forwarded-action-reports", TestActionFailureReasonsBelongToRepairReceiptContract)
 	t.Run("database", TestDatabaseFailureReasonsBelongToBothReceiptContracts)

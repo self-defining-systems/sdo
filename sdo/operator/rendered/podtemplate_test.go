@@ -95,6 +95,8 @@ func TestPodKindWithoutContainersIsRejected(t *testing.T) {
 // packages cannot import rendered (sdk, which rendered imports) or read other
 // documents than SDO's desired state (renderers, the cluster simulation, the
 // API history projection, kubectl read helpers).
+//
+//ci:whole-tree
 func TestPodTemplateTableIsTheOnlyLocator(t *testing.T) {
 	exempt := []string{"sdk", "render", "runtime/sim", "runtime/replay", "apihistory", "kubereads"}
 	root := ".."

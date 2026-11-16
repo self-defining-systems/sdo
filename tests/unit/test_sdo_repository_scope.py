@@ -5,6 +5,8 @@ import re
 import subprocess
 from pathlib import Path
 
+CI_WHOLE_TREE = True
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 LEGACY_PATTERNS = (
     re.compile(r"\bSDS\b"),

@@ -11,6 +11,8 @@ import (
 // hold must also ask whether the pod is still inside its own startup
 // (StillStarting or PodStarting); the hold alone is shorter than many
 // workloads' declared startup.
+//
+//ci:whole-tree
 func TestReadinessOpenersConsultTheStartupAllowance(t *testing.T) {
 	tokens := []string{"ReadyReplicas", "NumberReady", "ContainersReady"}
 	checked := 0

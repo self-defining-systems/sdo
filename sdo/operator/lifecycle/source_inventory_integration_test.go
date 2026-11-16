@@ -2,6 +2,8 @@
 
 package lifecycle_test
 
+//ci:scoped renders the apps/toy helm chart as a fixture
+
 import (
 	"context"
 	"io/fs"
