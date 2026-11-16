@@ -1,1 +1,1 @@
-Fill this on the incident-response turn. It is null on the reflection turn.
+Fill this on the incident-response turn, and only when you give up: ending a turn submits it. It is null on the reflection turn.
