@@ -17,7 +17,8 @@ A playbook is `.sdo/playbooks/<id>/` with `diagnose.go` and `mitigate.go`. Copy 
 - `Mitigate`: the changes that fixed it, in order, as you made them: `program.DeletePod`,
   `program.RestartRollout`, `program.SetField`; for an `sdo mitigate X`, the same
   `program.X` with the same fields.
-- A fix with no typed action (SQL, a CLI) is `program.EnsureExec`: a command in a Pod that checks, then repairs, with credentials from the container's environment. A plan that is only `program.Escalate` repairs nothing, and the check refuses it.
+- The SDK can run commands, not only restart and patch: a fix with no typed action (SQL, a CLI) is `program.EnsureExec` (check, then repair, in a Pod; credentials from the container's environment). All actions: `/opt/sdo/sdo/skills/sdo-playbook-authoring/references/sdk-card.md`. A plan that is only `program.Escalate` repairs nothing.
+- Prefer a mitigation that sets the known-good value directly over one that depends on controller history, such as a promoted baseline: a repeat may start without it.
 - Carry a source restore you ran as `program.SetField` with `program.FromSource`. Omit changes that did not help.
 - Memory is for this application and may name its own tables, resources and commands; generalize over what varies, not away from the application. A partial program beats none. No `RunScript`, no passwords.
 
