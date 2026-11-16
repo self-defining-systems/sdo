@@ -1096,7 +1096,10 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
         json.dumps({"revision": revision, "memory": memory, "compiled": devtree.fingerprint(Path.cwd())}) + "\n"
     )
     if block.seed is not None:
-        # A claim that fell back to a full build still runs on the seed's memory and settings.
+        # A claim that fell back to a full build still runs on the seed's memory and settings. The controller has not
+        # finished its start-up period yet (it is recorded once it has seen the app healthy): wait for it first.
+        if why := wait_idle(_kube(env), control_namespace(env), PREPARE_IDLE_WAIT_S):
+            raise HookError(f"the operator is not idle before the seed: {why}")
         memory = seed_lane(env, block, out)
     out(json.dumps({"pack": str(attached), "operator_version": revision, "memory": memory}))
     return 0
@@ -1740,6 +1743,7 @@ def wait_standby(kube: Kube, control: str, timeout: float) -> None:
 
 GOLDEN_DIRECTORY = "app-golden"
 RESET_IDLE_WAIT_S = 300.0
+PREPARE_IDLE_WAIT_S = 900.0
 MAINTENANCE_ACK_WAIT_S = 120.0
 
 
