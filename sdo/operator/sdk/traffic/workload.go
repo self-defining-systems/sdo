@@ -155,6 +155,12 @@ type Workload struct {
 	Timeout          Duration           `json:"timeout,omitempty"`
 	IterationTimeout Duration           `json:"iterationTimeout,omitempty"`
 	Seed             uint64             `json:"seed,omitempty"`
+	// SampleInterval is how often a health probe samples each scenario at
+	// least. Unset it is MinSampleInterval (10 s); set it within
+	// [MinSampleInterval, MaxSampleInterval] to lower probe load for many or
+	// expensive scenarios. Detection takes about minSamples intervals, so
+	// slo.maxAge defaults to cover them and must not be set shorter.
+	SampleInterval Duration `json:"sampleInterval,omitempty"`
 	SLO              SLO                `json:"slo,omitempty"`
 	Scenarios        []WorkloadScenario `json:"scenarios,omitempty"`
 	// Links, Interval and Failures configure a link-probe workload: the
@@ -188,6 +194,10 @@ func (w Workload) WithDefaults() Workload {
 	}
 	if w.RatePerSecond == 0 {
 		w.RatePerSecond = DefaultRatePerSecond
+		if w.Purpose == PurposeHealthProbe && w.SampleInterval > 0 && len(w.Scenarios) > 0 {
+			// One sample per scenario per interval: the rate the interval asks for.
+			w.RatePerSecond = float64(len(w.Scenarios)) / w.SampleInterval.Duration().Seconds()
+		}
 	}
 	if w.Timeout == 0 {
 		w.Timeout = Duration(DefaultTimeout)
@@ -233,7 +243,11 @@ func (w Workload) WithDefaults() Workload {
 		}
 	}
 	w.Links = links
+	maxAgeSet := w.SLO.MaxAge != 0
 	w.SLO = mergeSLO(defaultSLO(), w.SLO)
+	if !maxAgeSet && w.Purpose == PurposeHealthProbe && w.SampleInterval > 0 {
+		w.SLO.MaxAge = Duration(max(DefaultMaxAge, time.Duration(w.SLO.MinSamples)*w.SampleInterval.Duration()))
+	}
 	scenarios := make([]WorkloadScenario, len(w.Scenarios))
 	for index, scenario := range w.Scenarios {
 		if scenario.Weight == 0 {
@@ -287,6 +301,9 @@ func (w Workload) Validate() error {
 	}
 	if err := validateSLO(w.SLO); err != nil {
 		return fmt.Errorf("traffic workload %s: %w", w.Name, err)
+	}
+	if err := w.validateSampleInterval(); err != nil {
+		return err
 	}
 	if err := w.validateLinks(); err != nil {
 		return err
@@ -422,6 +439,30 @@ func validateSLO(slo SLO) error {
 		return fmt.Errorf("slo latencyPercentile must be in [1, 100]")
 	case slo.MaxLatency.Duration() <= 0:
 		return fmt.Errorf("slo maxLatency must be positive")
+	}
+	return nil
+}
+
+// validateSampleInterval checks SampleInterval and that every scenario's SLO
+// can still hold its minimum samples at that interval, so a longer interval
+// never leaves a scenario permanently unevaluated.
+func (w Workload) validateSampleInterval() error {
+	if w.SampleInterval == 0 {
+		return nil
+	}
+	if w.Purpose != PurposeHealthProbe {
+		return fmt.Errorf("traffic workload %s: sampleInterval applies only to a health-probe", w.Name)
+	}
+	interval := w.SampleInterval.Duration()
+	if interval < MinSampleInterval || interval > MaxSampleInterval {
+		return fmt.Errorf("traffic workload %s: sampleInterval must be in [%s, %s]", w.Name, MinSampleInterval, MaxSampleInterval)
+	}
+	for _, scenario := range w.Scenarios {
+		slo := w.ScenarioSLO(scenario.ID)
+		if need := time.Duration(slo.MinSamples) * interval; slo.MaxAge.Duration() < need {
+			return fmt.Errorf("traffic workload %s: scenario %s: slo maxAge %s cannot hold minSamples %d at sampleInterval %s; raise maxAge to at least %s",
+				w.Name, scenario.ID, slo.MaxAge.Duration(), slo.MinSamples, interval, need)
+		}
 	}
 	return nil
 }

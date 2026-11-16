@@ -13,6 +13,13 @@ const (
 	// confirm a failure within 30 s of it starting, where a weight-1 scenario
 	// sampled once a minute needed two more minutes.
 	MinSampleInterval = 10 * time.Second
+	// MaxSampleInterval bounds a workload's SampleInterval. A failure needs
+	// MinSamples samples to be confirmed, so detection takes about
+	// MinSamples times the interval and the SLO's MaxAge must span it; 120 s
+	// keeps that near six minutes, inside the 10 minute MaxAge ceiling. A
+	// probe sampled less often than that confirms outages too late to be a
+	// health signal.
+	MaxSampleInterval = 120 * time.Second
 	// ProbeRateCap is the most requests per second all continuous probes
 	// together should send when the application's own request rate is not
 	// measurable. Meeting the floor for many scenarios can exceed it; the
@@ -20,21 +27,31 @@ const (
 	ProbeRateCap = 3.0
 )
 
+// EffectiveSampleInterval is how often the workload samples each of its
+// scenarios at least: its SampleInterval, else MinSampleInterval.
+func (w Workload) EffectiveSampleInterval() time.Duration {
+	if w.SampleInterval > 0 {
+		return w.SampleInterval.Duration()
+	}
+	return MinSampleInterval
+}
+
 // SamplingPlan is how a workload's iterations are spread over its scenarios.
 type SamplingPlan struct {
 	// Rate is the iterations per second: the workload's rate, or the rate its
 	// scenarios' floor needs when that is higher.
 	Rate float64
 	// Schedule is one cycle of scenario IDs, repeated by iteration number.
-	// len(Schedule) over Rate is the cycle's duration, at most
-	// MinSampleInterval for a health probe.
+	// len(Schedule) over Rate is the cycle's duration, at most the workload's
+	// sample interval for a health probe.
 	Schedule []string
 	// Raised reports that the floor needed more than the workload's own rate.
 	Raised bool
 }
 
 // SamplingPlan builds the workload's plan. A health probe samples every
-// scenario at least once per MinSampleInterval regardless of weight: each cycle
+// scenario at least once per sample interval (MinSampleInterval unless the
+// workload sets SampleInterval) regardless of weight: each cycle
 // starts with one iteration of every scenario, and the iterations the workload's
 // rate leaves over in that interval are shared by weight. When the rate cannot
 // cover every scenario once per interval it is raised to do so. Other
@@ -51,11 +68,12 @@ func (w Workload) SamplingPlan() SamplingPlan {
 		}
 		return SamplingPlan{Rate: w.RatePerSecond, Schedule: weightedCycle(scenarios, total)}
 	}
-	slots := int(math.Floor(w.RatePerSecond*MinSampleInterval.Seconds() + 1e-9))
+	interval := w.EffectiveSampleInterval()
+	slots := int(math.Floor(w.RatePerSecond*interval.Seconds() + 1e-9))
 	plan := SamplingPlan{Rate: w.RatePerSecond}
 	if slots < len(scenarios) {
 		slots = len(scenarios)
-		plan.Rate = float64(len(scenarios)) / MinSampleInterval.Seconds()
+		plan.Rate = float64(len(scenarios)) / interval.Seconds()
 		plan.Raised = true
 	}
 	for _, scenario := range scenarios {

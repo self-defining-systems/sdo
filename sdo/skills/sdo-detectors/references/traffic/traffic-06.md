@@ -159,19 +159,25 @@ type WindowSet interface {
     a source without traffic returns an empty map.
 
 type Workload struct {
-	APIVersion       string             `json:"apiVersion"`
-	Kind             string             `json:"kind"`
-	Name             string             `json:"name"`
-	Description      string             `json:"description,omitempty"`
-	Purpose          Purpose            `json:"purpose"`
-	Arrival          Arrival            `json:"arrival,omitempty"`
-	RatePerSecond    float64            `json:"ratePerSecond,omitempty"`
-	Duration         Duration           `json:"duration,omitempty"`
-	Timeout          Duration           `json:"timeout,omitempty"`
-	IterationTimeout Duration           `json:"iterationTimeout,omitempty"`
-	Seed             uint64             `json:"seed,omitempty"`
-	SLO              SLO                `json:"slo,omitempty"`
-	Scenarios        []WorkloadScenario `json:"scenarios,omitempty"`
+	APIVersion       string   `json:"apiVersion"`
+	Kind             string   `json:"kind"`
+	Name             string   `json:"name"`
+	Description      string   `json:"description,omitempty"`
+	Purpose          Purpose  `json:"purpose"`
+	Arrival          Arrival  `json:"arrival,omitempty"`
+	RatePerSecond    float64  `json:"ratePerSecond,omitempty"`
+	Duration         Duration `json:"duration,omitempty"`
+	Timeout          Duration `json:"timeout,omitempty"`
+	IterationTimeout Duration `json:"iterationTimeout,omitempty"`
+	Seed             uint64   `json:"seed,omitempty"`
+	// SampleInterval is how often a health probe samples each scenario at
+	// least. Unset it is MinSampleInterval (10 s); set it within
+	// [MinSampleInterval, MaxSampleInterval] to lower probe load for many or
+	// expensive scenarios. Detection takes about minSamples intervals, so
+	// slo.maxAge defaults to cover them and must not be set shorter.
+	SampleInterval Duration           `json:"sampleInterval,omitempty"`
+	SLO            SLO                `json:"slo,omitempty"`
+	Scenarios      []WorkloadScenario `json:"scenarios,omitempty"`
 	// Links, Interval and Failures configure a link-probe workload: the
 	// dependency edges to dial afresh, how often, and how many consecutive
 	// failed dials report an edge.
@@ -195,16 +201,21 @@ func (w Workload) DetectionHorizon() time.Duration
     for a raise must wait at least this long, or a probe that works reads as one
     that does not. It is zero for a workload that is not a health probe.
 
+func (w Workload) EffectiveSampleInterval() time.Duration
+    EffectiveSampleInterval is how often the workload samples each of its
+    scenarios at least: its SampleInterval, else MinSampleInterval.
+
 func (w Workload) KnownBrokenScenario(id string) *KnownBroken
     KnownBrokenScenario returns the KnownBroken declaration of scenario id,
     or nil when the scenario gates health.
 
 func (w Workload) SamplingPlan() SamplingPlan
     SamplingPlan builds the workload's plan. A health probe samples every
-    scenario at least once per MinSampleInterval regardless of weight: each
-    cycle starts with one iteration of every scenario, and the iterations the
-    workload's rate leaves over in that interval are shared by weight. When the
-    rate cannot cover every scenario once per interval it is raised to do so.
+    scenario at least once per sample interval (MinSampleInterval unless the
+    workload sets SampleInterval) regardless of weight: each cycle starts
+    with one iteration of every scenario, and the iterations the workload's
+    rate leaves over in that interval are shared by weight. When the rate
+    cannot cover every scenario once per interval it is raised to do so.
     Other workloads (bursts, journeys) follow their weights only.
 
 func (w Workload) ScenarioArrival(id string) time.Duration

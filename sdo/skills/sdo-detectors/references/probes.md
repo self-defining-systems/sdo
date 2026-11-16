@@ -99,6 +99,7 @@ touched the affected records.
 Without a delete or overwrite route, keep every write on the fixed test identity, declare
 `SideEffectIdempotentWrite`, use the lowest rate that fills the window, and record the growth under
 `Probe costs` in the health-objective playbook.
+Probe load is harm: for numerous or expensive scenarios, lengthen the workload's `sampleInterval` (30 s to 120 s).
 
 ## Identities and sessions
 

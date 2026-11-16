@@ -174,8 +174,8 @@ type SamplingPlan struct {
 	// scenarios' floor needs when that is higher.
 	Rate float64
 	// Schedule is one cycle of scenario IDs, repeated by iteration number.
-	// len(Schedule) over Rate is the cycle's duration, at most
-	// MinSampleInterval for a health probe.
+	// len(Schedule) over Rate is the cycle's duration, at most the workload's
+	// sample interval for a health probe.
 	Schedule []string
 	// Raised reports that the floor needed more than the workload's own rate.
 	Raised bool
