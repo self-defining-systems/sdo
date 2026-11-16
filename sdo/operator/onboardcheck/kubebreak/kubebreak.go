@@ -298,3 +298,8 @@ func (b *Breaker) awaitReady(ctx context.Context, name string, w *workload) erro
 		}
 	}
 }
+
+// IsBreakPolicy reports whether a NetworkPolicy name is one a break of this
+// package creates (a component's deny-ingress policy or a worker's egress
+// policy): they exist only while a break runs.
+func IsBreakPolicy(name string) bool { return strings.HasPrefix(name, policyPrefix) }

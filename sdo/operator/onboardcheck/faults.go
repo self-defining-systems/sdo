@@ -111,7 +111,7 @@ func reportFault(report *Report, f Fault, out *breakOutcome, ids []string, bound
 				first, op = h, id
 			}
 		}
-		report.add(ItemBreak, subject, Green, fmt.Sprintf("%s: %s noticed after %s, naming %s: %s%s", out.how, first.raise.DetectorID, first.after.Round(time.Second), op, clip(first.raise.Summary, 200), signalNote(out, op)))
+		report.add(ItemBreak, subject, Green, fmt.Sprintf("%s: %s noticed after %s, naming %s: %s%s", out.how, first.raise.DetectorID, first.after.Round(time.Second), op, clip(first.raise.Summary, 200), signalNote(out, op)+reusedSuffix(out)))
 	default:
 		report.add(ItemBreak, subject, Red, fmt.Sprintf("%s: no detector named %s or its test scenarios within %s%s; every component stayed up, so only a test or request metric of the operation can catch this", out.how, strings.Join(ids, ", "), bound, otherRaises(out)))
 	}

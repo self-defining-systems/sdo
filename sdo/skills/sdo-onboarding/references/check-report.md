@@ -59,3 +59,7 @@ How to read a red item:
 
 What green does not prove: a perturbation shows a probe can fail, not that it catches a wrong answer. Each
 operation's `correct` note and an independent review of each probe cover content.
+
+## Incremental runs
+
+A check without `--full` records each green break (component or generic) and each detector that judged the healthy application quiet, under a key of the inputs that decide it, in the user cache directory (`--cache-dir`). A later run re-breaks only components whose key changed (map entries of the operations through them, their probes and workloads, detectors naming them or what is on their paths, the deployed pod templates on those paths with the ConfigMaps they reference by content and the Secrets by resourceVersion only) and labels the others `(reused from HH:MM PT)`; an operation line that rests on one says `includes a break reused from ...`. Unchanged detectors need one judgement past their horizon instead of three; any raise is red. Red or failed items are always judged again. The report says `mode: incremental` and is never clean; `--full` judges everything and is the gate.

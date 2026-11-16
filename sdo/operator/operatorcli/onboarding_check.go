@@ -38,7 +38,7 @@ import (
 const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --namespace NS --prometheus URL|NS/SERVICE:PORT
                                     [--kubeconfig FILE] [--context NAME] [--requests 5]
                                     [--settle 90s] [--json] [--report FILE]
-                                    [--quick] [--quiet-window 10m] [--quiet-interval 1m] [--quiet-evaluations 3]
+                                    [--quick] [--full] [--cache-dir DIR] [--quiet-window 10m] [--quiet-interval 1m] [--quiet-evaluations 3]
                                     [--break] [--break-bound 60s] [--break-mode auto|scale|network]
                                     [--cluster-network] [--operator-root DIR] [--telemetry-environment FILE] [--settings FILE]
 
@@ -51,6 +51,22 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
          least once. It never runs --break and its report is never clean (it
          says "mode: quick"); exit 0 means no red item. The full check is the
          gate for "clean".
+         Within a session a check is incremental: a green break (component or
+         generic) and a detector that judged quiet are recorded under a key of
+         what decides them (the map entries, probes, detector files and deployed
+         pod templates on the operations' paths, with the content of the
+         ConfigMaps and the resourceVersion of the Secrets they reference;
+         Secret values are never read) in --cache-dir (default: the
+         user cache, one file per repository and namespace). A rerun breaks only
+         the items whose key changed, takes the rest labelled "reused from TIME"
+         (Seattle time), and asks one judgement of unchanged detectors; red and
+         failed verdicts are always judged again. Such a report says "mode:
+         incremental" and is never clean. --full ignores the record and judges
+         everything: the gate for "clean" (and what acceptance must run).
+         Limits of reuse: a key covers the operations through a component, so
+         a missing edge (an operation or probe that really depends on a
+         component but does not list it) is found only by a fresh break, and
+         image tags are not resolved to digests; neither can reach the gate.
          The quiet window ends as soon as every detector has judged
          --quiet-evaluations (3) times past its own clearing horizon; the derived
          length is printed when the first verdict arrives, and --quiet-window
@@ -266,6 +282,8 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	asJSON := flags.Bool("json", false, "print the report as JSON")
 	reportFile := flags.String("report", "", "also write the report to this file")
 	quietWindow := flags.Duration("quiet-window", 10*time.Minute, "quiet-when-healthy window; 0 skips the item")
+	full := flags.Bool("full", false, "ignore the session's recorded verdicts and judge every item again (the gate); without it, a break or detector whose inputs are unchanged since a clean run is reused and labelled, and the report is incremental, never clean")
+	cacheDir := flags.String("cache-dir", "", "where the session's recorded verdicts are kept (default: the user cache directory), one file per repository and namespace")
 	quick := flags.Bool("quick", false, "fast iteration: the metric items and a short detector smoke; never clean, never breaks")
 	quietEvaluations := flags.Int("quiet-evaluations", onboardcheck.DefaultQuietEvaluations, "judgements each detector must make past its own horizon for the quiet window to end")
 	quietInterval := flags.Duration("quiet-interval", time.Minute, "wait between detector evaluations in the quiet window")
@@ -344,6 +362,7 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 		Now: processio.Now, Quick: *quick,
 		Progress: func(line string) { fmt.Fprintln(os.Stderr, processio.Now().Format("15:04:05"), line) },
 	}
+	saveCache := func() {}
 	var paused [2]onboardcheck.HarmSample
 	pausedWindow := make(chan error, 1)
 	if *harmWindow > 0 && *quietWindow > 0 {
@@ -377,6 +396,30 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 		lazy := &lazyWatch{prepared: prepared, ctx: ctx}
 		defer lazy.Close()
 		eval := detectorEvaluator{lazy: lazy}
+		var inputs onboardcheck.Inputs
+		var cache *onboardcheck.Cache
+		cachePath := ""
+		if !*quick {
+			files, err := diagnosticsFiles(tree)
+			if err != nil {
+				return 0, fmt.Errorf("read the memory's diagnostics: %w", err)
+			}
+			identity := clusterIdentity(ctx, cluster, *namespace)
+			if cachePath, err = checkCachePath(*cacheDir, *repo, *namespace, identity+"|"+*promTarget); err == nil {
+				cache = loadCheckCache(cachePath)
+			}
+			inputs = onboardcheck.Inputs{Map: m, Files: files, Deploy: deployFingerprints(ctx, cluster, *namespace, m),
+				Salt: checkSalt(identity, *promTarget, *kubeContext, sourceIdentity(ctx, *operatorRoot),
+					fmt.Sprint(*breakBound), *breakMode, fileDigest(*settingsFile), fileDigest(*telemetryEnv), fmt.Sprint(*clusterNetwork),
+					fmt.Sprint(*requests), fmt.Sprint(*settle), fmt.Sprint(*quietWindow), fmt.Sprint(*quietInterval), fmt.Sprint(*quietEvaluations), fmt.Sprint(*harmWindow))}
+			saveCache = func() {
+				if cache != nil && cachePath != "" {
+					if err := saveCheckCache(cachePath, cache); err != nil {
+						fmt.Fprintln(os.Stderr, "could not record the session's verdicts:", err)
+					}
+				}
+			}
+		}
 		if *harmWindow > 0 && *quietWindow > 0 && !config.NoDetectors {
 			// The probes have not started: this is the application without them.
 			if err := <-pausedWindow; err != nil {
@@ -386,6 +429,9 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 		}
 		if *quietWindow > 0 {
 			config.Quiet = &onboardcheck.QuietConfig{Eval: eval, Window: *quietWindow, Interval: *quietInterval, Evaluations: *quietEvaluations}
+			if cache != nil {
+				config.Quiet.Cache, config.Quiet.Reuse, config.Quiet.DetectorKey = cache, !*full, inputs.MemoDetectorKey()
+			}
 		}
 		if *breakItem {
 			// Wait for the memory's own tests to judge a failure: their sampling
@@ -397,12 +443,16 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 				return 0, err
 			}
 			config.Break = &onboardcheck.BreakConfig{Eval: eval, Breaker: breaker, Bound: bound, Horizon: horizon, Interval: 5 * time.Second, Faults: genericFaults(m, breaker, cluster)}
+			if cache != nil {
+				config.Break.Cache, config.Break.Reuse, config.Break.Keys = cache, !*full, inputs.BreakKeys(config.Break.Faults)
+			}
 		}
 	}
 	report, err := onboardcheck.Run(ctx, config)
 	if err != nil {
 		return 0, err
 	}
+	saveCache()
 	var rendered string
 	if *asJSON {
 		encoded, err := json.MarshalIndent(report, "", "  ")
