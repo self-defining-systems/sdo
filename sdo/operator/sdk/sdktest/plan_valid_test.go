@@ -100,16 +100,21 @@ func escalatePlan() program.Plan {
 	return program.Plan{Actions: []program.Action{program.Escalate{Reason: "run the DDL by hand"}}}
 }
 
-// A sole Escalate under an in-scope diagnosis cannot repair a repeat: the automatic stage records it FAILED and the
-// responder runs again. The check refuses it unless the diagnosis says only a human can fix the cause.
-func TestCheckPlanValidRefusesASoleEscalateUnderAnInScopeDiagnosis(t *testing.T) {
+// A sole Escalate under an in-scope diagnosis is a legal partial playbook, reported as an unverified-plan note.
+func TestSoleEscalateUnderAnInScopeDiagnosisIsANoteNotAFailure(t *testing.T) {
+	dir := t.TempDir()
+	raw, _ := json.Marshal(Snapshot{NamespaceName: "app"})
+	if err := os.WriteFile(filepath.Join(dir, "open@detect.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for _, reach := range []string{"", program.ReachInScope} {
-		err := CheckPlanValid(escalatingProgram{planMitigator{plan: escalatePlan()}, reach}, CorpusCase{})
-		if err == nil || !strings.Contains(err.Error(), "program.escalate-only") || !strings.Contains(err.Error(), "EnsureExec") {
-			t.Fatalf("reach %q: %v", reach, err)
+		unverified, err := CheckPlansOnIncident(escalatingProgram{planMitigator{plan: escalatePlan()}, reach}, dir)
+		if err != nil || len(unverified) != 1 || !strings.Contains(unverified[0], "EnsureExec") {
+			t.Fatalf("reach %q: %v, %v", reach, unverified, err)
 		}
 	}
-	if err := CheckPlanValid(escalatingProgram{planMitigator{plan: escalatePlan()}, program.ReachOutOfReach}, CorpusCase{}); err != nil {
-		t.Fatalf("out-of-reach escalation is legitimate: %v", err)
+	unverified, err := CheckPlansOnIncident(escalatingProgram{planMitigator{plan: escalatePlan()}, program.ReachOutOfReach}, dir)
+	if err != nil || len(unverified) != 0 {
+		t.Fatalf("out-of-reach escalation needs no note: %v, %v", unverified, err)
 	}
 }
