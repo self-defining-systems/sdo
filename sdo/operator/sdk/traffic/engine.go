@@ -88,8 +88,22 @@ type Sample struct {
 	// on an iteration that passed: exercised, own-only or empty. It is an
 	// operability note, never a failure: a fresh install has no user data.
 	ExistingRecords string `json:"existingRecords,omitempty"`
-	CleanupError    string `json:"cleanupError,omitempty"`
+	// Convergence says, for each step that answered NotYet, how many attempts
+	// it took and for how long, whether it passed or ran out of time.
+	Convergence  []Convergence `json:"convergence,omitempty"`
+	CleanupError string        `json:"cleanupError,omitempty"`
 }
+
+// Convergence is how a step that answered NotYet went in a sample.
+type Convergence struct {
+	Step      string        `json:"step"`
+	Attempts  int           `json:"attempts"`
+	Took      time.Duration `json:"took"`
+	Converged bool          `json:"converged"`
+}
+
+// pendingPause is how long the engine waits before sending a pending step again.
+const pendingPause = 250 * time.Millisecond
 
 // Doer sends HTTP requests; *http.Client satisfies it.
 type Doer interface {
@@ -303,11 +317,18 @@ func (e *Engine) Rand(iteration uint64) *rand.Rand {
 }
 
 // Plan builds, without sending, the requests of iteration assuming every
-// step succeeds without saving state. It is meant for replay and review.
+// step succeeds without saving state, as if it started now. It is meant for
+// review; replay uses PlanAt with the failing sample's At.
 func (e *Engine) Plan(ctx context.Context, iteration uint64) ([]Request, error) {
+	return e.PlanAt(ctx, iteration, e.clock.Now())
+}
+
+// PlanAt is Plan for an iteration that started at at (a sample's At), so the
+// requests that depend on the iteration's time are the ones it sent.
+func (e *Engine) PlanAt(ctx context.Context, iteration uint64, at time.Time) ([]Request, error) {
 	scenario := e.ScenarioAt(iteration)
 	rng := e.Rand(iteration)
-	state := State{}
+	state := State{StateNow: at.UTC().Format(time.RFC3339)}
 	for _, u := range scenario.Users {
 		state[u.As] = passwordPlaceholder
 		if u.SSHKey != "" {
@@ -342,6 +363,9 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 	rng := e.Rand(iteration)
 	state := State{}
 	sample := Sample{At: e.clock.Now().UTC(), Iteration: iteration, Outcome: OutcomeOK}
+	// The iteration's time is State, recorded as sample.At, so Build never
+	// reads a clock and a replay with that time builds the same requests.
+	state[StateNow] = sample.At.Format(time.RFC3339)
 	iterationCtx, cancel := e.withTimeout(ctx, e.workload.IterationTimeout.Duration())
 	defer cancel()
 	passwords, keys, err := e.userState(iterationCtx, scenario)
@@ -369,9 +393,11 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 			state[key] = value
 		}
 	}
+	state[StateNow] = sample.At.Format(time.RFC3339)
 	started := e.clock.Now()
+	deadline := sample.At.Add(e.workload.IterationTimeout.Duration())
 	for _, step := range scenario.Steps {
-		result := e.step(iterationCtx, scenario, step, rng, state, passwords, phaseStep)
+		result := e.untilNotPending(iterationCtx, scenario, step, rng, state, passwords, deadline)
 		sample.record(result)
 		if result.outcome != OutcomeOK {
 			sample.Outcome, sample.Step, sample.Request, sample.Error = result.outcome, step.Name, result.request, result.err
@@ -449,6 +475,7 @@ func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, s
 // saved, unless a concurrent iteration already recorded at least as many.
 func (r *setupRecord) advance(scenario Scenario, done int, saved State) {
 	kept := saved.clone()
+	delete(kept, StateNow)
 	for _, u := range scenario.Users {
 		delete(kept, u.As)
 		delete(kept, u.SSHKey)
@@ -472,11 +499,18 @@ type stepResult struct {
 	dial     bool
 	defect   string
 	byteCap  int
+	// pending is set when the step's check answered NotYet.
+	pending bool
+	// converge is set for a step that answered NotYet at least once.
+	converge *Convergence
 }
 
 // record adds a step's request count and last answer to the sample.
 func (sample *Sample) record(result stepResult) {
 	sample.Requests += result.sent
+	if result.converge != nil {
+		sample.Convergence = append(sample.Convergence, *result.converge)
+	}
 	switch {
 	case result.exit != nil:
 		exit := *result.exit
@@ -529,6 +563,7 @@ func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *ra
 					saved[k] = v
 				}
 			}
+			delete(saved, StateNow)
 			for _, u := range scenario.Users {
 				delete(saved, u.As)
 				delete(saved, u.SSHKey)
@@ -539,6 +574,48 @@ func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *ra
 		return result
 	}
 	return e.send(ctx, scenario, step, target, request, state, passwords, line)
+}
+
+// untilNotPending runs a step of Steps; while its check answers NotYet it
+// builds and sends the step again, after a short pause, on a copy of state
+// (only the last attempt's changes are kept), until the step passes or fails or
+// the iteration deadline passes, which fails it with the last reason.
+func (e *Engine) untilNotPending(ctx context.Context, scenario Scenario, step Step, rng *rand.Rand, state State, passwords State, deadline time.Time) stepResult {
+	started := e.clock.Now()
+	attempts, sent := 0, 0
+	var result stepResult
+	for {
+		attempts++
+		attempt := state.clone()
+		result = e.step(ctx, scenario, step, rng, attempt, passwords, phaseStep)
+		sent += result.sent
+		if !result.pending {
+			if result.outcome == OutcomeOK {
+				for key, value := range attempt {
+					state[key] = value
+				}
+			}
+			break
+		}
+		if remaining := deadline.Sub(e.clock.Now()); remaining <= 0 || ctx.Err() != nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+		case <-e.clock.After(pendingPause):
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	result.sent = sent
+	if attempts > 1 || result.pending {
+		result.converge = &Convergence{Step: step.Name, Attempts: attempts, Took: e.since(started), Converged: result.outcome == OutcomeOK}
+	}
+	if result.pending {
+		result.err = fmt.Sprintf("%s (still not there after %d attempts over %s)", result.err, attempts, result.converge.Took.Round(time.Millisecond))
+	}
+	return result
 }
 
 // send runs one built request and judges its answer.
@@ -589,7 +666,7 @@ func (e *Engine) send(ctx context.Context, scenario Scenario, step Step, target 
 		if strings.TrimSpace(reason) == "" {
 			reason = fmt.Sprintf("HTTP %d rejected by check", response.StatusCode)
 		}
-		return stepResult{outcome: OutcomeError, status: response.StatusCode, sent: 1, request: line, err: reason, observed: observedExcerpt(body, response.StatusCode, "")}
+		return stepResult{outcome: OutcomeError, status: response.StatusCode, sent: 1, request: line, err: reason, observed: observedExcerpt(body, response.StatusCode, ""), pending: verdict.Pending}
 	}
 	return stepResult{outcome: OutcomeOK, status: response.StatusCode, sent: 1, request: line}
 }

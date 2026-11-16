@@ -193,6 +193,12 @@ const RuleIDPrefix = "scenario-slo."
     RuleIDPrefix prefixes the rule ID of each scenario finding
     ("scenario-slo.<id>").
 
+const StateNow = "sdo.now"
+    StateNow is the State key holding the start time of the iteration, RFC
+    3339 in UTC. The engine sets it and records the same instant as Sample.At,
+    so replaying an iteration with that time rebuilds the same requests.
+    Build reads the time from here and never from a clock.
+
 
 VARIABLES
 

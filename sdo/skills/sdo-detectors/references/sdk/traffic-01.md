@@ -42,6 +42,7 @@ const MaxKnownBrokenReason = 200
 const MaxLinkExcerpt = 256
 const MethodExec = "EXEC"
 const RuleIDPrefix = "scenario-slo."
+const StateNow = "sdo.now"
 var RequiredFaultClasses = []FaultClass{ ... }
 var Watch = sdk.WatchKind{ ... }
 func BuildHTTPRequest(ctx context.Context, baseURL string, request Request) (*http.Request, error)
@@ -63,6 +64,7 @@ type Catalog []Scenario
 type Clock interface{ ... }
     var RealClock Clock = realClock{}
 type Consumer interface{ ... }
+type Convergence struct{ ... }
 type Descriptor struct{ ... }
 type Doer interface{ ... }
 type Duration time.Duration
@@ -140,6 +142,7 @@ type Step struct{ ... }
 type Target struct{ ... }
 type Verdict struct{ ... }
     func Fail(format string, args ...any) Verdict
+    func NotYet(format string, args ...any) Verdict
     func Pass() Verdict
 type Window struct{ ... }
     func WindowFrom(ctx sdk.DetectionContext, workload string) (Window, bool)

@@ -101,6 +101,14 @@ type Consumer interface {
     controller runtime asks the prober for exactly the workloads its detectors
     consume.
 
+type Convergence struct {
+	Step      string        `json:"step"`
+	Attempts  int           `json:"attempts"`
+	Took      time.Duration `json:"took"`
+	Converged bool          `json:"converged"`
+}
+    Convergence is how a step that answered NotYet went in a sample.
+
 type Descriptor struct {
 	ID          string       `json:"id"`
 	Description string       `json:"description,omitempty"`
@@ -167,7 +175,12 @@ func (e *Engine) IterationOf(scenario string, from uint64) (uint64, bool)
 
 func (e *Engine) Plan(ctx context.Context, iteration uint64) ([]Request, error)
     Plan builds, without sending, the requests of iteration assuming every step
-    succeeds without saving state. It is meant for replay and review.
+    succeeds without saving state, as if it started now. It is meant for review;
+    replay uses PlanAt with the failing sample's At.
+
+func (e *Engine) PlanAt(ctx context.Context, iteration uint64, at time.Time) ([]Request, error)
+    PlanAt is Plan for an iteration that started at at (a sample's At), so the
+    requests that depend on the iteration's time are the ones it sent.
 
 func (e *Engine) Rand(iteration uint64) *rand.Rand
     Rand is the random source of iteration: the same workload seed and iteration
@@ -210,25 +223,4 @@ func (e *Engine) UseSetupLock(l SetupLocker)
 
 func (e *Engine) Workload() Workload
     Workload returns the engine's workload with defaults applied.
-
-type Exec struct {
-	// Address is host:port of the target Service.
-	Address string
-	// Login is the target's SSH User.
-	Login     string
-	ProbeUser string
-	Command   string
-	Stdin     string
-}
-    Exec is one command the engine asks the prober's SSH transport to run.
-    ProbeUser names the probe user whose key signs the session; the engine never
-    holds the private key.
-
-type ExecResult struct {
-	Exit   int
-	Stdout []byte
-	Stderr string
-}
-    ExecResult is a finished command: its exit status, standard output (at most
-    MaxResponseBody bytes) and standard error (at most MaxExecStderr bytes).
 ```
