@@ -128,19 +128,26 @@ func (r *applyRun) keptImages(ctx context.Context, object rendered.DesiredObject
 	buffer.WriteString("---\n")
 	buffer.Write(encoded)
 	unchanged, err := adopter.TemplateUnchanged(ctx, object.Ref, buffer.Bytes())
-	if err != nil || !unchanged {
+	if err != nil {
+		slog.Warn("deploy_adoption_dry_run_failed", "workload", object.Ref.Kind+"/"+object.Ref.Name, "error", err)
+		return nil
+	}
+	if !unchanged {
+		slog.Info("deploy_adoption_template_changes", "workload", object.Ref.Kind+"/"+object.Ref.Name)
 		return nil
 	}
 	return kept
 }
 
+// copyDocument deep-copies through the encoding the apply itself uses, so the
+// dry run sees the same scalars (integers stay integers) the apply sends.
 func copyDocument(document map[string]any) (map[string]any, error) {
-	data, err := json.Marshal(document)
+	data, err := yaml.Marshal(document)
 	if err != nil {
 		return nil, err
 	}
 	var out map[string]any
-	return out, json.Unmarshal(data, &out)
+	return out, yaml.Unmarshal(data, &out)
 }
 
 // liveForm is what an observation of the workload reports for a recorded image:

@@ -19,6 +19,7 @@ type adoptFake struct {
 	live      LiveImages
 	liveErr   error
 	unchanged bool
+	dryRunErr error
 	probed    []string
 }
 
@@ -28,7 +29,7 @@ func (a *adoptFake) LiveImages(context.Context, sdk.ObjectRef) (LiveImages, erro
 
 func (a *adoptFake) TemplateUnchanged(_ context.Context, _ sdk.ObjectRef, document []byte) (bool, error) {
 	a.probed = append(a.probed, string(document))
-	return a.unchanged, nil
+	return a.unchanged, a.dryRunErr
 }
 
 func (a *adoptFake) Observe(ctx context.Context, id string) (WorkloadObservation, error) {
@@ -136,8 +137,10 @@ func TestAdoptionPinsWhenTheTemplateChangesForAnotherReason(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(applied, ",") == "busybox:1,web:1,web:1" || strings.Contains(strings.Join(applied, ","), ":1,") {
-		t.Fatalf("applied = %v, want the pins when the template rolls anyway", applied)
+	for _, image := range applied {
+		if !strings.Contains(image, "@sha256:") {
+			t.Fatalf("applied = %v, want the pins when the template rolls anyway", applied)
+		}
 	}
 	for _, image := range containers {
 		if image.Live != "" {
@@ -212,5 +215,36 @@ func TestCommandBackendReportsRunningPodDigestsAndTemplateEquality(t *testing.T)
 	dryRun = deployment
 	if same, err := backend.TemplateUnchanged(context.Background(), ref, []byte("---\nkind: Deployment\n")); err != nil || !same {
 		t.Fatalf("TemplateUnchanged with the same template = %v, %v", same, err)
+	}
+}
+
+func TestAdoptionPinsWhenOneRunningPodRunsAnotherDigest(t *testing.T) {
+	fake := &adoptFake{clusterFake: &clusterFake{}, live: adoptLive(imagesrctest.Digest("web:1")), unchanged: true}
+	fake.live.Containers[ContainerSite{Name: "web"}] = LiveContainer{Image: "web:1", Digests: []string{imagesrctest.Digest("web:1"), imagesrctest.Digest("web:old")}}
+	_, _, applied, err := adoptDeploy(t, fake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, image := range applied {
+		if !strings.Contains(image, "@sha256:") {
+			t.Fatalf("applied = %v, want every image pinned while a pod runs another digest", applied)
+		}
+	}
+}
+
+func TestAdoptionPinsWithNoRunningPodsOrAFailedDryRun(t *testing.T) {
+	for name, fake := range map[string]*adoptFake{
+		"no pods":        {clusterFake: &clusterFake{}, live: LiveImages{Found: true, Containers: map[ContainerSite]LiveContainer{{Name: "web"}: {Image: "web:1"}}}, unchanged: true},
+		"dry run failed": {clusterFake: &clusterFake{}, live: adoptLive(imagesrctest.Digest("web:1")), dryRunErr: errors.New("boom")},
+	} {
+		_, _, applied, err := adoptDeploy(t, fake)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for _, image := range applied {
+			if !strings.Contains(image, "@sha256:") {
+				t.Fatalf("%s: applied = %v, want every image pinned", name, applied)
+			}
+		}
 	}
 }
