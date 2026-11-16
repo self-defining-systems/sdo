@@ -395,3 +395,13 @@ def test_a_closing_turn_go_skipped_is_not_an_agent_run() -> None:
     ledger["reflection_results"] = [{"learning_decision": "updated", "usage": {"llm_calls": "3"}}]
     assert sink.agents_ran(ledger)
     assert sink.closing_turn_ran(ledger)
+
+
+def test_a_responder_less_close_with_no_session_is_not_an_agent_run() -> None:
+    ledger = {
+        "closure": {"result": {"resolution_path": "deterministic"}},
+        "outcome_document": {"resolution_path": "deterministic", "usage": {}},
+        "reflection_dispatch_at": "2026-01-01T00:00:00Z",
+        "reflection_results": [{"learning_decision": "no_change", "no_change_reason": "no_session"}],
+    }
+    assert not sink.agents_ran(ledger)

@@ -290,10 +290,11 @@ def _used(usage: Any) -> bool:
 
 
 #: ``no_change_reason`` values Go sets without starting a closing turn (``runtime/closing_turn.go``
-#: ``closingSkipReason``, ``runtime/native_broker.go`` covered-repeat shortcut and ``no_session``). Such a decision with no usage is a skipped turn: no session,
-#: no ``reflection-usage.jsonl``, a ``reflection_without_commit`` stamp a fraction of a second after the dispatch stamp.
+#: ``closingSkipReason``, ``runtime/native_broker.go`` covered-repeat shortcut and ``no_session``). Such a decision
+#: with no usage is a skipped turn: no session, no ``reflection-usage.jsonl``, a ``reflection_without_commit`` stamp a
+#: fraction of a second after the dispatch stamp.
 _TURN_SKIPPED = frozenset(
-    {"closing_turn_nothing_to_script", "escalated_no_learning", "accepted_programs_no_new_evidence"}
+    {"closing_turn_nothing_to_script", "escalated_no_learning", "accepted_programs_no_new_evidence", "no_session"}
 )
 
 
