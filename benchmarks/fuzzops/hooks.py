@@ -296,6 +296,12 @@ def baseline_problem(baseline: Baseline, namespace: str) -> str:
 
 #: What ``prepare`` leaves in the lane directory for ``swap``: the revision the lane runs and its memory commit.
 PREPARED_RECORD = "prepared.json"
+#: The first time the idle verb saw only unpromoted store baselines hold the lane, and the note left when the wait gave up.
+BASELINE_WAIT_RECORD = "baseline-wait.json"
+BASELINE_MISSING_RECORD = "no-baseline.json"
+#: How long the pre-inject gate waits for promoted store baselines before injecting without them.
+BASELINE_WAIT_MAX_S = 600.0
+BASELINE_BLIND = "blind: no promoted baseline yet for "
 #: The projected sources under the lane's evidence directory (``devtree``).
 DEV_DIRECTORY = ".dev"
 
@@ -1226,12 +1232,59 @@ def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
             out(f"error: controller log read failed: {exc}")
             return 1
         why = idle_verdict(state, updated, ready, datetime.now(UTC), controller_log=log)
+        if why.startswith(BASELINE_BLIND) and baseline_wait_expired(env, why):
+            why = ""
     if why:
         out(why)
         return 1
+    clear_baseline_wait(env)
     record_prepared_state(env, kube, control)
     out("idle")
     return 0
+
+
+def baseline_wait_expired(env: Mapping[str, str], why: str, now: datetime | None = None) -> bool:
+    """Whether the pre-inject gate has waited ``BASELINE_WAIT_MAX_S`` for store baselines. The first hold is
+    recorded in the lane directory; once the bound passes, the missing stores are noted (``no-baseline.json``, also in
+    ``BENCH_OUT``) and the gate lets the inject go, so a memory whose baselines never promote does not stall forever."""
+    lane = env.get("BENCH_LANE_DIR")
+    if not lane:
+        return False
+    now = now or datetime.now(UTC)
+    path = Path(lane) / BASELINE_WAIT_RECORD
+    try:
+        since = _parse_time(json.loads(path.read_text()).get("since"))
+    except (OSError, ValueError, AttributeError):
+        since = None
+    if since is None:
+        path.write_text(json.dumps({"since": now.strftime("%Y-%m-%dT%H:%M:%SZ")}) + "\n")
+        return False
+    if (now - since).total_seconds() < BASELINE_WAIT_MAX_S:
+        return False
+    note = (
+        json.dumps(
+            {
+                "since": since.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "gave_up": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "reason": why,
+            }
+        )
+        + "\n"
+    )
+    (Path(lane) / BASELINE_MISSING_RECORD).write_text(note)
+    if env.get("BENCH_OUT"):
+        try:
+            Path(env["BENCH_OUT"]).mkdir(parents=True, exist_ok=True)
+            (Path(env["BENCH_OUT"]) / BASELINE_MISSING_RECORD).write_text(note)
+        except OSError:
+            pass
+    return True
+
+
+def clear_baseline_wait(env: Mapping[str, str]) -> None:
+    lane = env.get("BENCH_LANE_DIR")
+    if lane:
+        (Path(lane) / BASELINE_WAIT_RECORD).unlink(missing_ok=True)
 
 
 def record_prepared_state(env: Mapping[str, str], kube: Kube, control: str) -> None:
