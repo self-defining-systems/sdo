@@ -273,3 +273,39 @@ func TestAnErroringUnrelatedDetectorDoesNotBlockStoreBaselinePromotion(t *testin
 		t.Fatalf("baseline after a settled healthy stretch = %v, want one promoted reading", got)
 	}
 }
+
+// confirmingDetector reports clear but cannot confirm health, as a probe
+// scenario short of usable samples does.
+type unconfirmedDetector struct{ *sequenceDetector }
+
+func (unconfirmedDetector) Confirmed(sdk.DetectionContext) bool { return false }
+
+// With many slow probes some scenario is always short of samples. That
+// detector reports nothing and opens nothing, so it must not keep a store's
+// healthy stretch from starting.
+func TestAnUnconfirmedProbeDoesNotBlockStoreBaselinePromotion(t *testing.T) {
+	store := controllerDetector("store-state-redis", time.Second, sdk.Finding{}, sdk.Finding{}, sdk.Finding{})
+	probe := controllerDetector("traffic-probe-write", time.Second, sdk.Finding{}, sdk.Finding{}, sdk.Finding{})
+	for _, d := range []*sequenceDetector{store, probe} {
+		d.spec.Class, d.spec.Owner = sdk.DetectorClassHealth, sdk.DetectorOwnerHealthJudge
+		d.spec.Persistence = sdk.PersistencePolicy{Firing: 1, Clearing: 1}
+		d.spec.Batching = sdk.BatchingPolicy{Severity: sdk.SeverityWarning, Debounce: 500 * time.Millisecond}
+		d.spec.Watches = []sdk.WatchKind{{APIVersion: "v1", Kind: "Pod"}}
+		d.spec.OriginatingCommit = "initial"
+	}
+	query := storeQuery()
+	cfg := testControllerConfig()
+	cfg.Namespace, cfg.SourceCommit, cfg.RepositoryWorktree = "app", "synthetic-accepted", "synthetic-worktree"
+	c, err := NewController(cfg, []sdk.Detector{store, unconfirmedDetector{probe}}, staticProvider{snapshot: readingsSnapshot(query, "healthy")}, &recordingDispatcher{}, time.Unix(0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.gitRead = fakeArchitecture("")
+	c.PodReadBaseline = NewPodReadBaseline(DefaultStateSettle)
+	step(t, c, 0)
+	step(t, c, 1)
+	step(t, c, int64(DefaultStateSettle/time.Second)+2)
+	if got := promoted(c.PodReadBaseline, query); len(got) != 1 {
+		t.Fatalf("baseline with a probe short of samples = %v, want one promoted reading", got)
+	}
+}

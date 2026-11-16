@@ -117,7 +117,7 @@ func (c *Controller) reportHealthyCaptureError(err error) {
 // start and none reports an opener: healthy means no opener is active and no
 // incident is open.
 func (c *Controller) completeHealthyEvaluation() bool {
-	return c.healthyEvaluation(func(string) bool { return false })
+	return c.healthyEvaluation(func(string) bool { return false }, false)
 }
 
 // storesHealthy is the healthy predicate of the store baselines. A detector the
@@ -141,10 +141,12 @@ func (c *Controller) storesHealthy(confirmationExpired bool, erroredIDs map[stri
 			return false
 		}
 	}
-	return c.healthyEvaluation(ignorable)
+	// A detector that cannot confirm health yet (a probe scenario short of usable samples) reports
+	// nothing and opens nothing; with many slow probes some scenario is always short.
+	return c.healthyEvaluation(ignorable, true)
 }
 
-func (c *Controller) healthyEvaluation(ignore func(string) bool) bool {
+func (c *Controller) healthyEvaluation(ignore func(string) bool, pendingOK bool) bool {
 	latest := map[string]DetectorEvaluation{}
 	for _, evaluation := range c.history {
 		latest[evaluation.DetectorID] = evaluation
@@ -165,7 +167,8 @@ func (c *Controller) healthyEvaluation(ignore func(string) bool) bool {
 		}
 		// A detector firing only clues still completes a healthy evaluation.
 		firingClues := evaluation.Status == DetectorEvaluationFiring && !c.openerFiring(id)
-		if evaluation.Status != DetectorEvaluationClear && !firingClues {
+		unconfirmed := pendingOK && evaluation.Status == DetectorEvaluationPending
+		if evaluation.Status != DetectorEvaluationClear && !firingClues && !unconfirmed {
 			return false
 		}
 	}
