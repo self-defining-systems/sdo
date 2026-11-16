@@ -51,7 +51,9 @@ func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 	application := flags.String("application", "", "application identity")
 	objective := flags.String("health-objective", "", "human health objective")
 	flags.StringVar(objective, "goal", "", "human health objective")
-	goalFile := flags.String("goal-file", "", "file containing human health objective")
+	goalFile := flags.String("goal-file", "", "file containing human health objective (a goal.md may list journeys in its front matter)")
+	journeys := flags.String("journeys", "", "the user journeys SDO must support, as free text from the people running the application (one per line or comma-separated); required unless onboarding.journeys_required is false")
+	journeysFile := flags.String("journeys-file", "", "absolute path of a file holding the same free text")
 	sourceBranchURL := flags.String("source-branch-url", "", "Git remote of the one branch SDO commits to and deploys from (source.branch); engineers and the benchmark replayer push to it")
 	sourceBranch := flags.String("source-branch", "", "name of that branch (never main or master)")
 	deploymentPlan := flags.String("deployment-plan", "", "provided DeploymentPlan as ProtoJSON (source, image sources, expected workload IDs): the deployer agent is skipped and the plan is deployed as given")
@@ -101,6 +103,25 @@ func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 	}
 	if strings.TrimSpace(*objective) == "" {
 		*objective = memory.DefaultHealthObjective
+	}
+	journeysText, err := readJourneysInput(*journeys, *journeysFile)
+	if err != nil {
+		return HostConfig{}, err
+	}
+	if *objective, err = memory.ComposeObjective(*objective, journeysText); err != nil {
+		return HostConfig{}, err
+	}
+	if derived, _ := memory.ObjectiveJourneys(*objective); len(derived) > 0 && strings.TrimSpace(journeysText) != "" {
+		// The split is deterministic, not an interpretation: show it so a wrong one is caught before the run.
+		for _, g := range derived {
+			fmt.Fprintf(os.Stderr, "sdo-operator host: journey %s: %s\n", g.ID, g.What)
+		}
+	}
+	if resolved.Onboarding.JourneysRequired {
+		// Before any Job or agent: a missing input costs nothing to fix here.
+		if err := memory.RequireJourneys(*objective); err != nil {
+			return HostConfig{}, err
+		}
 	}
 	for name, value := range map[string]string{
 		"repository": *repository, "namespace": *namespace, "application": *application,
@@ -250,4 +271,25 @@ func RunHost(ctx context.Context, launch HostConfig) (install.OperateResult, err
 
 func acceptedHead(ctx context.Context, repository string) (string, error) {
 	return processio.AcceptedHead(ctx, repository)
+}
+
+// readJourneysInput is the free-text journeys of --journeys or --journeys-file; at most one may be given.
+func readJourneysInput(text, file string) (string, error) {
+	if file == "" {
+		return text, nil
+	}
+	if text != "" {
+		return "", errors.New("host accepts at most one of --journeys or --journeys-file")
+	}
+	if !filepath.IsAbs(file) {
+		return "", errors.New("journeys file path must be absolute")
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return "", fmt.Errorf("read journeys file: %w", err)
+	}
+	if len(data) > 1<<20 {
+		return "", errors.New("journeys file exceeds 1 MiB")
+	}
+	return string(data), nil
 }

@@ -42,7 +42,8 @@ nothing here changes what an accepted detector decides.
    A list or an object is JSON. A variable that starts with a section prefix but names no key is an error.
 
 No knob has a command-line flag of its own; the flags of ` + "`host`" + ` and ` + "`install-existing`" + ` name only the installation
-(repository, namespaces, images, Secrets, PVC, registry, source and plan, agent registrations, run bounds).
+(repository, namespaces, images, Secrets, PVC, registry, source and plan, agent registrations, run bounds) and, for ` + "`host`" + `, the
+inputs the people running the application give (` + "`--goal`/`--goal-file`, `--journeys`/`--journeys-file`" + `).
 
 The installer writes the resolved result to the ` + "`sdo-config`" + ` ConfigMap, mounted read-only at ` + "`/etc/sdo/config.yaml`" + ` in the
 operate and controller Jobs, which refuse to start without it; no policy value crosses their command lines. The controller
@@ -66,7 +67,8 @@ learned playbooks achieve alone, ` + "`response.after_playbook: wait`" + ` with 
 the agent is never dispatched; recovery gets the whole bound (slow readiness and windowed detectors need more than the
 stage's default 90 seconds), then the incident escalates. Production keeps ` + "`agent`" + `. It also names ` + "`agent.recording: false`" + `
 (the production default, written out so an experiment can set it to ` + "`true`" + `): the agent-cluster recording is off, and a few runs
-that show nothing missing without it are the case for removing it.
+that show nothing missing without it are the case for removing it. It sets ` + "`onboarding.journeys_required: false`" + `: a benchmark app has no people to give journeys, so
+the onboarding agent discovers them (production requires them; a harness that has them passes ` + "`host --journeys`" + `).
 
 ## Keys
 `)

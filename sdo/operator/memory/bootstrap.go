@@ -57,7 +57,7 @@ func WriteGoal(checkout, application, objective string, sources []layout.Source)
 			}
 			journeys = string(encoded)
 		}
-		objective = doc.Body
+		objective = renderJourneys(doc.Body, list)
 	}
 	body := fmt.Sprintf("---\nschema_version: 1\nowner: human\napplication: %s\n%s---\n# Health objective\n\n%s\n", strconv.Quote(application), journeys, strings.TrimSpace(objective))
 	if len(sources) > 0 {

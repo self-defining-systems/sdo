@@ -309,6 +309,9 @@ class NativeHostConfig:
     # The branch SDO commits to and deploys from (``--source-branch-url`` / ``--source-branch``); both or neither.
     source_branch_url: str = ""
     source_branch: str = ""
+    # The user journeys SDO must support, free text from the people running the app (``--journeys``). The benchmark
+    # profile turns ``onboarding.journeys_required`` off, so ``""`` lets the onboarding agent discover them.
+    journeys: str = ""
 
     def __post_init__(self) -> None:
         if bool(self.source_branch_url) != bool(self.source_branch):
@@ -873,6 +876,8 @@ def launch_host(config: NativeHostConfig) -> dict[str, Any]:
     args.extend(("--health-objective", config.health_objective, "--operation-id", config.operation_id))
     args.extend(("--buildkit-image", config.buildkit_image, "--registry-push-secret", config.registry_push_secret))
     args.extend(("--registry-host", config.registry_host))
+    if config.journeys.strip():
+        args.extend(("--journeys", config.journeys))
     if config.registry_insecure:
         args.append("--registry-insecure")
     if config.agent_registrations is not None:

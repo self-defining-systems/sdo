@@ -2,7 +2,9 @@ package appmap
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 
@@ -114,4 +116,89 @@ func ParseGoalJourneys(goal []byte) ([]GivenJourney, error) {
 		seen[g.ID] = true
 	}
 	return out, nil
+}
+
+// maxGivenJourneys bounds a journeys input: a longer one is a document, not a list of journeys.
+const maxGivenJourneys = 100
+
+// JourneysFromText derives the given journeys from the free text the people
+// running the application write ("users sign in, browse projects, push code").
+// The text is the source of truth and reaches the agents as written; this only
+// gives each listed journey the stable id an operation's journey field names,
+// so the given-journeys check can match them without an agent invention.
+//
+// Items are separated by newlines and semicolons, a leading bullet or number
+// is dropped, and an input that is a single line is also split at commas. An
+// id is the item's first words as a slug; a repeat gets a numeric suffix.
+func JourneysFromText(text string) ([]GivenJourney, error) {
+	var items []string
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	var nonEmpty []string
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			nonEmpty = append(nonEmpty, line)
+		}
+	}
+	for _, line := range nonEmpty {
+		parts := strings.Split(line, ";")
+		if len(nonEmpty) == 1 {
+			parts = splitAny(line, ";,")
+		}
+		for _, part := range parts {
+			if item := cleanJourneyItem(part); item != "" {
+				items = append(items, item)
+			}
+		}
+	}
+	if len(items) > maxGivenJourneys {
+		return nil, fmt.Errorf("journeys: %d items; list at most %d user journeys", len(items), maxGivenJourneys)
+	}
+	var out []GivenJourney
+	used := map[string]bool{}
+	for _, item := range items {
+		id := journeySlug(item)
+		for n := 2; used[id]; n++ {
+			id = fmt.Sprintf("%s-%d", journeySlug(item), n)
+		}
+		used[id] = true
+		out = append(out, GivenJourney{ID: id, What: item})
+	}
+	return out, nil
+}
+
+func splitAny(s, separators string) []string {
+	return strings.FieldsFunc(s, func(r rune) bool { return strings.ContainsRune(separators, r) })
+}
+
+var journeyBullet = regexp.MustCompile(`^(?:[-*+•]|\d+[.)])\s+`)
+
+// cleanJourneyItem trims one item: bullet, a leading "and", and trailing
+// ellipsis or period. What is left may be empty.
+func cleanJourneyItem(s string) string {
+	s = strings.TrimSpace(s)
+	s = journeyBullet.ReplaceAllString(s, "")
+	s = strings.TrimSpace(s)
+	s = strings.TrimRight(s, ". …")
+	s = strings.TrimSpace(s)
+	if len(s) > 4 && strings.EqualFold(s[:4], "and ") {
+		s = strings.TrimSpace(s[4:])
+	}
+	if strings.IndexFunc(s, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) < 0 {
+		return ""
+	}
+	return s
+}
+
+var journeyNonWord = regexp.MustCompile(`[^a-z0-9]+`)
+
+// journeySlug is the first six words of an item as a lower-case id.
+func journeySlug(item string) string {
+	words := strings.Fields(journeyNonWord.ReplaceAllString(strings.ToLower(item), " "))
+	if len(words) > 6 {
+		words = words[:6]
+	}
+	if len(words) == 0 {
+		return "journey"
+	}
+	return strings.Join(words, "-")
 }

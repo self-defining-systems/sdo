@@ -20,6 +20,7 @@ memory check enforces the [rules](references/rules.md).
   when its metric's route value differs from the path, `writes: true` when it changes stored state, a `path` of
   every component it reaches (entry first), `triggers` (the background job classes it sets off; background work
   is a step of the journey that triggers it, not an operation), and `correct`: one line on what a correct result looks like.
+- **Given journeys**: when the goal lists user journeys (goal.md front matter, and "User journeys:" in the goal text), each is covered by at least one operation carrying `journey: <id>`; do not invent ids or rename them, and do not name a journey the goal does not list.
 - **Where journeys come from**: source, and the app's own tests (end-to-end, API and integration tests, fixtures
   and seed data show what users do and what a correct result is). Where the repo ships end-to-end tests that can
   target a deployment, run them against yours to see which routes real flows use.
