@@ -7,6 +7,7 @@ package kubebreak
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 
 	"sdo.dev/operator/memory/appmap"
@@ -118,8 +120,10 @@ type workload struct {
 	ready    int32
 	selector *metav1.LabelSelector
 	annot    map[string]string
-	apply    func(ctx context.Context, replicas int32, annot map[string]string) error
-	refresh  func(ctx context.Context) error
+	// apply changes only spec.replicas and the annotations in set (a nil value
+	// deletes one), as a merge patch that carries no resourceVersion.
+	apply   func(ctx context.Context, replicas int32, set map[string]*string) error
+	refresh func(ctx context.Context) error
 }
 
 // split reads a component's workload reference: a bare name, or Kind/name.
@@ -148,13 +152,12 @@ func (b *Breaker) find(ctx context.Context, ref string) (*workload, error) {
 			w.replicas, w.ready, w.selector, w.annot = d.Spec.Replicas, d.Status.ReadyReplicas, d.Spec.Selector, d.Annotations
 		}
 		load(d)
-		w.apply = func(ctx context.Context, n int32, annot map[string]string) error {
-			cur, err := apps.Deployments(ns).Get(ctx, name, metav1.GetOptions{})
+		w.apply = func(ctx context.Context, n int32, set map[string]*string) error {
+			patch, err := scalePatch(n, set)
 			if err != nil {
 				return err
 			}
-			cur.Spec.Replicas, cur.Annotations = &n, annot
-			_, err = apps.Deployments(ns).Update(ctx, cur, metav1.UpdateOptions{})
+			_, err = apps.Deployments(ns).Patch(ctx, name, types.MergePatchType, patch, metav1.PatchOptions{})
 			return err
 		}
 		w.refresh = func(ctx context.Context) error {
@@ -188,13 +191,12 @@ func (b *Breaker) findStatefulSet(ctx context.Context, name string) (*workload, 
 		w.replicas, w.ready, w.selector, w.annot = s.Spec.Replicas, s.Status.ReadyReplicas, s.Spec.Selector, s.Annotations
 	}
 	load(s)
-	w.apply = func(ctx context.Context, n int32, annot map[string]string) error {
-		cur, err := apps.StatefulSets(ns).Get(ctx, name, metav1.GetOptions{})
+	w.apply = func(ctx context.Context, n int32, set map[string]*string) error {
+		patch, err := scalePatch(n, set)
 		if err != nil {
 			return err
 		}
-		cur.Spec.Replicas, cur.Annotations = &n, annot
-		_, err = apps.StatefulSets(ns).Update(ctx, cur, metav1.UpdateOptions{})
+		_, err = apps.StatefulSets(ns).Patch(ctx, name, types.MergePatchType, patch, metav1.PatchOptions{})
 		return err
 	}
 	w.refresh = func(ctx context.Context) error {
@@ -205,6 +207,37 @@ func (b *Breaker) findStatefulSet(ctx context.Context, name string) (*workload, 
 		return err
 	}
 	return w, nil
+}
+
+func scalePatch(replicas int32, set map[string]*string) ([]byte, error) {
+	return json.Marshal(map[string]any{
+		"metadata": map[string]any{"annotations": set},
+		"spec":     map[string]any{"replicas": replicas},
+	})
+}
+
+const (
+	conflictTries   = 5
+	conflictBackoff = time.Second // grows linearly: 1s, 2s, 3s, 4s between five tries
+)
+
+// retryConflict runs op, and while it fails with a 409 conflict (another
+// writer, such as the controller, updated the object) waits and runs it again.
+// Only a conflict that outlasts every try, or another error, is returned.
+func (b *Breaker) retryConflict(ctx context.Context, op func() error) error {
+	var err error
+	for try := 1; try <= conflictTries; try++ {
+		if err = op(); !apierrors.IsConflict(err) {
+			return err
+		}
+		if try == conflictTries {
+			break
+		}
+		if werr := b.cfg.Wait(ctx, time.Duration(try)*conflictBackoff); werr != nil {
+			return werr
+		}
+	}
+	return fmt.Errorf("still conflicting after %d tries: %w", conflictTries, err)
 }
 
 func desired(w *workload) int32 {
@@ -239,12 +272,10 @@ func (b *Breaker) Break(ctx context.Context, c appmap.Component) error {
 		_, err := b.cfg.Client.NetworkingV1().NetworkPolicies(b.cfg.Namespace).Create(ctx, policy, metav1.CreateOptions{})
 		return err
 	}
-	annot := map[string]string{}
-	for k, v := range w.annot {
-		annot[k] = v
-	}
-	annot[restoreAnnotation] = strconv.Itoa(int(desired(w)))
-	return w.apply(ctx, 0, annot)
+	saved := strconv.Itoa(int(desired(w)))
+	return b.retryConflict(ctx, func() error {
+		return w.apply(ctx, 0, map[string]*string{restoreAnnotation: &saved})
+	})
 }
 
 // Restore undoes Break and verifies the workload is ready again. An error
@@ -255,7 +286,9 @@ func (b *Breaker) Restore(ctx context.Context, c appmap.Component) error {
 		return fmt.Errorf("restore %s: %w", c.Workload, err)
 	}
 	if b.mode == ModeNetwork {
-		err := b.cfg.Client.NetworkingV1().NetworkPolicies(b.cfg.Namespace).Delete(ctx, policyName(bare(c.Workload)), metav1.DeleteOptions{})
+		err := b.retryConflict(ctx, func() error {
+			return b.cfg.Client.NetworkingV1().NetworkPolicies(b.cfg.Namespace).Delete(ctx, policyName(bare(c.Workload)), metav1.DeleteOptions{})
+		})
 		if err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("restore %s: delete NetworkPolicy: %w", c.Workload, err)
 		}
@@ -264,13 +297,10 @@ func (b *Breaker) Restore(ctx context.Context, c appmap.Component) error {
 		if err != nil {
 			return fmt.Errorf("restore %s: bad %s annotation %q", c.Workload, restoreAnnotation, saved)
 		}
-		annot := map[string]string{}
-		for k, v := range w.annot {
-			if k != restoreAnnotation {
-				annot[k] = v
-			}
-		}
-		if err := w.apply(ctx, int32(n), annot); err != nil {
+		err = b.retryConflict(ctx, func() error {
+			return w.apply(ctx, int32(n), map[string]*string{restoreAnnotation: nil})
+		})
+		if err != nil {
 			return fmt.Errorf("restore %s: scale back to %d: %w", c.Workload, n, err)
 		}
 	}
