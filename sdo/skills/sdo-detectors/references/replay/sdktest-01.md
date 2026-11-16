@@ -46,6 +46,14 @@ func CheckNoMatchCase(t testing.TB, p program.Diagnoser, c CorpusCase)
     CheckNoMatchCase exercises an explicit synthetic near miss or a controller
     fixed capture labeled as observed negative evidence.
 
+func CheckPlanValid(m program.Mitigator, c CorpusCase) error
+    CheckPlanValid runs Mitigate on the case's opening state and validates
+    the plan it yields exactly as the host does before it applies one
+    (Plan.Validate: every action, including a data repair's statement and
+    bounds). A learned program then never fails on apply for a reason the check
+    could have caught. A Mitigate that cannot run on the recorded reads is not a
+    failure here; the replay notes say it was unverified.
+
 func CheckRenameInvariance(t testing.TB, p program.Diagnoser, c CorpusCase)
     CheckRenameInvariance requires a diagnosis to survive a consistent rename of
     the recorded application's resources, labels, images, and ports. Namespace
@@ -220,14 +228,4 @@ func (v *RecordingReadView) KubernetesRead(q program.KubernetesRequest) (json.Ra
 func (v *RecordingReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error)
 
 func (v *RecordingReadView) LogsWithOptions(ref sdk.ObjectRef, options corev1.PodLogOptions) (string, error)
-
-func (v *RecordingReadView) MetricResult(id string) (metrics.Result, bool)
-
-func (v *RecordingReadView) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error)
-
-func (v *RecordingReadView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error)
-
-func (v *RecordingReadView) NodeUsage(ref sdk.ObjectRef) (*metricsv1beta1.NodeMetrics, error)
-
-func (v *RecordingReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error)
 ```

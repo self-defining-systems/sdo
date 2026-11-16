@@ -275,3 +275,18 @@ func fixtureObject(snapshot map[string]any, ref sdk.ObjectRef) (map[string]any, 
 	}
 	return nil, fmt.Errorf("fixture lacks %s/%s", ref.Kind, ref.Name)
 }
+
+// CheckPlanValid runs Mitigate on the case's opening state and validates the plan it yields exactly as the host
+// does before it applies one (Plan.Validate: every action, including a data repair's statement and bounds). A
+// learned program then never fails on apply for a reason the check could have caught. A Mitigate that cannot run on
+// the recorded reads is not a failure here; the replay notes say it was unverified.
+func CheckPlanValid(m program.Mitigator, c CorpusCase) error {
+	plan, err := m.Mitigate(context.Background(), &ReplayReadView{Snapshot: c.Open, Calls: c.PhaseRecordings("open")}, c.Bindings)
+	if err != nil {
+		return nil
+	}
+	if err := plan.Validate(); err != nil {
+		return fmt.Errorf("program.plan-invalid: Mitigate of the recorded incident yields a plan the host refuses to apply: %w", err)
+	}
+	return nil
+}

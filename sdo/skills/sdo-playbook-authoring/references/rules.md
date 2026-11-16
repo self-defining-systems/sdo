@@ -82,6 +82,8 @@ Replay results are information only.
 
 Every recorded hand repair needs an executable typed SDK or RunScript step (partial coverage is fine), with
 relation-derived Env and digest-to-receipt linkage; README text holds only judgement and ordering.
+- A `RepairData` states a `Statement` some store engine accepts (`delete`, a postgres/mysql SET clause, a mongodb
+  update document, a redis single-key write) and an `ExpectMax` above 0. Enforced by: `program.plan-invalid`.
 
 <!-- replay:on -->
 ## Corpus evidence
