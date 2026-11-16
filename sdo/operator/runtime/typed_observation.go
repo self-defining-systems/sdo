@@ -32,3 +32,13 @@ func (v *cachedReadView) NodeUsage(ref sdk.ObjectRef) (*metricsv1beta1.NodeMetri
 	err := v.read("NodeUsage", []any{ref}, &r, func() (any, error) { return v.ReadView.NodeUsage(ref) })
 	return r, err
 }
+
+func (v *cachedReadView) LogMatches(ref sdk.ObjectRef, container string, since time.Duration, pattern string, max int) (program.LogMatchResult, error) {
+	var r program.LogMatchResult
+	err := v.read("LogMatches", []any{ref, container, since, pattern, max}, &r, func() (any, error) {
+		return call(context.Background(), 15*time.Second, func(context.Context) (program.LogMatchResult, error) {
+			return v.ReadView.LogMatches(ref, container, since, pattern, max)
+		})
+	})
+	return r, err
+}

@@ -638,3 +638,27 @@ func (v LiveReadView) driftSourceAdditions(ref sdk.ObjectRef, observed *unstruct
 	}
 	return v.sourceAdditions(ref, observed, source)
 }
+
+// LogMatches scans the container's whole log window on the API server's answer and returns only the matching lines.
+func (v LiveReadView) LogMatches(ref sdk.ObjectRef, container string, since time.Duration, pattern string, max int) (program.LogMatchResult, error) {
+	re, err := program.ValidateLogMatchRequest(since, pattern, max)
+	if err != nil {
+		return program.LogMatchResult{}, err
+	}
+	if ref.Kind != "Pod" || (ref.APIVersion != "" && ref.APIVersion != "v1") || ref.Namespace != v.Namespace() || ref.Name == "" || v.Client == nil || container == "" {
+		return program.LogMatchResult{}, errors.New("log matches require a Pod in the snapshot namespace, a container and a Kubernetes reader")
+	}
+	ctx, cancel := context.WithTimeout(v.context(), 15*time.Second)
+	defer cancel()
+	client, err := program.Kubernetes(v)
+	if err != nil {
+		return program.LogMatchResult{}, err
+	}
+	options := program.LogMatchOptions(container, since)
+	stream, err := client.CoreV1().Pods(ref.Namespace).GetLogs(ref.Name, &options).Stream(ctx)
+	if err != nil {
+		return program.LogMatchResult{}, fmt.Errorf("read logs of pod %s/%s: %w", ref.Namespace, ref.Name, err)
+	}
+	defer stream.Close()
+	return program.ScanLogMatches(stream, re, max)
+}

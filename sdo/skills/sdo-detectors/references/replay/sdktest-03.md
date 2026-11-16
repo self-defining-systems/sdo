@@ -129,6 +129,8 @@ func (s Snapshot) Jobs() []batchv1.Job
 
 func (s Snapshot) KubernetesRead(q program.KubernetesRequest) (json.RawMessage, error)
 
+func (s Snapshot) LogMatches(ref sdk.ObjectRef, container string, since time.Duration, pattern string, max int) (program.LogMatchResult, error)
+
 func (s Snapshot) LogResult(id string) (logs.Result, bool)
     LogResult implements logs.Source.
 
