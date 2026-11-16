@@ -86,3 +86,30 @@ func TestCheckPlansOnIncidentSaysWhyAPlanWasUnverified(t *testing.T) {
 		t.Fatalf("empty plan: %v, %v", unverified, err)
 	}
 }
+
+type escalatingProgram struct {
+	planMitigator
+	reach string
+}
+
+func (p escalatingProgram) Diagnose(context.Context, program.ReadView, program.Bindings) (program.Verdict, error) {
+	return program.Verdict{Result: program.Match, CauseClass: "object-missing", Reach: p.reach}, nil
+}
+
+func escalatePlan() program.Plan {
+	return program.Plan{Actions: []program.Action{program.Escalate{Reason: "run the DDL by hand"}}}
+}
+
+// A sole Escalate under an in-scope diagnosis cannot repair a repeat: the automatic stage records it FAILED and the
+// responder runs again. The check refuses it unless the diagnosis says only a human can fix the cause.
+func TestCheckPlanValidRefusesASoleEscalateUnderAnInScopeDiagnosis(t *testing.T) {
+	for _, reach := range []string{"", program.ReachInScope} {
+		err := CheckPlanValid(escalatingProgram{planMitigator{plan: escalatePlan()}, reach}, CorpusCase{})
+		if err == nil || !strings.Contains(err.Error(), "program.escalate-only") || !strings.Contains(err.Error(), "EnsureExec") {
+			t.Fatalf("reach %q: %v", reach, err)
+		}
+	}
+	if err := CheckPlanValid(escalatingProgram{planMitigator{plan: escalatePlan()}, program.ReachOutOfReach}, CorpusCase{}); err != nil {
+		t.Fatalf("out-of-reach escalation is legitimate: %v", err)
+	}
+}
