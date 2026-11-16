@@ -2,8 +2,9 @@
 
 A *cell* directory holds ``runs/<run>/`` with the grader's ``record.json`` and ``result.json`` and the
 operator evidence under ``operator/evidence/incidents/<id>/`` (``ledger.json``, ``reflection-usage.jsonl``).
-Every report reads cells through :func:`load_cell`; the per-cell evidence manifest
-(``benchmarks.fuzzops.cellevidence``) will replace the ledger reads here and nowhere else.
+Every report reads cells through :func:`load_cell`. Times, costs and grader numbers come from the per-cell
+evidence manifest (``benchmarks.fuzzops.cellevidence``, derived on the fly for older cells); the ledger adds
+the detail the manifest does not carry (what opened the incident, detector activations, playbook ids, tokens).
 
 All timestamps are RFC3339 UTC; every derived duration is ``None`` when its source is absent, and the
 loader names the absent facts in ``Incident.missing`` instead of guessing.
@@ -155,6 +156,48 @@ class Cell:
         return self.incidents[0] if self.incidents else None
 
 
+def _evidence(run: Path) -> Any:
+    """The run's cell-evidence manifest, derived on the fly for cells collected before it existed; None if unreadable."""  # noqa: E501
+    from benchmarks.fuzzops import cellevidence
+
+    try:
+        return cellevidence.load(run)
+    except (OSError, ValueError, TypeError):
+        pass
+    try:
+        return cellevidence.build(run)
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+
+
+def _overlay(incident: Incident, timeline: Any) -> None:
+    """Take the times and costs the cell-evidence manifest carries; the ledger keeps the detail it does not."""
+    for name, value in (
+        ("detected_at", timeline.detected_at),
+        ("dispatched_at", timeline.dispatched_at),
+        ("health_cleared_at", timeline.health_cleared_at),
+        ("verified_at", timeline.verified_at),
+        ("first_agent_change_at", timeline.first_agent_change_at),
+        ("applied_started_at", timeline.playbook_apply_started_at),
+        ("applied_completed_at", timeline.playbook_applied_at),
+        ("reflection_started_at", timeline.closing_turn_dispatch_at),
+        ("reflection_ended_at", timeline.closing_turn_end_at),
+    ):
+        parsed = ts(value)
+        if parsed is not None:
+            setattr(incident, name, parsed)
+    if timeline.closing_turn_duration_seconds:
+        incident.reflection_seconds = timeline.closing_turn_duration_seconds
+    if timeline.closing_turn_cost_usd is not None:
+        incident.reflection = Usage(
+            incident.reflection.input_tokens, incident.reflection.output_tokens, timeline.closing_turn_cost_usd
+        )
+    if timeline.responder_cost_usd is not None:
+        incident.responder = Usage(
+            incident.responder.input_tokens, incident.responder.output_tokens, timeline.responder_cost_usd
+        )
+
+
 def _json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -285,6 +328,24 @@ def load_cell(cell_dir: Path) -> Cell:
     incidents.sort(key=lambda i: i.detected_at or 0.0)
     window = record.get("window") or {}
     tail = record.get("tail") or {}
+    evidence = _evidence(run)
+    if evidence is not None:
+        by_id = {t.incident: t for t in evidence.timelines}
+        for incident in incidents:
+            if incident.incident_id in by_id:
+                _overlay(incident, by_id[incident.incident_id])
+        window = {
+            "BadSeconds": evidence.grader.window_bad_seconds
+            if evidence.grader.window_bad_seconds is not None
+            else window.get("BadSeconds")
+        }
+        tail = {
+            "BadSeconds": evidence.grader.tail_bad_seconds
+            if evidence.grader.tail_bad_seconds is not None
+            else tail.get("BadSeconds")
+        }
+        if evidence.grader.recovered is not None:
+            record = {**record, "recovered_in_window": evidence.grader.recovered}
     return Cell(
         name=cell_dir.name,
         run_dir=run,
