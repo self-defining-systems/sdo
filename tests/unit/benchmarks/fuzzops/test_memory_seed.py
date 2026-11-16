@@ -53,7 +53,7 @@ def test_seed_stops_the_controller_around_the_import(tmp_path: Path) -> None:
     calls: list[str] = []
     seed = baseline_dir(tmp_path, "seed", "r")
     receipt = hooks.apply_seed(steps(calls), seed, lambda _line: None)
-    assert calls == ["incidents", "retire", "stop", "config []", "import a", "start", "standby"]
+    assert calls == ["incidents", "stop", "retire", "config []", "import a", "start", "standby"]
     assert receipt["seed"] == COMMIT
 
 
