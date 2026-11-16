@@ -480,8 +480,11 @@ def idle_verdict(
     pod_ready: bool,
     now: datetime,
     controller_log: str | None = None,
+    baselines: bool = True,
 ) -> str:
-    """The ``idle`` hook's answer: "" when idle, else the reason (``alarm:`` first for an open incident)."""
+    """The ``idle`` hook's answer: "" when idle, else the reason (``alarm:`` first for an open incident).
+    ``baselines=False`` skips the promoted-store-baseline requirement: only an inject needs it, while the waits
+    before the seed import and after resets do not (a fresh install promotes later)."""
     if state is not None and idle_reason(state) == "incident open":
         return f"alarm: incident open {_incident_id(state)}".rstrip()
     if not pod_ready:
@@ -496,7 +499,7 @@ def idle_verdict(
     why = idle_reason(state)
     if why:
         return f"busy: {why}"
-    blind = _request_metrics_blind(state, now) or _store_baseline_pending(state, controller_log)
+    blind = _request_metrics_blind(state, now) or (_store_baseline_pending(state, controller_log) if baselines else "")
     return f"blind: {blind}" if blind else ""
 
 
@@ -2157,14 +2160,14 @@ def fuzzops_app(env: Mapping[str, str], verb: str) -> dict[str, Any]:
 
 def wait_idle(kube: Kube, control: str, timeout: float) -> str:
     """Poll until the controller is idle as the ``idle`` verb judges it (fresh state, no incident, closure or
-    reflection, startup done); the last reason otherwise. A state the controller has not written since a pause is
-    stale, never idle."""
+    XX A state the controller has not written since a pause is
+        stale, never idle."""
     deadline = time.monotonic() + timeout
     why = "no controller state yet"
     while time.monotonic() < deadline:
         try:
             state, updated = kube.state_configmap(control)
-            why = idle_verdict(state, updated, kube.controller_ready(control), datetime.now(UTC))
+            why = idle_verdict(state, updated, kube.controller_ready(control), datetime.now(UTC), baselines=False)
         except (subprocess.SubprocessError, json.JSONDecodeError, OSError) as exc:
             why = f"controller read failed: {exc}"
         if not why:
