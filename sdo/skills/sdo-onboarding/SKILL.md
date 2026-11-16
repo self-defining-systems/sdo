@@ -39,7 +39,8 @@ reports, not raw logs. When a result is wrong, say why and send it back.
 Every user journey is instrumented and detected: mapped in the app's own metrics (with the background work it
 triggers), errors and latency per journey, a probe that checks its result end to end, a detector that names it
 when any component on its path breaks, a true component path with metrics, logs and trace pointers. The
-check prints one row per journey; the items are in [the standard](references/journey-standard.md).
+check prints one row per journey; the items are in [the standard](references/journey-standard.md). Instrument in
+application code (middleware, metrics, tracing) or the deployment, whichever gives the items.
 
 ## Environment
 

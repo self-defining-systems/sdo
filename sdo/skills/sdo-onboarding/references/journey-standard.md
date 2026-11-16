@@ -13,6 +13,7 @@ of its own. Each declared journey is done when every item holds; the check repor
 | f. map | The path lists every component the journey really depends on (breaking a component fails exactly the journeys that list it), and each component has metrics and logs pointers (`observe`). |
 | g. traces | The journey's spans name each component's trace service, where the runtime allows. A note, never red. |
 
-Write the standard as outcomes: pick the cheapest instrumentation that makes each row true, reuse what the
+Write the standard as outcomes: you may change application code (middleware, metrics, tracing), the deployment,
+config and memory, whichever makes each row true most simply; do not steer to overlays only. Reuse what the
 application already exposes, and let the check show which cell is red. The `observe` pointers are where a
 reader looks next: the metrics selector or job, the container or label the logs come from, the trace service.
