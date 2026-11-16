@@ -192,7 +192,7 @@ def run_reflection_task(
         result.response.Pack(
             ReflectionResult(summary=turn.note, learning_decision="no_change", no_change_reason=turn.note)
             if cleanup
-            else turn.to_result(Path(task.workspace.checkout_path))
+            else turn.to_result(Path(task.workspace.checkout_path), task.workspace.base_commit)
         )
         if len(to_canonical_json(result).encode("utf-8")) > RESULT_BUDGET_BYTES:
             failure = ("result_too_large", "closing turn result exceeds the worker transport budget")
