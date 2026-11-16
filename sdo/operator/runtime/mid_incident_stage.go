@@ -26,6 +26,9 @@ type midIncidentStage struct {
 	running bool
 	dirty   bool
 	settled bool
+	// pending holds a finding that arrived while the first response pipeline
+	// was running; one pass evaluates it when the pipeline ends.
+	pending bool
 	passes  int
 }
 
@@ -57,7 +60,7 @@ func (c *Controller) attachLearnedActivation(ctx context.Context, finding sdk.Fi
 	c.mu.Lock()
 	loop := c.responderLoop
 	if !c.incidentOpen || c.currentIncidentRequest == nil || c.incidentDispatchedAt.IsZero() ||
-		c.dispatchState != contracts.DispatchState_DISPATCH_STATE_RUNNING || c.responseStagesRunning || c.responderDone ||
+		c.dispatchState != contracts.DispatchState_DISPATCH_STATE_RUNNING || c.responderDone ||
 		loop == nil || c.midStage.passes >= maxMidIncidentPasses || !c.deterministicStageSelectedLocked() ||
 		!learnedPlaybookExplains(loop, finding) {
 		c.mu.Unlock()
@@ -78,21 +81,48 @@ func (c *Controller) attachLearnedActivation(ctx context.Context, finding sdk.Fi
 		// saw this finding. The pass cap still bounds a flapping detector.
 		c.midStage.settled = false
 	}
+	// The first pipeline is still running: it diagnosed without this finding,
+	// so one pass follows it (resumePendingLearnedPass).
+	if c.responseStagesRunning {
+		c.midStage.pending = true
+		c.mu.Unlock()
+		return true
+	}
 	// A settled stage hands the finding to the responder with the incident.
 	if c.midStage.settled {
 		c.mu.Unlock()
 		return true
 	}
+	// A pass is running: it ends with one more pass, so the finding is
+	// evaluated even if the running pass already diagnosed.
 	if c.midStage.running {
 		c.midStage.dirty = true
 		c.mu.Unlock()
 		return true
 	}
-	c.midStage.running, c.midStage.dirty = true, false
-	incidentID := request.IncidentID
+	c.startMidPassesLocked(ctx, request.IncidentID, loop)
+	return true
+}
+
+// startMidPassesLocked starts the pass loop; it releases c.mu.
+func (c *Controller) startMidPassesLocked(ctx context.Context, incidentID string, loop *ResponderLoop) {
+	c.midStage.running, c.midStage.dirty, c.midStage.pending = true, false, false
 	c.mu.Unlock()
 	c.goBackground(func() { c.runMidIncidentPasses(ctx, incidentID, loop) })
-	return true
+}
+
+// resumePendingLearnedPass starts the pass a finding asked for while the first
+// response pipeline was running, once that pipeline has ended.
+func (c *Controller) resumePendingLearnedPass(ctx context.Context) {
+	c.mu.Lock()
+	loop := c.responderLoop
+	if !c.midStage.pending || c.responseStagesRunning || c.midStage.running || c.midStage.settled || !c.incidentOpen ||
+		c.currentIncidentRequest == nil || c.dispatchState != contracts.DispatchState_DISPATCH_STATE_RUNNING || c.responderDone ||
+		loop == nil || c.midStage.passes >= maxMidIncidentPasses {
+		c.mu.Unlock()
+		return
+	}
+	c.startMidPassesLocked(ctx, c.currentIncidentRequest.IncidentID, loop)
 }
 
 func (c *Controller) deterministicStageSelectedLocked() bool {
@@ -171,7 +201,8 @@ func (c *Controller) runMidIncidentPasses(ctx context.Context, incidentID string
 			slog.Warn("later automatic stage pass", "incident_id", incidentID, "error", err)
 		}
 		c.mu.Lock()
-		if err == nil && !progressed {
+		// A finding that arrived during the pass has not been evaluated yet.
+		if err == nil && !progressed && !c.midStage.dirty {
 			c.midStage.settled = true
 		}
 		again := c.midStage.dirty && !c.midStage.settled && c.midStage.passes < maxMidIncidentPasses && c.incidentOpen &&
@@ -211,6 +242,9 @@ func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, 
 	state := &IncidentState{Request: request, Findings: append([]sdk.Finding(nil), request.Findings...), Coverage: cloneCoverage(request.PlaybookCoverage), PriorStages: cloneStageReports(request.PriorStages)}
 	earlier := deterministicStageReport(state.PriorStages)
 	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true}
+	if c.tuneMidStage != nil {
+		c.tuneMidStage(stage)
+	}
 	report, runErr := RunStageAgain(actionCtx, state, stage)
 	notes := stageNotes(earlier, report)
 	c.mu.Lock()

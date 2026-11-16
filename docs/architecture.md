@@ -339,7 +339,7 @@ finding is inactive with a clear streak of the stability window. The alert set i
 `AlertJoinWindow` (5 minutes) of detection (no map needed; a later test is more likely an independent fault and opens the
 next incident). A joined test is judged like an opening one; clues and Kubernetes conditions never join, and joining never
 re-prompts the agent. A joined alert (or a clue) that a learned playbook can bind reopens the automatic stage for one more bounded pass
-(`maxMidIncidentPasses`), so a playbook is judged against the fault's own symptom even when routine churn opened the incident. The verification grace
+(`maxMidIncidentPasses`; a symptom arriving while the first pipeline or a pass runs queues one more pass, and a pass diagnoses live detector findings, not the loop's last observation), so a playbook is judged against the fault's own symptom even when routine churn opened the incident. The verification grace
 after the responder returns never escalates an incident whose alerts are clear while the stability window is still running. Credit and symptom matching keep `opening_keys`. Clues never hold it. The controller asks it before
 closing and before marking the responder verified; the broker asks it again at freeze (a user test that has not
 passed by its horizon plus the stability window commits `unconfirmed`, `OBSERVATION_INCOMPLETE`); the stage's
