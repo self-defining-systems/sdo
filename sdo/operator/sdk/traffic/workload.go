@@ -245,8 +245,12 @@ func (w Workload) WithDefaults() Workload {
 	w.Links = links
 	maxAgeSet := w.SLO.MaxAge != 0
 	w.SLO = mergeSLO(defaultSLO(), w.SLO)
-	if !maxAgeSet && w.Purpose == PurposeHealthProbe && w.SampleInterval > 0 {
-		w.SLO.MaxAge = Duration(max(DefaultMaxAge, time.Duration(w.SLO.MinSamples)*w.SampleInterval.Duration()))
+	if !maxAgeSet && w.Purpose == PurposeHealthProbe {
+		// A sample is stamped when its iteration starts and is seen when it
+		// ends. The window holds minSamples intervals plus the running
+		// iteration, or a healthy scenario sampled once per interval falls a
+		// sample short while each iteration runs.
+		w.SLO.MaxAge = Duration(max(DefaultMaxAge, time.Duration(w.SLO.MinSamples+1)*w.EffectiveSampleInterval()))
 	}
 	scenarios := make([]WorkloadScenario, len(w.Scenarios))
 	for index, scenario := range w.Scenarios {
