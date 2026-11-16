@@ -24,7 +24,8 @@ func TestJourneysFromTextDerivesOneJourneyPerItem(t *testing.T) {
 	cases := map[string][]string{
 		"users sign in, browse projects, push code, and download packages ...": {"users sign in", "browse projects", "push code", "download packages"},
 		"- users sign in\n* browse projects, filter by tag\n3. push code\n\n":  {"users sign in", "browse projects, filter by tag", "push code"},
-		"sign in; browse\npush code":                                           {"sign in", "browse", "push code"},
+		"sign in; browse\npush code":                                           {"sign in; browse", "push code"},
+		"sign in; browse; push code":                                           {"sign in", "browse", "push code"},
 		"":                                                                     nil,
 		"  \n\n":                                                               nil,
 	}
@@ -42,5 +43,25 @@ func TestJourneysFromTextDerivesOneJourneyPerItem(t *testing.T) {
 	got, _ := JourneysFromText("Sign in\nsign-in\nsign in!")
 	if len(got) != 3 || got[0].ID != "sign-in" || got[1].ID != "sign-in-2" || got[2].ID != "sign-in-3" {
 		t.Fatalf("repeated slugs must stay unique: %+v", got)
+	}
+}
+
+func TestJourneysFromTextKeepsOneJourneyPerLineWhateverItContains(t *testing.T) {
+	text := "Users reach the shop through the front-end (port 80); they browse the catalogue, filter by tag: socks or shoes\n" +
+		"- A user signs in (POST /login with username; password) and sees their orders\n" +
+		"* A user places an order: adds an item, pays, and reads the order back (status 201; body has the id)\n"
+	got, err := JourneysFromText(text)
+	if err != nil || len(got) != 3 {
+		t.Fatalf("one journey per line: got %+v, %v", got, err)
+	}
+	want := []string{
+		"Users reach the shop through the front-end (port 80); they browse the catalogue, filter by tag: socks or shoes",
+		"A user signs in (POST /login with username; password) and sees their orders",
+		"A user places an order: adds an item, pays, and reads the order back (status 201; body has the id)",
+	}
+	for i, g := range got {
+		if g.What != want[i] {
+			t.Errorf("journey %d = %q, want %q", i, g.What, want[i])
+		}
 	}
 }
