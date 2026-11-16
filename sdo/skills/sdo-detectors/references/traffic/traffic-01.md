@@ -107,6 +107,13 @@ const (
 	// confirm a failure within 30 s of it starting, where a weight-1 scenario
 	// sampled once a minute needed two more minutes.
 	MinSampleInterval = 10 * time.Second
+	// MaxSampleInterval bounds a workload's SampleInterval. A failure needs
+	// MinSamples samples to be confirmed, so detection takes about
+	// MinSamples times the interval and the SLO's MaxAge must span it; 120 s
+	// keeps that near six minutes, inside the 10 minute MaxAge ceiling. A
+	// probe sampled less often than that confirms outages too late to be a
+	// health signal.
+	MaxSampleInterval = 120 * time.Second
 	// ProbeRateCap is the most requests per second all continuous probes
 	// together should send when the application's own request rate is not
 	// measurable. Meeting the floor for many scenarios can exceed it; the
@@ -222,13 +229,4 @@ func CheckCatalog(ctx context.Context, catalog Catalog) []error
     required and declared fault classes. Generated tests call it so a generator
     that cannot tell a broken application from a healthy one never reaches the
     controller.
-
-func CheckDetects(ctx context.Context, scenario Scenario, class FaultClass) error
-    CheckDetects runs scenario once against a simulated fault of class and
-    returns an error unless the scenario fails the way a probe must: with an
-    error or timeout, not by being unable to build its requests.
-
-func DefaultLatencyNote(id string) string
-    DefaultLatencyNote is the non-blocking memory-check note for a scenario
-    DefaultLatencyScenarios returns.
 ```
