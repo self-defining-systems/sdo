@@ -58,6 +58,9 @@ type Map struct {
 	// Entries declare, per entry service, the request metric and the label
 	// names that tell operations apart (see MetricEntry).
 	Entries []MetricEntry `yaml:"entries,omitempty"`
+	// Routes lists the application's own routes so the onboarding check can
+	// tell which no journey covers (see Routes).
+	Routes *Routes `yaml:"routes,omitempty"`
 	// Reasons explain onboarding check items the author cannot make green.
 	Reasons []Reason `yaml:"reasons,omitempty"`
 	// Procedures are the operations procedures the application ships.

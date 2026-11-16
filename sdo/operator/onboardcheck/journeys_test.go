@@ -13,7 +13,7 @@ import (
 // items belong to the journey checklist.
 func metricItemsClean(r Report) bool {
 	for _, x := range r.Results {
-		if x.Status == Red && x.Item != ItemProbe && x.Item != ItemPointers {
+		if x.Status == Red && x.Item != ItemProbe && x.Item != ItemPointers && x.Item != ItemRoutesAssigned {
 			return false
 		}
 	}
@@ -42,6 +42,10 @@ operations:
     triggers: [MailWorker]
     entry: {service: web, port: 80, method: POST, path: /mail}
     path: [web, api, worker]
+routes:
+  list: {component: web, command: [routes]}
+  excluded:
+    - {route: GET /healthz, why: liveness only}
 probes:
   - {scenario: browse, kind: call, operations: [list-items]}
   - {scenario: mail, kind: write-read, operations: [send-mail]}
@@ -55,6 +59,7 @@ func journeyRun(t *testing.T, mapText string, w *world, brk bool) Report {
 		t.Fatal(err)
 	}
 	cfg.Map = m
+	cfg.Routes = fakeRoutes{"GET /items", "POST /mail", "GET /healthz"}
 	cfg.Prom.(*fakeProm).add("jobs_total", map[string]string{"job": "web", "class": "MailWorker", "outcome": "done"}, 5)
 	r, err := Run(context.Background(), cfg)
 	if err != nil {
@@ -204,3 +209,39 @@ func TestErrorPatternMustSeparateServerFromClientErrors(t *testing.T) {
 }
 
 var _ = time.Second
+
+type fakeRoutes []string
+
+func (f fakeRoutes) List(context.Context, appmap.Component, appmap.RouteList) ([]string, error) {
+	return f, nil
+}
+
+func TestListedRoutesMustBeAJourneyOrExcluded(t *testing.T) {
+	cfg := func(routes ...string) Report {
+		m, _ := appmap.Parse(journeyMap)
+		c := liveConfig(t, newWorld(), false, false)
+		c.Map, c.Routes = m, fakeRoutes(routes)
+		r, err := Run(context.Background(), c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	r := cfg("GET /items", "get /mail", "POST /mail", "GET /healthz", "DELETE /items/:id")
+	if status(r, ItemRoutesAssigned, "DELETE /items/:id") != Red || status(r, ItemRoutesAssigned, "routes") == Green {
+		t.Fatalf("an unassigned route is red:\n%s", r.Text())
+	}
+	if status(r, ItemRoutesAssigned, "get /mail") != Red {
+		t.Fatalf("method is part of the match:\n%s", r.Text())
+	}
+	if r := cfg("GET /items", "POST /mail", "GET /healthz"); status(r, ItemRoutesAssigned, "routes") != Green {
+		t.Fatalf("all assigned:\n%s", r.Text())
+	}
+	m, _ := appmap.Parse(strings.Replace(journeyMap, "routes:\n  list: {component: web, command: [routes]}\n", "", 1))
+	c := liveConfig(t, newWorld(), false, false)
+	c.Map = m
+	r, _ = Run(context.Background(), c)
+	if status(r, ItemRoutesAssigned, "routes") != Red || !strings.Contains(r.Text(), "no route list") {
+		t.Fatalf("red while the list is missing:\n%s", r.Text())
+	}
+}

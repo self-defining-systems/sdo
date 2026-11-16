@@ -20,6 +20,11 @@ memory check enforces the [rules](references/rules.md).
   when its metric's route value differs from the path, `writes: true` when it changes stored state, a `path` of
   every component it reaches (entry first), `triggers` (the background job classes it sets off; background work
   is a step of the journey that triggers it, not an operation), and `correct`: one line on what a correct result looks like.
+- **Where journeys come from**: source, and the app's own tests (end-to-end, API and integration tests, fixtures
+  and seed data show what users do and what a correct result is). Where the repo ships end-to-end tests that can
+  target a deployment, run them against yours to see which routes real flows use.
+- **Routes**: `routes.list` (component, container, command) prints the application's routes, one `METHOD route`
+  per line. Every listed route is a journey's route or sits in `routes.excluded` with a reason.
 - **Components**: one per workload, with the Services that select it and `observe` pointers (`metrics`, `logs`, `trace_service`); `holds_data: true` when it is the only
   place some user-visible data lives; every store gets a `data` entry.
 - **Edges**: caller to callee, with evidence. Ground them in code (a client address, an env value) and in

@@ -15,6 +15,10 @@ import (
 	"sync"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/evaluation"
 	"sdo.dev/operator/kubereads"
@@ -89,6 +93,8 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
          The report ends with a journey table (one row per operation: a mapping,
          b errors, c latency, d probe, e detection, f map, g traces); clean needs
          every journey complete on a to f, which includes a --break run.
+         routes-assigned runs the map's routes.list command in its component and
+         reports each listed route no operation covers and nothing excludes.
          Each live item reports its duration. The check prints its expected
          duration when it starts and takes minutes (about 20 with --break): run it
          in the background and read the report when it finishes; --report FILE
@@ -322,6 +328,7 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 		Prom:     promAdapter{prometheus.Client{BaseURL: base, HTTPClient: cluster}},
 		Sender:   httpSender{cluster: cluster, namespace: *namespace},
 		Exposed:  exposures,
+		Routes:   routeLister{cluster: cluster, namespace: *namespace},
 		Requests: *requests, Settle: *settle, Poll: 5 * time.Second, Wait: processio.Wait,
 		Now: processio.Now, Quick: *quick,
 		Progress: func(line string) { fmt.Fprintln(os.Stderr, processio.Now().Format("15:04:05"), line) },
@@ -477,4 +484,58 @@ func podExec(cluster *processio.KubeCluster) kubebreak.Exec {
 		err := exec.Stream(ctx, sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: namespace, Name: pod}, container, command, stdin, &out)
 		return out.String(), err
 	}
+}
+
+// routeLister runs the map's route-list command in a running pod of the
+// component's workload.
+type routeLister struct {
+	cluster   *processio.KubeCluster
+	namespace string
+}
+
+func (r routeLister) List(ctx context.Context, c appmap.Component, list appmap.RouteList) ([]string, error) {
+	kind, name, ok := strings.Cut(c.Workload, "/")
+	if !ok {
+		return nil, fmt.Errorf("component %s workload %q is not Kind/name", c.Name, c.Workload)
+	}
+	apps := r.cluster.Kube().AppsV1()
+	var selector *metav1.LabelSelector
+	var err error
+	switch kind {
+	case "Deployment":
+		var d *appsv1.Deployment
+		if d, err = apps.Deployments(r.namespace).Get(ctx, name, metav1.GetOptions{}); err == nil {
+			selector = d.Spec.Selector
+		}
+	case "StatefulSet":
+		var d *appsv1.StatefulSet
+		if d, err = apps.StatefulSets(r.namespace).Get(ctx, name, metav1.GetOptions{}); err == nil {
+			selector = d.Spec.Selector
+		}
+	case "DaemonSet":
+		var d *appsv1.DaemonSet
+		if d, err = apps.DaemonSets(r.namespace).Get(ctx, name, metav1.GetOptions{}); err == nil {
+			selector = d.Spec.Selector
+		}
+	default:
+		err = fmt.Errorf("unsupported workload kind %s", kind)
+	}
+	if err != nil {
+		return nil, err
+	}
+	pods, err := r.cluster.Kube().CoreV1().Pods(r.namespace).List(ctx, metav1.ListOptions{LabelSelector: metav1.FormatLabelSelector(selector)})
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range pods.Items {
+		if p.Status.Phase != corev1.PodRunning {
+			continue
+		}
+		out, err := podExec(r.cluster)(ctx, r.namespace, p.Name, list.Container, list.Command, "")
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(out))
+		}
+		return strings.Split(out, "\n"), nil
+	}
+	return nil, fmt.Errorf("no running pod of %s", c.Workload)
 }

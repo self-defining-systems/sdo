@@ -24,6 +24,8 @@ reports, not raw logs. When a result is wrong, say why and send it back.
 2. You know what users do: every exposed entry, route, non-HTTP entry and existing record, each written as an
    operation (background work belongs to the operation that triggers it) with what a correct result is
    ([map](../sdo-operations-map/SKILL.md)).
+   A separate subagent whose only job is finding missing journeys (from source, tests, docs and API specs, given
+   the current map) reviews the map; fix what it finds or exclude it with a reason.
 3. Every operation is observable: request, error and latency counts by route; traces across
    services; structured error logs. Reuse first; change code where needed
    ([observability](../sdo-observability/SKILL.md)).
