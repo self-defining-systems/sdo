@@ -347,6 +347,9 @@ def _timeline(
     t.closing_turn_duration_seconds = sum(_num(u.get("duration_seconds")) or 0.0 for u in done) if done else None
     t.closing_turn_cost_usd = sum(_num(u.get("cost_usd")) or 0.0 for u in done) if done else None
     results = ledger.get("reflection_results") or []
+    if t.closing_turn_cost_usd is None:  # the ledger's own copy of the same usage
+        costs = [_num(_get(r, "usage", "total_cost_usd")) for r in results]
+        t.closing_turn_cost_usd = sum(c for c in costs if c is not None) if any(c is not None for c in costs) else None
     dec = ledger.get("reflection_decision")
     dec = dec if isinstance(dec, dict) else (results[-1] if results else {})
     t.learning_decision = (dec or {}).get("learning_decision")
@@ -593,11 +596,11 @@ def build(run_dir: Path) -> CellEvidence:
                     problems.append(Problem(f"timeline {label}", "incomplete", f"no {field_name}"))  # noqa: PERF401
             if tl.resolution_path == "responder" and tl.responder_cost_usd is None:
                 problems.append(Problem(f"responder usage {label}", "incomplete", "no total_cost_usd"))
-        if ledger.get("reflection_dispatch_at") or tl.closing_turn_dispatch_at:
+        if ledger and sink.closing_turn_ran(ledger):
             if tl.closing_turn_end_at is None:
                 problems.append(Problem(f"closing turn {label}", "incomplete", "no end time"))
-            if tl.closing_turn_cost_usd is None and ran:
-                problems.append(Problem(f"closing turn {label}", "incomplete", "no cost (reflection-usage.jsonl)"))
+            if tl.closing_turn_cost_usd is None:
+                problems.append(Problem(f"closing turn {label}", "incomplete", "no cost"))
         if outcome.get("applied_playbooks") and tl.playbook_applied_at is None:
             problems.append(Problem(f"playbook {label}", "incomplete", "applied but no apply timestamp"))
         if outcome and "agent_changes" not in outcome:

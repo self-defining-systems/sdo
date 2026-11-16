@@ -374,3 +374,24 @@ def test_volume_node_is_one_schedulable_ready_node_and_stable_per_lane() -> None
     assert sink.volume_node(nodes, "lane3") == sink.volume_node(nodes, "lane3")
     with pytest.raises(sink.SinkError, match="no schedulable"):
         sink.volume_node({"items": []}, "lane1")
+
+
+def test_a_closing_turn_go_skipped_is_not_an_agent_run() -> None:
+    ledger = {
+        "closure": {"result": {"resolution_path": "deterministic"}},
+        "outcome_document": {"resolution_path": "deterministic", "usage": {}},
+        "reflection_dispatch_at": "2026-01-01T00:00:00Z",
+        "reflection_phase": "REFLECTION_PHASE_DONE",
+        "reflection_decision": {
+            "learning_decision": "no_change",
+            "no_change_reason": "accepted_programs_no_new_evidence",
+        },
+        "reflection_results": [
+            {"learning_decision": "no_change", "no_change_reason": "closing_turn_nothing_to_script"}
+        ],
+    }
+    assert not sink.agents_ran(ledger)
+    assert not sink.closing_turn_ran(ledger)
+    ledger["reflection_results"] = [{"learning_decision": "updated", "usage": {"llm_calls": "3"}}]
+    assert sink.agents_ran(ledger)
+    assert sink.closing_turn_ran(ledger)

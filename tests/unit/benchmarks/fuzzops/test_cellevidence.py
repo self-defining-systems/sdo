@@ -209,3 +209,17 @@ def test_finish_runs_analysis_only_when_every_cell_is_complete(
     assert ce.finish([tmp_path / "exp"]) == 1
     assert not calls
     assert "analysis not run" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("reason", ["closing_turn_nothing_to_script", "accepted_programs_no_new_evidence"])
+def test_a_closing_turn_go_skipped_needs_no_usage_or_session(tmp_path: Path, reason: str) -> None:
+    run = make_cell(tmp_path)
+    inc = run / "operator/evidence/incidents" / INC
+    ledger = json.loads((inc / "ledger.json").read_text())
+    ledger["reflection_decision"] = {"learning_decision": "no_change", "no_change_reason": reason}
+    ledger["reflection_results"] = [ledger["reflection_decision"]]
+    ledger["closure_phase_timestamps"].pop("reflection_committed")
+    ledger["closure_phase_timestamps"]["reflection_without_commit"] = T.format(12)
+    _w(inc / "ledger.json", ledger)
+    (inc / "reflection-usage.jsonl").unlink()
+    assert ce.build(run).problems == []
