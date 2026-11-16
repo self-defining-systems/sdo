@@ -514,6 +514,10 @@ def build(run_dir: Path, run_pending: bool = False) -> CellEvidence:
     col = add("collect.json", "operator/collect.json")
     _check_json(col, run, problems)
     for part, why in (collect.get("parts") or {}).items():
+        # collect's own verdict on the manifest, and the reset it blocked because of it, are this build's result
+        # (recomputed here) and the reset `validate` still owes: not evidence that is missing
+        if part == "evidence-manifest" or (part == "reset" and str(why).startswith("error: blocked")):
+            continue
         if str(why).startswith("error"):
             problems.append(Problem(f"collect part {part}", "incomplete", str(why)[:160]))
     _check_json(add("controller-state.json", "operator/controller-state.json"), run, problems)
