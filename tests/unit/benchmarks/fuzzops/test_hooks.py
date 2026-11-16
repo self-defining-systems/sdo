@@ -1091,3 +1091,41 @@ def test_reset_incidents_verb_resets_and_writes_the_receipt(tmp_path: Path, monk
     assert any(c[1:3] == ["incidents", "reset"] for c in calls)
     assert json.loads((out / "incidents-reset.json").read_text())["generation"] == 9
     assert "reset-incidents" in hooks.VERBS
+
+
+def _store_history(*entries: tuple[str, str]) -> dict[str, Any]:
+    stamp = NOW.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {
+        "version": "v",
+        "history": [
+            {
+                "detector_id": detector,
+                "evaluated_at": stamp,
+                "status": "clear",
+                **({"reason": reason} if reason else {}),
+            }
+            for detector, reason in entries
+        ],
+    }
+
+
+GAP = "store postgresql (postgres) not observed until it is read healthy once: Pod p has no healthy baseline"
+
+
+def test_idle_verdict_holds_while_a_data_store_has_no_promoted_baseline() -> None:
+    state = _store_history(("store-state-postgresql", GAP), ("store-state-redis", ""))
+
+    verdict = idle_verdict(state, NOW, True, NOW)
+
+    assert verdict == "blind: no healthy baseline yet for postgresql"
+
+
+def test_idle_verdict_releases_once_the_newest_evaluation_of_every_store_is_baselined() -> None:
+    state = _store_history(
+        ("store-state-postgresql", GAP),
+        ("drift.unexplained", ""),
+        ("store-state-postgresql", ""),
+        ("store-state-redis", ""),
+    )
+
+    assert idle_verdict(state, NOW, True, NOW) == ""
