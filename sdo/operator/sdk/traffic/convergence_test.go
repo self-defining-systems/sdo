@@ -122,3 +122,22 @@ func (stateGate) Build(_ context.Context, _ *rand.Rand, state State) (Request, e
 	return Request{Method: "GET", Path: "/readmodel/customers/sdo-probe-1"}, nil
 }
 func (stateGate) Check(Response, State) Verdict { return Pass() }
+
+// The wait for a NotYet step is Convergence, not latency: a read model that
+// converges after seconds, each request fast, must not violate the latency SLO.
+func TestNotYetWaitIsNotLatency(t *testing.T) {
+	server := readModelServer(3 * time.Second)
+	engine := simEngine(t, probeWorkload("register-customer"), Catalog{registerScenario(readModelCheck{notYet: true})}, server)
+	_, sample := engine.Iterate(context.Background(), 0)
+	if sample.Outcome != OutcomeOK || len(sample.Convergence) != 1 || sample.Convergence[0].Took < 3*time.Second {
+		t.Fatalf("setup of the test: %+v", sample)
+	}
+	if sample.Latency > 200*time.Millisecond {
+		t.Fatalf("latency %s counts the wait", sample.Latency)
+	}
+	slo := defaultSLO()
+	verdict := Evaluate("register-customer", slo, []Sample{sample, sample, sample}, sample.At)
+	if !verdict.Healthy {
+		t.Fatalf("converging step violates the objective: %+v", verdict)
+	}
+}

@@ -396,8 +396,10 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 	state[StateNow] = sample.At.Format(time.RFC3339)
 	started := e.clock.Now()
 	deadline := sample.At.Add(e.workload.IterationTimeout.Duration())
+	var waited time.Duration
 	for _, step := range scenario.Steps {
 		result := e.untilNotPending(iterationCtx, scenario, step, rng, state, passwords, deadline)
+		waited += result.waited
 		sample.record(result)
 		if result.outcome != OutcomeOK {
 			sample.Outcome, sample.Step, sample.Request, sample.Error = result.outcome, step.Name, result.request, result.err
@@ -409,7 +411,8 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 			sample.ExistingRecords = existingRecordsOutcome(state[ExistingMembersKey], scenario.Marker)
 		}
 	}
-	sample.Latency = e.since(started)
+	// Waiting for a NotYet step to pass is in Convergence, not in latency.
+	sample.Latency = max(e.since(started)-waited, time.Nanosecond)
 	if scenario.SideEffect == SideEffectWriteWithCleanup && sample.Requests > 0 {
 		cleanupCtx, cancelCleanup := e.withTimeout(context.WithoutCancel(ctx), e.workload.IterationTimeout.Duration())
 		defer cancelCleanup()
@@ -503,6 +506,9 @@ type stepResult struct {
 	pending bool
 	// converge is set for a step that answered NotYet at least once.
 	converge *Convergence
+	// waited is the time spent on attempts before the last one and the pauses
+	// between them; it is not part of the sample's latency.
+	waited time.Duration
 }
 
 // record adds a step's request count and last answer to the sample.
@@ -584,8 +590,10 @@ func (e *Engine) untilNotPending(ctx context.Context, scenario Scenario, step St
 	started := e.clock.Now()
 	attempts, sent := 0, 0
 	var result stepResult
+	var lastStart time.Time
 	for {
 		attempts++
+		lastStart = e.clock.Now()
 		attempt := state.clone()
 		result = e.step(ctx, scenario, step, rng, attempt, passwords, phaseStep)
 		sent += result.sent
@@ -609,6 +617,7 @@ func (e *Engine) untilNotPending(ctx context.Context, scenario Scenario, step St
 		}
 	}
 	result.sent = sent
+	result.waited = lastStart.Sub(started)
 	if attempts > 1 || result.pending {
 		result.converge = &Convergence{Step: step.Name, Attempts: attempts, Took: e.since(started), Converged: result.outcome == OutcomeOK}
 	}
