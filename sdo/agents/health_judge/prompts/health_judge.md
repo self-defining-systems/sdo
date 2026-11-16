@@ -20,6 +20,8 @@ Latency-sensitive request handlers often also dispatch background work (queues, 
 user-facing too: instrument it per job class, tie each class to the operation that triggers it, and confirm it completes.
 For every user journey that writes, the probe must read back what it wrote and check it is correct (read-your-writes),
 not just check the write returned success.
+Read-backs and existing-record checks use stable lookups: fetch by id, key or path, or check records the probe
+created and identifies. Never assert that a record appears on a page of a list other users change; it falls off.
 
 Follow ${skills_root}/sdo-operations-map/SKILL.md: map the application, write probes and detectors from the
 map, and calibrate them on the live application. The skill directory is the one place outside this checkout you

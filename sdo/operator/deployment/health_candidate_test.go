@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"sdo.dev/operator/evaluation"
 	"sdo.dev/operator/internal/testutil"
@@ -168,5 +169,16 @@ func TestAcceptedDetectorProbePassesTheScopeToEvaluateOnce(t *testing.T) {
 	}
 	if args := (AcceptedDetectorProbe{}).evaluationArgs("/root", "ns", HealthScope{}, ""); slices.Contains(args, "--classes") || slices.Contains(args, "--image-pins") {
 		t.Fatalf("unscoped args = %v", args)
+	}
+}
+
+func TestPreparedProbeWatchArgsSoakWritesOnlyWhenAsked(t *testing.T) {
+	plain := (&PreparedProbe{args: []string{"--evaluate-once"}}).watchArgs(5 * time.Second)
+	if slices.Contains(plain, "--write-soak") {
+		t.Fatalf("args %v soak writes without being asked", plain)
+	}
+	soaking := (&PreparedProbe{args: []string{"--evaluate-once"}, WriteSoak: 4}).watchArgs(5 * time.Second)
+	if i := slices.Index(soaking, "--write-soak"); i < 0 || soaking[i+1] != "4" {
+		t.Fatalf("args %v lack --write-soak 4", soaking)
 	}
 }
