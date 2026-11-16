@@ -599,13 +599,13 @@ func storeObservation(view sdk.DetectionContext) map[string]string {
 	}
 	for _, store := range storestate.Changes(view) {
 		switch {
+		case store.Error == storestate.NoBaseline:
+			if _, seen := out[store.Component]; !seen {
+				out[store.Component] = "no baseline yet"
+			}
 		case store.Error != "":
 			if prev, seen := out[store.Component]; !seen || prev != "" {
 				out[store.Component] = "store read failed: " + redactDetectText(store.Error, 70)
-			}
-		case !store.Baselined:
-			if _, seen := out[store.Component]; !seen {
-				out[store.Component] = "no baseline yet"
 			}
 		default:
 			out[store.Component] = ""
