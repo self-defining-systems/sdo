@@ -63,8 +63,11 @@ type Rule struct {
 	// failed for a client-error jump to be called on a thin baseline (fewer
 	// than MinBaselineRequests healthy requests). The share must also be
 	// MinRatio times the thin baseline's own observed failed share. Below it
-	// the jump stays the clue RuleInsufficientBaseline. Zero never calls one.
+	// the jump stays the clue RuleInsufficientBaseline. Zero never calls one. ThinMinFailed adds an absolute count.
 	ThinBaselineShare float64
+	// ThinMinFailed is the fewest failed requests every step of the run needs
+	// for a thin-baseline jump to be called; fewer stay the clue.
+	ThinMinFailed float64
 	// Lookback is how far back the steps reach (at least Window). A raised
 	// error finding stays until a step after it confirms recovery, so a quiet
 	// stretch with few requests never clears it.
@@ -92,7 +95,7 @@ func (r Rule) minHealthy() float64 {
 // and 5% of the requests and 5 times the healthy share over 30 s, on two
 // consecutive 5 s steps, healthy share floored at 1%.
 func DefaultRule() Rule {
-	return Rule{Window: 30 * time.Second, Step: 5 * time.Second, Consecutive: 2, MinFailed: 5, MinShare: 0.05, MinRatio: 5, ShareFloor: 0.01, MinBaselineRequests: 20, ThinBaselineShare: 0.5, Lookback: 5 * time.Minute, MinHealthy: 5}
+	return Rule{Window: 30 * time.Second, Step: 5 * time.Second, Consecutive: 2, MinFailed: 5, MinShare: 0.05, MinRatio: 5, ShareFloor: 0.01, MinBaselineRequests: 20, ThinBaselineShare: 0.5, ThinMinFailed: 8, Lookback: 5 * time.Minute, MinHealthy: 5}
 }
 
 // Entry is the request metric of one entry service, with the PromQL the
@@ -464,7 +467,7 @@ func (r Rule) judgeStep(c counts, class string, healthyServer, healthyClient flo
 // enough to be called anyway: at least ThinBaselineShare of the window's
 // requests failed, and MinRatio times the thin baseline's observed share.
 func (r Rule) thinJump(v verdict, thinClient float64) bool {
-	return r.ThinBaselineShare > 0 && v.share >= r.ThinBaselineShare && v.share >= r.MinRatio*thinClient
+	return r.ThinBaselineShare > 0 && v.failed >= r.ThinMinFailed && v.share >= r.ThinBaselineShare && v.share >= r.MinRatio*thinClient
 }
 
 // thinAll applies thinJump to every step of the consecutive run.
