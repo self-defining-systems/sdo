@@ -903,6 +903,9 @@ func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, n
 	// alert set (Recovered waits on it); any other later opener, or a test
 	// after the join window, opens the next incident.
 	if c.joinAlertSet(finding, now) {
+		// The alert set changed: a learned playbook for the joined symptom is
+		// evaluated against live state, not only the opening alerts' playbooks.
+		c.attachLearnedActivation(ctx, finding)
 		return
 	}
 	if spec.Class == "" {
@@ -1806,6 +1809,14 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			}
 		case !stageOnly && !graceOver:
 			// Recovered may still hold within the grace after the agent returned.
+			c.mu.Unlock()
+			return
+		}
+		// Alerts that cleared (a playbook's restarts can re-fire them after the
+		// stage first saw them clear) leave only the stability window to run:
+		// Recovered is holding, so the grace does not end it. The window is
+		// bounded, and one that restarts at every pass is not running.
+		if c.recoveryWindowRunningLocked(now) {
 			c.mu.Unlock()
 			return
 		}

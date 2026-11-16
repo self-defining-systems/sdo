@@ -19,7 +19,9 @@ const maxMidIncidentPasses = 8
 // open incident: one pass at a time, and one more when a match arrived during it.
 // A pass that clears no finding and applies no program new to the incident
 // settles the stage: the responder owns what remains, and later activations
-// join the incident without another pass.
+// of findings the incident already holds join it without another pass. A
+// finding new to the incident (a symptom joining the alert set, a clue)
+// reopens the stage for one more pass.
 type midIncidentStage struct {
 	running bool
 	dirty   bool
@@ -72,6 +74,9 @@ func (c *Controller) attachLearnedActivation(ctx context.Context, finding sdk.Fi
 		sortFindings(request.Findings)
 		c.incidentFindingKeys = findingKeys(request.Findings)
 		c.noteBatchedLocked(request.IncidentID, []sdk.Finding{finding})
+		// New evidence reopens a settled stage: the pass that settled it never
+		// saw this finding. The pass cap still bounds a flapping detector.
+		c.midStage.settled = false
 	}
 	// A settled stage hands the finding to the responder with the incident.
 	if c.midStage.settled {
