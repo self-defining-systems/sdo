@@ -1140,3 +1140,21 @@ def test_idle_verdict_needs_the_controller_log_to_judge_baselines() -> None:
     state = _store_history(("store-state-postgresql", ""))
 
     assert idle_verdict(state, NOW, True, NOW, controller_log=None).startswith("blind:")
+
+
+def test_idle_verdict_without_baselines_ignores_unpromoted_stores() -> None:
+    state = _store_history(("store-state-postgresql", ""))
+
+    assert idle_verdict(state, NOW, True, NOW, baselines=False) == ""
+    assert idle_verdict(state, NOW, True, NOW, controller_log=_log(EVALUATED)).startswith("blind:")
+
+
+def test_wait_idle_before_the_seed_needs_no_promoted_baseline(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Kube:
+        def state_configmap(self, control: str) -> tuple[dict[str, Any], datetime]:
+            return _store_history(("store-state-postgresql", "")), datetime.now(UTC)
+
+        def controller_ready(self, control: str) -> bool:
+            return True
+
+    assert hooks.wait_idle(_Kube(), "ns", 1.0) == ""  # type: ignore[arg-type]
