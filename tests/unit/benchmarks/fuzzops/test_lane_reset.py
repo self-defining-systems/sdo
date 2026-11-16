@@ -130,3 +130,66 @@ def test_an_unmoved_idle_lane_repository_is_left_alone(tmp_path: Path) -> None:
     same = {"head": "h" * 40, "status": "", "outcomes": ""}
     assert hooks.restore_moved_repository(lane(tmp_path), _steps(rec, same), same, lambda _m: None) is False
     assert rec.calls == []
+
+
+def test_a_claim_whose_stores_match_the_golden_copy_restores_nothing() -> None:
+    restored: list[str] = []
+    hooks.prove_golden(lambda: None, lambda: restored.append("restore"), lambda _m: None)
+    assert restored == []
+
+
+def test_a_claim_whose_stores_differ_forces_a_full_restore_then_proves_it() -> None:
+    log: list[str] = []
+    state = {"clean": False}
+
+    def verify() -> None:
+        log.append("verify")
+        if not state["clean"]:
+            raise hooks.HookError("pg/migrations differs")
+
+    def restore() -> None:
+        log.append("restore")
+        state["clean"] = True
+
+    hooks.prove_golden(verify, restore, log.append)
+    assert [e for e in log if e in ("verify", "restore")] == ["verify", "restore", "verify"]
+
+
+def test_a_claim_whose_stores_still_differ_after_the_restore_fails_loudly() -> None:
+    def verify() -> None:
+        raise hooks.HookError("pg/migrations differs")
+
+    with pytest.raises(hooks.HookError, match="after a full restore: pg/migrations differs"):
+        hooks.prove_golden(verify, lambda: None, lambda _m: None)
+
+
+def test_a_failed_snapshot_leaves_no_golden_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    env = lane(tmp_path)
+    golden = hooks.golden_directory(env)
+    golden.mkdir()
+    (golden / "meta.json").write_text("{}")
+    monkeypatch.setattr(hooks, "set_maintenance", lambda *_a, **_k: None)
+    monkeypatch.setattr(hooks, "_kube", lambda _e: None)
+    monkeypatch.setattr(hooks, "control_namespace", lambda _e: "ns")
+    monkeypatch.setattr(hooks, "fuzzops_app", lambda _e, _v: {"match": True})
+    monkeypatch.setattr(hooks, "wait_app_ready", lambda *_a, **_k: None)
+    monkeypatch.setattr(hooks, "wait_idle_stable", lambda *_a, **_k: "idle for less than the quiet period")
+    with pytest.raises(hooks.HookError, match="not idle after the snapshot"):
+        hooks.snapshot(env, lambda _m: None)
+    assert not golden.exists()
+
+
+def test_the_snapshot_is_refused_for_an_app_that_differs_from_the_fresh_deploy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[list[str]] = []
+
+    class Done:
+        returncode = 0
+        stdout = '{"match": true}\n'
+        stderr = ""
+
+    monkeypatch.setattr(hooks.subprocess, "run", lambda cmd, **_k: seen.append(cmd) or Done())
+    env = {**lane(tmp_path), "FUZZOPS_BIN": "/bin/fuzzops", hooks.FRESH_FINGERPRINT_ENV: "/lane/fresh.json"}
+    hooks.fuzzops_app(env, "snapshot")
+    assert seen[0][-2:] == ["--fresh", "/lane/fresh.json"]
