@@ -68,7 +68,7 @@ func ValidationTelemetryPolicy(ctx context.Context) (telemetry.Policy, bool) {
 // validationRequest is the single source of all acceptance inputs. Attestations
 // serialize this same request so future policy fields cannot be omitted.
 func (b *Broker) validationRequest(root, base string, actor Actor, phase Phase, publication *validate.PublicationContext, decision *contracts.ReflectionDecision, gaps *[]validate.Diagnostic) validate.Request {
-	return validate.Request{Replay: b.replay, CodePath: b.codePath, ObservationCeiling: b.observationCeiling, ApplicationNamespace: b.applicationNamespace, Root: root, Base: base, Actor: actor, Phase: phase, Publication: publication, Decision: decision, CoverageGaps: gaps, RepairVerified: b.RepairVerified, PlanCatalogs: b.PlanCatalogs, Telemetry: b.telemetry.Policy, TelemetryRegistry: b.telemetry.Registry}
+	return validate.Request{Replay: b.replay, CodePath: b.codePath, ObservationCeiling: b.observationCeiling, ApplicationNamespace: b.applicationNamespace, Root: root, Base: base, Actor: actor, Phase: phase, Publication: publication, Decision: decision, CoverageGaps: gaps, RepairVerified: b.RepairVerified, PlanCatalogs: b.PlanCatalogs, Renderers: b.Renderers, Telemetry: b.telemetry.Policy, TelemetryRegistry: b.telemetry.Registry}
 }
 
 // coverageGapsKey carries the broker's collector for the validator's gaps.

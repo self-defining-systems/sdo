@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/operatorcli/catalog/renderers"
 	"slices"
 
 	"sdo.dev/operator/broker"
@@ -66,6 +67,7 @@ func onboardingBroker(config OperateConfig, control string, validator broker.Val
 		return nil, fmt.Errorf("open accepted repository broker: %w", err)
 	}
 	repository.PlanCatalogs = planCatalogs()
+	repository.Renderers = renderers.Catalog()
 	return repository, nil
 }
 

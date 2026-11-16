@@ -15,7 +15,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/memory/layout"
 )
 
@@ -51,7 +50,7 @@ func loadMemoryNames(ctx context.Context, r Request) memoryNames {
 	// Component names are the accepted architecture's inventory lines (Go
 	// wrote them from the rendered source), so every source kind contributes.
 	if data, err := os.ReadFile(filepath.Join(r.Root, filepath.FromSlash(layout.ArchitectureFile))); err == nil {
-		for key := range appmap.ParseInventory(string(data)).Workloads {
+		for key := range derivedInventory(r, string(data)).Workloads {
 			_, name, _ := strings.Cut(key, "/")
 			names.components = append(names.components, name)
 		}
