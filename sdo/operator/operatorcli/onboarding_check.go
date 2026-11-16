@@ -83,8 +83,10 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
          failure counters for --harm-window before the memory's probes start
          (overlapping the detector build) and with them running (the quiet
          window, at least --harm-window); it is red when the probes raise
-         failures of an operation or job class, or are a large share of the
-         entry's requests, naming them (0 skips).
+         failures of an operation or job class, or add to the mean request
+         latency of an entry (100 ms and 1.5 times, with enough requests in both
+         windows), naming them; their share of the requests is shown, never
+         judged (0 skips).
          operations-observed, latency-per-operation and background-covered read
          the application's own metrics: a declared route that never appears
          (no reason excuses it), an operation without a request-duration series,

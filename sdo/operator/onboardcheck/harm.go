@@ -25,13 +25,14 @@ const (
 	// paused rate they must exceed.
 	harmFailureFloor = 1.0
 	harmFailureRatio = 2.0
-	// harmShare is the largest share of an entry's requests the probes may be.
-	harmShare = 0.25
-	// harmBaselineRate is the paused request rate per minute under which there
-	// is no user traffic to take a share of; the probes' own rate is then
-	// judged against harmAbsoluteRate per minute.
-	harmBaselineRate = 6.0
-	harmAbsoluteRate = 120.0
+	// harmLatencyAdded is the mean request latency the probes may add to an
+	// entry's users (and harmLatencyRatio the factor over the paused mean both
+	// must be exceeded), judged only with harmLatencyMinRequests requests in
+	// each window. The probes' share of the traffic is shown, never judged: it
+	// only says how small the user traffic is.
+	harmLatencyAdded       = 0.1
+	harmLatencyRatio       = 1.5
+	harmLatencyMinRequests = 30.0
 )
 
 // noiseLabels do not identify a failure counter's series.
@@ -69,6 +70,9 @@ func SampleHarm(ctx context.Context, prom Querier, m appmap.Map, now time.Time) 
 		for route, v := range byLabel(series, e.Labels.Route) {
 			out.Counts[requestsKey(e.Service, route)] += v
 		}
+		if err := sampleLatency(ctx, prom, e, out.Counts); err != nil {
+			return HarmSample{}, err
+		}
 		if e.Labels.Status == "" || e.Errors == "" {
 			continue
 		}
@@ -96,6 +100,38 @@ func SampleHarm(ctx context.Context, prom Querier, m appmap.Map, now time.Time) 
 		out.Counts["failures|"+failureSeries(name, s)] += v.Value
 	}
 	return out, nil
+}
+
+func latencySumKey(service string) string   { return "latency-sum|" + service }
+func latencyCountKey(service string) string { return "latency-count|" + service }
+
+// sampleLatency records the request-duration _sum and _count totals of the
+// entry's first duration family, from which the mean latency of a window follows.
+func sampleLatency(ctx context.Context, prom Querier, e appmap.MetricEntry, counts map[string]float64) error {
+	series, err := prom.Query(ctx, e.DurationFamilies())
+	if err != nil {
+		return fmt.Errorf("query %s: %w", e.DurationFamilies(), err)
+	}
+	var bases []string
+	for _, s := range series {
+		if n := s.Labels["__name__"]; strings.HasSuffix(n, "_sum") && isRequestDuration(n) {
+			bases = append(bases, strings.TrimSuffix(n, "_sum"))
+		}
+	}
+	sort.Strings(bases)
+	if len(bases) == 0 {
+		return nil
+	}
+	for suffix, key := range map[string]string{"sum": latencySumKey(e.Service), "count": latencyCountKey(e.Service)} {
+		got, err := prom.Query(ctx, e.DurationTotal(bases[0], suffix))
+		if err != nil {
+			return fmt.Errorf("query %s: %w", e.DurationTotal(bases[0], suffix), err)
+		}
+		if v, ok := scalar(got); ok {
+			counts[key] = v
+		}
+	}
+	return nil
 }
 
 func failureSeries(name string, s metrics.Series) string {
@@ -180,23 +216,37 @@ func judgeHarm(m appmap.Map, h HarmConfig, runStart, runEnd HarmSample) []Result
 		services = append(services, s)
 	}
 	sort.Strings(services)
+	var shares []string
 	for _, s := range services {
 		paused, running := requests[s][0], requests[s][1]
-		extra := max(0, running-paused)
-		switch {
-		case running <= 0:
-		case paused >= harmBaselineRate && extra/running > harmShare:
+		if running > 0 {
+			shares = append(shares, fmt.Sprintf("%s %.0f%% (%.0f/min running vs %.0f/min paused)", s, 100*max(0, running-paused)/running, running, paused))
+		}
+		ps, pc := latencyMean(h.PausedStart, h.PausedEnd, s)
+		rs, rc := latencyMean(runStart, runEnd, s)
+		if pc >= harmLatencyMinRequests && rc >= harmLatencyMinRequests && rs-ps > harmLatencyAdded && rs > harmLatencyRatio*ps {
 			failed++
-			add(s, Red, fmt.Sprintf("probes are %.0f%% of the requests of entry %s (%.1f/min running vs %.1f/min paused): lower their rate or send them to a cheaper route; scenarios: %s", 100*extra/running, s, running, paused, probes))
-		case paused < harmBaselineRate && extra > harmAbsoluteRate:
-			failed++
-			add(s, Red, fmt.Sprintf("probes send %.0f requests/min to entry %s with almost no other traffic (%.1f/min paused): lower their rate; scenarios: %s", extra, s, paused, probes))
+			add(s, Red, fmt.Sprintf("users of entry %s wait %.0f ms longer per request with the probes running (mean %.0f ms vs %.0f ms paused, %.0f and %.0f requests): lower the probes' rate or send them to cheaper routes; scenarios: %s", s, 1000*(rs-ps), 1000*rs, 1000*ps, rc, pc, probes))
 		}
 	}
+	info := ""
+	if len(shares) > 0 {
+		info = "; probes' share of requests, for information: " + strings.Join(shares, ", ")
+	}
 	if failed == 0 {
-		add("probes", Green, fmt.Sprintf("failures and request rates with the probes running (%s window) match the paused window (%s)", runEnd.At.Sub(runStart.At).Round(time.Second), h.PausedEnd.At.Sub(h.PausedStart.At).Round(time.Second)))
+		add("probes", Green, fmt.Sprintf("failures and request rates with the probes running (%s window) match the paused window (%s)%s", runEnd.At.Sub(runStart.At).Round(time.Second), h.PausedEnd.At.Sub(h.PausedStart.At).Round(time.Second), info))
 	}
 	return out
+}
+
+// latencyMean is the mean request latency of one window of an entry and the
+// number of requests it covers (0, 0 when the entry exposes no duration family).
+func latencyMean(from, to HarmSample, service string) (float64, float64) {
+	n := to.Counts[latencyCountKey(service)] - from.Counts[latencyCountKey(service)]
+	if n <= 0 {
+		return 0, 0
+	}
+	return max(0, to.Counts[latencySumKey(service)]-from.Counts[latencySumKey(service)]) / n, n
 }
 
 func probeNames(m appmap.Map) string {
