@@ -59,6 +59,12 @@ type Rule struct {
 	// MinBaselineRequests is the fewest healthy requests that make a baseline
 	// share believable; with fewer the healthy share is zero (so the floor applies).
 	MinBaselineRequests float64
+	// ThinBaselineShare is the share of a window's requests that must have
+	// failed for a client-error jump to be called on a thin baseline (fewer
+	// than MinBaselineRequests healthy requests). The share must also be
+	// MinRatio times the thin baseline's own observed failed share. Below it
+	// the jump stays the clue RuleInsufficientBaseline. Zero never calls one.
+	ThinBaselineShare float64
 	// Lookback is how far back the steps reach (at least Window). A raised
 	// error finding stays until a step after it confirms recovery, so a quiet
 	// stretch with few requests never clears it.
@@ -86,7 +92,7 @@ func (r Rule) minHealthy() float64 {
 // and 5% of the requests and 5 times the healthy share over 30 s, on two
 // consecutive 5 s steps, healthy share floored at 1%.
 func DefaultRule() Rule {
-	return Rule{Window: 30 * time.Second, Step: 5 * time.Second, Consecutive: 2, MinFailed: 5, MinShare: 0.05, MinRatio: 5, ShareFloor: 0.01, MinBaselineRequests: 20, Lookback: 5 * time.Minute, MinHealthy: 5}
+	return Rule{Window: 30 * time.Second, Step: 5 * time.Second, Consecutive: 2, MinFailed: 5, MinShare: 0.05, MinRatio: 5, ShareFloor: 0.01, MinBaselineRequests: 20, ThinBaselineShare: 0.5, Lookback: 5 * time.Minute, MinHealthy: 5}
 }
 
 // Entry is the request metric of one entry service, with the PromQL the
@@ -420,17 +426,20 @@ func (p entryPlan) perStep(op Operation, series []metrics.Series) map[time.Time]
 // healthy is the operation's healthy server and client-error shares.
 // enough is false when the baseline holds fewer than minRequests requests: the
 // shares are then zero and a client-error jump cannot be judged.
-func (p entryPlan) healthy(op Operation, series []metrics.Series, minRequests float64) (server, client float64, enough bool) {
+func (p entryPlan) healthy(op Operation, series []metrics.Series, minRequests float64) (server, client float64, enough bool, thinClient float64) {
 	var sum counts
 	for _, s := range series {
 		if v, ok := s.Last(); ok && p.matches(op, s.Labels) {
 			sum = sum.add(p.classify(s.Labels, v.Value))
 		}
 	}
-	if sum.total < minRequests || sum.total == 0 {
-		return 0, 0, false
+	if sum.total == 0 {
+		return 0, 0, false, 0
 	}
-	return sum.server / sum.total, sum.client / sum.total, true
+	if sum.total < minRequests {
+		return 0, 0, false, sum.client / sum.total
+	}
+	return sum.server / sum.total, sum.client / sum.total, true, 0
 }
 
 type verdict struct {
@@ -449,6 +458,23 @@ func (r Rule) judgeStep(c counts, class string, healthyServer, healthyClient flo
 	}
 	v.ok = v.failed >= r.MinFailed && v.share >= r.MinShare && v.share >= r.MinRatio*math.Max(v.healthy, r.ShareFloor)
 	return v
+}
+
+// thinJump reports whether a client-error rise on a thin baseline is large
+// enough to be called anyway: at least ThinBaselineShare of the window's
+// requests failed, and MinRatio times the thin baseline's observed share.
+func (r Rule) thinJump(v verdict, thinClient float64) bool {
+	return r.ThinBaselineShare > 0 && v.share >= r.ThinBaselineShare && v.share >= r.MinRatio*thinClient
+}
+
+// thinAll applies thinJump to every step of the consecutive run.
+func (r Rule) thinAll(steps map[time.Time]counts, run []time.Time, thinClient float64) bool {
+	for _, t := range run {
+		if !r.thinJump(r.judgeStep(steps[t], ClassClientJump, 0, 0), thinClient) {
+			return false
+		}
+	}
+	return true
 }
 
 // confirmsRecovery is a window with enough requests, none of them failed.
@@ -472,7 +498,7 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 	if len(times) < r.Consecutive && !held {
 		return sdk.Finding{}, false
 	}
-	healthyServer, healthyClient, enough := plan.healthy(op, results[plan.base.ID].Series, r.MinBaselineRequests)
+	healthyServer, healthyClient, enough, thinClient := plan.healthy(op, results[plan.base.ID].Series, r.MinBaselineRequests)
 	if held {
 		healthyServer, healthyClient, enough = 0, 0, true
 	}
@@ -496,8 +522,14 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 				continue
 			}
 			if class == ClassClientJump && !enough {
+				v := r.judgeStep(steps[times[end]], class, healthyServer, healthyClient)
+				if r.thinAll(steps, times[end-r.Consecutive+1:end+1], thinClient) {
+					if best == nil || unjudged || v.failed > best.failed {
+						best, raisedAt, unjudged = &v, end, false
+					}
+					continue
+				}
 				if best == nil {
-					v := r.judgeStep(steps[times[end]], class, healthyServer, healthyClient)
 					best, raisedAt, unjudged = &v, end, true
 				}
 				continue
