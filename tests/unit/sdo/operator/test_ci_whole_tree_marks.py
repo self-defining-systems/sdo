@@ -31,14 +31,15 @@ def test_every_tree_walking_test_in_the_repository_is_marked() -> None:
     assert select.unmarked_tree_walkers(ROOT, select.tracked_files(ROOT)) == []
 
 
-def test_a_change_only_under_operatorcli_still_runs_the_safefs_writer_guard() -> None:
-    """The merge-queue ejection this class fix closes: PR CI skipped the whole-tree writer guard."""
+def test_an_operatorcli_only_selection_still_runs_the_safefs_writer_guard() -> None:
+    """The merge-queue ejection this class fix closes: PR CI skipped the whole-tree writer guard.
+
+    The plan is built by hand (selecting operatorcli alone) so the test stays fast; the real planner is
+    exercised on a synthetic workspace in ``test_ci_selection.py``."""
     config = select.Config.load(ROOT)
-    result = select.plan_for(ROOT, config, ["sdo/operator/operatorcli/memory.go"], [])
-    assert not result.full
-    assert "sdo/operator/safefs" not in result.go_packages
-    assert "TestCheckoutWritersGoThroughSafefs" in result.go_guards["sdo/operator/safefs"]
-    regex, packages = select.shard_go_guards(result, config, "rest")
+    guards = select.go_whole_tree_tests(ROOT, select.tracked_files(ROOT))
+    plan = select.Plan(go_packages=["sdo/operator/operatorcli"], go_guards=guards)
+    regex, packages = select.shard_go_guards(plan, config, "rest")
     assert "TestCheckoutWritersGoThroughSafefs" in regex
     assert "./sdo/operator/safefs" in packages
 
