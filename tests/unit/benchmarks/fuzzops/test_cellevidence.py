@@ -259,3 +259,17 @@ def test_a_cell_is_complete_at_collect_before_the_manager_writes_run_json(tmp_pa
     pending = ce.build(run, run_pending=True)
     assert pending.problems == []
     assert pending.complete
+
+
+def test_a_failed_closing_turn_has_an_end_time_and_is_not_missing_evidence(tmp_path: Path) -> None:
+    """The turn ran and ended (the broker stamped reflection_failed); its failure is recorded, not a recording gap."""
+    run = make_cell(tmp_path)
+    inc = run / "operator/evidence/incidents" / INC
+    ledger = json.loads((inc / "ledger.json").read_text())
+    ledger["reflection_decision"] = {"learning_decision": "failed", "failure_reason": "agent_failed", "error": "x"}
+    ledger["closure_phase_timestamps"].pop("reflection_committed")
+    ledger["closure_phase_timestamps"]["reflection_failed"] = T.format(30)
+    _w(inc / "ledger.json", ledger)
+    ev = ce.build(run)
+    assert not any("closing turn" in p for p in ev.problems)
+    assert ev.timelines[0].closing_turn_end_at == T.format(30)
