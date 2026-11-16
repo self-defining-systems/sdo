@@ -82,6 +82,12 @@ type Config struct {
 	Evidence   Evidence   `yaml:"evidence"`
 	Telemetry  Telemetry  `yaml:"telemetry"`
 	Source     Source     `yaml:"source"`
+	Onboarding Onboarding `yaml:"onboarding"`
+}
+
+// Onboarding is what the people running the application owe SDO before it onboards.
+type Onboarding struct {
+	JourneysRequired bool `yaml:"journeys_required" doc:"whether onboarding requires the user journeys SDO must support, given by the people running the application as free text (host --journeys or --journeys-file, or a journeys: list in the goal file's front matter). On, a host or operate launch without them stops before any agent runs; off, the onboarding agent discovers the journeys itself"`
 }
 
 // Source is the one branch of the application repository SDO commits to and deploys from.
@@ -217,8 +223,9 @@ func Default() Config {
 			MaxAttempts: 3, BuildTimeout: Duration(DefaultBuildTimeout), BuildBudget: Duration(DefaultBuildBudget),
 			RolloutTimeout: Duration(DefaultRolloutTimeout),
 		},
-		Telemetry: Telemetry{Profile: "prometheus-default"},
-		Source:    Source{PollInterval: Duration(30 * time.Second)},
+		Telemetry:  Telemetry{Profile: "prometheus-default"},
+		Source:     Source{PollInterval: Duration(30 * time.Second)},
+		Onboarding: Onboarding{JourneysRequired: true},
 	}
 }
 

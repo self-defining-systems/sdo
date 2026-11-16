@@ -38,7 +38,13 @@ reports, not raw logs. When a result is wrong, say why and send it back.
 
 ## What done means for each journey
 
-When goal.md lists journeys, they are authoritative: cover each fully (`journey: <id>` on its operations) and still map the routes.
+The people running the application give the user journeys SDO must support; they are authoritative. They are in your
+goal under "User journeys:" as the people wrote them (free text, often one journey per line), and goal.md's front
+matter lists the same journeys as `id`/`what`. Cover every one fully: each has at least one operation with
+`journey: <id>` (use the front matter's ids), and each such operation meets the whole checklist below. A journey you
+cannot find in the application is a blocker you report, never one you drop. Still map every route: a route outside
+the given journeys is its own operation (with no `journey` field) or an excluded route with a reason. When the goal
+lists no journeys, find them yourself.
 
 Every user journey is instrumented and detected: mapped in the app's own metrics (with the background work it
 triggers), errors and latency per journey, a probe that checks its result end to end, a detector that names it

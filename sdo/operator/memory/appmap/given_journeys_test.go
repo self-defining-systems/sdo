@@ -19,3 +19,28 @@ func TestGivenJourneysAreReadFromTheGoalFrontMatter(t *testing.T) {
 		t.Fatal("duplicate ids are an error")
 	}
 }
+
+func TestJourneysFromTextDerivesOneJourneyPerItem(t *testing.T) {
+	cases := map[string][]string{
+		"users sign in, browse projects, push code, and download packages ...": {"users sign in", "browse projects", "push code", "download packages"},
+		"- users sign in\n* browse projects, filter by tag\n3. push code\n\n":  {"users sign in", "browse projects, filter by tag", "push code"},
+		"sign in; browse\npush code":                                           {"sign in", "browse", "push code"},
+		"":                                                                     nil,
+		"  \n\n":                                                               nil,
+	}
+	for text, want := range cases {
+		got, err := JourneysFromText(text)
+		if err != nil || len(got) != len(want) {
+			t.Fatalf("%q: got %+v, %v", text, got, err)
+		}
+		for i, g := range got {
+			if g.What != want[i] || g.ID == "" {
+				t.Errorf("%q item %d = %+v, want what %q", text, i, g, want[i])
+			}
+		}
+	}
+	got, _ := JourneysFromText("Sign in\nsign-in\nsign in!")
+	if len(got) != 3 || got[0].ID != "sign-in" || got[1].ID != "sign-in-2" || got[2].ID != "sign-in-3" {
+		t.Fatalf("repeated slugs must stay unique: %+v", got)
+	}
+}

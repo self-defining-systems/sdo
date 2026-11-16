@@ -15,7 +15,8 @@ nothing here changes what an accepted detector decides.
    A list or an object is JSON. A variable that starts with a section prefix but names no key is an error.
 
 No knob has a command-line flag of its own; the flags of `host` and `install-existing` name only the installation
-(repository, namespaces, images, Secrets, PVC, registry, source and plan, agent registrations, run bounds).
+(repository, namespaces, images, Secrets, PVC, registry, source and plan, agent registrations, run bounds) and, for `host`, the
+inputs the people running the application give (`--goal`/`--goal-file`, `--journeys`/`--journeys-file`).
 
 The installer writes the resolved result to the `sdo-config` ConfigMap, mounted read-only at `/etc/sdo/config.yaml` in the
 operate and controller Jobs, which refuse to start without it; no policy value crosses their command lines. The controller
@@ -39,7 +40,8 @@ learned playbooks achieve alone, `response.after_playbook: wait` with `response.
 the agent is never dispatched; recovery gets the whole bound (slow readiness and windowed detectors need more than the
 stage's default 90 seconds), then the incident escalates. Production keeps `agent`. It also names `agent.recording: false`
 (the production default, written out so an experiment can set it to `true`): the agent-cluster recording is off, and a few runs
-that show nothing missing without it are the case for removing it.
+that show nothing missing without it are the case for removing it. It sets `onboarding.journeys_required: false`: a benchmark app has no people to give journeys, so
+the onboarding agent discovers them (production requires them; a harness that has them passes `host --journeys`).
 
 ## Keys
 
@@ -136,6 +138,12 @@ that show nothing missing without it are the case for removing it.
 | Key | Env | Type | Default | Description |
 |---|---|---|---|---|
 | `source.poll_interval` | `SDO_SOURCE_POLL_INTERVAL` | duration | `30s` | how often the controller looks for a branch head SDO did not write (an engineer's push), to deploy and verify it |
+
+### `onboarding`
+
+| Key | Env | Type | Default | Description |
+|---|---|---|---|---|
+| `onboarding.journeys_required` | `SDO_ONBOARDING_JOURNEYS_REQUIRED` | bool | `true` | whether onboarding requires the user journeys SDO must support, given by the people running the application as free text (host --journeys or --journeys-file, or a journeys: list in the goal file's front matter). On, a host or operate launch without them stops before any agent runs; off, the onboarding agent discovers the journeys itself |
 
 ## App-memory defaults
 

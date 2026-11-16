@@ -93,8 +93,9 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
          The report ends with a journey table (one row per operation: a mapping,
          b errors, c latency, d probe, e detection, f map, g traces); clean needs
          every journey complete on a to f, which includes a --break run.
-         given-journeys (when goal.md lists journeys) is red for a listed journey no
-         operation serves and for an operation naming an unlisted one.
+         given-journeys (when goal.md lists journeys, which host's --journeys text
+         becomes) is red for a listed journey no operation serves and for an
+         operation naming an unlisted one.
          routes-assigned runs the map's routes.list command in its component and
          reports each listed route no operation covers and nothing excludes.
          Each live item reports its duration. The check prints its expected

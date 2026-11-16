@@ -152,7 +152,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			OperationID:    *operationID, Application: *application, Namespace: *namespace,
 			HealthObjective: *objective, DeployerAgentID: *deployerID, JudgeAgentID: *judgeID,
 			RegistryHost: *registryHost,
-			MaxAttempts:  policy.Deployment.MaxAttempts, StopAfterArchitecture: *stopAfterArchitecture,
+			MaxAttempts:  policy.Deployment.MaxAttempts, JourneysRequired: policy.Onboarding.JourneysRequired, StopAfterArchitecture: *stopAfterArchitecture,
 		},
 		Install: install.Config{
 			Settings:       &policy,

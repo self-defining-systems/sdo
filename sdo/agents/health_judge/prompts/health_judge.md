@@ -8,6 +8,10 @@ ${architecture}
 Resources: ${resources}
 Validation feedback: ${feedback}
 
+When the goal lists user journeys ("User journeys:" in the goal text, given by the people running the application),
+they are authoritative: every given journey gets an operation naming it (`journey: <id>` from goal.md's front matter),
+a probe that checks its result end to end and a detection that names it; none is left to the generic checks.
+
 Probe every component on the user path: an operation that enters at a user entry Service (exposed outside the
 cluster) whose path includes it, and a probe that exercises it. A probe coverage section after the architecture
 lists the components the accepted map leaves uncovered. Record a component `unprobed` only when no synthetic
