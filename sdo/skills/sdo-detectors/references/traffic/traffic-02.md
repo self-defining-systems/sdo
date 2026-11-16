@@ -205,6 +205,9 @@ func (e *Engine) UsePasswords(source Passwords)
     UsePasswords lets scenarios that declare Users sign in with the passwords
     source returns. A prober gives every engine the same source.
 
+func (e *Engine) UseSetupLock(l SetupLocker)
+    UseSetupLock makes e serialize each setup request across processes with l.
+
 func (e *Engine) Workload() Workload
     Workload returns the engine's workload with defaults applied.
 
