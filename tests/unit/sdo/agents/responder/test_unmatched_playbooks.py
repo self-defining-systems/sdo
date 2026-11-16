@@ -9,7 +9,10 @@ from sdo.agents.responder.incident_opening import unmatched_playbooks_block
 from sdo.contracts import IncidentRequest, MemoryPlaybook, ProgramRun, ReadStep, Verdict
 from tests.unit.sdo.agents.prompts.cases import incident
 
-README = "---\nschema_version: 1\nowner: responder\nfault_class: narrow-column\noriginating_incident: inc-7\ndescription: widen a varchar column the app outgrew\n---\n\n# Narrow column\n"
+README = (
+    "---\nschema_version: 1\nowner: responder\nfault_class: narrow-column\n"
+    "originating_incident: inc-7\ndescription: widen a varchar column the app outgrew\n---\n\n# Narrow column\n"
+)
 
 
 def _run(
