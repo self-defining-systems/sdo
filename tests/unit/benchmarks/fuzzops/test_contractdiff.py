@@ -270,3 +270,43 @@ def test_a_swap_refuses_a_breaking_contract_change(edit: Edit, tmp_path: Path) -
 def test_a_swap_refuses_a_contract_change_for_a_lane_without_descriptors(tmp_path: Path) -> None:
     repo, lane, _snapshot = _swap_repo(tmp_path, _add_field)
     assert "no contract descriptors" in devtree.swap_problem(repo, lane, rebuild_binary=True)
+
+
+def _hooks_checkouts(tmp_path: Path, edit: Edit) -> tuple[Path, Path, dict[str, str]]:
+    """A lane built (before descriptors were recorded) from ``bench-sdo-hooks-aaaaaaaa``; the claim's checkout
+    ``bench-sdo-hooks-bbbbbbbb`` carries ``edit`` and one more file under ``sdo/contracts``."""
+    old, new = tmp_path / "bench-sdo-hooks-aaaaaaaa", tmp_path / "bench-sdo-hooks-bbbbbbbb"
+    for root, change in ((old, None), (new, edit)):
+        file = _base()
+        if change is not None:
+            change(file)
+        _write(root, file)
+        _git(tmp_path, "init", "-q", str(root))
+        if change is not None:
+            (root / "sdo/contracts/agent_env.json").write_text("{}\n")
+        _git(root, "add", "-A")
+        _git(root, "commit", "-qm", "c")
+    return old, new, devtree.fingerprint(old)
+
+
+def test_a_lane_without_descriptors_takes_a_build_whose_contract_descriptors_are_unchanged(tmp_path: Path) -> None:
+    _old, new, lane = _hooks_checkouts(tmp_path, lambda f: None)
+    snapshot = devtree.legacy_snapshot(new, lane)
+    assert snapshot
+    assert devtree.swap_problem(new, lane, rebuild_binary=True, contracts=snapshot) == ""
+
+
+def test_a_lane_without_descriptors_takes_an_additive_change_and_refuses_a_breaking_one(tmp_path: Path) -> None:
+    _old, new, lane = _hooks_checkouts(tmp_path, _add_field)
+    assert devtree.swap_problem(new, lane, rebuild_binary=True, contracts=devtree.legacy_snapshot(new, lane)) == ""
+    tmp2 = tmp_path / "two"
+    tmp2.mkdir()
+    _old, new, lane = _hooks_checkouts(tmp2, _remove_field)
+    problem = devtree.swap_problem(new, lane, rebuild_binary=True, contracts=devtree.legacy_snapshot(new, lane))
+    assert problem.startswith("breaking contract change")
+
+
+def test_a_lane_whose_build_checkout_is_gone_still_cannot_say(tmp_path: Path) -> None:
+    _old, new, lane = _hooks_checkouts(tmp_path, _add_field)
+    lane = {devtree.CONTRACTS_PATH: "0" * 40}
+    assert devtree.legacy_snapshot(new, lane) == ""

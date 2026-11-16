@@ -1482,7 +1482,11 @@ def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     record = json.loads((lane_dir / PREPARED_RECORD).read_text())
     revision = checkout_revision()
     compiled = record.get("compiled") or {}
-    if why := devtree.swap_problem(Path.cwd(), compiled, rebuild_binary=True, contracts=record.get("contracts", "")):
+    contracts = record.get("contracts", "")
+    if not contracts and devtree.CONTRACTS_PATH in devtree.changed_compiled(Path.cwd(), compiled):
+        # a lane built before lanes recorded their descriptors: read them from the checkout it was built from
+        contracts = devtree.legacy_snapshot(Path.cwd(), compiled)
+    if why := devtree.swap_problem(Path.cwd(), compiled, rebuild_binary=True, contracts=contracts):
         raise HookError(why)
     started = time.monotonic()
     kube, control = _kube(env), control_namespace(env)
