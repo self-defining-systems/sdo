@@ -52,4 +52,5 @@ def test_every_program_identifier_the_skill_and_examples_name_exists_in_the_sdk(
 def test_the_skill_names_the_executable_alternative_to_a_sole_escalate() -> None:
     text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
     assert "program.EnsureExec" in text
-    assert "only `program.Escalate` repairs nothing" in text
+    assert "sdk-card.md" in text
+    assert "known-good value directly" in text
