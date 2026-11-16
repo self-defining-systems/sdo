@@ -130,7 +130,14 @@ func (probe AcceptedDetectorProbe) Prepare(ctx context.Context, acceptedRoot, op
 	}
 	prepared := &PreparedProbe{workspace: workspace}
 	fail := func(err error) (*PreparedProbe, error) { workspace.Close(); return nil, err }
-	if prepared.binary, err = workspace.ValidateAndBuild(ctx); err != nil {
+	// A host check reads no advisories: skip the informational playbook tests
+	// and the program-corpus replay, which only a launch's notes consume. Every
+	// gate that decides whether the detectors run still runs.
+	build := workspace.ValidateAndBuild
+	if probe.Host {
+		build = workspace.BuildForLaunch
+	}
+	if prepared.binary, err = build(ctx); err != nil {
 		return fail(fmt.Errorf("compile accepted health detectors: %w", err))
 	}
 	artifact, err := workspace.BuildMemoryHost(ctx)

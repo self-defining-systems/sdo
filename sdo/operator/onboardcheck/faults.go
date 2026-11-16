@@ -96,61 +96,23 @@ func OperationsThrough(m appmap.Map, component string) []string {
 	return ids
 }
 
-// runFaults breaks each fault once, one at a time, and reports whether a
-// detector named a hurt operation. It returns the baseline for later items and
-// whether a restore was uncertain. dirty says a restored break's raises may
-// still stand; each fault waits for them (and the previous fault's) to clear.
-func runFaults(ctx context.Context, cfg Config, report *Report, baseline map[string]bool, dirty bool) bool {
-	b := cfg.Break
-	for _, f := range b.Faults {
-		subject := f.Name()
-		ids := f.Operations()
-		var ops []appmap.Operation
+// reportFault judges a fault's outcome like a component break's: green when a
+// raise named an operation it hurts or one of that operation's test scenarios.
+func reportFault(report *Report, f Fault, out *breakOutcome, ids []string, bound time.Duration) {
+	subject := f.Name()
+	switch {
+	case out.err != "":
+		report.add(ItemBreak, subject, Red, out.err)
+	case len(out.opHit) > 0:
+		var first *foundRaise
+		var op string
 		for _, id := range ids {
-			for _, op := range cfg.Map.Operations {
-				if op.ID == id {
-					ops = append(ops, op)
-				}
+			if h := out.opHit[id]; h != nil && (first == nil || h.after < first.after) {
+				first, op = h, id
 			}
 		}
-		if len(ops) == 0 {
-			report.add(ItemBreak, subject, Note, "no operation depends on what this break targets, so nothing could be hurt")
-			continue
-		}
-		if why := f.NotApplicable(ctx); why != "" {
-			report.add(ItemBreak, subject, Note, "not run: "+why)
-			continue
-		}
-		out := &breakOutcome{names: []string{subject}, opHit: map[string]*foundRaise{}}
-		fcfg := cfg
-		fb := *b
-		fb.Breaker = faultBreaker{f}
-		fcfg.Break = &fb
-		cfg.say("fails-under-break: %s: %s", subject, f.Describe())
-		var restoreFailed bool
-		if dirty {
-			baseline = settleBaseline(ctx, cfg, baseline)
-		}
-		dirty = true
-		baseline, restoreFailed = breakWave(ctx, fcfg, []waveMember{{c: appmap.Component{Name: subject}, ops: ops, out: out}}, baseline)
-		switch {
-		case out.err != "":
-			report.add(ItemBreak, subject, Red, out.err)
-		case len(out.opHit) > 0:
-			var first *foundRaise
-			var op string
-			for _, id := range ids {
-				if h := out.opHit[id]; h != nil && (first == nil || h.after < first.after) {
-					first, op = h, id
-				}
-			}
-			report.add(ItemBreak, subject, Green, fmt.Sprintf("%s: %s noticed after %s, naming %s: %s%s", out.how, first.raise.DetectorID, first.after.Round(time.Second), op, clip(first.raise.Summary, 200), signalNote(out, op)))
-		default:
-			report.add(ItemBreak, subject, Red, fmt.Sprintf("%s: no detector named %s or its test scenarios within %s%s; every component stayed up, so only a test or request metric of the operation can catch this", out.how, strings.Join(ids, ", "), b.Bound, otherRaises(out)))
-		}
-		if restoreFailed {
-			return true
-		}
+		report.add(ItemBreak, subject, Green, fmt.Sprintf("%s: %s noticed after %s, naming %s: %s%s", out.how, first.raise.DetectorID, first.after.Round(time.Second), op, clip(first.raise.Summary, 200), signalNote(out, op)))
+	default:
+		report.add(ItemBreak, subject, Red, fmt.Sprintf("%s: no detector named %s or its test scenarios within %s%s; every component stayed up, so only a test or request metric of the operation can catch this", out.how, strings.Join(ids, ", "), bound, otherRaises(out)))
 	}
-	return false
 }

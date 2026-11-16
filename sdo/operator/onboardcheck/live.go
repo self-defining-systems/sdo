@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -248,9 +249,9 @@ type BreakConfig struct {
 	// Faults are the generic breaks that keep every component up, judged after
 	// the component breaks.
 	Faults []Fault
-	// NoPool breaks every component in waves of its own, never together with
-	// ones that share no entry: the slower path the pooled one must agree with.
-	NoPool bool
+	// OneAtATime breaks every component and fault in a wave of its own, even
+	// ones that share no operation: the slower path the waves must agree with.
+	OneAtATime bool
 }
 
 // ItemDuration is how long one item took.
@@ -538,40 +539,83 @@ func runBreak(ctx context.Context, cfg Config, report *Report) {
 	haveBaseline := false
 	stopped := false
 	dirty := false // a restored wave's raises may still stand
-	entries, pool := order, []string(nil)
-	if !b.NoPool {
-		entries, pool = splitPool(cfg.Map, order)
+
+	// The generic faults join the plan as members that hurt the operations they
+	// name: one that shares no operation with a component wave is judged in it.
+	items := make([]planItem, 0, len(order))
+	for _, name := range order {
+		items = append(items, planItem{name: name, ops: opIDs(opsOf[name])})
 	}
-	entryWaves := breakWavesOf(cfg.Map, entries)
-	total := len(entryWaves)
-	if len(pool) > 0 {
-		total++
+	faultOut := map[string]*breakOutcome{}
+	faultOps := map[string][]string{}
+	var faults []Fault
+	for _, f := range b.Faults {
+		subject := f.Name()
+		ids := f.Operations()
+		var ops []appmap.Operation
+		for _, id := range ids {
+			for _, op := range cfg.Map.Operations {
+				if op.ID == id {
+					ops = append(ops, op)
+				}
+			}
+		}
+		if len(ops) == 0 {
+			report.add(ItemBreak, subject, Note, "no operation depends on what this break targets, so nothing could be hurt")
+			continue
+		}
+		if why := f.NotApplicable(ctx); why != "" {
+			report.add(ItemBreak, subject, Note, "not run: "+why)
+			continue
+		}
+		faults = append(faults, f)
+		faultOps[subject] = ids
+		items = append(items, planItem{name: subject, ops: opIDs(ops), fault: f})
 	}
-	cfg.say("fails-under-break: %d components in %d waves (components sharing an operation are never broken together%s)", len(order), total, poolNote(pool))
+	waves := planWaves(items, b.OneAtATime)
+	cfg.say("fails-under-break: %d components and %d generic breaks in %d waves (breaks that share an operation are never made together)", len(order), len(faults), len(waves))
 	step := 0
-	// doWave breaks the named components together and returns the members it
-	// broke. Components that cannot be broken get their outcome here.
-	doWave := func(names []string, label string) []waveMember {
+	// doWave breaks the planned items together. Components that cannot be
+	// broken get their outcome here.
+	doWave := func(wave []planItem) {
 		step++
 		var members []waveMember
-		for _, name := range names {
-			c, ok := byName[name]
-			out := &breakOutcome{names: []string{name, c.Workload}, opHit: map[string]*foundRaise{}}
-			outcomes[name] = out
+		var names []string
+		for _, it := range wave {
+			names = append(names, it.name)
+			if it.fault != nil {
+				if stopped {
+					report.add(ItemBreak, it.name, Red, "not tried: an earlier restore was uncertain")
+					continue
+				}
+				out := &breakOutcome{names: []string{it.name}, opHit: map[string]*foundRaise{}}
+				faultOut[it.name] = out
+				var ops []appmap.Operation
+				for _, op := range cfg.Map.Operations {
+					if slices.Contains(it.ops, op.ID) {
+						ops = append(ops, op)
+					}
+				}
+				members = append(members, waveMember{c: appmap.Component{Name: it.name}, ops: ops, out: out, breaker: faultBreaker{it.fault}})
+				continue
+			}
+			c, ok := byName[it.name]
+			out := &breakOutcome{names: []string{it.name, c.Workload}, opHit: map[string]*foundRaise{}}
+			outcomes[it.name] = out
 			switch {
 			case stopped:
 				out.err = "not tried: an earlier restore was uncertain"
 			case !ok:
 				out.err = "not a declared component"
 			case c.Workload == "":
-				report.add(ItemBreak, name, Note, "declares no workload, so it cannot be broken through Kubernetes")
+				report.add(ItemBreak, it.name, Note, "declares no workload, so it cannot be broken through Kubernetes")
 				out.how = "no workload"
 			default:
-				members = append(members, waveMember{c: c, ops: opsOf[name], out: out})
+				members = append(members, waveMember{c: c, ops: opsOf[it.name], out: out})
 			}
 		}
 		if len(members) == 0 {
-			return nil
+			return
 		}
 		if !haveBaseline {
 			v, err := b.Eval.Evaluate(ctx)
@@ -580,13 +624,13 @@ func runBreak(ctx context.Context, cfg Config, report *Report) {
 					m.out.err = "could not evaluate before the break: " + err.Error()
 				}
 				stopped = true
-				return nil
+				return
 			}
 			haveBaseline = true
 			baseline = fingerprints(v.Raised)
 			report.markNotInstrumented(cfg.Map, v.Raised)
 		}
-		cfg.say("fails-under-break: %s %d: breaking %s", label, step, strings.Join(names, ", "))
+		cfg.say("fails-under-break: wave %d of %d: breaking %s", step, len(waves), strings.Join(names, ", "))
 		if dirty {
 			baseline = settleBaseline(ctx, cfg, baseline)
 		}
@@ -601,36 +645,13 @@ func runBreak(ctx context.Context, cfg Config, report *Report) {
 		if restoreFailed {
 			stopped = true
 		}
-		return members
 	}
-	for _, names := range entryWaves {
-		doWave(names, "wave")
+	for _, wave := range waves {
+		doWave(wave)
 	}
-	if len(pool) > 0 {
-		members := doWave(pool, "pooled wave")
-		var again []string
-		for _, m := range members {
-			if needsIndividualBreak(m, members) {
-				again = append(again, m.c.Name)
-			}
-		}
-		if len(again) > 0 {
-			cfg.say("fails-under-break: %d of %d pooled components need their own break to tell which one an operation's failure follows", len(again), len(pool))
-		}
-		for _, names := range breakWavesOf(cfg.Map, again) {
-			doWave(names, "wave")
-		}
-	}
-	if !stopped && len(b.Faults) > 0 {
-		if !haveBaseline {
-			if v, err := b.Eval.Evaluate(ctx); err == nil {
-				baseline, haveBaseline = fingerprints(v.Raised), true
-			} else {
-				report.add(ItemBreak, "faults", Red, "could not evaluate before the generic breaks: "+err.Error())
-			}
-		}
-		if haveBaseline {
-			runFaults(ctx, cfg, report, baseline, dirty)
+	for _, f := range faults {
+		if out := faultOut[f.Name()]; out != nil {
+			reportFault(report, f, out, faultOps[f.Name()], b.Bound)
 		}
 	}
 	for _, name := range order {
@@ -766,7 +787,19 @@ func opDetail(m appmap.Map, op appmap.Operation, outcomes map[string]*breakOutco
 // names an operation still names one broken component. Order within and across
 // waves follows first appearance in the operations.
 func BreakWaves(m appmap.Map) [][]string {
-	return breakWavesOf(m, pathComponents(m))
+	var items []planItem
+	for _, name := range pathComponents(m) {
+		items = append(items, planItem{name: name, ops: OperationsThrough(m, name)})
+	}
+	var out [][]string
+	for _, wave := range planWaves(items, false) {
+		var names []string
+		for _, it := range wave {
+			names = append(names, it.name)
+		}
+		out = append(out, names)
+	}
+	return out
 }
 
 // pathComponents lists the components on operation paths in first-appearance
@@ -785,52 +818,42 @@ func pathComponents(m appmap.Map) []string {
 	return order
 }
 
-// breakWavesOf is BreakWaves for the named components only.
-func breakWavesOf(m appmap.Map, only []string) [][]string {
-	keep := map[string]bool{}
-	for _, name := range only {
-		keep[name] = true
-	}
-	opsOf := map[string]map[string]bool{}
-	var order []string
-	for _, op := range m.Operations {
-		for _, name := range op.Path {
-			if !keep[name] {
-				continue
-			}
-			if opsOf[name] == nil {
-				opsOf[name] = map[string]bool{}
-				order = append(order, name)
-			}
-			opsOf[name][op.ID] = true
-		}
-	}
-	var waves [][]string
+// planItem is one break the check makes: a component or a generic fault, with
+// the operations it can move.
+type planItem struct {
+	name  string
+	ops   []string
+	fault Fault
+}
+
+// planWaves groups items into waves, first fit: an item joins the earliest wave
+// none of whose items shares an operation with it, so a raise naming an
+// operation is attributable to the one broken item on it. Items that share an
+// operation are never broken together: a guess that they can be (and a
+// fallback to one break each when an operation fails) costs a whole extra wave
+// whenever the guess is wrong, and breaking a component on an operation's path
+// nearly always fails the operation. oneAtATime puts every item in a wave of
+// its own.
+func planWaves(items []planItem, oneAtATime bool) [][]planItem {
+	var waves [][]planItem
 	var used []map[string]bool
-	for _, name := range order {
+	for _, it := range items {
 		placed := false
 		for i := range waves {
-			clash := false
-			for id := range opsOf[name] {
-				if used[i][id] {
-					clash = true
-					break
-				}
-			}
-			if clash {
+			if oneAtATime || slices.ContainsFunc(it.ops, func(id string) bool { return used[i][id] }) {
 				continue
 			}
-			waves[i] = append(waves[i], name)
-			for id := range opsOf[name] {
+			waves[i] = append(waves[i], it)
+			for _, id := range it.ops {
 				used[i][id] = true
 			}
 			placed = true
 			break
 		}
 		if !placed {
-			waves = append(waves, []string{name})
+			waves = append(waves, []planItem{it})
 			ids := map[string]bool{}
-			for id := range opsOf[name] {
+			for _, id := range it.ops {
 				ids[id] = true
 			}
 			used = append(used, ids)
@@ -839,94 +862,24 @@ func breakWavesOf(m appmap.Map, only []string) [][]string {
 	return waves
 }
 
-// PlannedBreakWaves is the most component waves a check plans before any
-// result changes it: the waves of the entry components plus one pooled wave
-// of the rest. Components the pool cannot tell apart get their own wave
-// after it.
+// PlannedBreakWaves is the number of component waves a check plans.
 func PlannedBreakWaves(m appmap.Map) int {
-	order := pathComponents(m)
-	entries, pool := splitPool(m, order)
-	n := len(breakWavesOf(m, entries))
-	if len(pool) > 0 {
-		n++
-	}
-	return n
-}
-
-// splitPool separates the components that serve an operation's entry from the
-// rest. The entries are broken in waves of their own: a user-facing request
-// fails whenever its entry does, so there is nothing to learn by pooling them.
-// The rest (stores, caches, workers behind the entry) are broken together
-// first: a component whose break moves no operation and is named by a
-// detector is judged by that one break, where a break each would take one
-// detection horizon each. Fewer than two pooled components is no pool.
-func splitPool(m appmap.Map, order []string) (entries, pool []string) {
-	entry := map[string]bool{}
-	for _, op := range m.Operations {
-		if len(op.Path) > 0 && !m.Internal(op) {
-			entry[op.Path[0]] = true
-		}
-	}
-	for _, name := range order {
-		if entry[name] {
-			entries = append(entries, name)
-		} else {
-			pool = append(pool, name)
-		}
-	}
-	if len(pool) < 2 {
-		return order, nil
-	}
-	return entries, pool
-}
-
-func poolNote(pool []string) string {
-	if len(pool) == 0 {
-		return ""
-	}
-	return fmt.Sprintf("; %d components behind the entries are broken together first, and again one wave at a time only where an operation's failure cannot tell them apart", len(pool))
-}
-
-// needsIndividualBreak reports whether a pooled component's outcome could differ
-// from breaking it alone: an operation it serves was named (by a failure or
-// an absence, which another pooled component may have caused), a failure
-// named an operation outside every path (it cannot be pinned on one
-// component), or no raise named it without naming another pooled component.
-// A component whose break moved no operation and was named by its own
-// raise is judged exactly as a break of it alone would judge it (a failure
-// cannot disappear when more is broken).
-func needsIndividualBreak(m waveMember, pool []waveMember) bool {
-	out := m.out
-	if out.err != "" || out.how == "no workload" {
-		return false
-	}
-	if len(out.opHit) > 0 || len(out.stray) > 0 {
-		return true
-	}
-	for i := range out.found {
-		f := out.found[i]
-		text := f.raise.text()
-		if !named(text, m.c.Name) && !named(text, m.c.Workload) {
-			continue
-		}
-		alone := true
-		for _, o := range pool {
-			if o.c.Name != m.c.Name && (named(text, o.c.Name) || named(text, o.c.Workload)) {
-				alone = false
-			}
-		}
-		if alone {
-			out.hit = &out.found[i]
-			return false
-		}
-	}
-	return true
+	return len(BreakWaves(m))
 }
 
 type waveMember struct {
 	c   appmap.Component
 	ops []appmap.Operation
 	out *breakOutcome
+	// breaker overrides the check's breaker (a generic fault breaks itself).
+	breaker Breaker
+}
+
+func (m waveMember) breakerOf(b *BreakConfig) Breaker {
+	if m.breaker != nil {
+		return m.breaker
+	}
+	return b.Breaker
 }
 
 // inParallel runs f for every member at once and waits for all.
@@ -950,15 +903,18 @@ func breakWave(ctx context.Context, cfg Config, members []waveMember, baseline m
 	b := cfg.Break
 	for _, m := range members {
 		for _, o := range members {
-			m.out.wave = append(m.out.wave, o.c.Name)
+			if o.breaker == nil { // the components broken together, not a generic fault
+				m.out.wave = append(m.out.wave, o.c.Name)
+			}
 		}
 	}
 	next = baseline
 	var broken []waveMember
 	var mu sync.Mutex
 	inParallel(members, func(m waveMember) {
-		m.out.how = b.Breaker.Mode()
-		err := b.Breaker.Break(ctx, m.c)
+		brk := m.breakerOf(b)
+		m.out.how = brk.Mode()
+		err := brk.Break(ctx, m.c)
 		if err == nil {
 			mu.Lock()
 			broken = append(broken, m)
@@ -968,7 +924,7 @@ func breakWave(ctx context.Context, cfg Config, members []waveMember, baseline m
 		// A failed break may have changed the cluster; restore regardless.
 		mu.Lock()
 		defer mu.Unlock()
-		if rerr := b.Breaker.Restore(context.WithoutCancel(ctx), m.c); rerr != nil {
+		if rerr := m.breakerOf(b).Restore(context.WithoutCancel(ctx), m.c); rerr != nil {
 			m.out.err = fmt.Sprintf("break failed (%v) and restore is uncertain: %v", err, rerr)
 			restoreFailed = true
 			return
@@ -980,7 +936,7 @@ func breakWave(ctx context.Context, cfg Config, members []waveMember, baseline m
 	defer func() {
 		cfg.phases.add(PhaseBreakJudge, judged)
 		inParallel(broken, func(m waveMember) {
-			if rerr := b.Breaker.Restore(context.WithoutCancel(ctx), m.c); rerr != nil {
+			if rerr := m.breakerOf(b).Restore(context.WithoutCancel(ctx), m.c); rerr != nil {
 				mu.Lock()
 				m.out.err = fmt.Sprintf("restore of %s is uncertain, stopping: %v", m.c.Name, rerr)
 				restoreFailed = true
@@ -1153,7 +1109,7 @@ func timingSummary(ds []ItemDuration) string {
 // in the wave: a failure of it is then explained.
 func onWavePath(op appmap.Operation, wave []waveMember) bool {
 	for _, m := range wave {
-		if onPath(op, m.c.Name) {
+		if onPath(op, m.c.Name) || slices.ContainsFunc(m.ops, func(o appmap.Operation) bool { return o.ID == op.ID }) {
 			return true
 		}
 	}
