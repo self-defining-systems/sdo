@@ -119,6 +119,7 @@ ScaleWorkload = program_pb2.ScaleWorkload
 Exec = program_pb2.Exec
 RestartRollout = program_pb2.RestartRollout
 ProgramRun = program_pb2.ProgramRun
+ReadStep = program_pb2.ReadStep
 PlanApplication = program_pb2.PlanApplication
 MitigationMenu = mitigation_menu_pb2.MitigationMenu
 MitigationOption = mitigation_menu_pb2.MitigationOption
@@ -335,6 +336,7 @@ __all__ = [
     "Plan",
     "PlanApplication",
     "ProgramRun",
+    "ReadStep",
     "PlaybookCoverage",
     "PlaybookMatch",
     "ProgramSpec",
