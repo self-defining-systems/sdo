@@ -96,6 +96,7 @@ class Incident:
     reflection_started_at: float | None
     reflection_ended_at: float | None
     reflection_seconds: float | None
+    first_activations: list[tuple[str, str, float]] = field(default_factory=list)  # detector, rule, first activated_at
     missing: list[str] = field(default_factory=list)
 
     @property
@@ -132,6 +133,22 @@ class Cell:
     window_bad_seconds: int | None
     tail_bad_seconds: int | None
     incidents: list[Incident]
+    first_bad_second: float | None = None  # seconds after inject of the first failing user second
+    run_ok: bool | None = None  # the bench run finished (False: capped, harness failure)
+    attempts: int = 1
+
+    @property
+    def harm_onset(self) -> float | None:
+        return (
+            None if self.inject_at is None or self.first_bad_second is None else self.inject_at + self.first_bad_second
+        )
+
+    def transcripts(self) -> list[Path]:
+        """Agent session JSONL files (responder, its subagents and resumed closing turns) of the cell's incidents."""
+        if self.run_dir is None:
+            return []
+        root = self.run_dir / "operator" / "evidence" / "incidents"
+        return sorted(root.glob("*/claude/projects/**/*.jsonl"))
 
     @property
     def first_incident(self) -> Incident | None:
@@ -233,6 +250,11 @@ def parse_ledger(ledger: dict[str, Any], turns: list[dict[str, Any]] | None = No
         reflection_started_at=started,
         reflection_ended_at=ended,
         reflection_seconds=seconds,
+        first_activations=[
+            (str(d.get("detector_id")), str(d.get("rule_id")), t)
+            for d in closure.get("detector_timeline") or []
+            if (t := ts(d.get("first_activated_at"))) is not None
+        ],
         missing=missing,
     )
 
@@ -271,4 +293,7 @@ def load_cell(cell_dir: Path) -> Cell:
         window_bad_seconds=window.get("BadSeconds"),
         tail_bad_seconds=tail.get("BadSeconds"),
         incidents=incidents,
+        first_bad_second=(record.get("lifecycle") or {}).get("first_bad_second"),
+        run_ok=result.get("ok") if "ok" in result else None,
+        attempts=len(list((cell_dir / "runs").glob("*"))) if (cell_dir / "runs").is_dir() else 1,
     )
