@@ -85,8 +85,15 @@ var (
 
 // State carries values between the steps of one iteration, for example an ID
 // a create step saved for the read and cleanup steps that follow. Every
-// iteration starts with an empty State.
+// iteration starts with State holding only the engine's own keys (StateNow and
+// the probe users' credentials).
 type State map[string]string
+
+// StateNow is the State key holding the start time of the iteration, RFC 3339
+// in UTC. The engine sets it and records the same instant as Sample.At, so
+// replaying an iteration with that time rebuilds the same requests. Build
+// reads the time from here and never from a clock.
+const StateNow = "sdo.now"
 
 // clone returns a copy of s; a nil State yields an empty one.
 func (s State) clone() State {
@@ -128,6 +135,18 @@ type Response struct {
 type Verdict struct {
 	OK     bool
 	Reason string
+	// Pending marks "not yet": the effect the step looks for may still arrive.
+	// The engine then re-Builds and re-sends the step until it passes, fails
+	// (a Verdict that is neither OK nor Pending), or the iteration timeout
+	// passes, which fails the step with the last Reason. A pending verdict
+	// outside Steps (setup, cleanup) is a failure.
+	Pending bool
+}
+
+// NotYet is a pending verdict; see Verdict.Pending. Only a read should return
+// it: the step is sent again.
+func NotYet(format string, args ...any) Verdict {
+	return Verdict{Pending: true, Reason: fmt.Sprintf(format, args...)}
 }
 
 // Pass accepts a response.

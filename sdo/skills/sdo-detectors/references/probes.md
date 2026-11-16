@@ -78,6 +78,12 @@ touched the affected records.
   the probe user the lowest role that can do the above, never admin; a failed grant must not stop the user from
   being provisioned.
 
+## Asynchronous effects and time
+
+- A check that cannot yet tell pass from fail returns `NotYet`; the step is sent again until it passes or the
+  iteration times out (a fail), so an effect that never arrives fails instead of passing as "not there yet".
+- The iteration's start time is in `State[StateNow]`; format dates from it instead of a clock or a far-future constant.
+
 ## What traffic cannot show
 
 - Wrong content (exact checks), operations users rarely call, and each
