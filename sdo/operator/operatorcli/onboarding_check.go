@@ -38,7 +38,7 @@ import (
 const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --namespace NS --prometheus URL|NS/SERVICE:PORT
                                     [--kubeconfig FILE] [--context NAME] [--requests 5]
                                     [--settle 90s] [--json] [--report FILE]
-                                    [--quick] [--full] [--cache-dir DIR] [--quiet-window 10m] [--quiet-interval 1m] [--quiet-evaluations 3]
+                                    [--quick] [--full] [--cache-dir DIR] [--quiet-window 10m] [--quiet-interval 1m] [--quiet-evaluations 3] [--quiet-writes 4]
                                     [--break] [--break-bound 60s] [--break-mode auto|scale|network]
                                     [--cluster-network] [--operator-root DIR] [--telemetry-environment FILE] [--settings FILE]
 
@@ -74,7 +74,11 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
          quiet-when-healthy evaluates the memory's detectors (test-request
          scenarios and the request-metrics detector included) against the live
          application every --quiet-interval for --quiet-window (0 skips) and is
-         red if any raises, naming the detector, scenario and step.
+         red if any raises, naming the detector, scenario and step. Writes
+         happen meanwhile: every detector pass re-runs the memory's write
+         probes --quiet-writes (4) times, so a probe that reads a list other
+         users change is judged on a list that grows (a probe that passes only
+         on a static dataset is red); 0 judges a static dataset.
          fails-under-break breaks each component on an operation's path
          (breaks that share no operation are made together in waves, the generic breaks included, and a
          raise still has to name the operation or component) (by default a deny-ingress NetworkPolicy when the CNI
@@ -265,6 +269,11 @@ func (s httpSender) Send(ctx context.Context, op appmap.Operation, n int) (int, 
 	return sent, nil
 }
 
+// defaultQuietWriteRounds is how many times per detector pass the quiet window
+// re-runs the memory's write scenarios. A probe that reads a list other users
+// change must be judged while records are being added to it.
+const defaultQuietWriteRounds = 4
+
 func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int, error) {
 	// An interrupt cancels the check but never skips a restore: a broken
 	// component is undone on a context that outlives the cancellation.
@@ -286,6 +295,7 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	cacheDir := flags.String("cache-dir", "", "where the session's recorded verdicts are kept (default: the user cache directory), one file per repository and namespace")
 	quick := flags.Bool("quick", false, "fast iteration: the metric items and a short detector smoke; never clean, never breaks")
 	quietEvaluations := flags.Int("quiet-evaluations", onboardcheck.DefaultQuietEvaluations, "judgements each detector must make past its own horizon for the quiet window to end")
+	quietWrites := flags.Int("quiet-writes", defaultQuietWriteRounds, "times per detector pass the quiet window re-runs the memory's write probes, so the lists its read probes use keep growing (0 judges a static dataset)")
 	quietInterval := flags.Duration("quiet-interval", time.Minute, "wait between detector evaluations in the quiet window")
 	harmWindow := flags.Duration("harm-window", time.Minute, "probes-do-no-harm: how long to measure the application with the memory's probes paused (before they start) and at least with them running; 0 skips the item")
 	breakItem := flags.Bool("break", false, "run fails-under-break: briefly break each component on an operation's path (only on a target without users)")
@@ -393,6 +403,7 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 			return 0, fmt.Errorf("build detectors for the live items: %w", err)
 		}
 		defer prepared.Close()
+		prepared.WriteSoak = *quietWrites
 		lazy := &lazyWatch{prepared: prepared, ctx: ctx}
 		defer lazy.Close()
 		eval := detectorEvaluator{lazy: lazy}
@@ -411,7 +422,7 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 			inputs = onboardcheck.Inputs{Map: m, Files: files, Deploy: deployFingerprints(ctx, cluster, *namespace, m),
 				Salt: checkSalt(identity, *promTarget, *kubeContext, sourceIdentity(ctx, *operatorRoot),
 					fmt.Sprint(*breakBound), *breakMode, fileDigest(*settingsFile), fileDigest(*telemetryEnv), fmt.Sprint(*clusterNetwork),
-					fmt.Sprint(*requests), fmt.Sprint(*settle), fmt.Sprint(*quietWindow), fmt.Sprint(*quietInterval), fmt.Sprint(*quietEvaluations), fmt.Sprint(*harmWindow))}
+					fmt.Sprint(*requests), fmt.Sprint(*settle), fmt.Sprint(*quietWindow), fmt.Sprint(*quietInterval), fmt.Sprint(*quietEvaluations), fmt.Sprint(*harmWindow), fmt.Sprint(*quietWrites))}
 			saveCache = func() {
 				if cache != nil && cachePath != "" {
 					if err := saveCheckCache(cachePath, cache); err != nil {

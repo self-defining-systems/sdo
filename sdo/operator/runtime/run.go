@@ -1803,6 +1803,7 @@ func evaluateOnce(
 	settingsFile := flags.String("settings", "", "operator configuration the evaluation runs under (the sdo-config mount or the controller's record); empty runs the defaults")
 	outsideCluster := flags.Bool("outside-cluster", false, "this process runs outside the cluster: detectors that dial in-cluster Service names are left out and reported unavailable (evaluation.OutsideClusterReason)")
 	watch := flags.Duration("watch", 0, "after the warm-up, judge again every interval and print one verdict per line until cancelled (a detector error is that detector's unavailable entry); 0 evaluates once")
+	writeSoak := flags.Int("write-soak", 0, "with --watch, each pass re-runs the probes' write scenarios this many times, so the lists other probes read keep changing while the detectors judge")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -2147,6 +2148,11 @@ func evaluateOnce(
 			}
 			if err := encoder.Encode(verdict); err != nil {
 				return err
+			}
+			if trafficAPI != nil {
+				if err := soakWrites(ctx, trafficAPI, *writeSoak, stderr); err != nil && ctx.Err() == nil {
+					fmt.Fprintln(stderr, "write soak:", err)
+				}
 			}
 			if err := waitOnClock(ctx, clock, *watch); err != nil {
 				return nil

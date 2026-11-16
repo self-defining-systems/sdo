@@ -35,6 +35,18 @@ or corrupted state is healed by the probe before it is read.
 - When a write fans out to other records (a write by one identity that other identities read), create the
   reading identities and their relations once in Setup, and read the write at every one of them.
 
+## Stable lookups only
+
+A healthy application keeps changing: users and other probes add records, so a paginated, newest-first or
+otherwise windowed list stops showing an old record. The onboarding check writes while it judges the probes, so
+a probe that needs a static dataset fails there, named by scenario and step.
+
+- A read-back or existing-record check fetches by id, key or path, or checks records the probe itself created and
+  identifies by its marker.
+- Never assert that a particular record appears on a page of a list other users change (`Contains` of a seed
+  record's name in `?per_page=20`). To exercise such a list, check its shape with `Each`, or save an id from the
+  list and open it.
+
 ## Read-later: data written once
 
 - Setup writes the fixture once, on an identity that no other scenario writes; steps only read it.

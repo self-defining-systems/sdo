@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -109,6 +110,10 @@ type PreparedProbe struct {
 	binary    string
 	args      []string
 	env       []string
+	// WriteSoak is how many times per watch pass the watch re-runs the
+	// memory's write scenarios, so lists the probes read keep growing while
+	// the detectors judge. Zero runs the watch as the controller does.
+	WriteSoak int
 }
 
 // Prepare compiles the accepted detectors and memory host of acceptedRoot.
@@ -254,11 +259,19 @@ type Watcher struct {
 	done    chan struct{}
 }
 
+func (p *PreparedProbe) watchArgs(interval time.Duration) []string {
+	args := append(append([]string(nil), p.args...), "--watch", interval.String())
+	if p.WriteSoak > 0 {
+		args = append(args, "--write-soak", strconv.Itoa(p.WriteSoak))
+	}
+	return args
+}
+
 // Watch starts the evaluation process; Close stops it.
 func (p *PreparedProbe) Watch(ctx context.Context, interval time.Duration) *Watcher {
 	running, cancel := context.WithCancel(ctx)
 	w := &Watcher{changed: make(chan struct{}), cancel: cancel, done: make(chan struct{})}
-	args := append(append([]string(nil), p.args...), "--watch", interval.String())
+	args := p.watchArgs(interval)
 	go func() {
 		defer close(w.done)
 		stderr, err := deploymentio.Lines(running, p.workspace.Directory, p.binary, args, p.env, func(line []byte) {
