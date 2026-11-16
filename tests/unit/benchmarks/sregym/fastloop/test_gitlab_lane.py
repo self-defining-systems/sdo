@@ -20,6 +20,8 @@ from benchmarks.sregym.fastloop.accepted_source import RenderedWorkloads
 from benchmarks.sregym.fastloop.cli import build_parser
 from tests.unit.apps.test_gitlab_workspace import stand_in_archive
 
+CI_SCOPED = "lists a throwaway workspace repository"
+
 ROOT = Path(__file__).resolve().parents[5]
 
 

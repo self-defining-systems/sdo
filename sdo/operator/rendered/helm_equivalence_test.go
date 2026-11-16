@@ -1,5 +1,7 @@
 package rendered_test
 
+//ci:scoped renders the apps/toy chart as a fixture
+
 import (
 	"context"
 	"encoding/json"

@@ -2,6 +2,8 @@
 
 package validate
 
+//ci:scoped snapshots its own temporary tree
+
 import (
 	"bytes"
 	"context"

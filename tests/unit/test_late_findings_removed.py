@@ -6,6 +6,8 @@ import re
 import subprocess
 from pathlib import Path
 
+CI_WHOLE_TREE = True
+
 _ROOT = Path(__file__).resolve().parents[2]
 _PATTERN = re.compile(r"late[_-]findings|LATE_FINDINGS|LateFindings", re.IGNORECASE)
 # The retired proto field name stays reserved so stored data cannot reuse it.

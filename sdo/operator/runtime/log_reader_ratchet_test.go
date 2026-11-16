@@ -15,6 +15,8 @@ import (
 // fault. Log requests ask for the newest lines (TailLines) and bound bytes
 // client-side (program.NewestLogBytes); this fails if any non-test code sets
 // LimitBytes on a request to anything but nil.
+//
+//ci:whole-tree
 func TestNoPodLogRequestSetsLimitBytes(t *testing.T) {
 	root := ".."
 	fset := token.NewFileSet()

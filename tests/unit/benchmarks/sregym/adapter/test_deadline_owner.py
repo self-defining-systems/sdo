@@ -19,6 +19,8 @@ from benchmarks.sregym.adapter.persistent import (
     _wait_for_verified_incident,
 )
 
+CI_WHOLE_TREE = True
+
 ROOT = Path(__file__).resolve().parents[5]
 SCANNED = ("benchmarks/sregym/fastloop", "benchmarks/sregym/adapter", "benchmarks/sregym/protocol")
 OWNER = "benchmarks/sregym/adapter/budgets.py"

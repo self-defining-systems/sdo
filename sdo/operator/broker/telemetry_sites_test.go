@@ -20,6 +20,8 @@ var telemetrySiteRoots = []string{"..", filepath.Join("..", "..", "..", "benchma
 // names both Telemetry and TelemetryRegistry. A construction site that forgets
 // them is how the validation subprocess and the controller brokers came to
 // reject every binding (and the alerts detector on a provided source).
+//
+//ci:whole-tree
 func TestEveryBrokerAndValidationRequestNamesItsTelemetry(t *testing.T) {
 	var brokers, requests int
 	for _, root := range telemetrySiteRoots {

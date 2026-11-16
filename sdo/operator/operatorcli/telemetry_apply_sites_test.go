@@ -30,6 +30,8 @@ var verifyCandidateOwners = map[string]string{
 // call is in a known owner, every lifecycle.Coordinator with a Verifier names
 // TelemetryApply, and every Advancer or RepairDeployer takes its Verifier from
 // deploywire.AppliedVerifier.
+//
+//ci:whole-tree
 func TestEveryVerifyCandidatePathAppliesTelemetry(t *testing.T) {
 	root := ".."
 	var coordinators, others int
