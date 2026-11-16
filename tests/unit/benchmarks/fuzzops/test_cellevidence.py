@@ -249,3 +249,13 @@ def test_an_incident_still_open_at_collect_has_no_ledger_to_demand(tmp_path: Pat
     assert ev.problems == []
     _w(openi / "seal.json", {})  # sealed means a ledger was owed
     assert any("ledger.json" in p for p in ce.build(run).problems)
+
+
+def test_a_cell_is_complete_at_collect_before_the_manager_writes_run_json(tmp_path: Path) -> None:
+    """collect runs inside the step; the manager writes run.json only after the step's directory is moved."""
+    run = make_cell(tmp_path)
+    (run / "run.json").unlink()
+    assert "run.json" in " ".join(ce.build(run).problems)  # a later validate expects it
+    pending = ce.build(run, run_pending=True)
+    assert pending.problems == []
+    assert pending.complete
