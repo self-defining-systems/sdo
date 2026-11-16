@@ -1,6 +1,6 @@
 """``python -m benchmarks.sregym.analysis <report> ...``: the one entry point for the analysis reports.
 
-Reports: ``wall-time`` (agent transcripts of the given cells, or transcript files), ``learning-economics``,
+Reports: ``wall-time`` (agent transcripts of the given cells, or transcript files), ``phases`` (marks from inject to close, and where the agent's span went), ``learning-economics``,
 ``sweep`` and ``detection`` (cells from ``--manifest`` with ``--pool``, or cell directories named
 ``<fault>-<arm>-<rev>``), and ``onboarding`` (directories holding ``scorecard.json``). ``all`` is the
 end-of-batch hook: it runs every report whose inputs exist and writes ``<out>/<report>.md`` and ``.json``
@@ -21,6 +21,7 @@ from benchmarks.sregym.analysis import (
     detection,
     learning_economics,
     onboarding_summary,
+    phases,
     sweep_table,
 )
 from benchmarks.sregym.analysis.cells import load_cell
@@ -81,6 +82,14 @@ def _onboarding(args: argparse.Namespace) -> Report:
     return onboarding_summary.render(rows), rows
 
 
+def _phases(args: argparse.Namespace) -> Report:
+    cells = [p for p in args.paths if is_cell(p)]
+    if not cells:
+        raise ValueError("no cells")
+    items = phases.rows(cells)
+    return phases.render(items), [p.to_json() for p in items]
+
+
 def _transcripts(paths: list[Path]) -> list[Path]:
     out: list[Path] = []
     for p in paths:
@@ -106,6 +115,7 @@ REPORTS = {
     "detection": _detection,
     "onboarding": _onboarding,
     "wall-time": _wall_time,
+    "phases": _phases,
 }
 
 
