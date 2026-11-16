@@ -379,7 +379,7 @@ func runQuiet(ctx context.Context, cfg Config, report *Report) bool {
 		pendingRed = true
 		if scenarios := pendingScenarios(reason); len(scenarios) > 0 {
 			for _, sc := range scenarios {
-				report.add(ItemQuiet, sc.id, Red, fmt.Sprintf("probe scenario %s (detector %s) %s through the healthy window, so it cannot give a verdict: make each iteration cheaper and sample often enough to qualify (enough usable samples inside its window, within about a minute of a fault); a longer interval does not fix it%s", sc.id, id, sc.why, sc.detail))
+				report.add(ItemQuiet, sc.id, Red, fmt.Sprintf("probe scenario %s (detector %s) %s through the healthy window, so it cannot give a verdict: %s%s", sc.id, id, sc.why, sc.remedy, sc.detail))
 			}
 			continue
 		}
@@ -1160,27 +1160,42 @@ func onWavePath(op appmap.Operation, wave []waveMember) bool {
 	return false
 }
 
-type pendingScenario struct{ id, why, detail string }
+type pendingScenario struct {
+	id, why, detail, remedy string
+}
+
+const (
+	underSampledMarker = "insufficient usable synthetic samples: "
+	unprovenRemedy     = "fix what its latest failure names, then re-run"
+	underSampleRemedy  = "make each iteration cheaper and sample often enough to qualify (enough usable samples inside its window, within about a minute of a fault); a longer interval does not fix it"
+)
 
 // pendingScenarios reads the scenario IDs out of a traffic detector's pending
-// reason: "...have not succeeded since observation began: a (detail), b" and
-// "insufficient usable synthetic samples: c, d". It returns nil for any other
-// reason.
+// reason: "...succeeded since observation began: a (detail), b" optionally
+// followed by "; insufficient usable synthetic samples: c, d". It returns nil
+// when any part of the reason is not one of those two, so nothing is dropped.
 func pendingScenarios(reason string) []pendingScenario {
-	var out []pendingScenario
-	for _, seg := range strings.Split(reason, "; ") {
-		var why string
-		var list string
-		switch {
-		case strings.Contains(seg, "insufficient usable synthetic samples: "):
-			why = "stayed under-sampled (insufficient usable synthetic samples)"
-			_, list, _ = strings.Cut(seg, "insufficient usable synthetic samples: ")
-		case strings.Contains(seg, "synthetic scenario") && strings.Contains(seg, "succeeded since observation began: "):
-			why = "stayed pending (no successful sample since observation began)"
-			_, list, _ = strings.Cut(seg, "succeeded since observation began: ")
-		default:
-			continue
+	first, second := reason, ""
+	if i := strings.Index(reason, "; "+underSampledMarker); i >= 0 {
+		first, second = reason[:i], reason[i+2:]
+	}
+	var parts []struct{ why, remedy, list string }
+	switch {
+	case strings.HasPrefix(first, underSampledMarker) && second == "":
+		parts = append(parts, struct{ why, remedy, list string }{"stayed under-sampled (insufficient usable synthetic samples)", underSampleRemedy, strings.TrimPrefix(first, underSampledMarker)})
+	default:
+		_, list, ok := strings.Cut(first, "succeeded since observation began: ")
+		if !ok || !strings.Contains(first, "synthetic scenario") || strings.TrimSpace(list) == "" {
+			return nil
 		}
+		parts = append(parts, struct{ why, remedy, list string }{"stayed pending (no successful sample since observation began)", unprovenRemedy, list})
+		if second != "" {
+			parts = append(parts, struct{ why, remedy, list string }{"stayed under-sampled (insufficient usable synthetic samples)", underSampleRemedy, strings.TrimPrefix(second, underSampledMarker)})
+		}
+	}
+	var out []pendingScenario
+	seen := map[string]bool{}
+	for _, p := range parts {
 		depth, start := 0, 0
 		add := func(item string) {
 			item = strings.TrimSpace(item)
@@ -1188,25 +1203,29 @@ func pendingScenarios(reason string) []pendingScenario {
 				return
 			}
 			id, detail, _ := strings.Cut(item, " (")
+			if seen[id] {
+				return
+			}
+			seen[id] = true
 			if detail != "" {
 				detail = "; " + clip(strings.TrimSuffix(detail, ")"), 300)
 			}
-			out = append(out, pendingScenario{id: id, why: why, detail: detail})
+			out = append(out, pendingScenario{id: id, why: p.why, detail: detail, remedy: p.remedy})
 		}
-		for i, r := range list {
+		for i, r := range p.list {
 			switch r {
 			case '(':
 				depth++
 			case ')':
-				depth--
+				depth = max(depth-1, 0)
 			case ',':
 				if depth == 0 {
-					add(list[start:i])
+					add(p.list[start:i])
 					start = i + 1
 				}
 			}
 		}
-		add(list[start:])
+		add(p.list[start:])
 	}
 	return out
 }

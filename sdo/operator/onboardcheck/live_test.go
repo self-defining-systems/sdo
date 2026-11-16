@@ -585,7 +585,7 @@ func TestQuietWhenHealthyNamesEachProbeScenarioThatStaysPendingOrUnderSampled(t 
 			t.Fatalf("scenario %s must be red by name:\n%s", scenario, r.Text())
 		}
 	}
-	if !strings.Contains(r.Text(), "make each iteration cheaper") {
+	if strings.Count(r.Text(), "make each iteration cheaper") != 2 || !strings.Contains(r.Text(), "fix what its latest failure names") {
 		t.Fatalf("the remedy is a cheaper iteration, not a longer interval:\n%s", r.Text())
 	}
 }
@@ -852,6 +852,27 @@ func TestReportTimesEveryBreakPhaseAndPrintsASummary(t *testing.T) {
 	for _, want := range []string{"time " + PhaseMetrics, "time " + PhaseBreakJudge, "time " + PhaseBreakSettle, "timing: ", ItemQuiet + " ", ItemBreak + " "} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("report lacks %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestPendingScenariosParsesOnlyWhatItUnderstands(t *testing.T) {
+	ids := func(reason string) string {
+		var out []string
+		for _, s := range pendingScenarios(reason) {
+			out = append(out, s.id)
+		}
+		return strings.Join(out, ",")
+	}
+	for _, c := range []struct{ reason, want string }{
+		{"insufficient usable synthetic samples: a, b", "a,b"},
+		{"no synthetic scenario has succeeded since observation began: a (environment wait; later (x), y), b", "a,b"},
+		{"synthetic scenarios have not succeeded since observation began: a (bad ) paren), b; insufficient usable synthetic samples: b, c", "a,b,c"},
+		{"no synthetic scenario has succeeded since observation began: ", ""},
+		{"detector cannot reach the prober", ""},
+	} {
+		if got := ids(c.reason); got != c.want {
+			t.Errorf("%q: got %q want %q", c.reason, got, c.want)
 		}
 	}
 }

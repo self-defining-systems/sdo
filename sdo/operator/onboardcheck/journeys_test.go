@@ -300,4 +300,19 @@ func TestAnOperationEnteringAtTheJobMetricDoesNotAttributeItsOwnClass(t *testing
 	if status(r, ItemBackground, "queue") != Red || !strings.Contains(r.Text(), "VacuumWorker (9)") {
 		t.Fatalf("a class only its own operation declares is unattributed:\n%s", r.Text())
 	}
+	if strings.Contains(r.Text(), "MailWorker (5)") {
+		t.Fatalf("MailWorker is triggered by send-mail and stays attributed:\n%s", r.Text())
+	}
+	triggered := strings.Replace(text, "triggers: [MailWorker]", "triggers: [MailWorker, VacuumWorker]", 1)
+	m, err = appmap.Parse(triggered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err = Run(context.Background(), Config{Map: m, Commit: "c", Prom: p, Sender: fakeSender{prom: p, emit: perRoute}, Requests: 1, Settle: time.Second, Poll: time.Second, Wait: p.wait})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status(r, ItemBackground, "queue") != Green {
+		t.Fatalf("a class an operation triggers is attributed:\n%s", r.Text())
+	}
 }
