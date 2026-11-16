@@ -457,9 +457,12 @@ func unknownCounter(n int32) *atomic.Int32 {
 // A diagnosis that fails because a read did not answer is asked again; a
 // playbook that matches on the next try is applied, not skipped.
 func TestStageRetriesADiagnosisThatDidNotAnswer(t *testing.T) {
-	stage, state, _, world := settlingStage(t, settlingCase{healAfter: 20 * time.Second, unknownDiagnoses: 2})
+	stage, state, _, world := settlingStage(t, settlingCase{healAfter: 20 * time.Second, unknownDiagnoses: stageDiagnoseTries - 1})
 	if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, &recordingStage{}}); err != nil {
 		t.Fatal(err)
+	}
+	if stageDiagnoseTries != 3 {
+		t.Fatalf("the stage asks %d times, want 3", stageDiagnoseTries)
 	}
 	if world.restarts.Load() != 1 {
 		t.Fatalf("the stage must apply the playbook after the read answers: %v", state.PriorStages[0])
