@@ -6,7 +6,10 @@ import (
 	"fmt"
 	jsonpatch "github.com/evanphx/json-patch"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"sdo.dev/operator/sdk"
@@ -279,14 +282,64 @@ func fixtureObject(snapshot map[string]any, ref sdk.ObjectRef) (map[string]any, 
 // CheckPlanValid runs Mitigate on the case's opening state and validates the plan it yields exactly as the host
 // does before it applies one (Plan.Validate: every action, including a data repair's statement and bounds). A
 // learned program then never fails on apply for a reason the check could have caught. A Mitigate that cannot run on
-// the recorded reads is not a failure here; the replay notes say it was unverified.
+// the recorded reads is not a failure; planOnState says it was unverified.
 func CheckPlanValid(m program.Mitigator, c CorpusCase) error {
+	_, err := planOnState(m, c)
+	return err
+}
+
+// planOnState is CheckPlanValid with the reason the plan could not be checked ("" when it was): Mitigate failed on
+// the recorded reads (a binding or a read the capture lacks), or it yielded no action there.
+func planOnState(m program.Mitigator, c CorpusCase) (unverified string, err error) {
 	plan, err := m.Mitigate(context.Background(), &ReplayReadView{Snapshot: c.Open, Calls: c.PhaseRecordings("open")}, c.Bindings)
 	if err != nil {
-		return nil
+		return "Mitigate could not run on it: " + err.Error(), nil
+	}
+	if len(plan.Actions) == 0 {
+		return "Mitigate yielded no action on it", nil
 	}
 	if err := plan.Validate(); err != nil {
-		return fmt.Errorf("program.plan-invalid: Mitigate of the recorded incident yields a plan the host refuses to apply: %w", err)
+		return "", fmt.Errorf("program.plan-invalid: Mitigate of the recorded incident yields a plan the host refuses to apply: %w", err)
 	}
-	return nil
+	return "", nil
+}
+
+// CheckPlansOnIncident runs CheckPlanValid on the incident's own captured open state: the controller's
+// open@* snapshots in dir, with their recorded reads. The closing turn's check has them before Go writes any
+// corpus case, so a brand-new program's plan is built and validated on real state. A program that needs bindings
+// the capture does not carry cannot run there, which CheckPlanValid treats as unverified.
+func CheckPlansOnIncident(m program.Mitigator, dir string) (unverified []string, err error) {
+	paths, err := filepath.Glob(filepath.Join(dir, "open@*.json"))
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		if strings.HasSuffix(path, "-recordings.json") {
+			continue
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return unverified, err
+		}
+		snapshot, err := decodeSnapshotStrict(raw)
+		if err != nil {
+			return unverified, fmt.Errorf("incident capture %s: %w", filepath.Base(path), err)
+		}
+		c := CorpusCase{Open: snapshot}
+		if recorded, readErr := os.ReadFile(strings.TrimSuffix(path, ".json") + "-recordings.json"); readErr == nil {
+			if err := json.Unmarshal(recorded, &c.Recordings); err != nil {
+				return unverified, fmt.Errorf("incident capture %s recordings: %w", filepath.Base(path), err)
+			}
+		}
+		c.Open.SourceName = filepath.Base(path)
+		why, err := planOnState(m, c)
+		if err != nil {
+			return unverified, fmt.Errorf("%s: %w", filepath.Base(path), err)
+		}
+		if why != "" {
+			unverified = append(unverified, filepath.Base(path)+": "+why)
+		}
+	}
+	return unverified, nil
 }
