@@ -56,7 +56,7 @@ func ComposeObjective(objective, journeysText string) (string, error) {
 		return "", err
 	}
 	if len(list) == 0 {
-		return objective, nil
+		return "", fmt.Errorf("journeys: the text %q lists no journey; write one per line, or comma-separated", strings.TrimSpace(journeysText))
 	}
 	front, err := yaml.Marshal(map[string]any{"schema_version": 1, "journeys": list})
 	if err != nil {

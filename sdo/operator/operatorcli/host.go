@@ -111,6 +111,12 @@ func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 	if *objective, err = memory.ComposeObjective(*objective, journeysText); err != nil {
 		return HostConfig{}, err
 	}
+	if derived, _ := memory.ObjectiveJourneys(*objective); len(derived) > 0 && strings.TrimSpace(journeysText) != "" {
+		// The split is deterministic, not an interpretation: show it so a wrong one is caught before the run.
+		for _, g := range derived {
+			fmt.Fprintf(os.Stderr, "sdo-operator host: journey %s: %s\n", g.ID, g.What)
+		}
+	}
 	if resolved.Onboarding.JourneysRequired {
 		// Before any Job or agent: a missing input costs nothing to fix here.
 		if err := memory.RequireJourneys(*objective); err != nil {

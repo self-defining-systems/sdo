@@ -89,6 +89,22 @@ func TestComposeObjectiveRefusesTwoSourcesOfJourneys(t *testing.T) {
 	}
 }
 
+func TestJourneysTextWithNoItemIsRefusedNotDropped(t *testing.T) {
+	for _, text := range []string{"...", "- ", ";,"} {
+		if _, err := ComposeObjective("body", text); err == nil {
+			t.Errorf("%q lists no journey and must be refused", text)
+		}
+	}
+}
+
+func TestStructuredJourneysAreNotListedTwice(t *testing.T) {
+	objective := "---\nschema_version: 1\njourneys:\n  - {id: a, what: x}\n---\nbody\n\nUser journeys:\nx\n"
+	got, err := ObjectiveText(objective)
+	if err != nil || strings.Count(got, "User journeys:") != 1 || strings.Contains(got, "- a: x") {
+		t.Fatalf("got %q, %v", got, err)
+	}
+}
+
 func TestRequireJourneysNamesHowToProvideThemAndHowToOptOut(t *testing.T) {
 	for name, objective := range map[string]string{"empty": "", "plain": "serve", "front matter without": "---\nschema_version: 1\n---\nserve\n"} {
 		err := RequireJourneys(objective)

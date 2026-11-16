@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 
@@ -181,6 +182,9 @@ func cleanJourneyItem(s string) string {
 	s = strings.TrimSpace(s)
 	if len(s) > 4 && strings.EqualFold(s[:4], "and ") {
 		s = strings.TrimSpace(s[4:])
+	}
+	if strings.IndexFunc(s, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) < 0 {
+		return ""
 	}
 	return s
 }
