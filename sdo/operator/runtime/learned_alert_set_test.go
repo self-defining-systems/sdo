@@ -118,3 +118,37 @@ func TestIncidentDoesNotEscalateWhileTheStabilityWindowRuns(t *testing.T) {
 		t.Fatalf("the incident did not close after the window: %+v", closed.Result)
 	}
 }
+
+// A symptom that joins while the first response pipeline is running is not
+// lost: one pass evaluates it when the pipeline ends.
+func TestSymptomJoiningDuringThePipelineIsEvaluatedAfterIt(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	c, passes := churnController(t, now)
+	c.responseStagesRunning = true
+	c.admitActivation(context.Background(), routeErrors(t, "route-fix"), now, sdk.DetectorSpec{})
+	c.resumePendingLearnedPass(context.Background())
+	c.Wait()
+	if passes.Load() != 0 {
+		t.Fatalf("a pass ran while the pipeline was still running: %d", passes.Load())
+	}
+	c.mu.Lock()
+	c.responseStagesRunning = false
+	c.mu.Unlock()
+	c.resumePendingLearnedPass(context.Background())
+	c.Wait()
+	if passes.Load() != 1 {
+		t.Fatalf("automatic passes = %d, want one after the pipeline ended", passes.Load())
+	}
+}
+
+// A symptom that joins while a pass is running queues one more pass, and the
+// running pass finding nothing does not settle the stage over it.
+func TestSymptomJoiningDuringAPassQueuesOneMorePass(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	c, _ := churnController(t, now)
+	c.midStage.running = true
+	c.admitActivation(context.Background(), routeErrors(t, "route-fix"), now, sdk.DetectorSpec{})
+	if !c.midStage.dirty {
+		t.Fatal("the joined symptom queued no pass behind the running one")
+	}
+}

@@ -109,19 +109,21 @@ type Controller struct {
 	memoryRefresh     func(context.Context) (bool, error)
 	config            ControllerConfig
 	// closureRecheckIdentity/Since bound an incomplete closure-time recheck.
-	closureRecheckIdentity      string
-	closureRecheckSince         time.Time
-	closureRecheckRetryAt       time.Time
-	codePath                    *CodePath
-	startedAt                   time.Time
-	scheduler                   *Scheduler
-	detectors                   map[string]sdk.Detector
-	tracker                     *FindingStateTracker
-	batcher                     *Batcher
-	provider                    SnapshotProvider
-	dispatcher                  Dispatcher
-	responseStagesRunning       bool
-	midStage                    midIncidentStage
+	closureRecheckIdentity string
+	closureRecheckSince    time.Time
+	closureRecheckRetryAt  time.Time
+	codePath               *CodePath
+	startedAt              time.Time
+	scheduler              *Scheduler
+	detectors              map[string]sdk.Detector
+	tracker                *FindingStateTracker
+	batcher                *Batcher
+	provider               SnapshotProvider
+	dispatcher             Dispatcher
+	responseStagesRunning  bool
+	midStage               midIncidentStage
+	// tuneMidStage lets a test inject the stage's clock and waits.
+	tuneMidStage                func(*DeterministicResponseStage)
 	history                     []DetectorEvaluation
 	progress                    map[string]*evaluation.DetectorProgress
 	drift                       *DriftControllerConfig
@@ -507,6 +509,7 @@ func (c *Controller) stepPaused(ctx context.Context, now time.Time) error {
 	// incident ownerless. Ownerless work is bookkeeping, not observation: a
 	// pause must not hold it.
 	c.processDispatchCompletions(now)
+	c.resumePendingLearnedPass(ctx)
 	if err := c.retireExpiredIncident(ctx, now); err != nil {
 		return err
 	}

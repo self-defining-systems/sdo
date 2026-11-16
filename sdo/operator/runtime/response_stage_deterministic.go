@@ -213,6 +213,16 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	if state.Coverage == nil {
 		var runs []ProgramRun
 		if state.Refresh {
+			// A later pass diagnoses live state: the loop's findings are the ones
+			// it last observed, which predate whatever joined the incident since.
+			func() {
+				loop.operationMu.Lock()
+				defer loop.operationMu.Unlock()
+				loop.mu.Lock()
+				defer loop.mu.Unlock()
+				observed := ToolResponse{}
+				loop.verify(ctx, nil, &observed, true)
+			}()
 			runs = loop.RefreshDiagnose(ctx)
 			fillProgramRevisionsWith(loop.gitRead(), ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
 			runs = append(append([]ProgramRun(nil), state.Request.InitialProgramRuns...), runs...)
