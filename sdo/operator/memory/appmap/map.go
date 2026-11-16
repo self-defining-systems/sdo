@@ -86,15 +86,6 @@ type Component struct {
 	Observe *Observe `yaml:"observe,omitempty"`
 }
 
-// Observe is a component's observability pointers: the selector or job of its
-// metrics, the workload container or label its logs come from, and the
-// service name its spans carry (empty when the runtime cannot trace).
-type Observe struct {
-	Metrics      string `yaml:"metrics,omitempty"`
-	Logs         string `yaml:"logs,omitempty"`
-	TraceService string `yaml:"trace_service,omitempty"`
-}
-
 // Evidence kinds: what grounds a component's role or an edge. config is the
 // application source or its config files; manifest is the rendered manifests
 // (an image, a volume, an env value, a ConfigMap entry), which is all there is

@@ -40,7 +40,8 @@ Every user journey is instrumented and detected: mapped in the app's own metrics
 triggers), errors and latency per journey, a probe that checks its result end to end, a detector that names it
 when any component on its path breaks, a true component path with metrics, logs and trace pointers. The
 check prints one row per journey; the items are in [the standard](references/journey-standard.md). Instrument in
-application code (middleware, metrics, tracing) or the deployment, whichever gives the items.
+application code (middleware, metrics, logging, tracing) or the deployment, whichever gives the items; install and
+configure OpenTelemetry yourself where it helps.
 
 ## Environment
 
