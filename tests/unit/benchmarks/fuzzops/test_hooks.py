@@ -1232,3 +1232,26 @@ def test_wait_idle_before_the_seed_needs_no_promoted_baseline(monkeypatch: pytes
             return True
 
     assert hooks.wait_idle(_Kube(), "ns", 1.0) == ""  # type: ignore[arg-type]
+
+
+def test_run_seed_runs_the_packs_seed_script_with_the_lane_environment(tmp_path: Path) -> None:
+    root = tmp_path / "pack"
+    (root / "manifests").mkdir(parents=True)
+    (root / "manifests" / "a.yaml").write_text("kind: Service\n")
+    (root / "app.yaml").write_text("name: s\nseed: ./seed.sh\nentry: {service: web, port: 80}\n")
+    (root / "seed.sh").write_text('#!/bin/sh\necho "$NAMESPACE $KUBE_CONTEXT $KIND_CLUSTER" > "$PWD/seeded"\n')
+    (root / "seed.sh").chmod(0o755)
+    env = {
+        "FUZZOPS_NAMESPACE": "ns1",
+        "FUZZOPS_KUBE_CONTEXT": "kind-c",
+        "FUZZOPS_KIND_CLUSTER": "c",
+        "KUBECONFIG": "/k",
+    }
+    assert hooks.run_seed(hooks.SourcePack(root), env) is True
+    assert (root / "seeded").read_text().strip() == "ns1 kind-c c"
+    (root / "app.yaml").write_text("name: s\nentry: {service: web, port: 80}\n")
+    assert hooks.run_seed(hooks.SourcePack(root), env) is False
+    (root / "app.yaml").write_text("name: s\nseed: ./seed.sh\nentry: {service: web, port: 80}\n")
+    (root / "seed.sh").write_text("#!/bin/sh\nexit 3\n")
+    with pytest.raises(HookError, match="seed"):
+        hooks.run_seed(hooks.SourcePack(root), env)
