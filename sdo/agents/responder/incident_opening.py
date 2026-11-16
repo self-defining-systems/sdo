@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from google.protobuf import json_format
 
+from sdo.contracts import Verdict
+
 if TYPE_CHECKING:
-    from sdo.contracts import Finding, IncidentRequest
+    from sdo.contracts import Finding, IncidentRequest, ProgramRun
 
 #: Rule prefix and detector prefix of a failing user-test finding (``sdo/operator/sdk/traffic`` and
 #: ``memory.TrafficDetectorPrefix``); Go decides which of them open an incident, and records the keys.
@@ -169,3 +172,80 @@ def earlier_attempts_block(request: IncidentRequest) -> str:
 def _age(delta: Any) -> str:
     minutes = int(delta.total_seconds() // 60)
     return f"{minutes} min" if minutes < 120 else f"{minutes // 60} h"
+
+
+#: The playbooks shown, and the hard bound on the whole block (the symptom placeholder budget leaves room for it).
+_MAX_UNMATCHED = 3
+_MAX_UNMATCHED_CHARS = 1200
+_UNMATCHED_RESULTS = {Verdict.RESULT_NO_MATCH: "NoMatch", Verdict.RESULT_UNKNOWN: "Unknown"}
+#: Closest first: a playbook credited for this symptom, then one bound from a finding, then the wider sweeps.
+_SOURCE_RANK = {"credited": 0, "finding": 1, "suspect": 2, "hint": 3, "sweep": 4}
+_FRONT_MATTER = re.compile(r"\A---\n(.*?)\n---", re.DOTALL)
+
+
+def _front_matter(markdown: str, key: str) -> str:
+    found = _FRONT_MATTER.match(markdown)
+    if found is None:
+        return ""
+    for line in found.group(1).splitlines():
+        name, _, value = line.partition(":")
+        if name.strip() == key:
+            return value.strip().strip("\"'")
+    return ""
+
+
+def _origin(markdown: str) -> str:
+    incident = _front_matter(markdown, "originating_incident")
+    summary = _front_matter(markdown, "description") or _front_matter(markdown, "fault_class")
+    parts = [f"learned from incident {_clip_to(incident, 60)}" if incident else "", _clip_to(summary, 90)]
+    return "; ".join(part for part in parts if part)
+
+
+def _clip_to(text: str, limit: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _last_read(run: ProgramRun) -> str:
+    if not run.read_trace:
+        return "no external reads"
+    step = run.read_trace[-1]
+    target = f" {_clip_to(step.target, 60)}" if step.target else ""
+    return f"{step.op}{target}: {_clip_to(step.outcome, 70)}"
+
+
+def unmatched_playbooks_block(request: IncidentRequest) -> str:
+    """Learned playbooks the automatic stage evaluated for this incident that returned NoMatch or Unknown, closest
+    few first, each with where it was learned, the last read in its trace and where its source is. SDO never
+    applies these; the responder decides. Empty when every evaluated playbook matched or none was evaluated."""
+    matched = {run.program_id for run in request.initial_program_runs if run.verdict.result == Verdict.RESULT_MATCH}
+    best: dict[str, ProgramRun] = {}
+    for run in request.initial_program_runs:
+        if run.verdict.result not in _UNMATCHED_RESULTS or run.program_id in matched:
+            continue
+        current = best.get(run.program_id)
+        if current is None or _closeness(run) < _closeness(current):
+            best[run.program_id] = run
+    if not best:
+        return ""
+    markdown = {playbook.id: playbook.markdown for playbook in request.memory_snapshot.playbooks}
+    ranked = sorted(best.values(), key=lambda run: (_closeness(run), run.program_id))
+    lines = [
+        "",
+        "Learned playbooks evaluated for this incident that did not match (SDO does not apply them; "
+        "one may still describe the right fix):",
+    ]
+    for run in ranked[:_MAX_UNMATCHED]:
+        origin = _origin(markdown.get(run.program_id, ""))
+        lines.append(
+            f"- {_clip_to(run.program_id, 60)}: {_UNMATCHED_RESULTS[run.verdict.result]}"
+            + (f"; {origin}" if origin else "")
+            + f"; last read: {_last_read(run)}; source: .sdo/playbooks/{_clip_to(run.program_id, 60)}/"
+        )
+    if len(ranked) > _MAX_UNMATCHED:
+        lines.append(f"(+{len(ranked) - _MAX_UNMATCHED} more; sdo diagnose NAME re-runs one)")
+    return "\n".join(lines)[:_MAX_UNMATCHED_CHARS]
+
+
+def _closeness(run: ProgramRun) -> tuple[int, int]:
+    return (_SOURCE_RANK.get(run.binding_source, len(_SOURCE_RANK)), -len(run.read_trace))

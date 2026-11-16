@@ -20,6 +20,8 @@ state against last healthy, log errors, clues. `more:` lines expand one. `.sdo/a
 - `sdo menu [NAME]`: list fixes. `sdo mitigate NAME --bind ROLE=Kind/ns/name`: apply one
 - `sdo mitigate ReconcileFromSource --bind ref=Deployment/shop/api`: restore source
 
+A listed non-matching playbook may still describe the right fix: check its cause directly, and reuse its mitigation if the cause holds; you decide, SDO never applies it.
+
 `sdo COMMAND --help` gives the syntax. Use `kubectl` for reads and changes. Keep a source fix with `git commit`.
 
 SDO decides recovery: the opening alerts cleared and stayed clear after your last change settled, then
