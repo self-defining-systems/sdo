@@ -88,6 +88,7 @@ var operatorOwned = map[string]string{
 	"runtime/event_stream.go":                          reasonLedger,
 	"runtime/internal/lifecycleio/repository_state.go": reasonScratch,
 	"runtime/internal/lifecycleio/state_evidence.go":   reasonLedger,
+	"runtime/prober/setup_lock.go":                     "empty advisory lock files under the OS temp directory (sdo-setup-locks/<namespace>), a fixed path never in a checkout and never published",
 	"runtime/internal/lifecycleio/task_store.go":       reasonLedger,
 	"runtime/investigators_dispatch.go":                reasonState,
 	"runtime/jitview/cmd/gen/main.go":                  reasonTool,
