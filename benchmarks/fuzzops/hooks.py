@@ -296,7 +296,7 @@ def baseline_problem(baseline: Baseline, namespace: str) -> str:
 
 #: What ``prepare`` leaves in the lane directory for ``swap``: the revision the lane runs and its memory commit.
 PREPARED_RECORD = "prepared.json"
-#: The first time the idle verb saw only unpromoted store baselines hold the lane, and the note left when the wait gave up.
+#: The first time the idle verb held only on unpromoted store baselines, and the note left when the wait gave up.
 BASELINE_WAIT_RECORD = "baseline-wait.json"
 BASELINE_MISSING_RECORD = "no-baseline.json"
 #: How long the pre-inject gate waits for promoted store baselines before injecting without them.
