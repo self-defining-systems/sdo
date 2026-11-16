@@ -1072,3 +1072,22 @@ def test_wait_idle_stable_restarts_the_quiet_period_when_an_incident_opens(monke
     kube = SimpleNamespace()
     assert hooks.wait_idle_stable(kube, "c", 1000, 90) == ""  # type: ignore[arg-type]
     assert clock["t"] >= 150  # 60 + 90 quiet seconds, not 90
+
+
+def test_reset_incidents_verb_resets_and_writes_the_receipt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    lane = tmp_path / "lane"
+    (lane / "bin").mkdir(parents=True)
+    (lane / "bin" / "sdo-operator").write_text("")
+    calls: list[list[str]] = []
+
+    def run_cmd(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, '{"generation": 9, "acknowledged": true}\n', "")
+
+    monkeypatch.setattr(hooks.subprocess, "run", run_cmd)
+    out = tmp_path / "scratch"
+    env = _sink_env(tmp_path, BENCH_OUT=str(out), BENCH_LANE_DIR=str(lane))
+    assert hooks.reset_incidents_verb(env, out=lambda _: None) == 0
+    assert any(c[1:3] == ["incidents", "reset"] for c in calls)
+    assert json.loads((out / "incidents-reset.json").read_text())["generation"] == 9
+    assert "reset-incidents" in hooks.VERBS

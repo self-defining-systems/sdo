@@ -228,6 +228,11 @@ class CellEvidence:
     items: list[Item] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
     waived: list[str] = field(default_factory=list)
+    #: Incident directories left out of this cell's evidence: late writes of an earlier cell's incident.
+    excluded: list[str] = field(default_factory=list)
+    #: Incident directories with no ledger and no seal: incidents still open when collect ran (not the cell's own, which
+    #: the settle waits for). Their session files are checked; their ledger does not exist yet.
+    open_incidents: list[str] = field(default_factory=list)
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)
@@ -249,6 +254,8 @@ class CellEvidence:
             items=[Item(**i) for i in raw.get("items", [])],
             problems=list(raw.get("problems", [])),
             waived=list(raw.get("waived", [])),
+            excluded=list(raw.get("excluded", [])),
+            open_incidents=list(raw.get("open_incidents", [])),
         )
 
     @property
@@ -564,8 +571,18 @@ def build(run_dir: Path) -> CellEvidence:
     outcomes_dir = op / "memory" / ".sdo" / "outcomes"
     inc_root = op / "evidence" / "incidents"
     ledger_by_dir: dict[str, dict[str, Any]] = {}
+    start = sink.parse_time(ev.interval[0]) if ev.interval else None
     for d in sorted(inc_root.glob("*/")) if inc_root.is_dir() else []:
         label = d.name[:12]
+        if sink.leftover(d, [], start):
+            ev.excluded.append(d.name)
+            continue
+        if not (d / "ledger.json").exists() and not (d / "seal.json").exists():
+            ev.open_incidents.append(d.name)
+            sessions, session_problems = _sessions(run, d)
+            ev.agents.extend(sessions)
+            problems += session_problems
+            continue
         ident = _check_json(
             add(f"incident.json {label}", str(Path("operator/evidence/incidents") / d.name / "incident.json")),
             run,
@@ -589,11 +606,11 @@ def build(run_dir: Path) -> CellEvidence:
         ran = sink.agents_ran(ledger) if ledger else False
         for field_name in ("detected_at", "closure_start_at", "closed_at"):
             if getattr(tl, field_name) is None:
-                problems.append(Problem(f"timeline {label}", "incomplete", f"no {field_name}"))  # noqa: PERF401
+                problems.append(Problem(f"timeline {label}", "incomplete", f"no {field_name}"))
         if ran:
             for field_name in ("dispatched_at", "verified_at", "health_cleared_at"):
                 if getattr(tl, field_name) is None and tl.outcome in (None, "success"):
-                    problems.append(Problem(f"timeline {label}", "incomplete", f"no {field_name}"))  # noqa: PERF401
+                    problems.append(Problem(f"timeline {label}", "incomplete", f"no {field_name}"))
             if tl.resolution_path == "responder" and tl.responder_cost_usd is None:
                 problems.append(Problem(f"responder usage {label}", "incomplete", "no total_cost_usd"))
         if ledger and sink.closing_turn_ran(ledger):

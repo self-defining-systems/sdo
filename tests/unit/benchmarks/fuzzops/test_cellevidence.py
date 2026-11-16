@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gzip
 import json
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -223,3 +224,28 @@ def test_a_closing_turn_go_skipped_needs_no_usage_or_session(tmp_path: Path, rea
     _w(inc / "ledger.json", ledger)
     (inc / "reflection-usage.jsonl").unlink()
     assert ce.build(run).problems == []
+
+
+def test_an_earlier_cells_leftover_incident_directory_is_outside_the_cell(tmp_path: Path) -> None:
+    run = make_cell(tmp_path)
+    op = run / "operator"
+    _w(op / "collect.json", {"interval": ["2026-01-01T00:00:00Z", T.format(59)], "parts": {}})
+    left = op / "evidence/incidents" / ("c" * 32)
+    before = int(datetime(2025, 12, 31, tzinfo=UTC).timestamp() * 1e9)
+    _w(left / "incident.json", {"incident_id": f"fg1-{before}"})
+    ev = ce.build(run)
+    assert ev.excluded == ["c" * 32]
+    assert not any("ccccccccccc" in p for p in ev.problems)
+
+
+def test_an_incident_still_open_at_collect_has_no_ledger_to_demand(tmp_path: Path) -> None:
+    run = make_cell(tmp_path)
+    op = run / "operator"
+    _w(op / "collect.json", {"interval": ["2026-01-01T00:00:00Z", T.format(59)], "parts": {}})
+    openi = op / "evidence/incidents" / ("d" * 32)
+    _w(openi / "incident.json", {"incident_id": f"fg1-{int(datetime(2026, 1, 1, 0, 5, tzinfo=UTC).timestamp() * 1e9)}"})
+    ev = ce.build(run)
+    assert ev.open_incidents == ["d" * 32]
+    assert ev.problems == []
+    _w(openi / "seal.json", {})  # sealed means a ledger was owed
+    assert any("ledger.json" in p for p in ce.build(run).problems)

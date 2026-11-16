@@ -405,3 +405,25 @@ def test_a_responder_less_close_with_no_session_is_not_an_agent_run() -> None:
         "reflection_results": [{"learning_decision": "no_change", "no_change_reason": "no_session"}],
     }
     assert not sink.agents_ran(ledger)
+
+
+def _identity(directory: Path, incident_id: str) -> None:
+    (directory / "incident.json").write_text(json.dumps({"incident_id": incident_id}))
+
+
+def test_late_writes_of_an_earlier_cells_incident_are_not_this_cells(tmp_path: Path) -> None:
+    run = _run(tmp_path)
+    start = datetime(2026, 11, 12, 10, 0, tzinfo=UTC)
+    nanos = lambda at: int(at.timestamp() * 1e9)  # noqa: E731
+    earlier = _incident(run, "a" * 32, None, rollouts=1)
+    _identity(earlier, f"fg1-{nanos(datetime(2026, 11, 12, 9, 0, tzinfo=UTC))}")
+    own = _incident(run, "b" * 32, None, rollouts=1)
+    _identity(own, f"fg1-{nanos(datetime(2026, 11, 12, 10, 1, tzinfo=UTC))}")
+    for d in (earlier, own):  # both were written during the interval
+        _age(d, datetime(2026, 11, 12, 10, 5, tzinfo=UTC))
+    assert sink.leftover(earlier, [], start)
+    assert not sink.leftover(own, [], start)
+    dest = tmp_path / "out"
+    sink.copy_interval(run, dest, start, datetime(2026, 11, 12, 11, 0, tzinfo=UTC))
+    assert not (dest / "incidents" / ("a" * 32)).exists()
+    assert (dest / "incidents" / ("b" * 32)).exists()

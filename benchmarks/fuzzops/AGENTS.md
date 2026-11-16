@@ -145,7 +145,7 @@ incident stays open until `python -m benchmarks.fuzzops.hooks validate` (`BENCH_
 `operator/evidence-waiver.json` (`{"waive": ["<item prefix>"], "reason": "..."}`) waives named items.
 `python -m benchmarks.fuzzops.cellevidence backfill|manifest|finish <exp dir>` audits, rewrites or (batch end) validates
 all cells and only then runs `benchmarks.sregym.analysis all`; `trial <dir>` applies the session and sub-agent rules to
-an onboarding trial directory (`transcript*.jsonl` plus `session-dir/`). Evidence stays in the run directory; diskwatch
+an onboarding trial directory (`transcript*.jsonl` plus `session-dir/`). Incident directories from before the cell's inject with no ledger (late writes of an earlier cell's incident) are left out of the cell's copy and of the manifest (`excluded`); ledger-less, unsealed ones detected inside the cell are incidents still open at collect (`open_incidents`; sessions checked, no ledger demanded). When the fuzzops-bench hold clears it runs the `reset-incidents` verb (the reset collect skipped). Evidence stays in the run directory; diskwatch
 must not prune `operator/`.
 
 ## Dashboard view

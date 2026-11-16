@@ -483,6 +483,23 @@ def _newest_mtime(directory: Path) -> datetime | None:
     return datetime.fromtimestamp(max(stamps), UTC) if stamps else None
 
 
+def incident_detected_at(directory: Path) -> datetime | None:
+    """When the incident was detected, from its ID (``<namespace>-<unix nanoseconds>``); for a ledger-less directory."""
+    identity = _read_json(directory / IDENTITY_FILE)
+    suffix = str(_get(identity, "incident_id") or "").rsplit("-", 1)[-1]
+    return datetime.fromtimestamp(int(suffix) / 1e9, UTC) if suffix.isdigit() else None
+
+
+def leftover(directory: Path, records: list[dict[str, Any]], start: datetime | None) -> bool:
+    """Whether an incident directory is only the late writes of an incident from before ``start`` (an earlier cell's):
+    no ledger, no sink index record, detected before the interval. The ready gate needs the operator idle before every
+    inject, so nothing detected earlier is open at ``start`` and the directory belongs to the earlier cell."""
+    if start is None or records or (directory / LEDGER_FILE).is_file():
+        return False
+    detected = incident_detected_at(directory)
+    return detected is not None and detected < start
+
+
 def _within(at: datetime | None, start: datetime, end: datetime) -> bool:
     return at is not None and start <= at <= end
 
@@ -514,6 +531,8 @@ def incident_in_interval(
         times += [parse_time(record.get(k)) for k in ("detected_at", "verified_at", "acknowledged_at", "sealed_at")]
     if any(_within(t, lo, hi) for t in times):
         return True
+    if leftover(directory, records, start):
+        return False
     if detected is not None:
         # Open during the interval: detected before its end and not acknowledged before its start.
         return detected <= hi and (acknowledged is None or acknowledged >= lo)
