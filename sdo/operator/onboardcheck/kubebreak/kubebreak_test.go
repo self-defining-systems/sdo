@@ -2,7 +2,6 @@ package kubebreak
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -341,8 +340,12 @@ func TestRestoreIsUncertainOnlyAfterTheConflictRetriesFail(t *testing.T) {
 	}
 	seen := conflictOn(client, "patch", 100)
 	err := b.Restore(context.Background(), c)
-	if err == nil || !apierrors.IsConflict(errors.Unwrap(err)) && !strings.Contains(err.Error(), "still conflicting after 5 tries") {
+	if err == nil || !apierrors.IsConflict(err) || !strings.Contains(err.Error(), "still conflicting after 5 tries") {
 		t.Fatalf("expected an uncertain restore, got %v", err)
+	}
+	got, _ := client.AppsV1().Deployments("app").Get(context.Background(), "web", metav1.GetOptions{})
+	if _, kept := got.Annotations[restoreAnnotation]; !kept || *got.Spec.Replicas != 0 {
+		t.Fatal("a failed restore must leave the annotation so a later restore can recover")
 	}
 	if *seen != 5 {
 		t.Fatalf("tries %d, want 5", *seen)

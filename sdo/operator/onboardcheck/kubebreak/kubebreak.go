@@ -210,6 +210,9 @@ func (b *Breaker) findStatefulSet(ctx context.Context, name string) (*workload, 
 }
 
 func scalePatch(replicas int32, set map[string]*string) ([]byte, error) {
+	if len(set) == 0 { // a nil map would marshal to null and delete every annotation
+		return nil, errors.New("kubebreak: scale patch needs at least one annotation change")
+	}
 	return json.Marshal(map[string]any{
 		"metadata": map[string]any{"annotations": set},
 		"spec":     map[string]any{"replicas": replicas},
