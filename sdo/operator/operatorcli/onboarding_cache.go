@@ -24,6 +24,7 @@ import (
 	"sdo.dev/operator/onboardcheck"
 	"sdo.dev/operator/onboardcheck/kubebreak"
 	"sdo.dev/operator/operatorcli/internal/processio"
+	"sdo.dev/operator/safefs"
 )
 
 // checkCachePath is the file that keeps one session's verdicts: one per
@@ -52,32 +53,15 @@ func loadCheckCache(path string) *onboardcheck.Cache {
 	return cache
 }
 
+// saveCheckCache replaces the record atomically (a temporary file in the
+// same directory, renamed over it, mode 0600) through safefs, which also
+// refuses a symlinked path.
 func saveCheckCache(path string, cache *onboardcheck.Cache) error {
 	data, err := json.MarshalIndent(cache, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".check-cache-*")
-	if err != nil {
-		return err
-	}
-	tmp := file.Name()
-	_, werr := file.Write(data)
-	if cerr := file.Close(); werr == nil {
-		werr = cerr
-	}
-	if werr != nil {
-		_ = os.Remove(tmp)
-		return werr
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return safefs.WriteFile(filepath.Dir(path), filepath.Base(path), data, 0o600)
 }
 
 // diagnosticsFiles reads the diagnostics of the prepared tree by repository path.
