@@ -3,8 +3,10 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
@@ -115,6 +117,34 @@ func (c *Controller) reportHealthyCaptureError(err error) {
 // start and none reports an opener: healthy means no opener is active and no
 // incident is open.
 func (c *Controller) completeHealthyEvaluation() bool {
+	return c.healthyEvaluation(func(string) bool { return false })
+}
+
+// storesHealthy is the healthy predicate of the store baselines. A detector the
+// designer authored for something other than stores or user tests (an
+// app-state reader, a setting check) that errors is a recorded clue, not a
+// reason to freeze every store's baseline.
+func (c *Controller) storesHealthy(confirmationExpired bool, erroredIDs map[string]bool, onboardingCandidate *contracts.NamespaceOnboarding) bool {
+	if confirmationExpired || c.pendingOnboarding != nil || (onboardingCandidate != nil && c.namespaceOnboarding == nil) || !c.quiet() {
+		return false
+	}
+	ignorable := func(id string) bool {
+		d, ok := c.detectors[id]
+		if !ok {
+			return false
+		}
+		spec := d.Spec()
+		return spec.Owner == sdk.DetectorOwnerHealthJudge && !strings.HasPrefix(id, "store-state-") && !strings.HasPrefix(id, "traffic-probe")
+	}
+	for id := range erroredIDs {
+		if !ignorable(id) {
+			return false
+		}
+	}
+	return c.healthyEvaluation(ignorable)
+}
+
+func (c *Controller) healthyEvaluation(ignore func(string) bool) bool {
 	latest := map[string]DetectorEvaluation{}
 	for _, evaluation := range c.history {
 		latest[evaluation.DetectorID] = evaluation
@@ -124,6 +154,9 @@ func (c *Controller) completeHealthyEvaluation() bool {
 	}
 	for id := range c.detectors {
 		if c.setupDetectorDisabled(id) {
+			continue
+		}
+		if ignore(id) {
 			continue
 		}
 		evaluation, found := latest[id]

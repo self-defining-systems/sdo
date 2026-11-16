@@ -15,6 +15,7 @@ import (
 	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/sdk/usage"
 	"sdo.dev/operator/sdk/vantage"
+	"slices"
 )
 
 // Registration carries optional declarations as well as scheduling metadata.
@@ -81,6 +82,10 @@ func registration(d sdk.Detector) Registration {
 	}
 	if c, ok := d.(appstate.Consumer); ok {
 		r.AppStateReaders = c.AppStateReaders()
+	}
+	if r.AppStateReader && !slices.Contains(r.AppStateReaders, r.ID) {
+		// A reader's own Detect usually judges its result; without the id the host never carries it.
+		r.AppStateReaders = append(slices.Clone(r.AppStateReaders), r.ID)
 	}
 	return r
 }
