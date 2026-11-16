@@ -176,21 +176,29 @@ def _age(delta: Any) -> str:
 
 #: The playbooks shown, and the hard bound on the whole block (the symptom placeholder budget leaves room for it).
 _MAX_UNMATCHED = 3
+_MAX_UNMATCHED_LINE = 360
 _MAX_UNMATCHED_CHARS = 1200
 _UNMATCHED_RESULTS = {Verdict.RESULT_NO_MATCH: "NoMatch", Verdict.RESULT_UNKNOWN: "Unknown"}
 #: Closest first: a playbook credited for this symptom, then one bound from a finding, then the wider sweeps.
 _SOURCE_RANK = {"credited": 0, "finding": 1, "suspect": 2, "hint": 3, "sweep": 4}
-_FRONT_MATTER = re.compile(r"\A---\n(.*?)\n---", re.DOTALL)
+_FRONT_MATTER = re.compile(r"\A\ufeff?---\r?\n(.*?)\r?\n---", re.DOTALL)
+_BLOCK_SCALAR = re.compile(r"[|>][+-]?")
 
 
 def _front_matter(markdown: str, key: str) -> str:
+    """A top-level scalar of the README's YAML front matter; "" when absent, nested or a block scalar."""
     found = _FRONT_MATTER.match(markdown)
     if found is None:
         return ""
     for line in found.group(1).splitlines():
+        if line[:1].isspace():
+            continue
         name, _, value = line.partition(":")
         if name.strip() == key:
-            return value.strip().strip("\"'")
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            return "" if _BLOCK_SCALAR.fullmatch(value) else value
     return ""
 
 
@@ -237,14 +245,19 @@ def unmatched_playbooks_block(request: IncidentRequest) -> str:
     ]
     for run in ranked[:_MAX_UNMATCHED]:
         origin = _origin(markdown.get(run.program_id, ""))
+        # The id is a path and a command argument, so it is never clipped; the free text around it is.
         lines.append(
-            f"- {_clip_to(run.program_id, 60)}: {_UNMATCHED_RESULTS[run.verdict.result]}"
-            + (f"; {origin}" if origin else "")
-            + f"; last read: {_last_read(run)}; source: .sdo/playbooks/{_clip_to(run.program_id, 60)}/"
+            _clip_to(
+                f"- {run.program_id}: {_UNMATCHED_RESULTS[run.verdict.result]}"
+                + (f"; {origin}" if origin else "")
+                + f"; last read: {_last_read(run)}",
+                max(_MAX_UNMATCHED_LINE - 60 - len(run.program_id), 40),
+            )
+            + f"; source: .sdo/playbooks/{run.program_id}/"
         )
     if len(ranked) > _MAX_UNMATCHED:
         lines.append(f"(+{len(ranked) - _MAX_UNMATCHED} more; sdo diagnose NAME re-runs one)")
-    return "\n".join(lines)[:_MAX_UNMATCHED_CHARS]
+    return "\n".join(lines)
 
 
 def _closeness(run: ProgramRun) -> tuple[int, int]:

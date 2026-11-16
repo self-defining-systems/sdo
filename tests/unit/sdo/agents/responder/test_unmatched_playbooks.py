@@ -5,7 +5,7 @@ from __future__ import annotations
 from google.protobuf import json_format, timestamp_pb2
 
 from sdo.agents.responder.codex import _responder_prompt
-from sdo.agents.responder.incident_opening import unmatched_playbooks_block
+from sdo.agents.responder.incident_opening import symptom, unmatched_playbooks_block
 from sdo.contracts import IncidentRequest, MemoryPlaybook, ProgramRun, ReadStep, Verdict
 from tests.unit.sdo.agents.prompts.cases import incident
 
@@ -110,8 +110,6 @@ def test_the_first_message_carries_the_block_and_nothing_when_there_are_none() -
 
 
 def test_the_block_fits_the_first_message_beside_a_worst_case_symptom_without_spilling() -> None:
-    from sdo.agents.responder.incident_opening import symptom
-
     request = _request(
         *[_run(f"p{i}", reads=(("observe", "t" * 500, "o" * 500),), source="credited") for i in range(10)],
         readmes={f"p{i}": README for i in range(10)},
@@ -134,3 +132,47 @@ def test_the_block_fits_the_first_message_beside_a_worst_case_symptom_without_sp
     assert unmatched_playbooks_block(request) in prompt
     assert len(symptom(request)) > 4000
     assert symptom(request) in prompt
+
+
+def test_the_footer_and_every_source_path_survive_the_bound() -> None:
+    long = "x" * 5000
+    runs = [_run(f"p{i}", reads=(("observe", long, long),), source="credited") for i in range(6)]
+    readmes = {f"p{i}": README.replace("widen a varchar column the app outgrew", long) for i in range(6)}
+
+    block = unmatched_playbooks_block(_request(*runs, readmes=readmes))
+
+    assert len(block) <= 1200
+    assert block.count("; source: .sdo/playbooks/p") == 3
+    assert block.endswith("sdo diagnose NAME re-runs one)")
+
+
+def test_front_matter_variants_still_give_the_origin() -> None:
+    crlf = README.replace("\n", "\r\n")
+    assert "inc-7" in unmatched_playbooks_block(_request(_run("a"), readmes={"a": crlf}))
+    only_class = "---\nfault_class: narrow-column\noriginating_incident: inc-7\n---\n"
+    assert "narrow-column" in unmatched_playbooks_block(_request(_run("a"), readmes={"a": only_class}))
+    folded = "---\ndescription: >\n  folded text\nfault_class: narrow-column\n---\n"
+    block = unmatched_playbooks_block(_request(_run("a"), readmes={"a": folded}))
+    assert "narrow-column" in block
+    assert "; >;" not in block
+    nested = "---\nmeta:\n  description: nested\n---\n"
+    assert "nested" not in unmatched_playbooks_block(_request(_run("a"), readmes={"a": nested}))
+
+
+def test_a_long_playbook_id_is_never_clipped() -> None:
+    name = "a" + "b" * 90
+    block = unmatched_playbooks_block(_request(_run(name)))
+
+    assert f"- {name}: NoMatch" in block
+    assert f".sdo/playbooks/{name}/" in block
+
+
+def test_ranking_prefers_the_credited_binding_then_the_longer_trace() -> None:
+    swept = _run("swept", source="sweep", reads=(("read", "t", "0 rows"), ("read", "t", "0 rows")))
+    short = _run("short", source="finding")
+    long = _run("long", source="finding", reads=(("read", "t", "0 rows"),))
+    credited = _run("credited", source="credited")
+    block = unmatched_playbooks_block(_request(swept, short, long, credited))
+
+    order = [line.split(":")[0].removeprefix("- ") for line in block.splitlines() if line.startswith("- ")]
+    assert order == ["credited", "long", "short"]
