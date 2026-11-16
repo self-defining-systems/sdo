@@ -475,6 +475,27 @@ func TestClientJumpNeedsEnoughHealthyBaseline(t *testing.T) {
 	}
 }
 
+// A low-rate route with a thin, failure-free baseline that then fails for most
+// of its requests is called an error, not left a clue that opens no incident.
+// The same rise at a smaller share stays the insufficient-baseline clue.
+func TestClientJumpOnThinBaselineIsCalledWhenMostRequestsFail(t *testing.T) {
+	baseline := []metrics.Series{instant(pkgRoute, "200", 10), instant(webRoute, "200", 400)}
+	recent := []metrics.Series{
+		series(pkgRoute, "200", steady(5, 7)...),
+		series(pkgRoute, "404", 0, 0, 0, 8, 12, 12, 12),
+		series(webRoute, "200", steady(40, 7)...),
+	}
+	got := detect(t, snapshot(recent, baseline, presence()))
+	if len(got) != 1 || got[0].RuleID != requestmetrics.RuleErrors {
+		t.Fatalf("a mostly failing route on a thin baseline = %+v", got)
+	}
+	flaky := []metrics.Series{instant(pkgRoute, "200", 6), instant(pkgRoute, "404", 4), instant(webRoute, "200", 400)}
+	got = detect(t, snapshot(recent, flaky, presence()))
+	if len(got) != 1 || got[0].RuleID != requestmetrics.RuleInsufficientBaseline {
+		t.Fatalf("a route already failing in its thin baseline = %+v", got)
+	}
+}
+
 func TestDeclaredOperationIsNotAlsoEvaluatedAsUndeclared(t *testing.T) {
 	recent := []metrics.Series{series(webRoute, "200", steady(40, 7)...), series(webRoute, "500", 0, 0, 0, 0, 0, 9, 9)}
 	got := detectWith(t, undeclaredDetector(0), snapshot(recent, healthyBaseline(), presence()))
