@@ -133,3 +133,26 @@ func activeFindings(c *Controller) []sdk.Finding {
 	}
 	return active
 }
+
+// A thin-baseline jump is kept as a clue under the error fingerprint; when the
+// baseline fills and the same fingerprint becomes an error finding, the already
+// active state must still open the incident instead of staying a clue.
+func TestRequestMetricsClueUpgradedToErrorsOpens(t *testing.T) {
+	fingerprint := "requestmetrics/errors/undeclared/front//packages"
+	clue := requestMetricsFinding(requestmetrics.RuleInsufficientBaseline, fingerprint, "insufficient baseline to judge a client-error jump")
+	clue.Severity = sdk.SeverityInfo
+	errs := failingOperation(fingerprint)
+	detector := controllerDetector(memory.RequestMetricsDetectorID, time.Second, clue, clue, errs, errs)
+	c := openersController(t, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, detector)
+	c.config.RequestMetricsOpens = true
+	step(t, c, 0)
+	step(t, c, 1)
+	if c.IncidentOpen() {
+		t.Fatal("a thin-baseline clue opened an incident")
+	}
+	step(t, c, 2)
+	request := currentRequest(c)
+	if request == nil || len(request.OpeningKeys) != 1 {
+		t.Fatalf("the clue that became an error finding opened no incident: %+v", request)
+	}
+}

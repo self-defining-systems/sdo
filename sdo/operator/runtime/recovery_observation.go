@@ -147,6 +147,7 @@ func (c *Controller) recordRecoveryObservation(ctx context.Context, id string, n
 			for _, finding := range changes.Activated {
 				c.admitActivation(ctx, finding, now, spec)
 			}
+			c.admitUpgrades(ctx, changes.Reruled, now, spec)
 		}
 	}
 	if len(c.history) > 100 {
