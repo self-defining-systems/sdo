@@ -268,6 +268,12 @@ func (e MetricEntry) DurationRoute(names []string, route string) string {
 	return "count(" + e.matchers(`__name__=~`+quote(strings.Join(quoted, "|")), e.Labels.Route+"="+quote(route)) + ")"
 }
 
+// DurationTotal is the total of one duration family's _sum or _count series
+// (suffix "sum" or "count") over all routes of the entry.
+func (e MetricEntry) DurationTotal(base, suffix string) string {
+	return "sum(" + base + "_" + suffix + e.matchers(e.Labels.Route+`!=""`) + ")"
+}
+
 func (e MetricEntry) durationMatchers(names string) string {
 	m := e.matchers(`__name__=~`+quote(names), e.Labels.Route+`!=""`)
 	return m

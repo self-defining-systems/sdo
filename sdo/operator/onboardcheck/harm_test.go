@@ -11,10 +11,18 @@ import (
 
 func harmRun(t *testing.T, fail, reqs float64, pausedReqs float64) Report {
 	t.Helper()
-	return harmRunWith(t, fail, reqs, map[string]float64{requestsKey("web", "/items"): pausedReqs})
+	return harmRunWith(t, fail, reqs, map[string]float64{requestsKey("web", "/items"): pausedReqs}, 0, 0)
 }
 
-func harmRunWith(t *testing.T, fail, reqs float64, pausedRequests map[string]float64) Report {
+// harmRunLatency runs with users sending 600 requests/min; the mean latency
+// is pausedLat seconds when the probes are paused and runLat while they run.
+func harmRunLatency(t *testing.T, pausedLat, runLat float64) Report {
+	t.Helper()
+	return harmRunWith(t, 0, 600, map[string]float64{requestsKey("web", "/items"): 600,
+		latencyCountKey("web"): 600, latencySumKey("web"): 600 * pausedLat}, 600, runLat)
+}
+
+func harmRunWith(t *testing.T, fail, reqs float64, pausedRequests map[string]float64, durReqs, durMean float64) Report {
 	t.Helper()
 	w := newWorld()
 	m, err := appmap.Parse(liveMap)
@@ -46,6 +54,10 @@ func harmRunWith(t *testing.T, fail, reqs float64, pausedRequests map[string]flo
 		}
 		if reqs > 0 {
 			p.add("http_requests_total", map[string]string{"job": "web", "route": "/items", "method": "GET", "code": "200"}, reqs*minutes)
+		}
+		if durReqs > 0 {
+			p.add("http_request_duration_seconds_count", map[string]string{"job": "web", "route": "/items"}, durReqs*minutes)
+			p.add("http_request_duration_seconds_sum", map[string]string{"job": "web", "route": "/items"}, durReqs*minutes*durMean)
 		}
 	}
 	cfg := Config{Map: m, Commit: "c", Prom: p, Sender: fakeSender{prom: p, emit: perRoute}, Requests: 1, Poll: time.Second, Wait: w.Wait, Now: w.Now,
@@ -80,11 +92,26 @@ func TestQuietProbesAreGreen(t *testing.T) {
 	}
 }
 
-func TestProbesThatAreMostTrafficAreRedWhenUsersExist(t *testing.T) {
-	// 60 requests/min from users paused; the probes add far more while running.
+func TestProbeShareOfTrafficIsInformationOnly(t *testing.T) {
+	// 60 requests/min from users paused; the probes add far more while running,
+	// which is how small the user traffic is, not harm.
 	r := harmRun(t, 0, 200, 60)
-	if status(r, ItemHarm, "web") != Red || !strings.Contains(r.Text(), "probes are") {
-		t.Fatalf("probe share:\n%s", r.Text())
+	if status(r, ItemHarm, "probes") != Green || !strings.Contains(r.Text(), "for information") {
+		t.Fatalf("share must be shown and not judged:\n%s", r.Text())
+	}
+}
+
+func TestProbesThatSlowUsersAreRed(t *testing.T) {
+	r := harmRunLatency(t, 0.1, 0.4)
+	if status(r, ItemHarm, "web") != Red || !strings.Contains(r.Text(), "longer per request") {
+		t.Fatalf("added latency:\n%s", r.Text())
+	}
+}
+
+func TestSmallLatencyChangesAreGreen(t *testing.T) {
+	r := harmRunLatency(t, 0.1, 0.15)
+	if status(r, ItemHarm, "probes") != Green {
+		t.Fatalf("50 ms is noise:\n%s", r.Text())
 	}
 }
 
@@ -103,11 +130,11 @@ func TestCoverageIsJudgedOnTheProbesPausedWindow(t *testing.T) {
 	// The probes hammer the declared route (cumulative counters look fully
 	// covered); real users, seen with the probes paused, mostly hit routes no
 	// operation declares.
-	r := harmRunWith(t, 0, 200, map[string]float64{requestsKey("web", "/items"): 10, requestsKey("web", "/other"): 90})
+	r := harmRunWith(t, 0, 200, map[string]float64{requestsKey("web", "/items"): 10, requestsKey("web", "/other"): 90}, 0, 0)
 	if status(r, ItemObserved, "web") != Red || !strings.Contains(r.Text(), "probes were paused") || !strings.Contains(r.Text(), "/other (90)") {
 		t.Fatalf("coverage must come from the paused window:\n%s", r.Text())
 	}
-	r = harmRunWith(t, 0, 200, map[string]float64{requestsKey("web", "/items"): 90, requestsKey("web", "/other"): 10})
+	r = harmRunWith(t, 0, 200, map[string]float64{requestsKey("web", "/items"): 90, requestsKey("web", "/other"): 10}, 0, 0)
 	if status(r, ItemObserved, "web") != Green {
 		t.Fatalf("real traffic mostly declared:\n%s", r.Text())
 	}
