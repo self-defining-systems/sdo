@@ -287,14 +287,23 @@ func (r *applyRun) apply(ctx context.Context, set rendered.DesiredSet, operation
 				return err
 			}
 			record := &workloadRecord{id: object.Ref.Kind + "/" + object.Ref.Namespace + "/" + object.Ref.Name, ephemeral: phase.Ephemeral}
+			var kept map[ContainerSite]string
+			if object.Workload {
+				kept = r.keptImages(ctx, object, document)
+			}
 			images, err := Stamp(document, r.effective.ID, func(site ImageSite) string {
 				pinned := r.resolved[site.Image]
+				applied := pinned.Ref
+				live := kept[ContainerSite{Name: site.Container, Init: site.Init}]
+				if live != "" {
+					applied = live
+				}
 				record.named = append(record.named, rendered.DeployedImage{
 					Ref:  sdk.ObjectRef{APIVersion: object.Ref.APIVersion, Kind: site.Kind, Namespace: object.Ref.Namespace, Name: site.Name},
-					Name: site.Container, Init: site.Init, Applied: pinned.Ref, Digest: pinned.Ref,
+					Name: site.Container, Init: site.Init, Applied: pinned.Ref, Digest: pinned.Ref, Live: live,
 					Inputs: rendered.ImageInputs{SourceImage: pinned.Inputs.SourceImage, ContextPath: pinned.Inputs.ContextPath, DockerfilePath: pinned.Inputs.DockerfilePath},
 				})
-				return pinned.Ref
+				return applied
 			})
 			if err != nil {
 				return fmt.Errorf("stamp %s/%s: %w", object.Ref.Kind, object.Ref.Name, err)
@@ -394,7 +403,7 @@ func (r *applyRun) receipt(ctx context.Context) (lifecycle.DeploymentReceipt, er
 	}
 	for _, id := range ids {
 		record := r.workloads[id]
-		receipt.Images = append(receipt.Images, record.observed.Images...)
+		receipt.Images = append(receipt.Images, pinnedImages(record.observed.Images, record.named)...)
 		if len(record.observed.ContainerImages) > 0 {
 			receipt.ContainerImages = append(receipt.ContainerImages, record.named...)
 		}

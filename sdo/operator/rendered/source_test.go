@@ -506,6 +506,25 @@ func TestReadsReturnTheReceiptPinsForTheSameEffectiveTree(t *testing.T) {
 	}
 }
 
+// A pin the deployer kept out of the template (the running pods already ran
+// its digest, so the tag stayed) leaves desired state at the tag: a workload
+// still holding the tag is in sync, not drift.
+func TestReadsKeepTheTagForAPinRecordedAsLive(t *testing.T) {
+	const digest = "example/web@sha256:" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	source := rendered.Source{Repository: "/synthetic", Deployment: rawSource(t, "loose.yaml"), Catalog: catalog(t), Git: treeGit(rawTree)}
+	object, err := source.AcceptedManifest(context.Background(), syntheticCommit, webRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	containers, _, _ := unstructured.NestedSlice(object.Object, "spec", "template", "spec", "containers")
+	name, _ := containers[0].(map[string]any)["name"].(string)
+	tag := webImage(t, source)
+	source.Pins = rendered.ReceiptPins{EffectiveTree: syntheticTree, Images: []rendered.DeployedImage{{Ref: webRef, Name: name, Applied: digest, Digest: digest, Live: tag.(string)}}}
+	if got := webImage(t, source); got != tag {
+		t.Fatalf("image of a pin recorded as live = %v, want the tag %v", got, tag)
+	}
+}
+
 // Hook-phase objects are applied by the deployer but are not desired state:
 // reads of the accepted manifests never return them, and the accepted
 // inventory lists them separately so drift can accept them as optional.

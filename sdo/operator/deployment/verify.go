@@ -137,7 +137,7 @@ func (d Deployer) VerifyAccepted(ctx context.Context, commit, namespace string, 
 		}
 		images = append(images, observed.Images...)
 	}
-	if !equalStrings(images, prior.Images) {
+	if !equalStrings(images, liveImages(prior.Images, prior.ContainerImages)) {
 		return lifecycle.DeploymentReceipt{}, errors.New("accepted workload images differ from deployed images")
 	}
 	return prior, nil
