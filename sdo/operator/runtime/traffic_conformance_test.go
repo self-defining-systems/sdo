@@ -58,6 +58,11 @@ func TestTrafficProtoSchemaModelsGoWorkloadJSON(t *testing.T) {
 			Purpose: traffic.PurposeHealthProbe, Arrival: traffic.ArrivalUniform,
 			Scenarios: []traffic.WorkloadScenario{{ID: "search", Weight: 2}, {ID: "login"}},
 		},
+		"health-probe-sample-interval": {
+			APIVersion: traffic.APIVersion, Kind: traffic.WorkloadKind, Name: "coverage",
+			Purpose: traffic.PurposeHealthProbe, Arrival: traffic.ArrivalUniform, SampleInterval: traffic.Duration(60 * time.Second),
+			Scenarios: []traffic.WorkloadScenario{{ID: "search"}, {ID: "login"}},
+		},
 		"health-probe-known-broken": {
 			APIVersion: traffic.APIVersion, Kind: traffic.WorkloadKind, Name: "health",
 			Purpose: traffic.PurposeHealthProbe, Arrival: traffic.ArrivalUniform,

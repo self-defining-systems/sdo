@@ -233,4 +233,6 @@ message TrafficWorkload {
   optional string interval = 15;
   // link-probe only; consecutive failed dials that report an edge.
   optional int32 failures = 16 [(buf.validate.field).int32 = {gte: 2, lte: 60}];
+  // Go-duration string; health-probe only: how often every scenario is sampled at least, bound host-checked (traffic.MinSampleInterval to MaxSampleInterval).
+  optional string sample_interval = 17;
 }
