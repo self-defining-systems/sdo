@@ -453,3 +453,37 @@ func TestProgramCorpus(t *testing.T){
 	test.WriteString(scriptReplayNoteHelper)
 	return test.String()
 }
+
+// IncidentPlanTests is the generated test that runs each program's Mitigate on the incident's captured open state
+// (testdata/incident-open) and fails when the plan is one the host refuses to apply. A program whose plan could not
+// be built there is written to incident-plan-gaps.json, which the check shows as a coverage note.
+func IncidentPlanTests(programs []Spec) string {
+	mitigated := false
+	for _, item := range programs {
+		mitigated = mitigated || item.Mitigator != ""
+	}
+	if !mitigated {
+		return "package generated\n"
+	}
+	var test strings.Builder
+	test.WriteString(`package generated
+import("encoding/json";"os";"testing";"sdo.dev/operator/sdk/sdktest")
+func TestProgramPlansOnTheIncidentOpenState(t *testing.T){
+ registry,err:=Programs();if err!=nil{t.Fatal(err)}
+ gaps:=[]string{}
+ defer func(){data,err:=json.Marshal(gaps);if err!=nil{t.Fatal(err)};if err:=os.WriteFile("incident-plan-gaps.json",data,0600);err!=nil{t.Fatal(err)}}()
+ check:=func(id string){
+  m,ok:=registry.Mitigator(id);if !ok{return}
+  unverified,err:=sdktest.CheckPlansOnIncident(m,"testdata/incident-open")
+  if err!=nil{t.Errorf("%s: %v",id,err)}
+  for _,why:=range unverified{gaps=append(gaps,"program "+id+" is not verified on its own incident ("+why+")")}
+ }
+`)
+	for _, item := range programs {
+		if item.Mitigator != "" {
+			fmt.Fprintf(&test, " check(%q)\n", item.ID)
+		}
+	}
+	test.WriteString("}\n")
+	return test.String()
+}

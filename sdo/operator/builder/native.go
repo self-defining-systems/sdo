@@ -25,6 +25,9 @@ type Config struct {
 	DiagnosticsRoot string
 	OperatorRoot    string
 	HealthyBaseline string
+	// IncidentCapture is the controller's capture directory of the incident under test (its open@* snapshots). Set, every
+	// program's Mitigate is run on it and its plan validated.
+	IncidentCapture string
 	// ProgramModule pins JIT imports to the accepted diagnostics module name.
 	// It never compiles checkout detector code.
 	ProgramModule string

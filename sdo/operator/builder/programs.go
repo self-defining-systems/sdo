@@ -82,7 +82,34 @@ func stagePrograms(ctx context.Context, config Config, workspace, module string)
 	if config.Replay == "off" {
 		return os.Remove(filepath.Join(workspace, "generated", "programs_test.go"))
 	}
-	return nil
+	return generateIncidentPlanTest(config.IncidentCapture, workspace, programs)
+}
+
+// generateIncidentPlanTest stages the controller's captured open state of the incident under test and a test that runs
+// every program's Mitigate on it and validates the plan as the host will apply it. The capture exists before Go writes
+// a corpus case, so a program that is new in this incident is checked too. No capture, no test.
+func generateIncidentPlanTest(capture, workspace string, programs []programvalidation.Spec) error {
+	if capture == "" {
+		return nil
+	}
+	paths, err := filepath.Glob(filepath.Join(capture, "open@*.json"))
+	if err != nil || len(paths) == 0 {
+		return nil
+	}
+	fixtures := filepath.Join(workspace, "generated", "testdata", "incident-open")
+	if err := os.MkdirAll(fixtures, 0o755); err != nil {
+		return err
+	}
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(fixtures, filepath.Base(path)), data, 0o644); err != nil {
+			return err
+		}
+	}
+	return os.WriteFile(filepath.Join(workspace, "generated", "incident_plans_test.go"), []byte(programvalidation.IncidentPlanTests(programs)), 0o644)
 }
 
 // changedPrograms names the playbooks the candidate edits: uncommitted changes

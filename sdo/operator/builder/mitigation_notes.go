@@ -51,6 +51,11 @@ func (workspace *Workspace) CoverageGaps() ([]string, error) {
 		return gaps, err
 	}
 	gaps = append(gaps, recorded...)
+	unverified, err := workspace.generatedNotes("incident-plan-gaps.json")
+	if err != nil {
+		return gaps, err
+	}
+	gaps = append(gaps, unverified...)
 	return append(gaps, workspace.advisoryTestErrors...), nil
 }
 

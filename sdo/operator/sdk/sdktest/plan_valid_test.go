@@ -2,7 +2,10 @@ package sdktest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -39,5 +42,47 @@ func TestCheckPlanValidRefusesAPlanTheHostWillRefuse(t *testing.T) {
 	}
 	if err := CheckPlanValid(planMitigator{err: errors.New("no store in the recorded reads")}, CorpusCase{}); err != nil {
 		t.Fatalf("a Mitigate that cannot run is unverified, not invalid: %v", err)
+	}
+}
+
+// The closing turn's check has the incident's captured open state before Go writes any case, so a program that is
+// new in this incident is still run on real state; one that cannot run there is reported as unverified.
+func TestCheckPlansOnIncidentRunsMitigateOnTheCapturedOpenState(t *testing.T) {
+	dir := t.TempDir()
+	raw, err := json.Marshal(Snapshot{NamespaceName: "app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string][]byte{"open@detect.json": raw, "open@detect-recordings.json": []byte("[]")} {
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if unverified, err := CheckPlansOnIncident(planMitigator{plan: repairPlan("SET status = 0")}, dir); err != nil || len(unverified) != 0 {
+		t.Fatalf("valid plan: %v, %v", unverified, err)
+	}
+	_, err = CheckPlansOnIncident(planMitigator{plan: repairPlan("status = 0")}, dir)
+	if err == nil || !strings.Contains(err.Error(), "program.plan-invalid") || !strings.Contains(err.Error(), "open@detect.json") {
+		t.Fatalf("invalid plan: %v", err)
+	}
+	if unverified, err := CheckPlansOnIncident(planMitigator{plan: repairPlan("status = 0")}, t.TempDir()); err != nil || len(unverified) != 0 {
+		t.Fatalf("no capture, nothing to check: %v, %v", unverified, err)
+	}
+}
+
+// A playbook that was never run on its own incident must be visible as such, not silently passed.
+func TestCheckPlansOnIncidentSaysWhyAPlanWasUnverified(t *testing.T) {
+	dir := t.TempDir()
+	raw, _ := json.Marshal(Snapshot{NamespaceName: "app"})
+	if err := os.WriteFile(filepath.Join(dir, "open@detect.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unverified, err := CheckPlansOnIncident(planMitigator{err: errors.New("binding resource missing")}, dir)
+	if err != nil || len(unverified) != 1 || !strings.Contains(unverified[0], "open@detect.json") || !strings.Contains(unverified[0], "binding resource missing") {
+		t.Fatalf("unverified = %v, %v", unverified, err)
+	}
+	unverified, err = CheckPlansOnIncident(planMitigator{}, dir)
+	if err != nil || len(unverified) != 1 || !strings.Contains(unverified[0], "no action") {
+		t.Fatalf("empty plan: %v, %v", unverified, err)
 	}
 }
