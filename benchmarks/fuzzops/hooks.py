@@ -17,8 +17,8 @@ ever touches its own lane. Verbs (environment: ``BENCH_*`` and ``FUZZOPS_*``, se
               (``sdo-operator incidents reset``), so the lane starts with no incident.
 ``idle``      exit 0 when the controller pod is Ready, its state ConfigMap changed within 60 s and SDO owns no incident
               work, request-metrics can watch an operation and every data store has a promoted healthy
-              baseline; otherwise exit 1 with the reason on the first line (``alarm: incident open <id>`` for an
-              incident).
+              baseline (read from the controller log); otherwise exit 1 with the reason on the first line
+              (``alarm: incident open <id>`` for an incident).
 ``watch``     the fault window's ``exec:`` command: ``benchmarks.fuzzops.observe``.
 ``collect``   best effort: accepted outcomes and playbooks, the controller state, controller logs since the inject, and
               from the host sink the interval's incidents and tasks (``evidence/``) and ``transcripts.json``; then
@@ -474,7 +474,13 @@ def other_incident(state: dict[str, Any] | None, env: Mapping[str, str]) -> tupl
     return _incident_id(state), rest
 
 
-def idle_verdict(state: dict[str, Any] | None, updated: datetime | None, pod_ready: bool, now: datetime) -> str:
+def idle_verdict(
+    state: dict[str, Any] | None,
+    updated: datetime | None,
+    pod_ready: bool,
+    now: datetime,
+    controller_log: str | None = None,
+) -> str:
     """The ``idle`` hook's answer: "" when idle, else the reason (``alarm:`` first for an open incident)."""
     if state is not None and idle_reason(state) == "incident open":
         return f"alarm: incident open {_incident_id(state)}".rstrip()
@@ -490,28 +496,27 @@ def idle_verdict(state: dict[str, Any] | None, updated: datetime | None, pod_rea
     why = idle_reason(state)
     if why:
         return f"busy: {why}"
-    blind = _request_metrics_blind(state, now) or _store_baseline_pending(state)
+    blind = _request_metrics_blind(state, now) or _store_baseline_pending(state, controller_log)
     return f"blind: {blind}" if blind else ""
 
 
-#: The store-state detectors' coverage note while a store has no promoted healthy baseline (storestate's
-#: ConfirmationReason).
-_STORE_UNBASELINED = "not observed until it is read healthy once"
-
-
-def _store_baseline_pending(state: dict[str, Any]) -> str:
-    """Why a data store is still unbaselined ("" when none is): the newest evaluation of a store-state detector carries
-    the coverage note. A fault injected then meets a controller that cannot tell what changed in the store, which a
-    long-running production install would not (it saw the app healthy first), so the gate holds."""
-    latest: dict[str, dict[str, Any]] = {}
-    for entry in state.get("history") or []:
-        detector = str(entry.get("detector_id") or entry.get("detectorId") or "")
-        if detector.startswith("store-state-"):
-            latest[detector] = entry
-    waiting = sorted(d for d, e in latest.items() if _STORE_UNBASELINED in str(e.get("reason") or ""))
-    return (
-        f"no healthy baseline yet for {', '.join(w.removeprefix('store-state-') for w in waiting)}" if waiting else ""
-    )
+def _store_baseline_pending(state: dict[str, Any], controller_log: str | None) -> str:
+    """Why a data store is still unbaselined ("" when none is). A RestoreStoreItem needs the controller's promoted
+    healthy baseline of the store (storestate.Baseline), which is in-memory and logged once as
+    ``store_baseline_promoted``; the state ConfigMap carries no coverage note, so the gate reads the log.
+    Every store the controller evaluates (its state history and its log) must have been promoted. Without the log
+    the gate holds."""
+    stores = {
+        str(e.get("detector_id") or e.get("detectorId") or "").removeprefix("store-state-")
+        for e in state.get("history") or []
+        if str(e.get("detector_id") or e.get("detectorId") or "").startswith("store-state-")
+    }
+    promoted: set[str] = set()
+    if controller_log is not None:
+        evaluated, promoted = baseline_state(controller_log)
+        stores |= evaluated
+    waiting = sorted(stores - promoted)
+    return f"no promoted baseline yet for {', '.join(waiting)}" if waiting else ""
 
 
 def _request_metrics_blind(state: dict[str, Any], now: datetime) -> str:
@@ -1201,6 +1206,14 @@ def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
         out(f"ignored: incident open {incident}")
         return 0
     why = idle_verdict(state, updated, ready, datetime.now(UTC))
+    if not why:
+        # Only an otherwise idle controller is worth the full log read the baselines need.
+        try:
+            log = controller_log(kube, control)
+        except (subprocess.SubprocessError, OSError) as exc:
+            out(f"error: controller log read failed: {exc}")
+            return 1
+        why = idle_verdict(state, updated, ready, datetime.now(UTC), controller_log=log)
     if why:
         out(why)
         return 1
@@ -1702,6 +1715,18 @@ _STORE_DETECTOR = re.compile(r'"store-state-([a-z0-9-]+)"')
 _PROMOTED = re.compile(r"store_baseline_promoted component=([A-Za-z0-9._-]+)")
 
 
+def controller_log(kube: Kube, control: str) -> str:
+    """The controller container's whole log."""
+    proc = subprocess.run(
+        kube.cmd("-n", control, "logs", "-l", f"job-name={CONTROLLER_JOB}", "-c", "controller", "--tail=-1"),
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    return proc.stdout
+
+
 def baseline_state(log_text: str) -> tuple[set[str], set[str]]:
     """(stores the controller evaluates, stores with a promoted baseline) from the controller's log."""
     return set(_STORE_DETECTOR.findall(log_text)), set(_PROMOTED.findall(log_text))
@@ -1715,14 +1740,7 @@ def wait_baselines_promoted(
     started = time.monotonic()
     missing: set[str] = set()
     while time.monotonic() - started < timeout:
-        proc = subprocess.run(
-            kube.cmd("-n", control, "logs", "-l", f"job-name={CONTROLLER_JOB}", "-c", "controller", "--tail=-1"),
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
-        expected, promoted = baseline_state(proc.stdout)
+        expected, promoted = baseline_state(controller_log(kube, control))
         missing = expected - promoted
         if expected and not missing:
             waited = time.monotonic() - started

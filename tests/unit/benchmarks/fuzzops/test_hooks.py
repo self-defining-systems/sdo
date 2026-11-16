@@ -417,7 +417,9 @@ def _fake_kubectl(responses: dict[str, dict[str, Any]], calls: list[list[str]]) 
     return run
 
 
-def test_idle_reads_the_pod_and_the_state_configmap_once_each(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_idle_reads_the_pod_the_state_configmap_and_the_controller_log_once_each(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     fresh = (datetime.now(UTC) - timedelta(seconds=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
     stale = "2020-01-01T00:00:00Z"
     configmap = {
@@ -430,7 +432,8 @@ def test_idle_reads_the_pod_and_the_state_configmap_once_each(monkeypatch: pytes
     env = {"FUZZOPS_NAMESPACE": "ns1", "FUZZOPS_KUBE_CONTEXT": "kind-c", "KUBECONFIG": "/k"}
     lines: list[str] = []
     assert hooks.idle(env, out=lines.append) == 0, lines
-    assert len(calls) == 2
+    assert len(calls) == 3
+    assert sum("logs" in c for c in calls) == 1
     assert any("--show-managed-fields" in c for c in calls)
     assert all(c[c.index("-n") + 1] == "ns1-sdo" for c in calls)
 
@@ -1102,30 +1105,38 @@ def _store_history(*entries: tuple[str, str]) -> dict[str, Any]:
                 "detector_id": detector,
                 "evaluated_at": stamp,
                 "status": "clear",
-                **({"reason": reason} if reason else {}),
             }
-            for detector, reason in entries
+            for detector, _ in entries
         ],
     }
 
 
-GAP = "store postgresql (postgres) not observed until it is read healthy once: Pod p has no healthy baseline"
+def _log(*lines: str) -> str:
+    return "\n".join(lines)
+
+
+EVALUATED = '{"evaluated_detectors":["store-state-postgresql","store-state-redis"],"findings":[]}'
 
 
 def test_idle_verdict_holds_while_a_data_store_has_no_promoted_baseline() -> None:
-    state = _store_history(("store-state-postgresql", GAP), ("store-state-redis", ""))
+    state = _store_history(("store-state-postgresql", ""), ("store-state-redis", ""))
+    log = _log(EVALUATED, "INFO store_baseline_promoted component=redis")
 
-    verdict = idle_verdict(state, NOW, True, NOW)
+    verdict = idle_verdict(state, NOW, True, NOW, controller_log=log)
 
-    assert verdict == "blind: no healthy baseline yet for postgresql"
+    assert verdict == "blind: no promoted baseline yet for postgresql"
 
 
-def test_idle_verdict_releases_once_the_newest_evaluation_of_every_store_is_baselined() -> None:
-    state = _store_history(
-        ("store-state-postgresql", GAP),
-        ("drift.unexplained", ""),
-        ("store-state-postgresql", ""),
-        ("store-state-redis", ""),
+def test_idle_verdict_releases_once_every_evaluated_store_is_promoted() -> None:
+    state = _store_history(("store-state-postgresql", ""), ("store-state-redis", ""))
+    log = _log(
+        EVALUATED, "INFO store_baseline_promoted component=redis", "INFO store_baseline_promoted component=postgresql"
     )
 
-    assert idle_verdict(state, NOW, True, NOW) == ""
+    assert idle_verdict(state, NOW, True, NOW, controller_log=log) == ""
+
+
+def test_idle_verdict_needs_the_controller_log_to_judge_baselines() -> None:
+    state = _store_history(("store-state-postgresql", ""))
+
+    assert idle_verdict(state, NOW, True, NOW, controller_log=None).startswith("blind:")
