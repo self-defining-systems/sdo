@@ -24,6 +24,7 @@ func sameNamedImages(expected, actual []rendered.DeployedImage) bool {
 	}
 	counts := map[rendered.DeployedImage]int{}
 	for _, image := range expected {
+		image = liveForm(image)
 		image.Inputs = rendered.ImageInputs{} // observation verifies identities, not build declarations
 		counts[image]++
 	}
