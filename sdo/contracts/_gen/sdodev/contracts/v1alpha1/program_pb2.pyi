@@ -422,7 +422,7 @@ class RestartRollout(_message.Message):
     def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., reason: _Optional[str] = ...) -> None: ...
 
 class ProgramRun(_message.Message):
-    __slots__ = ("program_id", "bindings", "verdict", "duration", "error", "finding_fingerprint", "program_revision", "binding_source", "can_mitigate")
+    __slots__ = ("program_id", "bindings", "verdict", "duration", "error", "finding_fingerprint", "program_revision", "binding_source", "can_mitigate", "read_trace")
     PROGRAM_ID_FIELD_NUMBER: _ClassVar[int]
     BINDINGS_FIELD_NUMBER: _ClassVar[int]
     VERDICT_FIELD_NUMBER: _ClassVar[int]
@@ -432,6 +432,7 @@ class ProgramRun(_message.Message):
     PROGRAM_REVISION_FIELD_NUMBER: _ClassVar[int]
     BINDING_SOURCE_FIELD_NUMBER: _ClassVar[int]
     CAN_MITIGATE_FIELD_NUMBER: _ClassVar[int]
+    READ_TRACE_FIELD_NUMBER: _ClassVar[int]
     program_id: str
     bindings: _containers.RepeatedCompositeFieldContainer[Binding]
     verdict: Verdict
@@ -441,7 +442,18 @@ class ProgramRun(_message.Message):
     program_revision: str
     binding_source: str
     can_mitigate: bool
-    def __init__(self, program_id: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[Binding, _Mapping]]] = ..., verdict: _Optional[_Union[Verdict, _Mapping]] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., error: _Optional[str] = ..., finding_fingerprint: _Optional[str] = ..., program_revision: _Optional[str] = ..., binding_source: _Optional[str] = ..., can_mitigate: _Optional[bool] = ...) -> None: ...
+    read_trace: _containers.RepeatedCompositeFieldContainer[ReadStep]
+    def __init__(self, program_id: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[Binding, _Mapping]]] = ..., verdict: _Optional[_Union[Verdict, _Mapping]] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., error: _Optional[str] = ..., finding_fingerprint: _Optional[str] = ..., program_revision: _Optional[str] = ..., binding_source: _Optional[str] = ..., can_mitigate: _Optional[bool] = ..., read_trace: _Optional[_Iterable[_Union[ReadStep, _Mapping]]] = ...) -> None: ...
+
+class ReadStep(_message.Message):
+    __slots__ = ("op", "target", "outcome")
+    OP_FIELD_NUMBER: _ClassVar[int]
+    TARGET_FIELD_NUMBER: _ClassVar[int]
+    OUTCOME_FIELD_NUMBER: _ClassVar[int]
+    op: str
+    target: str
+    outcome: str
+    def __init__(self, op: _Optional[str] = ..., target: _Optional[str] = ..., outcome: _Optional[str] = ...) -> None: ...
 
 class RolloutPending(_message.Message):
     __slots__ = ("reason_code", "admission_configurations", "admission_webhooks", "reason", "blockers")

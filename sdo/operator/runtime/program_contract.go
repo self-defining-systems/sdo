@@ -15,6 +15,9 @@ import (
 func programRunContract(run ProgramRun) *contracts.ProgramRun {
 	result := &contracts.ProgramRun{CanMitigate: run.CanMitigate, ProgramId: run.ProgramID, FindingFingerprint: run.FindingFingerprint, BindingSource: run.BindingSource, ProgramRevision: run.ProgramRevision, Duration: durationpb.New(run.Duration), Verdict: verdictContract(run.Verdict)}
 	result.Bindings = programBindingsContract(run.Bindings)
+	for _, step := range run.Verdict.Reads {
+		result.ReadTrace = append(result.ReadTrace, &contracts.ReadStep{Op: step.Op, Target: step.Target, Outcome: step.Outcome})
+	}
 	var reasons []string
 	for _, evidence := range run.Verdict.Evidence {
 		if evidence.Resource.Kind != "" || (evidence.Fact != "" && run.Verdict.Result != program.Unknown) {
@@ -77,6 +80,9 @@ func programRunState(run *contracts.ProgramRun) ProgramRun {
 	}
 	if run.GetError() != "" {
 		verdict.Evidence = append(verdict.Evidence, program.Evidence{Fact: "diagnosis", Observed: run.GetError()})
+	}
+	for _, step := range run.GetReadTrace() {
+		verdict.Reads = append(verdict.Reads, program.ReadStep{Op: step.GetOp(), Target: step.GetTarget(), Outcome: step.GetOutcome()})
 	}
 	return ProgramRun{CanMitigate: run.CanMitigate, FindingFingerprint: run.GetFindingFingerprint(), BindingSource: run.GetBindingSource(), ProgramID: run.GetProgramId(), ProgramRevision: run.GetProgramRevision(), Bindings: bindings, Verdict: verdict, Duration: run.GetDuration().AsDuration()}
 }

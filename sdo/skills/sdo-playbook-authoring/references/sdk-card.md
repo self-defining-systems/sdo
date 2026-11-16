@@ -12,7 +12,7 @@ Full [SDK](program-sdk.md).
 - `type ParamSpec struct{Name string; Kind Kind; Required bool; ValueKind ValueKind; Default any}`: declares one role or value a triggering finding binds.
 - `type Bindings struct{Objects ObjectBindings; Values map[string]any}`: contains object identities and separately typed scalar parameters.
 - `func (b Bindings) Parameter(spec ProgramSpec, name string) (any, error)`: resolves one declared value, including a validated default.
-- `type Verdict struct{Result Result; Evidence []Evidence; Question string; CauseClass string; Reach string}`: is what Diagnose returns; NeedsJudgement requires a Question.
+- `type Verdict struct{Result Result; Evidence []Evidence; Question string; CauseClass string; Reach string; Reads []ReadStep}`: is what Diagnose returns; NeedsJudgement requires a Question.
 - `type Result string (Match, NoMatch, Unknown, NeedsJudgement)`: is a diagnosis verdict: Match means the fault is present, NoMatch absent, Unknown that evidence is unavailable.
 - `type Evidence struct{Resource sdk.ObjectRef; Fact string; Observed string; Expected string}`: is one observed fact supporting a verdict.
 - `type Plan struct{Actions []Action; Rationale string}`: is what Mitigate returns: actions applied in order as one batch.
