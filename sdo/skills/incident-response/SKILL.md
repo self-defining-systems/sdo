@@ -7,7 +7,6 @@ description: A general method for finding and removing what is hurting an applic
 
 A reasoning loop, not a procedure. Move between the parts as the evidence asks.
 
-- **Orchestrate.** Name every plausible explanation for what users see. Start one subagent per explanation (in the background) to test it read-only with evidence, and brief each to check whether the data and state on its component match what the failing operation needs, not only whether it is up. You are the orchestrator: do not investigate yourself, weigh the subagents' evidence, and make the fix only when the evidence points to one cause. Combine facts across reports: data in one component that does not match another's is a finding even when each looks fine alone.
 - **Observe.** What fails, which operations, since when, and what still works. The opening alert can be a side
   effect, so run the operation that is failing (not a neighbour) and read the exact response.
 - **Localize.** The graph (`.sdo/arch.md`, `sdo map`) is a prior, not proof. A cause usually sits on or upstream
@@ -22,13 +21,12 @@ A reasoning loop, not a procedure. Move between the parts as the evidence asks.
   positions (entry, dependency, data holder). When forming explanations, ask whether the data or state the failing operation needs is right, not only whether components are up. An unexplained observation is a new candidate.
 - **Discriminate.** Pick the check whose outcome differs most between them, ideally one that could refute.
   After the first look, name your lead explanation and the runner-up (an unexplained finding on the failing path is a
-  first-choice runner-up). Unless a failing response or recorded change already states the cause, launch a read-only sub-agent for the runner-up (one per explanation still open, only if
-  its answer could change your next step; they read `sdo-investigator/SKILL.md`) before you act on the lead, and
-  keep working. Launch also during a slow action, and when a change left the failure as is or an
-  observation is unexplained. You alone change things. Brief each with the symptom users see failing and one explanation; ask for evidence, or
-  "inconclusive" if it cannot reproduce. Weigh the reports. Keep their
-  "How to diagnose" notes for closing. SDO may start investigators: read `sdo investigations`, weigh their
-  reports, above all "observations that don't fit".
+  first-choice runner-up). Check them yourself. You may start read-only sub-agents (they read
+  `sdo-investigator/SKILL.md`) to test explanations in parallel when that saves time; brief each with the symptom
+  users see failing and one explanation, and ask for evidence, or "inconclusive" if it cannot reproduce. You alone
+  change things. Combine facts across reports: data in one component that does not match another's is a finding
+  even when each looks fine alone. Keep their "How to diagnose" notes for closing. SDO may start investigators: read `sdo investigations`, weigh their reports, above all
+  "observations that don't fit".
 - **Update.** Drop what is refuted. Stop when one explanation covers the failing, the passing and the timing.
 - **Fix as a test.** You alone change things; each change is an experiment. Before it, say which failing
   operations it should fix and through which part of the map, then check exactly those. Effects take time: know
@@ -36,7 +34,7 @@ A reasoning loop, not a procedure. Move between the parts as the evidence asks.
   Done when what failed passes and keeps passing; SDO ends your session when recovery holds. Return only to
   give up (with what you found and excluded), never while users are still failing.
 - Wait on events, not a clock: `sdo detect --wait SECONDS` returns when an alert or finding changes. While your
-  sub-agents run, end your turn to wait: their reports arrive between turns, not during a tool call.
+  sub-agents run, keep them in the foreground. Ending your turn submits your result, which is for giving up.
 - **Record findings.** The result's `findings` are required, also when you give up: what you saw and where, what
   you ruled out and why (and what you did not check), never the probable cause. A later incident on the same
   symptoms reads them as unverified notes.

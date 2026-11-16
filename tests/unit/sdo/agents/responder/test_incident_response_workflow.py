@@ -96,3 +96,38 @@ def test_workflow_is_visible_in_the_real_provider_turn(tmp_path: Path, monkeypat
     result = execute_incident(request, provider=provider, model="synthetic", executor=agent.executor)
     assert result.responder_session_id
     assert len(agent.requests) == 1
+
+
+def _responder_instructions() -> str:
+    """Everything the responder is told on its incident turn: the first message, both skills and the result field."""
+
+    from sdo.agents.responder.session_turn import session_output_schema
+
+    schema = session_output_schema()
+    texts = [
+        (PROMPTS / "incident_prompt.md").read_text(encoding="utf-8"),
+        (SKILLS_ROOT / WORKFLOW / "SKILL.md").read_text(encoding="utf-8"),
+        (SKILLS_ROOT / "sdo-operating" / "SKILL.md").read_text(encoding="utf-8"),
+        str(schema["properties"]["incident_result"]["description"]),  # type: ignore[index]
+    ]
+    return "\n".join(texts).lower()
+
+
+def test_the_responder_works_the_incident_itself_and_subagents_are_optional() -> None:
+    text = _responder_instructions()
+
+    for forced in ("you are the orchestrator", "do not investigate yourself", "one subagent per explanation"):
+        assert forced not in text
+    assert "before you act on the lead" not in text
+    assert "you may start read-only" in text
+
+
+def test_nothing_tells_the_responder_to_end_a_turn_to_wait() -> None:
+    """The structured-result contract turns every ended turn into a submitted result (an early "failed")."""
+
+    text = _responder_instructions()
+
+    assert "end your turn to wait" not in text
+    assert "between turns" not in text
+    assert "ending your turn submits your result" in text
+    assert "only when you give up" in text
