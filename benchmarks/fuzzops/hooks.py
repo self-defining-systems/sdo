@@ -1347,6 +1347,13 @@ def _reset_receipt(env: Mapping[str, str], control: str, dest: Path) -> str:
     return f"ok (generation {receipt.get('generation')})"
 
 
+def reset_incidents_verb(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
+    """The bench's ``reset-incidents``: the operator reset collect skipped while the lane was held for its evidence."""
+    dest = Path(_need(env, "BENCH_OUT")).resolve()
+    out(_reset_receipt(env, control_namespace(env), dest))
+    return 0
+
+
 def validate(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     """Re-check a cell's evidence (``BENCH_OUT``); when complete (or waived) and the reset is still owed, do it."""
     dest = Path(_need(env, "BENCH_OUT")).resolve()
@@ -2172,6 +2179,7 @@ VERBS = (
     "watch",
     "collect",
     "validate",
+    "reset-incidents",
     "teardown",
     "transcripts",
 )
@@ -2197,6 +2205,7 @@ def main(argv: list[str] | None = None) -> int:
             "idle": idle,
             "collect": collect,
             "validate": validate,
+            "reset-incidents": reset_incidents_verb,
             "teardown": teardown,
             "transcripts": transcripts,
         }
