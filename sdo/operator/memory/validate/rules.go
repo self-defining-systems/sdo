@@ -159,6 +159,7 @@ const (
 	RuleProgramDiffText = "program.diff-text-match"
 
 	// Compile.
+	RuleProgramPlanInvalid      = "program.plan-invalid"
 	RuleProgramMitigationRepair = "program.mitigation-not-repaired"
 	RuleDetectorCompile         = "detector.compile"
 	RuleDetectorVet             = "detector.vet"

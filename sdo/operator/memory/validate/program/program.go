@@ -444,8 +444,9 @@ func TestProgramCorpus(t *testing.T){
  t.Logf("replay observation: status=%%s errors=%%v faulted=%%s post=%%s",r.Status,r.Errors,r.Faulted.Result,r.Post.Result)
  gaps=append(gaps,r.Notes...)
  notes=append(notes,ReplayNote(%q,%q,r))
+ if m,ok:=registry.Mitigator(%q);ok{if err:=sdktest.CheckPlanValid(m,c.Corpus);err!=nil{t.Error(err)}}
  })
-`, item.ID+"/"+id, id, item.ID, id, item.ID, item.ID, id)
+`, item.ID+"/"+id, id, item.ID, id, item.ID, item.ID, id, item.ID)
 		}
 	}
 	test.WriteString("}\n")
