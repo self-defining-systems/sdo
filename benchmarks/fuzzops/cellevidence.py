@@ -349,7 +349,11 @@ def _timeline(
     t.playbook_applied_at = min(applied) if applied else None
     t.playbook_apply_started_at = min(started) if started else None
     t.closing_turn_dispatch_at = phases.get("reflection_dispatch")
-    t.closing_turn_end_at = phases.get("reflection_committed") or phases.get("reflection_without_commit")
+    # every way a closing turn ends: committed, ended without a commit, or failed (its memory check rejected it, the
+    # worker errored): a failed turn ran and ended too, its failure is the outcome's to report, not missing evidence
+    t.closing_turn_end_at = (
+        phases.get("reflection_committed") or phases.get("reflection_without_commit") or phases.get("reflection_failed")
+    )
     done = [u for u in reflection_usage if u.get("event", "complete") == "complete" or "duration_seconds" in u]
     t.closing_turn_duration_seconds = sum(_num(u.get("duration_seconds")) or 0.0 for u in done) if done else None
     t.closing_turn_cost_usd = sum(_num(u.get("cost_usd")) or 0.0 for u in done) if done else None
