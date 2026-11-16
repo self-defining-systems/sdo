@@ -58,6 +58,9 @@ type Map struct {
 	// Entries declare, per entry service, the request metric and the label
 	// names that tell operations apart (see MetricEntry).
 	Entries []MetricEntry `yaml:"entries,omitempty"`
+	// Routes lists the application's own routes so the onboarding check can
+	// tell which no journey covers (see Routes).
+	Routes *Routes `yaml:"routes,omitempty"`
 	// Reasons explain onboarding check items the author cannot make green.
 	Reasons []Reason `yaml:"reasons,omitempty"`
 	// Procedures are the operations procedures the application ships.
@@ -84,15 +87,6 @@ type Component struct {
 	// Observe points at where the component's own telemetry lives, so a
 	// reader following a journey's path can look at each component.
 	Observe *Observe `yaml:"observe,omitempty"`
-}
-
-// Observe is a component's observability pointers: the selector or job of its
-// metrics, the workload container or label its logs come from, and the
-// service name its spans carry (empty when the runtime cannot trace).
-type Observe struct {
-	Metrics      string `yaml:"metrics,omitempty"`
-	Logs         string `yaml:"logs,omitempty"`
-	TraceService string `yaml:"trace_service,omitempty"`
 }
 
 // Evidence kinds: what grounds a component's role or an edge. config is the
