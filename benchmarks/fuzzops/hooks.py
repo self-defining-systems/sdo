@@ -16,7 +16,9 @@ ever touches its own lane. Verbs (environment: ``BENCH_*`` and ``FUZZOPS_*``, se
               ``{"pack", "operator_version", "memory"}``. It ends with an operator reset between problems
               (``sdo-operator incidents reset``), so the lane starts with no incident.
 ``idle``      exit 0 when the controller pod is Ready, its state ConfigMap changed within 60 s and SDO owns no incident
-              work; otherwise exit 1 with the reason on the first line (``alarm: incident open <id>`` for an incident).
+              work, request-metrics can watch an operation and every data store has a promoted healthy
+              baseline; otherwise exit 1 with the reason on the first line (``alarm: incident open <id>`` for an
+              incident).
 ``watch``     the fault window's ``exec:`` command: ``benchmarks.fuzzops.observe``.
 ``collect``   best effort: accepted outcomes and playbooks, the controller state, controller logs since the inject, and
               from the host sink the interval's incidents and tasks (``evidence/``) and ``transcripts.json``; then
@@ -488,7 +490,28 @@ def idle_verdict(state: dict[str, Any] | None, updated: datetime | None, pod_rea
     why = idle_reason(state)
     if why:
         return f"busy: {why}"
-    return f"blind: {blind}" if (blind := _request_metrics_blind(state, now)) else ""
+    blind = _request_metrics_blind(state, now) or _store_baseline_pending(state)
+    return f"blind: {blind}" if blind else ""
+
+
+#: The store-state detectors' coverage note while a store has no promoted healthy baseline (storestate's
+#: ConfirmationReason).
+_STORE_UNBASELINED = "not observed until it is read healthy once"
+
+
+def _store_baseline_pending(state: dict[str, Any]) -> str:
+    """Why a data store is still unbaselined ("" when none is): the newest evaluation of a store-state detector carries
+    the coverage note. A fault injected then meets a controller that cannot tell what changed in the store, which a
+    long-running production install would not (it saw the app healthy first), so the gate holds."""
+    latest: dict[str, dict[str, Any]] = {}
+    for entry in state.get("history") or []:
+        detector = str(entry.get("detector_id") or entry.get("detectorId") or "")
+        if detector.startswith("store-state-"):
+            latest[detector] = entry
+    waiting = sorted(d for d, e in latest.items() if _STORE_UNBASELINED in str(e.get("reason") or ""))
+    return (
+        f"no healthy baseline yet for {', '.join(w.removeprefix('store-state-') for w in waiting)}" if waiting else ""
+    )
 
 
 def _request_metrics_blind(state: dict[str, Any], now: datetime) -> str:
