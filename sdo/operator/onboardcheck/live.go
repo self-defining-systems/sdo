@@ -494,6 +494,11 @@ type breakOutcome struct {
 	// opFailure is, per operation, the first raise that names it with a
 	// failing-request signal (not only an absence).
 	opFailure map[string]*foundRaise
+	// stray is, per operation whose path does not list this component, the
+	// first failing-request signal that named it while the component was
+	// broken: a missing edge. wave lists the components broken together.
+	stray map[string]*foundRaise
+	wave  []string
 }
 
 type foundRaise struct {
@@ -599,6 +604,7 @@ func runBreak(ctx context.Context, cfg Config, report *Report) {
 	for _, op := range cfg.Map.Operations {
 		report.add(ItemBreak, op.ID, opStatus(op, outcomes), opDetail(cfg.Map, op, outcomes, b.Bound, b.Horizon))
 	}
+	judgeMapAccuracy(cfg.Map, order, outcomes, report)
 }
 
 // otherRaises lists the detectors that raised under the break without naming
@@ -785,6 +791,11 @@ func inParallel(members []waveMember, f func(waveMember)) {
 // next wave and whether a restore was uncertain.
 func breakWave(ctx context.Context, cfg Config, members []waveMember, baseline map[string]bool, more bool) (next map[string]bool, restoreFailed bool) {
 	b := cfg.Break
+	for _, m := range members {
+		for _, o := range members {
+			m.out.wave = append(m.out.wave, o.c.Name)
+		}
+	}
 	next = baseline
 	var broken []waveMember
 	var mu sync.Mutex
@@ -867,6 +878,15 @@ func breakWave(ctx context.Context, cfg Config, members []waveMember, baseline m
 							m.out.opFailure[op.ID] = &f
 						}
 					}
+				}
+				for _, op := range cfg.Map.Operations {
+					if onWavePath(op, broken) || !namesOperation(text, cfg.Map, op) || signalKind(r) != SignalFailure || m.out.stray[op.ID] != nil {
+						continue
+					}
+					if m.out.stray == nil {
+						m.out.stray = map[string]*foundRaise{}
+					}
+					m.out.stray[op.ID] = &f
 				}
 				if mine && m.out.hit == nil {
 					m.out.hit = &f
@@ -965,4 +985,15 @@ func timingSummary(ds []ItemDuration) string {
 		parts = append(parts, fmt.Sprintf("%s %s", d.Item, time.Duration(d.Seconds*float64(time.Second)).Round(time.Second)))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// onWavePath reports whether the operation's path lists any component broken
+// in the wave: a failure of it is then explained.
+func onWavePath(op appmap.Operation, wave []waveMember) bool {
+	for _, m := range wave {
+		if onPath(op, m.c.Name) {
+			return true
+		}
+	}
+	return false
 }

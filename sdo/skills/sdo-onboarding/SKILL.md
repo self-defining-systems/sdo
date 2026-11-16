@@ -21,8 +21,8 @@ reports, not raw logs. When a result is wrong, say why and send it back.
 ## Goals (a sensible order, not steps)
 
 1. It runs: deploy the commit until it is deployed and healthy ([serving](../sdo-serving/SKILL.md)).
-2. You know what users do: every exposed entry, route, non-HTTP entry, background worker,
-   schedule and existing record, each written as an operation with what a correct result is
+2. You know what users do: every exposed entry, route, non-HTTP entry and existing record, each written as an
+   operation (background work belongs to the operation that triggers it) with what a correct result is
    ([map](../sdo-operations-map/SKILL.md)).
 3. Every operation is observable: request, error and latency counts by route; traces across
    services; structured error logs. Reuse first; change code where needed
@@ -33,6 +33,14 @@ reports, not raw logs. When a result is wrong, say why and send it back.
    ([detectors](../sdo-detectors/SKILL.md)).
 6. Fix red items and redeploy. A red item you cannot fix gets a reason in the map.
    Keep going until the report is clean.
+
+## What done means for each journey
+
+Every user journey is instrumented and detected: mapped in the app's own metrics (with the background work it
+triggers), errors and latency per journey, a probe that checks its result end to end, a detector that names it
+when any component on its path breaks, a true component path with metrics, logs and trace pointers. The
+check prints one row per journey; the items are in [the standard](references/journey-standard.md). Instrument in
+application code (middleware, metrics, tracing) or the deployment, whichever gives the items.
 
 ## Environment
 

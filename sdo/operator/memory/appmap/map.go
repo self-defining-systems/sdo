@@ -81,6 +81,18 @@ type Component struct {
 	// covers, why no synthetic request can: the component is then verified at
 	// reachability strength (its link dials) and map.coverage is satisfied.
 	Unprobed string `yaml:"unprobed,omitempty"`
+	// Observe points at where the component's own telemetry lives, so a
+	// reader following a journey's path can look at each component.
+	Observe *Observe `yaml:"observe,omitempty"`
+}
+
+// Observe is a component's observability pointers: the selector or job of its
+// metrics, the workload container or label its logs come from, and the
+// service name its spans carry (empty when the runtime cannot trace).
+type Observe struct {
+	Metrics      string `yaml:"metrics,omitempty"`
+	Logs         string `yaml:"logs,omitempty"`
+	TraceService string `yaml:"trace_service,omitempty"`
 }
 
 // Evidence kinds: what grounds a component's role or an edge. config is the
@@ -162,6 +174,10 @@ type Operation struct {
 	Route string `yaml:"route,omitempty"`
 	// Correct says what a correct result of the operation looks like.
 	Correct string `yaml:"correct,omitempty"`
+	// Triggers are the background job or queue classes (the values of the job
+	// metric's class label) this operation sets off. Background work is a step
+	// of the user-facing operation that triggers it, not an operation.
+	Triggers []string `yaml:"triggers,omitempty"`
 }
 
 // Probe is one probe scenario and the operations its steps exercise.

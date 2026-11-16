@@ -20,9 +20,12 @@ const (
 	ItemRoutesMatchOperations  = "routes-match-operations"
 	ItemTestsFailBroken        = "tests-fail-broken"
 	ItemErrorsSeparable        = "errors-separable-per-operation"
+	// ItemBackgroundCovered accepts a reason per job class (the subject) that
+	// no operation triggers, such as periodic maintenance.
+	ItemBackgroundCovered = "background-covered"
 )
 
-var reasonItems = map[string]bool{ItemErrorsSeparable: true, ItemJourneysMoveOwnMetrics: true, ItemRoutesMatchOperations: true, ItemTestsFailBroken: true}
+var reasonItems = map[string]bool{ItemErrorsSeparable: true, ItemJourneysMoveOwnMetrics: true, ItemRoutesMatchOperations: true, ItemTestsFailBroken: true, ItemBackgroundCovered: true}
 
 // EntryLabels name the labels of the entry metric that carry the operation's
 // route, HTTP method and status. Method and Status are optional: a metric
@@ -239,7 +242,7 @@ func (c *checker) entries() {
 		switch {
 		case !reasonItems[r.Item]:
 			c.add(RuleReasons, "a reason explains journeys-move-own-metrics, routes-match-operations or tests-fail-broken; deployed-healthy and quiet-when-healthy accept none", "reason item %q takes no reason", r.Item)
-		case !subjects[r.Subject]:
+		case r.Item != ItemBackgroundCovered && !subjects[r.Subject]:
 			c.add(RuleReasons, "subject is an operation ID or an entry service", "reason for %s: subject %q is neither", r.Item, r.Subject)
 		case strings.TrimSpace(r.Reason) == "":
 			c.add(RuleReasons, "say why the item cannot be fixed", "reason for %s on %s is empty", r.Item, r.Subject)
