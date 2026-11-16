@@ -145,3 +145,37 @@ probes: []
 		t.Fatalf("the postgres store is the target, got %v", store)
 	}
 }
+
+// A fault judges raises it causes, so the raises the last component break left
+// must have cleared before it starts; after the last fault nothing waits.
+func TestFaultWaitsForTheLastComponentBreakToClearButNothingWaitsAfterTheLastFault(t *testing.T) {
+	w := newWorld()
+	var evalsAtBreak int
+	f := &probeFault{fakeFault: fakeFault{w: w, name: "data-wrong", ops: []string{"list-items"}}, onBreak: func() { evalsAtBreak = w.sinceRestore }}
+	faultRun(t, w, f)
+	if evalsAtBreak == 0 {
+		t.Fatal("the fault started without waiting for the last component break's raises to clear")
+	}
+	if w.sinceRestore != 0 {
+		t.Fatalf("%d evaluations after the last restore: nothing later needs a cleared baseline", w.sinceRestore)
+	}
+}
+
+type probeFault struct {
+	fakeFault
+	onBreak func()
+}
+
+func (f *probeFault) Break(ctx context.Context) error {
+	f.w.mu.Lock()
+	f.onBreak()
+	f.w.mu.Unlock()
+	return f.fakeFault.Break(ctx)
+}
+
+func (f *probeFault) Restore(ctx context.Context) error {
+	f.w.mu.Lock()
+	f.w.sinceRestore = 0
+	f.w.mu.Unlock()
+	return f.fakeFault.Restore(ctx)
+}
