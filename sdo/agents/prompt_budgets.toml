@@ -360,6 +360,18 @@ reason = "Explicit template-placeholder cap; preserve small identities inline an
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
+[template_data.responder-incident_page-branch_instruction]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_page-namespace]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_page-page]
+max_chars = 7800
+reason = "The page-only responder's page: the symptom block (5200 code points at most) plus the candidate block (2048 at most) as plain text, with headroom, so it is never spilled to a context file."
+
 [template_data.responder-incident_prompt-branch_instruction]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
