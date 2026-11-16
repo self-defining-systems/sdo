@@ -25,7 +25,6 @@ AGENT_SKILLS = MappingProxyType(
             "sdo-serving",
             "sdo-observability",
             "sdo-operations-map",
-            "sdo-investigator",
         ),
         "investigator": ("sdo-investigator",),
         "reflector": ("playbook-writing",),

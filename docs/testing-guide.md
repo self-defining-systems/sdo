@@ -268,7 +268,7 @@ Python contract tests (the full Python suite contains them), and compiles the
 operator with `go list -export` instead of linking every command.
 
 The responder's two skills (`incident-response`, `sdo-operating`) are each one `SKILL.md` of 1,024
-to 1,536 bytes, checked by `tests/unit/sdo/agents/test_skill_size.py`. `sdo-operating` lists the
+to 1,792 bytes, checked by `tests/unit/sdo/agents/test_skill_size.py`. `sdo-operating` lists the
 `sdo` commands by hand, so after changing the command surface update it and keep it under the cap.
 The responder image's cached model-tool
 layer installs `jq` and runs a JSON extraction smoke check during the build.

@@ -108,10 +108,12 @@ RL1 typed SDK gaps include resources to scope a decline to one confirmed cause; 
 
 Incident-open `playbook_coverage` is copied from the controller request into outcome field 35. The match and unexplained-finding lists retain their initial deterministic ordering. Match IDs and bindings link to application/action receipts; coverage alone is not repair attribution. See [agent-selected repair evidence](automatic-repair.md).
 
-The responder's first message is three lines under `responder.instructions`:
-the incident, its opening alerts and onset, the two skills to read
-(`incident-response`, `sdo-operating`) and "Start with `sdo detect`". It holds no
-finding and no request JSON; `sdo detect` is the first read. Warm/cold strategy,
+The responder's first message is `responder.instructions`: one short instruction line (investigate and fix;
+the `sdo` command is available and its skills are named but not required; SDO ends the session on recovery;
+return only to give up; never print a credential), the page (the incident, its opening alerts and onset, the
+candidate block), earlier attempts' notes and the result-field line. It holds no finding and no request JSON,
+tells the agent to read no skill and prescribes no first command. The model-facing incident result is only
+`findings` and `agent_changes`; the worker fills `incident_id`, `status` and `timing`. Warm/cold strategy,
 `responder.incident_data`, inlined playbook bodies and their former part names
 were removed. Optional transport instructions remain `responder.additional_context`.
 The request still carries controller-built playbook coverage; `sdo detect` shows it. Full worker

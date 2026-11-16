@@ -1,6 +1,4 @@
-Incident ${incident_id} in namespace ${namespace}.
+Incident ${incident_id} in namespace ${namespace}: investigate and fix it. You have kubectl, the shell and the `sdo` command (its skills are under ${skills_root}). SDO ends your session when users have recovered; return only to give up. Never print a credential value.
 ${symptom}
-Read your skills: ${skills_root}/incident-response/SKILL.md and ${skills_root}/sdo-operating/SKILL.md.
-Start with `sdo detect`. Work the incident yourself. You may start read-only subagents to test explanations in parallel when that saves time; run them in the foreground, because ending your turn submits your result. You alone change things. Return only to give up.
 ${recent_changes}
 ${branch_instruction}

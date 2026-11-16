@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -17,7 +18,7 @@ from sdo.agents.replay import selected_skills_root
 from sdo.agents.responder import page_only
 from sdo.agents.responder.credentials import SKILLS_ROOT
 from sdo.agents.responder.incident_opening import earlier_attempts_block, symptom
-from sdo.agents.responder.result_output import parse_incident_result
+from sdo.agents.responder.result_output import parse_incident_result, with_worker_facts
 from sdo.agents.responder.session_recovery import SessionRecoveryError, open_recovery
 from sdo.agents.responder.session_turn import (
     WrongBranchError,
@@ -85,6 +86,7 @@ def execute_incident(
     if recovery is not None:
         prompt += recovery.recovered_prompt()
     corrected_result = False
+    started = datetime.now(UTC)
     usage: dict[str, int | float] = {}
     options = session_turn_options(selected_provider, Path(request.repository_worktree))
     working_directory = request.repository_worktree
@@ -131,7 +133,9 @@ def execute_incident(
             usage[name] = usage.get(name, 0) + value
         try:
             result = parse_incident_result(
-                unwrap_branch(completed.output_json, "incident_result"),
+                with_worker_facts(
+                    unwrap_branch(completed.output_json, "incident_result"), request.incident_id, started
+                ),
                 usage,
                 incident_id=request.incident_id,
             )
@@ -170,6 +174,14 @@ def execute_incident(
 _MODEL_OMITS: dict[str, tuple[str, ...]] = {
     "sdodev.contracts.v1alpha1.IncidentResult": (
         "schema_version",
+        "incident_id",
+        "status",
+        "timing",
+        "confirmed_root_causes",
+        "applied_playbooks",
+        "repair_changes",
+        "verification_evidence",
+        "drift_events",
         "proposed_artifact_ids",
         "usage",
         "responder_session_id",
@@ -177,12 +189,11 @@ _MODEL_OMITS: dict[str, tuple[str, ...]] = {
         "error",
         "repair_actions",
     ),
-    "sdodev.contracts.v1alpha1.AppliedPlaybook": ("parameter_bindings", "script_names"),
 }
 
 
 def _incident_result_schema() -> dict[str, object]:
-    """The model-facing schema of ``IncidentResult``, generated from the proto the Go loader reads."""
+    """The model-facing schema of ``IncidentResult``: the findings and the changes; the worker fills the rest."""
 
     return model_output_schema(IncidentResult.DESCRIPTOR, omit=_MODEL_OMITS)
 
