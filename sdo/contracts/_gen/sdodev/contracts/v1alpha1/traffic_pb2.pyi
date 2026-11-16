@@ -79,7 +79,7 @@ class TrafficLinkGRPCOptions(_message.Message):
     def __init__(self, tls: _Optional[bool] = ...) -> None: ...
 
 class TrafficWorkload(_message.Message):
-    __slots__ = ("api_version", "kind", "name", "description", "purpose", "arrival", "rate_per_second", "duration", "timeout", "iteration_timeout", "seed", "slo", "scenarios", "links", "interval", "failures")
+    __slots__ = ("api_version", "kind", "name", "description", "purpose", "arrival", "rate_per_second", "duration", "timeout", "iteration_timeout", "seed", "slo", "scenarios", "links", "interval", "failures", "sample_interval")
     API_VERSION_FIELD_NUMBER: _ClassVar[int]
     KIND_FIELD_NUMBER: _ClassVar[int]
     NAME_FIELD_NUMBER: _ClassVar[int]
@@ -96,6 +96,7 @@ class TrafficWorkload(_message.Message):
     LINKS_FIELD_NUMBER: _ClassVar[int]
     INTERVAL_FIELD_NUMBER: _ClassVar[int]
     FAILURES_FIELD_NUMBER: _ClassVar[int]
+    SAMPLE_INTERVAL_FIELD_NUMBER: _ClassVar[int]
     api_version: str
     kind: str
     name: str
@@ -112,4 +113,5 @@ class TrafficWorkload(_message.Message):
     links: _containers.RepeatedCompositeFieldContainer[TrafficLink]
     interval: str
     failures: int
-    def __init__(self, api_version: _Optional[str] = ..., kind: _Optional[str] = ..., name: _Optional[str] = ..., description: _Optional[str] = ..., purpose: _Optional[str] = ..., arrival: _Optional[str] = ..., rate_per_second: _Optional[float] = ..., duration: _Optional[str] = ..., timeout: _Optional[str] = ..., iteration_timeout: _Optional[str] = ..., seed: _Optional[int] = ..., slo: _Optional[_Union[TrafficSLO, _Mapping]] = ..., scenarios: _Optional[_Iterable[_Union[TrafficWorkloadScenario, _Mapping]]] = ..., links: _Optional[_Iterable[_Union[TrafficLink, _Mapping]]] = ..., interval: _Optional[str] = ..., failures: _Optional[int] = ...) -> None: ...
+    sample_interval: str
+    def __init__(self, api_version: _Optional[str] = ..., kind: _Optional[str] = ..., name: _Optional[str] = ..., description: _Optional[str] = ..., purpose: _Optional[str] = ..., arrival: _Optional[str] = ..., rate_per_second: _Optional[float] = ..., duration: _Optional[str] = ..., timeout: _Optional[str] = ..., iteration_timeout: _Optional[str] = ..., seed: _Optional[int] = ..., slo: _Optional[_Union[TrafficSLO, _Mapping]] = ..., scenarios: _Optional[_Iterable[_Union[TrafficWorkloadScenario, _Mapping]]] = ..., links: _Optional[_Iterable[_Union[TrafficLink, _Mapping]]] = ..., interval: _Optional[str] = ..., failures: _Optional[int] = ..., sample_interval: _Optional[str] = ...) -> None: ...
