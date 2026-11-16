@@ -769,6 +769,19 @@ def test_collect_copies_the_interval_from_the_host_sink(tmp_path: Path, monkeypa
     assert json.loads((out / "view.json").read_text())["schema"] == "fuzzops.view/v1"
 
 
+def test_collect_does_not_report_the_managers_run_json_as_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bench manager writes run.json after the step that ran collect; collect's manifest must not hold the lane
+    for a file that cannot exist yet."""
+    monkeypatch.setattr(hooks.subprocess, "run", lambda cmd, **_: subprocess.CompletedProcess(cmd, 1, "", "no"))
+    out = tmp_path / "run" / "operator"
+    hooks.collect(_sink_env(tmp_path, BENCH_OUT=str(out)), out=lambda _: None)
+    manifest = json.loads((out / "evidence-manifest.json").read_text())
+    assert not (tmp_path / "run" / "run.json").exists()
+    assert not any("run.json" in problem for problem in manifest["problems"])
+
+
 def test_collect_records_a_view_failure_without_raising(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(hooks.subprocess, "run", lambda cmd, **_: subprocess.CompletedProcess(cmd, 1, "", "no"))
 
@@ -824,7 +837,7 @@ def _collect_with_reset_spy(
 
     monkeypatch.setattr(hooks.subprocess, "run", run_cmd)
     if complete:
-        monkeypatch.setattr(hooks.cellevidence, "write_manifest", lambda _run: hooks.cellevidence.CellEvidence())
+        monkeypatch.setattr(hooks.cellevidence, "write_manifest", lambda _run, **_kw: hooks.cellevidence.CellEvidence())
     out = tmp_path / "run" / "operator"
     hooks.collect(_sink_env(tmp_path, BENCH_OUT=str(out), BENCH_LANE_DIR=str(lane)), out=lambda _: None)
     return resets, out

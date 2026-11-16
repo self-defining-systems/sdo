@@ -467,8 +467,10 @@ def _check_json(it: Item, run: Path, problems: list[Problem]) -> Any:
     return value
 
 
-def build(run_dir: Path) -> CellEvidence:
-    """Derive the manifest from the collected files (reads only; see ``write_manifest``)."""
+def build(run_dir: Path, run_pending: bool = False) -> CellEvidence:
+    """Derive the manifest from the collected files (reads only; see ``write_manifest``). ``run.json`` is the bench
+    manager's, written after the step that ran ``collect`` has ended and its directory has moved into place: while
+    ``run_pending`` it is not yet expected (a later ``validate`` expects it)."""
     run = run_dir.resolve()
     op = run / "operator"
     ev = CellEvidence(run=run.name)
@@ -498,7 +500,7 @@ def build(run_dir: Path) -> CellEvidence:
         ev.items.append(it)
         return it
 
-    _check_json(add("run.json", "run.json"), run, problems)
+    _check_json(add("run.json", "run.json", required=not run_pending), run, problems)
     rec_item = add("record.json", "record.json")
     _check_json(rec_item, run, problems)
     if isinstance(record, dict):
@@ -659,9 +661,9 @@ def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def write_manifest(run_dir: Path) -> CellEvidence:
+def write_manifest(run_dir: Path, run_pending: bool = False) -> CellEvidence:
     """Build and atomically write ``operator/evidence-manifest.json``; returns it."""
-    ev = build(run_dir)
+    ev = build(run_dir, run_pending)
     atomic_write_json(run_dir / "operator" / MANIFEST, ev.to_json())
     return ev
 

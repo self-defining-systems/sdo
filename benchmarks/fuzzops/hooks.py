@@ -1380,8 +1380,9 @@ def collect(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
 
     # Every capture is on disk. Validate before the operator reset: an incomplete cell keeps its lane's incidents
     # open (the reset waits) until the evidence is complete, `hooks validate` passes, or a waiver is written.
+    # run.json does not exist yet: the bench manager writes it after this step ends.
     write_collect_json(False)
-    manifest = cellevidence.write_manifest(dest.parent)
+    manifest = cellevidence.write_manifest(dest.parent, run_pending=True)
     why = cellevidence.verdict(manifest)
     if why:
         parts["evidence-manifest"] = f"error: {why}"[:1000]
