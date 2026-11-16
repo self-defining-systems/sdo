@@ -759,6 +759,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		for _, finding := range changes.Activated {
 			c.admitActivation(ctx, finding, now, c.detectorSpecs[spec.ID])
 		}
+		c.admitUpgrades(ctx, changes.Reruled, now, c.detectorSpecs[spec.ID])
 		c.mu.Lock()
 		if len(c.recoveryScopeLocked().blocking(changes.Activated)) > 0 {
 			c.closureStableSince = time.Time{}
@@ -921,6 +922,27 @@ func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, n
 		return
 	}
 	c.batcher.AddAtWithDebounce(finding, now, spec.Batching.Debounce)
+}
+
+// admitUpgrades admits a finding whose rule changed from a clue to an opener
+// under the same fingerprint (a thin-baseline jump that became an error
+// finding): the tracker keeps the state active, so no activation announces it.
+func (c *Controller) admitUpgrades(ctx context.Context, changes []RuleChange, now time.Time, spec sdk.DetectorSpec) {
+	for _, change := range changes {
+		switch {
+		case c.opens(change.Before) && !c.opens(change.After):
+			// An opener that fell back to a clue no longer waits for an incident.
+			c.batcher.RemoveKeys([]string{FindingStateKey(change.After.DetectorID, FindingFingerprint(change.After))})
+		case !c.opens(change.Before) && c.opens(change.After):
+			// Inside an open incident the clue may already ride in its request:
+			// join the alert set first, then refresh the carried finding.
+			if c.joinAlertSet(change.After, now) {
+				c.mergeIntoOpenIncident(change.After)
+				continue
+			}
+			c.admitActivation(ctx, change.After, now, spec)
+		}
+	}
 }
 
 func (c *Controller) mergeIntoOpenIncident(finding sdk.Finding) bool {
