@@ -148,6 +148,9 @@ class Baseline:
     #: runs the lane's operator with other settings, for example another model). Not an install-time overlay, so
     #: it may set what the hook sets for an install (``refuse_hook_keys`` applies to ``config`` only).
     lane_overlay: dict[str, Any] = field(default_factory=dict)
+    #: A seed only: after importing it, wait until the controller has promoted a baseline for every store it reads
+    #: (``store_baseline_promoted`` log lines), so a fault injected next is judged against a reference.
+    wait_baselines: bool = False
     format: int = BASELINE_FORMAT
     #: The baseline directory (not serialized).
     root: Path | None = field(default=None, compare=False)
@@ -1666,6 +1669,41 @@ def apply_lane_config(
     return True
 
 
+BASELINE_WAIT_S = 600.0
+_STORE_DETECTOR = re.compile(r'"store-state-([a-z0-9-]+)"')
+_PROMOTED = re.compile(r"store_baseline_promoted component=([A-Za-z0-9._-]+)")
+
+
+def baseline_state(log_text: str) -> tuple[set[str], set[str]]:
+    """(stores the controller evaluates, stores with a promoted baseline) from the controller's log."""
+    return set(_STORE_DETECTOR.findall(log_text)), set(_PROMOTED.findall(log_text))
+
+
+def wait_baselines_promoted(
+    kube: Kube, control: str, timeout: float = BASELINE_WAIT_S, out: Callable[[str], None] = _print
+) -> float:
+    """Block until the controller's log shows a promoted baseline for every store it evaluates; fail loudly after
+    ``timeout``. Returns the seconds waited."""
+    started = time.monotonic()
+    missing: set[str] = set()
+    while time.monotonic() - started < timeout:
+        proc = subprocess.run(
+            kube.cmd("-n", control, "logs", "-l", f"job-name={CONTROLLER_JOB}", "-c", "controller", "--tail=-1"),
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        expected, promoted = baseline_state(proc.stdout)
+        missing = expected - promoted
+        if expected and not missing:
+            waited = time.monotonic() - started
+            out(f"baselines promoted for {sorted(expected)} after {waited:.0f}s")
+            return waited
+        time.sleep(5)
+    raise HookError(f"no promoted baseline for {sorted(missing) or 'any store'} after {timeout:.0f}s")
+
+
 def seed_lane(env: Mapping[str, str], block: OperatorBlock, out: Callable[[str], None] = _print) -> str:
     """Import ``block.seed`` into the prepared, idle lane (its memory and its config overlay, the controller
     restarted on them) and return the accepted tree's head. ``swap`` does it for a claim; ``prepare`` does it when
@@ -1694,7 +1732,11 @@ def seed_lane(env: Mapping[str, str], block: OperatorBlock, out: Callable[[str],
         seed,
         out,
     )
-    return regenerate_tree(env, kube, control, lane_dir, block, seeded["head"], out)
+    memory = regenerate_tree(env, kube, control, lane_dir, block, seeded["head"], out)
+    if seed.wait_baselines:
+        waited = wait_baselines_promoted(kube, control, BASELINE_WAIT_S, out)
+        (lane_dir / "baseline-wait.json").write_text(json.dumps({"waited_s": round(waited, 1)}) + "\n")
+    return memory
 
 
 def swap_receipt(lane_dir: Path, revision: str, memory: str, seconds: float) -> dict[str, Any]:
