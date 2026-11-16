@@ -49,8 +49,9 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
          --quick is the fast loop (about 2-3 minutes after the detectors build):
          the metric items and a short smoke where every detector judges at
          least once. It never runs --break and its report is never clean (it
-         says "mode: quick"); exit 0 means no red item. The full check is the
-         gate for "clean".
+         says "mode: quick"); exit 0 means no red item. Iterate with --quick and
+         incremental --break while fixing reds; run --full --break once at the
+         end to confirm clean. A full run is the gate, not the loop.
          Within a session a check is incremental: a green break (component or
          generic) and a detector that judged quiet are recorded under a key of
          what decides them (the map entries, probes, detector files and deployed
@@ -62,7 +63,8 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
          (Seattle time), and asks one judgement of unchanged detectors; red and
          failed verdicts are always judged again. Such a report says "mode:
          incremental" and is never clean. --full ignores the record and judges
-         everything: the gate for "clean" (and what acceptance must run).
+         everything: the gate for "clean" (and what acceptance must run), run once
+         at the end, not after every fix.
          Limits of reuse: a key covers the operations through a component, so
          a missing edge (an operation or probe that really depends on a
          component but does not list it) is found only by a fresh break, and

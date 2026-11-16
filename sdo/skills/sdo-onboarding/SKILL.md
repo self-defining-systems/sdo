@@ -65,13 +65,13 @@ configure OpenTelemetry yourself where it helps.
 1. Commit, then deploy and wait for the rollout.
 2. Try an operation by hand: send its requests, then read its series in Prometheus and its logs. To see which
    probes and detectors notice a broken component, scale it to zero with `kubectl scale`, watch, and scale back.
-3. `sdo-operator onboarding check --help` lists the flags; run it with `--quick` while iterating (about 3 minutes, never clean) and with `--break` to check breaks. After the first `--break` run, later runs in the session reuse the verdicts of items whose probes, detectors, map entries and deployment did not change (labelled `reused from`; report `mode: incremental`, never clean), so a rerun after a one-probe change takes a few minutes. The gate is `--full --break`, which ignores the record. A full check takes about 10 minutes: start it in the background, keep working, and read its report when it finishes. `sdo-operator memory check`
+3. `sdo-operator onboarding check --help` lists the flags; run it with `--quick` while iterating (about 3 minutes, never clean) and with `--break` to check breaks. After the first `--break` run, later runs in the session reuse the verdicts of items whose probes, detectors, map entries and deployment did not change (labelled `reused from`; report `mode: incremental`, never clean), so a rerun after a one-probe change takes a few minutes. While fixing red items, loop on `--quick` and incremental `--break`; do not rerun `--full --break` for each fix. `--full --break` ignores the record and is the gate, run once at the end to confirm clean (it takes 10-20 minutes: start it in the background, keep working, and read its report when it finishes). `sdo-operator memory check`
    validates memory the way the broker does.
 4. Read the report ([check report](references/check-report.md)), fix the red items, commit and check again.
 
 ## Finish line
 
-- You are done when the full check (`--full --break`; not `--quick` or an incremental run, which are never clean) reports clean on the committed tree.
+- You are done when one full check (`--full --break`; `--quick` and incremental runs are never clean) reports clean on the committed tree. Run it once, after the loop is green, not as the loop.
 - A red item you cannot fix gets a `reasons` entry in the map (item, subject, one-line reason). A reason never
   excuses `deployed-healthy` or `quiet-when-healthy`, and the report counts reasons, so use them rarely.
 - Reply with one line: `done`, or `blocked: <why>`.
