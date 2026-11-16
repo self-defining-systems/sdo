@@ -263,7 +263,10 @@ def analyze_agent(
 
 
 def analyze(paths: list[Path], rules: tuple[Rule, ...] = DEFAULT_RULES) -> dict[str, Any]:
-    agents = load_agents(paths)
+    return analyze_agents(load_agents(paths), rules)
+
+
+def analyze_agents(agents: dict[str, Agent], rules: tuple[Rule, ...] = DEFAULT_RULES) -> dict[str, Any]:
     if not agents:
         raise ValueError("no timestamped assistant/user events found")
     main = MAIN if MAIN in agents else min(agents, key=lambda k: agents[k].span[0])

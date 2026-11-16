@@ -134,6 +134,7 @@ class Cell:
     window_bad_seconds: int | None
     tail_bad_seconds: int | None
     incidents: list[Incident]
+    last_bad_second: float | None = None  # seconds after inject of the last failing user second
     first_bad_second: float | None = None  # seconds after inject of the first failing user second
     run_ok: bool | None = None  # the bench run finished (False: capped, harness failure)
     attempts: int = 1
@@ -144,12 +145,24 @@ class Cell:
             None if self.inject_at is None or self.first_bad_second is None else self.inject_at + self.first_bad_second
         )
 
+    @property
+    def users_recovered(self) -> float | None:
+        return None if self.inject_at is None or self.last_bad_second is None else self.inject_at + self.last_bad_second
+
     def transcripts(self) -> list[Path]:
         """Agent session JSONL files (responder, its subagents and resumed closing turns) of the cell's incidents."""
         if self.run_dir is None:
             return []
         root = self.run_dir / "operator" / "evidence" / "incidents"
         return sorted(root.glob("*/claude/projects/**/*.jsonl"))
+
+    def trajectory_files(self) -> tuple[list[Path], bool]:
+        """Agent transcripts and whether they were found outside SDO's incident evidence (a vanilla cell)."""
+        files = self.transcripts()
+        if files or self.run_dir is None:
+            return files, False
+        skip = {"timeline.jsonl", "claude-turns.jsonl", "reflection-usage.jsonl"}
+        return sorted(p for p in self.run_dir.rglob("*.jsonl") if p.name not in skip), True
 
     @property
     def first_incident(self) -> Incident | None:
@@ -355,6 +368,7 @@ def load_cell(cell_dir: Path) -> Cell:
         tail_bad_seconds=tail.get("BadSeconds"),
         incidents=incidents,
         first_bad_second=(record.get("lifecycle") or {}).get("first_bad_second"),
+        last_bad_second=record.get("last_bad_second"),
         run_ok=result.get("ok") if "ok" in result else None,
         attempts=len(list((cell_dir / "runs").glob("*"))) if (cell_dir / "runs").is_dir() else 1,
     )
