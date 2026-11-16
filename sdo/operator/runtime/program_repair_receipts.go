@@ -25,12 +25,13 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 		// passed, or it never ran one because the responder verifies the
 		// incident as a whole. A receipt reads FAILED only with a reason.
 		failure := ""
+		residualOnly := sourceResidualOnly(application)
 		switch {
 		case application.RollbackError != "":
 			failure = "rollback_failed"
 		case application.RolledBack:
 			failure = "rolled_back"
-		case application.Error != "":
+		case application.Error != "" && !residualOnly:
 			failure = "application_error"
 		case application.Result.SettlementRejectionReason != contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED:
 			failure = "settlement_rejected"
@@ -40,6 +41,10 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 			failure = "verification_failed"
 		}
 		verified := failure == "" && application.Result.VerificationCompleted && application.Result.VerificationPassed
+		// A source reconcile that wrote the object but left residual
+		// differences is recorded evidence in its action report, not a failed
+		// repair: whether it fixed anything is the alert set's verdict.
+		verified = verified || (residualOnly && failure == "")
 		refs := []sdk.ObjectRef{}
 		seen := map[sdk.ObjectRef]bool{}
 		actions := application.Result.Plan.Actions
@@ -78,8 +83,11 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 			reason := ""
 			if index < len(application.Result.ActionReports) {
 				report := application.Result.ActionReports[index]
-				applied = applied && report.Status == "applied"
+				applied = applied && (report.Status == "applied" || (residualOnly && report.Status == "partial"))
 				reason = report.FailureReason
+				if residualOnly && reason == "source_residual" {
+					reason = ""
+				}
 				if report.Status == "unknown" && reason == "" {
 					reason = "outcome_unknown"
 				}
@@ -132,6 +140,30 @@ func ProgramRepairReceipts(applications []RecordedPlanApplication, existing []Re
 		})
 	}
 	return result
+}
+
+// sourceResidualOnly reports whether an application's only error is a source
+// reconcile that applied but kept residual differences: every failing action
+// report names source_residual, nothing rolled back, and the executor's error
+// is the partial-reconcile one.
+func sourceResidualOnly(application RecordedPlanApplication) bool {
+	if !application.Result.Applied || application.RolledBack || application.RollbackError != "" {
+		return false
+	}
+	if application.Error != "" && !strings.HasPrefix(application.Error, "source_reconcile_partial:") {
+		return false
+	}
+	residual := false
+	for _, report := range application.Result.ActionReports {
+		switch report.FailureReason {
+		case "":
+		case "source_residual":
+			residual = true
+		default:
+			return false
+		}
+	}
+	return residual
 }
 
 // preImageOwners records each written resource's controller owner chain from
