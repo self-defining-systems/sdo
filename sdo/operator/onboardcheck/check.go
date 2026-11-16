@@ -107,6 +107,11 @@ type Report struct {
 	Results []Result `json:"results"`
 	// Durations is how long each live item took.
 	Durations []ItemDuration `json:"durations,omitempty"`
+	// Journeys is the per-operation checklist built from the results.
+	Journeys []Journey `json:"journeys,omitempty"`
+
+	// accuracy is what the breaks showed about each journey's path.
+	accuracy map[string]*opAccuracy
 
 	// notInstrumented are the operations request-metrics reported as not
 	// instrumented while the application was healthy, by operation ID.
@@ -132,10 +137,34 @@ func (r Report) Counts() (green, red, note int) {
 
 // Clean is true when nothing is red in a full run. A quick run never is: it
 // proves less than the gate.
-func (r Report) Clean() bool { return r.Mode != ModeQuick && r.NoRed() }
+// Every journey must also be complete on mapping, errors, latency, probe,
+// detection and map.
+func (r Report) Clean() bool {
+	if r.Mode == ModeQuick || !r.NoRed() {
+		return false
+	}
+	for _, j := range r.Journeys {
+		if !j.Complete() {
+			return false
+		}
+	}
+	return true
+}
 
-// NoRed is true when no item is red, in either mode.
-func (r Report) NoRed() bool { _, red, _ := r.Counts(); return red == 0 }
+// NoRed is true when no item and no journey cell is red, in either mode.
+func (r Report) NoRed() bool {
+	if _, red, _ := r.Counts(); red > 0 {
+		return false
+	}
+	for _, j := range r.Journeys {
+		for _, c := range append(j.cells(), j.Traces) {
+			if c.Status == Red {
+				return false
+			}
+		}
+	}
+	return true
+}
 
 // Report modes.
 const (
@@ -159,6 +188,9 @@ func (r Report) Text() string {
 	}
 	for _, x := range r.Results {
 		fmt.Fprintf(&b, "%s %s %s: %s\n", x.Status, x.Item, x.Subject, x.Detail)
+	}
+	if len(r.Journeys) > 0 {
+		b.WriteString(journeyTable(r.Journeys))
 	}
 	for _, d := range r.Durations {
 		fmt.Fprintf(&b, "time %s %s\n", d.Item, time.Duration(d.Seconds*float64(time.Second)).Round(time.Second))
@@ -259,6 +291,15 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	if err := cfg.validate(); err != nil {
 		return Report{}, err
 	}
+	report, err := runChecks(ctx, cfg)
+	if err != nil {
+		return Report{}, err
+	}
+	finalize(cfg, &report)
+	return report, nil
+}
+
+func runChecks(ctx context.Context, cfg Config) (Report, error) {
 	cfg.phases = &phaseLog{}
 	report := Report{Commit: cfg.Commit, Mode: ModeFull}
 	if cfg.Quick {
@@ -392,6 +433,26 @@ func runMetrics(ctx context.Context, cfg Config, report *Report) error {
 		es.declared[st.route] = true
 	}
 
+	// Job metrics are judged for the classes the operations trigger even when
+	// no operation enters through them.
+	for _, e := range cfg.Map.Entries {
+		if _, ok := entries[e.Service]; !ok && backgroundMetric.MatchString(e.Metric) && e.Labels.Route != "" {
+			entries[e.Service] = &entryState{entry: e, declared: map[string]bool{}}
+		}
+	}
+	for _, es := range entries {
+		for _, op := range cfg.Map.Operations {
+			for _, class := range op.Triggers {
+				es.declared[class] = true
+			}
+		}
+		for _, r := range cfg.Map.Reasons {
+			if r.Item == ItemBackground {
+				es.declared[r.Subject] = true
+			}
+		}
+	}
+
 	// Baseline.
 	for _, st := range ops {
 		series, err := query(st.entry.RequestCount(st.route, st.method))
@@ -522,6 +583,8 @@ func runMetrics(ctx context.Context, cfg Config, report *Report) error {
 			result(ItemErrorsSeparable, st.op.ID, Red, "error series does not evaluate: "+st.errorsErr.Error())
 		case len(byLabel(st.statusSeries, st.entry.Labels.Status)) == 0:
 			result(ItemErrorsSeparable, st.op.ID, Red, fmt.Sprintf("no series with a %s label carries %s=%q; errors are not separable per operation (route values on the metric: %s)", st.entry.Labels.Status, st.entry.Labels.Route, st.route, keys(es.routesAfter)))
+		case errorClasses(st.entry.Errors, mapKeys(byLabel(st.statusSeries, st.entry.Labels.Status))) != "":
+			result(ItemErrorsSeparable, st.op.ID, Red, errorClasses(st.entry.Errors, mapKeys(byLabel(st.statusSeries, st.entry.Labels.Status))))
 		default:
 			result(ItemErrorsSeparable, st.op.ID, Green, "status series carry this route: "+keys(byLabel(st.statusSeries, st.entry.Labels.Status)))
 		}
@@ -584,4 +647,13 @@ func hasRed(r Report, item, subject string) bool {
 		}
 	}
 	return false
+}
+
+func mapKeys(m map[string]float64) []string {
+	var out []string
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

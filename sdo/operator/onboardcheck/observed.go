@@ -23,8 +23,10 @@ const (
 	// series carrying its route.
 	ItemLatency = "latency-per-operation"
 	// ItemBackground is red for background-work classes (job or queue names in
-	// the app's job metrics) that no declared operation covers.
-	ItemBackground = "background-covered"
+	// the app's job metrics) that no operation triggers: unattributed
+	// background work. Attach the class to the operation whose data it affects
+	// (triggers) or exclude it with a reason.
+	ItemBackground = appmap.ItemBackgroundCovered
 )
 
 const (
@@ -180,6 +182,18 @@ func runObserved(ctx context.Context, cfg Config, report *Report, ops []*opState
 		}
 	}
 
+	for _, st := range ops {
+		for _, class := range st.op.Triggers {
+			seen := false
+			for _, es := range entries {
+				seen = seen || es.routesAfter[class] > 0
+			}
+			if !seen {
+				report.add(ItemObserved, st.op.ID, Red, fmt.Sprintf("triggered background class %q never appears in the job metrics: fix the class name in triggers, or make the operation's probe set the work off", class))
+			}
+		}
+	}
+
 	for _, name := range services {
 		es := entries[name]
 		type routeCount struct {
@@ -217,9 +231,9 @@ func runObserved(ctx context.Context, cfg Config, report *Report, ops []*opState
 		if background(cfg.Map, es, ops) {
 			switch {
 			case len(undeclared) > 0:
-				report.add(ItemBackground, name, Red, fmt.Sprintf("%.0f%% of the %.0f background runs in %s are of classes no operation declares: %s; declare an operation per class with route set to the class name", 100*(1-covered/total), total, es.entry.Metric, strings.Join(list, ", ")))
+				report.add(ItemBackground, name, Red, fmt.Sprintf("%.0f%% of the %.0f background runs in %s are unattributed background work (classes no operation triggers): %s; add each class to the triggers of the operation whose data it affects, or exclude it with a reason (for example periodic maintenance)", 100*(1-covered/total), total, es.entry.Metric, strings.Join(list, ", ")))
 			case total > 0:
-				report.add(ItemBackground, name, Green, fmt.Sprintf("every class in %s is declared (%.0f runs)", es.entry.Metric, total))
+				report.add(ItemBackground, name, Green, fmt.Sprintf("every class in %s is attributed to an operation or excluded (%.0f runs)", es.entry.Metric, total))
 			}
 			continue
 		}

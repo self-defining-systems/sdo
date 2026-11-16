@@ -18,8 +18,9 @@ memory check enforces the [rules](references/rules.md).
 - **Operations**: every user journey. Find each entry point in source (routes, API specs, proxy config,
   non-HTTP entries, workers, schedules). Each operation has an `entry` (service, port, method, path), a `route`
   when its metric's route value differs from the path, `writes: true` when it changes stored state, a `path` of
-  every component it reaches (entry first), and `correct`: one line on what a correct result looks like.
-- **Components**: one per workload, with the Services that select it; `holds_data: true` when it is the only
+  every component it reaches (entry first), `triggers` (the background job classes it sets off; background work
+  is a step of the journey that triggers it, not an operation), and `correct`: one line on what a correct result looks like.
+- **Components**: one per workload, with the Services that select it and `observe` pointers (`metrics`, `logs`, `trace_service`); `holds_data: true` when it is the only
   place some user-visible data lives; every store gets a `data` entry.
 - **Edges**: caller to callee, with evidence. Ground them in code (a client address, an env value) and in
   traces from the live application. Add an edge you observe but did not map; recheck one you never observe.
@@ -38,7 +39,7 @@ entries:
     selector: {service: web}
     labels: {route: route, method: method, status: code}
     errors: '5..'
-  - service: internal                 # background workers and schedules
+  - service: internal                 # job metrics: the route label is the job class
     metric: jobs_total
     labels: {route: queue, status: outcome}
     errors: 'failed|dead'
@@ -46,18 +47,13 @@ operations:
   - id: create-order
     writes: true
     entry: {service: web, port: 80, method: POST, path: /api/orders}
-    path: [web, orders, postgres]
-    correct: "201 with an id; reading it back returns the same items and total"
-  - id: send-receipt
-    writes: true
-    entry: {service: internal, path: receipts}
-    path: [worker, redis]
-    correct: "a receipt exists within 30 s of the order"
+    path: [web, orders, postgres, worker]
+    triggers: [ReceiptJob]
+    correct: "201 with an id; reading it back returns the same items; a receipt exists within 30 s"
 probes:
-  - {scenario: create-then-read, kind: write-read, operations: [create-order]}
-  - {scenario: order-gets-receipt, kind: read-later, operations: [send-receipt]}
+  - {scenario: create-then-receipt, kind: read-later, operations: [create-order]}
 reasons:
-  - {item: tests-fail-broken, subject: send-receipt, reason: "worker retries for 10 min before failing"}
+  - {item: background-covered, subject: PruneJob, reason: "periodic maintenance"}
 ```
 
 `route` defaults to `entry.path`. Components, edges, `unprobed`, `no_user_records`, procedures and the

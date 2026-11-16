@@ -85,7 +85,10 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
          the application's own metrics: a declared route that never appears
          (no reason excuses it), an operation without a request-duration series,
          most of an entry's real traffic on undeclared routes, and background
-         job classes no operation declares are red.
+         job classes no operation triggers (unattributed background work) are red.
+         The report ends with a journey table (one row per operation: a mapping,
+         b errors, c latency, d probe, e detection, f map, g traces); clean needs
+         every journey complete on a to f, which includes a --break run.
          Each live item reports its duration. The check prints its expected
          duration when it starts and takes minutes (about 20 with --break): run it
          in the background and read the report when it finishes; --report FILE

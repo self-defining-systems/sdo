@@ -271,7 +271,7 @@ func TestPerRouteSeriesAreGreen(t *testing.T) {
 	if !strings.HasPrefix(r.Text(), "commit abc123\n") {
 		t.Fatalf("report is not headed by the commit:\n%s", r.Text())
 	}
-	if !r.Clean() {
+	if !metricItemsClean(r) {
 		t.Fatalf("expected clean:\n%s", r.Text())
 	}
 	if status(r, ItemJourneys, "add-item") != Green || status(r, ItemErrorsSeparable, "list-items") != Green || status(r, ItemRoutes, "web") != Green {
@@ -301,7 +301,7 @@ func TestSharedRouteValueIsRed(t *testing.T) {
 	yaml := strings.Replace(mapYAML, "route: /items/new", "route: /items", 1)
 	r, _ := run(t, yaml, 0, 3*time.Second, perRoute)
 	// Same method differs (GET vs POST) so the label pair is distinct; make methods equal.
-	if !r.Clean() {
+	if !metricItemsClean(r) {
 		t.Fatalf("distinct methods share a route legitimately:\n%s", r.Text())
 	}
 	yaml = strings.Replace(yaml, "method: POST", "method: GET", 1)
@@ -326,7 +326,7 @@ func TestNoStatusLabelIsNotSeparable(t *testing.T) {
 
 func TestScrapeLagWithinSettleIsGreenBeyondIsRed(t *testing.T) {
 	r, _ := run(t, mapYAML, 3, 10*time.Second, perRoute)
-	if !r.Clean() {
+	if !metricItemsClean(r) {
 		t.Fatalf("lag inside settle:\n%s", r.Text())
 	}
 	r, _ = run(t, mapYAML, 30, 2*time.Second, perRoute)
