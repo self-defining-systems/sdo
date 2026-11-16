@@ -130,3 +130,21 @@ def test_cli_all_writes_markdown_and_json(tmp_path: Path) -> None:
     assert data["aggregate"]["all"]["median_time_ratio"] == 250 / 2 / 300
     assert "Learning economics" in (out / "learning-economics.md").read_text()
     assert (out / "sweep.md").is_file()
+
+
+def test_times_and_costs_come_from_the_evidence_manifest(tmp_path: Path) -> None:
+    from benchmarks.fuzzops import cellevidence
+
+    cell = make_cell(
+        tmp_path, "m-a-abcdef12", detected=20, verified=320, responder_cost=2.0, learned=["pb"], reflection_cost=0.5
+    )
+    run = next((cell / "runs").iterdir())
+    cellevidence.write_manifest(run)
+    manifest = run / "operator" / cellevidence.MANIFEST
+    raw = json.loads(manifest.read_text())
+    raw["timelines"][0]["responder_cost_usd"] = 9.0
+    manifest.write_text(json.dumps(raw))
+    inc = load_cell(cell).first_incident
+    assert inc is not None
+    assert inc.responder.cost_usd == 9.0
+    assert inc.page_to_recovered == 300
