@@ -68,6 +68,12 @@ func (r storeRun) restoreItem(ctx context.Context, a program.RestoreStoreItem) (
 		return refuse("cluster snapshot unavailable: %v", err)
 	}
 	baseline, ok := storestate.Baseline(view, a.Target.Component, a.Target.Pod)
+	if !ok && a.Change.Key().Kind == storestate.KindWriteBlock {
+		// A healthy store never holds a write block, so its absence is known
+		// without a promoted baseline (a lane or controller too young to have
+		// promoted one still repairs it).
+		baseline, ok = storestate.Facts{Engine: storestate.Engine(a.Target.Engine)}, true
+	}
 	if !ok {
 		return refuse("the controller holds no promoted healthy baseline of store %s Pod %s; it is captured once health has settled", a.Target.Component, a.Target.Pod.Name)
 	}

@@ -81,6 +81,32 @@ func TestRestoreStoreItemUsesTheControllersBaselineAndIsIdempotent(t *testing.T)
 	}
 }
 
+func clientPauseChange() storestate.Change {
+	return storestate.Change{After: &storestate.Item{Kind: storestate.KindWriteBlock, Name: "client-pause", Value: "active"}}
+}
+
+// A write block is wrong whether or not the controller has promoted a baseline
+// yet, so its restore needs none: the item goes back to absent and a fresh
+// read verifies it.
+func TestRestoreStoreItemRemovesAWriteBlockWithoutABaseline(t *testing.T) {
+	w := newStoreWorld(t)
+	w.stores.facts["db-0"] = strings.Replace(healthyRedisRead, "role:master\n", "role:master\npaused_reason:client_pause\n", 1)
+	w.stores.restored = func(pod string, words []string) string {
+		if strings.Join(words, " ") == "CLIENT UNPAUSE" {
+			delete(w.stores.facts, pod)
+		}
+		return "OK\n" + storestate.RestoredMarker + "\n"
+	}
+	result, err := w.apply(t, program.RestoreStoreItem{Target: dbTarget, Change: clientPauseChange(), Reason: "synthetic"})
+	if err != nil {
+		t.Fatalf("apply: %v (ops %v)", err, w.stores.ops)
+	}
+	effect := result.ActionReports[0].StoreRestore
+	if effect == nil || effect.Prior == nil || effect.After != nil || effect.Already {
+		t.Fatalf("effect = %+v", effect)
+	}
+}
+
 func TestRestoreStoreItemRefusals(t *testing.T) {
 	for name, test := range map[string]struct {
 		baseline bool
