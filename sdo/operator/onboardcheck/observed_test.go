@@ -21,6 +21,7 @@ operations:
     path: [web]
   - id: add-item
     writes: true
+    triggers: [MailWorker]
     entry: {service: web, port: 80, method: POST, path: /items}
     route: /items/new
     path: [web]

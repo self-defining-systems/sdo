@@ -202,13 +202,14 @@ func runObserved(ctx context.Context, cfg Config, report *Report, ops []*opState
 		}
 		var undeclared []routeCount
 		total, covered := 0.0, 0.0
+		isBackground := background(cfg.Map, es, ops)
 		for route, n := range es.routesAfter {
 			real := n - sentTo[name][route]
 			if real <= 0 {
 				continue
 			}
 			total += real
-			if es.declared[route] {
+			if es.declared[route] && (!isBackground || es.attributed[route]) {
 				covered += real
 			} else {
 				undeclared = append(undeclared, routeCount{route, real})
@@ -228,10 +229,10 @@ func runObserved(ctx context.Context, cfg Config, report *Report, ops []*opState
 			}
 			list = append(list, fmt.Sprintf("%s (%.0f)", u.route, u.n))
 		}
-		if background(cfg.Map, es, ops) {
+		if isBackground {
 			switch {
 			case len(undeclared) > 0:
-				report.add(ItemBackground, name, Red, fmt.Sprintf("%.0f%% of the %.0f background runs in %s are unattributed background work (classes no operation triggers): %s; add each class to the triggers of the operation whose data it affects, or exclude it with a reason (for example periodic maintenance)", 100*(1-covered/total), total, es.entry.Metric, strings.Join(list, ", ")))
+				report.add(ItemBackground, name, Red, fmt.Sprintf("%.0f%% of the %.0f background runs in %s are unattributed background work (classes no operation triggers; an operation entering at the job metric does not count): %s; add each class to the triggers of the operation whose data it affects, or exclude it with a reason (for example periodic maintenance)", 100*(1-covered/total), total, es.entry.Metric, strings.Join(list, ", ")))
 			case total > 0:
 				report.add(ItemBackground, name, Green, fmt.Sprintf("every class in %s is attributed to an operation or excluded (%.0f runs)", es.entry.Metric, total))
 			}
