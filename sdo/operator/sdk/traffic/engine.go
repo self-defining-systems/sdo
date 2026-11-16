@@ -138,6 +138,56 @@ type setupRecord struct {
 	// running serializes a scenario's setup: iterations run concurrently, and
 	// two that both saw the setup unfinished would each write its fixture.
 	running map[string]*sync.Mutex
+	// fixtures holds, per setup request, the State its first success saved.
+	// Scenarios that share a fixture (same request) send it once.
+	fixtures map[string]State
+	// locker serializes one setup request across processes; nil is none.
+	locker SetupLocker
+}
+
+// SetupLocker serializes a setup request across probe processes (a hot-swapped
+// memory host overlaps its predecessor, a restart replays setup). key names the
+// request, not the scenario, so every scenario and process that would write the
+// same fixture waits for the others. The in-process lock is always held too.
+type SetupLocker interface {
+	Lock(ctx context.Context, key string) (release func(), err error)
+}
+
+// UseSetupLock makes e serialize each setup request across processes with l.
+func (e *Engine) UseSetupLock(l SetupLocker) {
+	e.setups.mu.Lock()
+	e.setups.locker = l
+	e.setups.mu.Unlock()
+}
+
+// fixtureKey identifies the write a setup request makes: its target and the
+// request itself, never the scenario that declares it or the credentials it
+// signs in with.
+func fixtureKey(target Target, request Request) string {
+	query := make([]string, 0, len(request.Query))
+	for k, v := range request.Query {
+		query = append(query, k+"="+v)
+	}
+	sort.Strings(query)
+	return fmt.Sprintf("%s:%d|%s %s?%s|%s", target.Service, target.Port, request.Method, request.Path, strings.Join(query, "&"), request.Body)
+}
+
+// lockFixture waits for every other setup of the same request, in this process
+// and through the locker in others.
+func (r *setupRecord) lockFixture(ctx context.Context, key string) (func(), error) {
+	release := r.lock("fixture:" + key)
+	r.mu.Lock()
+	locker := r.locker
+	r.mu.Unlock()
+	if locker == nil {
+		return release, nil
+	}
+	remote, err := locker.Lock(ctx, key)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	return func() { remote(); release() }, nil
 }
 
 // lock waits for any setup of the scenario in progress and returns the
@@ -200,7 +250,15 @@ func NewEngine(workload Workload, catalog Catalog, client Doer, baseURL func(Tar
 // and its verify bursts) shares one record: data a setup step wrote and that
 // was lost afterwards then fails every engine instead of being written again.
 // Both engines must run the same catalog.
-func (e *Engine) ShareSetup(source *Engine) { e.setups = source.setups }
+func (e *Engine) ShareSetup(source *Engine) {
+	locker := e.setups.locker
+	e.setups = source.setups
+	if e.setups.locker == nil {
+		e.setups.mu.Lock()
+		e.setups.locker = locker
+		e.setups.mu.Unlock()
+	}
+}
 
 // Workload returns the engine's workload with defaults applied.
 func (e *Engine) Workload() Workload { return e.workload }
@@ -442,6 +500,49 @@ func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *ra
 	if err := checkRequest(scenario, target, request, phase); err != nil {
 		return stepResult{outcome: OutcomeInvalid, request: line, err: err.Error()}
 	}
+	if phase == phaseSetup && target.Scheme != "ssh" {
+		key := fixtureKey(target, request)
+		release, err := e.setups.lockFixture(ctx, key)
+		if err != nil {
+			return stepResult{outcome: OutcomeError, request: line, err: "setup lock: " + err.Error()}
+		}
+		defer release()
+		e.setups.mu.Lock()
+		delta, written := e.setups.fixtures[key]
+		e.setups.mu.Unlock()
+		if written {
+			for k, v := range delta {
+				state[k] = v
+			}
+			return stepResult{outcome: OutcomeOK, request: line}
+		}
+		before := state.clone()
+		result := e.send(ctx, scenario, step, target, request, state, passwords, line)
+		if result.outcome == OutcomeOK {
+			e.setups.mu.Lock()
+			if e.setups.fixtures == nil {
+				e.setups.fixtures = map[string]State{}
+			}
+			saved := State{}
+			for k, v := range state {
+				if before[k] != v {
+					saved[k] = v
+				}
+			}
+			for _, u := range scenario.Users {
+				delete(saved, u.As)
+				delete(saved, u.SSHKey)
+			}
+			e.setups.fixtures[key] = saved
+			e.setups.mu.Unlock()
+		}
+		return result
+	}
+	return e.send(ctx, scenario, step, target, request, state, passwords, line)
+}
+
+// send runs one built request and judges its answer.
+func (e *Engine) send(ctx context.Context, scenario Scenario, step Step, target Target, request Request, state State, passwords State, line string) stepResult {
 	if target.Scheme == "ssh" {
 		if carriesPassword(request, passwords) {
 			return stepResult{outcome: OutcomeInvalid, request: line, err: "an EXEC request may not send a probe-user password"}

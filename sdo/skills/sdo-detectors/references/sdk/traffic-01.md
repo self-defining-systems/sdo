@@ -131,6 +131,7 @@ type Sample struct{ ... }
 type SamplingPlan struct{ ... }
 type Scenario struct{ ... }
 type ScenarioObservations struct{ ... }
+type SetupLocker interface{ ... }
 type SideEffect string
     const SideEffectRead SideEffect = "read" ...
 type Source interface{ ... }

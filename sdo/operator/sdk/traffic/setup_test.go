@@ -339,3 +339,33 @@ func (s *gatedCreateStore) Do(request *http.Request) (*http.Response, error) {
 	}
 	return s.itemStore.Do(request)
 }
+
+// Scenarios that declare the same fixture request (one identity's project, say)
+// write it once, however many scenarios and concurrent iterations reach it.
+func TestScenariosSharingAFixtureWriteItOnce(t *testing.T) {
+	first, second := laterScenario(), laterScenario()
+	first.ID, second.ID = "items-a", "items-b"
+	workload := Workload{
+		APIVersion: APIVersion, Kind: WorkloadKind, Name: "probe", Purpose: PurposeHealthProbe,
+		Scenarios: []WorkloadScenario{{ID: first.ID}, {ID: second.ID}},
+	}
+	store := &itemStore{items: map[string]bool{}}
+	engine, err := NewEngine(workload, Catalog{first, second}, store, func(Target) string { return "http://web:80" }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	for iteration := uint64(0); iteration < 8; iteration++ {
+		wg.Add(1)
+		go func(iteration uint64) {
+			defer wg.Done()
+			if _, sample := engine.Iterate(context.Background(), iteration); sample.Outcome != OutcomeOK {
+				t.Errorf("iteration %d: %+v", iteration, sample)
+			}
+		}(iteration)
+	}
+	wg.Wait()
+	if store.posts != 1 {
+		t.Fatalf("fixture written %d times, want once", store.posts)
+	}
+}

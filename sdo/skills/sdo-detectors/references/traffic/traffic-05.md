@@ -232,7 +232,4 @@ type ScenarioObservations struct {
 	IdentityWait time.Duration `json:"identityWait,omitempty"`
 }
     ScenarioObservations are one scenario's recent samples, oldest first.
-
-type SideEffect string
-    SideEffect classifies what a scenario does to application state.
 ```
