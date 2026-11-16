@@ -678,6 +678,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	setupResults, setupHealthy := c.setupHealth(ctx, snapshot, detectors, onboardingCandidate)
 	sampleFindings := make([]sdk.Finding, 0)
 	errored := confirmationExpired
+	erroredIDs := map[string]bool{}
 	c.mu.Lock()
 	c.evaluationIteration++
 	c.evaluationAt = now.UTC()
@@ -721,6 +722,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			c.resetGate(spec.ID)
 			c.recordDetectorError(spec.ID, now, detectErr)
 			errored = true
+			erroredIDs[spec.ID] = true
 			return nil
 		}
 		if status == DetectorEvaluationPending {
@@ -816,7 +818,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			c.Baseline.Observe(now, healthy)
 		}
 		c.captureHealthyMemoryBaseline(ctx, now, snapshot, healthy)
-		c.promotePodReadBaseline(now, snapshot, healthy)
+		c.promotePodReadBaseline(now, snapshot, c.storesHealthy(confirmationExpired, erroredIDs, onboardingCandidate))
 		c.observeAppState(now, healthy)
 		c.promoteObservationBaselines(now, snapshot, healthy)
 		c.observeStartup(now)
