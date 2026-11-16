@@ -298,6 +298,9 @@ func planOnState(m program.Mitigator, c CorpusCase) (unverified string, err erro
 	if len(plan.Actions) == 0 {
 		return "Mitigate yielded no action on it", nil
 	}
+	if err := checkEscalationReach(m, plan, c); err != nil {
+		return "", err
+	}
 	if err := plan.Validate(); err != nil {
 		return "", fmt.Errorf("program.plan-invalid: Mitigate of the recorded incident yields a plan the host refuses to apply: %w", err)
 	}
@@ -342,4 +345,22 @@ func CheckPlansOnIncident(m program.Mitigator, dir string) (unverified []string,
 		}
 	}
 	return unverified, nil
+}
+
+// checkEscalationReach refuses a Mitigate whose whole plan is one Escalate unless the program's Diagnose says the
+// cause is out of reach. The automatic stage cannot apply an escalation as a repair: it records the attempt FAILED on
+// every repeat and the responder runs again, so the playbook never saves a responder turn.
+func checkEscalationReach(m program.Mitigator, plan program.Plan, c CorpusCase) error {
+	if _, sole := program.EscalationOf(plan); !sole || len(plan.Actions) != 1 {
+		return nil
+	}
+	diagnoser, ok := m.(program.Diagnoser)
+	if !ok {
+		return nil
+	}
+	verdict, err := diagnoser.Diagnose(context.Background(), &ReplayReadView{Snapshot: c.Open, Calls: c.PhaseRecordings("open")}, c.Bindings)
+	if err == nil && verdict.Result == program.Match && verdict.Reach == program.ReachOutOfReach {
+		return nil
+	}
+	return fmt.Errorf("program.escalate-only: Mitigate of the recorded incident only escalates, so a repeat records FAILED and the responder runs again. Express the command you ran with program.EnsureExec (runs in a Pod and is idempotent, e.g. SQL through the store's own client with credentials from the container environment), or return Reach: program.ReachOutOfReach from Diagnose if only a human can fix it")
 }

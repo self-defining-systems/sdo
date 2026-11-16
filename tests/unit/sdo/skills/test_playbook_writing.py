@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[4]
 SKILL = ROOT / "sdo/skills/playbook-writing"
 PROGRAM = ROOT / "sdo/operator/sdk/program"
-BUDGET_BYTES = 1536
+BUDGET_BYTES = 2048
 
 
 def _declared() -> set[str]:
@@ -47,3 +47,9 @@ def test_every_program_identifier_the_skill_and_examples_name_exists_in_the_sdk(
     named.discard("X")
     missing = sorted(name for name in named if name not in declared)
     assert not missing, f"the skill names SDK identifiers that do not exist: {missing}"
+
+
+def test_the_skill_names_the_executable_alternative_to_a_sole_escalate() -> None:
+    text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+    assert "program.EnsureExec" in text
+    assert "only `program.Escalate` repairs nothing" in text
