@@ -74,3 +74,16 @@ func TestClosureConfirmationJudgesOnlyTheAlertSetScenarios(t *testing.T) {
 		}
 	})
 }
+
+// The scope matches the key a real scenario finding carries, so a change to
+// the fingerprint format cannot silently drop a scenario from judgment.
+func TestScenarioScopeMatchesRealFindingKeys(t *testing.T) {
+	const id = "traffic-probe-write"
+	finding := traffic.ScenarioFinding(sdk.DetectorSpec{ID: id}, "app", traffic.Workload{Name: "probe-write"},
+		traffic.Descriptor{ID: "write-issue", Target: traffic.Target{Service: "web", Port: 80}}, traffic.SLOVerdict{})
+	scope := newRecoveryScope([]string{FindingStateKey(id, FindingFingerprint(finding))})
+	include := scenarioScope(id, scope)
+	if !include("write-issue") || include("write") || include("write-commit") {
+		t.Fatalf("include(write-issue)=%v include(write)=%v include(write-commit)=%v", include("write-issue"), include("write"), include("write-commit"))
+	}
+}
