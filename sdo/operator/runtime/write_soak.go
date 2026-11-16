@@ -10,6 +10,9 @@ import (
 	"sdo.dev/operator/sdk/traffic"
 )
 
+// maxWriteSoak caps the rounds per pass: the soak adds real writes to the application.
+const maxWriteSoak = 20
+
 // soakWrites re-runs, rounds times, every steady workload's write scenarios
 // (the ones that are not plain reads) now, recording each sample in the steady
 // window like a scheduled one. A probe that reads a list other users change
@@ -25,7 +28,10 @@ func soakWrites(ctx context.Context, api ProberAPI, rounds int, stderr io.Writer
 		return fmt.Errorf("read the probes' scenarios: %w", err)
 	}
 	names := make([]string, 0, len(windows))
-	for name := range windows {
+	for name, window := range windows {
+		if len(window.Links) > 0 {
+			continue
+		}
 		names = append(names, name)
 	}
 	sort.Strings(names)

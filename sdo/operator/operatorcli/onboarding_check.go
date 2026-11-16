@@ -349,6 +349,9 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	for _, e := range exposed {
 		exposures = append(exposures, onboardcheck.Exposure{Service: e.Service, Via: e.Via})
 	}
+	if *quietWrites < 0 {
+		return 0, fmt.Errorf("--quiet-writes must be 0 or more, got %d", *quietWrites)
+	}
 	if *quick && *breakItem {
 		return 0, errors.New("--quick never runs --break: the full check is the gate")
 	}

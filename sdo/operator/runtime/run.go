@@ -1807,6 +1807,12 @@ func evaluateOnce(
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
+	if *writeSoak < 0 || *writeSoak > maxWriteSoak {
+		return fmt.Errorf("--write-soak must be between 0 and %d, got %d", maxWriteSoak, *writeSoak)
+	}
+	if *writeSoak > 0 && *watch <= 0 {
+		return errors.New("--write-soak needs --watch")
+	}
 	policy := settings.Default()
 	if *settingsFile != "" {
 		var err error
@@ -2149,7 +2155,10 @@ func evaluateOnce(
 			if err := encoder.Encode(verdict); err != nil {
 				return err
 			}
-			if trafficAPI != nil {
+			// Only a clear application is soaked: once a detector fires (a
+			// deliberate break, an incident) more writes would only slow the
+			// judgement down.
+			if *writeSoak > 0 && verdict.Status == evaluation.Clear {
 				if err := soakWrites(ctx, trafficAPI, *writeSoak, stderr); err != nil && ctx.Err() == nil {
 					fmt.Fprintln(stderr, "write soak:", err)
 				}
