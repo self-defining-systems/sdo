@@ -172,6 +172,9 @@ type Operation struct {
 	// metric's class label) this operation sets off. Background work is a step
 	// of the user-facing operation that triggers it, not an operation.
 	Triggers []string `yaml:"triggers,omitempty"`
+	// Journey names the human-given journey (goal.md) this operation serves;
+	// several operations can serve one.
+	Journey string `yaml:"journey,omitempty"`
 }
 
 // Probe is one probe scenario and the operations its steps exercise.

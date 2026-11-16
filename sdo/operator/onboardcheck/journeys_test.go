@@ -245,3 +245,37 @@ func TestListedRoutesMustBeAJourneyOrExcluded(t *testing.T) {
 		t.Fatalf("red while the list is missing:\n%s", r.Text())
 	}
 }
+
+func TestGivenJourneysNeedAnOperationAndOperationsNeedAKnownJourney(t *testing.T) {
+	text := strings.Replace(journeyMap, "id: list-items\n", "id: list-items\n    journey: browse-items\n", 1)
+	text = strings.Replace(text, "id: send-mail\n", "id: send-mail\n    journey: nonesuch\n", 1)
+	m, err := appmap.Parse(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := liveConfig(t, newWorld(), false, false)
+	c.Map = m
+	c.Journeys = []appmap.GivenJourney{{ID: "browse-items", What: "a user lists items"}, {ID: "send-a-message", What: "a user sends mail"}}
+	r, err := Run(context.Background(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status(r, ItemGivenJourneys, "send-a-message") != Red || !strings.Contains(r.Text(), "no operation serves it") {
+		t.Fatalf("a given journey with no operation is red:\n%s", r.Text())
+	}
+	if status(r, ItemGivenJourneys, "send-mail") != Red || !strings.Contains(r.Text(), "nonesuch") {
+		t.Fatalf("an operation naming an unknown journey is red:\n%s", r.Text())
+	}
+	if status(r, ItemGivenJourneys, "browse-items") != Green {
+		t.Fatalf("a served journey is green:\n%s", r.Text())
+	}
+	if !strings.Contains(r.Text(), "list-items (browse-items)") {
+		t.Fatalf("the table names the journey:\n%s", r.Text())
+	}
+	// Without a list nothing is judged.
+	c.Journeys = nil
+	r, _ = Run(context.Background(), c)
+	if status(r, ItemGivenJourneys, "send-mail") != "missing" {
+		t.Fatalf("no list, no item:\n%s", r.Text())
+	}
+}

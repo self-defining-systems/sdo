@@ -93,6 +93,8 @@ const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --names
          The report ends with a journey table (one row per operation: a mapping,
          b errors, c latency, d probe, e detection, f map, g traces); clean needs
          every journey complete on a to f, which includes a --break run.
+         given-journeys (when goal.md lists journeys) is red for a listed journey no
+         operation serves and for an operation naming an unlisted one.
          routes-assigned runs the map's routes.list command in its component and
          reports each listed route no operation covers and nothing excludes.
          Each live item reports its duration. The check prints its expected
@@ -323,8 +325,14 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 		*quietWindow = min(*quietWindow, 2*time.Minute)
 	}
 	fmt.Fprintln(os.Stderr, startNotice(*quick, *settle, *quietWindow, *breakItem, max(*breakBound, probeDetectionHorizon(*repo)), len(onboardcheck.BreakWaves(m)), *reportFile))
+	var given []appmap.GivenJourney
+	if goal, err := os.ReadFile(filepath.Join(*repo, ".sdo", "goal.md")); err == nil {
+		if given, err = appmap.ParseGoalJourneys(goal); err != nil {
+			return 0, err
+		}
+	}
 	config := onboardcheck.Config{
-		Map: m, Commit: commit,
+		Map: m, Commit: commit, Journeys: given,
 		Prom:     promAdapter{prometheus.Client{BaseURL: base, HTTPClient: cluster}},
 		Sender:   httpSender{cluster: cluster, namespace: *namespace},
 		Exposed:  exposures,
