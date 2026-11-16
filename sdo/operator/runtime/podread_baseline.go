@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"log/slog"
 	"maps"
 	"reflect"
 	"slices"
@@ -117,6 +118,10 @@ func (b *PodReadBaseline) promote(results map[string]podread.Result, stretch map
 		}
 		b.results[id] = podread.Result{Query: result.Query, Readings: complete}
 		promoted[id] = b.results[id]
+		if _, component, ok := storestate.ParseQueryID(id); ok {
+			// Harnesses that inject only once every store has a reference wait for this line.
+			slog.Info("store_baseline_promoted", "component", component)
+		}
 		history := b.history[id]
 		if !reflect.DeepEqual(history.Query, result.Query) {
 			history = podread.Result{Query: result.Query}
