@@ -461,6 +461,43 @@ def test_idle_is_idle_once_the_log_shows_every_store_in_the_state_history_promot
     assert hooks.idle(env, out=lines.append) == 0, lines
 
 
+def test_idle_gives_up_waiting_for_store_baselines_after_the_bound_and_records_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fresh = (datetime.now(UTC) - timedelta(seconds=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    state = {
+        "version": "sdo.controller/v1",
+        "history": [{"detector_id": "store-state-redis", "evaluated_at": fresh, "status": "clear"}],
+    }
+    configmap = {
+        "metadata": {"managedFields": [{"time": fresh}]},
+        "data": {"runtime-state.json": json.dumps(state)},
+    }
+    pods = {"items": [{"metadata": {"name": "p"}, "status": {"conditions": [{"type": "Ready", "status": "True"}]}}]}
+    monkeypatch.setattr(
+        hooks.subprocess, "run", _fake_kubectl({"configmap": configmap, "pods": pods, "logs": "no promotions"}, [])
+    )
+    lane, out = tmp_path / "lane", tmp_path / "out"
+    lane.mkdir()
+    env = {
+        "FUZZOPS_NAMESPACE": "ns1",
+        "FUZZOPS_KUBE_CONTEXT": "kind-c",
+        "KUBECONFIG": "/k",
+        "BENCH_LANE_DIR": str(lane),
+        "BENCH_OUT": str(out),
+    }
+    lines: list[str] = []
+    assert hooks.idle(env, out=lines.append) == 1
+    assert lines[-1].startswith("blind: no promoted baseline yet for redis")
+    started = datetime.now(UTC) - timedelta(seconds=hooks.BASELINE_WAIT_MAX_S + 5)
+    (lane / hooks.BASELINE_WAIT_RECORD).write_text(json.dumps({"since": started.strftime("%Y-%m-%dT%H:%M:%SZ")}))
+    assert hooks.idle(env, out=lines.append) == 0
+    assert lines[-1] == "idle"
+    assert "redis" in json.loads((lane / hooks.BASELINE_MISSING_RECORD).read_text())["reason"]
+    assert (out / hooks.BASELINE_MISSING_RECORD).is_file()
+    assert not (lane / hooks.BASELINE_WAIT_RECORD).exists()
+
+
 def test_idle_reports_a_missing_controller_as_busy(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(hooks.subprocess, "run", _fake_kubectl({}, []))
     env = {"FUZZOPS_NAMESPACE": "ns1", "FUZZOPS_KUBE_CONTEXT": "kind-c", "KUBECONFIG": "/k"}
