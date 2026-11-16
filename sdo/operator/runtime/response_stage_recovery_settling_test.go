@@ -2,7 +2,9 @@ package runtime
 
 import (
 	"context"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -96,6 +98,8 @@ type settlingCase struct {
 	// judges current state only.
 	stallWindow time.Duration
 	blind       bool
+	// unknownDiagnoses is how many stage diagnoses fail as an unanswered read.
+	unknownDiagnoses int32
 	// traffic replaces the learned stall detector and program with ones that
 	// read the "health" workload's samples, as learned memory does.
 	traffic *settlingTraffic
@@ -254,7 +258,7 @@ func settlingStageOn(t *testing.T, tc settlingCase, world *settlingWorld) (*Dete
 	var restart interface {
 		program.Diagnoser
 		program.Mitigator
-	} = restartProgram{id: "api-request-stall", blind: tc.blind}
+	} = restartProgram{id: "api-request-stall", blind: tc.blind, unknown: unknownCounter(tc.unknownDiagnoses), answered: unknownCounter(1)}
 	if tc.traffic != nil {
 		stallDetector = trafficLearnedStall{stall}
 		restart = trafficStallProgram{restartProgram{id: "api-request-stall"}}
@@ -438,5 +442,38 @@ func TestRecoveryWaitWindowSurvivesControllerRestart(t *testing.T) {
 	}
 	if world.restarts.Load() != 1 {
 		t.Fatalf("the resumed stage repeated the restart (writes=%d)", world.restarts.Load())
+	}
+}
+
+func unknownCounter(n int32) *atomic.Int32 {
+	if n == 0 {
+		return nil
+	}
+	c := &atomic.Int32{}
+	c.Store(n)
+	return c
+}
+
+// A diagnosis that fails because a read did not answer is asked again; a
+// playbook that matches on the next try is applied, not skipped.
+func TestStageRetriesADiagnosisThatDidNotAnswer(t *testing.T) {
+	stage, state, _, world := settlingStage(t, settlingCase{healAfter: 20 * time.Second, unknownDiagnoses: 2})
+	if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, &recordingStage{}}); err != nil {
+		t.Fatal(err)
+	}
+	if world.restarts.Load() != 1 {
+		t.Fatalf("the stage must apply the playbook after the read answers: %v", state.PriorStages[0])
+	}
+}
+
+// A diagnosis that never answers skips the playbook and says why.
+func TestStageRecordsWhyADiagnosisStayedUnknown(t *testing.T) {
+	stage, state, _, world := settlingStage(t, settlingCase{unknownDiagnoses: 100})
+	if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, &recordingStage{}}); err != nil {
+		t.Fatal(err)
+	}
+	attempt := state.PriorStages[0].Mitigations[0]
+	if world.restarts.Load() != 0 || attempt.SkipReason != "diagnose_unavailable" || !strings.Contains(attempt.Error, "memory host unavailable") {
+		t.Fatalf("skip %q error %q writes %d", attempt.SkipReason, attempt.Error, world.restarts.Load())
 	}
 }

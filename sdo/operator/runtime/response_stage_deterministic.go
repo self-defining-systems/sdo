@@ -359,6 +359,21 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			continue
 		}
 		before := program.RunDiagnose(ctx, diagnoser, view, bindings, loop.deadline())
+		// An Unknown verdict is a read that did not answer (a memory host
+		// restart, a cancelled stream), not a diagnosis: ask again before
+		// giving the playbook up, and keep the reason either way.
+		for try := 1; before.Result == program.Unknown && try < stageDiagnoseTries; try++ {
+			if err := stage.diagnoseBackoff(ctx); err != nil {
+				return report, err
+			}
+			if fresh, viewErr := loop.snapshotView(ctx); viewErr == nil {
+				view = fresh
+			}
+			before = program.RunDiagnose(ctx, diagnoser, view, bindings, loop.deadline())
+		}
+		if before.Result == program.Unknown {
+			attempt.Error = diagnosisFailure(before)
+		}
 		if before.Result != program.Match {
 			if len(matches) > 1 && !deferred[key] {
 				deferred[key] = true
@@ -1268,4 +1283,36 @@ func sortedFindings(byFingerprint map[string]sdk.Finding) []sdk.Finding {
 	}
 	sortFindings(findings)
 	return findings
+}
+
+// stageDiagnoseTries is how many times the stage asks a program to diagnose
+// before an Unknown verdict skips it.
+const stageDiagnoseTries = 3
+
+// stageDiagnoseBackoff is the pause between those tries.
+const stageDiagnoseBackoff = time.Second
+
+func (stage *DeterministicResponseStage) diagnoseBackoff(ctx context.Context) error {
+	if stage.recoveryWait != nil {
+		return stage.recoveryWait(ctx, stageDiagnoseBackoff)
+	}
+	timer := lifecycleio.NewTimer(stageDiagnoseBackoff)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// diagnosisFailure is the text an Unknown verdict carries about why the
+// diagnosis could not be made.
+func diagnosisFailure(v program.Verdict) string {
+	for _, e := range v.Evidence {
+		if e.Observed != "" {
+			return "diagnosis unavailable: " + e.Observed
+		}
+	}
+	return "diagnosis unavailable"
 }
