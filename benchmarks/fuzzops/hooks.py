@@ -64,7 +64,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from benchmarks.fuzzops import config, devtree, observe, page, sink, view
+from benchmarks.fuzzops import capture, cellevidence, config, devtree, observe, page, sink, view
 from benchmarks.fuzzops.install import (
     CREDENTIALS_SECRET,
     REPOSITORY_PVC,
@@ -1273,25 +1273,92 @@ def collect(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
 
     part("view", dashboard)
 
-    def reset() -> str:
-        kubeconfig = Path(env["KUBECONFIG"]).resolve() if env.get("KUBECONFIG") else None
-        receipt = reset_incidents(_binary(env), control, kubeconfig)
-        (dest / "incidents-reset.json").write_text(json.dumps(receipt, indent=2) + "\n")
-        return f"ok (generation {receipt.get('generation')})"
+    def build_identity() -> str:
+        block = _operator(env)
+        baseline = _baseline(block)
+        capture.write_build(
+            dest,
+            {
+                "sdo_revision": checkout_revision(),
+                "operator_image_tag": block.image_tag,
+                "baseline_commit": baseline.commit,
+                "memory_seed_commit": baseline.commit,
+            },
+        )
+        return "ok"
 
-    part("reset", reset)
-    summary = {
-        "control_namespace": control,
-        "run": env.get("BENCH_RUN", ""),
-        "fault": env.get("BENCH_FAULT", ""),
-        "interval": [env.get("BENCH_INTERVAL_START", ""), env.get("BENCH_INTERVAL_END", "")],
-        "collected_at": _now(),
-        "parts": parts,
-    }
-    (dest / "collect.json").write_text(json.dumps(summary, indent=2) + "\n")
+    part("build", build_identity)
+    part("host-load", lambda: capture.write_host_load(dest, _now))
+
+    def observability() -> str:
+        receipt = capture.capture_all(
+            kube.cmd,
+            control,
+            _need(env, "FUZZOPS_NAMESPACE"),
+            dest,
+            env.get("BENCH_INTERVAL_START", ""),
+            env.get("BENCH_INTERVAL_END", ""),
+        )
+        bad = sorted(k for k in cellevidence.CAPTURES if receipt.get(k, {}).get("status") == "error")
+        if bad:
+            raise HookError("observability capture failed: " + ", ".join(f"{k}: {receipt[k]['detail']}" for k in bad))
+        return "ok " + ", ".join(f"{k}={receipt[k]['status']}" for k in cellevidence.CAPTURES)
+
+    part("observability", observability)
+
+    def write_collect_json(final: bool) -> None:
+        summary = {
+            "control_namespace": control,
+            "run": env.get("BENCH_RUN", ""),
+            "fault": env.get("BENCH_FAULT", ""),
+            "interval": [env.get("BENCH_INTERVAL_START", ""), env.get("BENCH_INTERVAL_END", "")],
+            "collected_at": _now(),
+            "parts": parts,
+        }
+        cellevidence.atomic_write_json(dest / "collect.json", summary)
+
+    # Every capture is on disk. Validate before the operator reset: an incomplete cell keeps its lane's incidents
+    # open (the reset waits) until the evidence is complete, `hooks validate` passes, or a waiver is written.
+    write_collect_json(False)
+    manifest = cellevidence.write_manifest(dest.parent)
+    why = cellevidence.verdict(manifest)
+    if why:
+        parts["evidence-manifest"] = f"error: {why}"[:1000]
+        parts["reset"] = "error: blocked, " + INCOMPLETE_HINT
+        out(why)
+    else:
+        parts["evidence-manifest"] = f"ok ({len(manifest.items)} items, {len(manifest.waived)} waived)"
+        part("reset", lambda: _reset_receipt(env, control, dest))
+    write_collect_json(True)
     failed = sorted(k for k, v in parts.items() if v.startswith("error"))
     out(f"collect: {'failed ' + ','.join(failed) if failed else 'ok'}")
     return 1 if failed else 0
+
+
+INCOMPLETE_HINT = (
+    "fix the missing evidence, then run `hooks validate` (it resets), or write operator/evidence-waiver.json"
+)
+
+
+def _reset_receipt(env: Mapping[str, str], control: str, dest: Path) -> str:
+    kubeconfig = Path(env["KUBECONFIG"]).resolve() if env.get("KUBECONFIG") else None
+    receipt = reset_incidents(_binary(env), control, kubeconfig)
+    cellevidence.atomic_write_json(dest / "incidents-reset.json", receipt)
+    return f"ok (generation {receipt.get('generation')})"
+
+
+def validate(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
+    """Re-check a cell's evidence (``BENCH_OUT``); when complete (or waived) and the reset is still owed, do it."""
+    dest = Path(_need(env, "BENCH_OUT")).resolve()
+    manifest = cellevidence.write_manifest(dest.parent)
+    why = cellevidence.verdict(manifest)
+    if why:
+        out(why)
+        return 1
+    if not (dest / "incidents-reset.json").is_file() and env.get("BENCH_OPERATOR"):
+        _reset_receipt(env, control_namespace(env), dest)
+    out("evidence complete" + (f" ({len(manifest.waived)} waived)" if manifest.waived else ""))
+    return 0
 
 
 def teardown(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
@@ -2095,7 +2162,19 @@ def baseline_main(argv: list[str]) -> int:
     return 0
 
 
-VERBS = ("check", "prepare", "swap", "reset", "snapshot", "idle", "watch", "collect", "teardown", "transcripts")
+VERBS = (
+    "check",
+    "prepare",
+    "swap",
+    "reset",
+    "snapshot",
+    "idle",
+    "watch",
+    "collect",
+    "validate",
+    "teardown",
+    "transcripts",
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2117,6 +2196,7 @@ def main(argv: list[str] | None = None) -> int:
             "snapshot": snapshot,
             "idle": idle,
             "collect": collect,
+            "validate": validate,
             "teardown": teardown,
             "transcripts": transcripts,
         }

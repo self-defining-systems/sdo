@@ -782,7 +782,9 @@ def test_reset_incidents_requires_an_acknowledged_receipt(monkeypatch: pytest.Mo
         hooks.reset_incidents(kc.parent / "sdo-operator", "fg1-sdo", None)
 
 
-def test_collect_ends_with_an_operator_reset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _collect_with_reset_spy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, complete: bool
+) -> tuple[list[list[str]], Path]:
     lane = tmp_path / "lane"
     (lane / "bin").mkdir(parents=True)
     (lane / "bin" / "sdo-operator").write_text("")
@@ -795,11 +797,31 @@ def test_collect_ends_with_an_operator_reset(tmp_path: Path, monkeypatch: pytest
         return subprocess.CompletedProcess(cmd, 1, "", "no cluster")
 
     monkeypatch.setattr(hooks.subprocess, "run", run_cmd)
-    out = tmp_path / "out"
+    if complete:
+        monkeypatch.setattr(hooks.cellevidence, "write_manifest", lambda _run: hooks.cellevidence.CellEvidence())
+    out = tmp_path / "run" / "operator"
     hooks.collect(_sink_env(tmp_path, BENCH_OUT=str(out), BENCH_LANE_DIR=str(lane)), out=lambda _: None)
+    return resets, out
+
+
+def test_collect_ends_with_an_operator_reset_once_the_evidence_is_complete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    resets, out = _collect_with_reset_spy(tmp_path, monkeypatch, complete=True)
     assert len(resets) == 1
     assert json.loads((out / "collect.json").read_text())["parts"]["reset"] == "ok (generation 7)"
     assert json.loads((out / "incidents-reset.json").read_text())["generation"] == 7
+
+
+def test_collect_blocks_the_reset_while_the_evidence_is_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    resets, out = _collect_with_reset_spy(tmp_path, monkeypatch, complete=False)
+    parts = json.loads((out / "collect.json").read_text())["parts"]
+    assert resets == []
+    assert parts["evidence-manifest"].startswith("error: evidence incomplete: ")
+    assert parts["reset"].startswith("error: blocked")
+    assert not (out / "incidents-reset.json").exists()
 
 
 def test_reset_after_install_waits_for_the_controller(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

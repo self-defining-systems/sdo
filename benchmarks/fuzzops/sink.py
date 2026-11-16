@@ -289,11 +289,22 @@ def _used(usage: Any) -> bool:
     return any(_number(_get(usage, n)) > 0 for n in names)
 
 
+#: ``no_change_reason`` values Go sets without starting a closing turn (``runtime/closing_turn.go``
+#: ``closingSkipReason``, ``runtime/native_broker.go`` covered-repeat shortcut and ``no_session``). Such a decision
+#: with no usage is a skipped turn: no session, no ``reflection-usage.jsonl``, a ``reflection_without_commit`` stamp a
+#: fraction of a second after the dispatch stamp.
+_TURN_SKIPPED = frozenset(
+    {"closing_turn_nothing_to_script", "escalated_no_learning", "accepted_programs_no_new_evidence", "no_session"}
+)
+
+
 def _reflection_ran(decision: Any) -> bool:
     if not isinstance(decision, dict) or not decision:
         return False
     if _used(_get(decision, "usage")):
         return True
+    if _get(decision, "no_change_reason") in _TURN_SKIPPED:
+        return False
     failure = str(_get(decision, "failure_reason") or "")
     # A completed reflection dispatch with no usage and no pre-start failure may still have run a turn.
     return failure not in _PRE_START_FAILURES
@@ -326,11 +337,25 @@ def agents_ran(ledger: Mapping[str, Any]) -> bool:
             return True
         if _number(_get(outcome, "response_loops_used")) > 0:
             return True
-    if _get(ledger, "reflection_dispatch_at"):
+    decisions = [_get(ledger, "reflection_decision"), *(_get(ledger, "reflection_results") or [])]
+    if _get(ledger, "reflection_dispatch_at") and not _only_skipped_turns(decisions):
         return True
     phase = _get(ledger, "reflection_phase")
     if phase in ("REFLECTION_PHASE_DISPATCH", 2):
         return True
+    return any(_reflection_ran(d) for d in decisions)
+
+
+def _only_skipped_turns(decisions: list[Any]) -> bool:
+    """Whether every recorded closing decision is one Go made without a turn (and at least one exists)."""
+    recorded = [d for d in decisions if isinstance(d, dict) and d]
+    return bool(recorded) and all(
+        not _used(_get(d, "usage")) and _get(d, "no_change_reason") in _TURN_SKIPPED for d in recorded
+    )
+
+
+def closing_turn_ran(ledger: Mapping[str, Any]) -> bool:
+    """Whether a closing (reflection) agent turn ran for this ledger, as opposed to Go deciding without one."""
     decisions = [_get(ledger, "reflection_decision"), *(_get(ledger, "reflection_results") or [])]
     return any(_reflection_ran(d) for d in decisions)
 

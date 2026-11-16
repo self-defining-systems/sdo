@@ -33,6 +33,7 @@ takes `detection.self_heal_hold: 60s` from `sdo-bench.yaml`; the hold is bound i
   best-fix, lost writes, harmful actions, lifecycle times, cause class and reach, tokens and cost, auto-applied,
   repeat/first ratios per sequence, churn findings, false alarms from healthy runs and alarms while gating).
 - `hooks.py`: SDO's operator hooks for fuzzops-bench (below).
+- `cellevidence.py` / `capture.py`: the per-cell evidence manifest and validator (below); `capture.py` takes build identity, host load, the Prometheus/Jaeger stores for the window and all application and control pod logs at collect time.
 - `view.py`: the dashboard view of a collected run (`operator/view.json`, below).
 
 ## fuzzops-bench hooks
@@ -128,6 +129,24 @@ effective_config`; the experiment's `config` may not set `mode`): detectors, syn
 observing and `sdo detect` serves the candidate view, but their findings never open, join or close the incident; the
 responder's completion closes it (frozen memory). Page to first write and page to fixed are measured from the
 page time in `page.json`, comparable with B1.
+
+## Cell evidence manifest and validator
+
+`collect` writes `operator/build.json`, `host-load.json`, `observability.json` (receipt: `prometheus`, `jaeger`, `applogs`
+each `ok`/`absent`/`error`) and `observability/prometheus.jsonl.gz` (every series over the window, 5 minutes of lead),
+`observability/jaeger.jsonl.gz`, `applogs/<ns>/<pod>.log.gz` (64 MiB budget per cell, all atomic writes). Then
+`cellevidence.write_manifest` writes `operator/evidence-manifest.json` (`sdo.cell-evidence/v1`: build and spec identity,
+the grader's journeys per second and window/tail bad seconds, per-incident timelines with dispatch, first agent change,
+health cleared, verified, playbook evaluated/applied, closing-turn dispatch/end/duration/cost, learning decision,
+responder usage; every agent session with its raw JSONL and sub-agent sidechain paths; one item per evidence file).
+The validator fails the cell as `evidence incomplete: ...` (a missing or truncated item, a session without its file, a
+sub-agent without its sidechain, a missing closing-turn cost or apply timestamp) and **the operator reset waits**: the
+incident stays open until `python -m benchmarks.fuzzops.hooks validate` (`BENCH_OUT`) passes and resets, or
+`operator/evidence-waiver.json` (`{"waive": ["<item prefix>"], "reason": "..."}`) waives named items.
+`python -m benchmarks.fuzzops.cellevidence backfill|manifest|finish <exp dir>` audits, rewrites or (batch end) validates
+all cells and only then runs `benchmarks.sregym.analysis all`; `trial <dir>` applies the session and sub-agent rules to
+an onboarding trial directory (`transcript*.jsonl` plus `session-dir/`). Evidence stays in the run directory; diskwatch
+must not prune `operator/`.
 
 ## Dashboard view
 
