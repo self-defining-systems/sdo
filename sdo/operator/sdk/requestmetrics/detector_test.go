@@ -489,6 +489,15 @@ func TestClientJumpOnThinBaselineIsCalledWhenMostRequestsFail(t *testing.T) {
 	if len(got) != 1 || got[0].RuleID != requestmetrics.RuleErrors {
 		t.Fatalf("a mostly failing route on a thin baseline = %+v", got)
 	}
+	few := []metrics.Series{
+		series(pkgRoute, "200", steady(2, 7)...),
+		series(pkgRoute, "404", 0, 0, 0, 6, 6, 6, 6),
+		series(webRoute, "200", steady(40, 7)...),
+	}
+	got = detect(t, snapshot(few, baseline, presence()))
+	if len(got) != 1 || got[0].RuleID != requestmetrics.RuleInsufficientBaseline {
+		t.Fatalf("a high share of too few failures = %+v", got)
+	}
 	flaky := []metrics.Series{instant(pkgRoute, "200", 6), instant(pkgRoute, "404", 4), instant(webRoute, "200", 400)}
 	got = detect(t, snapshot(recent, flaky, presence()))
 	if len(got) != 1 || got[0].RuleID != requestmetrics.RuleInsufficientBaseline {
