@@ -5,9 +5,11 @@ the checkout's Python sources over them from a node directory (``devmount``, ``S
 responder's prompt, skills or Python agent code reaches a lane by copying files, with no image build or push.
 The directory lives under the lane's evidence mount, which every node already has.
 
-Protobuf contracts and image manifests are baked in: a swap onto a revision that changed them is refused
+Image manifests and dependency files are baked in: a swap onto a revision that changed them is refused
 (``swap_problem``) and the lane takes the full build. A change to the Go operator source is carried by a rebuilt
-binary (built once per source tree, ``hooks.cached_operator_binary``) and a controller restart.
+binary (built once per source tree, ``hooks.cached_operator_binary``) and a controller restart. The protobuf contracts
+are not baked in (the Go ones are in that binary, the Python ``_gen`` modules are projected with ``sdo``): an *additive*
+change to them is carried the same way; a breaking one (``contractdiff``) is refused.
 """
 
 from __future__ import annotations
@@ -16,9 +18,12 @@ import shutil
 import subprocess
 from pathlib import Path  # noqa: TC003
 
+from benchmarks.fuzzops import contractdiff
+
 #: Directories the pods mount from the tree (``devmount.Apply``/``ApplyWorker``); benchmarks only its sregym package.
 PROJECTED = ("sdo", "libs", "examples", "benchmarks/__init__.py", "benchmarks/sregym")
-#: Paths whose change needs a rebuilt binary or image: a swap cannot carry them.
+#: Paths whose change needs a rebuilt binary or image: a swap carries only a changed ``sdo/operator`` (a rebuilt binary)
+#: and an additive change to ``sdo/contracts``.
 COMPILED = (
     "sdo/operator",
     "sdo/contracts",
@@ -70,6 +75,8 @@ def fingerprint(checkout: Path) -> dict[str, str]:
     return out
 
 
+#: The contracts path: its change is compared field by field, not refused outright.
+CONTRACTS_PATH = "sdo/contracts"
 #: The compiled path a swap can carry by a rebuilt operator binary (the controller restarts on it).
 BINARY_PATH = "sdo/operator"
 
@@ -81,15 +88,34 @@ def changed_compiled(checkout: Path, lane: dict[str, str]) -> list[str]:
 
 def binary_changed(checkout: Path, lane: dict[str, str]) -> bool:
     """Whether the operator binary the lane runs differs from the checkout's source (a swap must rebuild it)."""
-    return BINARY_PATH in changed_compiled(checkout, lane)
+    changed = changed_compiled(checkout, lane)
+    return BINARY_PATH in changed or CONTRACTS_PATH in changed  # the binary embeds the Go contracts
 
 
-def swap_problem(checkout: Path, lane: dict[str, str], rebuild_binary: bool = False) -> str:
+def contracts_snapshot(checkout: Path) -> str:
+    """The checkout's contract descriptors, in the form a lane keeps (``contractdiff.encode``)."""
+    return contractdiff.encode(contractdiff.from_directory(checkout))
+
+
+def contract_problems(checkout: Path, snapshot: str) -> list[str]:
+    """How the checkout's contracts break the ones the lane was built with (``snapshot``); with no snapshot, that the
+    lane cannot say."""
+    if not snapshot:
+        return ["the lane recorded no contract descriptors"]
+    return contractdiff.breaking(contractdiff.decode(snapshot), contractdiff.from_directory(checkout))
+
+
+def swap_problem(checkout: Path, lane: dict[str, str], rebuild_binary: bool = False, contracts: str = "") -> str:
     """Why the lane built with fingerprint ``lane`` cannot run the checkout by a swap; empty when it can. With
-    ``rebuild_binary`` a changed operator source is not a problem: the swap builds the binary."""
+    ``rebuild_binary`` a changed operator source is not a problem: the swap builds the binary, and with it a changed
+    contract that only adds to the lane's ``contracts`` snapshot (also built into that binary)."""
     changed = changed_compiled(checkout, lane)
     if rebuild_binary:
         changed = [path for path in changed if path != BINARY_PATH]
+        if CONTRACTS_PATH in changed:
+            if breaks := contract_problems(checkout, contracts):
+                return "breaking contract change since the lane was built: " + "; ".join(breaks[:5])
+            changed.remove(CONTRACTS_PATH)
     if changed:
         return "compiled code changed since the lane was built: " + ", ".join(changed[:5])
     return ""
