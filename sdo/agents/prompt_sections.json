@@ -87,6 +87,11 @@
     "skills_root": "template_data.responder-incident_prompt-skills_root",
     "branch_instruction": "template_data.responder-incident_prompt-branch_instruction"
   },
+  "responder/incident_page": {
+    "namespace": "template_data.responder-incident_page-namespace",
+    "page": "template_data.responder-incident_page-page",
+    "branch_instruction": "template_data.responder-incident_page-branch_instruction"
+  },
   "responder/scriptify": {
     "incident_id": "template_data.responder-scriptify-incident_id",
     "skills_root": "template_data.responder-scriptify-skills_root",

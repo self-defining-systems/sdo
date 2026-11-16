@@ -144,6 +144,10 @@ class Baseline:
     config: dict[str, Any] = field(default_factory=dict)
     render_sha256: str = ""
     sdo_revision: str = ""
+    #: Config laid over the lane's own operator configuration when this baseline is imported as a seed (a claim that
+    #: runs the lane's operator with other settings, for example another model). Not an install-time overlay, so
+    #: it may set what the hook sets for an install (``refuse_hook_keys`` applies to ``config`` only).
+    lane_overlay: dict[str, Any] = field(default_factory=dict)
     format: int = BASELINE_FORMAT
     #: The baseline directory (not serialized).
     root: Path | None = field(default=None, compare=False)
@@ -1091,6 +1095,9 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     (lane_dir / PREPARED_RECORD).write_text(
         json.dumps({"revision": revision, "memory": memory, "compiled": devtree.fingerprint(Path.cwd())}) + "\n"
     )
+    if block.seed is not None:
+        # A claim that fell back to a full build still runs on the seed's memory and settings.
+        memory = seed_lane(env, block, out)
     out(json.dumps({"pack": str(attached), "operator_version": revision, "memory": memory}))
     return 0
 
@@ -1458,29 +1465,17 @@ def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
             record["state"] = {**record["state"], "head": prepared}
             memory = record["memory"] = prepared
     (lane_dir / PREPARED_RECORD).write_text(json.dumps(record) + "\n")
+    if block.seed is None and apply_lane_config(kube, control, lane_dir, {}, dry_run=True):
+        # an earlier claim's config overlay (the seed's) is still on the lane: back to the lane's own
+        set_controller_suspended(kube, control, True)
+        apply_lane_config(kube, control, lane_dir, {})
+        set_controller_suspended(kube, control, False)
+        retire_standby(kube, control)
+        wait_standby(kube, control, SWAP_STANDBY_WAIT_S)
+        wait_idle(kube, control, RESET_IDLE_WAIT_S)
     if block.seed is not None:
         # The prepared record keeps the pool's own state: a reset returns the lane to it, never to a seed.
-        seed = Baseline.load(block.seed)
-        if why := seed_problem(seed, _baseline(block)):
-            raise HookError(why)
-        binary, kubeconfig = _binary(env), Path(env["KUBECONFIG"]).resolve() if env.get("KUBECONFIG") else None
-        bundle = seed.path(seed.bundle)
-        seeded = apply_seed(
-            SeedSteps(
-                reset_incidents=lambda: reset_incidents(binary, control, kubeconfig),
-                retire_standby=lambda: retire_standby(kube, control),
-                stop_controller=lambda: set_controller_suspended(kube, control, True),
-                import_memory=lambda commit: restore_repository(kube, control, commit, bundle),
-                start_controller=lambda: set_controller_suspended(kube, control, False),
-                wait_standby=lambda: wait_standby(kube, control, SWAP_STANDBY_WAIT_S),
-                repository_state=lambda: repository_state(kube, control),
-                controller_idle=lambda: wait_idle(kube, control, RESET_IDLE_WAIT_S),
-                is_ancestor=lambda ancestor, descendant: is_ancestor(kube, control, ancestor, descendant),
-            ),
-            seed,
-            out,
-        )
-        memory = regenerate_tree(env, kube, control, lane_dir, block, seeded["head"], out)
+        memory = seed_lane(env, block, out)
     out(json.dumps(swap_receipt(lane_dir, revision, memory, time.monotonic() - started)))
     return 0
 
@@ -1573,6 +1568,8 @@ class SeedSteps:
     reset_incidents: Callable[[], object]
     retire_standby: Callable[[], object]
     stop_controller: Callable[[], object]
+    #: Put the seed's config overlay on the stopped controller's configuration (the lane's own when it has none).
+    apply_config: Callable[[Mapping[str, Any]], object]
     import_memory: Callable[[str], object]
     start_controller: Callable[[], object]
     wait_standby: Callable[[], object]
@@ -1602,6 +1599,7 @@ def apply_seed(steps: SeedSteps, seed: Baseline, out: Callable[[str], None] = _p
     steps.reset_incidents()
     steps.retire_standby()
     steps.stop_controller()
+    steps.apply_config(seed.lane_overlay)
     steps.import_memory(seed.commit)
     steps.start_controller()
     steps.wait_standby()
@@ -1614,6 +1612,84 @@ def apply_seed(steps: SeedSteps, seed: Baseline, out: Callable[[str], None] = _p
     receipt = {"seed": seed.commit, "head": now["head"], "seed_s": round(time.monotonic() - started, 1)}
     out(json.dumps(receipt))
     return receipt
+
+
+LANE_CONFIG_ORIGINAL = "original-config.yaml"
+
+
+def apply_lane_config(
+    kube: Kube, control: str, lane_dir: Path, overlay: Mapping[str, Any], dry_run: bool = False
+) -> bool:
+    """Make the lane's operator configuration (the ``sdo-config`` ConfigMap, read when the controller starts) the
+    lane's own as installed plus ``overlay``. The installed document is kept beside the lane the first time, so a
+    later claim without an overlay gets it back. Returns whether the ConfigMap differs from the wanted document
+    (and, unless ``dry_run``, replaces it). The controller must be restarted for a change to take effect."""
+    proc = subprocess.run(
+        kube.cmd("-n", control, "get", "configmap", "sdo-config", "-o", "json"),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise HookError(f"read sdo-config: {proc.stderr[-300:]}")
+    live = json.loads(proc.stdout)["data"]["config.yaml"]
+    original = lane_dir / "sdo-config" / LANE_CONFIG_ORIGINAL
+    if not original.exists() and not dry_run:
+        original.parent.mkdir(parents=True, exist_ok=True)
+        original.write_text(live)
+    installed = original.read_text() if original.exists() else live
+    wanted = yaml.safe_dump(config.merge(yaml.safe_load(installed) or {}, overlay), sort_keys=True)
+    if yaml.safe_load(wanted) == yaml.safe_load(live):
+        return False
+    if not dry_run:
+        _run(
+            kube.cmd(
+                "-n",
+                control,
+                "patch",
+                "configmap",
+                "sdo-config",
+                "--type",
+                "merge",
+                "-p",
+                json.dumps({"data": {"config.yaml": wanted}}),
+            ),
+            "replace sdo-config",
+            60,
+        )
+    return True
+
+
+def seed_lane(env: Mapping[str, str], block: OperatorBlock, out: Callable[[str], None] = _print) -> str:
+    """Import ``block.seed`` into the prepared, idle lane (its memory and its config overlay, the controller
+    restarted on them) and return the accepted tree's head. ``swap`` does it for a claim; ``prepare`` does it when
+    the claim fell back to a full build, so a seeded cell never runs on the pool's own memory or settings."""
+    assert block.seed is not None
+    lane_dir = Path(_need(env, "BENCH_LANE_DIR")).resolve()
+    kube, control = _kube(env), control_namespace(env)
+    seed = Baseline.load(block.seed)
+    if why := seed_problem(seed, _baseline(block)):
+        raise HookError(why)
+    binary, kubeconfig = _binary(env), Path(env["KUBECONFIG"]).resolve() if env.get("KUBECONFIG") else None
+    bundle = seed.path(seed.bundle)
+    seeded = apply_seed(
+        SeedSteps(
+            reset_incidents=lambda: reset_incidents(binary, control, kubeconfig),
+            retire_standby=lambda: retire_standby(kube, control),
+            stop_controller=lambda: set_controller_suspended(kube, control, True),
+            apply_config=lambda overlay: apply_lane_config(kube, control, lane_dir, overlay),
+            import_memory=lambda commit: restore_repository(kube, control, commit, bundle),
+            start_controller=lambda: set_controller_suspended(kube, control, False),
+            wait_standby=lambda: wait_standby(kube, control, SWAP_STANDBY_WAIT_S),
+            repository_state=lambda: repository_state(kube, control),
+            controller_idle=lambda: wait_idle(kube, control, RESET_IDLE_WAIT_S),
+            is_ancestor=lambda ancestor, descendant: is_ancestor(kube, control, ancestor, descendant),
+        ),
+        seed,
+        out,
+    )
+    return regenerate_tree(env, kube, control, lane_dir, block, seeded["head"], out)
 
 
 def swap_receipt(lane_dir: Path, revision: str, memory: str, seconds: float) -> dict[str, Any]:

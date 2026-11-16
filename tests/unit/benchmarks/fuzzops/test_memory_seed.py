@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from benchmarks.fuzzops import hooks
+from benchmarks.fuzzops import config, hooks
 
 COMMIT = "a" * 40
 
@@ -39,6 +39,7 @@ def steps(
         reset_incidents=lambda: calls.append("incidents"),
         retire_standby=lambda: calls.append("retire"),
         stop_controller=lambda: calls.append("stop"),
+        apply_config=lambda overlay: calls.append(f"config {sorted(overlay)}"),
         import_memory=lambda commit: calls.append(f"import {commit[:1]}"),
         start_controller=lambda: calls.append("start"),
         wait_standby=lambda: calls.append("standby"),
@@ -52,7 +53,7 @@ def test_seed_stops_the_controller_around_the_import(tmp_path: Path) -> None:
     calls: list[str] = []
     seed = baseline_dir(tmp_path, "seed", "r")
     receipt = hooks.apply_seed(steps(calls), seed, lambda _line: None)
-    assert calls == ["incidents", "retire", "stop", "import a", "start", "standby"]
+    assert calls == ["incidents", "retire", "stop", "config []", "import a", "start", "standby"]
     assert receipt["seed"] == COMMIT
 
 
@@ -168,3 +169,24 @@ def test_the_restore_script_imports_a_bundle_whatever_its_refs_are_named(tmp_pat
     script = hooks.restore_script(head, True, root=str(lane), bundle_dir=str(tmp_path))
     subprocess.run(["sh", "-c", script], check=True, capture_output=True)
     assert git(lane, "rev-parse", "HEAD") == head
+
+
+def test_merge_config_lays_the_overlay_over_the_installed_document() -> None:
+    base = {"response": {"timeout": "1800s", "page_only": False}, "agent": {"model": "m"}}
+    merged = config.merge(base, {"response": {"page_only": True}})
+    assert merged == {"response": {"timeout": "1800s", "page_only": True}, "agent": {"model": "m"}}
+    assert base["response"]["page_only"] is False
+
+
+def test_a_seed_may_overlay_what_the_hook_sets_for_an_install(tmp_path: Path) -> None:
+    seed = baseline_dir(tmp_path, "seed", "r")
+    manifest = json.loads((seed.root / hooks.BASELINE_FILE).read_text())  # type: ignore[operator]
+    manifest["lane_overlay"] = {"agent": {"model": "other"}}
+    (seed.root / hooks.BASELINE_FILE).write_text(json.dumps(manifest))  # type: ignore[operator]
+    calls: list[str] = []
+    hooks.apply_seed(steps(calls), hooks.Baseline.load(seed.root), lambda _line: None)  # type: ignore[arg-type]
+    assert "config ['agent']" in calls
+    manifest["config"] = {"agent": {"model": "other"}}
+    (seed.root / hooks.BASELINE_FILE).write_text(json.dumps(manifest))  # type: ignore[operator]
+    with pytest.raises(ValueError, match="agent.model"):
+        hooks.Baseline.load(seed.root)  # type: ignore[arg-type]
