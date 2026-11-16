@@ -389,8 +389,8 @@ max_chars = 2100
 reason = "The candidate block Go renders (the recent_changes proto slot keeps its name): at most 2048 bytes including the live pointer line; the cap keeps it inline in the first message."
 
 [template_data.responder-incident_prompt-symptom]
-max_chars = 5600
-reason = "The symptom block is bounded to 5200 code points by the renderer (every failing user test by name, up to 48, grouped by shared status and error, plus passing names); the cap leaves headroom so it is never spilled to a context file."
+max_chars = 6800
+reason = "The symptom block is bounded to 5200 code points by the renderer (every failing user test by name, up to 48, grouped by shared status and error, plus passing names) and is followed by the learned-playbook block of at most 1200 code points (the unmatched playbooks with their last read); the cap leaves headroom so it is never spilled to a context file."
 
 [template_data.responder-incident_prompt-skills_root]
 max_chars = 256
