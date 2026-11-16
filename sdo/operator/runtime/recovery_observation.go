@@ -70,7 +70,7 @@ func (c *Controller) recoveryTrackersClear(request IncidentRequest) bool {
 	return len(scope.blocking(c.tracker.ActiveFindings(c.healthDetectorIDs, nil))) == 0
 }
 
-func validateDetectorObservation(detector sdk.Detector, snapshot sdk.DetectionContext, findings []sdk.Finding, err error) ([]sdk.Finding, DetectorEvaluationStatus, error) {
+func validateDetectorObservation(detector sdk.Detector, snapshot sdk.DetectionContext, findings []sdk.Finding, err error, scope recoveryScope) ([]sdk.Finding, DetectorEvaluationStatus, error) {
 	if err != nil {
 		return nil, DetectorEvaluationError, err
 	}
@@ -92,7 +92,7 @@ func validateDetectorObservation(detector sdk.Detector, snapshot sdk.DetectionCo
 			status = DetectorEvaluationFiring
 		}
 	}
-	if status == DetectorEvaluationClear && !detectorConfirmed(detector, snapshot) {
+	if status == DetectorEvaluationClear && !detectorConfirmedIn(detector, snapshot, scope) {
 		status = DetectorEvaluationPending
 	}
 	return findings, status, nil
@@ -117,11 +117,11 @@ func (c *Controller) observeRecoveryHealth(ctx context.Context, now time.Time, s
 		pending = append(pending, id)
 		detectors = append(detectors, detector)
 	}
-	reads := readRecoveryDetectors(ctx, detectors, snapshot)
 	scope := c.recoveryScope()
+	reads := readRecoveryDetectors(ctx, detectors, snapshot, scope)
 	for i, id := range pending {
 		read := reads[id]
-		c.recordRecoveryObservation(ctx, id, now, read.findings, read.status, read.err, detectorConfirmationReason(detectors[i], snapshot), scope)
+		c.recordRecoveryObservation(ctx, id, now, read.findings, read.status, read.err, detectorConfirmationReasonIn(detectors[i], snapshot, scope), scope)
 	}
 }
 

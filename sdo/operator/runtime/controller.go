@@ -717,7 +717,10 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	apply := func(detector sdk.Detector, result setupDetection) error {
 		spec := detector.Spec()
 		delete(pending, spec.ID)
-		findings, status, detectErr := validateDetectorObservation(detector, snapshot, result.findings, result.err)
+		// An open incident confirms only its alert set (nil without one), so the
+		// main loop never breaks the clear streak the closure scope holds intact.
+		scope := c.recoveryScope()
+		findings, status, detectErr := validateDetectorObservation(detector, snapshot, result.findings, result.err, scope)
 		if detectErr != nil {
 			c.resetGate(spec.ID)
 			c.recordDetectorError(spec.ID, now, detectErr)
@@ -727,7 +730,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		}
 		if status == DetectorEvaluationPending {
 			c.resetGate(spec.ID)
-			c.history = append(c.history, DetectorEvaluation{DetectorID: spec.ID, EvaluatedAt: now.UTC(), Status: DetectorEvaluationPending, Reason: detectorConfirmationReason(detector, snapshot)})
+			c.history = append(c.history, DetectorEvaluation{DetectorID: spec.ID, EvaluatedAt: now.UTC(), Status: DetectorEvaluationPending, Reason: detectorConfirmationReasonIn(detector, snapshot, scope)})
 			if len(c.history) > 100 {
 				c.history = append([]DetectorEvaluation(nil), c.history[len(c.history)-100:]...)
 			}
@@ -745,8 +748,8 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		changes := c.tracker.Observe(now, spec.ID, validFindings)
 		c.observeGate(spec.ID, now, validFindings)
 		sampleFindings = append(sampleFindings, validFindings...)
-		c.recordEvaluation(spec.ID, now, validFindings, c.recoveryScope())
-		c.history[len(c.history)-1].Reason = detectorConfirmationReason(detector, snapshot)
+		c.recordEvaluation(spec.ID, now, validFindings, scope)
+		c.history[len(c.history)-1].Reason = detectorConfirmationReasonIn(detector, snapshot, scope)
 		c.noteProgress(detector, snapshot, now)
 		c.noteStartupEvaluation(spec.ID)
 		c.batcher.RemoveKeys(changes.Cleared)

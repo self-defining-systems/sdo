@@ -598,8 +598,8 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 			toRead = append(toRead, detector)
 		}
 	}
-	reads := readRecoveryDetectors(ctx, toRead, snapshot)
 	scope := newRecoveryScope(alertKeys(&closure.Request))
+	reads := readRecoveryDetectors(ctx, toRead, snapshot, scope)
 	for _, id := range ordered {
 		detector := c.detectors[id]
 		if detector == nil && !slices.Contains(c.healthDetectorIDs, id) {
@@ -617,12 +617,12 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		findings, status, err := read.findings, read.status, read.err
 		if status == DetectorEvaluationFiring && len(scope.blocking(findings)) == 0 {
 			status = DetectorEvaluationClear
-			if !detectorConfirmed(detector, snapshot) {
+			if !detectorConfirmedIn(detector, snapshot, scope) {
 				status = DetectorEvaluationPending
 			}
 		}
-		observations = append(observations, recoveryObservation{ID: id, Findings: findings, Status: status, Error: err, Reason: detectorConfirmationReason(detector, snapshot)})
-		state := DetectorEvaluation{DetectorID: id, EvaluatedAt: c.clock(), Status: status, Fingerprints: findingFingerprints(scope.blocking(findings)), Reason: detectorConfirmationReason(detector, snapshot)}
+		observations = append(observations, recoveryObservation{ID: id, Findings: findings, Status: status, Error: err, Reason: detectorConfirmationReasonIn(detector, snapshot, scope)})
+		state := DetectorEvaluation{DetectorID: id, EvaluatedAt: c.clock(), Status: status, Fingerprints: findingFingerprints(scope.blocking(findings)), Reason: detectorConfirmationReasonIn(detector, snapshot, scope)}
 		if err != nil {
 			state.Error = err.Error()
 		}
@@ -641,8 +641,8 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 			active = append(active, fmt.Sprintf("closure observation detector %s is active", id))
 		}
 
-		if !detectorConfirmed(detector, snapshot) {
-			wait(detector, fmt.Sprintf("closure observation detector %s is unconfirmed: %s", id, detectorConfirmationReason(detector, snapshot)))
+		if !detectorConfirmedIn(detector, snapshot, scope) {
+			wait(detector, fmt.Sprintf("closure observation detector %s is unconfirmed: %s", id, detectorConfirmationReasonIn(detector, snapshot, scope)))
 		}
 	}
 	if len(active) > 0 {

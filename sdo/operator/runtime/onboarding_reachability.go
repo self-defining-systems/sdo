@@ -48,6 +48,48 @@ func detectorConfirmed(detector sdk.Detector, snapshot sdk.DetectionContext) boo
 	return true
 }
 
+// scopedConfirmation is the optional contract of a detector whose confirmation
+// is per scenario: it judges only the scenarios include accepts.
+type scopedConfirmation interface {
+	ConfirmedIn(sdk.DetectionContext, func(string) bool) bool
+	ConfirmationReasonIn(sdk.DetectionContext, func(string) bool) string
+}
+
+// scenarioScope accepts the probe scenarios whose finding is in the incident's
+// alert set. The finding key is detector + "\x00" + detector/scenario-slo.<id>/...
+// (the default fingerprint), so membership needs no observed scenario.
+func scenarioScope(detectorID string, scope recoveryScope) func(string) bool {
+	return func(scenarioID string) bool {
+		prefix := FindingStateKey(detectorID, detectorID+"/"+traffic.RuleIDPrefix+scenarioID+"/")
+		for key := range scope {
+			if strings.HasPrefix(key, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// detectorConfirmedIn is detectorConfirmed judging only the incident's alert
+// set: of a probe workload's scenarios, only those in the set must be
+// evaluable; a sibling that never alerted is neither required nor a blocker. A
+// nil scope, or a detector without per-scenario confirmation, is judged whole.
+func detectorConfirmedIn(detector sdk.Detector, snapshot sdk.DetectionContext, scope recoveryScope) bool {
+	if scoped, ok := detector.(scopedConfirmation); ok && scope != nil {
+		return scoped.ConfirmedIn(snapshot, scenarioScope(detector.Spec().ID, scope))
+	}
+	return detectorConfirmed(detector, snapshot)
+}
+
+// detectorConfirmationReasonIn is detectorConfirmationReason with the scope of
+// detectorConfirmedIn.
+func detectorConfirmationReasonIn(detector sdk.Detector, snapshot sdk.DetectionContext, scope recoveryScope) string {
+	if scoped, ok := detector.(scopedConfirmation); ok && scope != nil {
+		return scoped.ConfirmationReasonIn(snapshot, scenarioScope(detector.Spec().ID, scope))
+	}
+	return detectorConfirmationReason(detector, snapshot)
+}
+
 // detectorConfirmationReason is informational; pending is never an execution error.
 func detectorConfirmationReason(detector sdk.Detector, snapshot sdk.DetectionContext) string {
 	if d, ok := detector.(interface {

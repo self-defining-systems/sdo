@@ -107,6 +107,26 @@ func (d sloDetector) ConfirmationReason(ctx sdk.DetectionContext) string {
 }
 
 func (d sloDetector) pendingReason(ctx sdk.DetectionContext) string {
+	return d.pendingReasonIn(ctx, nil)
+}
+
+// ConfirmedIn is Confirmed restricted to the scenarios include accepts: a
+// scenario outside it (one that never alerted in the incident being closed)
+// neither blocks confirmation nor counts toward it. A nil include accepts every
+// scenario.
+func (d sloDetector) ConfirmedIn(ctx sdk.DetectionContext, include func(scenarioID string) bool) bool {
+	return d.pendingReasonIn(ctx, include) == ""
+}
+
+// ConfirmationReasonIn is ConfirmationReason restricted like ConfirmedIn.
+func (d sloDetector) ConfirmationReasonIn(ctx sdk.DetectionContext, include func(scenarioID string) bool) string {
+	if reason := d.pendingReasonIn(ctx, include); reason != "" {
+		return reason
+	}
+	return d.ConfirmationReason(ctx)
+}
+
+func (d sloDetector) pendingReasonIn(ctx sdk.DetectionContext, include func(scenarioID string) bool) string {
 	window, ok := WindowFrom(ctx, d.workload)
 	if !ok {
 		return "no synthetic scenario has succeeded since observation began"
@@ -124,6 +144,9 @@ func (d sloDetector) pendingReason(ctx sdk.DetectionContext) string {
 	for _, observed := range window.Scenarios {
 		id := observed.Scenario.ID
 		seen[id] = true
+		if include != nil && !include(id) {
+			continue
+		}
 		if window.Workload.KnownBrokenScenario(id) != nil {
 			continue
 		}
@@ -137,6 +160,9 @@ func (d sloDetector) pendingReason(ctx sdk.DetectionContext) string {
 		}
 	}
 	for _, scenario := range window.Workload.Scenarios {
+		if include != nil && !include(scenario.ID) {
+			continue
+		}
 		if !seen[scenario.ID] && scenario.KnownBroken == nil {
 			unqualified = append(unqualified, scenario.ID)
 		}
