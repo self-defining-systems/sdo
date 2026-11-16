@@ -79,6 +79,9 @@ type Config struct {
 	// the detectors (each judged at least once). It runs no break item and its
 	// report is never clean.
 	Quick bool
+	// Routes runs the map's route-list command; nil makes the routes item
+	// red (the list cannot be read).
+	Routes RouteLister
 	// Progress, when set, receives a line as the check advances.
 	Progress func(string)
 
@@ -295,6 +298,7 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
+	judgeRoutes(ctx, cfg, &report)
 	finalize(cfg, &report)
 	return report, nil
 }

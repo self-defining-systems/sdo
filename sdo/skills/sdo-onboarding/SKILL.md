@@ -24,6 +24,8 @@ reports, not raw logs. When a result is wrong, say why and send it back.
 2. You know what users do: every exposed entry, route, non-HTTP entry and existing record, each written as an
    operation (background work belongs to the operation that triggers it) with what a correct result is
    ([map](../sdo-operations-map/SKILL.md)).
+   A separate subagent whose only job is finding missing journeys (from source, tests, docs and API specs, given
+   the current map) reviews the map; fix what it finds or exclude it with a reason.
 3. Every operation is observable: request, error and latency counts by route; traces across
    services; structured error logs. Reuse first; change code where needed
    ([observability](../sdo-observability/SKILL.md)).
@@ -40,7 +42,8 @@ Every user journey is instrumented and detected: mapped in the app's own metrics
 triggers), errors and latency per journey, a probe that checks its result end to end, a detector that names it
 when any component on its path breaks, a true component path with metrics, logs and trace pointers. The
 check prints one row per journey; the items are in [the standard](references/journey-standard.md). Instrument in
-application code (middleware, metrics, tracing) or the deployment, whichever gives the items.
+application code (middleware, metrics, logging, tracing) or the deployment, whichever gives the items; install and
+configure OpenTelemetry yourself where it helps.
 
 ## Environment
 

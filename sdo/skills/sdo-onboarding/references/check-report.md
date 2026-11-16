@@ -24,6 +24,7 @@ The items are checks inside SDO's operability report (O1-O6), so the same result
 | `probes-do-no-harm` | With the memory's probes running, no operation or job class fails more than with them paused, and the probes are not a large share of an entry's requests. The line names the failing operation or class and the probe scenarios; fix the probe so it leaves no objects the application's work then trips on. `--harm-window` (1 minute, 0 skips). |
 
 | `probe-checks-result` | A probe lists the operation; one that writes data or triggers background work has a write-read or read-later probe that reads the effect; no healthy-window item found its scenarios failing. |
+| `routes-assigned` | The map's `routes.list` command runs in its component's container and prints one `METHOD route` per line; each is a journey's route (`route`, else `entry.path`, with its method) or in `routes.excluded` with a reason. Red while the list is missing and per unassigned route; no `reasons` entry covers it. |
 | `map-pointers` | Every component on the operation's path has `observe` metrics and logs pointers. |
 | `map-accuracy` | With `--break`, per broken component: the operations that failed (a failing request or probe step) match the operations whose path lists it. A missing edge (an operation failed but its path lacks the component) is red; a spurious one (listed, but nothing failed) is a note. A wave breaks components that share no operation, so a failure explained by any component in the wave is not a missing edge. |
 
