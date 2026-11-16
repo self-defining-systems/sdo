@@ -929,7 +929,17 @@ func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, n
 // finding): the tracker keeps the state active, so no activation announces it.
 func (c *Controller) admitUpgrades(ctx context.Context, changes []RuleChange, now time.Time, spec sdk.DetectorSpec) {
 	for _, change := range changes {
-		if !c.opens(change.Before) && c.opens(change.After) {
+		switch {
+		case c.opens(change.Before) && !c.opens(change.After):
+			// An opener that fell back to a clue no longer waits for an incident.
+			c.batcher.RemoveKeys([]string{FindingStateKey(change.After.DetectorID, FindingFingerprint(change.After))})
+		case !c.opens(change.Before) && c.opens(change.After):
+			// Inside an open incident the clue may already ride in its request:
+			// join the alert set first, then refresh the carried finding.
+			if c.joinAlertSet(change.After, now) {
+				c.mergeIntoOpenIncident(change.After)
+				continue
+			}
 			c.admitActivation(ctx, change.After, now, spec)
 		}
 	}

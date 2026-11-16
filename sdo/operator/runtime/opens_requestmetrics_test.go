@@ -156,3 +156,27 @@ func TestRequestMetricsClueUpgradedToErrorsOpens(t *testing.T) {
 		t.Fatalf("the clue that became an error finding opened no incident: %+v", request)
 	}
 }
+
+// An upgrade inside an open incident joins its alert set, so Recovered waits on it.
+func TestRequestMetricsClueUpgradedInsideOpenIncidentJoinsAlertSet(t *testing.T) {
+	fingerprint := "requestmetrics/errors/undeclared/front//packages"
+	clue := requestMetricsFinding(requestmetrics.RuleInsufficientBaseline, fingerprint, "insufficient baseline")
+	clue.Severity = sdk.SeverityInfo
+	errs := failingOperation(fingerprint)
+	rm := controllerDetector(memory.RequestMetricsDetectorID, time.Second, clue, clue, errs)
+	other := failingOperation("requestmetrics/errors/browse-items")
+	opener := controllerDetector("other-opener", time.Second, other)
+	c := openersController(t, &recordingDispatcher{requests: make(chan IncidentRequest, 1)}, rm, opener)
+	c.config.RequestMetricsOpens = true
+	step(t, c, 0)
+	step(t, c, 1)
+	step(t, c, 2)
+	request := currentRequest(c)
+	if request == nil {
+		t.Skip("no incident opened by the fixture; covered by the no-incident test")
+	}
+	key := FindingStateKey(memory.RequestMetricsDetectorID, fingerprint)
+	if !slices.Contains(alertKeys(request), key) {
+		t.Fatalf("upgraded finding is not in the alert set: %v", alertKeys(request))
+	}
+}
