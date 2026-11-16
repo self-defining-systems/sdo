@@ -1,6 +1,7 @@
 """``python -m benchmarks.sregym.analysis <report> ...``: the one entry point for the analysis reports.
 
-Reports: ``wall-time`` (agent transcripts of the given cells, or transcript files), ``phases`` (marks from inject to close, and where the agent's span went), ``learning-economics``,
+Reports: ``wall-time`` (agent transcripts of the given cells, or transcript files), ``phases`` (marks from inject
+to close, and where the agent's span went), ``learning-economics``,
 ``sweep`` and ``detection`` (cells from ``--manifest`` with ``--pool``, or cell directories named
 ``<fault>-<arm>-<rev>``), and ``onboarding`` (directories holding ``scorecard.json``). ``all`` is the
 end-of-batch hook: it runs every report whose inputs exist and writes ``<out>/<report>.md`` and ``.json``
