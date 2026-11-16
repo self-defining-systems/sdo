@@ -47,12 +47,18 @@ validate_pattern="./sdo/operator/memory/validate"
 # A pull request run names the packages its changes can affect (scripts/ci_select.py);
 # without a plan, or when the plan is the full suite, every package runs.
 if [[ -n "${SDO_CI_PLAN:-}" && "$(python3 scripts/ci_select.py mode --plan "$SDO_CI_PLAN")" == selected ]]; then
-    mapfile -t patterns < <(python3 scripts/ci_select.py go-patterns --plan "$SDO_CI_PLAN" --shard "${2:?a selected run needs a shard}")
+    # Capture first so a selector crash aborts (set -e) instead of silently dropping the selection.
+    selected_out="$(python3 scripts/ci_select.py go-patterns --plan "$SDO_CI_PLAN" --shard "${2:?a selected run needs a shard}")"
+    mapfile -t patterns <<< "$selected_out"
     # Whole-tree guards (//ci:whole-tree) scan sources no changed-file mapping can attribute, so every
     # pull request runs them, with -run, even in packages the selection skipped.
-    mapfile -t guard_lines < <(python3 scripts/ci_select.py go-guards --plan "$SDO_CI_PLAN" --shard "$2")
+    guard_out="$(python3 scripts/ci_select.py go-guards --plan "$SDO_CI_PLAN" --shard "$2")"
+    mapfile -t guard_lines <<< "$guard_out"
     guard_run="${guard_lines[0]:-}"
-    guard_patterns=("${guard_lines[@]:1}")
+    guard_patterns=()
+    if [[ ${#guard_lines[@]} -gt 1 ]]; then
+        guard_patterns=("${guard_lines[@]:1}")
+    fi
     if [[ ${#patterns[@]} -gt 0 && -z "${patterns[0]}" ]]; then
         patterns=()
     fi

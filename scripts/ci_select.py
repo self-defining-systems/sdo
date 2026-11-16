@@ -448,14 +448,14 @@ def plan_for(root: Path, config: Config, changed: list[str], deleted: list[str])
     return plan
 
 
-def _test_files(files: list[str], suffix: str) -> list[str]:
-    return [f for f in files if f.endswith(suffix) and not f.startswith("tests/fixtures/")]
+def _test_files(root: Path, files: list[str], suffix: str) -> list[str]:
+    return [f for f in files if f.endswith(suffix) and not f.startswith("tests/fixtures/") and (root / f).is_file()]
 
 
 def go_whole_tree_tests(root: Path, files: list[str]) -> dict[str, list[str]]:
     """Package directory -> names of its tests marked ``//ci:whole-tree``."""
     guards: dict[str, list[str]] = {}
-    for path in _test_files(files, "_test.go"):
+    for path in _test_files(root, files, "_test.go"):
         names = GO_GUARD.findall((root / path).read_text(errors="replace"))
         if names:
             guards.setdefault(str(PurePosixPath(path).parent), []).extend(names)
@@ -465,7 +465,7 @@ def go_whole_tree_tests(root: Path, files: list[str]) -> dict[str, list[str]]:
 def python_whole_tree_tests(root: Path, files: list[str]) -> set[str]:
     return {
         f
-        for f in _test_files(files, ".py")
+        for f in _test_files(root, files, ".py")
         if PurePosixPath(f).name.startswith("test_") and PY_GUARD.search((root / f).read_text(errors="replace"))
     }
 
@@ -473,14 +473,14 @@ def python_whole_tree_tests(root: Path, files: list[str]) -> set[str]:
 def unmarked_tree_walkers(root: Path, files: list[str]) -> list[str]:
     """Test files that scan a source tree but neither carry the whole-tree mark nor a reasoned exemption."""
     bad: list[str] = []
-    for path in _test_files(files, "_test.go"):
+    for path in _test_files(root, files, "_test.go"):
         text = (root / path).read_text(errors="replace")
         if GO_WALK.search(text) and GO_TREE_ROOT.search(text) and not (GO_GUARD.search(text) or GO_SCOPED.search(text)):
             bad.append(
                 f"{path}: scans a source tree; mark the guard `//ci:whole-tree` above its Test func, "
                 "or `//ci:scoped <reason>` when it only reads fixtures or named files"
             )
-    for path in _test_files(files, ".py"):
+    for path in _test_files(root, files, ".py"):
         if not PurePosixPath(path).name.startswith("test_"):
             continue
         text = (root / path).read_text(errors="replace")

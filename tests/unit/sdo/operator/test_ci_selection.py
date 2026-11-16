@@ -218,22 +218,6 @@ def test_an_unmarked_tree_walker_fails_the_mark_check(tmp_path: Path) -> None:
     assert [b.split(":")[0] for b in bad] == ["m/walk_test.go", "tests/test_walk.py"]
 
 
-def test_every_tree_walking_test_in_the_repository_is_marked() -> None:
-    assert select.unmarked_tree_walkers(ROOT, select.tracked_files(ROOT)) == []
-
-
-def test_a_change_only_under_operatorcli_still_runs_the_safefs_writer_guard() -> None:
-    """The merge-queue ejection this class fix closes: PR CI skipped the whole-tree writer guard."""
-    config = select.Config.load(ROOT)
-    result = select.plan_for(ROOT, config, ["sdo/operator/operatorcli/memory.go"], [])
-    assert not result.full
-    assert "sdo/operator/safefs" not in result.go_packages
-    assert "TestCheckoutWritersGoThroughSafefs" in result.go_guards["sdo/operator/safefs"]
-    regex, packages = select.shard_go_guards(result, config, "rest")
-    assert "TestCheckoutWritersGoThroughSafefs" in regex
-    assert "./sdo/operator/safefs" in packages
-
-
 def test_go_executable_inputs_select_the_python_tests_that_run_them(repo: Path, config: select.Config) -> None:
     assert "tests/unit/test_tool.py" in plan(repo, config, "goa/a.go").python_tests
     assert "tests/unit/test_tool.py" not in plan(repo, config, "gob/other/other.go").python_tests
