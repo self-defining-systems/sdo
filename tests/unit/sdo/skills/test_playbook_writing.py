@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[4]
 SKILL = ROOT / "sdo/skills/playbook-writing"
 PROGRAM = ROOT / "sdo/operator/sdk/program"
-BUDGET_BYTES = 1536
+BUDGET_BYTES = 2048
 
 
 def _declared() -> set[str]:
@@ -47,3 +47,7 @@ def test_every_program_identifier_the_skill_and_examples_name_exists_in_the_sdk(
     named.discard("X")
     missing = sorted(name for name in named if name not in declared)
     assert not missing, f"the skill names SDK identifiers that do not exist: {missing}"
+
+
+def test_the_skill_says_a_log_line_is_never_the_condition_for_a_match() -> None:
+    assert "Never make a log line the condition for `Match`" in (SKILL / "SKILL.md").read_text(encoding="utf-8")

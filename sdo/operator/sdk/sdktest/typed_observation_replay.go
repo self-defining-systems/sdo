@@ -20,7 +20,7 @@ func (v *ReplayReadView) LogsWithOptions(ref sdk.ObjectRef, options corev1.PodLo
 	if err != nil {
 		return "", err
 	}
-	return program.NewestLogBytes(r, limit), nil
+	return newestLines(program.NewestLogBytes(r, limit), v.LogTail), nil
 }
 func (v *ReplayReadView) PodUsage(ref sdk.ObjectRef) (*metricsv1beta1.PodMetrics, error) {
 	var r *metricsv1beta1.PodMetrics

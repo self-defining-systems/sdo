@@ -160,6 +160,8 @@ const (
 
 	// Compile.
 	RuleProgramPlanInvalid      = "program.plan-invalid"
+	// RuleProgramLogGated is raised by the generated replay test (sdktest.CheckDiagnoseLogRobust).
+	RuleProgramLogGated         = "program.log-gated-diagnose"
 	RuleProgramMitigationRepair = "program.mitigation-not-repaired"
 	RuleDetectorCompile         = "detector.compile"
 	RuleDetectorVet             = "detector.vet"

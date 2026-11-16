@@ -87,7 +87,10 @@ func (v *RecordingReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff
 type ReplayReadView struct {
 	Snapshot
 	Calls []PrimitiveCall
-	used  map[int]bool
+	// LogTail, when positive, cuts every Logs result to its newest LogTail lines, the way a busy pod's
+	// bounded read looks.
+	LogTail int
+	used    map[int]bool
 	mu    sync.Mutex
 }
 
@@ -148,7 +151,7 @@ func sameJSON(left, right []byte) bool {
 func (v *ReplayReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error) {
 	var result string
 	err := v.replay("Logs", []any{ref, container, since}, &result)
-	return result, err
+	return newestLines(result, v.LogTail), err
 }
 func (v *ReplayReadView) ProbeTCP(ref sdk.ObjectRef, port int32) (program.ProbeResult, error) {
 	var result program.ProbeResult

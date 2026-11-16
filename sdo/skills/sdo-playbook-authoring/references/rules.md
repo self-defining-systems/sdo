@@ -75,6 +75,9 @@ Replay results are information only.
 - Diagnose must observe its own repair. Read bookkeeping annotations (`kubectl.kubernetes.io/restartedAt`,
   revisions, last-applied) from the live object: source and baseline comparisons strip them, so a lookup there
   never changes and the program matches again after its own restart. Enforced by: `program.normalized-read`.
+- Diagnose never gates `Match` on a log line: a log read keeps only the newest ~64 KiB, so a busy pod's window can
+  drop the line. Match on the state the fix changed and use logs as evidence; `Unknown` when only logs could confirm.
+  Enforced by: `program.log-gated-diagnose`.
 - Diagnose compares typed fields (`diff.ContainerChanges`, `diff.Field`), never a substring of `diff.Text`;
   such programs still load but are noted for rewrite. Enforced by: `program.diff-text-match`.
 

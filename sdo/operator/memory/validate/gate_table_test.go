@@ -965,6 +965,7 @@ func TestGateNotes(t *testing.T) {
 
 // gateRuleCoverage names the rules with no bad row, each with the reason.
 var gateRuleCoverage = map[string]string{
+	RuleProgramLogGated:       "covered by sdk/sdktest/log_robust_test.go (TestCheckDiagnoseLogRobustRefusesALogGatedMatch): the generated replay test raises it",
 	RuleProgramPlanInvalid:    "covered by repair_statement_test.go (TestRepairStatementLiteralsAreCheckedAsTheEngineWillApplyThem)",
 	RuleDataCheckInvalid:      "covered by data_checks_test.go (TestDataChecksAreValidatedAsReadOnlyAndBounded) and the datacheck package's validation table",
 	RuleDataCheckComponent:    "covered by data_checks_test.go (TestDataChecksResolveToMapComponentsWithDataRoles): it needs an application map with data roles",

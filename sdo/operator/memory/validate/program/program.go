@@ -445,8 +445,9 @@ func TestProgramCorpus(t *testing.T){
  gaps=append(gaps,r.Notes...)
  notes=append(notes,ReplayNote(%q,%q,r))
  if m,ok:=registry.Mitigator(%q);ok{if err:=sdktest.CheckPlanValid(m,c.Corpus);err!=nil{t.Error(err)}}
+ if d,ok:=registry.Diagnoser(%q);ok{if err:=sdktest.CheckDiagnoseLogRobust(d,c.Corpus);err!=nil{t.Error(err)}}
  })
-`, item.ID+"/"+id, id, item.ID, id, item.ID, item.ID, id, item.ID)
+`, item.ID+"/"+id, id, item.ID, id, item.ID, item.ID, id, item.ID, item.ID)
 		}
 	}
 	test.WriteString("}\n")

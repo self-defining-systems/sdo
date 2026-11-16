@@ -8,6 +8,11 @@ package sdktest // import "sdo.dev/operator/sdk/sdktest"
 
 CONSTANTS
 
+const BusyLogTail = 20
+    BusyLogTail is how many newest log lines a Diagnose is still expected to
+    decide on: a read returns only the newest 64 KiB, which on a busy pod can be
+    a few dozen lines.
+
 const CapturedFixedNoMatchPhase = "fixed"
     CapturedFixedNoMatchPhase identifies observed negative evidence only.
 
@@ -34,6 +39,13 @@ func CanonicalSnapshot(raw []byte) ([]byte, error)
 func CaptureScoped(scoped sdk.ScopedObservationSource) (sdk.ScopedSnapshot, []sdk.ObjectRef, error)
     CaptureScoped freezes a scoped observation source into its credential-free
     replay form and lists the observed targets as object references.
+
+func CheckDiagnoseLogRobust(d program.Diagnoser, c CorpusCase) error
+    CheckDiagnoseLogRobust runs Diagnose on the case's opening state twice,
+    once on the recorded logs and once with every Logs result cut to its newest
+    BusyLogTail lines. A verdict that flips from Match means the program gates
+    on a log line that a busy pod's bounded read drops, so it would miss the
+    fault on a repeat.
 
 func CheckGeneralization(t testing.TB, p program.Diagnoser, c CorpusCase, peer program.Bindings)
 func CheckMitigationRepairs(p program.Diagnoser, m program.Mitigator, c CorpusCase) error
@@ -212,16 +224,4 @@ type RecordingReadView struct {
 }
     RecordingReadView serializes recorded calls and OnRecord callbacks. ReadView
     must support concurrent reads; inspect Calls only after all readers finish.
-
-func (v *RecordingReadView) AdmissionWebhooksFor(subject sdk.ObjectRef) ([]program.AdmissionWebhook, error)
-
-func (v *RecordingReadView) AlertsResult() (metrics.AlertsResult, bool)
-
-func (v *RecordingReadView) AppMap() (program.AppMap, error)
-    AppMap records the accepted application map the wrapped view read.
-
-func (v *RecordingReadView) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error)
-
-func (v *RecordingReadView) DataChecks() (map[string]string, error)
-    DataChecks records the accepted data checks the wrapped view read.
 ```
