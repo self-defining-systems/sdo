@@ -38,6 +38,8 @@ reports, not raw logs. When a result is wrong, say why and send it back.
 
 ## What done means for each journey
 
+When goal.md lists journeys, they are authoritative: cover each fully (`journey: <id>` on its operations) and still map the routes.
+
 Every user journey is instrumented and detected: mapped in the app's own metrics (with the background work it
 triggers), errors and latency per journey, a probe that checks its result end to end, a detector that names it
 when any component on its path breaks, a true component path with metrics, logs and trace pointers. The

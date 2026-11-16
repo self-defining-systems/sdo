@@ -75,3 +75,35 @@ func judgeRoutes(ctx context.Context, cfg Config, report *Report) {
 		report.add(ItemRoutesAssigned, "routes", Green, fmt.Sprintf("all %d listed routes are a journey's route or excluded", len(listed)))
 	}
 }
+
+// ItemGivenJourneys is red for a human-given journey no operation serves and
+// for an operation naming a journey goal.md does not list. Each operation of a
+// given journey is held to the same checklist as any other.
+const ItemGivenJourneys = "given-journeys"
+
+func judgeGivenJourneys(cfg Config, report *Report) {
+	if len(cfg.Journeys) == 0 {
+		return
+	}
+	known := map[string]bool{}
+	served := map[string][]string{}
+	for _, g := range cfg.Journeys {
+		known[g.ID] = true
+	}
+	for _, op := range cfg.Map.Operations {
+		switch {
+		case op.Journey == "":
+		case !known[op.Journey]:
+			report.add(ItemGivenJourneys, op.ID, Red, fmt.Sprintf("names journey %q, which goal.md does not list: use a listed journey id, or drop the field", op.Journey))
+		default:
+			served[op.Journey] = append(served[op.Journey], op.ID)
+		}
+	}
+	for _, g := range cfg.Journeys {
+		if len(served[g.ID]) == 0 {
+			report.add(ItemGivenJourneys, g.ID, Red, fmt.Sprintf("no operation serves it (%s): map the operations that do it with journey: %s", g.What, g.ID))
+			continue
+		}
+		report.add(ItemGivenJourneys, g.ID, Green, "served by "+strings.Join(served[g.ID], ", "))
+	}
+}

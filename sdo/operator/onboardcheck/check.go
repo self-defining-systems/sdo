@@ -79,6 +79,8 @@ type Config struct {
 	// the detectors (each judged at least once). It runs no break item and its
 	// report is never clean.
 	Quick bool
+	// Journeys are the human-given journeys of goal.md; empty means none.
+	Journeys []appmap.GivenJourney
 	// Routes runs the map's route-list command; nil makes the routes item
 	// red (the list cannot be read).
 	Routes RouteLister
@@ -299,6 +301,7 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		return Report{}, err
 	}
 	judgeRoutes(ctx, cfg, &report)
+	judgeGivenJourneys(cfg, &report)
 	finalize(cfg, &report)
 	return report, nil
 }

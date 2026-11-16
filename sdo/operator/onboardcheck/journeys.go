@@ -39,6 +39,8 @@ type Cell struct {
 // note.
 type Journey struct {
 	Operation string `json:"operation"`
+	// Given is the human-given journey the operation serves, if any.
+	Given     string `json:"journey,omitempty"`
 	Mapping   Cell   `json:"mapping"`
 	Errors    Cell   `json:"errors"`
 	Latency   Cell   `json:"latency"`
@@ -236,7 +238,7 @@ func errorClasses(errors string, observed []string) string {
 func finalize(cfg Config, r *Report) {
 	judgeProbesAndPointers(cfg, r)
 	for _, op := range cfg.Map.Operations {
-		j := Journey{Operation: op.ID}
+		j := Journey{Operation: op.ID, Given: op.Journey}
 		j.Mapping = cellOf(*r, op.ID, ItemJourneys, ItemObserved)
 		j.Errors = cellOf(*r, op.ID, ItemErrorsSeparable)
 		j.Latency = cellOf(*r, op.ID, ItemLatency)
@@ -325,9 +327,15 @@ func tracesCell(m appmap.Map, op appmap.Operation) Cell {
 func journeyTable(js []Journey) string {
 	var b strings.Builder
 	b.WriteString("journeys (a mapping, b errors, c latency, d probe, e detection, f map, g traces):\n")
+	label := func(j Journey) string {
+		if j.Given != "" {
+			return j.Operation + " (" + j.Given + ")"
+		}
+		return j.Operation
+	}
 	width := len("journey")
 	for _, j := range js {
-		width = max(width, len(j.Operation))
+		width = max(width, len(label(j)))
 	}
 	mark := func(c Cell) string {
 		switch {
@@ -342,7 +350,7 @@ func journeyTable(js []Journey) string {
 	}
 	fmt.Fprintf(&b, "  %-*s  %-4s %-4s %-4s %-4s %-4s %-4s %-4s\n", width, "journey", "a", "b", "c", "d", "e", "f", "g")
 	for _, j := range js {
-		fmt.Fprintf(&b, "  %-*s  %-4s %-4s %-4s %-4s %-4s %-4s %-4s\n", width, j.Operation, mark(j.Mapping), mark(j.Errors), mark(j.Latency), mark(j.Probe), mark(j.Detection), mark(j.Map), mark(j.Traces))
+		fmt.Fprintf(&b, "  %-*s  %-4s %-4s %-4s %-4s %-4s %-4s %-4s\n", width, label(j), mark(j.Mapping), mark(j.Errors), mark(j.Latency), mark(j.Probe), mark(j.Detection), mark(j.Map), mark(j.Traces))
 	}
 	for _, j := range js {
 		for i, c := range []Cell{j.Mapping, j.Errors, j.Latency, j.Probe, j.Detection, j.Map, j.Traces} {

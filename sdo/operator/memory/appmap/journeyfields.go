@@ -1,6 +1,13 @@
 package appmap
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+
+	"sdo.dev/operator/memory/layout"
+)
 
 // The per-journey checklist of the onboarding check needs two optional map
 // fields that the current schema lacks: Operation.Triggers (the background job
@@ -68,4 +75,43 @@ func (m Map) Assigned(line string) bool {
 		}
 	}
 	return false
+}
+
+// GivenJourney is a user journey a human lists in goal.md's front matter, in
+// user terms: no routes or components.
+type GivenJourney struct {
+	ID   string `yaml:"id"`
+	What string `yaml:"what"`
+}
+
+// ParseGoalJourneys reads the optional journeys list of goal.md's front
+// matter. An operation serves one with its journey field.
+func ParseGoalJourneys(goal []byte) ([]GivenJourney, error) {
+	doc, err := layout.ParseDocument(goal)
+	if err != nil {
+		return nil, err
+	}
+	raw, ok := doc.Meta["journeys"]
+	if !ok {
+		return nil, nil
+	}
+	data, err := yaml.Marshal(raw)
+	if err != nil {
+		return nil, err
+	}
+	var out []GivenJourney
+	if err := yaml.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("goal journeys: %w", err)
+	}
+	seen := map[string]bool{}
+	for _, g := range out {
+		switch {
+		case strings.TrimSpace(g.ID) == "" || strings.TrimSpace(g.What) == "":
+			return nil, fmt.Errorf("goal journeys: every journey needs an id and what")
+		case seen[g.ID]:
+			return nil, fmt.Errorf("goal journeys: duplicate id %q", g.ID)
+		}
+		seen[g.ID] = true
+	}
+	return out, nil
 }
