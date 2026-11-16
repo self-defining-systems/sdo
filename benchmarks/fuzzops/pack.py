@@ -145,6 +145,12 @@ def write_attached_pack(pack: SourcePack, out: Path) -> Path:
         raise PackError(f"{pack.root} has no {journeys}")
     out.mkdir(parents=True, exist_ok=True)
     attached = {"name": app["name"], "up": "./up.sh", "down": "./down.sh", "entry": app["entry"], "journeys": journeys}
+    seed = app.get("seed")
+    if seed:
+        if not (pack.root / seed).is_file():
+            raise PackError(f"{pack.root} has no {seed}")
+        attached["seed"] = seed
+        shutil.copy2(pack.root / seed, out / seed)
     (out / "app.yaml").write_text(json.dumps(attached, indent=2) + "\n")
     shutil.copy2(pack.root / journeys, out / journeys)
     if (pack.root / "faults").is_dir():

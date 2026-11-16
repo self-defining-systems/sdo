@@ -1129,6 +1129,11 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     if rc != 0:
         tail = (lane_dir / "install-existing.log").read_text()[-300:].strip().replace("\n", " ")
         raise HookError(f"install-existing exited {rc}: {tail}")
+    # the adoption restarted the app: wait for it, then bring back the pack's seeded data (when it has a seed script)
+    if source.app().get("seed"):
+        wait_rollouts(kube, namespace)
+        run_seed(source, env)
+        out("app reseeded")
     # install-existing returns before the controller runs: the reset waits for it to acknowledge.
     reset = reset_when_running(binary.resolve(), baseline.control, kubeconfig)
     out(f"incidents reset: generation {reset.get('generation')}")
@@ -1151,6 +1156,53 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
         memory = seed_lane(env, block, out)
     out(json.dumps({"pack": str(attached), "operator_version": revision, "memory": memory}))
     return 0
+
+
+SEED_TIMEOUT_S = 900
+
+
+def run_seed(pack: SourcePack, env: Mapping[str, str]) -> bool:
+    """The pack's own seed script (``seed:`` in its app.yaml), run against the lane's app: an operator that adopts
+    the app re-deploys it, and stores that keep their data in memory come back empty. True when one ran."""
+    seed = pack.app().get("seed")
+    if not seed:
+        return False
+    script = (pack.root / str(seed)).resolve()
+    if not script.is_file():
+        raise HookError(f"the pack's seed script {seed} is missing")
+    seed_env = {
+        **os.environ,
+        "NAMESPACE": _need(env, "FUZZOPS_NAMESPACE"),
+        "KUBE_CONTEXT": env.get("FUZZOPS_KUBE_CONTEXT", ""),
+        "KIND_CLUSTER": env.get("FUZZOPS_KIND_CLUSTER", ""),
+        "KUBECONFIG": env.get("KUBECONFIG", ""),
+    }
+    if env.get("FUZZOPS_ENTRY_HOST"):
+        seed_env["FUZZOPS_ENTRY_HOST"] = env["FUZZOPS_ENTRY_HOST"]
+    proc = subprocess.run(
+        [str(script)],
+        cwd=pack.root,
+        env=seed_env,
+        capture_output=True,
+        text=True,
+        timeout=SEED_TIMEOUT_S,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise HookError(f"seed script {seed} exited {proc.returncode}: {(proc.stderr or proc.stdout).strip()[-300:]}")
+    return True
+
+
+def wait_rollouts(kube: Kube, namespace: str, timeout_s: int = 600) -> None:
+    """Every Deployment and StatefulSet of the app namespace finished rolling out (the adoption re-deploys them)."""
+    for kind in ("deployment", "statefulset"):
+        listed = _run(kube.cmd("-n", namespace, "get", kind, "-o", "name"), f"list {kind}", 120).stdout
+        for name in listed.split():
+            _run(
+                kube.cmd("-n", namespace, "rollout", "status", name, f"--timeout={timeout_s}s"),
+                "rollout",
+                timeout_s + 60,
+            )
 
 
 RESET_TIMEOUT = "2m"
