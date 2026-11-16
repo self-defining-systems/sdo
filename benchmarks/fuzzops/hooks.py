@@ -1483,6 +1483,11 @@ def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
         # prepared state with the lane's own reset, the same one a used lane gets, instead of refusing the claim.
         out("the lane moved while held, restoring it: " + "; ".join(problems))
         reset_lane(env, reset_steps(env, lambda: fuzzops_app(env, "reset")), out)
+    prove_golden(
+        lambda: fuzzops_app(env, "verify"),
+        lambda: reset_lane(env, reset_steps(env, lambda: fuzzops_app(env, "reset")), out),
+        out,
+    )
     if why := idle_reason(kube.state(control)):
         raise HookError(f"the operator is not idle: {why}")
     record["revision"] = revision
@@ -2057,15 +2062,45 @@ def send_bundle(kube: Kube, control: str, pod: str, bundle: Path) -> None:
         raise HookError(f"sending the memory bundle failed: {proc.stderr.decode()[-300:]}")
 
 
+FRESH_FINGERPRINT_ENV = "BENCH_FRESH_FINGERPRINT"
+
+
+def golden_directory(env: Mapping[str, str]) -> Path:
+    return Path(_need(env, "BENCH_LANE_DIR")).resolve() / GOLDEN_DIRECTORY
+
+
+def prove_golden(
+    verify: Callable[[], object], restore: Callable[[], object], out: Callable[[str], None] = _print
+) -> None:
+    """A claimed lane's data stores must be the golden copy's before an operator is handed over: a fingerprint of
+    their structure, seeded content and row counts, recorded when the copy was taken. A mismatch forces a full restore
+    of the golden copy (which verifies itself); a lane that still differs fails the claim."""
+    try:
+        verify()
+        return
+    except HookError as exc:
+        out(f"the lane's data stores differ from the golden copy, restoring them: {exc}")
+    restore()
+    try:
+        verify()
+    except HookError as exc:
+        raise HookError(f"the lane's data stores differ from the golden copy after a full restore: {exc}") from exc
+
+
 def fuzzops_app(env: Mapping[str, str], verb: str) -> dict[str, Any]:
     """``fuzzops app snapshot|reset`` for the lane's app against its golden directory; the receipt is its last
     stdout line. A nonzero exit (the app is not the golden copy) is a ``HookError``."""
     binary = env.get("FUZZOPS_BIN") or shutil.which("fuzzops")
     if not binary:
         raise HookError("fuzzops binary not found (FUZZOPS_BIN)")
-    golden = Path(_need(env, "BENCH_LANE_DIR")).resolve() / GOLDEN_DIRECTORY
-    if verb == "reset" and not (golden / "meta.json").is_file():
+    golden = golden_directory(env)
+    if verb in ("reset", "verify") and not (golden / "meta.json").is_file():
         raise HookError(f"no golden copy of the app in {golden}: run the snapshot verb on a prepared lane first")
+    extra: list[str] = []
+    if verb == "snapshot" and env.get(FRESH_FINGERPRINT_ENV):
+        # the copy is refused unless the stores equal the lane's fresh deploy's: a golden copy carries whatever it
+        # was taken of into every later claim
+        extra = ["--fresh", env[FRESH_FINGERPRINT_ENV]]
     proc = subprocess.run(
         [
             binary,
@@ -2077,6 +2112,7 @@ def fuzzops_app(env: Mapping[str, str], verb: str) -> dict[str, Any]:
             _need(env, "FUZZOPS_NAMESPACE"),
             "--dir",
             str(golden),
+            *extra,
         ],
         capture_output=True,
         text=True,
@@ -2188,6 +2224,16 @@ def wait_idle_stable(kube: Kube, control: str, timeout: float, quiet: float) -> 
 def snapshot(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     """Take the lane's app golden copy while the controller is paused (the copy scales the data stores down).
     Run once on a prepared, idle lane; ``reset`` returns the lane to this state."""
+    try:
+        return _snapshot(env, out)
+    except BaseException:
+        # a snapshot that did not finish leaves no golden copy: the lane is released by teardown and rebuilt, and
+        # a claim never restores a copy whose snapshot was reported failed
+        shutil.rmtree(golden_directory(env), ignore_errors=True)
+        raise
+
+
+def _snapshot(env: Mapping[str, str], out: Callable[[str], None]) -> int:
     started = time.monotonic()
     generation = f"snapshot-{int(time.time())}"
     set_maintenance(env, True, generation + "-pause")
