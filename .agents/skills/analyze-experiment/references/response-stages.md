@@ -219,3 +219,12 @@ symptom just because it selects or names a nearby workload. The final claim
 boundary reuses the shared wait decision after preparation; a cleared skip emits
 no responder_dispatched lifecycle event. Published legacy/content-addressed
 requests, executions and workers retain ownership and are rejoined.
+
+## Fixed by the playbook alone
+
+A repeat counts as fixed by the playbook alone only when all hold, in every arm, with seconds taken after inject:
+no responder was dispatched and an automatic-stage plan application ran; the users had harm (their last bad second
+came after the fault's onset); and recovery followed the playbook's write (the write started before the last bad
+second, and no bad second came more than a short settle allowance, 15 s, after the write completed). A harm that
+ended before the write, or a fault that never hurt users, is not credited to the playbook. The record's `users`
+series is indexed from `users.start`, not from inject: shift it by `users.start - inject_at`.
