@@ -273,3 +273,23 @@ def test_a_failed_closing_turn_has_an_end_time_and_is_not_missing_evidence(tmp_p
     ev = ce.build(run)
     assert not any("closing turn" in p for p in ev.problems)
     assert ev.timelines[0].closing_turn_end_at == T.format(30)
+
+
+def test_collects_verdict_on_the_manifest_does_not_keep_a_repaired_cell_incomplete(tmp_path: Path) -> None:
+    """collect.json records 'evidence-manifest' and the blocked 'reset' as errors when collect found gaps; once the
+    gaps are repaired `validate` must be able to pass, so those two parts are not evidence themselves."""
+    run = make_cell(tmp_path)
+    collect = json.loads((run / "operator/collect.json").read_text())
+    collect["parts"] = {
+        "memory": "ok",
+        "evidence-manifest": "error: evidence incomplete: run.json missing",
+        "reset": "error: blocked, fix the missing evidence",
+    }
+    _w(run / "operator/collect.json", collect)
+    assert ce.build(run).problems == []
+    collect["parts"]["reset"] = "error: incidents reset did not acknowledge"
+    collect["parts"]["memory"] = "error: pod gone"
+    _w(run / "operator/collect.json", collect)
+    problems = " ".join(ce.build(run).problems)
+    assert "collect part reset" in problems
+    assert "collect part memory" in problems
