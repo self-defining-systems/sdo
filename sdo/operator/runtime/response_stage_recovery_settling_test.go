@@ -535,7 +535,8 @@ func TestStageGivesUpAnOpeningDiagnosisThatNeverAnswers(t *testing.T) {
 }
 
 // An Unknown the program answered itself, with every read answered, is a
-// diagnosis: the stage does not ask again, and the agent is not delayed.
+// diagnosis even when it explains itself: the stage does not ask again, and
+// the agent is not delayed.
 func TestStageDoesNotReaskAProgramsOwnUnknown(t *testing.T) {
 	stage, state, _, world := settlingStage(t, settlingCase{undecided: true})
 	if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, &recordingStage{}}); err != nil {

@@ -1354,7 +1354,7 @@ func unansweredRuns(runs []ProgramRun) map[string]string {
 	answered := map[string]bool{}
 	for _, run := range runs {
 		key := stageAttemptKey(run.ProgramID, run.Bindings)
-		if run.Verdict.Result == program.Unknown && programRunContract(run).GetError() != "" {
+		if diagnosisFailed(run.Verdict) {
 			unanswered[key] = run.ProgramID
 		} else {
 			answered[key] = true
@@ -1364,6 +1364,21 @@ func unansweredRuns(runs []ProgramRun) map[string]string {
 		delete(unanswered, key)
 	}
 	return unanswered
+}
+
+// diagnosisFailed reports an Unknown that is a failed diagnosis rather than the
+// program's answer: RunDiagnose and the shared candidate deadline mark one with
+// a resource-less "diagnosis" fact (a failed read, a Diagnose error, a deadline).
+func diagnosisFailed(v program.Verdict) bool {
+	if v.Result != program.Unknown {
+		return false
+	}
+	for _, e := range v.Evidence {
+		if e.Resource.Kind == "" && e.Fact == "diagnosis" {
+			return true
+		}
+	}
+	return false
 }
 
 // diagnosisFailure is the text an Unknown verdict carries about why the
