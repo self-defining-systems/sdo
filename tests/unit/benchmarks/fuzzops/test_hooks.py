@@ -931,6 +931,76 @@ def test_reset_after_install_waits_for_the_controller(monkeypatch: pytest.Monkey
         )
 
 
+class _StartingController:
+    """A lane controller that writes its state ConfigMap only once its start-up (informers, traffic warm-up,
+    first evaluation) is done, after ``starts_after`` polls."""
+
+    def __init__(self, starts_after: int, ready: bool = True) -> None:
+        self.polls = 0
+        self.starts_after = starts_after
+        self.ready = ready
+
+    def state(self, control: str) -> dict[str, Any] | None:
+        self.polls += 1
+        return {"step_count": 1} if self.polls > self.starts_after else None
+
+    def controller_ready(self, control: str) -> bool:
+        return self.ready
+
+    def controller_log_tail(self, control: str, lines: int = 3) -> str:
+        return "INFO responder_standby_created application=fg1"
+
+
+def test_reset_is_requested_only_after_the_controller_finished_starting(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The controller acknowledges resets from its main loop, which it enters after a start-up that took 17 minutes
+    on a loaded host: asking earlier only burns 2-minute acknowledgement waits."""
+    controller = _StartingController(starts_after=40)
+    asked: list[int] = []
+
+    def run(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        asked.append(controller.polls)
+        return subprocess.CompletedProcess(cmd, 0, '{"generation": 5, "acknowledged": true}', "")
+
+    monkeypatch.setattr(hooks.subprocess, "run", run)
+    now = [0.0]
+    receipt = hooks.reset_when_started(
+        controller,  # type: ignore[arg-type]
+        tmp_path / "sdo-operator",
+        "fg1-sdo",
+        None,
+        sleep=lambda s: now.__setitem__(0, now[0] + s),
+        clock=lambda: now[0],
+    )
+    assert receipt["generation"] == 5
+    assert asked == [41]
+    assert 400 <= now[0] < hooks.CONTROLLER_START_PATIENCE_S
+
+
+def test_a_controller_that_never_finishes_starting_fails_with_where_it_is(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    controller = _StartingController(starts_after=10**9, ready=True)
+    monkeypatch.setattr(hooks.subprocess, "run", lambda cmd, **_: pytest.fail("reset asked of a starting controller"))
+    now = [0.0]
+    with pytest.raises(hooks.HookError) as raised:
+        hooks.reset_when_started(
+            controller,  # type: ignore[arg-type]
+            tmp_path / "sdo-operator",
+            "fg1-sdo",
+            None,
+            start_patience=120,
+            sleep=lambda s: now.__setitem__(0, now[0] + s),
+            clock=lambda: now[0],
+        )
+    message = str(raised.value)
+    assert "did not finish starting within 2m" in message
+    assert "pod Ready" in message
+    assert "responder_standby_created" in message
+    assert "no state ConfigMap" in message
+
+
 def _fake_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, registry_fails: bool = False) -> Path:
     """docker, kind and a host registry script that log their calls; returns the log."""
     log = tmp_path / "calls.log"

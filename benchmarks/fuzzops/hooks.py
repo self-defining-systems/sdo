@@ -612,6 +612,14 @@ class Kube:
                 return True
         return False
 
+    def controller_log_tail(self, control: str, lines: int = 3) -> str:
+        pod = self.controller_pod(control)
+        proc = subprocess.run(
+            self.cmd("-n", control, "logs", pod, "-c", CONTROLLER_CONTAINER, f"--tail={lines}"),
+            capture_output=True, text=True, timeout=KUBECTL_TIMEOUT_S, check=False,
+        )  # fmt: skip
+        return proc.stdout
+
     def controller_pod(self, control: str) -> str:
         names = [
             p["metadata"]["name"]
@@ -1137,8 +1145,8 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
         wait_rollouts(kube, namespace)
         run_seed(source, env)
         out("app reseeded")
-    # install-existing returns before the controller runs: the reset waits for it to acknowledge.
-    reset = reset_when_running(binary.resolve(), baseline.control, kubeconfig)
+    # install-existing returns before the controller runs: the reset waits for its start-up to end, then for the ack.
+    reset = reset_when_started(kube, binary.resolve(), baseline.control, kubeconfig)
     out(f"incidents reset: generation {reset.get('generation')}")
     (lane_dir / PREPARED_RECORD).write_text(
         json.dumps(
@@ -1259,7 +1267,60 @@ def reset_incidents(binary: Path, control: str, kubeconfig: Path | None) -> dict
     return receipt
 
 
-RESET_PATIENCE_S = 15 * 60.0
+RESET_PATIENCE_S = 5 * 60.0
+# The controller reads reset requests from its main loop, which it enters only after a synchronous start-up
+# (informer sync, state baseline, the prober's warm-up of every health probe, the first evaluation). That took
+# 15-18 minutes on a loaded host, so the wait is for that start-up to end, bounded well above it.
+CONTROLLER_START_PATIENCE_S = 30 * 60.0
+CONTROLLER_START_POLL_S = 10.0
+
+
+def wait_controller_started(
+    kube: Kube,
+    control: str,
+    patience: float = CONTROLLER_START_PATIENCE_S,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> float:
+    """Wait until the controller has finished starting, seconds waited. The controller writes its state ConfigMap
+    after its start-up evaluation and before it serves resets, so the ConfigMap is the ready signal; the pod's Ready
+    condition holds from the container's first second and says nothing. Raises with where the controller is when
+    ``patience`` runs out."""
+    start = clock()
+    while True:
+        try:
+            if kube.state(control) is not None:
+                return clock() - start
+        except (subprocess.SubprocessError, json.JSONDecodeError, OSError):
+            pass  # a transient kubectl failure is the same as not yet
+        if clock() - start > patience:
+            break
+        sleep(CONTROLLER_START_POLL_S)
+    try:
+        ready = "Ready" if kube.controller_ready(control) else "not Ready"
+        tail = kube.controller_log_tail(control).strip().replace("\n", " | ") or "no log lines"
+    except (subprocess.SubprocessError, OSError, HookError) as exc:
+        ready, tail = "unknown", f"controller read failed: {exc}"
+    raise HookError(
+        f"controller in {control} did not finish starting within {patience / 60:.0f}m: no state ConfigMap "
+        f"{STATE_CONFIGMAP}; pod {ready}; last log: {tail[-400:]}"
+    )
+
+
+def reset_when_started(
+    kube: Kube,
+    binary: Path,
+    control: str,
+    kubeconfig: Path | None,
+    start_patience: float = CONTROLLER_START_PATIENCE_S,
+    patience: float = RESET_PATIENCE_S,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> dict[str, Any]:
+    """``reset_when_running`` once the controller has finished starting: asking earlier only burns a 2-minute
+    acknowledgement wait per request, and a controller that needs longer than the retries last fails the lane."""
+    wait_controller_started(kube, control, start_patience, sleep, clock)
+    return reset_when_running(binary, control, kubeconfig, patience, sleep, clock)
 
 
 def reset_when_running(
@@ -1270,7 +1331,7 @@ def reset_when_running(
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
-    """``reset_incidents`` tried again until the controller, just installed, acknowledges (at most ``patience``)."""
+    """``reset_incidents`` tried again until the controller acknowledges (at most ``patience``)."""
     start = clock()
     while True:
         try:
