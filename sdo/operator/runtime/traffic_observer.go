@@ -67,8 +67,9 @@ type TrafficObserver struct {
 	// warmup is the cancel of the running warm-up wait; settled is true once
 	// that wait concluded (warm, or its bound passed) since the last
 	// BeginWarmup.
-	warmup  context.CancelFunc
-	settled bool
+	warmup    context.CancelFunc
+	settled   bool
+	warmupGen int
 }
 
 // NewTrafficObserver returns nil when no detector consumes a workload.
@@ -186,8 +187,10 @@ func (o *TrafficObserver) BeginWarmup(ctx context.Context, floor time.Duration, 
 		o.warmup()
 	}
 	o.warmup, o.settled = cancel, false
-	o.mu.Unlock()
+	o.warmupGen++
+	gen := o.warmupGen
 	o.wait.Add(1)
+	o.mu.Unlock()
 	go func() {
 		defer o.wait.Done()
 		warm := o.AwaitWarm(running, floor)
@@ -195,6 +198,10 @@ func (o *TrafficObserver) BeginWarmup(ctx context.Context, floor time.Duration, 
 			return
 		}
 		o.mu.Lock()
+		if o.warmupGen != gen {
+			o.mu.Unlock()
+			return
+		}
 		o.settled = true
 		o.mu.Unlock()
 		if done != nil {
