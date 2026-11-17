@@ -3,10 +3,12 @@ package onboardcheck
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"sdo.dev/operator/memory/appmap"
+	"sdo.dev/operator/sdk/metrics"
 )
 
 func harmRun(t *testing.T, fail, reqs float64, pausedReqs float64) Report {
@@ -20,6 +22,36 @@ func harmRunLatency(t *testing.T, pausedLat, runLat float64) Report {
 	t.Helper()
 	return harmRunWith(t, 0, 600, map[string]float64{requestsKey("web", "/items"): 600,
 		latencyCountKey("web"): 600, latencySumKey("web"): 600 * pausedLat}, 600, runLat)
+}
+
+// sampleGate releases the quiet evaluator once SampleHarm's last query, the
+// failure counters, has been answered.
+type sampleGate struct {
+	Querier
+	once     sync.Once
+	released chan struct{}
+}
+
+func (g *sampleGate) Query(ctx context.Context, text string) ([]metrics.Series, error) {
+	out, err := g.Querier.Query(ctx, text)
+	if text == FailureCounters {
+		g.once.Do(func() { close(g.released) })
+	}
+	return out, err
+}
+
+type gatedEvaluator struct {
+	Evaluator
+	released <-chan struct{}
+}
+
+func (g gatedEvaluator) Evaluate(ctx context.Context) (Verdict, error) {
+	select {
+	case <-g.released:
+	case <-ctx.Done():
+		return Verdict{}, ctx.Err()
+	}
+	return g.Evaluator.Evaluate(ctx)
 }
 
 func harmRunWith(t *testing.T, fail, reqs float64, pausedRequests map[string]float64, durReqs, durMean float64) Report {
@@ -60,8 +92,15 @@ func harmRunWith(t *testing.T, fail, reqs float64, pausedRequests map[string]flo
 			p.add("http_request_duration_seconds_sum", map[string]string{"job": "web", "route": "/items"}, durReqs*minutes*durMean)
 		}
 	}
-	cfg := Config{Map: m, Commit: "c", Prom: p, Sender: fakeSender{prom: p, emit: perRoute}, Requests: 1, Poll: time.Second, Wait: w.Wait, Now: w.Now,
-		Quiet: &QuietConfig{Eval: w, Window: 5 * time.Minute, Interval: time.Minute},
+	// Run samples the running window's start while the quiet goroutine is
+	// still advancing the shared fake clock. The sample reads the clock, then
+	// queries counters that follow the clock, so a clock move in between
+	// pairs counters from a later time with an earlier timestamp (a 5 minute
+	// window holding almost no failures). The quiet evaluator therefore
+	// holds the clock until that sample has been read.
+	gate := &sampleGate{Querier: p, released: make(chan struct{})}
+	cfg := Config{Map: m, Commit: "c", Prom: gate, Sender: fakeSender{prom: p, emit: perRoute}, Requests: 1, Poll: time.Second, Wait: w.Wait, Now: w.Now,
+		Quiet: &QuietConfig{Eval: gatedEvaluator{Evaluator: w, released: gate.released}, Window: 5 * time.Minute, Interval: time.Minute},
 		Harm:  &paused}
 	r, err := Run(context.Background(), cfg)
 	if err != nil {
