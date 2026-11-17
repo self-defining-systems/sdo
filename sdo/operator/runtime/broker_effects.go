@@ -261,9 +261,8 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		}
 		switch recheck.Verdict {
 		case closureRecheckConfirmed:
-
+			// The Recovered wait below keeps its own timer across passes.
 			recoveryStates = recheck.States
-			c.clearClosureRecheckWait()
 		case closureRecheckRecovering:
 			// A live SLO is evidence to observe, not a broker rejection. The
 			// same proof owner now requires a new continuous clear window.
@@ -332,7 +331,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		check := c.closureRecoveryCheck(actionCtx, snapshot, effect.Closure)
 		verification = check.record
 		if check.verdict == recoveryPending {
-			if !c.closureRecheckWaitExpired(effect.Identity, check.horizon+effect.Closure.ClosureStabilityWindow) {
+			if !c.recoveredWaitExpired(effect.Identity, check.horizon+effect.Closure.ClosureStabilityWindow) {
 				c.scheduleClosureRecheck()
 				cancel()
 				return nil
@@ -762,6 +761,20 @@ func observerTransient(err error) bool {
 	}
 	var status apierrors.APIStatus
 	return errors.As(err, &status) && status.Status().Code >= 500
+}
+
+// recoveredWaitExpired is closureRecheckWaitExpired for the wait on the
+// Recovered predicate. It has its own timer, so neither a confirmed recheck nor
+// the incomplete-observation and source waits restart it; only a different
+// closure does.
+func (c *Controller) recoveredWaitExpired(identity string, bound time.Duration) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.clock()
+	if c.closureRecoveredIdentity != identity || c.closureRecoveredSince.IsZero() {
+		c.closureRecoveredIdentity, c.closureRecoveredSince = identity, now
+	}
+	return now.Sub(c.closureRecoveredSince) >= bound
 }
 
 // closureRecheckWaitExpired records when this closure's recheck first saw an
