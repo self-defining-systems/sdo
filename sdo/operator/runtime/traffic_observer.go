@@ -64,6 +64,11 @@ type TrafficObserver struct {
 	failure string
 	cancel  context.CancelFunc
 	wait    sync.WaitGroup
+	// warmup is the cancel of the running warm-up wait; settled is true once
+	// that wait concluded (warm, or its bound passed) since the last
+	// BeginWarmup.
+	warmup  context.CancelFunc
+	settled bool
 }
 
 // NewTrafficObserver returns nil when no detector consumes a workload.
@@ -171,9 +176,47 @@ func (o *TrafficObserver) Start(ctx context.Context) {
 	}()
 }
 
+// BeginWarmup runs AwaitWarm in the background and calls done with its result
+// when it concludes; Stop abandons it without calling done. Until it concludes
+// WarmupSettled is false. A second call replaces the running wait.
+func (o *TrafficObserver) BeginWarmup(ctx context.Context, floor time.Duration, done func(warm bool)) {
+	running, cancel := context.WithCancel(ctx)
+	o.mu.Lock()
+	if o.warmup != nil {
+		o.warmup()
+	}
+	o.warmup, o.settled = cancel, false
+	o.mu.Unlock()
+	o.wait.Add(1)
+	go func() {
+		defer o.wait.Done()
+		warm := o.AwaitWarm(running, floor)
+		if running.Err() != nil {
+			return
+		}
+		o.mu.Lock()
+		o.settled = true
+		o.mu.Unlock()
+		if done != nil {
+			done(warm)
+		}
+	}()
+}
+
+// WarmupSettled reports whether the background warm-up concluded. An observer
+// that was never asked to warm up reports true.
+func (o *TrafficObserver) WarmupSettled() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.warmup == nil || o.settled
+}
+
 // Stop ends polling and waits for the poller.
 func (o *TrafficObserver) Stop() {
 	o.mu.Lock()
+	if o.warmup != nil {
+		o.warmup()
+	}
 	cancel := o.cancel
 	o.cancel = nil
 	o.mu.Unlock()

@@ -91,6 +91,11 @@ type ControllerConfig struct {
 	// StartupBound is how long a new install holds its openers until the
 	// application is seen healthy (startupPeriod). Zero runs no period.
 	StartupBound time.Duration
+	// StartupWarmupSettled, when set, reports whether the traffic warm-up that
+	// runs beside start-up has concluded. The start-up period does not count a
+	// settle window as healthy before it has, so the period still waits for
+	// observed traffic although the controller serves meanwhile. Nil: settled.
+	StartupWarmupSettled func() bool
 }
 
 type dispatchCompletion struct {
