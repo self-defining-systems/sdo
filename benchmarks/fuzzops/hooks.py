@@ -60,7 +60,7 @@ import sys
 import tempfile
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -1267,7 +1267,7 @@ def reset_incidents(binary: Path, control: str, kubeconfig: Path | None) -> dict
     return receipt
 
 
-RESET_PATIENCE_S = 5 * 60.0
+RESET_PATIENCE_S = 15 * 60.0
 # The controller reads reset requests from its main loop, which it enters only after a synchronous start-up
 # (informer sync, state baseline, the prober's warm-up of every health probe, the first evaluation). That took
 # 15-18 minutes on a loaded host, so the wait is for that start-up to end, bounded well above it.
@@ -1281,15 +1281,19 @@ def wait_controller_started(
     patience: float = CONTROLLER_START_PATIENCE_S,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
+    since: datetime | None = None,
 ) -> float:
     """Wait until the controller has finished starting, seconds waited. The controller writes its state ConfigMap
-    after its start-up evaluation and before it serves resets, so the ConfigMap is the ready signal; the pod's Ready
-    condition holds from the container's first second and says nothing. Raises with where the controller is when
-    ``patience`` runs out."""
+    after its start-up evaluation, shortly before it serves resets, so a ConfigMap written since ``since`` (default
+    now; a state left by an earlier controller does not count) is the ready signal; the pod's Ready condition holds
+    from the container's first second and says nothing. Raises with where the controller is when ``patience`` runs
+    out."""
+    since = since or datetime.now(UTC)
     start = clock()
     while True:
         try:
-            if kube.state(control) is not None:
+            state, updated = kube.state_configmap(control)
+            if state is not None and (updated is None or updated >= since - timedelta(seconds=FRESH_S)):
                 return clock() - start
         except (subprocess.SubprocessError, json.JSONDecodeError, OSError):
             pass  # a transient kubectl failure is the same as not yet
@@ -1316,10 +1320,11 @@ def reset_when_started(
     patience: float = RESET_PATIENCE_S,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
+    since: datetime | None = None,
 ) -> dict[str, Any]:
     """``reset_when_running`` once the controller has finished starting: asking earlier only burns a 2-minute
     acknowledgement wait per request, and a controller that needs longer than the retries last fails the lane."""
-    wait_controller_started(kube, control, start_patience, sleep, clock)
+    wait_controller_started(kube, control, start_patience, sleep, clock, since)
     return reset_when_running(binary, control, kubeconfig, patience, sleep, clock)
 
 

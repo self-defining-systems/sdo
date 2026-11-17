@@ -939,10 +939,14 @@ class _StartingController:
         self.polls = 0
         self.starts_after = starts_after
         self.ready = ready
+        self.stale: dict[str, Any] | None = None
+        self.stale_at: datetime | None = None
 
-    def state(self, control: str) -> dict[str, Any] | None:
+    def state_configmap(self, control: str) -> tuple[dict[str, Any] | None, datetime | None]:
         self.polls += 1
-        return {"step_count": 1} if self.polls > self.starts_after else None
+        if self.polls <= self.starts_after:
+            return self.stale, self.stale_at
+        return {"step_count": 1}, datetime.now(UTC)
 
     def controller_ready(self, control: str) -> bool:
         return self.ready
@@ -976,6 +980,30 @@ def test_reset_is_requested_only_after_the_controller_finished_starting(
     assert receipt["generation"] == 5
     assert asked == [41]
     assert 400 <= now[0] < hooks.CONTROLLER_START_PATIENCE_S
+
+
+def test_a_state_left_by_an_earlier_controller_does_not_count_as_started(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    controller = _StartingController(starts_after=5)
+    controller.stale = {"step_count": 99}
+    controller.stale_at = datetime.now(UTC) - timedelta(hours=1)
+    asked: list[int] = []
+
+    def run(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        asked.append(controller.polls)
+        return subprocess.CompletedProcess(cmd, 0, '{"generation": 6, "acknowledged": true}', "")
+
+    monkeypatch.setattr(hooks.subprocess, "run", run)
+    hooks.reset_when_started(
+        controller,  # type: ignore[arg-type]
+        tmp_path / "sdo-operator",
+        "fg1-sdo",
+        None,
+        sleep=lambda _: None,
+        clock=lambda: 0.0,
+    )
+    assert asked == [6]
 
 
 def test_a_controller_that_never_finishes_starting_fails_with_where_it_is(
