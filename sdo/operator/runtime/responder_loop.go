@@ -1039,6 +1039,61 @@ func (l *ResponderLoop) RefreshDiagnose(ctx context.Context) []ProgramRun {
 	return l.diagnose(ctx, l.findings, true)
 }
 
+// RediagnosePrograms diagnoses again, against a fresh snapshot and without a
+// capture, only the candidates of the named programs. The opening capture and
+// the view coverage relates findings through stay what the incident opened with.
+func (l *ResponderLoop) RediagnosePrograms(ctx context.Context, ids map[string]bool) []ProgramRun {
+	ctx, closeMemory := withMemoryScope(ctx)
+	defer closeMemory()
+	l.operationMu.Lock()
+	defer l.operationMu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.Programs == nil || len(ids) == 0 {
+		return nil
+	}
+	l.capturePhase = ""
+	view, err := l.snapshotView(ctx)
+	if err != nil {
+		return nil
+	}
+	runs := SelectKeyedProgramCandidates(ctx, onlyPrograms{ProgramRegistry: l.Programs, ids: ids}, view, l.findings, l.deadline(), KeyedMatching{Credits: l.Credits, OpeningKeys: l.Request.OpeningKeys, Stage: true, Restore: sourceRestoreCandidates(view, l.Request, l.findings)})
+	l.stampProgramRuns(runs)
+	l.rememberMatchedViews(ctx, runs, view)
+	l.runs = append(l.runs, runs...)
+	return runs
+}
+
+// onlyPrograms narrows a registry to the named programs.
+type onlyPrograms struct {
+	program.ProgramRegistry
+	ids map[string]bool
+}
+
+func (r onlyPrograms) List() []program.ProgramSpec {
+	var specs []program.ProgramSpec
+	for _, spec := range r.ProgramRegistry.List() {
+		if r.ids[spec.ID] {
+			specs = append(specs, spec)
+		}
+	}
+	return specs
+}
+
+func (r onlyPrograms) Diagnoser(id string) (program.Diagnoser, bool) {
+	if !r.ids[id] {
+		return nil, false
+	}
+	return r.ProgramRegistry.Diagnoser(id)
+}
+
+func (r onlyPrograms) Mitigator(id string) (program.Mitigator, bool) {
+	if !r.ids[id] {
+		return nil, false
+	}
+	return r.ProgramRegistry.Mitigator(id)
+}
+
 // selectCandidates diagnoses the candidates for findings. stage is the
 // automatic stage, which binds a playbook with credited pairs only through
 // them; the responder's own diagnosis also sees the finding-bound ones.

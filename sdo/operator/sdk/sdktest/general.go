@@ -14,7 +14,7 @@ func (v *RecordingReadView) Observe(o program.ExternalOperation) (int32, error) 
 	}
 	r, err := v.ReadView.Observe(o)
 	if err != nil {
-		err = fmt.Errorf("external observation unavailable")
+		err = fmt.Errorf("external observation unavailable: %v", err)
 	}
 	v.record("Observe", []any{o}, r, err)
 	return r, err
@@ -44,7 +44,7 @@ func (v *RecordingReadView) KubernetesRead(q program.KubernetesRequest) (json.Ra
 		}
 	}
 	if err != nil {
-		err = fmt.Errorf("Kubernetes API observation unavailable")
+		err = fmt.Errorf("Kubernetes API observation unavailable: %v", err)
 	}
 	v.record("KubernetesRead", []any{q}, r, err)
 	return r, err

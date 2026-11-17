@@ -70,7 +70,7 @@ Full [SDK](program-sdk.md).
 ## Service routing and ports
 
 - `ReadView.ProbeTCP(to sdk.ObjectRef, port int32) (ProbeResult, error)`: connects to one port of a Pod or Service and records whether it accepted.
-- `ReadView.ProbeHTTP(to sdk.ObjectRef, req HTTPProbe) (ProbeResult, error)`: sends one recorded HTTP request to a Pod or Service.
+- `ReadView.ProbeHTTP(to sdk.ObjectRef, req HTTPProbe) (ProbeResult, error)`: sends one recorded HTTP request to a Service, on its first TCP port (HTTPProbePort).
 - `type HTTPProbe struct{Method string; Path string; Headers map[string]string; Fields map[string]string}`: is the request ProbeHTTP sends.
 - `type RemoveServicePort struct{Ref sdk.ObjectRef; Name string; Port int32; Protocol string; AllowEmpty bool; Reason string}`: removes exactly one Service port.
 

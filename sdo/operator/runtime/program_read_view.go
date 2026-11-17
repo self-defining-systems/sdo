@@ -141,10 +141,11 @@ func (v LiveReadView) ProbeHTTP(ref sdk.ObjectRef, request program.HTTPProbe) (p
 	}
 	for _, service := range v.Services() {
 		if service.Namespace == ref.Namespace && service.Name == ref.Name {
-			if len(service.Spec.Ports) == 0 {
-				return program.ProbeResult{}, errors.New("Service has no port")
+			port, ok := program.HTTPProbePort(service)
+			if !ok {
+				return program.ProbeResult{}, fmt.Errorf("Service %s/%s declares no TCP port for HTTP", ref.Namespace, ref.Name)
 			}
-			return v.probe(ref, service.Spec.Ports[0].Port, &request)
+			return v.probe(ref, port, &request)
 		}
 	}
 	return program.ProbeResult{}, fmt.Errorf("Service %s/%s is absent from snapshot", ref.Namespace, ref.Name)

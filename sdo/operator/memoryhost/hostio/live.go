@@ -170,13 +170,18 @@ func (v *LiveReadView) ProbeHTTP(ref sdk.ObjectRef, p program.HTTPProbe) (progra
 		return program.ProbeResult{}, errors.New("HTTP probe requires a Service")
 	}
 	var port int32
+	found := false
 	for _, s := range v.Services() {
-		if s.Name == ref.Name && s.Namespace == ref.Namespace && len(s.Spec.Ports) > 0 {
-			port = s.Spec.Ports[0].Port
+		if s.Name == ref.Name && s.Namespace == ref.Namespace {
+			found = true
+			port, _ = program.HTTPProbePort(s)
 		}
 	}
+	if !found {
+		return program.ProbeResult{}, fmt.Errorf("probe target Service %s/%s is absent from the memory host's mirror", ref.Namespace, ref.Name)
+	}
 	if port == 0 {
-		return program.ProbeResult{}, fmt.Errorf("probe target Service %s/%s has no port in the memory host's mirror (the Service is absent from the mirror or declares no port)", ref.Namespace, ref.Name)
+		return program.ProbeResult{}, fmt.Errorf("probe target Service %s/%s declares no TCP port for HTTP", ref.Namespace, ref.Name)
 	}
 	target, err := v.target(ref, port)
 	if err != nil {

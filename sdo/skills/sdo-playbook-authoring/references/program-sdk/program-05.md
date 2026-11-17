@@ -38,7 +38,7 @@ type ReadView interface {
 	metrics.UsageSource
 	// ProbeTCP connects to one port of a Pod or Service and records whether it accepted.
 	ProbeTCP(to sdk.ObjectRef, port int32) (ProbeResult, error)
-	// ProbeHTTP sends one recorded HTTP request to a Pod or Service.
+	// ProbeHTTP sends one recorded HTTP request to a Service, on its first TCP port (HTTPProbePort).
 	ProbeHTTP(to sdk.ObjectRef, req HTTPProbe) (ProbeResult, error)
 	// DiffAgainstSource compares quantities by value and excludes controller bookkeeping (revision, last-applied and restart annotations, status and managedFields), accepted server defaults, and replicas targeted by an HPA.
 	DiffAgainstSource(ref sdk.ObjectRef) (Diff, error)
