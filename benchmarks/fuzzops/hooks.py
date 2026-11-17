@@ -1096,6 +1096,9 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
             out(f"declared {line}")
     # (g) the baseline memory as the accepted repository
     memory = clone_baseline(baseline, lane_dir / "app")
+    # the memory's own render (instrumentation) is what must be running when the operator adopts the app
+    if apply_memory_render(_kube(env), namespace, lane_dir / "app", reference, out):
+        out("memory render applied")
     # (h) production restore: install-existing, history kept, no install-time agents
     args, launch_env = install_existing_launch(
         binary.resolve(),
@@ -1190,6 +1193,28 @@ def run_seed(pack: SourcePack, env: Mapping[str, str]) -> bool:
     )
     if proc.returncode != 0:
         raise HookError(f"seed script {seed} exited {proc.returncode}: {(proc.stderr or proc.stdout).strip()[-300:]}")
+    return True
+
+
+def apply_memory_render(
+    kube: Kube, namespace: str, memory: Path, reference: list[dict[str, Any]], log: Callable[[str], None]
+) -> bool:
+    """An onboarding memory may carry an instrumented render (``k8s/render.yaml``: a metrics ConfigMap, annotations)
+    that differs from the install render the lane was deployed from. SDO adopts what is running, so the lane must run
+    the memory's own render before the operator is installed; apply it and wait for the rollouts. True when applied."""
+    path = memory / "k8s" / "render.yaml"
+    if not path.is_file():
+        return False
+    docs = plain_docs(path.read_text())
+    if not render_difference(docs, reference):
+        return False
+    log(f"applying the memory's render ({render_difference(docs, reference)})")
+    _run(
+        kube.cmd("-n", namespace, "apply", "--server-side", "--force-conflicts", "-f", str(path)),
+        "apply the memory's render",
+        600,
+    )
+    wait_rollouts(kube, namespace)
     return True
 
 
