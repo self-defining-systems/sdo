@@ -1255,3 +1255,30 @@ def test_run_seed_runs_the_packs_seed_script_with_the_lane_environment(tmp_path:
     (root / "seed.sh").write_text("#!/bin/sh\nexit 3\n")
     with pytest.raises(HookError, match="seed"):
         hooks.run_seed(hooks.SourcePack(root), env)
+
+
+def test_memory_render_is_applied_only_when_it_differs_from_the_install_render(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], what: str, timeout: float = 600, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(hooks, "_run", fake_run)
+    waited: list[str] = []
+    monkeypatch.setattr(hooks, "wait_rollouts", lambda kube, ns, timeout_s=600: waited.append(ns))
+    install = [{"kind": "ConfigMap", "metadata": {"name": "nginx"}, "data": {"a": "1"}}]
+    repo = tmp_path / "memory"
+    (repo / "k8s").mkdir(parents=True)
+    kube = Kube("kind-c", "/k")
+    (repo / "k8s" / "render.yaml").write_text(yaml.safe_dump_all(install))
+    assert hooks.apply_memory_render(kube, "ns1", repo, install, lambda line: None) is False
+    assert calls == []
+    assert waited == []
+    instrumented = [{"kind": "ConfigMap", "metadata": {"name": "nginx"}, "data": {"a": "2"}}]
+    (repo / "k8s" / "render.yaml").write_text(yaml.safe_dump_all(instrumented))
+    assert hooks.apply_memory_render(kube, "ns1", repo, install, lambda line: None) is True
+    assert any("apply" in c and str(repo / "k8s" / "render.yaml") in c for c in calls)
+    assert waited == ["ns1"]
