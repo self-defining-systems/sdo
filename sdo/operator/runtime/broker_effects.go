@@ -261,9 +261,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		}
 		switch recheck.Verdict {
 		case closureRecheckConfirmed:
-			// The confirmed recheck leaves the wait timer alone: the Recovered
-			// wait below keeps its own start across passes, and each wait is
-			// keyed so a different one restarts the timer.
+			// The Recovered wait below keeps its own timer across passes.
 			recoveryStates = recheck.States
 		case closureRecheckRecovering:
 			// A live SLO is evidence to observe, not a broker rejection. The
@@ -333,7 +331,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		check := c.closureRecoveryCheck(actionCtx, snapshot, effect.Closure)
 		verification = check.record
 		if check.verdict == recoveryPending {
-			if !c.closureRecheckWaitExpired(effect.Identity+recoveredWaitSuffix, check.horizon+effect.Closure.ClosureStabilityWindow) {
+			if !c.recoveredWaitExpired(effect.Identity, check.horizon+effect.Closure.ClosureStabilityWindow) {
 				c.scheduleClosureRecheck()
 				cancel()
 				return nil
@@ -765,10 +763,19 @@ func observerTransient(err error) bool {
 	return errors.As(err, &status) && status.Status().Code >= 500
 }
 
-// recoveredWaitSuffix keys the wait on the Recovered predicate apart from the
-// wait on incomplete detector observations; the timer restarts when the key
-// changes, never when a recheck confirms again.
-const recoveredWaitSuffix = "/recovered"
+// recoveredWaitExpired is closureRecheckWaitExpired for the wait on the
+// Recovered predicate. It has its own timer, so neither a confirmed recheck nor
+// the incomplete-observation and source waits restart it; only a different
+// closure does.
+func (c *Controller) recoveredWaitExpired(identity string, bound time.Duration) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.clock()
+	if c.closureRecoveredIdentity != identity || c.closureRecoveredSince.IsZero() {
+		c.closureRecoveredIdentity, c.closureRecoveredSince = identity, now
+	}
+	return now.Sub(c.closureRecoveredSince) >= bound
+}
 
 // closureRecheckWaitExpired records when this closure's recheck first saw an
 // incomplete window and reports whether the bound has passed. The wait is

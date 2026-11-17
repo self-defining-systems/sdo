@@ -111,17 +111,20 @@ type Controller struct {
 	// closureRecheckIdentity/Since bound an incomplete closure-time recheck.
 	closureRecheckIdentity string
 	closureRecheckSince    time.Time
-	closureRecheckRetryAt  time.Time
-	codePath               *CodePath
-	startedAt              time.Time
-	scheduler              *Scheduler
-	detectors              map[string]sdk.Detector
-	tracker                *FindingStateTracker
-	batcher                *Batcher
-	provider               SnapshotProvider
-	dispatcher             Dispatcher
-	responseStagesRunning  bool
-	midStage               midIncidentStage
+	// closureRecoveredIdentity/Since bound the wait on the Recovered predicate.
+	closureRecoveredIdentity string
+	closureRecoveredSince    time.Time
+	closureRecheckRetryAt    time.Time
+	codePath                 *CodePath
+	startedAt                time.Time
+	scheduler                *Scheduler
+	detectors                map[string]sdk.Detector
+	tracker                  *FindingStateTracker
+	batcher                  *Batcher
+	provider                 SnapshotProvider
+	dispatcher               Dispatcher
+	responseStagesRunning    bool
+	midStage                 midIncidentStage
 	// tuneMidStage lets a test inject the stage's clock and waits.
 	tuneMidStage                func(*DeterministicResponseStage)
 	history                     []DetectorEvaluation
