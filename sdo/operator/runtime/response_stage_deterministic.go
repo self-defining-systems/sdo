@@ -225,10 +225,18 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}()
 			runs = loop.RefreshDiagnose(ctx)
 			fillProgramRevisionsWith(loop.gitRead(), ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
-			runs = append(append([]ProgramRun(nil), state.Request.InitialProgramRuns...), runs...)
+			fresh, err := stage.reaskUnanswered(ctx, loop, state, runs)
+			if err != nil {
+				return report, err
+			}
+			runs = append(append([]ProgramRun(nil), state.Request.InitialProgramRuns...), fresh...)
 		} else {
 			runs = loop.InitialDiagnose(ctx)
 			fillProgramRevisionsWith(loop.gitRead(), ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
+			var err error
+			if runs, err = stage.reaskUnanswered(ctx, loop, state, runs); err != nil {
+				return report, err
+			}
 		}
 		state.Request.InitialProgramRuns = runs
 		state.Coverage = buildPlaybookCoverage(state.Findings, state.Request.InitialProgramRuns, loop.lastDiagnosisView, loop.Trust)
@@ -1304,6 +1312,58 @@ func (stage *DeterministicResponseStage) diagnoseBackoff(ctx context.Context) er
 	case <-timer.C:
 		return nil
 	}
+}
+
+// reaskUnanswered asks again, up to stageDiagnoseTries diagnoses in all, for
+// every candidate whose diagnosis failed: an Unknown carrying a failure (a read
+// that did not answer, a deadline, an unreachable memory host). The stage's
+// candidates are the Matches of this diagnosis, so such an Unknown at incident
+// open (an exec that ran out of time, a memory host busy with the opening
+// capture) would otherwise leave the stage nothing to apply for the whole
+// incident. An Unknown the program answered itself is final. Only the failed
+// programs are diagnosed again; the failed runs stay as evidence and an answer
+// is appended after them.
+func (stage *DeterministicResponseStage) reaskUnanswered(ctx context.Context, loop *ResponderLoop, state *IncidentState, runs []ProgramRun) ([]ProgramRun, error) {
+	for try := 1; try < stageDiagnoseTries; try++ {
+		unanswered := unansweredRuns(runs)
+		if len(unanswered) == 0 {
+			return runs, nil
+		}
+		ids := map[string]bool{}
+		for _, id := range unanswered {
+			ids[id] = true
+		}
+		if err := stage.diagnoseBackoff(ctx); err != nil {
+			return runs, err
+		}
+		again := loop.RediagnosePrograms(ctx, ids)
+		fillProgramRevisionsWith(loop.gitRead(), ctx, again, state.Request.RepositoryWorktree, state.Request.SourceCommit)
+		for _, run := range again {
+			if _, ok := unanswered[stageAttemptKey(run.ProgramID, run.Bindings)]; ok {
+				runs = append(runs, run)
+			}
+		}
+	}
+	return runs, nil
+}
+
+// unansweredRuns maps each candidate (program and binding) whose every run is
+// a failed diagnosis to its program ID.
+func unansweredRuns(runs []ProgramRun) map[string]string {
+	unanswered := map[string]string{}
+	answered := map[string]bool{}
+	for _, run := range runs {
+		key := stageAttemptKey(run.ProgramID, run.Bindings)
+		if run.Verdict.Result == program.Unknown && programRunContract(run).GetError() != "" {
+			unanswered[key] = run.ProgramID
+		} else {
+			answered[key] = true
+		}
+	}
+	for key := range answered {
+		delete(unanswered, key)
+	}
+	return unanswered
 }
 
 // diagnosisFailure is the text an Unknown verdict carries about why the

@@ -100,6 +100,11 @@ type settlingCase struct {
 	blind       bool
 	// unknownDiagnoses is how many stage diagnoses fail as an unanswered read.
 	unknownDiagnoses int32
+	// unknownAtOpen starts those failures at the incident's opening diagnosis
+	// instead of after it.
+	unknownAtOpen bool
+	// undecided makes the program answer Unknown itself on every diagnosis.
+	undecided bool
 	// traffic replaces the learned stall detector and program with ones that
 	// read the "health" workload's samples, as learned memory does.
 	traffic *settlingTraffic
@@ -259,6 +264,12 @@ func settlingStageOn(t *testing.T, tc settlingCase, world *settlingWorld) (*Dete
 		program.Diagnoser
 		program.Mitigator
 	} = restartProgram{id: "api-request-stall", blind: tc.blind, unknown: unknownCounter(tc.unknownDiagnoses), answered: unknownCounter(1)}
+	if tc.unknownAtOpen {
+		restart = restartProgram{id: "api-request-stall", blind: tc.blind, unknown: unknownCounter(tc.unknownDiagnoses), answered: &atomic.Int32{}}
+	}
+	if tc.undecided {
+		restart = restartProgram{id: "api-request-stall", undecided: true}
+	}
 	if tc.traffic != nil {
 		stallDetector = trafficLearnedStall{stall}
 		restart = trafficStallProgram{restartProgram{id: "api-request-stall"}}
@@ -478,5 +489,65 @@ func TestStageRecordsWhyADiagnosisStayedUnknown(t *testing.T) {
 	attempt := state.PriorStages[0].Mitigations[0]
 	if world.restarts.Load() != 0 || attempt.SkipReason != "diagnose_unavailable" || !strings.Contains(attempt.Error, "memory host unavailable") {
 		t.Fatalf("skip %q error %q writes %d", attempt.SkipReason, attempt.Error, world.restarts.Load())
+	}
+}
+
+// The opening diagnosis is the one the stage's candidates come from: when its
+// read did not answer (a slow exec or a busy memory host at incident open), the
+// stage asks again within its bound instead of exiting with nothing applied.
+func TestStageRetriesAnOpeningDiagnosisThatDidNotAnswer(t *testing.T) {
+	stage, state, _, world := settlingStage(t, settlingCase{healAfter: 20 * time.Second, unknownDiagnoses: 2, unknownAtOpen: true})
+	if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, &recordingStage{}}); err != nil {
+		t.Fatal(err)
+	}
+	if world.restarts.Load() != 1 {
+		t.Fatalf("the stage must apply the playbook once the opening read answers: %v", state.PriorStages[0])
+	}
+	unknown := 0
+	for _, run := range state.Request.InitialProgramRuns {
+		if run.ProgramID == "api-request-stall" && run.Verdict.Result == program.Unknown {
+			unknown++
+		}
+	}
+	if unknown == 0 {
+		t.Fatalf("the unanswered opening diagnoses must stay as evidence: %+v", state.Request.InitialProgramRuns)
+	}
+}
+
+// An opening diagnosis that never answers leaves the stage with nothing to
+// apply, after a bounded number of tries.
+func TestStageGivesUpAnOpeningDiagnosisThatNeverAnswers(t *testing.T) {
+	stage, state, _, world := settlingStage(t, settlingCase{unknownDiagnoses: 100, unknownAtOpen: true})
+	agent := &recordingStage{}
+	if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, agent}); err != nil {
+		t.Fatal(err)
+	}
+	// Each diagnosis is one run per finding it binds through; count one finding's.
+	runs := 0
+	for _, run := range state.Request.InitialProgramRuns {
+		if run.ProgramID == "api-request-stall" && run.FindingFingerprint == state.Request.InitialProgramRuns[0].FindingFingerprint {
+			runs++
+		}
+	}
+	if world.restarts.Load() != 0 || !agent.dispatched || runs != stageDiagnoseTries {
+		t.Fatalf("writes=%d agent=%v opening runs=%d, want 0, true, %d", world.restarts.Load(), agent.dispatched, runs, stageDiagnoseTries)
+	}
+}
+
+// An Unknown the program answered itself, with every read answered, is a
+// diagnosis: the stage does not ask again, and the agent is not delayed.
+func TestStageDoesNotReaskAProgramsOwnUnknown(t *testing.T) {
+	stage, state, _, world := settlingStage(t, settlingCase{undecided: true})
+	if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, &recordingStage{}}); err != nil {
+		t.Fatal(err)
+	}
+	runs := 0
+	for _, run := range state.Request.InitialProgramRuns {
+		if run.ProgramID == "api-request-stall" && run.FindingFingerprint == state.Request.InitialProgramRuns[0].FindingFingerprint {
+			runs++
+		}
+	}
+	if world.restarts.Load() != 0 || runs != 1 {
+		t.Fatalf("writes=%d opening runs=%d, want 0 and 1", world.restarts.Load(), runs)
 	}
 }

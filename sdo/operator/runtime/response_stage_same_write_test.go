@@ -109,6 +109,8 @@ type restartProgram struct {
 	// answered counts diagnoses that answered before unknown applies: the
 	// stage's matching pass reads first.
 	answered *atomic.Int32
+	// undecided makes every diagnosis answer Unknown itself, with no failed read.
+	undecided bool
 }
 
 func (p restartProgram) Spec() program.ProgramSpec {
@@ -116,6 +118,9 @@ func (p restartProgram) Spec() program.ProgramSpec {
 }
 
 func (p restartProgram) Diagnose(_ context.Context, view program.ReadView, b program.Bindings) (program.Verdict, error) {
+	if p.undecided {
+		return program.Verdict{Result: program.Unknown}, nil
+	}
 	if p.unknown != nil && p.answered.Add(-1) < 0 && p.unknown.Add(-1) >= 0 {
 		return program.Verdict{}, errors.New("memory host unavailable")
 	}

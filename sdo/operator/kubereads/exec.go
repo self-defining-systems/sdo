@@ -82,6 +82,11 @@ func runCommand(ctx context.Context, exec PodExec, protectedNamespace string, co
 	if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
 		return 0, err
 	}
+	// The stream's own text is not carried; an expired read budget is, so a
+	// command that ran out of time is told from a broken transport.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return 0, fmt.Errorf("exec transport failed: %w", ctxErr)
+	}
 	return 0, fmt.Errorf("exec transport failed")
 }
 

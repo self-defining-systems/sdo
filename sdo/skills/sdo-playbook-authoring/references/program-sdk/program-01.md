@@ -193,6 +193,11 @@ func GroundStoreTarget(v ReadView, t StoreTarget) error
     the component declares data with this engine, the Pod belongs to its
     workload, and the named container runs the engine's image.
 
+func HTTPProbePort(service corev1.Service) (port int32, ok bool)
+    HTTPProbePort is the Service port ProbeHTTP dials: the first TCP port in
+    declaration order. HTTP rides TCP, so a leading UDP port (a tracing agent's,
+    say) is skipped; ok is false when the Service declares no TCP port.
+
 func Kubernetes(view ReadView, sourceBindings ...Bindings) (*kubeclient.ReadClient, error)
     Kubernetes constructs client-go-shaped read clients for this observation
     view. Build it once per Diagnose/mitigation or detector invocation.
