@@ -656,6 +656,12 @@ def test_watch_runs_the_observer_for_the_fault_without_pvc_snapshots(
     assert "--fault" not in seen[1]
 
 
+def test_collected_memory_paths_hold_what_a_seed_needs_to_apply_a_playbook() -> None:
+    # the corpus cases are where Go derives a playbook's credited (symptom, component) pairs; a seed built from a
+    # collected copy without them never applies the playbook on its own, and shared helpers (lib) are imported by it
+    assert {".sdo/outcomes", ".sdo/playbooks", ".sdo/corpus", ".sdo/lib"} <= set(hooks.MEMORY_PATHS)
+
+
 def test_kube_copy_memory_replaces_an_older_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     src = tmp_path / "src"
     (src / ".sdo" / "outcomes").mkdir(parents=True)
