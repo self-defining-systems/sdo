@@ -261,9 +261,10 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		}
 		switch recheck.Verdict {
 		case closureRecheckConfirmed:
-
+			// The confirmed recheck leaves the wait timer alone: the Recovered
+			// wait below keeps its own start across passes, and each wait is
+			// keyed so a different one restarts the timer.
 			recoveryStates = recheck.States
-			c.clearClosureRecheckWait()
 		case closureRecheckRecovering:
 			// A live SLO is evidence to observe, not a broker rejection. The
 			// same proof owner now requires a new continuous clear window.
@@ -332,7 +333,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		check := c.closureRecoveryCheck(actionCtx, snapshot, effect.Closure)
 		verification = check.record
 		if check.verdict == recoveryPending {
-			if !c.closureRecheckWaitExpired(effect.Identity, check.horizon+effect.Closure.ClosureStabilityWindow) {
+			if !c.closureRecheckWaitExpired(effect.Identity+recoveredWaitSuffix, check.horizon+effect.Closure.ClosureStabilityWindow) {
 				c.scheduleClosureRecheck()
 				cancel()
 				return nil
@@ -763,6 +764,11 @@ func observerTransient(err error) bool {
 	var status apierrors.APIStatus
 	return errors.As(err, &status) && status.Status().Code >= 500
 }
+
+// recoveredWaitSuffix keys the wait on the Recovered predicate apart from the
+// wait on incomplete detector observations; the timer restarts when the key
+// changes, never when a recheck confirms again.
+const recoveredWaitSuffix = "/recovered"
 
 // closureRecheckWaitExpired records when this closure's recheck first saw an
 // incomplete window and reports whether the bound has passed. The wait is
