@@ -33,8 +33,8 @@ for s;do q "$s"||exit 1;done;echo '` + RestoredMarker + `'
 // value, which a role without the privilege cannot (its error is dropped, and
 // the boot value stands).
 const postgresServerSettingScript = postgresRestoreHead + `d=$D;q "$1"||exit 1;q 'SELECT pg_reload_conf()'>/dev/null;sleep 1
-cur(){ r=$(q "$2");case "$r" in scoped:*)r=${r#scoped:};f=$(q "$3")&&[ -n "$f" ]&&r=$f;;*)r=${r#server:};;esac;printf '%%s' "$r";}
-if [ "$(cur)" != "$4" ];then q "$5"||exit 1;q 'SELECT pg_reload_conf()'>/dev/null;sleep 1;fi;echo '` + RestoredMarker + `'
+cur(){ r=$(q "$1");case "$r" in scoped:*)r=${r#scoped:};f=$(q "$2")&&[ -n "$f" ]&&r=$f;;*)r=${r#server:};;esac;printf '%%s' "$r";}
+if [ "$(cur "$2" "$3")" != "$4" ];then q "$5"||exit 1;q 'SELECT pg_reload_conf()'>/dev/null;sleep 1;fi;echo '` + RestoredMarker + `'
 `
 
 // postgresServerSettingQuery reads one setting's server-scope value for

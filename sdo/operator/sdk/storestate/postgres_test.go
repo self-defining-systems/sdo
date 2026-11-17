@@ -374,3 +374,11 @@ func TestPostgresLegacyBaselineComparesWithSourcedReads(t *testing.T) {
 		t.Fatalf("a legacy baseline differs from the same state read with sources: %v", changes)
 	}
 }
+
+func TestPostgresRefusedSettingsStatementRefusesTheServerSection(t *testing.T) {
+	out := strings.Replace(healthyPostgres, "set\tdefault_transaction_read_only\toff\n", "ERROR:  permission denied for view pg_settings\n", 1)
+	f := parsePostgres(t, out)
+	if got, ok := item(f, storestate.KindRefusal, "", "server"); !ok || got.Value != "no-permission" {
+		t.Fatalf("refusal = %+v, %v", got, ok)
+	}
+}

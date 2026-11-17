@@ -77,7 +77,7 @@ const postgresSettingNames = `'default_transaction_read_only','transaction_read_
 // grant, and the permission is checked when the statement starts, so it is its
 // own statement: a role without it gets an error the script drops, and a
 // scoped value's server value is then boot_val.
-const postgresFileSettingsQuery = `SELECT 'file',f.name,CASE WHEN s.vartype='bool' THEN CASE WHEN f.setting::boolean THEN 'on' ELSE 'off' END ELSE f.setting END FROM pg_show_all_file_settings() f JOIN pg_settings s ON s.name=f.name WHERE f.applied AND s.unit IS NULL AND f.name IN(` + postgresSettingNames + `) ORDER BY f.seqno`
+const postgresFileSettingsQuery = `SELECT 'file',f.name,CASE WHEN s.vartype='bool' THEN CASE WHEN f.setting::boolean THEN 'on' ELSE 'off' END ELSE f.setting END FROM pg_show_all_file_settings() f JOIN pg_settings s ON s.name=f.name WHERE f.applied AND s.unit IS NULL AND s.source IN(` + postgresScopedSourcesSQL + `) AND f.name IN(` + postgresSettingNames + `) ORDER BY f.seqno`
 
 // postgresQueries are the server-wide queries, one per section. Settings,
 // role flags and catalog definitions are read; a custom (dotted) setting's
@@ -272,6 +272,16 @@ func (postgresAdapter) Parse(stdout string) (Facts, error) {
 	}
 	for _, name := range postgresSections {
 		lines := sections[name]
+		// The server section is two statements: an error from the second
+		// is a refusal of the section too.
+		for i, line := range lines {
+			if i > 0 && name == "server" {
+				if _, refused := postgresRefusal(line); refused {
+					lines = lines[i:]
+					break
+				}
+			}
+		}
 		if len(lines) > 0 {
 			if class, refused := postgresRefusal(lines[0]); refused {
 				if class == "unreachable" {
