@@ -23,11 +23,33 @@ for s;do q "$s"||exit 1;done;echo '` + RestoredMarker + `'
 `
 
 // postgresServerSettingScript restores a server setting: it first removes an
-// ALTER SYSTEM override ($1) and reloads; only when the setting ($2 reads it)
-// still differs from the baseline ($3) does it set it ($4) and reload again.
+// ALTER SYSTEM override ($1) and reloads; only when the setting's server-scope
+// value still differs from the baseline ($4) does it set it ($5) and reload
+// again. The value is read like the read command's server section does
+// (postgresServerSettingQuery): $2 gives "server:<value>", or
+// "scoped:<boot value>" when the session's own value comes from a database,
+// role or connection setting, which the server restore can neither change nor
+// should be judged by; for a scoped one $3 reads the configuration files'
+// value, which a role without the privilege cannot (its error is dropped, and
+// the boot value stands).
 const postgresServerSettingScript = postgresRestoreHead + `d=$D;q "$1"||exit 1;q 'SELECT pg_reload_conf()'>/dev/null;sleep 1
-if [ "$(q "$2")" != "$3" ];then q "$4"||exit 1;q 'SELECT pg_reload_conf()'>/dev/null;sleep 1;fi;echo '` + RestoredMarker + `'
+cur(){ r=$(q "$2");case "$r" in scoped:*)r=${r#scoped:};f=$(q "$3")&&[ -n "$f" ]&&r=$f;;*)r=${r#server:};;esac;printf '%%s' "$r";}
+if [ "$(cur)" != "$4" ];then q "$5"||exit 1;q 'SELECT pg_reload_conf()'>/dev/null;sleep 1;fi;echo '` + RestoredMarker + `'
 `
+
+// postgresServerSettingQuery reads one setting's server-scope value for
+// postgresServerSettingScript: tagged "scoped:" with its boot value when the
+// session's value is from a scoped source (postgresScopedSources).
+func postgresServerSettingQuery(name string) string {
+	return "SELECT CASE WHEN source IN(" + postgresScopedSourcesSQL + ") THEN 'scoped:'||coalesce(boot_val,'') ELSE 'server:'||coalesce(setting,'') END FROM pg_settings WHERE name=" + pgString(name)
+}
+
+// postgresServerFileQuery reads the configuration files' last applied value of
+// one setting that has no unit, a boolean as on or off (see
+// postgresFileSettingsQuery).
+func postgresServerFileQuery(name string) string {
+	return "SELECT CASE WHEN s.vartype='bool' THEN CASE WHEN f.setting::boolean THEN 'on' ELSE 'off' END ELSE f.setting END FROM pg_show_all_file_settings() f JOIN pg_settings s ON s.name=f.name WHERE f.applied AND s.unit IS NULL AND f.name=" + pgString(name) + " ORDER BY f.seqno DESC LIMIT 1"
+}
 
 var postgresTags = []string{"POSTGRES", "POSTGRESQL", "PG"}
 
@@ -136,7 +158,8 @@ func postgresRestoreSetting(e Endpoint, c Change, options RestoreOptions) ([][]s
 		}
 		return [][]string{readCommand(postgresTags, fmt.Sprintf(postgresServerSettingScript, e.Port),
 			"ALTER SYSTEM RESET "+key.Name,
-			"SELECT setting FROM pg_settings WHERE name="+pgString(key.Name),
+			postgresServerSettingQuery(key.Name),
+			postgresServerFileQuery(key.Name),
 			before.Value,
 			"ALTER SYSTEM "+set)}, nil
 	}

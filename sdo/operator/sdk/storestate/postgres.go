@@ -32,7 +32,7 @@ var postgresRowLimits = map[string]int{"dbsettings": 33, "roles": 25, "databases
 // credential prelude found ($U, else postgres), so local trust applies; the
 // password it found ($P) reaches psql through the environment and is never
 // printed. The queries arrive as positional arguments ($5 is the holders
-// query, $6 the lock-waits query, $7 the TCP fallback, $8 onwards the catalog
+// query, $6 the lock-waits query, $7 the TCP fallback, $8 the server settings query, $9 the configuration file settings query (dropped when the role may not read it), $10 onwards the catalog
 // query, split). Holders fall back to the TCP table when the server refuses
 // the session list. The server-wide queries read only system views, which
 // never wait on a table lock; the catalog query sets a short lock_timeout, so
@@ -44,21 +44,58 @@ var postgresRowLimits = map[string]int{"dbsettings": 33, "roles": 25, "databases
 // output budget with a "== more" marker.
 const postgresScript = `U=${U:-postgres};D=${POSTGRES_DB:-${POSTGRESQL_DATABASE:-${PGDATABASE:-$U}}};T=$(printf '\t');export PGPASSWORD="$P" PGCONNECT_TIMEOUT=2
 p(){ psql -X -q -At -F "$T" -p %d -U "$U" -d "$1" -c "$2" 2>&1|tr -d '\r';};q(){ p "$@"|head -n 100;}
-h=$(echo '== server';q "$D" "$1";echo '== dbsettings';q "$D" "$2";echo '== roles';q "$D" "$3";echo '== databases';q "$D" "$4";echo '== holders';o=$(q "$D" "$5");case "$o" in holder*)printf '%%s\n' "$o";;*)eval "$7";;esac;echo '== lockwaits';q "$D" "$6")
-printf '%%s\n' "$h";c="SET lock_timeout=500;$8$9${10}${11}${12}${13}";psql -X -q -At -p %d -U "$U" -d "$D" -c "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY 1 LIMIT 8" 2>/dev/null|while IFS= read -r d;do echo "== catalog $d";p "$d" "$c";done|awk -v b=$((3900-${#h})) '{n+=length($0)+1;if(n>b){print "== more";exit}print}'
+h=$(echo '== server';q "$D" "$1";q "$D" "$8";q "$D" "$9"|grep '^file';echo '== dbsettings';q "$D" "$2";echo '== roles';q "$D" "$3";echo '== databases';q "$D" "$4";echo '== holders';o=$(q "$D" "$5");case "$o" in holder*)printf '%%s\n' "$o";;*)eval "$7";;esac;echo '== lockwaits';q "$D" "$6")
+printf '%%s\n' "$h";c="SET lock_timeout=500;${10}${11}${12}${13}${14}${15}";psql -X -q -At -p %d -U "$U" -d "$D" -c "SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY 1 LIMIT 8" 2>/dev/null|while IFS= read -r d;do echo "== catalog $d";p "$d" "$c";done|awk -v b=$((3900-${#h})) '{n+=length($0)+1;if(n>b){print "== more";exit}print}'
 `
+
+// postgresScopedSources are the pg_settings.source values of a value set for
+// the session's own database, role or connection rather than for the server.
+// The read connects as the application role in the application database, so
+// pg_settings shows those values as the effective ones; the server section
+// reports the server's own value instead, and the scoped value is read from
+// pg_db_role_setting into its own item (the dbsettings section).
+var postgresScopedSources = map[string]bool{"database": true, "user": true, "database user": true, "client": true, "session": true}
+
+// postgresScopedSourcesSQL is postgresScopedSources as an SQL list.
+const postgresScopedSourcesSQL = `'database','user','database user','client','session'`
+
+// postgresServerValueSQL is the fallback server-scope value of a pg_settings
+// row: the row's own value unless its source is scoped
+// (postgresScopedSources), then the compiled-in default, boot_val. The
+// configuration files' value for the setting, which is better, comes from
+// postgresFileSettingsQuery when the role may read it.
+const postgresServerValueSQL = `coalesce(CASE WHEN source IN(` + postgresScopedSourcesSQL + `) THEN boot_val ELSE setting END,'')`
+
+// postgresSettingNames are the server settings the read shows.
+const postgresSettingNames = `'default_transaction_read_only','transaction_read_only','max_connections','superuser_reserved_connections','statement_timeout','lock_timeout','idle_in_transaction_session_timeout','idle_session_timeout','synchronous_commit','synchronous_standby_names','max_locks_per_transaction','max_prepared_transactions','fsync','work_mem','temp_file_limit','password_encryption','log_min_duration_statement','wal_level'`
+
+// postgresFileSettingsQuery reads the value the configuration files
+// (postgresql.conf and ALTER SYSTEM) give each shown setting, as (file, name,
+// value) rows, last applied entry last. Only settings without a unit are read:
+// a file's text is not in the base unit pg_settings uses, and a boolean is
+// normalized to on or off. pg_show_all_file_settings needs superuser or a
+// grant, and the permission is checked when the statement starts, so it is its
+// own statement: a role without it gets an error the script drops, and a
+// scoped value's server value is then boot_val.
+const postgresFileSettingsQuery = `SELECT 'file',f.name,CASE WHEN s.vartype='bool' THEN CASE WHEN f.setting::boolean THEN 'on' ELSE 'off' END ELSE f.setting END FROM pg_show_all_file_settings() f JOIN pg_settings s ON s.name=f.name WHERE f.applied AND s.unit IS NULL AND f.name IN(` + postgresSettingNames + `) ORDER BY f.seqno`
 
 // postgresQueries are the server-wide queries, one per section. Settings,
 // role flags and catalog definitions are read; a custom (dotted) setting's
 // value, a role's password and every row of every table are not.
 var postgresQueries = []string{
-	`SELECT 'role',CASE WHEN pg_is_in_recovery() THEN 'standby' ELSE 'primary' END UNION ALL SELECT 'conn',count(*)||E'\t'||current_setting('max_connections') FROM pg_stat_activity WHERE backend_type='client backend' UNION ALL SELECT 'waiting',count(*)::text FROM pg_locks WHERE NOT granted UNION ALL (SELECT 'seq',schemaname||'.'||sequencename||E'\t'||last_value||E'\t'||max_value FROM pg_sequences WHERE last_value IS NOT NULL AND max_value>0 AND last_value>=max_value*0.9 ORDER BY last_value::numeric/max_value DESC LIMIT 5) UNION ALL (SELECT 'set',name||E'\t'||setting FROM pg_settings WHERE name IN('default_transaction_read_only','transaction_read_only','max_connections','superuser_reserved_connections','statement_timeout','lock_timeout','idle_in_transaction_session_timeout','idle_session_timeout','synchronous_commit','synchronous_standby_names','max_locks_per_transaction','max_prepared_transactions','fsync','work_mem','temp_file_limit','password_encryption','log_min_duration_statement','wal_level') ORDER BY 2)`,
+	`SELECT 'role',CASE WHEN pg_is_in_recovery() THEN 'standby' ELSE 'primary' END UNION ALL SELECT 'conn',count(*)||E'\t'||current_setting('max_connections') FROM pg_stat_activity WHERE backend_type='client backend' UNION ALL SELECT 'waiting',count(*)::text FROM pg_locks WHERE NOT granted UNION ALL (SELECT 'seq',schemaname||'.'||sequencename||E'\t'||last_value||E'\t'||max_value FROM pg_sequences WHERE last_value IS NOT NULL AND max_value>0 AND last_value>=max_value*0.9 ORDER BY last_value::numeric/max_value DESC LIMIT 5)`,
 	`SELECT coalesce(d.datname,'*'),coalesce(r.rolname,'*'),split_part(c,'=',1),CASE WHEN split_part(c,'=',1) LIKE '%.%' THEN 'set' ELSE substr(c,strpos(c,'=')+1) END FROM pg_db_role_setting s LEFT JOIN pg_database d ON d.oid=s.setdatabase LEFT JOIN pg_roles r ON r.oid=s.setrole,unnest(s.setconfig) c ORDER BY 1,2,3 LIMIT 33`,
 	`SELECT rolname,concat_ws(' ',CASE WHEN rolsuper THEN 'superuser' END,CASE WHEN rolcanlogin THEN 'login' ELSE 'nologin' END,CASE WHEN rolcreatedb THEN 'createdb' END,CASE WHEN rolcreaterole THEN 'createrole' END,CASE WHEN rolreplication THEN 'replication' END,CASE WHEN rolbypassrls THEN 'bypassrls' END,CASE WHEN rolconnlimit>=0 THEN 'connlimit='||rolconnlimit END,CASE WHEN rolvaliduntil<now() THEN 'expired' WHEN rolvaliduntil<'infinity' THEN 'valid-until='||rolvaliduntil::date END,(SELECT 'member-of='||string_agg(b.rolname,',' ORDER BY b.rolname) FROM pg_auth_members m JOIN pg_roles b ON b.oid=m.roleid WHERE m.member=r.oid)) FROM pg_roles r WHERE rolname!~'^pg_' ORDER BY 1 LIMIT 25`,
 	`SELECT datname,datallowconn,datconnlimit FROM pg_database WHERE NOT datistemplate ORDER BY 1 LIMIT 17`,
 	postgresHolders,
 	postgresLockWaits,
 }
+
+// postgresSettingsQuery reads the server settings the section shows, each as
+// (set, name, effective value, source, fallback server value); see
+// postgresServerValueSQL. It is its own argument so the
+// pod-read argument limit holds.
+const postgresSettingsQuery = `SELECT 'set',name||E'\t'||coalesce(setting,'')||E'\t'||source||E'\t'||` + postgresServerValueSQL + ` FROM pg_settings WHERE name IN(` + postgresSettingNames + `) ORDER BY 2`
 
 // postgresHolders groups the client sessions other than the read's own by
 // peer address (local for the Unix socket) and state.
@@ -111,7 +148,7 @@ func (postgresAdapter) Engine() Engine   { return EnginePostgres }
 func (postgresAdapter) DefaultPort() int { return 5432 }
 
 func (postgresAdapter) ReadCommand(e Endpoint) []string {
-	args := append(append(append([]string{}, postgresQueries...), tcpHoldersSnippet(e.Port)), chunk(postgresCatalog, readChunkBytes)...)
+	args := append(append(append([]string{}, postgresQueries...), tcpHoldersSnippet(e.Port), postgresSettingsQuery, postgresFileSettingsQuery), chunk(postgresCatalog, readChunkBytes)...)
 	return readCommand([]string{"POSTGRES", "POSTGRESQL", "PG"}, fmt.Sprintf(postgresScript, e.Port, e.Port), args...)
 }
 
@@ -149,6 +186,69 @@ func postgresTrue(v string) bool {
 		return true
 	}
 	return false
+}
+
+// postgresServerRows maps each "set" line of the server section to its
+// (set, name, value) fields at server scope. A line is (set, name, effective
+// value[, source[, fallback server value]]) and "file" lines give the
+// configuration files' value of a setting; one from a scoped source
+// (postgresScopedSources) must carry the fallback and reports the files' value,
+// else the fallback, instead of the effective one. transaction_read_only is the session's effective
+// read-only state, which follows default_transaction_read_only; when that
+// setting came from a scoped source, transaction_read_only reports the
+// server's default too (a standby is read-only at the server, and says so).
+func postgresServerRows(lines []string) (map[string][]string, error) {
+	rows := map[string][]string{}
+	serverDefault, scopedDefault, standby := "", false, false
+	files := map[string]string{} // the configuration files' value, last entry wins
+	for _, line := range lines {
+		if fields := strings.Split(line, "\t"); fields[0] == "file" {
+			if len(fields) != 3 {
+				return nil, fmt.Errorf("postgres server line is malformed: %q", line)
+			}
+			files[fields[1]] = fields[2]
+		}
+	}
+	for _, line := range lines {
+		fields := strings.Split(line, "\t")
+		if fields[0] == "role" && len(fields) == 2 && fields[1] == "standby" {
+			standby = true
+		}
+		if fields[0] != "set" {
+			continue
+		}
+		if len(fields) == 2 {
+			fields = append(fields, "") // an empty setting value
+		}
+		if len(fields) < 3 || len(fields) > 5 {
+			return nil, fmt.Errorf("postgres server line is malformed: %q", line)
+		}
+		row := []string{"set", fields[1], fields[2]}
+		if len(fields) >= 4 && postgresScopedSources[fields[3]] {
+			if len(fields) != 5 {
+				return nil, fmt.Errorf("postgres server line is malformed: %q", line)
+			}
+			row[2] = fields[4]
+			if v, ok := files[fields[1]]; ok {
+				row[2] = v
+			}
+			if fields[1] == "default_transaction_read_only" {
+				scopedDefault = true
+			}
+		}
+		if fields[1] == "default_transaction_read_only" {
+			serverDefault = row[2]
+		}
+		rows[line] = row
+	}
+	if scopedDefault && !standby {
+		for line, row := range rows {
+			if row[1] == "transaction_read_only" {
+				rows[line] = []string{"set", row[1], serverDefault}
+			}
+		}
+	}
+	return rows, nil
 }
 
 func (postgresAdapter) Parse(stdout string) (Facts, error) {
@@ -220,12 +320,24 @@ func (postgresAdapter) Parse(stdout string) (Facts, error) {
 		return fmt.Errorf("postgres %s line is malformed: %q", section, line)
 	}
 	if answered["server"] {
+		serverRows, err := postgresServerRows(sections["server"])
+		if err != nil {
+			return Facts{}, err
+		}
 		for _, line := range sections["server"] {
 			fields := strings.Split(line, "\t")
 			if fields[0] == "set" && len(fields) == 2 {
 				fields = append(fields, "") // an empty setting value
 			}
+			if fields[0] == "set" {
+				row, ok := serverRows[line]
+				if !ok {
+					return Facts{}, malformed("server", line)
+				}
+				fields = row
+			}
 			switch {
+			case fields[0] == "file":
 			case fields[0] == "role" && len(fields) == 2:
 				items = append(items, Item{Kind: KindRole, Name: "role", Value: fields[1]})
 				if fields[1] == "standby" {
