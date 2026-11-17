@@ -86,7 +86,7 @@ STATE_KEY = observe.STATE_KEY
 CONTROLLER_JOB = "sdo-controller-run"
 CONTROLLER_CONTAINER = "controller"
 APPLICATION_ROOT = "/workspace/application"
-MEMORY_PATHS = (".sdo/outcomes", ".sdo/playbooks")
+MEMORY_PATHS = (".sdo/outcomes", ".sdo/playbooks", ".sdo/corpus", ".sdo/lib")
 #: The controller state must have changed this recently for SDO to count as live.
 FRESH_S = 60.0
 KUBECTL_TIMEOUT_S = 25
@@ -643,7 +643,8 @@ class Kube:
         return proc.stdout
 
     def copy_memory(self, control: str, dest: Path) -> bool:
-        """Copy the accepted outcome records and playbooks into ``dest`` (replacing an older copy)."""
+        """Copy the accepted outcome records, playbooks, corpus cases and shared helpers into ``dest`` (replacing
+        an older copy); a seed built from it keeps what a playbook needs to apply on its own."""
         tar = f"cd {APPLICATION_ROOT} && tar cf - " + " ".join(MEMORY_PATHS) + " 2>/dev/null; true"
         try:
             data = self.exec_controller(control, tar)

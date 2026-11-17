@@ -26,7 +26,7 @@ run's cap) and the `collect` hook. Later positions of a sequence run on the memo
     fuzzops.log, hooks.log
     exec/                                       the watch hook's FUZZOPS_OUT dirs (state-*.json, report.json,
                                                  timeline.jsonl)
-    operator/                                   collect: memory/.sdo/{outcomes,playbooks}, controller-state.json,
+    operator/                                   collect: memory/.sdo/{outcomes,playbooks,corpus,lib}, controller-state.json,
                                                  controller.log (since the inject), collect.json (per-part
                                                  ok/error), and from the lane's host evidence sink:
       evidence/                                 layout.json, index.jsonl (the interval's records),
