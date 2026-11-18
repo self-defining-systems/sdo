@@ -44,14 +44,16 @@ type Config struct {
 	// their argv) and binds its hash into the install fingerprint.
 	Settings *settings.Config
 
-	ObservationCeiling                           sdk.ObservationScope
-	Namespace, ControlNamespace, Application     string
-	ControllerImage, ResponderImage              string
-	ScriptImage                                  string
-	RepositoryPVC, CredentialsSecret             string
-	AcceptedCommit                               string
-	ControllerDurationSeconds                    int
-	ExitAfterClosure                             bool
+	ObservationCeiling                       sdk.ObservationScope
+	Namespace, ControlNamespace, Application string
+	ControllerImage, ResponderImage          string
+	ScriptImage                              string
+	RepositoryPVC, CredentialsSecret         string
+	AcceptedCommit                           string
+	ControllerDurationSeconds                int
+	ExitAfterClosure                         bool
+	// StopAfterArchitecture ends the operate Job after the goal, schema, source and architecture commits: no health judge, no controller install.
+	StopAfterArchitecture                        bool
 	NativeCommand, NativeArgs                    []string
 	ExtraControllerArgs                          []string
 	Credentials                                  map[string][]byte
@@ -231,6 +233,7 @@ func Resources(c Config) (Plan, error) {
 	control := c.controlNamespace()
 	split := control != c.Namespace
 	plan := Plan{PVC: &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: c.RepositoryPVC, Namespace: control}, Spec: corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("10Gi")}}}}}
+	plan.PVC.Annotations = devmount.VolumeNodeAnnotations()
 	if split {
 		plan.Namespace = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: control, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo", ControllerNamespaceLabel: "true", ApplicationNamespaceLabel: c.Namespace}}}
 	}
@@ -436,7 +439,7 @@ func controllerJob(c Config) *batchv1.Job {
 	// validate already parsed the sink.
 	_ = evidenceSinkSidecar(c, pod)
 	if devmount.Enabled() {
-		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_DEV_MOUNT", Value: "1"})
+		pod.Containers[0].Env = append(pod.Containers[0].Env, devmount.Environment()...)
 		devmount.Apply(pod)
 	}
 	return job

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Protocol, cast
 
 from libs.agent_cli.errors import rate_limit_failure
 from libs.agent_cli.startup import mark_startup
+from sdo.agents.responder import page_only
 from sdo.agents.responder.codex import ResponderExecutionError, execute_incident
 from sdo.agents.responder.credentials import prepare_claude_home, prepare_codex_home, skills_for_role
 from sdo.agents.responder.investigation import execute_investigation
@@ -120,8 +121,9 @@ def main() -> int:
         return 2
     try:
         role = task_role(Path(os.environ.get("SDO_TASK_PATH", str(DEFAULT_TASK_PATH))))
-        prepare_codex_home(skills=skills_for_role(role))
-        prepare_claude_home(skills=skills_for_role(role))
+        skills = () if page_only.enabled() and role == "responder" else skills_for_role(role)
+        prepare_codex_home(skills=skills)
+        prepare_claude_home(skills=skills)
         run_worker_task(
             Path(os.environ.get("SDO_TASK_PATH", str(DEFAULT_TASK_PATH))),
             result_name,

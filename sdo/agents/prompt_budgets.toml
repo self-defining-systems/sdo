@@ -78,7 +78,7 @@ reason = "Actual benchmark transport appendix: 676 Unicode code points, with 10 
 
 [responder.instructions]
 max_chars = 4000
-reason = "The responder's first message (the candidate block Go renders adds at most 2048 bytes; without it 1800 holds): the symptom block of at most 1100 code points (failing user tests grouped by status and server error with failed counts, first failing sample, passing tests, sdo detect TEST), plus the identity line and the two skill lines (about 330 code points with a long skills root), plus headroom."
+reason = "The responder's first message (the candidate block Go renders adds at most 2048 bytes; without it 1800 holds): the symptom block of at most 1100 code points (failing user tests grouped by status and server error with failed counts, first failing sample, passing tests, sdo detect TEST), plus the one instruction line (about 330 code points with a long skills root), plus headroom."
 
 [investigator.instructions]
 max_chars = 3800
@@ -360,6 +360,18 @@ reason = "Explicit template-placeholder cap; preserve small identities inline an
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
 
+[template_data.responder-incident_page-branch_instruction]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_page-namespace]
+max_chars = 256
+reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
+
+[template_data.responder-incident_page-page]
+max_chars = 7800
+reason = "The page-only responder's page: the symptom block (5200 code points at most) plus the candidate block (2048 at most) as plain text, with headroom, so it is never spilled to a context file."
+
 [template_data.responder-incident_prompt-branch_instruction]
 max_chars = 256
 reason = "Explicit template-placeholder cap; preserve small identities inline and spill large values through the common renderer."
@@ -377,8 +389,8 @@ max_chars = 2100
 reason = "The candidate block Go renders (the recent_changes proto slot keeps its name): at most 2048 bytes including the live pointer line; the cap keeps it inline in the first message."
 
 [template_data.responder-incident_prompt-symptom]
-max_chars = 5600
-reason = "The symptom block is bounded to 5200 code points by the renderer (every failing user test by name, up to 48, grouped by shared status and error, plus passing names); the cap leaves headroom so it is never spilled to a context file."
+max_chars = 6800
+reason = "The symptom block is bounded to 5200 code points by the renderer (every failing user test by name, up to 48, grouped by shared status and error, plus passing names) and is followed by the learned-playbook block of at most 1200 code points (the unmatched playbooks with their last read); the cap leaves headroom so it is never spilled to a context file."
 
 [template_data.responder-incident_prompt-skills_root]
 max_chars = 256

@@ -11,7 +11,13 @@ type DeployedImage struct {
 	Init    bool          `json:"init"`
 	Applied string        `json:"applied"`
 	Digest  string        `json:"digest"`
-	Inputs  ImageInputs   `json:"inputs,omitzero"`
+	// Live is the image field the deployer left in the pod template because
+	// the running pods already ran Applied's digest (adoption must not roll
+	// a workload). Applied is the pin; it takes effect at the next deploy that
+	// changes the template for another reason. Empty: Applied is in the
+	// template. Desired state and observation read Live, not Applied.
+	Live   string      `json:"live,omitempty"`
+	Inputs ImageInputs `json:"inputs,omitzero"`
 }
 
 // ImageInputs is copied from the trusted deployment plan, never from a lock or

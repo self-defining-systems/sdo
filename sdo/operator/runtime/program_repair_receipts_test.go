@@ -152,3 +152,33 @@ func TestRepairActionFailedReadsTheReasonAndFallsBackForOlderRecords(t *testing.
 		}
 	}
 }
+
+// A source reconcile whose live object keeps differences the reconcile cannot
+// own (server-normalized fields, unreadable observations) still wrote the
+// object: the repair receipt is successful and the residual stays evidence in
+// the action report. Credit follows the alert set clearing, not what a repair
+// left in the object.
+func TestSourceResidualReconcileIsASuccessfulRepairReceipt(t *testing.T) {
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "app", Name: "api"}
+	reconcile := program.ReconcileFromSource{Ref: ref}
+	at := time.Unix(1_000, 0).UTC()
+	application := RecordedPlanApplication{
+		ID: "plan-r-1", ProgramIDs: []string{"drift"}, StartedAt: at, CompletedAt: at.Add(time.Second),
+		Error: (&SourceReconcilePartialError{Results: []*contracts.SourceReconcileResult{{}}}).Error(),
+		Result: PlanApplicationResult{
+			Applied:        true,
+			Plan:           program.Plan{Actions: []program.Action{reconcile}},
+			ActionsApplied: []program.Action{reconcile},
+			ActionReports: []PlanActionReport{{Status: "partial", FailureReason: "source_residual",
+				SourceReconcile: &contracts.SourceReconcileResult{ResidualPaths: []string{"spec.x"}}}},
+			ObjectEffects: []PlanObjectEffect{{Ref: ref, State: "applied", Confirmed: true}},
+		},
+	}
+	receipts := ProgramRepairReceipts([]RecordedPlanApplication{application}, nil)
+	if len(receipts) != 1 || !receipts[0].Success || receipts[0].FailureReason != "" {
+		t.Fatalf("a residual-only source reconcile must be one successful receipt: %+v", receipts)
+	}
+	if application.Result.ActionReports[0].SourceReconcile == nil || len(application.Result.ActionReports[0].SourceReconcile.ResidualPaths) == 0 {
+		t.Fatal("the residual detail must stay recorded")
+	}
+}

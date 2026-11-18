@@ -15,7 +15,7 @@ import (
 	p15 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 	p0 "sdo.dev/operator/sdk"
 	p3 "sdo.dev/operator/sdk/appstate/carried"
-	p12 "sdo.dev/operator/sdk/logs"
+	p13 "sdo.dev/operator/sdk/logs"
 	p1 "sdo.dev/operator/sdk/metrics"
 	p17 "sdo.dev/operator/sdk/podread"
 	p2 "sdo.dev/operator/sdk/program"
@@ -23,7 +23,7 @@ import (
 	p19 "sdo.dev/operator/sdk/traffic"
 	p20 "sdo.dev/operator/sdk/usage"
 	p21 "sdo.dev/operator/sdk/vantage"
-	p13 "time"
+	p12 "time"
 )
 
 func (v *View) AdmissionWebhooksFor(a0 p0.ObjectRef) (r0 []p0.AdmissionWebhook, r1 error) {
@@ -131,6 +131,13 @@ func (v *View) Events() (r0 []p5.Event) {
 	}
 	return
 }
+func (v *View) HeldAlertKeys() (r0 []string) {
+	err := v.call("HeldAlertKeys", []any{}, []any{&r0})
+	if err != nil {
+		panic(err)
+	}
+	return
+}
 func (v *View) HorizontalPodAutoscalers() (r0 []p9.HorizontalPodAutoscaler) {
 	err := v.call("HorizontalPodAutoscalers", []any{}, []any{&r0})
 	if err != nil {
@@ -157,14 +164,19 @@ func (v *View) KubernetesRead(a0 p2.KubernetesRequest) (r0 p11.RawMessage, r1 er
 	r1 = err
 	return
 }
-func (v *View) LogResult(a0 string) (r0 p12.Result, r1 bool) {
+func (v *View) LogMatches(a0 p0.ObjectRef, a1 string, a2 p12.Duration, a3 string, a4 int) (r0 p2.LogMatchResult, r1 error) {
+	err := v.call("LogMatches", []any{a0, a1, a2, a3, a4}, []any{&r0})
+	r1 = err
+	return
+}
+func (v *View) LogResult(a0 string) (r0 p13.Result, r1 bool) {
 	err := v.call("LogResult", []any{a0}, []any{&r0, &r1})
 	if err != nil {
 		panic(err)
 	}
 	return
 }
-func (v *View) Logs(a0 p0.ObjectRef, a1 string, a2 p13.Duration) (r0 string, r1 error) {
+func (v *View) Logs(a0 p0.ObjectRef, a1 string, a2 p12.Duration) (r0 string, r1 error) {
 	err := v.call("Logs", []any{a0, a1, a2}, []any{&r0})
 	r1 = err
 	return
@@ -248,7 +260,7 @@ func (v *View) Observe(a0 p2.ExternalOperation) (r0 int32, r1 error) {
 	r1 = err
 	return
 }
-func (v *View) ObservedAt() (r0 p13.Time) {
+func (v *View) ObservedAt() (r0 p12.Time) {
 	err := v.call("ObservedAt", []any{}, []any{&r0})
 	if err != nil {
 		panic(err)
@@ -374,7 +386,7 @@ func (v *View) Secrets() (r0 []p0.SecretMetadata) {
 	}
 	return
 }
-func (v *View) SelfHealHold() (r0 p13.Duration) {
+func (v *View) SelfHealHold() (r0 p12.Duration) {
 	err := v.call("SelfHealHold", []any{}, []any{&r0})
 	if err != nil {
 		panic(err)

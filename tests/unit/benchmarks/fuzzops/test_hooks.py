@@ -357,6 +357,28 @@ def test_idle_reason(state: dict[str, Any] | None, why: str) -> None:
 NOW = datetime(2026, 1, 1, 12, tzinfo=UTC)
 
 
+def _timeline(*rules: str) -> dict[str, Any]:
+    stamp = (NOW - timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {
+        "version": "v",
+        "detector_timeline": [
+            {"detector_id": "request-metrics", "rule_id": rule, "last_seen_at": stamp, "fingerprint": f"f{i}"}
+            for i, rule in enumerate(rules)
+        ],
+    }
+
+
+def test_idle_verdict_is_blind_while_request_metrics_cannot_watch_any_operation() -> None:
+    state = _timeline("request-metrics.not-instrumented", "request-metrics.not-instrumented")
+    assert idle_verdict(state, NOW, True, NOW).startswith("blind:")
+
+
+def test_idle_verdict_is_idle_when_some_operation_is_watched_or_none_is_declared() -> None:
+    mixed = _timeline("request-metrics.not-instrumented", "request-metrics.insufficient-baseline")
+    assert idle_verdict(mixed, NOW, True, NOW) == ""
+    assert idle_verdict(_timeline(), NOW, True, NOW) == ""
+
+
 def test_idle_verdict_is_idle_for_a_ready_fresh_quiet_controller() -> None:
     assert idle_verdict({"version": "v"}, NOW - timedelta(seconds=5), True, NOW) == ""
 
@@ -395,7 +417,9 @@ def _fake_kubectl(responses: dict[str, dict[str, Any]], calls: list[list[str]]) 
     return run
 
 
-def test_idle_reads_the_pod_and_the_state_configmap_once_each(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_idle_reads_the_pod_the_state_configmap_and_the_controller_log_once_each(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     fresh = (datetime.now(UTC) - timedelta(seconds=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
     stale = "2020-01-01T00:00:00Z"
     configmap = {
@@ -408,9 +432,70 @@ def test_idle_reads_the_pod_and_the_state_configmap_once_each(monkeypatch: pytes
     env = {"FUZZOPS_NAMESPACE": "ns1", "FUZZOPS_KUBE_CONTEXT": "kind-c", "KUBECONFIG": "/k"}
     lines: list[str] = []
     assert hooks.idle(env, out=lines.append) == 0, lines
-    assert len(calls) == 2
+    assert len(calls) == 3
+    assert sum("logs" in c for c in calls) == 1
     assert any("--show-managed-fields" in c for c in calls)
     assert all(c[c.index("-n") + 1] == "ns1-sdo" for c in calls)
+
+
+def test_idle_is_idle_once_the_log_shows_every_store_in_the_state_history_promoted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The first verdict has no log; it must not hold on baselines it cannot read (the log read comes after it)."""
+    fresh = (datetime.now(UTC) - timedelta(seconds=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    state = {
+        "version": "sdo.controller/v1",
+        "history": [{"detector_id": "store-state-redis", "evaluated_at": fresh, "status": "clear"}],
+    }
+    configmap = {
+        "metadata": {"managedFields": [{"time": fresh}]},
+        "data": {"runtime-state.json": json.dumps(state)},
+    }
+    pods = {"items": [{"metadata": {"name": "p"}, "status": {"conditions": [{"type": "Ready", "status": "True"}]}}]}
+    logs = "INFO store_baseline_promoted component=redis"
+    monkeypatch.setattr(
+        hooks.subprocess, "run", _fake_kubectl({"configmap": configmap, "pods": pods, "logs": logs}, [])
+    )
+    env = {"FUZZOPS_NAMESPACE": "ns1", "FUZZOPS_KUBE_CONTEXT": "kind-c", "KUBECONFIG": "/k"}
+    lines: list[str] = []
+    assert hooks.idle(env, out=lines.append) == 0, lines
+
+
+def test_idle_gives_up_waiting_for_store_baselines_after_the_bound_and_records_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fresh = (datetime.now(UTC) - timedelta(seconds=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    state = {
+        "version": "sdo.controller/v1",
+        "history": [{"detector_id": "store-state-redis", "evaluated_at": fresh, "status": "clear"}],
+    }
+    configmap = {
+        "metadata": {"managedFields": [{"time": fresh}]},
+        "data": {"runtime-state.json": json.dumps(state)},
+    }
+    pods = {"items": [{"metadata": {"name": "p"}, "status": {"conditions": [{"type": "Ready", "status": "True"}]}}]}
+    monkeypatch.setattr(
+        hooks.subprocess, "run", _fake_kubectl({"configmap": configmap, "pods": pods, "logs": "no promotions"}, [])
+    )
+    lane, out = tmp_path / "lane", tmp_path / "out"
+    lane.mkdir()
+    env = {
+        "FUZZOPS_NAMESPACE": "ns1",
+        "FUZZOPS_KUBE_CONTEXT": "kind-c",
+        "KUBECONFIG": "/k",
+        "BENCH_LANE_DIR": str(lane),
+        "BENCH_OUT": str(out),
+    }
+    lines: list[str] = []
+    assert hooks.idle(env, out=lines.append) == 1
+    assert lines[-1].startswith("blind: no promoted baseline yet for redis")
+    started = datetime.now(UTC) - timedelta(seconds=hooks.BASELINE_WAIT_MAX_S + 5)
+    (lane / hooks.BASELINE_WAIT_RECORD).write_text(json.dumps({"since": started.strftime("%Y-%m-%dT%H:%M:%SZ")}))
+    assert hooks.idle(env, out=lines.append) == 0
+    assert lines[-1] == "idle"
+    assert "redis" in json.loads((lane / hooks.BASELINE_MISSING_RECORD).read_text())["reason"]
+    assert (out / hooks.BASELINE_MISSING_RECORD).is_file()
+    assert not (lane / hooks.BASELINE_WAIT_RECORD).exists()
 
 
 def test_idle_reports_a_missing_controller_as_busy(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -496,6 +581,7 @@ def test_the_benchmark_profile_differs_from_production_in_a_few_documented_field
             "after_playbook_wait": "5m",
             "investigators": 2,
         },
+        "onboarding": {"journeys_required": False},
         "detection": {"self_heal_hold": "60s"},
     }
 
@@ -568,6 +654,12 @@ def test_watch_runs_the_observer_for_the_fault_without_pvc_snapshots(
     env["BENCH_FAULT"] = "none"
     hooks.watch(env)
     assert "--fault" not in seen[1]
+
+
+def test_collected_memory_paths_hold_what_a_seed_needs_to_apply_a_playbook() -> None:
+    # the corpus cases are where Go derives a playbook's credited (symptom, component) pairs; a seed built from a
+    # collected copy without them never applies the playbook on its own, and shared helpers (lib) are imported by it
+    assert {".sdo/outcomes", ".sdo/playbooks", ".sdo/corpus", ".sdo/lib"} <= set(hooks.MEMORY_PATHS)
 
 
 def test_kube_copy_memory_replaces_an_older_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -721,6 +813,19 @@ def test_collect_copies_the_interval_from_the_host_sink(tmp_path: Path, monkeypa
     assert json.loads((out / "view.json").read_text())["schema"] == "fuzzops.view/v1"
 
 
+def test_collect_does_not_report_the_managers_run_json_as_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bench manager writes run.json after the step that ran collect; collect's manifest must not hold the lane
+    for a file that cannot exist yet."""
+    monkeypatch.setattr(hooks.subprocess, "run", lambda cmd, **_: subprocess.CompletedProcess(cmd, 1, "", "no"))
+    out = tmp_path / "run" / "operator"
+    hooks.collect(_sink_env(tmp_path, BENCH_OUT=str(out)), out=lambda _: None)
+    manifest = json.loads((out / "evidence-manifest.json").read_text())
+    assert not (tmp_path / "run" / "run.json").exists()
+    assert not any("run.json" in problem for problem in manifest["problems"])
+
+
 def test_collect_records_a_view_failure_without_raising(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(hooks.subprocess, "run", lambda cmd, **_: subprocess.CompletedProcess(cmd, 1, "", "no"))
 
@@ -760,7 +865,9 @@ def test_reset_incidents_requires_an_acknowledged_receipt(monkeypatch: pytest.Mo
         hooks.reset_incidents(kc.parent / "sdo-operator", "fg1-sdo", None)
 
 
-def test_collect_ends_with_an_operator_reset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _collect_with_reset_spy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, complete: bool
+) -> tuple[list[list[str]], Path]:
     lane = tmp_path / "lane"
     (lane / "bin").mkdir(parents=True)
     (lane / "bin" / "sdo-operator").write_text("")
@@ -773,11 +880,31 @@ def test_collect_ends_with_an_operator_reset(tmp_path: Path, monkeypatch: pytest
         return subprocess.CompletedProcess(cmd, 1, "", "no cluster")
 
     monkeypatch.setattr(hooks.subprocess, "run", run_cmd)
-    out = tmp_path / "out"
+    if complete:
+        monkeypatch.setattr(hooks.cellevidence, "write_manifest", lambda _run, **_kw: hooks.cellevidence.CellEvidence())
+    out = tmp_path / "run" / "operator"
     hooks.collect(_sink_env(tmp_path, BENCH_OUT=str(out), BENCH_LANE_DIR=str(lane)), out=lambda _: None)
+    return resets, out
+
+
+def test_collect_ends_with_an_operator_reset_once_the_evidence_is_complete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    resets, out = _collect_with_reset_spy(tmp_path, monkeypatch, complete=True)
     assert len(resets) == 1
     assert json.loads((out / "collect.json").read_text())["parts"]["reset"] == "ok (generation 7)"
     assert json.loads((out / "incidents-reset.json").read_text())["generation"] == 7
+
+
+def test_collect_blocks_the_reset_while_the_evidence_is_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    resets, out = _collect_with_reset_spy(tmp_path, monkeypatch, complete=False)
+    parts = json.loads((out / "collect.json").read_text())["parts"]
+    assert resets == []
+    assert parts["evidence-manifest"].startswith("error: evidence incomplete: ")
+    assert parts["reset"].startswith("error: blocked")
+    assert not (out / "incidents-reset.json").exists()
 
 
 def test_reset_after_install_waits_for_the_controller(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -808,6 +935,76 @@ def test_reset_after_install_waits_for_the_controller(monkeypatch: pytest.Monkey
             sleep=lambda s: now.__setitem__(0, now[0] + s),
             clock=lambda: now[0],
         )
+
+
+class _StartingController:
+    """A lane controller that writes its state ConfigMap only once its start-up (informers, traffic warm-up,
+    first evaluation) is done, after ``starts_after`` polls."""
+
+    def __init__(self, starts_after: int, ready: bool = True) -> None:
+        self.polls = 0
+        self.starts_after = starts_after
+        self.ready = ready
+
+    def state(self, control: str) -> dict[str, Any] | None:
+        self.polls += 1
+        return {"step_count": 1} if self.polls > self.starts_after else None
+
+    def controller_ready(self, control: str) -> bool:
+        return self.ready
+
+    def controller_log_tail(self, control: str, lines: int = 3) -> str:
+        return "INFO responder_standby_created application=fg1"
+
+
+def test_reset_is_requested_only_after_the_controller_finished_starting(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The controller acknowledges resets from its main loop, which it enters after a start-up that took 17 minutes
+    on a loaded host: asking earlier only burns 2-minute acknowledgement waits."""
+    controller = _StartingController(starts_after=40)
+    asked: list[int] = []
+
+    def run(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        asked.append(controller.polls)
+        return subprocess.CompletedProcess(cmd, 0, '{"generation": 5, "acknowledged": true}', "")
+
+    monkeypatch.setattr(hooks.subprocess, "run", run)
+    now = [0.0]
+    receipt = hooks.reset_when_started(
+        controller,  # type: ignore[arg-type]
+        tmp_path / "sdo-operator",
+        "fg1-sdo",
+        None,
+        sleep=lambda s: now.__setitem__(0, now[0] + s),
+        clock=lambda: now[0],
+    )
+    assert receipt["generation"] == 5
+    assert asked == [41]
+    assert 400 <= now[0] < hooks.CONTROLLER_START_PATIENCE_S
+
+
+def test_a_controller_that_never_finishes_starting_fails_with_where_it_is(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    controller = _StartingController(starts_after=10**9, ready=True)
+    monkeypatch.setattr(hooks.subprocess, "run", lambda cmd, **_: pytest.fail("reset asked of a starting controller"))
+    now = [0.0]
+    with pytest.raises(hooks.HookError) as raised:
+        hooks.reset_when_started(
+            controller,  # type: ignore[arg-type]
+            tmp_path / "sdo-operator",
+            "fg1-sdo",
+            None,
+            start_patience=120,
+            sleep=lambda s: now.__setitem__(0, now[0] + s),
+            clock=lambda: now[0],
+        )
+    message = str(raised.value)
+    assert "did not finish starting within 2m" in message
+    assert "pod Ready" in message
+    assert "responder_standby_created" in message
+    assert "no state ConfigMap" in message
 
 
 def _fake_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, registry_fails: bool = False) -> Path:
@@ -975,3 +1172,189 @@ def test_pull_mode_teardown_goes_on_when_the_pull_fails(tmp_path: Path, monkeypa
     assert hooks.teardown(env, out=lines.append) == 0
     assert any("delete namespace ns1-sdo" in d for d in deleted)
     assert any("evidence pull failed" in line for line in lines)
+
+
+def test_dev_mount_in_pull_mode_projects_over_the_evidence_claim_not_a_node_path(tmp_path: Path) -> None:
+    from benchmarks.fuzzops import hooks
+
+    block = hooks.OperatorBlock.__new__(hooks.OperatorBlock)
+    object.__setattr__(block, "dev_mount", True)
+    env = {"BENCH_EVIDENCE_MODE": "pull", "BENCH_EVIDENCE_RUN": "e-l-1"}
+    assert hooks.dev_mount_env(env, block, tmp_path / "bin", lambda _m: None) == {
+        "SDO_DEV_MOUNT": "1",
+        "SDO_DEV_MOUNT_PATH": ".dev",
+        "SDO_DEV_MOUNT_CLAIM": "sdo-evidence",
+    }
+
+
+def _incident_state(detected: str, **extra: Any) -> dict[str, Any]:
+    return {
+        "incident_open": True,
+        "incident_request": {"incident_id": "inc-2", "detected_at": detected},
+        **extra,
+    }
+
+
+def test_another_incident_is_ignored_when_the_cells_own_is_known() -> None:
+    from benchmarks.fuzzops.hooks import OWN_DETECTED_ENV, other_incident
+
+    env = {OWN_DETECTED_ENV: "2026-01-01T12:00:02.4Z"}
+    found = other_incident(_incident_state("2026-01-01T12:03:49.1Z"), env)
+    assert found is not None
+    incident, rest = found
+    assert incident == "inc-2"
+    assert idle_verdict(rest, NOW, True, NOW) == ""
+    # The cell's own incident still holds the settle, and so does unfinished closing work of the cell.
+    assert other_incident(_incident_state("2026-01-01T12:00:02.4Z"), env) is None
+    assert other_incident(_incident_state("2026-01-01T12:03:49.1Z"), {}) is None
+    _, pending = other_incident(_incident_state("2026-01-01T12:03:49.1Z", pending_closure={"request": {}}), env) or (
+        "",
+        {},
+    )
+    assert idle_verdict(pending, NOW, True, NOW) == "busy: closure pending"
+
+
+def test_wait_idle_stable_restarts_the_quiet_period_when_an_incident_opens(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr(hooks.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(hooks.time, "sleep", lambda s: clock.__setitem__("t", clock["t"] + s))
+    # idle until t=30, an incident from 30 to 60, idle again after
+    monkeypatch.setattr(hooks, "wait_idle", lambda *a, **k: "alarm: incident open i" if 30 <= clock["t"] < 60 else "")
+    kube = SimpleNamespace()
+    assert hooks.wait_idle_stable(kube, "c", 1000, 90) == ""  # type: ignore[arg-type]
+    assert clock["t"] >= 150  # 60 + 90 quiet seconds, not 90
+
+
+def test_reset_incidents_verb_resets_and_writes_the_receipt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    lane = tmp_path / "lane"
+    (lane / "bin").mkdir(parents=True)
+    (lane / "bin" / "sdo-operator").write_text("")
+    calls: list[list[str]] = []
+
+    def run_cmd(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, '{"generation": 9, "acknowledged": true}\n', "")
+
+    monkeypatch.setattr(hooks.subprocess, "run", run_cmd)
+    out = tmp_path / "scratch"
+    env = _sink_env(tmp_path, BENCH_OUT=str(out), BENCH_LANE_DIR=str(lane))
+    assert hooks.reset_incidents_verb(env, out=lambda _: None) == 0
+    assert any(c[1:3] == ["incidents", "reset"] for c in calls)
+    assert json.loads((out / "incidents-reset.json").read_text())["generation"] == 9
+    assert "reset-incidents" in hooks.VERBS
+
+
+def _store_history(*entries: tuple[str, str]) -> dict[str, Any]:
+    stamp = NOW.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {
+        "version": "v",
+        "history": [
+            {
+                "detector_id": detector,
+                "evaluated_at": stamp,
+                "status": "clear",
+            }
+            for detector, _ in entries
+        ],
+    }
+
+
+def _log(*lines: str) -> str:
+    return "\n".join(lines)
+
+
+EVALUATED = '{"evaluated_detectors":["store-state-postgresql","store-state-redis"],"findings":[]}'
+
+
+def test_idle_verdict_holds_while_a_data_store_has_no_promoted_baseline() -> None:
+    state = _store_history(("store-state-postgresql", ""), ("store-state-redis", ""))
+    log = _log(EVALUATED, "INFO store_baseline_promoted component=redis")
+
+    verdict = idle_verdict(state, NOW, True, NOW, controller_log=log)
+
+    assert verdict == "blind: no promoted baseline yet for postgresql"
+
+
+def test_idle_verdict_releases_once_every_evaluated_store_is_promoted() -> None:
+    state = _store_history(("store-state-postgresql", ""), ("store-state-redis", ""))
+    log = _log(
+        EVALUATED, "INFO store_baseline_promoted component=redis", "INFO store_baseline_promoted component=postgresql"
+    )
+
+    assert idle_verdict(state, NOW, True, NOW, controller_log=log) == ""
+
+
+def test_idle_verdict_needs_the_controller_log_to_judge_baselines() -> None:
+    state = _store_history(("store-state-postgresql", ""))
+
+    assert idle_verdict(state, NOW, True, NOW, controller_log=None).startswith("blind:")
+
+
+def test_idle_verdict_without_baselines_ignores_unpromoted_stores() -> None:
+    state = _store_history(("store-state-postgresql", ""))
+
+    assert idle_verdict(state, NOW, True, NOW, baselines=False) == ""
+    assert idle_verdict(state, NOW, True, NOW, controller_log=_log(EVALUATED)).startswith("blind:")
+
+
+def test_wait_idle_before_the_seed_needs_no_promoted_baseline(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Kube:
+        def state_configmap(self, control: str) -> tuple[dict[str, Any], datetime]:
+            return _store_history(("store-state-postgresql", "")), datetime.now(UTC)
+
+        def controller_ready(self, control: str) -> bool:
+            return True
+
+    assert hooks.wait_idle(_Kube(), "ns", 1.0) == ""  # type: ignore[arg-type]
+
+
+def test_run_seed_runs_the_packs_seed_script_with_the_lane_environment(tmp_path: Path) -> None:
+    root = tmp_path / "pack"
+    (root / "manifests").mkdir(parents=True)
+    (root / "manifests" / "a.yaml").write_text("kind: Service\n")
+    (root / "app.yaml").write_text("name: s\nseed: ./seed.sh\nentry: {service: web, port: 80}\n")
+    (root / "seed.sh").write_text('#!/bin/sh\necho "$NAMESPACE $KUBE_CONTEXT $KIND_CLUSTER" > "$PWD/seeded"\n')
+    (root / "seed.sh").chmod(0o755)
+    env = {
+        "FUZZOPS_NAMESPACE": "ns1",
+        "FUZZOPS_KUBE_CONTEXT": "kind-c",
+        "FUZZOPS_KIND_CLUSTER": "c",
+        "KUBECONFIG": "/k",
+    }
+    assert hooks.run_seed(hooks.SourcePack(root), env) is True
+    assert (root / "seeded").read_text().strip() == "ns1 kind-c c"
+    (root / "app.yaml").write_text("name: s\nentry: {service: web, port: 80}\n")
+    assert hooks.run_seed(hooks.SourcePack(root), env) is False
+    (root / "app.yaml").write_text("name: s\nseed: ./seed.sh\nentry: {service: web, port: 80}\n")
+    (root / "seed.sh").write_text("#!/bin/sh\nexit 3\n")
+    with pytest.raises(HookError, match="seed"):
+        hooks.run_seed(hooks.SourcePack(root), env)
+
+
+def test_memory_render_is_applied_only_when_it_differs_from_the_install_render(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], what: str, timeout: float = 600, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(hooks, "_run", fake_run)
+    waited: list[str] = []
+    monkeypatch.setattr(hooks, "wait_rollouts", lambda kube, ns, timeout_s=600: waited.append(ns))
+    install = [{"kind": "ConfigMap", "metadata": {"name": "nginx"}, "data": {"a": "1"}}]
+    repo = tmp_path / "memory"
+    (repo / "k8s").mkdir(parents=True)
+    kube = Kube("kind-c", "/k")
+    (repo / "k8s" / "render.yaml").write_text(yaml.safe_dump_all(install))
+    assert hooks.apply_memory_render(kube, "ns1", repo, install, lambda line: None) is False
+    assert calls == []
+    assert waited == []
+    instrumented = [{"kind": "ConfigMap", "metadata": {"name": "nginx"}, "data": {"a": "2"}}]
+    (repo / "k8s" / "render.yaml").write_text(yaml.safe_dump_all(instrumented))
+    assert hooks.apply_memory_render(kube, "ns1", repo, install, lambda line: None) is True
+    assert any("apply" in c and str(repo / "k8s" / "render.yaml") in c for c in calls)
+    assert waited == ["ns1"]

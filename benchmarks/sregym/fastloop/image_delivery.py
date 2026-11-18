@@ -214,6 +214,24 @@ def _host_registry() -> str:
     return host
 
 
+def _tag_frozen(image: str, expected: str, local: str, architecture: str) -> None:
+    """Tag the frozen image bytes as *local*.
+
+    The classic store tags by image ID. A containerd image store reports a platform manifest digest as the ID of a
+    multi-platform image, and that digest is not an image ID, so ``docker tag`` rejects it: tag the source image
+    instead and require the platform's identity to still be the frozen one, so a concurrent build cannot substitute
+    other bytes.
+    """
+    if subprocess.run(["docker", "tag", expected, local], capture_output=True, text=True, check=False).returncode == 0:
+        return
+    _run(["docker", "tag", image, local])
+    identity = _run(
+        ["docker", "image", "inspect", "--platform", "linux/" + architecture, "--format", "{{.Id}}", local]
+    ).stdout.strip()
+    if identity != expected:
+        raise ValueError(f"{image} changed while it was being published: expected {expected}, found {identity}")
+
+
 def registry_delivery(
     cluster: str, images: list[str], *, metrics: dict[str, Any] | None = None
 ) -> dict[str, dict[str, str]]:
@@ -270,7 +288,7 @@ def registry_delivery(
         manifest = _manifest(host, key, tag)
         cached = manifest is not None
         if manifest is None:
-            _run(["docker", "tag", expected, local])
+            _tag_frozen(image, expected, local, architecture)
             pushed = _run(["docker", "push", "--platform", "linux/" + architecture, local])
             match = re.search(r"digest: (sha256:[0-9a-f]{64})", pushed.stdout + pushed.stderr)
             if match is None:

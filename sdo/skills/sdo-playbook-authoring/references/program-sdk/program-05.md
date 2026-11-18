@@ -30,10 +30,15 @@ type ReadView interface {
 	Logs(pod sdk.ObjectRef, container string, since time.Duration) (string, error)
 	// LogsWithOptions reads bounded container logs; Previous selects the last terminated instance.
 	LogsWithOptions(pod sdk.ObjectRef, options corev1.PodLogOptions) (string, error)
+	// LogMatches is `kubectl logs --since=<window> | grep <pattern>`: it scans the whole window (up to
+	// MaxLogScanLines newest lines) and returns the newest max matching lines (at most MaxLogMatchLines), oldest
+	// first. pattern is an RE2 regular expression. ScanTruncated says the scan did not cover the window, so an empty
+	// answer then means unknown, not absent. Prefer it to Logs when a Diagnose looks for a particular line.
+	LogMatches(pod sdk.ObjectRef, container string, since time.Duration, pattern string, max int) (LogMatchResult, error)
 	metrics.UsageSource
 	// ProbeTCP connects to one port of a Pod or Service and records whether it accepted.
 	ProbeTCP(to sdk.ObjectRef, port int32) (ProbeResult, error)
-	// ProbeHTTP sends one recorded HTTP request to a Pod or Service.
+	// ProbeHTTP sends one recorded HTTP request to a Service, on its first TCP port (HTTPProbePort).
 	ProbeHTTP(to sdk.ObjectRef, req HTTPProbe) (ProbeResult, error)
 	// DiffAgainstSource compares quantities by value and excludes controller bookkeeping (revision, last-applied and restart annotations, status and managedFields), accepted server defaults, and replicas targeted by an HPA.
 	DiffAgainstSource(ref sdk.ObjectRef) (Diff, error)
@@ -218,19 +223,4 @@ type RolloutView interface {
 }
     RolloutView is the observation a stalled-rollout release is chosen from.
     ReadView and detector snapshots satisfy it.
-
-type Row map[string]Scalar
-    Row maps a requested field to its value. A field absent from the source is
-    absent from the row.
-
-func ExtractJSONFields(body []byte, fields map[string]string) (Row, error)
-    ExtractJSONFields reads the scalars at the pointers from a JSON body and
-    drops the body. A pointer to nothing leaves the field out of the row;
-    a pointer to an array or object is an error.
-
-func (r Row) Bool(name string) (bool, bool)
-    Bool reads a boolean field.
-
-func (r Row) Float(name string) (float64, bool)
-    Float reads a numeric field.
 ```

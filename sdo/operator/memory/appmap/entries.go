@@ -20,9 +20,12 @@ const (
 	ItemRoutesMatchOperations  = "routes-match-operations"
 	ItemTestsFailBroken        = "tests-fail-broken"
 	ItemErrorsSeparable        = "errors-separable-per-operation"
+	// ItemBackgroundCovered accepts a reason per job class (the subject) that
+	// no operation triggers, such as periodic maintenance.
+	ItemBackgroundCovered = "background-covered"
 )
 
-var reasonItems = map[string]bool{ItemErrorsSeparable: true, ItemJourneysMoveOwnMetrics: true, ItemRoutesMatchOperations: true, ItemTestsFailBroken: true}
+var reasonItems = map[string]bool{ItemErrorsSeparable: true, ItemJourneysMoveOwnMetrics: true, ItemRoutesMatchOperations: true, ItemTestsFailBroken: true, ItemBackgroundCovered: true}
 
 // EntryLabels name the labels of the entry metric that carry the operation's
 // route, HTTP method and status. Method and Status are optional: a metric
@@ -239,10 +242,45 @@ func (c *checker) entries() {
 		switch {
 		case !reasonItems[r.Item]:
 			c.add(RuleReasons, "a reason explains journeys-move-own-metrics, routes-match-operations or tests-fail-broken; deployed-healthy and quiet-when-healthy accept none", "reason item %q takes no reason", r.Item)
-		case !subjects[r.Subject]:
+		case r.Item != ItemBackgroundCovered && !subjects[r.Subject]:
 			c.add(RuleReasons, "subject is an operation ID or an entry service", "reason for %s: subject %q is neither", r.Item, r.Subject)
 		case strings.TrimSpace(r.Reason) == "":
 			c.add(RuleReasons, "say why the item cannot be fixed", "reason for %s on %s is empty", r.Item, r.Subject)
 		}
 	}
+}
+
+// DurationFamilies lists, by metric name, the histogram or summary series that
+// carry the entry's route label under the entry's selector. The caller keeps
+// the names that are request durations.
+func (e MetricEntry) DurationFamilies() string {
+	return "count by (__name__) (" + e.durationMatchers(`.+_(bucket|sum)`) + ")"
+}
+
+// DurationRoute counts the series of the named families that carry one route
+// label value. One query per route keeps each answer a single series, however
+// many route values the families carry.
+func (e MetricEntry) DurationRoute(names []string, route string) string {
+	quoted := make([]string, len(names))
+	for i, n := range names {
+		quoted[i] = regexp.QuoteMeta(n)
+	}
+	return "count(" + e.matchers(`__name__=~`+quote(strings.Join(quoted, "|")), e.Labels.Route+"="+quote(route)) + ")"
+}
+
+// DurationTotal is the total of one duration family's _sum or _count series
+// (suffix "sum" or "count") over all routes of the entry.
+func (e MetricEntry) DurationTotal(base, suffix string) string {
+	return "sum(" + base + "_" + suffix + e.matchers(e.Labels.Route+`!=""`) + ")"
+}
+
+func (e MetricEntry) durationMatchers(names string) string {
+	m := e.matchers(`__name__=~`+quote(names), e.Labels.Route+`!=""`)
+	return m
+}
+
+// ErrorsByRoute is the error total per route label value; it needs a status
+// label and an errors expression.
+func (e MetricEntry) ErrorsByRoute() string {
+	return "sum by (" + e.Labels.Route + ") (" + e.Metric + e.matchers(e.Labels.Status+"=~"+quote(e.Errors)) + ") > 0"
 }

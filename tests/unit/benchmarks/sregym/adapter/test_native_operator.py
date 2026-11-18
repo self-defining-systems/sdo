@@ -163,6 +163,36 @@ def test_host_requires_typed_registry_and_strict_json(tmp_path: Path, monkeypatc
     assert settings["deployment"] == {"max_attempts": 2}
 
 
+def test_host_passes_given_journeys_and_the_bench_profile_does_not_require_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import yaml
+
+    monkeypatch.setenv("SDO_OPERATOR_BIN", "/tmp/sdo-operator")
+    stub_resolution(monkeypatch)
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "{}", "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    base = NativeHostConfig(
+        install=_install(tmp_path),
+        health_objective="serves requests",
+        operation_id="benchmark-stage-1",
+        buildkit_image="moby/buildkit@sha256:" + "b" * 64,
+        registry_push_secret="registry-push",
+        registry_host="registry.hotel-sdo.svc.cluster.local:5000",
+    )
+    for config in (base, replace(base, journeys="users sign in\nusers browse items")):
+        with pytest.raises(NativeOperatorError):
+            launch_host(config)
+    assert "--journeys" not in calls[0]
+    assert calls[1][calls[1].index("--journeys") + 1] == "users sign in\nusers browse items"
+    assert yaml.safe_load(BENCH_PROFILE.read_text())["onboarding"] == {"journeys_required": False}
+
+
 def test_sync_and_maintenance_use_go_cli_without_python_broker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

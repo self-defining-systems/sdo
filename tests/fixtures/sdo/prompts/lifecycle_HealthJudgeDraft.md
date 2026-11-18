@@ -8,10 +8,20 @@ Toy API depends on the store.
 Resources: [{'kind': 'Service', 'name': 'api', 'namespace': 'default', 'source': 'deploy/api.yaml', 'dependencies': []}]
 Validation feedback: No validator feedback is available for the first round.
 
+When the goal lists user journeys ("User journeys:" in the goal text, given by the people running the application),
+they are authoritative: every given journey gets an operation naming it (`journey: <id>` from goal.md's front matter),
+a probe that checks its result end to end and a detection that names it; none is left to the generic checks.
+
 Probe every component on the user path: an operation that enters at a user entry Service (exposed outside the
 cluster) whose path includes it, and a probe that exercises it. A probe coverage section after the architecture
 lists the components the accepted map leaves uncovered. Record a component `unprobed` only when no synthetic
 request can reach it; needing authentication is not such a reason.
+Latency-sensitive request handlers often also dispatch background work (queues, jobs, async workers). That work is
+user-facing too: instrument it per job class, tie each class to the operation that triggers it, and confirm it completes.
+For every user journey that writes, the probe must read back what it wrote and check it is correct (read-your-writes),
+not just check the write returned success.
+Read-backs and existing-record checks use stable lookups: fetch by id, key or path, or check records the probe
+created and identifies. Never assert that a record appears on a page of a list other users change; it falls off.
 
 Follow /opt/sdo/skills/sdo-operations-map/SKILL.md: map the application, write probes and detectors from the
 map, and calibrate them on the live application. The skill directory is the one place outside this checkout you

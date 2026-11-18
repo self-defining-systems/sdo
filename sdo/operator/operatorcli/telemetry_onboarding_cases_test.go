@@ -1,5 +1,7 @@
 package operatorcli
 
+//ci:scoped copies its own testdata cases as fixtures
+
 import (
 	"context"
 	"io/fs"

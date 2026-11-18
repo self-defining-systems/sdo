@@ -50,7 +50,7 @@ def test_the_first_message_template_renders_strictly() -> None:
     template = Template((PROMPTS / "incident_prompt.md").read_text(encoding="utf-8"))
     rendered = template.substitute(values)
     assert "$" not in rendered
-    assert len(rendered.encode()) <= 800
+    assert len(rendered.encode()) <= 520
     for key in values:
         missing = {field: value for field, value in values.items() if field != key}
         with pytest.raises(KeyError, match=key):
@@ -89,10 +89,60 @@ def test_workflow_is_visible_in_the_real_provider_turn(tmp_path: Path, monkeypat
         assert installed.read_text(encoding="utf-8") == (SKILLS_ROOT / WORKFLOW / "SKILL.md").read_text(
             encoding="utf-8"
         )
-        assert str(SKILLS_ROOT / WORKFLOW / "SKILL.md") in command.stdin
+        assert "SKILL.md" not in command.stdin
         return reply(provider, output, session_id="workflow-session", branch="incident_result")
 
     agent = ScriptedAgent(respond)
     result = execute_incident(request, provider=provider, model="synthetic", executor=agent.executor)
     assert result.responder_session_id
     assert len(agent.requests) == 1
+
+
+def _responder_instructions() -> str:
+    """Everything the responder is told on its incident turn: the first message, both skills and the result field."""
+
+    from sdo.agents.responder.session_turn import session_output_schema
+
+    schema = session_output_schema()
+    texts = [
+        (PROMPTS / "incident_prompt.md").read_text(encoding="utf-8"),
+        (SKILLS_ROOT / WORKFLOW / "SKILL.md").read_text(encoding="utf-8"),
+        (SKILLS_ROOT / "sdo-operating" / "SKILL.md").read_text(encoding="utf-8"),
+        str(schema["properties"]["incident_result"]["description"]),  # type: ignore[index]
+    ]
+    return "\n".join(texts).lower()
+
+
+def test_the_responder_works_the_incident_itself_and_nothing_prescribes_subagents() -> None:
+    text = _responder_instructions()
+
+    for forced in ("you are the orchestrator", "do not investigate yourself", "one subagent per explanation"):
+        assert forced not in text
+    assert "before you act on the lead" not in text
+    assert "subagent" not in text
+    assert "sub-agent" not in text
+
+
+def test_nothing_tells_the_responder_to_end_a_turn_to_wait() -> None:
+    """The structured-result contract turns every ended turn into a submitted result (an early "failed")."""
+
+    text = _responder_instructions()
+
+    assert "end your turn to wait" not in text
+    assert "between turns" not in text
+    assert "return only to give up" in text
+    assert "only when you give up" in text
+
+
+def test_a_result_submitted_while_background_work_runs_is_told_to_be_interim() -> None:
+    """Whatever ends a turn mid-incident (a background command, a monitor, a subagent), the wake-up follows.
+
+    The transport already returns the last result once the CLI is idle (see the background Bash and subagent
+    drain tests in ``test_structured``); the agent must not treat the earlier one as final.
+    """
+
+    text = _responder_instructions()
+
+    assert "interim" in text
+    assert "keep working" in text
+    assert "the last result stands" in text

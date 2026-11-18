@@ -13,16 +13,18 @@ the snapshot. No exec occurs in detectors.
 CONSTANTS
 
 const (
-	MaxQueries       = 16
-	MaxTargets       = 16
-	MaxArgs          = 32
-	MaxArgBytes      = 1024
-	MaxIDBytes       = 128
-	LimitBytes       = 4 * 1024
-	MaxConcurrent    = 4
-	MinInterval      = 30 * time.Second
-	ExecTimeout      = 3 * time.Second
-	CollectionBudget = 5 * time.Second
+	MaxQueries    = 16
+	MaxTargets    = 16
+	MaxArgs       = 32
+	MaxArgBytes   = 1024
+	MaxIDBytes    = 128
+	LimitBytes    = 4 * 1024
+	MaxConcurrent = 4
+	MinInterval   = 30 * time.Second
+	// ExecTimeout covers a kubectl-exec of a store client (psql, redis-cli) on a loaded node, which
+	// measured above 3 s; CollectionBudget leaves room for a second wave of reads (the first can use ExecTimeout).
+	ExecTimeout      = 10 * time.Second
+	CollectionBudget = 15 * time.Second
 )
     Limits bound declarations, target fan-out and retained output, so a read
     can neither load the application nor stall the controller's evaluation loop.

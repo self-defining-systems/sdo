@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -42,5 +43,16 @@ func TestLiveViewAnswersTheApplicationMapItWasBuiltWith(t *testing.T) {
 	}
 	if none, err := ApplicationMapFromYAML(""); none != nil || err != nil {
 		t.Fatalf("empty map = %v, %v", none, err)
+	}
+}
+
+// A filtered log read is answered live, not from the empty replay recording.
+func TestLiveViewReadsLogMatchesLive(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "worker-0", Namespace: "app"}}
+	view := NewLiveReadView(context.Background(), sdktest.Snapshot{NamespaceName: "app"}, ReadBackends{Client: fake.NewSimpleClientset(pod)})
+	got, err := view.LogMatches(sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: "app", Name: "worker-0"}, "app", time.Minute, "fake", 3)
+	var unrecorded *sdktest.UnrecordedError
+	if errors.As(err, &unrecorded) || err != nil || len(got.Lines) != 1 {
+		t.Fatalf("LogMatches = %+v, %v", got, err)
 	}
 }

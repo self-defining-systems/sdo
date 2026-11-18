@@ -23,6 +23,16 @@ const (
     Values of Verdict.Reach.
 
 const (
+	MaxLogScanLines  = 100000
+	MaxLogScanBytes  = 64 << 20
+	MaxLogMatchLines = 200
+)
+    Bounds of a LogMatches read. The scan covers the whole window up to
+    MaxLogScanLines newest lines and MaxLogScanBytes, then only the matching
+    lines are returned, so a busy pod's noise never pushes the match out the way
+    the newest-64 KiB cut of Logs does.
+
+const (
 	// ProcedureCheck only reads: a self-check or status report.
 	ProcedureCheck = "check"
 	// ProcedureRepair is idempotent: running it again changes nothing more.
@@ -183,6 +193,11 @@ func GroundStoreTarget(v ReadView, t StoreTarget) error
     the component declares data with this engine, the Pod belongs to its
     workload, and the named container runs the engine's image.
 
+func HTTPProbePort(service corev1.Service) (port int32, ok bool)
+    HTTPProbePort is the Service port ProbeHTTP dials: the first TCP port in
+    declaration order. HTTP rides TCP, so a leading UDP port (a tracing agent's,
+    say) is skipped; ok is false when the Service declares no TCP port.
+
 func Kubernetes(view ReadView, sourceBindings ...Bindings) (*kubeclient.ReadClient, error)
     Kubernetes constructs client-go-shaped read clients for this observation
     view. Build it once per Diagnose/mitigation or detector invocation.
@@ -191,6 +206,10 @@ func Kubernetes(view ReadView, sourceBindings ...Bindings) (*kubeclient.ReadClie
     RESTMapper cover CRDs. Optional bindings require each role to remain in
     accepted source. Omit them for observations of intentionally source-absent
     objects and derived resources.
+
+func LogMatchOptions(container string, since time.Duration) corev1.PodLogOptions
+    LogMatchOptions is the Kubernetes read a LogMatches scan needs: the window,
+    with a line tail that bounds the scan.
 
 func MergeObject(object map[string]any, ref sdk.ObjectRef, desired json.RawMessage) (map[string]any, error)
     MergeObject projects apply-style updates using the built-in keyed-list
@@ -220,6 +239,9 @@ func ValidateJSONPointer(pointer string) error
     credential.
 
 func ValidateKubernetesRead(r KubernetesRequest) error
+func ValidateLogMatchRequest(since time.Duration, pattern string, max int) (*regexp.Regexp, error)
+    ValidateLogMatchRequest checks the arguments of LogMatches.
+
 func ValidateRemoveServicePort(a RemoveServicePort) error
     ValidateRemoveServicePort checks the target and exclusive port identity.
 
@@ -230,29 +252,4 @@ func ValidateResolvedSetField(f SetField, value any) error
 func ValidateRestartRollout(a RestartRollout) error
     ValidateRestartRollout accepts one named, namespaced apps/v1 Deployment,
     StatefulSet or DaemonSet: the workloads kubectl rollout restart restarts.
-
-func ValidateSetField(f SetField) error
-    ValidateSetField checks a dotted vocabulary path or a JSON pointer on
-    a named nonsecret object. Dotted paths have an explicit allowlist and
-    Kubernetes schema check; use a slash-prefixed JSON pointer for fields
-    outside that vocabulary, or PatchObject for removals and structural edits.
-    Call this on authored SetField actions to check their shape without
-    executing a plan. An absent API version retains legacy program validation;
-    executors require it.
-
-func ValidateValueBinding(spec ParamSpec, value any) error
-    ValidateValueBinding checks types without coercing strings to numbers or
-    booleans. Quantities and durations use their Kubernetes and Go textual
-    syntax.
-
-func WorkloadOf(view sdk.DetectionContext, ref sdk.ObjectRef) string
-    WorkloadOf returns "Kind/name" of the workload that controls ref: a Pod's
-    controller, a ReplicaSet's Deployment, or ref itself.
-
-
-TYPES
-
-type Action interface {
-	// Has unexported methods.
-}
 ```

@@ -261,9 +261,8 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		}
 		switch recheck.Verdict {
 		case closureRecheckConfirmed:
-
+			// The Recovered wait below keeps its own timer across passes.
 			recoveryStates = recheck.States
-			c.clearClosureRecheckWait()
 		case closureRecheckRecovering:
 			// A live SLO is evidence to observe, not a broker rejection. The
 			// same proof owner now requires a new continuous clear window.
@@ -332,7 +331,7 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		check := c.closureRecoveryCheck(actionCtx, snapshot, effect.Closure)
 		verification = check.record
 		if check.verdict == recoveryPending {
-			if !c.closureRecheckWaitExpired(effect.Identity, check.horizon+effect.Closure.ClosureStabilityWindow) {
+			if !c.recoveredWaitExpired(effect.Identity, check.horizon+effect.Closure.ClosureStabilityWindow) {
 				c.scheduleClosureRecheck()
 				cancel()
 				return nil
@@ -598,8 +597,8 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 			toRead = append(toRead, detector)
 		}
 	}
-	reads := readRecoveryDetectors(ctx, toRead, snapshot)
 	scope := newRecoveryScope(alertKeys(&closure.Request))
+	reads := readRecoveryDetectors(ctx, toRead, snapshot, scope)
 	for _, id := range ordered {
 		detector := c.detectors[id]
 		if detector == nil && !slices.Contains(c.healthDetectorIDs, id) {
@@ -617,12 +616,12 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		findings, status, err := read.findings, read.status, read.err
 		if status == DetectorEvaluationFiring && len(scope.blocking(findings)) == 0 {
 			status = DetectorEvaluationClear
-			if !detectorConfirmed(detector, snapshot) {
+			if !detectorConfirmedIn(detector, snapshot, scope) {
 				status = DetectorEvaluationPending
 			}
 		}
-		observations = append(observations, recoveryObservation{ID: id, Findings: findings, Status: status, Error: err, Reason: detectorConfirmationReason(detector, snapshot)})
-		state := DetectorEvaluation{DetectorID: id, EvaluatedAt: c.clock(), Status: status, Fingerprints: findingFingerprints(scope.blocking(findings)), Reason: detectorConfirmationReason(detector, snapshot)}
+		observations = append(observations, recoveryObservation{ID: id, Findings: findings, Status: status, Error: err, Reason: detectorConfirmationReasonIn(detector, snapshot, scope)})
+		state := DetectorEvaluation{DetectorID: id, EvaluatedAt: c.clock(), Status: status, Fingerprints: findingFingerprints(scope.blocking(findings)), Reason: detectorConfirmationReasonIn(detector, snapshot, scope)}
 		if err != nil {
 			state.Error = err.Error()
 		}
@@ -641,8 +640,8 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 			active = append(active, fmt.Sprintf("closure observation detector %s is active", id))
 		}
 
-		if !detectorConfirmed(detector, snapshot) {
-			wait(detector, fmt.Sprintf("closure observation detector %s is unconfirmed: %s", id, detectorConfirmationReason(detector, snapshot)))
+		if !detectorConfirmedIn(detector, snapshot, scope) {
+			wait(detector, fmt.Sprintf("closure observation detector %s is unconfirmed: %s", id, detectorConfirmationReasonIn(detector, snapshot, scope)))
 		}
 	}
 	if len(active) > 0 {
@@ -762,6 +761,20 @@ func observerTransient(err error) bool {
 	}
 	var status apierrors.APIStatus
 	return errors.As(err, &status) && status.Status().Code >= 500
+}
+
+// recoveredWaitExpired is closureRecheckWaitExpired for the wait on the
+// Recovered predicate. It has its own timer, so neither a confirmed recheck nor
+// the incomplete-observation and source waits restart it; only a different
+// closure does.
+func (c *Controller) recoveredWaitExpired(identity string, bound time.Duration) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.clock()
+	if c.closureRecoveredIdentity != identity || c.closureRecoveredSince.IsZero() {
+		c.closureRecoveredIdentity, c.closureRecoveredSince = identity, now
+	}
+	return now.Sub(c.closureRecoveredSince) >= bound
 }
 
 // closureRecheckWaitExpired records when this closure's recheck first saw an

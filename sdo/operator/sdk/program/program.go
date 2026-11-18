@@ -168,10 +168,15 @@ type ReadView interface {
 	Logs(pod sdk.ObjectRef, container string, since time.Duration) (string, error)
 	// LogsWithOptions reads bounded container logs; Previous selects the last terminated instance.
 	LogsWithOptions(pod sdk.ObjectRef, options corev1.PodLogOptions) (string, error)
+	// LogMatches is `kubectl logs --since=<window> | grep <pattern>`: it scans the whole window (up to
+	// MaxLogScanLines newest lines) and returns the newest max matching lines (at most MaxLogMatchLines), oldest
+	// first. pattern is an RE2 regular expression. ScanTruncated says the scan did not cover the window, so an empty
+	// answer then means unknown, not absent. Prefer it to Logs when a Diagnose looks for a particular line.
+	LogMatches(pod sdk.ObjectRef, container string, since time.Duration, pattern string, max int) (LogMatchResult, error)
 	metrics.UsageSource
 	// ProbeTCP connects to one port of a Pod or Service and records whether it accepted.
 	ProbeTCP(to sdk.ObjectRef, port int32) (ProbeResult, error)
-	// ProbeHTTP sends one recorded HTTP request to a Pod or Service.
+	// ProbeHTTP sends one recorded HTTP request to a Service, on its first TCP port (HTTPProbePort).
 	ProbeHTTP(to sdk.ObjectRef, req HTTPProbe) (ProbeResult, error)
 	// DiffAgainstSource compares quantities by value and excludes controller bookkeeping (revision, last-applied and restart annotations, status and managedFields), accepted server defaults, and replicas targeted by an HPA.
 	DiffAgainstSource(ref sdk.ObjectRef) (Diff, error)
@@ -238,6 +243,12 @@ type Verdict struct {
 	Question   string     `json:"question,omitempty"`
 	CauseClass string     `json:"cause_class,omitempty"`
 	Reach      string     `json:"reach,omitempty"`
+	// Reads is the trace of the external reads the Diagnose made, in order,
+	// each with what it returned. RunDiagnose fills it; a program never sets
+	// it. It is how a NoMatch is attributed to the condition that produced it:
+	// a trace that ends at a log read means the log condition failed and the
+	// command after it never ran.
+	Reads []ReadStep `json:"reads,omitempty"`
 }
 
 func (v Verdict) Validate() error {
@@ -456,30 +467,34 @@ func RunDiagnose(ctx context.Context, p Diagnoser, v ReadView, b Bindings, deadl
 		err     error
 	}
 	result := make(chan outcome, 1)
+	checked := &checkedReadView{ReadView: v, maxReads: MaxDiagnoseReads}
 	go func() {
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				result <- outcome{err: fmt.Errorf("panic: %v", recovered)}
 			}
 		}()
-		checked := &checkedReadView{ReadView: v, maxReads: MaxDiagnoseReads}
 		verdict, err := p.Diagnose(ctx, checked, b)
 		if readErr := checked.failure(); readErr != nil {
 			err = readErr
 		}
 		result <- outcome{verdict, err}
 	}()
+	traced := func(v Verdict) Verdict {
+		v.Reads = checked.trace()
+		return v
+	}
 	select {
 	case <-ctx.Done():
-		return unknown(ctx.Err())
+		return traced(unknown(ctx.Err()))
 	case got := <-result:
 		if got.err != nil {
-			return unknown(got.err)
+			return traced(unknown(got.err))
 		}
 		if err := got.verdict.Validate(); err != nil {
-			return unknown(err)
+			return traced(unknown(err))
 		}
-		return got.verdict
+		return traced(got.verdict)
 	}
 }
 
@@ -494,6 +509,41 @@ type checkedReadView struct {
 	err error
 	// maxReads bounds Read calls when positive (a Diagnose); reads counts them.
 	maxReads, reads int
+	steps           []ReadStep
+}
+
+// maxTraceSteps bounds the trace one Diagnose keeps.
+const maxTraceSteps = 32
+
+// ReadStep is one external read a Diagnose made and what it returned.
+type ReadStep struct {
+	// Op is the read kind: logs, log_matches, observe, read, database_users or kubernetes_read.
+	Op string `json:"op"`
+	// Target names what was read: namespace/pod/container, a store collection or an API path.
+	Target string `json:"target"`
+	// Outcome is the result: a count, an exit code or "error: ...".
+	Outcome string `json:"outcome"`
+}
+
+func (v *checkedReadView) record(op, target, outcome string, err error) {
+	if err != nil {
+		outcome = "error: " + err.Error()
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if len(v.steps) < maxTraceSteps {
+		v.steps = append(v.steps, ReadStep{Op: op, Target: target, Outcome: outcome})
+	}
+}
+
+func (v *checkedReadView) trace() []ReadStep {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return append([]ReadStep(nil), v.steps...)
+}
+
+func podTarget(ref sdk.ObjectRef, container string) string {
+	return ref.Namespace + "/" + ref.Name + "/" + container
 }
 
 func (v *checkedReadView) check(err error) {
@@ -509,6 +559,7 @@ func (v *checkedReadView) failure() error { v.mu.Lock(); defer v.mu.Unlock(); re
 func (v *checkedReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error) {
 	result, err := v.ReadView.Logs(ref, container, since)
 	v.check(err)
+	v.record("logs", podTarget(ref, container), fmt.Sprintf("%d bytes", len(result)), err)
 	return result, err
 }
 func (v *checkedReadView) ProbeTCP(ref sdk.ObjectRef, port int32) (ProbeResult, error) {

@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+CI_SCOPED = "walks its own synthetic repositories and the selector itself"
+
 ROOT = Path(__file__).resolve().parents[4]
 
 
@@ -46,7 +48,6 @@ CONFIG = {
         "tach.toml",
     ],
     "documentation": ["README.md"],
-    "python_always": ["tests/unit/test_guard.py"],
     "go_workspace_modules": ["goa", "gob"],
     "go_binaries": ["gob/cmd/tool"],
     "go_consumer_modules": [],
@@ -83,7 +84,11 @@ FILES = {
     "tests/unit/test_by_string.py": 'SUBPROCESS = ["python", "-m", "pkg.by_name"]\n',
     "tests/unit/test_reads_data.py": 'PATH = "pkg/data.txt"\n',
     "tests/unit/test_other.py": "def test_nothing():\n    pass\n",
-    "tests/unit/test_guard.py": "def test_guard():\n    pass\n",
+    "tests/unit/test_guard.py": "CI_WHOLE_TREE = True\n\n\ndef test_guard():\n    pass\n",
+    "gob/other/guard_test.go": (
+        'package other\n\nimport "testing"\n\n//ci:whole-tree\nfunc TestGuardScansTheTree(t *testing.T) {}\n\n'
+        "func TestOther(t *testing.T) {}\n"
+    ),
     "tests/unit/test_tool.py": "def test_tool():\n    pass\n",
     "tests/unit/slow/__init__.py": "",
     "tests/unit/slow/test_slow.py": "import pkg.lonely\n",
@@ -170,10 +175,47 @@ def test_python_changes_select_importers_and_name_mentions(repo: Path, config: s
     assert "tests/unit/test_reads_data.py" in plan(repo, config, "pkg/data.txt").python_tests
 
 
-def test_repository_guards_run_with_every_change_but_a_go_test(repo: Path, config: select.Config) -> None:
-    assert "tests/unit/test_guard.py" in plan(repo, config, "pkg/lonely.py").python_tests
-    assert "tests/unit/test_guard.py" not in plan(repo, config, "goa/a_test.go").python_tests
-    assert plan(repo, config, "README.md").python_tests == ["tests/unit/test_guard.py"]
+def test_marked_python_guards_run_with_every_change(repo: Path, config: select.Config) -> None:
+    for changed in ("pkg/lonely.py", "goa/a_test.go", "README.md"):
+        assert "tests/unit/test_guard.py" in plan(repo, config, changed).python_tests, changed
+
+
+def test_marked_go_guards_run_in_packages_the_selection_skips(repo: Path, config: select.Config) -> None:
+    result = plan(repo, config, "goa/leaf/leaf.go")
+    assert "gob/other" not in result.go_packages
+    assert result.go_guards == {"gob/other": ["TestGuardScansTheTree"]}
+    assert select.shard_go_guards(result, config, "rest") == ("^(TestGuardScansTheTree)$", ["./gob/other"])
+    assert select.shard_go_guards(result, config, "cli") == ("", [])
+    assert select.shard_go_guards(result, config, "gate") == ("", [])
+    # a package the plan already runs in full needs no separate guard run
+    assert select.shard_go_guards(plan(repo, config, "gob/other/other.go"), config, "rest")[1] == []
+    # documentation-only changes still run the guards
+    assert plan(repo, config, "README.md").go_guards == result.go_guards
+
+
+def test_the_plan_round_trips_its_guards(repo: Path, config: select.Config, tmp_path: Path) -> None:
+    result = plan(repo, config, "goa/leaf/leaf.go")
+    path = tmp_path / "plan.json"
+    path.write_text(json.dumps(result.to_json()))
+    assert select.load_plan(path).go_guards == result.go_guards
+
+
+def test_an_unmarked_tree_walker_fails_the_mark_check(tmp_path: Path) -> None:
+    files = {
+        "m/walk_test.go": 'package m\n\nfunc TestW(t *testing.T) { filepath.WalkDir("..", nil) }\n',
+        "m/marked_test.go": 'package m\n\n//ci:whole-tree\nfunc TestM(t *testing.T) { filepath.WalkDir("..", nil) }\n',
+        "m/scoped_test.go": 'package m\n\n//ci:scoped fixture\nfunc TestS() { filepath.WalkDir("..", nil) }\n',
+        "m/tmp_test.go": "package m\n\nfunc TestT(t *testing.T) { filepath.WalkDir(t.TempDir(), nil) }\n",
+        "tests/test_walk.py": 'def test_w():\n    subprocess.run(["git", "ls-files"])\n',
+        "tests/test_marked.py": 'CI_WHOLE_TREE = True\ndef test_m():\n    subprocess.run(["git", "ls-files"])\n',
+        "tests/test_scoped.py": 'CI_SCOPED = "temp repo"\ndef test_s():\n    subprocess.run(["git", "ls-files"])\n',
+        "tests/test_plain.py": "def test_p():\n    pass\n",
+    }
+    for name, text in files.items():
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / name).write_text(text)
+    bad = select.unmarked_tree_walkers(tmp_path, sorted(files))
+    assert [b.split(":")[0] for b in bad] == ["m/walk_test.go", "tests/test_walk.py"]
 
 
 def test_go_executable_inputs_select_the_python_tests_that_run_them(repo: Path, config: select.Config) -> None:

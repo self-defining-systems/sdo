@@ -77,3 +77,16 @@ func TestInternalEntryNeedsAnEntriesRecord(t *testing.T) {
 		t.Fatalf("findings %v", findings)
 	}
 }
+
+func TestDurationQueriesCarryTheSelectorAndRoute(t *testing.T) {
+	e := MetricEntry{Service: "web", Metric: "m", Selector: map[string]string{"job": "web"}, Labels: EntryLabels{Route: "route", Status: "code"}, Errors: "5.."}
+	if got, want := e.DurationFamilies(), `count by (__name__) ({job="web",__name__=~".+_(bucket|sum)",route!=""})`; got != want {
+		t.Fatalf("families %s", got)
+	}
+	if got, want := e.DurationRoute([]string{"a_seconds_bucket", "b.x"}, "/items"), `count({job="web",__name__=~"a_seconds_bucket|b\\.x",route="/items"})`; got != want {
+		t.Fatalf("route %s", got)
+	}
+	if got, want := e.ErrorsByRoute(), `sum by (route) (m{job="web",code=~"5.."}) > 0`; got != want {
+		t.Fatalf("errors %s", got)
+	}
+}

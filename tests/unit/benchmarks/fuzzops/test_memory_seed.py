@@ -1,0 +1,171 @@
+"""A claim's seed: a learned memory imported into a pool lane's accepted repository by ``swap``."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from benchmarks.devswap import controller
+from benchmarks.fuzzops import config, hooks
+
+COMMIT = "a" * 40
+
+
+def baseline_dir(
+    tmp_path: Path, name: str, render: str, commit: str = COMMIT, namespace: str = "fg1"
+) -> hooks.Baseline:
+    root = tmp_path / name
+    root.mkdir()
+    (root / "render.yaml").write_text(render)
+    (root / "memory.bundle").write_bytes(b"bundle")
+    manifest = {
+        "namespace": namespace,
+        "bundle": "memory.bundle",
+        "branch": "main",
+        "commit": commit,
+        "render": "render.yaml",
+    }
+    (root / hooks.BASELINE_FILE).write_text(json.dumps(manifest))
+    return hooks.Baseline.load(root)
+
+
+def steps(
+    calls: list[str], head: str = COMMIT, status: str = "", idle: str = "", descends: bool = False
+) -> hooks.SeedSteps:
+    return hooks.SeedSteps(
+        reset_incidents=lambda: calls.append("incidents"),
+        retire_standby=lambda: calls.append("retire"),
+        stop_controller=lambda: calls.append("stop"),
+        apply_config=lambda overlay: calls.append(f"config {sorted(overlay)}"),
+        import_memory=lambda commit: calls.append(f"import {commit[:1]}"),
+        start_controller=lambda: calls.append("start"),
+        wait_standby=lambda: calls.append("standby"),
+        repository_state=lambda: {"head": head, "status": status, "outcomes": ""},
+        controller_idle=lambda: idle,
+        is_ancestor=lambda _a, _d: descends,
+    )
+
+
+def test_seed_stops_the_controller_around_the_import(tmp_path: Path) -> None:
+    calls: list[str] = []
+    seed = baseline_dir(tmp_path, "seed", "r")
+    receipt = hooks.apply_seed(steps(calls), seed, lambda _line: None)
+    assert calls == ["incidents", "stop", "retire", "config []", "import a", "start", "standby"]
+    assert receipt["seed"] == COMMIT
+
+
+def test_a_seed_import_that_fails_leaves_the_controller_running(tmp_path: Path) -> None:
+    """A stopped controller cannot acknowledge the release's incident reset, and the lane is then torn down."""
+    calls: list[str] = []
+    seed = baseline_dir(tmp_path, "seed", "r")
+    failing = steps(calls)
+
+    def broken(_commit: str) -> None:
+        raise hooks.HookError("restore pod failed")
+
+    with pytest.raises(hooks.HookError, match="restore pod failed"):
+        hooks.apply_seed(hooks.SeedSteps(**{**failing.__dict__, "import_memory": broken}), seed, lambda _line: None)
+    assert calls == ["incidents", "stop", "retire", "config []", "start"]
+
+
+def test_the_controllers_startup_upkeep_on_top_of_the_seed_is_the_seeded_memory(tmp_path: Path) -> None:
+    seed = baseline_dir(tmp_path, "seed", "r")
+    receipt = hooks.apply_seed(steps([], "b" * 40, descends=True), seed, lambda _line: None)
+    assert receipt["head"] == "b" * 40
+
+
+@pytest.mark.parametrize(
+    ("head", "status", "idle", "message"),
+    [
+        ("b" * 40, "", "", "not aaaaaaaaaaaa"),
+        (COMMIT, " M x", "", "not aaaaaaaaaaaa"),
+        (COMMIT, "", "busy", "not idle"),
+    ],
+)
+def test_seed_fails_unless_the_lane_is_the_seeds_memory_and_idle(
+    tmp_path: Path, head: str, status: str, idle: str, message: str
+) -> None:
+    seed = baseline_dir(tmp_path, "seed", "r")
+    with pytest.raises(hooks.HookError, match=message):
+        hooks.apply_seed(steps([], head, status, idle), seed, lambda _line: None)
+
+
+def test_a_seed_made_on_another_render_or_namespace_is_refused(tmp_path: Path) -> None:
+    lane = baseline_dir(tmp_path, "lane", "render one", commit="c" * 40)
+    assert hooks.seed_problem(baseline_dir(tmp_path, "same", "render one"), lane) == ""
+    assert "render" in hooks.seed_problem(baseline_dir(tmp_path, "other", "render two"), lane)
+    assert "namespace" in hooks.seed_problem(baseline_dir(tmp_path, "ns", "render one", namespace="fg2"), lane)
+
+
+def test_the_operator_block_carries_the_seed(tmp_path: Path) -> None:
+    path = tmp_path / "operator.json"
+    path.write_text(
+        json.dumps({"hooks": "sdo", "revision": "abcdef12", "baseline": "/b", "seed": "/s", "settings": {}})
+    )
+    assert hooks.OperatorBlock.load(path).seed == Path("/s")
+    path.write_text(json.dumps({"hooks": "sdo", "revision": "abcdef12", "baseline": "/b", "settings": {}}))
+    assert hooks.OperatorBlock.load(path).seed is None
+
+
+def test_the_restore_script_imports_a_bundle_whatever_its_refs_are_named(tmp_path: Path) -> None:
+    """A learned memory's bundle names its branch (no HEAD ref); the restore must still find the commit."""
+    import subprocess
+
+    def git(cwd: Path, *args: str) -> str:
+        env = {
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        }
+        return subprocess.run(
+            ["git", "-c", "safe.directory=*", *args], cwd=cwd, env={**__import__("os").environ, **env},
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()  # fmt: skip
+
+    source, lane = tmp_path / "source", tmp_path / "lane"
+    for repo in (source, lane):
+        repo.mkdir()
+        git(repo, "init", "-q", "-b", "main")
+    git(source, "commit", "-q", "--allow-empty", "-m", "learned")
+    head = git(source, "rev-parse", "HEAD")
+    git(source, "branch", "learned-branch")
+    git(source, "bundle", "create", str(tmp_path / "m.bundle"), "learned-branch")
+    (tmp_path / "memory.bundle").write_bytes((tmp_path / "m.bundle").read_bytes())
+    (tmp_path / "memory.ready").touch()
+    script = controller.restore_script(head, True, root=str(lane), bundle_dir=str(tmp_path))
+    subprocess.run(["sh", "-c", script], check=True, capture_output=True)
+    assert git(lane, "rev-parse", "HEAD") == head
+
+
+def test_merge_config_lays_the_overlay_over_the_installed_document() -> None:
+    base = {"response": {"timeout": "1800s", "page_only": False}, "agent": {"model": "m"}}
+    merged = config.merge(base, {"response": {"page_only": True}})
+    assert merged == {"response": {"timeout": "1800s", "page_only": True}, "agent": {"model": "m"}}
+    assert base["response"]["page_only"] is False
+
+
+def test_a_seed_may_overlay_what_the_hook_sets_for_an_install(tmp_path: Path) -> None:
+    seed = baseline_dir(tmp_path, "seed", "r")
+    manifest = json.loads((seed.root / hooks.BASELINE_FILE).read_text())  # type: ignore[operator]
+    manifest["lane_overlay"] = {"agent": {"model": "other"}}
+    (seed.root / hooks.BASELINE_FILE).write_text(json.dumps(manifest))  # type: ignore[operator]
+    calls: list[str] = []
+    hooks.apply_seed(steps(calls), hooks.Baseline.load(seed.root), lambda _line: None)  # type: ignore[arg-type]
+    assert "config ['agent']" in calls
+    manifest["config"] = {"agent": {"model": "other"}}
+    (seed.root / hooks.BASELINE_FILE).write_text(json.dumps(manifest))  # type: ignore[operator]
+    with pytest.raises(ValueError, match="agent.model"):
+        hooks.Baseline.load(seed.root)  # type: ignore[arg-type]
+
+
+def test_baseline_state_reads_stores_and_promotions_from_the_controller_log() -> None:
+    log = (
+        '{"controller_iteration":1,"evaluated_detectors":["cluster-wiring","store-state-postgresql","store-state-redis"]}\n'
+        "2026/11/16 05:20:00 INFO store_baseline_promoted component=postgresql\n"
+    )
+    expected, promoted = hooks.baseline_state(log)
+    assert expected == {"postgresql", "redis"}
+    assert promoted == {"postgresql"}

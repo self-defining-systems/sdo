@@ -518,7 +518,7 @@ var gateRows = []gateRow{
 	{name: "upstream advance cannot change memory", kind: gateOwnership, actor: Upstream, phase: AdvancePhase, rules: []string{RuleOwnershipDenied}, path: layout.GoalFile,
 		edit: gateWrite(layout.GoalFile, "---\nschema_version: 1\nowner: human\n---\nNew goal\n")},
 	{name: "upkeep stamps the schema alone", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, edit: func(t *testing.T, r string) {
-		write(t, r, layout.SchemaVersionFile, "8\n")
+		write(t, r, layout.SchemaVersionFile, "10\n")
 		write(t, r, layout.DiagnosticsGoModFile, "module m\n")
 	}},
 	{name: "upkeep migration drops a retired Go-installed generic detector", kind: gateOwnership, actor: Upkeep, phase: InitialPhase,
@@ -527,7 +527,7 @@ var gateRows = []gateRow{
 			gateStrandedDetector(t, r, "synthetic-retired", "lifecycle-bootstrap")
 		},
 		edit: func(t *testing.T, r string) {
-			write(t, r, layout.SchemaVersionFile, "8\n")
+			write(t, r, layout.SchemaVersionFile, "10\n")
 			remove(t, r, layout.DetectorDir(layout.ClassHealth, "synthetic-retired"))
 		}},
 	{name: "upkeep migration cannot drop an authored detector", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, rules: []string{RuleUpkeepMigration},
@@ -536,7 +536,7 @@ var gateRows = []gateRow{
 			gateStrandedDetector(t, r, "synthetic-authored", "initial")
 		},
 		edit: func(t *testing.T, r string) {
-			write(t, r, layout.SchemaVersionFile, "8\n")
+			write(t, r, layout.SchemaVersionFile, "10\n")
 			remove(t, r, layout.DetectorDir(layout.ClassHealth, "synthetic-authored"))
 		}},
 	{name: "responder cannot edit the goal", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, path: layout.GoalFile,
@@ -965,12 +965,14 @@ func TestGateNotes(t *testing.T) {
 
 // gateRuleCoverage names the rules with no bad row, each with the reason.
 var gateRuleCoverage = map[string]string{
+	RuleProgramPlanInvalid:    "covered by repair_statement_test.go (TestRepairStatementLiteralsAreCheckedAsTheEngineWillApplyThem)",
 	RuleDataCheckInvalid:      "covered by data_checks_test.go (TestDataChecksAreValidatedAsReadOnlyAndBounded) and the datacheck package's validation table",
 	RuleDataCheckComponent:    "covered by data_checks_test.go (TestDataChecksResolveToMapComponentsWithDataRoles): it needs an application map with data roles",
 	RulePatchUncaptured:       "covered by the broker publish tests (broker/enforcement_integration_test.go): it needs the agent checkout's working tree, which the shared check never sees",
 	RuleSourcePolicy:          "covered by the broker source tests (broker/source_integration_test.go): they need the agent checkout's committed history",
 	RuleSourceSize:            "covered by the broker source tests (broker/source_integration_test.go): they need the agent checkout's committed history",
 	RuleSourceHistory:         "covered by the broker source tests (broker/source_integration_test.go): they need the agent checkout's committed history",
+	RuleGoalMissing:           "covered by goal_missing_test.go: a non-blocking note",
 	RuleSnapshotProjection:    "no row yet: a defensive check behind the static layers; no authored change reaches it",
 	RuleTrafficDefaultLatency: "no row yet: informational, needs generated traffic replay results from the real toolchain on a tree with health-probe scenarios",
 	RuleMapMissing:            "covered by application_map_test.go (map rules are exercised with their own tiny-app fixtures)",

@@ -4,6 +4,8 @@ import re
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from tests.unit.sdo.agents.prompts.cases import rendered_cases
 
 GOLDENS = Path(__file__).resolve().parents[5] / "tests/fixtures/sdo/prompts"
@@ -43,7 +45,7 @@ def test_fixture_skill_root_is_independent_of_checkout(monkeypatch, tmp_path: Pa
     for module in (codex, reflection, lifecycle_agents):
         monkeypatch.setattr(module, "SKILLS_ROOT", tmp_path / "other-checkout/skills")
     prompts = rendered_cases()
-    assert "Read your skills: /opt/sdo/skills/incident-response/SKILL.md" in prompts["responder_cold_two"]
+    assert "its skills are under /opt/sdo/skills" in prompts["responder_cold_two"]
     assert "/opt/sdo/skills/sdo-detectors/references/sdk.md" in prompts["lifecycle_HealthJudgeDraft"]
     assert "Read /opt/sdo/skills/playbook-writing/SKILL.md" in prompts["closing_learning"]
 
@@ -57,3 +59,22 @@ def test_production_instructions_never_spill_to_context_files() -> None:
     """
     for name, prompt in rendered_cases().items():
         assert not normalize_prompt(prompt).startswith("Full: <context file>\nSummary ("), name
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "sdo/agents/responder/prompts/scriptify.md",
+        "sdo/skills/playbook-writing/SKILL.md",
+        "sdo/skills/sdo-memory/SKILL.md",
+        "sdo/skills/sdo-playbook-authoring/SKILL.md",
+    ],
+)
+def test_memory_authoring_text_says_memory_is_per_application(path: str) -> None:
+    root = Path(__file__).resolve().parents[5]
+    text = " ".join((root / path).read_text().split())
+    assert "this application" in text
+    assert "tables, resources and commands" in text
+    assert "not away from the application" in text
+    for stale in ("never by name", "no app names", "never by app name", "Avoid hard-coded service or app names"):
+        assert stale not in text

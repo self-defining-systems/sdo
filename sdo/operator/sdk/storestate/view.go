@@ -36,10 +36,15 @@ func ParseQueryID(id string) (Engine, string, bool) {
 	return Engine(engine), component, true
 }
 
+// NoBaseline is the Error of a store Pod the view holds no usable healthy
+// baseline for: what changed in it is unknown, never "nothing".
+const NoBaseline = "no healthy baseline yet"
+
 // StoreChanges is one store Pod's facts against the controller's promoted
 // healthy baseline. Baselined is false when no usable baseline reading exists
-// for the Pod; Changes is then empty. Error is set when the current read gave
-// no answer, and the other fields are then unknown.
+// for the Pod; Changes is then empty and Error is NoBaseline, so a reader that
+// checks Error treats the Pod as unknown, not unchanged. Error is also set when
+// the current read gave no answer; the other fields are then unknown.
 type StoreChanges struct {
 	Component  string        `json:"component"`
 	Engine     Engine        `json:"engine"`
@@ -105,6 +110,8 @@ func storeChanges(view sdk.DetectionContext, adapter Adapter, component string, 
 			entry.Baselined, entry.BaselineAt = true, baseline.At
 			entry.Changes = Diff(baseline, current)
 			markNoisy(entry.Changes, pickHistory(history, reading.Pod))
+		} else {
+			entry.Error = NoBaseline
 		}
 		if current.Holders != nil {
 			entry.Holders = ResolveHolders(view, entry.Pod, current.Holders)

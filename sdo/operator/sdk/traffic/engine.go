@@ -88,8 +88,22 @@ type Sample struct {
 	// on an iteration that passed: exercised, own-only or empty. It is an
 	// operability note, never a failure: a fresh install has no user data.
 	ExistingRecords string `json:"existingRecords,omitempty"`
-	CleanupError    string `json:"cleanupError,omitempty"`
+	// Convergence says, for each step that answered NotYet, how many attempts
+	// it took and for how long, whether it passed or ran out of time.
+	Convergence  []Convergence `json:"convergence,omitempty"`
+	CleanupError string        `json:"cleanupError,omitempty"`
 }
+
+// Convergence is how a step that answered NotYet went in a sample.
+type Convergence struct {
+	Step      string        `json:"step"`
+	Attempts  int           `json:"attempts"`
+	Took      time.Duration `json:"took"`
+	Converged bool          `json:"converged"`
+}
+
+// pendingPause is how long the engine waits before sending a pending step again.
+const pendingPause = 250 * time.Millisecond
 
 // Doer sends HTTP requests; *http.Client satisfies it.
 type Doer interface {
@@ -135,6 +149,76 @@ func (e *Engine) UsePasswords(source Passwords) { e.passwords = source }
 type setupRecord struct {
 	mu       sync.Mutex
 	progress map[string]setupProgress
+	// running serializes a scenario's setup: iterations run concurrently, and
+	// two that both saw the setup unfinished would each write its fixture.
+	running map[string]*sync.Mutex
+	// fixtures holds, per setup request, the State its first success saved.
+	// Scenarios that share a fixture (same request) send it once.
+	fixtures map[string]State
+	// locker serializes one setup request across processes; nil is none.
+	locker SetupLocker
+}
+
+// SetupLocker serializes a setup request across probe processes (a hot-swapped
+// memory host overlaps its predecessor, a restart replays setup). key names the
+// request, not the scenario, so every scenario and process that would write the
+// same fixture waits for the others. The in-process lock is always held too.
+type SetupLocker interface {
+	Lock(ctx context.Context, key string) (release func(), err error)
+}
+
+// UseSetupLock makes e serialize each setup request across processes with l.
+func (e *Engine) UseSetupLock(l SetupLocker) {
+	e.setups.mu.Lock()
+	e.setups.locker = l
+	e.setups.mu.Unlock()
+}
+
+// fixtureKey identifies the write a setup request makes: its target and the
+// request itself, never the scenario that declares it or the credentials it
+// signs in with.
+func fixtureKey(target Target, request Request) string {
+	query := make([]string, 0, len(request.Query))
+	for k, v := range request.Query {
+		query = append(query, k+"="+v)
+	}
+	sort.Strings(query)
+	return fmt.Sprintf("%s:%d|%s %s?%s|%s", target.Service, target.Port, request.Method, request.Path, strings.Join(query, "&"), request.Body)
+}
+
+// lockFixture waits for every other setup of the same request, in this process
+// and through the locker in others.
+func (r *setupRecord) lockFixture(ctx context.Context, key string) (func(), error) {
+	release := r.lock("fixture:" + key)
+	r.mu.Lock()
+	locker := r.locker
+	r.mu.Unlock()
+	if locker == nil {
+		return release, nil
+	}
+	remote, err := locker.Lock(ctx, key)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	return func() { remote(); release() }, nil
+}
+
+// lock waits for any setup of the scenario in progress and returns the
+// release function.
+func (r *setupRecord) lock(id string) func() {
+	r.mu.Lock()
+	m := r.running[id]
+	if m == nil {
+		if r.running == nil {
+			r.running = map[string]*sync.Mutex{}
+		}
+		m = &sync.Mutex{}
+		r.running[id] = m
+	}
+	r.mu.Unlock()
+	m.Lock()
+	return m.Unlock
 }
 
 // setupProgress is how many of a scenario's setup steps succeeded, in order,
@@ -180,7 +264,15 @@ func NewEngine(workload Workload, catalog Catalog, client Doer, baseURL func(Tar
 // and its verify bursts) shares one record: data a setup step wrote and that
 // was lost afterwards then fails every engine instead of being written again.
 // Both engines must run the same catalog.
-func (e *Engine) ShareSetup(source *Engine) { e.setups = source.setups }
+func (e *Engine) ShareSetup(source *Engine) {
+	locker := e.setups.locker
+	e.setups = source.setups
+	if e.setups.locker == nil {
+		e.setups.mu.Lock()
+		e.setups.locker = locker
+		e.setups.mu.Unlock()
+	}
+}
 
 // Workload returns the engine's workload with defaults applied.
 func (e *Engine) Workload() Workload { return e.workload }
@@ -225,11 +317,18 @@ func (e *Engine) Rand(iteration uint64) *rand.Rand {
 }
 
 // Plan builds, without sending, the requests of iteration assuming every
-// step succeeds without saving state. It is meant for replay and review.
+// step succeeds without saving state, as if it started now. It is meant for
+// review; replay uses PlanAt with the failing sample's At.
 func (e *Engine) Plan(ctx context.Context, iteration uint64) ([]Request, error) {
+	return e.PlanAt(ctx, iteration, e.clock.Now())
+}
+
+// PlanAt is Plan for an iteration that started at at (a sample's At), so the
+// requests that depend on the iteration's time are the ones it sent.
+func (e *Engine) PlanAt(ctx context.Context, iteration uint64, at time.Time) ([]Request, error) {
 	scenario := e.ScenarioAt(iteration)
 	rng := e.Rand(iteration)
-	state := State{}
+	state := State{StateNow: at.UTC().Format(time.RFC3339)}
 	for _, u := range scenario.Users {
 		state[u.As] = passwordPlaceholder
 		if u.SSHKey != "" {
@@ -264,6 +363,9 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 	rng := e.Rand(iteration)
 	state := State{}
 	sample := Sample{At: e.clock.Now().UTC(), Iteration: iteration, Outcome: OutcomeOK}
+	// The iteration's time is State, recorded as sample.At, so Build never
+	// reads a clock and a replay with that time builds the same requests.
+	state[StateNow] = sample.At.Format(time.RFC3339)
 	iterationCtx, cancel := e.withTimeout(ctx, e.workload.IterationTimeout.Duration())
 	defer cancel()
 	passwords, keys, err := e.userState(iterationCtx, scenario)
@@ -291,9 +393,13 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 			state[key] = value
 		}
 	}
+	state[StateNow] = sample.At.Format(time.RFC3339)
 	started := e.clock.Now()
+	deadline := sample.At.Add(e.workload.IterationTimeout.Duration())
+	var waited time.Duration
 	for _, step := range scenario.Steps {
-		result := e.step(iterationCtx, scenario, step, rng, state, passwords, phaseStep)
+		result := e.untilNotPending(iterationCtx, scenario, step, rng, state, passwords, deadline)
+		waited += result.waited
 		sample.record(result)
 		if result.outcome != OutcomeOK {
 			sample.Outcome, sample.Step, sample.Request, sample.Error = result.outcome, step.Name, result.request, result.err
@@ -305,7 +411,8 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 			sample.ExistingRecords = existingRecordsOutcome(state[ExistingMembersKey], scenario.Marker)
 		}
 	}
-	sample.Latency = e.since(started)
+	// Waiting for a NotYet step to pass is in Convergence, not in latency.
+	sample.Latency = max(e.since(started)-waited, time.Nanosecond)
 	if scenario.SideEffect == SideEffectWriteWithCleanup && sample.Requests > 0 {
 		cleanupCtx, cancelCleanup := e.withTimeout(context.WithoutCancel(ctx), e.workload.IterationTimeout.Duration())
 		defer cancelCleanup()
@@ -330,6 +437,7 @@ func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, s
 	if len(scenario.Setup) == 0 {
 		return false
 	}
+	defer e.setups.lock(scenario.ID)()
 	e.setups.mu.Lock()
 	progress := e.setups.progress[scenario.ID]
 	e.setups.mu.Unlock()
@@ -370,6 +478,7 @@ func (e *Engine) setup(ctx context.Context, scenario Scenario, rng *rand.Rand, s
 // saved, unless a concurrent iteration already recorded at least as many.
 func (r *setupRecord) advance(scenario Scenario, done int, saved State) {
 	kept := saved.clone()
+	delete(kept, StateNow)
 	for _, u := range scenario.Users {
 		delete(kept, u.As)
 		delete(kept, u.SSHKey)
@@ -393,11 +502,21 @@ type stepResult struct {
 	dial     bool
 	defect   string
 	byteCap  int
+	// pending is set when the step's check answered NotYet.
+	pending bool
+	// converge is set for a step that answered NotYet at least once.
+	converge *Convergence
+	// waited is the time spent on attempts before the last one and the pauses
+	// between them; it is not part of the sample's latency.
+	waited time.Duration
 }
 
 // record adds a step's request count and last answer to the sample.
 func (sample *Sample) record(result stepResult) {
 	sample.Requests += result.sent
+	if result.converge != nil {
+		sample.Convergence = append(sample.Convergence, *result.converge)
+	}
 	switch {
 	case result.exit != nil:
 		exit := *result.exit
@@ -421,6 +540,95 @@ func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *ra
 	if err := checkRequest(scenario, target, request, phase); err != nil {
 		return stepResult{outcome: OutcomeInvalid, request: line, err: err.Error()}
 	}
+	if phase == phaseSetup && target.Scheme != "ssh" {
+		key := fixtureKey(target, request)
+		release, err := e.setups.lockFixture(ctx, key)
+		if err != nil {
+			return stepResult{outcome: OutcomeError, request: line, err: "setup lock: " + err.Error()}
+		}
+		defer release()
+		e.setups.mu.Lock()
+		delta, written := e.setups.fixtures[key]
+		e.setups.mu.Unlock()
+		if written {
+			for k, v := range delta {
+				state[k] = v
+			}
+			return stepResult{outcome: OutcomeOK, request: line}
+		}
+		before := state.clone()
+		result := e.send(ctx, scenario, step, target, request, state, passwords, line)
+		if result.outcome == OutcomeOK {
+			e.setups.mu.Lock()
+			if e.setups.fixtures == nil {
+				e.setups.fixtures = map[string]State{}
+			}
+			saved := State{}
+			for k, v := range state {
+				if before[k] != v {
+					saved[k] = v
+				}
+			}
+			delete(saved, StateNow)
+			for _, u := range scenario.Users {
+				delete(saved, u.As)
+				delete(saved, u.SSHKey)
+			}
+			e.setups.fixtures[key] = saved
+			e.setups.mu.Unlock()
+		}
+		return result
+	}
+	return e.send(ctx, scenario, step, target, request, state, passwords, line)
+}
+
+// untilNotPending runs a step of Steps; while its check answers NotYet it
+// builds and sends the step again, after a short pause, on a copy of state
+// (only the last attempt's changes are kept), until the step passes or fails or
+// the iteration deadline passes, which fails it with the last reason.
+func (e *Engine) untilNotPending(ctx context.Context, scenario Scenario, step Step, rng *rand.Rand, state State, passwords State, deadline time.Time) stepResult {
+	started := e.clock.Now()
+	attempts, sent := 0, 0
+	var result stepResult
+	var lastStart time.Time
+	for {
+		attempts++
+		lastStart = e.clock.Now()
+		attempt := state.clone()
+		result = e.step(ctx, scenario, step, rng, attempt, passwords, phaseStep)
+		sent += result.sent
+		if !result.pending {
+			if result.outcome == OutcomeOK {
+				for key, value := range attempt {
+					state[key] = value
+				}
+			}
+			break
+		}
+		if remaining := deadline.Sub(e.clock.Now()); remaining <= 0 || ctx.Err() != nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+		case <-e.clock.After(pendingPause):
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	result.sent = sent
+	result.waited = lastStart.Sub(started)
+	if attempts > 1 || result.pending {
+		result.converge = &Convergence{Step: step.Name, Attempts: attempts, Took: e.since(started), Converged: result.outcome == OutcomeOK}
+	}
+	if result.pending {
+		result.err = fmt.Sprintf("%s (still not there after %d attempts over %s)", result.err, attempts, result.converge.Took.Round(time.Millisecond))
+	}
+	return result
+}
+
+// send runs one built request and judges its answer.
+func (e *Engine) send(ctx context.Context, scenario Scenario, step Step, target Target, request Request, state State, passwords State, line string) stepResult {
 	if target.Scheme == "ssh" {
 		if carriesPassword(request, passwords) {
 			return stepResult{outcome: OutcomeInvalid, request: line, err: "an EXEC request may not send a probe-user password"}
@@ -467,7 +675,7 @@ func (e *Engine) step(ctx context.Context, scenario Scenario, step Step, rng *ra
 		if strings.TrimSpace(reason) == "" {
 			reason = fmt.Sprintf("HTTP %d rejected by check", response.StatusCode)
 		}
-		return stepResult{outcome: OutcomeError, status: response.StatusCode, sent: 1, request: line, err: reason, observed: observedExcerpt(body, response.StatusCode, "")}
+		return stepResult{outcome: OutcomeError, status: response.StatusCode, sent: 1, request: line, err: reason, observed: observedExcerpt(body, response.StatusCode, ""), pending: verdict.Pending}
 	}
 	return stepResult{outcome: OutcomeOK, status: response.StatusCode, sent: 1, request: line}
 }

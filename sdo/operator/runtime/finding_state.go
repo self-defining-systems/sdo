@@ -42,10 +42,20 @@ type FindingTransition struct {
 
 type FindingChanges struct {
 	Activated []sdk.Finding
-	Cleared   []string
+	// Reruled lists findings that stayed active under the same fingerprint but
+	// changed rule (a clue that became an error finding). Not an activation:
+	// the state kept its streak, so the controller decides what the new rule
+	// means.
+	Reruled []RuleChange
+	Cleared []string
 	// Transitions lists activations, clears, and findings that vanished before
 	// reaching their firing threshold, in deterministic order.
 	Transitions []FindingTransition
+}
+
+// RuleChange is an active finding's rule moving under one fingerprint.
+type RuleChange struct {
+	Before, After sdk.Finding
 }
 
 type FindingStateTracker struct {
@@ -113,6 +123,9 @@ func (t *FindingStateTracker) observe(now time.Time, detectorID string, findings
 		}
 		if state.FiringCount == 0 {
 			state.FirstSeenAt = now
+		}
+		if exists && state.Active && state.Finding.RuleID != finding.RuleID {
+			changes.Reruled = append(changes.Reruled, RuleChange{Before: state.Finding, After: finding})
 		}
 		state.Finding = finding
 		state.ClearCount = 0

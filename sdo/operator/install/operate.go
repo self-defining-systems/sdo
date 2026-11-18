@@ -154,6 +154,9 @@ func OperateJob(cfg Config, healthObjective, operationID string) (*batchv1.Job, 
 	if cfg.ExitAfterClosure {
 		args = append(args, "--exit-after-closure")
 	}
+	if cfg.StopAfterArchitecture {
+		args = append(args, "--stop-after-architecture")
+	}
 	if cfg.RegistrationConfigMap != "" {
 		args = append(args, "--agent-registration-configmap", cfg.RegistrationConfigMap, "--agent-registration-directory", cfg.registrationDirectory())
 	}
@@ -184,7 +187,7 @@ func OperateJob(cfg Config, healthObjective, operationID string) (*batchv1.Job, 
 		return nil, err
 	}
 	if devmount.Enabled() {
-		pod.Containers[0].Env = append(pod.Containers[0].Env, corev1.EnvVar{Name: "SDO_DEV_MOUNT", Value: "1"})
+		pod.Containers[0].Env = append(pod.Containers[0].Env, devmount.Environment()...)
 		devmount.Apply(pod)
 	}
 	if err := worker_registry.ApplyProviderCapacity(pod, worker_registry.ProviderCapacityEnvironment()); err != nil {
@@ -317,7 +320,7 @@ func (i Installer) WaitOperate(ctx context.Context, cfg Config, operationID stri
 		}
 		for _, line := range strings.Split(string(raw), "\n") {
 			var result OperateResult
-			if json.Unmarshal([]byte(line), &result) == nil && result.OperationID == operationID && result.Installed && result.SourceCommit != "" && result.JudgeCommit != "" {
+			if json.Unmarshal([]byte(line), &result) == nil && result.OperationID == operationID && result.SourceCommit != "" && ((result.Installed && result.JudgeCommit != "") || (cfg.StopAfterArchitecture && !result.Installed && result.ArchitectureCommit != "")) {
 				return result, nil
 			}
 		}

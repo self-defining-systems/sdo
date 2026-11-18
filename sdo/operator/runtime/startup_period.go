@@ -96,6 +96,9 @@ func (c *Controller) observeStartup(now time.Time) {
 		return
 	}
 	quiet := c.quiet()
+	if c.config.StartupWarmupSettled != nil && !c.config.StartupWarmupSettled() {
+		quiet = false
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for id := range c.detectors {

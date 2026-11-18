@@ -63,6 +63,7 @@ func duplicatePVCClaims(file *ast.File, positions *token.FileSet) ([]string, int
 	return problems, builders
 }
 
+//ci:whole-tree
 func TestNativePodBuildersDeclareEachPVCOnce(t *testing.T) {
 	// Debug filenames are module-relative under -trimpath; go test's package
 	// working directory locates the checked-in source independently of them.

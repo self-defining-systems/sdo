@@ -232,6 +232,7 @@ func (c *Controller) clearIncidentLocked() {
 	c.escalatedAt = time.Time{}
 	c.responderDone = false
 	c.currentIncidentRequest = nil
+	c.publishHeldLocked()
 	c.currentIncidentResult = nil
 	c.dispatchError = ""
 	c.incidentDetectedAt = time.Time{}

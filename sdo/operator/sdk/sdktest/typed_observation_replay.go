@@ -2,6 +2,7 @@ package sdktest
 
 import (
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
@@ -52,4 +53,15 @@ func (s Snapshot) PodUsage(ref sdk.ObjectRef) (*metricsv1beta1.PodMetrics, error
 }
 func (s Snapshot) NodeUsage(ref sdk.ObjectRef) (*metricsv1beta1.NodeMetrics, error) {
 	return (&ReplayReadView{Snapshot: s, Calls: s.Readings}).NodeUsage(ref)
+}
+func (v *ReplayReadView) LogMatches(ref sdk.ObjectRef, container string, since time.Duration, pattern string, max int) (program.LogMatchResult, error) {
+	if _, err := program.ValidateLogMatchRequest(since, pattern, max); err != nil {
+		return program.LogMatchResult{}, err
+	}
+	var r program.LogMatchResult
+	err := v.replay("LogMatches", []any{ref, container, since, pattern, max}, &r)
+	return r, err
+}
+func (s Snapshot) LogMatches(ref sdk.ObjectRef, container string, since time.Duration, pattern string, max int) (program.LogMatchResult, error) {
+	return (&ReplayReadView{Snapshot: s, Calls: s.Readings}).LogMatches(ref, container, since, pattern, max)
 }

@@ -1006,6 +1006,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if stateBaseline {
 		controller.Baseline = stateTracker
 	}
+	if trafficObserver != nil {
+		controller.config.StartupWarmupSettled = trafficObserver.WarmupSettled
+	}
 	controller.PodReadBaseline = podReadBaseline
 	controller.VantageBaseline = vantageBaseline
 	controller.AppState = appStateObserver.Store()
@@ -1055,7 +1058,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		return err
 	}
 	iteration := 0
-	encoder := json.NewEncoder(stdout)
+	encoder := &lockedEncoder{enc: json.NewEncoder(stdout)}
 	controller.OnError = func(err error) { fmt.Fprintln(stderr, err) }
 	controller.OnClosureFailed = func(failure ClosureFailure) {
 		document, err := wire.Canonical(closureFailureContract(&failure))
@@ -1133,9 +1136,8 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}
 	}
 	// startTraffic makes sure the prober runs, clears its observations, and
-	// waits briefly for a first sample of every scenario, so the next
-	// evaluation, which may be the all-clear that precedes a fault, judges
-	// observed traffic.
+	// begins the warm-up for a first sample of every scenario in the
+	// background; it returns without waiting for it.
 	startTraffic := func() {
 		if hostManager != nil && syntheticTraffic {
 			if err := (MemoryTraffic{RPC: hostManager}).Start(runCtx); err != nil {
@@ -1155,15 +1157,28 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		started := clock.Now()
 		resetErr := trafficObserver.Reset(runCtx)
 		trafficObserver.Start(runCtx)
-		warm := trafficObserver.AwaitWarm(runCtx, syntheticTrafficWarmup)
-		record := map[string]any{
-			"synthetic_traffic": trafficObserver.Summary(), "synthetic_traffic_warm": warm,
-			"synthetic_traffic_startup_ms": clock.Since(started).Milliseconds(),
-		}
-		if resetErr != nil {
-			record["synthetic_traffic_error"] = resetErr.Error()
-		}
-		if err := encoder.Encode(record); err != nil {
+		// One read so the first evaluation sees the prober's windows.
+		trafficObserver.Poll(runCtx)
+		// The warm-up never holds start-up: the reset path, the main loop and
+		// every detector run while the probes qualify. A scenario that has not
+		// qualified is a pending probe (traffic detectors report no finding for
+		// it) and the start-up period holds its openers until the warm-up
+		// concludes. The conclusion is logged when it comes.
+		trafficObserver.BeginWarmup(runCtx, syntheticTrafficWarmup, func(warm bool) {
+			record := map[string]any{
+				"synthetic_traffic": trafficObserver.Summary(), "synthetic_traffic_warm": warm,
+				"synthetic_traffic_warmup_ms": clock.Since(started).Milliseconds(),
+			}
+			if resetErr != nil {
+				record["synthetic_traffic_error"] = resetErr.Error()
+			}
+			if err := encoder.Encode(record); err != nil {
+				fmt.Fprintln(stderr, err)
+			}
+		})
+		if err := encoder.Encode(map[string]any{
+			"synthetic_traffic": "warming", "synthetic_traffic_startup_ms": clock.Since(started).Milliseconds(),
+		}); err != nil {
 			fmt.Fprintln(stderr, err)
 		}
 	}
@@ -1229,6 +1244,17 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			stateTracker.Reset()
 		}
 	}
+	// startupStage logs how long one blocking step of start-up or resume took,
+	// so a slow start names its stage.
+	startupBegan := clock.Now()
+	startupStage := func(name string) (end func()) {
+		began := clock.Now()
+		return func() {
+			if err := encoder.Encode(map[string]any{"startup_stage": name, "ms": clock.Since(began).Milliseconds()}); err != nil {
+				fmt.Fprintln(stderr, err)
+			}
+		}
+	}
 	syncPolicy := options.InformerSync
 	if err := syncPolicy.Validate(); err != nil {
 		return err
@@ -1255,17 +1281,23 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	// preserving pause), and each component starts only if it is not running.
 	observeApplication := func(syncCtx context.Context, informersCurrent bool) error {
 		var err error
+		endStage := startupStage("informer_sync")
 		if informersCurrent {
 			err = kubernetesCache.ObserveRunning(runCtx, syncCtx)
 		} else {
 			err = kubernetesCache.Observe(runCtx, syncCtx)
 		}
+		endStage()
 		if err != nil {
 			return err
 		}
 		waitState := startState()
+		endStage = startupStage("traffic_start")
 		startTraffic()
+		endStage()
+		endStage = startupStage("reachability_start")
 		startReachability()
+		endStage()
 		waitState()
 		return nil
 	}
@@ -1293,13 +1325,17 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}, syncRetried("startup")); err != nil {
 			return nil
 		}
+		endStage := startupStage("reachability_baseline")
 		acceptBaseline(acceptStartupReachabilityBaseline)
+		endStage()
+		endStage = startupStage("first_evaluation")
 		if err := retryStartup(func() error { return controller.Step(runCtx, clock.Now().UTC(), nil) }); err != nil {
 			if runCtx.Err() != nil {
 				return nil
 			}
 			return err
 		}
+		endStage()
 	}
 	if err := retryStartup(func() error { return controller.retireExpiredIncident(runCtx, lifecycleio.Now().UTC()) }); err != nil {
 		return err
@@ -1324,6 +1360,15 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	maintenanceChanges := maintenance.Watch(runCtx, desired, maintenancePollInterval, controller.OnError)
 	resets := install.ResetRequests{Client: bootstrapProvider.Client, Namespace: *controlNamespace}
 	resetRequests := watchResets(runCtx, resets, clock, maintenancePollInterval, controller.OnError)
+	// Serving: the state baseline, informers and first evaluation are done and
+	// the loop below reads reset requests. The traffic warm-up may still run
+	// (synthetic_traffic_warmup_ms logs its end).
+	if err := encoder.Encode(map[string]any{
+		"controller_serving": true, "startup_ms": clock.Since(startupBegan).Milliseconds(),
+		"traffic_warmup_settled": trafficObserver == nil || trafficObserver.WarmupSettled(),
+	}); err != nil {
+		fmt.Fprintln(stderr, err)
+	}
 	// A pause is a barrier the declaring side waits on: once the loop observes
 	// nothing and every in-flight pass drained, the generation it stopped under
 	// is acknowledged. A failed acknowledgement is retried while paused.
@@ -1843,6 +1888,7 @@ func evaluateOnce(
 	settingsFile := flags.String("settings", "", "operator configuration the evaluation runs under (the sdo-config mount or the controller's record); empty runs the defaults")
 	outsideCluster := flags.Bool("outside-cluster", false, "this process runs outside the cluster: detectors that dial in-cluster Service names are left out and reported unavailable (evaluation.OutsideClusterReason)")
 	watch := flags.Duration("watch", 0, "after the warm-up, judge again every interval and print one verdict per line until cancelled (a detector error is that detector's unavailable entry); 0 evaluates once")
+	writeSoak := flags.Int("write-soak", 0, "with --watch, each pass re-runs the probes' write scenarios this many times, so the lists other probes read keep changing while the detectors judge")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -2174,7 +2220,7 @@ func evaluateOnce(
 				break
 			}
 		}
-		return evaluation.Verdict{Status: status, Findings: findings, Unavailable: unavailableNow, DetectorStates: unconfirmed, ExistingRecordsExercised: exercised, StartedAt: now.UTC()}, nil
+		return evaluation.Verdict{Status: status, Findings: findings, Unavailable: unavailableNow, DetectorStates: unconfirmed, Progress: progressWhenWatching(watching, controller), ExistingRecordsExercised: exercised, StartedAt: now.UTC()}, nil
 	}
 	if *watch > 0 {
 		// The provider warmed above; each pass judges the live application
@@ -2187,6 +2233,11 @@ func evaluateOnce(
 			}
 			if err := encoder.Encode(verdict); err != nil {
 				return err
+			}
+			if trafficAPI != nil {
+				if err := soakWrites(ctx, trafficAPI, *writeSoak, stderr); err != nil && ctx.Err() == nil {
+					fmt.Fprintln(stderr, "write soak:", err)
+				}
 			}
 			if err := waitOnClock(ctx, clock, *watch); err != nil {
 				return nil
@@ -2338,4 +2389,24 @@ func hostProtectedNamespace(control, application string) string {
 		return ""
 	}
 	return control
+}
+
+func progressWhenWatching(watching bool, controller *Controller) []evaluation.DetectorProgress {
+	if !watching {
+		return nil
+	}
+	return controller.DetectorProgress()
+}
+
+// lockedEncoder serializes JSON records written from the main loop and from
+// background stages such as the traffic warm-up.
+type lockedEncoder struct {
+	mu  sync.Mutex
+	enc *json.Encoder
+}
+
+func (e *lockedEncoder) Encode(v any) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.enc.Encode(v)
 }

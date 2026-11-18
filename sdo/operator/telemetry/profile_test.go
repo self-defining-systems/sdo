@@ -56,3 +56,16 @@ func TestProfileEnvironmentCarriesGrantedCapabilities(t *testing.T) {
 		t.Fatalf("environment capabilities = %v", got)
 	}
 }
+
+func TestProfileAllowsOneDefaultSourcePerKind(t *testing.T) {
+	two := `{"name":"lab","mode":"open","sources":[` +
+		`{"id":"prom","adapter":"prometheus","kinds":["metrics"],"endpoint":"http://p.lab.svc:9090","default":true},` +
+		`{"id":"traces","adapter":"jaeger","kinds":["traces"],"endpoint":"http://j.lab.svc:16686","default":true}]}`
+	if _, err := telemetry.ParseProfile([]byte(two)); err != nil {
+		t.Fatalf("a metrics default and a traces default: %v", err)
+	}
+	same := strings.Replace(two, `"kinds":["traces"]`, `"kinds":["metrics"]`, 1)
+	if _, err := telemetry.ParseProfile([]byte(same)); err == nil {
+		t.Fatal("two metrics defaults accepted")
+	}
+}

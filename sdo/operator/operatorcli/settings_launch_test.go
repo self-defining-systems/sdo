@@ -46,6 +46,7 @@ func TestHostWithoutConfigKeepsTheProductionDefaults(t *testing.T) {
 	}
 	want := settings.Default()
 	want.Agent.Model = "m"
+	want.Onboarding.JourneysRequired = false // the package's model config turns the requirement off
 	got := *launch.Install.Settings
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("defaults differ:\n got %+v\nwant %+v", got, want)

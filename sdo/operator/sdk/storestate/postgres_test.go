@@ -263,3 +263,122 @@ func TestPostgresDetectorReportsAReadOnlyDatabase(t *testing.T) {
 		t.Fatalf("read-only findings = %+v", findings)
 	}
 }
+
+// serverSettings replaces the healthy server section's two read-only settings
+// with rows in the read's own format: name, effective value, source, and the
+// server-scope value.
+func serverSettings(defaultRow, txRow string) string {
+	out := strings.Replace(healthyPostgres, "set\tdefault_transaction_read_only\toff", defaultRow, 1)
+	return strings.Replace(out, "set\ttransaction_read_only\toff", txRow, 1)
+}
+
+func TestPostgresScopedSettingIsNotAServerChange(t *testing.T) {
+	baseline := parsePostgres(t, healthyPostgres)
+	for _, source := range []string{"database", "user", "database user", "client", "session"} {
+		t.Run(source, func(t *testing.T) {
+			out := serverSettings(
+				"set\tdefault_transaction_read_only\ton\t"+source+"\toff",
+				"set\ttransaction_read_only\ton\tdefault\ton")
+			out = strings.Replace(out, "== roles", "exampledb\tappuser\tdefault_transaction_read_only\ton\n== roles", 1)
+			current := parsePostgres(t, out)
+			if got, ok := item(current, storestate.KindSetting, "", "default_transaction_read_only"); !ok || got.Value != "off" {
+				t.Errorf("server default_transaction_read_only = %+v, %v", got, ok)
+			}
+			if got, ok := item(current, storestate.KindSetting, "", "transaction_read_only"); !ok || got.Value != "off" {
+				t.Errorf("server transaction_read_only = %+v, %v", got, ok)
+			}
+			scoped := storestate.Key{Kind: storestate.KindSetting, Scope: "appuser@exampledb", Name: "default_transaction_read_only"}
+			changes := storestate.Diff(baseline, current)
+			var sawScoped bool
+			for _, c := range changes {
+				if c.Key().Scope == "" {
+					t.Errorf("a scoped setting changes the server section: %s", c)
+				}
+				sawScoped = sawScoped || c.Key() == scoped
+			}
+			if !sawScoped {
+				t.Errorf("the scoped item is not reported: %v", changes)
+			}
+			if current.Writable == nil || *current.Writable {
+				t.Errorf("writable = %v, want false (the role's setting blocks writes)", current.Writable)
+			}
+		})
+	}
+}
+
+func TestPostgresServerChangeStillShowsWithASource(t *testing.T) {
+	baseline := parsePostgres(t, healthyPostgres)
+	out := serverSettings(
+		"set\tdefault_transaction_read_only\ton\tconfiguration file\ton",
+		"set\ttransaction_read_only\ton\tdefault\ton")
+	assertChanges(t, baseline, parsePostgres(t, out), []wantChange{
+		{storestate.KindSetting, "", "default_transaction_read_only", "off", "on"},
+		{storestate.KindSetting, "", "transaction_read_only", "off", "on"},
+		{storestate.KindWriteBlock, "", "default-transaction-read-only", "", "active"},
+	})
+	// A scoped source that hides a server-wide change keeps the server value.
+	out = serverSettings(
+		"set\tdefault_transaction_read_only\toff\tdatabase user\ton",
+		"set\ttransaction_read_only\toff\tdefault\ton")
+	assertChanges(t, baseline, parsePostgres(t, out), []wantChange{
+		{storestate.KindSetting, "", "default_transaction_read_only", "off", "on"},
+	})
+}
+
+func TestPostgresScopedSettingNeedsItsServerValue(t *testing.T) {
+	out := serverSettings("set\tdefault_transaction_read_only\ton\tuser", "set\ttransaction_read_only\toff")
+	if f, err := adapterFor(t, storestate.EnginePostgres).Parse(out); err == nil {
+		t.Fatalf("Parse accepted a scoped row without a server value: %+v", f)
+	}
+}
+
+func TestPostgresReadAndRestoreVerifyTheServerScopeValue(t *testing.T) {
+	a := adapterFor(t, storestate.EnginePostgres)
+	text := strings.Join(a.ReadCommand(storestate.Endpoint{Port: 5432}), "\n")
+	baseline := parsePostgres(t, healthyPostgres)
+	current := parsePostgres(t, strings.Replace(healthyPostgres, "default_transaction_read_only\toff", "default_transaction_read_only\ton", 1))
+	for _, c := range storestate.Diff(baseline, current) {
+		if c.Key().Kind != storestate.KindSetting || c.Key().Name != "default_transaction_read_only" {
+			continue
+		}
+		cmds, err := storestate.RestoreCommands(storestate.EnginePostgres, storestate.Endpoint{Port: 5432}, c, baseline, storestate.RestoreOptions{})
+		if err != nil || len(cmds) != 1 {
+			t.Fatalf("restore = %v, %v", cmds, err)
+		}
+		// The server restore judges the server's own value, never the
+		// session's: scoped sources are told apart.
+		restoreText := strings.Join(cmds[0], "\n")
+		for _, want := range []string{"scoped:", "'database user'", "pg_show_all_file_settings"} {
+			if !strings.Contains(restoreText, want) {
+				t.Errorf("server restore lacks %q", want)
+			}
+		}
+	}
+	for _, want := range []string{"boot_val", "pg_show_all_file_settings", "'database user'"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("read lacks %q", want)
+		}
+	}
+}
+
+// A baseline promoted before the read carried sources has set rows of three
+// fields; it parses as server-scope values and compares equal to a healthy
+// read in the current format.
+func TestPostgresLegacyBaselineComparesWithSourcedReads(t *testing.T) {
+	legacy := parsePostgres(t, healthyPostgres)
+	sourced := healthyPostgres
+	for _, row := range []string{"default_transaction_read_only\toff", "transaction_read_only\toff", "max_connections\t100", "statement_timeout\t0"} {
+		sourced = strings.Replace(sourced, "set\t"+row, "set\t"+row+"\tdefault\t"+row[strings.Index(row, "\t")+1:], 1)
+	}
+	if changes := storestate.Diff(legacy, parsePostgres(t, sourced)); len(changes) != 0 {
+		t.Fatalf("a legacy baseline differs from the same state read with sources: %v", changes)
+	}
+}
+
+func TestPostgresRefusedSettingsStatementRefusesTheServerSection(t *testing.T) {
+	out := strings.Replace(healthyPostgres, "set\tdefault_transaction_read_only\toff\n", "ERROR:  permission denied for view pg_settings\n", 1)
+	f := parsePostgres(t, out)
+	if got, ok := item(f, storestate.KindRefusal, "", "server"); !ok || got.Value != "no-permission" {
+		t.Fatalf("refusal = %+v, %v", got, ok)
+	}
+}

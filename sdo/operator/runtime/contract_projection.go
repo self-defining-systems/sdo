@@ -273,6 +273,12 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 		ProgramFailureSignals: append([]string(nil), result.ProgramFailureSignals...),
 		ResolutionPath:        result.ResolutionPath,
 	}
+	for _, finding := range result.Findings {
+		message.Findings = append(message.Findings, proto.Clone(finding).(*contracts.IncidentFinding)) //assertcheck:ok proto.Clone of a T returns a T
+	}
+	for _, change := range result.AgentChanges {
+		message.AgentChanges = append(message.AgentChanges, proto.Clone(change).(*contracts.AgentChange)) //assertcheck:ok proto.Clone of a T returns a T
+	}
 	for _, call := range result.ProgramToolCalls {
 		message.ProgramToolCalls = append(message.ProgramToolCalls, toolCallContract(call))
 	}
@@ -369,6 +375,12 @@ func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 		ResponseLoopsUsed: int(message.GetResponseLoopsUsed()), ResponseLoopExhausted: message.GetResponseLoopExhausted(),
 		ProgramFailureSignals: append([]string(nil), message.GetProgramFailureSignals()...),
 		ResolutionPath:        message.GetResolutionPath(),
+	}
+	for _, finding := range message.GetFindings() {
+		result.Findings = append(result.Findings, proto.Clone(finding).(*contracts.IncidentFinding)) //assertcheck:ok proto.Clone of a T returns a T
+	}
+	for _, change := range message.GetAgentChanges() {
+		result.AgentChanges = append(result.AgentChanges, proto.Clone(change).(*contracts.AgentChange)) //assertcheck:ok proto.Clone of a T returns a T
 	}
 	for _, call := range message.GetProgramToolCalls() {
 		result.ProgramToolCalls = append(result.ProgramToolCalls, toolCallState(call))

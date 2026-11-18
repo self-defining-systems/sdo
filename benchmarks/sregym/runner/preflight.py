@@ -21,7 +21,10 @@ touched:
   experiment, and every kubeconfig the lane would use reaches only its own
   cluster (lanes once shared a kubeconfig and contaminated each other);
 - ``model-policy``: every agent role and the judge resolve to the one allowed
-  model, provider and effort (:class:`ModelPolicy`);
+  model, provider and effort (:class:`ModelPolicy`); the stock ``claudecode``
+  arm may instead run a declared Claude model (``ModelPolicy.claude_models``),
+  and the generic ``external`` arm (any agent command) records its model
+  without pinning it;
 - ``arm-parity``: every compared arm and stage shares the model, reasoning
   effort, judge and environment that affect grading or timing;
 - ``codex-quota``: the weekly Codex quota has headroom, read offline from the
@@ -106,6 +109,11 @@ JUDGE_EFFORT_ENV = "JUDGE_REASONING_EFFORT"
 SREGYM_DEFAULT_JUDGE_EFFORT = "xhigh"
 _SEMVER = re.compile(r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
 _CODEX_VERSION = re.compile(r"codex-cli\s+(\S+)")
+#: SREGym's stock Claude Code agent (``third_party/sregym/agents.yaml``): the vanilla arm.
+CLAUDE_AGENT = "claudecode"
+CLAUDE_PROVIDER = "claude"
+#: Any external agent command (``fastloop run --agent external``): its model is recorded, never pinned.
+EXTERNAL_AGENT = "external"
 
 
 # --------------------------------------------------------------------------- policy and settings
@@ -121,6 +129,14 @@ class ModelPolicy:
     the effort SDO's agents run at under the benchmark profile (operator config
     ``agent.effort``, ``docs/config.md``; a test keeps the two equal), so every
     compared arm declares it.
+
+    One declared exception: SREGym's stock ``claudecode`` agent (the vanilla arm
+    of the Claude comparison) runs one of ``claude_models`` through Claude Code.
+    It keeps the stock effort default, so ``reasoning_effort`` is only recorded
+    and compared across arms, not pinned. The generic ``external`` arm (any agent
+    command) runs whatever model its command picks: the model and effort are
+    recorded and compared across arms, not pinned. Everything else, the judge
+    included, is unchanged.
     """
 
     provider: str = "codex"
@@ -128,7 +144,8 @@ class ModelPolicy:
     judge_model_id: str = "codex-gpt-6-luna"
     judge_effort: str = "xhigh"
     agent_effort: str = "medium"
-    agents: frozenset[str] = frozenset({"codex", "sdo_codex"})
+    agents: frozenset[str] = frozenset({"codex", "sdo_codex", CLAUDE_AGENT, EXTERNAL_AGENT})
+    claude_models: frozenset[str] = frozenset({"claude-sonnet-5-5", "claude-opus-5-5"})
 
     def __post_init__(self) -> None:
         for name in ("provider", "model", "judge_model_id", "judge_effort", "agent_effort"):
@@ -137,6 +154,8 @@ class ModelPolicy:
                 raise ValueError(f"ModelPolicy.{name} must be a non-empty string, got {value!r}")
         if not self.agents:
             raise ValueError("ModelPolicy.agents must name at least one agent")
+        if not self.claude_models or any(not model.strip() for model in self.claude_models):
+            raise ValueError(f"ModelPolicy.claude_models must be non-empty model names, got {set(self.claude_models)}")
 
 
 @dataclass(frozen=True)
@@ -499,6 +518,12 @@ def resolve_roles(config: ExperimentConfig, env: Mapping[str, str], policy: Mode
             roles[role] = RoleModel(provider, model, policy.agent_effort, "agent.sdo_codex")
     elif config.agent == "codex":
         roles["baseline_agent"] = RoleModel("codex", config.model, config.reasoning_effort or None, "runner.model")
+    elif config.agent == CLAUDE_AGENT:
+        roles["baseline_agent"] = RoleModel(
+            CLAUDE_PROVIDER, config.model, config.reasoning_effort or None, "runner.model"
+        )
+    elif config.agent == EXTERNAL_AGENT:
+        roles["baseline_agent"] = RoleModel(None, config.model, config.reasoning_effort or None, "runner.model")
     else:
         roles["agent"] = RoleModel(None, config.model, config.reasoning_effort or None, "runner.model")
     return roles
@@ -957,9 +982,13 @@ def _check_model_policy(ctx: _Context) -> PreflightCheck:
         arm = config.agent
         if arm not in policy.agents:
             problems.append(f"agent {arm!r} is outside the allowed arms {sorted(policy.agents)}")
-        if config.model != policy.model:
+        claude = arm == CLAUDE_AGENT
+        recorded = claude or arm == EXTERNAL_AGENT  # the model is declared, not SDO's pinned one
+        if claude and config.model not in policy.claude_models:
+            problems.append(f"{arm}: runner.model is {config.model!r}, not one of {sorted(policy.claude_models)}")
+        elif not recorded and config.model != policy.model:
             problems.append(f"{arm}: runner.model is {config.model!r}, not {policy.model!r}")
-        if config.reasoning_effort != policy.agent_effort:
+        if not recorded and config.reasoning_effort != policy.agent_effort:
             problems.append(
                 f"{arm}: runner.reasoning_effort is {config.reasoning_effort!r}, "
                 f"not SDO's pinned {policy.agent_effort!r}"
@@ -971,6 +1000,8 @@ def _check_model_policy(ctx: _Context) -> PreflightCheck:
                 if resolved.effort != policy.judge_effort:
                     problems.append(f"{arm}: judge effort is {resolved.effort!r}, not {policy.judge_effort!r}")
                 continue
+            if recorded:
+                continue  # a Claude model was checked against ``claude_models`` above; an external one is recorded
             if resolved.provider not in (None, policy.provider) or resolved.model != policy.model:
                 problems.append(
                     f"{arm}: {role} resolves to {resolved.provider}:{resolved.model}, "
@@ -986,11 +1017,18 @@ def _check_model_policy(ctx: _Context) -> PreflightCheck:
             "model-policy",
             "fail",
             "; ".join(problems),
-            f"every arm runs {policy.provider}:{policy.model} at {policy.agent_effort} and is judged by "
+            f"every arm runs {policy.provider}:{policy.model} at {policy.agent_effort} (the stock {CLAUDE_AGENT} arm "
+            f"one of {sorted(policy.claude_models)}; the {EXTERNAL_AGENT} arm any) and is judged by "
             f"{policy.judge_model_id} at {policy.judge_effort}; fix the config or unset the override",
         )
+    claude_models = sorted({config.model for config in ctx.configs if config.agent == CLAUDE_AGENT})
+    claude_note = f", {CLAUDE_AGENT} {', '.join(claude_models)}" if claude_models else ""
+    external_models = sorted({config.model for config in ctx.configs if config.agent == EXTERNAL_AGENT})
+    claude_note += f", {EXTERNAL_AGENT} {', '.join(external_models)} (recorded)" if external_models else ""
     return PreflightCheck(
-        "model-policy", "pass", f"all roles {policy.provider}:{policy.model}, judge {policy.judge_model_id}"
+        "model-policy",
+        "pass",
+        f"all roles {policy.provider}:{policy.model}{claude_note}, judge {policy.judge_model_id}",
     )
 
 

@@ -109,7 +109,7 @@ The CLI decision file contains the unwrapped ReflectionResult below. The model's
 
 ## Incident result ownership
 
-Return only the agent-owned fields in the session output schema: `incident_id`, `status`, `confirmed_root_causes`, `applied_playbooks`, `repair_changes`, `verification_evidence`, `timing`, `drift_events`. Controller-owned fields, including drift counts, are derived independently. Contract validation feedback permits one correction in the same session; preserve completed repairs. Receipts and controller facts are never model-authored.
+Return only the agent-owned fields in the session output schema: `incident_id`, `status`, `confirmed_root_causes`, `applied_playbooks`, `repair_changes`, `verification_evidence`, `timing`, `drift_events`, `findings` (observations with where seen, explanations ruled out with how; required in every result, failed ones included; Go stores them in the outcome and shows them as unverified earlier attempts to a later incident with the same opening keys). Controller-owned fields, including drift counts, are derived independently. Contract validation feedback permits one correction in the same session; preserve completed repairs. Receipts and controller facts are never model-authored.
 
 ## Mitigation menu and responder continuity
 
@@ -117,7 +117,7 @@ The menu is a convenience over direct commands. It lists accepted Mitigators wit
 
 ## Controller verification and command reports
 
-`sdo detect` runs the detectors on reads taken now; `sdo detect TEST` sends that user test's scheduled request now; `sdo detect --wait SECONDS` returns when a failing test or alert changes, a new alert raises, the incident recovers, or the time passes. SDO ends the incident work when Recovered holds; the agent returns only to give up. After verified closure, incident_verified adds an informational timestamp and message to every normal result; reads and reports continue. New mutations receive a typed incident_verified rejection receipt.
+`sdo detect` runs the detectors on reads taken now; `sdo detect TEST` sends that user test's scheduled request now; `sdo detect --wait SECONDS` returns when a failing test, alert or finding's text or counts change, a new alert raises, the incident recovers, or the time passes. SDO ends the incident work when Recovered holds; the agent returns only to give up. After verified closure, incident_verified adds an informational timestamp and message to every normal result; reads and reports continue. New mutations receive a typed incident_verified rejection receipt.
 
 Mutating commands always store complete per-action results, evidence, program runs, reports and receipts under $SDO_SESSION_SCRATCH/sdo-reports/<incident>/<sequence>-<command>.json. Their compact output states action and incident verdicts separately, compares controller cached finding sets by fingerprint and evidence (fixed/new/unchanged), and prints the file path and generated schema. A failed action line names the failure reason, exit code and first error line.
 

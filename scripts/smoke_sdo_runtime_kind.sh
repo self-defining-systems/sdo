@@ -82,6 +82,7 @@ SDO_AGENT_MODEL=fixture SDO_DEPLOYMENT_MAX_ATTEMPTS=1 timeout 1200s "${workspace
   --control-namespace "${control_namespace}" \
   --application demo \
   --health-objective 'The demo Deployment has an available replica.' \
+  --journeys 'the demo Deployment serves requests' \
   --operation-id native-smoke \
   --controller-image "sdo-controller:${image_tag}" \
   --responder-image "sdo-responder:${image_tag}" \

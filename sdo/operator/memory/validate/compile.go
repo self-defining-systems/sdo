@@ -49,6 +49,7 @@ func (s *run) compile(ctx context.Context) error {
 	}
 	workspace, err := builder.BuildWorkspace(ctx, builder.Config{
 		Replay: s.req.Replay, ApplicationRoot: s.req.Root, DiagnosticsRoot: diagnostics, OperatorRoot: s.req.OperatorRoot, HealthyBaseline: s.req.HealthyBaseline,
+		IncidentCapture: s.incidentCapture(),
 		Telemetry: &builder.TelemetryBindings{Sources: sources},
 	})
 	if err != nil {
@@ -222,4 +223,23 @@ func summarizeGoTest(output string) (message string, path string) {
 		message = message[:maxCompileOutput]
 	}
 	return message, path
+}
+
+// incidentCapture is the controller's capture directory of the incident whose reflection this check judges: the agent's
+// closing turn and the broker see the incident's open state before Go writes any corpus case. Other checks have none.
+func (s *run) incidentCapture() string {
+	if s.req.Actor != Responder || s.req.Phase != ReflectionPhase {
+		return ""
+	}
+	if s.req.CaptureDirectory != "" {
+		return s.req.CaptureDirectory
+	}
+	if s.req.CaptureRoot == "" || s.req.IncidentID == "" {
+		return ""
+	}
+	dir, err := memory.IncidentCorpusDir(s.req.CaptureRoot, s.req.IncidentID)
+	if err != nil {
+		return ""
+	}
+	return dir
 }

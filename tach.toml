@@ -115,14 +115,26 @@ depends_on = [
 ]
 
 [[modules]]
+path = "benchmarks.sregym.eval"
+depends_on = [
+    "benchmarks.sregym.adapter",
+    "benchmarks.sregym.fastloop",
+    "benchmarks.sregym.repository_git",
+]
+
+[[modules]]
 path = "benchmarks.sregym.run"
 depends_on = [
     "benchmarks.sregym.runner",
 ]
 
 [[modules]]
-path = "benchmarks.fuzzops"
+path = "benchmarks.devswap"
 depends_on = []
+
+[[modules]]
+path = "benchmarks.fuzzops"
+depends_on = ["benchmarks.devswap"]
 
 [[modules]]
 path = "benchmarks.sregym.repository_git"

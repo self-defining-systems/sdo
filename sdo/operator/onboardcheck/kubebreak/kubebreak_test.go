@@ -8,8 +8,12 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"sdo.dev/operator/memory/appmap"
 )
@@ -257,5 +261,108 @@ func TestNetworkPolicyNameUsesTheBareWorkloadName(t *testing.T) {
 	}
 	if err := b.Restore(context.Background(), c); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDefaultModeDeniesIngressWhereTheCNIEnforces(t *testing.T) {
+	for _, mode := range []string{"", ModeAuto} {
+		b := newBreaker(t, fake.NewSimpleClientset(deployment("web", 2), daemonSet("calico-node")), mode)
+		if !strings.Contains(b.Mode(), "deny-ingress NetworkPolicy") || strings.Contains(b.Mode(), "scale") {
+			t.Fatalf("mode %q: default must be the network break on an enforcing CNI, said in the mode: %q", mode, b.Mode())
+		}
+	}
+}
+
+func TestDefaultModeScalesAndSaysWhyWhereTheCNIDoesNotEnforce(t *testing.T) {
+	for _, mode := range []string{"", ModeAuto} {
+		b := newBreaker(t, fake.NewSimpleClientset(deployment("web", 2), daemonSet("kindnet")), mode)
+		if !strings.Contains(b.Mode(), "scale to zero") || !strings.Contains(b.Mode(), "does not enforce") {
+			t.Fatalf("mode %q: %q", mode, b.Mode())
+		}
+	}
+}
+
+func TestExplicitScaleModeStaysScaleOnAnEnforcingCNI(t *testing.T) {
+	b := newBreaker(t, fake.NewSimpleClientset(deployment("web", 2), daemonSet("calico-node")), ModeScale)
+	if strings.Contains(b.Mode(), "NetworkPolicy") {
+		t.Fatalf("%q", b.Mode())
+	}
+}
+
+func TestBreakPoliciesAreRecognisedByName(t *testing.T) {
+	if !IsBreakPolicy(policyName("web")) || !IsBreakPolicy("sdo-onboarding-check-worker-egress-sidekiq") || IsBreakPolicy("allow-web") {
+		t.Fatal("only the policies a break creates are break policies")
+	}
+}
+
+// conflictOn makes the first n writes of verb on deployments fail with 409.
+func conflictOn(client *fake.Clientset, verb string, n int) *int {
+	seen := 0
+	client.PrependReactor(verb, "deployments", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if seen < n {
+			seen++
+			return true, nil, apierrors.NewConflict(schema.GroupResource{Group: "apps", Resource: "deployments"}, "web", nil)
+		}
+		return false, nil, nil
+	})
+	return &seen
+}
+
+func TestRestoreRetriesAConflictAndSucceeds(t *testing.T) {
+	client := fake.NewSimpleClientset(deployment("web", 3))
+	b := newBreaker(t, client, ModeScale)
+	c := appmap.Component{Name: "web", Workload: "web"}
+	if err := b.Break(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	seen := conflictOn(client, "patch", 1)
+	if err := b.Restore(context.Background(), c); err != nil {
+		t.Fatalf("a single conflict must not make the restore uncertain: %v", err)
+	}
+	if *seen != 1 {
+		t.Fatalf("conflicts injected %d", *seen)
+	}
+	got, _ := client.AppsV1().Deployments("app").Get(context.Background(), "web", metav1.GetOptions{})
+	if *got.Spec.Replicas != 3 {
+		t.Fatalf("replicas %d", *got.Spec.Replicas)
+	}
+	if _, left := got.Annotations[restoreAnnotation]; left {
+		t.Fatal("restore annotation left behind")
+	}
+}
+
+func TestRestoreIsUncertainOnlyAfterTheConflictRetriesFail(t *testing.T) {
+	client := fake.NewSimpleClientset(deployment("web", 3))
+	b := newBreaker(t, client, ModeScale)
+	c := appmap.Component{Name: "web", Workload: "web"}
+	if err := b.Break(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	seen := conflictOn(client, "patch", 100)
+	err := b.Restore(context.Background(), c)
+	if err == nil || !apierrors.IsConflict(err) || !strings.Contains(err.Error(), "still conflicting after 5 tries") {
+		t.Fatalf("expected an uncertain restore, got %v", err)
+	}
+	got, _ := client.AppsV1().Deployments("app").Get(context.Background(), "web", metav1.GetOptions{})
+	if _, kept := got.Annotations[restoreAnnotation]; !kept || *got.Spec.Replicas != 0 {
+		t.Fatal("a failed restore must leave the annotation so a later restore can recover")
+	}
+	if *seen != 5 {
+		t.Fatalf("tries %d, want 5", *seen)
+	}
+}
+
+func TestRestoreDoesNotOverwriteConcurrentChanges(t *testing.T) {
+	d := deployment("web", 0)
+	d.Annotations = map[string]string{restoreAnnotation: "2", "other": "keep"}
+	d.Spec.Paused = true
+	client := fake.NewSimpleClientset(d)
+	b := newBreaker(t, client, ModeScale)
+	if err := b.Restore(context.Background(), appmap.Component{Name: "web", Workload: "web"}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := client.AppsV1().Deployments("app").Get(context.Background(), "web", metav1.GetOptions{})
+	if got.Annotations["other"] != "keep" || !got.Spec.Paused || *got.Spec.Replicas != 2 {
+		t.Fatalf("restore touched more than its own fields: %+v", got)
 	}
 }

@@ -64,6 +64,12 @@ class InstallConfig:
     evidence_run_id: str = ""
     #: Operator config overlay files passed after the benchmark profile, in order.
     config_files: tuple[Path, ...] = ()
+    #: Free-text user journeys the people running the app give (``host --journeys-file``); ``None``: the
+    #: onboarding agent discovers them (the benchmark profile does not require them).
+    journeys_file: Path | None = None
+    #: ``False``: no provided plan; SDO's deployer agent writes it from the repository (the production path), so
+    #: it can add what the app lacks (request metrics, a telemetry overlay). ``True`` (default): the benchmark path.
+    provided_plan: bool = True
 
     def __post_init__(self) -> None:
         self.host_env()
@@ -75,6 +81,8 @@ class InstallConfig:
         for name in ("work", "operator_binary", "kubeconfig", "auth_file"):
             if not getattr(self, name).is_absolute():
                 raise ValueError(f"{name} must be an absolute path")
+        if self.journeys_file is not None and not self.journeys_file.is_absolute():
+            raise ValueError("journeys_file must be an absolute path")
 
     @property
     def application(self) -> str:
@@ -109,11 +117,16 @@ class InstallConfig:
             CREDENTIALS_SECRET,
             "--registry-push-secret",
             REGISTRY_SECRET,
-            "--deployment-plan",
-            json.dumps(plan, separators=(",", ":"), sort_keys=True),
+            *(
+                ["--deployment-plan", json.dumps(plan, separators=(",", ":"), sort_keys=True)]
+                if self.provided_plan
+                else []
+            ),
             "--kubeconfig",
             str(self.kubeconfig),
         ]
+        if self.journeys_file is not None:
+            args += ["--journeys-file", str(self.journeys_file)]
         return [*args, *config.config_args((config.BENCH_PROFILE, *self.config_files))]
 
     def host_env(self) -> dict[str, str]:
@@ -275,6 +288,16 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="operator config overlay file passed after sdo-bench.yaml (repeatable; docs/config.md)",
     )
+    p.add_argument(
+        "--journeys-file",
+        type=Path,
+        help="file of free-text user journeys, passed to `sdo-operator host --journeys-file` (default: discovered)",
+    )
+    p.add_argument(
+        "--deployer",
+        action="store_true",
+        help="no provided plan: SDO's deployer agent deploys from the repository (needs --source for the app's code)",
+    )
     a = p.parse_args(argv)
     cfg = InstallConfig(
         pack=a.pack.resolve(),
@@ -298,6 +321,8 @@ def main(argv: list[str] | None = None) -> int:
         evidence_sink_host_path=a.evidence_sink_host_path,
         evidence_run_id=a.evidence_run_id,
         config_files=tuple(path.resolve() for path in a.config),
+        journeys_file=a.journeys_file.resolve() if a.journeys_file else None,
+        provided_plan=not a.deployer,
     )
     cfg.work.mkdir(parents=True, exist_ok=True)
     return install(cfg, description=a.description)

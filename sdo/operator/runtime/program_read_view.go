@@ -141,10 +141,11 @@ func (v LiveReadView) ProbeHTTP(ref sdk.ObjectRef, request program.HTTPProbe) (p
 	}
 	for _, service := range v.Services() {
 		if service.Namespace == ref.Namespace && service.Name == ref.Name {
-			if len(service.Spec.Ports) == 0 {
-				return program.ProbeResult{}, errors.New("Service has no port")
+			port, ok := program.HTTPProbePort(service)
+			if !ok {
+				return program.ProbeResult{}, fmt.Errorf("Service %s/%s declares no TCP port for HTTP", ref.Namespace, ref.Name)
 			}
-			return v.probe(ref, service.Spec.Ports[0].Port, &request)
+			return v.probe(ref, port, &request)
 		}
 	}
 	return program.ProbeResult{}, fmt.Errorf("Service %s/%s is absent from snapshot", ref.Namespace, ref.Name)
@@ -637,4 +638,28 @@ func (v LiveReadView) driftSourceAdditions(ref sdk.ObjectRef, observed *unstruct
 		return nil, fmt.Errorf("accepted manifest does not match %s/%s", ref.Kind, ref.Name)
 	}
 	return v.sourceAdditions(ref, observed, source)
+}
+
+// LogMatches scans the container's whole log window on the API server's answer and returns only the matching lines.
+func (v LiveReadView) LogMatches(ref sdk.ObjectRef, container string, since time.Duration, pattern string, max int) (program.LogMatchResult, error) {
+	re, err := program.ValidateLogMatchRequest(since, pattern, max)
+	if err != nil {
+		return program.LogMatchResult{}, err
+	}
+	if ref.Kind != "Pod" || (ref.APIVersion != "" && ref.APIVersion != "v1") || ref.Namespace != v.Namespace() || ref.Name == "" || v.Client == nil || container == "" {
+		return program.LogMatchResult{}, errors.New("log matches require a Pod in the snapshot namespace, a container and a Kubernetes reader")
+	}
+	ctx, cancel := context.WithTimeout(v.context(), 15*time.Second)
+	defer cancel()
+	client, err := program.Kubernetes(v)
+	if err != nil {
+		return program.LogMatchResult{}, err
+	}
+	options := program.LogMatchOptions(container, since)
+	stream, err := client.CoreV1().Pods(ref.Namespace).GetLogs(ref.Name, &options).Stream(ctx)
+	if err != nil {
+		return program.LogMatchResult{}, fmt.Errorf("read logs of pod %s/%s: %w", ref.Namespace, ref.Name, err)
+	}
+	defer stream.Close()
+	return program.ScanLogMatches(stream, re, max)
 }

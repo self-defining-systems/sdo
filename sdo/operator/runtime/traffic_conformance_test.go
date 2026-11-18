@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,6 +59,11 @@ func TestTrafficProtoSchemaModelsGoWorkloadJSON(t *testing.T) {
 			APIVersion: traffic.APIVersion, Kind: traffic.WorkloadKind, Name: "health",
 			Purpose: traffic.PurposeHealthProbe, Arrival: traffic.ArrivalUniform,
 			Scenarios: []traffic.WorkloadScenario{{ID: "search", Weight: 2}, {ID: "login"}},
+		},
+		"health-probe-sample-interval": {
+			APIVersion: traffic.APIVersion, Kind: traffic.WorkloadKind, Name: "coverage",
+			Purpose: traffic.PurposeHealthProbe, Arrival: traffic.ArrivalUniform, SampleInterval: traffic.Duration(60 * time.Second),
+			Scenarios: []traffic.WorkloadScenario{{ID: "search"}, {ID: "login"}},
 		},
 		"health-probe-known-broken": {
 			APIVersion: traffic.APIVersion, Kind: traffic.WorkloadKind, Name: "health",
@@ -235,5 +242,63 @@ func TestTrafficProtoValidateLinkProbeInvariants(t *testing.T) {
 				t.Fatalf("protovalidate accepted a link-probe invariant violation: %s", tc.name)
 			}
 		})
+	}
+}
+
+// jsonFieldNames is the JSON key of every exported field of a struct type that
+// encoding/json would emit or read (tag "-" excluded), embedded structs inlined.
+func jsonFieldNames(t *testing.T, typ reflect.Type) map[string]bool {
+	t.Helper()
+	names := map[string]bool{}
+	for index := 0; index < typ.NumField(); index++ {
+		field := typ.Field(index)
+		if !field.IsExported() {
+			continue
+		}
+		tag := field.Tag.Get("json")
+		if tag == "-" {
+			continue
+		}
+		name := strings.Split(tag, ",")[0]
+		if name == "" {
+			name = field.Name
+		}
+		names[name] = true
+	}
+	return names
+}
+
+// TestTrafficProtoFieldsMatchGoStructs fails when a field is added to a Go traffic
+// struct without its proto message (or the reverse). The schema fidelity test above
+// only catches a field a fixture happens to set; this one compares the field sets,
+// so the next field added on one side alone fails here instead of at install time.
+func TestTrafficProtoFieldsMatchGoStructs(t *testing.T) {
+	pairs := []struct {
+		goType reflect.Type
+		proto  proto.Message
+	}{
+		{reflect.TypeOf(traffic.Workload{}), &contractsv1alpha1.TrafficWorkload{}},
+		{reflect.TypeOf(traffic.WorkloadScenario{}), &contractsv1alpha1.TrafficWorkloadScenario{}},
+		{reflect.TypeOf(traffic.SLO{}), &contractsv1alpha1.TrafficSLO{}},
+		{reflect.TypeOf(traffic.KnownBroken{}), &contractsv1alpha1.TrafficKnownBroken{}},
+		{reflect.TypeOf(traffic.Link{}), &contractsv1alpha1.TrafficLink{}},
+	}
+	for _, pair := range pairs {
+		descriptor := pair.proto.ProtoReflect().Descriptor()
+		inProto := map[string]bool{}
+		for index := 0; index < descriptor.Fields().Len(); index++ {
+			inProto[descriptor.Fields().Get(index).JSONName()] = true
+		}
+		inGo := jsonFieldNames(t, pair.goType)
+		for name := range inGo {
+			if !inProto[name] {
+				t.Errorf("%s has JSON field %q that %s lacks: add it to traffic.proto and run scripts/gen_proto.sh", pair.goType, name, descriptor.FullName())
+			}
+		}
+		for name := range inProto {
+			if !inGo[name] {
+				t.Errorf("%s has field %q that %s lacks", descriptor.FullName(), name, pair.goType)
+			}
+		}
 	}
 }

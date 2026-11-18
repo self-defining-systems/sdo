@@ -154,8 +154,8 @@ func parseObservedWorkload(resourceID string, data []byte) (WorkloadObservation,
 				return WorkloadObservation{}, errors.New("observed workload has malformed container")
 			}
 			image := objectString(container, "image")
-			if !digestReference.MatchString(image) {
-				return WorkloadObservation{}, fmt.Errorf("observed workload image is mutable: %q", image)
+			if image == "" {
+				return WorkloadObservation{}, errors.New("observed workload container has no image")
 			}
 			name := objectString(container, "name")
 			if name == "" {

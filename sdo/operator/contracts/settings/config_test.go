@@ -314,3 +314,38 @@ func TestAfterPlaybookDefaultsFileEnvironmentAndValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestPageOnlyResponseRefusesInvestigators(t *testing.T) {
+	cfg := settings.Default()
+	cfg.Agent.Model = "m"
+	cfg.Response.PageOnly = true
+	cfg.Response.Investigators = 1
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "response.page_only") {
+		t.Fatalf("Validate = %v, want a response.page_only error", err)
+	}
+	cfg.Response.Investigators = 0
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Onboarding requires the people's user journeys by default; a file or the environment turns the requirement off.
+func TestOnboardingJourneysRequiredDefaultFileAndEnvironment(t *testing.T) {
+	if !settings.Default().Onboarding.JourneysRequired {
+		t.Fatal("onboarding.journeys_required must default to true")
+	}
+	cfg, err := settings.Resolve([]string{writeFile(t, "onboarding:\n  journeys_required: false\n")}, []string{"SDO_AGENT_MODEL=m"})
+	if err != nil || cfg.Onboarding.JourneysRequired {
+		t.Fatalf("file: %v %+v", err, cfg.Onboarding)
+	}
+	cfg, err = settings.Resolve(nil, []string{"SDO_AGENT_MODEL=m", "SDO_ONBOARDING_JOURNEYS_REQUIRED=false"})
+	if err != nil || cfg.Onboarding.JourneysRequired {
+		t.Fatalf("environment: %v %+v", err, cfg.Onboarding)
+	}
+	if _, err := settings.Resolve([]string{writeFile(t, "onboarding:\n  journeys_required: sometimes\n")}, []string{"SDO_AGENT_MODEL=m"}); err == nil {
+		t.Fatal("a non-boolean must be refused")
+	}
+	if _, err := settings.Resolve(nil, []string{"SDO_AGENT_MODEL=m", "SDO_ONBOARDING_JOURNEYS_REQUIRED=maybe"}); err == nil {
+		t.Fatal("a non-boolean environment value must be refused")
+	}
+}

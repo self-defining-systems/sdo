@@ -114,6 +114,7 @@ func accumulateResponderResult(previous *contracts.IncidentResult, current Incid
 		}
 	}
 	current.RepairChanges = append(prior.RepairChanges, current.RepairChanges...)
+	current.AgentChanges = append(prior.AgentChanges, current.AgentChanges...)
 	current.ConfirmedRootCauses = append(prior.ConfirmedRootCauses, current.ConfirmedRootCauses...)
 	current.AppliedPlaybooks = append(prior.AppliedPlaybooks, current.AppliedPlaybooks...)
 	current.VerificationEvidence = append(prior.VerificationEvidence, current.VerificationEvidence...)

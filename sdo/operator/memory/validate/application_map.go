@@ -163,11 +163,11 @@ func readerCoverageNote(root string, m appmap.Map) (appmap.Finding, bool) {
 	return appmap.Finding{Rule: RuleMapReaders, Message: "no health detector implements appstate.Reader, so settings and flags held in the authoritative store(s) " + strings.Join(stores, ", ") + " are not exposed", Hint: "note only: see references/app-state.md; write a reader for application-defined settings or flags, and a detector that uses appstate.Require"}, true
 }
 
-// mapInventory is the inventory the map's names resolve against: the manifest
-// lines Go wrote into arch.md from the rendered accepted source. Validation
-// never reads the source tree itself, so Helm and Kustomize sources resolve
-// the same way raw manifests do. When arch.md carries no lines, the empty
-// inventory makes every name a finding.
+// mapInventory is the inventory the map's names resolve against. The manifests
+// are its source: when the checkout declares a deployment source and a renderer
+// catalog is wired, it is derived now through the code that writes the arch.md
+// section, so a missing or stale section cannot change a result. Otherwise the
+// section's lines are read; with none, every name is a finding.
 func (s *run) mapInventory() appmap.Inventory {
-	return appmap.ParseInventory(s.arch.doc.Source)
+	return derivedInventory(s.req, s.arch.doc.Source)
 }

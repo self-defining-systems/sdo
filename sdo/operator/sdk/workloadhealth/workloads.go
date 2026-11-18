@@ -311,6 +311,11 @@ func (e *evaluation) container(
 	if waiting != nil {
 		detail, reason = "is waiting: "+waiting.Reason+optionalMessage(waiting.Message), waiting.Reason
 	}
+	// A running container inside its own declared startup allowance is
+	// still starting, not outliving Kubernetes' self-healing.
+	if rule == RuleNotReady && sdk.StillStarting(e.ctx, pod, status) {
+		return true
+	}
 	if e.held(podFalseSince(pod, corev1.ContainersReady)) {
 		report(rule, label, status, detail, reason)
 	}

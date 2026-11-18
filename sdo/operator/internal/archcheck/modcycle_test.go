@@ -51,6 +51,8 @@ func TestModuleCyclesAllowsATestOnlyModuleOnTop(t *testing.T) {
 }
 
 // TestRepositoryModulesAreAcyclic runs the cycle check over the real modules.
+//
+//ci:whole-tree
 func TestRepositoryModulesAreAcyclic(t *testing.T) {
 	cycles, err := ModuleCycles("../..")
 	if err != nil {

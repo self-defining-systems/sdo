@@ -35,6 +35,18 @@ or corrupted state is healed by the probe before it is read.
 - When a write fans out to other records (a write by one identity that other identities read), create the
   reading identities and their relations once in Setup, and read the write at every one of them.
 
+## Stable lookups only
+
+A healthy application keeps changing: users and other probes add records, so a paginated, newest-first or
+otherwise windowed list stops showing an old record. The onboarding check writes while it judges the probes, so
+a probe that needs a static dataset fails there, named by scenario and step.
+
+- A read-back or existing-record check fetches by id, key or path, or checks records the probe itself created and
+  identifies by its marker.
+- Never assert that a particular record appears on a page of a list other users change (`Contains` of a seed
+  record's name in `?per_page=20`). To exercise such a list, check its shape with `Each`, or save an id from the
+  list and open it.
+
 ## Read-later: data written once
 
 - Setup writes the fixture once, on an identity that no other scenario writes; steps only read it.
@@ -78,6 +90,12 @@ touched the affected records.
   the probe user the lowest role that can do the above, never admin; a failed grant must not stop the user from
   being provisioned.
 
+## Asynchronous effects and time
+
+- A check that cannot yet tell pass from fail returns `NotYet`; the step is sent again until it passes or the
+  iteration times out (a fail), so an effect that never arrives fails; the wait is not step latency.
+- The iteration's start time is in `State[StateNow]`; format dates from it instead of a clock or a far-future constant.
+
 ## What traffic cannot show
 
 - Wrong content (exact checks), operations users rarely call, and each
@@ -93,6 +111,11 @@ touched the affected records.
 Without a delete or overwrite route, keep every write on the fixed test identity, declare
 `SideEffectIdempotentWrite`, use the lowest rate that fills the window, and record the growth under
 `Probe costs` in the health-objective playbook.
+Every probe must sample often enough to qualify: enough usable samples inside its window to give a verdict, within
+about a minute of a fault. A probe sampled every 45 to 60 s never collects them, stays pending and detects nothing,
+so never stretch `sampleInterval` past qualification to save load. Reduce cost by making each iteration cheap (fewer
+and smaller requests, a lighter read-back, no needless fan-out) and by trimming scenarios, not by sampling less often.
+The onboarding check is red for a scenario that stays pending or under-sampled through the healthy window.
 
 ## Identities and sessions
 

@@ -324,6 +324,7 @@ func publicationChecks(ctx context.Context, r Request, structurallyValid bool) (
 		}
 	}
 
+	ds = append(ds, repairStatementDiagnostics(r.Root, paths)...)
 	ds = append(ds, clusterLocalDiagnostics(r.Root, paths)...)
 	ds = append(ds, secretDataDiagnostics(r.Root, paths)...)
 	ds = append(ds, liveObjectNameDiagnostics(r.Root, paths)...)

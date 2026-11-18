@@ -4,6 +4,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/program"
+	"time"
 )
 
 func (v mitigationReadView) LogsWithOptions(ref sdk.ObjectRef, options corev1.PodLogOptions) (string, error) {
@@ -26,4 +28,11 @@ func (v mitigationReadView) NodeUsage(ref sdk.ObjectRef) (*metricsv1beta1.NodeMe
 		return zero, err
 	}
 	return v.ReadView.NodeUsage(ref)
+}
+
+func (v mitigationReadView) LogMatches(ref sdk.ObjectRef, container string, since time.Duration, pattern string, max int) (program.LogMatchResult, error) {
+	if err := v.ctx.Err(); err != nil {
+		return program.LogMatchResult{}, err
+	}
+	return v.ReadView.LogMatches(ref, container, since, pattern, max)
 }

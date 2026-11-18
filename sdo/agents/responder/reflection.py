@@ -83,42 +83,38 @@ class ReflectionTurn(BaseModel):
         self._usage = dict(usage)
         return self
 
-    def to_result(self, worktree: Path | None = None) -> ReflectionResult:
-        """The typed result: the decision the checkout's diff already says, with the agent's line as its reason."""
-        changed = changed_playbooks(worktree) if worktree is not None else []
-        if changed:
-            result = ReflectionResult(summary=self.note, learning_decision="updated", proposed_artifact_ids=changed)
+    def to_result(self, worktree: Path | None = None, base: str = "") -> ReflectionResult:
+        """The typed result: the decision the checkout's diff against the accepted base already says, with the agent's
+        line as its reason. The agent never states a decision, so it cannot contradict its files."""
+        paths = changed_memory(worktree, base) if worktree is not None else []
+        if worktree is not None and paths:
+            result = ReflectionResult(
+                summary=self.note, learning_decision="updated", proposed_artifact_ids=changed_playbooks(worktree, base)
+            )
         else:
             result = ReflectionResult(summary=self.note, learning_decision="no_change", no_change_reason=self.note)
         validate(result)
         return result
 
 
-def changed_memory(worktree: Path) -> bool:
-    """Whether the checkout differs from its base anywhere under .sdo/."""
-    listed = subprocess.run(
-        ["git", "-C", str(worktree), "status", "--porcelain", "--untracked-files=all", "--", ".sdo"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return bool(listed.stdout.strip())
+def changed_memory(worktree: Path, base: str = "") -> list[str]:
+    """Paths under .sdo/ that differ from the accepted base: committed, staged, edited or new. Without a base the
+    checkout's HEAD stands in, which sees only uncommitted edits."""
+    base = base or os.environ.get("SDO_BASE_COMMIT", "") or "HEAD"
+    git = ["git", "-C", str(worktree)]
+    names: list[str] = []
+    for args in (
+        ["diff", "--no-renames", "--name-only", base, "--", ".sdo"],
+        ["ls-files", "--others", "--exclude-standard", "--", ".sdo"],
+    ):
+        listed = subprocess.run([*git, *args], capture_output=True, text=True, check=False)
+        names += listed.stdout.splitlines()
+    return sorted({name.strip() for name in names if name.strip()})
 
 
-def changed_playbooks(worktree: Path) -> list[str]:
-    """IDs of the playbooks whose files the closing turn changed in the checkout."""
-    listed = subprocess.run(
-        ["git", "-C", str(worktree), "status", "--porcelain", "--untracked-files=all", "--", ".sdo/playbooks"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    ids = {
-        match.group(1)
-        for line in listed.stdout.splitlines()
-        if (match := _PLAYBOOK_FILE.match(line[3:].strip().split(" -> ")[-1]))
-    }
-    return sorted(ids)
+def changed_playbooks(worktree: Path, base: str = "") -> list[str]:
+    """IDs of the playbooks whose files differ from the accepted base."""
+    return sorted({m.group(1) for path in changed_memory(worktree, base) if (m := _PLAYBOOK_FILE.match(path))})
 
 
 def reflection_output_schema() -> dict[str, object]:
@@ -174,6 +170,7 @@ class StatefulResponderBackend(Protocol):
         prompt: RenderedPrompt,
         idempotency_key: str,
         check: bool = True,
+        base: str = "",
     ) -> ReflectionTurn: ...
 
 
@@ -226,6 +223,7 @@ class SessionReflector:
             worktree=worktree,
             prompt=closing_prompt(incident_id=incident_id, changes=changes),
             idempotency_key=f"closing:{incident_id}:{outcome_commit}",
+            base=outcome_commit,
         )
 
     def cleanup(
@@ -299,6 +297,7 @@ class CodexSessionBackend:
         prompt: RenderedPrompt,
         idempotency_key: str,
         check: bool = True,
+        base: str = "",
     ) -> ReflectionTurn:
         # A private per-turn latch carries a terminal check timeout back to the final checker.
         with tempfile.TemporaryDirectory(prefix="sdo-check-timeout-") as temporary:
@@ -311,6 +310,7 @@ class CodexSessionBackend:
                     idempotency_key=idempotency_key,
                     session_id=session_id,
                     check=check,
+                    base=base,
                 )
             finally:
                 if previous is None:
@@ -319,7 +319,7 @@ class CodexSessionBackend:
                     os.environ[VALIDATION_TIMEOUT_FILE_ENV] = previous
 
     def _checked_turn(
-        self, *, worktree: Path, prompt: RenderedPrompt, idempotency_key: str, session_id: str, check: bool
+        self, *, worktree: Path, prompt: RenderedPrompt, idempotency_key: str, session_id: str, check: bool, base: str
     ) -> ReflectionTurn:
         budget = reflection_budget_seconds() if self.timeout_seconds is None else self.timeout_seconds
         deadline = time.monotonic() + budget
@@ -359,7 +359,7 @@ class CodexSessionBackend:
             reply = ReflectionTurn.from_model_output(payload)
             if not check:
                 return reply.with_usage(usage)
-            result = reply.to_result(worktree)
+            result = reply.to_result(worktree, base)
             verdict = self.memory_checker(worktree, result, max(0.0, min(check_limit, deadline - time.monotonic())))
             if verdict.timed_out:
                 raise MemoryCheckTimeout(verdict)

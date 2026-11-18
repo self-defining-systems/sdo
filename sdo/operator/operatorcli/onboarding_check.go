@@ -12,47 +12,120 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"sdo.dev/operator/deployment"
 	"sdo.dev/operator/evaluation"
+	"sdo.dev/operator/kubereads"
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/onboardcheck"
 	"sdo.dev/operator/onboardcheck/kubebreak"
 	"sdo.dev/operator/operatorcli/internal/processio"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/metrics"
+	"sdo.dev/operator/sdk/traffic"
 	"sdo.dev/operator/telemetry"
 	"sdo.dev/operator/telemetry/prometheus"
+	"sigs.k8s.io/yaml"
 )
 
 // OnboardingUsage documents "sdo-operator onboarding".
 const OnboardingUsage = `usage: sdo-operator onboarding check --repo DIR --namespace NS --prometheus URL|NS/SERVICE:PORT
                                     [--kubeconfig FILE] [--context NAME] [--requests 5]
-                                    [--settle 90s] [--json]
-                                    [--quiet-window 10m] [--quiet-interval 1m]
-                                    [--break] [--break-bound 60s] [--break-mode scale|network]
+                                    [--settle 90s] [--json] [--report FILE]
+                                    [--quick] [--full] [--cache-dir DIR] [--quiet-window 10m] [--quiet-interval 1m] [--quiet-evaluations 3] [--quiet-writes 4]
+                                    [--break] [--break-bound 60s] [--break-mode auto|scale|network]
                                     [--cluster-network] [--operator-root DIR] [--telemetry-environment FILE] [--settings FILE]
 
   check  Run the onboarding check against a running environment: the metric
-         items, then quiet-when-healthy, then (with --break) fails-under-break.
+         items with quiet-when-healthy observing alongside, then (with --break)
+         fails-under-break. Progress lines go to stderr; the report is headed
+         by its mode.
+         --quick is the fast loop (about 2-3 minutes after the detectors build):
+         the metric items and a short smoke where every detector judges at
+         least once. It never runs --break and its report is never clean (it
+         says "mode: quick"); exit 0 means no red item. Iterate with --quick and
+         incremental --break while fixing reds; run --full --break once at the
+         end to confirm clean. A full run is the gate, not the loop.
+         Within a session a check is incremental: a green break (component or
+         generic) and a detector that judged quiet are recorded under a key of
+         what decides them (the map entries, probes, detector files and deployed
+         pod templates on the operations' paths, with the content of the
+         ConfigMaps and the resourceVersion of the Secrets they reference;
+         Secret values are never read) in --cache-dir (default: the
+         user cache, one file per repository and namespace). A rerun breaks only
+         the items whose key changed, takes the rest labelled "reused from TIME"
+         (Seattle time), and asks one judgement of unchanged detectors; red and
+         failed verdicts are always judged again. Such a report says "mode:
+         incremental" and is never clean. --full ignores the record and judges
+         everything: the gate for "clean" (and what acceptance must run), run once
+         at the end, not after every fix.
+         Limits of reuse: a key covers the operations through a component, so
+         a missing edge (an operation or probe that really depends on a
+         component but does not list it) is found only by a fresh break, and
+         image tags are not resolved to digests; neither can reach the gate.
+         The quiet window ends as soon as every detector has judged
+         --quiet-evaluations (3) times past its own clearing horizon; the derived
+         length is printed when the first verdict arrives, and --quiet-window
+         is only the cap (a detector short of its judgements at the cap is red).
          quiet-when-healthy evaluates the memory's detectors (test-request
          scenarios and the request-metrics detector included) against the live
          application every --quiet-interval for --quiet-window (0 skips) and is
-         red if any raises, naming the detector, scenario and step.
-         fails-under-break breaks, one at a time, each component on an
-         operation's path (scale the workload to zero; with --break-mode network
-         a deny-ingress NetworkPolicy when the CNI enforces it, else scale to
-         zero, said in the report), waits up to --break-bound for raises that name
+         red if any raises, naming the detector, scenario and step. Writes
+         happen meanwhile: every detector pass re-runs the memory's write
+         probes --quiet-writes (4) times, so a probe that reads a list other
+         users change is judged on a list that grows (a probe that passes only
+         on a static dataset is red); 0 judges a static dataset.
+         fails-under-break breaks each component on an operation's path
+         (breaks that share no operation are made together in waves, the generic breaks included, and a
+         raise still has to name the operation or component) (by default a deny-ingress NetworkPolicy when the CNI
+         enforces it, else scale the workload to zero; --break-mode scale
+         always scales; the mode that ran is said in the report), waits up to --break-bound for raises that name
          the component or its operations, and restores it. An operation is green
-         only when a raise names it or one of its probe scenarios; a generic
-         detector that names just the component leaves it red, and the report
+         only when a failure signal (failing requests or a failing probe step)
+         names it or one of its probe scenarios; a generic detector that names
+         just the component, or an absence-only raise, leaves it red, and the report
          says which detectors noticed. It is red (stopping) if a restore cannot
          be verified. Detectors that dial in-cluster Service names cannot be judged
          from the host running the check and are reported as a note, unless
          --cluster-network says this process resolves them (the test-request
          scenarios need it too; a scenario that never succeeded is red). Run it only on a target the agent owns, with no users.
-         Each live item reports its duration.
+         With --break the worker-quiet break (a worker's egress denied except DNS:
+         it stays Running and Ready) and the data-wrong break (a text column of
+         the oldest rows of the most-read table of a postgres store overwritten,
+         restored by primary key) run after the component breaks; each is judged
+         like them (a raise must name an operation it hurts) and is always
+         restored, also when the check is interrupted.
+         probes-do-no-harm measures the application's request, error and job
+         failure counters for --harm-window before the memory's probes start
+         (overlapping the detector build) and with them running (the quiet
+         window, at least --harm-window); it is red when the probes raise
+         failures of an operation or job class, or add to the mean request
+         latency of an entry (100 ms and 1.5 times, with enough requests in both
+         windows), naming them; their share of the requests is shown, never
+         judged (0 skips).
+         operations-observed, latency-per-operation and background-covered read
+         the application's own metrics: a declared route that never appears
+         (no reason excuses it), an operation without a request-duration series,
+         most of an entry's real traffic on undeclared routes, and background
+         job classes no operation triggers (unattributed background work) are red.
+         The report ends with a journey table (one row per operation: a mapping,
+         b errors, c latency, d probe, e detection, f map, g traces); clean needs
+         every journey complete on a to f, which includes a --break run.
+         given-journeys (when goal.md lists journeys, which host's --journeys text
+         becomes) is red for a listed journey no operation serves and for an
+         operation naming an unlisted one.
+         routes-assigned runs the map's routes.list command in its component and
+         reports each listed route no operation covers and nothing excludes.
+         Each live item reports its duration. The check prints its expected
+         duration when it starts and takes minutes (about 20 with --break): run it
+         in the background and read the report when it finishes; --report FILE
+         also writes the report there.
          The metric items: SDO builds each operation's request and error series from
          the application map's entries (metric, route, method and status labels),
          sends --requests requests to every operation's entry through the API
@@ -102,10 +175,35 @@ func (p promAdapter) Query(ctx context.Context, text string) ([]metrics.Series, 
 // long-running evaluation keeps judging the live application. Evaluate returns
 // the first verdict judged after the call, so a break made just before it is
 // seen.
-type detectorEvaluator struct{ watch *deployment.Watcher }
+//
+// The evaluation (and with it the memory's probes) starts on the first call, so
+// the check can measure the application before any probe has run.
+type detectorEvaluator struct{ lazy *lazyWatch }
+
+// lazyWatch starts the detector evaluation once, when first needed.
+type lazyWatch struct {
+	once     sync.Once
+	prepared *deployment.PreparedProbe
+	ctx      context.Context
+	watch    *deployment.Watcher
+}
+
+func (l *lazyWatch) get() *deployment.Watcher {
+	l.once.Do(func() {
+		fmt.Fprintln(os.Stderr, "warming the detectors (test-request scenarios need their sample window) ...")
+		l.watch = l.prepared.Watch(l.ctx, 5*time.Second)
+	})
+	return l.watch
+}
+
+func (l *lazyWatch) Close() {
+	if l.watch != nil {
+		l.watch.Close()
+	}
+}
 
 func (e detectorEvaluator) Evaluate(ctx context.Context) (onboardcheck.Verdict, error) {
-	verdict, err := e.watch.Next(ctx, processio.Now())
+	verdict, err := e.lazy.get().Next(ctx, processio.Now())
 	if err != nil {
 		return onboardcheck.Verdict{}, err
 	}
@@ -118,7 +216,11 @@ func (e detectorEvaluator) Evaluate(ctx context.Context) (onboardcheck.Verdict, 
 		for _, r := range f.RelatedResources {
 			resources = append(resources, r.Name)
 		}
-		out.Raised = append(out.Raised, onboardcheck.Raise{DetectorID: f.DetectorID, Rule: f.RuleID, Summary: f.Summary, Evidence: f.Evidence, Resources: resources, Fingerprint: sdk.FindingFingerprint(f)})
+		operation, _ := f.Metadata["operation"].(string)
+		out.Raised = append(out.Raised, onboardcheck.Raise{Operation: operation, DetectorID: f.DetectorID, Rule: f.RuleID, Summary: f.Summary, Evidence: f.Evidence, Resources: resources, Fingerprint: sdk.FindingFingerprint(f)})
+	}
+	for _, p := range verdict.Progress {
+		out.Progress = append(out.Progress, onboardcheck.DetectorProgress{DetectorID: p.DetectorID, Interval: p.Interval, Horizon: p.Horizon, Evaluations: p.Evaluations, PastHorizon: p.PastHorizon})
 	}
 	for _, state := range verdict.DetectorStates {
 		if state.Status == "pending" {
@@ -169,6 +271,11 @@ func (s httpSender) Send(ctx context.Context, op appmap.Operation, n int) (int, 
 	return sent, nil
 }
 
+// defaultQuietWriteRounds is how many times per detector pass the quiet window
+// re-runs the memory's write scenarios. A probe that reads a list other users
+// change must be judged while records are being added to it.
+const defaultQuietWriteRounds = 4
+
 func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int, error) {
 	// An interrupt cancels the check but never skips a restore: a broken
 	// component is undone on a context that outlives the cancellation.
@@ -184,11 +291,18 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	requests := flags.Int("requests", 5, "requests sent to each operation")
 	settle := flags.Duration("settle", 90*time.Second, "wait for scrapes after sending")
 	asJSON := flags.Bool("json", false, "print the report as JSON")
+	reportFile := flags.String("report", "", "also write the report to this file")
 	quietWindow := flags.Duration("quiet-window", 10*time.Minute, "quiet-when-healthy window; 0 skips the item")
+	full := flags.Bool("full", false, "ignore the session's recorded verdicts and judge every item again (the gate); without it, a break or detector whose inputs are unchanged since a clean run is reused and labelled, and the report is incremental, never clean")
+	cacheDir := flags.String("cache-dir", "", "where the session's recorded verdicts are kept (default: the user cache directory), one file per repository and namespace")
+	quick := flags.Bool("quick", false, "fast iteration: the metric items and a short detector smoke; never clean, never breaks")
+	quietEvaluations := flags.Int("quiet-evaluations", onboardcheck.DefaultQuietEvaluations, "judgements each detector must make past its own horizon for the quiet window to end")
+	quietWrites := flags.Int("quiet-writes", defaultQuietWriteRounds, "times per detector pass the quiet window re-runs the memory's write probes, so the lists its read probes use keep growing (0 judges a static dataset)")
 	quietInterval := flags.Duration("quiet-interval", time.Minute, "wait between detector evaluations in the quiet window")
+	harmWindow := flags.Duration("harm-window", time.Minute, "probes-do-no-harm: how long to measure the application with the memory's probes paused (before they start) and at least with them running; 0 skips the item")
 	breakItem := flags.Bool("break", false, "run fails-under-break: briefly break each component on an operation's path (only on a target without users)")
-	breakBound := flags.Duration("break-bound", 60*time.Second, "how long to wait for a detector to notice each break")
-	breakMode := flags.String("break-mode", kubebreak.ModeScale, "how to break: scale (to zero) or network (deny-ingress NetworkPolicy; scale when the CNI does not enforce it)")
+	breakBound := flags.Duration("break-bound", 60*time.Second, "least time to wait for a detector to notice each break (at least the time the memory's own probes need to judge a failure)")
+	breakMode := flags.String("break-mode", kubebreak.ModeAuto, "how to break: auto (deny-ingress NetworkPolicy when the CNI enforces it, else scale to zero), network (the same) or scale (to zero)")
 	operatorRoot := flags.String("operator-root", operatorRootDefault(processio.Environment), "operator source tree detectors are built from")
 	clusterNetwork := flags.Bool("cluster-network", false, "this process resolves and dials in-cluster Service names (it runs in a pod or on the cluster network); without it, detectors that dial Service names are not judged")
 	telemetryEnv := flags.String("telemetry-environment", "", "telemetry environment document the detector evaluation reads")
@@ -237,52 +351,276 @@ func onboardingCheck(ctx context.Context, args []string, stdout io.Writer) (int,
 	for _, e := range exposed {
 		exposures = append(exposures, onboardcheck.Exposure{Service: e.Service, Via: e.Via})
 	}
+	if *quick && *breakItem {
+		return 0, errors.New("--quick never runs --break: the full check is the gate")
+	}
+	if *quick {
+		*quietWindow = min(*quietWindow, 2*time.Minute)
+	}
+	fmt.Fprintln(os.Stderr, startNotice(*quick, *settle, *quietWindow, *breakItem, max(*breakBound, probeDetectionHorizon(*repo)), plannedWaves(m), *reportFile))
+	var given []appmap.GivenJourney
+	if goal, err := os.ReadFile(filepath.Join(*repo, ".sdo", "goal.md")); err == nil {
+		if given, err = appmap.ParseGoalJourneys(goal); err != nil {
+			return 0, err
+		}
+	}
 	config := onboardcheck.Config{
-		Map: m, Commit: commit,
+		Map: m, Commit: commit, Journeys: given,
 		Prom:     promAdapter{prometheus.Client{BaseURL: base, HTTPClient: cluster}},
 		Sender:   httpSender{cluster: cluster, namespace: *namespace},
 		Exposed:  exposures,
+		Routes:   routeLister{cluster: cluster, namespace: *namespace},
 		Requests: *requests, Settle: *settle, Poll: 5 * time.Second, Wait: processio.Wait,
-		Now: processio.Now,
+		Now: processio.Now, Quick: *quick,
+		Progress: func(line string) { fmt.Fprintln(os.Stderr, processio.Now().Format("15:04:05"), line) },
+	}
+	saveCache := func() {}
+	var paused [2]onboardcheck.HarmSample
+	pausedWindow := make(chan error, 1)
+	if *harmWindow > 0 && *quietWindow > 0 {
+		// Measured while the detectors build, before any probe has run.
+		go func() {
+			var err error
+			if paused[0], err = onboardcheck.SampleHarm(ctx, config.Prom, m, processio.Now()); err != nil {
+				pausedWindow <- err
+				return
+			}
+			if err = processio.Wait(ctx, *harmWindow); err == nil {
+				paused[1], err = onboardcheck.SampleHarm(ctx, config.Prom, m, processio.Now())
+			}
+			pausedWindow <- err
+		}()
 	}
 	if *quietWindow > 0 || *breakItem {
 		probe := deployment.AcceptedDetectorProbe{Settings: *settingsFile, TelemetryEnvironment: *telemetryEnv, Kubeconfig: *kubeconfig, OutsideCluster: !*clusterNetwork, Host: true}
 		fmt.Fprintln(os.Stderr, "building the memory's detectors ...")
-		prepared, err := probe.Prepare(ctx, *repo, *operatorRoot, *namespace, deployment.HealthScope{})
+		tree, cleanupTree, err := preparedTree(ctx, *repo, *telemetryEnv)
+		if err != nil {
+			return 0, fmt.Errorf("prepare the memory as the controller will run it: %w", err)
+		}
+		defer cleanupTree()
+		config.NoDetectors = detectorCount(tree) == 0
+		prepared, err := probe.Prepare(ctx, tree, *operatorRoot, *namespace, deployment.HealthScope{})
 		if err != nil {
 			return 0, fmt.Errorf("build detectors for the live items: %w", err)
 		}
 		defer prepared.Close()
-		fmt.Fprintln(os.Stderr, "warming the detectors (test-request scenarios need their sample window) ...")
-		watch := prepared.Watch(ctx, 5*time.Second)
-		defer watch.Close()
-		eval := detectorEvaluator{watch: watch}
+		prepared.WriteSoak = *quietWrites
+		lazy := &lazyWatch{prepared: prepared, ctx: ctx}
+		defer lazy.Close()
+		eval := detectorEvaluator{lazy: lazy}
+		var inputs onboardcheck.Inputs
+		var cache *onboardcheck.Cache
+		cachePath := ""
+		if !*quick {
+			files, err := diagnosticsFiles(tree)
+			if err != nil {
+				return 0, fmt.Errorf("read the memory's diagnostics: %w", err)
+			}
+			identity := clusterIdentity(ctx, cluster, *namespace)
+			if cachePath, err = checkCachePath(*cacheDir, *repo, *namespace, identity+"|"+*promTarget); err == nil {
+				cache = loadCheckCache(cachePath)
+			}
+			inputs = onboardcheck.Inputs{Map: m, Files: files, Deploy: deployFingerprints(ctx, cluster, *namespace, m),
+				Salt: checkSalt(identity, *promTarget, *kubeContext, sourceIdentity(ctx, *operatorRoot),
+					fmt.Sprint(*breakBound), *breakMode, fileDigest(*settingsFile), fileDigest(*telemetryEnv), fmt.Sprint(*clusterNetwork),
+					fmt.Sprint(*requests), fmt.Sprint(*settle), fmt.Sprint(*quietWindow), fmt.Sprint(*quietInterval), fmt.Sprint(*quietEvaluations), fmt.Sprint(*harmWindow), fmt.Sprint(*quietWrites))}
+			saveCache = func() {
+				if cache != nil && cachePath != "" {
+					if err := saveCheckCache(cachePath, cache); err != nil {
+						fmt.Fprintln(os.Stderr, "could not record the session's verdicts:", err)
+					}
+				}
+			}
+		}
+		if *harmWindow > 0 && *quietWindow > 0 && !config.NoDetectors {
+			// The probes have not started: this is the application without them.
+			if err := <-pausedWindow; err != nil {
+				return 0, fmt.Errorf("measure the application with the probes paused: %w", err)
+			}
+			config.Harm = &onboardcheck.HarmConfig{PausedStart: paused[0], PausedEnd: paused[1], MinRunning: *harmWindow}
+		}
 		if *quietWindow > 0 {
-			config.Quiet = &onboardcheck.QuietConfig{Eval: eval, Window: *quietWindow, Interval: *quietInterval}
+			config.Quiet = &onboardcheck.QuietConfig{Eval: eval, Window: *quietWindow, Interval: *quietInterval, Evaluations: *quietEvaluations}
+			if cache != nil {
+				config.Quiet.Cache, config.Quiet.Reuse, config.Quiet.DetectorKey = cache, !*full, inputs.MemoDetectorKey()
+			}
 		}
 		if *breakItem {
-			breaker, err := kubebreak.New(ctx, kubebreak.Config{Client: cluster.Kube(), Namespace: *namespace, Mode: *breakMode, Bound: 2 * *breakBound, Interval: 5 * time.Second, Wait: processio.Wait})
+			// Wait for the memory's own tests to judge a failure: their sampling
+			// and holds set the time, not the flag's default.
+			horizon := probeDetectionHorizon(*repo)
+			bound := max(*breakBound, horizon)
+			breaker, err := kubebreak.New(ctx, kubebreak.Config{Client: cluster.Kube(), Namespace: *namespace, Mode: *breakMode, Bound: 2 * bound, Interval: 5 * time.Second, Wait: processio.Wait})
 			if err != nil {
 				return 0, err
 			}
-			config.Break = &onboardcheck.BreakConfig{Eval: eval, Breaker: breaker, Bound: *breakBound, Interval: 5 * time.Second}
+			config.Break = &onboardcheck.BreakConfig{Eval: eval, Breaker: breaker, Bound: bound, Horizon: horizon, Interval: 5 * time.Second, Faults: genericFaults(m, breaker, cluster)}
+			if cache != nil {
+				config.Break.Cache, config.Break.Reuse, config.Break.Keys = cache, !*full, inputs.BreakKeys(config.Break.Faults)
+			}
 		}
 	}
 	report, err := onboardcheck.Run(ctx, config)
 	if err != nil {
 		return 0, err
 	}
+	saveCache()
+	var rendered string
 	if *asJSON {
 		encoded, err := json.MarshalIndent(report, "", "  ")
 		if err != nil {
 			return 0, err
 		}
-		fmt.Fprintln(stdout, string(encoded))
+		rendered = string(encoded) + "\n"
 	} else {
-		fmt.Fprint(stdout, report.Text())
+		rendered = report.Text()
 	}
-	if !report.Clean() {
+	fmt.Fprint(stdout, rendered)
+	if *reportFile != "" {
+		if err := os.WriteFile(*reportFile, []byte(rendered), 0o600); err != nil {
+			return 0, fmt.Errorf("write --report: %w", err)
+		}
+	}
+	if !report.NoRed() {
 		return exitDiagnostics, nil
 	}
 	return exitClean, nil
+}
+
+// probeDetectionHorizon is the longest time the repository's health-probe
+// workloads can take to raise a failing scenario (zero without any).
+func probeDetectionHorizon(repo string) time.Duration {
+	files, _ := filepath.Glob(filepath.Join(repo, ".sdo", "diagnostics", "traffic", "workloads", "*.yaml"))
+	var longest time.Duration
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		raw, err := yaml.YAMLToJSON(data)
+		if err != nil {
+			continue
+		}
+		if workload, err := traffic.ParseWorkloadJSON(raw); err == nil {
+			longest = max(longest, workload.DetectionHorizon())
+		}
+	}
+	return longest
+}
+
+// expectedDuration is an upper bound for one check: the metric items run
+// alongside the quiet window (whose cap is the window), and with --break each
+// wave costs a break, a restore and the wait for detectors to clear. A quick run
+// is the longer of the settle and its short smoke.
+func expectedDuration(settle, quiet time.Duration, withBreak bool, bound time.Duration, waves int) time.Duration {
+	total := max(settle, quiet)
+	if withBreak {
+		total += time.Duration(waves) * (bound + 30*time.Second)
+	}
+	return total
+}
+
+// startNotice is the line printed when a check starts: how long it takes and
+// where the report goes.
+func startNotice(quick bool, settle, quiet time.Duration, withBreak bool, bound time.Duration, waves int, reportFile string) string {
+	mode := "full"
+	if quick {
+		mode = "quick"
+	}
+	where := "the report prints to stdout when the check finishes"
+	if reportFile != "" {
+		where += " and is also written to " + reportFile
+	}
+	return fmt.Sprintf("onboarding check (%s): expected at most %s (the quiet window ends early once every detector has judged enough); run it in the background and keep working; %s",
+		mode, expectedDuration(settle, quiet, withBreak, bound, waves).Round(time.Second), where)
+}
+
+// plannedWaves is the most waves a check can take: the component waves plus a
+// wave for each generic break that shares an operation with all of them.
+func plannedWaves(m appmap.Map) int {
+	workers, store := onboardcheck.FaultTargets(m)
+	n := onboardcheck.PlannedBreakWaves(m) + len(workers)
+	if store != nil {
+		n++
+	}
+	return n
+}
+
+// genericFaults are the breaks that keep every component up: each worker with
+// its egress denied, and the authoritative store with rows made wrong.
+func genericFaults(m appmap.Map, breaker *kubebreak.Breaker, cluster *processio.KubeCluster) []onboardcheck.Fault {
+	workers, store := onboardcheck.FaultTargets(m)
+	var faults []onboardcheck.Fault
+	for _, w := range workers {
+		faults = append(faults, breaker.WorkerQuiet(w, onboardcheck.OperationsThrough(m, w.Name)))
+	}
+	if store != nil {
+		faults = append(faults, breaker.DataWrong(*store, onboardcheck.OperationsThrough(m, store.Name), podExec(cluster)))
+	}
+	return faults
+}
+
+// podExec runs a command in a pod container and returns its standard output.
+func podExec(cluster *processio.KubeCluster) kubebreak.Exec {
+	exec := kubereads.SPDYExec{Client: cluster.Kube(), Config: cluster.Config()}
+	return func(ctx context.Context, namespace, pod, container string, command []string, stdin string) (string, error) {
+		var out strings.Builder
+		err := exec.Stream(ctx, sdk.ObjectRef{APIVersion: "v1", Kind: "Pod", Namespace: namespace, Name: pod}, container, command, stdin, &out)
+		return out.String(), err
+	}
+}
+
+// routeLister runs the map's route-list command in a running pod of the
+// component's workload.
+type routeLister struct {
+	cluster   *processio.KubeCluster
+	namespace string
+}
+
+func (r routeLister) List(ctx context.Context, c appmap.Component, list appmap.RouteList) ([]string, error) {
+	kind, name, ok := strings.Cut(c.Workload, "/")
+	if !ok {
+		return nil, fmt.Errorf("component %s workload %q is not Kind/name", c.Name, c.Workload)
+	}
+	apps := r.cluster.Kube().AppsV1()
+	var selector *metav1.LabelSelector
+	var err error
+	switch kind {
+	case "Deployment":
+		var d *appsv1.Deployment
+		if d, err = apps.Deployments(r.namespace).Get(ctx, name, metav1.GetOptions{}); err == nil {
+			selector = d.Spec.Selector
+		}
+	case "StatefulSet":
+		var d *appsv1.StatefulSet
+		if d, err = apps.StatefulSets(r.namespace).Get(ctx, name, metav1.GetOptions{}); err == nil {
+			selector = d.Spec.Selector
+		}
+	case "DaemonSet":
+		var d *appsv1.DaemonSet
+		if d, err = apps.DaemonSets(r.namespace).Get(ctx, name, metav1.GetOptions{}); err == nil {
+			selector = d.Spec.Selector
+		}
+	default:
+		err = fmt.Errorf("unsupported workload kind %s", kind)
+	}
+	if err != nil {
+		return nil, err
+	}
+	pods, err := r.cluster.Kube().CoreV1().Pods(r.namespace).List(ctx, metav1.ListOptions{LabelSelector: metav1.FormatLabelSelector(selector)})
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range pods.Items {
+		if p.Status.Phase != corev1.PodRunning {
+			continue
+		}
+		out, err := podExec(r.cluster)(ctx, r.namespace, p.Name, list.Container, list.Command, "")
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s", err, strings.TrimSpace(out))
+		}
+		return strings.Split(out, "\n"), nil
+	}
+	return nil, fmt.Errorf("no running pod of %s", c.Workload)
 }

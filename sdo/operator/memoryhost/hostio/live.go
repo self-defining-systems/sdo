@@ -170,13 +170,18 @@ func (v *LiveReadView) ProbeHTTP(ref sdk.ObjectRef, p program.HTTPProbe) (progra
 		return program.ProbeResult{}, errors.New("HTTP probe requires a Service")
 	}
 	var port int32
+	found := false
 	for _, s := range v.Services() {
-		if s.Name == ref.Name && s.Namespace == ref.Namespace && len(s.Spec.Ports) > 0 {
-			port = s.Spec.Ports[0].Port
+		if s.Name == ref.Name && s.Namespace == ref.Namespace {
+			found = true
+			port, _ = program.HTTPProbePort(s)
 		}
 	}
+	if !found {
+		return program.ProbeResult{}, fmt.Errorf("probe target Service %s/%s is absent from the memory host's mirror", ref.Namespace, ref.Name)
+	}
 	if port == 0 {
-		return program.ProbeResult{}, fmt.Errorf("probe target Service %s/%s has no port in the memory host's mirror (the Service is absent from the mirror or declares no port)", ref.Namespace, ref.Name)
+		return program.ProbeResult{}, fmt.Errorf("probe target Service %s/%s declares no TCP port for HTTP", ref.Namespace, ref.Name)
 	}
 	target, err := v.target(ref, port)
 	if err != nil {
@@ -219,4 +224,24 @@ func (v *LiveReadView) ProbeHTTP(ref sdk.ObjectRef, p program.HTTPProbe) (progra
 		result.Fields = fields
 	}
 	return result, nil
+}
+
+// LogMatches scans the container's whole log window live and returns only the matching lines.
+func (v *LiveReadView) LogMatches(ref sdk.ObjectRef, container string, since time.Duration, pattern string, max int) (program.LogMatchResult, error) {
+	re, err := program.ValidateLogMatchRequest(since, pattern, max)
+	if err != nil {
+		return program.LogMatchResult{}, err
+	}
+	if ref.Kind != "Pod" || ref.Namespace != v.Namespace() || ref.Name == "" || v.client == nil || container == "" {
+		return program.LogMatchResult{}, errors.New("log matches require a namespace-scoped Pod, a container and a Kubernetes reader")
+	}
+	ctx, cancel := context.WithTimeout(v.ctx, 15*time.Second)
+	defer cancel()
+	options := program.LogMatchOptions(container, since)
+	stream, err := v.client.CoreV1().Pods(ref.Namespace).GetLogs(ref.Name, &options).Stream(ctx)
+	if err != nil {
+		return program.LogMatchResult{}, err
+	}
+	defer stream.Close()
+	return program.ScanLogMatches(stream, re, max)
 }

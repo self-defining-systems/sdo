@@ -8,7 +8,9 @@ counts. A request that is read only up to its first result would hand the early 
 while the agent's own tasks still run.
 
 ``ClaudeStreamSession`` reads on: after the turn ends it keeps reading the process until the CLI
-itself reports ``session_state_changed: idle`` (see ``SESSION_STATE_ENV``), and returns the last
+itself reports ``session_state_changed: idle`` with no registered background task left (subagents
+and background Bash alike: the CLI reports idle after a result while a background Bash runs, and
+starts a turn of its own when it finishes; see ``SessionWatch.working``), and returns the last
 structured result. SDO injects no turn and no context; it only does not stop reading. A CLI that
 reports no session state gives no such signal, and then the first result stands.
 """
@@ -48,6 +50,33 @@ if TYPE_CHECKING:
 #: the agent is done, so no timer decides.
 SESSION_STATE_ENV = "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS"
 
+#: Claude Code tools that cannot work in a headless one-shot session, denied for every SDO agent.
+#: The first group starts a later turn of the session (a wakeup, a cron job, a remote trigger) that
+#: never begins: the CLI does not count them as background tasks, so the session goes idle and
+#: SDO closes it. The second needs a person (a question, plan approval, a push notification) or moves
+#: the session out of its checkout (worktrees). ``Monitor`` and ``Bash`` ``run_in_background`` do
+#: register as background tasks the CLI keeps the session alive for, and subagents (``Agent``) too,
+#: so they stay available.
+HEADLESS_DISALLOWED_TOOLS = (
+    "ScheduleWakeup",
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "RemoteTrigger",
+    "AskUserQuestion",
+    "EnterPlanMode",
+    "ExitPlanMode",
+    "PushNotification",
+    "EnterWorktree",
+    "ExitWorktree",
+)
+
+
+def disallowed_tools_args(extra: Sequence[str] = ()) -> tuple[str, ...]:
+    """The one ``--disallowedTools`` argument: the headless-unusable tools plus *extra*."""
+    return ("--disallowedTools", ",".join((*HEADLESS_DISALLOWED_TOOLS, *extra)))
+
+
 #: How often the drain looks at the process again; it decides nothing.
 POLL_SECONDS = 0.2
 
@@ -57,6 +86,11 @@ class SessionWatch:
     """The CLI's own session state and result frames, read from its raw output."""
 
     state: str | None = None
+    #: Background tasks the CLI lists as registered (``background_tasks_changed``): subagents and
+    #: background Bash alike. The CLI reports ``idle`` after a turn's result even while one runs.
+    tasks: int = 0
+    #: A task finished while the CLI was idle, so it will start a turn of its own; not yet running.
+    wake_pending: bool = False
     results: list[dict[str, Any]] = field(default_factory=lambda: cast("list[dict[str, Any]]", []))
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -73,17 +107,27 @@ class SessionWatch:
             if record.get("type") == "system" and record.get("subtype") == "session_state_changed":
                 state = record.get("state")
                 self.state = state if isinstance(state, str) else None
+                if self.state == "running":
+                    self.wake_pending = False
+            elif record.get("type") == "system" and record.get("subtype") == "background_tasks_changed":
+                tasks = record.get("tasks")
+                self.tasks = len(cast("list[Any]", tasks)) if isinstance(tasks, list) else 0
+            elif record.get("type") == "system" and record.get("subtype") == "task_notification":
+                if self.state != "running":
+                    self.wake_pending = True
             elif record.get("type") == "result":
                 self.results.append(record)
 
     @property
     def working(self) -> bool:
-        """The CLI said it is running and has not said idle since.
+        """The CLI is running, or registered background work remains or is about to wake it.
 
         False when it never reports state (an old CLI): there is no signal to wait for.
         """
         with self._lock:
-            return self.state == "running"
+            if self.state is None:
+                return False
+            return self.state == "running" or self.tasks > 0 or self.wake_pending
 
     def final_result(self) -> dict[str, Any] | None:
         """The last result frame that carried structured output, if any."""
@@ -196,7 +240,9 @@ def settings_args(settings: Mapping[str, object], extra: Sequence[str]) -> tuple
 
 
 __all__ = [
+    "HEADLESS_DISALLOWED_TOOLS",
     "SessionWatch",
+    "disallowed_tools_args",
     "ClaudeStreamSession",
     "TurnTimeoutError",
     "settings_args",

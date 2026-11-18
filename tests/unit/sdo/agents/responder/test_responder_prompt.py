@@ -1,14 +1,17 @@
-"""The responder's first message names the incident and its symptom and sends it to the skills and `sdo detect`."""
+"""The responder's first message names the incident and its page; it requires no skill and no command."""
 
 from __future__ import annotations
 
 import pytest
 from google.protobuf import timestamp_pb2
 
-from sdo.agents.responder.codex import _responder_prompt
-from sdo.agents.responder.credentials import SKILLS_ROOT
+from sdo.agents.responder.codex import _responder_prompt, recent_changes_block
+from sdo.agents.responder.incident_opening import symptom
 from tests.proto_messages import evolve
 from tests.unit.sdo.agents.prompts.cases import incident
+
+#: The text around the page, with the telemetry sentence and a long skills path: about 770 bytes today.
+FIXED_BYTES = 800
 
 
 def _opened_by_a_test(*scenarios: str):
@@ -23,22 +26,37 @@ def _opened_by_a_test(*scenarios: str):
 def test_the_first_message_names_the_incident_and_the_failing_tests() -> None:
     prompt = str(_responder_prompt(_opened_by_a_test("login", "checkout")))
 
-    assert prompt.startswith(
-        "Incident toy-incident in namespace toy.\n"
-        "2 failing user tests; each name is followed by failed/total samples in the window."
+    assert prompt.startswith("Incident toy-incident in namespace toy: investigate and fix it.")
+    assert (
+        "\n2 failing user tests; each name is followed by failed/total samples in the window."
         " Shared symptom per group:\n"
         "- an unrecorded error (2): checkout, login\n"
-    )
-    assert f"{SKILLS_ROOT}/incident-response/SKILL.md" in prompt
-    assert f"{SKILLS_ROOT}/sdo-operating/SKILL.md" in prompt
-    assert "Start with `sdo detect`." in prompt
+    ) in prompt
+
+
+def test_the_first_message_requires_no_skill_and_no_command() -> None:
+    prompt = str(_responder_prompt(_opened_by_a_test("login")))
+
+    for forced in ("Read your skills", "SKILL.md", "Start with", "subagent", "orchestrat"):
+        assert forced not in prompt
+    assert "return only to give up" in prompt
+
+
+def test_the_fixed_part_of_the_first_message_cannot_grow_back() -> None:
+    """Everything the responder is told besides the page (symptom, candidates) and the branch line."""
+    request = _opened_by_a_test("login")
+    full = str(_responder_prompt(request))
+    page = symptom(request) + recent_changes_block(request)
+
+    fixed = len(full.replace(page, "").encode())
+    assert fixed <= FIXED_BYTES, f"{fixed} > {FIXED_BYTES}: the first-try prompt grew; cut text or justify the raise"
 
 
 def test_the_first_message_is_small_and_holds_no_finding() -> None:
     request = _opened_by_a_test("login")
     prompt = str(_responder_prompt(request))
 
-    assert len(prompt.encode()) <= 1900
+    assert len(prompt.encode()) <= 1500
     for finding in request.findings:
         assert finding.summary not in prompt
         assert finding.fingerprint not in prompt
@@ -106,3 +124,11 @@ def test_the_first_message_names_the_commands_when_no_change_is_listed() -> None
     assert "`sdo changes`" in prompt
     assert "`sdo timeline`" in prompt
     assert "CANDIDATES" not in prompt
+
+
+def test_the_operating_skill_forbids_printing_credentials_but_allows_use_in_place() -> None:
+    skill = " ".join((__import__("pathlib").Path("sdo/skills/sdo-operating/SKILL.md")).read_text().split())
+
+    assert "Never print, copy, log or write a credential value" in skill
+    assert "may be used in place" in skill
+    assert "Never read Secret values" not in skill

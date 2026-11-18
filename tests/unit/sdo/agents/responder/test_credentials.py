@@ -100,7 +100,6 @@ def test_no_skills_leaves_the_home_without_a_skills_directory(tmp_path: Path) ->
                 "sdo-serving",
                 "sdo-observability",
                 "sdo-operations-map",
-                "sdo-investigator",
             },
         ),
         ("onboarding", {"sdo-onboarding", "sdo-serving", "sdo-observability", "sdo-operations-map", "sdo-detectors"}),
@@ -119,13 +118,11 @@ def test_each_agent_worker_declares_the_skills_it_installs(agent: str, skills: s
         assert document.startswith(f"---\nname: {name}\ndescription: ")
 
 
-def test_responder_home_ships_the_investigator_skill_its_method_names(tmp_path: Path) -> None:
+def test_responder_home_ships_no_investigator_skill_and_the_method_names_no_subagent(tmp_path: Path) -> None:
     claude_home = tmp_path / ".claude"
 
     prepare_claude_home(credentials_root=tmp_path / "none", claude_home=claude_home, skills=AGENT_SKILLS["responder"])
 
     method = (claude_home / "skills" / "incident-response" / "SKILL.md").read_text(encoding="utf-8")
-    investigator = (claude_home / "skills" / "sdo-investigator" / "SKILL.md").read_text(encoding="utf-8")
-    assert "sdo-investigator/SKILL.md" in method
-    assert "Do not call `sdo status`, `sdo diagnose` or `sdo menu`" in investigator
-    assert "How to diagnose" in investigator
+    assert not (claude_home / "skills" / "sdo-investigator").exists()
+    assert "sdo-investigator" not in method

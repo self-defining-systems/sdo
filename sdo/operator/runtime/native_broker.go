@@ -118,7 +118,9 @@ type NativeIncidentBroker struct {
 	Cleaner LeftoverCleaner
 	// Recording is agent.recording: when false the closing turn carries no recorded changes and learns on any
 	// success closure (ClosingLearns).
-	Recording    bool
+	Recording bool
+	// PageOnly is response.page_only: the responder is a plain agent, so no closing, cleanup or learning turn runs.
+	PageOnly     bool
 	CleanupTurns int
 
 	// SourceGate is the controller's view of its own activity, read before a
@@ -738,6 +740,9 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 	}
 	driver := lifecycleio.ReflectionDriver{Repository: n.Repository, SessionRoot: n.SessionRoot, Now: n.clock, Phase: func(phase string) error { return n.recordPhase(ledger, phase) }, Reflect: func(ctx context.Context, effect lifecyclecore.ReflectionEffect) (*contracts.ReflectionDecision, error) {
 		workspace := IncidentWorkspace{IncidentID: effect.IncidentID, Worktree: effect.Workspace.GetCheckoutPath(), BaseCommit: effect.Workspace.GetBaseCommit()}
+		if n.PageOnly {
+			return noLearningDecision(effect.Outcome.GetClassification(), false), nil
+		}
 		selected, err := NewCodePathRegistry().Resolve(n.CodePath)
 		if err != nil {
 			return nil, err

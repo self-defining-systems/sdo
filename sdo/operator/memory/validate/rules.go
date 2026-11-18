@@ -81,6 +81,9 @@ const (
 
 	// Semantic.
 	RuleArchitectureMissing = "memory.architecture-missing"
+	// RuleGoalMissing is a non-blocking note: the goal is human-owned and
+	// install supplies SDO's standard goal when memory has none.
+	RuleGoalMissing         = "memory.goal-missing"
 	RuleGoalOwner           = "goal.owner"
 	RuleManifestMissing     = "manifest.missing"
 	RuleDetectorNone        = "detector.none"
@@ -156,6 +159,7 @@ const (
 	RuleProgramDiffText = "program.diff-text-match"
 
 	// Compile.
+	RuleProgramPlanInvalid      = "program.plan-invalid"
 	RuleProgramMitigationRepair = "program.mitigation-not-repaired"
 	RuleDetectorCompile         = "detector.compile"
 	RuleDetectorVet             = "detector.vet"

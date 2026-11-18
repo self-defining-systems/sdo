@@ -82,6 +82,12 @@ type Config struct {
 	Evidence   Evidence   `yaml:"evidence"`
 	Telemetry  Telemetry  `yaml:"telemetry"`
 	Source     Source     `yaml:"source"`
+	Onboarding Onboarding `yaml:"onboarding"`
+}
+
+// Onboarding is what the people running the application owe SDO before it onboards.
+type Onboarding struct {
+	JourneysRequired bool `yaml:"journeys_required" doc:"whether onboarding requires the user journeys SDO must support, given by the people running the application as free text (host --journeys or --journeys-file, or a journeys: list in the goal file's front matter). On, a host or operate launch without them stops before any agent runs; off, the onboarding agent discovers the journeys itself"`
 }
 
 // Source is the one branch of the application repository SDO commits to and deploys from.
@@ -150,6 +156,7 @@ type Response struct {
 	Permissive           bool     `yaml:"permissive" doc:"broad lane repair permissions excluding Secret and credential APIs"`
 	PermissiveNamespaces []string `yaml:"permissive_namespaces" doc:"additional lane namespaces the permissive responder may repair"`
 	CleanupTurns         int      `yaml:"cleanup_turns" doc:"how many times the responder's session is asked, after Recovered, to keep or remove the app-file edits it left uncaptured; edits still left after that are discarded and recorded as source_repair_uncaptured. 0 asks no cleanup turn"`
+	PageOnly             bool     `yaml:"page_only" doc:"the responder is a plain agent that gets only the incident page: no sdo commands on its PATH, no skills, no memory checkout, no investigators, no closing or cleanup turn, and no learning from the incident. SDO still detects, pages and verifies as usual. For comparing SDO's page alone against SDO's tools and memory"`
 	ExternalClues        bool     `yaml:"external_clues" doc:"with mode external: keep the detectors, synthetic traffic and state baseline running as clues (sdo detect, the candidate view). Their findings never open, join or close an external incident; the caller opens it and the responder's completion closes it. Default off: an external controller observes nothing"`
 	Investigators        int      `yaml:"investigators" doc:"how many read-only investigator sessions SDO starts when the responder has made no write for investigator_delay: one per top candidate node with non-routine evidence, each testing one hypothesis and writing a report the responder reads with sdo investigations. They never fix, never close or escalate an incident and are stopped before the closing turn. 0 starts none"`
 	InvestigatorDelay    Duration `yaml:"investigator_delay" doc:"how long the responder may work without a write before investigators start; a fix faster than this costs nothing. Measured fast fixes land in 25-60 s, so the 60s default starts them only for the slow incidents"`
@@ -216,8 +223,9 @@ func Default() Config {
 			MaxAttempts: 3, BuildTimeout: Duration(DefaultBuildTimeout), BuildBudget: Duration(DefaultBuildBudget),
 			RolloutTimeout: Duration(DefaultRolloutTimeout),
 		},
-		Telemetry: Telemetry{Profile: "prometheus-default"},
-		Source:    Source{PollInterval: Duration(30 * time.Second)},
+		Telemetry:  Telemetry{Profile: "prometheus-default"},
+		Source:     Source{PollInterval: Duration(30 * time.Second)},
+		Onboarding: Onboarding{JourneysRequired: true},
 	}
 }
 
@@ -286,6 +294,9 @@ func (c Config) Validate() error {
 	positive("response.stage_budget", c.Response.StageBudget)
 	if c.Response.CleanupTurns < 0 {
 		bad("response.cleanup_turns", "%d must not be negative", c.Response.CleanupTurns)
+	}
+	if c.Response.PageOnly && c.Response.Investigators != 0 {
+		bad("response.page_only", "investigators must be 0 (a page-only responder has no sdo commands to read their reports)")
 	}
 	if c.Response.Investigators < 0 || c.Response.Investigators > 4 {
 		bad("response.investigators", "%d must be between 0 and 4", c.Response.Investigators)

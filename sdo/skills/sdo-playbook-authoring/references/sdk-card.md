@@ -12,7 +12,7 @@ Full [SDK](program-sdk.md).
 - `type ParamSpec struct{Name string; Kind Kind; Required bool; ValueKind ValueKind; Default any}`: declares one role or value a triggering finding binds.
 - `type Bindings struct{Objects ObjectBindings; Values map[string]any}`: contains object identities and separately typed scalar parameters.
 - `func (b Bindings) Parameter(spec ProgramSpec, name string) (any, error)`: resolves one declared value, including a validated default.
-- `type Verdict struct{Result Result; Evidence []Evidence; Question string; CauseClass string; Reach string}`: is what Diagnose returns; NeedsJudgement requires a Question.
+- `type Verdict struct{Result Result; Evidence []Evidence; Question string; CauseClass string; Reach string; Reads []ReadStep}`: is what Diagnose returns; NeedsJudgement requires a Question.
 - `type Result string (Match, NoMatch, Unknown, NeedsJudgement)`: is a diagnosis verdict: Match means the fault is present, NoMatch absent, Unknown that evidence is unavailable.
 - `type Evidence struct{Resource sdk.ObjectRef; Fact string; Observed string; Expected string}`: is one observed fact supporting a verdict.
 - `type Plan struct{Actions []Action; Rationale string}`: is what Mitigate returns: actions applied in order as one batch.
@@ -26,7 +26,7 @@ Full [SDK](program-sdk.md).
 
 ## Reads (ReadView)
 
-- `type ReadView interface: inputs.Sources, WebhookCAMatchesSecret, AdmissionWebhooksFor, ObjectReader, DetectionContext, ScopedObservationSource, ObservationClock, StatefulSets, HorizontalPodAutoscalers, PodDisruptionBudgets, metrics.Source, metrics.AlertSource, metrics.QuerySource, traffic.Source, AppMap, datacheck.Accepted, servicehealth.ReachabilitySource, Logs, LogsWithOptions, metrics.UsageSource, ProbeTCP, ProbeHTTP, DiffAgainstSource, DiffAgainstBaseline, DatabaseUsers, Observe, KubernetesRead, Read`: is a program's frozen, recorded read access to the incident namespace; every read is replayed from the corpus at check time.
+- `type ReadView interface: inputs.Sources, WebhookCAMatchesSecret, AdmissionWebhooksFor, ObjectReader, DetectionContext, ScopedObservationSource, ObservationClock, StatefulSets, HorizontalPodAutoscalers, PodDisruptionBudgets, metrics.Source, metrics.AlertSource, metrics.QuerySource, traffic.Source, AppMap, datacheck.Accepted, servicehealth.ReachabilitySource, Logs, LogsWithOptions, LogMatches, metrics.UsageSource, ProbeTCP, ProbeHTTP, DiffAgainstSource, DiffAgainstBaseline, DatabaseUsers, Observe, KubernetesRead, Read`: is a program's frozen, recorded read access to the incident namespace; every read is replayed from the corpus at check time.
 - `type DetectionContext interface: StatefulSets, DaemonSets, Jobs, CronJobs, PersistentVolumeClaims, ServiceAccounts, HorizontalPodAutoscalers, PodDisruptionBudgets, Ingresses, Nodes, Secrets, DiffAgainstSource, PodAdmission, Namespace, ConfigMaps, Services, Pods, Deployments, ReplicaSets, Endpoints, EndpointSlices, NetworkPolicies, Events, ReadyEndpointCountForService, PodsForService, RecentEventsFor`: is the frozen snapshot read by detectors and, through ReadView, by programs.
 - `ObjectReader.Object(ObjectRef) (*unstructured.Unstructured, error)`: reads one exact object by kind, namespace and name.
 - `ReadView.LogsWithOptions(pod sdk.ObjectRef, options corev1.PodLogOptions) (string, error)`: reads bounded container logs; Previous selects the last terminated instance.
@@ -70,7 +70,7 @@ Full [SDK](program-sdk.md).
 ## Service routing and ports
 
 - `ReadView.ProbeTCP(to sdk.ObjectRef, port int32) (ProbeResult, error)`: connects to one port of a Pod or Service and records whether it accepted.
-- `ReadView.ProbeHTTP(to sdk.ObjectRef, req HTTPProbe) (ProbeResult, error)`: sends one recorded HTTP request to a Pod or Service.
+- `ReadView.ProbeHTTP(to sdk.ObjectRef, req HTTPProbe) (ProbeResult, error)`: sends one recorded HTTP request to a Service, on its first TCP port (HTTPProbePort).
 - `type HTTPProbe struct{Method string; Path string; Headers map[string]string; Fields map[string]string}`: is the request ProbeHTTP sends.
 - `type RemoveServicePort struct{Ref sdk.ObjectRef; Name string; Port int32; Protocol string; AllowEmpty bool; Reason string}`: removes exactly one Service port.
 

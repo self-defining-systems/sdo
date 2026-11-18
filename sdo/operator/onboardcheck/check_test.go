@@ -21,6 +21,8 @@ type fakeProm struct {
 	lag     int
 	waits   int
 	queries []string
+	// tick runs before every query so a test can make counters follow a clock.
+	tick func()
 }
 
 type fakeSeries struct {
@@ -56,8 +58,81 @@ func sameLabels(a, b map[string]string) bool {
 	return true
 }
 
+var countShape = regexp.MustCompile(`^count(?: by \((\w+)\) )?\(\{(.*)\}\)$`)
+
+// countBy answers the duration-family queries: series counted by one label
+// over every metric whose name matches.
+func (p *fakeProm) countBy(by, matchers string) []metrics.Series {
+	type matcher struct {
+		label string
+		re    *regexp.Regexp
+	}
+	var ms []matcher
+	for _, x := range matcherShape.FindAllStringSubmatch(matchers, -1) {
+		value, _ := strconv.Unquote(x[3])
+		if x[2] == "=" {
+			value = regexp.QuoteMeta(value)
+		}
+		ms = append(ms, matcher{x[1], regexp.MustCompile("^(?:" + value + ")$")})
+	}
+	groups := map[string]float64{}
+	for _, s := range p.series {
+		ok := true
+		for _, x := range ms {
+			v := s.labels[x.label]
+			if x.label == "__name__" {
+				v = s.metric
+			}
+			if !x.re.MatchString(v) {
+				ok = false
+			}
+		}
+		if ok {
+			key := s.labels[by]
+			if by == "__name__" {
+				key = s.metric
+			}
+			groups[key]++
+		}
+	}
+	var out []metrics.Series
+	if by == "" {
+		total := 0.0
+		for _, v := range groups {
+			total += v
+		}
+		if total == 0 {
+			return nil
+		}
+		return []metrics.Series{{Labels: map[string]string{}, Samples: []metrics.Sample{{At: time.Unix(0, 0), Value: total}}}}
+	}
+	for key, v := range groups {
+		out = append(out, metrics.Series{Labels: map[string]string{by: key}, Samples: []metrics.Sample{{At: time.Unix(0, 0), Value: v}}})
+	}
+	return out
+}
+
 func (p *fakeProm) Query(_ context.Context, text string) ([]metrics.Series, error) {
 	p.queries = append(p.queries, text)
+	if p.tick != nil {
+		p.tick()
+	}
+	if text == FailureCounters {
+		var out []metrics.Series
+		for _, s := range p.series {
+			if strings.Contains(s.metric, "jobs_failed") {
+				labels := map[string]string{"__name__": s.metric}
+				for k, v := range s.labels {
+					labels[k] = v
+				}
+				out = append(out, metrics.Series{Labels: labels, Samples: []metrics.Sample{{At: time.Unix(0, 0), Value: s.value}}})
+			}
+		}
+		return out, nil
+	}
+	if c := countShape.FindStringSubmatch(text); c != nil {
+		return p.countBy(c[1], c[2]), nil
+	}
 	m := queryShape.FindStringSubmatch(text)
 	if m == nil {
 		return nil, context.DeadlineExceeded
@@ -118,6 +193,8 @@ type fakeSender struct {
 	prom *fakeProm
 	emit func(op appmap.Operation) map[string]string
 	bg   func()
+	// noLatency leaves out the request-duration histogram.
+	noLatency bool
 }
 
 func (s fakeSender) Send(_ context.Context, op appmap.Operation, n int) (int, error) {
@@ -128,7 +205,12 @@ func (s fakeSender) Send(_ context.Context, op appmap.Operation, n int) (int, er
 		return 0, nil
 	}
 	labels := s.emit(op)
-	apply := func() { s.prom.add("http_requests_total", labels, float64(n)) }
+	apply := func() {
+		s.prom.add("http_requests_total", labels, float64(n))
+		if !s.noLatency {
+			s.prom.add("http_request_duration_seconds_bucket", labels, float64(n))
+		}
+	}
 	if s.prom.lag > 0 {
 		s.prom.pending = append(s.prom.pending, apply)
 	} else {
@@ -189,7 +271,7 @@ func TestPerRouteSeriesAreGreen(t *testing.T) {
 	if !strings.HasPrefix(r.Text(), "commit abc123\n") {
 		t.Fatalf("report is not headed by the commit:\n%s", r.Text())
 	}
-	if !r.Clean() {
+	if !metricItemsClean(r) {
 		t.Fatalf("expected clean:\n%s", r.Text())
 	}
 	if status(r, ItemJourneys, "add-item") != Green || status(r, ItemErrorsSeparable, "list-items") != Green || status(r, ItemRoutes, "web") != Green {
@@ -219,7 +301,7 @@ func TestSharedRouteValueIsRed(t *testing.T) {
 	yaml := strings.Replace(mapYAML, "route: /items/new", "route: /items", 1)
 	r, _ := run(t, yaml, 0, 3*time.Second, perRoute)
 	// Same method differs (GET vs POST) so the label pair is distinct; make methods equal.
-	if !r.Clean() {
+	if !metricItemsClean(r) {
 		t.Fatalf("distinct methods share a route legitimately:\n%s", r.Text())
 	}
 	yaml = strings.Replace(yaml, "method: POST", "method: GET", 1)
@@ -244,7 +326,7 @@ func TestNoStatusLabelIsNotSeparable(t *testing.T) {
 
 func TestScrapeLagWithinSettleIsGreenBeyondIsRed(t *testing.T) {
 	r, _ := run(t, mapYAML, 3, 10*time.Second, perRoute)
-	if !r.Clean() {
+	if !metricItemsClean(r) {
 		t.Fatalf("lag inside settle:\n%s", r.Text())
 	}
 	r, _ = run(t, mapYAML, 30, 2*time.Second, perRoute)

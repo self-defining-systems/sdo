@@ -105,7 +105,7 @@ func (p Profile) Validate() error {
 		return fmt.Errorf("telemetry profile %q has %d sources; the limit is %d", p.Name, len(p.Sources), MaxProfileSources)
 	}
 	seen := map[string]bool{}
-	defaults := 0
+	defaults := map[Kind]int{}
 	for _, s := range p.Sources {
 		if !SourceIDPattern.MatchString(s.ID) || seen[s.ID] {
 			return fmt.Errorf("telemetry profile %q source id %q is malformed or provided twice", p.Name, s.ID)
@@ -118,11 +118,13 @@ func (p Profile) Validate() error {
 			return fmt.Errorf("telemetry profile %q source %q endpoint %q must be an http or https URL", p.Name, s.ID, s.Endpoint)
 		}
 		if s.Default {
-			defaults++
+			for _, kind := range s.Kinds {
+				defaults[kind]++
+				if defaults[kind] > 1 {
+					return fmt.Errorf("telemetry profile %q has %d default %s sources; at most one per kind", p.Name, defaults[kind], kind)
+				}
+			}
 		}
-	}
-	if defaults > 1 {
-		return fmt.Errorf("telemetry profile %q has %d default sources; at most one", p.Name, defaults)
 	}
 	if p.MetricsPublishURL != "" {
 		if parsed, err := url.Parse(p.MetricsPublishURL); err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {

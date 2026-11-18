@@ -75,6 +75,13 @@ func ConsumesPodAdmission(detectors []Detector) bool
     ConsumesPodAdmission enables the bounded API observation only for bundles
     containing a detector that explicitly requests it.
 
+func ContainerStartupAllowance(pod corev1.Pod, name string) time.Duration
+    ContainerStartupAllowance is how long a container may take to become
+    ready by its own declaration: a startup probe's initialDelaySeconds plus
+    failureThreshold x periodSeconds (the time the kubelet gives it before
+    restarting it), or, with none, a readiness probe's initialDelaySeconds plus
+    the same product. Zero means the container declares no allowance.
+
 func DecodeTypedObjects(target any, objects []unstructured.Unstructured) error
     DecodeTypedObjects maintains the legacy typed fixture edge without a kind
     map. New kinds remain in Objects and are available through ObjectReader.
@@ -90,6 +97,11 @@ func FormatObjectRef(ref ObjectRef) (string, error)
     retained explicitly. JSON is used when slash text would select legacy
     namespace/kind ordering, so parsing the formatted value preserves every
     ObjectRef field.
+
+func HeldFingerprints(ctx DetectionContext, detectorID string) map[string]bool
+    HeldFingerprints returns the fingerprints of the detector's findings that
+    hold the open incident (its opening and joined alerts); empty when no
+    incident is open or the context carries none.
 
 func HeldPastSelfHeal(ctx DetectionContext, since time.Time) bool
     HeldPastSelfHeal reports whether a condition that has held since since
@@ -116,6 +128,12 @@ func ObservationTime(ctx DetectionContext) time.Time
     deterministic lower bound on the real observation time, so an age derived
     from it can only be underestimated: a grace period may elapse late, never
     early. It is zero when the context records no time at all.
+
+func PodStarting(ctx DetectionContext, pod corev1.Pod) bool
+    PodStarting reports whether a pod that is not yet ready is still inside
+    its startup: a running unready container within its declared allowance,
+    or a pod whose containers have not started yet within the self-heal hold of
+    its creation (image pull, scheduling, init containers).
 
 func ProjectCABundle(ca []byte) []byte
     ProjectCABundle replaces certificate bytes with an idempotent digest.
@@ -177,6 +195,12 @@ func SourceComparisonText(accepted, observed []byte) string
     one object as SourceDiff.Text. Each side is one JSON document, or null when
     that side is absent. Sides, Field and ContainerChanges parse this form.
 
+func StillStarting(ctx DetectionContext, pod corev1.Pod, status corev1.ContainerStatus) bool
+    StillStarting reports whether a running container is inside its own
+    declared startup allowance at the observation time: it started less than its
+    allowance ago. A container with no declared allowance, an unknown start or
+    an unknown observation time is never still starting.
+
 func SupportedWatchKinds() []string
     SupportedWatchKinds lists, sorted, the "apiVersion/Kind" resources a
     detector may watch.
@@ -192,34 +216,4 @@ func TypedObjects(view any) []unstructured.Unstructured
 
 
 TYPES
-
-type AdmissionWebhook struct {
-	Configuration  ObjectRef             `json:"configuration"`
-	Webhook        string                `json:"webhook"`
-	FailurePolicy  string                `json:"failure_policy"`
-	TimeoutSeconds int32                 `json:"timeout_seconds,omitempty"`
-	ObjectSelector *metav1.LabelSelector `json:"object_selector,omitempty"`
-	Service        *ObjectRef            `json:"service,omitempty"`
-	Port           int32                 `json:"port,omitempty"`
-	URL            string                `json:"url,omitempty"`
-	ReadyEndpoints int                   `json:"ready_endpoints"`
-	ServingSecrets []WebhookSecretKey    `json:"serving_secrets,omitempty"`
-	CABundle       string                `json:"ca_bundle,omitempty"`
-}
-    AdmissionWebhook is one webhook entry admitting Pods in the namespace.
-    Its backend is the Service, its ready endpoint count and the Secrets its
-    Pods mount, or, for a webhook served outside the cluster, the URL's scheme
-    and host. CABundle is a digest, never certificate bytes. TimeoutSeconds
-    is how long the API server waits for it (DefaultWebhookTimeoutSeconds
-    when the entry declares none); ObjectSelector, when set, limits it to Pods
-    whose labels match. To repair a broken admission webhook, bind the failing
-    Namespace or workload (not the webhook configuration or Secret), read it
-    with ReadView.AdmissionWebhooksFor, and repair with SyncWebhookCA for the
-    CA, PatchObject for failurePolicy or the service reference, or DeleteObject
-    for an orphaned entry.
-
-func (w AdmissionWebhook) CATarget(secret WebhookSecretKey) WebhookCA
-    CATarget names this entry and one serving Secret key for SyncWebhookCA and
-    WebhookCAMatchesSecret. An empty secret.Key means the Pod mounts the whole
-    Secret; set the key the serving certificate uses.
 ```

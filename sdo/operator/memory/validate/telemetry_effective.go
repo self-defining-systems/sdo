@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sdo.dev/operator/memory"
 	"slices"
 
 	"sdo.dev/operator/memory/layout"
@@ -83,4 +84,17 @@ func HasRangeSource(sources []telemetry.Source) bool {
 	return slices.ContainsFunc(sources, func(s telemetry.Source) bool {
 		return s.Serves(telemetry.KindMetrics) && s.Has(telemetry.CapRange)
 	})
+}
+
+// PrepareHealthTree installs, under root, the detectors Go adds to a health
+// judge's tree at publication: the generic set, the traffic-probe detector of
+// every probe workload and the request-metrics detector when a source answers
+// range queries. Memory check, broker acceptance and the onboarding check all
+// call it, so what is checked is what is deployed.
+func PrepareHealthTree(root string, policy telemetry.Policy, registry *telemetry.Registry) error {
+	sources, err := EffectiveTelemetrySources(root, policy, registry)
+	if err != nil {
+		return err
+	}
+	return memory.PrepareHealthWith(root, memory.HealthOptions{AlertSources: HasAlertSource(sources), RequestMetrics: HasRangeSource(sources)})
 }

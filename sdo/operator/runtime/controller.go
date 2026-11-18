@@ -16,13 +16,16 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/apihistory"
 	"sdo.dev/operator/core"
+	"sdo.dev/operator/evaluation"
 	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -88,6 +91,11 @@ type ControllerConfig struct {
 	// StartupBound is how long a new install holds its openers until the
 	// application is seen healthy (startupPeriod). Zero runs no period.
 	StartupBound time.Duration
+	// StartupWarmupSettled, when set, reports whether the traffic warm-up that
+	// runs beside start-up has concluded. The start-up period does not count a
+	// settle window as healthy before it has, so the period still waits for
+	// observed traffic although the controller serves meanwhile. Nil: settled.
+	StartupWarmupSettled func() bool
 }
 
 type dispatchCompletion struct {
@@ -98,26 +106,34 @@ type dispatchCompletion struct {
 }
 
 type Controller struct {
+	// heldKeys are the open incident's alert keys, published for the snapshot provider (sdk.HeldAlertSource).
+	heldKeys atomic.Pointer[[]string]
 	// signals is the 15-minute ring the incident timeline is drawn from.
 	signals           *incidentSignals
 	ExternalIncidents func(context.Context) (*ExternalIncident, error)
 	memoryRefresh     func(context.Context) (bool, error)
 	config            ControllerConfig
 	// closureRecheckIdentity/Since bound an incomplete closure-time recheck.
-	closureRecheckIdentity      string
-	closureRecheckSince         time.Time
-	closureRecheckRetryAt       time.Time
-	codePath                    *CodePath
-	startedAt                   time.Time
-	scheduler                   *Scheduler
-	detectors                   map[string]sdk.Detector
-	tracker                     *FindingStateTracker
-	batcher                     *Batcher
-	provider                    SnapshotProvider
-	dispatcher                  Dispatcher
-	responseStagesRunning       bool
-	midStage                    midIncidentStage
+	closureRecheckIdentity string
+	closureRecheckSince    time.Time
+	// closureRecoveredIdentity/Since bound the wait on the Recovered predicate.
+	closureRecoveredIdentity string
+	closureRecoveredSince    time.Time
+	closureRecheckRetryAt    time.Time
+	codePath                 *CodePath
+	startedAt                time.Time
+	scheduler                *Scheduler
+	detectors                map[string]sdk.Detector
+	tracker                  *FindingStateTracker
+	batcher                  *Batcher
+	provider                 SnapshotProvider
+	dispatcher               Dispatcher
+	responseStagesRunning    bool
+	midStage                 midIncidentStage
+	// tuneMidStage lets a test inject the stage's clock and waits.
+	tuneMidStage                func(*DeterministicResponseStage)
 	history                     []DetectorEvaluation
+	progress                    map[string]*evaluation.DetectorProgress
 	drift                       *DriftControllerConfig
 	driftEvents                 []sdk.DriftEvent
 	sourceInventory             *SourceInventory
@@ -409,20 +425,55 @@ func NewController(
 	if config.StartupBound > 0 && !config.ExternalIncidentsOnly {
 		startup = newStartupPeriod(start.UTC(), start.UTC().Add(config.StartupBound))
 	}
-	return &Controller{
+	controller := &Controller{
 		signals: newIncidentSignals(),
 		config:  config, codePath: resolvedPath, startedAt: start, scheduler: NewScheduler(detectors, start, config.Namespace), detectors: byID,
 		tracker: tracker, startup: startup,
 		gateClears: make(map[string]*gateClear), gateProbes: make(map[string]time.Time),
-		batcher: NewDebouncedBatcher(config.BatchDebounce), provider: provider, dispatcher: dispatcher,
+		batcher: NewDebouncedBatcher(config.BatchDebounce), dispatcher: dispatcher,
 		results: make(chan dispatchCompletion, 1), healthDetectorIDs: healthDetectorIDs,
 		detectorSpecs:    detectorSpecs,
 		workspaceResults: make(chan workspaceCompletion, 1), closureResults: make(chan closureCompletion, 1), closurePrepared: make(chan struct{}, 1),
 		acknowledgmentResults: make(chan acknowledgmentCompletion, 1),
 		reflectionResults:     make(chan reflectionCompletion, 1), reflections: reflectionQueueState{rescan: true},
 		dispatchJitter: lifecycleio.DispatchJitter,
-	}, nil
+	}
+	controller.provider = heldSnapshotProvider{Base: provider, held: &controller.heldKeys}
+	return controller, nil
 }
+
+// publishHeldLocked records the open incident's alert keys for the snapshots
+// taken from now on. Caller holds c.mu.
+func (c *Controller) publishHeldLocked() {
+	var keys []string
+	if c.incidentOpen && c.currentIncidentRequest != nil {
+		keys = alertKeys(c.currentIncidentRequest)
+	}
+	c.heldKeys.Store(&keys)
+}
+
+// heldSnapshotProvider records the open incident's alert keys in every
+// snapshot, so detectors judge a finding that holds the incident as the
+// controller does and replay reproduces it.
+type heldSnapshotProvider struct {
+	Base SnapshotProvider
+	held *atomic.Pointer[[]string]
+}
+
+func (p heldSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
+	base, err := p.Base.Snapshot(ctx)
+	if err != nil {
+		return base, err
+	}
+	keys := p.held.Load()
+	if keys == nil || len(*keys) == 0 {
+		return base, nil
+	}
+	return heldContext{Carrier: inputs.New(base).WithHeld(*keys)}, nil
+}
+
+// heldContext keeps the wrapped snapshot's other optional inputs visible.
+type heldContext struct{ inputs.Carrier }
 
 func (c *Controller) Step(ctx context.Context, now time.Time, event *sdk.WatchKind) error {
 	if event == nil {
@@ -466,6 +517,7 @@ func (c *Controller) stepPaused(ctx context.Context, now time.Time) error {
 	// incident ownerless. Ownerless work is bookkeeping, not observation: a
 	// pause must not hold it.
 	c.processDispatchCompletions(now)
+	c.resumePendingLearnedPass(ctx)
 	if err := c.retireExpiredIncident(ctx, now); err != nil {
 		return err
 	}
@@ -634,6 +686,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	setupResults, setupHealthy := c.setupHealth(ctx, snapshot, detectors, onboardingCandidate)
 	sampleFindings := make([]sdk.Finding, 0)
 	errored := confirmationExpired
+	erroredIDs := map[string]bool{}
 	c.mu.Lock()
 	c.evaluationIteration++
 	c.evaluationAt = now.UTC()
@@ -672,16 +725,20 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	apply := func(detector sdk.Detector, result setupDetection) error {
 		spec := detector.Spec()
 		delete(pending, spec.ID)
-		findings, status, detectErr := validateDetectorObservation(detector, snapshot, result.findings, result.err)
+		// An open incident confirms only its alert set (nil without one), so the
+		// main loop never breaks the clear streak the closure scope holds intact.
+		scope := c.recoveryScope()
+		findings, status, detectErr := validateDetectorObservation(detector, snapshot, result.findings, result.err, scope)
 		if detectErr != nil {
 			c.resetGate(spec.ID)
 			c.recordDetectorError(spec.ID, now, detectErr)
 			errored = true
+			erroredIDs[spec.ID] = true
 			return nil
 		}
 		if status == DetectorEvaluationPending {
 			c.resetGate(spec.ID)
-			c.history = append(c.history, DetectorEvaluation{DetectorID: spec.ID, EvaluatedAt: now.UTC(), Status: DetectorEvaluationPending, Reason: detectorConfirmationReason(detector, snapshot)})
+			c.history = append(c.history, DetectorEvaluation{DetectorID: spec.ID, EvaluatedAt: now.UTC(), Status: DetectorEvaluationPending, Reason: detectorConfirmationReasonIn(detector, snapshot, scope)})
 			if len(c.history) > 100 {
 				c.history = append([]DetectorEvaluation(nil), c.history[len(c.history)-100:]...)
 			}
@@ -699,8 +756,9 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		changes := c.tracker.Observe(now, spec.ID, validFindings)
 		c.observeGate(spec.ID, now, validFindings)
 		sampleFindings = append(sampleFindings, validFindings...)
-		c.recordEvaluation(spec.ID, now, validFindings, c.recoveryScope())
-		c.history[len(c.history)-1].Reason = detectorConfirmationReason(detector, snapshot)
+		c.recordEvaluation(spec.ID, now, validFindings, scope)
+		c.history[len(c.history)-1].Reason = detectorConfirmationReasonIn(detector, snapshot, scope)
+		c.noteProgress(detector, snapshot, now)
 		c.noteStartupEvaluation(spec.ID)
 		c.batcher.RemoveKeys(changes.Cleared)
 		if c.config.ConfirmationInterval > 0 && c.tracker.HasPendingDetector(spec.ID) {
@@ -709,6 +767,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		for _, finding := range changes.Activated {
 			c.admitActivation(ctx, finding, now, c.detectorSpecs[spec.ID])
 		}
+		c.admitUpgrades(ctx, changes.Reruled, now, c.detectorSpecs[spec.ID])
 		c.mu.Lock()
 		if len(c.recoveryScopeLocked().blocking(changes.Activated)) > 0 {
 			c.closureStableSince = time.Time{}
@@ -771,7 +830,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			c.Baseline.Observe(now, healthy)
 		}
 		c.captureHealthyMemoryBaseline(ctx, now, snapshot, healthy)
-		c.promotePodReadBaseline(now, snapshot, healthy)
+		c.promotePodReadBaseline(now, snapshot, c.storesHealthy(confirmationExpired, erroredIDs, onboardingCandidate))
 		c.observeAppState(now, healthy)
 		c.promoteObservationBaselines(now, snapshot, healthy)
 		c.observeStartup(now)
@@ -861,6 +920,9 @@ func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, n
 	// alert set (Recovered waits on it); any other later opener, or a test
 	// after the join window, opens the next incident.
 	if c.joinAlertSet(finding, now) {
+		// The alert set changed: a learned playbook for the joined symptom is
+		// evaluated against live state, not only the opening alerts' playbooks.
+		c.attachLearnedActivation(ctx, finding)
 		return
 	}
 	if spec.Class == "" {
@@ -868,6 +930,27 @@ func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, n
 		return
 	}
 	c.batcher.AddAtWithDebounce(finding, now, spec.Batching.Debounce)
+}
+
+// admitUpgrades admits a finding whose rule changed from a clue to an opener
+// under the same fingerprint (a thin-baseline jump that became an error
+// finding): the tracker keeps the state active, so no activation announces it.
+func (c *Controller) admitUpgrades(ctx context.Context, changes []RuleChange, now time.Time, spec sdk.DetectorSpec) {
+	for _, change := range changes {
+		switch {
+		case c.opens(change.Before) && !c.opens(change.After):
+			// An opener that fell back to a clue no longer waits for an incident.
+			c.batcher.RemoveKeys([]string{FindingStateKey(change.After.DetectorID, FindingFingerprint(change.After))})
+		case !c.opens(change.Before) && c.opens(change.After):
+			// Inside an open incident the clue may already ride in its request:
+			// join the alert set first, then refresh the carried finding.
+			if c.joinAlertSet(change.After, now) {
+				c.mergeIntoOpenIncident(change.After)
+				continue
+			}
+			c.admitActivation(ctx, change.After, now, spec)
+		}
+	}
 }
 
 func (c *Controller) mergeIntoOpenIncident(finding sdk.Finding) bool {
@@ -1031,6 +1114,7 @@ func (c *Controller) beginIncident(now time.Time, request IncidentRequest, batch
 	c.responderDone = false
 	request.DetectedAt = now.UTC()
 	c.currentIncidentRequest = cloneIncidentRequest(&request)
+	c.publishHeldLocked()
 	c.currentIncidentResult = nil
 	c.dispatchError = ""
 	c.incidentDetectedAt = now.UTC()
@@ -1766,6 +1850,14 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			c.mu.Unlock()
 			return
 		}
+		// Alerts that cleared (a playbook's restarts can re-fire them after the
+		// stage first saw them clear) leave only the stability window to run:
+		// Recovered is holding, so the grace does not end it. The window is
+		// bounded, and one that restarts at every pass is not running.
+		if c.recoveryWindowRunningLocked(now) {
+			c.mu.Unlock()
+			return
+		}
 		// The responder returned (or its stage escalated) before Recovered held:
 		// the incident escalates. No agent runs again for these symptoms; it
 		// stays open until its opening alerts clear or `incidents reset`.
@@ -1918,6 +2010,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 	if early {
 		c.incidentOpen = false
+		c.publishHeldLocked()
 		warning := apihistory.VerificationWarning(verifiedAt)
 		verification.IncidentVerified = warning
 		c.cacheVerificationLocked(verification)
@@ -2170,6 +2263,7 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	// lock, but treat the old process as finished so detector clears can close it.
 	c.responderDone = state.ResponderDone
 	c.currentIncidentRequest = cloneIncidentRequest(incidentRequestState(state.GetIncidentRequest()))
+	c.publishHeldLocked()
 	c.currentIncidentResult = nil
 	if state.IncidentResult != nil {
 		result := incidentResultState(state.IncidentResult)
@@ -2334,6 +2428,7 @@ func (c *Controller) PersistState(ctx context.Context) error {
 			return ErrStateConflict
 		}
 		c.currentIncidentRequest = cloneIncidentRequest(&prepared)
+		c.publishHeldLocked()
 		c.mu.Unlock()
 		state.IncidentRequest, err = incidentRequestContract(prepared)
 		if err != nil {
@@ -2474,4 +2569,35 @@ func passingTests(snapshot sdk.DetectionContext) []string {
 // changes read besides the snapshot: the signal ring and the app-state source.
 func (c *Controller) IncidentSources() (*incidentSignals, AppStateChangeSource) {
 	return c.signals, c.config.AppStateChanges
+}
+
+// noteProgress counts one judged evaluation of the detector against its own
+// clearing horizon, so a reader can tell when every detector has judged enough
+// times past it.
+func (c *Controller) noteProgress(detector sdk.Detector, snapshot sdk.DetectionContext, now time.Time) {
+	if c.progress == nil {
+		c.progress = map[string]*evaluation.DetectorProgress{}
+	}
+	spec := detector.Spec()
+	p := c.progress[spec.ID]
+	if p == nil {
+		p = &evaluation.DetectorProgress{DetectorID: spec.ID, FirstAt: now.UTC()}
+		c.progress[spec.ID] = p
+	}
+	p.Interval = spec.Interval
+	p.Horizon = detectorClearingHorizon(detector, snapshot)
+	p.Evaluations++
+	if now.Sub(p.FirstAt) >= p.Horizon {
+		p.PastHorizon++
+	}
+}
+
+// DetectorProgress is the judging progress of every detector, ordered by ID.
+func (c *Controller) DetectorProgress() []evaluation.DetectorProgress {
+	out := make([]evaluation.DetectorProgress, 0, len(c.progress))
+	for _, p := range c.progress {
+		out = append(out, *p)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].DetectorID < out[j].DetectorID })
+	return out
 }

@@ -58,6 +58,9 @@ type Map struct {
 	// Entries declare, per entry service, the request metric and the label
 	// names that tell operations apart (see MetricEntry).
 	Entries []MetricEntry `yaml:"entries,omitempty"`
+	// Routes lists the application's own routes so the onboarding check can
+	// tell which no journey covers (see Routes).
+	Routes *Routes `yaml:"routes,omitempty"`
 	// Reasons explain onboarding check items the author cannot make green.
 	Reasons []Reason `yaml:"reasons,omitempty"`
 	// Procedures are the operations procedures the application ships.
@@ -81,6 +84,9 @@ type Component struct {
 	// covers, why no synthetic request can: the component is then verified at
 	// reachability strength (its link dials) and map.coverage is satisfied.
 	Unprobed string `yaml:"unprobed,omitempty"`
+	// Observe points at where the component's own telemetry lives, so a
+	// reader following a journey's path can look at each component.
+	Observe *Observe `yaml:"observe,omitempty"`
 }
 
 // Evidence kinds: what grounds a component's role or an edge. config is the
@@ -162,6 +168,13 @@ type Operation struct {
 	Route string `yaml:"route,omitempty"`
 	// Correct says what a correct result of the operation looks like.
 	Correct string `yaml:"correct,omitempty"`
+	// Triggers are the background job or queue classes (the values of the job
+	// metric's class label) this operation sets off. Background work is a step
+	// of the user-facing operation that triggers it, not an operation.
+	Triggers []string `yaml:"triggers,omitempty"`
+	// Journey names the human-given journey (goal.md) this operation serves;
+	// several operations can serve one.
+	Journey string `yaml:"journey,omitempty"`
 }
 
 // Probe is one probe scenario and the operations its steps exercise.

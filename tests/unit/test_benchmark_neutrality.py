@@ -22,6 +22,8 @@ import pytest
 
 from benchmarks.sregym.adapter.driver import _deployed_lifecycle_context
 
+CI_WHOLE_TREE = True
+
 ROOT = Path(__file__).resolve().parents[2]
 
 #: Source trees whose text reaches an SDO agent prompt, a lifecycle template, the

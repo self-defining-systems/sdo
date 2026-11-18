@@ -59,6 +59,15 @@ type Rule struct {
 	// MinBaselineRequests is the fewest healthy requests that make a baseline
 	// share believable; with fewer the healthy share is zero (so the floor applies).
 	MinBaselineRequests float64
+	// ThinBaselineShare is the share of a window's requests that must have
+	// failed for a client-error jump to be called on a thin baseline (fewer
+	// than MinBaselineRequests healthy requests). The share must also be
+	// MinRatio times the thin baseline's own observed failed share. Below it
+	// the jump stays the clue RuleInsufficientBaseline. Zero never calls one. ThinMinFailed adds an absolute count.
+	ThinBaselineShare float64
+	// ThinMinFailed is the fewest failed requests every step of the run needs
+	// for a thin-baseline jump to be called; fewer stay the clue.
+	ThinMinFailed float64
 	// Lookback is how far back the steps reach (at least Window). A raised
 	// error finding stays until a step after it confirms recovery, so a quiet
 	// stretch with few requests never clears it.
@@ -86,7 +95,7 @@ func (r Rule) minHealthy() float64 {
 // and 5% of the requests and 5 times the healthy share over 30 s, on two
 // consecutive 5 s steps, healthy share floored at 1%.
 func DefaultRule() Rule {
-	return Rule{Window: 30 * time.Second, Step: 5 * time.Second, Consecutive: 2, MinFailed: 5, MinShare: 0.05, MinRatio: 5, ShareFloor: 0.01, MinBaselineRequests: 20, Lookback: 5 * time.Minute, MinHealthy: 5}
+	return Rule{Window: 30 * time.Second, Step: 5 * time.Second, Consecutive: 2, MinFailed: 5, MinShare: 0.05, MinRatio: 5, ShareFloor: 0.01, MinBaselineRequests: 20, ThinBaselineShare: 0.5, ThinMinFailed: 8, Lookback: 5 * time.Minute, MinHealthy: 5}
 }
 
 // Entry is the request metric of one entry service, with the PromQL the
@@ -268,6 +277,9 @@ func (d *detector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Fi
 			continue
 		}
 		if why := plan.instrumentation(results); why != "" {
+			if len(results[plan.pres.ID].Series) == 0 && serviceStarting(ctx, op.Service) {
+				continue // the scrape target is a pod still inside its startup, not a missing instrument
+			}
 			findings = append(findings, d.notInstrumented(ctx, op, why))
 			continue
 		}
@@ -292,8 +304,18 @@ func (p entryPlan) instrumentation(results map[string]metrics.Result) string {
 	if p.StatusLabel == "" {
 		return fmt.Sprintf("entry %s declares no status label, so failed requests cannot be counted per operation", p.Service)
 	}
+	// A grouped query leaves a label off a series whose source carries none
+	// (a health check, a scrape), and such a series may sort first: the label
+	// is present when any series carries it.
 	for _, label := range []string{p.RouteLabel, p.StatusLabel} {
-		if _, ok := presence[0].Labels[label]; !ok {
+		found := false
+		for _, s := range presence {
+			if _, ok := s.Labels[label]; ok {
+				found = true
+				break
+			}
+		}
+		if !found {
 			return fmt.Sprintf("metric %s%s carries no %q label", p.Metric, p.Selector, label)
 		}
 	}
@@ -302,7 +324,7 @@ func (p entryPlan) instrumentation(results map[string]metrics.Result) string {
 
 // undeclared judges every route value of the entry's request metric that no
 // declared operation covers, with the same rule, busiest routes first up to the
-// configured bound. The application map need not be complete for the detector
+// configured bound (failing routes first). The application map need not be complete for the detector
 // to see a failing route.
 func (d *detector) undeclared(ctx sdk.DetectionContext, plan entryPlan, results map[string]metrics.Result) []sdk.Finding {
 	if plan.instrumentation(results) != "" {
@@ -314,7 +336,10 @@ func (d *detector) undeclared(ctx sdk.DetectionContext, plan entryPlan, results 
 			declared[op.Route] = true
 		}
 	}
-	volume := map[string]float64{}
+	// Routes that carried failed requests anywhere in the lookback rank first: a failing route must stay judged
+	// (and its finding stay until recovery is confirmed) however busy the healthy routes become. Busiest first
+	// among the rest.
+	volume, failed := map[string]float64{}, map[string]float64{}
 	for _, s := range results[plan.recent.ID].Series {
 		route := s.Labels[plan.RouteLabel]
 		if declared[route] {
@@ -326,12 +351,19 @@ func (d *detector) undeclared(ctx sdk.DetectionContext, plan entryPlan, results 
 		if v, ok := s.Last(); ok {
 			volume[route] += plan.classify(s.Labels, v.Value).total
 		}
+		for _, sample := range s.Samples {
+			c := plan.classify(s.Labels, sample.Value)
+			failed[route] = math.Max(failed[route], c.server+c.client)
+		}
 	}
 	routes := make([]string, 0, len(volume))
 	for route := range volume {
 		routes = append(routes, route)
 	}
 	sort.Slice(routes, func(i, j int) bool {
+		if failed[routes[i]] != failed[routes[j]] {
+			return failed[routes[i]] > failed[routes[j]]
+		}
 		if volume[routes[i]] != volume[routes[j]] {
 			return volume[routes[i]] > volume[routes[j]]
 		}
@@ -356,31 +388,27 @@ func (d *detector) undeclared(ctx sdk.DetectionContext, plan entryPlan, results 
 	return out
 }
 
+// serviceStarting reports whether a pod the Service selects is not ready yet
+// but still inside its own startup allowance: a metric with no series then
+// says the target is restarting, not that the application is uninstrumented.
+// A target missing beyond the allowance still counts.
+func serviceStarting(ctx sdk.DetectionContext, service string) bool {
+	for _, pod := range ctx.PodsForService(ctx.Namespace(), service) {
+		if sdk.PodStarting(ctx, pod) {
+			return true
+		}
+	}
+	return false
+}
+
 func (d *detector) notInstrumented(ctx sdk.DetectionContext, op Operation, why string) sdk.Finding {
 	return sdk.Finding{
 		DetectorID: d.cfg.Spec.ID, RuleID: RuleNotInstrumented, Status: sdk.FindingActive, Severity: sdk.SeverityInfo,
 		Summary:         fmt.Sprintf("operation %s is not instrumented for request metrics", op.ID),
 		Evidence:        fmt.Sprintf("operation %s (route %q) cannot be watched: %s", op.ID, op.Route, why),
 		PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: ctx.Namespace(), Name: op.Service},
-		Fingerprint:     "requestmetrics/not-instrumented/" + op.ID,
+		Fingerprint:     "requestmetrics/errors/" + op.ID,
 		Metadata:        map[string]any{"operation": op.ID, "route": op.Route, "method": op.Method, "service": op.Service, "reason": why},
-	}
-}
-
-// insufficientBaseline says a client-error jump was not judged for lack of
-// healthy history (a fresh install, a rarely used route). It is a clue.
-func (d *detector) insufficientBaseline(ctx sdk.DetectionContext, op Operation, minRequests float64) sdk.Finding {
-	fingerprint := "requestmetrics/insufficient-baseline/" + op.ID
-	if op.undeclared {
-		fingerprint = "requestmetrics/insufficient-baseline/undeclared/" + op.Service + "/" + op.Route
-	}
-	return sdk.Finding{
-		DetectorID: d.cfg.Spec.ID, RuleID: RuleInsufficientBaseline, Status: sdk.FindingActive, Severity: sdk.SeverityInfo,
-		Summary:         fmt.Sprintf("operation %s: insufficient baseline to judge a client-error jump", op.ID),
-		Evidence:        fmt.Sprintf("operation %s (route %q) shows client errors but has fewer than %.0f healthy requests in its baseline window, so the rise cannot be called a jump", op.ID, op.Route, minRequests),
-		PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: ctx.Namespace(), Name: op.Service},
-		Fingerprint:     fingerprint,
-		Metadata:        map[string]any{"operation": op.ID, "route": op.Route, "method": op.Method, "service": op.Service, "min_baseline_requests": minRequests},
 	}
 }
 
@@ -401,17 +429,20 @@ func (p entryPlan) perStep(op Operation, series []metrics.Series) map[time.Time]
 // healthy is the operation's healthy server and client-error shares.
 // enough is false when the baseline holds fewer than minRequests requests: the
 // shares are then zero and a client-error jump cannot be judged.
-func (p entryPlan) healthy(op Operation, series []metrics.Series, minRequests float64) (server, client float64, enough bool) {
+func (p entryPlan) healthy(op Operation, series []metrics.Series, minRequests float64) (server, client float64, enough bool, thinClient float64) {
 	var sum counts
 	for _, s := range series {
 		if v, ok := s.Last(); ok && p.matches(op, s.Labels) {
 			sum = sum.add(p.classify(s.Labels, v.Value))
 		}
 	}
-	if sum.total < minRequests || sum.total == 0 {
-		return 0, 0, false
+	if sum.total == 0 {
+		return 0, 0, false, 0
 	}
-	return sum.server / sum.total, sum.client / sum.total, true
+	if sum.total < minRequests {
+		return 0, 0, false, sum.client / sum.total
+	}
+	return sum.server / sum.total, sum.client / sum.total, true, 0
 }
 
 type verdict struct {
@@ -432,6 +463,23 @@ func (r Rule) judgeStep(c counts, class string, healthyServer, healthyClient flo
 	return v
 }
 
+// thinJump reports whether a client-error rise on a thin baseline is large
+// enough to be called anyway: at least ThinBaselineShare of the window's
+// requests failed, and MinRatio times the thin baseline's observed share.
+func (r Rule) thinJump(v verdict, thinClient float64) bool {
+	return r.ThinBaselineShare > 0 && v.failed >= r.ThinMinFailed && v.share >= r.ThinBaselineShare && v.share >= r.MinRatio*thinClient
+}
+
+// thinAll applies thinJump to every step of the consecutive run.
+func (r Rule) thinAll(steps map[time.Time]counts, run []time.Time, thinClient float64) bool {
+	for _, t := range run {
+		if !r.thinJump(r.judgeStep(steps[t], ClassClientJump, 0, 0), thinClient) {
+			return false
+		}
+	}
+	return true
+}
+
 // confirmsRecovery is a window with enough requests, none of them failed.
 func (r Rule) confirmsRecovery(c counts, healthyClient float64) bool {
 	return c.total >= r.minHealthy() && c.server == 0 && c.client-healthyClient*c.total < 1
@@ -446,15 +494,25 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 		times = append(times, t)
 	}
 	sort.Slice(times, func(i, j int) bool { return times[i].Before(times[j]) })
-	if len(times) < r.Consecutive {
+	// A finding that holds the open incident is judged against the share
+	// floor, not the baseline: an ongoing fault must never become its own
+	// healthy share, and it leaves only through confirmed recovery.
+	held := sdk.HeldFingerprints(ctx, d.cfg.Spec.ID)[errorsFingerprint(op)]
+	if len(times) < r.Consecutive && !held {
 		return sdk.Finding{}, false
 	}
-	healthyServer, healthyClient, enough := plan.healthy(op, results[plan.base.ID].Series, r.MinBaselineRequests)
+	healthyServer, healthyClient, enough, thinClient := plan.healthy(op, results[plan.base.ID].Series, r.MinBaselineRequests)
+	if held {
+		healthyServer, healthyClient, enough = 0, 0, true
+	}
 	// The newest step at which the rule held on Consecutive steps in a row.
 	var best *verdict
 	raisedAt := -1
+	// unjudged marks a client-error jump held on thin history: it is kept
+	// (a clue under the error fingerprint) rather than dropped, so an incident
+	// it opened or joined holds until recovery is confirmed.
 	unjudged := false
-	for end := len(times) - 1; end >= r.Consecutive-1 && best == nil; end-- {
+	for end := len(times) - 1; end >= r.Consecutive-1 && (best == nil || unjudged); end-- {
 		for _, class := range []string{ClassServer, ClassClientJump} {
 			held := true
 			for _, t := range times[end-r.Consecutive+1 : end+1] {
@@ -467,16 +525,36 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 				continue
 			}
 			if class == ClassClientJump && !enough {
-				unjudged = true
+				v := r.judgeStep(steps[times[end]], class, healthyServer, healthyClient)
+				if r.thinAll(steps, times[end-r.Consecutive+1:end+1], thinClient) {
+					if best == nil || unjudged || v.failed > best.failed {
+						best, raisedAt, unjudged = &v, end, false
+					}
+					continue
+				}
+				if best == nil {
+					best, raisedAt, unjudged = &v, end, true
+				}
 				continue
 			}
-			if v := r.judgeStep(steps[times[end]], class, healthyServer, healthyClient); best == nil || v.failed > best.failed {
-				best, raisedAt = &v, end
+			if v := r.judgeStep(steps[times[end]], class, healthyServer, healthyClient); best == nil || unjudged || v.failed > best.failed {
+				best, raisedAt, unjudged = &v, end, false
 			}
 		}
 	}
-	if best == nil && unjudged {
-		return d.insufficientBaseline(ctx, op, r.MinBaselineRequests), true
+	onset := time.Time{}
+	if best != nil {
+		onset = times[raisedAt]
+	}
+	heldUnconfirmed := ""
+	if best == nil && held {
+		for _, t := range times {
+			if r.confirmsRecovery(steps[t], 0) {
+				return sdk.Finding{}, false
+			}
+		}
+		best, raisedAt, onset = &verdict{class: ClassServer}, len(times)-1, recent.ObservedAt
+		heldUnconfirmed = " The incident this finding holds is open and no recent step had enough requests with none failed, so recovery is not confirmed."
 	}
 	if best == nil {
 		return sdk.Finding{}, false
@@ -502,9 +580,9 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 		method = "any"
 	}
 	window := r.Window.String()
-	fingerprint, note := "requestmetrics/errors/"+op.ID, unconfirmed
+	fingerprint, note := "requestmetrics/errors/"+op.ID, unconfirmed+heldUnconfirmed
 	meta := map[string]any{}
-	if unconfirmed != "" {
+	if unconfirmed != "" || heldUnconfirmed != "" {
 		meta["recovery_unconfirmed"] = true
 	}
 	samples := failingSamples(ctx, op, best.class)
@@ -518,11 +596,20 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 			meta["undeclared_truncated"] = op.truncated
 		}
 	}
+	rule, severity := RuleErrors, sdk.SeverityWarning
+	if unjudged {
+		rule, severity = RuleInsufficientBaseline, sdk.SeverityInfo
+		note = fmt.Sprintf(" The baseline holds fewer than %.0f healthy requests, so the rise is not called a jump: this is a clue, and it holds an incident it already belongs to until recovery is confirmed.", r.MinBaselineRequests) + note
+	}
+	summary := fmt.Sprintf("operation %s: %.0f of %.0f requests failed in %s (%s)", op.ID, best.failed, best.total, window, best.class)
+	if unjudged {
+		summary = fmt.Sprintf("operation %s: insufficient baseline to judge a client-error jump (%.0f of %.0f requests failed in %s)", op.ID, best.failed, best.total, window)
+	}
 	f := sdk.Finding{
-		DetectorID: d.cfg.Spec.ID, RuleID: RuleErrors, Status: sdk.FindingActive, Severity: sdk.SeverityWarning,
-		Summary: fmt.Sprintf("operation %s: %.0f of %.0f requests failed in %s (%s)", op.ID, best.failed, best.total, window, best.class),
+		DetectorID: d.cfg.Spec.ID, RuleID: rule, Status: sdk.FindingActive, Severity: severity,
+		Summary: summary,
 		Evidence: fmt.Sprintf("operation %s (route %q, method %s) had %.0f failed of %.0f requests over %s, %.1f%% against a healthy %.1f%% (%s), on %d consecutive %s steps; newest step at %s.",
-			op.ID, op.Route, method, best.failed, best.total, window, best.share*100, best.healthy*100, best.class, r.Consecutive, r.Step, times[raisedAt].UTC().Format(time.RFC3339)) + note + samples.text(),
+			op.ID, op.Route, method, best.failed, best.total, window, best.share*100, best.healthy*100, best.class, r.Consecutive, r.Step, onset.UTC().Format(time.RFC3339)) + note + samples.text(),
 		PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: ctx.Namespace(), Name: op.Service},
 		Playbooks:       append([]string(nil), d.cfg.Spec.Playbooks...),
 		Fingerprint:     fingerprint,
@@ -537,4 +624,13 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 		f.Metadata[k] = v
 	}
 	return f, true
+}
+
+// errorsFingerprint is the key an operation's error finding, and every clue
+// that stands in for it, carries.
+func errorsFingerprint(op Operation) string {
+	if op.undeclared {
+		return "requestmetrics/errors/undeclared/" + op.Service + "/" + op.Route
+	}
+	return "requestmetrics/errors/" + op.ID
 }

@@ -7,6 +7,10 @@ import "sdo.dev/operator/sdk"
 // clue, or a later opener waiting in the batcher for the next incident, is not
 // evidence that this repair failed. A nil scope (no open incident) holds every
 // finding.
+//
+// For probe confirmation (detectorConfirmedIn) nil judges the whole detector
+// and a non-nil scope judges only the scenarios in it: a detector with none of
+// its scenarios in the set has nothing of the incident to confirm.
 type recoveryScope map[string]struct{}
 
 func newRecoveryScope(keys []string) recoveryScope {

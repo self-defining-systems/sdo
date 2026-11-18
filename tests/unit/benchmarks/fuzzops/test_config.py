@@ -26,7 +26,15 @@ def test_a_benchmark_lane_resolves_to_the_values_benchmarks_ran_with(operator_bi
     # D2: the benchmark profile holds a condition for 60s before it opens an incident; production holds 5m.
     assert config.duration_seconds(lane["detection"]["self_heal_hold"]) == 60
     assert config.duration_seconds(production["detection"]["self_heal_hold"]) == 300
-    assert {**production, "response": lane["response"], "detection": lane["detection"]} == lane
+    # A benchmark app has no people to give journeys, so the profile does not require them; production does.
+    assert lane["onboarding"] == {"journeys_required": False}
+    assert production["onboarding"] == {"journeys_required": True}
+    assert {
+        **production,
+        "response": lane["response"],
+        "detection": lane["detection"],
+        "onboarding": lane["onboarding"],
+    } == lane
 
 
 def test_local_workers_take_the_configured_limits(operator_binary: Path) -> None:

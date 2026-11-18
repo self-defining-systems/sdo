@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sdo.dev/operator/contracts/settings"
+	"sdo.dev/operator/operatorcli/catalog/renderers"
 	"sdo.dev/operator/operatorcli/internal/processio"
 	"sdo.dev/operator/provenance"
 	"strconv"
@@ -281,7 +282,7 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 		if err != nil {
 			return exitInfra, err
 		}
-		diagnostics, err := validate.CheckAccepted(ctx, validate.Request{Telemetry: acceptedPolicy, TelemetryRegistry: telemetryRegistry(), Root: absolute, OperatorRoot: operatorRootDefault(getenv), Replay: replay, CodePath: memoryValidationCodePath(getenv)}, validate.CompileCandidate)
+		diagnostics, err := validate.CheckAccepted(ctx, validate.Request{Telemetry: acceptedPolicy, TelemetryRegistry: telemetryRegistry(), Root: absolute, OperatorRoot: operatorRootDefault(getenv), Replay: replay, CodePath: memoryValidationCodePath(getenv), PlanCatalogs: planCatalogs(), Renderers: renderers.Catalog()}, validate.CompileCandidate)
 		if err != nil {
 			return exitInfra, err
 		}
@@ -382,7 +383,7 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 	}
 	diagnostics, err := validate.Check(ctx, validate.Request{
 		Telemetry: telemetryPolicy, TelemetryRegistry: telemetryRegistry(),
-		Replay: replay, CodePath: memoryValidationCodePath(getenv), PlanCatalogs: planCatalogs(),
+		Replay: replay, CodePath: memoryValidationCodePath(getenv), PlanCatalogs: planCatalogs(), Renderers: renderers.Catalog(),
 		ObservationCeiling: ceiling, ApplicationNamespace: appNamespace,
 		MitigationReplayNotes: &replayNotes, CoverageGaps: &coverageGaps,
 		Root: absolute, Base: base, CaptureDirectory: getenv("SDO_CAPTURED_CORPUS_DIR"), IncidentID: getenv(memoryIncidentEnv), Actor: validate.Actor(actor), Phase: validate.Phase(phase), Publication: publication, Decision: decision,

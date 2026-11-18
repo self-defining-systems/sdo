@@ -299,6 +299,11 @@ func (v *checkedReadView) Read(q Query) (Observation, error) {
 	}
 	o, err := v.ReadView.Read(q)
 	v.check(err)
+	target := "probe"
+	if q.Store != nil {
+		target = podTarget(q.Store.Target.Pod, q.Store.Target.Container) + " " + q.Store.Scope.Collection
+	}
+	v.record("read", target, fmt.Sprintf("%d rows", o.Count), err)
 	return o, err
 }
 

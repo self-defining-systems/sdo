@@ -79,6 +79,7 @@ sdo-operator host --repository /path/to/application \
   --namespace my-app \
   --application my-app \
   --goal-file /path/to/health-objective.md \
+  --journeys-file /path/to/user-journeys.txt \
   --operation-id my-app-bootstrap \
   --controller-image sdo-controller:v0.1.0 \
   --responder-image sdo-responder:v0.1.0 \
@@ -89,11 +90,14 @@ sdo-operator host --repository /path/to/application \
   --model gpt-6-luna
 ```
 
+The journeys are free text from the people running the application (one per line or bullet; a single line with no newline is split at commas and semicolons: "users sign in, browse projects, push code"); `onboarding.journeys_required` (default true, see [docs/config.md](docs/config.md)) makes `host` refuse to start without them, and a `journeys:` list in the goal file's front matter works too. Set it to false to let the onboarding agent discover the journeys. The journey ids derive from the text, so re-run `host` with the same text to keep them.
+
 The full interface:
 
 ```text
 sdo-operator host --repository REPOSITORY --namespace NAMESPACE
   --application NAME (--goal TEXT | --goal-file PATH)
+  (--journeys TEXT | --journeys-file PATH)
   --operation-id ID --controller-image IMAGE --responder-image IMAGE
   --buildkit-image DIGEST_PINNED_IMAGE
   --repository-pvc PVC --credentials-secret SECRET

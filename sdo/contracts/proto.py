@@ -119,6 +119,7 @@ ScaleWorkload = program_pb2.ScaleWorkload
 Exec = program_pb2.Exec
 RestartRollout = program_pb2.RestartRollout
 ProgramRun = program_pb2.ProgramRun
+ReadStep = program_pb2.ReadStep
 PlanApplication = program_pb2.PlanApplication
 MitigationMenu = mitigation_menu_pb2.MitigationMenu
 MitigationOption = mitigation_menu_pb2.MitigationOption
@@ -156,6 +157,9 @@ TelemetrySource = messages_pb2.TelemetrySource
 IncidentRequest = messages_pb2.IncidentRequest
 RootCauseEvidence = messages_pb2.RootCauseEvidence
 ConfirmedRootCause = messages_pb2.ConfirmedRootCause
+EarlierAttempt = messages_pb2.EarlierAttempt
+IncidentFinding = messages_pb2.IncidentFinding
+AgentChange = messages_pb2.AgentChange
 AppliedPlaybook = messages_pb2.AppliedPlaybook
 VerificationEvidence = messages_pb2.VerificationEvidence
 UsageMetrics = messages_pb2.UsageMetrics
@@ -281,6 +285,9 @@ __all__ = [
     "AppliedPlaybook",
     "Binding",
     "ConfirmedRootCause",
+    "EarlierAttempt",
+    "AgentChange",
+    "IncidentFinding",
     "ControllerConfig",
     "DetectorEvaluation",
     "RecoveryVerification",
@@ -329,6 +336,7 @@ __all__ = [
     "Plan",
     "PlanApplication",
     "ProgramRun",
+    "ReadStep",
     "PlaybookCoverage",
     "PlaybookMatch",
     "ProgramSpec",

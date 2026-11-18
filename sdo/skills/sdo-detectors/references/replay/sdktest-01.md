@@ -46,6 +46,22 @@ func CheckNoMatchCase(t testing.TB, p program.Diagnoser, c CorpusCase)
     CheckNoMatchCase exercises an explicit synthetic near miss or a controller
     fixed capture labeled as observed negative evidence.
 
+func CheckPlanValid(m program.Mitigator, c CorpusCase) error
+    CheckPlanValid runs Mitigate on the case's opening state and validates
+    the plan it yields exactly as the host does before it applies one
+    (Plan.Validate: every action, including a data repair's statement and
+    bounds). A learned program then never fails on apply for a reason the check
+    could have caught. A Mitigate that cannot run on the recorded reads is not a
+    failure; planOnState says it was unverified.
+
+func CheckPlansOnIncident(m program.Mitigator, dir string) (unverified []string, err error)
+    CheckPlansOnIncident runs CheckPlanValid on the incident's own captured open
+    state: the controller's open@* snapshots in dir, with their recorded reads.
+    The closing turn's check has them before Go writes any corpus case,
+    so a brand-new program's plan is built and validated on real state.
+    A program that needs bindings the capture does not carry cannot run there,
+    which CheckPlanValid treats as unverified.
+
 func CheckRenameInvariance(t testing.TB, p program.Diagnoser, c CorpusCase)
     CheckRenameInvariance requires a diagnosis to survive a consistent rename of
     the recorded application's resources, labels, images, and ports. Namespace
@@ -208,26 +224,4 @@ func (v *RecordingReadView) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured
 
 func (v *RecordingReadView) DataChecks() (map[string]string, error)
     DataChecks records the accepted data checks the wrapped view read.
-
-func (v *RecordingReadView) DatabaseUsers(t program.DatabaseTarget) ([]program.DatabaseUser, error)
-
-func (v *RecordingReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, error)
-
-func (v *RecordingReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
-
-func (v *RecordingReadView) KubernetesRead(q program.KubernetesRequest) (json.RawMessage, error)
-
-func (v *RecordingReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error)
-
-func (v *RecordingReadView) LogsWithOptions(ref sdk.ObjectRef, options corev1.PodLogOptions) (string, error)
-
-func (v *RecordingReadView) MetricResult(id string) (metrics.Result, bool)
-
-func (v *RecordingReadView) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error)
-
-func (v *RecordingReadView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error)
-
-func (v *RecordingReadView) NodeUsage(ref sdk.ObjectRef) (*metricsv1beta1.NodeMetrics, error)
-
-func (v *RecordingReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error)
 ```

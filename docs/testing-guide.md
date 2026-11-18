@@ -268,7 +268,7 @@ Python contract tests (the full Python suite contains them), and compiles the
 operator with `go list -export` instead of linking every command.
 
 The responder's two skills (`incident-response`, `sdo-operating`) are each one `SKILL.md` of 1,024
-to 1,536 bytes, checked by `tests/unit/sdo/agents/test_skill_size.py`. `sdo-operating` lists the
+to 1,792 bytes, checked by `tests/unit/sdo/agents/test_skill_size.py`. `sdo-operating` lists the
 `sdo` commands by hand, so after changing the command surface update it and keep it under the cap.
 The responder image's cached model-tool
 layer installs `jq` and runs a JSON extraction smoke check during the build.
@@ -1083,11 +1083,20 @@ main runs always run the full suite, so `main` stays protected. `scripts/ci_sele
   are selected transitively. A file that names another file's dotted module (`-m pkg.mod`), path, or unique
   basename counts as a dependent. Tests that run the Go executables (`python_go_consumers`) rerun when a
   package in an executable's dependency closure changes, or when `go_consumer_modules` change. The
-  repository-wide guards in `python_always` run with every change except a pure Go-test change.
+  repository-wide guards (the marked tests below) run with every change.
 - Full suite instead of a selection, listed as data in `full_suite`: `go.mod`/`go.sum`/`go.work`,
   `uv.lock`, `pyproject.toml`, `.github/**`, `scripts/**`, protos and generated code, `tests/conftest.py`,
   test helpers and fixtures, lint and tach configuration, `third_party/**`, any deleted non-test file, and any
   changed file the mapping cannot attribute. A selection failure also runs everything.
+- Whole-tree guards always run. A test that scans sources outside its own package (the safefs writer
+  guard, archcheck rules, ownership ratchets, repository-wide Python scans) cannot be attributed to a changed
+  file, so it carries a mark: `//ci:whole-tree` directly above a Go `func TestX`, or a module-level
+  `CI_WHOLE_TREE = True` in a Python test file. Pull requests run marked Go tests with `-run` in the packages the
+  selection skipped (`ci_select.py go-guards`, in each Go shard that owns the package; the `gate` shard runs none).
+  `ci_select.py check-marks` (in `check_errors.sh`) fails a test file that walks a source tree
+  (`WalkDir`/`ParseDir`/`packages.Load` with a `".."` root, `os.walk`, `git ls-files`, `ROOT.rglob`) without the mark
+  or a reasoned exemption (`//ci:scoped <reason>` anywhere in a Go file, module-level `CI_SCOPED = "<reason>"` in a
+  Python file) for tests that only read fixtures or a throwaway repository. Mark a new guard when you write it.
 - Static checks (format, lint, archcheck, proto drift) always run in full. A shard with nothing selected skips
   its setup and passes. A partial run publishes no coverage data, so the combined floor is enforced on full runs.
 - Selection misses: when a merge-group or main run fails a test that the pull request's selection would have

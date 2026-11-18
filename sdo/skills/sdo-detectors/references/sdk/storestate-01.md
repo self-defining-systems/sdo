@@ -122,6 +122,10 @@ const MinJudgedCount = 10
 const NearLimit = 0.95
     NearLimit is the fraction of a cap at which use is reported.
 
+const NoBaseline = "no healthy baseline yet"
+    NoBaseline is the Error of a store Pod the view holds no usable healthy
+    baseline for: what changed in it is unknown, never "nothing".
+
 const PeerLocal = "local"
     PeerLocal is the peer of a session over the store's own socket or loopback
     address: a process inside the store's Pod.

@@ -286,20 +286,13 @@ jobs:
           done
           echo "images=${images[*]}" >> "${GITHUB_OUTPUT}"
           (IFS=,; echo "targets=${images[*]}") >> "${GITHUB_OUTPUT}"
-      - name: Build affected images with persistent layers
+      - name: Build affected images
         uses: docker/bake-action@3acf805d94d93a86cce4ca44798a76464a75b88c # v6.9.0
         with:
           source: .
           files: scripts/sdo-images.hcl
           targets: ${{ steps.image-inputs.outputs.targets }}
           load: true
-          set: |
-            controller.cache-from=type=gha,scope=sdo-controller
-            controller.cache-to=type=gha,scope=sdo-controller,mode=min
-            responder.cache-from=type=gha,scope=sdo-responder
-            responder.cache-to=type=gha,scope=sdo-responder,mode=min
-            benchmark.cache-from=type=gha,scope=sdo-benchmark
-            benchmark.cache-to=type=gha,scope=sdo-benchmark,mode=min
       - name: Smoke and probe every affected image
         env:
           SDO_IMAGES: ${{ steps.image-inputs.outputs.images }}

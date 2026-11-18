@@ -11,6 +11,8 @@ import (
 // SDO's field-manager names live only in this package. A literal elsewhere
 // could write under a name SecretDataChangedAt does not treat as SDO's own,
 // so SDO's writes would read as foreign data changes again.
+//
+//ci:whole-tree
 func TestSDOFieldManagerNamesAreDeclaredOnlyInTheSDK(t *testing.T) {
 	literals := []string{`"` + DeployerFieldManager + `"`, `"` + AcceptanceFieldManager + `"`, `"` + ReplicasHandoffFieldManager + `"`, "field-manager=sdo-", `FieldManager: "sdo-`}
 	err := filepath.WalkDir("..", func(path string, entry fs.DirEntry, err error) error {

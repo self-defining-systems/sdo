@@ -15,13 +15,12 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 SHORT_SKILLS = tuple(SKILL_BYTE_CAPS)
 
 
-def test_the_responder_reads_the_two_short_skills_the_shared_onboarding_skills_and_the_investigator_skill() -> None:
+def test_the_responder_has_the_two_short_skills_and_the_shared_onboarding_skills() -> None:
     assert AGENT_SKILLS["responder"] == (
         *SHORT_SKILLS,
         "sdo-serving",
         "sdo-observability",
         "sdo-operations-map",
-        "sdo-investigator",
     )
 
 

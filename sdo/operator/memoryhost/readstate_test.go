@@ -126,3 +126,23 @@ func TestObservationDecodesAppStateIntoTheSnapshot(t *testing.T) {
 		t.Fatalf("limit = %q", limit)
 	}
 }
+
+func TestObservationCarriesTheOpenIncidentsAlertKeysIntoTheSnapshot(t *testing.T) {
+	var snapshot sdktest.Snapshot
+	keys := []string{"request-metrics\x00requestmetrics/errors/op"}
+	if err := observe(&snapshot, &pb.MemoryObservation{HeldKeys: keys}); err != nil {
+		t.Fatal(err)
+	}
+	if held := sdk.HeldFingerprints(snapshot, "request-metrics"); !held["requestmetrics/errors/op"] {
+		t.Fatalf("held = %v", held)
+	}
+}
+
+// A reader is a health detector whose own judgement reads its result; the
+// registration must name it, or the host never carries the result to Detect.
+func TestRegistrationCarriesAReadersOwnResultToItsDetect(t *testing.T) {
+	r := registration(stateReader{id: "settings"})
+	if len(r.AppStateReaders) != 1 || r.AppStateReaders[0] != "settings" {
+		t.Fatalf("AppStateReaders = %v, want the reader's own id", r.AppStateReaders)
+	}
+}

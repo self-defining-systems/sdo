@@ -53,7 +53,7 @@ func (d ProtoOutcomeDeriver) Derive(ctx context.Context, closure IncidentClosure
 			}
 		}
 	}
-	result, err := outcome_derivation.Derive(ctx, message, repairCommit, backend, model)
+	result, err := outcome_derivation.Derive(ctx, message, repairCommit, backend, model, d.Recording)
 	if err != nil {
 		return DerivedOutcome{}, err
 	}

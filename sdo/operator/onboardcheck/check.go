@@ -69,6 +69,31 @@ type Config struct {
 	// nil skips the item.
 	Quiet *QuietConfig
 	Break *BreakConfig
+	// Harm enables probes-do-no-harm; it needs Quiet, whose window is the one
+	// with the probes running.
+	Harm *HarmConfig
+	// NoDetectors says the memory SDO would deploy holds no detector at all,
+	// so the live items have nothing to judge.
+	NoDetectors bool
+	// Quick is the fast-iteration run: the metric items and a short smoke of
+	// the detectors (each judged at least once). It runs no break item and its
+	// report is never clean.
+	Quick bool
+	// Journeys are the human-given journeys of goal.md; empty means none.
+	Journeys []appmap.GivenJourney
+	// Routes runs the map's route-list command; nil makes the routes item
+	// red (the list cannot be read).
+	Routes RouteLister
+	// Progress, when set, receives a line as the check advances.
+	Progress func(string)
+
+	phases *phaseLog
+}
+
+func (c Config) say(format string, args ...any) {
+	if c.Progress != nil {
+		c.Progress(fmt.Sprintf(format, args...))
+	}
 }
 
 // Result is one line of the report.
@@ -81,10 +106,23 @@ type Result struct {
 
 // Report is the check outcome, tagged with the commit it ran for.
 type Report struct {
-	Commit  string   `json:"commit"`
+	Commit string `json:"commit"`
+	// Mode is "full", "quick" or "incremental".
+	Mode    string   `json:"mode"`
 	Results []Result `json:"results"`
 	// Durations is how long each live item took.
 	Durations []ItemDuration `json:"durations,omitempty"`
+	// Journeys is the per-operation checklist built from the results.
+	Journeys []Journey `json:"journeys,omitempty"`
+
+	// accuracy is what the breaks showed about each journey's path.
+	accuracy map[string]*opAccuracy
+
+	// notInstrumented are the operations request-metrics reported as not
+	// instrumented while the application was healthy, by operation ID.
+	notInstrumented map[string]string
+	// foreground are the entries whose coverage the probes-paused window judges.
+	foreground []string
 }
 
 // Counts returns the number of green, red and note results.
@@ -102,19 +140,73 @@ func (r Report) Counts() (green, red, note int) {
 	return
 }
 
-// Clean is true when nothing is red.
-func (r Report) Clean() bool { _, red, _ := r.Counts(); return red == 0 }
+// Clean is true when nothing is red in a full run. A quick or incremental run
+// never is: it proves less than the gate.
+// Every journey must also be complete on mapping, errors, latency, probe,
+// detection and map.
+func (r Report) Clean() bool {
+	if r.Mode == ModeQuick || r.Mode == ModeIncremental || !r.NoRed() {
+		return false
+	}
+	for _, j := range r.Journeys {
+		if !j.Complete() {
+			return false
+		}
+	}
+	return true
+}
+
+// NoRed is true when no item and no journey cell is red, in either mode.
+func (r Report) NoRed() bool {
+	if _, red, _ := r.Counts(); red > 0 {
+		return false
+	}
+	for _, j := range r.Journeys {
+		for _, c := range append(j.cells(), j.Traces) {
+			if c.Status == Red {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// Report modes.
+const (
+	ModeFull  = "full"
+	ModeQuick = "quick"
+	// ModeIncremental is a run that reused verdicts of an earlier run for
+	// unchanged items. It is never clean: the gate is a full run (--full).
+	ModeIncremental = "incremental"
+)
 
 // Text renders the report, headed by the commit.
 func (r Report) Text() string {
 	g, red, n := r.Counts()
 	var b strings.Builder
 	fmt.Fprintf(&b, "commit %s\ncheck: green %d red %d note %d\n", r.Commit, g, red, n)
+	if r.Mode == ModeQuick {
+		verdict := "no red item"
+		if red > 0 {
+			verdict = "red items"
+		}
+		fmt.Fprintf(&b, "mode: quick (%s; a quick run is never clean, run the full check for the gate)\n", verdict)
+	} else if r.Mode == ModeIncremental {
+		fmt.Fprintf(&b, "mode: incremental (verdicts of unchanged items are reused and labelled; an incremental run is never clean, run with --full for the gate)\n")
+	} else {
+		fmt.Fprintf(&b, "mode: full\n")
+	}
 	for _, x := range r.Results {
 		fmt.Fprintf(&b, "%s %s %s: %s\n", x.Status, x.Item, x.Subject, x.Detail)
 	}
+	if len(r.Journeys) > 0 {
+		b.WriteString(journeyTable(r.Journeys))
+	}
 	for _, d := range r.Durations {
 		fmt.Fprintf(&b, "time %s %s\n", d.Item, time.Duration(d.Seconds*float64(time.Second)).Round(time.Second))
+	}
+	if len(r.Durations) > 0 {
+		fmt.Fprintf(&b, "timing: %s\n", timingSummary(r.Durations))
 	}
 	return b.String()
 }
@@ -129,6 +221,10 @@ func (c Config) validate() error {
 		return errors.New("onboardcheck: Requests must be at least 1")
 	case c.Poll <= 0 || c.Settle < 0:
 		return errors.New("onboardcheck: Poll must be positive and Settle not negative")
+	case c.Harm != nil && (c.Quiet == nil || c.Now == nil || c.Harm.MinRunning <= 0 || !c.Harm.PausedEnd.At.After(c.Harm.PausedStart.At)):
+		return errors.New("onboardcheck: probes-do-no-harm needs the quiet window, a clock, a positive MinRunning and a paused window with positive length")
+	case c.Quick && c.Break != nil:
+		return errors.New("onboardcheck: a quick run does not run fails-under-break")
 	}
 	return c.validateLive()
 }
@@ -156,6 +252,10 @@ type entryState struct {
 	routesAfter  map[string]float64
 	sent         int
 	declared     map[string]bool
+	// attributed are the background classes an operation triggers or a reason
+	// excludes: declared routes of operations entering at a job metric are not
+	// attribution, since nothing says which operation causes that work.
+	attributed   map[string]bool
 	hasDrivenOps bool
 }
 
@@ -197,13 +297,123 @@ func keys(m map[string]float64) string {
 	return strings.Join(out, ", ")
 }
 
-// Run sends known traffic and checks the metric items. An error means the
-// check could not run (a failed query), not that an item is red.
+// Run sends known traffic and checks the metric items; the quiet-when-healthy
+// item observes meanwhile (its sample window is much longer than the traffic).
+// An error means the check could not run (a failed query), not that an item is
+// red.
 func Run(ctx context.Context, cfg Config) (Report, error) {
 	if err := cfg.validate(); err != nil {
 		return Report{}, err
 	}
-	report := Report{Commit: cfg.Commit}
+	report, err := runChecks(ctx, cfg)
+	if err != nil {
+		return Report{}, err
+	}
+	judgeRoutes(ctx, cfg, &report)
+	judgeGivenJourneys(cfg, &report)
+	finalize(cfg, &report)
+	return report, nil
+}
+
+func runChecks(ctx context.Context, cfg Config) (Report, error) {
+	cfg.phases = &phaseLog{}
+	report := Report{Commit: cfg.Commit, Mode: ModeFull}
+	if cfg.Quick {
+		report.Mode = ModeQuick
+	}
+	var quiet Report
+	var quietRed bool
+	quietDone := make(chan struct{})
+	qctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if cfg.Quiet != nil && !cfg.NoDetectors {
+		go func() {
+			defer close(quietDone)
+			start := cfg.Now()
+			quietRed = runQuiet(qctx, cfg, &quiet)
+			quiet.Durations = append(quiet.Durations, ItemDuration{Item: ItemQuiet, Seconds: cfg.Now().Sub(start).Seconds()})
+		}()
+	} else {
+		close(quietDone)
+	}
+	cfg.say("metric items: sending %d requests per operation", cfg.Requests)
+	var metricsStart time.Time
+	if cfg.Now != nil {
+		metricsStart = cfg.Now()
+	}
+	err := runMetrics(ctx, cfg, &report)
+	if cfg.Now != nil && err == nil {
+		report.Durations = append(report.Durations, ItemDuration{Item: PhaseMetrics, Seconds: cfg.Now().Sub(metricsStart).Seconds()})
+	}
+	if err != nil {
+		cancel()
+		<-quietDone
+		return Report{}, err
+	}
+	cfg.say("metric items done: %d results", len(report.Results))
+	var harmStart HarmSample
+	harmOn := cfg.Harm != nil && cfg.Quiet != nil && !cfg.NoDetectors
+	if harmOn {
+		// The probes have been running since the check began; the window that
+		// counts starts now, after the traffic SDO sent.
+		if harmStart, err = SampleHarm(ctx, cfg.Prom, cfg.Map, cfg.Now()); err != nil {
+			cancel()
+			<-quietDone
+			return Report{}, err
+		}
+	}
+	<-quietDone
+	if harmOn {
+		if wait := cfg.Harm.MinRunning - cfg.Now().Sub(harmStart.At); wait > 0 {
+			cfg.say("probes-do-no-harm: waiting %s for a long enough window with the probes running", wait.Round(time.Second))
+			if err := cfg.Wait(ctx, wait); err != nil {
+				return Report{}, err
+			}
+		}
+		harmEnd, herr := SampleHarm(ctx, cfg.Prom, cfg.Map, cfg.Now())
+		if herr != nil {
+			return Report{}, herr
+		}
+		report.Results = append(report.Results, judgeHarm(cfg.Map, *cfg.Harm, harmStart, harmEnd)...)
+	}
+	if cfg.Harm != nil {
+		report.Results = append(report.Results, judgePausedCoverage(cfg.Map, report.foreground, *cfg.Harm)...)
+	}
+	if quiet.Mode == ModeIncremental && report.Mode == ModeFull {
+		report.Mode = ModeIncremental
+	}
+	report.Results = append(report.Results, quiet.Results...)
+	report.Durations = append(report.Durations, quiet.Durations...)
+	for id, line := range quiet.notInstrumented {
+		if report.notInstrumented == nil {
+			report.notInstrumented = map[string]string{}
+		}
+		report.notInstrumented[id] = line
+	}
+	if cfg.NoDetectors {
+		report.add(ItemQuiet, "detectors", Red, "SDO: no detectors were evaluated: the memory SDO would deploy holds none, so silence here proves nothing; author health detectors or traffic workloads")
+		if cfg.Break != nil {
+			report.add(ItemBreak, "all", Red, "SDO: not run: no detectors were evaluated")
+		}
+		return report, nil
+	}
+	if cfg.Break != nil {
+		if quietRed {
+			// The breaks are independent evidence: only a raise that was not
+			// standing before the break counts, so a noisy quiet item does not
+			// hide whether a break gets named.
+			report.add(ItemBreak, "all", Note, "ran although quiet-when-healthy is red: standing raises are ignored and only raises that appear after a break count")
+		}
+		start := cfg.Now()
+		runBreak(ctx, cfg, &report)
+		report.Durations = append(report.Durations, ItemDuration{Item: ItemBreak, Seconds: cfg.Now().Sub(start).Seconds()})
+		report.Durations = append(report.Durations, cfg.phases.durations()...)
+	}
+	report.applyNotInstrumented(cfg.Map)
+	return report, nil
+}
+
+func runMetrics(ctx context.Context, cfg Config, report *Report) error {
 	add := func(item, subject, status, detail string) {
 		report.Results = append(report.Results, Result{Item: item, Subject: subject, Status: status, Detail: detail})
 	}
@@ -236,29 +446,51 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		duplicate[key] = append(duplicate[key], op.ID)
 		es := entries[entry.Service]
 		if es == nil {
-			es = &entryState{entry: entry, declared: map[string]bool{}}
+			es = &entryState{entry: entry, declared: map[string]bool{}, attributed: map[string]bool{}}
 			entries[entry.Service] = es
 		}
 		es.declared[st.route] = true
+	}
+
+	// Job metrics are judged for the classes the operations trigger even when
+	// no operation enters through them.
+	for _, e := range cfg.Map.Entries {
+		if _, ok := entries[e.Service]; !ok && backgroundMetric.MatchString(e.Metric) && e.Labels.Route != "" {
+			entries[e.Service] = &entryState{entry: e, declared: map[string]bool{}, attributed: map[string]bool{}}
+		}
+	}
+	for _, es := range entries {
+		for _, op := range cfg.Map.Operations {
+			for _, class := range op.Triggers {
+				es.declared[class] = true
+				es.attributed[class] = true
+			}
+		}
+		for _, r := range cfg.Map.Reasons {
+			if r.Item == ItemBackground {
+				es.declared[r.Subject] = true
+				es.attributed[r.Subject] = true
+			}
+		}
 	}
 
 	// Baseline.
 	for _, st := range ops {
 		series, err := query(st.entry.RequestCount(st.route, st.method))
 		if err != nil {
-			return Report{}, err
+			return err
 		}
 		st.before, _ = scalar(series)
 	}
 	for _, es := range entries {
 		all, err := query(es.entry.All())
 		if err != nil {
-			return Report{}, err
+			return err
 		}
 		es.allBefore, _ = scalar(all)
 		routes, err := query(es.entry.ByRoute())
 		if err != nil {
-			return Report{}, err
+			return err
 		}
 		es.routesBefore = byLabel(routes, es.entry.Labels.Route)
 	}
@@ -302,19 +534,19 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	}
 	for waited := time.Duration(0); ; waited += cfg.Poll {
 		if err := read(); err != nil {
-			return Report{}, err
+			return err
 		}
 		if settled() || waited >= cfg.Settle {
 			break
 		}
 		if err := cfg.Wait(ctx, cfg.Poll); err != nil {
-			return Report{}, err
+			return err
 		}
 	}
 	for _, es := range entries {
 		routes, err := query(es.entry.ByRoute())
 		if err != nil {
-			return Report{}, err
+			return err
 		}
 		es.routesAfter = byLabel(routes, es.entry.Labels.Route)
 	}
@@ -322,7 +554,7 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		if st.entry.Labels.Status != "" {
 			series, err := query(st.entry.ByStatus(st.route, st.method))
 			if err != nil {
-				return Report{}, err
+				return err
 			}
 			st.statusSeries = series
 			_, st.errorsErr = cfg.Prom.Query(ctx, st.entry.ErrorCount(st.route, st.method))
@@ -372,9 +604,21 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 			result(ItemErrorsSeparable, st.op.ID, Red, "error series does not evaluate: "+st.errorsErr.Error())
 		case len(byLabel(st.statusSeries, st.entry.Labels.Status)) == 0:
 			result(ItemErrorsSeparable, st.op.ID, Red, fmt.Sprintf("no series with a %s label carries %s=%q; errors are not separable per operation (route values on the metric: %s)", st.entry.Labels.Status, st.entry.Labels.Route, st.route, keys(es.routesAfter)))
+		case errorClasses(st.entry.Errors, mapKeys(byLabel(st.statusSeries, st.entry.Labels.Status))) != "":
+			result(ItemErrorsSeparable, st.op.ID, Red, errorClasses(st.entry.Errors, mapKeys(byLabel(st.statusSeries, st.entry.Labels.Status))))
 		default:
 			result(ItemErrorsSeparable, st.op.ID, Green, "status series carry this route: "+keys(byLabel(st.statusSeries, st.entry.Labels.Status)))
 		}
+	}
+
+	journeyRed := map[string]bool{}
+	for _, r := range report.Results {
+		if r.Item == ItemJourneys && r.Status == Red {
+			journeyRed[r.Subject] = true
+		}
+	}
+	if err := runObserved(ctx, cfg, report, ops, entries, journeyRed); err != nil {
+		return err
 	}
 
 	var services []string
@@ -410,12 +654,11 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 			continue
 		}
 		es := entries[name]
-		if !(es.allAfter-es.allBefore < float64(es.sent)) && !hasRed(report, ItemRoutes, name) {
+		if !(es.allAfter-es.allBefore < float64(es.sent)) && !hasRed(*report, ItemRoutes, name) {
 			result(ItemRoutes, name, Green, fmt.Sprintf("entry metric rose by %.0f for %d sent; every moved route is declared", es.allAfter-es.allBefore, es.sent))
 		}
 	}
-	runLive(ctx, cfg, &report)
-	return report, nil
+	return nil
 }
 
 func hasRed(r Report, item, subject string) bool {
@@ -425,4 +668,13 @@ func hasRed(r Report, item, subject string) bool {
 		}
 	}
 	return false
+}
+
+func mapKeys(m map[string]float64) []string {
+	var out []string
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

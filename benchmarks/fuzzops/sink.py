@@ -13,18 +13,20 @@ incident directory with a ``ledger.json`` must hold at least one, unless the led
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
+import zlib
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 
 LAYOUT_SCHEMA = "sdo.evidence/v1"
 LAYOUT_FILE = "layout.json"
@@ -38,6 +40,9 @@ TASKS = "lifecycle"
 #: Reflection failures that end the task before any agent turn starts.
 _PRE_START_FAILURES = frozenset({"session_unavailable", "session_handoff_invalid", "request_too_large"})
 _FRACTION = re.compile(r"(\.\d{6})\d+")
+#: An investigator's session ID is ``<incident id>-inv-<n>`` (``investigatorID`` in the operator's runtime); its
+#: trailing number is an index, never a detection time.
+_INVESTIGATOR_SUFFIX = re.compile(r"-inv-\d+$")
 
 
 class SinkError(RuntimeError):
@@ -70,14 +75,34 @@ def pull_mode(env: Mapping[str, str]) -> bool:
     return env.get("BENCH_EVIDENCE_MODE", "") == "pull"
 
 
-def claim_manifest(control: str) -> dict[str, Any]:
-    """The PersistentVolumeClaim that holds the sink of a pull-mode lane."""
+def claim_manifest(control: str, node: str = "") -> dict[str, Any]:
+    """The PersistentVolumeClaim that holds the sink of a pull-mode lane, bound on ``node`` when one is given."""
+    metadata: dict[str, Any] = {"name": EVIDENCE_CLAIM, "namespace": control}
+    if node:
+        metadata["annotations"] = {"volume.kubernetes.io/selected-node": node}
     return {
         "apiVersion": "v1",
         "kind": "PersistentVolumeClaim",
-        "metadata": {"name": EVIDENCE_CLAIM, "namespace": control},
+        "metadata": metadata,
         "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": EVIDENCE_CLAIM_SIZE}}},
     }
+
+
+def volume_node(nodes: Mapping[str, Any], lane: str) -> str:
+    """The node a lane's node-local volumes live on: one Ready, schedulable node of ``kubectl get nodes -o json``,
+    chosen by the lane's name so that lanes spread over the nodes and a lane's choice never changes. All claims of an
+    operator that mounts several (repository, evidence) must sit on one node, or its pod cannot be scheduled."""
+    ready = sorted(
+        item["metadata"]["name"]
+        for item in nodes.get("items", [])
+        if not item.get("spec", {}).get("unschedulable")
+        and any(
+            c.get("type") == "Ready" and c.get("status") == "True" for c in item.get("status", {}).get("conditions", [])
+        )
+    )
+    if not ready:
+        raise SinkError("no schedulable Ready node for the lane's volumes")
+    return ready[zlib.crc32(lane.encode()) % len(ready)]
 
 
 def puller_manifest(control: str, name: str) -> dict[str, Any]:
@@ -106,6 +131,63 @@ def puller_manifest(control: str, name: str) -> dict[str, Any]:
             "volumes": [{"name": "sink", "persistentVolumeClaim": {"claimName": EVIDENCE_CLAIM, "readOnly": True}}],
         },
     }
+
+
+def pusher_manifest(control: str, name: str) -> dict[str, Any]:
+    """A throwaway pod that mounts the sink claim writable (restricted pod security compatible)."""
+    manifest = puller_manifest(control, name)
+    container = manifest["spec"]["containers"][0]
+    container["volumeMounts"] = [{"name": "sink", "mountPath": "/sink"}]
+    manifest["spec"]["volumes"] = [{"name": "sink", "persistentVolumeClaim": {"claimName": EVIDENCE_CLAIM}}]
+    return manifest
+
+
+def push_paths(
+    kube_cmd: Callable[..., list[str]], control: str, root: Path, paths: Sequence[str], wipe: Sequence[str] = ()
+) -> None:
+    """Unpack ``paths`` (relative to ``root``) into the lane's evidence claim, after emptying the ``wipe`` directories.
+
+    A directory is emptied in place, never removed: a pod that already mounts it by subPath keeps seeing it. The
+    claim is node-local, so the pod lands on the node the claim is bound to (or binds it). Raises ``SinkError``."""
+    name = f"claim-push-{os.getpid()}"
+
+    def kube(*args: str, **kw: Any) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.run(kube_cmd("-n", control, *args), capture_output=True, check=False, **kw)
+
+    try:
+        created = subprocess.run(
+            kube_cmd("apply", "-f", "-"),
+            input=json.dumps(pusher_manifest(control, name)).encode(),
+            capture_output=True,
+            check=False,
+            timeout=120,
+        )
+        if created.returncode != 0:
+            raise SinkError(f"claim push pod: {created.stderr.decode()[-200:].strip()}")
+        ready = kube("wait", f"pod/{name}", "--for=condition=Ready", f"--timeout={PULL_READY_TIMEOUT}", timeout=240)
+        if ready.returncode != 0:
+            raise SinkError(f"claim push pod not ready: {ready.stderr.decode()[-200:].strip()}")
+        script = "set -e; " + "; ".join(f"mkdir -p /sink/{d}; find /sink/{d} -mindepth 1 -delete" for d in wipe)
+        if wipe:
+            emptied = kube("exec", name, "-c", "pull", "--", "sh", "-c", script, timeout=300)
+            if emptied.returncode != 0:
+                raise SinkError(f"claim push of {', '.join(paths)}: {emptied.stderr.decode()[-200:].strip()}")
+        packed = subprocess.Popen(["tar", "-C", str(root), "-cf", "-", *paths], stdout=subprocess.PIPE)
+        unpacked = subprocess.run(
+            kube_cmd("-n", control, "exec", "-i", name, "-c", "pull", "--", "tar", "-C", "/sink", "-xf", "-"),
+            stdin=packed.stdout,
+            capture_output=True,
+            check=False,
+            timeout=1200,
+        )
+        assert packed.stdout is not None
+        packed.stdout.close()
+        if packed.wait() != 0 or unpacked.returncode != 0:
+            raise SinkError(
+                f"claim push of {', '.join(paths)}: {unpacked.stderr.decode()[-200:].strip() or 'tar failed'}"
+            )
+    finally:
+        kube("delete", "pod", name, "--ignore-not-found", "--wait=false", "--grace-period=0", "--force", timeout=120)
 
 
 def pull_run_dir(env: Mapping[str, str], kube_cmd: Callable[..., list[str]], control: str) -> None:
@@ -211,11 +293,22 @@ def _used(usage: Any) -> bool:
     return any(_number(_get(usage, n)) > 0 for n in names)
 
 
+#: ``no_change_reason`` values Go sets without starting a closing turn (``runtime/closing_turn.go``
+#: ``closingSkipReason``, ``runtime/native_broker.go`` covered-repeat shortcut and ``no_session``). Such a decision
+#: with no usage is a skipped turn: no session, no ``reflection-usage.jsonl``, a ``reflection_without_commit`` stamp a
+#: fraction of a second after the dispatch stamp.
+_TURN_SKIPPED = frozenset(
+    {"closing_turn_nothing_to_script", "escalated_no_learning", "accepted_programs_no_new_evidence", "no_session"}
+)
+
+
 def _reflection_ran(decision: Any) -> bool:
     if not isinstance(decision, dict) or not decision:
         return False
     if _used(_get(decision, "usage")):
         return True
+    if _get(decision, "no_change_reason") in _TURN_SKIPPED:
+        return False
     failure = str(_get(decision, "failure_reason") or "")
     # A completed reflection dispatch with no usage and no pre-start failure may still have run a turn.
     return failure not in _PRE_START_FAILURES
@@ -248,11 +341,25 @@ def agents_ran(ledger: Mapping[str, Any]) -> bool:
             return True
         if _number(_get(outcome, "response_loops_used")) > 0:
             return True
-    if _get(ledger, "reflection_dispatch_at"):
+    decisions = [_get(ledger, "reflection_decision"), *(_get(ledger, "reflection_results") or [])]
+    if _get(ledger, "reflection_dispatch_at") and not _only_skipped_turns(decisions):
         return True
     phase = _get(ledger, "reflection_phase")
     if phase in ("REFLECTION_PHASE_DISPATCH", 2):
         return True
+    return any(_reflection_ran(d) for d in decisions)
+
+
+def _only_skipped_turns(decisions: list[Any]) -> bool:
+    """Whether every recorded closing decision is one Go made without a turn (and at least one exists)."""
+    recorded = [d for d in decisions if isinstance(d, dict) and d]
+    return bool(recorded) and all(
+        not _used(_get(d, "usage")) and _get(d, "no_change_reason") in _TURN_SKIPPED for d in recorded
+    )
+
+
+def closing_turn_ran(ledger: Mapping[str, Any]) -> bool:
+    """Whether a closing (reflection) agent turn ran for this ledger, as opposed to Go deciding without one."""
     decisions = [_get(ledger, "reflection_decision"), *(_get(ledger, "reflection_results") or [])]
     return any(_reflection_ran(d) for d in decisions)
 
@@ -380,6 +487,44 @@ def _newest_mtime(directory: Path) -> datetime | None:
     return datetime.fromtimestamp(max(stamps), UTC) if stamps else None
 
 
+def incident_dir_name(incident_id: str) -> str:
+    """The sink directory of an incident or investigator session: ``sha256(incident_id)[:32]``."""
+    return hashlib.sha256(incident_id.encode()).hexdigest()[:32]
+
+
+def parent_incident_id(incident_id: str) -> str:
+    """The incident an investigator session works for: ``incident_id`` without its ``-inv-<n>`` suffix; any other ID
+    unchanged."""
+    return _INVESTIGATOR_SUFFIX.sub("", incident_id)
+
+
+def incident_identity(directory: Path) -> str:
+    """The incident ID recorded in a ledger-less incident directory (``incident.json``); empty when unknown."""
+    return str(_get(_read_json(directory / IDENTITY_FILE), "incident_id") or "")
+
+
+def is_investigator_dir(directory: Path) -> bool:
+    """Whether an incident directory is an investigator's own session (``<incident>-inv-<n>``), not an incident."""
+    return bool(_INVESTIGATOR_SUFFIX.search(incident_identity(directory)))
+
+
+def incident_detected_at(directory: Path) -> datetime | None:
+    """When the incident was detected, from its ID (``<namespace>-<unix nanoseconds>``); for a ledger-less directory.
+    An investigator directory takes its parent incident's time."""
+    suffix = parent_incident_id(incident_identity(directory)).rsplit("-", 1)[-1]
+    return datetime.fromtimestamp(int(suffix) / 1e9, UTC) if suffix.isdigit() else None
+
+
+def leftover(directory: Path, records: list[dict[str, Any]], start: datetime | None) -> bool:
+    """Whether an incident directory is only the late writes of an incident from before ``start`` (an earlier cell's):
+    no ledger, no sink index record, detected before the interval. The ready gate needs the operator idle before every
+    inject, so nothing detected earlier is open at ``start`` and the directory belongs to the earlier cell."""
+    if start is None or records or (directory / LEDGER_FILE).is_file():
+        return False
+    detected = incident_detected_at(directory)
+    return detected is not None and detected < start
+
+
 def _within(at: datetime | None, start: datetime, end: datetime) -> bool:
     return at is not None and start <= at <= end
 
@@ -411,6 +556,8 @@ def incident_in_interval(
         times += [parse_time(record.get(k)) for k in ("detected_at", "verified_at", "acknowledged_at", "sealed_at")]
     if any(_within(t, lo, hi) for t in times):
         return True
+    if leftover(directory, records, start):
+        return False
     if detected is not None:
         # Open during the interval: detected before its end and not acknowledged before its start.
         return detected <= hi and (acknowledged is None or acknowledged >= lo)
@@ -468,9 +615,19 @@ def copy_interval(run_dir: Path, dest: Path, start: datetime | None, end: dateti
     shutil.copy2(run_dir / LAYOUT_FILE, dest / LAYOUT_FILE)
     copied: set[str] = set()
     incidents = []
-    for directory in incident_dirs(run_dir):
+    directories = incident_dirs(run_dir)
+    in_interval: dict[str, bool] = {}
+    # Incidents first: an investigator directory follows its parent's membership (when the parent is in the sink).
+    for directory in sorted(directories, key=is_investigator_dir):
         rel = f"{INCIDENTS}/{directory.name}"
-        if incident_in_interval(directory, by_path.get(rel, []), start, end):
+        parent = incident_dir_name(parent_incident_id(incident_identity(directory)))
+        if is_investigator_dir(directory) and parent in in_interval:
+            in_interval[directory.name] = in_interval[parent]
+        else:
+            in_interval[directory.name] = incident_in_interval(directory, by_path.get(rel, []), start, end)
+    for directory in directories:
+        rel = f"{INCIDENTS}/{directory.name}"
+        if in_interval[directory.name]:
             _copy_tree(directory, dest / rel)
             copied.add(rel)
             incidents.append(incident_coverage(dest / rel))

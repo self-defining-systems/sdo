@@ -8,7 +8,8 @@ import (
 	"sdo.dev/operator/contracts/settings"
 )
 
-// testModelConfig is a --config file that sets only the required model, and the package's mounted configuration is
+// testModelConfig is a --config file that sets only the required model and turns the journeys requirement off
+// (tests of the requirement switch it back on), and the package's mounted configuration is
 // the defaults with that model: the operate and controller parsers read it as the installed Jobs read sdo-config.
 var testModelConfig string
 
@@ -18,7 +19,7 @@ func init() {
 		panic(err)
 	}
 	testModelConfig = filepath.Join(directory, "model.yaml")
-	if err := os.WriteFile(testModelConfig, []byte("agent:\n  model: m\n"), 0o600); err != nil {
+	if err := os.WriteFile(testModelConfig, []byte("agent:\n  model: m\nonboarding:\n  journeys_required: false\n"), 0o600); err != nil {
 		panic(err)
 	}
 	mountedSettings = writeTestSettings(directory, nil)
@@ -27,6 +28,7 @@ func init() {
 func writeTestSettings(directory string, mutate func(*settings.Config)) string {
 	cfg := settings.Default()
 	cfg.Agent.Model = "m"
+	cfg.Onboarding.JourneysRequired = false
 	if mutate != nil {
 		mutate(&cfg)
 	}

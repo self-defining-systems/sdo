@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -14,9 +15,10 @@ from sdo.agents.prompt_templates import RenderedPrompt, named_prompt, render_pro
 from sdo.agents.prompt_templates import run_agent_turn as run_structured_turn
 from sdo.agents.provider import MODEL_ENV, agent_effort, resolve_agent
 from sdo.agents.replay import selected_skills_root
+from sdo.agents.responder import page_only
 from sdo.agents.responder.credentials import SKILLS_ROOT
-from sdo.agents.responder.incident_opening import symptom
-from sdo.agents.responder.result_output import parse_incident_result
+from sdo.agents.responder.incident_opening import earlier_attempts_block, symptom, unmatched_playbooks_block
+from sdo.agents.responder.result_output import parse_incident_result, with_worker_facts
 from sdo.agents.responder.session_recovery import SessionRecoveryError, open_recovery
 from sdo.agents.responder.session_turn import (
     WrongBranchError,
@@ -74,7 +76,8 @@ def execute_incident(
             model, effort = model or os.getenv(MODEL_ENV["responder"]) or None, agent_effort()
     except ValueError as exc:
         raise ResponderExecutionError(str(exc)) from exc
-    prompt = _responder_prompt(request)
+    plain = page_only.enabled()
+    prompt = page_only.prompt(request, branch_instruction("incident_result")) if plain else _responder_prompt(request)
     try:
         recovery = open_recovery(request.incident_id, selected_provider)
         resume_session_id = recovery.resume_session_id() if recovery is not None else None
@@ -83,9 +86,18 @@ def execute_incident(
     if recovery is not None:
         prompt += recovery.recovered_prompt()
     corrected_result = False
+    started = datetime.now(UTC)
     usage: dict[str, int | float] = {}
     options = session_turn_options(selected_provider, Path(request.repository_worktree))
-    options["environment"] = {**(options.get("environment") or {}), "SDO_INCIDENT_ID": request.incident_id}
+    working_directory = request.repository_worktree
+    if plain:
+        working_directory = str(page_only.scratch_directory())
+        options["environment"] = {
+            **(options.get("environment") or {}),
+            "PATH": page_only.path_without_sdo(os.environ.get("PATH", ""), Path(working_directory) / ".bin"),
+        }
+    else:
+        options["environment"] = {**(options.get("environment") or {}), "SDO_INCIDENT_ID": request.incident_id}
     while True:
         checkpoint_directory = os.environ.get("SDO_RESPONDER_USAGE_DIR", "")
         checkpoint = (
@@ -102,7 +114,7 @@ def execute_incident(
             completed = run_structured_turn(
                 selected_provider,  # type: ignore[arg-type]
                 prompt,
-                cwd=request.repository_worktree,
+                cwd=working_directory,
                 access="danger-full-access",
                 model=model,
                 reasoning_effort=effort,
@@ -121,7 +133,9 @@ def execute_incident(
             usage[name] = usage.get(name, 0) + value
         try:
             result = parse_incident_result(
-                unwrap_branch(completed.output_json, "incident_result"),
+                with_worker_facts(
+                    unwrap_branch(completed.output_json, "incident_result"), request.incident_id, started
+                ),
                 usage,
                 incident_id=request.incident_id,
             )
@@ -160,6 +174,14 @@ def execute_incident(
 _MODEL_OMITS: dict[str, tuple[str, ...]] = {
     "sdodev.contracts.v1alpha1.IncidentResult": (
         "schema_version",
+        "incident_id",
+        "status",
+        "timing",
+        "confirmed_root_causes",
+        "applied_playbooks",
+        "repair_changes",
+        "verification_evidence",
+        "drift_events",
         "proposed_artifact_ids",
         "usage",
         "responder_session_id",
@@ -167,12 +189,11 @@ _MODEL_OMITS: dict[str, tuple[str, ...]] = {
         "error",
         "repair_actions",
     ),
-    "sdodev.contracts.v1alpha1.AppliedPlaybook": ("parameter_bindings", "script_names"),
 }
 
 
 def _incident_result_schema() -> dict[str, object]:
-    """The model-facing schema of ``IncidentResult``, generated from the proto the Go loader reads."""
+    """The model-facing schema of ``IncidentResult``: the findings and the changes; the worker fills the rest."""
 
     return model_output_schema(IncidentResult.DESCRIPTOR, omit=_MODEL_OMITS)
 
@@ -194,7 +215,7 @@ def _responder_prompt(request: IncidentRequest) -> RenderedPrompt:
         part="responder.instructions",
         incident_id=request.incident_id,
         namespace=request.namespace,
-        symptom=symptom(request),
+        symptom=symptom(request) + earlier_attempts_block(request) + unmatched_playbooks_block(request),
         recent_changes=recent_changes_block(request),
         skills_root=selected_skills_root(SKILLS_ROOT),
         branch_instruction=branch_instruction("incident_result"),

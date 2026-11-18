@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from datetime import UTC, datetime
@@ -285,3 +286,189 @@ def test_pull_run_dir_reports_a_missing_run_directory_and_still_removes_its_pod(
     with pytest.raises(sink.SinkError, match="evidence pull"):
         sink.pull_run_dir(env, lambda *a: ["kubectl", *a], "ns-sdo")
     assert "delete pod" in log.read_text().splitlines()[-1]
+
+
+# ---- pushing a tree into the evidence claim (dev mount without a node directory) -------------------------------
+
+
+def test_the_push_pod_mounts_the_claim_writable_and_fits_the_restricted_level() -> None:
+    pod = sink.pusher_manifest("ns-sdo", "p")["spec"]
+    assert pod["securityContext"]["runAsNonRoot"] is True
+    mount = pod["containers"][0]["volumeMounts"][0]
+    assert mount["mountPath"] == "/sink"
+    assert not mount.get("readOnly")
+    assert pod["volumes"][0]["persistentVolumeClaim"] == {"claimName": sink.EVIDENCE_CLAIM}
+    assert "hostPath" not in json.dumps(pod)
+
+
+def _fake_pushing_kubectl(tmp: Path, monkeypatch: pytest.MonkeyPatch, landing: Path) -> Path:
+    """A kubectl that logs its calls and unpacks the stdin of ``exec ... tar -xf`` into ``landing``."""
+    log = tmp / "kubectl.log"
+    script = tmp / "bin" / "kubectl"
+    script.parent.mkdir()
+    script.write_text(
+        '#!/bin/sh\necho "$*" >> "$CALLS"\n'
+        'case "$*" in *" -xf "*) exec tar -C "$LANDING" -xf - ;; esac\n'
+        "cat >/dev/null 2>&1 </dev/null\nexit 0\n"
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{script.parent}:{os.environ['PATH']}")
+    monkeypatch.setenv("CALLS", str(log))
+    monkeypatch.setenv("LANDING", str(landing))
+    return log
+
+
+def test_push_paths_empties_the_wiped_directories_in_place_unpacks_the_tree_and_removes_its_pod(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "stage"
+    (root / ".dev" / "sdo").mkdir(parents=True)
+    (root / ".dev" / "sdo" / "a.py").write_text("x")
+    landing = tmp_path / "claim"
+    landing.mkdir()
+    log = _fake_pushing_kubectl(tmp_path, monkeypatch, landing)
+    sink.push_paths(lambda *a: ["kubectl", *a], "ns-sdo", root, [".dev"], wipe=[".dev/sdo"])
+    assert (landing / ".dev" / "sdo" / "a.py").read_text() == "x"
+    calls = log.read_text().splitlines()
+    wipe = next(c for c in calls if "find" in c)
+    assert "-mindepth 1 -delete" in wipe  # emptied, not removed: running pods keep their mount
+    assert "/sink/.dev/sdo" in wipe
+    assert "delete pod" in calls[-1]
+    assert "--ignore-not-found" in calls[-1]
+
+
+def test_push_paths_reports_a_failed_unpack_and_still_removes_its_pod(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "stage"
+    root.mkdir()
+    log = _fake_pushing_kubectl(tmp_path, monkeypatch, tmp_path / "missing")
+    with pytest.raises(sink.SinkError, match="push"):
+        sink.push_paths(lambda *a: ["kubectl", *a], "ns-sdo", root, ["."])
+    assert "delete pod" in log.read_text().splitlines()[-1]
+
+
+def test_the_evidence_claim_names_the_lane_volume_node_when_given() -> None:
+    assert "annotations" not in sink.claim_manifest("ns-sdo")["metadata"]
+    claim = sink.claim_manifest("ns-sdo", node="n2")
+    assert claim["metadata"]["annotations"] == {"volume.kubernetes.io/selected-node": "n2"}
+
+
+def test_volume_node_is_one_schedulable_ready_node_and_stable_per_lane() -> None:
+    nodes = {
+        "items": [
+            {
+                "metadata": {"name": name},
+                "spec": {"unschedulable": cordoned},
+                "status": {"conditions": [{"type": "Ready", "status": ready}]},
+            }
+            for name, cordoned, ready in (
+                ("a", False, "True"),
+                ("b", True, "True"),
+                ("c", False, "False"),
+                ("d", False, "True"),
+            )
+        ]
+    }
+    picked = {sink.volume_node(nodes, f"lane{i}") for i in range(20)}
+    assert picked == {"a", "d"}
+    assert sink.volume_node(nodes, "lane3") == sink.volume_node(nodes, "lane3")
+    with pytest.raises(sink.SinkError, match="no schedulable"):
+        sink.volume_node({"items": []}, "lane1")
+
+
+def test_a_closing_turn_go_skipped_is_not_an_agent_run() -> None:
+    ledger = {
+        "closure": {"result": {"resolution_path": "deterministic"}},
+        "outcome_document": {"resolution_path": "deterministic", "usage": {}},
+        "reflection_dispatch_at": "2026-01-01T00:00:00Z",
+        "reflection_phase": "REFLECTION_PHASE_DONE",
+        "reflection_decision": {
+            "learning_decision": "no_change",
+            "no_change_reason": "accepted_programs_no_new_evidence",
+        },
+        "reflection_results": [
+            {"learning_decision": "no_change", "no_change_reason": "closing_turn_nothing_to_script"}
+        ],
+    }
+    assert not sink.agents_ran(ledger)
+    assert not sink.closing_turn_ran(ledger)
+    ledger["reflection_results"] = [{"learning_decision": "updated", "usage": {"llm_calls": "3"}}]
+    assert sink.agents_ran(ledger)
+    assert sink.closing_turn_ran(ledger)
+
+
+def test_a_responder_less_close_with_no_session_is_not_an_agent_run() -> None:
+    ledger = {
+        "closure": {"result": {"resolution_path": "deterministic"}},
+        "outcome_document": {"resolution_path": "deterministic", "usage": {}},
+        "reflection_dispatch_at": "2026-01-01T00:00:00Z",
+        "reflection_results": [{"learning_decision": "no_change", "no_change_reason": "no_session"}],
+    }
+    assert not sink.agents_ran(ledger)
+
+
+def _identity(directory: Path, incident_id: str) -> None:
+    (directory / "incident.json").write_text(json.dumps({"incident_id": incident_id}))
+
+
+def test_late_writes_of_an_earlier_cells_incident_are_not_this_cells(tmp_path: Path) -> None:
+    run = _run(tmp_path)
+    start = datetime(2026, 11, 12, 10, 0, tzinfo=UTC)
+    nanos = lambda at: int(at.timestamp() * 1e9)  # noqa: E731
+    earlier = _incident(run, "a" * 32, None, rollouts=1)
+    _identity(earlier, f"fg1-{nanos(datetime(2026, 11, 12, 9, 0, tzinfo=UTC))}")
+    own = _incident(run, "b" * 32, None, rollouts=1)
+    _identity(own, f"fg1-{nanos(datetime(2026, 11, 12, 10, 1, tzinfo=UTC))}")
+    for d in (earlier, own):  # both were written during the interval
+        _age(d, datetime(2026, 11, 12, 10, 5, tzinfo=UTC))
+    assert sink.leftover(earlier, [], start)
+    assert not sink.leftover(own, [], start)
+    dest = tmp_path / "out"
+    sink.copy_interval(run, dest, start, datetime(2026, 11, 12, 11, 0, tzinfo=UTC))
+    assert not (dest / "incidents" / ("a" * 32)).exists()
+    assert (dest / "incidents" / ("b" * 32)).exists()
+
+
+def _digest(incident_id: str) -> str:
+    return hashlib.sha256(incident_id.encode()).hexdigest()[:32]
+
+
+def test_an_investigator_directory_follows_its_parent_incident_not_a_unix_time(tmp_path: Path) -> None:
+    """The ``-inv-N`` suffix of an investigator's session ID is not a detection time: the directory is attributed to
+    its parent incident, copied with it, and left out with it."""
+    run = _run(tmp_path)
+    start = datetime(2026, 11, 12, 10, 0, tzinfo=UTC)
+    nanos = lambda at: int(at.timestamp() * 1e9)  # noqa: E731
+    own_parent = f"fg1-{nanos(datetime(2026, 11, 12, 10, 1, tzinfo=UTC))}"
+    old_parent = f"fg1-{nanos(datetime(2026, 11, 12, 9, 0, tzinfo=UTC))}"
+    own_inv = [_incident(run, _digest(f"{own_parent}-inv-{n}"), None, rollouts=1) for n in range(2)]
+    old_inv = _incident(run, _digest(f"{old_parent}-inv-0"), None, rollouts=1)
+    for n, directory in enumerate(own_inv):
+        _identity(directory, f"{own_parent}-inv-{n}")
+    _identity(old_inv, f"{old_parent}-inv-0")
+    for directory in (*own_inv, old_inv):
+        _age(directory, datetime(2026, 11, 12, 10, 5, tzinfo=UTC))
+    assert sink.incident_detected_at(own_inv[0]) == datetime(2026, 11, 12, 10, 1, tzinfo=UTC)
+    assert not any(sink.leftover(d, [], start) for d in own_inv)
+    assert sink.leftover(old_inv, [], start)
+    dest = tmp_path / "out"
+    result = sink.copy_interval(run, dest, start, datetime(2026, 11, 12, 11, 0, tzinfo=UTC))
+    copied = {p.name for p in (dest / "incidents").iterdir()}
+    assert copied == {d.name for d in own_inv}
+    assert result.summary()["rollouts"] == 2
+
+
+def test_an_investigator_directory_is_copied_when_its_parent_is_in_the_interval_even_if_idle(tmp_path: Path) -> None:
+    """An investigator last written before the interval still belongs to a parent that was open in it."""
+    run = _run(tmp_path)
+    parent = "fg1-1"  # an ID that parses as 1970: only the parent's ledger places it in the interval
+    parent_dir = _incident(run, _digest(parent), _ledger(parent, "2026-11-12T10:05:00Z"), rollouts=1)
+    inv = _incident(run, _digest(f"{parent}-inv-0"), None, rollouts=1)
+    _identity(inv, f"{parent}-inv-0")
+    old = datetime(2026, 11, 11, tzinfo=UTC)
+    _age(parent_dir, old)
+    _age(inv, old)
+    dest = tmp_path / "out"
+    sink.copy_interval(run, dest, T0, T1)
+    assert {p.name for p in (dest / "incidents").iterdir()} == {parent_dir.name, inv.name}

@@ -105,7 +105,10 @@ func (c *Controller) joinAlertSet(finding sdk.Finding, now time.Time) bool {
 	finding.Fingerprint = FindingFingerprint(finding)
 	request.Findings = append(request.Findings, finding)
 	sortFindings(request.Findings)
+	c.publishHeldLocked()
 	c.closureStableSince = time.Time{}
+	// A new alert reopens a settled automatic stage (see attachLearnedActivation).
+	c.midStage.settled = false
 	return true
 }
 

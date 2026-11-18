@@ -13,6 +13,8 @@ from scripts.check_skill_sizes import violations
 from sdo.agents.context_output import budget_for
 from sdo.agents.responder.tools_cli import command_surface
 
+CI_WHOLE_TREE = True
+
 ROOT = Path(__file__).resolve().parents[5]
 
 

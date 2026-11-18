@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 // something waits or evaluates, the set of broken components, and the raises
 // the detectors would produce for them.
 type world struct {
+	mu      sync.Mutex
 	now     time.Time
 	evalDur time.Duration
 	broken  map[string]bool
@@ -23,16 +26,19 @@ type world struct {
 	// raiseFor maps a broken component to what the detectors raise.
 	raiseFor map[string][]Raise
 	// ignoredBy lists components whose breakage no detector notices.
-	log        []string
-	evalErr    error
-	restoreErr map[string]error
-	breakErr   map[string]error
-	stuck      map[string]bool // restore succeeds but the component stays broken
-	unavail    bool
-	pending    []string
-	evals      int
-	late       map[string]lateRaise
-	brokenAt   map[string]time.Time
+	log          []string
+	evalErr      error
+	restoreErr   map[string]error
+	breakErr     map[string]error
+	stuck        map[string]bool // restore succeeds but the component stays broken
+	unavail      bool
+	pending      []string
+	evals        int
+	late         map[string]lateRaise
+	sim          []detectorSim
+	sinceRestore int
+	simStart     time.Time
+	brokenAt     map[string]time.Time
 }
 
 // lateRaise is a raise that appears only some time after its component broke.
@@ -45,14 +51,23 @@ func newWorld() *world {
 	return &world{now: time.Unix(1000, 0), evalDur: 2 * time.Second, broken: map[string]bool{}, raiseFor: map[string][]Raise{}, restoreErr: map[string]error{}, breakErr: map[string]error{}, stuck: map[string]bool{}}
 }
 
-func (w *world) Now() time.Time { return w.now }
+func (w *world) Now() time.Time {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.now
+}
 func (w *world) Wait(_ context.Context, d time.Duration) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.now = w.now.Add(d)
 	return nil
 }
 
 func (w *world) Evaluate(context.Context) (Verdict, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.evals++
+	w.sinceRestore++
 	w.now = w.now.Add(w.evalDur)
 	if w.evalErr != nil {
 		return Verdict{}, w.evalErr
@@ -71,7 +86,7 @@ func (w *world) Evaluate(context.Context) (Verdict, error) {
 		}
 	}
 	if len(raised) == 0 {
-		return Verdict{Status: "clear"}, nil
+		return Verdict{Status: "clear", Progress: w.progress()}, nil
 	}
 	return Verdict{Status: "firing", Raised: raised}, nil
 }
@@ -79,6 +94,8 @@ func (w *world) Evaluate(context.Context) (Verdict, error) {
 func (w *world) Mode() string { return "scale-to-zero" }
 
 func (w *world) Break(_ context.Context, c appmap.Component) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if err := w.breakErr[c.Name]; err != nil {
 		return err
 	}
@@ -92,7 +109,10 @@ func (w *world) Break(_ context.Context, c appmap.Component) error {
 }
 
 func (w *world) Restore(_ context.Context, c appmap.Component) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.log = append(w.log, "restore "+c.Name)
+	w.sinceRestore = 0
 	if err := w.restoreErr[c.Name]; err != nil {
 		return err
 	}
@@ -295,8 +315,8 @@ func TestFailsUnderBreakWaitsUpToBoundThenGivesUp(t *testing.T) {
 	if status(r, ItemBreak, "list-items") != Red {
 		t.Fatalf("%s", r.Text())
 	}
-	// 4 components, each waits at least the bound.
-	if elapsed := w.now.Sub(time.Unix(1000, 0)); elapsed < 4*60*time.Second {
+	// 4 components in 3 waves, each wave waits at least the bound.
+	if elapsed := w.now.Sub(time.Unix(1000, 0)); elapsed < 3*60*time.Second {
 		t.Fatalf("gave up before the bound: %s", elapsed)
 	}
 }
@@ -350,27 +370,133 @@ func TestFailsUnderBreakStopsWhenRestoreIsUncertain(t *testing.T) {
 	}
 }
 
+func runBreakItem(t *testing.T, w *world, oneAtATime bool) Report {
+	t.Helper()
+	cfg := liveConfig(t, w, false, true)
+	cfg.Break.OneAtATime = oneAtATime
+	r, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
 func TestFailsUnderBreakRestoresEveryBrokenComponentInOrder(t *testing.T) {
 	w := newWorld()
-	runLiveItems(t, w, false, true)
-	want := []string{"break web", "restore web", "break api", "restore api", "break db", "restore db", "break worker", "restore worker"}
-	if strings.Join(w.log, ",") != strings.Join(want, ",") {
-		t.Fatalf("log %v want %v", w.log, want)
+	runBreakItem(t, w, false)
+	if len(w.log) != 8 || strings.Join(w.log[:4], ",") != "break web,restore web,break api,restore api" {
+		t.Fatalf("shared components go one at a time: %v", w.log)
+	}
+	// db (list-items) and worker (send-mail) share no operation: one wave, both
+	// broken before either is restored.
+	last := w.log[4:]
+	if !strings.HasPrefix(last[0], "break ") || !strings.HasPrefix(last[1], "break ") || !strings.HasPrefix(last[2], "restore ") || !strings.HasPrefix(last[3], "restore ") {
+		t.Fatalf("disjoint components break together: %v", w.log)
 	}
 }
 
-func TestFailsUnderBreakIsSkippedWhenTheHealthyAppAlreadyRaises(t *testing.T) {
+// Breaking several components that serve one operation together cannot say
+// which of them a failure of the operation follows, and nearly always fails
+// the operation, so the check never spends a wave on the attempt: each
+// component is broken exactly once, whatever the detectors raise.
+func TestFailsUnderBreakNeverBreaksAComponentTwiceOrSpendsAWaveOnPooling(t *testing.T) {
+	worlds := map[string]func(*world){
+		"nothing noticed": func(w *world) {},
+		"every operation fails under every break": func(w *world) {
+			for _, c := range []string{"web", "api", "db", "worker"} {
+				w.raiseFor[c] = append(raiseNaming("traffic-probe-call", "scenario browse failed: list-items"), raiseNaming("traffic-probe-send", "send-mail failing")...)
+			}
+		},
+		"components named by their own raises": func(w *world) {
+			w.raiseFor["api"] = raiseNaming("workload-health", "workload api has no ready pods")
+			w.raiseFor["db"] = raiseNaming("store-state", "postgres db is unreachable")
+			w.raiseFor["worker"] = raiseNaming("workload-health", "workload worker has no ready pods")
+		},
+	}
+	for name, setup := range worlds {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld()
+			setup(w)
+			runBreakItem(t, w, false)
+			count := map[string]int{}
+			for _, e := range w.log {
+				if c, ok := strings.CutPrefix(e, "break "); ok {
+					count[c]++
+				}
+			}
+			if len(count) != 4 || count["web"] != 1 || count["api"] != 1 || count["db"] != 1 || count["worker"] != 1 {
+				t.Fatalf("each of the 4 components is broken once: %v", w.log)
+			}
+			if len(w.log) != 8 {
+				t.Fatalf("three waves (web, api, db with worker): %v", w.log)
+			}
+		})
+	}
+}
+
+// Breaking disjoint components together only decides how many waves it takes:
+// every verdict is the one the one-at-a-time check gives on the same detectors.
+func TestWavesGiveTheVerdictsOfSeparateBreaks(t *testing.T) {
+	worlds := map[string]func(*world){
+		"nothing noticed": func(w *world) {},
+		"all named": func(w *world) {
+			w.raiseFor["api"] = raiseNaming("workload-health", "workload api has no ready pods")
+			w.raiseFor["db"] = raiseNaming("store-state", "postgres db is unreachable")
+			w.raiseFor["worker"] = raiseNaming("workload-health", "workload worker has no ready pods")
+		},
+		"db fails an operation": func(w *world) {
+			w.raiseFor["db"] = append(raiseNaming("store-state", "postgres db is unreachable"), raiseNaming("traffic-probe-call", "scenario browse failed: list-items")...)
+		},
+		"only worker fails send-mail": func(w *world) {
+			w.raiseFor["worker"] = raiseNaming("traffic-probe-send", "send-mail failing")
+		},
+		"one raise names two components": func(w *world) {
+			w.raiseFor["db"] = raiseNaming("store-state", "postgres db is unreachable from api")
+		},
+		"web fails everything": func(w *world) {
+			w.raiseFor["web"] = append(raiseNaming("traffic-probe-call", "scenario browse failed: list-items"), raiseNaming("traffic-probe-send", "send-mail failing")...)
+		},
+	}
+	for name, setup := range worlds {
+		t.Run(name, func(t *testing.T) {
+			waved, separate := newWorld(), newWorld()
+			setup(waved)
+			setup(separate)
+			a, b := runBreakItem(t, waved, false), runBreakItem(t, separate, true)
+			if got, want := verdicts(a), verdicts(b); got != want {
+				t.Fatalf("waves:\n%s\nseparate:\n%s", got, want)
+			}
+		})
+	}
+}
+
+func verdicts(r Report) string {
+	var lines []string
+	for _, x := range r.Results {
+		if x.Item == ItemBreak || x.Item == ItemMapAccuracy {
+			lines = append(lines, x.Item+" "+x.Subject+" "+x.Status)
+		}
+	}
+	sort.Strings(lines)
+	return strings.Join(lines, "\n")
+}
+
+func TestFailsUnderBreakStillRunsWhenTheHealthyAppAlreadyRaises(t *testing.T) {
 	w := newWorld()
 	w.healthyRaise = raiseNaming("traffic-probe-write", "write-commit failed")
+	w.raiseFor["api"] = []Raise{{DetectorID: "traffic-probe-call", Summary: "scenario browse failed: list-items returned 503"}}
 	r := runLiveItems(t, w, true, true)
 	if status(r, ItemQuiet, "traffic-probe-write") != Red {
 		t.Fatalf("%s", r.Text())
 	}
-	if len(w.log) != 0 {
-		t.Fatalf("broke components of an app that is not quiet: %v", w.log)
+	if len(w.log) == 0 {
+		t.Fatalf("a noisy quiet item must not hide the breaks:\n%s", r.Text())
 	}
-	if status(r, ItemBreak, "all") != Note {
-		t.Fatalf("expected a skip note:\n%s", r.Text())
+	if status(r, ItemBreak, "list-items") != Green {
+		t.Fatalf("a new raise under the break names the operation even though the app was noisy:\n%s", r.Text())
+	}
+	if status(r, ItemBreak, "all") != Note || !strings.Contains(r.Text(), "standing raises") {
+		t.Fatalf("expected a note that standing raises are ignored:\n%s", r.Text())
 	}
 }
 
@@ -424,10 +550,311 @@ func TestQuietWhenHealthyIsRedForADetectorThatNeverJudged(t *testing.T) {
 	w := newWorld()
 	w.pending = []string{"traffic-probe-write: no synthetic scenario has succeeded since observation began: write-commit (last failure: identity unavailable)"}
 	r := runLiveItems(t, w, true, false)
-	if status(r, ItemQuiet, "traffic-probe-write") != Red || !strings.Contains(r.Text(), "identity unavailable") {
+	if status(r, ItemQuiet, "write-commit") != Red || !strings.Contains(r.Text(), "identity unavailable") {
 		t.Fatalf("a detector still pending at the end proves nothing about quiet:\n%s", r.Text())
 	}
 	if elapsed := w.now.Sub(time.Unix(1000, 0)); elapsed < 10*time.Minute {
 		t.Fatalf("the window must still be sampled in full: %s", elapsed)
+	}
+}
+
+func TestQuietWhenHealthyNamesEachProbeScenarioThatStaysPendingOrUnderSampled(t *testing.T) {
+	w := newWorld()
+	w.pending = []string{"traffic-probe-slow: no synthetic scenario has succeeded since observation began: warm (last failure: a, b); insufficient usable synthetic samples: checkout, search"}
+	r := runLiveItems(t, w, true, false)
+	for _, scenario := range []string{"warm", "checkout", "search"} {
+		if status(r, ItemQuiet, scenario) != Red {
+			t.Fatalf("scenario %s must be red by name:\n%s", scenario, r.Text())
+		}
+	}
+	if strings.Count(r.Text(), "make each iteration cheaper") != 2 || !strings.Contains(r.Text(), "fix what its latest failure names") {
+		t.Fatalf("the remedy is a cheaper iteration, not a longer interval:\n%s", r.Text())
+	}
+}
+
+// A memory that holds no detector cannot be judged quiet or to fail under a
+// break: silence is SDO's gap, said so, never a pass.
+func TestLiveItemsAreRedWhenNoDetectorWasEvaluated(t *testing.T) {
+	w := newWorld()
+	cfg := liveConfig(t, w, true, true)
+	cfg.NoDetectors = true
+	r, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status(r, ItemQuiet, "detectors") != Red || !strings.Contains(r.Text(), "SDO: no detectors were evaluated") {
+		t.Fatalf("quiet must be red when nothing was evaluated:\n%s", r.Text())
+	}
+	if status(r, ItemBreak, "all") != Red || w.evals != 0 {
+		t.Fatalf("break must not run or pass without detectors (evaluations %d):\n%s", w.evals, r.Text())
+	}
+}
+
+// detectorSim is a detector judging every interval, with a clearing horizon.
+type detectorSim struct {
+	id                string
+	interval, horizon time.Duration
+}
+
+func (w *world) progress() []DetectorProgress {
+	if len(w.sim) == 0 {
+		return nil
+	}
+	if w.simStart.IsZero() {
+		w.simStart = w.now
+	}
+	elapsed := w.now.Sub(w.simStart)
+	var out []DetectorProgress
+	for _, d := range w.sim {
+		p := DetectorProgress{DetectorID: d.id, Interval: d.interval, Horizon: d.horizon}
+		for at := time.Duration(0); at <= elapsed; at += d.interval {
+			p.Evaluations++
+			if at >= d.horizon {
+				p.PastHorizon++
+			}
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func TestParallelBreaksStillNameTheRightOperation(t *testing.T) {
+	w := newWorld()
+	// Only the worker's break is noticed, by a scenario of send-mail. db is
+	// broken in the same wave but nothing names it or list-items.
+	w.raiseFor["worker"] = raiseNaming("traffic-probe-send", "send-mail failing")
+	r := runLiveItems(t, w, false, true)
+	if status(r, ItemBreak, "send-mail") != Green {
+		t.Fatalf("send-mail is noticed:\n%s", r.Text())
+	}
+	if status(r, ItemBreak, "list-items") != Red {
+		t.Fatalf("a raise naming send-mail must not credit list-items:\n%s", r.Text())
+	}
+	waves := BreakWaves(liveMapParsed(t))
+	if len(waves) != 3 || len(waves[2]) != 2 {
+		t.Fatalf("waves %v", waves)
+	}
+}
+
+func liveMapParsed(t *testing.T) appmap.Map {
+	m, err := appmap.Parse(liveMap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func TestQuickModeNeverReportsClean(t *testing.T) {
+	w := newWorld()
+	w.sim = []detectorSim{{"d1", 30 * time.Second, time.Minute}}
+	cfg := liveConfig(t, w, true, false)
+	cfg.Quick = true
+	r, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Mode != ModeQuick || r.Clean() || status(r, ItemQuiet, "detectors") != Green {
+		t.Fatalf("quick run is never clean:\n%s", r.Text())
+	}
+	if rr := (Report{Mode: ModeQuick}); rr.Clean() || !rr.NoRed() {
+		t.Fatal("a quick report with nothing red has no red item but is not clean")
+	}
+	if rr := (Report{Mode: ModeFull}); !rr.Clean() {
+		t.Fatal("a full report with nothing red is clean")
+	}
+	if !strings.Contains(r.Text(), "mode: quick") {
+		t.Fatalf("report names the mode:\n%s", r.Text())
+	}
+	if elapsed := w.now.Sub(time.Unix(1000, 0)); elapsed > 30*time.Second {
+		t.Fatalf("quick smoke should end once each detector judged: %s", elapsed)
+	}
+	cfg = liveConfig(t, w, true, true)
+	cfg.Quick = true
+	if _, err := Run(context.Background(), cfg); err == nil {
+		t.Fatal("quick mode refuses the break item")
+	}
+}
+
+func TestQuickModeRedWhenNoDetectorEvaluated(t *testing.T) {
+	w := newWorld()
+	cfg := liveConfig(t, w, true, false)
+	cfg.Quick = true
+	cfg.Quiet.Window = time.Minute
+	r, _ := Run(context.Background(), cfg)
+	if status(r, ItemQuiet, "detectors") != Red {
+		t.Fatalf("a smoke that evaluated nothing proves nothing:\n%s", r.Text())
+	}
+}
+
+func TestQuietWindowCoversEveryDetectorsHorizon(t *testing.T) {
+	w := newWorld()
+	w.sim = []detectorSim{{"fast", time.Minute, 30 * time.Second}, {"slow", 30 * time.Second, 4 * time.Minute}}
+	r := runLiveItems(t, w, true, false)
+	if status(r, ItemQuiet, "detectors") != Green {
+		t.Fatalf("expected green:\n%s", r.Text())
+	}
+	elapsed := w.now.Sub(time.Unix(1000, 0))
+	// slow: horizon 4m, then 3 judgements 30s apart.
+	if need := 4*time.Minute + 2*30*time.Second; elapsed < need {
+		t.Fatalf("window ended after %s, before slow judged 3 times past its horizon (%s)", elapsed, need)
+	}
+	if elapsed >= 10*time.Minute {
+		t.Fatalf("window should be derived, not the full cap: %s", elapsed)
+	}
+	for _, p := range w.progress() {
+		if p.PastHorizon < DefaultQuietEvaluations {
+			t.Fatalf("%s judged %d times past its horizon", p.DetectorID, p.PastHorizon)
+		}
+	}
+}
+
+func TestQuietWindowCapShorterThanHorizonIsRed(t *testing.T) {
+	w := newWorld()
+	w.sim = []detectorSim{{"slow", 30 * time.Second, 20 * time.Minute}}
+	r := runLiveItems(t, w, true, false)
+	if status(r, ItemQuiet, "slow") != Red {
+		t.Fatalf("a detector that never judged past its horizon is red:\n%s", r.Text())
+	}
+}
+
+func TestFinalWaveDoesNotWaitForDetectorsToClear(t *testing.T) {
+	w := newWorld()
+	runLiveItems(t, w, false, true)
+	if w.sinceRestore != 0 {
+		t.Fatalf("%d evaluations after the final restore: nothing later needs a cleared baseline", w.sinceRestore)
+	}
+}
+
+func TestWarmUpRaisesAreANoteNotRedInTheQuietItem(t *testing.T) {
+	w := newWorld()
+	w.healthyRaise = []Raise{{DetectorID: "request-metrics", Rule: "request-metrics.insufficient-baseline", Summary: "operation list-items: insufficient baseline to judge a client-error jump"}}
+	r := runLiveItems(t, w, true, false)
+	if status(r, ItemQuiet, "detectors") != Green || status(r, ItemQuiet, "sdo-warm-up") != Note {
+		t.Fatalf("SDO warm-up must be a note, not red:\n%s", r.Text())
+	}
+}
+
+func TestWarmUpRaiseNeverNamesAnOperationUnderABreak(t *testing.T) {
+	w := newWorld()
+	w.raiseFor["db"] = []Raise{{DetectorID: "request-metrics", Rule: "request-metrics.insufficient-baseline", Summary: "operation list-items: insufficient baseline"}}
+	r := runLiveItems(t, w, false, true)
+	if status(r, ItemBreak, "list-items") != Red {
+		t.Fatalf("a warm-up raise is not evidence:\n%s", r.Text())
+	}
+}
+
+func TestBreakReportSaysWhetherAFailureOrOnlyAnAbsenceNamedTheOperation(t *testing.T) {
+	w := newWorld()
+	w.raiseFor["db"] = []Raise{{DetectorID: "request-metrics", Rule: "request-metrics.not-instrumented", Summary: "operation list-items is not instrumented for request metrics"}}
+	r := runLiveItems(t, w, false, true)
+	if status(r, ItemBreak, "list-items") != Red || !strings.Contains(r.Text(), "absence signal only") {
+		t.Fatalf("an absence-only signal must not make the operation green, and must be reported:\n%s", r.Text())
+	}
+	w = newWorld()
+	w.raiseFor["db"] = []Raise{{DetectorID: "traffic-probe-call", Summary: "scenario browse: list-items returned 503"}}
+	r = runLiveItems(t, w, false, true)
+	if status(r, ItemBreak, "list-items") != Green || !strings.Contains(r.Text(), "failing-request signal: traffic-probe-call") {
+		t.Fatalf("expected the failure signal named:\n%s", r.Text())
+	}
+}
+
+func TestBreakWaitsForAFailureSignalAfterAnAbsenceSignalNamedTheOperation(t *testing.T) {
+	w := newWorld()
+	w.raiseFor["web"] = []Raise{{DetectorID: "request-metrics", Rule: "request-metrics.not-instrumented", Summary: "operation list-items is not instrumented for request metrics"}}
+	w.late = map[string]lateRaise{"web": {after: 20 * time.Second, raise: []Raise{{DetectorID: "traffic-probe-call", Rule: "scenario-slo.browse", Summary: "synthetic scenario browse violates its SLO: error rate 2/3"}}}}
+	r := runLiveItems(t, w, false, true)
+	if status(r, ItemBreak, "list-items") != Green {
+		t.Fatalf("stopped at the absence signal instead of waiting for the failing probe:\n%s", r.Text())
+	}
+}
+
+func TestProbeFailureSummaryMentioningNotFoundIsStillAFailureSignal(t *testing.T) {
+	w := newWorld()
+	w.raiseFor["db"] = []Raise{{DetectorID: "traffic-probe-call", Rule: "scenario-slo.browse", Summary: "synthetic scenario browse step list: 404 not found, no data returned"}}
+	r := runLiveItems(t, w, false, true)
+	if status(r, ItemBreak, "list-items") != Green {
+		t.Fatalf("a failing probe step is a failure signal whatever its words:\n%s", r.Text())
+	}
+}
+
+func TestOperationReportedNotInstrumentedOnTheHealthyApplicationIsRedInTheMetricItems(t *testing.T) {
+	notInstrumented := Raise{DetectorID: "request-metrics", Rule: "request-metrics.not-instrumented", Summary: "operation list-items is not instrumented for request metrics", Evidence: "metric m has no series"}
+	for name, run := range map[string]func(*world) Report{
+		"quiet window":   func(w *world) Report { return runLiveItems(t, w, true, false) },
+		"break baseline": func(w *world) Report { return runLiveItems(t, w, false, true) },
+	} {
+		w := newWorld()
+		w.healthyRaise = []Raise{notInstrumented}
+		r := run(w)
+		for _, item := range []string{ItemObserved, ItemLatency} {
+			if status(r, item, "list-items") != Red {
+				t.Fatalf("%s: %s must be red for list-items:\n%s", name, item, r.Text())
+			}
+		}
+		if status(r, ItemObserved, "send-mail") == Red {
+			t.Fatalf("%s: send-mail was not reported:\n%s", name, r.Text())
+		}
+		if !strings.Contains(r.Text(), "request-metrics reports operation list-items is not instrumented") {
+			t.Fatalf("%s: the red line must name the operation:\n%s", name, r.Text())
+		}
+	}
+}
+
+func TestNotInstrumentedOperationIsRedEvenWithAReasonInTheMap(t *testing.T) {
+	m, err := appmap.Parse(liveMap + "reasons:\n  - {item: operations-observed, subject: list-items, reason: cannot}\n  - {item: latency-per-operation, subject: list-items, reason: cannot}\n  - {item: journeys-move-own-metrics, subject: list-items, reason: cannot}\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := newWorld()
+	w.healthyRaise = []Raise{{DetectorID: "request-metrics", Rule: "request-metrics.not-instrumented", Summary: "x", Operation: "list-items"}}
+	cfg := liveConfig(t, w, true, false)
+	cfg.Map = m
+	r, err := Run(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status(r, ItemObserved, "list-items") != Red || status(r, ItemLatency, "list-items") != Red {
+		t.Fatalf("a reason does not excuse an uninstrumented operation:\n%s", r.Text())
+	}
+}
+
+func TestAgentProbeRaisingInTheHealthyWindowIsRed(t *testing.T) {
+	w := newWorld()
+	w.healthyRaise = []Raise{{DetectorID: "traffic-probe-call", Rule: "scenario-slo.call-issue-todo", Summary: "synthetic scenario call-issue-todo violates its SLO: error rate 2/3 >= 50%"}}
+	r := runLiveItems(t, w, true, false)
+	if status(r, ItemQuiet, "traffic-probe-call") != Red || r.Clean() {
+		t.Fatalf("a probe that raises on the healthy application is red:\n%s", r.Text())
+	}
+}
+
+func TestReportTimesEveryBreakPhaseAndPrintsASummary(t *testing.T) {
+	w := newWorld()
+	r := runLiveItems(t, w, true, true)
+	text := r.Text()
+	for _, want := range []string{"time " + PhaseMetrics, "time " + PhaseBreakJudge, "time " + PhaseBreakSettle, "timing: ", ItemQuiet + " ", ItemBreak + " "} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("report lacks %q:\n%s", want, text)
+		}
+	}
+}
+
+func TestPendingScenariosParsesOnlyWhatItUnderstands(t *testing.T) {
+	ids := func(reason string) string {
+		var out []string
+		for _, s := range pendingScenarios(reason) {
+			out = append(out, s.id)
+		}
+		return strings.Join(out, ",")
+	}
+	for _, c := range []struct{ reason, want string }{
+		{"insufficient usable synthetic samples: a, b", "a,b"},
+		{"no synthetic scenario has succeeded since observation began: a (environment wait; later (x), y), b", "a,b"},
+		{"synthetic scenarios have not succeeded since observation began: a (bad ) paren), b; insufficient usable synthetic samples: b, c", "a,b,c"},
+		{"no synthetic scenario has succeeded since observation began: ", ""},
+		{"detector cannot reach the prober", ""},
+	} {
+		if got := ids(c.reason); got != c.want {
+			t.Errorf("%q: got %q want %q", c.reason, got, c.want)
+		}
 	}
 }

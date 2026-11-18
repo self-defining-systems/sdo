@@ -66,6 +66,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 	judgeID := flags.String("judge-agent-id", "", "health judge registration ID; defaults to the agent registered for health judgment")
 	controllerDuration := flags.Duration("controller-duration", 0, "bounded controller run duration")
 	exitAfterClosure := flags.Bool("exit-after-closure", false, "stop after first closure")
+	stopAfterArchitecture := flags.Bool("stop-after-architecture", false, "end after the goal, schema, source and architecture commits: no health judge, no controller install")
 	registryInsecure := flags.Bool("registry-insecure", false, "allow an explicitly configured HTTP image registry")
 	if err := flags.Parse(args[1:]); err != nil {
 		return OperateConfig{}, err
@@ -151,7 +152,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			OperationID:    *operationID, Application: *application, Namespace: *namespace,
 			HealthObjective: *objective, DeployerAgentID: *deployerID, JudgeAgentID: *judgeID,
 			RegistryHost: *registryHost,
-			MaxAttempts:  policy.Deployment.MaxAttempts,
+			MaxAttempts:  policy.Deployment.MaxAttempts, JourneysRequired: policy.Onboarding.JourneysRequired, StopAfterArchitecture: *stopAfterArchitecture,
 		},
 		Install: install.Config{
 			Settings:       &policy,
@@ -165,7 +166,7 @@ func ParseOperateLaunch(args []string) (OperateConfig, error) {
 			// The controller parent deploys upstream advances with the same identity.
 			BuildKitImage: *buildkitImage, RegistryPushSecret: *registryPushSecret,
 			RegistryInsecure: *registryInsecure, RegistryHost: *registryHost,
-			ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure,
+			ControllerDurationSeconds: int(controllerDuration.Seconds()), ExitAfterClosure: *exitAfterClosure, WaitForCompletion: *controllerDuration > 0 || *exitAfterClosure, StopAfterArchitecture: *stopAfterArchitecture,
 			NativeCommand:     []string{"/usr/local/bin/sdo-operator"},
 			ReuseExisting:     true,
 			MemoryUpstreamURL: *sourceBranchURL, MemoryUpstreamBranch: *sourceBranch,

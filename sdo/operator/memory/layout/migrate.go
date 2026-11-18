@@ -153,6 +153,11 @@ var schemaMigrations = map[int]func(*schemaPlan) error{
 	// labels, which Go writes. An earlier case stays valid without them: the
 	// step only stamps and leaves every case byte for byte.
 	8: func(*schemaPlan) error { return nil },
+	// Version 9 adds the optional agent_findings to outcome documents. An
+	// earlier outcome stays valid without them: the step only stamps.
+	9: func(*schemaPlan) error { return nil },
+	// Version 10 adds the optional agent_changes to outcome documents; the step only stamps.
+	10: func(*schemaPlan) error { return nil },
 }
 
 type fileRewrite struct {

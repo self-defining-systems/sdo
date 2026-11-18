@@ -47,6 +47,9 @@ type InstallExistingResult struct {
 	Reused         bool   `json:"reused"`
 	Fingerprint    string `json:"fingerprint"`
 	AcceptedCommit string `json:"accepted_commit"`
+	// GoalSupplied is set when the accepted memory had no .sdo/goal.md and
+	// install recorded SDO's standard goal in a human commit.
+	GoalSupplied   bool   `json:"goal_supplied,omitempty"`
 	ControllerLogs string `json:"controller_logs,omitempty"`
 }
 
@@ -136,12 +139,40 @@ func ParseInstallExistingLaunchEnv(args []string, environ []string) (InstallExis
 	return InstallExistingConfig{AdoptExistingMemory: *adopt, OperatorRoot: *operatorRoot, Repository: *repository, Kubeconfig: *kubeconfig, DeploymentSource: deploymentSource, Duration: *duration, Install: config}, nil
 }
 
+// PrepareInstallTree makes the launch repository's accepted head the tree an
+// install of this build would start the controller on (generic detectors added
+// or regenerated to the current template, committed), and returns the head. It
+// is the step install-existing runs first and `sdo-operator prepare-tree`
+// replays for a lane whose memory was made by an earlier build. A shell-path
+// install has no Go-installed detectors and returns an empty head.
+func PrepareInstallTree(ctx context.Context, launch InstallExistingConfig) (string, error) {
+	if memoryCodePath(launch.Install.CodePathSelection()) == "shell" {
+		return "", nil
+	}
+	control := launch.Install.ControlNamespace
+	if control == "" {
+		control = launch.Install.Namespace
+	}
+	derived, err := installTelemetry(launch.Install, telemetryRegistry(), launch.Install.Namespace, control)
+	if err != nil {
+		return "", err
+	}
+	return prepareInstallTree(ctx, launch.Repository, derived)
+}
+
 func RunInstallExisting(ctx context.Context, launch InstallExistingConfig) (InstallExistingResult, error) {
 	source, err := recordInstallDeploymentSource(ctx, launch)
 	if err != nil {
 		return InstallExistingResult{}, err
 	}
 	launch.DeploymentSource = source
+	goalSupplied, err := memory.EnsureGoal(ctx, launch.Repository, launch.Install.Application)
+	if err != nil {
+		return InstallExistingResult{}, fmt.Errorf("install-existing: supply the standard goal: %w", err)
+	}
+	if _, err := PrepareInstallTree(ctx, launch); err != nil {
+		return InstallExistingResult{}, err
+	}
 	commit, err := prepareInstallExistingRepository(ctx, launch)
 	if err != nil {
 		return InstallExistingResult{}, err
@@ -172,7 +203,7 @@ func RunInstallExisting(ctx context.Context, launch InstallExistingConfig) (Inst
 	if err != nil {
 		return InstallExistingResult{}, err
 	}
-	return InstallExistingResult{Installed: true, Reused: result.Reused, Fingerprint: result.Fingerprint, AcceptedCommit: commit, ControllerLogs: result.ControllerLogs}, nil
+	return InstallExistingResult{Installed: true, Reused: result.Reused, Fingerprint: result.Fingerprint, AcceptedCommit: commit, GoalSupplied: goalSupplied, ControllerLogs: result.ControllerLogs}, nil
 }
 
 // recordInstallDeploymentSource settles the deployment source before any

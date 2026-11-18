@@ -64,6 +64,9 @@ type Config struct {
 	Signer func(user string) (ssh.Signer, error)
 	// Exec overrides the SSH transport, for tests.
 	Exec traffic.Execer
+	// SetupLock orders the setup requests of this prober against other probe
+	// processes; by default a host-wide FileSetupLock of the namespace.
+	SetupLock traffic.SetupLocker
 }
 
 // NewHTTPClient is the prober's default client: no keep-alives, so every
@@ -153,6 +156,9 @@ func New(config Config) (*Prober, error) {
 	if config.Exec == nil && config.Signer != nil {
 		config.Exec = &SSHExecer{Signer: config.Signer}
 	}
+	if config.SetupLock == nil {
+		config.SetupLock = DefaultSetupLock(config.Namespace)
+	}
 	if config.DialContext == nil {
 		config.DialContext = (&net.Dialer{}).DialContext
 	}
@@ -209,6 +215,7 @@ func New(config Config) (*Prober, error) {
 // steps. Data a setup step wrote is written again only by a new prober (a
 // controller restart). The caller holds p.mu once the prober runs.
 func (p *Prober) shareSetup(engine *traffic.Engine) {
+	engine.UseSetupLock(p.config.SetupLock)
 	if p.setups == nil {
 		p.setups = engine
 		return

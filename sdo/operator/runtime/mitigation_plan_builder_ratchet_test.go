@@ -13,6 +13,8 @@ import (
 // BuildMitigationPlan; a direct call elsewhere would let them drift apart. The
 // exceptions are named: the builder itself, the out-of-process runner for
 // working programs, and the SDK's own test helpers.
+//
+//ci:whole-tree
 func TestMitigationPlansAreBuiltOnlyThroughBuildMitigationPlan(t *testing.T) {
 	allowed := map[string]bool{
 		"runtime/program_mitigator.go":  true,

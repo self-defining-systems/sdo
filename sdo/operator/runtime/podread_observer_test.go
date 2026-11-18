@@ -426,3 +426,25 @@ func TestPodReadDeclarationsAreRefusedAtComposition(t *testing.T) {
 		t.Fatalf("compose = %v", err)
 	}
 }
+
+// A store client that answers slowly (a loaded node) is an answer, not a failure
+// that would end the store's healthy stretch.
+func TestPodReadWaitsForASlowStoreClientOnALoadedNode(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		exec := &scriptedPodExec{answer: func(ctx context.Context, _ sdk.ObjectRef, _ string, stdout io.Writer) error {
+			select {
+			case <-time.After(6 * time.Second):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			_, err := io.WriteString(stdout, "good")
+			return err
+		}}
+		observer := podReadObserver(t, exec, time.Now)
+		results := observer.collect(context.Background(), storeSnapshot(runningStorePod("a")))
+		reading := results[storeReadID].Readings[0]
+		if reading.Error != "" || reading.Stdout != "good" {
+			t.Fatalf("slow reading = %+v, want its answer", reading)
+		}
+	})
+}

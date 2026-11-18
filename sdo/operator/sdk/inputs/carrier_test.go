@@ -29,9 +29,11 @@ import (
 // an optional source requires registering it in Sources and this contract table.
 var contentSet = regexp.MustCompile(`^[A-Z][a-z]+Set$`)
 
+//ci:whole-tree
 func TestSDKInputInterfaceInventory(t *testing.T) {
 	registered := map[string]reflect.Type{
 		"sdk.ObservationClock":             reflect.TypeFor[sdk.ObservationClock](),
+		"sdk.HeldAlertSource":              reflect.TypeFor[sdk.HeldAlertSource](),
 		"traffic.Source":                   reflect.TypeFor[traffic.Source](),
 		"traffic.WindowSet":                reflect.TypeFor[traffic.WindowSet](),
 		"metrics.ResultSet":                reflect.TypeFor[metrics.ResultSet](),

@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -103,6 +104,13 @@ func (d sameWriteDetector) Detect(_ context.Context, view sdk.DetectionContext) 
 type restartProgram struct {
 	id    string
 	blind bool
+	// unknown, when set, makes that many diagnoses fail as a read that did not answer.
+	unknown *atomic.Int32
+	// answered counts diagnoses that answered before unknown applies: the
+	// stage's matching pass reads first.
+	answered *atomic.Int32
+	// undecided makes every diagnosis answer an explained Unknown itself, with no failed read.
+	undecided bool
 }
 
 func (p restartProgram) Spec() program.ProgramSpec {
@@ -110,6 +118,12 @@ func (p restartProgram) Spec() program.ProgramSpec {
 }
 
 func (p restartProgram) Diagnose(_ context.Context, view program.ReadView, b program.Bindings) (program.Verdict, error) {
+	if p.undecided {
+		return program.Verdict{Result: program.Unknown, Evidence: []program.Evidence{{Fact: "stall duration", Observed: "too short to judge"}}}, nil
+	}
+	if p.unknown != nil && p.answered.Add(-1) < 0 && p.unknown.Add(-1) >= 0 {
+		return program.Verdict{}, errors.New("memory host unavailable")
+	}
 	for _, deployment := range view.Deployments() {
 		if deployment.Name == b.Objects["deployment"].Name && (p.blind || deployment.Spec.Template.Annotations["kubectl.kubernetes.io/restartedAt"] == "") {
 			return program.Verdict{Result: program.Match}, nil

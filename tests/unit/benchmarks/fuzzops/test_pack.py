@@ -192,3 +192,18 @@ def test_app_repository_carries_source_without_vendor_or_upstream_deploy_files(t
     assert (repo / "src" / "go.mod").is_file()
     assert not (repo / "src" / "vendor").exists()
     assert not (repo / "src" / "kubernetes").exists()
+
+
+def test_attached_pack_carries_the_packs_seed_script(tmp_path: Path) -> None:
+    pack = _pack(tmp_path / "pack")
+    (pack.root / "app.yaml").write_text(
+        "name: synth\nup: ./up.sh\ndown: ./down.sh\nseed: ./seed.sh\nentry:\n  service: web\n  port: 80\n"
+    )
+    (pack.root / "seed.sh").write_text("#!/bin/sh\necho seeded\n")
+    (pack.root / "seed.sh").chmod(0o755)
+    out = write_attached_pack(pack, tmp_path / "attached")
+    assert json.loads((out / "app.yaml").read_text())["seed"] == "./seed.sh"
+    assert (out / "seed.sh").read_text() == "#!/bin/sh\necho seeded\n"
+    assert (out / "seed.sh").stat().st_mode & 0o111
+    plain = write_attached_pack(_pack(tmp_path / "plain"), tmp_path / "attached-plain")
+    assert "seed" not in json.loads((plain / "app.yaml").read_text())

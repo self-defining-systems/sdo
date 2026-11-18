@@ -39,6 +39,8 @@ jq -s 'map({incident_id, classification, repair_commit, memory_commit})' .sdo/ou
 jq -s 'group_by(.classification) | map({classification: .[0].classification, count: length})' .sdo/outcomes/*.json
 ```
 
+Program-run `read_trace` lists the external reads the Diagnose made (`op`, `target`, `outcome`), in order; absent on older evidence. A NoMatch belongs to the condition behind its last read: a trace ending at `log_matches` with `0 lines matched` means the log condition failed and no command ran; one ending at `observe` with `exit 0` means the cause-state check found nothing. An empty trace means the program decided from the snapshot alone.
+
 Program-run `can_mitigate` records whether the compiled registry has a mitigator; `false` means diagnosis-only, and an absent field on older evidence means unknown. It does not establish trust, plan validity or replay support. Responder prompts omit NoMatch runs and report `omitted_no_match_program_runs`; durable requests, outcomes and captures retain the full runs.
 
 Go may add deterministic `repeat-<digest>` corpus cases through normal reflection validation and broker publication without dispatching an LLM, when every cause/matched binding has verified plan-equivalent repair evidence. Corpus-only decisions are `updated` with no changed playbook IDs; no README annotation is needed. Trust consumes only the covered instances in the controller-owned, pre-commit eligibility result; adding corpus files supplies no independent credit. Runtime dependency revisions now exclude `_test.go` as well as Markdown; older runs can reset trust on test-only changes. A cleared bound program with another explicit open resource finding is not a failed application; global health is independently required for the final outcome. Older traces can contain false `diagnosis_clear_detectors_firing` and application-failure signals from composite incidents, which prevent trust even when each bound apply response is NoMatch.
@@ -108,10 +110,12 @@ RL1 typed SDK gaps include resources to scope a decline to one confirmed cause; 
 
 Incident-open `playbook_coverage` is copied from the controller request into outcome field 35. The match and unexplained-finding lists retain their initial deterministic ordering. Match IDs and bindings link to application/action receipts; coverage alone is not repair attribution. See [agent-selected repair evidence](automatic-repair.md).
 
-The responder's first message is three lines under `responder.instructions`:
-the incident, its opening alerts and onset, the two skills to read
-(`incident-response`, `sdo-operating`) and "Start with `sdo detect`". It holds no
-finding and no request JSON; `sdo detect` is the first read. Warm/cold strategy,
+The responder's first message is `responder.instructions`: one short instruction line (investigate and fix;
+the `sdo` command is available and its skills are named but not required; SDO ends the session on recovery;
+return only to give up; never print a credential), the page (the incident, its opening alerts and onset, the
+candidate block), earlier attempts' notes and the result-field line. It holds no finding and no request JSON,
+tells the agent to read no skill and prescribes no first command. The model-facing incident result is only
+`findings` and `agent_changes`; the worker fills `incident_id`, `status` and `timing`. Warm/cold strategy,
 `responder.incident_data`, inlined playbook bodies and their former part names
 were removed. Optional transport instructions remain `responder.additional_context`.
 The request still carries controller-built playbook coverage; `sdo detect` shows it. Full worker

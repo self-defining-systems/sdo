@@ -202,6 +202,13 @@ type Config struct {
 	DeploymentSource  *contracts.DeploymentSource
 	RenderEnvironment *contracts.RenderEnvironment
 	MaxAttempts       int
+	// JourneysRequired (onboarding.journeys_required) makes Run refuse an
+	// objective that carries no user journeys, before any commit or agent.
+	JourneysRequired bool
+	// StopAfterArchitecture ends Run once the goal, schema, accepted source and
+	// seeded architecture are committed: no health judge and no controller
+	// install. The onboarding agent starts from that accepted head.
+	StopAfterArchitecture bool
 	// SettingsDigest is settings.Config.DetectionDigest of the configuration the operator runs under; it joins
 	// every operability report subject this run builds.
 	SettingsDigest string
@@ -236,8 +243,15 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 	}
 	var result Result
 	if strings.TrimSpace(cfg.HealthObjective) != "" {
+		goalObjective := cfg.HealthObjective
+		// Every later stage and agent reads the objective as text, journeys listed, not as a goal document.
+		text, err := memory.ObjectiveText(cfg.HealthObjective)
+		if err != nil {
+			return result, fmt.Errorf("health objective: %w", err)
+		}
+		cfg.HealthObjective = text
 		goal, err := c.bootstrap(ctx, cfg.OperationID+"-goal", broker.Human, func(checkout string) error {
-			return c.Bootstrap.WriteGoal(checkout, cfg.Application, cfg.HealthObjective, cfg.Sources)
+			return c.Bootstrap.WriteGoal(checkout, cfg.Application, goalObjective, cfg.Sources)
 		})
 		if err != nil {
 			return result, fmt.Errorf("publish human goal: %w", err)
@@ -292,6 +306,9 @@ func (c Coordinator) Run(ctx context.Context, cfg Config) (Result, error) {
 			continue
 		}
 		result.ArchitectureCommit = architectureReceipt.Commit
+		if cfg.StopAfterArchitecture {
+			return result, nil
+		}
 		judgeID := fmt.Sprintf("%s-judge-%d", cfg.OperationID, attempt)
 		// A judge commit accepted by an earlier run was verified before it was
 		// accepted; only a crash between acceptance and install gets here.
@@ -380,6 +397,11 @@ func (c Coordinator) validate(cfg Config) error {
 	}
 	if cfg.OperationID == "" || cfg.Application == "" || cfg.Namespace == "" || cfg.MaxAttempts < 1 {
 		return errors.New("operation ID, application, namespace and positive max attempts are required")
+	}
+	if cfg.JourneysRequired {
+		if err := memory.RequireJourneys(cfg.HealthObjective); err != nil {
+			return err
+		}
 	}
 	if len(cfg.Sources) > 0 && strings.TrimSpace(cfg.HealthObjective) == "" {
 		return errors.New("followed sources are published with the human goal and require a health objective")

@@ -20,9 +20,13 @@ state against last healthy, log errors, clues. `more:` lines expand one. `.sdo/a
 - `sdo menu [NAME]`: list fixes. `sdo mitigate NAME --bind ROLE=Kind/ns/name`: apply one
 - `sdo mitigate ReconcileFromSource --bind ref=Deployment/shop/api`: restore source
 
+A listed non-matching playbook may still describe the fix: check its cause, reuse its mitigation if it holds. SDO never applies it.
+
 `sdo COMMAND --help` gives the syntax. Use `kubectl` for reads and changes. Keep a source fix with `git commit`.
 
 SDO decides recovery: the opening alerts cleared and stayed clear after your last change settled, then
 it ends your work. Return only to give up; that escalates.
 
-Never read Secret values. Label helper Pods/Jobs `sdo.dev/responder-helper=true`; delete when done.
+Never print, copy, log or write a credential value anywhere, including findings and memory. A credential already in a
+pod's environment or mounted files may be used in place (exec into that pod and let its client read it) to check the
+data the failing operation needs. Label helper Pods/Jobs `sdo.dev/responder-helper=true`; delete when done.

@@ -15,7 +15,8 @@ nothing here changes what an accepted detector decides.
    A list or an object is JSON. A variable that starts with a section prefix but names no key is an error.
 
 No knob has a command-line flag of its own; the flags of `host` and `install-existing` name only the installation
-(repository, namespaces, images, Secrets, PVC, registry, source and plan, agent registrations, run bounds).
+(repository, namespaces, images, Secrets, PVC, registry, source and plan, agent registrations, run bounds) and, for `host`, the
+inputs the people running the application give (`--goal`/`--goal-file`, `--journeys`/`--journeys-file`).
 
 The installer writes the resolved result to the `sdo-config` ConfigMap, mounted read-only at `/etc/sdo/config.yaml` in the
 operate and controller Jobs, which refuse to start without it; no policy value crosses their command lines. The controller
@@ -39,7 +40,8 @@ learned playbooks achieve alone, `response.after_playbook: wait` with `response.
 the agent is never dispatched; recovery gets the whole bound (slow readiness and windowed detectors need more than the
 stage's default 90 seconds), then the incident escalates. Production keeps `agent`. It also names `agent.recording: false`
 (the production default, written out so an experiment can set it to `true`): the agent-cluster recording is off, and a few runs
-that show nothing missing without it are the case for removing it.
+that show nothing missing without it are the case for removing it. It sets `onboarding.journeys_required: false`: a benchmark app has no people to give journeys, so
+the onboarding agent discovers them (production requires them; a harness that has them passes `host --journeys`).
 
 ## Keys
 
@@ -82,6 +84,7 @@ that show nothing missing without it are the case for removing it.
 | `response.permissive` | `SDO_RESPONSE_PERMISSIVE` | bool | `false` | broad lane repair permissions excluding Secret and credential APIs |
 | `response.permissive_namespaces` | `SDO_RESPONSE_PERMISSIVE_NAMESPACES` | list (JSON) | `[]` | additional lane namespaces the permissive responder may repair |
 | `response.cleanup_turns` | `SDO_RESPONSE_CLEANUP_TURNS` | int | `2` | how many times the responder's session is asked, after Recovered, to keep or remove the app-file edits it left uncaptured; edits still left after that are discarded and recorded as source_repair_uncaptured. 0 asks no cleanup turn |
+| `response.page_only` | `SDO_RESPONSE_PAGE_ONLY` | bool | `false` | the responder is a plain agent that gets only the incident page: no sdo commands on its PATH, no skills, no memory checkout, no investigators, no closing or cleanup turn, and no learning from the incident. SDO still detects, pages and verifies as usual. For comparing SDO's page alone against SDO's tools and memory |
 | `response.external_clues` | `SDO_RESPONSE_EXTERNAL_CLUES` | bool | `false` | with mode external: keep the detectors, synthetic traffic and state baseline running as clues (sdo detect, the candidate view). Their findings never open, join or close an external incident; the caller opens it and the responder's completion closes it. Default off: an external controller observes nothing |
 | `response.investigators` | `SDO_RESPONSE_INVESTIGATORS` | int | `0` | how many read-only investigator sessions SDO starts when the responder has made no write for investigator_delay: one per top candidate node with non-routine evidence, each testing one hypothesis and writing a report the responder reads with sdo investigations. They never fix, never close or escalate an incident and are stopped before the closing turn. 0 starts none |
 | `response.investigator_delay` | `SDO_RESPONSE_INVESTIGATOR_DELAY` | duration | `1m0s` | how long the responder may work without a write before investigators start; a fix faster than this costs nothing. Measured fast fixes land in 25-60 s, so the 60s default starts them only for the slow incidents |
@@ -135,6 +138,12 @@ that show nothing missing without it are the case for removing it.
 | Key | Env | Type | Default | Description |
 |---|---|---|---|---|
 | `source.poll_interval` | `SDO_SOURCE_POLL_INTERVAL` | duration | `30s` | how often the controller looks for a branch head SDO did not write (an engineer's push), to deploy and verify it |
+
+### `onboarding`
+
+| Key | Env | Type | Default | Description |
+|---|---|---|---|---|
+| `onboarding.journeys_required` | `SDO_ONBOARDING_JOURNEYS_REQUIRED` | bool | `true` | whether onboarding requires the user journeys SDO must support, given by the people running the application as free text (host --journeys or --journeys-file, or a journeys: list in the goal file's front matter). On, a host or operate launch without them stops before any agent runs; off, the onboarding agent discovers the journeys itself |
 
 ## App-memory defaults
 

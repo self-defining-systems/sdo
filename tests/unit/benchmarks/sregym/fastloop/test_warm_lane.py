@@ -300,4 +300,4 @@ def test_every_run_obeys_the_same_lane_owner(tmp_path: Path, monkeypatch, warm: 
     env.save()
     monkeypatch.setattr(cli, "_run_owned", lambda _args: pytest.fail("competing caller mutated an owned lane"))
     with own_lane(locks, env.cluster), pytest.raises(WarmLaneBusy):
-        cli._run(Namespace(run_dir=tmp_path, warm_lane=warm))
+        cli._run(Namespace(run_dir=tmp_path, warm_lane=warm, agent="sdo"))

@@ -142,3 +142,31 @@ func TestReplicaFailureIsHeldAndProgressDeadlineIsNot(t *testing.T) {
 		t.Fatalf("findings = %v, want progress-deadline-exceeded at once", got)
 	}
 }
+
+// slowStarting is an api Pod whose container started `age` ago, is not ready
+// and declares a startup probe allowing 300 s.
+func slowStarting(name string, age time.Duration) corev1.Pod {
+	pod := healthy(name)
+	pod.Spec.Containers = []corev1.Container{{Name: "api", StartupProbe: &corev1.Probe{FailureThreshold: 30, PeriodSeconds: 10}}}
+	pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.ContainersReady, Status: corev1.ConditionFalse, LastTransitionTime: ago(age)}}
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "api", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: ago(age)}}}}
+	return pod
+}
+
+// A pod still inside the startup allowance it declares is starting, not
+// outliving Kubernetes' self-healing, even past the self-heal hold.
+func TestUnreadyPodInsideItsStartupAllowanceReportsNothing(t *testing.T) {
+	hold := 60 * time.Second
+	if got := rules(detect(t, &hold, []appsv1.Deployment{api(1, 0)}, slowStarting("api-a", 90*time.Second))); len(got) != 0 {
+		t.Fatalf("a pod 90 s into a 300 s startup allowance was reported: %v", got)
+	}
+}
+
+// A real outage still opens: never ready past the allowance.
+func TestUnreadyPodPastItsStartupAllowanceIsReported(t *testing.T) {
+	hold := 60 * time.Second
+	got := rules(detect(t, &hold, []appsv1.Deployment{api(1, 0)}, slowStarting("api-a", 400*time.Second)))
+	if len(got) != 1 || got[0] != RuleNotReady+" Deployment/api" {
+		t.Fatalf("findings = %v, want one not-ready finding", got)
+	}
+}

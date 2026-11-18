@@ -518,9 +518,11 @@ type TrafficWorkload struct {
 	// Go-duration string; link-probe only, bound host-checked.
 	Interval *string `protobuf:"bytes,15,opt,name=interval,proto3,oneof" json:"interval,omitempty"`
 	// link-probe only; consecutive failed dials that report an edge.
-	Failures      *int32 `protobuf:"varint,16,opt,name=failures,proto3,oneof" json:"failures,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Failures *int32 `protobuf:"varint,16,opt,name=failures,proto3,oneof" json:"failures,omitempty"`
+	// Go-duration string; health-probe only: how often every scenario is sampled at least, bound host-checked (traffic.MinSampleInterval to MaxSampleInterval).
+	SampleInterval *string `protobuf:"bytes,17,opt,name=sample_interval,json=sampleInterval,proto3,oneof" json:"sample_interval,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *TrafficWorkload) Reset() {
@@ -665,6 +667,13 @@ func (x *TrafficWorkload) GetFailures() int32 {
 	return 0
 }
 
+func (x *TrafficWorkload) GetSampleInterval() string {
+	if x != nil && x.SampleInterval != nil {
+		return *x.SampleInterval
+	}
+	return ""
+}
+
 var File_sdodev_contracts_v1alpha1_traffic_proto protoreflect.FileDescriptor
 
 const file_sdodev_contracts_v1alpha1_traffic_proto_rawDesc = "" +
@@ -722,7 +731,7 @@ const file_sdodev_contracts_v1alpha1_traffic_proto_rawDesc = "" +
 	"\x0elink.http_path\x12*http path must be an absolute request path\x1a\x87\x01this.path == '' || (this.path.startsWith('/') && !this.path.startsWith('//') && !this.path.contains('\\r') && !this.path.contains('\\n'))\x1a\xd2\x02\n" +
 	"\x16link.http_status_range\x125http status range must be within 100..599 and ordered\x1a\x80\x02(this.status_min == 0 || (this.status_min >= 100 && this.status_min <= 599)) && (this.status_max == 0 || (this.status_max >= 100 && this.status_max <= 599)) && (this.status_min == 0 ? 100 : this.status_min) <= (this.status_max == 0 ? 499 : this.status_max)\"*\n" +
 	"\x16TrafficLinkGRPCOptions\x12\x10\n" +
-	"\x03tls\x18\x01 \x01(\bR\x03tls\"\xe3\x12\n" +
+	"\x03tls\x18\x01 \x01(\bR\x03tls\"\xa5\x13\n" +
 	"\x0fTrafficWorkload\x128\n" +
 	"\vapi_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
 	"\x10sdo.dev/v1alpha1R\n" +
@@ -746,7 +755,8 @@ const file_sdodev_contracts_v1alpha1_traffic_proto_rawDesc = "" +
 	"\tscenarios\x18\r \x03(\v22.sdodev.contracts.v1alpha1.TrafficWorkloadScenarioR\tscenarios\x12<\n" +
 	"\x05links\x18\x0e \x03(\v2&.sdodev.contracts.v1alpha1.TrafficLinkR\x05links\x12\x1f\n" +
 	"\binterval\x18\x0f \x01(\tH\x01R\binterval\x88\x01\x01\x12*\n" +
-	"\bfailures\x18\x10 \x01(\x05B\t\xbaH\x06\x1a\x04\x18<(\x02H\x02R\bfailures\x88\x01\x01:\xd2\n" +
+	"\bfailures\x18\x10 \x01(\x05B\t\xbaH\x06\x1a\x04\x18<(\x02H\x02R\bfailures\x88\x01\x01\x12,\n" +
+	"\x0fsample_interval\x18\x11 \x01(\tH\x03R\x0esampleInterval\x88\x01\x01:\xd2\n" +
 	"\xbaH\xce\n" +
 	"\x1a\xc5\x01\n" +
 	"\x1eworkload.scenarios_for_purpose\x12Ma non-link-probe workload needs at least one scenario; a link-probe runs none\x1aTthis.purpose == 'link-probe' ? size(this.scenarios) == 0 : size(this.scenarios) >= 1\x1a\xcb\x01\n" +
@@ -758,7 +768,8 @@ const file_sdodev_contracts_v1alpha1_traffic_proto_rawDesc = "" +
 	"\x15workload.unique_links\x12\x1fa link must not be listed twice\x1aithis.links.all(l, this.links.filter(m, m.from == l.from && m.to == l.to && m.port == l.port).size() == 1)B\v\n" +
 	"\t_durationB\v\n" +
 	"\t_intervalB\v\n" +
-	"\t_failuresB\xff\x01\n" +
+	"\t_failuresB\x12\n" +
+	"\x10_sample_intervalB\xff\x01\n" +
 	"\x1dcom.sdodev.contracts.v1alpha1B\fTrafficProtoP\x01ZJsdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1;contractsv1alpha1\xa2\x02\x03SCX\xaa\x02\x19Sdodev.Contracts.V1alpha1\xca\x02\x19Sdodev\\Contracts\\V1alpha1\xe2\x02%Sdodev\\Contracts\\V1alpha1\\GPBMetadata\xea\x02\x1bSdodev::Contracts::V1alpha1b\x06proto3"
 
 var (
