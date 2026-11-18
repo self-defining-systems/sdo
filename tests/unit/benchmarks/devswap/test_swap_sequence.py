@@ -58,6 +58,7 @@ class Lane:
         monkeypatch.setattr(swap, "controller_pod_ids", lambda *_: set(self.pods))
         monkeypatch.setattr(swap, "controller_stopped", self.stopped)
         monkeypatch.setattr(swap, "cached_operator_binary", lambda *a, **k: self.built())
+        monkeypatch.setattr(swap, "start_go_cache_warm", self.start_warm)
 
     @contextmanager
     def stopped(self, _kube: object, _control: str) -> Iterator[None]:
@@ -69,6 +70,19 @@ class Lane:
             self.suspended = False
             self.calls.append("start")
             self.pods = {f"pod-{len(self.calls)}"}
+
+    def start_warm(self, _kube: object, _control: str, _out: object) -> object:
+        calls = self.calls
+
+        class Warm:
+            def finish(self) -> None:
+                calls.append("warm finish")
+
+            def abort(self) -> None:
+                calls.append("warm abort")
+
+        calls.append("warm start")
+        return Warm()
 
     def built(self) -> Path:
         self.calls.append("build")
@@ -122,11 +136,66 @@ def test_a_changed_operator_is_built_placed_and_restarted_once_at_the_end(
     _go_change(repo)
     result = swap.swap_compiled(lane.plan(repo, compiled), lambda _m: None)
     # the controller is stopped, the standby retired while it is stopped, and only then started
-    assert lane.calls == ["build", "place binary", "retire", "standby", "stop", "retire", "start", "standby"]
+    # the new tree's Go build cache is warmed while the old controller serves, joined before anything stops it
+    assert lane.calls == [
+        "build",
+        "place binary",
+        "warm start",
+        "retire",
+        "standby",
+        "warm finish",
+        "stop",
+        "retire",
+        "start",
+        "standby",
+    ]
     assert result.binary
     assert result.restarted
     assert result.compiled == devtree.fingerprint(repo)
     assert lane.persisted[-1].compiled == devtree.fingerprint(repo)
+
+
+def test_the_go_cache_is_warmed_before_a_seed_or_tree_preparation_stops_the_controller(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lane = Lane(monkeypatch, tmp_path)
+    compiled = devtree.fingerprint(repo)
+    _go_change(repo)
+
+    def seed(_timeline: Any) -> str:
+        with lane.stopped(None, "ns"):
+            pass
+        return "e" * 40
+
+    swap.swap_compiled(lane.plan(repo, compiled, seed=seed), lambda _m: None)
+    assert lane.calls.index("warm finish") < lane.calls.index("stop")
+    assert lane.calls.count("warm start") == lane.calls.count("warm finish") == 1
+
+
+def test_no_warm_without_a_new_binary_or_when_switched_off(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lane = Lane(monkeypatch, tmp_path)
+    swap.swap_compiled(lane.plan(repo, devtree.fingerprint(repo)), lambda _m: None)  # nothing compiled changed
+    assert not [c for c in lane.calls if c.startswith("warm")]
+    compiled = devtree.fingerprint(repo)
+    _go_change(repo)
+    swap.swap_compiled(lane.plan(repo, compiled, warm_go_cache=False), lambda _m: None)
+    assert not [c for c in lane.calls if c.startswith("warm")]
+
+
+def test_a_failed_swap_removes_the_warm_pod(repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    lane = Lane(monkeypatch, tmp_path)
+    compiled = devtree.fingerprint(repo)
+    _go_change(repo)
+
+    def boom() -> None:
+        raise SwapError("golden copy differs")
+
+    with pytest.raises(SwapError, match="golden copy differs"):
+        swap.swap_compiled(lane.plan(repo, compiled, verify=boom), lambda _m: None)
+    assert "warm abort" in lane.calls
+    assert "warm finish" not in lane.calls
 
 
 def test_a_later_step_that_restarts_the_controller_carries_the_binary(

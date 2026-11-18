@@ -243,6 +243,15 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "warm-memory-build" {
+		// the controller's start-up build of the accepted memory, its executable discarded: fills the Go build cache the
+		// pod mounts before a controller restarts on a new operator source tree
+		if err := operatorcli.RunWarmMemoryBuild(context.Background(), os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "prepare-tree" {
 		// install-existing's flags; only the tree preparation runs, on the --repository clone (hooks use it for pool lanes)
 		args := append([]string{"install-existing"}, os.Args[2:]...)

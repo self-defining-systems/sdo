@@ -127,6 +127,7 @@ def swap(args: argparse.Namespace) -> dict[str, object]:
             on_binary=lambda built: _copy_binary(built, binary),
             persist=persist,
             allow_dirty=args.allow_dirty,
+            warm_go_cache=not args.no_warm_go_cache,
         ),
         lambda message: print(message, file=sys.stderr),
     )
@@ -178,6 +179,11 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--dev-dir", required=True)
     s.add_argument("--binary", default="", help="the runner's own copy of sdo-operator, kept at the new build")
     s.add_argument("--allow-dirty", action="store_true", help="build from uncommitted changes under sdo/operator")
+    s.add_argument(
+        "--no-warm-go-cache",
+        action="store_true",
+        help="do not compile the new tree into the lane's Go build cache before the controller restarts",
+    )
     s.add_argument("--install-args", default="")
     s.add_argument("--install-env", default="")
     return ap

@@ -30,6 +30,7 @@ from benchmarks.devswap.controller import (
 from benchmarks.devswap.kube import SwapError
 from benchmarks.devswap.timeline import Timeline
 from benchmarks.devswap.tree import regenerate_tree
+from benchmarks.devswap.warm import start_go_cache_warm
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping
@@ -144,6 +145,9 @@ class SwapPlan:
     #: A glob, beside the checkout, of older checkouts that hold the contracts of a lane that recorded none.
     legacy_checkouts: str = ""
     allow_dirty: bool = False  # build from a checkout with uncommitted changes under the compiled paths
+    #: With a new binary, compile the new tree's Go packages into the lane's build cache (``devswap.warm``) while the old
+    #: controller still serves, so its restart only links. Never fails the swap.
+    warm_go_cache: bool = True
 
 
 @dataclass(frozen=True)
@@ -217,6 +221,7 @@ def swap_compiled(plan: SwapPlan, out: Callable[[str], object] = print) -> SwapR
     compiled, snapshot = dict(plan.lane_compiled), contracts
     head = plan.prepared["head"]
     seeded = ""
+    warm = None
     try:
         with phases("project"):
             if binary is not None:
@@ -225,6 +230,10 @@ def swap_compiled(plan: SwapPlan, out: Callable[[str], object] = print) -> SwapR
         if binary is not None:
             compiled, snapshot = devtree.fingerprint(plan.checkout), devtree.contracts_snapshot(plan.checkout)
             plan.persist(SwapState(compiled, snapshot, head))
+            if plan.warm_go_cache:
+                # the new tree is on the mount and the old controller still runs: compile what its restart would
+                with phases("warm_start"):
+                    warm = start_go_cache_warm(plan.kube, plan.control, out)
         with phases("standby"):
             retire_standby(plan.kube, plan.control)
             wait_standby(plan.kube, plan.control, SWAP_STANDBY_WAIT_S)
@@ -234,10 +243,16 @@ def swap_compiled(plan: SwapPlan, out: Callable[[str], object] = print) -> SwapR
                 if plan.restore_moved is None:
                     raise SwapError("the lane is not the one prepared: " + "; ".join(problems))
                 out("the lane moved while held, restoring it: " + "; ".join(problems))
+                if warm is not None:
+                    warm.finish()  # the restore resets the lane, which stops the controller
                 plan.restore_moved(problems)
             plan.verify()
         if why := plan.idle():
             raise SwapError(f"the operator is not idle: {why}")
+        if warm is not None:
+            # joined before the first step that stops the controller (a seed import, a tree import, the restart)
+            with phases("warm"):
+                warm.finish()
         if plan.seed is not None:
             seed_steps = Timeline(out, "seed.")
             try:
@@ -259,6 +274,8 @@ def swap_compiled(plan: SwapPlan, out: Callable[[str], object] = print) -> SwapR
                 restarted = True
                 out("restarted the controller on the new binary")
     except BaseException:
+        if warm is not None:
+            warm.abort()
         if binary is not None:
             _roll_back(plan, controller, previous, head, contracts, out)
         raise
