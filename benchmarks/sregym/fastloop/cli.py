@@ -976,11 +976,22 @@ def _run(args: argparse.Namespace) -> int:
             queue.close(drain=False, timeout=wait_for(WaitKind.OPERATION))
 
 
+DEFAULT_CLAUDE_MODEL = "claude-sonnet-5-5"
+
+
+def _agent_model(args: argparse.Namespace) -> str:
+    """``--model``, else the agent's default: stock Claude Code runs Sonnet 5.5, everything else gpt-6-luna."""
+    if args.model:
+        return str(args.model)
+    return DEFAULT_CLAUDE_MODEL if args.agent == "claudecode" else "gpt-6-luna"
+
+
 def _run_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQueue | None = None) -> int:
     """Persist failures before the incident loop owns canonical rows."""
     from benchmarks.sregym.fastloop.records import NotInjected, append_record
 
     args.run_id = args.run_id or f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{args.agent}"
+    args.model = _agent_model(args)
     environment = FastloopEnvironment.load(args.run_dir.resolve())
     path = environment.run_dir / "results" / args.run_id / INCIDENTS_FILENAME
     started = time.monotonic()
@@ -1027,6 +1038,7 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
         prepare_shared_lane(environment)
     run_id = args.run_id or f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{args.agent}"
     args.run_id = run_id
+    args.model = _agent_model(args)
     results_dir = environment.run_dir / "results" / run_id
     arm_memory = None
     if getattr(args, "ablation_arm", None):
@@ -1298,6 +1310,19 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
                 diagnosis_grading=grading_mode,
                 on_failed_incident=reset_failed if args.continue_on_error else None,
             )
+        elif args.agent == "claudecode":
+            records = _run_claudecode(
+                args,
+                environment,
+                results_dir,
+                worker,
+                driver,
+                config,
+                grader,
+                grading_mode,
+                faults_by_incident,
+                reset_failed if args.continue_on_error else None,
+            )
         else:
             records = _run_codex(
                 args,
@@ -1374,6 +1399,66 @@ def _run_codex(
         )
         registered = bool(stream_faults)
         if registered:
+            from benchmarks.sregym.fastloop.composite import TrackedAgent, reader_for
+
+            agent = TrackedAgent(  # type: ignore[assignment]
+                agent,
+                reader=reader_for(environment.namespace, environment.kubeconfig),
+                report_dir=results_dir,
+                settings=_composite_settings(args),
+                stream_faults=stream_faults,
+            )
+        return run_incidents(
+            agent, driver, config, grader=grader, diagnosis_grading=grading_mode, on_failed_incident=on_failed_incident
+        )
+
+
+def _run_claudecode(
+    args: argparse.Namespace,
+    environment: FastloopEnvironment,
+    results_dir: Path,
+    worker: SregymWorker,
+    driver: SregymFaultDriver,
+    config: LoopConfig,
+    grader: DiagnosisGrader | None = None,
+    grading_mode: str = "off",
+    stream_faults: dict[str, tuple[FaultSpec, ...]] | None = None,
+    on_failed_incident: Callable[[], None] | None = None,
+) -> list[IncidentRecord]:
+    """SREGym's stock Claude Code agent, no SDO in the lane; auth from ``$CLAUDE_CONFIG_DIR`` (ClaudeGCP)."""
+    from benchmarks.sregym.fastloop.claudecode_agent import (
+        ClaudeCodeBaselineAgent,
+        ClaudeCodeSettings,
+        stock_prompt,
+    )
+    from benchmarks.sregym.fastloop.codex_agent import SubmissionStub
+
+    results_dir.mkdir(parents=True, exist_ok=True)
+    proxy = worker.request(
+        "proxy",
+        port=args.proxy_port or _free_port(),
+        hide=[f"{environment.namespace}-sdo"],
+        kubeconfig=str(results_dir / "agent.kubeconfig"),
+    )
+    settings = ClaudeCodeSettings(
+        kubeconfig=Path(str(proxy["kubeconfig"])),
+        results_dir=results_dir,
+        model=args.model,
+        timeout_seconds=float(args.timeout),
+        reasoning_effort=args.reasoning_effort,
+    )
+    app_info = {
+        "app_name": environment.application,
+        "namespace": environment.namespace,
+        "descriptions": environment.description,
+    }
+    with SubmissionStub(app_info=app_info) as stub:
+        agent = ClaudeCodeBaselineAgent(
+            settings,
+            stub=stub,
+            prompt_for=lambda _problem_id, api_base: stock_prompt(environment.sregym_dir, app_info, api_base),
+        )
+        if stream_faults:
             from benchmarks.sregym.fastloop.composite import TrackedAgent, reader_for
 
             agent = TrackedAgent(  # type: ignore[assignment]
@@ -1731,10 +1816,18 @@ def _preflight(args: argparse.Namespace) -> int:
     return 0
 
 
+class _Parser(argparse.ArgumentParser):
+    """Resolves ``run``'s agent-dependent ``--model`` default once the agent is known."""
+
+    def parse_known_args(self, args=None, namespace=None):  # type: ignore[no-untyped-def,override]
+        parsed, rest = super().parse_known_args(args, namespace)
+        if hasattr(parsed, "agent") and hasattr(parsed, "model"):
+            parsed.model = _agent_model(parsed)
+        return parsed, rest
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="fastloop", description=__doc__, formatter_class=argparse.RawTextHelpFormatter
-    )
+    parser = _Parser(prog="fastloop", description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
 
     preflight = commands.add_parser("preflight", help="fail fast on host prerequisites before building images")
@@ -1896,7 +1989,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = commands.add_parser("run", help="loop incidents against the warm environment")
     run.add_argument("--run-dir", type=Path, required=True)
-    run.add_argument("--agent", choices=("sdo", "codex"), required=True)
+    run.add_argument("--agent", choices=("sdo", "codex", "claudecode"), required=True)
     run.add_argument(
         "--warm-lane",
         action="store_true",
@@ -1954,7 +2047,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=1,
         help="verify full cleanup and the official recovery oracle twice when set to 2",
     )
-    run.add_argument("--model", default="gpt-6-luna")
+    run.add_argument(
+        "--model",
+        default=None,
+        help="agent model (default: gpt-6-luna; claude-sonnet-5-5 for --agent claudecode, SREGym's stock Claude Code)",
+    )
     run.add_argument("--provider", choices=("codex", "claude"), default="codex", help="SDO agent provider")
     run.add_argument(
         "--config",
