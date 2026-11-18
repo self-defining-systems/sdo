@@ -59,6 +59,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -77,7 +78,7 @@ from benchmarks.fuzzops.install import (
 from benchmarks.fuzzops.pack import SourcePack, images, write_attached_pack
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Iterator, Mapping
 
 BASELINE_FILE = "baseline.json"
 BASELINE_FORMAT = 2
@@ -602,6 +603,13 @@ class Kube:
     def controller_pods(self, control: str) -> list[dict[str, Any]]:
         pods = self._json("-n", control, "get", "pods", "-l", f"job-name={CONTROLLER_JOB}")
         return list((pods or {}).get("items") or [])
+
+    def controller_suspended(self, control: str) -> bool | None:
+        """Whether the controller Job is suspended; None when the Job could not be read."""
+        job = self._json("-n", control, "get", "job", CONTROLLER_JOB)
+        if job is None:
+            return None
+        return bool((job.get("spec") or {}).get("suspend"))
 
     def controller_ready(self, control: str) -> bool:
         for pod in self.controller_pods(control):
@@ -1274,6 +1282,10 @@ RESET_PATIENCE_S = 5 * 60.0
 # 15-18 minutes on a loaded host, so the wait is for that start-up to end, bounded well above it.
 CONTROLLER_START_PATIENCE_S = 30 * 60.0
 CONTROLLER_START_POLL_S = 10.0
+#: How long a reset of a used lane waits for a controller it just resumed (left stopped by a failed swap or reset) to
+#: finish starting. A controller that was running gets RESET_PATIENCE_S: a dead one must fail the reset sooner than
+#: the 19 min a rebuild takes. (Worst case of a failed reset pass: about 7 min dead, about 22 min resumed and dead.)
+RESET_START_PATIENCE_S = 15 * 60.0
 
 
 def wait_controller_started(
@@ -1659,7 +1671,10 @@ def wipe_problems(before: Mapping[str, str], now: Mapping[str, str]) -> list[str
     return problems
 
 
-SWAP_STANDBY_WAIT_S = 180.0
+#: How long a controller that was just (re)started gets to bring up its ready standby. It is a bound, not a delay: a
+#: lane that is ready returns at once. 180 s was too short on a loaded host (three claim swaps failed on it with the
+#: controller still starting, and the lane was then torn down).
+SWAP_STANDBY_WAIT_S = 600.0
 
 
 def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
@@ -1693,8 +1708,8 @@ def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
         devtree.sync(Path.cwd(), Path(_need(env, "BENCH_EVIDENCE_HOST")) / DEV_DIRECTORY, binary)
     if binary is not None:
         # the controller process is the old binary: restart it on the new one (state, repository and install kept)
-        set_controller_suspended(kube, control, True)
-        set_controller_suspended(kube, control, False)
+        with controller_stopped(kube, control):
+            pass
         record["compiled"] = devtree.fingerprint(Path.cwd())
         record["contracts"] = devtree.contracts_snapshot(Path.cwd())
     retire_standby(kube, control)
@@ -1724,9 +1739,8 @@ def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     (lane_dir / PREPARED_RECORD).write_text(json.dumps(record) + "\n")
     if block.seed is None and apply_lane_config(kube, control, lane_dir, {}, dry_run=True):
         # an earlier claim's config overlay (the seed's) is still on the lane: back to the lane's own
-        set_controller_suspended(kube, control, True)
-        apply_lane_config(kube, control, lane_dir, {})
-        set_controller_suspended(kube, control, False)
+        with controller_stopped(kube, control):
+            apply_lane_config(kube, control, lane_dir, {})
         retire_standby(kube, control)
         wait_standby(kube, control, SWAP_STANDBY_WAIT_S)
         wait_idle(kube, control, RESET_IDLE_WAIT_S)
@@ -1802,9 +1816,8 @@ def regenerate_tree(
         _run(["git", "-C", str(clone), "bundle", "create", str(bundle), "HEAD"], "bundle the prepared tree")
         # as a reset does: end the idle standby first, so the wait below is for the new controller's own
         retire_standby(kube, control)
-        set_controller_suspended(kube, control, True)
-        restore_repository(kube, control, new_head, bundle)
-        set_controller_suspended(kube, control, False)
+        with controller_stopped(kube, control):
+            restore_repository(kube, control, new_head, bundle)
         wait_standby(kube, control, SWAP_STANDBY_WAIT_S)
         now = repository_state(kube, control)
         if now["head"] != new_head or now["status"]:
@@ -2051,6 +2064,7 @@ MAINTENANCE_ACK_WAIT_S = 120.0
 class ResetSteps:
     """What ``reset_lane`` does to the lane, one callable per step (tests substitute them)."""
 
+    resume_controller: Callable[[], object]
     reset_incidents: Callable[[], object]
     retire_standby: Callable[[], object]
     stop_controller: Callable[[], object]
@@ -2066,31 +2080,49 @@ class ResetSteps:
         def refuse(*_: object) -> Any:
             raise AssertionError("step must not run")
 
-        return cls(*([refuse] * 9))
+        return cls(*([refuse] * 10))
 
 
 def reset_lane(env: Mapping[str, str], steps: ResetSteps, out: Callable[[str], None] = _print) -> dict[str, Any]:
     """Return a used, prepared lane to the state ``prepare`` left, with the controller, its images and its startup
-    facts kept: close any incident and end the responder session, stop the controller (its Job is suspended; the
+    facts kept: resume the controller if an earlier swap or reset left it stopped, close any incident and end the
+    responder session, stop the controller (its Job is suspended; the
     process caches the accepted commit, so a repository moved behind a live controller is unsafe), put the accepted
     repository back to the prepared head, return the app to its golden copy, start the controller again (a new
     process on the same repository, state and images), and assert the repository equals the prepared state and the
-    operator is idle. Raises ``HookError`` unless the lane is the
-    prepared one (the caller then rebuilds it)."""
+    operator is idle. A step that fails after the stop starts the controller again before the error propagates (the
+    controller never stays stopped, so the lane can be reset again); the app may then be half restored, and an
+    incident the controller opens on it is closed as RESET by the next pass. Raises ``HookError`` unless the lane is
+    the prepared one (the caller then rebuilds it)."""
     lane_dir = Path(_need(env, "BENCH_LANE_DIR")).resolve()
     record = json.loads((lane_dir / PREPARED_RECORD).read_text())
     if "state" not in record:
         raise HookError("the lane has no recorded prepared state (no idle verdict since prepare)")
     prepared = record["state"]
     started = time.monotonic()
+    # An earlier swap or reset that failed after stopping the controller leaves its Job suspended: nothing would
+    # acknowledge the incident reset below, and the lane would be torn down for it.
+    steps.resume_controller()
     steps.reset_incidents()
     steps.retire_standby()
-    steps.stop_controller()
-    out("controller stopped")
-    steps.restore_repository(prepared["head"])
-    app = steps.app_reset()
-    out(f"app reset: {json.dumps(app)}")
-    steps.start_controller()
+    started_again = False
+    try:
+        steps.stop_controller()
+        out("controller stopped")
+        steps.restore_repository(prepared["head"])
+        app = steps.app_reset()
+        out(f"app reset: {json.dumps(app)}")
+        steps.start_controller()
+        started_again = True
+    finally:
+        if not started_again:
+            # A failed reset must not leave the controller stopped: every other verb (idle, collect, the next
+            # reset) needs it running, and a stopped controller cannot be asked to reset.
+            try:
+                steps.start_controller()
+                out("controller started again after the failed reset")
+            except Exception as exc:  # the reset's own error is the one to report
+                out(f"controller could not be started again: {exc}")
     steps.wait_standby()
     if problems := wipe_problems(prepared, steps.repository_state()):
         raise HookError("the lane is not the prepared one after the reset: " + "; ".join(problems))
@@ -2100,6 +2132,39 @@ def reset_lane(env: Mapping[str, str], steps: ResetSteps, out: Callable[[str], N
     receipt["reset_s"] = receipt.pop("swap_s")
     receipt["app"] = app
     return receipt
+
+
+RESET_ATTEMPTS = 2
+
+
+def reset_lane_again(
+    env: Mapping[str, str],
+    steps: ResetSteps,
+    out: Callable[[str], None] = _print,
+    attempts: int = RESET_ATTEMPTS,
+) -> dict[str, Any]:
+    """``reset_lane``, tried again when it fails: the lane stays in the pool when a second pass (which starts from a
+    running controller, whatever the first left) returns it, and only a lane that fails every pass is reported, so
+    that the caller rebuilds it."""
+    if attempts < 1:
+        raise ValueError(f"attempts must be at least 1, not {attempts}")
+    for attempt in range(1, attempts + 1):
+        try:
+            return reset_lane(env, steps, out)
+        except HookError as exc:
+            if attempt == attempts:
+                raise
+            out(f"reset failed ({exc}); trying again ({attempt + 1} of {attempts})")
+    raise AssertionError("unreachable")
+
+
+def resume_stopped_controller(kube: Kube, control: str) -> bool:
+    """Resume the controller Job, whatever its state (a swap or reset that failed may have left it suspended; the
+    patch changes nothing on a running one, so a failed read of the Job must not skip it). True when the controller
+    may be starting up now (it was suspended, or its state was unknown): the caller then waits for its start-up."""
+    was = kube.controller_suspended(control)
+    set_controller_suspended(kube, control, False)
+    return was is not False
 
 
 def set_maintenance(env: Mapping[str, str], paused: bool, generation: str) -> None:
@@ -2130,6 +2195,17 @@ def set_maintenance(env: Mapping[str, str], paused: bool, generation: str) -> No
             return
         time.sleep(1)
     raise HookError(f"the controller did not acknowledge maintenance {generation} within {MAINTENANCE_ACK_WAIT_S:.0f}s")
+
+
+@contextmanager
+def controller_stopped(kube: Kube, control: str) -> Iterator[None]:
+    """The controller Job suspended for the block and resumed after it, also when the stop or the block fails: a
+    stopped controller cannot be asked for anything, so no failure may leave it suspended."""
+    try:
+        set_controller_suspended(kube, control, True)
+        yield
+    finally:
+        set_controller_suspended(kube, control, False)
 
 
 def set_controller_suspended(kube: Kube, control: str, suspended: bool, timeout: float = 300.0) -> None:
@@ -2376,15 +2452,32 @@ def wait_idle(kube: Kube, control: str, timeout: float) -> str:
 
 def reset(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     steps = reset_steps(env, lambda: fuzzops_app(env, "reset"))
-    out(json.dumps(reset_lane(env, steps, out)))
+    out(json.dumps(reset_lane_again(env, steps, out)))
     return 0
 
 
-def reset_steps(env: Mapping[str, str], app_reset: Callable[[], dict[str, Any]]) -> ResetSteps:
+def reset_steps(
+    env: Mapping[str, str],
+    app_reset: Callable[[], dict[str, Any]],
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> ResetSteps:
     kube, control = _kube(env), control_namespace(env)
     binary, kubeconfig = _binary(env), Path(env["KUBECONFIG"]).resolve() if env.get("KUBECONFIG") else None
+    resumed = [False]
+
+    def resume() -> None:
+        resumed[0] = resume_stopped_controller(kube, control)
+
+    def reset_incidents_once_serving() -> None:
+        # a controller that was just resumed serves resets only after its start-up: wait for that; a running one
+        # that does not answer is dead, which is a failed reset to report soon, not after the start-up bound
+        patience = RESET_START_PATIENCE_S if resumed[0] else RESET_PATIENCE_S
+        reset_when_running(binary, control, kubeconfig, patience, sleep, clock)
+
     return ResetSteps(
-        reset_incidents=lambda: reset_incidents(binary, control, kubeconfig),
+        resume_controller=resume,
+        reset_incidents=reset_incidents_once_serving,
         retire_standby=lambda: retire_standby(kube, control),
         stop_controller=lambda: set_controller_suspended(kube, control, True),
         restore_repository=lambda head: restore_repository(kube, control, head),
