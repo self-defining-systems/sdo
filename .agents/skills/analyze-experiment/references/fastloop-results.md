@@ -228,3 +228,7 @@ reflection-attempt cap. A pause-admission race goes through the same bounded fen
 another problem injection or grading attempt.
 
 Every incident row carries `operator_build`, the build ID of the SDO operator that ran it: the VCS stamp for a stamped binary, else `src-<16 hex>`, a digest of the operator's non-test source (`sdo-operator build-id <source-root>`). On the dev-mount path it hashes the mounted worktree source, so two rows with the same ID ran the same operator code and a changed ID means changed operator source. `null` on rows from image runs and older lanes.
+
+## External agent rows
+
+`--agent external` rows (any agent command; contract in `benchmarks/sregym/fastloop/README.md`) record `agent_label` and `agent_state_dir`, and `model` as declared. The cell directory `results/<run>/<index>_<problem>/` holds `incident/` and (when a closing timeout was set) `closing/`, each with `prompt.txt`, `agent-result.json`, `command.stdout`/`command.stderr`, `clock.json` and the command's evidence; `agent/` is the state it kept; the cell's `clock.json` has notice, start and end (top level is the incident phase) and `accounting.json` has one row per phase (`online` for the incident, offline for the closing), token split, unique requests, USD, error counts, `partial` and the request-log cross-check. The closing phase's tokens are the row's `reflection_tokens`. A row whose result file, evidence or accounting is missing or fails its cross-check carries an `external transcripts incomplete` error and is not gradable.
