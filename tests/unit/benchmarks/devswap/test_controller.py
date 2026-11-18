@@ -171,3 +171,42 @@ def test_resuming_the_controller_leaves_the_lease_alone(monkeypatch: pytest.Monk
     lane = LeaseLane(monkeypatch, [[]])
     controller.set_controller_suspended(lane.kube(), "ns", False)
     assert lane.lease_held
+
+
+class PendingWarm:
+    def __init__(self, calls: list[str]) -> None:
+        self.calls = calls
+
+    def finish(self) -> None:
+        self.calls.append("warm joined")
+
+
+def test_a_pending_go_cache_warm_is_joined_before_any_stop_of_the_controller(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Whatever stops the controller (a seed import, a tree import, the restart, a lane reset), the compile that warms the
+    cache for the new tree has ended first: the stop is the point the warm exists to shorten."""
+    from benchmarks.devswap import warm
+
+    lane = LeaseLane(monkeypatch, [[]])
+    kube = lane.kube()
+    events: list[str] = []
+    warm.pending[warm.lane_key(kube, "ns")] = PendingWarm(events)  # type: ignore[assignment]
+    real_run = lane.run
+    monkeypatch.setattr(
+        controller,
+        "run",
+        lambda args, *a, **k: (events.append("patch" if "patch" in args else "kubectl"), real_run(args, *a, **k))[1],
+    )
+    controller.set_controller_suspended(kube, "ns", True)
+    assert events[:2] == ["warm joined", "patch"]
+
+
+def test_resuming_never_waits_for_a_warm(monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarks.devswap import warm
+
+    lane = LeaseLane(monkeypatch, [[]])
+    kube = lane.kube()
+    events: list[str] = []
+    warm.pending[warm.lane_key(kube, "ns")] = PendingWarm(events)  # type: ignore[assignment]
+    controller.set_controller_suspended(kube, "ns", False)
+    assert events == []
+    warm.pending.clear()

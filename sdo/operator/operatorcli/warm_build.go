@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"time"
 
 	"sdo.dev/operator/builder"
 )
@@ -20,10 +19,9 @@ func RunWarmBuild(ctx context.Context, args []string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	started := time.Now()
 	commit, err := builder.WarmLaunchBuild(ctx, run)
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(output).Encode(map[string]any{"commit": commit, "seconds": time.Since(started).Seconds()})
+	return json.NewEncoder(output).Encode(map[string]string{"commit": commit})
 }

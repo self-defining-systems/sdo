@@ -27,6 +27,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
 WARM_POD = "sdo-warm-go-cache"
+#: The warm of each lane that has one running, by ``lane_key``: ``controller.set_controller_suspended`` joins it before
+#: any stop of that lane's controller, whichever step stops it.
+pending: dict[tuple[str, str, str], GoCacheWarm] = {}
 #: A bound, not a delay: the pod ends when the build does (measured 25-45 s on a new tree, 130 s on an empty cache).
 WARM_TIMEOUT_S = 420.0
 OPERATOR_BINARY = "/usr/local/bin/sdo-operator"
@@ -35,6 +38,17 @@ OPERATOR_BINARY = "/usr/local/bin/sdo-operator"
 #: names them ``dev-*``).
 _KEPT_MOUNTS = ("repository", "scratch", "sdo-config")
 _KEPT_PREFIX = "dev-"
+
+
+def lane_key(kube: Kubectl, control: str) -> tuple[str, str, str]:
+    return (kube.kubeconfig, kube.context, control)
+
+
+def join_pending(kube: Kubectl, control: str) -> None:
+    """Wait (bounded) for the lane's running warm, if any: called before the controller is stopped."""
+    step = pending.get(lane_key(kube, control))
+    if step is not None:
+        step.finish()
 
 
 def warm_pod(job: Mapping[str, Any], control: str) -> dict[str, Any]:
@@ -93,6 +107,8 @@ class GoCacheWarm:
         self._timeout = timeout
         self._started = 0.0
         self._created = False
+        #: Seconds ``finish`` waited for the pod (the part of the warm that was not overlapped with other swap steps).
+        self.waited = 0.0
 
     def _delete(self, wait: bool) -> None:
         subprocess.run(
@@ -115,8 +131,10 @@ class GoCacheWarm:
             self._started = time.monotonic()
             self._created = True
             run(self._kube.cmd("apply", "-f", "-"), "create the Go cache warm pod", 60, input=json.dumps(pod))
+            pending[lane_key(self._kube, self._control)] = self
         except (SwapError, OSError, subprocess.SubprocessError, ValueError, KeyError) as exc:
             self._created = False
+            pending.pop(lane_key(self._kube, self._control), None)
             self._out(f"Go build cache warm skipped (the restart compiles what is missing): {exc}")
 
     def _phase(self) -> str:
@@ -142,6 +160,7 @@ class GoCacheWarm:
     def finish(self) -> None:
         if not self._created:
             return
+        waiting = time.monotonic()
         try:
             while True:
                 phase = self._phase()
@@ -157,6 +176,7 @@ class GoCacheWarm:
         except (SwapError, OSError, subprocess.SubprocessError) as exc:
             self._out(f"Go build cache warm skipped (the restart compiles what is missing): {exc}")
         finally:
+            self.waited = time.monotonic() - waiting
             self.abort()
 
     def abort(self) -> None:
@@ -164,6 +184,7 @@ class GoCacheWarm:
         if not self._created:
             return
         self._created = False
+        pending.pop(lane_key(self._kube, self._control), None)
         try:
             self._delete(wait=False)
         except (OSError, subprocess.SubprocessError) as exc:

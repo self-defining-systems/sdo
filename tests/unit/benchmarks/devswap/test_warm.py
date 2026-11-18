@@ -114,7 +114,7 @@ class FakeKubectl(Kubectl):
 
 
 class Cluster:
-    def __init__(self, monkeypatch: pytest.MonkeyPatch, phases: list[str], log: str = '{"seconds": 31.5}') -> None:
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, phases: list[str], log: str = '{"commit": "abc"}') -> None:
         self.verbs: list[str] = []
         self.phases = list(phases)
         self.log = log
@@ -148,7 +148,7 @@ def test_a_warm_that_succeeds_waits_for_the_pod_and_removes_it(monkeypatch: pyte
     assert cluster.verbs == ["delete", "apply"]  # a stale pod of an earlier swap goes first
     step.finish()
     assert cluster.verbs[-2:] == ["logs", "delete"]
-    assert any("31.5" in m for m in messages)
+    assert any("abc" in m for m in messages)
     step.abort()  # nothing is left to remove
     assert cluster.verbs.count("delete") == 2
 
@@ -195,3 +195,28 @@ def test_aborting_removes_the_pod_without_waiting(monkeypatch: pytest.MonkeyPatc
     step.start()
     step.abort()
     assert cluster.verbs == ["delete", "apply", "delete"]
+
+
+def test_a_started_warm_is_pending_for_its_lane_until_it_is_finished_or_aborted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    Cluster(monkeypatch, ["Succeeded"])
+    kube = FakeKubectl(_job())
+    step = _warm(kube, [])
+    step.start()
+    assert warm.pending[warm.lane_key(kube, "control")] is step
+    step.finish()
+    assert warm.lane_key(kube, "control") not in warm.pending
+    step.start()
+    step.abort()
+    assert not warm.pending
+
+
+def test_a_warm_that_could_not_start_is_never_pending(monkeypatch: pytest.MonkeyPatch) -> None:
+    Cluster(monkeypatch, ["Succeeded"])
+    _warm(FakeKubectl(None), []).start()
+    assert not warm.pending
+
+
+def test_joining_a_lane_with_no_warm_does_nothing() -> None:
+    warm.join_pending(FakeKubectl(None), "control")

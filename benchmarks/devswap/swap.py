@@ -243,16 +243,10 @@ def swap_compiled(plan: SwapPlan, out: Callable[[str], object] = print) -> SwapR
                 if plan.restore_moved is None:
                     raise SwapError("the lane is not the one prepared: " + "; ".join(problems))
                 out("the lane moved while held, restoring it: " + "; ".join(problems))
-                if warm is not None:
-                    warm.finish()  # the restore resets the lane, which stops the controller
                 plan.restore_moved(problems)
             plan.verify()
         if why := plan.idle():
             raise SwapError(f"the operator is not idle: {why}")
-        if warm is not None:
-            # joined before the first step that stops the controller (a seed import, a tree import, the restart)
-            with phases("warm"):
-                warm.finish()
         if plan.seed is not None:
             seed_steps = Timeline(out, "seed.")
             try:
@@ -279,5 +273,8 @@ def swap_compiled(plan: SwapPlan, out: Callable[[str], object] = print) -> SwapR
         if binary is not None:
             _roll_back(plan, controller, previous, head, contracts, out)
         raise
+    if warm is not None:
+        warm.finish()  # normally joined by the first stop; never left running when no step stopped the controller
+        phases.seconds["warm"] = round(warm.waited, 1)  # what the swap waited for it (the rest overlapped other steps)
     plan.persist(SwapState(compiled, snapshot, head))
     return SwapResult(head, phases, binary is not None, restarted, compiled, snapshot, seeded)

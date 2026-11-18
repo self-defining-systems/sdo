@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path  # noqa: TC003
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.devswap import warm
 from benchmarks.devswap.kube import APPLICATION_ROOT, CONTROLLER_CONTAINER, CONTROLLER_JOB, Kubectl, SwapError, run
 
 if TYPE_CHECKING:
@@ -44,7 +45,11 @@ def controller_pod_ids(kube: Kubectl, control: str) -> set[str]:
 
 def set_controller_suspended(kube: Kubectl, control: str, suspended: bool, timeout: float = 300.0) -> None:
     """Suspend or resume the controller Job. Suspending ends its pod (SIGTERM: the evidence sidecar's final pass runs),
-    waits until none is left and frees the leader Lease the ended process still names."""
+    waits until none is left and frees the leader Lease the ended process still names. A Go build cache warm still
+    running for this lane (``devswap.warm``) is joined first: a stop ends the old controller, the warm shortens the next
+    start."""
+    if suspended:
+        warm.join_pending(kube, control)
     run(
         kube.cmd("-n", control, "patch", "job", CONTROLLER_JOB, "-p", json.dumps({"spec": {"suspend": suspended}})),
         "suspend the controller" if suspended else "resume the controller",

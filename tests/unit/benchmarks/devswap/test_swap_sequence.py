@@ -47,6 +47,7 @@ class Lane:
         self.calls: list[str] = []
         self.pods = {"pod-1"}
         self.suspended = False
+        self.warm: Any = None
         self.state = {"head": HEAD, "status": "", "outcomes": ""}
         self.tmp_path = tmp_path
         self.mount = tmp_path / "mount-sdo-operator"
@@ -62,6 +63,8 @@ class Lane:
 
     @contextmanager
     def stopped(self, _kube: object, _control: str) -> Iterator[None]:
+        if self.warm is not None:
+            self.warm.finish()  # what the real devswap.controller.set_controller_suspended does before any stop
         self.calls.append("stop")
         self.suspended = True
         try:
@@ -72,17 +75,27 @@ class Lane:
             self.pods = {f"pod-{len(self.calls)}"}
 
     def start_warm(self, _kube: object, _control: str, _out: object) -> object:
-        calls = self.calls
+        lane = self
 
         class Warm:
+            waited = 0.0
+            running = True
+
             def finish(self) -> None:
-                calls.append("warm finish")
+                if self.running:
+                    self.running = False
+                    lane.warm = None
+                    lane.calls.append("warm finish")
 
             def abort(self) -> None:
-                calls.append("warm abort")
+                if self.running:
+                    self.running = False
+                    lane.warm = None
+                    lane.calls.append("warm abort")
 
-        calls.append("warm start")
-        return Warm()
+        self.calls.append("warm start")
+        self.warm = Warm()
+        return self.warm
 
     def built(self) -> Path:
         self.calls.append("build")
