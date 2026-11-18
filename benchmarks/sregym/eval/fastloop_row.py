@@ -248,6 +248,8 @@ class FastloopRowRunner:
         if cell.arm == "sdo" and snapshot_commit:
             self._fetch(cell.app, environment, snapshot_commit)
         self._clear_events(environment)
+        if cell.arm == "sdo":
+            self._restart_trace_stores(environment)
         with self._lock:
             self._state[lane_id] = {
                 "environment": environment,
@@ -272,6 +274,40 @@ class FastloopRowRunner:
                 kubectl(["delete", "events", "--all"], namespace=namespace, kubeconfig=environment.kubeconfig)
             except Exception:
                 continue
+
+    def _restart_trace_stores(self, environment: FastloopEnvironment) -> None:
+        """SDO's lane admission refuses a lane whose Jaeger all-in-one pod holds more than its memory budget (it
+        grows with every trace a warm lane serves). Restart those Deployments at claim, like a fresh lane would be."""
+        try:
+            listing = json.loads(
+                kubectl(
+                    ["get", "deployments", "-o", "json"],
+                    namespace=environment.namespace,
+                    kubeconfig=environment.kubeconfig,
+                ).stdout
+            )
+            names = [
+                d["metadata"]["name"]
+                for d in listing["items"]
+                if any(
+                    "jaegertracing/all-in-one" in c.get("image", "")
+                    for c in d["spec"]["template"]["spec"].get("containers", [])
+                )
+            ]
+            for name in names:
+                kubectl(
+                    ["rollout", "restart", f"deployment/{name}"],
+                    namespace=environment.namespace,
+                    kubeconfig=environment.kubeconfig,
+                )
+            for name in names:
+                kubectl(
+                    ["rollout", "status", f"deployment/{name}", "--timeout=180s"],
+                    namespace=environment.namespace,
+                    kubeconfig=environment.kubeconfig,
+                )
+        except Exception:  # noqa: BLE001 - best effort; the admission check reports a real problem
+            return
 
     def _fetch(self, app: str, environment: FastloopEnvironment, commit: str) -> None:
         repo = self.settings.snapshot_repos.get(app)
