@@ -43,11 +43,38 @@ def test_a_late_failure_moves_the_time_back_retroactively() -> None:
     assert assess_health(broke, hold_seconds=6, max_gap_seconds=5).healthy_at == 15
 
 
-def test_a_gap_in_sampling_breaks_the_run_because_unknown_is_not_healthy() -> None:
+def test_a_gap_in_sampling_is_unknown_time_and_does_not_restart_the_healthy_run() -> None:
     run = samples((0, True), (3, True), (40, True), (43, True), (46, True))
     result = assess_health(run, hold_seconds=6, max_gap_seconds=5)
-    assert result.healthy_at == 40
+    assert result.healthy_at == 0
     assert result.gaps == 1
+    assert result.gap_seconds == 37
+    assert result.flaps == 0
+    assert result.coverage == pytest.approx(1 - 37 / 46)
+
+
+def test_a_gap_after_an_unhealthy_sample_still_starts_the_run_at_the_next_healthy_sample() -> None:
+    run = samples((0, False), (3, False), (40, True), (43, True), (46, True))
+    result = assess_health(run, hold_seconds=6, max_gap_seconds=5)
+    assert result.healthy_at == 40
+    assert result.unhealthy_seconds == 8  # 3 s + the unknown interval capped at max_gap (5 s), never its full length
+
+
+def test_a_failing_sample_after_a_gap_still_breaks_the_run() -> None:
+    run = samples((0, True), (30, False), (33, True), (36, True), (39, True))
+    assert assess_health(run, hold_seconds=6, max_gap_seconds=5).healthy_at == 33
+
+
+def test_a_gap_after_recovery_does_not_delay_the_healthy_time() -> None:
+    # Unhealthy at 0-3 s, healthy from 6 s, then one unanswered stretch (a host-side kubectl timeout) inside the hold.
+    run = samples(
+        (0, False), (3, False), (6, True), (9, True), (12, True), (30, True), (33, True), (36, True), (39, True)
+    )
+    result = assess_health(run, hold_seconds=30, max_gap_seconds=8)
+    assert result.healthy_at == 6
+    assert result.first_unhealthy_at == 0
+    assert result.gaps == 1
+    assert result.flaps == 0
 
 
 def test_no_samples_gives_no_time() -> None:
