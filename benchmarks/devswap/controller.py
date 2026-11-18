@@ -29,6 +29,11 @@ _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 SWAP_STANDBY_WAIT_S = 600.0
 
 
+def pod_ended(pod: Mapping[str, Any]) -> bool:
+    """Whether the pod's process is over (Succeeded or Failed): the Job keeps such pods, but nothing runs in them."""
+    return (pod.get("status") or {}).get("phase") in ("Succeeded", "Failed")
+
+
 def controller_pod_ids(kube: Kubectl, control: str) -> set[str]:
     """The uids of the controller pods that run or are about to (not ended, not being deleted). A pod list kubectl could
     not read is an error: an empty answer would read as "no controller to restart"."""
@@ -38,8 +43,7 @@ def controller_pod_ids(kube: Kubectl, control: str) -> set[str]:
     return {
         pod["metadata"]["uid"]
         for pod in pods
-        if not (pod.get("metadata") or {}).get("deletionTimestamp")
-        and (pod.get("status") or {}).get("phase") not in ("Succeeded", "Failed")
+        if not (pod.get("metadata") or {}).get("deletionTimestamp") and not pod_ended(pod)
     }
 
 
@@ -61,7 +65,8 @@ def set_controller_suspended(kube: Kubectl, control: str, suspended: bool, timeo
     while time.monotonic() < deadline:
         # an unreadable pod list is "not yet", never "gone": the Lease is freed only with no controller process left
         pods = kube.read_controller_pods(control)
-        if pods is not None and not pods:
+        # ended pods (a crash, a node shutdown) stay in the Job's list for good: no process runs in them
+        if pods is not None and all(pod_ended(pod) for pod in pods):
             release_leader_lease(kube, control)
             return
         time.sleep(2)

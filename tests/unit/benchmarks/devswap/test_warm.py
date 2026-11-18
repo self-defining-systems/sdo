@@ -60,6 +60,9 @@ def test_the_warm_pod_runs_the_controllers_environment_on_its_cache_and_the_dev_
     spec = pod["spec"]
     assert spec["restartPolicy"] == "Never"
     assert spec["securityContext"] == {"fsGroup": 65532}
+    # no cluster identity, and the cluster itself ends a pod that hangs
+    assert spec["automountServiceAccountToken"] is False
+    assert spec["activeDeadlineSeconds"] == 420 == int(warm.WARM_TIMEOUT_S)
     (container,) = spec["containers"]
     assert container["image"] == "sdo-controller:dev"
     # the new binary's warm-build, with the arguments the controller starts with
@@ -77,6 +80,7 @@ def test_the_warm_pod_runs_the_controllers_environment_on_its_cache_and_the_dev_
         "GOCACHE": "/workspace/.sdo-runtime/build/go-cache",
         "TMPDIR": "/workspace/.sdo-runtime/build/tmp",
         "SDO_DEV_MOUNT": "1",
+        "GIT_OPTIONAL_LOCKS": "0",  # reading the accepted repository never takes its index lock from the controller
     }
     assert "envFrom" not in container
     assert container["resources"] == {"limits": {"cpu": "4", "memory": "4Gi"}}
@@ -220,3 +224,29 @@ def test_a_warm_that_could_not_start_is_never_pending(monkeypatch: pytest.Monkey
 
 def test_joining_a_lane_with_no_warm_does_nothing() -> None:
     warm.join_pending(FakeKubectl(None), "control")
+
+
+def test_a_warm_pod_that_stays_pending_is_given_up_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pod that cannot start (a volume that does not mount, an image that does not pull) must not hold the swap for the
+    full bound: it is a build, not a gate."""
+    cluster = Cluster(monkeypatch, ["Pending"])
+    messages: list[str] = []
+    clock = iter([0.0, 0.0, 30.0, 95.0, 96.0, 97.0, 98.0])
+    monkeypatch.setattr(warm.time, "monotonic", lambda: next(clock))
+    step = _warm(FakeKubectl(_job()), messages, timeout=420)
+    step.start()
+    step.finish()
+    assert any("Pending" in m and "skipped" in m for m in messages), messages
+    assert cluster.verbs[-1] == "delete"
+
+
+def test_a_running_warm_is_not_given_up_on_at_the_pending_bound(monkeypatch: pytest.MonkeyPatch) -> None:
+    cluster = Cluster(monkeypatch, ["Running", "Running", "Succeeded"])
+    messages: list[str] = []
+    clock = iter([0.0, 0.0, 100.0, 200.0, 201.0, 202.0, 203.0])
+    monkeypatch.setattr(warm.time, "monotonic", lambda: next(clock))
+    step = _warm(FakeKubectl(_job()), messages, timeout=420)
+    step.start()
+    step.finish()
+    assert not any("skipped" in m for m in messages), messages
+    assert "logs" in cluster.verbs

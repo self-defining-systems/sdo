@@ -13,8 +13,10 @@ import (
 // controller restarts on a new operator source tree recompiles every package that imports the operator packages and
 // their tests, which costs more than the restart itself; run beforehand (by whatever places the new tree, while the
 // old controller keeps serving), the restart only links. Nothing is launched and no repository file is written: the
-// accepted tree is read as it is (the controller's own start-up upkeep, a schema migration, is not run). It returns
-// the accepted commit it built.
+// accepted tree is read as it is: the controller's own start-up upkeep (a schema migration, the health refresh) is
+// not run, by design, so a memory that upkeep would change is warmed as it stands. It writes the Go build cache and
+// the staged workspace under TMPDIR, which it removes before it returns (also when the build fails or ctx ends). It
+// returns the accepted commit it built.
 func WarmLaunchBuild(ctx context.Context, config RunConfig) (string, error) {
 	projected, err := memory.AcceptedDiagnostics(ctx, config.Build.ApplicationRoot)
 	if err != nil {

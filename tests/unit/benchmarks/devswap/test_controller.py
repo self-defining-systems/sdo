@@ -210,3 +210,28 @@ def test_resuming_never_waits_for_a_warm(monkeypatch: pytest.MonkeyPatch) -> Non
     controller.set_controller_suspended(kube, "ns", False)
     assert events == []
     warm.pending.clear()
+
+
+def test_a_leftover_terminal_pod_of_the_job_is_not_a_controller_that_still_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Job keeps the pods that failed (a node shutdown, a crash): they have no process, so the stop must not wait the
+    full bound for them to disappear (the same rule as ``controller_pod_ids``)."""
+    failed = {"status": {"phase": "Failed"}}
+    done = {"status": {"phase": "Succeeded"}}
+    lane = LeaseLane(monkeypatch, [[failed, done]])
+    controller.set_controller_suspended(lane.kube(), "ns", True)
+    assert not lane.lease_held  # freed on the first read, with no waiting
+
+
+def test_a_running_or_terminating_pod_still_holds_the_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+    lane = LeaseLane(
+        monkeypatch,
+        [
+            [{"status": {"phase": "Failed"}}, {"status": {"phase": "Running"}}],
+            [{"metadata": {"deletionTimestamp": "t"}, "status": {"phase": "Running"}}],
+            [],
+        ],
+    )
+    controller.set_controller_suspended(lane.kube(), "ns", True)
+    assert lane.lease_deleted_after_reads == 3

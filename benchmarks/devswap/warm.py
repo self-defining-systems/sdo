@@ -32,6 +32,8 @@ WARM_POD = "sdo-warm-go-cache"
 pending: dict[tuple[str, str, str], GoCacheWarm] = {}
 #: A bound, not a delay: the pod ends when the build does (measured 25-45 s on a new tree, 130 s on an empty cache).
 WARM_TIMEOUT_S = 420.0
+#: A pod that is still Pending this long (a volume that does not mount, an image that does not pull) is given up on.
+PENDING_TIMEOUT_S = 90.0
 OPERATOR_BINARY = "/usr/local/bin/sdo-operator"
 #: The controller's mounts the build needs: the repository volume (accepted memory, ``GOCACHE``, scratch directories),
 #: scratch, the mounted settings (the build reads the replay policy) and every projected-tree mount (``devmount.Apply``
@@ -77,13 +79,21 @@ def warm_pod(job: Mapping[str, Any], control: str) -> dict[str, Any]:
         "imagePullPolicy": "IfNotPresent",
         "command": [OPERATOR_BINARY, "warm-build", *args],
         # plain values only: an entry that reads the pod's own identity is the controller's (leader election)
-        "env": [e for e in container.get("env", []) if "value" in e],
+        "env": [
+            *(e for e in container.get("env", []) if "value" in e and e["name"] != "GIT_OPTIONAL_LOCKS"),
+            # reading the accepted repository must not refresh its index under the live controller's feet
+            {"name": "GIT_OPTIONAL_LOCKS", "value": "0"},
+        ],
         "resources": container.get("resources") or {},
         "securityContext": container.get("securityContext") or {},
         "volumeMounts": mounts,
     }
     pod_spec: dict[str, Any] = {
         "restartPolicy": "Never",
+        # the build needs no cluster identity, and the cluster ends a pod that hangs (SIGTERM first: warm-build cleans up)
+        "automountServiceAccountToken": False,
+        "activeDeadlineSeconds": int(WARM_TIMEOUT_S),
+        "terminationGracePeriodSeconds": 10,
         "securityContext": spec.get("securityContext") or {},
         "containers": [warm],
         "volumes": volumes,
@@ -170,7 +180,10 @@ class GoCacheWarm:
                     return
                 if phase == "Failed":
                     raise SwapError(f"the warm build failed: {self._logs()[-300:]}")
-                if time.monotonic() - self._started > self._timeout:
+                elapsed = time.monotonic() - self._started
+                if phase in ("Pending", "") and elapsed > PENDING_TIMEOUT_S:
+                    raise SwapError(f"the warm pod was still Pending after {PENDING_TIMEOUT_S:.0f}s")
+                if elapsed > self._timeout:
                     raise SwapError(f"the warm build did not end within {self._timeout:.0f}s")
                 time.sleep(2)
         except (SwapError, OSError, subprocess.SubprocessError) as exc:

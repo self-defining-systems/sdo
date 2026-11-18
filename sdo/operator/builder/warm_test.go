@@ -4,10 +4,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
+	contractsv1alpha1 "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/internal/testutil"
+	"sdo.dev/operator/memory"
 )
 
 func warmFixture(t *testing.T) (app, head string) {
@@ -84,5 +87,63 @@ func TestWarmLaunchBuildReportsABuildThatFailsAndKeepsNothing(t *testing.T) {
 	}
 	if left, _ := os.ReadDir(tmp); len(left) != 0 {
 		t.Fatalf("a failed warm build left its workspace behind: %v", left)
+	}
+}
+
+var stageDir = regexp.MustCompile(`-o \S+/`)
+
+// normalized drops the staging directory, which differs per run.
+func normalized(stages []string) []string {
+	out := make([]string, len(stages))
+	for i, stage := range stages {
+		out[i] = stageDir.ReplaceAllString(stage, "-o <workspace>/")
+	}
+	return out
+}
+
+// The warm exists to make a controller start's compiles cache hits, so it must run exactly the stages a start runs.
+// Both call compileLaunch; this pins that no stage is added to either side alone: the go stages of a real start
+// (runPass, up to the point it launches the controller child) and of the warm are the same list.
+func TestWarmLaunchBuildRunsTheSameStagesAsAControllerStart(t *testing.T) {
+	app, _ := warmFixture(t)
+	build := Config{ApplicationRoot: app, OperatorRoot: "..", Replay: "off"}
+
+	startLog := testutil.FakeGo(t)
+	t.Setenv("TMPDIR", t.TempDir())
+	started := RunConfig{
+		Build:      build,
+		Controller: &contractsv1alpha1.ControllerConfig{},
+		ResolveDiagnostics: func(ctx context.Context, root string) (DiagnosticsProjection, error) {
+			projected, err := memory.AcceptedDiagnostics(ctx, root)
+			return DiagnosticsProjection{Directory: projected.Directory, Fingerprint: projected.Fingerprint, AcceptedRevision: projected.AcceptedRevision}, err
+		},
+	}
+	// the fake go links an empty executable, so launching the controller child fails after every compile has run
+	_, _ = runPass(context.Background(), started)
+	start := normalized(stageArgs(t, startLog))
+
+	warmLog := testutil.FakeGo(t)
+	if _, err := WarmLaunchBuild(context.Background(), RunConfig{Build: build}); err != nil {
+		t.Fatal(err)
+	}
+	warmed := normalized(stageArgs(t, warmLog))
+
+	if len(start) < 4 || strings.Join(start, "\n") != strings.Join(warmed, "\n") {
+		t.Fatalf("a controller start and the warm compile different things\nstart: %q\nwarm:  %q", start, warmed)
+	}
+}
+
+func TestWarmLaunchBuildEndedByItsContextLeavesNothingBehind(t *testing.T) {
+	app, _ := warmFixture(t)
+	testutil.FakeGo(t)
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := WarmLaunchBuild(ctx, RunConfig{Build: Config{ApplicationRoot: app, OperatorRoot: "..", Replay: "off"}}); err == nil {
+		t.Fatal("a cancelled warm build must fail")
+	}
+	if left, _ := os.ReadDir(tmp); len(left) != 0 {
+		t.Fatalf("left behind: %v", left)
 	}
 }
