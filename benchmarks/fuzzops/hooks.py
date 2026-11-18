@@ -137,6 +137,15 @@ _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 HookError = SwapError  # a hook cannot do its job on this lane; the message is the one-line reason the bench records
 
 
+class StoreMismatch(HookError):
+    """The lane's data stores are not the golden copy's (fuzzops' fingerprint check said so): the one failure a
+    full restore of the golden copy can undo, and so the only one a claim retries."""
+
+
+class SnapshotNotIdle(HookError):
+    """The golden copy is whole and the app serves again; only the operator was not idle afterwards."""
+
+
 def _print(line: str) -> None:
     print(line, flush=True)
 
@@ -2035,28 +2044,49 @@ def set_maintenance(env: Mapping[str, str], paused: bool, generation: str) -> No
 
 
 FRESH_FINGERPRINT_ENV = "BENCH_FRESH_FINGERPRINT"
+STORE_MISMATCH_MARK = "the data stores are not the golden copy's"
 
 
 def golden_directory(env: Mapping[str, str]) -> Path:
     return Path(_need(env, "BENCH_LANE_DIR")).resolve() / GOLDEN_DIRECTORY
 
 
+GOLDEN_RESTORE_ATTEMPTS = 2
+
+
 def prove_golden(
-    verify: Callable[[], object], restore: Callable[[], object], out: Callable[[str], None] = _print
+    verify: Callable[[], object],
+    restore: Callable[[], object],
+    out: Callable[[str], None] = _print,
+    attempts: int = GOLDEN_RESTORE_ATTEMPTS,
 ) -> None:
     """A claimed lane's data stores must be the golden copy's before an operator is handed over: a fingerprint of
-    their structure, seeded content and row counts, recorded when the copy was taken. A mismatch forces a full restore
-    of the golden copy (which verifies itself); a lane that still differs fails the claim."""
+    their structure, seeded content and row counts, recorded when the copy was taken. A mismatch (``StoreMismatch``)
+    forces a full restore of the golden copy (which verifies itself) and a new proof, at most ``attempts`` times: a
+    restore whose own check raced an app that was still settling (a cache key rewritten, a schema change landing) is
+    tried again on the settled app instead of costing the lane. Any other failure (no golden copy, a controller that
+    does not start, a repository that cannot be restored) is not a store difference and is not retried: a second full
+    reset would hold the claim as long again before the pool rebuilds the lane. A lane that still differs fails the
+    claim, naming the last difference."""
+    if attempts < 1:
+        raise ValueError(f"attempts must be at least 1, not {attempts}")
     try:
         verify()
         return
-    except HookError as exc:
+    except StoreMismatch as exc:
         out(f"the lane's data stores differ from the golden copy, restoring them: {exc}")
-    restore()
-    try:
-        verify()
-    except HookError as exc:
-        raise HookError(f"the lane's data stores differ from the golden copy after a full restore: {exc}") from exc
+    last: HookError | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            restore()
+            verify()
+            return
+        except StoreMismatch as exc:
+            last = exc
+            if attempt < attempts:
+                out(f"restore {attempt} of {attempts} did not give the golden copy, restoring again: {exc}")
+    plural = "restore" if attempts == 1 else "restores"
+    raise StoreMismatch(f"the lane's data stores differ from the golden copy after {attempts} full {plural}: {last}")
 
 
 def fuzzops_app(env: Mapping[str, str], verb: str) -> dict[str, Any]:
@@ -2093,7 +2123,9 @@ def fuzzops_app(env: Mapping[str, str], verb: str) -> dict[str, Any]:
     )
     lines = [line for line in proc.stdout.splitlines() if line.strip()]
     if proc.returncode != 0:
-        raise HookError(f"app {verb} failed: {(proc.stderr.strip().splitlines() or ['no output'])[-1][-400:]}")
+        why = (proc.stderr.strip().splitlines() or ["no output"])[-1][-400:]
+        # fuzzops' verdict on the fingerprint ends its stderr: only this one is something a restore can undo
+        raise (StoreMismatch if STORE_MISMATCH_MARK in why else HookError)(f"app {verb} failed: {why}")
     try:
         return dict(json.loads(lines[-1]))
     except (IndexError, json.JSONDecodeError) as exc:
@@ -2215,6 +2247,10 @@ def snapshot(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int
     Run once on a prepared, idle lane; ``reset`` returns the lane to this state."""
     try:
         return _snapshot(env, out)
+    except SnapshotNotIdle:
+        # the copy is whole and was verified when it was taken; only the operator had not settled afterwards. The
+        # copy stays, and the manager decides (it waits for the operator and never claims the lane before)
+        raise
     except BaseException:
         # a snapshot that did not finish leaves no golden copy: the lane is released by teardown and rebuilt, and
         # a claim never restores a copy whose snapshot was reported failed
@@ -2235,7 +2271,9 @@ def _snapshot(env: Mapping[str, str], out: Callable[[str], None]) -> int:
     finally:
         set_maintenance(env, False, generation + "-resume")
     if why := wait_idle_stable(kube, control, RESET_IDLE_WAIT_S, SNAPSHOT_QUIET_S):
-        raise HookError(f"the operator is not idle after the snapshot: {why}")
+        # the last stdout line tells the manager the copy is whole and was kept
+        out(json.dumps({"golden": "kept", "not_idle": why}))
+        raise SnapshotNotIdle(f"the operator is not idle after the snapshot: {why}")
     # the app restarting after the copy can open an incident on the idle lane; its outcome must not stay in the pool
     restore_moved_repository(
         env, reset_steps(env, lambda: {"match": True, "skipped": "app untouched"}), repository_state(kube, control), out
