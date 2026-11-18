@@ -1,11 +1,12 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -141,22 +142,21 @@ func TestObjectOfUncapturedKindIsNotAbsent(t *testing.T) {
 
 // When the list is not complete but the API answers NotFound, the object is absent.
 func TestObjectNotFoundOnGetIsAbsent(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+	respond := func(code int, body any) (*http.Response, error) {
+		encoded, _ := json.Marshal(body)
+		return &http.Response{StatusCode: code, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(bytes.NewReader(encoded))}, nil
+	}
+	notFound := metav1.Status{TypeMeta: metav1.TypeMeta{Kind: "Status", APIVersion: "v1"}, Status: metav1.StatusFailure, Reason: metav1.StatusReasonNotFound, Code: http.StatusNotFound}
+	client, err := kubernetes.NewForConfig(&rest.Config{Host: "http://api.invalid", Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		switch r.URL.Path {
 		case "/api/v1":
-			_ = json.NewEncoder(w).Encode(metav1.APIResourceList{GroupVersion: "v1", APIResources: []metav1.APIResource{{Name: "configmaps", Kind: "ConfigMap", Namespaced: true}}})
-		case "/api/v1/namespaces/app/configmaps/cm":
-			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(metav1.Status{TypeMeta: metav1.TypeMeta{Kind: "Status", APIVersion: "v1"}, Status: metav1.StatusFailure, Reason: metav1.StatusReasonNotFound, Code: http.StatusNotFound})
+			return respond(http.StatusOK, metav1.APIResourceList{GroupVersion: "v1", APIResources: []metav1.APIResource{{Name: "configmaps", Kind: "ConfigMap", Namespaced: true}}})
 		case "/api/v1/namespaces/app/configmaps/boom":
-			w.WriteHeader(http.StatusInternalServerError)
+			return respond(http.StatusInternalServerError, metav1.Status{TypeMeta: metav1.TypeMeta{Kind: "Status", APIVersion: "v1"}, Status: metav1.StatusFailure, Code: http.StatusInternalServerError})
 		default:
-			w.WriteHeader(http.StatusNotFound)
+			return respond(http.StatusNotFound, notFound)
 		}
-	}))
-	defer server.Close()
-	client, err := kubernetes.NewForConfig(&rest.Config{Host: server.URL})
+	})})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,3 +204,7 @@ func TestClassifyDeletedDeclaredObjectDoesNotError(t *testing.T) {
 		t.Fatalf("deleted undeclared object = %+v, %v; want no event, no error", event, err)
 	}
 }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
