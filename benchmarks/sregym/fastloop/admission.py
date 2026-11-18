@@ -156,6 +156,10 @@ class LaneAdmission:
         self._identity: dict[str, Any] | None = None
         self._sequence = 0
 
+    def _has_health_detectors(self) -> bool:
+        root = self.environment.workspace / ".sdo/diagnostics"
+        return any((root / "detectors/health").glob("*/manifest.yaml"))
+
     def _policy(self) -> None:
         if self.code_path == "shell":
             self.required_detectors = {"shell.detectors"}
@@ -448,11 +452,20 @@ class LaneAdmission:
         boundary = datetime.now(timezone.utc).isoformat()
         self.check_resources("entry")
         process = self._controller_process(control)
-        self._policy()
+        # A fresh memory without health detectors gets them from the health refresh at adoption (the controller's
+        # judge authors and commits them): read the policy after that refresh and a sync of the accepted repository.
+        defer_policy = fresh and self.code_path == "go" and not self._has_health_detectors()
+        if not defer_policy:
+            self._policy()
         # Onboarding has its own budget: the stabilization clock below must never
         # contain install-existing or the first health refresh of a fresh seed.
         self._run_pre_onboarding_hook()
         onboarding = self.await_onboarding(control) if self.code_path == "go" else {}
+        if defer_policy:
+            if self.synchronize is None:
+                raise ValueError("eval: a fresh memory without health detectors requires synchronization")
+            self.synchronize()
+            self._policy()
         # A previous row's closure and reflection have their own budget too: a
         # repeat starts only on the memory that reflection accepted.
         self.await_prior_closure(control)
