@@ -159,8 +159,49 @@ def test_a_claim_whose_stores_still_differ_after_the_restore_fails_loudly() -> N
     def verify() -> None:
         raise hooks.HookError("pg/migrations differs")
 
-    with pytest.raises(hooks.HookError, match="after a full restore: pg/migrations differs"):
+    with pytest.raises(hooks.HookError, match="after 2 full restores: pg/migrations differs"):
         hooks.prove_golden(verify, lambda: None, lambda _m: None)
+
+
+def test_a_restore_that_itself_fails_the_gate_is_tried_once_more_before_the_claim_fails() -> None:
+    # the pool lane pc5 failed its claim because the restore's own verify raced the app (a key or the schema was
+    # still moving); the second restore, run on a settled app, proves the copy
+    log: list[str] = []
+    state = {"restores": 0}
+
+    def verify() -> None:
+        log.append("verify")
+        if state["restores"] == 0:
+            raise hooks.HookError("redis/cache:x:set has other content")
+
+    def restore() -> None:
+        state["restores"] += 1
+        log.append("restore")
+        if state["restores"] == 1:
+            raise hooks.HookError(
+                "app reset failed: reset: the data stores are not the golden copy's: postgres/columns differs"
+            )
+        log.append("restored")
+
+    hooks.prove_golden(verify, restore, log.append)
+    assert [e for e in log if e in ("verify", "restore", "restored")] == [
+        "verify",
+        "restore",
+        "restore",
+        "restored",
+        "verify",
+    ]
+
+
+def test_a_claim_fails_naming_the_last_difference_when_every_restore_attempt_fails() -> None:
+    def verify() -> None:
+        raise hooks.HookError("first")
+
+    def restore() -> None:
+        raise hooks.HookError("app reset failed: postgres/columns differs")
+
+    with pytest.raises(hooks.HookError, match="after 2 full restores: app reset failed: postgres/columns differs"):
+        hooks.prove_golden(verify, restore, lambda _m: None)
 
 
 def test_a_failed_snapshot_leaves_no_golden_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -2297,22 +2297,39 @@ def golden_directory(env: Mapping[str, str]) -> Path:
     return Path(_need(env, "BENCH_LANE_DIR")).resolve() / GOLDEN_DIRECTORY
 
 
+GOLDEN_RESTORE_ATTEMPTS = 2
+
+
 def prove_golden(
-    verify: Callable[[], object], restore: Callable[[], object], out: Callable[[str], None] = _print
+    verify: Callable[[], object],
+    restore: Callable[[], object],
+    out: Callable[[str], None] = _print,
+    attempts: int = GOLDEN_RESTORE_ATTEMPTS,
 ) -> None:
     """A claimed lane's data stores must be the golden copy's before an operator is handed over: a fingerprint of
     their structure, seeded content and row counts, recorded when the copy was taken. A mismatch forces a full restore
-    of the golden copy (which verifies itself); a lane that still differs fails the claim."""
+    of the golden copy (which verifies itself) and a new proof, at most ``attempts`` times: a restore whose own check
+    raced an app that was still settling (a cache key rewritten, a schema change landing) is tried again on the
+    settled app instead of costing the lane. A lane that still differs fails the claim, naming the last difference."""
     try:
         verify()
         return
     except HookError as exc:
         out(f"the lane's data stores differ from the golden copy, restoring them: {exc}")
-    restore()
-    try:
-        verify()
-    except HookError as exc:
-        raise HookError(f"the lane's data stores differ from the golden copy after a full restore: {exc}") from exc
+    last: HookError | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            restore()
+            verify()
+            return
+        except HookError as exc:
+            last = exc
+            if attempt < attempts:
+                out(f"restore {attempt} of {attempts} did not give the golden copy, restoring again: {exc}")
+    plural = "restore" if attempts == 1 else "restores"
+    raise HookError(
+        f"the lane's data stores differ from the golden copy after {attempts} full {plural}: {last}"
+    ) from last
 
 
 def fuzzops_app(env: Mapping[str, str], verb: str) -> dict[str, Any]:
