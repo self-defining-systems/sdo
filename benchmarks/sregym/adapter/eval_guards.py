@@ -34,6 +34,14 @@ def validate_setup_commit(validation: str) -> None:
         raise ValueError(f"unvalidated setup commit: validation={validation}")
 
 
+def is_install_plan_record(actor: str, origin: str, paths: list[str]) -> bool:
+    """The commit install-existing makes to record the lane's deployment plan over an installed snapshot.
+
+    It carries no broker validation (the installer, not the broker, writes it) and touches only the plan file.
+    """
+    return actor == "human" and origin == "install-existing" and paths == [".sdo/deployment/plan.yaml"]
+
+
 def is_health_setup(actor: str, phase: str, paths: list[str]) -> bool:
     """Whether a setup-window commit is the health judge's initial setup rather than other accepted memory."""
     return (
@@ -69,8 +77,9 @@ def setup_lineage(repository: Path, seed: str, head: str = "HEAD") -> dict[str, 
             if line.startswith("SDO-") and ": " in line
         )
         paths = git("diff-tree", "--no-commit-id", "--name-only", "-r", sha).splitlines()
-        validate_setup_commit(trailers.get("SDO-Validation", ""))
         actor, phase = trailers.get("SDO-Actor", ""), trailers.get("SDO-Phase", "")
+        if not is_install_plan_record(actor, trailers.get("SDO-Origin", ""), paths):
+            validate_setup_commit(trailers.get("SDO-Validation", ""))
         commits.append(
             {
                 "sha": sha,

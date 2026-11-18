@@ -636,3 +636,27 @@ def test_verify_burst_cannot_shadow_qualified_health_scenarios(reverse):
     windows["health"]["scenarios"][0]["qualified"] = False
     windows["verify"]["scenarios"][0].update(qualified=True, samples=[{}])
     assert not qualified_scenarios({"windows": windows}, {"login"})
+
+
+def test_lineage_admits_the_install_plan_record_over_an_installed_snapshot(tmp_path):
+    """install-existing records the lane's plan as a human commit without a validation trailer; only that commit."""
+    from benchmarks.sregym.adapter.eval_guards import setup_lineage
+
+    repository = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    _commit(repository, "seed", [])
+    seed = subprocess.run(
+        ["git", "-C", str(repository), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    (repository / ".sdo/deployment").mkdir(parents=True)
+    (repository / ".sdo/deployment/plan.yaml").write_text("{}")
+    subprocess.run(["git", "-C", str(repository), "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm",
+         "sdo: record the deployment plan\n\nSDO-Actor: human\nSDO-Phase: initial\nSDO-Origin: install-existing"],
+        check=True,
+    )
+    assert setup_lineage(repository, seed)["passed"] is True
+    _commit(repository, "other", ["SDO-Actor: human", "SDO-Phase: initial", "SDO-Origin: install-existing"])
+    with pytest.raises(ValueError, match="unvalidated setup commit"):
+        setup_lineage(repository, seed)
