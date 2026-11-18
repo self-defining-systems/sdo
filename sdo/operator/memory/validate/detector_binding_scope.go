@@ -87,3 +87,61 @@ func bindsByName(file string) bool {
 	})
 	return found
 }
+
+// namedPlaybookDiagnostics holds a changed responder incident detector to its
+// one job: retrieval. It must name at least one playbook, and each named
+// playbook must exist. The semantic check already rejects a missing playbook
+// whenever the memory holds any; this adds the case of a memory with none, so a
+// detector never points at nothing.
+func namedPlaybookDiagnostics(root string, paths []string) []Diagnostic {
+	changed := map[string]bool{}
+	for _, p := range paths {
+		if kind, id, ok := layout.Classify(p); ok && (kind == layout.KindIncidentDetectorManifest || kind == layout.KindIncidentDetectorSource) {
+			changed[id] = true
+		}
+	}
+	ids := make([]string, 0, len(changed))
+	for id := range changed {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	exists := func(id string) bool {
+		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(layout.PlaybookDir(id)), layout.PlaybookFileName))
+		return err == nil
+	}
+	anyPlaybook := false
+	if entries, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(layout.PlaybooksDir))); err == nil {
+		for _, entry := range entries {
+			anyPlaybook = anyPlaybook || entry.IsDir() && exists(entry.Name())
+		}
+	}
+	var diagnostics []Diagnostic
+	for _, id := range ids {
+		manifestPath := layout.DetectorManifestPath(layout.ClassIncident, id)
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(manifestPath)))
+		if err != nil {
+			continue
+		}
+		manifest, err := layout.ParseDetectorManifest(data)
+		if err != nil {
+			continue
+		}
+		if len(manifest.PossiblePlaybooks) == 0 {
+			diagnostics = append(diagnostics, Diagnostic{Rule: RuleDetectorNamesNoPlaybook, Path: manifestPath,
+				Message: "incident detector " + id + " names no playbook",
+				Hint:    "a responder's incident detector exists to retrieve the playbook for its cause: list that playbook in possiblePlaybooks, Spec Playbooks and each finding's Playbooks, or delete the detector"})
+			continue
+		}
+		if anyPlaybook {
+			continue
+		}
+		for _, reference := range manifest.PossiblePlaybooks {
+			if layout.ValidPlaybookID(reference) && !exists(reference) {
+				diagnostics = append(diagnostics, Diagnostic{Rule: RuleUnknownPlaybook, Path: manifestPath,
+					Message: "incident detector " + id + " names playbook " + reference + ", which does not exist",
+					Hint:    "write the playbook in the same change or remove it from possiblePlaybooks"})
+			}
+		}
+	}
+	return diagnostics
+}
