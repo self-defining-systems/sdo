@@ -64,10 +64,9 @@ type IncidentRequest struct {
 	// JoinedKeys are the finding keys of user tests that started failing while
 	// the incident was open, within AlertJoinWindow of detection. With
 	// OpeningKeys they are the alert set Recovered waits on (alertKeys).
-	JoinedKeys             []string
-	ExternalMessage        string
-	Telemetry              *contracts.TelemetryContext
-	DisabledSetupDetectors []*contracts.DisabledSetupDetector
+	JoinedKeys      []string
+	ExternalMessage string
+	Telemetry       *contracts.TelemetryContext
 	// NamespaceOnboarding is the namespace's installer record. Every incident of
 	// an onboarded namespace carries it; it does not mean onboarding is under way.
 	NamespaceOnboarding *contracts.NamespaceOnboarding

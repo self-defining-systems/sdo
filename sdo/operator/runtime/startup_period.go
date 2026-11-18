@@ -102,7 +102,7 @@ func (c *Controller) observeStartup(now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for id := range c.detectors {
-		if c.openerDetector(id) && !c.setupDetectorDisabled(id) && !c.startup.ran[id] {
+		if c.openerDetector(id) && !c.startup.ran[id] {
 			quiet = false
 		}
 	}

@@ -152,7 +152,6 @@ type OutcomeRecord struct {
 	// verified the closure. Information only; never a verdict.
 	SourceCheckNotes        []string                 `protobuf:"bytes,38,rep,name=source_check_notes,json=sourceCheckNotes,proto3" json:"source_check_notes,omitempty"`
 	DriftReprompt           *DriftReprompt           `protobuf:"bytes,39,opt,name=drift_reprompt,json=driftReprompt,proto3" json:"drift_reprompt,omitempty"`
-	DisabledSetupDetectors  []*DisabledSetupDetector `protobuf:"bytes,40,rep,name=disabled_setup_detectors,json=disabledSetupDetectors,proto3" json:"disabled_setup_detectors,omitempty"`
 	StatePersistenceFailure *StatePersistenceFailure `protobuf:"bytes,41,opt,name=state_persistence_failure,json=statePersistenceFailure,proto3" json:"state_persistence_failure,omitempty"`
 	// Controller-observed: the closure's recovery verification set, strength
 	// per component and whether it recovered after SDO's last write settled.
@@ -476,13 +475,6 @@ func (x *OutcomeRecord) GetDriftReprompt() *DriftReprompt {
 	return nil
 }
 
-func (x *OutcomeRecord) GetDisabledSetupDetectors() []*DisabledSetupDetector {
-	if x != nil {
-		return x.DisabledSetupDetectors
-	}
-	return nil
-}
-
 func (x *OutcomeRecord) GetStatePersistenceFailure() *StatePersistenceFailure {
 	if x != nil {
 		return x.StatePersistenceFailure
@@ -760,7 +752,7 @@ const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\x06status\x18\x01 \x01(\tB&\xbaH#r!R\bdeployedR\tpublishedR\x04heldR\x04noneR\x06status\x12\x16\n" +
 	"\x06commit\x18\x02 \x01(\tR\x06commit\x12\x16\n" +
 	"\x06detail\x18\x03 \x01(\tR\x06detail\x12)\n" +
-	"\x10uncaptured_paths\x18\x04 \x03(\tR\x0funcapturedPaths\"\x91\x1b\n" +
+	"\x10uncaptured_paths\x18\x04 \x03(\tR\x0funcapturedPaths\"\xc5\x1a\n" +
 	"\rOutcomeRecord\x12F\n" +
 	"\tcode_path\x18d \x01(\v2).sdodev.contracts.v1alpha1.CodePathConfigR\bcodePath\x12.\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05B\a\xbaH\x04\x1a\x02\b\x01R\rschemaVersion\x12,\n" +
@@ -806,14 +798,13 @@ const file_sdodev_contracts_v1alpha1_outcome_proto_rawDesc = "" +
 	"\x15reflection_rejections\x184 \x03(\v2,.sdodev.contracts.v1alpha1.ProposalRejectionR\x14reflectionRejections\x12L\n" +
 	"\rsource_repair\x185 \x01(\v2'.sdodev.contracts.v1alpha1.SourceRepairR\fsourceRepair\x12,\n" +
 	"\x12source_check_notes\x18& \x03(\tR\x10sourceCheckNotes\x12O\n" +
-	"\x0edrift_reprompt\x18' \x01(\v2(.sdodev.contracts.v1alpha1.DriftRepromptR\rdriftReprompt\x12j\n" +
-	"\x18disabled_setup_detectors\x18( \x03(\v20.sdodev.contracts.v1alpha1.DisabledSetupDetectorR\x16disabledSetupDetectors\x12n\n" +
+	"\x0edrift_reprompt\x18' \x01(\v2(.sdodev.contracts.v1alpha1.DriftRepromptR\rdriftReprompt\x12n\n" +
 	"\x19state_persistence_failure\x18) \x01(\v22.sdodev.contracts.v1alpha1.StatePersistenceFailureR\x17statePersistenceFailure\x12d\n" +
 	"\x15recovery_verification\x18* \x01(\v2/.sdodev.contracts.v1alpha1.RecoveryVerificationR\x14recoveryVerification\x12Q\n" +
 	"\x0eagent_findings\x186 \x03(\v2*.sdodev.contracts.v1alpha1.IncidentFindingR\ragentFindings\x12K\n" +
 	"\ragent_changes\x187 \x03(\v2&.sdodev.contracts.v1alpha1.AgentChangeR\fagentChangesB\x10\n" +
 	"\x0e_repair_commitB\x10\n" +
-	"\x0e_memory_commitJ\x04\b\x16\x10\x17J\x04\b\x1f\x10 J\x04\b \x10!J\x04\b!\x10\"R\x16diagnosis_verification\"\xcc\x02\n" +
+	"\x0e_memory_commitJ\x04\b\x16\x10\x17J\x04\b\x1f\x10 J\x04\b \x10!J\x04\b!\x10\"J\x04\b(\x10)R\x16diagnosis_verificationR\x18disabled_setup_detectors\"\xcc\x02\n" +
 	"\x11OutcomeTimestamps\x12;\n" +
 	"\vdetected_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"detectedAt\x12?\n" +
@@ -873,13 +864,12 @@ var file_sdodev_contracts_v1alpha1_outcome_proto_goTypes = []any{
 	(*StageReport)(nil),             // 17: sdodev.contracts.v1alpha1.StageReport
 	(*ProposalRejection)(nil),       // 18: sdodev.contracts.v1alpha1.ProposalRejection
 	(*DriftReprompt)(nil),           // 19: sdodev.contracts.v1alpha1.DriftReprompt
-	(*DisabledSetupDetector)(nil),   // 20: sdodev.contracts.v1alpha1.DisabledSetupDetector
-	(*StatePersistenceFailure)(nil), // 21: sdodev.contracts.v1alpha1.StatePersistenceFailure
-	(*RecoveryVerification)(nil),    // 22: sdodev.contracts.v1alpha1.RecoveryVerification
-	(*IncidentFinding)(nil),         // 23: sdodev.contracts.v1alpha1.IncidentFinding
-	(*AgentChange)(nil),             // 24: sdodev.contracts.v1alpha1.AgentChange
-	(*timestamppb.Timestamp)(nil),   // 25: google.protobuf.Timestamp
-	(*ObjectRef)(nil),               // 26: sdodev.contracts.v1alpha1.ObjectRef
+	(*StatePersistenceFailure)(nil), // 20: sdodev.contracts.v1alpha1.StatePersistenceFailure
+	(*RecoveryVerification)(nil),    // 21: sdodev.contracts.v1alpha1.RecoveryVerification
+	(*IncidentFinding)(nil),         // 22: sdodev.contracts.v1alpha1.IncidentFinding
+	(*AgentChange)(nil),             // 23: sdodev.contracts.v1alpha1.AgentChange
+	(*timestamppb.Timestamp)(nil),   // 24: google.protobuf.Timestamp
+	(*ObjectRef)(nil),               // 25: sdodev.contracts.v1alpha1.ObjectRef
 }
 var file_sdodev_contracts_v1alpha1_outcome_proto_depIdxs = []int32{
 	5,  // 0: sdodev.contracts.v1alpha1.OutcomeRecord.code_path:type_name -> sdodev.contracts.v1alpha1.CodePathConfig
@@ -902,25 +892,24 @@ var file_sdodev_contracts_v1alpha1_outcome_proto_depIdxs = []int32{
 	18, // 17: sdodev.contracts.v1alpha1.OutcomeRecord.reflection_rejections:type_name -> sdodev.contracts.v1alpha1.ProposalRejection
 	0,  // 18: sdodev.contracts.v1alpha1.OutcomeRecord.source_repair:type_name -> sdodev.contracts.v1alpha1.SourceRepair
 	19, // 19: sdodev.contracts.v1alpha1.OutcomeRecord.drift_reprompt:type_name -> sdodev.contracts.v1alpha1.DriftReprompt
-	20, // 20: sdodev.contracts.v1alpha1.OutcomeRecord.disabled_setup_detectors:type_name -> sdodev.contracts.v1alpha1.DisabledSetupDetector
-	21, // 21: sdodev.contracts.v1alpha1.OutcomeRecord.state_persistence_failure:type_name -> sdodev.contracts.v1alpha1.StatePersistenceFailure
-	22, // 22: sdodev.contracts.v1alpha1.OutcomeRecord.recovery_verification:type_name -> sdodev.contracts.v1alpha1.RecoveryVerification
-	23, // 23: sdodev.contracts.v1alpha1.OutcomeRecord.agent_findings:type_name -> sdodev.contracts.v1alpha1.IncidentFinding
-	24, // 24: sdodev.contracts.v1alpha1.OutcomeRecord.agent_changes:type_name -> sdodev.contracts.v1alpha1.AgentChange
-	25, // 25: sdodev.contracts.v1alpha1.OutcomeTimestamps.detected_at:type_name -> google.protobuf.Timestamp
-	25, // 26: sdodev.contracts.v1alpha1.OutcomeTimestamps.dispatched_at:type_name -> google.protobuf.Timestamp
-	25, // 27: sdodev.contracts.v1alpha1.OutcomeTimestamps.mitigated_at:type_name -> google.protobuf.Timestamp
-	25, // 28: sdodev.contracts.v1alpha1.OutcomeTimestamps.verified_at:type_name -> google.protobuf.Timestamp
-	25, // 29: sdodev.contracts.v1alpha1.OutcomeTimestamps.completed_at:type_name -> google.protobuf.Timestamp
-	26, // 30: sdodev.contracts.v1alpha1.SdkGap.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	26, // 31: sdodev.contracts.v1alpha1.UndetectedCause.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	25, // 32: sdodev.contracts.v1alpha1.UndetectedCause.open_observed_at:type_name -> google.protobuf.Timestamp
-	25, // 33: sdodev.contracts.v1alpha1.UndetectedCause.fixed_observed_at:type_name -> google.protobuf.Timestamp
-	34, // [34:34] is the sub-list for method output_type
-	34, // [34:34] is the sub-list for method input_type
-	34, // [34:34] is the sub-list for extension type_name
-	34, // [34:34] is the sub-list for extension extendee
-	0,  // [0:34] is the sub-list for field type_name
+	20, // 20: sdodev.contracts.v1alpha1.OutcomeRecord.state_persistence_failure:type_name -> sdodev.contracts.v1alpha1.StatePersistenceFailure
+	21, // 21: sdodev.contracts.v1alpha1.OutcomeRecord.recovery_verification:type_name -> sdodev.contracts.v1alpha1.RecoveryVerification
+	22, // 22: sdodev.contracts.v1alpha1.OutcomeRecord.agent_findings:type_name -> sdodev.contracts.v1alpha1.IncidentFinding
+	23, // 23: sdodev.contracts.v1alpha1.OutcomeRecord.agent_changes:type_name -> sdodev.contracts.v1alpha1.AgentChange
+	24, // 24: sdodev.contracts.v1alpha1.OutcomeTimestamps.detected_at:type_name -> google.protobuf.Timestamp
+	24, // 25: sdodev.contracts.v1alpha1.OutcomeTimestamps.dispatched_at:type_name -> google.protobuf.Timestamp
+	24, // 26: sdodev.contracts.v1alpha1.OutcomeTimestamps.mitigated_at:type_name -> google.protobuf.Timestamp
+	24, // 27: sdodev.contracts.v1alpha1.OutcomeTimestamps.verified_at:type_name -> google.protobuf.Timestamp
+	24, // 28: sdodev.contracts.v1alpha1.OutcomeTimestamps.completed_at:type_name -> google.protobuf.Timestamp
+	25, // 29: sdodev.contracts.v1alpha1.SdkGap.resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	25, // 30: sdodev.contracts.v1alpha1.UndetectedCause.resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	24, // 31: sdodev.contracts.v1alpha1.UndetectedCause.open_observed_at:type_name -> google.protobuf.Timestamp
+	24, // 32: sdodev.contracts.v1alpha1.UndetectedCause.fixed_observed_at:type_name -> google.protobuf.Timestamp
+	33, // [33:33] is the sub-list for method output_type
+	33, // [33:33] is the sub-list for method input_type
+	33, // [33:33] is the sub-list for extension type_name
+	33, // [33:33] is the sub-list for extension extendee
+	0,  // [0:33] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_outcome_proto_init() }

@@ -365,7 +365,6 @@ func NewResponderLoopWithOptions(request IncidentRequest, programs program.Progr
 	if request.ExternalMessage != "" {
 		detectors = nil
 	}
-	detectors = withoutDisabledSetupDetectors(detectors, request.SourceCommit, request.DisabledSetupDetectors)
 	restoreEvidence := &sourceRestoreEvidence{}
 	restoreEvidence.set(request)
 	loop := &ResponderLoop{sessionID: session, Request: request, Programs: withSourceRestore(programs, restoreEvidence), restoreEvidence: restoreEvidence, Provider: provider, Detectors: detectors, Executor: executor, MaxBatches: maxBatches, plans: map[string]selectedPlan{}, applications: map[string]PlanApplicationResult{}, matchedViews: map[string]program.ReadView{}, matchedPlans: map[string]PlanApplicationResult{}, findings: append([]sdk.Finding(nil), request.Findings...)}

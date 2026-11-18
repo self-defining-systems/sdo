@@ -283,19 +283,23 @@ message TelemetryPublish {
   string otlp_traces_url = 3;
 }
 
-// Controller-owned exclusion, valid only at the exact accepted memory revision.
-message DisabledSetupDetector {
+// An incident-class detector that errored or fired while the app was judged
+// healthy at setup. Evidence of a noisy clue and nothing else: only health-class
+// detectors and user tests decide an install, and this detector is never disabled.
+message SetupNoisyDetector {
   string detector_id = 1 [(buf.validate.field).string.min_len = 1];
   string accepted_revision = 2 [(buf.validate.field).string.min_len = 1];
-  repeated string fingerprints = 3 [(buf.validate.field).repeated = {min_items: 1, items: {string: {min_len: 1}}}];
-  google.protobuf.Timestamp disabled_at = 4 [(buf.validate.field).required = true];
-  string reason = 5 [(buf.validate.field).string.const = "fired on the confirmed-healthy app at setup"];
+  // errored or fired.
+  string outcome = 3 [(buf.validate.field).string = {in: ["errored", "fired"]}];
+  // The error text, or the fired rule IDs; one line of at most 500 bytes.
+  string detail = 4 [(buf.validate.field).string.max_len = 500];
 }
 
 // NamespaceOnboarding is controller-owned identity acknowledgement at verified
 // initial installation. It never asserts content correctness or repair credit.
 message NamespaceOnboarding {
-  repeated DisabledSetupDetector disabled_setup_detectors = 6;
+  reserved 6;
+  reserved "disabled_setup_detectors";
   string namespace = 1;
   string accepted_commit = 2;
   google.protobuf.Timestamp established_at = 3;
@@ -303,6 +307,9 @@ message NamespaceOnboarding {
   // Install observations carry no health authority. The digest binds UID,
   // configuration and ownership, excluding API bookkeeping and status.
   repeated InstallEnvironmentObject environment_objects = 5;
+  // Incident-class detectors that errored or fired while the app was judged
+  // healthy at setup. Evidence only: they stay enabled and never gate the install.
+  repeated SetupNoisyDetector setup_noisy = 7;
 }
 
 message InstallEnvironmentObject {
@@ -321,7 +328,7 @@ message IncidentRequest {
   option (buf.validate.message).cel = {
     id: "incident.trigger"
     message: "detected incidents require findings and history; external incidents carry no detector evidence"
-    expression: "this.external_message == '' ? (size(this.findings) > 0 && size(this.detector_history) > 0) : (size(this.findings) == 0 && size(this.detector_history) == 0 && size(this.drift_events) == 0 && !has(this.state_changes) && size(this.disabled_setup_detectors) == 0)"
+    expression: "this.external_message == '' ? (size(this.findings) > 0 && size(this.detector_history) > 0) : (size(this.findings) == 0 && size(this.detector_history) == 0 && size(this.drift_events) == 0 && !has(this.state_changes))"
   };
   string schema_version = 1 [(buf.validate.field).string.const = "sdo.dev/v1alpha1"];
   string application = 2 [(buf.validate.field).string.min_len = 1];
@@ -357,7 +364,8 @@ message IncidentRequest {
   repeated string compaction = 30;
   // Information from failed episodes of the same continuously open problem.
   repeated ResponseProgress prior_response_progress = 31;
-  repeated DisabledSetupDetector disabled_setup_detectors = 32;
+  reserved 32;
+  reserved "disabled_setup_detectors";
   reserved 33;
   reserved "metrics_source";
   // External alerts close when the responder returns; they assert no verified health.
