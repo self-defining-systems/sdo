@@ -1293,53 +1293,61 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
         def reset_failed() -> None:
             _reset_failed_incident(environment, worker)
 
-        if args.agent == "sdo":
-            records = run_incidents(
-                _sdo_agent(
+        try:
+            if args.agent == "sdo":
+                records = run_incidents(
+                    _sdo_agent(
+                        args,
+                        environment,
+                        results_dir,
+                        composite=registered_composites,
+                        stream_faults=faults_by_incident,
+                        worker=worker,
+                        evidence_queue=evidence_queue,
+                    ),
+                    driver,
+                    config,
+                    grader=grader,
+                    diagnosis_grading=grading_mode,
+                    on_failed_incident=reset_failed if args.continue_on_error else None,
+                )
+            elif args.agent == "claudecode":
+                records = _run_claudecode(
                     args,
                     environment,
                     results_dir,
-                    composite=registered_composites,
-                    stream_faults=faults_by_incident,
-                    worker=worker,
-                    evidence_queue=evidence_queue,
-                ),
-                driver,
-                config,
-                grader=grader,
-                diagnosis_grading=grading_mode,
-                on_failed_incident=reset_failed if args.continue_on_error else None,
-            )
-        elif args.agent == "claudecode":
-            records = _run_claudecode(
-                args,
-                environment,
-                results_dir,
-                worker,
-                driver,
-                config,
-                grader,
-                grading_mode,
-                faults_by_incident,
-                reset_failed if args.continue_on_error else None,
-            )
-        else:
-            records = _run_codex(
-                args,
-                environment,
-                results_dir,
-                worker,
-                driver,
-                config,
-                grader,
-                grading_mode,
-                faults_by_incident,
-                reset_failed if args.continue_on_error else None,
-            )
+                    worker,
+                    driver,
+                    config,
+                    grader,
+                    grading_mode,
+                    faults_by_incident,
+                    reset_failed if args.continue_on_error else None,
+                )
+            else:
+                records = _run_codex(
+                    args,
+                    environment,
+                    results_dir,
+                    worker,
+                    driver,
+                    config,
+                    grader,
+                    grading_mode,
+                    faults_by_incident,
+                    reset_failed if args.continue_on_error else None,
+                )
+        except BaseException:
+            # A crashed or timed-out run still keeps its transcripts and stamps the rows it cannot vouch for.
+            try:
+                _finish_evidence(args, environment, results_dir)
+            except Exception:
+                logger.exception("evidence copy and gate after a failed run")
+            raise
     marker.end(unrecovered_rows(records))
     _print_summary(records)
     print(f"results: {config.results_path}")
-    evidence_copied = _copy_out_evidence(args, environment, results_dir)
+    evidence_copied = _finish_evidence(args, environment, results_dir)
     return (
         0
         if records
@@ -1353,20 +1361,24 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
     )
 
 
-def _copy_out_evidence(args: argparse.Namespace, environment: FastloopEnvironment, results_dir: Path) -> bool:
-    """Copy the run's transcripts out of the lane's sink into its results; False when the SDO arm's copy failed."""
-    from benchmarks.sregym.fastloop import evidence_sink
+def _finish_evidence(args: argparse.Namespace, environment: FastloopEnvironment, results_dir: Path) -> bool:
+    """End of a run, and of a crashed one: copy the transcripts out of the lane's sink into the results, then refuse to
+    grade any SDO row whose transcripts are missing. False when the copy failed or a row was refused."""
+    from benchmarks.sregym.fastloop import evidence_gate, evidence_sink
 
-    if args.agent != "sdo" or environment.evidence_root is None:
+    if args.agent != "sdo":
         return True
-    try:
-        copied = evidence_sink.copy_out_run(environment, results_dir)
-    except evidence_sink.EvidenceSinkError as exc:
-        logger.error("evidence copy: %s", exc)
-        print(f"evidence copy FAILED: {exc}", file=sys.stderr)
-        return False
-    print(f"evidence: {copied.incidents} incidents, {copied.tasks} tasks, {copied.files} files -> {copied.destination}")
-    return True
+    copied = True
+    if environment.evidence_root is not None:
+        try:
+            copy = evidence_sink.copy_out_run(environment, results_dir)
+        except evidence_sink.EvidenceSinkError as exc:
+            logger.error("evidence copy: %s", exc)
+            print(f"evidence copy FAILED: {exc}", file=sys.stderr)
+            copied = False
+        else:
+            print(f"evidence: {copy.incidents} incidents, {copy.tasks} tasks, {copy.files} files -> {copy.destination}")
+    return evidence_gate.announce(evidence_gate.apply(results_dir)) and copied
 
 
 def _run_codex(
