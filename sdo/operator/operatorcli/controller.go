@@ -20,6 +20,7 @@ import (
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/deploymentpolicy"
 	"sdo.dev/operator/operatorcli/deploywire"
+	"sdo.dev/operator/operatorcli/internal/processio"
 	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/renderenv"
 	"sdo.dev/operator/toolchain"
@@ -57,7 +58,9 @@ func RunController(ctx context.Context, args []string) error {
 	if err := publishResolvedSettings(policy, run.Controller.GetRepositoryMountPath()); err != nil {
 		return fmt.Errorf("controller cannot record its configuration: %w", err)
 	}
-	ctx, cancel := context.WithCancel(ctx)
+	// SIGTERM ends the supervised child gracefully (builder.Run forwards it),
+	// so the child releases its leader Lease before this pod is gone.
+	ctx, cancel := processio.TerminationContext(ctx)
 	defer cancel()
 	// A deployment that violates the policy in force is published as a typed
 	// hold; detection keeps running either way.

@@ -139,13 +139,22 @@ const defaultStateBaselineStartTimeout = 30 * time.Second
 // deployment factory the composition root supplies.
 func Run(renderers *render.Catalog, registry *telemetry.Registry, repairs RepairDeployerFactory) {
 	broker.RunValidationChild(registry)
-	if err := RunWithOptions(context.Background(), nil, RuntimeOptions{Renderers: renderers, Telemetry: registry, RepairDeployer: repairs}); err != nil {
+	ctx, stop := terminationContext(context.Background())
+	defer stop()
+	if err := RunWithOptions(ctx, nil, RuntimeOptions{Renderers: renderers, Telemetry: registry, RepairDeployer: repairs}); err != nil && !(ctx.Err() != nil && errors.Is(err, context.Canceled)) {
 		fmt.Fprintln(os.Stderr, err)
 		if errors.Is(err, memory.ErrHealthRefreshRequired) {
 			os.Exit(memory.HealthRefreshExitCode)
 		}
 		os.Exit(1)
 	}
+}
+
+// terminationContext is the controller process's lifetime: SIGTERM (pod
+// deletion, Job suspend) cancels it, RunWithOptions stops its work and its
+// deferred Release clears the leader Lease before the process exits.
+func terminationContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return lifecycleio.TerminationContext(parent)
 }
 
 func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options RuntimeOptions) (runErr error) {

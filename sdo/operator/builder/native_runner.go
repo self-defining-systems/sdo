@@ -16,6 +16,11 @@ import (
 	"sdo.dev/operator/memory"
 )
 
+// ControllerStopGrace is how long a stopping controller child has to shut down
+// (releasing its leader Lease) before it is killed; the controller pod's
+// terminationGracePeriodSeconds must exceed it.
+const ControllerStopGrace = buildio.StopGrace
+
 // RunConfig binds a built application controller to its transport-neutral
 // protobuf launch contract. Storage projections and cache publication come
 // from the repository edge.
