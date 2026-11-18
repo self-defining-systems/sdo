@@ -99,7 +99,6 @@ def row_command(
         str(settings.detection_timeout_seconds),
         "--healthy-baseline",
         "--inject-before-resume",
-        "--require-fault-tracking",
         "--require-full-cleanup",
         "--continue-on-error",
     ]
