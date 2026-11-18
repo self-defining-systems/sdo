@@ -91,6 +91,7 @@ from benchmarks.devswap.kube import (
 from benchmarks.devswap.seed import MemorySeed, PreparedMemory, SeedSteps, apply_seed, prepare_memory
 from benchmarks.devswap.swap import Phases, SwapPlan, SwapState, swap_compiled
 from benchmarks.devswap.timeline import Timeline
+from benchmarks.devswap.tree import regenerate_tree as regenerate_lane_tree
 from benchmarks.fuzzops import capture, cellevidence, config, observe, page, sink, view
 from benchmarks.fuzzops.install import (
     CREDENTIALS_SECRET,
@@ -1788,7 +1789,12 @@ def wait_baselines_promoted(
     raise HookError(f"no promoted baseline for {sorted(missing) or 'any store'} after {timeout:.0f}s")
 
 
-def seed_steps(env: Mapping[str, str], prepared: Callable[[], PreparedMemory]) -> SeedSteps:
+def seed_steps(
+    env: Mapping[str, str],
+    prepared: Callable[[], PreparedMemory],
+    preparer: Callable[[Path, Path | None], str],
+    out: Callable[[str], None] = _print,
+) -> SeedSteps:
     """``SeedSteps`` on this bench's lane: its cluster, its operator binary and the configuration it keeps."""
     lane_dir = Path(_need(env, "BENCH_LANE_DIR")).resolve()
     kube, control = _kube(env), control_namespace(env)
@@ -1805,6 +1811,9 @@ def seed_steps(env: Mapping[str, str], prepared: Callable[[], PreparedMemory]) -
         repository_state=lambda: repository_state(kube, control),
         controller_idle=lambda: wait_idle(kube, control, RESET_IDLE_WAIT_S),
         is_ancestor=lambda ancestor, descendant: is_ancestor(kube, control, ancestor, descendant),
+        settle=lambda head: regenerate_lane_tree(
+            kube, control, lane_dir, head, preparer, lambda: wait_idle(kube, control, RESET_IDLE_WAIT_S), out
+        ),
     )
 
 
@@ -1834,7 +1843,7 @@ def seed_lane(
         return prepared[-1]
 
     try:
-        seeded = apply_seed(seed_steps(env, prepare), memory, out, t)
+        seeded = apply_seed(seed_steps(env, prepare, preparer, out), memory, out, t)
     finally:
         for kept in prepared:
             if kept.bundle != memory.bundle:  # the prepared bundle was made for this import

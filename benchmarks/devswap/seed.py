@@ -114,6 +114,10 @@ class SeedSteps:
     repository_state: Callable[[], Mapping[str, str]]
     controller_idle: Callable[[], str]  # why the operator is not idle, waiting for it; empty when it is
     is_ancestor: Callable[[str, str], bool]  # (ancestor, descendant) in the lane's accepted repository
+    #: Called with the head the controller holds when its start-up upkeep (a schema migration) committed on top of the
+    #: prepared seed: make that tree prepared again (``devswap.tree.regenerate_tree``: nothing when preparing it changes
+    #: nothing, else one more import and restart) and return the resulting head.
+    settle: Callable[[str], str]
 
 
 def apply_seed(
@@ -155,10 +159,17 @@ def apply_seed(
         why = steps.controller_idle()
     if why:
         raise SwapError(f"the operator is not idle after the seed: {why}")
+    head = now["head"]
+    if head != prepared.head:
+        # The upkeep ran after the preparation, the other way round from a fresh build (which migrates the seed and then
+        # prepares it). A migration that rewrites what the preparation generated would leave a tree that is not the
+        # prepared one: preparing it once more settles that, and costs nothing when it changes nothing.
+        with t.step("settle"):
+            head = steps.settle(head)
     receipt = {
         "seed": seed.commit,
         "prepared": prepared.head,
-        "head": now["head"],
+        "head": head,
         "seed_s": round(time.monotonic() - started, 1),
     }
     out(json.dumps(receipt))

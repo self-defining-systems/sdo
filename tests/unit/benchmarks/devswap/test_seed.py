@@ -80,6 +80,7 @@ def steps(calls: list[str], prepared: PreparedMemory, head: str | None = None, s
         repository_state=lambda: {"head": head or prepared.head, "status": status, "outcomes": ""},
         controller_idle=lambda: idle,
         is_ancestor=lambda _a, _d: False,
+        settle=lambda head: calls.append(f"settle {head[:1]}") or head,
     )
 
 
@@ -136,12 +137,23 @@ def test_the_lane_must_be_the_prepared_seed_and_idle(
         apply_seed(steps([], prepared, head, status, idle), seed_memory, lambda _line: None)
 
 
-def test_the_controllers_startup_upkeep_on_top_of_the_prepared_seed_is_accepted(seed_memory: MemorySeed) -> None:
+def test_the_controllers_startup_upkeep_on_top_of_the_prepared_seed_is_settled(seed_memory: MemorySeed) -> None:
+    """A fresh build migrates the seed and then prepares it; here the migration runs after the preparation, so the
+    head the controller holds is prepared once more (nothing happens when that changes nothing)."""
+    calls: list[str] = []
     prepared = PreparedMemory("b" * 40, Path("x"))
-    on_top = SeedSteps(
-        **{**steps([], prepared, "c" * 40).__dict__, "is_ancestor": lambda a, d: (a, d) == ("b" * 40, "c" * 40)}
-    )
+    lane = steps(calls, prepared, "c" * 40)
+    on_top = SeedSteps(**{**lane.__dict__, "is_ancestor": lambda a, d: (a, d) == ("b" * 40, "c" * 40)})
     assert apply_seed(on_top, seed_memory, lambda _line: None)["head"] == "c" * 40
+    assert calls[-1] == "settle c"
+    settled = SeedSteps(**{**on_top.__dict__, "settle": lambda head: "d" * 40})
+    assert apply_seed(settled, seed_memory, lambda _line: None)["head"] == "d" * 40
+
+
+def test_a_lane_that_started_on_the_prepared_head_is_not_settled(seed_memory: MemorySeed) -> None:
+    calls: list[str] = []
+    apply_seed(steps(calls, PreparedMemory("b" * 40, Path("x"))), seed_memory, lambda _line: None)
+    assert not any(call.startswith("settle") for call in calls)
 
 
 def test_a_seed_without_a_preparer_goes_in_as_it_is(tmp_path: Path, seed_memory: MemorySeed) -> None:
@@ -328,3 +340,75 @@ def test_a_seed_that_fails_still_times_the_steps_that_ran(
     with pytest.raises(SwapError, match="prepare-tree failed"):
         swap.swap_compiled(lane.plan(operator_repo, seed=broken), lambda _m: None)
     assert lane.pods == {"pod-1"}  # the controller was never touched
+
+
+def migrate(repo: Path, rewrite: bool) -> None:
+    """The start-up upkeep: stamps the schema and (``rewrite``) rewrites the detector the preparation generated."""
+    (repo / ".sdo" / "schema").write_text("10\n")
+    generated = repo / ".sdo" / "diagnostics" / "generic.go"
+    if rewrite and generated.exists():
+        generated.write_text(generated.read_text().rstrip("\n") + " (migrated)\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "sdo(memory-v10-schema): validated initial")
+
+
+@pytest.mark.parametrize("migration_rewrites_detectors", [False, True])
+def test_a_migration_after_the_preparation_leaves_the_tree_a_fresh_build_makes(
+    tmp_path: Path, migration_rewrites_detectors: bool
+) -> None:
+    """A fresh build migrates the old-schema seed (the controller's upkeep) and then prepares what it finds. The swap
+    prepares first and the controller migrates after: when the migration rewrites what the preparation generated the
+    head is not a prepared one, and ``settle`` must restore exactly the fresh build's tree."""
+    source = tmp_path / "source"
+    commit = make_repo(source, {".sdo/goal.md": "goal\n", ".sdo/schema": "9\n", ".sdo/diagnostics/generic.go": "old\n"})
+    bundle = tmp_path / "memory.bundle"
+    git(source, "bundle", "create", "-q", str(bundle), "main")
+    memory = MemorySeed(commit, bundle)
+    preparer = FakePreparer()
+
+    # fresh build: import the seed, the controller migrates it, tree preparation regenerates what it finds
+    fresh = tmp_path / "fresh"
+    make_repo(fresh, {".sdo/goal.md": "lane\n"})
+    lane_restore(fresh, PreparedMemory(commit, bundle), tmp_path)
+    migrate(fresh, migration_rewrites_detectors)
+    preparer(fresh, None)
+
+    # the swap: prepared on the host, imported once, the controller migrates, then the head is settled
+    swapped = tmp_path / "swapped"
+    make_repo(swapped, {".sdo/goal.md": "lane\n"})
+    prepared = prepare_memory(memory, preparer, None, tmp_path, lambda _m: None)
+    heads: list[str] = []
+
+    def import_memory(imported: PreparedMemory) -> None:
+        lane_restore(swapped, imported, tmp_path)
+        migrate(swapped, migration_rewrites_detectors)  # the controller's start-up upkeep
+
+    def settle(head: str) -> str:
+        heads.append(head)
+        preparer(swapped, None)  # regenerate_tree: prepare the accepted tree, import what changed
+        return git(swapped, "rev-parse", "HEAD")
+
+    def state() -> dict[str, str]:
+        return {
+            "head": git(swapped, "rev-parse", "HEAD"),
+            "status": git(swapped, "status", "--porcelain"),
+            "outcomes": "",
+        }
+
+    lane = steps([], PreparedMemory("0" * 40, Path("x")))
+    seeded = SeedSteps(
+        **{
+            **lane.__dict__,
+            "prepare": lambda: prepared,
+            "import_memory": import_memory,
+            "repository_state": state,
+            "is_ancestor": lambda ancestor, descendant: git(swapped, "merge-base", ancestor, descendant) == ancestor,
+            "settle": settle,
+        }
+    )
+    receipt = apply_seed(seeded, memory, lambda _line: None)
+    assert len(heads) == 1  # the migration committed on top of the prepared seed
+    assert receipt["head"] == git(swapped, "rev-parse", "HEAD")
+    assert git(swapped, "ls-tree", "-r", "HEAD", "--", ".sdo") == git(fresh, "ls-tree", "-r", "HEAD", "--", ".sdo")
+    assert git(swapped, "status", "--porcelain") == ""
+    assert (swapped / ".sdo/diagnostics/generic.go").read_text() == "generated v1\n"
