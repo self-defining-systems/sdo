@@ -4840,7 +4840,9 @@ type StageReport struct {
 	StartedAt *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
 	// Go-owned: set when this stage applied a repair whose detector confirmation
 	// is still pending at hand-off.
-	HandoffState  *HandoffState `protobuf:"bytes,8,opt,name=handoff_state,json=handoffState,proto3" json:"handoff_state,omitempty"`
+	HandoffState *HandoffState `protobuf:"bytes,8,opt,name=handoff_state,json=handoffState,proto3" json:"handoff_state,omitempty"`
+	// Every playbook the stage diagnosed, with its verdict and why, matched or not.
+	Diagnoses     []*PlaybookVerdict `protobuf:"bytes,9,rep,name=diagnoses,proto3" json:"diagnoses,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4927,6 +4929,13 @@ func (x *StageReport) GetStartedAt() *timestamppb.Timestamp {
 func (x *StageReport) GetHandoffState() *HandoffState {
 	if x != nil {
 		return x.HandoffState
+	}
+	return nil
+}
+
+func (x *StageReport) GetDiagnoses() []*PlaybookVerdict {
+	if x != nil {
+		return x.Diagnoses
 	}
 	return nil
 }
@@ -5922,7 +5931,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x0eapplication_id\x18\x01 \x01(\tR\rapplicationId\x129\n" +
 	"\n" +
 	"settled_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\tsettledAt\x12\x18\n" +
-	"\asettled\x18\x03 \x01(\bR\asettled\"\xef\x03\n" +
+	"\asettled\x18\x03 \x01(\bR\asettled\"\xb9\x04\n" +
 	"\vStageReport\x12\x1d\n" +
 	"\x05stage\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05stage\x12L\n" +
 	"\vmitigations\x18\x02 \x03(\v2*.sdodev.contracts.v1alpha1.StageMitigationR\vmitigations\x12D\n" +
@@ -5932,7 +5941,8 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\rrecovery_wait\x18\x06 \x01(\v2'.sdodev.contracts.v1alpha1.RecoveryWaitR\frecoveryWait\x129\n" +
 	"\n" +
 	"started_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x12L\n" +
-	"\rhandoff_state\x18\b \x01(\v2'.sdodev.contracts.v1alpha1.HandoffStateR\fhandoffState\"\xa1\n" +
+	"\rhandoff_state\x18\b \x01(\v2'.sdodev.contracts.v1alpha1.HandoffStateR\fhandoffState\x12H\n" +
+	"\tdiagnoses\x18\t \x03(\v2*.sdodev.contracts.v1alpha1.PlaybookVerdictR\tdiagnoses\"\xa1\n" +
 	"\n" +
 	"\fHandoffState\x12V\n" +
 	"\frepair_state\x18\x01 \x01(\x0e23.sdodev.contracts.v1alpha1.HandoffState.RepairStateR\vrepairState\x120\n" +
@@ -6096,7 +6106,8 @@ var file_sdodev_contracts_v1alpha1_messages_proto_goTypes = []any{
 	(*PlanApplication)(nil),              // 70: sdodev.contracts.v1alpha1.PlanApplication
 	(*durationpb.Duration)(nil),          // 71: google.protobuf.Duration
 	(*RecoveryWait)(nil),                 // 72: sdodev.contracts.v1alpha1.RecoveryWait
-	(*Binding)(nil),                      // 73: sdodev.contracts.v1alpha1.Binding
+	(*PlaybookVerdict)(nil),              // 73: sdodev.contracts.v1alpha1.PlaybookVerdict
+	(*Binding)(nil),                      // 74: sdodev.contracts.v1alpha1.Binding
 }
 var file_sdodev_contracts_v1alpha1_messages_proto_depIdxs = []int32{
 	61,  // 0: sdodev.contracts.v1alpha1.Finding.primary_resource:type_name -> sdodev.contracts.v1alpha1.ObjectRef
@@ -6219,29 +6230,30 @@ var file_sdodev_contracts_v1alpha1_messages_proto_depIdxs = []int32{
 	72,  // 117: sdodev.contracts.v1alpha1.StageReport.recovery_wait:type_name -> sdodev.contracts.v1alpha1.RecoveryWait
 	63,  // 118: sdodev.contracts.v1alpha1.StageReport.started_at:type_name -> google.protobuf.Timestamp
 	52,  // 119: sdodev.contracts.v1alpha1.StageReport.handoff_state:type_name -> sdodev.contracts.v1alpha1.HandoffState
-	1,   // 120: sdodev.contracts.v1alpha1.HandoffState.repair_state:type_name -> sdodev.contracts.v1alpha1.HandoffState.RepairState
-	63,  // 121: sdodev.contracts.v1alpha1.HandoffState.applied_at:type_name -> google.protobuf.Timestamp
-	2,   // 122: sdodev.contracts.v1alpha1.HandoffState.post_apply_diagnose:type_name -> sdodev.contracts.v1alpha1.HandoffState.PostApplyDiagnose
-	60,  // 123: sdodev.contracts.v1alpha1.HandoffState.residual_findings:type_name -> sdodev.contracts.v1alpha1.HandoffState.ResidualFinding
-	63,  // 124: sdodev.contracts.v1alpha1.HandoffState.observe_until:type_name -> google.protobuf.Timestamp
-	71,  // 125: sdodev.contracts.v1alpha1.HandoffState.settlement_extension:type_name -> google.protobuf.Duration
-	73,  // 126: sdodev.contracts.v1alpha1.StageMitigation.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
-	70,  // 127: sdodev.contracts.v1alpha1.StageMitigation.apply_receipt:type_name -> sdodev.contracts.v1alpha1.PlanApplication
-	66,  // 128: sdodev.contracts.v1alpha1.StageMitigation.post_apply_diagnose:type_name -> sdodev.contracts.v1alpha1.ProgramRun
-	61,  // 129: sdodev.contracts.v1alpha1.StageMitigation.touched_objects:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	66,  // 130: sdodev.contracts.v1alpha1.StageMitigation.escalation:type_name -> sdodev.contracts.v1alpha1.ProgramRun
-	61,  // 131: sdodev.contracts.v1alpha1.StageMitigation.escalated_resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	61,  // 132: sdodev.contracts.v1alpha1.Finding.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	61,  // 133: sdodev.contracts.v1alpha1.SurfacedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	61,  // 134: sdodev.contracts.v1alpha1.AppliedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	61,  // 135: sdodev.contracts.v1alpha1.DetectorTimelineEntry.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
-	3,   // 136: sdodev.contracts.v1alpha1.HandoffState.ResidualFinding.residual_class:type_name -> sdodev.contracts.v1alpha1.HandoffState.ResidualClass
-	63,  // 137: sdodev.contracts.v1alpha1.HandoffState.ResidualFinding.first_seen:type_name -> google.protobuf.Timestamp
-	138, // [138:138] is the sub-list for method output_type
-	138, // [138:138] is the sub-list for method input_type
-	138, // [138:138] is the sub-list for extension type_name
-	138, // [138:138] is the sub-list for extension extendee
-	0,   // [0:138] is the sub-list for field type_name
+	73,  // 120: sdodev.contracts.v1alpha1.StageReport.diagnoses:type_name -> sdodev.contracts.v1alpha1.PlaybookVerdict
+	1,   // 121: sdodev.contracts.v1alpha1.HandoffState.repair_state:type_name -> sdodev.contracts.v1alpha1.HandoffState.RepairState
+	63,  // 122: sdodev.contracts.v1alpha1.HandoffState.applied_at:type_name -> google.protobuf.Timestamp
+	2,   // 123: sdodev.contracts.v1alpha1.HandoffState.post_apply_diagnose:type_name -> sdodev.contracts.v1alpha1.HandoffState.PostApplyDiagnose
+	60,  // 124: sdodev.contracts.v1alpha1.HandoffState.residual_findings:type_name -> sdodev.contracts.v1alpha1.HandoffState.ResidualFinding
+	63,  // 125: sdodev.contracts.v1alpha1.HandoffState.observe_until:type_name -> google.protobuf.Timestamp
+	71,  // 126: sdodev.contracts.v1alpha1.HandoffState.settlement_extension:type_name -> google.protobuf.Duration
+	74,  // 127: sdodev.contracts.v1alpha1.StageMitigation.bindings:type_name -> sdodev.contracts.v1alpha1.Binding
+	70,  // 128: sdodev.contracts.v1alpha1.StageMitigation.apply_receipt:type_name -> sdodev.contracts.v1alpha1.PlanApplication
+	66,  // 129: sdodev.contracts.v1alpha1.StageMitigation.post_apply_diagnose:type_name -> sdodev.contracts.v1alpha1.ProgramRun
+	61,  // 130: sdodev.contracts.v1alpha1.StageMitigation.touched_objects:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	66,  // 131: sdodev.contracts.v1alpha1.StageMitigation.escalation:type_name -> sdodev.contracts.v1alpha1.ProgramRun
+	61,  // 132: sdodev.contracts.v1alpha1.StageMitigation.escalated_resources:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	61,  // 133: sdodev.contracts.v1alpha1.Finding.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	61,  // 134: sdodev.contracts.v1alpha1.SurfacedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	61,  // 135: sdodev.contracts.v1alpha1.AppliedPlaybook.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	61,  // 136: sdodev.contracts.v1alpha1.DetectorTimelineEntry.ParameterBindingsEntry.value:type_name -> sdodev.contracts.v1alpha1.ObjectRef
+	3,   // 137: sdodev.contracts.v1alpha1.HandoffState.ResidualFinding.residual_class:type_name -> sdodev.contracts.v1alpha1.HandoffState.ResidualClass
+	63,  // 138: sdodev.contracts.v1alpha1.HandoffState.ResidualFinding.first_seen:type_name -> google.protobuf.Timestamp
+	139, // [139:139] is the sub-list for method output_type
+	139, // [139:139] is the sub-list for method input_type
+	139, // [139:139] is the sub-list for extension type_name
+	139, // [139:139] is the sub-list for extension extendee
+	0,   // [0:139] is the sub-list for field type_name
 }
 
 func init() { file_sdodev_contracts_v1alpha1_messages_proto_init() }

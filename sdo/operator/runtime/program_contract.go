@@ -13,7 +13,7 @@ import (
 )
 
 func programRunContract(run ProgramRun) *contracts.ProgramRun {
-	result := &contracts.ProgramRun{CanMitigate: run.CanMitigate, ProgramId: run.ProgramID, FindingFingerprint: run.FindingFingerprint, BindingSource: run.BindingSource, ProgramRevision: run.ProgramRevision, Duration: durationpb.New(run.Duration), Verdict: verdictContract(run.Verdict)}
+	result := &contracts.ProgramRun{CanMitigate: run.CanMitigate, ProgramId: run.ProgramID, FindingFingerprint: run.FindingFingerprint, BindingSource: run.BindingSource, Retrieval: run.Retrieval, ProgramRevision: run.ProgramRevision, Duration: durationpb.New(run.Duration), Verdict: verdictContract(run.Verdict)}
 	result.Bindings = programBindingsContract(run.Bindings)
 	for _, step := range run.Verdict.Reads {
 		result.ReadTrace = append(result.ReadTrace, &contracts.ReadStep{Op: step.Op, Target: step.Target, Outcome: step.Outcome})
@@ -84,7 +84,7 @@ func programRunState(run *contracts.ProgramRun) ProgramRun {
 	for _, step := range run.GetReadTrace() {
 		verdict.Reads = append(verdict.Reads, program.ReadStep{Op: step.GetOp(), Target: step.GetTarget(), Outcome: step.GetOutcome()})
 	}
-	return ProgramRun{CanMitigate: run.CanMitigate, FindingFingerprint: run.GetFindingFingerprint(), BindingSource: run.GetBindingSource(), ProgramID: run.GetProgramId(), ProgramRevision: run.GetProgramRevision(), Bindings: bindings, Verdict: verdict, Duration: run.GetDuration().AsDuration()}
+	return ProgramRun{CanMitigate: run.CanMitigate, FindingFingerprint: run.GetFindingFingerprint(), BindingSource: run.GetBindingSource(), Retrieval: run.GetRetrieval(), ProgramID: run.GetProgramId(), ProgramRevision: run.GetProgramRevision(), Bindings: bindings, Verdict: verdict, Duration: run.GetDuration().AsDuration()}
 }
 
 func toolCallContract(call ToolCall) *contracts.ProgramToolCall {
@@ -129,4 +129,45 @@ func programBindingsState(encoded []*contracts.Binding) program.Bindings {
 		}
 	}
 	return bindings
+}
+
+// verdictResultName is a diagnosis result as PlaybookVerdict.result states it.
+func verdictResultName(result program.Result) string {
+	switch result {
+	case program.Match:
+		return "match"
+	case program.NoMatch:
+		return "no_match"
+	case program.NeedsJudgement:
+		return "needs_judgement"
+	}
+	return "unknown"
+}
+
+// verdictReason is why a diagnosis was not a Match, short: the error that made it Unknown, or the facts it
+// observed. Empty for a Match.
+func verdictReason(run ProgramRun) string {
+	if run.Verdict.Result == program.Match {
+		return ""
+	}
+	if run.Verdict.Result == program.Unknown {
+		return programRunContract(run).GetError()
+	}
+	var facts []string
+	for _, evidence := range run.Verdict.Evidence {
+		if len(facts) == 3 {
+			break
+		}
+		facts = append(facts, strings.TrimSpace(evidence.Fact+": "+evidence.Observed))
+	}
+	return strings.Join(facts, "; ")
+}
+
+// playbookVerdictContract is one diagnosis as the stage report and coverage state it.
+func playbookVerdictContract(run ProgramRun) *contracts.PlaybookVerdict {
+	reason := verdictReason(run)
+	if len(reason) > 300 {
+		reason = reason[:300]
+	}
+	return &contracts.PlaybookVerdict{PlaybookId: run.ProgramID, ProgramRevision: run.ProgramRevision, Result: verdictResultName(run.Verdict.Result), Reason: reason, Retrieval: run.Retrieval}
 }

@@ -422,7 +422,7 @@ class RestartRollout(_message.Message):
     def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., reason: _Optional[str] = ...) -> None: ...
 
 class ProgramRun(_message.Message):
-    __slots__ = ("program_id", "bindings", "verdict", "duration", "error", "finding_fingerprint", "program_revision", "binding_source", "can_mitigate", "read_trace")
+    __slots__ = ("program_id", "bindings", "verdict", "duration", "error", "finding_fingerprint", "program_revision", "binding_source", "can_mitigate", "read_trace", "retrieval")
     PROGRAM_ID_FIELD_NUMBER: _ClassVar[int]
     BINDINGS_FIELD_NUMBER: _ClassVar[int]
     VERDICT_FIELD_NUMBER: _ClassVar[int]
@@ -433,6 +433,7 @@ class ProgramRun(_message.Message):
     BINDING_SOURCE_FIELD_NUMBER: _ClassVar[int]
     CAN_MITIGATE_FIELD_NUMBER: _ClassVar[int]
     READ_TRACE_FIELD_NUMBER: _ClassVar[int]
+    RETRIEVAL_FIELD_NUMBER: _ClassVar[int]
     program_id: str
     bindings: _containers.RepeatedCompositeFieldContainer[Binding]
     verdict: Verdict
@@ -443,7 +444,24 @@ class ProgramRun(_message.Message):
     binding_source: str
     can_mitigate: bool
     read_trace: _containers.RepeatedCompositeFieldContainer[ReadStep]
-    def __init__(self, program_id: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[Binding, _Mapping]]] = ..., verdict: _Optional[_Union[Verdict, _Mapping]] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., error: _Optional[str] = ..., finding_fingerprint: _Optional[str] = ..., program_revision: _Optional[str] = ..., binding_source: _Optional[str] = ..., can_mitigate: _Optional[bool] = ..., read_trace: _Optional[_Iterable[_Union[ReadStep, _Mapping]]] = ...) -> None: ...
+    retrieval: str
+    def __init__(self, program_id: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[Binding, _Mapping]]] = ..., verdict: _Optional[_Union[Verdict, _Mapping]] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., error: _Optional[str] = ..., finding_fingerprint: _Optional[str] = ..., program_revision: _Optional[str] = ..., binding_source: _Optional[str] = ..., can_mitigate: _Optional[bool] = ..., read_trace: _Optional[_Iterable[_Union[ReadStep, _Mapping]]] = ..., retrieval: _Optional[str] = ...) -> None: ...
+
+class PlaybookVerdict(_message.Message):
+    __slots__ = ("playbook_id", "program_revision", "result", "reason", "retrieval", "unknown_on_recurrence")
+    PLAYBOOK_ID_FIELD_NUMBER: _ClassVar[int]
+    PROGRAM_REVISION_FIELD_NUMBER: _ClassVar[int]
+    RESULT_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    RETRIEVAL_FIELD_NUMBER: _ClassVar[int]
+    UNKNOWN_ON_RECURRENCE_FIELD_NUMBER: _ClassVar[int]
+    playbook_id: str
+    program_revision: str
+    result: str
+    reason: str
+    retrieval: str
+    unknown_on_recurrence: int
+    def __init__(self, playbook_id: _Optional[str] = ..., program_revision: _Optional[str] = ..., result: _Optional[str] = ..., reason: _Optional[str] = ..., retrieval: _Optional[str] = ..., unknown_on_recurrence: _Optional[int] = ...) -> None: ...
 
 class ReadStep(_message.Message):
     __slots__ = ("op", "target", "outcome")
@@ -630,15 +648,17 @@ class ReflectionEligibility(_message.Message):
     def __init__(self, version: _Optional[int] = ..., causes: _Optional[_Iterable[_Union[ReflectionCauseWork, _Mapping]]] = ..., unassigned: _Optional[_Iterable[_Union[ReflectionWorkItem, _Mapping]]] = ..., no_repair_count: _Optional[int] = ...) -> None: ...
 
 class PlaybookCoverage(_message.Message):
-    __slots__ = ("matches", "unexplained_finding_fingerprints")
+    __slots__ = ("matches", "unexplained_finding_fingerprints", "unresolved")
     MATCHES_FIELD_NUMBER: _ClassVar[int]
     UNEXPLAINED_FINDING_FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
+    UNRESOLVED_FIELD_NUMBER: _ClassVar[int]
     matches: _containers.RepeatedCompositeFieldContainer[PlaybookMatch]
     unexplained_finding_fingerprints: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, matches: _Optional[_Iterable[_Union[PlaybookMatch, _Mapping]]] = ..., unexplained_finding_fingerprints: _Optional[_Iterable[str]] = ...) -> None: ...
+    unresolved: _containers.RepeatedCompositeFieldContainer[PlaybookVerdict]
+    def __init__(self, matches: _Optional[_Iterable[_Union[PlaybookMatch, _Mapping]]] = ..., unexplained_finding_fingerprints: _Optional[_Iterable[str]] = ..., unresolved: _Optional[_Iterable[_Union[PlaybookVerdict, _Mapping]]] = ...) -> None: ...
 
 class PlaybookMatch(_message.Message):
-    __slots__ = ("playbook_id", "program_revision", "bindings", "explained_finding_fingerprints", "can_mitigate", "mitigate_command", "verified_successes", "verified_failures")
+    __slots__ = ("playbook_id", "program_revision", "bindings", "explained_finding_fingerprints", "can_mitigate", "mitigate_command", "verified_successes", "verified_failures", "retrieval")
     PLAYBOOK_ID_FIELD_NUMBER: _ClassVar[int]
     PROGRAM_REVISION_FIELD_NUMBER: _ClassVar[int]
     BINDINGS_FIELD_NUMBER: _ClassVar[int]
@@ -647,6 +667,7 @@ class PlaybookMatch(_message.Message):
     MITIGATE_COMMAND_FIELD_NUMBER: _ClassVar[int]
     VERIFIED_SUCCESSES_FIELD_NUMBER: _ClassVar[int]
     VERIFIED_FAILURES_FIELD_NUMBER: _ClassVar[int]
+    RETRIEVAL_FIELD_NUMBER: _ClassVar[int]
     playbook_id: str
     program_revision: str
     bindings: _containers.RepeatedCompositeFieldContainer[Binding]
@@ -655,7 +676,8 @@ class PlaybookMatch(_message.Message):
     mitigate_command: str
     verified_successes: int
     verified_failures: int
-    def __init__(self, playbook_id: _Optional[str] = ..., program_revision: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[Binding, _Mapping]]] = ..., explained_finding_fingerprints: _Optional[_Iterable[str]] = ..., can_mitigate: _Optional[bool] = ..., mitigate_command: _Optional[str] = ..., verified_successes: _Optional[int] = ..., verified_failures: _Optional[int] = ...) -> None: ...
+    retrieval: str
+    def __init__(self, playbook_id: _Optional[str] = ..., program_revision: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[Binding, _Mapping]]] = ..., explained_finding_fingerprints: _Optional[_Iterable[str]] = ..., can_mitigate: _Optional[bool] = ..., mitigate_command: _Optional[str] = ..., verified_successes: _Optional[int] = ..., verified_failures: _Optional[int] = ..., retrieval: _Optional[str] = ...) -> None: ...
 
 class RemoveServicePort(_message.Message):
     __slots__ = ("ref", "name", "port", "protocol", "allow_empty", "reason")

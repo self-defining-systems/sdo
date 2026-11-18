@@ -239,6 +239,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 		}
 		state.Request.InitialProgramRuns = runs
+		report.Diagnoses = mergeStageDiagnoses(report.Diagnoses, stageDiagnoses(runs))
 		state.Coverage = buildPlaybookCoverage(state.Findings, state.Request.InitialProgramRuns, loop.lastDiagnosisView, loop.Trust)
 		state.Request.PlaybookCoverage = cloneCoverage(state.Coverage)
 		loop.Request = state.Request

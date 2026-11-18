@@ -927,7 +927,7 @@ class WriteSettlement(_message.Message):
     def __init__(self, application_id: _Optional[str] = ..., settled_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., settled: _Optional[bool] = ...) -> None: ...
 
 class StageReport(_message.Message):
-    __slots__ = ("stage", "mitigations", "remaining_finding_fingerprints", "error", "cleared_finding_fingerprints", "recovery_wait", "started_at", "handoff_state")
+    __slots__ = ("stage", "mitigations", "remaining_finding_fingerprints", "error", "cleared_finding_fingerprints", "recovery_wait", "started_at", "handoff_state", "diagnoses")
     STAGE_FIELD_NUMBER: _ClassVar[int]
     MITIGATIONS_FIELD_NUMBER: _ClassVar[int]
     REMAINING_FINDING_FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
@@ -936,6 +936,7 @@ class StageReport(_message.Message):
     RECOVERY_WAIT_FIELD_NUMBER: _ClassVar[int]
     STARTED_AT_FIELD_NUMBER: _ClassVar[int]
     HANDOFF_STATE_FIELD_NUMBER: _ClassVar[int]
+    DIAGNOSES_FIELD_NUMBER: _ClassVar[int]
     stage: str
     mitigations: _containers.RepeatedCompositeFieldContainer[StageMitigation]
     remaining_finding_fingerprints: _containers.RepeatedScalarFieldContainer[str]
@@ -944,7 +945,8 @@ class StageReport(_message.Message):
     recovery_wait: _program_pb2.RecoveryWait
     started_at: _timestamp_pb2.Timestamp
     handoff_state: HandoffState
-    def __init__(self, stage: _Optional[str] = ..., mitigations: _Optional[_Iterable[_Union[StageMitigation, _Mapping]]] = ..., remaining_finding_fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., cleared_finding_fingerprints: _Optional[_Iterable[str]] = ..., recovery_wait: _Optional[_Union[_program_pb2.RecoveryWait, _Mapping]] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., handoff_state: _Optional[_Union[HandoffState, _Mapping]] = ...) -> None: ...
+    diagnoses: _containers.RepeatedCompositeFieldContainer[_program_pb2.PlaybookVerdict]
+    def __init__(self, stage: _Optional[str] = ..., mitigations: _Optional[_Iterable[_Union[StageMitigation, _Mapping]]] = ..., remaining_finding_fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., cleared_finding_fingerprints: _Optional[_Iterable[str]] = ..., recovery_wait: _Optional[_Union[_program_pb2.RecoveryWait, _Mapping]] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., handoff_state: _Optional[_Union[HandoffState, _Mapping]] = ..., diagnoses: _Optional[_Iterable[_Union[_program_pb2.PlaybookVerdict, _Mapping]]] = ...) -> None: ...
 
 class HandoffState(_message.Message):
     __slots__ = ("repair_state", "applied_playbook_ids", "applied_at", "post_apply_diagnose", "residual_findings", "observe_only", "observe_until", "mutation_rounds_per_finding", "settlement_extension")

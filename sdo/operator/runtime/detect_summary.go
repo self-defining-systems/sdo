@@ -849,6 +849,8 @@ func buildDetectSummary(in detectInput) detectSummary {
 		}
 	}
 
+	header = append(header, diagnosisLines(in.Request.PriorStages)...)
+
 	testBlock := func(test failingTest, role string) ([]string, string) {
 		since := ""
 		if !test.onset.IsZero() {
