@@ -62,11 +62,15 @@ def test_the_warm_pod_runs_the_controllers_environment_on_its_cache_and_the_dev_
     assert spec["securityContext"] == {"fsGroup": 65532}
     (container,) = spec["containers"]
     assert container["image"] == "sdo-controller:dev"
+    # the new binary's warm-build, with the arguments the controller starts with
     assert container["command"] == [
         "/usr/local/bin/sdo-operator",
-        "warm-memory-build",
-        "--repository",
-        APPLICATION_ROOT,
+        "warm-build",
+        "controller",
+        "--app",
+        "/workspace/application",
+        "--namespace",
+        "app",
     ]
     # the same Go environment (cache on the repository volume), nothing that needs the pod's own identity
     assert {e["name"]: e["value"] for e in container["env"]} == {
