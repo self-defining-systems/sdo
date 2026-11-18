@@ -268,8 +268,8 @@ class FastloopRowRunner:
         )
 
     def _unblock_stale_evidence(self, environment: FastloopEnvironment) -> None:
-        """A row whose runner was killed never copied its evidence out, and the next row on the lane then refuses to wipe
-        it. At claim no row is running on this lane: copy such rows out now, or waive them (they are not gradable)."""
+        """A row whose runner was killed never copied its evidence out, and the next row on the lane then refuses to
+        wipe it. At claim no row is running on this lane: copy such rows out now, or waive them (not gradable)."""
         from benchmarks.sregym.fastloop import evidence_sink
 
         for results in sorted((environment.run_dir / "results").glob("*")):
@@ -283,7 +283,7 @@ class FastloopRowRunner:
                 if environment.evidence_root is not None:
                     evidence_sink.copy_out_run(environment, results)
                     continue
-            except Exception:  # noqa: BLE001 - fall through to the waiver
+            except Exception:
                 pass
             (results / evidence_sink.WAIVER_FILENAME).write_text(
                 json.dumps({"schema": "sdo.fastloop-evidence-waiver/v1", "waived_at": "claim", "reason": "stale row"})
