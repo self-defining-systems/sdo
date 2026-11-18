@@ -502,3 +502,18 @@ def test_the_reset_needs_at_least_one_attempt(tmp_path: Path) -> None:
 
 def test_a_restarted_controller_gets_time_to_start_before_the_swap_gives_up() -> None:
     assert hooks.SWAP_STANDBY_WAIT_S >= 600
+
+
+def test_main_keeps_the_kept_copy_json_as_the_last_stdout_line_of_a_failed_snapshot(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # the manager decides from the last STDOUT line: an "error:" line after the JSON made it tear down a good copy
+    def not_idle(_env: object, out: object = print) -> int:
+        out(json.dumps({"golden": "kept", "not_idle": "idle for less than the quiet period"}))  # type: ignore[operator]
+        raise hooks.SnapshotNotIdle("the operator is not idle after the snapshot: idle for less than the quiet period")
+
+    monkeypatch.setattr(hooks, "snapshot", not_idle)
+    assert hooks.main(["snapshot"]) == 1
+    captured = capsys.readouterr()
+    assert json.loads(captured.out.strip().splitlines()[-1])["golden"] == "kept"
+    assert "not idle after the snapshot" in captured.err

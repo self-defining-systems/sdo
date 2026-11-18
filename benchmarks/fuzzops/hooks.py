@@ -2405,6 +2405,10 @@ def main(argv: list[str] | None = None) -> int:
         return verbs[verb](env)
     except (HookError, ValueError, OSError, subprocess.SubprocessError) as exc:
         reason = " ".join(str(exc).split()) or type(exc).__name__
+        if isinstance(exc, SnapshotNotIdle):
+            # the manager reads the last STDOUT line ({"golden": "kept", ...}); the reason goes to stderr, which it logs
+            print(f"error: {reason}", file=sys.stderr, flush=True)
+            return 1
         print(reason if verb == "check" else f"error: {reason}", flush=True)
         return 1
 
