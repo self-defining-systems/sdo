@@ -51,6 +51,9 @@ OWN_PAGE_WINDOW_SECONDS = 120.0
 
 #: Rows retried when SDO's install window rejects the lane before any injection (host load, helper start-up).
 ADMISSION_RETRIES = 2
+#: Errors raised before any injection by transient lane state: SDO's install window ending on an incomplete read, the
+#: no-fault oracle rehearsal run while a freshly recreated app still registers, a namespace stuck Terminating.
+PRE_INJECTION_RETRY_MARKERS = ("SDO rejected onboarding", "no-fault rehearsal has unhealthy", "wipe could not remove")
 
 
 def _admission_rejected_before_injection(results: Path) -> bool:
@@ -61,8 +64,9 @@ def _admission_rejected_before_injection(results: Path) -> bool:
         record = json.loads(path.read_text().splitlines()[0])
     except (OSError, ValueError, IndexError):
         return False
-    return (record.get("injection") or {}).get("state") == "not_injected" and "SDO rejected onboarding" in str(
-        record.get("error") or ""
+    error = str(record.get("error") or "")
+    return (record.get("injection") or {}).get("state") == "not_injected" and any(
+        marker in error for marker in PRE_INJECTION_RETRY_MARKERS
     )
 
 class RowSettings(BaseModel):
