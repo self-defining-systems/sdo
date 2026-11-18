@@ -292,12 +292,12 @@ func (v *checkedReadView) Read(q Query) (Observation, error) {
 		v.mu.Unlock()
 		if over {
 			err := fmt.Errorf("%w: a Diagnose makes at most %d reads", ErrDeadline, v.maxReads)
-			v.check(err)
+			v.check("Read", err)
 			return Observation{}, err
 		}
 	}
 	o, err := v.ReadView.Read(q)
-	v.check(err)
+	v.check("Read", err)
 	target := "probe"
 	if q.Store != nil {
 		target = podTarget(q.Store.Target.Pod, q.Store.Target.Container) + " " + q.Store.Scope.Collection

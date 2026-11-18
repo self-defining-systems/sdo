@@ -54,3 +54,19 @@ Replay agrees with live. A recording stores each failed read's `error_class` nex
 rebuilds an error of the same class, and a recording written before classes existed reads as unavailable. A
 database catalog read is recorded by target and credential reference (never a value), so a fallback that
 tries one credential and then another replays both reads.
+
+### What a failed read does to a verdict
+
+A failed read prevents clearance, not a positive finding. SDO latches every unavailable or invalid read
+your Diagnose made, in order; refused and absent reads never latch.
+
+- An invalid read makes the verdict Unknown, whatever you returned.
+- An unavailable read turns NoMatch into Unknown: you cleared on missing evidence.
+- An unavailable read leaves Match standing, and each failed read rides with it as evidence
+  (`read unavailable`, the method and the error). Unknown and NeedsJudgement are unchanged.
+- Return an error only for `sdk.ErrUnavailable`. A refused login is a fact: try the next credential, or
+  conclude from the refusal. Do not write `users, _ := v.DatabaseUsers(t)` and return NoMatch on an empty
+  list; an unavailable read makes that NoMatch Unknown.
+
+Mitigate is stricter: a plan has no later check on its inputs, so an unavailable or invalid read fails it,
+and a refused or absent read does not.
