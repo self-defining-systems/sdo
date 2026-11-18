@@ -228,7 +228,7 @@ def test_a_failing_check_gets_exactly_one_correction_turn(tmp_path: Path, prepar
 def test_the_learning_message_is_about_600_bytes_plus_the_change_list() -> None:
     prompt = expand_context(closing_prompt(incident_id="0123456789abcdef", changes=CHANGES))
     message = prompt.replace("\n".join(CHANGES), "")
-    assert len(message.encode()) <= 760, len(message.encode())
+    assert len(message.encode()) <= 1040, len(message.encode())  # +~190 for the detector line
     assert "\n".join(CHANGES) in prompt
     cleanup = expand_context(cleanup_prompt(leftovers=["a.go"], turn=1))
     assert len(cleanup.encode()) <= 560, len(cleanup.encode())

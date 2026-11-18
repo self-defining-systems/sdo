@@ -437,8 +437,8 @@ max_chars = 256
 reason = "Explicit cap for the newly merged registered result-correction template; full diagnostics stay in session files."
 
 [reflection.scriptify]
-max_chars = 600
-reason = "The closing turn's learning message: its literal text is about 400 characters; the incident ID, skill path and one-line reply instruction add the rest. The recorded change list is its own part."
+max_chars = 900
+reason = "The closing turn's learning message: its literal text is about 560 characters, including the one detector instruction; the incident ID, skill path and one-line reply instruction add the rest. The recorded change list is its own part."
 
 [reflection.cleanup]
 max_chars = 500

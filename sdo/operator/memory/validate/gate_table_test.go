@@ -686,7 +686,7 @@ var gateRows = []gateRow{
 	gateReflection("script names a StatefulSet Pod and a Service", gateClean(), gateUpdated("base"), func(t *testing.T, r string) {
 		edit(t, r, ".sdo/playbooks/base/scripts/fix.sh", "\n", "\nkubectl exec cache-0 -- true # svc/post-storage-service\n")
 	}),
-	gateReflection("incident detector binds roles without declaring a playbook", gateClean(), gateUpdated(), gateUnscopedBinding("possiblePlaybooks: []", "Playbooks: nil,"), RuleDetectorUnscopedBinding),
+	gateReflection("incident detector binds roles without declaring a playbook", gateClean(), gateUpdated(), gateUnscopedBinding("possiblePlaybooks: []", "Playbooks: nil,"), RuleDetectorUnscopedBinding, RuleDetectorNamesNoPlaybook),
 	gateReflection("incident detector binds roles for its declared playbook", gateClean(), gateUpdated(), gateUnscopedBinding("possiblePlaybooks:\n  - base", `Playbooks: []string{"base"},`)),
 	gateReflection("incident detector implements an app-state reader", gateClean(), gateUpdated(), gateStateReader, RuleDetectorReaderClass),
 	{name: "accepted corpus case rewritten", kind: gateCheck, actor: Responder, phase: ReflectionPhase, rules: []string{gateProgramInvalid, RuleCorpusImmutable},

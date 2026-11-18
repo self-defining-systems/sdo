@@ -20,6 +20,8 @@ A playbook is `.sdo/playbooks/<id>/` with `diagnose.go` and `mitigate.go`. Copy 
 - Carry a source restore you ran as `program.SetField` with `program.FromSource`. Omit changes that did not help.
 - Memory is for this application and may name its own tables, resources and commands; generalize over what varies, not away from the application. A partial program beats none. No `RunScript`, no passwords.
 
+If the cause has a signal of its own, add a detector that names the playbook: [detector.md](detector.md).
+
 Check:
 1. `sdo-operator memory check`
 2. `sdo-operator memory test <id>`

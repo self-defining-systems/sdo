@@ -78,6 +78,8 @@ Advice, not validator-checked: tests and recorded-state replay run as informatio
 - A finding's named `ParameterBindings` bind only the playbooks it lists, so an incident detector that binds roles
   (`ParameterBindings`, `localize.BindSuspects`) declares the playbooks those bindings are for; a reused playbook
   is listed by every detector whose binding it needs. Enforced by: `detector.unscoped-binding`.
+- A responder's incident detector exists to retrieve the playbook for its cause: it names at least one playbook, and each named
+  playbook exists (in the same change when it is new). Enforced by: `detector.names-no-playbook`, `ref.unknown-playbook`.
 - One incident detector covers every component that fails the same way: a new incident detector that copies an
   existing one apart from IDs, prose and the scenario or workload it names is rejected; widen the existing one to
   bind the component from the failure (`localize.BindSuspects`) while it stays keyed on the cause's own signal. Enforced by: `detector.component-copy`.

@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[4]
 SKILL = ROOT / "sdo/skills/playbook-writing"
 PROGRAM = ROOT / "sdo/operator/sdk/program"
-BUDGET_BYTES = 2560
+BUDGET_BYTES = 2700
 
 
 def _declared() -> set[str]:
@@ -28,7 +28,7 @@ def test_the_skill_fits_its_budget() -> None:
 
 def test_the_directory_holds_only_the_skill_and_two_examples() -> None:
     entries = sorted(path.name for path in SKILL.iterdir())
-    assert entries == ["SKILL.md", "examples"]
+    assert entries == ["SKILL.md", "detector.md", "examples"]
     examples = sorted(path.name for path in (SKILL / "examples").iterdir())
     assert len(examples) == 2
     for example in examples:
