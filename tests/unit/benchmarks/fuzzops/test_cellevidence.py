@@ -293,3 +293,72 @@ def test_collects_verdict_on_the_manifest_does_not_keep_a_repaired_cell_incomple
     problems = " ".join(ce.build(run).problems)
     assert "collect part reset" in problems
     assert "collect part memory" in problems
+
+
+def test_copy_problems_of_a_complete_sink_copy_are_empty(tmp_path: Path) -> None:
+    evidence = make_cell(tmp_path) / "operator" / "evidence"
+    assert ce.copy_problems(evidence) == {}
+
+
+@pytest.mark.parametrize(
+    ("remove", "expect"),
+    [
+        (f"incidents/{INC}/claude/projects/p/{SID}.jsonl", "session"),
+        (f"incidents/{INC}/claude/projects/p/{SID}/subagents/agent-{AGENT}.jsonl", "subagent"),
+    ],
+)
+def test_copy_problems_name_the_incident_whose_transcript_is_missing(tmp_path: Path, remove: str, expect: str) -> None:
+    evidence = make_cell(tmp_path) / "operator" / "evidence"
+    (evidence / remove).unlink()
+    problems = ce.copy_problems(evidence)
+    assert list(problems) == [f"incidents/{INC}"]
+    assert any(expect in text for text in problems[f"incidents/{INC}"])
+
+
+def test_copy_problems_flag_an_incident_whose_agents_ran_with_no_transcript(tmp_path: Path) -> None:
+    evidence = make_cell(tmp_path) / "operator" / "evidence"
+    for path in (evidence / "incidents" / INC / "claude").rglob("*.jsonl"):
+        path.unlink()
+    (evidence / "incidents" / INC / "claude-turns.jsonl").unlink()
+    (evidence / "incidents" / INC / "reflection-usage.jsonl").unlink()
+    assert ce.copy_problems(evidence)[f"incidents/{INC}"]
+
+
+def test_copy_problems_flag_a_started_investigator_that_left_no_session_but_not_an_idle_one(tmp_path: Path) -> None:
+    evidence = make_cell(tmp_path) / "operator" / "evidence"
+    idle = evidence / "incidents" / ("e" * 32)
+    _w(idle / "incident.json", {"incident_id": "i1-inv-2"})
+    assert ce.copy_problems(evidence) == {}, "a prepared investigator that never started has nothing to collect"
+    started = evidence / "incidents" / ("f" * 32)
+    _w(started / "incident.json", {"incident_id": "i1-inv-1"})
+    _w(started / "claude-turns.jsonl", json.dumps({"event": "start", "role": "responder", "session_id": ""}) + "\n")
+    assert list(ce.copy_problems(evidence)) == ["incidents/" + "f" * 32]
+
+
+def test_copy_problems_cover_lifecycle_tasks_and_the_layout(tmp_path: Path) -> None:
+    evidence = make_cell(tmp_path) / "operator" / "evidence"
+    task = evidence / "lifecycle" / "designer-1"
+    _w(task / "claude-turns.jsonl", json.dumps({"event": "complete", "role": "agent", "session_id": SID}) + "\n")
+    assert list(ce.copy_problems(evidence)) == ["lifecycle/designer-1"]
+    (evidence / "layout.json").unlink()
+    assert "" in ce.copy_problems(evidence)
+    assert ce.copy_problems(evidence / "nowhere") == {
+        "": ["no sink copy: " + str(evidence / "nowhere" / "layout.json") + " does not exist"]
+    }
+
+
+def test_cell_problems_check_each_arms_own_transcript_layout(tmp_path: Path) -> None:
+    sdo = tmp_path / "sdo"
+    run = make_cell(sdo)
+    cell = run / "operator"  # the sink copy sits in <cell>/evidence
+    assert ce.cell_problems(cell, "sdo") == []
+    (cell / "evidence" / "incidents" / INC / "claude" / "projects" / "p" / f"{SID}.jsonl").unlink()
+    assert any("session" in text for text in ce.cell_problems(cell, "sdo"))
+    assert ce.cell_problems(tmp_path / "empty", "sdo"), "a cell with no sink copy is incomplete"
+    vanilla = tmp_path / "vanilla"
+    _w(vanilla / "transcript.jsonl", json.dumps({"type": "system", "session_id": SID}) + "\n")
+    assert any("missing" in text for text in ce.cell_problems(vanilla, "vanilla"))
+    _w(vanilla / "session-dir" / "projects" / "p" / f"{SID}.jsonl", "{}\n")
+    assert ce.cell_problems(vanilla, "vanilla") == []
+    with pytest.raises(ValueError, match="unknown arm"):
+        ce.cell_problems(vanilla, "codex")

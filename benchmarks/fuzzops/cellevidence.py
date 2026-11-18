@@ -451,6 +451,35 @@ def _sessions(run: Path, incident_dir: Path) -> tuple[list[Session], list[Proble
     return list(sessions.values()), problems
 
 
+def copy_problems(evidence: Path) -> dict[str, list[str]]:
+    """What is missing from a copied sink run directory, by directory (``incidents/<digest>``, ``lifecycle/<key>``).
+
+    The same checks a fuzzops cell gets, for a harness with no cell layout: every agent session a directory's usage
+    records name has its main JSONL, every sub-agent that file names has its sidechain, none is truncated, and an
+    incident whose ledger says agents ran holds at least one transcript. An investigator or open incident has no
+    ledger: only a session it started and left no file for is a problem. The key ``""`` is the copy itself (no
+    ``sdo.evidence/v1`` layout). Empty: complete.
+    """
+    if why := sink.layout_problem(evidence):
+        return {"": [f"no sink copy: {why}"]}
+    out: dict[str, list[str]] = {}
+
+    def check(key: str, directory: Path, *, ledgered: bool) -> None:
+        _, found = _sessions(evidence, directory)
+        texts = [str(p) for p in found]
+        if ledgered and sink.incident_coverage(directory).needs_rollout:
+            texts.append(f"{directory.name[:12]}: agents ran but no transcript was copied")
+        if texts:
+            out[key] = texts
+
+    for directory in sink.incident_dirs(evidence):
+        check(f"incidents/{directory.name}", directory, ledgered=(directory / "ledger.json").is_file())
+    tasks = evidence / sink.TASKS
+    for directory in sorted(p for p in tasks.iterdir() if p.is_dir()) if tasks.is_dir() else []:
+        check(f"{sink.TASKS}/{directory.name}", directory, ledgered=False)
+    return out
+
+
 def _item(run: Path, name: str, rel: str, required: bool = True) -> Item:
     p = run / rel
     if not p.is_file():
@@ -722,6 +751,24 @@ def trial_problems(trial: Path) -> list[str]:
         if f"agent-{aid}.jsonl" not in have
     ]
     return problems
+
+
+def cell_problems(directory: Path, arm: str) -> list[str]:
+    """The transcript problems of one eval cell directory, for either arm (empty: gradable).
+
+    The SDO arm keeps its copy of the evidence sink in ``<cell>/evidence/`` (:func:`copy_problems`); the vanilla arm
+    keeps the stream-json it read and the CLI's own session directory in ``<cell>/`` (:func:`trial_problems`). A cell
+    that holds neither is incomplete, never complete by default.
+    """
+    if arm == "sdo":
+        return [
+            f"{key or 'sink copy'}: {text}"
+            for key, texts in copy_problems(directory / "evidence").items()
+            for text in texts
+        ]
+    if arm == "vanilla":
+        return trial_problems(directory)
+    raise ValueError(f"unknown arm {arm!r}: want 'sdo' or 'vanilla'")
 
 
 def cells(root: Path) -> list[Path]:
