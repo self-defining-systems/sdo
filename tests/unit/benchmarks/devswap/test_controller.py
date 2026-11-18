@@ -91,3 +91,83 @@ def test_a_stop_that_times_out_still_resumes_the_job(monkeypatch: pytest.MonkeyP
     with pytest.raises(SwapError, match="did not end"), controller.controller_stopped(None, "ns"):  # type: ignore[arg-type]
         pytest.fail("the block must not run")
     assert calls == [True, False]
+
+
+class LeaseLane:
+    """A cluster's controller Job and leader Lease as ``kubectl`` calls see them: the process killed by a stop never
+    releases the Lease, so it names a dead holder until its 60 s run out. ``reads`` is what each pod-list read returns
+    (None: kubectl could not read it); the last one repeats."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, reads: list[list[dict[str, Any]] | None]) -> None:
+        self.calls: list[list[str]] = []
+        self.reads = list(reads)
+        self.read_count = 0
+        self.lease_held = True
+        self.lease_deleted_after_reads = -1
+        self.delete_fails = False
+        monkeypatch.setattr(controller, "run", self.run)
+        monkeypatch.setattr(controller.time, "sleep", lambda _s: None)
+
+    def run(self, args: list[str], what: str, timeout: float = 600, **_: Any) -> Any:
+        self.calls.append(args)
+        if "lease" in args and "delete" in args:
+            if self.delete_fails:
+                raise SwapError("delete lease failed (1): forbidden")
+            self.lease_held = False
+            self.lease_deleted_after_reads = self.read_count
+        return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    def kube(self) -> Kubectl:
+        kube = Kubectl(context="c")
+
+        def read(_control: str) -> list[dict[str, Any]] | None:
+            self.read_count += 1
+            return self.reads.pop(0) if len(self.reads) > 1 else self.reads[0]
+
+        kube.read_controller_pods = read  # type: ignore[method-assign]
+        return kube
+
+
+def test_stopping_the_controller_frees_its_leader_lease_for_the_next_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The stopped controller process is killed before it can release the Lease, and the controller that starts next
+    would wait out the 60 s the dead one still holds (measured: 41-60 s of every restart)."""
+    lane = LeaseLane(monkeypatch, [[{}, {}], [{}], []])
+    controller.set_controller_suspended(lane.kube(), "ns", True)
+    assert not lane.lease_held
+    assert lane.lease_deleted_after_reads == 3  # only once a read showed no controller pod
+    [delete] = [call for call in lane.calls if "lease" in call]
+    assert delete[-5:] == ["delete", "lease", controller.CONTROLLER_LEASE, "--ignore-not-found", "--wait=false"]
+
+
+def test_an_unreadable_pod_list_is_not_a_stopped_controller(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A kubectl read that fails says nothing about the pod: the Lease of a controller that may still run (and renew it)
+    must not be deleted, or a second controller could take it over."""
+    lane = LeaseLane(monkeypatch, [None, None, [{}], None, []])
+    controller.set_controller_suspended(lane.kube(), "ns", True)
+    assert lane.lease_deleted_after_reads == 5  # not after the unreadable reads, nor the read that still showed a pod
+    assert not lane.lease_held
+
+
+def test_a_pod_list_that_stays_unreadable_never_deletes_the_lease(monkeypatch: pytest.MonkeyPatch) -> None:
+    lane = LeaseLane(monkeypatch, [None])
+    clock = iter([0.0, 1.0, 400.0])
+    monkeypatch.setattr(controller.time, "monotonic", lambda: next(clock))
+    with pytest.raises(SwapError, match="did not end"):
+        controller.set_controller_suspended(lane.kube(), "ns", True)
+    assert lane.lease_held
+
+
+def test_a_lease_that_cannot_be_deleted_does_not_fail_the_stop(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Freeing the Lease only saves time: it expires by itself."""
+    lane = LeaseLane(monkeypatch, [[]])
+    lane.delete_fails = True
+    controller.set_controller_suspended(lane.kube(), "ns", True)
+    assert "expires by itself" in capsys.readouterr().err
+
+
+def test_resuming_the_controller_leaves_the_lease_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    lane = LeaseLane(monkeypatch, [[]])
+    controller.set_controller_suspended(lane.kube(), "ns", False)
+    assert lane.lease_held

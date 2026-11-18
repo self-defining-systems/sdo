@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path  # noqa: TC003
@@ -42,8 +43,8 @@ def controller_pod_ids(kube: Kubectl, control: str) -> set[str]:
 
 
 def set_controller_suspended(kube: Kubectl, control: str, suspended: bool, timeout: float = 300.0) -> None:
-    """Suspend or resume the controller Job. Suspending ends its pod (SIGTERM: the evidence sidecar's final pass runs)
-    and waits until none is left."""
+    """Suspend or resume the controller Job. Suspending ends its pod (SIGTERM: the evidence sidecar's final pass runs),
+    waits until none is left and frees the leader Lease the ended process still names."""
     run(
         kube.cmd("-n", control, "patch", "job", CONTROLLER_JOB, "-p", json.dumps({"spec": {"suspend": suspended}})),
         "suspend the controller" if suspended else "resume the controller",
@@ -53,10 +54,33 @@ def set_controller_suspended(kube: Kubectl, control: str, suspended: bool, timeo
         return
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if not kube.controller_pods(control):
+        # an unreadable pod list is "not yet", never "gone": the Lease is freed only with no controller process left
+        pods = kube.read_controller_pods(control)
+        if pods is not None and not pods:
+            release_leader_lease(kube, control)
             return
         time.sleep(2)
     raise SwapError(f"the controller pod did not end within {timeout:.0f}s")
+
+
+#: The controller's leader Lease (``controllerLeaseName`` in ``sdo/operator/runtime``), 60 s long.
+CONTROLLER_LEASE = "sdo-controller"
+
+
+def release_leader_lease(kube: Kubectl, control: str) -> None:
+    """Free the leader Lease the stopped controller still holds. The process is killed when its pod ends, before its own
+    release runs, and the controller that starts next waits out the rest of the 60 s (measured: 41-60 s of every
+    restart on a lane). With no controller process left nobody holds the Lease for real; the next controller creates
+    it again at once. It only saves time (an unreleased Lease expires by itself), so a delete that fails is reported
+    and the stop goes on."""
+    try:
+        run(
+            kube.cmd("-n", control, "delete", "lease", CONTROLLER_LEASE, "--ignore-not-found", "--wait=false"),
+            "release the controller's leader Lease",
+            60,
+        )
+    except (SwapError, OSError, subprocess.SubprocessError) as exc:
+        print(f"{exc} (the Lease expires by itself; the next controller start waits for it)", file=sys.stderr)
 
 
 def standby_jobs(kube: Kubectl, control: str) -> list[str]:
