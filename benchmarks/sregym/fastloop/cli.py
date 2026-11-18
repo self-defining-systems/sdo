@@ -948,9 +948,25 @@ def deploy_with_setup_proof(
     return decision
 
 
+def _check_external_args(args: argparse.Namespace) -> None:
+    """The ``--agent-*`` flags belong to ``--agent external`` and need a command; fail before touching the lane."""
+    flags = (args.agent_command, args.agent_label, args.agent_state_map, args.agent_closing_timeout, args.agent_env)
+    if args.agent != "external":
+        if any(flags):
+            raise SystemExit("--agent-* flags apply to --agent external only")
+        return
+    if not args.agent_command or not args.agent_command.strip():
+        raise SystemExit("--agent external requires --agent-command")
+    if bad := [item for item in args.agent_env if "=" not in item or item.startswith("=")]:
+        raise SystemExit(f"--agent-env expects KEY=VALUE, got {bad}")
+    if args.agent_state_map is not None and not args.agent_state_map.is_file():
+        raise SystemExit(f"--agent-state-map {args.agent_state_map} is not a file")
+
+
 def _run(args: argparse.Namespace) -> int:
     from benchmarks.sregym.fastloop.warm_lane import own_lane
 
+    _check_external_args(args)
     if getattr(args, "sweep_service", None) and (args.stream is None or args.agent != "sdo"):
         raise SystemExit("--sweep-service requires an SDO --stream run")
     # A full-reset caller must obey the same ownership as a warm caller; otherwise
@@ -980,9 +996,14 @@ DEFAULT_CLAUDE_MODEL = "claude-sonnet-5-5"
 
 
 def _agent_model(args: argparse.Namespace) -> str:
-    """``--model``, else the agent's default: stock Claude Code runs Sonnet 5.5, everything else gpt-6-luna."""
+    """``--model``, else the agent's default: stock Claude Code runs Sonnet 5.5, everything else gpt-6-luna.
+
+    The external command picks its own model; the row records ``--model`` as declared, else ``unspecified``.
+    """
     if args.model:
         return str(args.model)
+    if args.agent == "external":
+        return "unspecified"
     return DEFAULT_CLAUDE_MODEL if args.agent == "claudecode" else "gpt-6-luna"
 
 
@@ -1310,8 +1331,9 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
                 diagnosis_grading=grading_mode,
                 on_failed_incident=reset_failed if args.continue_on_error else None,
             )
-        elif args.agent == "claudecode":
-            records = _run_claudecode(
+        elif args.agent in ("claudecode", "external"):
+            run_baseline = _run_claudecode if args.agent == "claudecode" else _run_external
+            records = run_baseline(
                 args,
                 environment,
                 results_dir,
@@ -1454,6 +1476,84 @@ def _run_claudecode(
     }
     with SubmissionStub(app_info=app_info) as stub:
         agent = ClaudeCodeBaselineAgent(
+            settings,
+            stub=stub,
+            prompt_for=lambda _problem_id, api_base: stock_prompt(environment.sregym_dir, app_info, api_base),
+        )
+        if stream_faults:
+            from benchmarks.sregym.fastloop.composite import TrackedAgent, reader_for
+
+            agent = TrackedAgent(  # type: ignore[assignment]
+                agent,
+                reader=reader_for(environment.namespace, environment.kubeconfig),
+                report_dir=results_dir,
+                settings=_composite_settings(args),
+                stream_faults=stream_faults,
+            )
+        return run_incidents(
+            agent, driver, config, grader=grader, diagnosis_grading=grading_mode, on_failed_incident=on_failed_incident
+        )
+
+
+def _external_settings(args: argparse.Namespace, kubeconfig: Path, results_dir: Path) -> Any:
+    """The external arm's settings from ``--agent-*`` flags (a shell-quoted command, ``KEY=VALUE`` environment)."""
+    import shlex
+
+    from benchmarks.sregym.fastloop.external_agent import DEFAULT_CLOSING_PROMPT, ExternalAgentSettings
+
+    state_map: dict[str, Path] = {}
+    if args.agent_state_map:
+        state_map = {str(k): Path(str(v)) for k, v in json.loads(args.agent_state_map.read_text()).items()}
+    closing_prompt = (
+        args.agent_closing_prompt_file.read_text() if args.agent_closing_prompt_file else DEFAULT_CLOSING_PROMPT
+    )
+    return ExternalAgentSettings(
+        command=tuple(shlex.split(args.agent_command)),
+        label=args.agent_label or Path(shlex.split(args.agent_command)[0]).name,
+        results_dir=results_dir,
+        kubeconfig=kubeconfig,
+        incident_timeout_seconds=float(args.timeout),
+        closing_timeout_seconds=args.agent_closing_timeout,
+        closing_prompt=closing_prompt,
+        evidence_grace_seconds=args.agent_evidence_grace,
+        state_map=state_map,
+        model=args.model,
+        extra_env=dict(item.split("=", 1) for item in args.agent_env),
+    )
+
+
+def _run_external(
+    args: argparse.Namespace,
+    environment: FastloopEnvironment,
+    results_dir: Path,
+    worker: SregymWorker,
+    driver: SregymFaultDriver,
+    config: LoopConfig,
+    grader: DiagnosisGrader | None = None,
+    grading_mode: str = "off",
+    stream_faults: dict[str, tuple[FaultSpec, ...]] | None = None,
+    on_failed_incident: Callable[[], None] | None = None,
+) -> list[IncidentRecord]:
+    """Any external agent command, no SDO in the lane: SREGym's own stock instruction, the command does the rest."""
+    from benchmarks.sregym.fastloop.claudecode_agent import stock_prompt
+    from benchmarks.sregym.fastloop.codex_agent import SubmissionStub
+    from benchmarks.sregym.fastloop.external_agent import ExternalBaselineAgent
+
+    results_dir.mkdir(parents=True, exist_ok=True)
+    proxy = worker.request(
+        "proxy",
+        port=args.proxy_port or _free_port(),
+        hide=[f"{environment.namespace}-sdo"],
+        kubeconfig=str(results_dir / "agent.kubeconfig"),
+    )
+    settings = _external_settings(args, Path(str(proxy["kubeconfig"])), results_dir)
+    app_info = {
+        "app_name": environment.application,
+        "namespace": environment.namespace,
+        "descriptions": environment.description,
+    }
+    with SubmissionStub(app_info=app_info) as stub:
+        agent = ExternalBaselineAgent(
             settings,
             stub=stub,
             prompt_for=lambda _problem_id, api_base: stock_prompt(environment.sregym_dir, app_info, api_base),
@@ -1989,7 +2089,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = commands.add_parser("run", help="loop incidents against the warm environment")
     run.add_argument("--run-dir", type=Path, required=True)
-    run.add_argument("--agent", choices=("sdo", "codex", "claudecode"), required=True)
+    run.add_argument("--agent", choices=("sdo", "codex", "claudecode", "external"), required=True)
     run.add_argument(
         "--warm-lane",
         action="store_true",
@@ -2050,7 +2150,31 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--model",
         default=None,
-        help="agent model (default: gpt-6-luna; claude-sonnet-5-5 for --agent claudecode, SREGym's stock Claude Code)",
+        help="agent model (default: gpt-6-luna; claude-sonnet-5-5 for --agent claudecode, SREGym's stock Claude Code; "
+        "recorded as declared for --agent external, whose command picks its own)",
+    )
+    external = run.add_argument_group("external agent (--agent external)", "see fastloop/README.md for the contract")
+    external.add_argument("--agent-command", help="the command to run per cell and phase (shell-quoted)")
+    external.add_argument("--agent-label", help="the arm's label on every row (default: the command's name)")
+    external.add_argument(
+        "--agent-env", action="append", default=[], metavar="KEY=VALUE", help="extra environment for the command"
+    )
+    external.add_argument(
+        "--agent-state-map",
+        type=Path,
+        help="JSON file {problem_id: state dir}: that cell starts from a copy of the state a previous pass kept",
+    )
+    external.add_argument(
+        "--agent-closing-timeout",
+        type=float,
+        help="seconds for the closing phase after the oracle grade (default: no closing phase)",
+    )
+    external.add_argument("--agent-closing-prompt-file", type=Path, help="the closing phase's text (default: neutral)")
+    external.add_argument(
+        "--agent-evidence-grace",
+        type=float,
+        default=90.0,
+        help="seconds past a phase's deadline before the arm kills the command's process group",
     )
     run.add_argument("--provider", choices=("codex", "claude"), default="codex", help="SDO agent provider")
     run.add_argument(

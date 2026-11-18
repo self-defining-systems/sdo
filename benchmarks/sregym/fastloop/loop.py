@@ -133,6 +133,9 @@ class AgentOutcome:
     previous_reflection_drain_seconds: float | None = None
     incident_id: str | None = None
     artifacts_dir: str | None = None
+    #: The external agent's label and the directory of the state it kept (``None`` for every other agent).
+    agent_label: str | None = None
+    agent_state_dir: str | None = None
     program_diagnoses: int | None = None
     program_verdicts: dict[str, int] = field(default_factory=dict)
     program_tool_calls: int | None = None
@@ -815,6 +818,8 @@ def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:
         "reflection_started_at": outcome.reflection_started_at,
         "reflection_finished_at": outcome.reflection_finished_at,
         "rebuild_done_at": outcome.rebuild_done_at,
+        "agent_label": outcome.agent_label,
+        "agent_state_dir": outcome.agent_state_dir,
         "diagnosis": outcome.diagnosis,
         "mitigation": outcome.mitigation,
         "responder_tokens": outcome.responder_tokens,
