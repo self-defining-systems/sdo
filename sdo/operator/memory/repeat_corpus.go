@@ -83,6 +83,10 @@ func RecordCorpus(root, captures, incidentID string, instances map[string][]prog
 			if err != nil {
 				return nil, err
 			}
+			// A healthy peer is a second instance of the program that an earlier
+			// accepted case already captured. A program's first case has none and
+			// leaves it empty: replay then diagnoses the healthy capture on the case's
+			// own bindings.
 			var peers program.Bindings
 			for _, previous := range prior {
 				if !slices.Contains(previous.Programs, id) {
@@ -105,9 +109,6 @@ func RecordCorpus(root, captures, incidentID string, instances map[string][]prog
 				if peers.Objects != nil {
 					break
 				}
-			}
-			if peers.Objects == nil {
-				return nil, fmt.Errorf("no captured accepted healthy peer for program %s", id)
 			}
 			encoded, _ := json.Marshal(binding)
 			digest := sha256.Sum256(append([]byte(incidentID+"\x00"+id+"\x00"), encoded...))
