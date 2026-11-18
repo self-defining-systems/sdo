@@ -170,12 +170,22 @@ func (c DriftClassifier) Classify(ctx context.Context, change ObjectChange, view
 			paths = append(paths, path)
 		}
 	}
-	// A deletion cannot introduce fields. Without changed owned paths there
-	// is nothing left to compare, and the deleted object need not be captured
-	// in the current snapshot. Surviving objects still need addition checks
-	// even when the deployer owns none of their changed paths.
+	// A deletion cannot introduce fields, so only the deleted object's own
+	// absence is left to judge. Absence is an observation: accepted source
+	// still declaring the object makes the deletion drift, whoever owned its
+	// fields. Surviving objects still need addition checks even when the
+	// deployer owns none of their changed paths.
 	if len(paths) == 0 && change.New == nil {
-		return nil, nil
+		diff, err := declaredSourceDiff(view, ref)
+		if err != nil {
+			return nil, fmt.Errorf("compare %s/%s with accepted source: %w", ref.Kind, ref.Name, err)
+		}
+		if !diff.MissingButInSource() {
+			return nil, nil
+		}
+		manager, operation, managerAt := changedDriftManager(change, nil, "unknown")
+		return &sdk.DriftEvent{Ref: ref, Source: "differs from accepted manifest", Manager: manager, Operation: operation, ManagerAt: managerAt, ObservedAt: now.UTC(), Classification: sdk.DriftUnexplained,
+			Fields: []sdk.DriftField{{Path: "metadata.name", Old: ref.Name, Source: ref.Name, New: "absent"}}}, nil
 	}
 	// Comparison, rather than deployer ownership, owns the additions policy.
 	// A writer can add effect-bearing fields that the deployer never owned.

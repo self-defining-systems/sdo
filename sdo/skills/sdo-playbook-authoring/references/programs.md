@@ -84,16 +84,17 @@ component name in either (`playbook.component-literal`, `detector.component-lite
 Choose playbooks by failure mechanism. Admission mutation, resource exhaustion and old-revision
 blockage need separate diagnoses and steps even on one Deployment; link them from findings and explain
 ordering in READMEs. Keep actions together only when one repair needs them. Unrelated unavailable reads
-must not turn a decidable source comparison into Unknown. Preserve earlier cases when refining variants.
+must not make a decidable source comparison Unknown. Preserve earlier cases when refining variants.
 Judge a pending stage by its final receipt: a later verified settlement preserves the working step;
-a handoff snapshot alone does not justify rewriting it.
+a handoff snapshot alone does not justify a rewrite.
 
 - `SetField` restores one schema-checked field; named list selectors (`env[name=X]`) and ConfigMap
   JSON/YAML entries (`DocumentFormat`, `DocumentPath`) preserve unrelated values. A missing final
   `env[name=X]` entry is inserted.
 - `ReconcileFromSource` restores a whole source-owned object and removes reported additions;
   `CreateFromSource` restores a named missing object. `DeleteObject` is irreversible; a delete-style Diagnose
-  matches on `diff.PresentButNotInSource()`, which turns false after the delete.
+  matches on `diff.PresentButNotInSource()`, a recreate-style one on `diff.MissingButInSource()`
+  (declared, gone live).
 - Diagnose on typed fields: `diff.ContainerChanges()` names each changed container by kind (init or
   app) and name, and `diff.Field(path).Differs()` sees only fields source declares, never server
   defaults. `diff.Text` is the whole document, so a substring matches any container; use it only as

@@ -21,6 +21,10 @@ type Snapshot struct {
 	ObjectSnapshotVersion int                         `json:"object_snapshot_version,omitempty"`
 	Admission             *sdk.PodAdmissionResult     `json:"pod_admission,omitempty"`
 	Objects               []unstructured.Unstructured `json:"objects,omitempty"`
+	// CompleteKindList names the kinds the snapshot lists completely for its
+	// namespace. A missing object of one of them is absent; of any other kind
+	// the snapshot cannot say.
+	CompleteKindList []schema.GroupVersionKind `json:"complete_kinds,omitempty"`
 	// TrimmedObjects counts, by kind, the objects a capture dropped to fit the
 	// snapshot budget; detectors that need them see an evidence gap.
 	TrimmedObjects map[string]int `json:"trimmed_objects,omitempty"`
@@ -96,6 +100,9 @@ func (s Snapshot) AppStateResults() map[string]carried.Result
     AppStateResults implements carried.ResultSet: the recorded results.
 
 func (s Snapshot) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error)
+
+func (s Snapshot) CompleteKinds() []schema.GroupVersionKind
+    CompleteKinds implements sdk.CompleteKindSource.
 
 func (s Snapshot) ConfigMaps() []corev1.ConfigMap
 
@@ -222,17 +229,4 @@ func (s Snapshot) UsageResult() (usage.Result, bool)
 
 func (s Snapshot) VantageResult(id string) (vantage.Result, bool)
     VantageResult implements vantage.Source.
-
-func (s Snapshot) VantageResults() map[string]vantage.Result
-    VantageResults implements vantage.ResultSet: the recorded results.
-
-func (s Snapshot) WebhookCAMatchesSecret(t program.WebhookCA) (bool, error)
-
-type UnrecordedError struct {
-	Method    string
-	Arguments json.RawMessage
-}
-    UnrecordedError names a read a replay was asked for that no recording holds.
-
-func (e *UnrecordedError) Error() string
 ```

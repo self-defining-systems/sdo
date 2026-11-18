@@ -54,8 +54,17 @@ var ErrNoFieldComparison = errors.New("diff holds no accepted/observed field com
     comparison, such as a baseline diff or a diff read from an unavailable
     source.
 
+var ErrObjectAbsent = errors.New("object is absent from snapshot")
+    ErrObjectAbsent means the object was observed to be missing: the API
+    answered NotFound, or the snapshot holds a complete list of the object's
+    kind without it. Absence is an observation a program may reason on.
+
 var ErrObjectNotCaptured = errors.New("object not captured")
-var ErrScopedObjectAbsent = errors.New("object is absent from snapshot")
+    ErrObjectNotCaptured means the snapshot cannot say whether the object
+    exists: its kind was not listed completely. It is a gap in evidence,
+    never an absence.
+
+var ErrScopedObjectAbsent = fmt.Errorf("%w", ErrObjectAbsent)
     ErrScopedObjectAbsent reports a declared, observed scoped target that does
     not contain the named object.
 
@@ -70,6 +79,10 @@ func ClearingHorizon(detector Detector, view DetectionContext) time.Duration
     ClearingHorizon is how long after a condition resolves a fresh evaluation
     of the detector may still report it: its rolling window plus the evaluations
     its clearing policy needs at its own cadence.
+
+func CompleteKinds(source any) []schema.GroupVersionKind
+    CompleteKinds returns the kinds source lists completely, or nil when it does
+    not say.
 
 func ConsumesPodAdmission(detectors []Detector) bool
     ConsumesPodAdmission enables the bounded API observation only for bundles
@@ -87,6 +100,14 @@ func DecodeTypedObjects(target any, objects []unstructured.Unstructured) error
     map. New kinds remain in Objects and are available through ObjectReader.
 
 func FindObject(objects []unstructured.Unstructured, ref ObjectRef) (*unstructured.Unstructured, error)
+    FindObject finds ref in objects. A miss is ErrObjectNotCaptured: nothing
+    says the list was complete.
+
+func FindObjectIn(objects []unstructured.Unstructured, complete []schema.GroupVersionKind, ref ObjectRef) (*unstructured.Unstructured, error)
+    FindObjectIn finds ref in objects. A miss is ErrObjectAbsent when ref's kind
+    is among complete, the kinds objects lists completely for ref's namespace
+    (the caller guarantees the namespace), and ErrObjectNotCaptured otherwise.
+
 func FindingFingerprint(finding Finding) string
     FindingFingerprint is a finding's identity within its detector: its own
     Fingerprint, or by default its detector, rule and primary resource. Two
@@ -116,6 +137,9 @@ func IsSDOFieldManager(manager string) bool
 func IsSupportedWatchKind(watch WatchKind) bool
     IsSupportedWatchKind reports whether a watch names a snapshot or controller
     input. Kubernetes kinds require their exact served API version.
+
+func KindComplete(complete []schema.GroupVersionKind, ref ObjectRef) bool
+    KindComplete reports whether ref's kind is among complete.
 
 func ObservationTime(ctx DetectionContext) time.Time
     ObservationTime returns the time a detection context describes. Detectors
@@ -194,26 +218,4 @@ func SourceComparisonText(accepted, observed []byte) string
     SourceComparisonText renders the accepted and observed comparable fields of
     one object as SourceDiff.Text. Each side is one JSON document, or null when
     that side is absent. Sides, Field and ContainerChanges parse this form.
-
-func StillStarting(ctx DetectionContext, pod corev1.Pod, status corev1.ContainerStatus) bool
-    StillStarting reports whether a running container is inside its own
-    declared startup allowance at the observation time: it started less than its
-    allowance ago. A container with no declared allowance, an unknown start or
-    an unknown observation time is never still starting.
-
-func SupportedWatchKinds() []string
-    SupportedWatchKinds lists, sorted, the "apiVersion/Kind" resources a
-    detector may watch.
-
-func TypedObjectFields(target any) []reflect.Value
-    TypedObjectFields returns target's typed Kubernetes list fields, the ones
-    DecodeTypedObjects fills. They are a projection of the generic objects.
-
-func TypedObjects(view any) []unstructured.Unstructured
-    TypedObjects is the compatibility edge for existing typed detector views and
-    old fixtures. It discovers zero-argument Kubernetes slice getters by type;
-    capture/replay have no separate kind inventories.
-
-
-TYPES
 ```

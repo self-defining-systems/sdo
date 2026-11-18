@@ -34,7 +34,7 @@ Full [SDK](program-sdk.md).
 ## Source drift: a field, ConfigMap entry or object differs from accepted source
 
 - `DetectionContext.DiffAgainstSource(ref ObjectRef) (SourceDiff, error)`: compares a captured resource with accepted source, including source absence.
-- `type SourceDiff struct{SourceAbsent bool; Changed bool; Text string}`: is the read-only comparison with the accepted source for one resource.
+- `type SourceDiff struct{SourceAbsent bool; LiveAbsent bool; Changed bool; Text string}`: is the read-only comparison with the accepted source for one resource.
 - `func (d SourceDiff) PresentButNotInSource() bool`: is true while the object exists live but not in accepted source.
 - `func (d SourceDiff) ContainerChanges() ([]ContainerChange, error)`: compares a workload's or Pod's containers with accepted source by kind and name: an added init container is never an app image change.
 - `type ContainerChange struct{Kind ContainerKind; Name string; Added bool; Removed bool; Fields []string}`: is one pod-template container that differs from accepted source, matched by kind and name.

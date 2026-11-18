@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sdo.dev/operator/core/internal/kubeio"
 	"sort"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -228,6 +229,8 @@ func (p KubernetesSnapshotProvider) Snapshot(ctx context.Context) (sdk.Detection
 		EndpointSliceList:  endpointSlices.Items,
 		NetworkPolicyList:  networkPolicies.Items,
 		EventList:          events.Items,
+		// Every typed list above returned without error: each is complete for the namespace.
+		CompleteKindList: namespacedListKinds(),
 		// Stamped after every list so no listed object postdates it.
 		ObservedAtTime:   now().UTC(),
 		SelfHealHoldTime: p.SelfHealHold,
@@ -259,6 +262,11 @@ type DetectionSnapshot struct {
 	EndpointSliceList  []discoveryv1.EndpointSlice
 	NetworkPolicyList  []networkingv1.NetworkPolicy
 	EventList          []corev1.Event
+	// CompleteKindList names the kinds the typed lists above hold completely
+	// for the namespace: lists that returned without error, or informers that
+	// have synced. An empty or unsynced list is not proof of absence, so a kind
+	// is named only once its list is whole.
+	CompleteKindList []schema.GroupVersionKind `json:"-"`
 	// TrafficWindows holds synthetic-traffic observations by workload name.
 	TrafficWindows map[string]traffic.Window
 	// ObservedAtTime is when the snapshot was read. Detectors read it through
@@ -581,7 +589,41 @@ func (s DetectionSnapshot) Object(ref sdk.ObjectRef) (*unstructured.Unstructured
 	if s.GenericCapture != nil {
 		return s.GenericCapture.Object(ref)
 	}
-	return sdk.FindObject(sdk.TypedObjects(s), ref)
+	if ref.Namespace != s.NamespaceName {
+		return sdk.FindObject(sdk.TypedObjects(s), ref)
+	}
+	return sdk.FindObjectIn(sdk.TypedObjects(s), s.CompleteKindList, ref)
+}
+
+// CompleteKinds implements sdk.CompleteKindSource.
+func (s DetectionSnapshot) CompleteKinds() []schema.GroupVersionKind { return s.CompleteKindList }
+
+// namespacedListKinds are the namespaced kinds KubernetesSnapshotProvider lists in full.
+func namespacedListKinds() []schema.GroupVersionKind {
+	return []schema.GroupVersionKind{
+		{Version: "v1", Kind: "ConfigMap"}, {Version: "v1", Kind: "Service"}, {Version: "v1", Kind: "Pod"},
+		{Version: "v1", Kind: "Endpoints"}, {Version: "v1", Kind: "Event"}, {Version: "v1", Kind: "PersistentVolumeClaim"},
+		{Version: "v1", Kind: "ServiceAccount"},
+		{Group: "apps", Version: "v1", Kind: "Deployment"}, {Group: "apps", Version: "v1", Kind: "ReplicaSet"},
+		{Group: "apps", Version: "v1", Kind: "StatefulSet"}, {Group: "apps", Version: "v1", Kind: "DaemonSet"},
+		{Group: "batch", Version: "v1", Kind: "Job"}, {Group: "batch", Version: "v1", Kind: "CronJob"},
+		{Group: "autoscaling", Version: "v2", Kind: "HorizontalPodAutoscaler"}, {Group: "policy", Version: "v1", Kind: "PodDisruptionBudget"},
+		{Group: "discovery.k8s.io", Version: "v1", Kind: "EndpointSlice"},
+		{Group: "networking.k8s.io", Version: "v1", Kind: "NetworkPolicy"}, {Group: "networking.k8s.io", Version: "v1", Kind: "Ingress"},
+	}
+}
+
+// KindOfInformerKey parses an informer key ("apps/v1/Deployment") into its kind.
+func KindOfInformerKey(key string) (schema.GroupVersionKind, bool) {
+	index := strings.LastIndex(key, "/")
+	if index < 0 {
+		return schema.GroupVersionKind{}, false
+	}
+	gv, err := schema.ParseGroupVersion(key[:index])
+	if err != nil {
+		return schema.GroupVersionKind{}, false
+	}
+	return gv.WithKind(key[index+1:]), true
 }
 
 // DiffAgainstSource requires the runtime's accepted-source read view.

@@ -211,6 +211,8 @@ type HTTPProbe struct {
 
 // Diff is the shared accepted-source or baseline comparison result.
 // A delete-style Diagnose matches on diff.PresentButNotInSource(), not SourceAbsent, which stays true after the delete.
+// A recreate-style Diagnose matches on diff.MissingButInSource(): an object accepted source declares and that is
+// absent live is a diff (LiveAbsent), not an error, and it turns false once CreateFromSource has recreated it.
 type Diff = sdk.SourceDiff
 
 // Result is a diagnosis verdict: Match means the fault is present, NoMatch
