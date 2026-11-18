@@ -48,7 +48,12 @@ class SnapshotStore(Protocol):
 
 
 class LoadGate:
-    """Admit a cell start only while the load average is under ``max_load``, at most one start per spacing."""
+    """Admit a cell start only while the load average is under ``max_load`` and the host has memory room.
+
+    ``host_check`` returns why the host cannot take another lane now (low MemAvailable, memory pressure), or
+    ``None``; a refusal pauses every new start and is logged once per distinct reason. Starts are at most one per
+    spacing.
+    """
 
     def __init__(
         self,
@@ -58,8 +63,11 @@ class LoadGate:
         loadavg: Callable[[], float] = lambda: os.getloadavg()[0],
         now: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        host_check: Callable[[], str | None] | None = None,
     ) -> None:
         self._max_load = max_load
+        self._host_check = host_check
+        self._last_reason: str | None = None
         self._spacing = spacing_seconds
         self._loadavg = loadavg
         self._now = now
@@ -67,6 +75,7 @@ class LoadGate:
         self._lock = threading.Lock()
         self._next_start = 0.0
         self.waited = 0.0
+        self.memory_waited = 0.0
 
     def admit(self) -> float:
         """Block until a start is allowed; returns the seconds waited."""
@@ -80,6 +89,17 @@ class LoadGate:
                 if self._loadavg() >= self._max_load:
                     self._sleep(min(5.0, max(self._spacing, 1.0)))
                     continue
+                if (reason := self._host_check() if self._host_check else None) is not None:
+                    if reason != self._last_reason:
+                        logger.warning("cell start paused: %s", reason)
+                        self._last_reason = reason
+                    paused = self._now()
+                    self._sleep(5.0)
+                    self.memory_waited += self._now() - paused
+                    continue
+                if self._last_reason is not None:
+                    logger.info("host memory admits cell starts again")
+                    self._last_reason = None
                 self._next_start = self._now() + self._spacing
                 break
         waited = self._now() - started

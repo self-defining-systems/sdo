@@ -89,3 +89,20 @@ def test_a_lane_serves_one_kind(tmp_path: Path) -> None:
 def test_probe_interval_stays_in_the_agreed_range(tmp_path: Path) -> None:
     with pytest.raises(ValidationError):
         config(tmp_path, probe_interval_seconds=10)
+
+
+def test_host_memory_defaults_are_a_32gib_reserve_pressure_10_and_no_budget(tmp_path: Path) -> None:
+    cfg = config(tmp_path)
+    assert (cfg.host_reserve_gib, cfg.max_memory_pressure, cfg.lane_memory_cap_gib) == (32, 10, 32)
+    assert cfg.lane_budget_gib is None
+
+
+def test_lane_caps_must_fit_the_host_budget(tmp_path: Path) -> None:
+    # Five lanes (h1 h2 hv1 s1 sv1) at 32 GiB each.
+    assert config(tmp_path, lane_budget_gib=160).lane_budget_gib == 160
+    with pytest.raises(ValidationError, match="lane memory caps 160 GiB .* budget 159 GiB"):
+        config(tmp_path, lane_budget_gib=159)
+
+
+def test_a_vanilla_only_plan_counts_only_the_lanes_it_uses(tmp_path: Path) -> None:
+    config(tmp_path, passes=("vanilla",), lane_budget_gib=96)  # hv1, sv1 -> 64 GiB, though h1 h2 s1 exist

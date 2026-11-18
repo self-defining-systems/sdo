@@ -31,7 +31,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from benchmarks.sregym.adapter import WaitKind, assert_host_disk_headroom, assert_host_headroom, kubectl, wait_for
+from benchmarks.sregym.adapter import (
+    HostMemoryPolicy,
+    WaitKind,
+    assert_host_disk_headroom,
+    assert_host_headroom,
+    assert_host_memory_admission,
+    assert_lane_budget,
+    kubectl,
+    parse_memory_size,
+    running_lane_caps,
+    wait_for,
+)
 from benchmarks.sregym.fastloop.accepted_source import AcceptedSource, deployment_source_for_environment
 from benchmarks.sregym.fastloop.baseline_recovery import (
     KubectlApplicationCluster,
@@ -323,10 +334,51 @@ def resolve_node_limits(args: argparse.Namespace) -> None:
         args.memory_limit = GITLAB_MEMORY_LIMIT if gitlab else DEFAULT_MEMORY_LIMIT
 
 
+def up_host_memory_policy(args: argparse.Namespace) -> HostMemoryPolicy:
+    """The host memory policy: ``SDO_HOST_*`` environment, each value overridable by its ``up`` flag."""
+    base = HostMemoryPolicy.from_env(os.environ)
+    reserve, pressure, budget = (
+        getattr(args, name, None) for name in ("host_reserve_gib", "host_psi_max", "host_lane_budget_gib")
+    )
+    return HostMemoryPolicy(
+        reserve_bytes=base.reserve_bytes if reserve is None else int(reserve * 1024**3),
+        max_pressure_avg60=base.max_pressure_avg60 if pressure is None else pressure,
+        lane_budget_bytes=base.lane_budget_bytes if budget is None else int(budget * 1024**3),
+    )
+
+
+def assert_lane_host_memory(args: argparse.Namespace, *, running: dict[str, int] | None = None) -> None:
+    """Refuse to create or start a lane the host has no memory for, or past the host's lane budget.
+
+    The lane cap is the node cap times its kind nodes. A lane that already runs holds its memory, so only the
+    reserve and the pressure gate apply to it; foreign clusters are neither counted nor touched.
+    """
+    node = parse_memory_size(args.memory_limit)
+    cap = node * (1 + getattr(args, "kind_worker_nodes", 1))
+    prefix = (
+        "fastloop-dev-w" if args.dev_mount is not None and args.cluster_prefix == "fastloop-w" else args.cluster_prefix
+    )
+    cluster = f"{prefix}{args.worker_id}"
+    policy = up_host_memory_policy(args)
+    if running is None:
+        # Our lanes are every cluster under the host-wide prefix (lane clusters are named <prefix><lane>, so the
+        # lane's own prefix would see only itself).
+        scope = getattr(args, "host_lane_prefix", None) or os.environ.get("SDO_HOST_LANE_PREFIX") or prefix
+        running = running_lane_caps(scope, default_node_bytes=node)
+    assert_host_memory_admission(0 if cluster in running else cap, policy)
+    assert_lane_budget(cluster, cap, running, policy)
+
+
+def _admit_lane(args: argparse.Namespace) -> None:
+    """The host memory gate ``up`` passes before it touches anything (a seam so tests need not read /proc)."""
+    assert_lane_host_memory(args)
+
+
 def _up(args: argparse.Namespace) -> int:
     resolve_node_limits(args)
     NodeLimits(args.cpu_limit, args.memory_limit, args.pids_limit)
     HostLimits(args.host_lock_dir.resolve(), args.host_redeploys)
+    _admit_lane(args)
     up_preflight(args)
     if args.app == "toy":
         from benchmarks.sregym.fastloop.toy import up
@@ -2070,6 +2122,32 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=1,
         help="kind worker nodes beside the control plane (default 1, as every experiment lane)",
+    )
+    up.add_argument(
+        "--host-reserve-gib",
+        type=float,
+        default=None,
+        help="refuse unless MemAvailable >= the lane's cap + this reserve "
+        "(default env SDO_HOST_MEMORY_RESERVE_GIB or 32)",
+    )
+    up.add_argument(
+        "--host-psi-max",
+        type=float,
+        default=None,
+        help="refuse while memory PSI some avg60 is at or above this (default env SDO_HOST_MEMORY_PSI_MAX or 10)",
+    )
+    up.add_argument(
+        "--host-lane-budget-gib",
+        type=float,
+        default=None,
+        help="refuse a lane that takes the summed caps of our running lanes past this "
+        "(default env SDO_HOST_LANE_BUDGET_GIB; unset: unchecked)",
+    )
+    up.add_argument(
+        "--host-lane-prefix",
+        default=None,
+        help="cluster-name prefix that marks OUR lanes for the lane budget (default env SDO_HOST_LANE_PREFIX, "
+        "else --cluster-prefix)",
     )
     up.add_argument("--builder", default="fastloop", help="private buildx builder for the application image")
     up.add_argument(

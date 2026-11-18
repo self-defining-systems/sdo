@@ -14,6 +14,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
+    import pytest
+
 
 class Store:
     def __init__(self) -> None:
@@ -112,3 +114,42 @@ def test_load_gate_waits_while_load_is_high_and_spaces_starts() -> None:
     start = clock.now
     gate.admit()
     assert clock.now - start >= 5  # the next start waited out the spacing
+
+
+def test_load_gate_pauses_new_starts_while_host_memory_refuses_and_logs_the_reason(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    refusals = iter(
+        ["host memory pressure some avg60=25.00 >= 10.00", "host memory pressure some avg60=25.00 >= 10.00", None]
+    )
+    clock = Clock(0)
+    gate = LoadGate(40, 0, loadavg=lambda: 0.0, now=clock.time, sleep=clock.sleep, host_check=lambda: next(refusals))
+    with caplog.at_level("WARNING", logger="benchmarks.sregym.eval.scheduler"):
+        waited = gate.admit()
+    assert waited > 0
+    assert gate.memory_waited == waited
+    reasons = [r.getMessage() for r in caplog.records if "avg60=25.00" in r.getMessage()]
+    assert len(reasons) == 1, "the same reason is logged once, not on every poll"
+
+
+def test_load_gate_admits_at_once_when_host_memory_has_room() -> None:
+    clock = Clock(0)
+    gate = LoadGate(40, 0, loadavg=lambda: 0.0, now=clock.time, sleep=clock.sleep, host_check=lambda: None)
+    assert gate.admit() == 0
+    assert gate.memory_waited == 0
+
+
+def test_scheduler_does_not_start_a_cell_until_the_host_check_passes(tmp_path: Path) -> None:
+    clock = Clock()
+    config = make_config(tmp_path, passes=("pass1",))
+    plan = build_plan(config)
+    context, backend = make_context(config, clock)
+    checks: list[int] = []
+
+    def refuse_twice() -> str | None:
+        checks.append(len(backend.calls))
+        return "low" if len(checks) <= 2 else None
+
+    gate = LoadGate(1e9, 0, loadavg=lambda: 0.0, sleep=lambda s: None, host_check=refuse_twice)
+    Scheduler(plan, context, Store(), ResultsTable(tmp_path), gate=gate).run()
+    assert checks[:2] == [0, 0], "no backend call happened while the host refused"

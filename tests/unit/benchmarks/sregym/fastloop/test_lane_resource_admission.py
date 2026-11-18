@@ -1155,3 +1155,98 @@ def test_policy_rejects_memory_without_health_detectors(lane):
     shutil.rmtree(gate.environment.workspace / ".sdo/diagnostics/detectors/health")
     with pytest.raises(ValueError, match="no health detectors"):
         gate._policy()
+
+
+def _up_args(**overrides):
+    values = {
+        "memory_limit": "16g",
+        "kind_worker_nodes": 1,
+        "dev_mount": None,
+        "cluster_prefix": "c5-evl-hotel1",
+        "worker_id": 0,
+        "host_reserve_gib": None,
+        "host_psi_max": None,
+        "host_lane_budget_gib": None,
+        "host_lane_prefix": "c5-",
+    }
+    return SimpleNamespace(**{**values, **overrides})
+
+
+def _proc(monkeypatch, tmp_path, *, available_gib, avg60):
+    from benchmarks.sregym.adapter import host_memory
+
+    for name in ("SDO_HOST_MEMORY_RESERVE_GIB", "SDO_HOST_MEMORY_PSI_MAX", "SDO_HOST_LANE_BUDGET_GIB"):
+        monkeypatch.delenv(name, raising=False)
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text(f"MemAvailable: {int(available_gib * 1024**2)} kB\n")
+    psi = tmp_path / "pressure"
+    psi.write_text(f"some avg10=0.00 avg60={avg60:.2f} avg300=0.00 total=0\n")
+    monkeypatch.setattr(host_memory, "MEMINFO_FILE", meminfo)
+    monkeypatch.setattr(host_memory, "PRESSURE_FILE", psi)
+    monkeypatch.setattr(
+        host_memory,
+        "assert_host_memory_admission",
+        partial(host_memory.assert_host_memory_admission, meminfo=meminfo, pressure=psi),
+    )
+    monkeypatch.setattr(cli, "assert_host_memory_admission", host_memory.assert_host_memory_admission)
+
+
+GI = 1024**3
+
+
+def test_up_refuses_a_lane_when_available_memory_is_below_cap_plus_reserve(monkeypatch, tmp_path):
+    from benchmarks.sregym.adapter import HostMemoryRefused
+
+    _proc(monkeypatch, tmp_path, available_gib=60, avg60=0.0)  # lane cap 2 x 16g = 32; 32 + reserve 32 = 64
+    with pytest.raises(HostMemoryRefused, match="MemAvailable"):
+        cli.assert_lane_host_memory(_up_args(), running={})
+    _proc(monkeypatch, tmp_path, available_gib=64, avg60=0.0)
+    cli.assert_lane_host_memory(_up_args(), running={})
+
+
+def test_up_refuses_while_memory_pressure_is_high(monkeypatch, tmp_path):
+    from benchmarks.sregym.adapter import HostMemoryRefused
+
+    _proc(monkeypatch, tmp_path, available_gib=200, avg60=12.0)
+    with pytest.raises(HostMemoryRefused, match="pressure"):
+        cli.assert_lane_host_memory(_up_args(), running={})
+
+
+def test_up_refuses_a_lane_past_the_host_lane_budget_but_not_one_already_running(monkeypatch, tmp_path):
+    from benchmarks.sregym.adapter import HostMemoryRefused
+
+    _proc(monkeypatch, tmp_path, available_gib=200, avg60=0.0)
+    running = {"c5-evl-hotel20": 32 * GI, "c5-evl-hotel30": 32 * GI}
+    args = _up_args(host_lane_budget_gib=96)
+    cli.assert_lane_host_memory(args, running=running)  # 96 == 96
+    with pytest.raises(HostMemoryRefused, match="budget"):
+        cli.assert_lane_host_memory(_up_args(host_lane_budget_gib=95), running=running)
+    # A lane that is already running keeps its own cap: re-running `up` is not a second lane.
+    own = {**running, "c5-evl-hotel10": 32 * GI}
+    cli.assert_lane_host_memory(args, running=own)
+
+
+def test_an_already_running_lane_needs_only_the_reserve_not_its_cap_again(monkeypatch, tmp_path):
+    _proc(monkeypatch, tmp_path, available_gib=33, avg60=0.0)
+    cli.assert_lane_host_memory(_up_args(), running={"c5-evl-hotel10": 32 * GI})
+
+
+def test_up_scans_the_host_wide_prefix_for_running_lanes(monkeypatch, tmp_path):
+    _proc(monkeypatch, tmp_path, available_gib=200, avg60=0.0)
+    seen = []
+    monkeypatch.setattr(cli, "running_lane_caps", lambda prefix, **kw: seen.append(prefix) or {})
+    cli.assert_lane_host_memory(_up_args())
+    assert seen == ["c5-"]
+
+
+def test_up_passes_the_host_memory_gate_before_any_preflight(monkeypatch, tmp_path):
+    from benchmarks.sregym.adapter import HostMemoryRefused
+
+    def refuse(_args):
+        raise HostMemoryRefused("eval: host memory pressure")
+
+    monkeypatch.setattr(cli, "_admit_lane", refuse)
+    monkeypatch.setattr(cli, "up_preflight", lambda *_: pytest.fail("preflight ran before the host memory gate"))
+    args = cli.build_parser().parse_args(["up", "--run-dir", str(tmp_path), "--seed", str(tmp_path)])
+    with pytest.raises(HostMemoryRefused):
+        cli._up(args)

@@ -1,0 +1,201 @@
+"""Host memory admission for lanes and eval cells: reserve, pressure and a budget for our own lane caps.
+
+Three read-only checks keep a shared host from thrashing:
+
+* ``MemAvailable >= lane cap + reserve``: a lane may be started only if its whole cap would still leave the reserve;
+* memory PSI ``some avg60`` below a threshold: a host already stalling on memory takes no new work;
+* the caps of our running lanes (Docker node ``--memory`` limits under our cluster prefix) plus the new lane stay
+  within a configured budget, so lanes we start cannot add up to more than we agreed to use. Foreign clusters are
+  never counted and never touched.
+
+A missing or unparsable measurement refuses admission. Production code stays benchmark-neutral: nothing here knows
+about a fault or a verdict.
+"""
+
+from __future__ import annotations
+
+import re
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+from benchmarks.sregym.adapter.lane_resources import host_available_memory
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+
+_GIB = 1024**3
+_SIZE = re.compile(r"([1-9][0-9]*)([bkmgBKMG]?)")
+_UNITS = {"": 1, "b": 1, "k": 1024, "m": 1024**2, "g": 1024**3}
+PRESSURE_FILE = Path("/proc/pressure/memory")
+MEMINFO_FILE = Path("/proc/meminfo")
+KIND_CLUSTER_LABEL = "io.x-k8s.kind.cluster"
+
+
+class HostMemoryRefused(ValueError):
+    """The host has no memory room for this lane or cell; the message is the logged reason."""
+
+
+@dataclass(frozen=True)
+class HostMemoryPolicy:
+    reserve_bytes: int = 32 * _GIB
+    #: Refuse at or above this memory PSI ``some avg60`` (percent of time some task stalled on memory).
+    max_pressure_avg60: float = 10.0
+    #: Upper bound on the summed caps of our running lanes; ``None`` leaves the sum unchecked.
+    lane_budget_bytes: int | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.reserve_bytes) is not int:
+            raise TypeError("host memory reserve_bytes must be an integer")
+        if self.reserve_bytes < 0:
+            raise ValueError("host memory reserve_bytes must not be negative")
+        if not isinstance(self.max_pressure_avg60, (int, float)) or isinstance(self.max_pressure_avg60, bool):
+            raise TypeError("host memory max_pressure_avg60 must be a number")
+        if not 0 < self.max_pressure_avg60 <= 100:
+            raise ValueError("host memory max_pressure_avg60 must be in (0, 100]")
+        if self.lane_budget_bytes is not None:
+            if type(self.lane_budget_bytes) is not int:
+                raise TypeError("host memory lane_budget_bytes must be an integer")
+            if self.lane_budget_bytes <= 0:
+                raise ValueError("host memory lane_budget_bytes must be positive")
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str]) -> HostMemoryPolicy:
+        """``SDO_HOST_MEMORY_RESERVE_GIB``, ``SDO_HOST_MEMORY_PSI_MAX``, ``SDO_HOST_LANE_BUDGET_GIB``."""
+        default = cls()
+        budget = env.get("SDO_HOST_LANE_BUDGET_GIB")
+        return cls(
+            reserve_bytes=int(float(env.get("SDO_HOST_MEMORY_RESERVE_GIB", default.reserve_bytes / _GIB)) * _GIB),
+            max_pressure_avg60=float(env.get("SDO_HOST_MEMORY_PSI_MAX", default.max_pressure_avg60)),
+            lane_budget_bytes=None if budget is None else int(float(budget) * _GIB),
+        )
+
+
+def parse_memory_size(text: str) -> int:
+    """A Docker size such as ``16g``, ``512M`` or a plain byte count."""
+    match = _SIZE.fullmatch(text.strip())
+    if match is None:
+        raise ValueError(f"eval: memory size {text!r} is not a Docker size such as 16g")
+    return int(match[1]) * _UNITS[match[2].lower()]
+
+
+def memory_pressure_avg60(path: Path = PRESSURE_FILE) -> float:
+    """``some avg60`` from the kernel's memory PSI file."""
+    try:
+        for line in path.read_text().splitlines():
+            fields = line.split()
+            if fields[:1] == ["some"]:
+                values = dict(field.split("=", 1) for field in fields[1:] if "=" in field)
+                return float(values["avg60"])
+    except (OSError, ValueError, KeyError) as exc:
+        raise ValueError(f"eval: host memory pressure (PSI) unavailable at {path}") from exc
+    raise ValueError(f"eval: host memory pressure (PSI) unavailable at {path}: no 'some avg60' line")
+
+
+def host_memory_refusal(
+    cap_bytes: int, policy: HostMemoryPolicy, *, available_bytes: int, pressure_avg60: float
+) -> str | None:
+    """Why the host cannot take a lane of ``cap_bytes`` now, or ``None`` when it can."""
+    if pressure_avg60 >= policy.max_pressure_avg60:
+        return (
+            f"host memory pressure some avg60={pressure_avg60:.2f} >= {policy.max_pressure_avg60:.2f}; "
+            "no new lane or cell while the host stalls on memory"
+        )
+    needed = cap_bytes + policy.reserve_bytes
+    if available_bytes < needed:
+        return (
+            f"host MemAvailable {available_bytes} bytes < lane cap {cap_bytes} + reserve {policy.reserve_bytes} "
+            f"= {needed} bytes"
+        )
+    return None
+
+
+def assert_host_memory_admission(
+    cap_bytes: int,
+    policy: HostMemoryPolicy | None = None,
+    *,
+    meminfo: Path = MEMINFO_FILE,
+    pressure: Path = PRESSURE_FILE,
+) -> dict[str, Any]:
+    """Read /proc and refuse (``HostMemoryRefused``) a lane that would eat the reserve or start under pressure."""
+    policy = policy or HostMemoryPolicy()
+    available = host_available_memory(meminfo)
+    avg60 = memory_pressure_avg60(pressure)
+    if (reason := host_memory_refusal(cap_bytes, policy, available_bytes=available, pressure_avg60=avg60)) is not None:
+        raise HostMemoryRefused(f"eval: {reason}")
+    return {
+        "passed": True,
+        "host_available_bytes": available,
+        "lane_cap_bytes": cap_bytes,
+        "reserve_bytes": policy.reserve_bytes,
+        "pressure_avg60": avg60,
+        "max_pressure_avg60": policy.max_pressure_avg60,
+    }
+
+
+def host_check(
+    cap_bytes: int,
+    policy: HostMemoryPolicy | None = None,
+    *,
+    meminfo: Path = MEMINFO_FILE,
+    pressure: Path = PRESSURE_FILE,
+) -> Callable[[], str | None]:
+    """A polling probe: the refusal reason now, or ``None``. An unreadable host is a reason too."""
+    policy = policy or HostMemoryPolicy()
+
+    def check() -> str | None:
+        try:
+            assert_host_memory_admission(cap_bytes, policy, meminfo=meminfo, pressure=pressure)
+        except ValueError as exc:
+            return str(exc).removeprefix("eval: ")
+        return None
+
+    return check
+
+
+def running_lane_caps(
+    cluster_prefix: str,
+    *,
+    default_node_bytes: int,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> dict[str, int]:
+    """Summed Docker memory caps per running kind cluster named ``cluster_prefix*``; read-only Docker queries.
+
+    An uncapped node (limit 0) of ours counts as ``default_node_bytes``: unknown is never free.
+    """
+    timeout = wait_for(WaitKind.PROBE)
+    listed = run(["docker", "ps", "-q"], capture_output=True, text=True, check=True, timeout=timeout).stdout.split()
+    if not listed:
+        return {}
+    template = '{{index .Config.Labels "' + KIND_CLUSTER_LABEL + '"}} {{.Name}} {{.HostConfig.Memory}}'
+    rows = run(
+        ["docker", "inspect", "--format", template, *listed],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=timeout,
+    ).stdout.splitlines()
+    caps: dict[str, int] = {}
+    for row in rows:
+        fields = row.split()
+        if len(fields) != 3 or not fields[0].startswith(cluster_prefix):
+            continue  # not a kind node, or not one of ours
+        caps[fields[0]] = caps.get(fields[0], 0) + (int(fields[2]) or default_node_bytes)
+    return caps
+
+
+def assert_lane_budget(
+    cluster: str, cap_bytes: int, running: Mapping[str, int], policy: HostMemoryPolicy | None = None
+) -> dict[str, Any]:
+    """Refuse a lane whose cap would take the summed caps of our running lanes past the budget."""
+    policy = policy or HostMemoryPolicy()
+    others = sum(cap for name, cap in running.items() if name != cluster)
+    after = others + cap_bytes
+    if policy.lane_budget_bytes is not None and after > policy.lane_budget_bytes:
+        raise HostMemoryRefused(
+            f"eval: lane {cluster} cap {cap_bytes} bytes plus {others} bytes already capped by our running lanes "
+            f"= {after} bytes exceeds the host lane budget {policy.lane_budget_bytes} bytes"
+        )
+    return {"passed": True, "lane_caps_after_bytes": after, "budget_bytes": policy.lane_budget_bytes}

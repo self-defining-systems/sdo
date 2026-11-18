@@ -53,3 +53,7 @@ of vet: the inventory fixture rejects compiler-only directive errors too.
 in `check_errors.sh`. Its synthetic temporary-Git negative controls cover run
 markers, extensionless and hidden files, binary files, deletions and Git failures.
 Keep run reports and measurements in an external experiment directory.
+
+## Shared-host memory guard
+
+Agent builds and tests share hosts with eval lanes, so they run under `scripts/capped_run.sh [--memory 16G] -- <command>`: it sets `GOFLAGS=-p=4` and `GOMAXPROCS=8` and, when `systemd-run --user --scope` really applies `MemoryMax` (checked through the scope's own `memory.max`), caps the command at 16G (`SDO_CAPPED_MEMORY_MAX`); otherwise it falls back to `nice`/`ionice`. No root needed. Lane and cell starts are gated by `benchmarks/sregym/adapter/host_memory.py`: `fastloop up` and the eval scheduler refuse or wait (the reason is logged) unless `MemAvailable >= lane cap + reserve` (default 32 GiB) and memory PSI `some avg60` is under 10; `up` also refuses a lane whose cap takes the summed caps of our running lanes (Docker node limits under the host lane prefix) past the lane budget. Configure with `SDO_HOST_MEMORY_RESERVE_GIB`, `SDO_HOST_MEMORY_PSI_MAX`, `SDO_HOST_LANE_BUDGET_GIB`, `SDO_HOST_LANE_PREFIX` (or the `up --host-*` flags); in an eval TOML use `host_reserve_gib`, `max_memory_pressure`, `lane_memory_cap_gib`, `lane_budget_gib`. Only our own lanes are counted; other clusters are never touched.
