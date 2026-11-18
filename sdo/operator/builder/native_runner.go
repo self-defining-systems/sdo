@@ -16,6 +16,21 @@ import (
 	"sdo.dev/operator/memory"
 )
 
+// ControllerStopGrace is how long a stopping controller child has to shut down
+// (releasing its leader Lease) before it is killed; the controller pod's
+// terminationGracePeriodSeconds must exceed it.
+const ControllerStopGrace = buildio.StopGrace
+
+// WithForcedStop carries a forced-stop channel to the controller child's
+// supervisor: closing it kills the child without waiting out ControllerStopGrace.
+func WithForcedStop(ctx context.Context, force <-chan struct{}) context.Context {
+	return buildio.WithForcedStop(ctx, force)
+}
+
+// ControllerStopped reports whether err is the controller child ending because
+// it was asked to stop (terminated status or killed by a signal).
+func ControllerStopped(err error) bool { return buildio.Stopped(err) }
+
 // RunConfig binds a built application controller to its transport-neutral
 // protobuf launch contract. Storage projections and cache publication come
 // from the repository edge.

@@ -82,3 +82,26 @@ func TestRepeatedRequestAtSameRevisionBacksOff(t *testing.T) {
 		t.Fatalf("waits=%v want %v", waits, want)
 	}
 }
+
+// A controller that ends because it was asked to stop (terminated status or a
+// signal death) is a stop; any other status is the controller's own failure.
+func TestControllerStoppedIsTheTerminatedStatusOrASignalDeath(t *testing.T) {
+	if !ControllerStopped(exitError(t, 143)) {
+		t.Fatal("exit 143 is a stop")
+	}
+	script := filepath.Join(t.TempDir(), "child.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nkill -9 $$\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !ControllerStopped(buildio.RunController(context.Background(), script, "unused.json", t.TempDir())) {
+		t.Fatal("a signal death is a stop")
+	}
+	for _, code := range []int{1, 2, 76} {
+		if ControllerStopped(exitError(t, code)) {
+			t.Fatalf("exit %d is the controller's own failure", code)
+		}
+	}
+	if ControllerStopped(nil) || ControllerStopped(errors.New("x")) {
+		t.Fatal("only a process exit is a stop")
+	}
+}

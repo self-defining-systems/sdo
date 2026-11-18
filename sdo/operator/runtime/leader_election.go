@@ -22,6 +22,10 @@ import (
 // client-side throttling) is never reported this way, it is retried.
 var ErrLeadershipLost = errors.New("controller leadership lost: Lease is held by another controller")
 
+// ErrLeaseReleased is returned by a renewal after Release: a controller that
+// gave the Lease up never takes it again.
+var ErrLeaseReleased = errors.New("controller Lease was released")
+
 var ErrLeadershipInactive = errors.New("controller leadership is not active")
 
 type LeaseElector struct {
@@ -32,6 +36,7 @@ type LeaseElector struct {
 	leaseDuration time.Duration
 	now           func() time.Time
 	leader        atomic.Bool
+	released      atomic.Bool
 	validUntil    atomic.Int64
 	generation    atomic.Uint64
 	mu            sync.Mutex
@@ -60,6 +65,9 @@ func NewLeaseElectorWithClock(client kubernetes.Interface, namespace, name, iden
 }
 
 func (e *LeaseElector) TryAcquireOrRenew(ctx context.Context) (leader bool, err error) {
+	if e.released.Load() {
+		return false, ErrLeaseReleased
+	}
 	validUntil := time.Time{}
 	defer func() {
 		if leader && err == nil {
@@ -128,25 +136,44 @@ func (e *LeaseElector) TryAcquireOrRenew(ctx context.Context) (leader bool, err 
 	return true, nil
 }
 
+// releaseAttempts bounds the read-modify-write of a release that keeps losing
+// to a concurrent writer (a renewal that was already in flight).
+const releaseAttempts = 3
+
+// Release clears the holder when this identity still holds the Lease, so the
+// next controller takes it at once. It marks the elector released first: no
+// renewal or acquisition follows, whatever is still in flight. A write that
+// loses an optimistic-lock race is read and tried again, because returning
+// with the Lease still naming this holder would make the replacement wait it
+// out.
 func (e *LeaseElector) Release(ctx context.Context) error {
+	e.released.Store(true)
 	defer e.deactivate()
 	leases := e.client.CoordinationV1().Leases(e.namespace)
-	lease, err := leases.Get(ctx, e.name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		return nil
+	var conflict error
+	for attempt := 0; attempt < releaseAttempts; attempt++ {
+		lease, err := leases.Get(ctx, e.name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("get leader Lease for release: %w", err)
+		}
+		if lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != e.identity {
+			return nil
+		}
+		empty := ""
+		lease.Spec.HolderIdentity = &empty
+		_, err = leases.Update(ctx, lease, metav1.UpdateOptions{})
+		if err == nil {
+			return nil
+		}
+		if !apierrors.IsConflict(err) {
+			return fmt.Errorf("release leader Lease: %w", err)
+		}
+		conflict = err
 	}
-	if err != nil {
-		return fmt.Errorf("get leader Lease for release: %w", err)
-	}
-	if lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != e.identity {
-		return nil
-	}
-	empty := ""
-	lease.Spec.HolderIdentity = &empty
-	if _, err := leases.Update(ctx, lease, metav1.UpdateOptions{}); err != nil && !apierrors.IsConflict(err) {
-		return fmt.Errorf("release leader Lease: %w", err)
-	}
-	return nil
+	return fmt.Errorf("release leader Lease: still conflicting after %d attempts: %w", releaseAttempts, conflict)
 }
 
 func (e *LeaseElector) IsLeader() bool {

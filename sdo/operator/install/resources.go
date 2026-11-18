@@ -373,6 +373,11 @@ func controllerJob(c Config) *batchv1.Job {
 	job.Spec.Template.Labels = map[string]string{"app.kubernetes.io/name": "sdo-controller"}
 	pod := &job.Spec.Template.Spec
 	pod.RestartPolicy = corev1.RestartPolicyNever
+	// The parent forwards SIGTERM to the controller child and waits up to
+	// builder.ControllerStopGrace for it to release its leader Lease; the pod
+	// must outlive that wait (the 30 s default only barely does).
+	grace := int64(45)
+	pod.TerminationGracePeriodSeconds = &grace
 	pod.ServiceAccountName = "sdo-controller"
 	pod.SecurityContext = podSecurity()
 	pod.Volumes = []corev1.Volume{

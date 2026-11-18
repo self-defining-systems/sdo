@@ -20,6 +20,7 @@ import (
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/deploymentpolicy"
 	"sdo.dev/operator/operatorcli/deploywire"
+	"sdo.dev/operator/operatorcli/internal/processio"
 	"sdo.dev/operator/planfile"
 	"sdo.dev/operator/renderenv"
 	"sdo.dev/operator/toolchain"
@@ -57,13 +58,39 @@ func RunController(ctx context.Context, args []string) error {
 	if err := publishResolvedSettings(policy, run.Controller.GetRepositoryMountPath()); err != nil {
 		return fmt.Errorf("controller cannot record its configuration: %w", err)
 	}
-	ctx, cancel := context.WithCancel(ctx)
+	// SIGTERM ends the supervised child gracefully (builder.Run forwards it),
+	// so the child releases its leader Lease before this pod is gone; a second
+	// signal kills it at once.
+	parent := ctx
+	ctx, force, cancel := processio.Termination(parent)
 	defer cancel()
+	ctx = builder.WithForcedStop(ctx, force)
 	// A deployment that violates the policy in force is published as a typed
 	// hold; detection keeps running either way.
 	controllerPolicyHold(ctx, run.Controller, identity, slog.Default())
 	err = builder.Run(ctx, run, builder.RestartPolicy{})
+	signalled := parent.Err() == nil && ctx.Err() != nil
 	cancel()
+	return terminationResult(signalled, err)
+}
+
+// ErrTerminated reports a controller stopped by a signal. The process exits
+// 143, so its pod ends Failed (see runtime.ExitTerminated).
+var ErrTerminated = errors.New("controller stopped by signal")
+
+// ExitTerminated is the process status for ErrTerminated (128+SIGTERM).
+const ExitTerminated = 143
+
+// terminationResult reports a signal stop as ErrTerminated when the child
+// ended the way a stop makes it end; a child that failed for its own reason
+// stays a failure.
+func terminationResult(signalled bool, err error) error {
+	if !signalled {
+		return err
+	}
+	if err == nil || errors.Is(err, context.Canceled) || builder.ControllerStopped(err) {
+		return ErrTerminated
+	}
 	return err
 }
 
