@@ -169,6 +169,21 @@ def test_parser_defaults_match_the_benchmark_configuration() -> None:
     assert up.kind_worker_nodes == 1
 
 
+def test_end_of_row_recovery_makes_every_arm_recover_at_its_row_end() -> None:
+    """An SDO row that wiped at start used to defer its recovery to the next row; the flag makes it pay it."""
+    from benchmarks.sregym.fastloop.cli import row_start_tier2
+
+    parser = build_parser()
+    base = ["run", "--run-dir", "d", "--agent", "sdo"]
+    default = parser.parse_args(base)
+    assert default.end_of_row_recovery is False
+    assert row_start_tier2(default, wiped_at_start=True, incidents=1) is True
+    ending = parser.parse_args([*base, "--end-of-row-recovery"])
+    assert row_start_tier2(ending, wiped_at_start=True, incidents=1) is False
+    assert row_start_tier2(ending, wiped_at_start=False, incidents=1) is False  # vanilla never wiped, always recovers
+    assert row_start_tier2(default, wiped_at_start=True, incidents=3) is False  # multi-incident streams recover
+
+
 def test_run_checks_sdo_credentials_before_worker_setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from benchmarks.sregym.fastloop import cli
 

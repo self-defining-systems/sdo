@@ -38,6 +38,7 @@ from benchmarks.sregym.adapter import (
     record_failed_closure,
     run_persistent_stage,
     wait_for,
+    wait_for_outcome_commit,
 )
 from benchmarks.sregym.fastloop.evidence_queue import (
     EvidenceExportQueue,
@@ -485,6 +486,25 @@ class SdoPersistentAgent:
             playbook_coverage=resolution.get("playbook_coverage"),
             resolution_path=resolution.get("resolution_path"),
         )
+
+    def await_outcome_committed(self, outcome: AgentOutcome) -> datetime | None:
+        """Wait for the controller to commit this incident's outcome (its closure acknowledgement).
+
+        That is the row's online end: the reflection and detector rollout that follow are the closing turn, which
+        ``learn`` drains. The wait ends at the incident's reflection deadline without raising.
+        """
+
+        settings = self._settings
+        record = PersistentState.load(settings.state_path).controllers.get(settings.namespace)
+        if not outcome.incident_id or record is None or record.pending is None:
+            return None
+        pending = record.pending
+        if pending.incident_id != outcome.incident_id:
+            return None
+        deadline = pending.reflection_deadline_at or self._clock.now() + timedelta(
+            seconds=wait_for(WaitKind.REFLECTION_DRAIN)
+        )
+        return wait_for_outcome_commit(self._ops, record.control_namespace, outcome.incident_id, deadline, self._clock)
 
     def learn(self, outcome: AgentOutcome) -> AgentOutcome:
         """Wait for reflection and detector rollout, then read the incident's strict receipt."""

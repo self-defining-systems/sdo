@@ -4,6 +4,10 @@ Each (app, arm) has a pool of lanes. A cell takes any free lane of its pool (the
 claim), so the number of cells in flight is bounded by the lanes and, on top of that, by host load. The merge of an
 app's pass-1 deltas is a lane-free step that pass-2 cells wait for; a pass-2 own-delta cell waits only for its own
 problem's pass-1 cell. A finished cell directory with a verified manifest is skipped on restart.
+
+A cell holds its lane through its closing turn: ``run_cell`` returns only after the closing record is written, so a
+lane is never claimed again, the pass-1 delta is never taken, and the merge never starts before a cell's
+``closing.json`` is terminal.
 """
 
 from __future__ import annotations
@@ -160,7 +164,8 @@ class Scheduler:
             try:
                 self.gate.admit()
                 row = run_cell(cell, self.context, lane)
-                reusable = row.status != "error"
+                # A lane whose closing turn was not drained (or whose drain failed) is never handed out again.
+                reusable = row.status != "error" and row.closing_status not in ("not_drained", "error")
             finally:
                 self.pools.release(cell.pool, lane, reusable=reusable)
         self.table.append(row)

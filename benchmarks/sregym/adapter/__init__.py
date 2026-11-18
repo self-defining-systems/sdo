@@ -118,6 +118,7 @@ if TYPE_CHECKING:
         runtime_config_payload,
         teardown,
         wait_for_maintenance_ack,
+        wait_for_outcome_commit,
     )
     from benchmarks.sregym.adapter.processes import bind_state
     from benchmarks.sregym.adapter.runtime import (
@@ -221,6 +222,7 @@ _EXPORTS: dict[str, str] = {
     "pause_for_recovery": "persistent",
     "record_failed_closure": "persistent",
     "run_persistent_stage": "persistent",
+    "wait_for_outcome_commit": "persistent",
     "teardown": "persistent",
     "RuntimeConfig": "runtime",
     "DeploymentPolicyConfig": "deployment_source",
@@ -347,6 +349,7 @@ __all__ = [
     "run_persistent_stage",
     "teardown",
     "wait_for_maintenance_ack",
+    "wait_for_outcome_commit",
 ]
 
 

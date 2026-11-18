@@ -790,6 +790,16 @@ def _wipes_at_row_start(args: argparse.Namespace, environment: FastloopEnvironme
     return args.agent == "sdo" and environment.app != "toy" and not environment.shared_accepted_id
 
 
+def row_start_tier2(args: argparse.Namespace, *, wiped_at_start: bool, incidents: int) -> bool:
+    """Whether the row leaves its fault recovery to the next row's start (Tier-2) instead of paying it at its end.
+
+    Only a one-incident SDO row that wiped at start defers it; ``--end-of-row-recovery`` makes it pay the same
+    recovery and cleanup a vanilla row pays, inside the row.
+    """
+
+    return wiped_at_start and incidents == 1 and not getattr(args, "end_of_row_recovery", False)
+
+
 def _warm_reset_args(args: argparse.Namespace, environment: FastloopEnvironment) -> argparse.Namespace:
     # A warm caller retains accepted knowledge by default. An explicitly
     # selected planned revision still owns the ordinary reset semantics.
@@ -1207,7 +1217,9 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
     )
     config = LoopConfig(
         ablation_arm=arm_memory.arm if arm_memory else None,
-        row_start_tier2=tier1 is not None and (len(stream) if stream else args.incidents) == 1,
+        row_start_tier2=row_start_tier2(
+            args, wiped_at_start=tier1 is not None, incidents=len(stream) if stream else args.incidents
+        ),
         delivery_record_path=environment.run_dir / "image_delivery.jsonl",
         image_delivery=environment.image_delivery,
         image_delivery_reason=environment.image_delivery_reason,
@@ -2189,6 +2201,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="require this exact composite oracle component to grade faulty before repair (repeatable)",
     )
     run.add_argument("--require-full-cleanup", action="store_true", help="require v2 recovery and application baseline")
+    run.add_argument(
+        "--end-of-row-recovery",
+        action="store_true",
+        help="pay the harness fault recovery and cleanup at the row's end even for a row that wiped at start "
+        "(an arm-neutral end of row; without it a one-incident SDO row leaves it to the next row's start)",
+    )
     run.add_argument(
         "--cleanup-passes",
         type=int,
