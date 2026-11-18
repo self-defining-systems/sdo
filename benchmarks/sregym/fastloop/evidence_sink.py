@@ -156,8 +156,12 @@ def copy_out_run(environment: FastloopEnvironment, results_dir: Path) -> SinkCop
         # The interval copy keeps incidents, lifecycle tasks, the index and the layout; the run's own top-level
         # files (the controller's resolved config.yaml) are evidence too, and the verification below expects them.
         for top in sorted(source.iterdir()):
-            if top.is_file() and not top.is_symlink() and not (destination / top.name).exists():
+            if top.is_symlink() or (destination / top.name).exists():
+                continue
+            if top.is_file():
                 shutil.copy2(top, destination / top.name)
+            elif top.is_dir():  # the controller's telemetry/ and other run-level directories
+                shutil.copytree(top, destination / top.name, symlinks=False, dirs_exist_ok=True)
         files, size = _verify_and_sync(source, destination)
     except (OSError, sink.SinkError) as exc:
         raise EvidenceSinkError(f"copying the sink run directory {run_id}: {exc}") from exc
