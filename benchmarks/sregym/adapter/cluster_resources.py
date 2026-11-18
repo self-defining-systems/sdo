@@ -164,6 +164,33 @@ def _kind_nodes(config: BenchmarkClusterResourcesConfig, kubeconfig: Path) -> li
     return kind_nodes
 
 
+_DOCKER_HUB_HOSTS = frozenset({"docker.io", "index.docker.io", "registry-1.docker.io", "registry.hub.docker.com"})
+DOCKERHUB_AUTH_FILE_ENV = "FASTLOOP_DOCKERHUB_AUTH_FILE"
+
+
+def _registry_push_config() -> str:
+    """The lane registry Secret's dockerconfigjson: empty, or only the Docker Hub entry of the named config file.
+
+    In-cluster BuildKit resolves base images with this config; anonymous pulls from a shared host IP are rate
+    limited (429). Other registries' credentials in the file are never copied, and the content is never logged.
+    """
+    path = os.environ.get(DOCKERHUB_AUTH_FILE_ENV)
+    auths: dict[str, Any] = {}
+    if path:
+        try:
+            document = json.loads(Path(path).read_text(encoding="utf-8"))
+            declared = document["auths"]
+            if not isinstance(declared, dict):
+                raise TypeError("auths is not an object")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise ValueError(f"{DOCKERHUB_AUTH_FILE_ENV} must name a docker config.json with an auths object") from exc
+        for host, entry in declared.items():
+            bare = re.sub(r"^https?://", "", str(host)).split("/", 1)[0]
+            if bare in _DOCKER_HUB_HOSTS and isinstance(entry, dict):
+                auths[str(host)] = entry
+    return json.dumps({"auths": auths}, separators=(",", ":"))
+
+
 def _registry_resources(config: BenchmarkClusterResourcesConfig) -> list[dict[str, Any]]:
     labels = {"app.kubernetes.io/name": _REGISTRY_NAME}
     namespace = config.control_namespace
@@ -174,7 +201,7 @@ def _registry_resources(config: BenchmarkClusterResourcesConfig) -> list[dict[st
             "kind": "Secret",
             "metadata": {"name": config.registry_push_secret, "namespace": namespace},
             "type": "kubernetes.io/dockerconfigjson",
-            "stringData": {".dockerconfigjson": '{"auths":{}}'},
+            "stringData": {".dockerconfigjson": _registry_push_config()},
         },
         {
             "apiVersion": "v1",

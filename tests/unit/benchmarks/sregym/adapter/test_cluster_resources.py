@@ -157,3 +157,50 @@ def test_bridge_wait_and_cleanup_are_namespace_scoped(tmp_path: Path, monkeypatc
         command[:5] == ["kubectl", "--kubeconfig", str(kubeconfig), "--namespace", "hotel-sdo"] for command in calls
     )
     assert any("deployment/sdo-sregym-bridge" in command for command in calls)
+
+
+def _push_secret_payload(tmp_path: Path) -> dict[str, object]:
+    from benchmarks.sregym.adapter.cluster_resources import _registry_resources
+
+    secret = next(item for item in _registry_resources(_config(tmp_path)) if item["kind"] == "Secret")
+    return json.loads(secret["stringData"][".dockerconfigjson"])
+
+
+def test_registry_push_secret_carries_only_docker_hub_auth_from_the_named_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In-cluster BuildKit pulls base images anonymously otherwise and is rate-limited per host IP."""
+    docker_config = tmp_path / "config.json"
+    docker_config.write_text(
+        json.dumps(
+            {
+                "auths": {
+                    "https://index.docker.io/v1/": {"auth": "c3ludGhldGljOnN5bnRoZXRpYw=="},
+                    "ghcr.io": {"auth": "b3RoZXI6b3RoZXI="},
+                },
+                "credsStore": "desktop",
+            }
+        )
+    )
+    monkeypatch.setenv("FASTLOOP_DOCKERHUB_AUTH_FILE", str(docker_config))
+    payload = _push_secret_payload(tmp_path)
+    assert payload == {"auths": {"https://index.docker.io/v1/": {"auth": "c3ludGhldGljOnN5bnRoZXRpYw=="}}}
+
+
+def test_registry_push_secret_stays_empty_without_the_auth_file_setting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("FASTLOOP_DOCKERHUB_AUTH_FILE", raising=False)
+    assert _push_secret_payload(tmp_path) == {"auths": {}}
+
+
+@pytest.mark.parametrize("contents", [None, "not json", "[]", '{"auths": []}'])
+def test_registry_push_secret_fails_closed_on_an_unusable_auth_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, contents: str | None
+) -> None:
+    docker_config = tmp_path / "config.json"
+    if contents is not None:
+        docker_config.write_text(contents)
+    monkeypatch.setenv("FASTLOOP_DOCKERHUB_AUTH_FILE", str(docker_config))
+    with pytest.raises(ValueError, match="FASTLOOP_DOCKERHUB_AUTH_FILE"):
+        _push_secret_payload(tmp_path)
