@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -145,6 +146,11 @@ def copy_out_run(environment: FastloopEnvironment, results_dir: Path) -> SinkCop
     destination = results_dir / COPY_DIRNAME
     try:
         copied = sink.copy_interval(source, destination, None, None)
+        # The interval copy keeps incidents, lifecycle tasks, the index and the layout; the run's own top-level
+        # files (the controller's resolved config.yaml) are evidence too, and the verification below expects them.
+        for top in sorted(source.iterdir()):
+            if top.is_file() and not top.is_symlink() and not (destination / top.name).exists():
+                shutil.copy2(top, destination / top.name)
         files, size = _verify_and_sync(source, destination)
     except (OSError, sink.SinkError) as exc:
         raise EvidenceSinkError(f"copying the sink run directory {run_id}: {exc}") from exc
