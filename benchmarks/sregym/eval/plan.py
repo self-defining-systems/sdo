@@ -154,7 +154,7 @@ def build_plan(config: EvalConfig) -> Plan:
         shuffled = list(app.problems)
         random.Random(f"{config.seed}:{app.name}").shuffle(shuffled)
         order[app.name] = tuple(shuffled)
-        for pass_ in ALL_PASSES:
+        for pass_ in (*ALL_PASSES, "vanilla-eq"):
             if pass_ not in config.passes:
                 continue
             for index, problem in enumerate(shuffled):
