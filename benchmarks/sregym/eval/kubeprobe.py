@@ -19,23 +19,24 @@ if TYPE_CHECKING:
 PREFIX = "kube:"
 
 
-def parse(spec: str) -> tuple[str, str, str, str]:
-    """``kube:ns/svc:port/path`` -> (namespace, service, port, path)."""
+def parse(spec: str) -> tuple[str, str, str, str, str]:
+    """``kube:ns/svc:port/path[|expect=text]`` -> (namespace, service, port, path, expected body substring)."""
     if not spec.startswith(PREFIX):
         raise ValueError(f"not a kube probe spec: {spec!r}")
+    spec, _, expected = spec.partition("|expect=")
     namespace, _, rest = spec[len(PREFIX) :].partition("/")
     service_port, _, path = rest.partition("/")
     service, _, port = service_port.partition(":")
     if not (namespace and service and port):
         raise ValueError(f"kube probe spec needs ns/svc:port/path, got {spec!r}")
-    return namespace, service, port, path
+    return namespace, service, port, path, expected
 
 
 def kube_probe(specs: tuple[str, ...], kubeconfig: Path, *, timeout_seconds: float = 4.0) -> Callable[[], ProbeResult]:
     targets = [parse(spec) for spec in specs]
 
     def probe() -> ProbeResult:
-        for namespace, service, port, path in targets:
+        for namespace, service, port, path, expected in targets:
             raw = f"/api/v1/namespaces/{namespace}/services/{service}:{port}/proxy/{path}"
             try:
                 completed = subprocess.run(
@@ -57,6 +58,8 @@ def kube_probe(specs: tuple[str, ...], kubeconfig: Path, *, timeout_seconds: flo
                 return ProbeResult(False, f"{service}:{port}/{path}: timeout")
             if completed.returncode != 0:
                 return ProbeResult(False, f"{service}:{port}/{path}: {completed.stderr.strip()[-160:]}")
+            if expected and expected not in completed.stdout:
+                return ProbeResult(False, f"{service}:{port}/{path}: body lacks {expected!r}")
         return ProbeResult(True)
 
     return probe
