@@ -320,6 +320,7 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
                 str(tmp_path),
                 "--agent",
                 "sdo",
+                "--allow-no-evidence-sink",
                 "--run-id",
                 "hermetic",
                 "--agent-registrations",
