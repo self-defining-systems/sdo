@@ -201,6 +201,19 @@ class GitSnapshotStore:
             self._fetch(repo, workspace, commit, f"refs/first-try/{problem}")
             self._first_try[(app, problem)] = commit
 
+    def load_first_tries(self, app: str) -> dict[str, str]:
+        """Rebuild the first-try table of ``app`` from the repository's ``refs/first-try/*`` (a later process)."""
+        repo = self._repo(app)
+        out = _git(repo, "for-each-ref", "--format=%(refname) %(objectname)", "refs/first-try/").decode()
+        found: dict[str, str] = {}
+        for line in out.splitlines():
+            ref, _, sha = line.partition(" ")
+            found[ref.removeprefix("refs/first-try/")] = sha
+        with self._lock:
+            for problem, sha in found.items():
+                self._first_try[(app, problem)] = sha
+        return found
+
     def record_first_try(self, app: str, problem: str, memory_commit_after: str | None) -> None:
         with self._lock:
             if memory_commit_after is None:
