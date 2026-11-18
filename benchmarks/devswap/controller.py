@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path  # noqa: TC003
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.devswap import warm
 from benchmarks.devswap.kube import APPLICATION_ROOT, CONTROLLER_CONTAINER, CONTROLLER_JOB, Kubectl, SwapError, run
 
 if TYPE_CHECKING:
@@ -28,6 +29,11 @@ _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 SWAP_STANDBY_WAIT_S = 600.0
 
 
+def pod_ended(pod: Mapping[str, Any]) -> bool:
+    """Whether the pod's process is over (Succeeded or Failed): the Job keeps such pods, but nothing runs in them."""
+    return (pod.get("status") or {}).get("phase") in ("Succeeded", "Failed")
+
+
 def controller_pod_ids(kube: Kubectl, control: str) -> set[str]:
     """The uids of the controller pods that run or are about to (not ended, not being deleted). A pod list kubectl could
     not read is an error: an empty answer would read as "no controller to restart"."""
@@ -37,14 +43,17 @@ def controller_pod_ids(kube: Kubectl, control: str) -> set[str]:
     return {
         pod["metadata"]["uid"]
         for pod in pods
-        if not (pod.get("metadata") or {}).get("deletionTimestamp")
-        and (pod.get("status") or {}).get("phase") not in ("Succeeded", "Failed")
+        if not (pod.get("metadata") or {}).get("deletionTimestamp") and not pod_ended(pod)
     }
 
 
 def set_controller_suspended(kube: Kubectl, control: str, suspended: bool, timeout: float = 300.0) -> None:
     """Suspend or resume the controller Job. Suspending ends its pod (SIGTERM: the evidence sidecar's final pass runs),
-    waits until none is left and frees the leader Lease the ended process still names."""
+    waits until none is left and frees the leader Lease the ended process still names. A Go build cache warm still
+    running for this lane (``devswap.warm``) is joined first: a stop ends the old controller, the warm shortens the next
+    start."""
+    if suspended:
+        warm.join_pending(kube, control)
     run(
         kube.cmd("-n", control, "patch", "job", CONTROLLER_JOB, "-p", json.dumps({"spec": {"suspend": suspended}})),
         "suspend the controller" if suspended else "resume the controller",
@@ -56,7 +65,8 @@ def set_controller_suspended(kube: Kubectl, control: str, suspended: bool, timeo
     while time.monotonic() < deadline:
         # an unreadable pod list is "not yet", never "gone": the Lease is freed only with no controller process left
         pods = kube.read_controller_pods(control)
-        if pods is not None and not pods:
+        # ended pods (a crash, a node shutdown) stay in the Job's list for good: no process runs in them
+        if pods is not None and all(pod_ended(pod) for pod in pods):
             release_leader_lease(kube, control)
             return
         time.sleep(2)

@@ -83,27 +83,13 @@ func runPass(ctx context.Context, config RunConfig) (string, error) {
 		return "", err
 	}
 	projectedRevision := projected.AcceptedRevision
-	buildConfig := config.Build
-	buildConfig.DiagnosticsRoot = projected.Directory
-	buildConfig.CompileOnly, err = memory.AdoptedBuild(ctx, config.Build.ApplicationRoot, projected.AcceptedRevision)
-	if err != nil {
-		return projectedRevision, err
-	}
-	workspace, err := BuildWorkspace(ctx, buildConfig)
+	workspace, binary, artifact, err := compileLaunch(ctx, config.Build, projected)
 	if err != nil {
 		return projectedRevision, err
 	}
 	defer workspace.Close()
-	binary, err := workspace.BuildForLaunch(ctx)
-	if err != nil {
-		return projectedRevision, err
-	}
 
 	provenance, err := buildProvenance(projected, binary)
-	if err != nil {
-		return projectedRevision, err
-	}
-	artifact, err := workspace.BuildMemoryHost(ctx)
 	if err != nil {
 		return projectedRevision, err
 	}
@@ -120,6 +106,32 @@ func runPass(ctx context.Context, config RunConfig) (string, error) {
 		return projectedRevision, err
 	}
 	return projectedRevision, buildio.RunController(ctx, binary, configPath, workspace.Directory)
+}
+
+// compileLaunch is every compile a controller start does for the accepted memory: the launch gates and the controller
+// binary (BuildForLaunch) and the memory host. The caller owns the returned workspace, which holds both executables.
+func compileLaunch(ctx context.Context, build Config, projected DiagnosticsProjection) (*Workspace, string, MemoryHostArtifact, error) {
+	build.DiagnosticsRoot = projected.Directory
+	compileOnly, err := memory.AdoptedBuild(ctx, build.ApplicationRoot, projected.AcceptedRevision)
+	if err != nil {
+		return nil, "", MemoryHostArtifact{}, err
+	}
+	build.CompileOnly = compileOnly
+	workspace, err := BuildWorkspace(ctx, build)
+	if err != nil {
+		return nil, "", MemoryHostArtifact{}, err
+	}
+	binary, err := workspace.BuildForLaunch(ctx)
+	if err != nil {
+		_ = workspace.Close()
+		return nil, "", MemoryHostArtifact{}, err
+	}
+	artifact, err := workspace.BuildMemoryHost(ctx)
+	if err != nil {
+		_ = workspace.Close()
+		return nil, "", MemoryHostArtifact{}, err
+	}
+	return workspace, binary, artifact, nil
 }
 
 type provenance struct {
