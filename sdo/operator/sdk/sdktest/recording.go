@@ -359,6 +359,10 @@ func RecordPrimitiveCalls(view program.ReadView, calls []PrimitiveCall) ([]Primi
 		}
 
 		switch call.Method {
+		case "AcceptedRefs":
+			// The controller's frozen accepted inventory is a host input, not a
+			// program read: a re-observation has nothing to record.
+			continue
 		case "AdmissionWebhooksFor":
 			var subject sdk.ObjectRef
 			if len(args) != 1 {

@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/appstate"
@@ -508,6 +509,19 @@ func observe(snapshot *sdktest.Snapshot, o *pb.MemoryObservation) error {
 		snapshot.ObservedAtTime = &at
 	}
 	snapshot.HeldKeys = append([]string(nil), o.HeldKeys...)
+	snapshot.CompleteKindList = nil
+	for _, kind := range o.CompleteKinds {
+		cut := strings.LastIndex(kind, "/")
+		if cut <= 0 || cut == len(kind)-1 {
+			return fmt.Errorf("invalid complete kind %q", kind)
+		}
+		version, name := kind[:cut], kind[cut+1:]
+		gv, err := schema.ParseGroupVersion(version)
+		if err != nil {
+			return fmt.Errorf("invalid complete kind %q: %w", kind, err)
+		}
+		snapshot.CompleteKindList = append(snapshot.CompleteKindList, gv.WithKind(name))
+	}
 	if o.SelfHealHold != nil {
 		if err := o.SelfHealHold.CheckValid(); err != nil {
 			return err

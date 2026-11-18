@@ -307,17 +307,41 @@ func watchedDiffReads(view sdk.DetectionContext, watches []sdk.WatchKind) ([]*pb
 	if err != nil {
 		return nil, err
 	}
-	var watched []sdk.ObjectRef
-	for _, ref := range refs {
+	watchesRef := func(ref sdk.ObjectRef) bool {
 		for _, watch := range watches {
 			if ref.Kind == watch.Kind && (watch.APIVersion == "" || ref.APIVersion == watch.APIVersion) &&
 				(watch.Namespace == "" || ref.Namespace == watch.Namespace) {
-				watched = append(watched, ref)
-				break
+				return true
 			}
 		}
+		return false
 	}
-	return frozenMemoryReads(view, watched)
+	var watched []sdk.ObjectRef
+	frozen := map[sdk.ObjectRef]bool{}
+	for _, ref := range refs {
+		if watchesRef(ref) {
+			watched = append(watched, ref)
+			frozen[ref] = true
+		}
+	}
+	reads, err := frozenMemoryReads(view, watched)
+	if err != nil {
+		return nil, err
+	}
+	// A watched object that is declared but gone is in no snapshot list: freeze
+	// its diff too, or the host answers it as unrecorded.
+	live := map[sdk.ObjectRef]bool{}
+	for _, ref := range refs {
+		live[ref] = true
+	}
+	for ref := range live {
+		frozen[ref] = true
+	}
+	absence, err := absenceInputs(view, frozen, watchesRef)
+	if err != nil {
+		return nil, err
+	}
+	return append(reads, absence...), nil
 }
 
 func wireStruct(value any) (*structpb.Struct, error) {
@@ -373,6 +397,9 @@ func (r *RemoteMemory) buildObservation(view sdk.DetectionContext) (*pb.MemoryOb
 		out.SelfHealHold = durationpb.New(hold)
 	}
 	out.HeldKeys = source.HeldAlertKeys()
+	for _, kind := range sdk.CompleteKinds(source) {
+		out.CompleteKinds = append(out.CompleteKinds, kind.GroupVersion().String()+"/"+kind.Kind)
+	}
 	var err error
 	if len(source.ObservationStatuses()) > 0 {
 		scoped, _, e := sdktest.CaptureScoped(source)
@@ -495,6 +522,11 @@ func (p *remoteProgram) reads(view program.ReadView, b program.Bindings) ([]*pb.
 	if err != nil {
 		return nil, err
 	}
+	absence, err := absenceInputs(view, seen, nil)
+	if err != nil {
+		return nil, err
+	}
+	reads = append(reads, absence...)
 	accepted, err := memoryhost.EncodeReceipts(acceptedMemoryInputs(view))
 	if err != nil {
 		return nil, err

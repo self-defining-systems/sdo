@@ -78,7 +78,7 @@ class MirrorResponse(_message.Message):
     def __init__(self, sequence: _Optional[int] = ...) -> None: ...
 
 class MemoryObservation(_message.Message):
-    __slots__ = ("observed_at", "traffic", "reachability", "metrics", "alerts", "usage", "logs", "scoped", "pod_admission", "pod_reads", "vantage", "self_heal_hold", "app_state", "held_keys")
+    __slots__ = ("observed_at", "traffic", "reachability", "metrics", "alerts", "usage", "logs", "scoped", "pod_admission", "pod_reads", "vantage", "self_heal_hold", "app_state", "held_keys", "complete_kinds")
     class TrafficEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -135,6 +135,7 @@ class MemoryObservation(_message.Message):
     SELF_HEAL_HOLD_FIELD_NUMBER: _ClassVar[int]
     APP_STATE_FIELD_NUMBER: _ClassVar[int]
     HELD_KEYS_FIELD_NUMBER: _ClassVar[int]
+    COMPLETE_KINDS_FIELD_NUMBER: _ClassVar[int]
     observed_at: _timestamp_pb2.Timestamp
     traffic: _containers.MessageMap[str, _struct_pb2.Struct]
     reachability: _struct_pb2.Struct
@@ -149,7 +150,8 @@ class MemoryObservation(_message.Message):
     self_heal_hold: _duration_pb2.Duration
     app_state: _containers.MessageMap[str, _struct_pb2.Struct]
     held_keys: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., traffic: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., reachability: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., metrics: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., alerts: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., usage: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., logs: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., scoped: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., pod_admission: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., pod_reads: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., vantage: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., self_heal_hold: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., app_state: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., held_keys: _Optional[_Iterable[str]] = ...) -> None: ...
+    complete_kinds: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., traffic: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., reachability: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., metrics: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., alerts: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., usage: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., logs: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., scoped: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., pod_admission: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., pod_reads: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., vantage: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., self_heal_hold: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., app_state: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., held_keys: _Optional[_Iterable[str]] = ..., complete_kinds: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class ReadStateRequest(_message.Message):
     __slots__ = ("reader_id", "observed_at", "pod_reads")
