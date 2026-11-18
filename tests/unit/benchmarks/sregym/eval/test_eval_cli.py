@@ -50,3 +50,11 @@ def test_dry_run_completes_every_cell_with_verified_manifests(
     assert verify_manifest(cell) == []
     timings = json.loads((cell / "timings.json").read_text())
     assert set(timings["phases"]) == {"claim_reset", "deploy", "inject", "page", "agent", "settle", "grade", "collect"}
+
+
+def test_run_is_a_registered_command(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[str] = []
+    monkeypatch.setattr("benchmarks.sregym.eval.live.run_live", lambda config, plan: called.append(str(config)) or 0)
+    config = write_config(tmp_path)
+    assert main(["run", "--config", str(config)]) == 0
+    assert called == [str(config)]
