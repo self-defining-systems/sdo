@@ -2229,6 +2229,28 @@ def _wait_for_reflection_drain(
     )
 
 
+def wait_for_outcome_commit(
+    ops: ClusterOps, control: str, incident_id: str, deadline_at: datetime, clock: Clock
+) -> datetime | None:
+    """Wait for the controller to acknowledge the incident's closure, which is when its outcome is committed.
+
+    The reflection and detector rollout that follow belong to the closing turn and are not waited for here.
+    Returns the observation time, or ``None`` at the deadline: an unreadable state or a closure that never
+    acknowledges is for the reflection drain to decide, so this wait never raises for either.
+    """
+
+    while True:
+        try:
+            state = ops.runtime_state(control)
+        except (RuntimeError, ValueError, KeyError, OSError):
+            state = {}
+        if state.get("last_acknowledged_incident_id") == incident_id:
+            return clock.now()
+        if clock.now() >= deadline_at:
+            return None
+        clock.sleep(POLL_SECONDS)
+
+
 def _raise_terminal_controller_job(ops: ClusterOps, control: str, incident_id: str) -> None:
     # An unreadable Job says nothing about the closure; the state reads keep deciding.
     try:

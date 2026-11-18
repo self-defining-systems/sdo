@@ -184,6 +184,16 @@ sample, including during composite resolution before its first receipt drain.
 Responder/reflection accounting completed later belongs to the final row, not
 to a replacement grade checkpoint.
 
+## Online end of the row
+
+`incidents.online/<index>.json` (`records.online_checkpoint_path`) is published once the grade is frozen and, for SDO,
+the controller has acknowledged the incident's closure (`outcome_committed_at`, the outcome commit), and before the
+closing turn (reflection, detector rollout) starts. It is a partial row: the injection, the grade and the outcome's
+online fields, with `online_ended_at` set and no reflection tokens or recovery. The final row repeats both timestamps.
+A runner that ends a row there treats everything after it (the closing turn, the end-of-row fault recovery) as the
+drain on the held lane. `--end-of-row-recovery` makes a one-incident SDO row pay the harness fault recovery and cleanup
+at its end, as every vanilla row does; without it the recovery is left to the next row's Tier-2 start.
+
 ## Healthy-baseline oracle exclusions
 
 `oracle-baselines.json` in the environment run directory records the raw no-fault

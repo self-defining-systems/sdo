@@ -33,6 +33,7 @@ from benchmarks.sregym.fastloop.records import (
     RecoveryOracleSample,
     TokenCounts,
     append_record,
+    online_checkpoint_path,
     persist_grade_checkpoint,
     write_records,
 )
@@ -122,6 +123,7 @@ class AgentOutcome:
     #: from the receipt, strict or rejected; ``None`` when no receipt exists.
     sdo_outcome_classification: str | None = None
     reflection_seconds: float | None = None
+    outcome_committed_at: datetime | None = None
     baseline_gate_seconds: float | None = None
     #: One-time setup paid inside this incident (lifecycle and controller install), excluded from resolution.
     setup_seconds: float | None = None
@@ -530,6 +532,40 @@ def _run_one(
         # problem may itself contribute multiple components; positions are not IDs.
         return driver.oracle()
 
+    def graded_record(**extra: Any) -> IncidentRecord:
+        """The row so far: injection and grade, plus the outcome's fields once the agent has returned."""
+        fields = (
+            _outcome_fields(outcome)
+            if outcome is not None
+            else {
+                "incident_id": oracle_point.incident_id if oracle_point else None,
+                "resolved_at": oracle_point.resolved_at if oracle_point else None,
+            }
+        )
+        return IncidentRecord(
+            operator_build=config.operator_build,
+            pre_injection_responder_tokens=getattr(agent, "pre_injection_responder_tokens", None),
+            pre_injection_usage_error=getattr(agent, "pre_injection_usage_error", None),
+            run_id=config.run_id,
+            index=index,
+            agent=agent.name,
+            problem_id=problem_id,
+            provider=getattr(agent, "provider", None),
+            model=agent.model,
+            reasoning_effort=getattr(agent, "reasoning_effort", None),
+            replay=getattr(agent, "replay", None),
+            injection=Injected(started_at=windows[0].started_at, finished_at=windows[0].finished_at),
+            fault_components=getattr(driver, "last_components", []),
+            fault_reversions=fault_reversions,
+            oracle=oracle,
+            diagnosis_grade=diagnosis_grade,
+            oracle_finished_at=oracle_finished_at,
+            oracle_incident_id=oracle_point.incident_id if oracle_point else None,
+            oracle_resolved_at=oracle_point.resolved_at if oracle_point else None,
+            infra_error=infra_error,
+            **{**fields, **extra},
+        )
+
     def measure_resolution(point: ResolutionGradePoint | None = None) -> None:
         nonlocal oracle, infra_error, oracle_finished_at, oracle_point, fault_reversions
         if oracle_finished_at is not None:
@@ -552,38 +588,7 @@ def _run_one(
             errors.append(infra_error)
         finally:
             oracle_finished_at = now()
-            fields = (
-                _outcome_fields(outcome)
-                if outcome is not None
-                else {
-                    "incident_id": oracle_point.incident_id if oracle_point else None,
-                    "resolved_at": oracle_point.resolved_at if oracle_point else None,
-                }
-            )
-            checkpoint = IncidentRecord(
-                operator_build=config.operator_build,
-                pre_injection_responder_tokens=getattr(agent, "pre_injection_responder_tokens", None),
-                pre_injection_usage_error=getattr(agent, "pre_injection_usage_error", None),
-                run_id=config.run_id,
-                index=index,
-                agent=agent.name,
-                problem_id=problem_id,
-                provider=getattr(agent, "provider", None),
-                model=agent.model,
-                reasoning_effort=getattr(agent, "reasoning_effort", None),
-                replay=getattr(agent, "replay", None),
-                injection=Injected(started_at=windows[0].started_at, finished_at=windows[0].finished_at),
-                fault_components=getattr(driver, "last_components", []),
-                fault_reversions=fault_reversions,
-                oracle=oracle,
-                diagnosis_grade=diagnosis_grade,
-                oracle_finished_at=oracle_finished_at,
-                oracle_incident_id=oracle_point.incident_id if oracle_point else None,
-                oracle_resolved_at=oracle_point.resolved_at if oracle_point else None,
-                infra_error=infra_error,
-                **fields,
-            )
-            persist_grade_checkpoint(config.results_path.with_suffix(".grades") / f"{index:06d}.json", checkpoint)
+            persist_grade_checkpoint(config.results_path.with_suffix(".grades") / f"{index:06d}.json", graded_record())
 
     try:
         resolve_at_closure = getattr(agent, "resolve_at_closure", None)
@@ -673,6 +678,22 @@ def _run_one(
 
     if windows and oracle_finished_at is None and infra_error not in ("rate_limited", "account_exhausted"):
         measure_resolution(ResolutionGradePoint(outcome.incident_id, outcome.resolved_at) if outcome else None)
+
+    online_ended_at: datetime | None = None
+    if windows and oracle_finished_at is not None and infra_error not in ("rate_limited", "account_exhausted"):
+        # The row's online part is over once the grade is frozen and the agent's outcome is committed. Publish it
+        # before the closing turn starts, so a runner can end the row here and wait for the rest as the drain.
+        if outcome is not None:
+            await_committed = getattr(agent, "await_outcome_committed", None)
+            if callable(await_committed):
+                try:
+                    outcome = replace(outcome, outcome_committed_at=await_committed(outcome))
+                except Exception:
+                    logger.exception("could not observe the outcome commit for incident %d", index)
+        online_ended_at = now()
+        persist_grade_checkpoint(
+            online_checkpoint_path(config.results_path, index), graded_record(online_ended_at=online_ended_at)
+        )
 
     learning_complete = outcome is None or not outcome.terminal_error
     if outcome is not None:
@@ -782,6 +803,7 @@ def _run_one(
         incident_wall_seconds=monotonic() - started,
         run_prelude_phase_seconds=config.run_prelude_phase_seconds if index == config.slot_offset else {},
         error="; ".join(errors) or None,
+        online_ended_at=online_ended_at,
         **outcome_fields,
     )
     if infra_error in ("rate_limited", "account_exhausted"):
@@ -839,6 +861,7 @@ def _outcome_fields(outcome: AgentOutcome) -> dict[str, Any]:
         "sdo_resolution": outcome.sdo_resolution,
         "sdo_outcome_classification": outcome.sdo_outcome_classification,
         "reflection_seconds": outcome.reflection_seconds,
+        "outcome_committed_at": outcome.outcome_committed_at,
         "baseline_gate_seconds": outcome.baseline_gate_seconds,
         "setup_seconds": outcome.setup_seconds,
         "controller_installed": outcome.controller_installed,
