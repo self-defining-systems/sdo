@@ -245,7 +245,7 @@ class FastloopRowRunner:
     def claim(self, cell: Cell, lane_id: str, snapshot_commit: str | None) -> Lane:
         directory = self.settings.lane_environments[lane_id]
         environment = FastloopEnvironment.load(directory)
-        if cell.arm == "sdo" and snapshot_commit:
+        if snapshot_commit:
             self._fetch(cell.app, environment, snapshot_commit)
         self._clear_events(environment)
         if cell.arm == "sdo":
@@ -253,7 +253,7 @@ class FastloopRowRunner:
         with self._lock:
             self._state[lane_id] = {
                 "environment": environment,
-                "planned": snapshot_commit if cell.arm == "sdo" else None,
+                "planned": snapshot_commit,
             }
         return Lane(
             id=lane_id,

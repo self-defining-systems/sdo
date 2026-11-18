@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from benchmarks.sregym.eval.health import DEFAULT_HOLD_SECONDS, MAX_INTERVAL_SECONDS, MIN_INTERVAL_SECONDS
 
-PlanPass = Literal["pass1", "pass2", "pass2-own", "vanilla"]
+PlanPass = Literal["pass1", "pass2", "pass2-own", "vanilla", "vanilla-eq"]
 Arm = Literal["sdo", "vanilla"]
 ALL_PASSES: tuple[PlanPass, ...] = ("vanilla", "pass1", "pass2", "pass2-own")
 PLAN_SCHEMA = "sdo.sregym-eval-plan/v1"
@@ -80,7 +80,7 @@ class EvalConfig(BaseModel):
         for app in self.apps:
             if any(p in self.passes for p in ("pass1", "pass2", "pass2-own")) and not app.sdo_lanes:
                 raise ValueError(f"app {app.name}: SDO passes selected but no sdo_lanes")
-            if "vanilla" in self.passes and not app.vanilla_lanes:
+            if ("vanilla" in self.passes or "vanilla-eq" in self.passes) and not app.vanilla_lanes:
                 raise ValueError(f"app {app.name}: vanilla pass selected but no vanilla_lanes")
         if ("pass2" in self.passes or "pass2-own" in self.passes) and "pass1" not in self.passes:
             raise ValueError("pass 2 needs pass 1 in the plan")
@@ -160,6 +160,8 @@ def build_plan(config: EvalConfig) -> Plan:
             for index, problem in enumerate(shuffled):
                 snapshot = {
                     "vanilla": None,
+                    #: Stock Claude Code on the onboarded source (the lane runs the snapshot's source, no SDO).
+                    "vanilla-eq": BASE,
                     "pass1": BASE,
                     "pass2": MERGED,
                     "pass2-own": own_snapshot(problem),
@@ -168,7 +170,7 @@ def build_plan(config: EvalConfig) -> Plan:
                     Cell(
                         app=app.name,
                         problem=problem,
-                        arm="vanilla" if pass_ == "vanilla" else "sdo",
+                        arm="vanilla" if pass_ in ("vanilla", "vanilla-eq") else "sdo",
                         pass_=pass_,
                         snapshot=snapshot,
                         order=index,
