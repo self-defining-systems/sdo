@@ -2456,7 +2456,12 @@ def reset(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     return 0
 
 
-def reset_steps(env: Mapping[str, str], app_reset: Callable[[], dict[str, Any]]) -> ResetSteps:
+def reset_steps(
+    env: Mapping[str, str],
+    app_reset: Callable[[], dict[str, Any]],
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> ResetSteps:
     kube, control = _kube(env), control_namespace(env)
     binary, kubeconfig = _binary(env), Path(env["KUBECONFIG"]).resolve() if env.get("KUBECONFIG") else None
     resumed = [False]
@@ -2468,7 +2473,7 @@ def reset_steps(env: Mapping[str, str], app_reset: Callable[[], dict[str, Any]])
         # a controller that was just resumed serves resets only after its start-up: wait for that; a running one
         # that does not answer is dead, which is a failed reset to report soon, not after the start-up bound
         patience = RESET_START_PATIENCE_S if resumed[0] else RESET_PATIENCE_S
-        reset_when_running(binary, control, kubeconfig, patience)
+        reset_when_running(binary, control, kubeconfig, patience, sleep, clock)
 
     return ResetSteps(
         resume_controller=resume,

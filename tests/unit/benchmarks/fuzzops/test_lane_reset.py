@@ -321,7 +321,7 @@ def _wired(
     monkeypatch.setattr(
         hooks,
         "reset_when_running",
-        lambda _b, _c, _k, patience, **_: patiences.append(patience) or {"acknowledged": True},
+        lambda _b, _c, _k, patience, *_a, **_: patiences.append(patience) or {"acknowledged": True},
     )
     return hooks.reset_steps({}, lambda: {"match": True}), patiences
 
@@ -364,10 +364,13 @@ def test_the_wired_incident_reset_is_retried_not_a_single_attempt(
     monkeypatch.setattr(hooks, "control_namespace", lambda _e: "ns")
     monkeypatch.setattr(hooks, "_binary", lambda _e: tmp_path / "sdo-operator")
     monkeypatch.setattr(hooks, "reset_incidents", ask)
-    monkeypatch.setattr(hooks.time, "sleep", lambda _s: None)
-    steps = hooks.reset_steps({}, lambda: {"match": True})
+    now = [0.0]
+    steps = hooks.reset_steps(
+        {}, lambda: {"match": True}, sleep=lambda s: now.__setitem__(0, now[0] + s), clock=lambda: now[0]
+    )
     steps.reset_incidents()
     assert answers == []
+    assert 0 < now[0] < hooks.RESET_PATIENCE_S  # waited on the injected clock, not the wall clock
 
 
 def test_a_controller_stopped_block_always_resumes_the_job(monkeypatch: pytest.MonkeyPatch) -> None:
