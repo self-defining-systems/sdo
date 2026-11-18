@@ -203,6 +203,11 @@ def up_worker_environment(args: argparse.Namespace, *, workspace: Path) -> dict[
         # One control plane plus this many workers, as the experiment lanes (`kind_worker_nodes`).
         "SREGYM_KIND_WORKER_NODES": str(args.kind_worker_nodes),
     }
+    if os.environ.get("FASTLOOP_NATIVE_DEPLOY") == "1":
+        # A baseline-only lane (no SDO): the harness deploys the app from its own charts and published images, so
+        # an app whose source build drifted (third-party downloads) can still host the vanilla arm.
+        worker_env["SREGYM_DEPLOY_FROM_SOURCE"] = "0"
+        worker_env.pop("SREGYM_APP_SOURCE_DIR", None)
     if args.builder:
         worker_env["SREGYM_DOCKER_BUILDER"] = args.builder
     if args.dev_mount is not None:
