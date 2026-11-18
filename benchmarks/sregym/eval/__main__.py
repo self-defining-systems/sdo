@@ -12,7 +12,10 @@ from benchmarks.sregym.eval.plan import EvalConfig, build_plan
 
 
 def load_config(path: Path) -> EvalConfig:
-    return EvalConfig.model_validate(tomllib.loads(path.read_text(encoding="utf-8")))
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    for table in ("row", "store", "gate", "accountant"):  # the live runner's tables, read by ``live``
+        data.pop(table, None)
+    return EvalConfig.model_validate(data)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -21,6 +24,7 @@ def main(argv: list[str] | None = None) -> int:
     for name, text in (
         ("plan", "write plan.json and print a summary"),
         ("dry-run", "run the plan against scripted fakes"),
+        ("run", "run the plan live: fastloop rows on the configured lanes ([row] and [store] tables in the config)"),
     ):
         command = commands.add_parser(name, help=text)
         command.add_argument("--config", type=Path, required=True)
@@ -35,6 +39,10 @@ def main(argv: list[str] | None = None) -> int:
             counts[cell.pass_] = counts.get(cell.pass_, 0) + 1
         print(json.dumps({"plan": str(root / "plan.json"), "cells": len(plan.cells), "per_pass": counts}, indent=2))
         return 0
+    if args.command == "run":
+        from benchmarks.sregym.eval.live import run_live
+
+        return run_live(args.config, plan)
     from benchmarks.sregym.eval.dryrun import DryRunStore, dry_run_context
     from benchmarks.sregym.eval.results import ResultsTable
     from benchmarks.sregym.eval.scheduler import LoadGate, Scheduler
