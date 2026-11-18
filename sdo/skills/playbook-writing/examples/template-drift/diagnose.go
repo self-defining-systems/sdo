@@ -20,13 +20,14 @@ type drift struct {
 }
 
 // drifted finds the cause: a live pod template whose image differs from accepted source. It reads no Pods or logs.
+// It diffs only objects the list holds; a missing object is absent from the list, not an error.
 func drifted(v program.ReadView) ([]drift, error) {
 	var found []drift
 	for _, d := range v.Deployments() {
 		ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: d.Namespace, Name: d.Name}
 		diff, err := v.DiffAgainstSource(ref)
 		if err != nil {
-			return nil, err // unavailable evidence is Unknown, never NoMatch
+			return nil, err // the object is listed, so an error is a failed read: Unknown, never NoMatch
 		}
 		if !diff.Changed {
 			continue
