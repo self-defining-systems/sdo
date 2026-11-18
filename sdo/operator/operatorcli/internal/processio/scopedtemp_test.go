@@ -18,16 +18,16 @@ func TestScopedTempHoldsWhatTheProcessLeavesAndTouchesNothingElse(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	scoped := os.Getenv("GOTMPDIR")
-	if filepath.Dir(scoped) != goBase || filepath.Dir(os.Getenv("TMPDIR")) != base {
-		t.Fatalf("not scoped inside the originals: %s %s", os.Getenv("TMPDIR"), scoped)
+	scoped := Environment("GOTMPDIR")
+	if filepath.Dir(scoped) != goBase || filepath.Dir(Environment("TMPDIR")) != base {
+		t.Fatalf("not scoped inside the originals: %s %s", Environment("TMPDIR"), scoped)
 	}
 	if err := os.Mkdir(filepath.Join(scoped, "go-build123"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	cleanup()
-	if os.Getenv("TMPDIR") != base || os.Getenv("GOTMPDIR") != goBase {
-		t.Fatalf("environment not restored: %s %s", os.Getenv("TMPDIR"), os.Getenv("GOTMPDIR"))
+	if Environment("TMPDIR") != base || Environment("GOTMPDIR") != goBase {
+		t.Fatalf("environment not restored: %s %s", Environment("TMPDIR"), Environment("GOTMPDIR"))
 	}
 	if entries, _ := os.ReadDir(base); len(entries) != 0 {
 		t.Fatalf("left in TMPDIR: %v", entries)
@@ -42,12 +42,11 @@ func TestScopedTempWithoutGOTMPDIRScopesOnlyTMPDIR(t *testing.T) {
 	base := t.TempDir()
 	t.Setenv("TMPDIR", base)
 	t.Setenv("GOTMPDIR", "")
-	os.Unsetenv("GOTMPDIR")
 	cleanup, err := ScopedTemp("warm-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, set := os.LookupEnv("GOTMPDIR"); set {
+	if Environment("GOTMPDIR") != "" {
 		t.Fatal("GOTMPDIR must stay unset")
 	}
 	cleanup()

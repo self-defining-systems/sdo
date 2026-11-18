@@ -17,7 +17,8 @@ func ScopedTemp(prefix string) (func(), error) {
 		}
 	}
 	for _, name := range []string{"TMPDIR", "GOTMPDIR"} {
-		base, set := os.LookupEnv(name)
+		base := os.Getenv(name)
+		set := base != ""
 		if !set && name == "GOTMPDIR" {
 			continue // the toolchain then uses TMPDIR, already scoped
 		}
