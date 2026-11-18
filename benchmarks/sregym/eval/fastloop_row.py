@@ -306,7 +306,7 @@ class FastloopRowRunner:
                     namespace=environment.namespace,
                     kubeconfig=environment.kubeconfig,
                 )
-        except Exception:  # noqa: BLE001 - best effort; the admission check reports a real problem
+        except Exception:
             return
 
     def _fetch(self, app: str, environment: FastloopEnvironment, commit: str) -> None:
