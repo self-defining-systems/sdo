@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from datetime import UTC, datetime
@@ -427,3 +428,47 @@ def test_late_writes_of_an_earlier_cells_incident_are_not_this_cells(tmp_path: P
     sink.copy_interval(run, dest, start, datetime(2026, 11, 12, 11, 0, tzinfo=UTC))
     assert not (dest / "incidents" / ("a" * 32)).exists()
     assert (dest / "incidents" / ("b" * 32)).exists()
+
+
+def _digest(incident_id: str) -> str:
+    return hashlib.sha256(incident_id.encode()).hexdigest()[:32]
+
+
+def test_an_investigator_directory_follows_its_parent_incident_not_a_unix_time(tmp_path: Path) -> None:
+    """The ``-inv-N`` suffix of an investigator's session ID is not a detection time: the directory is attributed to
+    its parent incident, copied with it, and left out with it."""
+    run = _run(tmp_path)
+    start = datetime(2026, 11, 12, 10, 0, tzinfo=UTC)
+    nanos = lambda at: int(at.timestamp() * 1e9)  # noqa: E731
+    own_parent = f"fg1-{nanos(datetime(2026, 11, 12, 10, 1, tzinfo=UTC))}"
+    old_parent = f"fg1-{nanos(datetime(2026, 11, 12, 9, 0, tzinfo=UTC))}"
+    own_inv = [_incident(run, _digest(f"{own_parent}-inv-{n}"), None, rollouts=1) for n in range(2)]
+    old_inv = _incident(run, _digest(f"{old_parent}-inv-0"), None, rollouts=1)
+    for n, directory in enumerate(own_inv):
+        _identity(directory, f"{own_parent}-inv-{n}")
+    _identity(old_inv, f"{old_parent}-inv-0")
+    for directory in (*own_inv, old_inv):
+        _age(directory, datetime(2026, 11, 12, 10, 5, tzinfo=UTC))
+    assert sink.incident_detected_at(own_inv[0]) == datetime(2026, 11, 12, 10, 1, tzinfo=UTC)
+    assert not any(sink.leftover(d, [], start) for d in own_inv)
+    assert sink.leftover(old_inv, [], start)
+    dest = tmp_path / "out"
+    result = sink.copy_interval(run, dest, start, datetime(2026, 11, 12, 11, 0, tzinfo=UTC))
+    copied = {p.name for p in (dest / "incidents").iterdir()}
+    assert copied == {d.name for d in own_inv}
+    assert result.summary()["rollouts"] == 2
+
+
+def test_an_investigator_directory_is_copied_when_its_parent_is_in_the_interval_even_if_idle(tmp_path: Path) -> None:
+    """An investigator whose files were last written before the interval still belongs to a parent that was open in it."""
+    run = _run(tmp_path)
+    parent = "fg1-1"  # an ID that parses as 1970: only the parent's ledger places it in the interval
+    parent_dir = _incident(run, _digest(parent), _ledger(parent, "2026-11-12T10:05:00Z"), rollouts=1)
+    inv = _incident(run, _digest(f"{parent}-inv-0"), None, rollouts=1)
+    _identity(inv, f"{parent}-inv-0")
+    old = datetime(2026, 11, 11, tzinfo=UTC)
+    _age(parent_dir, old)
+    _age(inv, old)
+    dest = tmp_path / "out"
+    sink.copy_interval(run, dest, T0, T1)
+    assert {p.name for p in (dest / "incidents").iterdir()} == {parent_dir.name, inv.name}
