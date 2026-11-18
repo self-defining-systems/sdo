@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -55,17 +56,21 @@ func (c *Controller) processDrift(ctx context.Context, now time.Time, snapshot s
 			ref := sdk.ObjectRef{APIVersion: object.GetAPIVersion(), Kind: object.GetKind(), Namespace: object.GetNamespace(), Name: object.GetName()}
 			if ref.Namespace != view.Namespace() && !driftRefAllowed(view, ref) {
 				if scopedRefDeclared(view, ref) {
-					c.retryDrift(change)
+					c.retryDrift(now, change, errScopedObservationPending)
 				}
 				continue
 			}
 		}
 		event, err := classifier.Classify(ctx, change, view, now)
 		if err != nil {
-			c.retryDrift(change)
+			if abandoned := c.retryDrift(now, change, err); abandoned != nil && c.OnError != nil {
+				c.OnError(abandoned)
+			}
 			if c.OnError != nil {
 				c.OnError(err)
 			}
+		} else {
+			c.driftRetryCleared(change)
 		}
 		if event != nil && c.drift.Inventory && sourceInventoryKind(object) && event.Source == "absent from accepted source" {
 			continue
@@ -483,11 +488,113 @@ func scopedDriftFields(change ObjectChange) []sdk.DriftField {
 	return fields
 }
 
-func (c *Controller) retryDrift(change ObjectChange) {
-	if queue, ok := c.drift.Events.(interface{ RetryObjectChange(ObjectChange) }); ok {
-		queue.RetryObjectChange(change)
-	}
+// driftRetryPolicy is the schedule of a change whose classification could not
+// complete: each failure doubles the wait from First to Max, and the change is
+// abandoned Bound after its first failure (the controller names it and stops).
+var driftRetryPolicy = boundedRetry{First: 2 * time.Second, Max: 30 * time.Second, Bound: 2 * time.Minute}
+
+// errScopedObservationPending is the cause of retrying a declared scoped
+// target that is not yet observed.
+var errScopedObservationPending = errors.New("scoped observation is not available yet")
+
+// deferredDrift is a change waiting out its backoff, with the oldest
+// pre-image seen for the object.
+type deferredDrift struct {
+	change ObjectChange
+	due    time.Time
 }
+
+func driftChangeKey(change ObjectChange) string {
+	object := change.New
+	if object == nil {
+		object = change.Old
+	}
+	if object == nil {
+		return ""
+	}
+	return object.GetAPIVersion() + "/" + object.GetKind() + "/" + object.GetNamespace() + "/" + object.GetName()
+}
+
+// retryDrift schedules change for another classification after its backoff,
+// keeping the oldest pre-image. A permanent cause (classifyPermanent) is not
+// retried: the caller has reported it. When the change's bound has passed it
+// is dropped and the returned error says so.
+func (c *Controller) retryDrift(now time.Time, change ObjectChange, cause error) error {
+	key := driftChangeKey(change)
+	if key == "" {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if classifyPermanent(cause) {
+		c.forgetDriftRetryLocked(key)
+		return nil
+	}
+	next, exhausted := c.driftRetries.failed(key, now)
+	if exhausted {
+		delete(c.driftDeferred, key)
+		return fmt.Errorf("drift_classification_abandoned: %s after %s: %w", key, driftRetryPolicy.Bound, cause)
+	}
+	if queued, ok := c.driftDeferred[key]; ok {
+		change.Old = queued.change.Old
+	}
+	if c.driftDeferred == nil {
+		c.driftDeferred = map[string]deferredDrift{}
+	}
+	c.driftDeferred[key] = deferredDrift{change: change, due: next}
+	return nil
+}
+
+// driftRetryCleared forgets a change that classified.
+func (c *Controller) driftRetryCleared(change ObjectChange) {
+	key := driftChangeKey(change)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.forgetDriftRetryLocked(key)
+}
+
+func (c *Controller) forgetDriftRetryLocked(key string) {
+	c.driftRetries.cleared(key)
+	delete(c.driftDeferred, key)
+}
+
+// dueDriftRetries adds the deferred changes whose backoff has passed to the
+// changes the step took. A change observed again meanwhile keeps its newer
+// state and takes the retained pre-image.
+func (c *Controller) dueDriftRetries(now time.Time, taken []ObjectChange) []ObjectChange {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for key, deferred := range c.driftDeferred {
+		if deferred.due.After(now) {
+			continue
+		}
+		delete(c.driftDeferred, key)
+		merged := false
+		for i := range taken {
+			if driftChangeKey(taken[i]) == key {
+				taken[i].Old = deferred.change.Old
+				merged = true
+			}
+		}
+		if !merged {
+			taken = append(taken, deferred.change)
+		}
+	}
+	return taken
+}
+
+// driftRetryWake returns the earliest deferred retry when it is before next.
+func (c *Controller) driftRetryWake(next time.Time) time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, deferred := range c.driftDeferred {
+		if next.IsZero() || deferred.due.Before(next) {
+			next = deferred.due
+		}
+	}
+	return next
+}
+
 func scopedRefDeclared(view any, ref sdk.ObjectRef) bool {
 	t := sdk.ObservationTarget{APIVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace}
 	if t.Cluster() {

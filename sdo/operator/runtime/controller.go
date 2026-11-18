@@ -235,7 +235,11 @@ type Controller struct {
 	dispatchFailureAttempts int
 	dispatchNextRetryAt     time.Time
 	// prepareRetries tracks the failing preparation of each incident's task.
-	prepareRetries             *retryLedger
+	prepareRetries *retryLedger
+	// driftRetries and driftDeferred bound the retry of drift changes whose
+	// classification failed (retryDrift): a backoff per object, then give up.
+	driftRetries               *retryLedger
+	driftDeferred              map[string]deferredDrift
 	lastAcknowledgedIncidentID string
 	// rejectedExternalIncident is the last invalid inbox alert logged, so a
 	// retained bad alert is reported once rather than every cycle.
@@ -451,6 +455,7 @@ func NewController(
 		reflectionResults:     make(chan reflectionCompletion, 1), reflections: reflectionQueueState{rescan: true},
 		dispatchJitter: lifecycleio.DispatchJitter,
 		prepareRetries: newRetryLedger(dispatchPrepareRetry(config)),
+		driftRetries:   newRetryLedger(driftRetryPolicy),
 	}
 	controller.baseProvider = provider
 	controller.composeProvider()
@@ -655,10 +660,15 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	detectors := c.enabledSetupDetectors(c.scheduler.SelectEvents(now, events))
 	probes := c.dueGateProbes(now, detectors)
 	var objectChanges []ObjectChange
+	// freshObjectChanges counts the changes the cluster delivered this step;
+	// a deferred retry is the same observation again, not a new write.
+	freshObjectChanges := 0
 	if c.drift != nil {
 		if c.drift.Events != nil {
 			objectChanges = c.drift.Events.TakeObjectChanges()
 		}
+		freshObjectChanges = len(objectChanges)
+		objectChanges = c.dueDriftRetries(now, objectChanges)
 
 	}
 	if len(detectors) == 0 && len(probes) == 0 && len(objectChanges) == 0 && !c.adoptionNeeded && !c.hasRetainedDrift() {
@@ -855,7 +865,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	c.probeGate(ctx, now, snapshot, probes)
 	c.forgetGate()
 	c.settleGateProbes(now)
-	if len(objectChanges) > 0 {
+	if freshObjectChanges > 0 {
 		c.resetEarlyStability()
 	}
 	if len(detectors) > 0 {
@@ -1318,6 +1328,9 @@ func (c *Controller) nextWake() (time.Time, string) {
 	}
 	if retry := c.closureRetryWake(next); !retry.Equal(next) {
 		next, why = retry, "closure retry"
+	}
+	if retry := c.driftRetryWake(next); !retry.Equal(next) {
+		next, why = retry, "drift retry"
 	}
 	return next, why
 }
