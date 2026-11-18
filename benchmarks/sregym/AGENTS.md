@@ -19,6 +19,7 @@ The external SREGym implementation is a separately pinned Git submodule at `thir
 
 - **sdo_codex** — the adapter-backed benchmark entry for the production SDO design
 - **codex** — the memoryless stock Codex baseline, with its CLI version pinned in `registry.yaml`
+- **claudecode** — SREGym's own stock Claude Code agent (`third_party/sregym/clients/claudecode`), the vanilla arm of the SDO-vs-vanilla comparison: no SDO in its lane, Claude Sonnet 5.5 by default, via Vertex
 
 ## Boundary rules
 
@@ -89,7 +90,7 @@ Report timing without judge time, the same way for every arm (`benchmarks.sregym
 
 ## Run assurance
 
-- Every launch runs the preflight in `runner/preflight.py`. It aborts on low disk, floating or mismatched Codex CLI and agentshim pins, broken images, lane-isolation problems, any role or judge off `codex:gpt-6-luna` / `codex-gpt-6-luna` at `xhigh`, arm-parity differences, or an exhausted Codex quota. Check the arms of a comparison before launching them: `uv run python -m benchmarks.sregym.runner.preflight <arm.toml>...`.
+- Every launch runs the preflight in `runner/preflight.py`. It aborts on low disk, floating or mismatched Codex CLI and agentshim pins, broken images, lane-isolation problems, any role or judge off `codex:gpt-6-luna` / `codex-gpt-6-luna` at `xhigh` (the one declared exception is SREGym's stock `claudecode` arm, which may run `claude-sonnet-5-5` or `claude-opus-5-5`; the judge stays `codex-gpt-6-luna` for every arm), arm-parity differences, or an exhausted Codex quota. Check the arms of a comparison before launching them: `uv run python -m benchmarks.sregym.runner.preflight <arm.toml>...`.
 - Reused images must prove their runtime entrypoints before injection. Controller/validator images in fastloop remain bound to the run source revision; an unlabelled or older responder must pass the real Python entrypoint import smoke, including the required benchmark recorder/transport imports. SREGym experiment and fastloop preflight checks select that explicit benchmark profile; production responder image checks keep the production profile. Runner image checks also accept the `benchmark_image` role. For development mounts, the smoke uses the current source projection returned by production `devmount.ApplyWorker`, including its benchmark file allowlist; checking only the older image entrypoint cannot establish compatibility. A missing transitive module rejects the named image before worker discovery.
 - Shared Linux kind hosts need `net.ipv4.neigh.default.gc_thresh3 >= 65536`; the launch preflight rejects smaller values. Neighbor exhaustion can stall node loopback API/etcd connections as well as pod traffic. An administrator must approve any host-wide runtime `sysctl -w` increase; preflight never changes kernel settings. For remote Docker or hosts without the Linux proc knob, verify capacity directly on the Docker host (the check reports `unknown`).
 - Every run directory gets a `run_manifest.json` (`runner/manifest.py`).
