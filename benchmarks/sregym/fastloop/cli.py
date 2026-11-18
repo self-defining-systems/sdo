@@ -538,6 +538,7 @@ def _up(args: argparse.Namespace) -> int:
             tuple(capture_application_baseline(cluster, namespace) for namespace in namespaces),
             installed=True,
         )
+        _record_fresh_deploy(environment)
     elif not app_recreated:
         from benchmarks.sregym.fastloop.baseline_recovery import seal_existing_install
 
@@ -877,6 +878,11 @@ def recreate_application(
         timeout_seconds=wait_for(WaitKind.ROLLOUT),
     ).write(results_dir)
     return deployed
+
+
+def _record_fresh_deploy(environment: FastloopEnvironment) -> None:
+    """A deploy `up` just performed is a whole-application recreation: the lane's first row need not redeploy it."""
+    LaneInjectionState(environment.kubeconfig, environment.namespace).recreated()
 
 
 def _application_needs_redeploy(
