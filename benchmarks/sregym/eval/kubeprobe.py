@@ -10,13 +10,19 @@ from __future__ import annotations
 import subprocess
 from typing import TYPE_CHECKING
 
-from benchmarks.sregym.eval.health import ProbeResult
+from benchmarks.sregym.eval.health import ProbeResult, ProbeUnavailable
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
 PREFIX = "kube:"
+#: kubectl could not reach the API server at all: a harness/host fault (load), not evidence about the app.
+_CLIENT_SIDE = ("Unable to connect to the server", "TLS handshake timeout", "connection refused", "no route to host")
+
+
+class ProbeInfraError(ProbeUnavailable):
+    """The probe itself could not run (API server unreachable from the host); the sample is dropped, not unhealthy."""
 
 
 def parse(spec: str) -> tuple[str, str, str, str, str]:
@@ -55,8 +61,10 @@ def kube_probe(specs: tuple[str, ...], kubeconfig: Path, *, timeout_seconds: flo
                     check=False,
                 )
             except subprocess.TimeoutExpired:
-                return ProbeResult(False, f"{service}:{port}/{path}: timeout")
+                raise ProbeInfraError(f"kubectl timed out for {service}:{port}") from None
             if completed.returncode != 0:
+                if any(marker in completed.stderr for marker in _CLIENT_SIDE):
+                    raise ProbeInfraError(completed.stderr.strip()[-160:])
                 return ProbeResult(False, f"{service}:{port}/{path}: {completed.stderr.strip()[-160:]}")
             if expected and expected not in completed.stdout:
                 return ProbeResult(False, f"{service}:{port}/{path}: body lacks {expected!r}")

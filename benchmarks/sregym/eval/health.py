@@ -26,6 +26,10 @@ MAX_INTERVAL_SECONDS = 5.0
 DEFAULT_HOLD_SECONDS = 60.0
 
 
+class ProbeUnavailable(RuntimeError):
+    """The probe could not be asked (host-side fault): the sample is left out of the assessment, leaving a gap."""
+
+
 @dataclass(frozen=True)
 class ProbeResult:
     healthy: bool
@@ -130,6 +134,11 @@ class Prober:
         at = self._now()
         try:
             result = self._probe()
+        except ProbeUnavailable as exc:  # the host could not ask: an unknown second (a gap), not an unhealthy one
+            if out is not None:
+                out.write(json.dumps({"at": at, "unavailable": str(exc)[:200]}) + "\n")
+                out.flush()
+            return ProbeSample(at=at, healthy=False, detail=f"unavailable: {exc}")
         except Exception as exc:  # a probe that cannot answer is evidence of an unhealthy app, not a runner fault
             result = ProbeResult(False, f"{type(exc).__name__}: {exc}")
         sample = ProbeSample(at=at, healthy=result.healthy, detail=result.detail)
