@@ -28,6 +28,8 @@ func (absentSource) Revision(context.Context, sdk.ObjectRef, string) (*unstructu
 
 const liveViewCommit = "accepted-commit"
 
+var liveViewNow = time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
+
 func liveViewFor(snapshot sdk.DetectionContext) program.ReadView {
 	return LiveReadView{Carrier: inputs.New(snapshot), Context: context.Background(), Source: absentSource{}, SourceCommit: liveViewCommit}
 }
@@ -60,7 +62,7 @@ func TestOpenIncidentSnapshotsKeepTheLiveReadView(t *testing.T) {
 	reference := &servicehealth.ReachabilityBaseline{}
 	base := sdktest.Snapshot{NamespaceName: "app", Reachability: &servicehealth.ReachabilityWindow{}}
 	provider := ReadSnapshotProvider{Base: fixedProvider{base}, View: liveViewFor}
-	c, err := NewController(testControllerConfig(), nil, provider, &recordingDispatcher{}, time.Now())
+	c, err := NewController(testControllerConfig(), nil, provider, &recordingDispatcher{}, liveViewNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +89,7 @@ func TestOpenIncidentSnapshotsKeepTheLiveReadView(t *testing.T) {
 		if memoryCycle(snapshot) == nil {
 			t.Fatalf("%s: memory host edge cannot reach the cycle view", label)
 		}
-		c.processDrift(context.Background(), time.Now(), snapshot, []ObjectChange{{New: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"namespace": "app", "name": "web"}}}}})
+		c.processDrift(context.Background(), liveViewNow, snapshot, []ObjectChange{{New: &unstructured.Unstructured{Object: map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"namespace": "app", "name": "web"}}}}})
 	}
 	check("no incident", false)
 
@@ -98,7 +100,7 @@ func TestOpenIncidentSnapshotsKeepTheLiveReadView(t *testing.T) {
 
 	// A memory activation swaps the provider; the decorations must follow it.
 	next := ReadSnapshotProvider{Base: fixedProvider{base}, View: liveViewFor}
-	if err := c.ReconfigureMemory(&RemoteMemory{}, next, time.Now()); err != nil {
+	if err := c.ReconfigureMemory(&RemoteMemory{}, next, liveViewNow); err != nil {
 		t.Fatal(err)
 	}
 	check("incident open after memory activation", true)
