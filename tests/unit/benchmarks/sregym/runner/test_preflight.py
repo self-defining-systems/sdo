@@ -392,7 +392,8 @@ def test_the_external_arm_records_its_model_without_pinning_it(fake_host: FakeHo
     report = _preflight([_external_arm("whatever-the-command-runs")], fake_host, sregym_dir)
 
     check = _check(report, "model-policy")
-    assert check.status == "pass" and "external whatever-the-command-runs (recorded)" in check.detail
+    assert check.status == "pass"
+    assert "external whatever-the-command-runs (recorded)" in check.detail
     (roles,) = report.facts["roles"]
     assert roles["baseline_agent"]["model"] == "whatever-the-command-runs"
     assert roles["sregym_judge"]["model"] == "codex-gpt-6-luna"  # the one judge, as for every arm
@@ -403,7 +404,8 @@ def test_the_external_arm_is_still_judged_by_the_one_judge(fake_host: FakeHost, 
 
     check = _check(_preflight([config], fake_host, sregym_dir), "model-policy")
 
-    assert check.status == "fail" and "judge is 'claude-sonnet-5-5'" in check.detail
+    assert check.status == "fail"
+    assert "judge is 'claude-sonnet-5-5'" in check.detail
 
 
 def test_a_claude_model_does_not_open_the_codex_arms(fake_host: FakeHost, sregym_dir: Path) -> None:

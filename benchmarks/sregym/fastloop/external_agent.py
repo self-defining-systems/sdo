@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.external_accounting import (
     ACCOUNTING_FILE,
     ACCOUNTING_SCHEMA,
@@ -54,8 +55,8 @@ RESULT_SCHEMA = "sdo.external-agent-result/v1"
 RESULT_FILE = "agent-result.json"
 CLOCK_FILE = "clock.json"
 PHASES = ("incident", "closing")
-KILL_GRACE_SECONDS = 15.0
-DEFAULT_EVIDENCE_GRACE_SECONDS = 90.0
+KILL_GRACE_SECONDS = wait_for(WaitKind.SNAPSHOT_READ)
+DEFAULT_EVIDENCE_GRACE_SECONDS = 1.5 * wait_for(WaitKind.MINUTE)
 #: The closing phase's fixed text: no outcome, no grade, no cluster.
 DEFAULT_CLOSING_PROMPT = (
     "This incident session is over and you no longer have cluster access. If anything from it would help you "

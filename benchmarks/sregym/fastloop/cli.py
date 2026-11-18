@@ -949,7 +949,10 @@ def deploy_with_setup_proof(
 
 def _check_external_args(args: argparse.Namespace) -> None:
     """The ``--agent-*`` flags belong to ``--agent external`` and need a command; fail before touching the lane."""
-    flags = (args.agent_command, args.agent_label, args.agent_state_map, args.agent_closing_timeout, args.agent_env)
+    flags = tuple(
+        getattr(args, name, None)
+        for name in ("agent_command", "agent_label", "agent_state_map", "agent_closing_timeout", "agent_env")
+    )
     if args.agent != "external":
         if any(flags):
             raise SystemExit("--agent-* flags apply to --agent external only")
@@ -999,7 +1002,7 @@ def _agent_model(args: argparse.Namespace) -> str:
 
     The external command picks its own model; the row records ``--model`` as declared, else ``unspecified``.
     """
-    if args.model:
+    if getattr(args, "model", None):
         return str(args.model)
     if args.agent == "external":
         return "unspecified"
@@ -2219,7 +2222,7 @@ def build_parser() -> argparse.ArgumentParser:
     external.add_argument(
         "--agent-evidence-grace",
         type=float,
-        default=90.0,
+        default=1.5 * wait_for(WaitKind.MINUTE),
         help="seconds past a phase's deadline before the arm kills the command's process group",
     )
     run.add_argument("--provider", choices=("codex", "claude"), default="codex", help="SDO agent provider")

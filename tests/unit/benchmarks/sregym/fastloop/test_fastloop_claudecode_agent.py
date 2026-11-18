@@ -19,11 +19,11 @@ from benchmarks.sregym.fastloop.claudecode_agent import (
     AUTH_KEYS,
     ClaudeCodeBaselineAgent,
     ClaudeCodeSettings,
-    SubmissionStub,
     claude_auth_env,
     claudecode_command,
     run_claudecode_cell,
 )
+from benchmarks.sregym.fastloop.codex_agent import SubmissionStub
 from benchmarks.sregym.fastloop.loop import InjectionWindow
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
@@ -159,7 +159,9 @@ def test_a_cell_keeps_its_own_config_home_and_both_streams(tmp_path: Path, fake_
     result = _run(_settings(tmp_path, fake_claude, profile), tmp_path)
 
     cell = result.cell_dir
-    assert result.returncode == 0 and result.error is None and result.transcripts_complete
+    assert result.returncode == 0
+    assert result.error is None
+    assert result.transcripts_complete
     session = next((cell / "session-dir" / "projects").glob("**/*.jsonl"))
     assert session.name == "11111111-2222-3333-4444-555555555555.jsonl"
     assert (cell / "session-dir" / "settings.json").read_text() == '{"cleanupPeriodDays": 36500}'
@@ -167,7 +169,8 @@ def test_a_cell_keeps_its_own_config_home_and_both_streams(tmp_path: Path, fake_
     assert (cell / "claude-code.stderr").exists()
     assert (cell / "prompt.txt").read_text() == "PROMPT"
     clock = json.loads((cell / "clock.json").read_text())
-    assert clock["claude_version"] == "9.9.9 (fake)" and clock["model"] == "claude-sonnet-5-5"
+    assert clock["claude_version"] == "9.9.9 (fake)"
+    assert clock["model"] == "claude-sonnet-5-5"
     assert result.clock.notice_at <= result.clock.started_at <= result.clock.ended_at
     # the credentials never reach the evidence directory
     assert "ANTHROPIC_VERTEX_PROJECT_ID" not in (cell / "session-dir" / "settings.json").read_text()
@@ -178,7 +181,8 @@ def test_the_agent_sees_no_path_that_names_the_problem(tmp_path: Path, fake_clau
 
     probe = json.loads((tmp_path / "probe.json").read_text())
     for value in (probe["cwd"], probe["config"], probe["kubeconfig"]):
-        assert "secret-problem-id" not in value and "cells" not in value
+        assert "secret-problem-id" not in value
+        assert "cells" not in value
     assert probe["kubeconfig_text"] == "kubeconfig-body"
     assert probe["model"] == "claude-sonnet-5-5"
     assert not Path(probe["cwd"]).exists()  # the alias scratch is gone; the real data stays in the cell
@@ -194,7 +198,8 @@ def test_accounting_counts_unique_message_ids_with_the_cache_split(
     tokens = accounting.tokens
     assert (tokens.cached_input_tokens, tokens.cache_write_input_tokens, tokens.output_tokens) == (200, 100, 7 + 9)
     assert tokens.input_tokens == 2 * (10 + 100 + 50)
-    assert accounting.usd is not None and accounting.usd > 0
+    assert accounting.usd is not None
+    assert accounting.usd > 0
     assert accounting.cli_total_cost_usd == pytest.approx(0.0001)
     assert json.loads((result.cell_dir / "accounting.json").read_text())["requests"] == 2
 
@@ -206,7 +211,8 @@ def test_a_timeout_kills_the_process_group_and_still_collects_the_transcripts(
     result = _run(_settings(tmp_path, fake_claude, profile, mode="hang", timeout_seconds=2), tmp_path)
 
     assert time.monotonic() - started < 60
-    assert result.timed_out and "timed out" in (result.error or "")
+    assert result.timed_out
+    assert "timed out" in (result.error or "")
     assert list((result.cell_dir / "session-dir" / "projects").glob("**/*.jsonl"))
     assert result.accounting.requests == 2
     assert result.transcripts_complete, result.transcript_problems  # the cut stream line is expected after a kill
@@ -216,7 +222,8 @@ def test_a_timeout_kills_the_process_group_and_still_collects_the_transcripts(
 def test_a_crash_is_an_error_with_its_partial_transcripts(tmp_path: Path, fake_claude: Path, profile: Path) -> None:
     result = _run(_settings(tmp_path, fake_claude, profile, mode="crash"), tmp_path)
 
-    assert result.returncode == 3 and result.error == "claudecode exited with code 3"
+    assert result.returncode == 3
+    assert result.error == "claudecode exited with code 3"
     assert result.accounting.requests == 2
 
 
@@ -232,8 +239,10 @@ def test_a_named_subagent_without_its_sidechain_file_makes_the_cell_incomplete(
 def test_a_missing_binary_is_an_error_row_not_an_exception(tmp_path: Path, profile: Path) -> None:
     result = _run(_settings(tmp_path, tmp_path / "nope", profile), tmp_path)
 
-    assert result.error is not None and "FileNotFoundError" in result.error
-    assert (result.cell_dir / "prompt.txt").exists() and (result.cell_dir / "clock.json").exists()
+    assert result.error is not None
+    assert "FileNotFoundError" in result.error
+    assert (result.cell_dir / "prompt.txt").exists()
+    assert (result.cell_dir / "clock.json").exists()
 
 
 def test_the_fast_loop_agent_maps_the_cell_to_an_outcome(tmp_path: Path, fake_claude: Path, profile: Path) -> None:
@@ -245,11 +254,13 @@ def test_the_fast_loop_agent_maps_the_cell_to_an_outcome(tmp_path: Path, fake_cl
 
     assert (agent.name, agent.provider, agent.model) == ("claudecode", "claude", "claude-sonnet-5-5")
     assert outcome.injection is window
-    assert outcome.dispatched_at is not None and outcome.responder_started_at is not None
+    assert outcome.dispatched_at is not None
+    assert outcome.responder_started_at is not None
     assert outcome.responder_tokens.cache_write_input_tokens == 100
     # the fake never submits to the stub, so the row says so instead of grading a cell with no mitigation
     assert outcome.error == "claudecode exited without submitting a mitigation"
-    assert outcome.artifacts_dir is not None and outcome.artifacts_dir.endswith("000_problem-x")
+    assert outcome.artifacts_dir is not None
+    assert outcome.artifacts_dir.endswith("000_problem-x")
 
 
 @pytest.mark.parametrize(

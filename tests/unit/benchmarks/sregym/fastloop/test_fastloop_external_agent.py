@@ -151,8 +151,10 @@ def test_an_incident_phase_runs_the_command_with_the_contract_and_gates_on_the_r
         result = _incident(_settings(tmp_path, fake_command), tmp_path, submit_url=stub.url)
 
     cell = result.cell_dir
-    assert result.error is None and result.transcripts_complete, result.transcript_problems
-    assert result.result is not None and result.result.agent_version == "9.9"
+    assert result.error is None
+    assert result.transcripts_complete, result.transcript_problems
+    assert result.result is not None
+    assert result.result.agent_version == "9.9"
     probe = _probe(tmp_path, "incident")
     argv = probe["argv"]
     assert argv[:3] == ["--flag", "value", "--phase"] or "--phase" in argv
@@ -160,7 +162,8 @@ def test_an_incident_phase_runs_the_command_with_the_contract_and_gates_on_the_r
     assert argv[argv.index("--cell-dir") + 1] == str(cell)
     assert argv[argv.index("--deadline-epoch") + 1]
     assert "--state-in" not in argv
-    assert probe["prompt"] == "NOTICE" and (cell / "incident" / "prompt.txt").read_text() == "NOTICE"
+    assert probe["prompt"] == "NOTICE"
+    assert (cell / "incident" / "prompt.txt").read_text() == "NOTICE"
     assert probe["kubeconfig_text"] == "kubeconfig-body"
     env = probe["env"]
     assert env["SDO_EXTERNAL_PHASE"] == "incident"
@@ -170,7 +173,8 @@ def test_an_incident_phase_runs_the_command_with_the_contract_and_gates_on_the_r
     assert env["SREGYM_SUMMARY_FILE"] is None  # the harness's summary variable does not
     assert env["KUBECONFIG"] == argv[argv.index("--kubeconfig") + 1]
     assert not Path(probe["cwd"]).exists()  # the scratch directory is gone afterwards
-    assert (cell / "incident" / "command.stdout").exists() and (cell / "incident" / "command.stderr").exists()
+    assert (cell / "incident" / "command.stdout").exists()
+    assert (cell / "incident" / "command.stderr").exists()
 
 
 def test_the_clock_records_notice_start_and_end_for_each_phase(tmp_path: Path, fake_command: Path) -> None:
@@ -184,7 +188,8 @@ def test_the_clock_records_notice_start_and_end_for_each_phase(tmp_path: Path, f
     clock = json.loads((result.cell_dir / "clock.json").read_text())
     assert {"notice_at", "started_at", "ended_at"} <= clock.keys()
     assert clock["label"] == "fake agent (patched, abc123)"
-    assert clock["phases"]["incident"]["returncode"] == 0 and clock["phases"]["incident"]["backstop_killed"] is False
+    assert clock["phases"]["incident"]["returncode"] == 0
+    assert clock["phases"]["incident"]["backstop_killed"] is False
     assert clock["phases"]["closing"]["started_at"] == closing.clock.started_at.isoformat()
     assert clock["notice_at"] == result.clock.notice_at.isoformat()  # the top is the incident's
 
@@ -197,18 +202,25 @@ def test_accounting_has_one_row_per_phase_online_then_offline_with_the_cache_spl
     run_external_cell(settings, cell_dir=incident.cell_dir, prompt="CLOSE", phase="closing")
 
     accounting = incident.accounting
-    assert accounting is not None and accounting.online and accounting.requests == 2  # three records, two ids
+    assert accounting is not None
+    assert accounting.online
+    assert accounting.requests == 2
     tokens = accounting.tokens
     assert (tokens.cached_input_tokens, tokens.cache_write_input_tokens, tokens.output_tokens) == (200, 100, 7 + 9)
-    assert tokens.cache_write_1h_input_tokens == 40 and tokens.input_tokens == 2 * 160
-    assert accounting.usd is not None and accounting.usd > 0
+    assert tokens.cache_write_1h_input_tokens == 40
+    assert tokens.input_tokens == 2 * 160
+    assert accounting.usd is not None
+    assert accounting.usd > 0
     assert (accounting.request_errors, accounting.independent_errors) == (1, 1)  # counted, never priced
-    assert accounting.crosscheck == "passed" and not accounting.partial
+    assert accounting.crosscheck == "passed"
+    assert not accounting.partial
     document = json.loads((incident.cell_dir / "accounting.json").read_text())
     rows = {row["phase"]: row for row in document["phases"]}
     assert list(rows) == ["incident", "closing"]
-    assert rows["incident"]["online"] is True and rows["closing"]["online"] is False
-    assert rows["incident"]["requests"] == 2 and rows["closing"]["requests"] == 2
+    assert rows["incident"]["online"] is True
+    assert rows["closing"]["online"] is False
+    assert rows["incident"]["requests"] == 2
+    assert rows["closing"]["requests"] == 2
     assert rows["closing"]["tokens"]["cache_write_input_tokens"] == 100
 
 
@@ -248,8 +260,11 @@ def test_missing_or_empty_evidence_and_a_missing_or_bad_result_make_the_cell_not
 def test_a_crash_is_an_error_but_keeps_its_evidence(tmp_path: Path, fake_command: Path) -> None:
     result = _incident(_settings(tmp_path, fake_command, "crash"), tmp_path)
 
-    assert result.returncode == 3 and result.error == "fake agent (patched, abc123) incident exited with code 3"
-    assert result.transcripts_complete and result.accounting is not None and result.accounting.requests == 2
+    assert result.returncode == 3
+    assert result.error == "fake agent (patched, abc123) incident exited with code 3"
+    assert result.transcripts_complete
+    assert result.accounting is not None
+    assert result.accounting.requests == 2
 
 
 def test_a_command_that_never_returns_is_killed_as_a_backstop(tmp_path: Path, fake_command: Path) -> None:
@@ -258,17 +273,21 @@ def test_a_command_that_never_returns_is_killed_as_a_backstop(tmp_path: Path, fa
     result = _incident(settings, tmp_path)
 
     assert time.monotonic() - started < 60
-    assert result.backstop_killed and result.timed_out and "group killed" in (result.error or "")
+    assert result.backstop_killed
+    assert result.timed_out
+    assert "group killed" in (result.error or "")
     assert not result.transcripts_complete  # it wrote no result, so the row is not gradable
     clock = json.loads((result.cell_dir / "clock.json").read_text())
-    assert clock["phases"]["incident"]["backstop_killed"] is True and clock["phases"]["incident"]["timed_out"] is True
+    assert clock["phases"]["incident"]["backstop_killed"] is True
+    assert clock["phases"]["incident"]["timed_out"] is True
 
 
 def test_a_cross_check_mismatch_is_not_gradable(tmp_path: Path, fake_command: Path) -> None:
     result = _incident(_settings(tmp_path, fake_command, "mismatch"), tmp_path)
 
     assert not result.transcripts_complete
-    assert result.accounting is not None and result.accounting.crosscheck == "failed"
+    assert result.accounting is not None
+    assert result.accounting.crosscheck == "failed"
     assert any(
         "accounting cross-check failed" in item and "token fields differ" in item for item in result.transcript_problems
     )
@@ -288,9 +307,13 @@ def test_a_timed_out_phase_prices_a_cut_response_from_the_independent_log_and_fl
 
     accounting = result.accounting
     assert result.transcripts_complete, result.transcript_problems
-    assert result.timed_out and "timed out" in (result.error or "")
-    assert accounting is not None and accounting.partial and accounting.partial_requests == 1
-    assert accounting.requests == 3 and accounting.tokens.output_tokens == 7 + 9 + 4
+    assert result.timed_out
+    assert "timed out" in (result.error or "")
+    assert accounting is not None
+    assert accounting.partial
+    assert accounting.partial_requests == 1
+    assert accounting.requests == 3
+    assert accounting.tokens.output_tokens == 7 + 9 + 4
     assert accounting.crosscheck == "passed"
     row = json.loads((result.cell_dir / "accounting.json").read_text())["phases"][0]
     assert row["partial"] is True
@@ -324,7 +347,8 @@ def test_the_closing_phase_gets_an_empty_kubeconfig_and_the_fixed_text_only(tmp_
     assert not any("outcome" in item for item in closing["argv"])
     assert learned.error is None
     assert learned.reflection_tokens.cache_write_input_tokens == 100
-    assert learned.reflection_started_at is not None and learned.reflection_finished_at is not None
+    assert learned.reflection_started_at is not None
+    assert learned.reflection_finished_at is not None
     assert learned.responder_tokens == outcome.responder_tokens
 
 
@@ -349,7 +373,8 @@ def test_a_closing_phase_with_problems_marks_the_row_without_touching_the_incide
         )
         learned = broken.learn(outcome)
 
-    assert learned.error is not None and "external transcripts incomplete" in learned.error
+    assert learned.error is not None
+    assert "external transcripts incomplete" in learned.error
     assert learned.responder_tokens == outcome.responder_tokens
 
 
@@ -365,7 +390,8 @@ def test_a_state_map_entry_is_passed_as_state_in_and_a_bad_one_is_refused_up_fro
 
     argv = _probe(tmp_path, "incident")["argv"]
     assert argv[argv.index("--state-in") + 1] == str(state)
-    assert settings.state_for("problem-x+other") == state and settings.state_for("problem-y") is None
+    assert settings.state_for("problem-x+other") == state
+    assert settings.state_for("problem-y") is None
     with pytest.raises(ValueError, match="is not a directory"):
         _settings(tmp_path, fake_command, state_map={"p": tmp_path / "missing"})
 
@@ -380,7 +406,8 @@ def test_state_in_reaches_the_command_and_the_source_is_not_modified(tmp_path: P
     assert probe["argv"][probe["argv"].index("--state-in") + 1] == str(state)
     assert probe["state_in_exists"] is True
     assert (state / "memory.txt").read_text() == "pass 1"
-    assert result.result is not None and result.result.state_dir == result.cell_dir / "agent"
+    assert result.result is not None
+    assert result.result.state_dir == result.cell_dir / "agent"
 
 
 def test_the_fast_loop_agent_maps_the_cell_to_an_outcome(tmp_path: Path, fake_command: Path) -> None:
@@ -391,13 +418,17 @@ def test_the_fast_loop_agent_maps_the_cell_to_an_outcome(tmp_path: Path, fake_co
         outcome = agent.resolve(0, "problem-x", lambda: window)
 
     assert (agent.name, agent.provider, agent.model) == ("external", "external", "some-model")
-    assert outcome.injection is window and outcome.error is None
+    assert outcome.injection is window
+    assert outcome.error is None
     assert (outcome.diagnosis, outcome.mitigation) == ("the diagnosis", "the fix")
-    assert outcome.dispatched_at is not None and outcome.responder_started_at is not None
+    assert outcome.dispatched_at is not None
+    assert outcome.responder_started_at is not None
     assert outcome.responder_tokens.cache_write_input_tokens == 100
     assert outcome.agent_label == "fake agent (patched, abc123)"
-    assert outcome.agent_state_dir is not None and outcome.agent_state_dir.endswith("000_problem-x/agent")
-    assert outcome.artifacts_dir is not None and outcome.artifacts_dir.endswith("000_problem-x")
+    assert outcome.agent_state_dir is not None
+    assert outcome.agent_state_dir.endswith("000_problem-x/agent")
+    assert outcome.artifacts_dir is not None
+    assert outcome.artifacts_dir.endswith("000_problem-x")
 
 
 def test_a_row_whose_command_submitted_nothing_or_lost_evidence_says_so(tmp_path: Path, fake_command: Path) -> None:
@@ -479,9 +510,9 @@ def test_fastloop_run_takes_the_external_agent_and_records_the_declared_model(
     )
 
     assert (args.agent, args.model, args.agent_command, args.agent_label) == ("external", model, agent_command, "L")
-    assert (
-        args.agent_env == ["A=b"] and args.agent_closing_timeout == 120.0 and args.agent_state_map == Path("map.json")
-    )
+    assert args.agent_env == ["A=b"]
+    assert args.agent_closing_timeout == 120.0
+    assert args.agent_state_map == Path("map.json")
 
 
 def test_the_agent_flags_need_the_external_agent_and_a_command() -> None:
@@ -537,10 +568,13 @@ def test_the_cli_builds_the_settings_from_the_flags(tmp_path: Path) -> None:
 
     settings = _external_settings(args, kubeconfig, tmp_path / "results")
 
-    assert settings.command == ("bin/tool", "--opt", "a b") and settings.label == "tool"
-    assert settings.extra_env == {"K": "v=w"} and settings.state_map == {"p": state}
+    assert settings.command == ("bin/tool", "--opt", "a b")
+    assert settings.label == "tool"
+    assert settings.extra_env == {"K": "v=w"}
+    assert settings.state_map == {"p": state}
     assert (settings.incident_timeout_seconds, settings.closing_timeout_seconds) == (600.0, 30.0)
-    assert settings.closing_prompt == "Close it." and settings.model == "m"
+    assert settings.closing_prompt == "Close it."
+    assert settings.model == "m"
 
 
 def test_the_sources_name_no_particular_agent() -> None:

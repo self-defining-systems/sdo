@@ -88,7 +88,7 @@ def account_cell(config_home: Path, stream: Path) -> CellAccounting:
     )
     cli = cli_total_cost_usd(stream)
     mismatch = bool(
-        cli is not None and bill.usd is not None and abs(cli - bill.usd) > COST_TOLERANCE * max(cli, bill.usd, 1e-9)
+        cli is not None and bill.usd is not None and abs(cli - bill.usd) > COST_TOLERANCE * max(cli, bill.usd)
     )
     return CellAccounting(
         tokens=tokens,
