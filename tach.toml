@@ -117,7 +117,9 @@ depends_on = [
 [[modules]]
 path = "benchmarks.sregym.eval"
 depends_on = [
+    "benchmarks.fuzzops",
     "benchmarks.sregym.adapter",
+    "benchmarks.sregym.analysis",
     "benchmarks.sregym.fastloop",
     "benchmarks.sregym.repository_git",
 ]
