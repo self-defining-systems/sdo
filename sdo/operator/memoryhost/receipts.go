@@ -18,7 +18,7 @@ func EncodeReceipts(calls []sdktest.PrimitiveCall) ([]*pb.MemoryReadReceipt, err
 		if err := result.UnmarshalJSON(call.Result); err != nil {
 			return nil, err
 		}
-		out = append(out, &pb.MemoryReadReceipt{Operation: call.Method, Arguments: args, Result: result, Error: call.Error})
+		out = append(out, &pb.MemoryReadReceipt{Operation: call.Method, Arguments: args, Result: result, Error: call.Error, ErrorClass: call.ErrorClass})
 	}
 	return out, nil
 }
@@ -40,7 +40,7 @@ func DecodeReceipts(receipts []*pb.MemoryReadReceipt) ([]sdktest.PrimitiveCall, 
 		if err = json.Unmarshal(args, &arguments); err != nil {
 			return nil, err
 		}
-		out = append(out, sdktest.PrimitiveCall{Method: r.Operation, Arguments: args, Result: result, Error: r.Error})
+		out = append(out, sdktest.PrimitiveCall{Method: r.Operation, Arguments: args, Result: result, Error: r.Error, ErrorClass: r.ErrorClass})
 	}
 	return out, nil
 }

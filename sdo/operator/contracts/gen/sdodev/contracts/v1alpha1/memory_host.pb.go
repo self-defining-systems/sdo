@@ -828,10 +828,14 @@ func (x *EvaluateRequest) GetReads() []*MemoryReadReceipt {
 }
 
 type MemoryDetectorResult struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	DetectorId    string                 `protobuf:"bytes,1,opt,name=detector_id,json=detectorId,proto3" json:"detector_id,omitempty"`
-	Findings      []*Finding             `protobuf:"bytes,2,rep,name=findings,proto3" json:"findings,omitempty"`
-	Error         string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	DetectorId string                 `protobuf:"bytes,1,opt,name=detector_id,json=detectorId,proto3" json:"detector_id,omitempty"`
+	Findings   []*Finding             `protobuf:"bytes,2,rep,name=findings,proto3" json:"findings,omitempty"`
+	Error      string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`
+	// error_class is the read class of error: absent, refused, unavailable or
+	// invalid (sdk.ReadErrorClass). Empty means unclassified, which reads as
+	// unavailable; a detector that panicked is invalid.
+	ErrorClass    string `protobuf:"bytes,4,opt,name=error_class,json=errorClass,proto3" json:"error_class,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -887,6 +891,13 @@ func (x *MemoryDetectorResult) GetError() string {
 	return ""
 }
 
+func (x *MemoryDetectorResult) GetErrorClass() string {
+	if x != nil {
+		return x.ErrorClass
+	}
+	return ""
+}
+
 type EvaluateResponse struct {
 	state         protoimpl.MessageState  `protogen:"open.v1"`
 	Results       []*MemoryDetectorResult `protobuf:"bytes,1,rep,name=results,proto3" json:"results,omitempty"`
@@ -934,11 +945,15 @@ func (x *EvaluateResponse) GetResults() []*MemoryDetectorResult {
 // Read receipts are produced by the host and keyed by the requested primitive.
 // Programs cannot acquire a cluster writer through this protocol.
 type MemoryReadReceipt struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Operation     string                 `protobuf:"bytes,1,opt,name=operation,proto3" json:"operation,omitempty"`
-	Arguments     *structpb.Value        `protobuf:"bytes,3,opt,name=arguments,proto3" json:"arguments,omitempty"`
-	Result        *structpb.Value        `protobuf:"bytes,4,opt,name=result,proto3" json:"result,omitempty"`
-	Error         string                 `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Operation string                 `protobuf:"bytes,1,opt,name=operation,proto3" json:"operation,omitempty"`
+	Arguments *structpb.Value        `protobuf:"bytes,3,opt,name=arguments,proto3" json:"arguments,omitempty"`
+	Result    *structpb.Value        `protobuf:"bytes,4,opt,name=result,proto3" json:"result,omitempty"`
+	Error     string                 `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`
+	// error_class is the read class of error: absent, refused, unavailable or
+	// invalid (sdk.ReadErrorClass). A replay rebuilds an error of the same class.
+	// Empty means a legacy receipt, which reads as unavailable.
+	ErrorClass    string `protobuf:"bytes,6,opt,name=error_class,json=errorClass,proto3" json:"error_class,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -997,6 +1012,13 @@ func (x *MemoryReadReceipt) GetResult() *structpb.Value {
 func (x *MemoryReadReceipt) GetError() string {
 	if x != nil {
 		return x.Error
+	}
+	return ""
+}
+
+func (x *MemoryReadReceipt) GetErrorClass() string {
+	if x != nil {
+		return x.ErrorClass
 	}
 	return ""
 }
@@ -1657,19 +1679,23 @@ const file_sdodev_contracts_v1alpha1_memory_host_proto_rawDesc = "" +
 	"\fdetector_ids\x18\x01 \x03(\tR\vdetectorIds\x12'\n" +
 	"\x0fmirror_sequence\x18\x02 \x01(\x04R\x0emirrorSequence\x12N\n" +
 	"\vobservation\x18\x03 \x01(\v2,.sdodev.contracts.v1alpha1.MemoryObservationR\vobservation\x12B\n" +
-	"\x05reads\x18\x04 \x03(\v2,.sdodev.contracts.v1alpha1.MemoryReadReceiptR\x05reads\"\x8d\x01\n" +
+	"\x05reads\x18\x04 \x03(\v2,.sdodev.contracts.v1alpha1.MemoryReadReceiptR\x05reads\"\xae\x01\n" +
 	"\x14MemoryDetectorResult\x12\x1f\n" +
 	"\vdetector_id\x18\x01 \x01(\tR\n" +
 	"detectorId\x12>\n" +
 	"\bfindings\x18\x02 \x03(\v2\".sdodev.contracts.v1alpha1.FindingR\bfindings\x12\x14\n" +
-	"\x05error\x18\x03 \x01(\tR\x05error\"]\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\x12\x1f\n" +
+	"\verror_class\x18\x04 \x01(\tR\n" +
+	"errorClass\"]\n" +
 	"\x10EvaluateResponse\x12I\n" +
-	"\aresults\x18\x01 \x03(\v2/.sdodev.contracts.v1alpha1.MemoryDetectorResultR\aresults\"\xb3\x01\n" +
+	"\aresults\x18\x01 \x03(\v2/.sdodev.contracts.v1alpha1.MemoryDetectorResultR\aresults\"\xd4\x01\n" +
 	"\x11MemoryReadReceipt\x12\x1c\n" +
 	"\toperation\x18\x01 \x01(\tR\toperation\x124\n" +
 	"\targuments\x18\x03 \x01(\v2\x16.google.protobuf.ValueR\targuments\x12.\n" +
 	"\x06result\x18\x04 \x01(\v2\x16.google.protobuf.ValueR\x06result\x12\x14\n" +
-	"\x05error\x18\x05 \x01(\tR\x05errorJ\x04\b\x02\x10\x03\"\xb0\x02\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\x12\x1f\n" +
+	"\verror_class\x18\x06 \x01(\tR\n" +
+	"errorClassJ\x04\b\x02\x10\x03\"\xb0\x02\n" +
 	"\x12MemoryProgramInput\x12\x1d\n" +
 	"\n" +
 	"program_id\x18\x01 \x01(\tR\tprogramId\x12>\n" +

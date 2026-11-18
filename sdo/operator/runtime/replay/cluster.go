@@ -160,7 +160,7 @@ func (c *cluster) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructured.Uns
 		return nil, err
 	}
 	if strings.EqualFold(ref.Kind, "Secret") {
-		return nil, fmt.Errorf("Secret reads forbidden")
+		return nil, sdk.Classified("Secret reads forbidden", sdk.ErrInvalidRead)
 	}
 	object, err := c.fake.Invokes(ktesting.NewGetAction(fixtureResource(ref), ref.Namespace, ref.Name), &unstructured.Unstructured{})
 	if err != nil {

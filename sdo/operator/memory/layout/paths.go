@@ -64,11 +64,14 @@ const (
 	// recovery verification to each outcome document; version 8 lets Go write
 	// the incident's opening keys and suspects into corpus case labels; version 9
 	// adds the agent's findings to each outcome document; version 10 adds the changes the agent reported;
-	// version 11 retires disabled_setup_detectors from outcome documents.
-	// Versions 4 to 11 need no conversion: no earlier repository holds those
-	// files, an earlier outcome keeps what it recorded (the retired field is
-	// dropped on read), and an earlier case is valid without the optional labels.
-	CurrentSchemaVersion = 11
+	// version 11 retires disabled_setup_detectors from outcome documents;
+	// version 12 lets a recorded failed read carry its error_class (absent,
+	// refused, unavailable or invalid). Versions 4 to 12 need no conversion: no
+	// earlier repository holds those files, an earlier outcome keeps what it
+	// recorded (the retired field is dropped on read), an earlier case is valid
+	// without the optional labels, and an earlier recording without a class reads
+	// as unavailable.
+	CurrentSchemaVersion = 12
 )
 
 // Kind names a class of file in operational memory.

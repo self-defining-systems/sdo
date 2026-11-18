@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/kubernetes"
 	utilexec "k8s.io/client-go/util/exec"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -65,6 +66,24 @@ func (e *DatabaseOperationError) Error() string {
 		reason = DatabaseUnavailable
 	}
 	return fmt.Sprintf("database %s: %s", step, reason)
+}
+
+// Is gives the failure its read class. Only the target's own explicit answer is
+// refused: a login or a catalog read the database rejected. A target the
+// program named ambiguously is an invalid read. Everything else, timeouts,
+// transport, a missing client, a changed Pod, is a failure to observe.
+func (e *DatabaseOperationError) Is(target error) bool {
+	refused := e.Reason == DatabaseRejected && (e.Step == DatabaseAuthentication || e.Step == DatabaseCatalogRead)
+	invalid := e.Reason == DatabaseAmbiguousAuth
+	switch target {
+	case sdk.ErrRefused:
+		return refused
+	case sdk.ErrInvalidRead:
+		return invalid
+	case sdk.ErrUnavailable:
+		return !refused && !invalid
+	}
+	return false
 }
 func DatabaseOperationFailure(step DatabaseOperationStep, err error) error {
 	reason := DatabaseUnavailable
@@ -149,6 +168,9 @@ type DatabaseTargetError struct {
 	Container  string
 	Containers []string
 }
+
+// Is marks a target naming a container the Pod does not have as an invalid read.
+func (e *DatabaseTargetError) Is(target error) bool { return target == sdk.ErrInvalidRead }
 
 func (e *DatabaseTargetError) Error() string {
 	return fmt.Sprintf("container %s not found; containers: %v", e.Container, e.Containers)
@@ -244,7 +266,7 @@ func DatabaseCredentialExit(t program.DatabaseTarget, a *program.EnsureDatabaseU
 	refs := DatabaseCredentialRefs(t, a)
 	i := int(code) - 42
 	if i >= 0 && i < len(refs) && refs[i].ConfigMap == nil {
-		return &CredentialReferenceError{Reference: refs[i], Reason: "container environment variable missing or empty"}
+		return &CredentialReferenceError{Reference: refs[i], Reason: credentialEnvMissing}
 	}
 	return nil
 }

@@ -15,4 +15,7 @@ type UnrecordedError struct {
     UnrecordedError names a read a replay was asked for that no recording holds.
 
 func (e *UnrecordedError) Error() string
+
+func (e *UnrecordedError) Unwrap() error
+    Unwrap makes an unrecorded read unavailable: nothing was observed.
 ```

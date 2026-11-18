@@ -36,3 +36,21 @@ and phase replay. Keep observation streams finite. Missing recordings never
 become an empty list or a healthy response. Secret endpoints and mutation
 methods are unavailable to this read client; write intent remains an executor
 plan. Exec effects require explicit undo rather than object restoration.
+
+## Read errors have a class
+A `ReadView` error says which of four things happened. Test it with `errors.Is`; an error with no class
+is `sdk.ErrUnavailable`.
+
+| class | sentinel | meaning | what a program may do |
+|---|---|---|---|
+| observed | none (a value) | SDO saw the state, including "not there" | reason on it |
+| refused | `sdk.ErrRefused` | the target answered and said no: a database login or catalog read the database rejected, a credential reference with no usable value in the container | reason on it, for example try the next credential |
+| unavailable | `sdk.ErrUnavailable` | SDO could not observe: no client, kind not captured, timeout, transport, no accepted source, a read a recording does not hold | only "I do not know" |
+| invalid | `sdk.ErrInvalidRead` | the program asked something illegal: a Secret read, a ref outside the namespace, an ambiguous database target, the read budget | a program bug; fix the program |
+
+`sdk.ReadErrorClass(err)` names the class.
+
+Replay agrees with live. A recording stores each failed read's `error_class` next to its text, a replay
+rebuilds an error of the same class, and a recording written before classes existed reads as unavailable. A
+database catalog read is recorded by target and credential reference (never a value), so a fallback that
+tries one credential and then another replays both reads.

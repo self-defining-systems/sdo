@@ -30,6 +30,11 @@ type PrimitiveCall struct {
 	Arguments json.RawMessage `json:"arguments"`
 	Result    json.RawMessage `json:"result"`
 	Error     string          `json:"error,omitempty"`
+	// ErrorClass is the read class of Error (sdk.ReadErrorClass): absent,
+	// refused, unavailable or invalid. A replay rebuilds an error of the same
+	// class, so a program is judged on a recording exactly as it was live. A
+	// recording with no class is legacy and reads as unavailable.
+	ErrorClass string `json:"error_class,omitempty"`
 }
 
 // RecordingReadView serializes recorded calls and OnRecord callbacks. ReadView
@@ -47,6 +52,7 @@ func (v *RecordingReadView) record(method string, arguments any, result any, err
 	call := PrimitiveCall{Method: method, Arguments: args, Result: value}
 	if err != nil {
 		call.Error = err.Error()
+		call.ErrorClass = sdk.ReadErrorClass(err)
 	}
 	v.mu.Lock()
 	v.Calls = append(v.Calls, call)
@@ -101,6 +107,9 @@ func (e *UnrecordedError) Error() string {
 	return fmt.Sprintf("unrecorded %s call with arguments %s", e.Method, e.Arguments)
 }
 
+// Unwrap makes an unrecorded read unavailable: nothing was observed.
+func (e *UnrecordedError) Unwrap() error { return sdk.ErrUnavailable }
+
 func (v *ReplayReadView) replay(method string, arguments any, result any) error {
 	return v.lookup(method, arguments, result, true)
 }
@@ -130,7 +139,7 @@ func (v *ReplayReadView) lookup(method string, arguments any, result any, consum
 			v.used[index] = true
 		}
 		if call.Error != "" {
-			return errors.New(call.Error)
+			return sdk.ErrorWithClass(call.Error, call.ErrorClass)
 		}
 		return json.Unmarshal(call.Result, result)
 	}
@@ -734,4 +743,17 @@ func (v *RecordingReadView) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured
 		return source.CaptureObjects(refs)
 	}
 	return sdk.TypedObjects(v.ReadView), nil
+}
+
+// safeReadError replaces an upstream error with fixed text, because a recording
+// must not hold what an API body or exec output carried, but keeps the error's
+// read class: the text is value-free, the class is the observation.
+func safeReadError(text string, err error) error {
+	return sdk.ErrorWithClass(text, sdk.ReadErrorClass(err))
+}
+
+// describedReadError is safeReadError for a boundary whose upstream text is
+// already safe to keep: the text follows the fixed prefix, the class is kept.
+func describedReadError(prefix string, err error) error {
+	return sdk.ErrorWithClass(prefix+": "+err.Error(), sdk.ReadErrorClass(err))
 }

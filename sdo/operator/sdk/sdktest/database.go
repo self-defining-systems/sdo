@@ -2,7 +2,6 @@ package sdktest
 
 import (
 	"errors"
-	"fmt"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -12,7 +11,7 @@ func (v *RecordingReadView) DatabaseUsers(t program.DatabaseTarget) ([]program.D
 	}
 	r, err := v.ReadView.DatabaseUsers(t)
 	if err != nil {
-		err = fmt.Errorf("database catalog observation unavailable")
+		err = safeReadError("database catalog observation unavailable", err)
 		r = nil
 	} else {
 		r, err = program.NormalizeDatabaseUsers(r)
@@ -31,7 +30,7 @@ func (v *ReplayReadView) DatabaseUsers(t program.DatabaseTarget) ([]program.Data
 		if errors.As(err, &unrecorded) {
 			return nil, err
 		}
-		return nil, fmt.Errorf("database catalog observation unavailable")
+		return nil, safeReadError("database catalog observation unavailable", err)
 	}
 	return program.NormalizeDatabaseUsers(r)
 }

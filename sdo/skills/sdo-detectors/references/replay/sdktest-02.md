@@ -19,6 +19,11 @@ type PrimitiveCall struct {
 	Arguments json.RawMessage `json:"arguments"`
 	Result    json.RawMessage `json:"result"`
 	Error     string          `json:"error,omitempty"`
+	// ErrorClass is the read class of Error (sdk.ReadErrorClass): absent,
+	// refused, unavailable or invalid. A replay rebuilds an error of the same
+	// class, so a program is judged on a recording exactly as it was live. A
+	// recording with no class is legacy and reads as unavailable.
+	ErrorClass string `json:"error_class,omitempty"`
 }
     PrimitiveCall stores one live ReadView call for deterministic replay.
 

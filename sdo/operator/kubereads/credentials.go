@@ -15,6 +15,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -23,6 +24,40 @@ import (
 type CredentialReferenceError struct {
 	Reference program.CredentialRef
 	Reason    string
+}
+
+// Reasons a reference fails to give a credential. The target's own answer that
+// it holds no usable value is refused, so a program may fall back to another
+// reference; a reference the program should never have built is invalid; any
+// other reason is a failure to observe.
+const (
+	credentialEnvMissing   = "container environment variable missing or empty"
+	credentialKeyMissing   = "key missing"
+	credentialKeyUnusable  = "key is empty or invalid"
+	credentialNoAssignment = "expected exactly one nonempty literal assignment; expansion and duplicates refused"
+	credentialInvalidRef   = "invalid reference"
+	credentialNamespace    = "target namespace refused"
+	credentialEnvInside    = "env is resolved inside the container"
+)
+
+// Is gives the failure its read class (see sdk.ReadErrorClass).
+func (e *CredentialReferenceError) Is(target error) bool {
+	refused, invalid := false, false
+	switch e.Reason {
+	case credentialEnvMissing, credentialKeyMissing, credentialKeyUnusable, credentialNoAssignment:
+		refused = true
+	case credentialInvalidRef, credentialNamespace, credentialEnvInside:
+		invalid = true
+	}
+	switch target {
+	case sdk.ErrRefused:
+		return refused
+	case sdk.ErrInvalidRead:
+		return invalid
+	case sdk.ErrUnavailable:
+		return !refused && !invalid
+	}
+	return false
 }
 
 func (e *CredentialReferenceError) Error() string {
@@ -84,13 +119,13 @@ func ResolveCredential(ctx context.Context, client kubernetes.Interface, protect
 		return "", &CredentialReferenceError{Reference: ref, Reason: reason}
 	}
 	if err := ref.Validate(); err != nil {
-		return fail("invalid reference")
+		return fail(credentialInvalidRef)
 	}
 	if protectedNamespace != "" && namespace == protectedNamespace {
-		return fail("target namespace refused")
+		return fail(credentialNamespace)
 	}
 	if ref.ConfigMap == nil {
-		return fail("env is resolved inside the container")
+		return fail(credentialEnvInside)
 	}
 	if client == nil {
 		return fail("ConfigMap transport unavailable")
@@ -107,16 +142,16 @@ func ResolveCredential(ctx context.Context, client kubernetes.Interface, protect
 		}
 	}
 	if !ok {
-		return fail("key missing")
+		return fail(credentialKeyMissing)
 	}
 	if k.Assignment != "" {
 		value, ok = AssignmentCredential(value, k.Assignment)
 		if !ok {
-			return fail("expected exactly one nonempty literal assignment; expansion and duplicates refused")
+			return fail(credentialNoAssignment)
 		}
 	}
 	if value == "" || strings.ContainsRune(value, 0) || !utf8.ValidString(value) {
-		return fail("key is empty or invalid")
+		return fail(credentialKeyUnusable)
 	}
 	return value, nil
 }
