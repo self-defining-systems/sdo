@@ -153,6 +153,30 @@ func TestQueuedReflectionCommittedOnlyWhenAcceptedBranchHasTheCommit(t *testing.
 	}
 }
 
+// The closure receipt is the acknowledgment-time statement: it binds the
+// proposal and outcome commits and is never rewritten (the acknowledgment
+// identity and token derive from it). A reflection that commits afterwards is
+// recorded in the ledger alone, and the strict production-receipt check
+// validates the two separately.
+func TestReflectionCommitLandsInTheLedgerNotTheAckTimeReceipt(t *testing.T) {
+	root := t.TempDir()
+	accepted := filepath.Join(root, "accepted")
+	ledger := queuedReflectionLedger(t, root, func(context.Context, IncidentClosure, IncidentWorkspace, *contracts.OutcomeRecord, string, string, ReflectionFeedback) (ReflectionDecision, error) {
+		queuedReflectionGit(t, accepted, "-c", "user.name=SDO Commit Broker", "-c", "user.email=sdo-commit-broker@localhost", "commit", "-q", "--allow-empty", "-m", "sdo(incident-1): validated reflection\n\nSDO-Incident: incident-1\nSDO-Phase: reflection")
+		return ReflectionDecision{LearningDecision: "updated"}, nil
+	})
+	if ledger.GetReflectionCommit() == "" || !ledger.GetReflectionQueued() || !ledger.GetRequiresReflection() {
+		t.Fatalf("ledger after a committed reflection: commit %q queued %v requires %v", ledger.GetReflectionCommit(), ledger.GetReflectionQueued(), ledger.GetRequiresReflection())
+	}
+	receipt := ledger.GetReceipt()
+	if receipt.GetOutcomeCommit() == "" || receipt.GetOutcomeCommit() != ledger.GetOutcomeCommit() || receipt.GetProposalCommit() != ledger.GetProposalCommit() {
+		t.Fatalf("receipt %v does not bind the closure-time commits of the ledger", receipt)
+	}
+	if receipt.GetReflectionCommit() != "" {
+		t.Fatalf("the ack-time receipt names reflection commit %q that landed after it", receipt.GetReflectionCommit())
+	}
+}
+
 // The host must serve the accepted HEAD once a queued reflection committed:
 // HEAD contains the reflection and whatever was accepted after it (another
 // incident's outcome closing while the reflection ran). Activating the

@@ -12,16 +12,20 @@ import (
 	"sdo.dev/operator/contracts/wire"
 )
 
-// Hand-authored generated messages, never experiment outputs.
+// Hand-authored generated messages, never experiment outputs. The ledger is
+// shaped as the broker leaves it after a learning closure: the closure receipt
+// was written at acknowledgment, before the reflection was queued behind it, so
+// it names the proposal and outcome commits only; the reflection commit landed
+// in the ledger later and the receipt is never rewritten.
 func fixture() *c.NativeProductionReceipt {
 	stamp := timestamppb.New(time.Date(2026, 10, 18, 3, 0, 0, 0, time.UTC))
 	proposal, outcome, reflection := strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("c", 40)
 	return &c.NativeProductionReceipt{
 		SchemaVersion: "sdo.production-receipt/v2", RecordedAt: stamp, BrokerMode: "native", WorkerMountMode: "proposal-only", IncidentId: "incident-1", Namespace: "demo", ControlNamespace: "demo-sdo", ControllerImage: "controller:go", ResponderImage: "responder:python", ControllerPodUid: "pod-uid",
 		NativeLedger: &c.BrokerLedger{
-			IncidentId: "incident-1", Acknowledged: true, ProposalCommit: proposal, OutcomeCommit: outcome, ReflectionCommit: reflection, RequiresReflection: true, ReflectionProcessed: true,
+			IncidentId: "incident-1", Acknowledged: true, ProposalCommit: proposal, OutcomeCommit: outcome, ReflectionCommit: reflection, RequiresReflection: true, ReflectionQueued: true, ReflectionProcessed: true,
 			ReflectionDecision: &c.ReflectionDecision{LearningDecision: "no_change"},
-			Receipt:            &c.ClosureReceipt{IncidentId: "incident-1", ProposalCommit: proposal, OutcomeCommit: outcome, ReflectionCommit: reflection, AckToken: "token"},
+			Receipt:            &c.ClosureReceipt{IncidentId: "incident-1", ProposalCommit: proposal, OutcomeCommit: outcome, AckToken: "token"},
 			Closure: &c.IncidentClosure{
 				Request:             &c.IncidentRequest{IncidentId: "incident-1", Namespace: "demo", RepairPolicy: "recorded-actions"},
 				Result:              &c.IncidentResult{IncidentId: "incident-1", Status: "completed", RepairActions: []*c.RepairActionReceipt{{ActionId: "repair-1", Success: true}}, ConfirmedRootCauses: []*c.ConfirmedRootCause{{Summary: "unavailable replica"}}},
@@ -85,6 +89,40 @@ func TestReceiptSurvivesResponderRetirement(t *testing.T) {
 	}
 }
 
+// A closure's receipt binds the commits it owns at acknowledgment (proposal and
+// outcome). The reflection commit lands after the acknowledgment and is bound by
+// the ledger alone, so a receipt that omits it is honest; one that names a
+// reflection must name the ledger's, and an omission is only honest when the
+// ledger owes a reflection queued behind the acknowledgment.
+func TestClosureReceiptPrecedesTheReflectionCommit(t *testing.T) {
+	if got := Evaluate(encoded(t, fixture()), true); got.GetFailure() != nil {
+		t.Fatalf("a learning closure followed by its reflection commit was rejected: %v", got.GetFailure())
+	}
+	named := fixture()
+	named.NativeLedger.Receipt.ReflectionCommit = named.NativeLedger.ReflectionCommit
+	if got := Evaluate(encoded(t, named), true); got.GetFailure() != nil {
+		t.Fatalf("a receipt that already names the ledger's reflection was rejected: %v", got.GetFailure())
+	}
+	for name, mutate := range map[string]func(*c.BrokerLedger){
+		"receipt names another reflection": func(l *c.BrokerLedger) { l.Receipt.ReflectionCommit = strings.Repeat("d", 40) },
+		"receipt names a reflection the ledger lacks": func(l *c.BrokerLedger) {
+			l.ReflectionCommit, l.ReflectionDecision.LearningDecision = "", "no_change"
+			l.Receipt.ReflectionCommit = strings.Repeat("c", 40)
+		},
+		"ledger reflection was never queued behind the acknowledgment": func(l *c.BrokerLedger) { l.ReflectionQueued = false },
+		"ledger reflection was never required":                         func(l *c.BrokerLedger) { l.RequiresReflection = false },
+		"closure-time proposal changed":                                func(l *c.BrokerLedger) { l.Receipt.ProposalCommit = strings.Repeat("d", 40) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := fixture()
+			mutate(bad.NativeLedger)
+			if got := Evaluate(encoded(t, bad), true); got.GetFailure() == nil {
+				t.Fatal("accepted a receipt and ledger that disagree about the closure's commits")
+			}
+		})
+	}
+}
+
 func TestReceiptRejectsConflictingEvidence(t *testing.T) {
 	cases := map[string]func(*c.NativeProductionReceipt){
 		"partial":        func(r *c.NativeProductionReceipt) { r.NativeLedger.OutcomeDocument.Classification = "partial" },
@@ -98,7 +136,6 @@ func TestReceiptRejectsConflictingEvidence(t *testing.T) {
 		},
 		"updated reflection": func(r *c.NativeProductionReceipt) {
 			r.NativeLedger.ReflectionCommit = ""
-			r.NativeLedger.Receipt.ReflectionCommit = ""
 			r.NativeLedger.ReflectionDecision.LearningDecision = "updated"
 		},
 		"failed reflection": func(r *c.NativeProductionReceipt) { r.NativeLedger.ReflectionDecision.LearningDecision = "failed" },
@@ -319,7 +356,7 @@ func TestFrozenReceiptGradesPrivateEvidence(t *testing.T) {
 	l.Closure.Request.RepositoryBaseCommit = l.OutcomeCommit
 	l.Receipt.BaseCommit = l.OutcomeCommit
 	l.Receipt.ProposalCommit, l.Receipt.ReflectionCommit = "", ""
-	l.RequiresReflection, l.ReflectionProcessed = false, false
+	l.RequiresReflection, l.ReflectionQueued, l.ReflectionProcessed = false, false, false
 	l.ReflectionDecision = nil
 	l.ReflectionSkippedReason = "frozen_memory"
 	if got := Evaluate(encoded(t, r), true); got.GetFailure() != nil {
@@ -333,7 +370,7 @@ func externalFixture() *c.NativeProductionReceipt {
 	l.FrozenMemory = proto.Bool(true)
 	l.ProposalCommit = ""
 	l.ReflectionCommit = ""
-	l.RequiresReflection = false
+	l.RequiresReflection, l.ReflectionQueued = false, false
 	l.ReflectionProcessed = false
 	l.ReflectionDecision = nil
 	l.ReflectionSkippedReason = "frozen_memory"

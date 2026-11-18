@@ -173,8 +173,21 @@ func validate(r *c.NativeProductionReceipt) error {
 	if outcome.GetRepairCommit() != l.GetProposalCommit() {
 		return errors.New("native outcome repair commit disagrees with broker proposal")
 	}
-	if accepted.GetProposalCommit() != l.GetProposalCommit() || accepted.GetOutcomeCommit() != l.GetOutcomeCommit() || accepted.GetReflectionCommit() != l.GetReflectionCommit() {
+	// The closure receipt is written once, at acknowledgment, and binds the
+	// commits the closure owns then: the proposal and the outcome. The
+	// reflection is queued behind the acknowledgment and commits later, so only
+	// the ledger records it. A receipt omits the reflection commit only when the
+	// ledger owes one queued behind the acknowledgment, and any reflection the
+	// receipt does name must be the ledger's.
+	if accepted.GetProposalCommit() != l.GetProposalCommit() || accepted.GetOutcomeCommit() != l.GetOutcomeCommit() {
 		return errors.New("native closure receipt commits disagree with broker ledger")
+	}
+	if accepted.GetReflectionCommit() != "" {
+		if accepted.GetReflectionCommit() != l.GetReflectionCommit() {
+			return errors.New("native closure receipt reflection commit disagrees with broker ledger")
+		}
+	} else if l.GetReflectionCommit() != "" && (!l.GetRequiresReflection() || !l.GetReflectionQueued()) {
+		return errors.New("native broker ledger has a reflection commit the closure receipt neither names nor precedes")
 	}
 	if err := nonempty(accepted.GetAckToken(), "acknowledgment token"); err != nil {
 		return err
