@@ -13,6 +13,7 @@ incident directory with a ``ledger.json`` must hold at least one, unless the led
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -39,6 +40,9 @@ TASKS = "lifecycle"
 #: Reflection failures that end the task before any agent turn starts.
 _PRE_START_FAILURES = frozenset({"session_unavailable", "session_handoff_invalid", "request_too_large"})
 _FRACTION = re.compile(r"(\.\d{6})\d+")
+#: An investigator's session ID is ``<incident id>-inv-<n>`` (``investigatorID`` in the operator's runtime); its
+#: trailing number is an index, never a detection time.
+_INVESTIGATOR_SUFFIX = re.compile(r"-inv-\d+$")
 
 
 class SinkError(RuntimeError):
@@ -483,10 +487,31 @@ def _newest_mtime(directory: Path) -> datetime | None:
     return datetime.fromtimestamp(max(stamps), UTC) if stamps else None
 
 
+def incident_dir_name(incident_id: str) -> str:
+    """The sink directory of an incident or investigator session: ``sha256(incident_id)[:32]``."""
+    return hashlib.sha256(incident_id.encode()).hexdigest()[:32]
+
+
+def parent_incident_id(incident_id: str) -> str:
+    """The incident an investigator session works for: ``incident_id`` without its ``-inv-<n>`` suffix; any other ID
+    unchanged."""
+    return _INVESTIGATOR_SUFFIX.sub("", incident_id)
+
+
+def incident_identity(directory: Path) -> str:
+    """The incident ID recorded in a ledger-less incident directory (``incident.json``); empty when unknown."""
+    return str(_get(_read_json(directory / IDENTITY_FILE), "incident_id") or "")
+
+
+def is_investigator_dir(directory: Path) -> bool:
+    """Whether an incident directory is an investigator's own session (``<incident>-inv-<n>``), not an incident."""
+    return bool(_INVESTIGATOR_SUFFIX.search(incident_identity(directory)))
+
+
 def incident_detected_at(directory: Path) -> datetime | None:
-    """When the incident was detected, from its ID (``<namespace>-<unix nanoseconds>``); for a ledger-less directory."""
-    identity = _read_json(directory / IDENTITY_FILE)
-    suffix = str(_get(identity, "incident_id") or "").rsplit("-", 1)[-1]
+    """When the incident was detected, from its ID (``<namespace>-<unix nanoseconds>``); for a ledger-less directory.
+    An investigator directory takes its parent incident's time."""
+    suffix = parent_incident_id(incident_identity(directory)).rsplit("-", 1)[-1]
     return datetime.fromtimestamp(int(suffix) / 1e9, UTC) if suffix.isdigit() else None
 
 
@@ -590,9 +615,19 @@ def copy_interval(run_dir: Path, dest: Path, start: datetime | None, end: dateti
     shutil.copy2(run_dir / LAYOUT_FILE, dest / LAYOUT_FILE)
     copied: set[str] = set()
     incidents = []
-    for directory in incident_dirs(run_dir):
+    directories = incident_dirs(run_dir)
+    in_interval: dict[str, bool] = {}
+    # Incidents first: an investigator directory follows its parent's membership (when the parent is in the sink).
+    for directory in sorted(directories, key=is_investigator_dir):
         rel = f"{INCIDENTS}/{directory.name}"
-        if incident_in_interval(directory, by_path.get(rel, []), start, end):
+        parent = incident_dir_name(parent_incident_id(incident_identity(directory)))
+        if is_investigator_dir(directory) and parent in in_interval:
+            in_interval[directory.name] = in_interval[parent]
+        else:
+            in_interval[directory.name] = incident_in_interval(directory, by_path.get(rel, []), start, end)
+    for directory in directories:
+        rel = f"{INCIDENTS}/{directory.name}"
+        if in_interval[directory.name]:
             _copy_tree(directory, dest / rel)
             copied.add(rel)
             incidents.append(incident_coverage(dest / rel))
