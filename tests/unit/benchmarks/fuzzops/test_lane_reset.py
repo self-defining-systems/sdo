@@ -300,16 +300,6 @@ def test_the_resume_step_patches_the_job_even_when_it_cannot_be_read(monkeypatch
     assert patched == [False, False]
 
 
-def test_an_unreadable_job_is_unknown_not_running(monkeypatch: pytest.MonkeyPatch) -> None:
-    kube = hooks.Kube(context="")
-    monkeypatch.setattr(kube, "_json", lambda *_a: None)
-    assert kube.controller_suspended("ns") is None
-    monkeypatch.setattr(kube, "_json", lambda *_a: {"spec": {"suspend": True}})
-    assert kube.controller_suspended("ns") is True
-    monkeypatch.setattr(kube, "_json", lambda *_a: {"spec": {}})
-    assert kube.controller_suspended("ns") is False
-
-
 def _wired(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suspended: bool | None
 ) -> tuple[hooks.ResetSteps, list[float]]:
@@ -371,32 +361,6 @@ def test_the_wired_incident_reset_is_retried_not_a_single_attempt(
     steps.reset_incidents()
     assert answers == []
     assert 0 < now[0] < hooks.RESET_PATIENCE_S  # waited on the injected clock, not the wall clock
-
-
-def test_a_controller_stopped_block_always_resumes_the_job(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[bool] = []
-    monkeypatch.setattr(hooks, "set_controller_suspended", lambda _k, _c, suspended, **_: calls.append(suspended))
-    with hooks.controller_stopped(None, "ns"):  # type: ignore[arg-type]
-        pass
-    assert calls == [True, False]
-    calls.clear()
-    with pytest.raises(hooks.HookError, match="config overlay"), hooks.controller_stopped(None, "ns"):  # type: ignore[arg-type]
-        raise hooks.HookError("config overlay failed")
-    assert calls == [True, False]
-
-
-def test_a_stop_that_times_out_still_resumes_the_job(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[bool] = []
-
-    def suspend(_k: object, _c: str, suspended: bool, **_: object) -> None:
-        calls.append(suspended)
-        if suspended:
-            raise hooks.HookError("the controller pod did not end within 300s")
-
-    monkeypatch.setattr(hooks, "set_controller_suspended", suspend)
-    with pytest.raises(hooks.HookError, match="did not end"), hooks.controller_stopped(None, "ns"):  # type: ignore[arg-type]
-        pytest.fail("the block must not run")
-    assert calls == [True, False]
 
 
 def test_the_reset_needs_at_least_one_attempt(tmp_path: Path) -> None:

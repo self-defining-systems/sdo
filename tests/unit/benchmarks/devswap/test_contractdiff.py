@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from google.protobuf import descriptor_pb2
 
-from benchmarks.fuzzops import contractdiff, devtree
+from benchmarks.devswap import contractdiff, devtree
 
 F = descriptor_pb2.FieldDescriptorProto
 Edit = Callable[[descriptor_pb2.FileDescriptorProto], None]
@@ -291,22 +291,29 @@ def _hooks_checkouts(tmp_path: Path, edit: Edit) -> tuple[Path, Path, dict[str, 
 
 def test_a_lane_without_descriptors_takes_a_build_whose_contract_descriptors_are_unchanged(tmp_path: Path) -> None:
     _old, new, lane = _hooks_checkouts(tmp_path, lambda f: None)
-    snapshot = devtree.legacy_snapshot(new, lane)
+    snapshot = devtree.legacy_snapshot(new, lane, "bench-sdo-hooks-*")
     assert snapshot
     assert devtree.swap_problem(new, lane, rebuild_binary=True, contracts=snapshot) == ""
 
 
 def test_a_lane_without_descriptors_takes_an_additive_change_and_refuses_a_breaking_one(tmp_path: Path) -> None:
     _old, new, lane = _hooks_checkouts(tmp_path, _add_field)
-    assert devtree.swap_problem(new, lane, rebuild_binary=True, contracts=devtree.legacy_snapshot(new, lane)) == ""
+    assert (
+        devtree.swap_problem(
+            new, lane, rebuild_binary=True, contracts=devtree.legacy_snapshot(new, lane, "bench-sdo-hooks-*")
+        )
+        == ""
+    )
     tmp2 = tmp_path / "two"
     tmp2.mkdir()
     _old, new, lane = _hooks_checkouts(tmp2, _remove_field)
-    problem = devtree.swap_problem(new, lane, rebuild_binary=True, contracts=devtree.legacy_snapshot(new, lane))
+    problem = devtree.swap_problem(
+        new, lane, rebuild_binary=True, contracts=devtree.legacy_snapshot(new, lane, "bench-sdo-hooks-*")
+    )
     assert problem.startswith("breaking contract change")
 
 
 def test_a_lane_whose_build_checkout_is_gone_still_cannot_say(tmp_path: Path) -> None:
     _old, new, lane = _hooks_checkouts(tmp_path, _add_field)
     lane = {devtree.CONTRACTS_PATH: "0" * 40}
-    assert devtree.legacy_snapshot(new, lane) == ""
+    assert devtree.legacy_snapshot(new, lane, "bench-sdo-hooks-*") == ""
