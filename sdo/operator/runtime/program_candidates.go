@@ -270,8 +270,12 @@ func findingProgramBindings(spec program.ProgramSpec, finding sdk.Finding) (prog
 	for _, param := range spec.Params {
 		hasObjectRoles = hasObjectRoles || param.Kind != ""
 	}
+	named := findingNamesPlaybook(finding, spec.ID)
 	if err == nil && (!hasObjectRoles || len(bound.Objects) > 0) {
 		source := BindingSourceFinding
+		if named {
+			source = BindingSourceHint
+		}
 		for name, ref := range bound.Objects {
 			if finding.ParameterBindings[name] == ref && ref.Kind != "" {
 				source = BindingSourceHint
@@ -279,13 +283,21 @@ func findingProgramBindings(spec program.ProgramSpec, finding sdk.Finding) (prog
 		}
 		return bound, source, true
 	}
-	for _, reference := range finding.Playbooks {
-		id, err := layout.PlaybookID(reference)
-		if err == nil && id == spec.ID {
-			return cloneProgramBindings(bound), BindingSourceHint, true
-		}
+	if named {
+		return cloneProgramBindings(bound), BindingSourceHint, true
 	}
 	return program.Bindings{}, "", false
+}
+
+// findingNamesPlaybook reports whether the finding lists the playbook: the
+// detector that produced it says this playbook is the one for its cause.
+func findingNamesPlaybook(finding sdk.Finding, id string) bool {
+	for _, reference := range finding.Playbooks {
+		if named, err := layout.PlaybookID(reference); err == nil && named == id {
+			return true
+		}
+	}
+	return false
 }
 
 func cloneProgramBindings(source program.Bindings) program.Bindings {
