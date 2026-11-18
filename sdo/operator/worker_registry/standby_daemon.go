@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -148,8 +149,8 @@ func RunStandbyDaemon(ctx context.Context, options StandbyDaemonOptions) error {
 		return err
 	}
 
-	if output, err := workerio.CombinedOutput(ctx, "git", "-C", options.Checkout, "reset", "--hard", task.GetWorkspace().GetBaseCommit()); err != nil {
-		return fmt.Errorf("bind accepted commit: %w: %s", err, output)
+	if err := bindAcceptedCommit(ctx, options.Checkout, task.GetWorkspace().GetBaseCommit()); err != nil {
+		return err
 	}
 	if options.ProxyAddress != "" {
 		deadline := workerio.Now().Add(2 * time.Second)
@@ -185,4 +186,25 @@ func RunStandbyDaemon(ctx context.Context, options StandbyDaemonOptions) error {
 	err = worker.Wait()
 	waited = true
 	return err
+}
+
+// bindAcceptedCommit confirms the claimed checkout is at the task's accepted
+// commit. The controller already swapped its canonical checkout in, with the
+// deployment patch series materialized into the working files and the
+// effective view recorded under .git; the bind must not rewrite any of it. A
+// hard reset here reverted every patched file to the bare base, so the agent
+// saw unpatched source and the broker reported each patched file as an
+// uncommitted app edit. A checkout at another commit is refused.
+func bindAcceptedCommit(ctx context.Context, checkout, baseCommit string) error {
+	if baseCommit == "" {
+		return errors.New("bind accepted commit: the task names no accepted commit")
+	}
+	output, err := workerio.CombinedOutput(ctx, "git", "-C", checkout, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return fmt.Errorf("bind accepted commit: %w: %s", err, output)
+	}
+	if head := strings.TrimSpace(string(output)); head != baseCommit {
+		return fmt.Errorf("bind accepted commit: the checkout is at %s, the task's accepted commit is %s", head, baseCommit)
+	}
+	return nil
 }
