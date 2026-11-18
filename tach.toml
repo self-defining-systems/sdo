@@ -116,7 +116,11 @@ depends_on = [
 
 [[modules]]
 path = "benchmarks.sregym.eval"
-depends_on = []
+depends_on = [
+    "benchmarks.sregym.adapter",
+    "benchmarks.sregym.fastloop",
+    "benchmarks.sregym.repository_git",
+]
 
 [[modules]]
 path = "benchmarks.sregym.run"

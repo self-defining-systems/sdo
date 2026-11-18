@@ -56,8 +56,16 @@ class PhaseTimings:
             raise ValueError("a phase cannot end before it starts")
         self._record(name, start, end, failed=False)
 
+    def add(self, name: str, seconds: float) -> None:
+        """Add seconds an arm measured inside its own process (a fastloop row's prelude), as a zero-start span."""
+        if seconds < 0:
+            raise ValueError("a phase cannot take negative time")
+        if name not in PHASES:
+            raise ValueError(f"unknown phase {name!r}; phases are {', '.join(PHASES)}")
+        self._spans.append({"phase": name, "start": None, "end": None, "seconds": seconds, "measured_by": "arm"})
+
     def _record(self, name: str, start: float, end: float, *, failed: bool) -> None:
-        span: dict[str, Any] = {"phase": name, "start": start, "end": end}
+        span: dict[str, Any] = {"phase": name, "start": start, "end": end, "seconds": end - start}
         if failed:
             span["failed"] = True
         self._spans.append(span)
@@ -65,7 +73,7 @@ class PhaseTimings:
     def to_dict(self) -> dict[str, Any]:
         phases: dict[str, float | None] = dict.fromkeys(PHASES)
         for span in self._spans:
-            phases[span["phase"]] = (phases[span["phase"]] or 0) + span["end"] - span["start"]
+            phases[span["phase"]] = (phases[span["phase"]] or 0) + span["seconds"]
         total = sum(value for value in phases.values() if value is not None)
         agent = phases[AGENT_PHASE] or 0
         return {

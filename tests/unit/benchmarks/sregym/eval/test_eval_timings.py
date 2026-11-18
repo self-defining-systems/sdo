@@ -37,8 +37,8 @@ def test_phase_records_seconds_and_a_span() -> None:
     assert document["phases"]["inject"] == 4
     assert document["phases"]["agent"] == 30
     assert document["spans"] == [
-        {"phase": "inject", "start": 100.0, "end": 104.0},
-        {"phase": "agent", "start": 104.0, "end": 134.0},
+        {"phase": "inject", "start": 100.0, "end": 104.0, "seconds": 4.0},
+        {"phase": "agent", "start": 104.0, "end": 134.0, "seconds": 30.0},
     ]
     assert document["total_seconds"] == 34
     assert document["overhead_seconds"] == 4  # everything outside the agent's own work
@@ -84,3 +84,14 @@ def test_write_is_atomic_json(tmp_path: Path) -> None:
     timings.write(tmp_path / "timings.json")
     assert json.loads((tmp_path / "timings.json").read_text())["schema"] == TIMINGS_SCHEMA
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_seconds_measured_inside_an_arm_are_added_and_marked() -> None:
+    timings = PhaseTimings(now=Clock())
+    timings.add("claim_reset", 12.5)
+    with pytest.raises(ValueError, match="negative"):
+        timings.add("deploy", -1)
+    document = timings.to_dict()
+    assert document["phases"]["claim_reset"] == 12.5
+    assert document["spans"][0]["measured_by"] == "arm"
+    assert document["overhead_seconds"] == 12.5

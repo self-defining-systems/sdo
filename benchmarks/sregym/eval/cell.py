@@ -60,6 +60,11 @@ class ArmResult:
     resolution_path: str | None = None
     applied_playbooks: tuple[str, ...] = ()
     binding_sources: tuple[str, ...] = ()
+    #: Epoch seconds at which the fault was actually injected, when the arm injects itself (a fastloop row does);
+    #: it replaces the backend's placeholder injection time.
+    injected_at: float | None = None
+    #: Phase seconds the arm measured inside its own process (claim_reset, deploy, inject, ...), added to the timings.
+    phase_seconds: Mapping[str, float] = field(default_factory=dict)
     #: Head of the lane's accepted memory after the cell (SDO arm); the first-try delta is taken from it.
     memory_commit_after: str | None = None
     error: str | None = None
@@ -202,6 +207,10 @@ def run_cell(cell: Cell, ctx: CellContext, lane_id: str) -> ResultRow:
             injection = ctx.backend.inject(lane, cell)
         arm = ArmContext(config=config, page_hook=ctx.page_hook, now=ctx.now, sleep=ctx.sleep)
         result = ctx.executors[cell.arm].execute(lane, cell, injection, directory, arm)
+        if result.injected_at is not None:
+            injection = Injection(at=result.injected_at)
+        for phase, seconds in result.phase_seconds.items():
+            timings.add(phase, seconds)
         if result.paged_at is not None:
             timings.record("page", injection.at, max(injection.at, result.paged_at))
             timings.record("agent", max(injection.at, result.paged_at), max(result.paged_at, result.agent_ended_at))
