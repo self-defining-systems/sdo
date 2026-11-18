@@ -21,6 +21,8 @@ type ProgramRun struct {
 	CanMitigate        *bool            `json:"can_mitigate,omitempty"`
 	FindingFingerprint string           `json:"finding_fingerprint,omitempty"`
 	BindingSource      string           `json:"binding_source,omitempty"`
+	// Retrieval is how the playbook came to be tried (Retrieval* below).
+	Retrieval string `json:"retrieval,omitempty"`
 	ProgramID          string           `json:"program_id"`
 	Bindings           program.Bindings `json:"bindings"`
 	Verdict            program.Verdict  `json:"verdict"`
@@ -49,6 +51,38 @@ const (
 	// (symptom, component) pair rather than through a finding's resources.
 	BindingSourceCredited = "credited"
 )
+
+// Retrieval paths: how a playbook came to be tried on a finding. Attribution only; none of them filters or orders.
+const (
+	// RetrievalDetector: a detector finding names the playbook.
+	RetrievalDetector = "detector"
+	// RetrievalRoleLessScan: a playbook with no object role is tried on every finding, named or not.
+	RetrievalRoleLessScan = "role_less_scan"
+	// RetrievalRoleBound: the playbook's object roles bound from a finding's resources.
+	RetrievalRoleBound = "role_bound"
+	// RetrievalCredited: bound through a credited (symptom, component) pair.
+	RetrievalCredited = "credited"
+	// RetrievalSuspect: the built-in source-restore candidate for a suspect component.
+	RetrievalSuspect = "suspect"
+)
+
+// RetrievalPaths lists every value a candidate producer can emit.
+var RetrievalPaths = []string{RetrievalDetector, RetrievalRoleLessScan, RetrievalRoleBound, RetrievalCredited, RetrievalSuspect}
+
+// findingRetrieval attributes the diagnosis of spec on finding: a detector that names the playbook comes first.
+func findingRetrieval(spec program.ProgramSpec, finding sdk.Finding) string {
+	for _, reference := range finding.Playbooks {
+		if id, err := layout.PlaybookID(reference); err == nil && id == spec.ID {
+			return RetrievalDetector
+		}
+	}
+	for _, param := range spec.Params {
+		if param.Kind != "" {
+			return RetrievalRoleBound
+		}
+	}
+	return RetrievalRoleLessScan
+}
 
 // BindingSources lists every value a candidate producer can emit.
 var BindingSources = []string{BindingSourceFinding, BindingSourceHint, BindingSourceSuspect, BindingSourceCredited}
@@ -99,6 +133,7 @@ func SelectKeyedProgramCandidates(ctx context.Context, registry program.ProgramR
 	type candidate struct {
 		fingerprint string
 		source      string
+		retrieval   string
 		id          string
 		bindings    program.Bindings
 		rank        int
@@ -106,16 +141,22 @@ func SelectKeyedProgramCandidates(ctx context.Context, registry program.ProgramR
 	var candidates []candidate
 	seen := map[string]bool{}
 	aliases := map[string][]candidate{}
-	add := func(id string, bindings program.Bindings, fingerprint, source string, rank int) {
+	position := map[string]int{}
+	add := func(id string, bindings program.Bindings, fingerprint, source, retrieval string, rank int) {
 		key := id + "\x00" + bindingKey(bindings)
 		if seen[key] {
+			// A finding that names the playbook is why it was tried, whichever finding got there first.
+			if retrieval == RetrievalDetector {
+				candidates[position[key]].retrieval = retrieval
+			}
 			if fingerprint != "" {
-				aliases[key] = append(aliases[key], candidate{fingerprint: fingerprint, source: source, id: id, bindings: bindings, rank: rank})
+				aliases[key] = append(aliases[key], candidate{fingerprint: fingerprint, source: source, retrieval: retrieval, id: id, bindings: bindings, rank: rank})
 			}
 			return
 		}
 		seen[key] = true
-		candidates = append(candidates, candidate{fingerprint: fingerprint, source: source, id: id, bindings: bindings, rank: rank})
+		position[key] = len(candidates)
+		candidates = append(candidates, candidate{fingerprint: fingerprint, source: source, retrieval: retrieval, id: id, bindings: bindings, rank: rank})
 	}
 	for _, finding := range findings {
 		if finding.Status != sdk.FindingActive {
@@ -127,13 +168,13 @@ func SelectKeyedProgramCandidates(ctx context.Context, registry program.ProgramR
 			}
 			bindings, source, ok := findingProgramBindings(spec, finding)
 			if ok {
-				add(spec.ID, bindings, FindingFingerprint(finding), source, 0)
+				add(spec.ID, bindings, FindingFingerprint(finding), source, findingRetrieval(spec, finding), 0)
 			}
 		}
 	}
 	for _, restore := range keyed.Restore {
 		if _, ok := registry.Diagnoser(SourceRestoreID); ok {
-			add(SourceRestoreID, restore.bindings, restore.fingerprint, BindingSourceSuspect, restore.rank)
+			add(SourceRestoreID, restore.bindings, restore.fingerprint, BindingSourceSuspect, RetrievalSuspect, restore.rank)
 		}
 	}
 	if keyed.active() {
@@ -142,7 +183,7 @@ func SelectKeyedProgramCandidates(ctx context.Context, registry program.ProgramR
 				continue
 			}
 			for _, credited := range creditedBindings(spec, keyed, findings) {
-				add(spec.ID, credited.bindings, credited.fingerprint, BindingSourceCredited, credited.rank)
+				add(spec.ID, credited.bindings, credited.fingerprint, BindingSourceCredited, RetrievalCredited, credited.rank)
 			}
 		}
 	}
@@ -155,6 +196,7 @@ func SelectKeyedProgramCandidates(ctx context.Context, registry program.ProgramR
 			associated := run
 			associated.FindingFingerprint = alias.fingerprint
 			associated.BindingSource = alias.source
+			associated.Retrieval = alias.retrieval
 			runs = append(runs, associated)
 		}
 		return runs
@@ -167,7 +209,7 @@ func SelectKeyedProgramCandidates(ctx context.Context, registry program.ProgramR
 				return
 			}
 			verdict := program.RunDiagnose(ctx, diagnoser, view, candidate.bindings, deadline)
-			results <- ProgramRun{FindingFingerprint: candidate.fingerprint, BindingSource: candidate.source, ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: verdict, Duration: lifecycleio.Since(started), suspectRank: candidate.rank}
+			results <- ProgramRun{FindingFingerprint: candidate.fingerprint, BindingSource: candidate.source, Retrieval: candidate.retrieval, ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: verdict, Duration: lifecycleio.Since(started), suspectRank: candidate.rank}
 		}(item)
 	}
 	runs := make([]ProgramRun, 0, len(candidates))
@@ -185,7 +227,7 @@ func SelectKeyedProgramCandidates(ctx context.Context, registry program.ProgramR
 					}
 				}
 				if !found {
-					runs = appendAssociations(runs, ProgramRun{FindingFingerprint: candidate.fingerprint, BindingSource: candidate.source, ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: program.Verdict{Result: program.Unknown, Evidence: []program.Evidence{{Fact: "diagnosis", Observed: ctx.Err().Error(), Expected: "completed before deadline"}}}, Duration: deadline, suspectRank: candidate.rank})
+					runs = appendAssociations(runs, ProgramRun{FindingFingerprint: candidate.fingerprint, BindingSource: candidate.source, Retrieval: candidate.retrieval, ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: program.Verdict{Result: program.Unknown, Evidence: []program.Evidence{{Fact: "diagnosis", Observed: ctx.Err().Error(), Expected: "completed before deadline"}}}, Duration: deadline, suspectRank: candidate.rank})
 				}
 			}
 			sortProgramRuns(runs)

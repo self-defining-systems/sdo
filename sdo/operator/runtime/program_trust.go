@@ -16,6 +16,9 @@ type ProgramTrust struct {
 	VerifiedSuccesses int    `json:"verified_successes"`
 	Failures          int    `json:"failures"`
 	LastChange        string `json:"last_change"`
+	// UnknownOnRecurrence counts the outcomes in which the playbook was tried and its diagnosis was Unknown: a
+	// playbook that could not recognise its fault. A counter that gates nothing and debits nothing.
+	UnknownOnRecurrence int `json:"unknown_on_recurrence"`
 }
 
 // ProgramTrustStats derives counters from durable outcomes. A changed
@@ -57,6 +60,17 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 			if revision != "" && revision != state.LastChange {
 				stats[run.GetProgramId()] = stateForRevision(run.GetProgramId(), revision)
 			}
+		}
+		unknownInOutcome := map[string]bool{}
+		for _, run := range outcome.GetProgramRuns() {
+			id := run.GetProgramId()
+			if run.GetVerdict().GetResult() != contracts.Verdict_RESULT_UNKNOWN || id == "" || id == SourceRestoreID || unknownInOutcome[id] {
+				continue
+			}
+			unknownInOutcome[id] = true
+			state := stats[id]
+			state.UnknownOnRecurrence++
+			stats[id] = state
 		}
 		failedInApplication := map[string]bool{}
 		creditedInOutcome := map[string]bool{}
