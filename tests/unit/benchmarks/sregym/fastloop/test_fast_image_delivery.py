@@ -109,7 +109,7 @@ def test_run_repeats_fallback_warning_before_starting_workers(monkeypatch, tmp_p
 
     monkeypatch.setattr(cli, "kubectl", stop)
     with pytest.raises(RuntimeError, match="stop before worker"):
-        cli.main(["run", "--run-dir", str(tmp_path), "--agent", "sdo"])
+        cli.main(["run", "--run-dir", str(tmp_path), "--agent", "sdo", "--allow-no-evidence-sink"])
     assert "WARNING: image_delivery: kind-load-fallback" in capsys.readouterr().err
 
 

@@ -265,6 +265,7 @@ def test_lane_destruction_settles_queued_exports_first(tmp_path: Path, monkeypat
         workspace = tmp_path / "workspace"
         state_path = tmp_path / "state.json"
         parallel_root = None
+        evidence_root = None
 
     with pytest.raises(RuntimeError, match="destructive step"):
         wipe.wipe_environment(

@@ -151,4 +151,17 @@ def test_cli_records_permissive_gaps_before_worker_launch(tmp_path, monkeypatch,
     monkeypatch.setattr(cli, "_worker", worker)
     expected = WorkerReached if mode == "permissive" else ValueError
     with pytest.raises(expected):
-        cli.main(["run", "--run-dir", str(tmp_path), "--stream", str(stream), "--agent", "sdo", "--run-id", "test"])
+        cli.main(
+            [
+                "run",
+                "--run-dir",
+                str(tmp_path),
+                "--stream",
+                str(stream),
+                "--agent",
+                "sdo",
+                "--allow-no-evidence-sink",
+                "--run-id",
+                "test",
+            ]
+        )

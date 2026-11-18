@@ -74,7 +74,18 @@ def test_rejected_row_never_wipes_or_starts_setup(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "kubectl", lambda *a, **kw: pytest.fail("cluster access before plan admission"))
     monkeypatch.setattr(cli, "_worker", lambda *a: pytest.fail("worker before plan admission"))
     args = cli.build_parser().parse_args(
-        ["run", "--run-dir", str(tmp_path), "--agent", "sdo", "--problem", "synthetic", "--run-id", "rejected"]
+        [
+            "run",
+            "--run-dir",
+            str(tmp_path),
+            "--agent",
+            "sdo",
+            "--allow-no-evidence-sink",
+            "--problem",
+            "synthetic",
+            "--run-id",
+            "rejected",
+        ]
     )
     with pytest.raises(FaultNotInstallableError, match="not_runnable_on_lane"):
         cli._run(args)

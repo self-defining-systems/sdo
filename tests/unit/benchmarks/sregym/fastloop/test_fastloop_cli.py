@@ -199,7 +199,7 @@ def test_run_checks_sdo_credentials_before_worker_setup(tmp_path: Path, monkeypa
     monkeypatch.setattr(cli, "_worker", lambda _environment: pytest.fail("worker started before credential preflight"))
 
     with pytest.raises(SystemExit, match="credentials Secret.*sdo-agent-credentials.*missing"):
-        main(["run", "--run-dir", str(tmp_path), "--agent", "sdo"])
+        main(["run", "--run-dir", str(tmp_path), "--agent", "sdo", "--allow-no-evidence-sink"])
 
     assert checked == [["get", "secret", "sdo-agent-credentials", "-o", "name"]]
 
@@ -521,7 +521,18 @@ def test_mf_stream_launches_with_both_component_probes(tmp_path: Path, monkeypat
 
     assert (
         main(
-            ["run", "--run-dir", str(tmp_path), "--agent", "sdo", "--stream", str(stream), "--diagnosis-grading", "off"]
+            [
+                "run",
+                "--run-dir",
+                str(tmp_path),
+                "--agent",
+                "sdo",
+                "--allow-no-evidence-sink",
+                "--stream",
+                str(stream),
+                "--diagnosis-grading",
+                "off",
+            ]
         )
         == 1
     )

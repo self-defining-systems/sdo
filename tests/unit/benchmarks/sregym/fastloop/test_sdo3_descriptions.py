@@ -152,7 +152,15 @@ def test_unsupported_requested_tracking_fails_before_worker_deployment(tmp_path,
         lambda *args, **kwargs: {problem_id: describe_problem(problem_id, part("MongoDBUserUnregistered"))},
     )
     monkeypatch.setattr(cli, "_worker", lambda _: pytest.fail("preflight must finish before deployment"))
-    arguments = ["run", "--run-dir", str(tmp_path), "--agent", "sdo", "--require-fault-tracking"]
+    arguments = [
+        "run",
+        "--run-dir",
+        str(tmp_path),
+        "--agent",
+        "sdo",
+        "--allow-no-evidence-sink",
+        "--require-fault-tracking",
+    ]
     if stream_mode:
         stream = tmp_path / "stream.json"
         stream.write_text('["mf__synthetic"]')
