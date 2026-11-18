@@ -152,7 +152,7 @@ def test_a_claim_whose_stores_differ_forces_a_full_restore_then_proves_it() -> N
     def verify() -> None:
         log.append("verify")
         if not state["clean"]:
-            raise hooks.HookError("pg/migrations differs")
+            raise hooks.StoreMismatch("pg/migrations differs")
 
     def restore() -> None:
         log.append("restore")
@@ -162,15 +162,18 @@ def test_a_claim_whose_stores_differ_forces_a_full_restore_then_proves_it() -> N
     assert [e for e in log if e in ("verify", "restore")] == ["verify", "restore", "verify"]
 
 
-def test_a_claim_whose_stores_still_differ_after_the_restore_fails_loudly() -> None:
+def test_a_claim_whose_stores_still_differ_after_the_restores_fails_loudly_after_at_most_two() -> None:
+    restores: list[int] = []
+
     def verify() -> None:
-        raise hooks.HookError("pg/migrations differs")
+        raise hooks.StoreMismatch("pg/migrations differs")
 
     with pytest.raises(hooks.HookError, match="after 2 full restores: pg/migrations differs"):
-        hooks.prove_golden(verify, lambda: None, lambda _m: None)
+        hooks.prove_golden(verify, lambda: restores.append(1), lambda _m: None)
+    assert len(restores) == 2
 
 
-def test_a_restore_that_itself_fails_the_gate_is_tried_once_more_before_the_claim_fails() -> None:
+def test_a_restore_that_itself_fails_the_store_check_is_tried_once_more_before_the_claim_fails() -> None:
     # the pool lane pc5 failed its claim because the restore's own verify raced the app (a key or the schema was
     # still moving); the second restore, run on a settled app, proves the copy
     log: list[str] = []
@@ -179,13 +182,13 @@ def test_a_restore_that_itself_fails_the_gate_is_tried_once_more_before_the_clai
     def verify() -> None:
         log.append("verify")
         if state["restores"] == 0:
-            raise hooks.HookError("redis/cache:x:set has other content")
+            raise hooks.StoreMismatch("redis/cache:x:set has other content")
 
     def restore() -> None:
         state["restores"] += 1
         log.append("restore")
         if state["restores"] == 1:
-            raise hooks.HookError(
+            raise hooks.StoreMismatch(
                 "app reset failed: reset: the data stores are not the golden copy's: postgres/columns differs"
             )
         log.append("restored")
@@ -200,18 +203,84 @@ def test_a_restore_that_itself_fails_the_gate_is_tried_once_more_before_the_clai
     ]
 
 
-def test_a_claim_fails_naming_the_last_difference_when_every_restore_attempt_fails() -> None:
+def test_a_claim_fails_naming_the_last_difference_when_every_restore_attempt_fails_the_store_check() -> None:
+    calls: list[int] = []
+
     def verify() -> None:
-        raise hooks.HookError("first")
+        raise hooks.StoreMismatch("first")
 
     def restore() -> None:
-        raise hooks.HookError("app reset failed: postgres/columns differs")
+        calls.append(1)
+        raise hooks.StoreMismatch("app reset failed: postgres/columns differs")
 
     with pytest.raises(hooks.HookError, match="after 2 full restores: app reset failed: postgres/columns differs"):
         hooks.prove_golden(verify, restore, lambda _m: None)
+    assert len(calls) == 2
 
 
-def test_a_failed_snapshot_leaves_no_golden_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_restore_that_fails_for_another_reason_is_not_repeated() -> None:
+    # a controller that does not start, a repository restore that fails: a second full reset cannot help and would
+    # hold the claim for as long again before the pool rebuilds the lane
+    calls: list[int] = []
+
+    def verify() -> None:
+        raise hooks.StoreMismatch("pg/migrations differs")
+
+    def restore() -> None:
+        calls.append(1)
+        raise hooks.HookError("controller did not start in 900s")
+
+    with pytest.raises(hooks.HookError, match="controller did not start"):
+        hooks.prove_golden(verify, restore, lambda _m: None)
+    assert len(calls) == 1
+
+
+def test_a_verify_that_fails_for_another_reason_restores_nothing() -> None:
+    calls: list[int] = []
+
+    def verify() -> None:
+        raise hooks.HookError("no golden copy of the app in /lane/app-golden: run the snapshot verb first")
+
+    with pytest.raises(hooks.HookError, match="no golden copy"):
+        hooks.prove_golden(verify, lambda: calls.append(1), lambda _m: None)
+    assert calls == []
+
+
+def test_the_restore_attempts_must_be_at_least_one() -> None:
+    with pytest.raises(ValueError, match="at least 1"):
+        hooks.prove_golden(lambda: None, lambda: None, lambda _m: None, attempts=0)
+
+
+def test_the_fuzzops_verdict_that_the_stores_are_not_the_golden_copys_is_a_store_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = {**lane(tmp_path), "FUZZOPS_BIN": "/bin/fuzzops"}
+    golden = hooks.golden_directory(env)
+    golden.mkdir()
+    (golden / "meta.json").write_text("{}")
+
+    def run(stderr: str):
+        class Done:
+            returncode = 1
+            stdout = ""
+
+        Done.stderr = stderr  # type: ignore[attr-defined]
+        return lambda *_a, **_k: Done()
+
+    monkeypatch.setattr(
+        hooks.subprocess,
+        "run",
+        run("reset: the data stores are not the golden copy's: postgres/columns differs (reference a, now b)"),
+    )
+    with pytest.raises(hooks.StoreMismatch, match="postgres/columns differs"):
+        hooks.fuzzops_app(env, "reset")
+    monkeypatch.setattr(hooks.subprocess, "run", run("usage: fuzzops app up|down --pack DIR"))
+    with pytest.raises(hooks.HookError) as other:
+        hooks.fuzzops_app(env, "verify")
+    assert not isinstance(other.value, hooks.StoreMismatch)
+
+
+def _snapshot_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, idle: str, copy: object) -> tuple[Path, list[str]]:
     env = lane(tmp_path)
     golden = hooks.golden_directory(env)
     golden.mkdir()
@@ -219,12 +288,34 @@ def test_a_failed_snapshot_leaves_no_golden_copy(tmp_path: Path, monkeypatch: py
     monkeypatch.setattr(hooks, "set_maintenance", lambda *_a, **_k: None)
     monkeypatch.setattr(hooks, "_kube", lambda _e: None)
     monkeypatch.setattr(hooks, "control_namespace", lambda _e: "ns")
-    monkeypatch.setattr(hooks, "fuzzops_app", lambda _e, _v: {"match": True})
+
+    def copy_app(_e: object, _v: str) -> dict[str, object]:
+        if isinstance(copy, Exception):
+            raise copy
+        return {"match": True}
+
+    monkeypatch.setattr(hooks, "fuzzops_app", copy_app)
     monkeypatch.setattr(hooks, "wait_app_ready", lambda *_a, **_k: None)
-    monkeypatch.setattr(hooks, "wait_idle_stable", lambda *_a, **_k: "idle for less than the quiet period")
-    with pytest.raises(hooks.HookError, match="not idle after the snapshot"):
-        hooks.snapshot(env, lambda _m: None)
+    monkeypatch.setattr(hooks, "wait_idle_stable", lambda *_a, **_k: idle)
+    printed: list[str] = []
+    with pytest.raises(hooks.HookError):
+        hooks.snapshot(env, printed.append)
+    return golden, printed
+
+
+def test_a_snapshot_whose_only_failure_is_the_post_copy_idle_wait_keeps_the_good_golden_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    golden, printed = _snapshot_env(tmp_path, monkeypatch, "idle for less than the quiet period", None)
+    assert (golden / "meta.json").is_file()
+    # the manager reads the last stdout line: the copy is whole, only the operator was not idle yet
+    assert json.loads(printed[-1]) == {"golden": "kept", "not_idle": "idle for less than the quiet period"}
+
+
+def test_a_snapshot_whose_copy_fails_leaves_no_golden_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    golden, printed = _snapshot_env(tmp_path, monkeypatch, "", hooks.HookError("app snapshot failed: no space"))
     assert not golden.exists()
+    assert not any("golden" in line for line in printed)
 
 
 def test_the_snapshot_is_refused_for_an_app_that_differs_from_the_fresh_deploy(
