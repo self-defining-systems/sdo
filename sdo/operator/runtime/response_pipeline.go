@@ -377,7 +377,7 @@ func (c *Controller) prepareResponseStageHandoff(ctx context.Context, request In
 		var err error
 		prepared, err = preparer.PrepareDispatch(ctx, request)
 		if err != nil {
-			return IncidentRequest{}, fmt.Errorf("prepare stage handoff: %w", err)
+			return IncidentRequest{}, &DispatchPrepareError{Err: fmt.Errorf("prepare stage handoff: %w", err)}
 		}
 	}
 	c.mu.Lock()

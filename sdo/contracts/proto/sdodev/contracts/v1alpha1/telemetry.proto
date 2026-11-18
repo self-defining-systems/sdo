@@ -50,7 +50,7 @@ message LifecycleEvent {
   string event = 3 [(buf.validate.field).string = {
     in: [
       "incident_opened", "workspace_prepared",
-      "responder_dispatched", "responder_completed", "incident_closed", "closure_committed", "incident_acknowledged"
+      "responder_dispatched", "responder_completed", "responder_dispatch_failed", "incident_closed", "closure_committed", "incident_acknowledged"
     ]
   }];
   google.protobuf.Timestamp recorded_at = 4 [(buf.validate.field).required = true];

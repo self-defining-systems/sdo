@@ -315,6 +315,24 @@ func TestAfterPlaybookDefaultsFileEnvironmentAndValidation(t *testing.T) {
 	}
 }
 
+// A transient failure to prepare the responder's task retries for two minutes by default, then escalates; the bound
+// is configurable and must be positive.
+func TestDispatchPrepareBoundDefaultEnvironmentAndValidation(t *testing.T) {
+	if got := time.Duration(settings.Default().Response.DispatchPrepareBound); got != 2*time.Minute {
+		t.Fatalf("response.dispatch_prepare_bound default = %v, want 2m", got)
+	}
+	cfg, err := settings.Resolve(nil, []string{"SDO_AGENT_MODEL=m", "SDO_RESPONSE_DISPATCH_PREPARE_BOUND=30s"})
+	if err != nil || time.Duration(cfg.Response.DispatchPrepareBound) != 30*time.Second {
+		t.Fatalf("environment: %v %+v", err, cfg.Response)
+	}
+	bad := settings.Default()
+	bad.Agent.Model = "m"
+	bad.Response.DispatchPrepareBound = 0
+	if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "response.dispatch_prepare_bound") {
+		t.Fatalf("a zero bound must be refused, got %v", err)
+	}
+}
+
 func TestPageOnlyResponseRefusesInvestigators(t *testing.T) {
 	cfg := settings.Default()
 	cfg.Agent.Model = "m"

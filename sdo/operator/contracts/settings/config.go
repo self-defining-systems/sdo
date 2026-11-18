@@ -150,6 +150,7 @@ type Response struct {
 	RepairPolicy         string   `yaml:"repair_policy" doc:"the evidence the controller requires for a responder repair: commit (a source repair is committed through the broker; production) or recorded-actions (live cluster repairs are recorded as actions without a source commit; benchmark runs)"`
 	AfterPlaybook        string   `yaml:"after_playbook" doc:"what happens when a learned playbook applied and the alert set did not recover within the stage's bound: agent (dispatch the agent, told what the playbook did), escalate (no agent; the incident stays open under ordinary closure and closes failed at the verification timeout if the alerts never clear) or wait (keep waiting for recovery up to after_playbook_wait, then escalate). When recovery holds, no agent runs in any setting; an alert that did not open the incident never dispatches the agent after an applied playbook"`
 	AfterPlaybookWait    Duration `yaml:"after_playbook_wait" doc:"how long after_playbook: wait keeps waiting for the alert set to recover after the playbook applied, capped by the response timeout"`
+	DispatchPrepareBound Duration `yaml:"dispatch_prepare_bound" doc:"how long a transient failure to prepare the responder's task (a Git, IO or Kubernetes API error) is retried with backoff before the incident escalates without an agent, capped by the response timeout; a permanent failure (unreadable operational memory, a task over budget) escalates at once"`
 	Standby              bool     `yaml:"standby" doc:"pre-start a responder worker; false forces cold Jobs"`
 	Menu                 bool     `yaml:"menu" doc:"offer the responder its tool menu"`
 	BuiltinRestoreAuto   bool     `yaml:"builtin_restore_auto" doc:"let the automatic stage apply the built-in source-restore playbook (put a component's non-SDO departures from accepted source back) when its diagnosis matches; off, it is only offered like any playbook and the responder decides"`
@@ -212,7 +213,7 @@ func Default() Config {
 		Response: Response{
 			Timeout: Duration(30 * time.Minute), VerificationTimeout: Duration(5 * time.Minute), MaxLoops: 10,
 			DiagnosisDeadline: Duration(10 * time.Second), StageBudget: Duration(45 * time.Second), RepairPolicy: "commit",
-			AfterPlaybook: AfterPlaybookAgent, AfterPlaybookWait: Duration(5 * time.Minute),
+			AfterPlaybook: AfterPlaybookAgent, AfterPlaybookWait: Duration(5 * time.Minute), DispatchPrepareBound: Duration(2 * time.Minute),
 			CleanupTurns: 2, InvestigatorDelay: Duration(60 * time.Second), Standby: true, Menu: true, StartupBound: Duration(30 * time.Minute),
 		},
 		Detection: Detection{
@@ -309,6 +310,7 @@ func (c Config) Validate() error {
 	oneOf("response.repair_policy", c.Response.RepairPolicy, "commit", "recorded-actions")
 	oneOf("response.after_playbook", c.Response.AfterPlaybook, AfterPlaybookAgent, AfterPlaybookEscalate, AfterPlaybookWait)
 	positive("response.after_playbook_wait", c.Response.AfterPlaybookWait)
+	positive("response.dispatch_prepare_bound", c.Response.DispatchPrepareBound)
 	positive("detection.self_heal_hold", c.Detection.SelfHealHold)
 	positive("detection.stability_window", c.Detection.StabilityWindow)
 	positive("detection.drift_batch_window", c.Detection.DriftBatchWindow)
