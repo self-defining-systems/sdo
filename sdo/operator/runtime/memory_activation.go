@@ -55,11 +55,10 @@ func (c *Controller) ReconfigureMemory(remote *RemoteMemory, provider SnapshotPr
 	c.batcher.Retain(c.knownDetector)
 	c.detectorSpecs = specs
 	c.healthDetectorIDs = health
-	if c.onboardingReachability != nil {
-		// The new catalog keeps the onboarding reachability reference the controller installed at startup.
-		provider = onboardingSnapshotProvider{Base: provider, State: c.onboardingReachability}
-	}
-	c.provider = provider
+	// The new catalog keeps the held keys and the onboarding reachability
+	// reference the controller installed at startup.
+	c.baseProvider = provider
+	c.composeProvider()
 	return nil
 }
 

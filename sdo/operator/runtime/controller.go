@@ -26,6 +26,7 @@ import (
 	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
+	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -108,6 +109,9 @@ type dispatchCompletion struct {
 type Controller struct {
 	// heldKeys are the open incident's alert keys, published for the snapshot provider (sdk.HeldAlertSource).
 	heldKeys atomic.Pointer[[]string]
+	// baseProvider is the provider as given (a ReadSnapshotProvider in
+	// production); provider is its composition, see composeProvider.
+	baseProvider SnapshotProvider
 	// signals is the 15-minute ring the incident timeline is drawn from.
 	signals           *incidentSignals
 	ExternalIncidents func(context.Context) (*ExternalIncident, error)
@@ -438,8 +442,31 @@ func NewController(
 		reflectionResults:     make(chan reflectionCompletion, 1), reflections: reflectionQueueState{rescan: true},
 		dispatchJitter: lifecycleio.DispatchJitter,
 	}
-	controller.provider = heldSnapshotProvider{Base: provider, held: &controller.heldKeys}
+	controller.baseProvider = provider
+	controller.composeProvider()
 	return controller, nil
+}
+
+// composeProvider builds the snapshot provider the controller reads through:
+// the held alert keys and the install reachability reference decorate the
+// observation inputs, and the live read view is built last over the result so
+// it keeps its accepted source, commit, client, prober and baseline. A
+// decorator above the view could only flatten it. Every change to the base or
+// to a decoration goes through here.
+func (c *Controller) composeProvider() {
+	decorate := func(p SnapshotProvider) SnapshotProvider {
+		p = heldSnapshotProvider{Base: p, held: &c.heldKeys}
+		if c.onboardingReachability != nil {
+			p = onboardingSnapshotProvider{Base: p, State: c.onboardingReachability}
+		}
+		return p
+	}
+	if view, ok := c.baseProvider.(ReadSnapshotProvider); ok {
+		view.Base = decorate(view.Base)
+		c.provider = view
+		return
+	}
+	c.provider = decorate(c.baseProvider)
 }
 
 // publishHeldLocked records the open incident's alert keys for the snapshots
@@ -468,6 +495,9 @@ func (p heldSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContex
 	keys := p.held.Load()
 	if keys == nil || len(*keys) == 0 {
 		return base, nil
+	}
+	if _, built := base.(program.ReadView); built {
+		return nil, errors.New("held alert keys must decorate the snapshot beneath the read view; a decorator above it would drop the view's source, client and prober")
 	}
 	return heldContext{Carrier: inputs.New(base).WithHeld(*keys)}, nil
 }

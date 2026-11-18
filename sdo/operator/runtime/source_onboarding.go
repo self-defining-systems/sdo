@@ -99,13 +99,7 @@ func (c *Controller) AttachPendingOnboarding(ctx context.Context, client kuberne
 	if reference != nil && reference.Authorization.ObjectiveDigest != c.reachabilityObjectiveDigest() {
 		reference = nil
 	}
-	// A retried attachment (a transient read failure below) reuses the wrapper.
-	if c.onboardingReachability == nil {
-		c.onboardingReachability = &onboardingReachabilityState{reference: reference}
-		c.provider = onboardingSnapshotProvider{Base: c.provider, State: c.onboardingReachability}
-	} else {
-		c.onboardingReachability.reference, c.onboardingReachability.invalid = reference, false
-	}
+	c.attachOnboardingReference(reference)
 	if c.namespaceOnboarding != nil {
 		return nil
 	}
@@ -133,6 +127,17 @@ func (c *Controller) AttachPendingOnboarding(ctx context.Context, client kuberne
 	c.sourceInventory = nil
 	c.pendingOnboarding = record
 	return nil
+}
+
+// attachOnboardingReference installs the install reachability reference. A
+// retried attachment (a transient read failure) reuses the wrapper.
+func (c *Controller) attachOnboardingReference(reference *servicehealth.ReachabilityBaseline) {
+	if c.onboardingReachability == nil {
+		c.onboardingReachability = &onboardingReachabilityState{reference: reference}
+		c.composeProvider()
+	} else {
+		c.onboardingReachability.reference, c.onboardingReachability.invalid = reference, false
+	}
 }
 
 func (c *Controller) beginOnboarding(ctx context.Context, detectors []sdk.Detector, now time.Time) *contracts.NamespaceOnboarding {
