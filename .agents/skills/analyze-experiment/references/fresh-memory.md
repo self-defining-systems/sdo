@@ -25,13 +25,12 @@ The legacy controller checkpoint is recognized by its exact name,
 `sdo.dev/state-revision` annotation and `runtime-state.json` key. Retiring it
 prevents restored controller state from resurrecting old onboarding authority.
 
-Setup detector exclusions: `ControllerState.disabled_setup_detectors`,
-`NamespaceOnboarding.disabled_setup_detectors` (the immutable setup receipt), `IncidentRequest.disabled_setup_detectors`, and
-`OutcomeRecord.disabled_setup_detectors` retain detector ID, accepted revision,
-finding fingerprints, disabled time and the reason "fired on the confirmed-healthy
-app at setup". Only responder-owned learned incident detectors qualify; health
-judge detectors remain authoritative. Evaluation is skipped only at the exact
-accepted revision and resumes on a different revision. Reflection sees the
-outcome records to repair or delete the detector; exclusion is not incident
-recovery or repair credit. `setup_evaluated_revision` prevents later steady-state
-findings being mistaken for setup false positives.
+Setup and incident-class detectors: only health-class detectors and user tests decide whether an install or
+start-up is healthy and accepted. An incident-class detector (designer-authored or learned alike) never affects
+acceptance and is never disabled at setup. When one fires or errors while the app is judged healthy it stays
+enabled and is recorded as noisy evidence: a log line and `NamespaceOnboarding.setup_noisy` (detector ID,
+accepted revision, `errored` or `fired`, the error or the fired rule IDs). The earlier quarantine is gone:
+`disabled_setup_detectors` (controller state, onboarding record, incident request, outcome record) is retired and
+stored documents that still carry it decode with the field dropped. Read `setup_noisy` to see which clues were
+noisy at install; a detector that is always noisy needs repair by reflection, and the install is unaffected.
+`setup_evaluated_revision` prevents later steady-state findings being mistaken for setup noise.

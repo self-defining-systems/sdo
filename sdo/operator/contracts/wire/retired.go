@@ -19,13 +19,17 @@ import (
 // retiredFieldNames maps "<message>.<old field>" to the field that replaced it,
 // or to "" when the field was removed and its stored value is dropped.
 var retiredFieldNames = map[string]string{
-	"sdodev.contracts.v1alpha1.ReflectionEligibility.evidence_gap_count":   "no_repair_count",
-	"sdodev.contracts.v1alpha1.BrokerLedger.reflection_evidence_gap_count": "reflection_no_repair_count",
-	"sdodev.contracts.v1alpha1.RecoveryVerification.probed":                "",
-	"sdodev.contracts.v1alpha1.RecoveryVerification.components":            "",
-	"sdodev.contracts.v1alpha1.PlanApplication.restored_source":             "",
-	"sdodev.contracts.v1alpha1.ControllerState.verification_deadline_at":    "",
-	"sdodev.contracts.v1alpha1.IncidentResult.late_findings_pull":           "",
+	"sdodev.contracts.v1alpha1.ReflectionEligibility.evidence_gap_count":     "no_repair_count",
+	"sdodev.contracts.v1alpha1.BrokerLedger.reflection_evidence_gap_count":   "reflection_no_repair_count",
+	"sdodev.contracts.v1alpha1.RecoveryVerification.probed":                  "",
+	"sdodev.contracts.v1alpha1.RecoveryVerification.components":              "",
+	"sdodev.contracts.v1alpha1.PlanApplication.restored_source":              "",
+	"sdodev.contracts.v1alpha1.ControllerState.verification_deadline_at":     "",
+	"sdodev.contracts.v1alpha1.IncidentResult.late_findings_pull":            "",
+	"sdodev.contracts.v1alpha1.ControllerState.disabled_setup_detectors":     "",
+	"sdodev.contracts.v1alpha1.NamespaceOnboarding.disabled_setup_detectors": "",
+	"sdodev.contracts.v1alpha1.IncidentRequest.disabled_setup_detectors":     "",
+	"sdodev.contracts.v1alpha1.OutcomeRecord.disabled_setup_detectors":       "",
 }
 
 // retiredValues maps "<message>.<field>" to retired value -> successor, for

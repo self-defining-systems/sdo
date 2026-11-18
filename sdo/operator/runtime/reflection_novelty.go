@@ -11,7 +11,7 @@ import (
 // keeps learning available. The shared Check still rejects hand repairs and
 // stale/partial stage applications from the committed controller outcome.
 func coveredRepeatCandidate(outcome *contracts.OutcomeRecord) bool {
-	if outcome.GetClassification() != "success" || len(outcome.GetFindings()) == 0 || outcome.RepairCommit != nil || outcome.GetResponseLoopExhausted() || len(outcome.GetProgramFailureSignals()) > 0 || len(outcome.GetUndetectedCauses()) > 0 || len(outcome.GetDisabledSetupDetectors()) > 0 || outcome.GetStatePersistenceFailure() != nil {
+	if outcome.GetClassification() != "success" || len(outcome.GetFindings()) == 0 || outcome.RepairCommit != nil || outcome.GetResponseLoopExhausted() || len(outcome.GetProgramFailureSignals()) > 0 || len(outcome.GetUndetectedCauses()) > 0 || outcome.GetStatePersistenceFailure() != nil {
 		return false
 	}
 	applied := map[string][]*contracts.PlanApplication{}

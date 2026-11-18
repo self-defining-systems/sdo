@@ -155,9 +155,6 @@ func (c *Controller) healthyEvaluation(ignore func(string) bool, pendingOK bool)
 		return false
 	}
 	for id := range c.detectors {
-		if c.setupDetectorDisabled(id) {
-			continue
-		}
 		if ignore(id) {
 			continue
 		}

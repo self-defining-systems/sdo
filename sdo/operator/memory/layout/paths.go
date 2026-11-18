@@ -63,11 +63,12 @@ const (
 	// checks under .sdo/diagnostics/data; version 7 adds the controller's
 	// recovery verification to each outcome document; version 8 lets Go write
 	// the incident's opening keys and suspects into corpus case labels; version 9
-	// adds the agent's findings to each outcome document; version 10 adds the changes the agent reported. Versions 4 to 10 need
-	// no conversion: no earlier repository holds those files, an earlier
-	// outcome keeps what it recorded, and an earlier case is valid without the
-	// optional labels.
-	CurrentSchemaVersion = 10
+	// adds the agent's findings to each outcome document; version 10 adds the changes the agent reported;
+	// version 11 retires disabled_setup_detectors from outcome documents.
+	// Versions 4 to 11 need no conversion: no earlier repository holds those
+	// files, an earlier outcome keeps what it recorded (the retired field is
+	// dropped on read), and an earlier case is valid without the optional labels.
+	CurrentSchemaVersion = 11
 )
 
 // Kind names a class of file in operational memory.

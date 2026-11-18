@@ -148,7 +148,7 @@ StateFieldChange = messages_pb2.StateFieldChange
 StateChange = messages_pb2.StateChange
 StateChanges = messages_pb2.StateChanges
 InstallEnvironmentObject = messages_pb2.InstallEnvironmentObject
-DisabledSetupDetector = messages_pb2.DisabledSetupDetector
+SetupNoisyDetector = messages_pb2.SetupNoisyDetector
 NamespaceOnboarding = messages_pb2.NamespaceOnboarding
 TelemetryContext = messages_pb2.TelemetryContext
 TelemetryPublish = messages_pb2.TelemetryPublish
@@ -308,7 +308,7 @@ __all__ = [
     "TelemetrySource",
     "IncidentRequest",
     "NamespaceOnboarding",
-    "DisabledSetupDetector",
+    "SetupNoisyDetector",
     "InstallEnvironmentObject",
     "IncidentResult",
     "MemoryDetector",

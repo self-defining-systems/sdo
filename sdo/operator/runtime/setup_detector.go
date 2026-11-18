@@ -2,57 +2,78 @@ package runtime
 
 import (
 	"context"
+	"log/slog"
 	"sort"
-	"time"
+	"strings"
+	"unicode/utf8"
 
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 )
 
-const setupDetectorReason = "fired on the confirmed-healthy app at setup"
+// Only health-class detectors and user tests decide whether an install or a
+// start-up is healthy and accepted. An incident-class detector, designer-authored
+// or learned alike, is a clue: when it errors or fires while the app is judged
+// healthy it stays enabled and is recorded as noisy evidence, nothing else.
 
-func learnedIncidentDetector(spec sdk.DetectorSpec) bool {
-	return spec.Class == sdk.DetectorClassIncident && spec.Owner == sdk.DetectorOwnerResponder && spec.OriginatingIncident != ""
-}
+// maxSetupNoiseBytes bounds the detail a noisy-detector record keeps (the
+// contract's max_len).
+const maxSetupNoiseBytes = 500
 
-func cloneDisabledSetupDetectors(records []*contracts.DisabledSetupDetector) []*contracts.DisabledSetupDetector {
-	result := make([]*contracts.DisabledSetupDetector, 0, len(records))
-	for _, record := range records {
-		result = append(result, proto.Clone(record).(*contracts.DisabledSetupDetector))
+const (
+	setupNoiseErrored = "errored"
+	setupNoiseFired   = "fired"
+)
+
+// gatesSetup reports whether spec's result may decide an install: only a
+// health-class detector does.
+func gatesSetup(spec sdk.DetectorSpec) bool { return spec.Class == sdk.DetectorClassHealth }
+
+// recordSetupNoise notes an incident-class detector that errored or fired on the
+// healthy app at setup. It logs, and records the evidence on the install being
+// completed. It changes nothing else.
+func (c *Controller) recordSetupNoise(ctx context.Context, spec sdk.DetectorSpec, outcome, detail string, candidate *contracts.NamespaceOnboarding) {
+	detail = clipSetupDetail(detail)
+	slog.WarnContext(ctx, "incident detector is noisy on the healthy app at setup", "detector", spec.ID, "outcome", outcome, "detail", detail)
+	if candidate == nil {
+		return
 	}
-	return result
-}
-
-func setupDetectorExcluded(spec sdk.DetectorSpec, revision string, records []*contracts.DisabledSetupDetector) bool {
-	if !learnedIncidentDetector(spec) {
-		return false
-	}
-	for _, record := range records {
-		if record.DetectorId == spec.ID && record.AcceptedRevision == revision {
-			return true
+	for _, record := range candidate.SetupNoisy {
+		if record.DetectorId == spec.ID && record.AcceptedRevision == c.config.SourceCommit && record.Outcome == outcome {
+			return
 		}
 	}
-	return false
+	candidate.SetupNoisy = append(candidate.SetupNoisy, &contracts.SetupNoisyDetector{DetectorId: spec.ID, AcceptedRevision: c.config.SourceCommit, Outcome: outcome, Detail: detail})
 }
 
-func withoutDisabledSetupDetectors(detectors []sdk.Detector, revision string, records []*contracts.DisabledSetupDetector) []sdk.Detector {
-	result := make([]sdk.Detector, 0, len(detectors))
-	for _, detector := range detectors {
-		if !setupDetectorExcluded(detector.Spec(), revision, records) {
-			result = append(result, detector)
+// clipSetupDetail keeps one line of at most maxSetupNoiseBytes, cut on a rune
+// boundary.
+func clipSetupDetail(text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if len(text) <= maxSetupNoiseBytes {
+		return text
+	}
+	cut := maxSetupNoiseBytes
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut]
+}
+
+// firedRules names the active findings' rules, sorted, for a noisy record.
+func firedRules(findings []sdk.Finding) string {
+	rules := map[string]bool{}
+	for _, finding := range findings {
+		if finding.Status == sdk.FindingActive {
+			rules[finding.RuleID] = true
 		}
 	}
-	return result
-}
-
-func (c *Controller) setupDetectorDisabled(id string) bool {
-	return setupDetectorExcluded(c.detectorSpecs[id], c.config.SourceCommit, c.disabledSetupDetectors)
-}
-
-func (c *Controller) enabledSetupDetectors(detectors []sdk.Detector) []sdk.Detector {
-	return withoutDisabledSetupDetectors(detectors, c.config.SourceCommit, c.disabledSetupDetectors)
+	names := make([]string, 0, len(rules))
+	for name := range rules {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ",")
 }
 
 type setupDetection struct {
@@ -92,26 +113,4 @@ func (c *Controller) setupHealth(ctx context.Context, snapshot sdk.DetectionCont
 		}
 	}
 	return results, healthy
-}
-
-func (c *Controller) disableSetupDetector(spec sdk.DetectorSpec, findings []sdk.Finding, now time.Time, candidate *contracts.NamespaceOnboarding) bool {
-	fingerprints := make([]string, 0, len(findings))
-	for _, finding := range findings {
-		if finding.Status == sdk.FindingActive {
-			fingerprints = append(fingerprints, finding.Fingerprint)
-		}
-	}
-	if len(fingerprints) == 0 {
-		return false
-	}
-	sort.Strings(fingerprints)
-	record := &contracts.DisabledSetupDetector{DetectorId: spec.ID, AcceptedRevision: c.config.SourceCommit, Fingerprints: fingerprints, DisabledAt: timestamppb.New(now.UTC()), Reason: setupDetectorReason}
-	c.mu.Lock()
-	// Retain the audit trail across revision changes; only an exact revision disables.
-	c.disabledSetupDetectors = append(c.disabledSetupDetectors, record)
-	c.mu.Unlock()
-	if candidate != nil {
-		candidate.DisabledSetupDetectors = cloneDisabledSetupDetectors(c.disabledSetupDetectors)
-	}
-	return true
 }

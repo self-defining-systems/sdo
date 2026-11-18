@@ -46,7 +46,6 @@ func cloneIncidentRequest(request *IncidentRequest) *IncidentRequest {
 	copy.JoinedKeys = append([]string(nil), request.JoinedKeys...)
 	copy.DriftEvents = append([]sdk.DriftEvent(nil), request.DriftEvents...)
 	copy.NamespaceOnboarding = cloneNamespaceOnboarding(request.NamespaceOnboarding)
-	copy.DisabledSetupDetectors = cloneDisabledSetupDetectors(request.DisabledSetupDetectors)
 	copy.DetectorHistory = cloneEvaluations(request.DetectorHistory)
 	copy.SurfacedPlaybooks = append(make([]SurfacedPlaybook, 0, len(request.SurfacedPlaybooks)), request.SurfacedPlaybooks...)
 	copy.RelevantOutcomes = append(make([]PriorOutcomeEvidence, 0, len(request.RelevantOutcomes)), request.RelevantOutcomes...)

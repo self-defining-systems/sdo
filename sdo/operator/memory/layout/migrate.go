@@ -158,6 +158,10 @@ var schemaMigrations = map[int]func(*schemaPlan) error{
 	9: func(*schemaPlan) error { return nil },
 	// Version 10 adds the optional agent_changes to outcome documents; the step only stamps.
 	10: func(*schemaPlan) error { return nil },
+	// Version 11 retires disabled_setup_detectors from outcome documents; an
+	// earlier outcome that carries it is read with the field dropped: the step
+	// only stamps.
+	11: func(*schemaPlan) error { return nil },
 }
 
 type fileRewrite struct {

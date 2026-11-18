@@ -127,7 +127,7 @@ func TestMemoryCheckReportsDiagnosticsAsLines(t *testing.T) {
 
 func TestMemoryCheckJSONIsMemoryCheckReport(t *testing.T) {
 	root := copyFixture(t, goodFixture)
-	if err := os.WriteFile(filepath.Join(root, ".sdo/schema-version"), []byte("11\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".sdo/schema-version"), []byte("12\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	code, stdout, _ := runMemory(t, memoryCheckEnv(t), "check", "--root", root, "--json")
@@ -162,7 +162,7 @@ func TestMemoryCheckReportNamesTheCommitItChecked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".sdo/schema-version"), []byte("11\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".sdo/schema-version"), []byte("12\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, stdout, _ := runMemory(t, memoryCheckEnv(t), "check", "--root", root, "--json")
@@ -326,7 +326,7 @@ func TestMemoryNewDetectorScaffoldsBuildVetAndPassTheirTests(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".sdo"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".sdo/schema-version"), []byte("10\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".sdo/schema-version"), []byte("11\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{
