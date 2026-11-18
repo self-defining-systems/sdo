@@ -19,8 +19,8 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import re
+import shutil
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -114,6 +114,13 @@ def _verify_and_sync(source: Path, destination: Path) -> tuple[int, int]:
             size = target.stat().st_size
         except OSError as exc:
             raise EvidenceSinkError(f"{target} was not copied: {exc}") from exc
+        if path.parent == source and path.name == sink.INDEX_FILE:
+            # The interval copy rewrites the index to the records of what it copied: it need not equal the sink's.
+            _fsync(target)
+            directories.add(target.parent)
+            files += 1
+            total += size
+            continue
         if size > path.stat().st_size or (size < path.stat().st_size and not _grew(path, target)):
             raise EvidenceSinkError(f"{target} differs from the sink file ({size} bytes)")
         _fsync(target)
