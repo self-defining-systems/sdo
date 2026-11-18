@@ -15,7 +15,8 @@ Merge rules, per delta unit in recorded problem order:
 - absent from the merge: copied;
 - identical to a unit already merged: a duplicate, recorded;
 - a playbook, detector or corpus unit that collides with different content: renamed ``<id>-<hash of problem>``, with
-  the id rewritten in every text file of that problem's delta (so a detector keeps naming its renamed playbook);
+  the id rewritten in every text file of that problem's delta (so a detector keeps naming its renamed playbook),
+  except a corpus case's captures, which are digest-bound evidence: only its ``labels.json`` is rewritten;
 - a lib directory that collides with different content: kept as first merged, a conflict recorded (it cannot be
   renamed because other code imports it by name);
 - units that are equal once their own id is masked are near-duplicates, recorded and kept.
@@ -24,7 +25,8 @@ After each problem's delta the memory check runs (an injected callable; ``memory
 operator's accepted-checkout audit, the same structural, semantic and compile validation dispatch and the broker rely
 on, without controller-only context); a delta that fails it is excluded and recorded, so the merged snapshot always
 passes. Conflicts, renames, duplicates and near-duplicates go to
-``merge-report.json`` as data. This module never writes into a lane or the accepted repository of an install.
+``merge-report.json`` as data, with the number of corpus cases the merged snapshot carries and the playbooks no case
+names. This module never writes into a lane or the accepted repository of an install.
 """
 
 from __future__ import annotations
@@ -57,6 +59,7 @@ DELTA_ROOTS = (
 )
 RENAMEABLE = (".sdo/playbooks/", ".sdo/diagnostics/detectors/incidents/", ".sdo/corpus/")
 PLAYBOOKS_ROOT = ".sdo/playbooks/"
+CORPUS_ROOT = ".sdo/corpus/"
 #: Derived files directly under a delta root: regenerated from the merged tree, never taken from a delta.
 PLAYBOOK_INDEX = ".sdo/playbooks/README.md"
 PLAYBOOK_FILE = "README.md"
@@ -135,6 +138,10 @@ class MergeReport:
     near_duplicates: list[dict[str, str]] = field(default_factory=list)
     conflicts: list[dict[str, str]] = field(default_factory=list)
     check: dict[str, Any] = field(default_factory=dict)
+    #: Replay cases the merged snapshot carries, and the merged playbooks no case names: a playbook without a case is
+    #: never replayed against anything, so the report says so rather than leaving it for a reader to discover.
+    corpus_cases: int = 0
+    playbooks_without_case: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -461,6 +468,7 @@ class GitSnapshotStore:
                     )
                 masked.setdefault(key, (problem, unit_path))
         report.merged = current
+        report.corpus_cases, report.playbooks_without_case = self._case_coverage(repo, current)
         with self._lock:
             self._merged[app] = current
             self.reports[app] = report
@@ -489,16 +497,45 @@ class GitSnapshotStore:
                 continue
             if renames:
                 new_id = renames.get(unit_path[len(root) :], unit_path[len(root) :])
-                out[root + new_id] = self._rewrite(repo, files, renames)
+                # A corpus case's captures are digest-bound evidence; only its labels name a playbook.
+                only = "labels.json" if root == CORPUS_ROOT else None
+                out[root + new_id] = self._rewrite(repo, files, renames, only=only)
             else:
                 out[unit_path] = files
         if renames:
             notes["renames"] = renames
         return (out or None), notes
 
-    def _rewrite(self, repo: Path, files: Unit, renames: Mapping[str, str]) -> Unit:
+    def _case_coverage(self, repo: Path, commit: str) -> tuple[int, list[str]]:
+        """The corpus cases in the commit, and its playbooks that no case's ``root_cause_program_ids`` names."""
+        named: set[str] = set()
+        cases = 0
+        playbooks: set[str] = set()
+        for line in _git(repo, "ls-tree", "-r", "-z", commit, "--", ".sdo/corpus/", PLAYBOOKS_ROOT).split(b"\0"):
+            if not line:
+                continue
+            meta, path = line.decode().split("\t", 1)
+            sha = meta.split(" ")[2]
+            if path.startswith(PLAYBOOKS_ROOT):
+                parts = path[len(PLAYBOOKS_ROOT) :].split("/")
+                if len(parts) > 1:
+                    playbooks.add(parts[0])
+            elif path.endswith("/labels.json"):
+                cases += 1
+                try:
+                    labels = json.loads(_git(repo, "cat-file", "blob", sha))
+                except ValueError:
+                    continue
+                named.update(labels.get("root_cause_program_ids") or [])
+        return cases, sorted(playbooks - named)
+
+    def _rewrite(self, repo: Path, files: Unit, renames: Mapping[str, str], *, only: str | None = None) -> Unit:
+        """``files`` with each renamed id replaced in their text; ``only`` limits that to the one file naming ids."""
         result: Unit = {}
         for rel, entry in files.items():
+            if only is not None and rel != only:
+                result[rel] = entry
+                continue
             blob = _git(repo, "cat-file", "blob", entry.sha)
             try:
                 text = blob.decode("utf-8")

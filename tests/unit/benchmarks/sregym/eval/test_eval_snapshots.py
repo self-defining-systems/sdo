@@ -146,6 +146,89 @@ def test_a_colliding_playbook_is_renamed_and_its_detector_follows(tmp_path: Path
     assert git(repo, "show", f"{merged}:{detector.format(n='a')}") == "playbooks: [restart]"
 
 
+CASE = ".sdo/corpus/{name}/{file}"
+
+
+def corpus_case(name: str, playbook: str, *, capture: str = "{}\n") -> dict[str, str]:
+    """One synthetic corpus case: labels naming the playbook plus the controller captures."""
+    labels = json.dumps({"root_cause_program_ids": [playbook], "bindings": {}}) + "\n"
+    return {
+        CASE.format(name=name, file="labels.json"): labels,
+        CASE.format(name=name, file="open.json"): capture,
+        CASE.format(name=name, file="fixed.json"): capture,
+        CASE.format(name=name, file="recordings.json"): "[]\n",
+    }
+
+
+def test_a_first_trys_corpus_case_reaches_the_merged_snapshot_and_is_counted(
+    tmp_path: Path, base_repo: tuple[Path, str]
+) -> None:
+    s = store(tmp_path, base_repo)
+    s.import_first_try(
+        "hotel",
+        "a",
+        *lane(tmp_path, "a", base_repo, {PLAYBOOK.format(id="fix"): "package a\n", **corpus_case("case-a", "fix")}),
+    )
+    report = s.merge("hotel", ["a"])
+    repo = s.repositories()["hotel"]
+    assert CASE.format(name="case-a", file="labels.json") in tree(repo, s.resolve("hotel", "merged"))
+    assert report.corpus_cases == 1
+    assert report.playbooks_without_case == []
+
+
+def test_a_playbook_the_merge_carries_without_any_corpus_case_is_listed(
+    tmp_path: Path, base_repo: tuple[Path, str]
+) -> None:
+    """A learned playbook with no case is never replayed against anything; the report says so, never silently."""
+    s = store(tmp_path, base_repo)
+    s.import_first_try(
+        "hotel",
+        "a",
+        *lane(tmp_path, "a", base_repo, {PLAYBOOK.format(id="bare"): "package a\n"}),
+    )
+    s.import_first_try(
+        "hotel",
+        "b",
+        *lane(tmp_path, "b", base_repo, {PLAYBOOK.format(id="cased"): "package b\n", **corpus_case("case-b", "cased")}),
+    )
+    report = s.merge("hotel", ["a", "b"])
+    assert report.playbooks_without_case == ["bare"]
+    assert report.corpus_cases == 1
+
+
+def test_a_renamed_playbook_renames_its_case_label_and_never_touches_the_captures(
+    tmp_path: Path, base_repo: tuple[Path, str]
+) -> None:
+    """Captures are digest-bound evidence: the rename may rewrite the label that names the playbook, nothing else."""
+    s = store(tmp_path, base_repo)
+    capture = '{"note": "the restart playbook is not an object name restart"}\n'
+    s.import_first_try(
+        "hotel",
+        "a",
+        *lane(
+            tmp_path, "a", base_repo, {PLAYBOOK.format(id="restart"): "package a\n", **corpus_case("case-a", "restart")}
+        ),
+    )
+    s.import_first_try(
+        "hotel",
+        "b",
+        *lane(
+            tmp_path,
+            "b",
+            base_repo,
+            {PLAYBOOK.format(id="restart"): "package b\n", **corpus_case("case-b", "restart", capture=capture)},
+        ),
+    )
+    report = s.merge("hotel", ["a", "b"])
+    repo = s.repositories()["hotel"]
+    merged = s.resolve("hotel", "merged")
+    new_id = report.renames["b"]["restart"]
+    labels = json.loads(git(repo, "show", f"{merged}:{CASE.format(name='case-b', file='labels.json')}"))
+    assert labels["root_cause_program_ids"] == [new_id]
+    for name in ("open.json", "fixed.json"):
+        assert git(repo, "show", f"{merged}:{CASE.format(name='case-b', file=name)}") == capture.strip()
+
+
 def test_an_identical_unit_is_a_duplicate_and_adds_nothing(tmp_path: Path, base_repo: tuple[Path, str]) -> None:
     s = store(tmp_path, base_repo)
     s.import_first_try("hotel", "a", *lane(tmp_path, "a", base_repo, {PLAYBOOK.format(id="same"): "package x // v1\n"}))
