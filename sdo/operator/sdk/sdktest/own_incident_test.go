@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -98,5 +100,35 @@ func TestDiagnoseOnIncidentWithoutACaptureIsUnverified(t *testing.T) {
 	got, err := DiagnoseOnIncident(ownDiagnoser{spec: program.ProgramSpec{ID: "p"}, diagnose: match}, t.TempDir())
 	if err != nil || got.Outcome != OwnIncidentUnverified || !strings.Contains(got.Reason, "no captured open state") {
 		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
+// A capture redacts ConfigMap values (a live read sees them) and drops objects over its budget, so a NoMatch on
+// such a capture may be the capture and not the playbook: it is unverified, never a definite failure.
+func TestDiagnoseOnIncidentDoesNotCallNoMatchDefiniteOnARedactedCapture(t *testing.T) {
+	noMatch := ownDiagnoser{spec: program.ProgramSpec{ID: "p"}, diagnose: func(program.ReadView) (program.Verdict, error) {
+		return program.Verdict{Result: program.NoMatch}, nil
+	}}
+	redacted := corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "script", Namespace: "app", Annotations: map[string]string{"sdo.dev/configmap-values-redacted": "true"}}}
+	for name, snapshot := range map[string]Snapshot{
+		"redacted ConfigMap values": {NamespaceName: "app", ConfigMapList: []corev1.ConfigMap{redacted}},
+		"trimmed objects":           {NamespaceName: "app", TrimmedObjects: map[string]int{"Pod": 3}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			raw, err := json.Marshal(snapshot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for file, data := range map[string][]byte{"open@detect.json": raw, "open@detect-recordings.json": []byte("[]")} {
+				if err := os.WriteFile(filepath.Join(dir, file), data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := DiagnoseOnIncident(noMatch, dir)
+			if err != nil || got.Outcome != OwnIncidentUnverified || !strings.Contains(got.Reason, "NoMatch") {
+				t.Fatalf("got %+v, %v; want unverified naming the NoMatch", got, err)
+			}
+		})
 	}
 }

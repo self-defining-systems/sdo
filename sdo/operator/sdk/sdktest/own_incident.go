@@ -101,6 +101,10 @@ func DiagnoseOnIncident(d program.Diagnoser, dir string) (OwnIncidentResult, err
 			return here, nil
 		case program.NoMatch:
 			here.Outcome, here.Reason = OwnIncidentFailed, "Diagnose returned NoMatch on the incident it was written for: "+evidenceSummary(verdict)
+			if limit := captureLimits(snapshot); limit != "" {
+				// What a capture withholds, a live read sees: the NoMatch may be the capture, not the playbook.
+				here.Outcome, here.Reason = OwnIncidentUnverified, "Diagnose returned NoMatch, but the capture "+limit+": "+evidenceSummary(verdict)
+			}
 			if failed == nil {
 				failed = &here
 			}
@@ -134,4 +138,23 @@ func evidenceSummary(v program.Verdict) string {
 		return "no evidence"
 	}
 	return strings.Join(parts, "; ")
+}
+
+// captureLimits says what a capture withholds that a live read sees, "" when it withholds nothing a Diagnose could
+// depend on: ConfigMap values are redacted and objects over the snapshot budget are dropped.
+func captureLimits(snapshot Snapshot) string {
+	for _, configMap := range snapshot.ConfigMapList {
+		if configMap.Annotations["sdo.dev/configmap-values-redacted"] == "true" {
+			return "redacts ConfigMap values"
+		}
+	}
+	for _, object := range snapshot.Objects {
+		if object.GetKind() == "ConfigMap" && object.GetAnnotations()["sdo.dev/configmap-values-redacted"] == "true" {
+			return "redacts ConfigMap values"
+		}
+	}
+	if len(snapshot.TrimmedObjects) > 0 {
+		return "dropped objects over its budget"
+	}
+	return ""
 }
