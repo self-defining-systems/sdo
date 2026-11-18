@@ -310,7 +310,9 @@ func main() {
 		}
 		return
 	}
-	if err := operatorcli.RunController(context.Background(), os.Args[1:]); err != nil && !errors.Is(err, context.Canceled) {
+	if err := operatorcli.RunController(context.Background(), os.Args[1:]); errors.Is(err, operatorcli.ErrTerminated) {
+		os.Exit(operatorcli.ExitTerminated)
+	} else if err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

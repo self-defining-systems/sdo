@@ -140,14 +140,38 @@ const defaultStateBaselineStartTimeout = 30 * time.Second
 func Run(renderers *render.Catalog, registry *telemetry.Registry, repairs RepairDeployerFactory) {
 	broker.RunValidationChild(registry)
 	ctx, stop := terminationContext(context.Background())
-	defer stop()
-	if err := RunWithOptions(ctx, nil, RuntimeOptions{Renderers: renderers, Telemetry: registry, RepairDeployer: repairs}); err != nil && !(ctx.Err() != nil && errors.Is(err, context.Canceled)) {
+	err := RunWithOptions(ctx, nil, RuntimeOptions{Renderers: renderers, Telemetry: registry, RepairDeployer: repairs})
+	code := runExitCode(ctx, err)
+	stop()
+	if code == ExitTerminated {
+		os.Exit(code)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		if errors.Is(err, memory.ErrHealthRefreshRequired) {
 			os.Exit(memory.HealthRefreshExitCode)
 		}
-		os.Exit(1)
+		os.Exit(code)
 	}
+}
+
+// ExitTerminated is the exit status of a controller stopped by SIGTERM
+// (128+15): the pod ends Failed, so the Job's pod failure policy and backoff
+// treat the stop like any lost pod and the installer does not read it as a
+// finished bounded run. A run that ended by itself (--duration,
+// --exit-after-closure) exits 0.
+const ExitTerminated = 143
+
+// runExitCode is the status for a RunWithOptions result. ctx is the
+// termination context: it is done only when a signal asked the process to stop.
+func runExitCode(ctx context.Context, err error) int {
+	if ctx.Err() != nil && (err == nil || errors.Is(err, context.Canceled)) {
+		return ExitTerminated
+	}
+	if err != nil {
+		return 1
+	}
+	return 0
 }
 
 // terminationContext is the controller process's lifetime: SIGTERM (pod
@@ -470,7 +494,6 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}
 	}()
 	renewalCtx, cancelRenewal := context.WithCancel(ctx)
-	defer cancelRenewal()
 	renewalInterval := leaseDuration / 3
 	if renewalInterval <= 0 {
 		renewalInterval = time.Second
@@ -478,7 +501,13 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if renewalInterval > 5*time.Second {
 		renewalInterval = 5 * time.Second
 	}
-	renewalErrors := maintainLeadership(renewalCtx, elector, renewalInterval, clock)
+	renewalErrors, renewalDone := maintainLeadership(renewalCtx, elector, renewalInterval, clock)
+	// Registered after the Release defer, so it runs first: no renewal is in
+	// flight when the Lease is released.
+	defer func() {
+		cancelRenewal()
+		<-renewalDone
+	}()
 	stateConfigMapName := ""
 	if *controlNamespace == *namespace {
 		stateConfigMapName = controllerStateConfigMap
@@ -1706,10 +1735,12 @@ func maintainLeadership(
 	elector *LeaseElector,
 	interval time.Duration,
 	clock kclock.WithTicker,
-) <-chan error {
+) (<-chan error, <-chan struct{}) {
 	clock = timerClock(clock)
 	errors := make(chan error, 1)
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		ticker := clock.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -1746,7 +1777,7 @@ func maintainLeadership(
 			}
 		}
 	}()
-	return errors
+	return errors, done
 }
 
 var namespacePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)

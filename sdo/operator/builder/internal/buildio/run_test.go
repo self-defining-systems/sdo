@@ -86,3 +86,31 @@ func TestStopGraceIsBoundedBelowThePodGracePeriod(t *testing.T) {
 		t.Fatalf("StopGrace = %v; it must exceed the Lease release (5s) and fit the pod grace period", StopGrace)
 	}
 }
+
+// A second signal on the parent does not wait out the grace: the forced-stop
+// channel kills the child at once.
+func TestForcedStopKillsTheChildBeforeItsGrace(t *testing.T) {
+	dir := t.TempDir()
+	ready := filepath.Join(dir, "ready")
+	child := writeChild(t, "trap '' TERM\ntouch "+ready+"\nwhile :; do sleep 0.05; done\n")
+	force := make(chan struct{})
+	ctx, cancel := context.WithCancel(WithForcedStop(context.Background(), force))
+	done := make(chan error, 1)
+	go func() { done <- runController(ctx, child, "unused.json", dir, time.Minute) }()
+	waitForFile(t, ready)
+	cancel()
+	select {
+	case <-done:
+		t.Fatal("the child was ended before the forced stop")
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(force)
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a killed child is a failed run")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("forced stop did not kill the child")
+	}
+}

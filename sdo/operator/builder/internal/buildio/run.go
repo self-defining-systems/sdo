@@ -30,10 +30,40 @@ func runController(ctx context.Context, binary, configPath, directory string, gr
 	command.Stdin = os.Stdin
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
-	if err := command.Run(); err != nil {
+	if err := command.Start(); err != nil {
+		return fmt.Errorf("controller run: %w", err)
+	}
+	finished := make(chan struct{})
+	defer close(finished)
+	if force, _ := ctx.Value(forcedStopKey{}).(<-chan struct{}); force != nil {
+		go func() {
+			select {
+			case <-force:
+				_ = command.Process.Kill()
+			case <-finished:
+			}
+		}()
+	}
+	if err := command.Wait(); err != nil {
 		return fmt.Errorf("controller run: %w", err)
 	}
 	return nil
+}
+
+type forcedStopKey struct{}
+
+// WithForcedStop returns a context that carries a channel whose closing makes
+// RunController kill the child at once, instead of waiting out StopGrace (a
+// second SIGTERM or SIGINT on the parent).
+func WithForcedStop(ctx context.Context, force <-chan struct{}) context.Context {
+	return context.WithValue(ctx, forcedStopKey{}, force)
+}
+
+// Stopped reports whether err is the child ending because it was asked to
+// stop: its terminated status (128+SIGTERM) or its death by a signal.
+func Stopped(err error) bool {
+	var exit *exec.ExitError
+	return errors.As(err, &exit) && (exit.ExitCode() == 143 || exit.ExitCode() == -1)
 }
 
 // ExitCode returns the exit status of the process err reports, or -1 when err
