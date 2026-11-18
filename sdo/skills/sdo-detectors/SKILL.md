@@ -86,6 +86,7 @@ Open only the topic needed for the current edit.
 - [sdktest-01](references/replay/sdktest-01.md)
 - [sdktest-02](references/replay/sdktest-02.md)
 - [sdktest-03](references/replay/sdktest-03.md)
+- [sdktest-04](references/replay/sdktest-04.md)
 - [replay](references/replay.md)
 - [request-metrics](references/request-metrics.md)
 - [traffic-coverage](references/traffic-coverage.md)

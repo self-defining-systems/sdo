@@ -8,6 +8,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	metricsv1beta1 "k8s.io/metrics/pkg/apis/metrics/v1beta1"
 
 	"sdo.dev/operator/sdk"
@@ -43,6 +44,7 @@ type Sources interface {
 	metrics.UsageSource
 	sdk.ObjectCaptureSource
 	sdk.ScopedObservationSource
+	sdk.CompleteKindSource
 	vantage.Source
 	vantage.ResultSet
 	carried.Source
@@ -113,6 +115,10 @@ func (c Carrier) PodAdmission() (sdk.PodAdmissionResult, bool) {
 		return *c.admission, true
 	}
 	return c.DetectionContext.PodAdmission()
+}
+// CompleteKinds forwards the base snapshot's completely listed kinds.
+func (c Carrier) CompleteKinds() []schema.GroupVersionKind {
+	return sdk.CompleteKinds(c.DetectionContext)
 }
 func (c Carrier) WithClock(source sdk.ObservationClock) Carrier { c.clock = source; return c }
 func (c Carrier) ObservedAt() time.Time {

@@ -475,6 +475,12 @@ func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, e
 	snapshot := controllercore.DetectionSnapshot{GenericCapture: c.config.GenericCapture, NamespaceName: c.config.Namespace, ObservedAtTime: clock().UTC(), SelfHealHoldTime: c.config.SelfHealHold, ScopedSnapshot: scoped}
 	c.informerMu.RLock()
 	for key, informer := range c.informers {
+		// An unsynced informer reads as an empty namespace, which proves nothing.
+		if informer.HasSynced() && completeInformerKinds[key] {
+			if kind, ok := controllercore.KindOfInformerKey(key); ok {
+				snapshot.CompleteKindList = append(snapshot.CompleteKindList, kind)
+			}
+		}
 		for _, object := range informer.GetStore().List() {
 			switch key {
 			case "v1/ConfigMap":
@@ -525,6 +531,16 @@ func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, e
 	}
 	c.informerMu.RUnlock()
 	return snapshot, nil
+}
+
+// completeInformerKinds are the informer keys whose store fills a typed list
+// of the namespace snapshot; a synced one lists its kind completely.
+var completeInformerKinds = map[string]bool{
+	"v1/ConfigMap": true, "v1/Service": true, "v1/Pod": true, "apps/v1/Deployment": true, "apps/v1/ReplicaSet": true,
+	"v1/Endpoints": true, "discovery.k8s.io/v1/EndpointSlice": true, "networking.k8s.io/v1/NetworkPolicy": true,
+	"apps/v1/StatefulSet": true, "apps/v1/DaemonSet": true, "batch/v1/Job": true, "batch/v1/CronJob": true,
+	"v1/PersistentVolumeClaim": true, "v1/ServiceAccount": true, "autoscaling/v2/HorizontalPodAutoscaler": true,
+	"policy/v1/PodDisruptionBudget": true, "networking.k8s.io/v1/Ingress": true, "v1/Event": true,
 }
 
 func (c *KubernetesCache) eventHandler(watch sdk.WatchKind) cache.ResourceEventHandler {

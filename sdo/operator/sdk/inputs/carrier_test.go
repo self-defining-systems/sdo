@@ -48,6 +48,7 @@ func TestSDKInputInterfaceInventory(t *testing.T) {
 		"metrics.UsageSource":              reflect.TypeFor[metrics.UsageSource](),
 		"sdk.ObjectCaptureSource":          reflect.TypeFor[sdk.ObjectCaptureSource](),
 		"sdk.ScopedObservationSource":      reflect.TypeFor[sdk.ScopedObservationSource](),
+		"sdk.CompleteKindSource":           reflect.TypeFor[sdk.CompleteKindSource](),
 		"vantage.Source":                   reflect.TypeFor[vantage.Source](),
 		"vantage.ResultSet":                reflect.TypeFor[vantage.ResultSet](),
 		"carried.Source":                   reflect.TypeFor[carried.Source](),

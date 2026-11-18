@@ -14,6 +14,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/appstate/carried"
@@ -45,6 +46,10 @@ type Snapshot struct {
 	ObjectSnapshotVersion int                         `json:"object_snapshot_version,omitempty"`
 	Admission             *sdk.PodAdmissionResult     `json:"pod_admission,omitempty"`
 	Objects               []unstructured.Unstructured `json:"objects,omitempty"`
+	// CompleteKindList names the kinds the snapshot lists completely for its
+	// namespace. A missing object of one of them is absent; of any other kind
+	// the snapshot cannot say.
+	CompleteKindList []schema.GroupVersionKind `json:"complete_kinds,omitempty"`
 	// TrimmedObjects counts, by kind, the objects a capture dropped to fit the
 	// snapshot budget; detectors that need them see an evidence gap.
 	TrimmedObjects map[string]int `json:"trimmed_objects,omitempty"`
@@ -493,8 +498,15 @@ func (s Snapshot) PodAdmission() (sdk.PodAdmissionResult, bool) {
 func (s Snapshot) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
 	// Generic objects are authoritative; old fixtures fall back to typed arrays.
 	objects := append(append([]unstructured.Unstructured(nil), s.Objects...), sdk.TypedObjects(s)...)
-	return sdk.FindObject(objects, ref)
+	if ref.Namespace != s.NamespaceName {
+		return sdk.FindObject(objects, ref)
+	}
+	return sdk.FindObjectIn(objects, s.CompleteKindList, ref)
 }
+
+// CompleteKinds implements sdk.CompleteKindSource.
+func (s Snapshot) CompleteKinds() []schema.GroupVersionKind { return s.CompleteKindList }
+
 func (s Snapshot) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error) {
 	return append(sdk.TypedObjects(s), s.Objects...), nil
 }

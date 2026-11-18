@@ -20,7 +20,8 @@ import (
 )
 
 // ObjectReader reads an exact, versioned identity. Returned objects are private copies.
-// An absent or uncaptured identity is an error, never an empty healthy object.
+// An absent (ErrObjectAbsent) or uncaptured (ErrObjectNotCaptured) identity is
+// an error, never an empty healthy object.
 type ObjectReader interface {
 	// Object reads one exact object by kind, namespace and name.
 	Object(ObjectRef) (*unstructured.Unstructured, error)
@@ -94,9 +95,52 @@ func ObjectIdentity(o unstructured.Unstructured) ObjectRef {
 	return ObjectRef{APIVersion: o.GetAPIVersion(), Kind: o.GetKind(), Namespace: o.GetNamespace(), Name: o.GetName()}
 }
 
+// ErrObjectNotCaptured means the snapshot cannot say whether the object
+// exists: its kind was not listed completely. It is a gap in evidence, never
+// an absence.
 var ErrObjectNotCaptured = errors.New("object not captured")
 
+// ErrObjectAbsent means the object was observed to be missing: the API
+// answered NotFound, or the snapshot holds a complete list of the object's
+// kind without it. Absence is an observation a program may reason on.
+var ErrObjectAbsent = errors.New("object is absent from snapshot")
+
+// CompleteKindSource is implemented by snapshots that know which kinds they
+// list completely for the snapshot namespace (a synced informer, or a list
+// that returned without error). Only for those kinds is a missing object absent.
+type CompleteKindSource interface {
+	CompleteKinds() []schema.GroupVersionKind
+}
+
+// CompleteKinds returns the kinds source lists completely, or nil when it
+// does not say.
+func CompleteKinds(source any) []schema.GroupVersionKind {
+	if s, ok := source.(CompleteKindSource); ok {
+		return s.CompleteKinds()
+	}
+	return nil
+}
+
+// KindComplete reports whether ref's kind is among complete.
+func KindComplete(complete []schema.GroupVersionKind, ref ObjectRef) bool {
+	for _, gvk := range complete {
+		if gvk.Kind == ref.Kind && gvk.GroupVersion().String() == ref.APIVersion {
+			return true
+		}
+	}
+	return false
+}
+
+// FindObject finds ref in objects. A miss is ErrObjectNotCaptured: nothing
+// says the list was complete.
 func FindObject(objects []unstructured.Unstructured, ref ObjectRef) (*unstructured.Unstructured, error) {
+	return FindObjectIn(objects, nil, ref)
+}
+
+// FindObjectIn finds ref in objects. A miss is ErrObjectAbsent when ref's kind
+// is among complete, the kinds objects lists completely for ref's namespace
+// (the caller guarantees the namespace), and ErrObjectNotCaptured otherwise.
+func FindObjectIn(objects []unstructured.Unstructured, complete []schema.GroupVersionKind, ref ObjectRef) (*unstructured.Unstructured, error) {
 	if strings.EqualFold(ref.Kind, "Secret") {
 		return nil, fmt.Errorf("Secret reads forbidden")
 	}
@@ -104,6 +148,9 @@ func FindObject(objects []unstructured.Unstructured, ref ObjectRef) (*unstructur
 		if ObjectIdentity(o) == ref {
 			return o.DeepCopy(), nil
 		}
+	}
+	if KindComplete(complete, ref) {
+		return nil, fmt.Errorf("%w: %s/%s %s/%s", ErrObjectAbsent, ref.APIVersion, ref.Kind, ref.Namespace, ref.Name)
 	}
 	return nil, fmt.Errorf("%w: %s/%s %s/%s", ErrObjectNotCaptured, ref.APIVersion, ref.Kind, ref.Namespace, ref.Name)
 }

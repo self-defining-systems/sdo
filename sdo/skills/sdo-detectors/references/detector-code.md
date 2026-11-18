@@ -35,7 +35,8 @@ Use `program.ReadFrom(ctx)` for the shared detector/Diagnose surface; read the
 [generated program SDK](../../sdo-playbook-authoring/references/program-sdk.md) before using it.
 Use the [recorded Kubernetes client](../../sdo-playbook-authoring/references/kubernetes-client.md) for typed or dynamic API reads.
 Detectors can call `ctx.DiffAgainstSource(ref)` directly.
-`Changed` covers field drift and source-absent objects; `SourceAbsent` requires a successful accepted-source lookup.
+`Changed` covers field drift, source-absent objects and declared objects missing live; `SourceAbsent` requires a successful accepted-source lookup.
+A declared object that is gone live is a diff (`LiveAbsent`, `MissingButInSource()`), not an error; `Object` of it returns `sdk.ErrObjectAbsent`.
 Bind playbooks through findings, to the faulty component only: for a journey failure embed `localize.Inputs` and
 return `localize.BindSuspects` of `localize.FromContext`, not a literal name.
 The shared view adds previous-instance logs, usage, probes, baseline diffs, metric queries, alerts and traffic.

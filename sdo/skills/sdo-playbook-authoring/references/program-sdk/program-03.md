@@ -97,7 +97,10 @@ type Diagnoser interface {
 type Diff = sdk.SourceDiff
     Diff is the shared accepted-source or baseline comparison result.
     A delete-style Diagnose matches on diff.PresentButNotInSource(), not
-    SourceAbsent, which stays true after the delete.
+    SourceAbsent, which stays true after the delete. A recreate-style Diagnose
+    matches on diff.MissingButInSource(): an object accepted source declares and
+    that is absent live is a diff (LiveAbsent), not an error, and it turns false
+    once CreateFromSource has recreated it.
 
 type EnsureDatabaseUser struct {
 	Target   DatabaseTarget
@@ -272,9 +275,4 @@ type KubernetesRequest struct {
     cluster resources and discovered kinds. Query carries API options. Only the
     plan checks bound operations (SDO identities hold a cluster-wide grant,
     so RBAC does not). Secret endpoints are never accessed.
-
-func (r KubernetesRequest) CredentialResponse() bool
-    CredentialResponse identifies API operations whose response is a credential,
-    rather than cluster evidence. Their bodies are never read by the controller.
-    Use a container command when the generated value must be consumed there.
 ```

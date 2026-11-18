@@ -94,6 +94,12 @@ a handoff snapshot alone does not justify rewriting it.
 - `ReconcileFromSource` restores a whole source-owned object and removes reported additions;
   `CreateFromSource` restores a named missing object. `DeleteObject` is irreversible; a delete-style Diagnose
   matches on `diff.PresentButNotInSource()`, which turns false after the delete.
+- An absent object is an observation, never an error. `DiffAgainstSource` of an object accepted source
+  declares and that is gone live returns `Changed` with `LiveAbsent`; a recreate-style Diagnose (a deleted
+  ConfigMap, Service or Deployment) matches on `diff.MissingButInSource()`, which turns false once
+  `CreateFromSource` has recreated it. `v.Object(ref)` returns `sdk.ErrObjectAbsent` for a confirmed absence
+  (the API said NotFound, or a complete list of the kind lacks it) and `sdk.ErrObjectNotCaptured` when the
+  snapshot cannot say. Return Unknown only for the second; handle the first as the finding it is.
 - Diagnose on typed fields: `diff.ContainerChanges()` names each changed container by kind (init or
   app) and name, and `diff.Field(path).Differs()` sees only fields source declares, never server
   defaults. `diff.Text` is the whole document, so a substring matches any container; use it only as
