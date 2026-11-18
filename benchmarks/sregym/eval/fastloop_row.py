@@ -105,6 +105,9 @@ def row_command(
     ]
     if planned:
         run += ["--planned-commit", planned]
+    if cell.arm == "sdo" and environment.evidence_root is not None:
+        # The lane's own sink root: it must equal the root mounted when the lane was created.
+        run += ["--evidence-root", str(environment.evidence_root)]
     run += list(settings.extra_args.get(cell.arm, ()))
     if settings.coord is None:
         return [settings.python, "-m", *run]
