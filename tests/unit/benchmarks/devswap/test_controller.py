@@ -182,8 +182,8 @@ class PendingWarm:
 
 
 def test_a_pending_go_cache_warm_is_joined_before_any_stop_of_the_controller(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Whatever stops the controller (a seed import, a tree import, the restart, a lane reset), the compile that warms the
-    cache for the new tree has ended first: the stop is the point the warm exists to shorten."""
+    """Whatever stops the controller (a seed import, a tree import, the restart, a lane reset), the compile that warms
+    the cache for the new tree has ended first: the stop is the point the warm exists to shorten."""
     from benchmarks.devswap import warm
 
     lane = LeaseLane(monkeypatch, [[]])
@@ -215,8 +215,8 @@ def test_resuming_never_waits_for_a_warm(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_a_leftover_terminal_pod_of_the_job_is_not_a_controller_that_still_runs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The Job keeps the pods that failed (a node shutdown, a crash): they have no process, so the stop must not wait the
-    full bound for them to disappear (the same rule as ``controller_pod_ids``)."""
+    """The Job keeps the pods that failed (a node shutdown, a crash): they have no process, so the stop must not wait
+    the full bound for them to disappear (the same rule as ``controller_pod_ids``)."""
     failed = {"status": {"phase": "Failed"}}
     done = {"status": {"phase": "Succeeded"}}
     lane = LeaseLane(monkeypatch, [[failed, done]])

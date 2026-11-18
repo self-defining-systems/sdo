@@ -145,8 +145,8 @@ class SwapPlan:
     #: A glob, beside the checkout, of older checkouts that hold the contracts of a lane that recorded none.
     legacy_checkouts: str = ""
     allow_dirty: bool = False  # build from a checkout with uncommitted changes under the compiled paths
-    #: With a new binary, compile the new tree's Go packages into the lane's build cache (``devswap.warm``) while the old
-    #: controller still serves, so its restart only links. Never fails the swap.
+    #: With a new binary, compile the new tree's Go packages into the lane's build cache (``devswap.warm``) while the
+    #: old controller still serves, so its restart only links. Never fails the swap.
     warm_go_cache: bool = True
 
 

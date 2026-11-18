@@ -10,8 +10,8 @@ volume and survives the restart.
 ``GoCacheWarm`` runs the new binary's ``warm-build`` (the same compiles, the executables discarded, the controller's own
 arguments) in a short pod made from the controller Job's own pod template: the same image, Go environment, cache volume,
 accepted repository, mounted settings and projected tree. The pod needs no credentials and no cluster API. A target tree
-whose binary has no ``warm-build`` fails the pod: reported, and the restart compiles as before. Nothing here may fail a swap (the restart only
-compiles what is missing, as before): every failure is reported to ``out`` and swallowed.
+whose binary has no ``warm-build`` fails the pod: reported, and the restart compiles as before. Nothing here may fail a
+swap (the restart only compiles what is missing, as before): every failure is reported to ``out`` and swallowed.
 """
 
 from __future__ import annotations
@@ -90,7 +90,7 @@ def warm_pod(job: Mapping[str, Any], control: str) -> dict[str, Any]:
     }
     pod_spec: dict[str, Any] = {
         "restartPolicy": "Never",
-        # the build needs no cluster identity, and the cluster ends a pod that hangs (SIGTERM first: warm-build cleans up)
+        # no cluster identity needed; the cluster ends a pod that hangs (SIGTERM first: warm-build cleans up)
         "automountServiceAccountToken": False,
         "activeDeadlineSeconds": int(WARM_TIMEOUT_S),
         "terminationGracePeriodSeconds": 10,

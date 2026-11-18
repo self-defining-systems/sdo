@@ -227,8 +227,8 @@ def test_joining_a_lane_with_no_warm_does_nothing() -> None:
 
 
 def test_a_warm_pod_that_stays_pending_is_given_up_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A pod that cannot start (a volume that does not mount, an image that does not pull) must not hold the swap for the
-    full bound: it is a build, not a gate."""
+    """A pod that cannot start (a volume that does not mount, an image that does not pull) must not hold the swap for
+    the full bound: it is a build, not a gate."""
     cluster = Cluster(monkeypatch, ["Pending"])
     messages: list[str] = []
     clock = iter([0.0, 0.0, 30.0, 95.0, 96.0, 97.0, 98.0])
