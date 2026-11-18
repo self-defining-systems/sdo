@@ -603,6 +603,10 @@ class Kube:
         pods = self._json("-n", control, "get", "pods", "-l", f"job-name={CONTROLLER_JOB}")
         return list((pods or {}).get("items") or [])
 
+    def controller_suspended(self, control: str) -> bool:
+        job = self._json("-n", control, "get", "job", CONTROLLER_JOB) or {}
+        return bool((job.get("spec") or {}).get("suspend"))
+
     def controller_ready(self, control: str) -> bool:
         for pod in self.controller_pods(control):
             if (pod.get("metadata") or {}).get("deletionTimestamp"):
@@ -1274,6 +1278,8 @@ RESET_PATIENCE_S = 5 * 60.0
 # 15-18 minutes on a loaded host, so the wait is for that start-up to end, bounded well above it.
 CONTROLLER_START_PATIENCE_S = 30 * 60.0
 CONTROLLER_START_POLL_S = 10.0
+#: How long a reset of a used lane waits for a controller that was left stopped or starting by a failed swap.
+RESET_START_PATIENCE_S = 20 * 60.0
 
 
 def wait_controller_started(
@@ -1659,7 +1665,10 @@ def wipe_problems(before: Mapping[str, str], now: Mapping[str, str]) -> list[str
     return problems
 
 
-SWAP_STANDBY_WAIT_S = 180.0
+#: How long a controller that was just (re)started gets to bring up its ready standby. It is a bound, not a delay: a
+#: lane that is ready returns at once. 180 s was too short on a loaded host (three claim swaps failed on it with the
+#: controller still starting, and the lane was then torn down).
+SWAP_STANDBY_WAIT_S = 600.0
 
 
 def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
@@ -2051,6 +2060,7 @@ MAINTENANCE_ACK_WAIT_S = 120.0
 class ResetSteps:
     """What ``reset_lane`` does to the lane, one callable per step (tests substitute them)."""
 
+    resume_controller: Callable[[], object]
     reset_incidents: Callable[[], object]
     retire_standby: Callable[[], object]
     stop_controller: Callable[[], object]
@@ -2066,7 +2076,7 @@ class ResetSteps:
         def refuse(*_: object) -> Any:
             raise AssertionError("step must not run")
 
-        return cls(*([refuse] * 9))
+        return cls(*([refuse] * 10))
 
 
 def reset_lane(env: Mapping[str, str], steps: ResetSteps, out: Callable[[str], None] = _print) -> dict[str, Any]:
@@ -2083,14 +2093,29 @@ def reset_lane(env: Mapping[str, str], steps: ResetSteps, out: Callable[[str], N
         raise HookError("the lane has no recorded prepared state (no idle verdict since prepare)")
     prepared = record["state"]
     started = time.monotonic()
+    # An earlier swap or reset that failed after stopping the controller leaves its Job suspended: nothing would
+    # acknowledge the incident reset below, and the lane would be torn down for it.
+    steps.resume_controller()
     steps.reset_incidents()
     steps.retire_standby()
-    steps.stop_controller()
-    out("controller stopped")
-    steps.restore_repository(prepared["head"])
-    app = steps.app_reset()
-    out(f"app reset: {json.dumps(app)}")
-    steps.start_controller()
+    started_again = False
+    try:
+        steps.stop_controller()
+        out("controller stopped")
+        steps.restore_repository(prepared["head"])
+        app = steps.app_reset()
+        out(f"app reset: {json.dumps(app)}")
+        steps.start_controller()
+        started_again = True
+    finally:
+        if not started_again:
+            # A failed reset must not leave the controller stopped: every other verb (idle, collect, the next
+            # reset) needs it running, and a stopped controller cannot be asked to reset.
+            try:
+                steps.start_controller()
+                out("controller started again after the failed reset")
+            except Exception as exc:  # the reset's own error is the one to report
+                out(f"controller could not be started again: {exc}")
     steps.wait_standby()
     if problems := wipe_problems(prepared, steps.repository_state()):
         raise HookError("the lane is not the prepared one after the reset: " + "; ".join(problems))
@@ -2100,6 +2125,34 @@ def reset_lane(env: Mapping[str, str], steps: ResetSteps, out: Callable[[str], N
     receipt["reset_s"] = receipt.pop("swap_s")
     receipt["app"] = app
     return receipt
+
+
+RESET_ATTEMPTS = 2
+
+
+def reset_lane_again(
+    env: Mapping[str, str],
+    steps: ResetSteps,
+    out: Callable[[str], None] = _print,
+    attempts: int = RESET_ATTEMPTS,
+) -> dict[str, Any]:
+    """``reset_lane``, tried again when it fails: the lane stays in the pool when a second pass (which starts from a
+    running controller, whatever the first left) returns it, and only a lane that fails every pass is reported, so
+    that the caller rebuilds it."""
+    for attempt in range(1, attempts + 1):
+        try:
+            return reset_lane(env, steps, out)
+        except HookError as exc:
+            if attempt == attempts:
+                raise
+            out(f"reset failed ({exc}); trying again ({attempt + 1} of {attempts})")
+    raise AssertionError("unreachable")
+
+
+def resume_stopped_controller(kube: Kube, control: str) -> None:
+    """Resume the controller Job when something suspended it and did not resume it (a swap or reset that failed)."""
+    if kube.controller_suspended(control):
+        set_controller_suspended(kube, control, False)
 
 
 def set_maintenance(env: Mapping[str, str], paused: bool, generation: str) -> None:
@@ -2376,7 +2429,7 @@ def wait_idle(kube: Kube, control: str, timeout: float) -> str:
 
 def reset(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     steps = reset_steps(env, lambda: fuzzops_app(env, "reset"))
-    out(json.dumps(reset_lane(env, steps, out)))
+    out(json.dumps(reset_lane_again(env, steps, out)))
     return 0
 
 
@@ -2384,7 +2437,9 @@ def reset_steps(env: Mapping[str, str], app_reset: Callable[[], dict[str, Any]])
     kube, control = _kube(env), control_namespace(env)
     binary, kubeconfig = _binary(env), Path(env["KUBECONFIG"]).resolve() if env.get("KUBECONFIG") else None
     return ResetSteps(
-        reset_incidents=lambda: reset_incidents(binary, control, kubeconfig),
+        resume_controller=lambda: resume_stopped_controller(kube, control),
+        # a controller that was just resumed serves resets only after its start-up: wait for it, not for one answer
+        reset_incidents=lambda: reset_when_running(binary, control, kubeconfig, RESET_START_PATIENCE_S),
         retire_standby=lambda: retire_standby(kube, control),
         stop_controller=lambda: set_controller_suspended(kube, control, True),
         restore_repository=lambda head: restore_repository(kube, control, head),
