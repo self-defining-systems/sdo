@@ -84,22 +84,17 @@ component name in either (`playbook.component-literal`, `detector.component-lite
 Choose playbooks by failure mechanism. Admission mutation, resource exhaustion and old-revision
 blockage need separate diagnoses and steps even on one Deployment; link them from findings and explain
 ordering in READMEs. Keep actions together only when one repair needs them. Unrelated unavailable reads
-must not turn a decidable source comparison into Unknown. Preserve earlier cases when refining variants.
+must not make a decidable source comparison Unknown. Preserve earlier cases when refining variants.
 Judge a pending stage by its final receipt: a later verified settlement preserves the working step;
-a handoff snapshot alone does not justify rewriting it.
+a handoff snapshot alone does not justify a rewrite.
 
 - `SetField` restores one schema-checked field; named list selectors (`env[name=X]`) and ConfigMap
   JSON/YAML entries (`DocumentFormat`, `DocumentPath`) preserve unrelated values. A missing final
   `env[name=X]` entry is inserted.
 - `ReconcileFromSource` restores a whole source-owned object and removes reported additions;
   `CreateFromSource` restores a named missing object. `DeleteObject` is irreversible; a delete-style Diagnose
-  matches on `diff.PresentButNotInSource()`, which turns false after the delete.
-- An absent object is an observation, never an error. `DiffAgainstSource` of an object accepted source
-  declares and that is gone live returns `Changed` with `LiveAbsent`; a recreate-style Diagnose (a deleted
-  ConfigMap, Service or Deployment) matches on `diff.MissingButInSource()`, which turns false once
-  `CreateFromSource` has recreated it. `v.Object(ref)` returns `sdk.ErrObjectAbsent` for a confirmed absence
-  (the API said NotFound, or a complete list of the kind lacks it) and `sdk.ErrObjectNotCaptured` when the
-  snapshot cannot say. Return Unknown only for the second; handle the first as the finding it is.
+  matches on `diff.PresentButNotInSource()`, a recreate-style one on `diff.MissingButInSource()`
+  (declared, gone live).
 - Diagnose on typed fields: `diff.ContainerChanges()` names each changed container by kind (init or
   app) and name, and `diff.Field(path).Differs()` sees only fields source declares, never server
   defaults. `diff.Text` is the whole document, so a substring matches any container; use it only as
