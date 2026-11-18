@@ -250,6 +250,7 @@ class FastloopRowRunner:
         environment = FastloopEnvironment.load(directory)
         if cell.arm == "sdo" and snapshot_commit:
             self._fetch(cell.app, environment, snapshot_commit)
+        self._clear_events(environment)
         with self._lock:
             self._state[lane_id] = {
                 "environment": environment,
@@ -265,6 +266,15 @@ class FastloopRowRunner:
                 "kubeconfig": str(environment.kubeconfig),
             },
         )
+
+    def _clear_events(self, environment: FastloopEnvironment) -> None:
+        """A warm lane keeps the previous cell's Kubernetes Events for an hour: an agent that reads them is shown the
+        last problem's fault. Delete them before the row starts (the previous cell is already recovered)."""
+        for namespace in {environment.namespace}:
+            try:
+                kubectl(["delete", "events", "--all"], namespace=namespace, kubeconfig=environment.kubeconfig)
+            except Exception:
+                continue
 
     def _fetch(self, app: str, environment: FastloopEnvironment, commit: str) -> None:
         repo = self.settings.snapshot_repos.get(app)
