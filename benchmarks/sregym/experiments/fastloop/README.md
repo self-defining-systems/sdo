@@ -324,6 +324,13 @@ evidence sidecar then mirrors trajectories, task records, ledgers, usage and tel
 `<host dir>/<run-id>/` while rows run (rows: `<cluster>-<results dir>`; a toy or GitLab `up`: the control namespace); deleting the namespace or the cluster leaves it intact. Keep the
 host directory in `sdo-exp`. The layout is in [the architecture](../../../../docs/architecture.md#run-evidence-sink).
 
+The sink is required for `run --agent sdo`: a lane created without `--evidence-root` is refused, so no agent transcript
+(responder, closing turn, investigators, lifecycle tasks) can be lost on a crash, a timeout or a teardown.
+`--allow-no-evidence-sink` is the one explicit waiver; it writes `evidence-sink-waiver.json` and the run's cells are not
+gradable on transcripts. When a run ends, `run` copies `<host dir>/<run-id>/` into `results/<run>/evidence/`, verifies
+every file and writes `evidence-copy.json`; `down` and the tier-1 wipe copy the lane's sink out again after stopping the
+controller (its sidecar's final pass) and refuse to delete the namespace or the cluster while a copy is unverified.
+
 # Tier 2a: toy real cluster
 
 The reusable [toy application](../../../../apps/toy/README.md) has three tiny HTTP

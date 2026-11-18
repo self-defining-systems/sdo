@@ -13,7 +13,7 @@ loader names the absent facts in ``Incident.missing`` instead of guessing.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -44,15 +44,31 @@ def _num(value: Any) -> float:
 
 @dataclass(frozen=True)
 class Usage:
-    """Normalized model usage: ``input_tokens`` includes cache reads and writes, ``output_tokens`` reasoning."""
+    """Normalized model usage: ``input_tokens`` includes cache reads and writes, ``output_tokens`` reasoning.
+
+    The cache split and the request count are kept (``cache_read``, ``cache_write``, ``requests``), so a cache rate
+    and a price can be recomputed from the row; all are zero when the source did not record them.
+    """
 
     input_tokens: int = 0
     output_tokens: int = 0
     cost_usd: float | None = None
+    cache_read: int = 0
+    cache_write: int = 0
+    requests: int = 0
 
     @property
     def tokens(self) -> int:
         return self.input_tokens + self.output_tokens
+
+    @property
+    def uncached_input(self) -> int:
+        return max(self.input_tokens - self.cache_read - self.cache_write, 0)
+
+    @property
+    def cache_hit_rate(self) -> float | None:
+        """Cache reads over all input tokens; ``None`` when there was no input."""
+        return self.cache_read / self.input_tokens if self.input_tokens else None
 
     @classmethod
     def from_mapping(cls, raw: Any) -> Usage:
@@ -63,6 +79,9 @@ class Usage:
             int(_num(raw.get("input_tokens"))),
             int(_num(raw.get("output_tokens"))),
             None if cost is None else _num(cost),
+            int(_num(raw.get("cache_read_input_tokens", raw.get("cached_input_tokens")))),
+            int(_num(raw.get("cache_write_input_tokens"))),
+            int(_num(raw.get("model_requests") or raw.get("llm_calls"))),
         )
 
     def __add__(self, other: Usage) -> Usage:
@@ -71,7 +90,14 @@ class Usage:
             if self.cost_usd is None and other.cost_usd is None
             else (self.cost_usd or 0.0) + (other.cost_usd or 0.0)
         )
-        return Usage(self.input_tokens + other.input_tokens, self.output_tokens + other.output_tokens, cost)
+        return Usage(
+            self.input_tokens + other.input_tokens,
+            self.output_tokens + other.output_tokens,
+            cost,
+            self.cache_read + other.cache_read,
+            self.cache_write + other.cache_write,
+            self.requests + other.requests,
+        )
 
 
 @dataclass
@@ -202,13 +228,9 @@ def _overlay(incident: Incident, timeline: Any) -> None:
     if timeline.closing_turn_duration_seconds:
         incident.reflection_seconds = timeline.closing_turn_duration_seconds
     if timeline.closing_turn_cost_usd is not None:
-        incident.reflection = Usage(
-            incident.reflection.input_tokens, incident.reflection.output_tokens, timeline.closing_turn_cost_usd
-        )
+        incident.reflection = replace(incident.reflection, cost_usd=timeline.closing_turn_cost_usd)
     if timeline.responder_cost_usd is not None:
-        incident.responder = Usage(
-            incident.responder.input_tokens, incident.responder.output_tokens, timeline.responder_cost_usd
-        )
+        incident.responder = replace(incident.responder, cost_usd=timeline.responder_cost_usd)
 
 
 def _json(path: Path) -> Any:
@@ -255,7 +277,7 @@ def parse_ledger(ledger: dict[str, Any], turns: list[dict[str, Any]] | None = No
     for turn in turns or []:
         turn_usage += Usage.from_mapping({"input_tokens": 0, "total_cost_usd": turn.get("cost_usd")})
     if reflection.cost_usd is None and turn_usage.cost_usd is not None:
-        reflection = Usage(reflection.input_tokens, reflection.output_tokens, turn_usage.cost_usd)
+        reflection = replace(reflection, cost_usd=turn_usage.cost_usd)
 
     started = ts(phases.get("reflection_dispatch")) or ts(ledger.get("reflection_dispatch_at"))
     ended = ts(phases.get("reflection_committed")) or ts(phases.get("reflection_without_commit"))

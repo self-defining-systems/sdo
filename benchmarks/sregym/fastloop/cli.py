@@ -22,7 +22,6 @@ import json
 import logging
 import os
 import platform
-import re
 import socket
 import subprocess
 import sys
@@ -43,6 +42,7 @@ from benchmarks.sregym.fastloop.baseline_recovery import (
     save_application_baseline,
 )
 from benchmarks.sregym.fastloop.environment import DEFAULT_PROBLEM, FastloopEnvironment, Images
+from benchmarks.sregym.fastloop.evidence_sink import lane_evidence_run_id
 from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
 from benchmarks.sregym.fastloop.gitlab_faults import add_faults_parser
 from benchmarks.sregym.fastloop.gitlab_rehearsal import add_gitlab_rehearse_parser
@@ -538,6 +538,7 @@ def _up(args: argparse.Namespace) -> int:
             tuple(capture_application_baseline(cluster, namespace) for namespace in namespaces),
             installed=True,
         )
+        _record_fresh_deploy(environment)
     elif not app_recreated:
         from benchmarks.sregym.fastloop.baseline_recovery import seal_existing_install
 
@@ -613,13 +614,6 @@ def _cluster_ops(args: argparse.Namespace, namespace: str, *, ops: ClusterOps | 
 
         selected = RestartControllerInPauseOps(selected, restart_evidence)  # type: ignore[assignment]
     return selected
-
-
-def lane_evidence_run_id(environment: FastloopEnvironment, results_dir: Path) -> str:
-    """One evidence run directory per lane and results directory, as a valid run ID."""
-
-    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{environment.cluster}-{results_dir.name}").strip("-.")
-    return slug[:128] or "fastloop"
 
 
 def _runtime_config(args: argparse.Namespace, environment: FastloopEnvironment, results_dir: Path) -> RuntimeConfig:
@@ -886,6 +880,11 @@ def recreate_application(
     return deployed
 
 
+def _record_fresh_deploy(environment: FastloopEnvironment) -> None:
+    """A deploy `up` just performed is a whole-application recreation: the lane's first row need not redeploy it."""
+    LaneInjectionState(environment.kubeconfig, environment.namespace).recreated()
+
+
 def _application_needs_redeploy(
     environment: FastloopEnvironment,
     marker: AttemptMarker,
@@ -1061,6 +1060,13 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
     args.run_id = run_id
     args.model = _agent_model(args)
     results_dir = environment.run_dir / "results" / run_id
+    if args.agent == "sdo":
+        from benchmarks.sregym.fastloop.evidence_sink import EvidenceSinkError, require_evidence_sink
+
+        try:
+            require_evidence_sink(environment, results_dir, waived=getattr(args, "allow_no_evidence_sink", False))
+        except EvidenceSinkError as exc:
+            raise SystemExit(str(exc)) from exc
     arm_memory = None
     if getattr(args, "ablation_arm", None):
         from benchmarks.sregym.fastloop.ablation import configure_arm
@@ -1314,56 +1320,66 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
         def reset_failed() -> None:
             _reset_failed_incident(environment, worker)
 
-        if args.agent == "sdo":
-            records = run_incidents(
-                _sdo_agent(
+        try:
+            if args.agent == "sdo":
+                records = run_incidents(
+                    _sdo_agent(
+                        args,
+                        environment,
+                        results_dir,
+                        composite=registered_composites,
+                        stream_faults=faults_by_incident,
+                        worker=worker,
+                        evidence_queue=evidence_queue,
+                    ),
+                    driver,
+                    config,
+                    grader=grader,
+                    diagnosis_grading=grading_mode,
+                    on_failed_incident=reset_failed if args.continue_on_error else None,
+                )
+            elif args.agent in ("claudecode", "external"):
+                run_baseline = _run_claudecode if args.agent == "claudecode" else _run_external
+                records = run_baseline(
                     args,
                     environment,
                     results_dir,
-                    composite=registered_composites,
-                    stream_faults=faults_by_incident,
-                    worker=worker,
-                    evidence_queue=evidence_queue,
-                ),
-                driver,
-                config,
-                grader=grader,
-                diagnosis_grading=grading_mode,
-                on_failed_incident=reset_failed if args.continue_on_error else None,
-            )
-        elif args.agent in ("claudecode", "external"):
-            run_baseline = _run_claudecode if args.agent == "claudecode" else _run_external
-            records = run_baseline(
-                args,
-                environment,
-                results_dir,
-                worker,
-                driver,
-                config,
-                grader,
-                grading_mode,
-                faults_by_incident,
-                reset_failed if args.continue_on_error else None,
-            )
-        else:
-            records = _run_codex(
-                args,
-                environment,
-                results_dir,
-                worker,
-                driver,
-                config,
-                grader,
-                grading_mode,
-                faults_by_incident,
-                reset_failed if args.continue_on_error else None,
-            )
+                    worker,
+                    driver,
+                    config,
+                    grader,
+                    grading_mode,
+                    faults_by_incident,
+                    reset_failed if args.continue_on_error else None,
+                )
+            else:
+                records = _run_codex(
+                    args,
+                    environment,
+                    results_dir,
+                    worker,
+                    driver,
+                    config,
+                    grader,
+                    grading_mode,
+                    faults_by_incident,
+                    reset_failed if args.continue_on_error else None,
+                )
+        except BaseException:
+            # A crashed or timed-out run still keeps its transcripts and stamps the rows it cannot vouch for.
+            try:
+                _finish_evidence(args, environment, results_dir)
+            except Exception:
+                logger.exception("evidence copy and gate after a failed run")
+            raise
     marker.end(unrecovered_rows(records))
     _print_summary(records)
     print(f"results: {config.results_path}")
+    evidence_copied = _finish_evidence(args, environment, results_dir)
     return (
         0
         if records
+        and evidence_copied
         and all(
             record.error is None
             and (grading_mode == "off" or (record.diagnosis_grade is not None and record.diagnosis_grade.error is None))
@@ -1371,6 +1387,26 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
         )
         else 1
     )
+
+
+def _finish_evidence(args: argparse.Namespace, environment: FastloopEnvironment, results_dir: Path) -> bool:
+    """End of a run, and of a crashed one: copy the transcripts out of the lane's sink into the results, then refuse to
+    grade any SDO row whose transcripts are missing. False when the copy failed or a row was refused."""
+    from benchmarks.sregym.fastloop import evidence_gate, evidence_sink
+
+    if args.agent != "sdo":
+        return True
+    copied = True
+    if environment.evidence_root is not None:
+        try:
+            copy = evidence_sink.copy_out_run(environment, results_dir)
+        except evidence_sink.EvidenceSinkError as exc:
+            logger.error("evidence copy: %s", exc)
+            print(f"evidence copy FAILED: {exc}", file=sys.stderr)
+            copied = False
+        else:
+            print(f"evidence: {copy.incidents} incidents, {copy.tasks} tasks, {copy.files} files -> {copy.destination}")
+    return evidence_gate.announce(evidence_gate.apply(results_dir)) and copied
 
 
 def _run_codex(
@@ -1702,10 +1738,16 @@ def _summary(args: argparse.Namespace) -> int:
 def _down(args: argparse.Namespace) -> int:
     from benchmarks.sregym.adapter import KubectlClusterOps, teardown
     from benchmarks.sregym.fastloop.evidence_queue import settle_lane_exports
+    from benchmarks.sregym.fastloop.evidence_sink import settle_lane_evidence
 
     environment = FastloopEnvironment.load(args.run_dir.resolve())
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
     failed_exports = settle_lane_exports(environment)
+    if evidence_failures := settle_lane_evidence(environment):
+        for failure in evidence_failures:
+            logger.error("evidence not copied out of the sink: %s", failure)
+        print("down refused: the evidence sink is not copied out (nothing was deleted)", file=sys.stderr)
+        return 1
     errors = teardown(environment.state_path, ops=KubectlClusterOps()) if environment.state_path.exists() else []
     if environment.app in {"toy", "gitlab"}:
         from benchmarks.sregym.fastloop.toy_upstream import UpstreamLayout, delete_upstream
@@ -1714,9 +1756,13 @@ def _down(args: argparse.Namespace) -> int:
         if (error := delete_upstream(environment.kubeconfig, UpstreamLayout(environment.namespace))) is not None:
             errors.append(error)
     errors.extend(f"evidence export for {job.incident_id} failed: {job.error}" for job in failed_exports)
+    # Stopping the controller ran the sink's final pass; copy that out before the cluster can go.
+    errors.extend(f"evidence copy failed: {failure}" for failure in settle_lane_evidence(environment))
     for error in errors:
         logger.error("persistent controller teardown: %s", error)
-    if args.delete_cluster:
+    if args.delete_cluster and any(error.startswith("evidence copy failed") for error in errors):
+        print("cluster kept: the evidence sink is not copied out", file=sys.stderr)
+    elif args.delete_cluster:
         subprocess.run(["kind", "delete", "cluster", "--name", environment.cluster], check=True)
         from benchmarks.sregym.fastloop.image_delivery import remove_registry
 
@@ -2261,6 +2307,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--health-timeout", type=float, default=300.0, help="seconds to wait for health after recovery")
     run.add_argument("--proxy-port", type=int, default=0, help="Codex baseline API proxy port (default: free port)")
     run.add_argument("--run-id", default=None)
+    run.add_argument(
+        "--allow-no-evidence-sink",
+        action="store_true",
+        help="run the SDO arm on a lane without an evidence sink (no transcripts are kept; its cells are not gradable)",
+    )
     run.add_argument(
         "--continue-on-error", action="store_true", help="record a failed incident and continue after baseline recovery"
     )

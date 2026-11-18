@@ -292,6 +292,7 @@ def wipe_environment(
     """Tier 1 for one fastloop lane: its SDO control namespace, harness leftovers, seed and controller registry."""
     from benchmarks.sregym.adapter import HELPER_NAMESPACE, allowed_namespaces, control_namespace_for
     from benchmarks.sregym.fastloop.evidence_queue import settle_lane_exports
+    from benchmarks.sregym.fastloop.evidence_sink import settle_lane_evidence
     from benchmarks.sregym.fastloop.parallel_memory import memory_head
     from benchmarks.sregym.fastloop.reset_provenance import publish_reset_generation
 
@@ -299,6 +300,10 @@ def wipe_environment(
         raise WipeError("eval: reset generation already published; refusing to reset an existing attempt")
     # Deleting the control namespace deletes the PVC holding sealed evidence archives.
     settle_lane_exports(environment)
+    if failures := settle_lane_evidence(environment):
+        raise WipeError(
+            f"eval: the evidence sink is not copied out; refusing to delete the lane: {'; '.join(failures)}"
+        )
     before = memory_head(environment.workspace) if provenance_path is not None else None
     control = control_namespace_for(environment.namespace)
     receipt = run_tier1(
@@ -312,6 +317,9 @@ def wipe_environment(
         timeout_seconds=timeout_seconds,
         helper_namespace=HELPER_NAMESPACE,
     )
+    # Stopping the controller ran the sink's final pass: copy it out before the next row writes beside it.
+    if failures := settle_lane_evidence(environment):
+        raise WipeError(f"eval: the evidence sink's final pass is not copied out: {'; '.join(failures)}")
     if environment.parallel_root is not None:
         from benchmarks.sregym.fastloop.shared_memory import provision_parallel_volume
 
