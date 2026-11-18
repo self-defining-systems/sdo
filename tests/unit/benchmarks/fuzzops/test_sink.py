@@ -460,7 +460,7 @@ def test_an_investigator_directory_follows_its_parent_incident_not_a_unix_time(t
 
 
 def test_an_investigator_directory_is_copied_when_its_parent_is_in_the_interval_even_if_idle(tmp_path: Path) -> None:
-    """An investigator whose files were last written before the interval still belongs to a parent that was open in it."""
+    """An investigator last written before the interval still belongs to a parent that was open in it."""
     run = _run(tmp_path)
     parent = "fg1-1"  # an ID that parses as 1970: only the parent's ledger places it in the interval
     parent_dir = _incident(run, _digest(parent), _ledger(parent, "2026-11-12T10:05:00Z"), rollouts=1)
