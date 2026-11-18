@@ -285,9 +285,13 @@ class FastloopRowRunner:
 
     def probe(self, lane: Lane) -> Callable[[], ProbeResult]:
         urls = self.settings.probe_urls.get(lane.app)
+        kubeconfig, namespace = Path(lane.info["kubeconfig"]), lane.info["namespace"]
+        if urls and all(u.startswith("kube:") for u in urls):
+            from benchmarks.sregym.eval.kubeprobe import kube_probe
+
+            return kube_probe(tuple(urls), kubeconfig)
         if urls:
             return http_probe(urls)
-        kubeconfig, namespace = Path(lane.info["kubeconfig"]), lane.info["namespace"]
 
         def pods_ready() -> ProbeResult:
             listing = json.loads(
