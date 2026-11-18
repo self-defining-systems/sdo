@@ -153,3 +153,17 @@ Stream labels: `resolved_by_sdo` (closure `success`, or `cleared_without_action`
 ```bash
 uv run python -m benchmarks.sregym.fastloop gitlab faults --run-dir LANE --count 10 --seed 1 --dry-run
 ```
+
+## Vanilla Claude Code arm (`--agent claudecode`)
+
+`run --agent claudecode` runs SREGym's own stock Claude Code agent (no SDO in the lane): the instruction is
+SREGym's `clients/claudecode` `build_instruction`, the model defaults to `claude-sonnet-5-5` (`--model`
+overrides; Opus 5.5 is `claude-opus-5-5`), and auth comes from the environment or the `env` block of
+`$CLAUDE_CONFIG_DIR/settings.json` (the ClaudeGCP Vertex profile). Each row's directory
+(`results/<run>/<index>_<problem>/`) holds `session-dir/` (the cell's own persistent CLI config home with every
+session and sub-agent JSONL), `transcript.jsonl` (raw stream-json), `claude-code.stderr`, `prompt.txt`,
+`clock.json` (notice = page, start, end, timeout, `claude --version`) and `accounting.json` (tokens split into
+uncached input / cache read / cache write / output, unique-request count, USD from the shared `ClaudeLedger`
+and the agentshim price table; the CLI's own cost is a cross-check). A timeout kills the process group and
+keeps the partial transcripts; a row whose session or sub-agent files are missing carries an error and is not
+gradable. `claudecode_agent.run_claudecode_cell` is the same executor for a per-cell runner.
