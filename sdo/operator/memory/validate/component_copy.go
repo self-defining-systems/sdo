@@ -615,3 +615,10 @@ func normalizeLeaf(node ast.Node, identifiers map[string]string, helpers map[str
 	}
 	return true
 }
+
+// PlaybookRoles is the parameters the playbook's Spec declares, as "name (Kind)":
+// none for a role-less playbook, which finds its subject by relation and is
+// tried on every finding.
+func PlaybookRoles(root, id string) []string {
+	return programRoles(filepath.Join(root, layout.PlaybookDir(id)))
+}

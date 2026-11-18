@@ -97,3 +97,49 @@ func TestRepeatCorpusWithoutContextKeepsLabelsMinimal(t *testing.T) {
 		}
 	}
 }
+
+// A program's first case needs no healthy peer: it is written from the incident
+// alone, role-less or not, and its labels simply omit peer_bindings. Replay then
+// diagnoses the healthy capture on the case's own bindings.
+func TestRecordCorpusWritesAProgramsFirstCaseWithoutAPeer(t *testing.T) {
+	for name, binding := range map[string]program.Bindings{"role-less": {}, "one role": component("front")} {
+		t.Run(name, func(t *testing.T) {
+			root, captures := t.TempDir(), t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, layout.CorpusDir), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for _, file := range []string{"fixed.json", "open@detect.json"} {
+				writeCaptureFile(t, filepath.Join(captures, file), "{}")
+			}
+			writeCaptureFile(t, filepath.Join(captures, "open@detect-recordings.json"), "[]")
+			paths, err := RecordCorpus(root, captures, "incident-1", map[string][]program.Bindings{"fresh": {binding}}, nil, CaseContext{})
+			if err != nil || len(paths) == 0 {
+				t.Fatalf("RecordCorpus = %v, %v; a new program's first case must not need a peer", paths, err)
+			}
+			var labelsPath string
+			for _, path := range paths {
+				if filepath.Base(path) == "labels.json" {
+					labelsPath = path
+				}
+			}
+			data, err := os.ReadFile(filepath.Join(root, labelsPath))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var raw map[string]json.RawMessage
+			if err := json.Unmarshal(data, &raw); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := raw["peer_bindings"]; ok {
+				t.Fatalf("a first case invents no peer: %s", data)
+			}
+			loaded, err := sdktest.LoadCorpusMetadata(filepath.Dir(filepath.Join(root, labelsPath)))
+			if err != nil {
+				t.Fatalf("load: %v", err)
+			}
+			if len(loaded.RootCauseProgramIDs) != 1 || loaded.RootCauseProgramIDs[0] != "fresh" || loaded.Provenance.IncidentID != "incident-1" {
+				t.Fatalf("loaded = %+v", loaded)
+			}
+		})
+	}
+}
