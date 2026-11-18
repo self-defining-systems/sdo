@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from benchmarks.devswap import warm
-from benchmarks.devswap.kube import APPLICATION_ROOT, Kubectl, SwapError
+from benchmarks.devswap.kube import Kubectl, SwapError
 
 
 def _job(**overrides: Any) -> dict[str, Any]:
@@ -17,7 +17,8 @@ def _job(**overrides: Any) -> dict[str, Any]:
         "name": "controller",
         "image": "sdo-controller:dev",
         "imagePullPolicy": "IfNotPresent",
-        "command": ["sdo-operator", "run"],
+        "command": ["/usr/local/bin/sdo-operator"],
+        "args": ["controller", "--app", "/workspace/application", "--namespace", "app"],
         "envFrom": [{"secretRef": {"name": "credentials"}}],
         "env": [
             {"name": "GOCACHE", "value": "/workspace/.sdo-runtime/build/go-cache"},
@@ -33,6 +34,7 @@ def _job(**overrides: Any) -> dict[str, Any]:
             {"name": "credentials", "mountPath": "/sdo/credentials", "readOnly": True},
             {"name": "dev-sdo", "mountPath": "/opt/sdo/sdo", "readOnly": True},
             {"name": "dev-operator", "mountPath": "/usr/local/bin/sdo-operator", "readOnly": True},
+            {"name": "sdo-config", "mountPath": "/etc/sdo", "readOnly": True},
         ],
     }
     volumes = [
@@ -41,6 +43,7 @@ def _job(**overrides: Any) -> dict[str, Any]:
         {"name": "credentials", "secret": {"secretName": "credentials"}},
         {"name": "dev-sdo", "hostPath": {"path": "/mnt/dev/sdo", "type": "Directory"}},
         {"name": "dev-operator", "hostPath": {"path": "/mnt/dev/.fastloop/sdo-operator", "type": "File"}},
+        {"name": "sdo-config", "configMap": {"name": "sdo-config"}},
     ]
     spec: dict[str, Any] = {
         "containers": [{"name": "sidecar", "image": "x"}, controller],
@@ -74,9 +77,10 @@ def test_the_warm_pod_runs_the_controllers_environment_on_its_cache_and_the_dev_
     assert "envFrom" not in container
     assert container["resources"] == {"limits": {"cpu": "4", "memory": "4Gi"}}
     assert container["securityContext"] == {"runAsNonRoot": True}
-    # the repository (cache and accepted memory), scratch and the projected tree; no credentials
-    assert [m["name"] for m in container["volumeMounts"]] == ["repository", "scratch", "dev-sdo", "dev-operator"]
-    assert [v["name"] for v in spec["volumes"]] == ["repository", "scratch", "dev-sdo", "dev-operator"]
+    # the repository (cache and accepted memory), scratch, the settings and the projected tree; no credentials
+    kept = ["repository", "scratch", "dev-sdo", "dev-operator", "sdo-config"]
+    assert [m["name"] for m in container["volumeMounts"]] == kept
+    assert [v["name"] for v in spec["volumes"]] == ["repository", "scratch", "dev-sdo", "dev-operator", "sdo-config"]
 
 
 def test_a_job_without_the_repository_volume_cannot_be_warmed() -> None:
@@ -84,6 +88,13 @@ def test_a_job_without_the_repository_volume_cannot_be_warmed() -> None:
     spec = job["spec"]["template"]["spec"]
     spec["volumes"] = [v for v in spec["volumes"] if v["name"] != "repository"]
     with pytest.raises(SwapError, match="repository"):
+        warm.warm_pod(job, "control")
+
+
+def test_a_job_whose_controller_container_runs_something_else_cannot_be_warmed() -> None:
+    job = _job()
+    job["spec"]["template"]["spec"]["containers"][1]["args"] = ["standby"]
+    with pytest.raises(SwapError, match="does not run the controller"):
         warm.warm_pod(job, "control")
 
 

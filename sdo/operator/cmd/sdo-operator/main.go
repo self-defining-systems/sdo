@@ -243,10 +243,10 @@ func main() {
 		}
 		return
 	}
-	if len(os.Args) > 1 && os.Args[1] == "warm-memory-build" {
-		// the controller's start-up build of the accepted memory, its executable discarded: fills the Go build cache the
-		// pod mounts before a controller restarts on a new operator source tree
-		if err := operatorcli.RunWarmMemoryBuild(context.Background(), os.Args[2:], os.Stdout); err != nil {
+	if len(os.Args) > 1 && os.Args[1] == "warm-build" {
+		// a controller start's compiles of the accepted memory, the executables discarded: fills the Go build cache the
+		// pod mounts before a controller restarts on a new operator source tree (takes the controller's arguments)
+		if err := operatorcli.RunWarmBuild(context.Background(), os.Args[2:], os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}

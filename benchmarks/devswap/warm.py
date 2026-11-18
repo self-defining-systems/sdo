@@ -1,14 +1,16 @@
 """Warm a lane's Go build cache for the operator source tree a swap is about to run, while the old controller serves.
 
-The controller compiles its accepted memory's host at every start (``sdo-operator``'s ``BuildAcceptedMemoryHost``: the
-staged workspace, ``go mod tidy``, ``go build`` of the memory host). That build imports the operator packages from the
-projected source tree (the dev mount), so after a swap to a new tree their cache entries do not exist and the first
-restart recompiles them: measured on a pool lane, a restart that took 19-21 s with a warm cache took about 45 s on a new
-tree and 130 s with an empty cache. The cache lives on the controller's repository volume and survives the restart.
+The controller compiles its accepted memory at every start (``builder.RunOnce``: the staged workspace, ``go mod tidy``,
+the test compile of every package, the detector and generated gates, the controller binary, the memory host). That build
+imports the operator packages from the projected source tree (the dev mount), so after a swap to a new tree their cache
+entries do not exist and the first restart recompiles them: measured on a pool lane, a restart that took 19-21 s with a
+warm cache took about 45 s on a new tree and 130 s with an empty cache. The cache lives on the controller's repository
+volume and survives the restart.
 
-``GoCacheWarm`` runs the new binary's ``warm-memory-build`` (the same build, its executable discarded) in a short pod
-made from the controller Job's own pod template: the same image, Go environment, cache volume, accepted repository and
-projected tree. The pod needs no credentials and no cluster API. Nothing here may fail a swap (the restart only
+``GoCacheWarm`` runs the new binary's ``warm-build`` (the same compiles, the executables discarded, the controller's own
+arguments) in a short pod made from the controller Job's own pod template: the same image, Go environment, cache volume,
+accepted repository, mounted settings and projected tree. The pod needs no credentials and no cluster API. A target tree
+whose binary has no ``warm-build`` fails the pod: reported, and the restart compiles as before. Nothing here may fail a swap (the restart only
 compiles what is missing, as before): every failure is reported to ``out`` and swallowed.
 """
 
@@ -19,7 +21,7 @@ import subprocess
 import time
 from typing import TYPE_CHECKING, Any
 
-from benchmarks.devswap.kube import APPLICATION_ROOT, CONTROLLER_CONTAINER, CONTROLLER_JOB, Kubectl, SwapError, run
+from benchmarks.devswap.kube import CONTROLLER_CONTAINER, CONTROLLER_JOB, Kubectl, SwapError, run
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -28,16 +30,17 @@ WARM_POD = "sdo-warm-go-cache"
 #: A bound, not a delay: the pod ends when the build does (measured 25-45 s on a new tree, 130 s on an empty cache).
 WARM_TIMEOUT_S = 420.0
 OPERATOR_BINARY = "/usr/local/bin/sdo-operator"
-#: The controller's mounts the build needs: the repository volume (accepted memory, ``GOCACHE``, scratch directories)
-#: and every projected-tree mount (``devmount.Apply`` names them ``dev-*``).
-_KEPT_MOUNTS = ("repository", "scratch")
+#: The controller's mounts the build needs: the repository volume (accepted memory, ``GOCACHE``, scratch directories),
+#: scratch, the mounted settings (the build reads the replay policy) and every projected-tree mount (``devmount.Apply``
+#: names them ``dev-*``).
+_KEPT_MOUNTS = ("repository", "scratch", "sdo-config")
 _KEPT_PREFIX = "dev-"
 
 
 def warm_pod(job: Mapping[str, Any], control: str) -> dict[str, Any]:
     """The warm pod, from the controller Job object ``job``: its controller container's image, plain environment,
-    resources and security context, with only the mounts the build needs, running ``warm-memory-build`` on the accepted
-    repository. Raises ``SwapError`` when the Job has no controller container or repository volume."""
+    resources and security context, with only the mounts the build needs, running ``warm-build`` with the controller's
+    arguments. Raises ``SwapError`` when the Job has no controller container, arguments or repository volume."""
     spec = ((job.get("spec") or {}).get("template") or {}).get("spec") or {}
     container = next((c for c in spec.get("containers", []) if c.get("name") == CONTROLLER_CONTAINER), None)
     if container is None:
@@ -47,6 +50,9 @@ def warm_pod(job: Mapping[str, Any], control: str) -> dict[str, Any]:
         for m in container.get("volumeMounts", [])
         if m.get("name") in _KEPT_MOUNTS or str(m.get("name", "")).startswith(_KEPT_PREFIX)
     ]
+    args = list(container.get("args") or [])
+    if args[:1] != ["controller"]:
+        raise SwapError(f"the {CONTROLLER_CONTAINER} container of job {CONTROLLER_JOB} does not run the controller")
     names = {m["name"] for m in mounts}
     volumes = [v for v in spec.get("volumes", []) if v.get("name") in names]
     if "repository" not in names or "repository" not in {v["name"] for v in volumes}:
@@ -55,7 +61,7 @@ def warm_pod(job: Mapping[str, Any], control: str) -> dict[str, Any]:
         "name": "warm",
         "image": container["image"],
         "imagePullPolicy": "IfNotPresent",
-        "command": [OPERATOR_BINARY, "warm-memory-build", "--repository", APPLICATION_ROOT],
+        "command": [OPERATOR_BINARY, "warm-build", *args],
         # plain values only: an entry that reads the pod's own identity is the controller's (leader election)
         "env": [e for e in container.get("env", []) if "value" in e],
         "resources": container.get("resources") or {},
