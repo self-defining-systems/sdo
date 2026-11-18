@@ -67,19 +67,19 @@ type KubernetesJobDispatcher struct {
 func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request IncidentRequest) (IncidentRequest, error) {
 	defer dispatchPreparationTiming(request.IncidentID, "prepare_task")()
 	if err := validateIncidentRequest(request); err != nil {
-		return IncidentRequest{}, fmt.Errorf("validate incident request: %w", err)
+		return IncidentRequest{}, fmt.Errorf("%w: validate incident request: %w", ErrDispatchPermanent, err)
 	}
 	if request.PreparedAgentTask != "" {
 		return request, nil
 	}
 	if d.AgentID == "" {
 		if d.Registry == nil {
-			return IncidentRequest{}, errors.New("incident dispatcher requires an agent registry")
+			return IncidentRequest{}, fmt.Errorf("%w: incident dispatcher requires an agent registry", ErrDispatchPermanent)
 		}
 		var err error
 		d.AgentID, err = d.Registry.AgentFor(&contracts.IncidentRequest{})
 		if err != nil {
-			return IncidentRequest{}, err
+			return IncidentRequest{}, fmt.Errorf("%w: %w", ErrDispatchPermanent, err)
 		}
 	}
 	if d.Client != nil {
@@ -92,7 +92,7 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 				task.GetTaskId() != request.IncidentID || task.GetAgentId() != d.AgentID ||
 				task.GetWorkspace().GetCheckoutPath() != request.RepositoryWorktree ||
 				task.GetWorkspace().GetBaseCommit() != request.RepositoryBaseCommit {
-				return IncidentRequest{}, fmt.Errorf("existing agent request ConfigMap %q differs from pending incident", name)
+				return IncidentRequest{}, fmt.Errorf("%w: existing agent request ConfigMap %q differs from pending incident", ErrDispatchPermanent, name)
 			}
 			typed := new(contracts.IncidentRequest)
 			if err := task.GetRequest().UnmarshalTo(typed); err != nil {
@@ -144,7 +144,7 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 	}
 	var snapshots []*contracts.OperationalMemorySnapshot
 	if d.RequireMemorySnapshot && d.Catalog == nil {
-		return IncidentRequest{}, errors.New("native responder requires logical operational memory")
+		return IncidentRequest{}, fmt.Errorf("%w: native responder requires logical operational memory", ErrDispatchPermanent)
 	}
 	if d.Catalog != nil {
 		finished := dispatchPreparationTiming(request.IncidentID, "memory_snapshot")
@@ -160,7 +160,7 @@ func (d KubernetesJobDispatcher) PrepareDispatch(ctx context.Context, request In
 	}
 	_, payload, err := encodeIncidentAgentTask(request, d.Registry, d.AgentID, snapshots...)
 	if err != nil {
-		return IncidentRequest{}, err
+		return IncidentRequest{}, fmt.Errorf("%w: %w", ErrDispatchPermanent, err)
 	}
 	request.PreparedAgentTask = string(payload)
 	return request, nil
@@ -231,7 +231,7 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 		var err error
 		request, err = d.PrepareDispatch(ctx, request)
 		if err != nil {
-			return IncidentResult{}, err
+			return IncidentResult{}, &DispatchPrepareError{Err: err}
 		}
 	}
 	task := new(contracts.AgentTask)

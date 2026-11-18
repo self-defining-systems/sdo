@@ -2355,6 +2355,14 @@ func executePendingEffects(ctx context.Context, controller *Controller) (err err
 		}
 		return nil
 	}
+	// The dispatch's task is frozen and saved before a worker can start.
+	if prepared, err := controller.PrepareDispatchStep(ctx); err != nil {
+		return fmt.Errorf("prepare responder dispatch: %w", err)
+	} else if prepared {
+		if err := controller.PersistState(ctx); err != nil {
+			return fmt.Errorf("persist prepared responder dispatch: %w", err)
+		}
+	}
 	effect, ok := controller.PendingDispatchEffect()
 	if ok {
 		if err := controller.ExecuteDispatchEffect(ctx, effect); err != nil {
