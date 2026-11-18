@@ -180,8 +180,14 @@ func withOnboardingReference(snapshot sdk.DetectionContext, reference *servicehe
 		view.Reachability = &window
 		return view
 	}
-	return NewCycleReadView(onboardingReadView{ReadView: LiveReadView{Carrier: inputs.New(snapshot)}, window: window})
+	// Observation inputs only: no view has been built yet, so none is invented
+	// (a view fabricated here would carry no source, client or prober).
+	return onboardingContext{Carrier: inputs.New(snapshot).WithReachability(reachabilityWindow{&window})}
 }
+
+// onboardingContext is the carrier with the install reachability reference;
+// like heldContext it keeps the wrapped snapshot's other inputs visible.
+type onboardingContext struct{ inputs.Carrier }
 
 type onboardingReadView struct {
 	program.ReadView
