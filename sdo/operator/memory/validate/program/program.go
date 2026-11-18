@@ -487,3 +487,39 @@ func TestProgramPlansOnTheIncidentOpenState(t *testing.T){
 	test.WriteString("}\n")
 	return test.String()
 }
+
+// OwnIncidentTests is the generated test that runs each named playbook's
+// Diagnose on the incident's captured open state (testdata/own-incident) and
+// records the verdict in own-incident-replay.json. A definite failure (Diagnose
+// returns NoMatch on the incident the playbook was written for) fails the test
+// with a line the check turns into a blocking diagnostic; a capture that cannot
+// say is only recorded. ids are the playbooks new in this change.
+func OwnIncidentTests(ids []string) string {
+	if len(ids) == 0 {
+		return "package generated\n"
+	}
+	var test strings.Builder
+	test.WriteString(`package generated
+import("encoding/json";"os";"testing";"sdo.dev/operator/sdk/sdktest")
+func TestNewProgramsDiagnoseTheirOwnIncident(t *testing.T){
+ registry,err:=Programs();if err!=nil{t.Fatal(err)}
+ results:=[]sdktest.OwnIncidentResult{}
+ defer func(){data,err:=json.Marshal(results);if err!=nil{t.Fatal(err)};if err:=os.WriteFile("own-incident-replay.json",data,0600);err!=nil{t.Fatal(err)}}()
+ check:=func(id string){
+  d,ok:=registry.Diagnoser(id);if !ok{return}
+  result,err:=sdktest.DiagnoseOnIncident(d,"testdata/own-incident")
+  if err!=nil{result=sdktest.OwnIncidentResult{ProgramID:id,Outcome:sdktest.OwnIncidentUnverified,Reason:"capture unreadable: "+err.Error()}}
+  results=append(results,result)
+  if result.Outcome==sdktest.OwnIncidentFailed{t.Errorf("`+OwnIncidentRule+`[%s]: %s",id,result.Reason)}
+ }
+`)
+	for _, id := range ids {
+		fmt.Fprintf(&test, " check(%q)\n", id)
+	}
+	test.WriteString("}\n")
+	return test.String()
+}
+
+// OwnIncidentRule is the rule named by an own-incident replay failure line and
+// by the check's diagnostic and note for it.
+const OwnIncidentRule = "playbook.own-incident-replay"

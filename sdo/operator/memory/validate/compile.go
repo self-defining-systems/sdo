@@ -11,6 +11,7 @@ import (
 	"sdo.dev/operator/builder"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 const maxCompileOutput = 4096
@@ -31,6 +32,24 @@ var telemetryBindingViolation = regexp.MustCompile(`(?m)(telemetry\.(?:unbound|k
 // the incident detector ID and the violation.
 var healthyBaselineViolation = regexp.MustCompile(`(?m)detector\.healthy-baseline\[([a-z0-9][a-z0-9_.-]*)\]: (.+?)\s*$`)
 
+// ownIncidentViolation is one generated own-incident replay failure: the
+// playbook ID and the reason Diagnose did not match its own incident.
+var ownIncidentViolation = regexp.MustCompile(`(?m)playbook\.own-incident-replay\[([a-z0-9][a-z0-9-]*)\]: (.+?)\s*$`)
+
+// ownIncidentNote is a new playbook's own-incident verdict as a note the check
+// reports and the broker records (trailer and ledger): "match", "unverified" or,
+// for a replay that did not fail the check, nothing else.
+func ownIncidentNote(result sdktest.OwnIncidentResult) Diagnostic {
+	message := string(result.Outcome)
+	switch {
+	case result.Outcome == sdktest.OwnIncidentMatch:
+		message += ": Diagnose matches the incident it was written for (" + result.Capture + ")"
+	case result.Reason != "":
+		message += ": " + result.Reason
+	}
+	return Diagnostic{Rule: RuleOwnIncidentReplay, Path: layout.PlaybookDir(result.ProgramID), Message: message}
+}
+
 // compile builds the detectors against the SDK in an isolated workspace, then
 // vets and tests them. It executes detector code: the broker invokes it in
 // its bounded subprocess; agent self-checks invoke the same runner locally.
@@ -49,7 +68,7 @@ func (s *run) compile(ctx context.Context) error {
 	}
 	workspace, err := builder.BuildWorkspace(ctx, builder.Config{
 		Replay: s.req.Replay, ApplicationRoot: s.req.Root, DiagnosticsRoot: diagnostics, OperatorRoot: s.req.OperatorRoot, HealthyBaseline: s.req.HealthyBaseline,
-		IncidentCapture: s.incidentCapture(),
+		IncidentCapture: s.incidentCapture(), OwnIncidentCapture: s.ownIncidentCapture(),
 		Telemetry: &builder.TelemetryBindings{Sources: sources},
 	})
 	if err != nil {
@@ -82,6 +101,13 @@ func (s *run) compile(ctx context.Context) error {
 		}
 		for _, gap := range gaps {
 			s.req.noteGaps(Diagnostic{Rule: RuleReplayObservation, Path: layout.PlaybooksDir, Message: gap})
+		}
+		verdicts, verdictErr := workspace.OwnIncidentResults()
+		if verdictErr != nil {
+			s.req.noteGaps(Diagnostic{Rule: RuleOwnIncidentReplay, Path: layout.PlaybooksDir, Message: "unverified: " + verdictErr.Error()})
+		}
+		for _, verdict := range verdicts {
+			s.req.noteGaps(ownIncidentNote(verdict))
 		}
 		bounds, boundErr := workspace.TrafficLatencyGaps()
 		if boundErr != nil {
@@ -128,6 +154,17 @@ func (s *run) compile(ctx context.Context) error {
 		}
 		if len(matches) == 0 {
 			s.add(Compile, Diagnostic{Rule: RuleDetectorHealthyBaseline, Path: layout.DiagnosticsDir, Message: goTestDuration.ReplaceAllString(stage.Output, ""), Hint: hint})
+		}
+		return nil
+	}
+	if violations := ownIncidentViolation.FindAllStringSubmatch(stage.Output, -1); len(violations) > 0 {
+		const hint = "a new playbook's Diagnose must Match the incident capture it was written for; run sdo-operator memory test <id> and fix what it tests"
+		seen := map[string]bool{}
+		for _, match := range violations {
+			if key := match[1] + "\x00" + match[2]; !seen[key] {
+				seen[key] = true
+				s.add(Compile, Diagnostic{Rule: RuleOwnIncidentReplay, Path: layout.PlaybookDir(match[1]), Message: match[2], Hint: hint})
+			}
 		}
 		return nil
 	}
@@ -227,6 +264,16 @@ func summarizeGoTest(output string) (message string, path string) {
 
 // incidentCapture is the controller's capture directory of the incident whose reflection this check judges: the agent's
 // closing turn and the broker see the incident's open state before Go writes any corpus case. Other checks have none.
+// ownIncidentCapture is the capture the own-incident replay reads: the one the
+// caller supplied for a compile that runs apart from the reflection check, else
+// the reflection check's.
+func (s *run) ownIncidentCapture() string {
+	if s.req.OwnIncidentDirectory != "" {
+		return s.req.OwnIncidentDirectory
+	}
+	return s.incidentCapture()
+}
+
 func (s *run) incidentCapture() string {
 	if s.req.Actor != Responder || s.req.Phase != ReflectionPhase {
 		return ""

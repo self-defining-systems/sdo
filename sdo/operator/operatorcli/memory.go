@@ -87,7 +87,9 @@ commands:
   test <id> [--replay on|off] [--root .]
         Replay one playbook on the captured cases of this incident: the same check as
         "memory check", reduced to the playbook's own replay lines and whether anything
-        blocks. At most about 1 KB; Unknown is not a failure.
+        blocks. A playbook new in this change also shows its verdict on the incident it was written for:
+        "diagnose on incident: match", "failed" (Diagnose returned NoMatch there: blocks) or "unverified"
+        (the capture cannot say: does not block). At most about 1 KB.
   ls [--root .] [--kind goal|architecture|playbook|script|detector] [--json]
         List artifacts by logical ID.
   new playbook <id> [--root .] [--incident I]
@@ -577,6 +579,25 @@ func normalizeCorpusForReplay(root string, paths []string, replay string) ([]str
 	return validate.NormalizeCapturedCorpus(root, paths)
 }
 
+// ownIncidentLines is the playbook's own-incident replay verdict as "memory test" prints it: one line for a
+// non-blocking verdict (match or unverified, which the check records as a coverage gap) and one per blocking
+// diagnostic (a definite failure). Nothing for a playbook that is not new in this change.
+func ownIncidentLines(report *contracts.MemoryCheckReport, id string) []string {
+	path := layout.PlaybookDir(id)
+	var lines []string
+	for _, gap := range report.GetCoverageGaps() {
+		if gap.GetRule() == validate.RuleOwnIncidentReplay && gap.GetPath() == path {
+			lines = append(lines, "  diagnose on incident: "+gap.GetMessage())
+		}
+	}
+	for _, diagnostic := range report.GetDiagnostics() {
+		if diagnostic.GetRule() == validate.RuleOwnIncidentReplay && diagnostic.GetPath() == path {
+			lines = append(lines, "  diagnose on incident: "+diagnostic.GetMessage()+" (blocks publication)")
+		}
+	}
+	return lines
+}
+
 // memoryTest is "memory check" read for one playbook: its replay verdicts per captured case and whether anything blocks
 // publication. It runs the same check, so it cannot disagree with the broker's, and prints at most a few short lines.
 func memoryTest(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) (int, error) {
@@ -602,6 +623,9 @@ func memoryTest(ctx context.Context, args []string, getenv func(string) string, 
 	}
 	fmt.Fprintf(stdout, "playbook %s\n", id)
 	fmt.Fprintf(stdout, "  checked %s\n", checkedLabel(checked))
+	for _, line := range ownIncidentLines(checked, id) {
+		fmt.Fprintln(stdout, line)
+	}
 	replayed := 0
 	for _, note := range checked.GetMitigationReplayNotes() {
 		if note.GetProgramId() == id {
@@ -610,7 +634,7 @@ func memoryTest(ctx context.Context, args []string, getenv func(string) string, 
 		}
 	}
 	if replayed == 0 {
-		fmt.Fprintln(stdout, "  no captured case replays this playbook yet (Unknown is not a failure)")
+		fmt.Fprintln(stdout, "  no captured case replays this playbook yet")
 	}
 	if blocking := checked.GetDiagnostics(); len(blocking) > 0 {
 		fmt.Fprintf(stdout, "  blocking: %d problem(s); run memory check for the list\n", len(blocking))

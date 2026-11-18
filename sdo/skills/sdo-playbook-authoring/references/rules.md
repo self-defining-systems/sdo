@@ -77,6 +77,10 @@ Replay results are information only.
   never changes and the program matches again after its own restart. Enforced by: `program.normalized-read`.
 - Diagnose compares typed fields (`diff.ContainerChanges`, `diff.Field`), never a substring of `diff.Text`;
   such programs still load but are noted for rewrite. Enforced by: `program.diff-text-match`.
+- A new playbook's Diagnose must Match the incident it was written for: the check runs it on the incident's captured
+  open state. `NoMatch` there is refused; a capture that cannot decide (a read it lacks or holds an error for) is
+  recorded as unverified and never refused. `sdo-operator memory test <id>` prints the verdict first.
+  Enforced by: `playbook.own-incident-replay`.
 
 ## Executable repair evidence
 
