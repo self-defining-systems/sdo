@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Any
 
 import pytest
 
+from benchmarks.devswap import controller
 from benchmarks.fuzzops import config, hooks
 
 COMMIT = "a" * 40
@@ -57,6 +56,20 @@ def test_seed_stops_the_controller_around_the_import(tmp_path: Path) -> None:
     assert receipt["seed"] == COMMIT
 
 
+def test_a_seed_import_that_fails_leaves_the_controller_running(tmp_path: Path) -> None:
+    """A stopped controller cannot acknowledge the release's incident reset, and the lane is then torn down."""
+    calls: list[str] = []
+    seed = baseline_dir(tmp_path, "seed", "r")
+    failing = steps(calls)
+
+    def broken(_commit: str) -> None:
+        raise hooks.HookError("restore pod failed")
+
+    with pytest.raises(hooks.HookError, match="restore pod failed"):
+        hooks.apply_seed(hooks.SeedSteps(**{**failing.__dict__, "import_memory": broken}), seed, lambda _line: None)
+    assert calls == ["incidents", "stop", "retire", "config []", "start"]
+
+
 def test_the_controllers_startup_upkeep_on_top_of_the_seed_is_the_seeded_memory(tmp_path: Path) -> None:
     seed = baseline_dir(tmp_path, "seed", "r")
     receipt = hooks.apply_seed(steps([], "b" * 40, descends=True), seed, lambda _line: None)
@@ -96,50 +109,6 @@ def test_the_operator_block_carries_the_seed(tmp_path: Path) -> None:
     assert hooks.OperatorBlock.load(path).seed is None
 
 
-def test_the_restore_pod_receives_the_bundle_in_its_own_writable_volume(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The controller image runs with a read-only root: the bundle goes to an emptyDir, never to /tmp."""
-    head = "a" * 40
-    job = {
-        "spec": {
-            "template": {
-                "spec": {
-                    "volumes": [{"name": "repository", "persistentVolumeClaim": {"claimName": "repo"}}],
-                    "containers": [
-                        {
-                            "name": hooks.CONTROLLER_CONTAINER,
-                            "image": "img",
-                            "securityContext": {"readOnlyRootFilesystem": True},
-                            "volumeMounts": [{"name": "repository", "mountPath": "/repo"}],
-                        }
-                    ],
-                }
-            }
-        }
-    }
-    applied: list[dict[str, Any]] = []
-
-    def fake_run(cmd: list[str], what: str, timeout: float, **kw: Any) -> Any:
-        if kw.get("input") is not None:
-            applied.append(json.loads(kw["input"]))
-        return SimpleNamespace(stdout=head, stderr="")
-
-    monkeypatch.setattr(hooks, "_run", fake_run)
-    monkeypatch.setattr(hooks, "send_bundle", lambda *a, **k: None)
-    monkeypatch.setattr(
-        hooks.subprocess, "run", lambda *a, **k: SimpleNamespace(stdout="Succeeded", stderr="", returncode=0)
-    )
-    kube = SimpleNamespace(_json=lambda *a: job, cmd=lambda *a: list(a))
-    hooks.restore_repository(kube, "ctl", head, bundle=Path("b"))  # type: ignore[arg-type]
-    pod = applied[0]["spec"]
-    container = pod["containers"][0]
-    assert {"name": "seed", "mountPath": hooks.BUNDLE_DIR} in container["volumeMounts"]
-    assert {"name": "seed", "emptyDir": {}} in pod["volumes"]
-    assert "/tmp/" not in container["command"][2]
-    assert f"{hooks.BUNDLE_DIR}/memory.bundle" in container["command"][2]
-    # a memory with another history leaves no broker proposals or ledger describing the old one
-    assert "rm -rf /repo/worktrees/*" in container["command"][2]
-
-
 def test_the_restore_script_imports_a_bundle_whatever_its_refs_are_named(tmp_path: Path) -> None:
     """A learned memory's bundle names its branch (no HEAD ref); the restore must still find the commit."""
     import subprocess
@@ -166,7 +135,7 @@ def test_the_restore_script_imports_a_bundle_whatever_its_refs_are_named(tmp_pat
     git(source, "bundle", "create", str(tmp_path / "m.bundle"), "learned-branch")
     (tmp_path / "memory.bundle").write_bytes((tmp_path / "m.bundle").read_bytes())
     (tmp_path / "memory.ready").touch()
-    script = hooks.restore_script(head, True, root=str(lane), bundle_dir=str(tmp_path))
+    script = controller.restore_script(head, True, root=str(lane), bundle_dir=str(tmp_path))
     subprocess.run(["sh", "-c", script], check=True, capture_output=True)
     assert git(lane, "rev-parse", "HEAD") == head
 

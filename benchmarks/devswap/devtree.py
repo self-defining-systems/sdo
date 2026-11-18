@@ -1,4 +1,4 @@
-"""The dev-mounted source tree of a fuzzops lane.
+"""The dev-mounted source tree of a lane.
 
 A lane started with ``settings.dev_mount`` runs the controller and responder pods from the base images and projects
 the checkout's Python sources over them from a node directory (``devmount``, ``SDO_DEV_MOUNT_PATH``): a change to the
@@ -7,7 +7,7 @@ The directory lives under the lane's evidence mount, which every node already ha
 
 Image manifests and dependency files are baked in: a swap onto a revision that changed them is refused
 (``swap_problem``) and the lane takes the full build. A change to the Go operator source is carried by a rebuilt
-binary (built once per source tree, ``hooks.cached_operator_binary``) and a controller restart. The protobuf contracts
+binary (built once per source tree, ``binary.cached_operator_binary``) and a controller restart. The protobuf contracts
 are not baked in (the Go ones are in that binary, the Python ``_gen`` modules are projected with ``sdo``): an *additive*
 change to them is carried the same way; a breaking one (``contractdiff``) is refused.
 """
@@ -16,20 +16,32 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from collections.abc import Mapping  # noqa: TC003
 from pathlib import Path  # noqa: TC003
 
-from benchmarks.fuzzops import contractdiff
+from benchmarks.devswap import contractdiff
 
 #: Directories the pods mount from the tree (``devmount.Apply``/``ApplyWorker``); benchmarks only its sregym package.
 PROJECTED = ("sdo", "libs", "examples", "benchmarks/__init__.py", "benchmarks/sregym")
+#: Image inputs that live beside the code a swap carries: a change to one is a change to the base images (refused with a
+#: cause), never to the binary. A lane whose record predates them cannot say what it was built from, so they are skipped
+#: for it (``OPTIONAL``; a lane with no fingerprint at all is refused).
+IMAGE_FILES = (
+    "sdo/operator/Dockerfile.runtime",
+    "sdo/operator/model_cli_requirements.json",
+    "benchmarks/sregym/Dockerfile.worker",
+    "scripts/check_model_cli_versions.py",
+    "scripts/check_claude_worker.py",
+)
+OPTIONAL = frozenset(IMAGE_FILES)
 #: Paths whose change needs a rebuilt binary or image: a swap carries only a changed ``sdo/operator`` (a rebuilt binary)
 #: and an additive change to ``sdo/contracts``.
 COMPILED = (
     "sdo/operator",
     "sdo/contracts",
+    *IMAGE_FILES,
     "scripts/sdo-images.hcl",
     "scripts/build_sdo_images.sh",
-    "docker",
     "uv.lock",
     "pyproject.toml",
 )
@@ -81,12 +93,16 @@ CONTRACTS_PATH = "sdo/contracts"
 BINARY_PATH = "sdo/operator"
 
 
-def changed_compiled(checkout: Path, lane: dict[str, str]) -> list[str]:
+def changed_compiled(checkout: Path, lane: Mapping[str, str]) -> list[str]:
     """The ``COMPILED`` paths whose content differs from what the lane was built from."""
-    return [path for path, ident in fingerprint(checkout).items() if lane.get(path) != ident]
+    return [
+        path
+        for path, ident in fingerprint(checkout).items()
+        if lane.get(path) != ident and not (path in OPTIONAL and path not in lane and lane)
+    ]
 
 
-def binary_changed(checkout: Path, lane: dict[str, str]) -> bool:
+def binary_changed(checkout: Path, lane: Mapping[str, str]) -> bool:
     """Whether the operator binary the lane runs differs from the checkout's source (a swap must rebuild it)."""
     changed = changed_compiled(checkout, lane)
     return BINARY_PATH in changed or CONTRACTS_PATH in changed  # the binary embeds the Go contracts
@@ -97,14 +113,14 @@ def contracts_snapshot(checkout: Path) -> str:
     return contractdiff.encode(contractdiff.from_directory(checkout))
 
 
-def legacy_snapshot(checkout: Path, lane: dict[str, str]) -> str:
+def legacy_snapshot(checkout: Path, lane: Mapping[str, str], siblings: str = "") -> str:
     """The contract descriptors of a lane built before lanes recorded them: found by the git tree id of
-    ``sdo/contracts`` the lane recorded, in the sibling hooks checkouts (``bench-sdo-hooks-*`` beside ``checkout``,
-    where every revision a pool was built from is kept). Empty when no sibling has that tree."""
+    ``sdo/contracts`` the lane recorded, in the checkouts matching the glob ``siblings`` beside ``checkout`` (where
+    every revision a pool was built from is kept). Empty when no sibling has that tree, or with no glob."""
     want = lane.get(CONTRACTS_PATH)
-    if not want:
+    if not want or not siblings:
         return ""
-    for sibling in sorted(checkout.parent.glob("bench-sdo-hooks-*")):
+    for sibling in sorted(checkout.parent.glob(siblings)):
         if sibling == checkout or not (sibling / ".git").exists():
             continue
         proc = subprocess.run(
@@ -128,7 +144,7 @@ def contract_problems(checkout: Path, snapshot: str) -> list[str]:
     return contractdiff.breaking(contractdiff.decode(snapshot), contractdiff.from_directory(checkout))
 
 
-def swap_problem(checkout: Path, lane: dict[str, str], rebuild_binary: bool = False, contracts: str = "") -> str:
+def swap_problem(checkout: Path, lane: Mapping[str, str], rebuild_binary: bool = False, contracts: str = "") -> str:
     """Why the lane built with fingerprint ``lane`` cannot run the checkout by a swap; empty when it can. With
     ``rebuild_binary`` a changed operator source is not a problem: the swap builds the binary, and with it a changed
     contract that only adds to the lane's ``contracts`` snapshot (also built into that binary)."""
@@ -137,8 +153,16 @@ def swap_problem(checkout: Path, lane: dict[str, str], rebuild_binary: bool = Fa
         changed = [path for path in changed if path != BINARY_PATH]
         if CONTRACTS_PATH in changed:
             if breaks := contract_problems(checkout, contracts):
-                return "breaking contract change since the lane was built: " + "; ".join(breaks[:5])
+                return (
+                    "breaking contract change since the lane was built (a rebuilt binary cannot carry it; refill the "
+                    "pool at this revision): " + "; ".join(breaks[:5])
+                )
             changed.remove(CONTRACTS_PATH)
+        if changed:
+            return (
+                "image or dependency files changed since the lane was built (baked into the pods' base images; a "
+                "binary swap cannot carry them, take the full build): " + ", ".join(changed[:5])
+            )
     if changed:
         return "compiled code changed since the lane was built: " + ", ".join(changed[:5])
     return ""
