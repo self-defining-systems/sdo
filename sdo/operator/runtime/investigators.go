@@ -15,7 +15,8 @@ import (
 // SDO-started investigators. When the responder has made no write for the investigator delay, Go starts up to
 // response.investigators read-only sessions, one per top candidate node with non-routine evidence, each testing
 // one hypothesis. Their reports are display evidence for the responder (`sdo investigations`): they never reach
-// IncidentResult, closure, escalation or learning, and the responder is never prompted about them.
+// IncidentResult, closure, escalation or learning, and the responder is never prompted about them. Their token
+// usage is accounting, not evidence: ResponderUsage adds their sessions' checkpoints to the incident's usage.
 
 const (
 	// investigatorTimeLimit is the time box a brief states and the Job's deadline.
