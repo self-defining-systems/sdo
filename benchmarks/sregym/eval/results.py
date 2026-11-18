@@ -71,6 +71,17 @@ class ResultRow(BaseModel):
     offline: TokenRow = TokenRow()
     harm: str | None = None
     memory_commit_after: str | None = None
+    # The row is the online part, claim to its end (outcome committed and graded); everything after it drains on the
+    # held lane. ``lane_occupancy_s`` is claim to the lane being free again, so it is ``row_wall_s + drain_s``.
+    row_wall_s: float | None = None
+    drain_s: float | None = None
+    lane_occupancy_s: float | None = None
+    #: The closing turn's own wall time and the end-of-row fault recovery, both inside the drain.
+    closing_s: float | None = None
+    recovery_s: float | None = None
+    #: ``pending`` in ``row.json`` (written at the row's end); ``closing.json`` and the table carry the terminal value.
+    closing_status: str | None = None
+    closing_decision: str | None = None
     manifest_sha256: str | None = None
 
     def flat(self) -> dict[str, Any]:
