@@ -1,4 +1,5 @@
-"""A claim's seed: a learned memory imported into a pool lane's accepted repository by ``swap``."""
+"""A claim's seed: the baseline format of a learned memory and how ``swap`` takes it (the import itself is
+``devswap.seed``, tested in ``tests/unit/benchmarks/devswap/test_seed.py``)."""
 
 from __future__ import annotations
 
@@ -29,67 +30,6 @@ def baseline_dir(
     }
     (root / hooks.BASELINE_FILE).write_text(json.dumps(manifest))
     return hooks.Baseline.load(root)
-
-
-def steps(
-    calls: list[str], head: str = COMMIT, status: str = "", idle: str = "", descends: bool = False
-) -> hooks.SeedSteps:
-    return hooks.SeedSteps(
-        reset_incidents=lambda: calls.append("incidents"),
-        retire_standby=lambda: calls.append("retire"),
-        stop_controller=lambda: calls.append("stop"),
-        apply_config=lambda overlay: calls.append(f"config {sorted(overlay)}"),
-        import_memory=lambda commit: calls.append(f"import {commit[:1]}"),
-        start_controller=lambda: calls.append("start"),
-        wait_standby=lambda: calls.append("standby"),
-        repository_state=lambda: {"head": head, "status": status, "outcomes": ""},
-        controller_idle=lambda: idle,
-        is_ancestor=lambda _a, _d: descends,
-    )
-
-
-def test_seed_stops_the_controller_around_the_import(tmp_path: Path) -> None:
-    calls: list[str] = []
-    seed = baseline_dir(tmp_path, "seed", "r")
-    receipt = hooks.apply_seed(steps(calls), seed, lambda _line: None)
-    assert calls == ["incidents", "stop", "retire", "config []", "import a", "start", "standby"]
-    assert receipt["seed"] == COMMIT
-
-
-def test_a_seed_import_that_fails_leaves_the_controller_running(tmp_path: Path) -> None:
-    """A stopped controller cannot acknowledge the release's incident reset, and the lane is then torn down."""
-    calls: list[str] = []
-    seed = baseline_dir(tmp_path, "seed", "r")
-    failing = steps(calls)
-
-    def broken(_commit: str) -> None:
-        raise hooks.HookError("restore pod failed")
-
-    with pytest.raises(hooks.HookError, match="restore pod failed"):
-        hooks.apply_seed(hooks.SeedSteps(**{**failing.__dict__, "import_memory": broken}), seed, lambda _line: None)
-    assert calls == ["incidents", "stop", "retire", "config []", "start"]
-
-
-def test_the_controllers_startup_upkeep_on_top_of_the_seed_is_the_seeded_memory(tmp_path: Path) -> None:
-    seed = baseline_dir(tmp_path, "seed", "r")
-    receipt = hooks.apply_seed(steps([], "b" * 40, descends=True), seed, lambda _line: None)
-    assert receipt["head"] == "b" * 40
-
-
-@pytest.mark.parametrize(
-    ("head", "status", "idle", "message"),
-    [
-        ("b" * 40, "", "", "not aaaaaaaaaaaa"),
-        (COMMIT, " M x", "", "not aaaaaaaaaaaa"),
-        (COMMIT, "", "busy", "not idle"),
-    ],
-)
-def test_seed_fails_unless_the_lane_is_the_seeds_memory_and_idle(
-    tmp_path: Path, head: str, status: str, idle: str, message: str
-) -> None:
-    seed = baseline_dir(tmp_path, "seed", "r")
-    with pytest.raises(hooks.HookError, match=message):
-        hooks.apply_seed(steps([], head, status, idle), seed, lambda _line: None)
 
 
 def test_a_seed_made_on_another_render_or_namespace_is_refused(tmp_path: Path) -> None:
@@ -152,9 +92,7 @@ def test_a_seed_may_overlay_what_the_hook_sets_for_an_install(tmp_path: Path) ->
     manifest = json.loads((seed.root / hooks.BASELINE_FILE).read_text())  # type: ignore[operator]
     manifest["lane_overlay"] = {"agent": {"model": "other"}}
     (seed.root / hooks.BASELINE_FILE).write_text(json.dumps(manifest))  # type: ignore[operator]
-    calls: list[str] = []
-    hooks.apply_seed(steps(calls), hooks.Baseline.load(seed.root), lambda _line: None)  # type: ignore[arg-type]
-    assert "config ['agent']" in calls
+    assert hooks.Baseline.load(seed.root).lane_overlay == {"agent": {"model": "other"}}
     manifest["config"] = {"agent": {"model": "other"}}
     (seed.root / hooks.BASELINE_FILE).write_text(json.dumps(manifest))  # type: ignore[operator]
     with pytest.raises(ValueError, match="agent.model"):

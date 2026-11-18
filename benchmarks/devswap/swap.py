@@ -28,6 +28,7 @@ from benchmarks.devswap.controller import (
     wipe_problems,
 )
 from benchmarks.devswap.kube import SwapError
+from benchmarks.devswap.timeline import Timeline
 from benchmarks.devswap.tree import regenerate_tree
 
 if TYPE_CHECKING:
@@ -134,6 +135,11 @@ class SwapPlan:
     persist: Callable[[SwapState], object] = _nothing
     restore_moved: Callable[[list[str]], object] | None = None  # the lane moved while held; None refuses it
     verify: Callable[[], object] = _nothing  # the caller's own lane checks (a golden copy), after the lane is asserted
+    #: Import a seed memory (``devswap.seed.apply_seed``), recording its steps in the timeline it is given; returns the
+    #: accepted head it leaves. The controller restarts once, on the prepared seed, so with a seed ``prepare_tree`` does
+    #: not run (the seed is prepared before it goes in). The lane record keeps the lane's own head: a reset of the lane
+    #: returns to it, never to a seed.
+    seed: Callable[[Timeline], str] | None = None
     finish: Callable[[], object] = _nothing  # the caller's steps that restart the controller (a seed import)
     #: A glob, beside the checkout, of older checkouts that hold the contracts of a lane that recorded none.
     legacy_checkouts: str = ""
@@ -148,6 +154,7 @@ class SwapResult:
     restarted: bool  # the swap itself restarted the controller for it
     compiled: Mapping[str, str] = field(default_factory=dict)  # what the lane now runs, for the caller to record
     contracts: str = ""
+    seeded: str = ""  # the accepted head after a seed import (``head`` stays the lane's own)
 
 
 def _keep_aside(plan: SwapPlan) -> Path | None:
@@ -209,6 +216,7 @@ def swap_compiled(plan: SwapPlan, out: Callable[[str], object] = print) -> SwapR
             controller.placed()  # the controller that runs now runs the old binary
     compiled, snapshot = dict(plan.lane_compiled), contracts
     head = plan.prepared["head"]
+    seeded = ""
     try:
         with phases("project"):
             if binary is not None:
@@ -230,7 +238,14 @@ def swap_compiled(plan: SwapPlan, out: Callable[[str], object] = print) -> SwapR
             plan.verify()
         if why := plan.idle():
             raise SwapError(f"the operator is not idle: {why}")
-        if plan.prepare_tree is not None:
+        if plan.seed is not None:
+            seed_steps = Timeline(out, "seed.")
+            try:
+                with phases("seed"):
+                    seeded = plan.seed(seed_steps)
+            finally:
+                phases.seconds.update(seed_steps.seconds())
+        elif plan.prepare_tree is not None:
             with phases("tree"):
                 head = regenerate_tree(
                     plan.kube, plan.control, plan.work_root, head, plan.prepare_tree, plan.wait_idle, out, binary
@@ -248,4 +263,4 @@ def swap_compiled(plan: SwapPlan, out: Callable[[str], object] = print) -> SwapR
             _roll_back(plan, controller, previous, head, contracts, out)
         raise
     plan.persist(SwapState(compiled, snapshot, head))
-    return SwapResult(head, phases, binary is not None, restarted, compiled, snapshot)
+    return SwapResult(head, phases, binary is not None, restarted, compiled, snapshot, seeded)

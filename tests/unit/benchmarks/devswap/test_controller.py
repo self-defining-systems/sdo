@@ -91,3 +91,49 @@ def test_a_stop_that_times_out_still_resumes_the_job(monkeypatch: pytest.MonkeyP
     with pytest.raises(SwapError, match="did not end"), controller.controller_stopped(None, "ns"):  # type: ignore[arg-type]
         pytest.fail("the block must not run")
     assert calls == [True, False]
+
+
+class LeaseLane:
+    """A cluster's controller Job and leader Lease as ``kubectl`` calls see them: the process killed by a stop never
+    releases the Lease, so it names a dead holder until its 60 s run out."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, pods_ending: int = 0) -> None:
+        self.calls: list[list[str]] = []
+        self.pods = pods_ending
+        self.lease_held = True
+        monkeypatch.setattr(controller, "run", self.run)
+        monkeypatch.setattr(controller.time, "sleep", lambda _s: None)
+
+    def run(self, args: list[str], what: str, timeout: float = 600, **_: Any) -> Any:
+        self.calls.append(args)
+        if "lease" in args and "delete" in args:
+            assert self.pods == 0, "the Lease is released only once the controller process is gone"
+            self.lease_held = False
+        return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    def kube(self) -> Kubectl:
+        kube = Kubectl(context="c")
+
+        def pods(_control: str) -> list[dict[str, Any]]:
+            left = self.pods
+            self.pods = max(0, self.pods - 1)
+            return [{}] * left
+
+        kube.controller_pods = pods  # type: ignore[method-assign]
+        return kube
+
+
+def test_stopping_the_controller_frees_its_leader_lease_for_the_next_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The stopped controller process is killed before it can release the Lease, and the controller that starts next
+    would wait out the 60 s the dead one still holds (measured: 41-60 s of every restart)."""
+    lane = LeaseLane(monkeypatch, pods_ending=2)
+    controller.set_controller_suspended(lane.kube(), "ns", True)
+    assert not lane.lease_held
+    [delete] = [call for call in lane.calls if "lease" in call]
+    assert delete[-5:] == ["delete", "lease", controller.CONTROLLER_LEASE, "--ignore-not-found", "--wait=false"]
+
+
+def test_resuming_the_controller_leaves_the_lease_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    lane = LeaseLane(monkeypatch)
+    controller.set_controller_suspended(lane.kube(), "ns", False)
+    assert lane.lease_held

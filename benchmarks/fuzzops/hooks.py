@@ -88,8 +88,9 @@ from benchmarks.devswap.kube import (
     SwapError,
     run,
 )
+from benchmarks.devswap.seed import MemorySeed, PreparedMemory, SeedSteps, apply_seed, prepare_memory
 from benchmarks.devswap.swap import Phases, SwapPlan, SwapState, swap_compiled
-from benchmarks.devswap.tree import regenerate_tree as regenerate_lane_tree
+from benchmarks.devswap.timeline import Timeline
 from benchmarks.fuzzops import capture, cellevidence, config, observe, page, sink, view
 from benchmarks.fuzzops.install import (
     CREDENTIALS_SECRET,
@@ -1583,22 +1584,6 @@ def tree_preparer(env: Mapping[str, str], lane_dir: Path, block: OperatorBlock) 
     return prepare
 
 
-def regenerate_tree(
-    env: Mapping[str, str],
-    kube: Kube,
-    control: str,
-    lane_dir: Path,
-    block: OperatorBlock,
-    head: str,
-    out: Callable[[str], None] = _print,
-) -> str:
-    """Prepare the lane's accepted repository as an install of this build would (``devswap.tree``); returns its head."""
-    return regenerate_lane_tree(
-        kube, control, lane_dir, head, tree_preparer(env, lane_dir, block),
-        lambda: wait_idle(kube, control, RESET_IDLE_WAIT_S), out,
-    )  # fmt: skip
-
-
 def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     """Run the hooks checkout's sources on a prepared ``dev_mount`` lane: ``devswap.swap_compiled`` with this bench's
     steps (the lane's golden copy, a seed's memory and configuration, the prepared record). A changed ``sdo/operator``
@@ -1642,9 +1627,10 @@ def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
                 apply_lane_config(kube, control, lane_dir, {})
             wait_standby(kube, control, SWAP_STANDBY_WAIT_S)
             wait_idle(kube, control, RESET_IDLE_WAIT_S)
-        if block.seed is not None:
-            # The prepared record keeps the pool's own state: a reset returns the lane to it, never to a seed.
-            seeded["memory"] = seed_lane(env, block, out)
+
+    def seed_with_memory(timeline: Timeline) -> str:
+        seeded["memory"] = seed_lane(env, block, out, timeline)
+        return seeded["memory"]
 
     def persist(state: SwapState) -> None:
         """The record says what the lane runs and where its memory is, at each change (not only when the swap ends)."""
@@ -1680,6 +1666,8 @@ def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
             restore_moved=restore_moved,
             verify=verify,
             finish=finish,
+            # The prepared record keeps the pool's own state: a reset returns the lane to it, never to a seed.
+            seed=None if block.seed is None else seed_with_memory,
             legacy_checkouts="bench-sdo-hooks-*",
         ),
         out,
@@ -1700,23 +1688,6 @@ def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     return 0
 
 
-@dataclass(frozen=True)
-class SeedSteps:
-    """What ``apply_seed`` does to the lane, one callable per step (tests substitute them)."""
-
-    reset_incidents: Callable[[], object]
-    retire_standby: Callable[[], object]
-    stop_controller: Callable[[], object]
-    #: Put the seed's config overlay on the stopped controller's configuration (the lane's own when it has none).
-    apply_config: Callable[[Mapping[str, Any]], object]
-    import_memory: Callable[[str], object]
-    start_controller: Callable[[], object]
-    wait_standby: Callable[[], object]
-    repository_state: Callable[[], Mapping[str, str]]
-    controller_idle: Callable[[], str]
-    is_ancestor: Callable[[str, str], bool]  # (ancestor, descendant) in the lane's accepted repository
-
-
 def seed_problem(seed: Baseline, prepared: Baseline) -> str:
     """Why ``seed`` cannot be imported into a lane prepared from ``prepared``: its memory was made on another render
     (the lane's app would not be what the memory describes) or in another namespace."""
@@ -1728,35 +1699,6 @@ def seed_problem(seed: Baseline, prepared: Baseline) -> str:
     if seed.path(seed.render).read_text() != prepared.path(prepared.render).read_text():
         return "the seed's render differs from the lane's baseline render"
     return ""
-
-
-def apply_seed(steps: SeedSteps, seed: Baseline, out: Callable[[str], None] = _print) -> dict[str, Any]:
-    """Make a prepared, idle lane's accepted repository the seed's memory: close any incident, stop the controller (it
-    caches the accepted commit), import the seed's commit, start it again (the same install, state and images) and
-    assert the repository is the seed's commit, clean, with the operator idle."""
-    started = time.monotonic()
-    steps.reset_incidents()
-    try:
-        steps.stop_controller()
-        # With the controller stopped nothing recreates the standby: the next one starts from the new configuration.
-        # Retired before the stop, a running controller would start a replacement from the old environment that the
-        # restart adopts.
-        steps.retire_standby()
-        steps.apply_config(seed.lane_overlay)
-        steps.import_memory(seed.commit)
-    finally:
-        # the controller never stays stopped: a failed import must not leave the lane unable to answer a reset
-        steps.start_controller()
-    steps.wait_standby()
-    now = steps.repository_state()
-    # The controller's startup upkeep (schema, module) may commit on top of the seed; anything else moved the head.
-    if now["status"] or (now["head"] != seed.commit and not steps.is_ancestor(seed.commit, now["head"])):
-        raise HookError(f"the lane's repository is {now['head'][:12]} after the seed, not {seed.commit[:12]}")
-    if why := steps.controller_idle():
-        raise HookError(f"the operator is not idle after the seed: {why}")
-    receipt = {"seed": seed.commit, "head": now["head"], "seed_s": round(time.monotonic() - started, 1)}
-    out(json.dumps(receipt))
-    return receipt
 
 
 LANE_CONFIG_ORIGINAL = "original-config.yaml"
@@ -1846,39 +1788,61 @@ def wait_baselines_promoted(
     raise HookError(f"no promoted baseline for {sorted(missing) or 'any store'} after {timeout:.0f}s")
 
 
-def seed_lane(env: Mapping[str, str], block: OperatorBlock, out: Callable[[str], None] = _print) -> str:
-    """Import ``block.seed`` into the prepared, idle lane (its memory and its config overlay, the controller
-    restarted on them) and return the accepted tree's head. ``swap`` does it for a claim; ``prepare`` does it when
-    the claim fell back to a full build, so a seeded cell never runs on the pool's own memory or settings."""
+def seed_steps(env: Mapping[str, str], prepared: Callable[[], PreparedMemory]) -> SeedSteps:
+    """``SeedSteps`` on this bench's lane: its cluster, its operator binary and the configuration it keeps."""
+    lane_dir = Path(_need(env, "BENCH_LANE_DIR")).resolve()
+    kube, control = _kube(env), control_namespace(env)
+    binary, kubeconfig = _binary(env), Path(env["KUBECONFIG"]).resolve() if env.get("KUBECONFIG") else None
+    return SeedSteps(
+        prepare=prepared,
+        reset_incidents=lambda: reset_incidents(binary, control, kubeconfig),
+        retire_standby=lambda: retire_standby(kube, control),
+        stop_controller=lambda: set_controller_suspended(kube, control, True),
+        apply_config=lambda overlay: apply_lane_config(kube, control, lane_dir, overlay),
+        import_memory=lambda memory: restore_repository(kube, control, memory.head, memory.bundle),
+        start_controller=lambda: set_controller_suspended(kube, control, False),
+        wait_standby=lambda: wait_standby(kube, control, SWAP_STANDBY_WAIT_S),
+        repository_state=lambda: repository_state(kube, control),
+        controller_idle=lambda: wait_idle(kube, control, RESET_IDLE_WAIT_S),
+        is_ancestor=lambda ancestor, descendant: is_ancestor(kube, control, ancestor, descendant),
+    )
+
+
+def seed_lane(
+    env: Mapping[str, str],
+    block: OperatorBlock,
+    out: Callable[[str], None] = _print,
+    timeline: Timeline | None = None,
+) -> str:
+    """Import ``block.seed`` into the prepared, idle lane (its memory, prepared by the build the lane runs, and its
+    config overlay; the controller restarted once, on them) and return the accepted tree's head. ``swap`` does it for
+    a claim; ``prepare`` does it when the claim fell back to a full build, so a seeded cell never runs on the pool's
+    own memory or settings."""
     assert block.seed is not None
     lane_dir = Path(_need(env, "BENCH_LANE_DIR")).resolve()
     kube, control = _kube(env), control_namespace(env)
     seed = Baseline.load(block.seed)
     if why := seed_problem(seed, _baseline(block)):
         raise HookError(why)
-    binary, kubeconfig = _binary(env), Path(env["KUBECONFIG"]).resolve() if env.get("KUBECONFIG") else None
-    bundle = seed.path(seed.bundle)
-    seeded = apply_seed(
-        SeedSteps(
-            reset_incidents=lambda: reset_incidents(binary, control, kubeconfig),
-            retire_standby=lambda: retire_standby(kube, control),
-            stop_controller=lambda: set_controller_suspended(kube, control, True),
-            apply_config=lambda overlay: apply_lane_config(kube, control, lane_dir, overlay),
-            import_memory=lambda commit: restore_repository(kube, control, commit, bundle),
-            start_controller=lambda: set_controller_suspended(kube, control, False),
-            wait_standby=lambda: wait_standby(kube, control, SWAP_STANDBY_WAIT_S),
-            repository_state=lambda: repository_state(kube, control),
-            controller_idle=lambda: wait_idle(kube, control, RESET_IDLE_WAIT_S),
-            is_ancestor=lambda ancestor, descendant: is_ancestor(kube, control, ancestor, descendant),
-        ),
-        seed,
-        out,
-    )
-    memory = regenerate_tree(env, kube, control, lane_dir, block, seeded["head"], out)
+    memory = MemorySeed(seed.commit, seed.path(seed.bundle), seed.lane_overlay)
+    t = timeline or Timeline(out, "seed.")
+    preparer = tree_preparer(env, lane_dir, block)
+    prepared: list[PreparedMemory] = []
+
+    def prepare() -> PreparedMemory:
+        prepared.append(prepare_memory(memory, preparer, None, lane_dir, out))
+        return prepared[-1]
+
+    try:
+        seeded = apply_seed(seed_steps(env, prepare), memory, out, t)
+    finally:
+        for kept in prepared:
+            if kept.bundle != memory.bundle:  # the prepared bundle was made for this import
+                kept.bundle.unlink(missing_ok=True)
     if seed.wait_baselines:
         waited = wait_baselines_promoted(kube, control, BASELINE_WAIT_S, out)
         (lane_dir / "baseline-wait.json").write_text(json.dumps({"waited_s": round(waited, 1)}) + "\n")
-    return memory
+    return str(seeded["head"])
 
 
 def swap_receipt(
