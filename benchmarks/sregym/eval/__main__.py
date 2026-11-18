@@ -24,6 +24,7 @@ def main(argv: list[str] | None = None) -> int:
     for name, text in (
         ("plan", "write plan.json and print a summary"),
         ("dry-run", "run the plan against scripted fakes"),
+        ("run", "run the plan live: fastloop rows on the configured lanes ([row] and [store] tables in the config)"),
     ):
         command = commands.add_parser(name, help=text)
         command.add_argument("--config", type=Path, required=True)
