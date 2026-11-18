@@ -160,3 +160,15 @@ def test_undescribed_injection_cannot_retain_an_older_clean_record(tmp_path: Pat
     assert state.reason() is None
     driver.inject("not-in-catalog")
     assert state.reason().trigger.value == "lane_injection_unknown"
+
+
+def test_fresh_up_deploy_is_a_known_clean_lane_so_the_first_row_keeps_the_app(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop.cli import _record_fresh_deploy
+
+    kubeconfig = tmp_path / "worker_0.kubeconfig"
+    state = LaneInjectionState(kubeconfig, "hotel")
+    assert state.reason() is not None  # a lane nobody recorded is unknown and would be recreated
+    _record_fresh_deploy(SimpleNamespace(kubeconfig=kubeconfig, namespace="hotel"))
+    assert state.reason() is None

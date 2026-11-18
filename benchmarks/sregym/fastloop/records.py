@@ -71,11 +71,19 @@ class TokenCounts(_PersistedModel):
     cache_write_1h_input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
     reasoning_output_tokens: int = Field(default=0, ge=0)
+    #: Billable model requests (unique API responses); 0 on rows written before it was kept or when the source has none.
+    model_requests: int = Field(default=0, ge=0)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def total_tokens(self) -> int:
         return self.input_tokens + self.output_tokens
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def uncached_input_tokens(self) -> int:
+        """Input that was neither read from nor written to the cache."""
+        return max(self.input_tokens - self.cached_input_tokens - self.cache_write_input_tokens, 0)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -106,6 +114,7 @@ class TokenCounts(_PersistedModel):
             cache_write_1h_input_tokens=count("cache_write_1h_input_tokens", "cacheWrite1hInputTokens"),
             output_tokens=count("output_tokens", "outputTokens"),
             reasoning_output_tokens=count("reasoning_output_tokens", "reasoningOutputTokens"),
+            model_requests=count("model_requests", "modelRequests", "llm_calls", "llmCalls"),
         )
 
 
@@ -408,15 +417,23 @@ class IncidentRecord(_PersistedModel):
             or max((item.finished_at for item in self.provider_waits), default=None)
         )
 
+    #: Why the evidence gate refused to grade this row (``benchmarks.sregym.fastloop.evidence_gate``): an expected
+    #: agent transcript is missing or the evidence sink was not kept. Set after the run, never by the row itself.
+    evidence_incomplete: str | None = None
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def grade_status(self) -> Literal["GRADED", "NOT-GRADED"]:
-        return "NOT-GRADED" if self.infra_error or isinstance(self.injection, NotInjected) else "GRADED"
+        return "NOT-GRADED" if self.not_graded_reason else "GRADED"
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def not_graded_reason(self) -> str | None:
-        return self.infra_error or ("not_injected" if isinstance(self.injection, NotInjected) else None)
+        return (
+            self.infra_error
+            or ("not_injected" if isinstance(self.injection, NotInjected) else None)
+            or (f"evidence_incomplete: {self.evidence_incomplete}" if self.evidence_incomplete else None)
+        )
 
     @computed_field  # type: ignore[prop-decorator]
     @property
