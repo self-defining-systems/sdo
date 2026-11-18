@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/planfile"
 )
 
@@ -134,5 +135,31 @@ func TestMemoryCheckOutsideAnyCheckoutNamesTheFix(t *testing.T) {
 	code, _, stderr := runMemory(t, memoryCheckEnv(t), "check")
 	if code != 2 || !strings.Contains(stderr, "pass --root") {
 		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+}
+
+// "memory test" says, first, what the playbook's Diagnose did on the incident it was written for: a definite
+// failure blocks, anything the capture cannot decide is shown and does not.
+func TestMemoryTestPrintsTheOwnIncidentVerdict(t *testing.T) {
+	report := &contracts.MemoryCheckReport{
+		CoverageGaps: []*contracts.MemoryDiagnostic{
+			{Rule: validate.RuleOwnIncidentReplay, Path: ".sdo/playbooks/seen", Message: "match: Diagnose matches the incident it was written for (open@detect.json)"},
+			{Rule: validate.RuleOwnIncidentReplay, Path: ".sdo/playbooks/blind", Message: "unverified: Diagnose returned Unknown: unrecorded logs call"},
+			{Rule: validate.RuleReplayObservation, Path: ".sdo/playbooks/seen", Message: "unrelated"},
+		},
+		Diagnostics: []*contracts.MemoryDiagnostic{
+			{Rule: validate.RuleOwnIncidentReplay, Path: ".sdo/playbooks/wrong", Message: "Diagnose returned NoMatch on the incident it was written for"},
+		},
+	}
+	for id, want := range map[string]string{
+		"seen":    "  diagnose on incident: match: Diagnose matches the incident it was written for (open@detect.json)",
+		"blind":   "  diagnose on incident: unverified: Diagnose returned Unknown: unrecorded logs call",
+		"wrong":   "  diagnose on incident: Diagnose returned NoMatch on the incident it was written for (blocks publication)",
+		"another": "",
+	} {
+		got := ownIncidentLines(report, id)
+		if want == "" && len(got) != 0 || want != "" && (len(got) != 1 || got[0] != want) {
+			t.Fatalf("%s: lines = %q, want %q", id, got, want)
+		}
 	}
 }

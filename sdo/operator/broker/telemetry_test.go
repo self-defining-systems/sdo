@@ -51,12 +51,15 @@ func TestValidationChildRunsUnderTheParentChecksTelemetryPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	registry := telemetry.NewRegistry()
-	request, err := validationChildRequest([]string{"bin", "validation-child", "/candidate", "/operator", "", "off", encoded}, registry)
+	request, err := validationChildRequest([]string{"bin", "validation-child", "/candidate", "/operator", "", "off", encoded, "/capture"}, registry)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(request.Telemetry, policy) || request.TelemetryRegistry != registry {
 		t.Fatalf("child request telemetry = %+v (registry %p), want %+v (registry %p)", request.Telemetry, request.TelemetryRegistry, policy, registry)
+	}
+	if request.OwnIncidentDirectory != "/capture" {
+		t.Fatalf("the child must read the check's incident capture, got %q", request.OwnIncidentDirectory)
 	}
 	if request.Root != "/candidate" || request.OperatorRoot != "/operator" || request.Replay != "off" {
 		t.Fatalf("child request = %+v", request)
@@ -64,7 +67,7 @@ func TestValidationChildRunsUnderTheParentChecksTelemetryPolicy(t *testing.T) {
 	if _, err := childTelemetryArgument(context.Background()); err == nil {
 		t.Fatal("a compile request without the check's telemetry policy must not start the child")
 	}
-	if _, err := validationChildRequest([]string{"bin", "validation-child", "/c", "/o", "", "", encoded}, nil); err == nil {
+	if _, err := validationChildRequest([]string{"bin", "validation-child", "/c", "/o", "", "", encoded, ""}, nil); err == nil {
 		t.Fatal("a validation child without a registry must refuse to run")
 	}
 	if _, err := validationChildRequest([]string{"bin", "validation-child", "/c", "/o", "", ""}, registry); err == nil {

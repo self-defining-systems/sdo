@@ -237,3 +237,13 @@ Reflection inventories show every accepted detector and playbook with a short ex
 For immutable digest-pinned validator/compiler images without development mounts, `memory check` can call the broker through the incident's session transport. The broker checks a private frozen tree with the ordinary isolated validator and retains a successful attestation in process memory, outside `.sdo/`. Exact candidate bytes/modes, accepted base, decision, policy, captures and toolchain must match at publication. Changed inputs or a controller restart cause full validation. Advisory replay notes and coverage gaps survive reuse. Worker-written reports and files never authorize reuse. Mutable tags/dev mounts retain local checking and independent broker validation.
 
 A clean peer rebase reruns validation on the merged accepted head with the existing model result; only an actual hunk/semantic conflict needs correction. Controller relaunch remains unchanged because promoted detector builds include program dependencies. Do not infer a model-call or timing saving merely from a validated no-change decision or from a missing usage record; distinguish broker-only completion, worker-only probing, actual provider calls and compile-job phases.
+
+## Own-incident replay of a new playbook
+
+For every playbook the closing turn introduced (no program source at the base), the shared check runs its `Diagnose` on the incident's own `open@*` capture and reports one verdict per playbook as a `playbook.own-incident-replay` entry whose path is `.sdo/playbooks/<id>` and whose message starts with the outcome:
+
+- `match: ...`: Diagnose recognised the fault it was written for. Non-blocking note.
+- `unverified: ...`: the capture cannot say (an unrecorded read, a read the capture holds an error for, declared object roles, no capture, or a `NoMatch` on a capture that redacts ConfigMap values or dropped objects over its budget: the live read sees what the capture withholds). Non-blocking note carrying the reason. An always-unverified playbook is the signal to look at: it has never been shown to recognise anything.
+- A blocking diagnostic with the same rule: Diagnose returned `NoMatch` on its own incident with every read answered (a definite failure). The broker refuses the commit; the correction turn gets the text and the entry is in `reflection_rejections`.
+
+Notes are in the agent's `memory check --json` `coverage_gaps`, `memory test <id>` (first line `diagnose on incident: ...`), the accepted commit's `SDO-Coverage-Gap:` trailers and the ledger's `reflection_coverage_gaps`. No protobuf field changes. The first corpus case of such a playbook is written from the same capture (`corpus_case_not_recorded` in the controller log says why one is missing).

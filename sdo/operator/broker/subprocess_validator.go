@@ -69,7 +69,8 @@ func (v SubprocessValidator) Validator() Validator {
 		if err != nil {
 			return err
 		}
-		args := childArguments(candidate, root, baseline, replay, policy)
+		capture, _ := validate.CaptureSource(ctx)
+		args := childArguments(candidate, root, baseline, replay, policy, capture)
 		scratch, err := os.MkdirTemp("", "sdo-validation-")
 		if err != nil {
 			return err
@@ -98,8 +99,10 @@ func (v SubprocessValidator) Validator() Validator {
 }
 
 // childArguments is the validation child's argv after the program name.
-func childArguments(candidate, operatorRoot, baseline, replay, policy string) []string {
-	return []string{"validation-child", candidate, operatorRoot, baseline, replay, policy}
+// capture is the incident capture the check holds, so the child can replay a
+// new playbook on the incident it was written for; empty outside a reflection check.
+func childArguments(candidate, operatorRoot, baseline, replay, policy, capture string) []string {
+	return []string{"validation-child", candidate, operatorRoot, baseline, replay, policy, capture}
 }
 
 // ChildRequest is the compile request the validation subprocess would run for
@@ -112,7 +115,7 @@ func ChildRequest(ctx context.Context, candidate string, registry *telemetry.Reg
 	if err != nil {
 		return validate.Request{}, err
 	}
-	return validationChildRequest(append([]string{"sdo-operator"}, childArguments(candidate, "/operator", "", "", policy)...), registry)
+	return validationChildRequest(append([]string{"sdo-operator"}, childArguments(candidate, "/operator", "", "", policy, "")...), registry)
 }
 
 // childTelemetryArgument is the check's telemetry policy as the validation
@@ -135,7 +138,7 @@ func childTelemetryArgument(ctx context.Context) (string, error) {
 // baseline, replay mode and the parent check's telemetry policy, checked
 // against the child's adapter registry.
 func validationChildRequest(args []string, registry *telemetry.Registry) (validate.Request, error) {
-	if len(args) != 7 || args[1] != "validation-child" {
+	if len(args) != 8 || args[1] != "validation-child" {
 		return validate.Request{}, errors.New("invalid validation child arguments")
 	}
 	if registry == nil {
@@ -148,7 +151,7 @@ func validationChildRequest(args []string, registry *telemetry.Registry) (valida
 	if err := policy.Validate(); err != nil {
 		return validate.Request{}, fmt.Errorf("validation child telemetry policy: %w", err)
 	}
-	return validate.Request{Replay: args[5], Root: args[2], OperatorRoot: args[3], HealthyBaseline: args[4], Layers: validate.Compile, Telemetry: policy, TelemetryRegistry: registry}, nil
+	return validate.Request{Replay: args[5], Root: args[2], OperatorRoot: args[3], HealthyBaseline: args[4], Layers: validate.Compile, Telemetry: policy, TelemetryRegistry: registry, OwnIncidentDirectory: args[7]}, nil
 }
 
 // RunValidationChild is called before normal launch by both the operator CLI
