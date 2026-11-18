@@ -52,7 +52,7 @@ func RecordCorpus(root, captures, incidentID string, instances map[string][]prog
 	type labels struct {
 		Programs    []string                 `json:"root_cause_program_ids"`
 		Bindings    program.Bindings         `json:"bindings"`
-		Peers       *program.Bindings        `json:"peer_bindings,omitempty"`
+		Peers       program.Bindings         `json:"peer_bindings"`
 		Provenance  sdktest.CorpusProvenance `json:"provenance"`
 		OpeningKeys []string                 `json:"opening_keys,omitempty"`
 		Suspects    []sdk.ObjectRef          `json:"suspects,omitempty"`
@@ -85,18 +85,14 @@ func RecordCorpus(root, captures, incidentID string, instances map[string][]prog
 			}
 			// A healthy peer is a second instance of the program that an earlier
 			// accepted case already captured. A program's first case has none and
-			// omits it: replay then diagnoses the healthy capture on the case's
+			// leaves it empty: replay then diagnoses the healthy capture on the case's
 			// own bindings.
-			var peers *program.Bindings
+			var peers program.Bindings
 			for _, previous := range prior {
 				if !slices.Contains(previous.Programs, id) {
 					continue
 				}
-				candidates := []program.Bindings{previous.Bindings}
-				if previous.Peers != nil {
-					candidates = []program.Bindings{*previous.Peers, previous.Bindings}
-				}
-				for _, candidate := range candidates {
+				for _, candidate := range []program.Bindings{previous.Peers, previous.Bindings} {
 					if len(candidate.Objects) != len(binding.Objects) || candidate.Equal(binding) {
 						continue
 					}
@@ -106,11 +102,11 @@ func RecordCorpus(root, captures, incidentID string, instances map[string][]prog
 						valid = valid && ok && peer.Kind == ref.Kind
 					}
 					if valid {
-						peers = &candidate
+						peers = candidate
 						break
 					}
 				}
-				if peers != nil {
+				if peers.Objects != nil {
 					break
 				}
 			}
