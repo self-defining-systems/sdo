@@ -83,6 +83,9 @@ class LoadGate:
         return waited
 
 
+MAX_LANE_STRIKES = 2
+
+
 class Pools:
     """Free lanes per (app, arm). A lane a cell errored on is held for inspection and never handed out again."""
 
@@ -91,6 +94,8 @@ class Pools:
         self._live: dict[tuple[str, str], int] = {}
         self._lock = threading.Lock()
         self.held: list[tuple[str, str]] = []
+        #: Consecutive errored cells per lane: one error is a bad cell, two in a row is a bad lane.
+        self.strikes: dict[str, int] = {}
         for app in plan.config.apps:
             for arm, names in (("sdo", app.sdo_lanes), ("vanilla", app.vanilla_lanes)):
                 free: queue.Queue[str] = queue.Queue()
@@ -112,7 +117,11 @@ class Pools:
                     if self._live[key] == 0:
                         return None
 
-    def release(self, key: tuple[str, str], lane: str, *, reusable: bool) -> None:
+    def release(self, key: tuple[str, str], lane: str, *, reusable: bool, errored: bool = False) -> None:
+        with self._lock:
+            self.strikes[lane] = self.strikes.get(lane, 0) + 1 if errored else 0
+            if errored and self.strikes[lane] < MAX_LANE_STRIKES:
+                reusable = True
         if reusable:
             self._free[key].put(lane)
             return
@@ -157,12 +166,14 @@ class Scheduler:
             )
         else:
             reusable = False
+            errored = True
             try:
                 self.gate.admit()
                 row = run_cell(cell, self.context, lane)
-                reusable = row.status != "error"
+                errored = row.status == "error"
+                reusable = not errored
             finally:
-                self.pools.release(cell.pool, lane, reusable=reusable)
+                self.pools.release(cell.pool, lane, reusable=reusable, errored=errored)
         self.table.append(row)
         if cell.pass_ == "pass1":
             self.store.record_first_try(cell.app, cell.problem, row.memory_commit_after)
