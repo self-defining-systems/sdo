@@ -48,6 +48,14 @@ class PhaseTimings:
             raise ValueError(f"unknown phase {name!r}; phases are {', '.join(PHASES)}")
         return _Span(self, name)
 
+    def record(self, name: str, start: float, end: float) -> None:
+        """Add a phase measured from event times (page: injection to page) rather than around a call."""
+        if name not in PHASES:
+            raise ValueError(f"unknown phase {name!r}; phases are {', '.join(PHASES)}")
+        if end < start:
+            raise ValueError("a phase cannot end before it starts")
+        self._record(name, start, end, failed=False)
+
     def _record(self, name: str, start: float, end: float, *, failed: bool) -> None:
         span: dict[str, Any] = {"phase": name, "start": start, "end": end}
         if failed:
