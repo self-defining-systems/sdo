@@ -247,6 +247,11 @@ class FastloopRowRunner:
         environment = FastloopEnvironment.load(directory)
         if snapshot_commit:
             self._fetch(cell.app, environment, snapshot_commit)
+            if cell.arm == "sdo" and environment.seed_commit != snapshot_commit:
+                # The lane's setup lineage (every accepted commit after the seed must be broker-validated) starts at
+                # the memory this cell installs, not at the lane's own seed.
+                environment.seed_commit = snapshot_commit
+                environment.save()
         self._unblock_stale_evidence(environment)
         self._clear_events(environment)
         if cell.arm == "sdo":
