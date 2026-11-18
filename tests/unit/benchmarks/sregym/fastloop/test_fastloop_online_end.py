@@ -149,3 +149,13 @@ def test_the_commit_wait_survives_an_unreadable_state_read() -> None:
     ops = Flaky([{"last_acknowledged_incident_id": "i-1"}])
     clock = _clock(fake)
     assert wait_for_outcome_commit(ops, "ctl", "i-1", clock.now() + timedelta(seconds=60), clock) is not None  # type: ignore[arg-type]
+
+
+def test_the_commit_wait_is_bounded_by_the_monotonic_clock_when_wall_time_does_not_move() -> None:
+    """The reflection drain's budget is monotonic; a frozen wall clock must not make this wait unbounded."""
+    fake = FakeClock()
+    base = datetime(2026, 9, 27, 12, 0, 0, tzinfo=timezone.utc)
+    clock = Clock(monotonic=fake.monotonic, sleep=fake.advance, now=lambda: base)
+    ops = StateOps([{}])
+    assert wait_for_outcome_commit(ops, "ctl", "i-1", base + timedelta(seconds=30), clock) is None  # type: ignore[arg-type]
+    assert ops.reads < 100

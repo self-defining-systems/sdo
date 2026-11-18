@@ -2239,6 +2239,7 @@ def wait_for_outcome_commit(
     acknowledges is for the reflection drain to decide, so this wait never raises for either.
     """
 
+    end = clock.monotonic() + max(0.0, (deadline_at - clock.now()).total_seconds())
     while True:
         try:
             state = ops.runtime_state(control)
@@ -2246,7 +2247,7 @@ def wait_for_outcome_commit(
             state = {}
         if state.get("last_acknowledged_incident_id") == incident_id:
             return clock.now()
-        if clock.now() >= deadline_at:
+        if clock.monotonic() >= end:
             return None
         clock.sleep(POLL_SECONDS)
 
