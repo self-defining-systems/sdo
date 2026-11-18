@@ -548,8 +548,29 @@ func stageCandidates(state *IncidentState) []stageCandidate {
 		}
 		return false
 	}
-	sort.SliceStable(matches, func(i, j int) bool { return priority(matches[i]) && !priority(matches[j]) })
+	// A playbook a firing detector named through a finding is tried before
+	// the role-less playbooks every finding offers: the detector recognised
+	// this cause, the others only did not rule it out.
+	named := namedStageMatches(state.Request.InitialProgramRuns)
+	sort.SliceStable(matches, func(i, j int) bool {
+		if priority(matches[i]) != priority(matches[j]) {
+			return priority(matches[i])
+		}
+		return named[stageAttemptKey(matches[i].PlaybookId, programBindingsState(matches[i].Bindings))] && !named[stageAttemptKey(matches[j].PlaybookId, programBindingsState(matches[j].Bindings))]
+	})
 	return matches
+}
+
+// namedStageMatches keys the matching diagnoses bound by a finding that names
+// the playbook (binding source hint).
+func namedStageMatches(runs []ProgramRun) map[string]bool {
+	named := map[string]bool{}
+	for _, run := range runs {
+		if run.BindingSource == BindingSourceHint && run.Verdict.Result == program.Match {
+			named[stageAttemptKey(run.ProgramID, run.Bindings)] = true
+		}
+	}
+	return named
 }
 
 func updateStageFindings(state *IncidentState, response ToolResponse) {
