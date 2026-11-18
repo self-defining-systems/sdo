@@ -4,13 +4,16 @@ while the controller is paused or stopped."""
 from __future__ import annotations
 
 import json
-from pathlib import Path  # noqa: TC003
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from benchmarks.fuzzops import hooks
 from benchmarks.fuzzops.hooks import HookError
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class Recorder:
@@ -306,10 +309,142 @@ def _snapshot_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, idle: str, co
 def test_a_snapshot_whose_only_failure_is_the_post_copy_idle_wait_keeps_the_good_golden_copy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(hooks, "reset_steps", lambda *_a, **_k: "steps")
+    monkeypatch.setattr(hooks, "reset_lane", lambda *_a, **_k: {})
     golden, printed = _snapshot_env(tmp_path, monkeypatch, "idle for less than the quiet period", None)
     assert (golden / "meta.json").is_file()
-    # the manager reads the last stdout line: the copy is whole, only the operator was not idle yet
+    # the manager reads the last stdout line: the copy is whole, only the operator was not idle yet (still, after the
+    # lane's repository was put back)
     assert json.loads(printed[-1]) == {"golden": "kept", "not_idle": "idle for less than the quiet period"}
+
+
+class BusySnapshot:
+    """What a snapshot with a busy operator did: the golden directory, what the hook printed, the ``reset_lane`` calls
+    (by the steps they got), the app verbs run for each steps object and the ``fuzzops app`` verbs actually run."""
+
+    def __init__(self) -> None:
+        self.golden = Path()
+        self.printed: list[str] = []
+        self.resets: list[str] = []
+        self.app_resets: list[Callable[[], dict[str, Any]]] = []
+        self.app_verbs: list[str] = []
+
+
+def _busy_snapshot_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, waits: list[str], reset_error: BaseException | None = None
+) -> BusySnapshot:
+    """A snapshot whose post-copy idle waits answer ``waits`` in turn, with ``reset_lane`` and the app stubbed."""
+    env = lane(tmp_path)
+    seen = BusySnapshot()
+    seen.golden = hooks.golden_directory(env)
+    seen.golden.mkdir()
+    (seen.golden / "meta.json").write_text("{}")
+
+    def fuzzops_app(_e: object, verb: str) -> dict[str, Any]:
+        seen.app_verbs.append(verb)
+        return {"match": True}
+
+    def steps_with(_env: object, app_reset: Callable[[], dict[str, Any]], *_a: object, **_k: object) -> str:
+        seen.app_resets.append(app_reset)
+        return f"steps{len(seen.app_resets)}"
+
+    def reset(_env: object, steps: object, _out: object = None) -> dict[str, object]:
+        seen.resets.append(str(steps))
+        if reset_error is not None:
+            raise reset_error
+        return {}
+
+    monkeypatch.setattr(hooks, "set_maintenance", lambda *_a, **_k: None)
+    monkeypatch.setattr(hooks, "_kube", lambda _e: None)
+    monkeypatch.setattr(hooks, "control_namespace", lambda _e: "ns")
+    monkeypatch.setattr(hooks, "fuzzops_app", fuzzops_app)
+    monkeypatch.setattr(hooks, "wait_app_ready", lambda *_a, **_k: None)
+    monkeypatch.setattr(hooks, "wait_idle_stable", lambda *_a, **_k: waits.pop(0))
+    monkeypatch.setattr(hooks, "reset_steps", steps_with)
+    monkeypatch.setattr(hooks, "repository_state", lambda *_a, **_k: {"head": "h" * 40, "status": "", "outcomes": ""})
+    monkeypatch.setattr(hooks, "reset_lane", reset)
+    monkeypatch.setattr(hooks, "restore_moved_repository", lambda *_a, **_k: False)
+    try:
+        hooks.snapshot(env, seen.printed.append)
+    except hooks.HookError:
+        pass
+    return seen
+
+
+def test_a_snapshot_whose_operator_is_busy_puts_the_lane_back_before_it_is_declared_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # an incident the copy's own app restart opened is still running when the wait ends: its outcome would be
+    # accepted after the copy and the claim would find the accepted head moved (a restore of ~100 s at the claim)
+    seen = _busy_snapshot_env(tmp_path, monkeypatch, ["alarm: incident open fg1-1", ""])
+    assert seen.resets == ["steps1"]
+    assert (seen.golden / "meta.json").is_file()
+    assert "snapshot_s" in json.loads(seen.printed[-1])  # done: not the kept-copy line the manager answers by waiting
+
+
+def test_the_put_back_runs_the_real_app_reset_and_never_retakes_the_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the responder may have edited app objects while the incident ran: only `fuzzops app reset` checks every object
+    seen = _busy_snapshot_env(tmp_path, monkeypatch, ["busy: closure open", ""])
+    assert seen.app_verbs == ["snapshot"]  # the one copy, taken before the incident
+    put_back = seen.app_resets[0]
+    assert put_back() == {"match": True}
+    assert seen.app_verbs == ["snapshot", "reset"]  # the put-back's app step is the real reset, not a stub
+    assert seen.app_resets[1]()["skipped"]  # the final moved-repository check leaves the app alone
+
+
+@pytest.mark.parametrize("why", ["idle for less than the quiet period", "alarm: incident open x", "busy: closure"])
+def test_an_incident_reason_triggers_the_put_back(why: str) -> None:
+    assert hooks.incident_reason(why)
+
+
+@pytest.mark.parametrize(
+    "why",
+    [
+        "down: controller pod not Ready",
+        "stale: state not updated for 90s",
+        "controller read failed: x",
+        "no controller state yet",
+    ],
+)
+def test_other_not_idle_reasons_keep_the_previous_behaviour(
+    why: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert not hooks.incident_reason(why)
+    seen = _busy_snapshot_env(tmp_path, monkeypatch, [why])
+    assert seen.resets == []
+    assert json.loads(seen.printed[-1]) == {"golden": "kept", "not_idle": why}
+
+
+def test_a_snapshot_that_is_idle_at_once_does_not_reset_the_lane_for_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = _busy_snapshot_env(tmp_path, monkeypatch, [""])
+    assert seen.resets == []
+    assert "snapshot_s" in json.loads(seen.printed[-1])
+
+
+def test_a_snapshot_still_busy_after_the_lane_was_put_back_keeps_its_copy_for_the_manager_to_wait(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = _busy_snapshot_env(tmp_path, monkeypatch, ["alarm: incident open x", "busy: again"])
+    assert seen.resets == ["steps1"]
+    assert (seen.golden / "meta.json").is_file()
+    assert json.loads(seen.printed[-1]) == {"golden": "kept", "not_idle": "busy: again"}
+
+
+@pytest.mark.parametrize("error", [hooks.HookError("not idle"), KeyError("state"), RuntimeError("boom")])
+def test_a_snapshot_whose_lane_cannot_be_put_back_keeps_its_whole_copy(
+    error: Exception, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the copy is whole and verified; only the put-back failed, whatever the error: a claim restores a moved lane
+    seen = _busy_snapshot_env(tmp_path, monkeypatch, ["alarm: incident open x"], error)
+    assert (seen.golden / "meta.json").is_file()
+    kept = json.loads(seen.printed[-1])
+    assert kept["golden"] == "kept"
+    assert "alarm: incident open x" in kept["not_idle"]
+    assert str(error).strip("'") in kept["not_idle"]
 
 
 def test_a_snapshot_whose_copy_fails_leaves_no_golden_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
