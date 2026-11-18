@@ -349,6 +349,90 @@ def test_any_role_or_judge_off_the_luna_policy_aborts(
     assert expected in check.detail
 
 
+def _claude_arm(model: str = "claude-sonnet-5-5", **overrides: object) -> ExperimentConfig:
+    return _luna("claudecode", model=model, reasoning_effort="", **overrides)
+
+
+@pytest.mark.parametrize("model", ["claude-sonnet-5-5", "claude-opus-5-5"])
+def test_the_stock_claude_arm_passes_on_a_declared_claude_model(
+    fake_host: FakeHost, sregym_dir: Path, model: str
+) -> None:
+    report = _preflight([_claude_arm(model)], fake_host, sregym_dir)
+
+    assert _check(report, "model-policy").status == "pass"
+    (roles,) = report.facts["roles"]
+    assert (roles["baseline_agent"]["provider"], roles["baseline_agent"]["model"]) == ("claude", model)
+    # The judge is the same for every arm of a comparison.
+    assert roles["sregym_judge"]["model"] == "codex-gpt-6-luna"
+    assert roles["sregym_judge"]["effort"] == "xhigh"
+
+
+@pytest.mark.parametrize(
+    ("config", "expected"),
+    [
+        (_claude_arm("claude-haiku-4-5"), "claudecode: runner.model is 'claude-haiku-4-5'"),
+        (_claude_arm("gpt-6-luna"), "claudecode: runner.model is 'gpt-6-luna'"),
+        (_claude_arm(env=RunnerEnv(judge_model_id="claude-sonnet-5-5")), "judge is 'claude-sonnet-5-5'"),
+    ],
+)
+def test_the_claude_arm_is_held_to_its_declared_models_and_the_one_judge(
+    fake_host: FakeHost, sregym_dir: Path, config: ExperimentConfig, expected: str
+) -> None:
+    check = _check(_preflight([config], fake_host, sregym_dir), "model-policy")
+
+    assert check.status == "fail"
+    assert expected in check.detail
+
+
+def _external_arm(model: str = "any-model", **overrides: object) -> ExperimentConfig:
+    return _luna("external", model=model, reasoning_effort="", **overrides)
+
+
+def test_the_external_arm_records_its_model_without_pinning_it(fake_host: FakeHost, sregym_dir: Path) -> None:
+    report = _preflight([_external_arm("whatever-the-command-runs")], fake_host, sregym_dir)
+
+    check = _check(report, "model-policy")
+    assert check.status == "pass"
+    assert "external whatever-the-command-runs (recorded)" in check.detail
+    (roles,) = report.facts["roles"]
+    assert roles["baseline_agent"]["model"] == "whatever-the-command-runs"
+    assert roles["sregym_judge"]["model"] == "codex-gpt-6-luna"  # the one judge, as for every arm
+
+
+def test_the_external_arm_is_still_judged_by_the_one_judge(fake_host: FakeHost, sregym_dir: Path) -> None:
+    config = _external_arm(env=RunnerEnv(judge_model_id="claude-sonnet-5-5"))
+
+    check = _check(_preflight([config], fake_host, sregym_dir), "model-policy")
+
+    assert check.status == "fail"
+    assert "judge is 'claude-sonnet-5-5'" in check.detail
+
+
+def test_a_claude_model_does_not_open_the_codex_arms(fake_host: FakeHost, sregym_dir: Path) -> None:
+    config = _luna("codex", model="claude-sonnet-5-5")
+
+    check = _check(_preflight([config], fake_host, sregym_dir), "model-policy")
+
+    assert check.status == "fail"
+    assert "codex: runner.model is 'claude-sonnet-5-5'" in check.detail
+
+
+def test_claude_arms_on_different_models_differ_in_parity(fake_host: FakeHost, sregym_dir: Path) -> None:
+    check = _check(
+        _preflight([_claude_arm("claude-sonnet-5-5"), _claude_arm("claude-opus-5-5")], fake_host, sregym_dir),
+        "arm-parity",
+    )
+
+    assert check.status == "fail"
+    assert "model differs" in check.detail
+
+
+def test_the_claude_model_set_is_part_of_the_policy() -> None:
+    assert ModelPolicy().claude_models == frozenset({"claude-sonnet-5-5", "claude-opus-5-5"})
+    with pytest.raises(ValueError, match="claude_models"):
+        ModelPolicy(claude_models=frozenset({" "}))
+
+
 def test_an_sdo_codex_config_without_a_model_uses_the_luna_driver_default(
     fake_host: FakeHost, sregym_dir: Path
 ) -> None:

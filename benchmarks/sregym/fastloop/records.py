@@ -37,7 +37,7 @@ SCHEMA_VERSION = "sdo.fastloop-incident/v2"
 #: A second pass only re-proves that cleanup is repeatable, which credential-slot
 #: rehearsals check; on astronomy it costs another ~170 s alert-silence oracle.
 EVAL_CLEANUP_PASSES = 1
-AgentName = Literal["sdo", "codex"]
+AgentName = Literal["sdo", "codex", "claudecode", "external"]
 #: What let harness fault recovery run once the row was over: SDO's natural closure, a closure SDO
 #: permanently failed or retired, the reflection deadline with SDO still working, or no SDO incident.
 RecoveryTrigger = Literal["natural_closure", "closure_failed", "reflection_deadline", "no_incident"]
@@ -266,6 +266,9 @@ class IncidentRecord(_PersistedModel):
     provider: str | None = None
     model: str
     reasoning_effort: str | None = None
+    #: The external agent's label (for example its build) and the state directory it kept; ``None`` for other agents.
+    agent_label: str | None = None
+    agent_state_dir: str | None = None
     replay: Literal["on", "off"] | None = None
     injection: InjectionState
     dispatched_at: AwareDatetime | None = None
