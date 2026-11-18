@@ -225,3 +225,12 @@ def test_from_config_builds_a_store(tmp_path: Path, base_repo: tuple[Path, str])
         {"root": str(tmp_path / "s"), "bases": {"hotel": {"repo": str(base_repo[0]), "commit": base_repo[1]}}}
     )
     assert s.resolve("hotel", "base") == base_repo[1]
+
+
+def test_store_refuses_a_stored_base_that_differs_from_the_configured_one(tmp_path: Path, base_repo: tuple[Path, str]) -> None:
+    first = store(tmp_path, base_repo)
+    assert first.base("hotel") == base_repo[1]
+    newer = commit(base_repo[0], {".sdo/goal.md": "installed\n"}, "installed")
+    with pytest.raises(ValueError, match="holds base"):
+        store(tmp_path, (base_repo[0], newer)).base("hotel")
+    assert store(tmp_path, base_repo).base("hotel") == base_repo[1]

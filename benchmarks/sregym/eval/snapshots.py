@@ -157,6 +157,7 @@ class GitSnapshotStore:
         self._first_try: dict[tuple[str, str], str | None] = {}
         self._own: dict[tuple[str, str], str] = {}
         self._merged: dict[str, str] = {}
+        self._base_checked: set[str] = set()
         self.reports: dict[str, MergeReport] = {}
         root.mkdir(parents=True, exist_ok=True)
 
@@ -179,6 +180,17 @@ class GitSnapshotStore:
                 subprocess.run(["git", "init", "-q", str(repo)], check=True)
                 source, commit = self._bases[app]
                 self._fetch(repo, source, commit, "refs/base")
+            elif app not in self._base_checked:
+                # A store root outlives its stage config: a repository created for another base would silently
+                # serve that base to every cell, so the configured base must be the stored one.
+                _, commit = self._bases[app]
+                stored = _git(repo, "rev-parse", "refs/base^{commit}").decode().strip()
+                if not stored.startswith(commit) and not commit.startswith(stored):
+                    raise ValueError(
+                        f"eval: snapshot store {repo} holds base {stored[:12]} but the config pins {commit[:12]}; "
+                        "use a new store root or move refs/base and delete refs/first-try/*"
+                    )
+                self._base_checked.add(app)
             return repo
 
     def _fetch(self, repo: Path, source: Path, commit: str, ref: str) -> None:
