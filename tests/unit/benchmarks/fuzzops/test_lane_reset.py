@@ -306,10 +306,87 @@ def _snapshot_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, idle: str, co
 def test_a_snapshot_whose_only_failure_is_the_post_copy_idle_wait_keeps_the_good_golden_copy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(hooks, "reset_steps", lambda *_a, **_k: "steps")
+    monkeypatch.setattr(hooks, "reset_lane", lambda *_a, **_k: {})
     golden, printed = _snapshot_env(tmp_path, monkeypatch, "idle for less than the quiet period", None)
     assert (golden / "meta.json").is_file()
-    # the manager reads the last stdout line: the copy is whole, only the operator was not idle yet
+    # the manager reads the last stdout line: the copy is whole, only the operator was not idle yet (still, after the
+    # lane's repository was put back)
     assert json.loads(printed[-1]) == {"golden": "kept", "not_idle": "idle for less than the quiet period"}
+
+
+def _busy_snapshot_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, waits: list[str], reset_error: Exception | None = None
+) -> tuple[Path, list[str], list[str]]:
+    """A snapshot whose post-copy idle waits answer ``waits`` in turn; returns the golden directory, what the hook
+    printed and what the lane was told to do (``reset_lane`` calls)."""
+    env = lane(tmp_path)
+    golden = hooks.golden_directory(env)
+    golden.mkdir()
+    (golden / "meta.json").write_text("{}")
+    monkeypatch.setattr(hooks, "set_maintenance", lambda *_a, **_k: None)
+    monkeypatch.setattr(hooks, "_kube", lambda _e: None)
+    monkeypatch.setattr(hooks, "control_namespace", lambda _e: "ns")
+    monkeypatch.setattr(hooks, "fuzzops_app", lambda _e, _v: {"match": True})
+    monkeypatch.setattr(hooks, "wait_app_ready", lambda *_a, **_k: None)
+    monkeypatch.setattr(hooks, "wait_idle_stable", lambda *_a, **_k: waits.pop(0))
+    monkeypatch.setattr(hooks, "reset_steps", lambda *_a, **_k: "steps")
+    monkeypatch.setattr(hooks, "repository_state", lambda *_a, **_k: {"head": "h" * 40, "status": "", "outcomes": ""})
+    done: list[str] = []
+
+    def reset(_env: object, steps: object, _out: object = None) -> dict[str, object]:
+        done.append(f"reset {steps}")
+        if reset_error is not None:
+            raise reset_error
+        return {}
+
+    monkeypatch.setattr(hooks, "reset_lane", reset)
+    printed: list[str] = []
+    try:
+        hooks.snapshot(env, printed.append)
+    except hooks.HookError:
+        pass
+    return golden, printed, done
+
+
+def test_a_snapshot_whose_operator_is_busy_puts_the_lane_back_before_it_is_declared_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # an incident the copy's own app restart opened is still running when the wait ends: its outcome would be
+    # accepted after the copy and the claim would find the accepted head moved (a restore of ~100 s at the claim)
+    golden, printed, done = _busy_snapshot_env(tmp_path, monkeypatch, ["idle for less than the quiet period", ""])
+    assert done == ["reset steps"]
+    assert (golden / "meta.json").is_file()
+    assert "snapshot_s" in json.loads(printed[-1])  # done: not the kept-copy line the manager answers by waiting
+
+
+def test_a_snapshot_that_is_idle_at_once_does_not_reset_the_lane_for_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _golden, printed, done = _busy_snapshot_env(tmp_path, monkeypatch, [""])
+    assert done == []
+    assert "snapshot_s" in json.loads(printed[-1])
+
+
+def test_a_snapshot_still_busy_after_the_lane_was_put_back_keeps_its_copy_for_the_manager_to_wait(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    golden, printed, done = _busy_snapshot_env(tmp_path, monkeypatch, ["busy", "busy again"])
+    assert done == ["reset steps"]
+    assert (golden / "meta.json").is_file()
+    assert json.loads(printed[-1]) == {"golden": "kept", "not_idle": "busy again"}
+
+
+def test_a_snapshot_whose_lane_cannot_be_put_back_keeps_its_whole_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the copy is whole and verified; only the repository could not be settled: the claim still restores a moved lane
+    golden, printed, _done = _busy_snapshot_env(tmp_path, monkeypatch, ["busy"], hooks.HookError("not idle"))
+    assert (golden / "meta.json").is_file()
+    kept = json.loads(printed[-1])
+    assert kept["golden"] == "kept"
+    assert "busy" in kept["not_idle"]
+    assert "not idle" in kept["not_idle"]
 
 
 def test_a_snapshot_whose_copy_fails_leaves_no_golden_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

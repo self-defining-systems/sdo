@@ -2243,14 +2243,25 @@ def _snapshot(env: Mapping[str, str], out: Callable[[str], None]) -> int:
         wait_app_ready(kube, _need(env, "FUZZOPS_NAMESPACE"))
     finally:
         set_maintenance(env, False, generation + "-resume")
-    if why := wait_idle_stable(kube, control, RESET_IDLE_WAIT_S, SNAPSHOT_QUIET_S):
+    steps = reset_steps(env, lambda: {"match": True, "skipped": "app untouched"})
+    why = wait_idle_stable(kube, control, RESET_IDLE_WAIT_S, SNAPSHOT_QUIET_S)
+    if why:
+        # The app restarting after the copy opened an incident on the idle lane and it is still running (or closing)
+        # when the wait ends. Its outcome would be accepted after this point and move the accepted head that every
+        # claim asserts: the claim then restores the lane (about 100 s plus an idle wait). Close it and put the
+        # prepared repository back now, while nobody waits for the lane.
+        out(f"the operator is not idle after the snapshot ({why}): putting the lane's repository back")
+        try:
+            reset_lane(env, steps, out)
+            why = wait_idle_stable(kube, control, RESET_IDLE_WAIT_S, SNAPSHOT_QUIET_S)
+        except (HookError, OSError, ValueError, subprocess.SubprocessError) as exc:
+            why = f"{why}; the lane could not be put back: {exc}"
+    if why:
         # the last stdout line tells the manager the copy is whole and was kept
         out(json.dumps({"golden": "kept", "not_idle": why}))
         raise SnapshotNotIdle(f"the operator is not idle after the snapshot: {why}")
     # the app restarting after the copy can open an incident on the idle lane; its outcome must not stay in the pool
-    restore_moved_repository(
-        env, reset_steps(env, lambda: {"match": True, "skipped": "app untouched"}), repository_state(kube, control), out
-    )
+    restore_moved_repository(env, steps, repository_state(kube, control), out)
     out(json.dumps({"snapshot_s": round(time.monotonic() - started, 1), "app": app}))
     return 0
 
