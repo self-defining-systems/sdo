@@ -48,6 +48,23 @@ if TYPE_CHECKING:
 OWN_PAGE_WINDOW_SECONDS = 120.0
 
 
+
+#: Rows retried when SDO's install window rejects the lane before any injection (host load, helper start-up).
+ADMISSION_RETRIES = 2
+
+
+def _admission_rejected_before_injection(results: Path) -> bool:
+    path = results / "incidents.jsonl"
+    if not path.is_file():
+        return False
+    try:
+        record = json.loads(path.read_text().splitlines()[0])
+    except (OSError, ValueError, IndexError):
+        return False
+    return (record.get("injection") or {}).get("state") == "not_injected" and "SDO rejected onboarding" in str(
+        record.get("error") or ""
+    )
+
 class RowSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     code_root: Path
@@ -416,8 +433,6 @@ class FastloopRowRunner:
         with self._lock:
             state = self._state[lane.id]
         environment: FastloopEnvironment = state["environment"]
-        attempt = len(list((environment.run_dir / "results").glob(f"{run_id(self.stage, cell, 0)[:-3]}-a*")))
-        row_id = run_id(self.stage, cell, attempt)
         stream = directory / "stream.json"
         stream.write_text(
             json.dumps(
@@ -431,19 +446,28 @@ class FastloopRowRunner:
             + "\n",
             encoding="utf-8",
         )
-        command = row_command(self.settings, environment, cell, row_id, stream, state["planned"])
-        (directory / "command.json").write_text(json.dumps(command, indent=2) + "\n", encoding="utf-8")
         started = self._now()
-        with (directory / "row.stdout.log").open("a") as out, (directory / "row.stderr.log").open("a") as err:
-            completed = self._run(
-                command,
-                cwd=self.settings.code_root,
-                stdout=out,
-                stderr=err,
-                check=False,
-                timeout=context.config.cell_cap_seconds + 600,
-            )
-        results = environment.run_dir / "results" / row_id
+        for admission_try in range(1 + ADMISSION_RETRIES):
+            attempt = len(list((environment.run_dir / "results").glob(f"{run_id(self.stage, cell, 0)[:-3]}-a*")))
+            row_id = run_id(self.stage, cell, attempt)
+            command = row_command(self.settings, environment, cell, row_id, stream, state["planned"])
+            (directory / "command.json").write_text(json.dumps(command, indent=2) + "\n", encoding="utf-8")
+            with (directory / "row.stdout.log").open("a") as out, (directory / "row.stderr.log").open("a") as err:
+                completed = self._run(
+                    command,
+                    cwd=self.settings.code_root,
+                    stdout=out,
+                    stderr=err,
+                    check=False,
+                    timeout=context.config.cell_cap_seconds + 600,
+                )
+            results = environment.run_dir / "results" / row_id
+            retryable = admission_try < ADMISSION_RETRIES and cell.arm == "sdo"
+            if retryable and _admission_rejected_before_injection(results):
+                # The fault was never injected: SDO's install window failed on an incomplete or slow observation
+                # (a loaded host), not on the application. The next row starts from a clean wipe; try it again.
+                continue
+            break
         state["results"] = results
         (directory / "row-exit.json").write_text(
             json.dumps({"returncode": completed.returncode, "wall_seconds": self._now() - started}) + "\n",

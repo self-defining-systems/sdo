@@ -71,6 +71,9 @@ def environment(tmp_path: Path) -> Any:
         kubeconfig=tmp_path / "kc",
         namespace="hotel-reservation",
         workspace=tmp_path / "ws",
+        seed_commit="seed",
+        evidence_root=None,
+        save=lambda: None,
     )
 
 
@@ -210,3 +213,31 @@ def test_a_row_without_results_is_an_error_result(tmp_path: Path, monkeypatch: p
 
 def test_lane_info_names_the_environment() -> None:
     assert Lane(id="h1", app="hotel").info == {}
+
+
+def test_an_sdo_row_rejected_by_admission_before_injection_is_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = environment(tmp_path)
+    monkeypatch.setattr("benchmarks.sregym.eval.fastloop_row.FastloopEnvironment.load", lambda directory: env)
+    monkeypatch.setattr("benchmarks.sregym.eval.fastloop_row.subprocess.run", lambda command, **kw: None)
+    runs: list[str] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        row = command[command.index("--run-id") + 1]
+        runs.append(row)
+        results = env.run_dir / "results" / row
+        results.mkdir(parents=True)
+        data = json.loads(record().model_dump_json())
+        if len(runs) < 3:
+            data["injection"] = {"state": "not_injected", "stage": "pre_injection"}
+            data["error"] = "ValueError: eval: SDO rejected onboarding after 232s (install observation window expired)"
+        (results / "incidents.jsonl").write_text(json.dumps(data) + "\n")
+        return subprocess.CompletedProcess(command, 0)
+
+    runner = FastloopRowRunner(settings(tmp_path), "small", run=fake_run, head=lambda w: "h")
+    context = ArmContext(config=make_config(tmp_path), page_hook=NoPageHook(), now=lambda: 0.0, sleep=lambda s: None)
+    lane = runner.claim(cell(), "h1", "snapcommit")
+    runner.execute(lane, cell(), Injection(at=0), tmp_path, context)
+    assert len(runs) == 3
+    assert runs[0].endswith("-a0") and runs[2].endswith("-a2")
