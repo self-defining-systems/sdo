@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 import tomllib
 
+from benchmarks.sregym.adapter import HostMemoryPolicy, host_check
 from benchmarks.sregym.eval.cell import CellContext
 from benchmarks.sregym.eval.fastloop_row import FastloopRowRunner, RecordAccountant, RowSettings, TranscriptPresenceGate
 from benchmarks.sregym.eval.results import ResultsTable
@@ -85,7 +86,14 @@ def run_live(config_path: Path, plan: Plan) -> int:
     )
     root = config.runs_root / config.stage
     plan.write(root / "plan.json")
-    load_gate = LoadGate(config.max_load, config.admit_spacing_seconds)
+    policy = HostMemoryPolicy(
+        reserve_bytes=int(config.host_reserve_gib * 1024**3), max_pressure_avg60=config.max_memory_pressure
+    )
+    load_gate = LoadGate(
+        config.max_load,
+        config.admit_spacing_seconds,
+        host_check=host_check(int(config.lane_memory_cap_gib * 1024**3), policy),
+    )
     rows = Scheduler(plan, context, store, ResultsTable(root), gate=load_gate).run()
     summary = {
         "cells": len(rows),

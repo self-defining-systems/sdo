@@ -92,3 +92,11 @@ def isolated_host_limits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     """Hermetic tests must never join the live lanes' host semaphore."""
     monkeypatch.setenv("FASTLOOP_HOST_LOCK_DIR", str(tmp_path / "host-locks"))
     monkeypatch.setenv("FASTLOOP_HOST_REDEPLOYS", "2")
+
+
+@pytest.fixture(autouse=True)
+def host_memory_gate_reads_no_proc(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``up`` tests must not depend on this machine's MemAvailable, PSI or running Docker lanes."""
+    from benchmarks.sregym.fastloop import cli
+
+    monkeypatch.setattr(cli, "_admit_lane", lambda _args: None)
