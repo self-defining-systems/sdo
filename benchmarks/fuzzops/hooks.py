@@ -487,8 +487,17 @@ def idle_reason(state: dict[str, Any] | None) -> str:
     if state.get("queued_reflections_unknown") or state.get("queuedReflectionsUnknown"):
         return "reflection queue unknown"
     if _startup_holding(state):
-        return "startup baseline pending"
+        return "startup baseline pending" + _startup_holders(state.get("startup") or {})
     return ""
+
+
+def _startup_holders(startup: dict[str, Any]) -> str:
+    """The bound and what the controller recorded as holding the period on its last pass (``holders``: the firing
+    openers, batched findings, unevaluated openers or warm-up, or since when it has been healthy). The controller owns
+    which findings hold it; this only renders them."""
+    bound = startup.get("bound_at") or startup.get("boundAt")
+    holders = [str(holder) for holder in startup.get("holders") or []]
+    return (f" (bound {bound})" if bound else "") + (": " + "; ".join(holders) if holders else "")
 
 
 def _incident_id(state: dict[str, Any]) -> str:

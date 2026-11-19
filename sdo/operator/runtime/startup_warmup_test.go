@@ -49,6 +49,9 @@ func TestStartupPeriodWaitsForTheTrafficWarmup(t *testing.T) {
 	if startupState(t, c).GetEstablishedAt() != nil {
 		t.Fatal("established while the traffic warm-up was still running")
 	}
+	if got := startupState(t, c).GetHolders(); len(got) != 1 || got[0] != "measurement warm-up not settled" {
+		t.Fatalf("holders = %q, want the warm-up named", got)
+	}
 	settled = true
 	for second := int64(201); second <= 400; second++ {
 		step(t, c, second)
