@@ -94,3 +94,39 @@ func TestSampleIntervalValidation(t *testing.T) {
 		}
 	}
 }
+
+// The memory check rejects a probe set that sends more than the cap, naming the
+// rate and the way out, instead of leaving the controller to log it.
+func TestCheckProbeLoadRejectsAnOverCapProbeSet(t *testing.T) {
+	var catalog Catalog
+	for i := 0; i < 18; i++ {
+		catalog = append(catalog, Scenario{ID: fmt.Sprintf("scenario-%02d", i), Steps: make([]Step, 2)})
+	}
+	err := CheckProbeLoad([]Workload{intervalWorkload(t, "10s", 18)}, catalog)
+	if err == nil {
+		t.Fatal("an 18-scenario probe at the 10 s floor was accepted")
+	}
+	for _, want := range []string{"3.6 requests/s", "3/s cap", "sampleInterval"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("message %q lacks %q", err, want)
+		}
+	}
+	if err := CheckProbeLoad([]Workload{intervalWorkload(t, "30s", 18)}, catalog); err != nil {
+		t.Fatalf("a probe set under the cap was rejected: %v", err)
+	}
+}
+
+// The default rate of a workload that sets none is not the designer's choice:
+// only the floor load of sampling each scenario once per interval is checked.
+func TestCheckProbeLoadIgnoresTheDefaultRate(t *testing.T) {
+	catalog := Catalog{{ID: "scenario-00", Steps: make([]Step, 1)}}
+	var workloads []Workload
+	for i := 0; i < 3; i++ {
+		w := intervalWorkload(t, "10s", 1)
+		w.Name, w.RatePerSecond = fmt.Sprintf("probe-%d", i), DefaultRatePerSecond
+		workloads = append(workloads, w)
+	}
+	if err := CheckProbeLoad(workloads, catalog); err != nil {
+		t.Fatalf("three single-scenario probes at the default rate were rejected: %v", err)
+	}
+}

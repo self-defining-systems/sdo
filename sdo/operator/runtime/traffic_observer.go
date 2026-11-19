@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"fmt"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kclock "k8s.io/utils/clock"
 	"maps"
@@ -374,7 +373,7 @@ func (o *TrafficObserver) Summary() map[string]any {
 	if load := traffic.MeasureProbeLoad(probes, requests); len(load.Raised) > 0 || load.OverCap() {
 		entry := map[string]any{"requests_per_second": load.RequestsPerSecond, "cap": load.Cap, "rate_raised_for_floor": load.Raised}
 		if load.OverCap() {
-			entry["over_cap"] = fmt.Sprintf("sampling every scenario at least every %s (the %s floor, or a workload's sampleInterval up to %s) sends %.1f requests/s, above the %.0f/s cap; no scenario was starved: lengthen sampleInterval, or remove or merge scenarios", traffic.MinSampleInterval, traffic.MinSampleInterval, traffic.MaxSampleInterval, load.RequestsPerSecond, load.Cap)
+			entry["over_cap"] = load.Message()
 		}
 		summary["_probe_load"] = entry
 	}

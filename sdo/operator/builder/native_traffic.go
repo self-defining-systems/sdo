@@ -242,6 +242,14 @@ func TestTrafficNotesDefaultLatencyBounds(t *testing.T) {
     if err := os.WriteFile("` + trafficLatencyNotes + `", data, 0o600); err != nil { t.Fatal(err) }
 }
 
+// TestTrafficProbeLoadWithinCap refuses a probe set that sends more requests
+// per second than the probe-load cap.
+func TestTrafficProbeLoadWithinCap(t *testing.T) {
+    workloads, err := prober.ParseWorkloads(TrafficWorkloads)
+    if err != nil { t.Fatal(err) }
+    if err := traffic.CheckProbeLoad(workloads, TrafficCatalog()); err != nil { t.Fatal(err) }
+}
+
 func TestTrafficGeneratorsDetectTheirFaultClasses(t *testing.T) {
     for _, failure := range traffic.CheckCatalog(context.Background(), TrafficCatalog()) {
         t.Error(failure)
