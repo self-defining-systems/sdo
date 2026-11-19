@@ -4,7 +4,17 @@ Mongo container files are ephemeral in this fixture. Restoring manifests cannot
 restore posts lost on a container restart, while surviving timelines retain IDs.
 Reset therefore stops all post/timeline processes, replaces the entire fixture,
 and checks all references before enabling writers again. No incident repair uses
-this code, and neither traffic users nor read windows are changed.
+this code, and read windows are never changed.
+
+Identities follow one invariant (`restore_social_identities`): the app holds only
+user ids its own gateway can carry. The user service mints an id as
+machine|millisecond|per-millisecond counter, and the nginx Lua handlers read the
+id back from the login token with ``tonumber``, a float64. Above 2**53 a double
+drops the low bits, so a registration that is not the first in its millisecond
+(at the app's ids, above 2**60, any counter not a multiple of 256) reaches every
+signed-in handler as a neighbouring id: the user composes as another user, or as
+nobody. Such an identity is broken for life, and since the Mongo containers keep
+no volume, every recreation re-mints the users a probe registers concurrently.
 """
 
 from __future__ import annotations
@@ -22,7 +32,7 @@ from benchmarks.sregym.adapter import Deadline, WaitKind, kubectl, wait_for
 from benchmarks.sregym.fastloop.transient_cleanup import retire_pods, wait_deleted
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Collection, Iterator, Sequence
     from pathlib import Path
 
 NAMESPACE = "social-network"
@@ -330,3 +340,250 @@ print("SOCIAL_FIXTURE_SEEDED");"""
         kubeconfig=config,
     )
     return snapshot
+
+
+USER_MONGO = "user-mongodb.social-network.svc.cluster.local:27017"
+GRAPH_MONGO = "social-graph-mongodb.social-network.svc.cluster.local:27017"
+TIMELINE_MONGO = "user-timeline-mongodb.social-network.svc.cluster.local:27017"
+# The id's low 12 bits are the user service's per-millisecond counter.
+COUNTER_BITS = 12
+# Field on a user document recording the id an interrupted rekey was moving it to.
+PENDING_FIELD = "sdo_rekey_to"
+
+
+def gateway_carries(user_id: int) -> bool:
+    """Whether the gateway's Lua number (an IEEE double) holds user_id exactly."""
+    return int(float(user_id)) == user_id
+
+
+@dataclass(frozen=True)
+class Identity:
+    username: str
+    user_id: int
+    # The target a previous, interrupted rekey recorded on this user's document.
+    pending: int | None = None
+
+
+@dataclass(frozen=True)
+class GraphNode:
+    user_id: int
+    followers: tuple[int, ...]
+    followees: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class Rekey:
+    username: str
+    old_id: int
+    new_id: int
+    # What every signed-in handler receives for old_id, and whose id that is.
+    gateway_id: int
+    impersonates: str | None
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "username": self.username,
+            "old_id": str(self.old_id),
+            "new_id": str(self.new_id),
+            "gateway_id": str(self.gateway_id),
+            "impersonates": self.impersonates,
+        }
+
+
+@dataclass(frozen=True)
+class IdentityRepair:
+    users: int
+    graph_nodes: int
+    rekeyed: tuple[Rekey, ...]
+    # Social-graph ids no user holds or is being moved to (a user removed from the user store
+    # keeps its graph node and the edges pointing at it).
+    orphans: tuple[int, ...]
+
+    def __bool__(self) -> bool:
+        return bool(self.rekeyed or self.orphans)
+
+    def describe(self) -> str:
+        parts = [
+            f"{row.username} id {row.old_id} reaches the gateway as {row.gateway_id}"
+            + (f" (user {row.impersonates})" if row.impersonates else " (no user)")
+            + f", rekeyed to {row.new_id}"
+            for row in self.rekeyed
+        ]
+        if self.orphans:
+            parts.append("dropped graph ids no user holds: " + ", ".join(str(value) for value in self.orphans))
+        return "; ".join(parts) or "all identities carried by the gateway"
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "users": self.users,
+            "graph_nodes": self.graph_nodes,
+            "rekeyed": [row.to_json() for row in self.rekeyed],
+            "orphans": [str(value) for value in self.orphans],
+        }
+
+
+def _free_carried_id(old_id: int, taken: set[int]) -> int:
+    """The highest free counter in old_id's millisecond block whose id the gateway carries.
+
+    The user service would need thousands of registrations in one millisecond to mint
+    these counters, so the new id neither collides later nor leaves its time block.
+    """
+    block = old_id >> COUNTER_BITS << COUNTER_BITS
+    for counter in range((1 << COUNTER_BITS) - 1, 0, -1):
+        candidate = block | counter
+        if candidate not in taken and gateway_carries(candidate):
+            return candidate
+    raise ValueError(f"eval: social identity {old_id} has no free gateway-carried id in its millisecond block")
+
+
+def plan_identity_repair(
+    users: Sequence[Identity], graph: Sequence[GraphNode], also_taken: Collection[int] = ()
+) -> IdentityRepair:
+    """Rekey every user the gateway cannot carry; drop graph ids no user holds.
+
+    A new id is never any id the stores already mention (users, pending targets, graph
+    nodes, follow edges, and also_taken: ids keying posts or timelines), so it inherits no
+    data and the orphan cleanup cannot reach it. A user with a recorded target resumes to
+    that same target, so an interrupted run converges instead of orphaning its own work.
+    """
+    by_id = {user.user_id: user.username for user in users}
+    if len(by_id) != len(users):
+        raise ValueError("eval: social user store holds one user id twice; recreate the application")
+    referenced = {node.user_id for node in graph}
+    for node in graph:
+        referenced.update(node.followers, node.followees)
+    taken = set(by_id) | referenced | set(also_taken) | {u.pending for u in users if u.pending is not None}
+    rekeyed = []
+    for user in sorted(users, key=lambda row: (row.user_id, row.username)):
+        if user.pending is not None:
+            new_id = user.pending
+            if not gateway_carries(new_id):
+                raise ValueError(f"eval: social user {user.username} records a rekey target the gateway rounds")
+        elif gateway_carries(user.user_id):
+            continue
+        else:
+            new_id = _free_carried_id(user.user_id, taken)
+            taken.add(new_id)
+        gateway_id = int(float(user.user_id))
+        impersonates = by_id.get(gateway_id) if gateway_id != user.user_id else None
+        rekeyed.append(Rekey(user.username, user.user_id, new_id, gateway_id, impersonates))
+    moving = {row.old_id for row in rekeyed} | {row.new_id for row in rekeyed}
+    orphans = tuple(sorted(referenced - set(by_id) - moving))
+    return IdentityRepair(len(users), len(graph), tuple(rekeyed), orphans)
+
+
+def _json_lines(output: str) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in output.splitlines() if line.strip()]
+
+
+_ID_JS = "function id(v){return v.toString().replace(/[^0-9-]/g,'');}"
+
+
+def read_social_identities(config: Path) -> tuple[list[Identity], list[GraphNode], frozenset[int]]:
+    """Read users, the follow graph and timeline owners with exact 64-bit ids (decimal strings)."""
+    users_script = (
+        f'var c=new Mongo("{USER_MONGO}").getDB("user").user;{_ID_JS}'
+        f"c.find({{}}, {{username:1,user_id:1,{PENDING_FIELD}:1}}).forEach(function(d){{"
+        f"var p=d.{PENDING_FIELD}; print(JSON.stringify({{username:d.username,user_id:id(d.user_id),"
+        "pending:(p===undefined||p===null)?null:id(p)}));});"
+    )
+    graph_script = (
+        f'var c=new Mongo("{GRAPH_MONGO}").getDB("social-graph").getCollection("social-graph");{_ID_JS}'
+        "function ids(l){return (l||[]).map(function(e){return id(e.user_id);});}"
+        "c.find({}).forEach(function(d){print(JSON.stringify("
+        "{user_id:id(d.user_id),followers:ids(d.followers),followees:ids(d.followees)}));});"
+    )
+    # Every post a user composes enters that user's timeline document, so its owners cover post creators.
+    timeline_script = (
+        f'var c=new Mongo("{TIMELINE_MONGO}").getDB("user-timeline").getCollection("user-timeline");{_ID_JS}'
+        'c.distinct("user_id").forEach(function(v){print(id(v));});'
+    )
+    with helper_cleanup(config):
+        users = [
+            Identity(row["username"], int(row["user_id"]), None if row["pending"] is None else int(row["pending"]))
+            for row in _json_lines(_mongo(config, users_script))
+        ]
+        graph = [
+            GraphNode(
+                int(row["user_id"]),
+                tuple(int(value) for value in row["followers"]),
+                tuple(int(value) for value in row["followees"]),
+            )
+            for row in _json_lines(_mongo(config, graph_script))
+        ]
+        owners = frozenset(int(line) for line in _mongo(config, timeline_script).split())
+    return users, graph, owners
+
+
+# Each step is idempotent and the target is recorded on the user document before anything
+# moves, so a run interrupted at any point is resumed by the next one to the same id.
+_REPAIR_SCRIPT = f"""var plan=JSON.parse(cat("/dev/stdin"));
+var u=new Mongo("{USER_MONGO}").getDB("user").user;
+var g=new Mongo("{GRAPH_MONGO}").getDB("social-graph").getCollection("social-graph");
+plan.rekey.forEach(function(r){{
+  var o=NumberLong(r.old), n=NumberLong(r.new), mark={{}}; mark["{PENDING_FIELD}"]=n;
+  assert.eq(u.updateOne({{username:r.username}},{{$set:mark}}).matchedCount, 1);
+  if (r.old!=r.new) {{
+    if (g.count({{user_id:n}})==0) g.updateOne({{user_id:o}},{{$set:{{user_id:n}}}});
+    else g.deleteMany({{user_id:o}});
+  }}
+  if (g.count({{user_id:n}})==0) g.insertOne({{user_id:n,followers:[],followees:[]}});
+  ["followers","followees"].forEach(function(k){{
+    var q={{}}; q[k+".user_id"]=o; var s={{}}; s[k+".$[e].user_id"]=n;
+    g.updateMany(q,{{$set:s}},{{arrayFilters:[{{"e.user_id":o}}]}});
+  }});
+  var done={{}}; done["{PENDING_FIELD}"]="";
+  assert.eq(u.updateOne({{username:r.username}},{{$set:{{user_id:n}},$unset:done}}).matchedCount, 1);
+}});
+plan.orphans.forEach(function(v){{
+  var o=NumberLong(v);
+  g.deleteMany({{user_id:o}});
+  g.updateMany({{}},{{$pull:{{followers:{{user_id:o}},followees:{{user_id:o}}}}}});
+}});
+print("SOCIAL_IDENTITIES_REPAIRED");"""
+
+
+def _empty_id_caches(config: Path) -> None:
+    """Empty the caches keyed by user id or username; their Mongo stores refill them."""
+    if _exec(config, "social-graph-redis", ["redis-cli", "FLUSHALL"]).strip() != "OK":
+        raise RuntimeError("eval: social identity restore could not empty social-graph-redis")
+    selector = json.loads(
+        kubectl(
+            ["get", "deployment/user-memcached", "-o", "jsonpath={.spec.selector.matchLabels}"],
+            namespace=NAMESPACE,
+            kubeconfig=config,
+        ).stdout
+    )
+    labels = ",".join(f"{key}={value}" for key, value in sorted(selector.items()))
+    pods = kubectl(["get", "pods", "-l", labels, "-o", "name"], namespace=NAMESPACE, kubeconfig=config).stdout.split()
+    if not pods:
+        raise RuntimeError(f"eval: social identity restore found no user-memcached pod for selector {labels}")
+    # Deleting the pods empties memcached without changing the Deployment the baseline captured.
+    kubectl(["delete", *pods, "--wait=true"], namespace=NAMESPACE, kubeconfig=config)
+    kubectl(["rollout", "status", "deployment/user-memcached", "--timeout=90s"], namespace=NAMESPACE, kubeconfig=config)
+
+
+def restore_social_identities(config: Path) -> IdentityRepair:
+    """Hold the identity invariant; call only while no prober runs (after the SDO namespace wipe).
+
+    A rekeyed user keeps its username, password hash and follow edges under an id the
+    gateway carries. Posts and timelines under the old id stay: nothing reads them under the
+    new id, which owns none, and removing them would dangle the home-timeline references
+    the post fixture keeps coherent. Session tokens carrying the old id died with the prober.
+    The id caches are emptied on every run, so a run that failed after its Mongo rewrite
+    cannot leave stale entries behind a store that now looks clean.
+    """
+    users, graph, owners = read_social_identities(config)
+    repair = plan_identity_repair(users, graph, owners)
+    if repair:
+        plan = {
+            "rekey": [
+                {"username": row.username, "old": str(row.old_id), "new": str(row.new_id)} for row in repair.rekeyed
+            ],
+            "orphans": [str(value) for value in repair.orphans],
+        }
+        with helper_cleanup(config):
+            if "SOCIAL_IDENTITIES_REPAIRED" not in _mongo(config, _REPAIR_SCRIPT, json.dumps(plan)):
+                raise RuntimeError("eval: social identity repair did not complete")
+    _empty_id_caches(config)
+    return repair
