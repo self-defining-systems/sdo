@@ -53,6 +53,7 @@ from benchmarks.sregym.fastloop.baseline_recovery import (
     load_application_baseline,
     save_application_baseline,
 )
+from benchmarks.lanes.eks import EksLane
 from benchmarks.sregym.fastloop.environment import DEFAULT_PROBLEM, FastloopEnvironment, Images
 from benchmarks.sregym.fastloop.evidence_sink import lane_evidence_run_id
 from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
@@ -276,22 +277,40 @@ def up_preflight(args: argparse.Namespace) -> None:
     import shutil
     import warnings
 
+    eks_platform = getattr(args, "platform", "kind") == "eks"
     if getattr(args, "reuse_cluster_only", False):
         if args.dev_mount is not None:
-            raise ValueError("attach-only up requires --no-dev-mount; existing node mounts cannot be changed")
+            raise ValueError(
+                "an EKS lane has no node mounts; pass --no-dev-mount"
+                if eks_platform
+                else "attach-only up requires --no-dev-mount; existing node mounts cannot be changed"
+            )
         if not os.environ.get("KUBECONFIG") or not Path(os.environ["KUBECONFIG"]).is_file():
             raise ValueError("attach-only up requires the existing lane KUBECONFIG")
+    if eks_platform:
+        if args.app != "sregym":
+            raise ValueError("--platform eks supports SREGym applications only")
+        if not getattr(args, "ecr_registry", None):
+            raise ValueError("--platform eks requires --ecr-registry <account>.dkr.ecr.<region>.amazonaws.com")
+        if getattr(args, "parallel_root", None) is not None:
+            raise ValueError("an EKS lane shares memory through the remote memory branch, not --parallel-root")
+        for item in getattr(args, "ecr_tag", ()):
+            if "=" not in item or not item.split("=", 1)[0]:
+                raise ValueError(f"--ecr-tag must be KEY=VALUE, got {item!r}")
     if args.kind_worker_nodes < 0:
         raise SystemExit("--kind-worker-nodes must not be negative")
     if getattr(args, "parallel_root", None) is not None and (args.dev_mount is None or args.app in {"toy", "gitlab"}):
         raise ValueError("--parallel-root requires an SREGym --dev-mount lane")
-    for executable in ("docker", "kind", "kubectl", "go"):
+    # An EKS lane builds images on this host and pushes them; it never runs kind.
+    for executable in ("docker", "kubectl", "go", *(("aws",) if eks_platform else ("kind",))):
         if shutil.which(executable) is None:
             raise ValueError(f"fastloop preflight: missing {executable}")
     subprocess.run(["docker", "info", "--format", "{{.ServerVersion}}"], check=True, capture_output=True, text=True)
-    check_host_capacity(args)
+    if not eks_platform:
+        check_host_capacity(args)
     if args.dev_mount is None:
-        warnings.warn("--no-dev-mount: code changes require image rebuilds", stacklevel=2)
+        if not eks_platform:
+            warnings.warn("--no-dev-mount: code changes require image rebuilds", stacklevel=2)
     elif not (args.dev_mount.resolve() / "sdo/operator/go.mod").is_file():
         raise ValueError(f"fastloop preflight: not an SDO worktree: {args.dev_mount}")
     if getattr(args, "app", None) not in {"toy", "gitlab"}:
@@ -397,12 +416,58 @@ def _admit_lane(args: argparse.Namespace) -> None:
     assert_lane_host_memory(args)
 
 
+def eks_worker_environment(args: argparse.Namespace, *, workspace: Path, lane: EksLane) -> dict[str, str]:
+    """The SREGym worker environment of an EKS lane: attach only, build the app from source, publish by mirror."""
+
+    return {
+        "SREGYM_KIND_CLUSTER_PREFIX": args.cluster_prefix,
+        "SREGYM_KIND_CLUSTER_NAME": f"{args.cluster_prefix}{args.worker_id}",
+        "SREGYM_CLUSTER_PLATFORM": "eks",
+        "SREGYM_IMAGE_DELIVERY": "build",
+        # Checked at attach (the VPC CNI policy agent), so the lane topology records the feature as on kind.
+        "SREGYM_KIND_REQUIRE_NETWORK_POLICY": "1",
+        "FASTLOOP_EKS_LANE": lane.model_dump_json(),
+        "FASTLOOP_DELIVERY_RECORD": str(args.run_dir.resolve() / "image_delivery.jsonl"),
+        "SREGYM_REUSE_CLUSTER": "1",
+        **HostLimits(args.host_lock_dir.resolve(), args.host_redeploys).worker_env(),
+        "SREGYM_DEPLOY_FROM_SOURCE": "1",
+        "SREGYM_APP_SOURCE_DIR": str(workspace),
+        "SREGYM_PRESERVE_INFRASTRUCTURE": "1",
+        "SREGYM_SOURCE_BUILD_CACHE": "1",
+    }
+
+
+def attach_eks_lane(args: argparse.Namespace) -> tuple[EksLane, Images]:
+    """Attach the EKS lane provider (fence, NetworkPolicy, node agent) and pin SDO's images in ECR; idempotent."""
+
+    from benchmarks.lanes.eks import EksLaneError, EksProvider
+
+    provider = EksProvider.attach(
+        str(Path(os.environ["KUBECONFIG"]).resolve()),
+        registry=args.ecr_registry,
+        upstreams=tuple(args.mirror_upstream or ("docker.io",)),
+        repository_tags=dict(item.split("=", 1) for item in args.ecr_tag),
+    )
+    prior = FastloopEnvironment.load(args.run_dir.resolve()) if (args.run_dir / "fastloop.json").is_file() else None
+    if prior is not None and prior.eks is not None:
+        if (prior.eks.server, prior.eks.cluster_uid) != (provider.lane.server, provider.lane.cluster_uid):
+            raise EksLaneError("KUBECONFIG reaches a different cluster than the one this lane was created on")
+    images = Images(controller=provider.pin(args.controller_image), responder=provider.pin(args.responder_image))
+    return provider.lane, images
+
+
 def _up(args: argparse.Namespace) -> int:
-    resolve_node_limits(args)
-    NodeLimits.from_args(args)
-    logger.info(describe_mode(args.lane_cgroup))
+    eks_platform = getattr(args, "platform", "kind") == "eks"
+    if eks_platform:
+        # An EKS lane only attaches: no kind cluster, node caps or host memory admission apply.
+        args.reuse_cluster_only = True
+    else:
+        resolve_node_limits(args)
+        NodeLimits.from_args(args)
+        logger.info(describe_mode(args.lane_cgroup))
     HostLimits(args.host_lock_dir.resolve(), args.host_redeploys)
-    _admit_lane(args)
+    if not eks_platform:
+        _admit_lane(args)
     up_preflight(args)
     if args.app == "toy":
         from benchmarks.sregym.fastloop.toy import up
@@ -430,7 +495,7 @@ def _up(args: argparse.Namespace) -> int:
         raise ValueError("--parallel-root must match the root mounted when this lane was created")
     evidence_root = args.evidence_root.resolve() if getattr(args, "evidence_root", None) is not None else None
     if evidence_root is not None:
-        if args.dev_mount is None:
+        if args.dev_mount is None and not eks_platform:
             raise ValueError("--evidence-root requires a --dev-mount lane (the node mount is set at cluster creation)")
         from benchmarks.sregym.fastloop.dev import prepare_evidence_root
 
@@ -451,6 +516,13 @@ def _up(args: argparse.Namespace) -> int:
     if private_tmp is not None:
         private_tmp.mkdir(exist_ok=True)
     images = Images(controller=args.controller_image, responder=args.responder_image)
+    eks_lane: EksLane | None = None
+    host_operator: Path | None = None
+    if eks_platform:
+        from benchmarks.sregym.fastloop.dev import build_host_operator
+
+        eks_lane, images = attach_eks_lane(args)
+        host_operator = build_host_operator(REPO_ROOT)
     if args.dev_mount is not None:
         from benchmarks.sregym.fastloop.dev import prepare_dev_mount
 
@@ -465,7 +537,11 @@ def _up(args: argparse.Namespace) -> int:
             text=True,
             check=True,
         ).stdout.strip()
-    worker_env = up_worker_environment(args, workspace=workspace)
+    worker_env = (
+        eks_worker_environment(args, workspace=workspace, lane=eks_lane)
+        if eks_lane is not None
+        else up_worker_environment(args, workspace=workspace)
+    )
     if args.dev_mount is not None and not (run_dir / "fastloop.json").exists():
         clusters = subprocess.run(
             ["kind", "get", "clusters"], capture_output=True, text=True, check=True
@@ -481,7 +557,8 @@ def _up(args: argparse.Namespace) -> int:
             and previous.worker_env == worker_env
             and previous.deploy_problem == args.problem
             and previous.kubeconfig.is_file()
-            and node_images_match(previous.cluster, images)
+            # An EKS lane's images are digests, so equal references are equal content.
+            and (eks_platform or node_images_match(previous.cluster, images))
         ):
             if previous.namespace == "astronomy-shop":
                 from benchmarks.sregym.adapter import prepare_oracle_observability
@@ -512,6 +589,10 @@ def _up(args: argparse.Namespace) -> int:
     if args.builder:
         _ensure_builder(args.builder)
     placeholder = FastloopEnvironment(
+        platform="eks" if eks_platform else "kind",
+        eks=eks_lane,
+        host_operator=host_operator,
+        pinned_tools=eks_platform,
         run_dir=run_dir,
         cluster=worker_env["SREGYM_KIND_CLUSTER_NAME"],
         kubeconfig=(
@@ -694,6 +775,7 @@ def _cluster_ops(args: argparse.Namespace, namespace: str, *, ops: ClusterOps | 
 
 def _runtime_config(args: argparse.Namespace, environment: FastloopEnvironment, results_dir: Path) -> RuntimeConfig:
     from benchmarks.sregym.adapter import RuntimeConfig, control_namespace_for
+    from benchmarks.sregym.adapter.cluster_resources import evidence_claim_volume
     from benchmarks.sregym.fastloop.dev import EVIDENCE_NODE_ROOT
 
     registrations = args.agent_registrations.resolve() if args.agent_registrations else None
@@ -735,8 +817,17 @@ def _runtime_config(args: argparse.Namespace, environment: FastloopEnvironment, 
         responder_namespaces=getattr(args, "responder_namespaces", ()),
         shared_accepted_id=environment.shared_accepted_id,
         reuse_existing=bool(environment.shared_accepted_id),
-        evidence_sink_host_path=EVIDENCE_NODE_ROOT if environment.evidence_root is not None else "",
+        evidence_sink_host_path=(
+            EVIDENCE_NODE_ROOT if environment.evidence_root is not None and environment.platform == "kind" else ""
+        ),
+        # An EKS lane's sink is a claim in the control namespace that fastloop pulls before deleting it.
+        evidence_sink_volume=(
+            evidence_claim_volume()
+            if environment.evidence_root is not None and environment.platform == "eks"
+            else ""
+        ),
         evidence_run_id=lane_evidence_run_id(environment, results_dir) if environment.evidence_root is not None else "",
+        lane_platform=environment.platform,
     )
 
 
@@ -2144,6 +2235,23 @@ def build_parser() -> argparse.ArgumentParser:
         "--reuse-cluster-only",
         action="store_true",
         help="attach with KUBECONFIG or refuse; never create or recreate a kind cluster",
+    )
+    up.add_argument(
+        "--platform",
+        choices=("kind", "eks"),
+        default="kind",
+        help="eks: attach to the existing EKS cluster KUBECONFIG reaches (implies --reuse-cluster-only; needs "
+        "--no-dev-mount and --ecr-registry); images go to ECR, app images keep their names through a node mirror",
+    )
+    up.add_argument("--ecr-registry", help="eks: ECR registry host <account>.dkr.ecr.<region>.amazonaws.com")
+    up.add_argument(
+        "--ecr-tag", action="append", default=[], help="eks: KEY=VALUE tag on every ECR repository the lane creates"
+    )
+    up.add_argument(
+        "--mirror-upstream",
+        action="append",
+        choices=("docker.io", "ghcr.io", "quay.io", "registry.k8s.io"),
+        help="eks: upstream registries the node mirror serves from ECR (default docker.io)",
     )
     up.add_argument(
         "--cpu-limit",

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.app_images import install_shared_builds
+from benchmarks.lanes.eks import Ecr, EksLane, assert_lane_cluster, publish_app_image
 from benchmarks.sregym.fastloop.host_limits import HostLimits, install_node_limits
 from benchmarks.sregym.fastloop.idempotent_helm import make_deploy_idempotent
 from benchmarks.sregym.repository_git import host_git_command
@@ -22,15 +23,53 @@ if TYPE_CHECKING:
 SURGE_GUARDED_OPS = frozenset({"recover", "refresh"})
 
 
+def eks_lane_from_env() -> EksLane | None:
+    """The EKS lane this worker drives (``FASTLOOP_EKS_LANE``), or None on a kind lane."""
+    raw = os.environ.get("FASTLOOP_EKS_LANE", "").strip()
+    return EksLane.model_validate_json(raw) if raw else None
+
+
 def attach_existing_cluster(worker_infra: Any) -> dict[str, str]:
     """Attach using the fenced kubeconfig; never invoke a cluster factory."""
     cluster = os.environ["SREGYM_KIND_CLUSTER_NAME"]
     kubeconfig = str(Path(os.environ["KUBECONFIG"]).resolve())
+    lane = eks_lane_from_env()
+    if lane is not None:
+        # No kind registry or node images to check: the fence is the API server and the cluster's identity.
+        assert_lane_cluster(kubeconfig, lane)
+        return {"cluster": cluster, "kubeconfig": kubeconfig}
     reusable, reason = worker_infra.existing_cluster_is_reusable(cluster, kubeconfig)
     if not reusable:
         raise ValueError(f"eval: refusing cluster recreation in attach-only mode: {reason}")
     worker_infra.preflight_cluster_requirements(cluster, kubeconfig)
     return {"cluster": cluster, "kubeconfig": kubeconfig}
+
+
+def install_eks_delivery(worker_infra: Any, source_deploy: Any, ecr: Ecr) -> None:
+    """An EKS lane's app images: SREGym builds from source on this host, and the image is published under the name
+    its manifests declare by a push to the lane's node mirror. Nothing is loaded into nodes, so the kind loaders fail
+    loudly if anything still calls them. Every EKS lane of this host shares the local build cache, so the kind lanes'
+    shared host registry is not used."""
+
+    def no_kind(*_args: object, **_kwargs: object) -> Any:
+        raise RuntimeError("an EKS lane cannot load images into kind nodes")
+
+    worker_infra.ensure_kind_images = no_kind
+    worker_infra.ensure_kind_platform_images = no_kind
+    worker_infra.tag_image_in_kind_nodes = no_kind
+    worker_infra.kind_nodes_hold_image = no_kind
+
+    def published_by_declaration(*, cluster_name: str, image_ref: str) -> None:
+        del cluster_name, image_ref  # the declared name is what nodes pull; see declare()
+
+    def declare(*, cluster_name: str, built_ref: str, declared_tag: str) -> None:
+        del cluster_name
+        repository = built_ref.rpartition(":")[0]
+        digest = publish_app_image(ecr, built_ref, f"{repository}:{declared_tag}")
+        print(f"app image {repository}:{declared_tag} published to the node mirror as {digest}", file=sys.stderr)
+
+    source_deploy._kind_load_image = published_by_declaration
+    source_deploy._declare_image = declare
 
 
 def handle_with_surge_guard(
@@ -76,7 +115,9 @@ def main() -> int:
     # The external worker and its dependencies run in SREGym's own environment.
     worker_infra: Any = importlib.import_module("sregym.worker_infra")
     worker = importlib.import_module("sregym.fastloop.worker")
-    install_node_limits(worker_infra)
+    eks_lane = eks_lane_from_env()
+    if eks_lane is None:
+        install_node_limits(worker_infra)
     handle = worker.FastloopWorker.handle
     from benchmarks.sregym.fastloop.clean_start import install_probe_isolation
     from benchmarks.sregym.fastloop.hotel_helpers import admit_install, configure_profile, prepare_install
@@ -231,20 +272,23 @@ def main() -> int:
     def deliver_platform(cluster: str, images: list[str], _platform_name: str) -> dict[str, dict[str, str]]:
         return deliver(cluster, images)
 
-    worker_infra.ensure_kind_images = deliver
-    worker_infra.ensure_kind_platform_images = deliver_platform
     source_deploy: Any = importlib.import_module("sregym.service.source_deploy")
+    if eks_lane is not None:
+        install_eks_delivery(worker_infra, source_deploy, Ecr(eks_lane))
+    else:
+        worker_infra.ensure_kind_images = deliver
+        worker_infra.ensure_kind_platform_images = deliver_platform
 
-    def deliver_source(*, cluster_name: str, image_ref: str) -> None:
-        deliver(cluster_name, [image_ref])
+        def deliver_source(*, cluster_name: str, image_ref: str) -> None:
+            deliver(cluster_name, [image_ref])
 
-    source_deploy._kind_load_image = deliver_source
-    record = os.environ.get("FASTLOOP_DELIVERY_RECORD")
-    install_shared_builds(
-        source_deploy,
-        record_path=Path(record).parent / "app_images.jsonl" if record else None,
-        lock_dir=HostLimits.from_env().directory,
-    )
+        source_deploy._kind_load_image = deliver_source
+        record = os.environ.get("FASTLOOP_DELIVERY_RECORD")
+        install_shared_builds(
+            source_deploy,
+            record_path=Path(record).parent / "app_images.jsonl" if record else None,
+            lock_dir=HostLimits.from_env().directory,
+        )
     worker.FastloopWorker.handle = extended_handle
     return worker.main()
 
