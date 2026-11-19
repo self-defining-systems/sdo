@@ -16,7 +16,8 @@ Reasoning habits, not a procedure.
 - **Change as an experiment.** Say which failing operations a change should fix, then check exactly those after
   its delay. A change that left the failure as is counts against its hypothesis.
 - **Done** when what failed passes and keeps passing. SDO ends your session when recovery holds. Return only to
-  give up, never while users are still failing. A result submitted while a background command still runs is
+  give up, never while users are still failing. To wait for recovery or a change to take effect, run
+  `sdo detect --wait SECONDS` (up to 600), never `sleep`: it returns early only when the incident's state changes. A result submitted while a background command still runs is
   interim: you are woken when it finishes and must keep working; the last result stands.
 - **Record.** `findings`: what you saw and where, what you ruled out and why (and what you did not check), never the
   probable cause; required, also when you give up. `agent_changes`: each change, what, where and when (RFC 3339);
