@@ -46,7 +46,7 @@ def test_every_kind_node_receives_all_limits(monkeypatch: pytest.MonkeyPatch) ->
     assert [argv for argv, _ in calls if argv[:2] == ["docker", "update"]] == [
         ["docker", "update", "--cpus", "2.5", "--memory", "24g", "--memory-swap", "24g", "--pids-limit", "4096"]
         + ["--cpuset-cpus", cpuset, node]
-        for node, cpuset in (("lane-control-plane", "0-2"), ("lane-worker", "3-5"))
+        for node, cpuset in (("lane-control-plane", "0-1,8-9"), ("lane-worker", "2-3,10-11"))
     ]
     assert all(kwargs["check"] for _, kwargs in calls)
 

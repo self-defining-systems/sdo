@@ -255,14 +255,47 @@ def visible_cpu_count(cpus: float) -> int:
     return max(1, math.ceil(cpus - 1e-9))
 
 
-def choose_cpuset(count: int, available: Iterable[int], held: Iterable[frozenset[int]]) -> frozenset[int]:
-    """The ``count`` host CPUs other containers' cpusets use least, lowest number first on a tie."""
-    use = dict.fromkeys(sorted(set(available)), 0)
-    for cpuset in held:
-        for cpu in cpuset:
-            if cpu in use:
-                use[cpu] += 1
-    return frozenset(sorted(use, key=lambda cpu: (use[cpu], cpu))[:count])
+def read_host_cores(sysfs: Path, allowed: frozenset[int]) -> tuple[frozenset[int], ...]:
+    """Physical cores as sets of SMT siblings (``cpu*/topology/thread_siblings_list``), limited to ``allowed``."""
+    cores = set()
+    for path in sysfs.glob("cpu[0-9]*/topology/thread_siblings_list"):
+        core = parse_cpu_list(path.read_text()) & allowed
+        if core:
+            cores.add(core)
+    if not cores:  # no topology to read: every CPU is its own core
+        cores = {frozenset({cpu}) for cpu in allowed}
+    return tuple(sorted(cores, key=min))
+
+
+class CpusetExhausted(ValueError):
+    """Not enough whole physical cores are free of every other container's cpuset to pin a lane node."""
+
+
+def is_whole_cores(cpus: frozenset[int], cores: Iterable[frozenset[int]]) -> bool:
+    """Whether ``cpus`` is a union of whole cores (every SMT sibling of each core it touches)."""
+    return all(core <= cpus or not core & cpus for core in cores) and cpus <= frozenset().union(*cores)
+
+
+def choose_cores(
+    count: int, cores: Iterable[frozenset[int]], held: frozenset[int], *, node: str = "node"
+) -> frozenset[int]:
+    """The lowest-numbered whole cores, none sharing a CPU or an SMT sibling with ``held``, holding ``count`` CPUs.
+
+    Raises ``CpusetExhausted`` rather than overlap another experiment's pinned cores.
+    """
+    free = sorted((core for core in cores if not core & held), key=min)
+    chosen: set[int] = set()
+    for core in free:
+        if len(chosen) >= count:
+            break
+        chosen |= core
+    if len(chosen) < count:
+        raise CpusetExhausted(
+            f"eval: cannot pin {node} to {count} CPUs: only {len(free)} whole cores ({len(chosen)} CPUs) are free "
+            f"of other containers' cpusets ({format_cpu_list(held) or 'none'} held); free cores or lower the lane cap "
+            "instead of overlapping another experiment"
+        )
+    return frozenset(chosen)
 
 
 def cgroup_matches(

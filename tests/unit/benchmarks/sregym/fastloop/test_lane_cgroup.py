@@ -12,11 +12,13 @@ from benchmarks.sregym.fastloop import cli
 from benchmarks.sregym.fastloop.host_limits import NodeLimits, apply_lane_cpu, apply_node_limits
 from benchmarks.sregym.fastloop.lane_cgroup import (
     CgroupMismatch,
+    CpusetExhausted,
     NodeCgroup,
-    choose_cpuset,
+    choose_cores,
     describe_mode,
     install_docker_shim,
     kind_run_flags,
+    read_host_cores,
     read_node_cgroup,
     resolve_cgroup_parent,
     shim_environment,
@@ -243,10 +245,10 @@ def test_applying_node_limits_twice_issues_the_same_updates_and_reads_back(monke
         "--pids-limit",
         "4096",
         "--cpuset-cpus",
-        "0-2",
+        "0-1,8-9",
         "lane-control-plane",
     ]
-    assert first[1][-3:] == ["--cpuset-cpus", "3-5", "lane-worker"]
+    assert first[1][-3:] == ["--cpuset-cpus", "2-3,10-11", "lane-worker"]
     assert reads == ["lane-control-plane", "lane-worker"] * 2
 
 
@@ -282,7 +284,7 @@ def test_claim_cpu_reapply_touches_only_cpus_of_our_cluster(monkeypatch: pytest.
         docker.updates()
         == [
             ["docker", "update", "--cpus", "3", "--cpuset-cpus", cpuset, node]
-            for node, cpuset in (("lane-control-plane", "0-2"), ("lane-worker", "3-5"))
+            for node, cpuset in (("lane-control-plane", "0-1,8-9"), ("lane-worker", "2-3,10-11"))
         ]
         * 2
     )
@@ -291,28 +293,67 @@ def test_claim_cpu_reapply_touches_only_cpus_of_our_cluster(monkeypatch: pytest.
 # --- visible CPUs: runtimes size thread pools and direct buffers from the CPUs they can see ------------------------
 
 
-def test_the_least_used_host_cpus_are_chosen_lowest_first() -> None:
-    held = [frozenset({0, 1, 2}), frozenset({2, 3})]
-    assert choose_cpuset(3, range(8), held) == frozenset({4, 5, 6})
-    assert choose_cpuset(6, range(8), held) == frozenset({1, 4, 5, 6, 7, 0})
-    assert choose_cpuset(20, range(4), []) == frozenset(range(4))  # never more than the host has
+CORES = tuple(frozenset({core, core + 8}) for core in range(8))  # SMT siblings i and i+8, as conftest pins
 
 
-def test_a_capped_node_sees_only_as_many_cpus_as_its_cap(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A 6-CPU lane on a 224-CPU host must not show 224 CPUs to its JVMs (opensearch sized 224 netty workers)."""
+def test_whole_free_cores_are_chosen_lowest_first() -> None:
+    assert choose_cores(3, CORES, frozenset()) == frozenset({0, 8, 1, 9})  # 3 CPUs round up to two whole cores
+    assert choose_cores(2, CORES, frozenset({0, 1})) == frozenset({2, 10})
+
+
+def test_a_core_whose_sibling_another_experiment_holds_is_not_free() -> None:
+    """(b) Holding CPU 8 holds core 0 too: its sibling 0 must not be handed to a lane."""
+    assert choose_cores(2, CORES, frozenset({8})) == frozenset({1, 9})
+
+
+def test_too_few_free_cores_fail_naming_the_cause_instead_of_overlapping() -> None:
+    """(c) Two free cores cannot hold six CPUs; never fall back to someone else's cores."""
+    with pytest.raises(CpusetExhausted, match="cannot pin lane-worker to 6 CPUs: only 2 whole cores"):
+        choose_cores(6, CORES, frozenset(range(6)), node="lane-worker")
+
+
+def test_a_capped_node_sees_only_whole_cores_no_other_container_holds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """(a) A 3-CPU lane on a big host gets its own cores, never another experiment's pinned ones.
+
+    A JVM that sees every host CPU sizes for them (opensearch on 224 CPUs exhausted its direct memory).
+    """
     docker = Docker("lane-control-plane\nlane-worker\n", {"someone-else": "0-3", "unpinned": ""})
     monkeypatch.setattr(subprocess, "run", docker)
     apply_node_limits("lane", NodeLimits(cpu="2.5", memory="16g"), read=lambda _node: None)
-    assert docker.cpusets["lane-control-plane"] == "4-6"
-    assert docker.cpusets["lane-worker"] == "7-9"
+    assert docker.cpusets["lane-control-plane"] == "4-5,12-13"
+    assert docker.cpusets["lane-worker"] == "6-7,14-15"
     assert docker.cpusets["someone-else"] == "0-3"
 
 
-def test_a_node_already_pinned_to_the_right_count_keeps_its_cpus(monkeypatch: pytest.MonkeyPatch) -> None:
-    docker = Docker("lane-worker\n", {"lane-worker": "10-12", "other": "0-2"})
+def test_a_lane_that_does_not_fit_in_the_free_cores_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    docker = Docker("lane-control-plane\nlane-worker\n", {"other-experiment": "0-5"})
     monkeypatch.setattr(subprocess, "run", docker)
-    apply_lane_cpu("lane", "3", read=lambda _node: None)
-    assert docker.updates() == [["docker", "update", "--cpus", "3", "--cpuset-cpus", "10-12", "lane-worker"]]
+    with pytest.raises(CpusetExhausted, match="cannot pin lane-worker"):
+        apply_node_limits("lane", NodeLimits(cpu="3", memory="16g"), read=lambda _node: None)
+    assert docker.cpusets["lane-worker"] == ""  # never pinned onto someone else's cores
+
+
+def test_a_node_already_on_whole_free_cores_keeps_them(monkeypatch: pytest.MonkeyPatch) -> None:
+    docker = Docker("lane-worker\n", {"lane-worker": "4,12", "other": "0-2"})
+    monkeypatch.setattr(subprocess, "run", docker)
+    apply_lane_cpu("lane", "2", read=lambda _node: None)
+    assert docker.updates() == [["docker", "update", "--cpus", "2", "--cpuset-cpus", "4,12", "lane-worker"]]
+
+
+def test_a_node_pinned_onto_another_experiments_sibling_is_moved(monkeypatch: pytest.MonkeyPatch) -> None:
+    docker = Docker("lane-worker\n", {"lane-worker": "4,12", "other": "12"})
+    monkeypatch.setattr(subprocess, "run", docker)
+    apply_lane_cpu("lane", "2", read=lambda _node: None)
+    assert docker.cpusets["lane-worker"] == "0,8"
+
+
+def test_host_cores_group_smt_siblings_from_sysfs(tmp_path: Path) -> None:
+    for cpu, siblings in ((0, "0,2"), (1, "1,3"), (2, "0,2"), (3, "1,3")):
+        topology = tmp_path / f"cpu{cpu}" / "topology"
+        topology.mkdir(parents=True)
+        (topology / "thread_siblings_list").write_text(f"{siblings}\n")
+    assert read_host_cores(tmp_path, frozenset(range(4))) == (frozenset({0, 2}), frozenset({1, 3}))
+    assert read_host_cores(tmp_path, frozenset({0, 1})) == (frozenset({0}), frozenset({1}))  # affinity limits it
 
 
 def test_a_node_that_still_shows_every_host_cpu_fails_closed_naming_the_cause(monkeypatch: pytest.MonkeyPatch) -> None:

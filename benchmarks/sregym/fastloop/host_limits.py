@@ -19,11 +19,13 @@ from benchmarks.sregym.adapter import WaitKind, parse_memory_size, wait_for
 from benchmarks.sregym.fastloop.lane_cgroup import (
     DEFAULT_LANE_CPUS,
     NodeCgroup,
-    choose_cpuset,
+    choose_cores,
     default_shim_dir,
     describe_mode,
     format_cpu_list,
+    is_whole_cores,
     parse_cpu_list,
+    read_host_cores,
     read_node_cgroup,
     shim_environment,
     split_cpus,
@@ -98,9 +100,9 @@ def _update(node: str, *flags: str) -> None:
     subprocess.run(["docker", "update", *flags, node], check=True, timeout=wait_for(WaitKind.CLUSTER_OP))
 
 
-def host_cpus() -> tuple[int, ...]:
-    """The host CPUs a lane node may be pinned to."""
-    return tuple(sorted(os.sched_getaffinity(0)))
+def host_cores() -> tuple[frozenset[int], ...]:
+    """This host's physical cores (SMT sibling sets) limited to the CPUs this process may use."""
+    return read_host_cores(Path("/sys/devices/system/cpu"), frozenset(os.sched_getaffinity(0)))
 
 
 def _running_cpusets() -> dict[str, frozenset[int]]:
@@ -144,18 +146,23 @@ def _pin_and_update(
     parent: str | None,
     memory_bytes: int | None,
 ) -> None:
-    """``docker update`` each node with ``flags`` plus a cpuset of ``ceil(cpus)`` host CPUs, then verify it.
+    """``docker update`` each node with ``flags`` plus a whole-core cpuset of at least ``ceil(cpus)`` CPUs; verify.
 
-    A node already pinned to that many CPUs keeps them; otherwise it takes the CPUs other containers use least.
+    Cores are exclusive: every running container's cpuset (other experiments included) and its SMT siblings are
+    excluded, and too few free cores fail with ``CpusetExhausted``. A node already pinned to whole free cores of
+    the right size keeps them.
     """
-    count = min(visible_cpu_count(float(cpus)), len(host_cpus()))
+    count = visible_cpu_count(float(cpus))
+    cores = host_cores()
     with _cpuset_lock():
-        held = _running_cpusets()
-        others = [cpuset for name, cpuset in held.items() if name not in nodes]
+        pinned = _running_cpusets()
+        held = frozenset().union(*(cpuset for name, cpuset in pinned.items() if name not in nodes))
         for node in nodes:
-            current = held.get(node, frozenset())
-            chosen = current if len(current) == count else choose_cpuset(count, host_cpus(), others)
-            others.append(chosen)
+            current = pinned.get(node, frozenset())
+            size = len(choose_cores(count, cores, frozenset(), node=node))
+            keep = len(current) == size and not current & held and is_whole_cores(current, cores)
+            chosen = current if keep else choose_cores(count, cores, held, node=node)
+            held |= chosen
             node_flags = [*flags, "--cpuset-cpus", format_cpu_list(chosen)]
             _update(node, *node_flags)
             verify_node(
@@ -163,7 +170,7 @@ def _pin_and_update(
                 lambda node=node, node_flags=node_flags: _update(node, *node_flags),
                 cpus=float(cpus),
                 memory_bytes=memory_bytes,
-                visible_cpus=count,
+                visible_cpus=len(chosen),
                 parent=parent,
                 read=read,
             )
