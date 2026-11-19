@@ -3,6 +3,7 @@ package generichealth
 import (
 	"context"
 	"fmt"
+	corev1 "k8s.io/api/core/v1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/usage"
 	"sort"
@@ -51,12 +52,20 @@ func (d saturation) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.F
 			}
 		}
 	}
+	claims := map[string]corev1.PersistentVolumeClaim{}
+	for _, pvc := range ctx.PersistentVolumeClaims() {
+		if pvc.Namespace == ctx.Namespace() || pvc.Namespace == "" {
+			claims[pvc.Name] = pvc
+		}
+	}
 	for _, w := range r.Volumes {
 		if len(w.Samples) == 0 {
 			continue
 		}
 		s := w.Samples[len(w.Samples)-1]
 		resource := sdk.ObjectRef{APIVersion: "v1", Kind: "PersistentVolumeClaim", Namespace: ctx.Namespace(), Name: w.PVC}
+		// A shared filesystem's growth is every tenant's, not the application's.
+		forecast := !sharedFilesystem(claims[w.PVC], s.CapacityBytes)
 		bytes, inodes := []usage.Point{}, []usage.Point{}
 		for _, p := range w.Samples {
 			if p.UsedBytes != nil {
@@ -67,10 +76,10 @@ func (d saturation) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.F
 			}
 		}
 		if s.UsedBytes != nil {
-			e.capacity("pvc-bytes-saturation", resource, *s.UsedBytes, s.CapacityBytes, bytes, 4*time.Hour, "")
+			e.capacity("pvc-bytes-saturation", resource, *s.UsedBytes, s.CapacityBytes, bytes, forecast, "")
 		}
 		if s.InodesUsed != nil {
-			e.capacity("pvc-inodes-saturation", resource, *s.InodesUsed, s.Inodes, inodes, 4*time.Hour, "")
+			e.capacity("pvc-inodes-saturation", resource, *s.InodesUsed, s.Inodes, inodes, forecast, "")
 		}
 	}
 	return finish(e.findings, d.spec), nil
@@ -134,28 +143,59 @@ func (e *evaluation) memory(r sdk.ObjectRef, s usage.Sample, points []usage.Poin
 	e.emit("memory-saturation", r, "container="+container+" signal="+signal+" "+usage.Evidence(*s.WorkingSetBytes, s.MemoryLimit, window, nil)+fmt.Sprintf(" ratio=%g threshold=%g", ratio, memoryThreshold), false)
 	e.findings[len(e.findings)-1].Fingerprint += "/" + container
 }
-func (e *evaluation) capacity(rule string, r sdk.ObjectRef, value float64, limit *float64, points []usage.Point, horizon time.Duration, container string) {
+// Storage forecasts extrapolate a growth rate forecastHorizon ahead. Only
+// storage is forecast: unlike stored bytes and inodes, memory is reclaimable,
+// and memory reports observed pressure above 90% only. The rate is the median
+// pairwise slope (usage.TimeToThreshold) over at least minForecastWindow of
+// samples: at the usage observer's 15 s cadence that is 20 or more samples, so
+// a burst must last over a minute to move the median, and a rate is never
+// projected more than 48 times the window it was measured over.
+const (
+	forecastHorizon   = 4 * time.Hour
+	minForecastWindow = 5 * time.Minute
+	// sharedCapacityFactor is how much larger than its claim a volume's
+	// filesystem may be before it counts as shared with other tenants.
+	sharedCapacityFactor = 2
+)
+
+// sharedFilesystem reports a volume whose filesystem is far larger than its
+// claim requested: a hostPath or local-path volume on the node's own disk,
+// whose used bytes and inodes include every other tenant's.
+func sharedFilesystem(pvc corev1.PersistentVolumeClaim, capacity *float64) bool {
+	request, ok := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
+	if !ok || capacity == nil || request.IsZero() {
+		return false
+	}
+	return *capacity > sharedCapacityFactor*request.AsApproximateFloat64()
+}
+
+// capacity reports a volume above 90% of its capacity, observed now, or, when
+// forecast is allowed, one whose sustained growth fills it within
+// forecastHorizon. A forecast-only finding is predicted (sdk.MetadataPredicted):
+// a trend, never a condition that holds now.
+func (e *evaluation) capacity(rule string, r sdk.ObjectRef, value float64, limit *float64, points []usage.Point, forecast bool, container string) {
 	ratio, ok := usage.RatioToLimit(value, limit)
 	if !ok {
 		return
 	}
-	var forecast *time.Duration
-	// Forecast storage growth only: unlike stored bytes and inodes, memory is
-	// reclaimable. Heap warm-up and GC cycles cannot predict an OOM from a
-	// short working-set slope; memory still reports observed pressure above 90%.
-	// Two minutes and three observations reject one-point storage slopes.
+	var fill *time.Duration
 	window := time.Duration(0)
 	if len(points) > 0 {
 		window = points[len(points)-1].At.Sub(points[0].At)
 	}
-	if rule != "memory-saturation" && len(points) >= 3 && window >= 2*time.Minute {
+	if forecast && len(points) >= 3 && window >= minForecastWindow {
 		if t, ok := usage.TimeToThreshold(points, *limit); ok {
-			forecast = &t
+			fill = &t
 		}
 	}
-	if ratio <= 0.9 && (forecast == nil || *forecast > horizon) {
+	observed := ratio > 0.9
+	if !observed && (fill == nil || *fill > forecastHorizon) {
 		return
 	}
-	e.emit(rule, r, "container="+container+" "+usage.Evidence(value, limit, window, forecast)+fmt.Sprintf(" ratio=%g threshold=0.9 forecast horizon=%s", ratio, horizon), false)
-	e.findings[len(e.findings)-1].Fingerprint += "/" + container
+	e.emit(rule, r, "container="+container+" "+usage.Evidence(value, limit, window, fill)+fmt.Sprintf(" ratio=%g threshold=0.9 forecast horizon=%s", ratio, forecastHorizon), false)
+	finding := &e.findings[len(e.findings)-1]
+	finding.Fingerprint += "/" + container
+	if !observed {
+		finding.Metadata = map[string]any{sdk.MetadataPredicted: true}
+	}
 }

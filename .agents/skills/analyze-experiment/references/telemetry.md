@@ -238,9 +238,14 @@ container limit. That is observed capacity pressure, not by itself proof of an
 OOM or request failure; correlate it with container termination reasons, restart
 counts, kubelet samples, and application behavior. Short memory growth below
 that threshold must not forecast exhaustion: heap warm-up and garbage collection
-make RAM reclaimable. PVC bytes and inode capacity retain their bounded-window
-exhaustion forecasts. A forecast-only memory finding in an older run can therefore
-be a policy false alarm even when the arithmetic slope is positive.
+make RAM reclaimable. PVC bytes and inode capacity retain exhaustion forecasts:
+the median pairwise growth rate over at least five minutes, none for a volume
+whose filesystem is over twice its claim (a shared host disk), and marked
+`metadata.predicted`, which never decides an install. A forecast-only memory
+finding, or a storage forecast that rejected an install in an older run (a
+least-squares slope over about three minutes, extrapolating another tenant's
+burst on a shared disk), can therefore be a policy false alarm even when the
+arithmetic slope is positive.
 
 ## Runtime artifact export and retention
 

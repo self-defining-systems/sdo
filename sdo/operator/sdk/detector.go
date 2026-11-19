@@ -149,6 +149,18 @@ type Finding struct {
 	Metadata          map[string]any       `json:"metadata,omitempty"`
 }
 
+// MetadataPredicted is the Metadata key, set to true, of a finding about a
+// condition the detector forecasts from a trend rather than one that holds now
+// (a volume that will fill within hours). Such a finding is evidence; a gate on
+// current health, such as install admission, never treats it as a contradiction.
+const MetadataPredicted = "predicted"
+
+// Predicted reports whether the finding is a forecast (MetadataPredicted).
+func Predicted(finding Finding) bool {
+	predicted, _ := finding.Metadata[MetadataPredicted].(bool)
+	return predicted
+}
+
 // FindingFingerprint is a finding's identity within its detector: its own
 // Fingerprint, or by default its detector, rule and primary resource. Two
 // active findings of one detector with the same fingerprint are one finding.

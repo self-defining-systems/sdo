@@ -1110,7 +1110,9 @@ intentionally. Cron schedules use the standard five-field parser with explicit t
 Warning events require repeated occurrences spanning a minute, seen within two minutes, and clear
 when the affected pod has subsequently become ready. Runtime crashes use one firing evaluation:
 `logs.Appeared` already requires a quiet cycle and produces a single transition. Other policies use
-firing/clearing 2/2. Forecasts require at least three samples spanning two minutes.
+firing/clearing 2/2. Storage forecasts use the median pairwise growth rate over at least five
+minutes of samples, are skipped for a volume whose filesystem is over twice its claim (a shared
+host disk), and are predicted findings (`sdk.MetadataPredicted`) that never decide an install.
 
 CPU throttling is supported by the SDK constructor but disabled in bootstrap:
 cAdvisor parsing adds allocation cost and an extra kubelet HTTP request per node

@@ -108,7 +108,7 @@ func (c *Controller) setupHealth(ctx context.Context, snapshot sdk.DetectionCont
 	healthy := true
 	for _, id := range c.healthDetectorIDs {
 		result, found := results[id]
-		if !found || result.err != nil || len(result.findings) != 0 || !detectorConfirmed(c.detectors[id], snapshot) {
+		if !found || result.err != nil || len(currentFindings(result.findings)) != 0 || !detectorConfirmed(c.detectors[id], snapshot) {
 			healthy = false
 		}
 	}

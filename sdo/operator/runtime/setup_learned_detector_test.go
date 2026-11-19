@@ -103,6 +103,29 @@ func TestLearnedDetectorOnAHealthyInstallNeverGatesOrDisables(t *testing.T) {
 	}
 }
 
+// A health detector's forecast (a volume that will fill within hours, from a
+// trend) is not a condition that holds now: it neither contradicts the install
+// window nor fails the install evaluation, which is accepted.
+func TestPredictedHealthFindingDoesNotDecideTheInstall(t *testing.T) {
+	forecast := controllerDetector("health", time.Second, sdk.Finding{RuleID: "pvc-bytes-saturation", Status: sdk.FindingActive, Severity: sdk.SeverityWarning, Summary: "fills in 2h", Evidence: "fills in 2h", PrimaryResource: sdk.ObjectRef{APIVersion: "v1", Kind: "PersistentVolumeClaim", Namespace: "demo", Name: "data"}, Metadata: map[string]any{sdk.MetadataPredicted: true}})
+	forecast.spec = quietHealth().spec
+	got := freshInstall(t, forecast)
+	if got.record == nil {
+		t.Fatal("a predicted finding of a health detector rejected the install")
+	}
+	if got.c.onboardingReachability.invalid {
+		t.Fatalf("a predicted finding contradicted the install window: %s", got.c.onboardingReachability.invalidReason)
+	}
+	// Detectors run behind the memory host: the mark must survive the wire.
+	wire, err := findingContract(forecast.samples[0][0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sdk.Predicted(findingState(wire)) {
+		t.Fatal("the predicted mark was lost on the memory-host wire")
+	}
+}
+
 // Protection kept: a health-class detector still decides admission, erroring or firing.
 func TestHealthDetectorStillDecidesTheInstall(t *testing.T) {
 	erroring := quietHealth()

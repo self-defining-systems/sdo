@@ -816,7 +816,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		}
 		validFindings := findings
 		if gatesSetup(spec) {
-			gatingFindings = append(gatingFindings, validFindings...)
+			gatingFindings = append(gatingFindings, currentFindings(validFindings)...)
 		} else if setupHealthy {
 			if rules := firedRules(validFindings); rules != "" {
 				c.recordSetupNoise(ctx, spec, setupNoiseFired, rules, onboardingCandidate)

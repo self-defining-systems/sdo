@@ -46,7 +46,8 @@ scenarios, workloads and links.
   that are unhealthy now; a Ready or completed pod has none.
 - `node-health`: nodes running application pods that stay NotReady past the self-heal hold.
 - `resource-saturation`: memory working set above 90% of its limit, PVC bytes or inodes above 90% or forecast
-  to run out (CPU throttling only when enabled).
+  to run out (a predicted finding: evidence, never an install contradiction; none on a shared host
+  filesystem) (CPU throttling only when enabled).
 - Controller drift: live fields that differ from the accepted source, and foreign changes. These are clues: they
   never open an incident.
 
