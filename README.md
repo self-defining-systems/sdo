@@ -8,7 +8,7 @@ SDO doesn't trust its agents to grade their own work:
 
 - **Detectors are deterministic Go, checked independently.** Agents write detectors, but SDO reruns validation itself before one ships. It compiles the detector in a no-network sandbox and rejects detectors that would fire on the application's healthy structure. An agent's own self-check never counts as evidence. At runtime, detectors never call a model.
 - **Agents propose; a broker commits.** Every agent works in an isolated Git worktree. A commit broker enforces who may change which artifact, and only validated changes reach the application's operational branch.
-- **Memory grows from verified outcomes.** After an incident, SDO checks recovery itself, records the outcome, and lets the responder add incident detectors and playbooks. The next incident of the same kind starts from that memory.
+- **Memory grows from verified outcomes.** After an incident, SDO checks recovery itself, records the outcome, and lets the responder add learned detectors and playbooks. The next incident of the same kind starts from that memory.
 
 SDO is described in the paper [A Self-Defining Operator for Distributed Applications](https://arxiv.org/abs/2610.14547).
 
@@ -119,11 +119,11 @@ Each operated application carries its operational memory in `.sdo/`, versioned a
 ├── goal.md          # health objective (human-owned)
 ├── arch.md          # source and topology summary (deployer-owned)
 ├── playbooks/       # repair procedures (responder-owned)
-├── diagnostics/     # Go health and incident detectors, plus a manifest
+├── diagnostics/     # Go health and learned detectors, plus a manifest
 └── outcomes/        # one incident outcome record per file (controller-owned)
 ```
 
-The commit broker enforces ownership. For example, a responder can add playbooks and incident detectors, but it cannot rewrite the goal, the health detectors, the architecture summary, or past outcomes.
+The commit broker enforces ownership. For example, a responder can add playbooks and learned detectors, but it cannot rewrite the goal, the health detectors, the architecture summary, or past outcomes.
 
 ## Reproducing the SREGym evaluation
 

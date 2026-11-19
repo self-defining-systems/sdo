@@ -63,7 +63,7 @@ type DetectorClass string
 
 const (
 	DetectorClassHealth   DetectorClass = "health"
-	DetectorClassIncident DetectorClass = "incident"
+	DetectorClassLearned DetectorClass = "learned"
 )
 
 type DetectorOwner string

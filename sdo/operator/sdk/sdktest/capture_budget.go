@@ -15,7 +15,7 @@ import (
 // trimOrder lists the kinds a capture drops first when the snapshot is over
 // budget, least relevant first. Kinds absent from the list rank after it and
 // before the protected kinds. Pods, Deployments, StatefulSets and Services are
-// never trimmed: every health and incident detector reads them.
+// never trimmed: every health and learned detector reads them.
 var trimOrder = []string{
 	"Event", "ConfigMap", "ServiceAccount", "ReplicaSet", "ControllerRevision", "PodDisruptionBudget",
 	"NetworkPolicy", "Ingress", "PersistentVolumeClaim", "Job", "CronJob", "DaemonSet",

@@ -1,0 +1,61 @@
+# Eval host setup entries. Paths and numbers only: no secret belongs in this file.
+# `python -m benchmarks.sregym.hosts verify --host NAME` checks a host; `plan`/`apply`/`remove` change it.
+# Limits derive from the host: MemoryMax is memory_max_pct of MemTotal, MemoryHigh a fraction of it, CPUQuota a share
+# of the cores (all floored). A host may set memory_max_gib, memory_high_gib or cpu_cores outright.
+
+[defaults.slice]
+memory_max_pct = 50
+memory_high_fraction = 0.94
+cpu_quota_pct = 44
+cpu_weight = 100
+tasks_max = 16384
+io_weight = 50
+
+[defaults.mglru]
+min_ttl_ms = 1000
+
+[defaults.guard]
+reserve_gib = 32
+psi_max = 10
+
+# chelan5 was set up by hand before this tool; plan/verify match what is installed.
+[hosts.chelan5]
+lane_root = "/mnt/data/shli/sdo-lanes"
+
+[hosts.chelan5.slice]
+memory_max_gib = 128
+
+# kind's own drop-in (99-kind.conf) sets gc_thresh1 to 8192 here.
+[hosts.chelan5.sysctl]
+gc_thresh = [8192, 32768, 65536]
+
+[hosts.chelan5.guard]
+lane_prefix = "c5-"
+env_file = "/mnt/data/shli/sdo-lanes/host-main.env"
+
+[hosts.chelan5.credentials]
+profile_dir = "/mnt/data/shli/.claude-gcp"
+
+[hosts.chelan4]
+lane_root = "/mnt/data/shli/sdo-lanes"
+
+# The running lanes use the ovh4- prefix and this env file.
+[hosts.chelan4.guard]
+lane_prefix = "ovh4-"
+env_file = "/mnt/data/shli/sdo-lanes/host-main.env"
+
+[hosts.chelan4.credentials]
+profile_dir = "/mnt/data/shli/.claude-gcp"
+
+# spokane1: the root filesystem is NFS, so everything lives on the local /mnt/nvme1 disk. Lanes, evidence and the
+# eval scripts are under /mnt/nvme1/shli-sdo; the running lanes use the sdm- prefix.
+[hosts.spokane1]
+lane_root = "/mnt/nvme1/shli-sdo"
+
+[hosts.spokane1.guard]
+lane_prefix = "sdm-"
+env_file = "/mnt/nvme1/shli-sdo/host-main.env"
+
+[hosts.spokane1.credentials]
+profile_dir = "/mnt/nvme1/shli/.claude-gcp"
+key_path = "/mnt/nvme1/shli/.claude-gcp/gcp-key.json"

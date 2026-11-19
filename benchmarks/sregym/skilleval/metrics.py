@@ -16,7 +16,7 @@ REFLECTION_PREFIXES = (
     ".sdo/playbooks/",
     ".sdo/lib/",
     ".sdo/corpus/",
-    ".sdo/diagnostics/detectors/incidents/",
+    ".sdo/diagnostics/detectors/learned/",
 )
 JUDGE_OWNED_PREFIXES = (".sdo/playbooks/health-objective/",)
 PROGRAM_REPAIR_KIND = "program-plan"

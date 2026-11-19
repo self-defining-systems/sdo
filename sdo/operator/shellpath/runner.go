@@ -89,8 +89,8 @@ func Discover(root string) ([]Script, error) {
 			return nil
 		}
 		parts := strings.Split(filepath.ToSlash(rel), "/")
-		if len(parts) < 3 || !layout.ValidDetectorID(parts[1]) || (parts[0] != "health" && parts[0] != "incidents") || !strings.HasSuffix(rel, ".sh") {
-			return fmt.Errorf("executable detector must be a health or incidents shell script: %s", rel)
+		if len(parts) < 3 || !layout.ValidDetectorID(parts[1]) || (parts[0] != "health" && parts[0] != "learned") || !strings.HasSuffix(rel, ".sh") {
+			return fmt.Errorf("executable detector must be a health or learned shell script: %s", rel)
 		}
 		source, err := os.ReadFile(p)
 		if err != nil {

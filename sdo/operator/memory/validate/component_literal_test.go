@@ -112,7 +112,7 @@ func New() sdk.Detector { return Detector{} }
 
 func (Detector) Spec() sdk.DetectorSpec {
 	return sdk.DetectorSpec{
-		ID: "cache-acl", Class: sdk.DetectorClassIncident, Owner: sdk.DetectorOwnerResponder,
+		ID: "cache-acl", Class: sdk.DetectorClassLearned, Owner: sdk.DetectorOwnerResponder,
 		Description: "detect cache command denials in any failing journey",
 		Watches:     []sdk.WatchKind{traffic.Watch}, Interval: 2 * time.Second,
 		Persistence: sdk.PersistencePolicy{Firing: 1, Clearing: 2},
@@ -176,8 +176,8 @@ func writePlaybook(id, diagnose, mitigate string) func(t *testing.T, r string) {
 
 func writeDetector(id, source string) func(t *testing.T, r string) {
 	return func(t *testing.T, r string) {
-		write(t, r, ".sdo/diagnostics/detectors/incidents/"+id+"/detector.go", gateFormatted(t, source))
-		write(t, r, ".sdo/diagnostics/detectors/incidents/"+id+"/manifest.yaml", componentManifest(id, "orders-cache-acl", gateIncident))
+		write(t, r, ".sdo/diagnostics/detectors/learned/"+id+"/detector.go", gateFormatted(t, source))
+		write(t, r, ".sdo/diagnostics/detectors/learned/"+id+"/manifest.yaml", componentManifest(id, "orders-cache-acl", gateIncident))
 	}
 }
 
@@ -196,10 +196,10 @@ var componentLiteralRows = []gateRow{
 		writePlaybook("orders-cache-acl", rolelessLiteral.Replace(componentDiagnose), componentMitigate), RulePlaybookComponentLiteral),
 	gateComponentLiteral("new role-less playbook names no component", false, []string{"cache-acl-restore"},
 		writePlaybook("cache-acl-restore", strings.Replace(rolelessLiteral.Replace(genericDiagnose), `"orders-cache"`, `"cache"`, 1), genericMitigate)),
-	gateComponentLiteral("new incident detector binds a component by name", true, nil,
+	gateComponentLiteral("new learned detector binds a component by name", true, nil,
 		writeDetector("cache-acl", strings.NewReplacer(`ID: "orders-cache-acl"`, `ID: "cache-acl"`, "orderscacheacldetector", "cacheacldetector", `OriginatingIncident: "inc-0"`, `OriginatingIncident: "inc-1"`).Replace(componentDetector)),
 		RuleDetectorComponentLiteral),
-	gateComponentLiteral("new incident detector binds every suspect", true, nil, writeDetector("cache-acl", genericDetector)),
+	gateComponentLiteral("new learned detector binds every suspect", true, nil, writeDetector("cache-acl", genericDetector)),
 }
 
 // rolelessLiteral is the same diagnose with no object role: the playbook finds

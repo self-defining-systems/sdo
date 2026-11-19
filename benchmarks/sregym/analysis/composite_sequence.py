@@ -1,8 +1,8 @@
 """Per-composite learning-curve table for a persistent-controller sequence.
 
-For every run directory (one composite each) it reports, per fault, whether a learned (incident-class)
+For every run directory (one composite each) it reports, per fault, whether a learned (learned)
 detector activated for the fault's component before the first dispatch, and how much operational
-memory (incident detectors, playbooks) existed in the application workspace after each memory commit.
+memory (learned detectors, playbooks) existed in the application workspace after each memory commit.
 
     uv run python -m benchmarks.sregym.analysis.composite_sequence <results-dir>...
 """
@@ -56,9 +56,9 @@ def memory_counts(workspace: Path, revision: str = "HEAD") -> dict[str, int]:
         text=True,
         check=True,
     ).stdout.splitlines()
-    incident_detectors = {p.split("/")[4] for p in listing if p.startswith(".sdo/diagnostics/detectors/incidents/")}
+    learned_detectors = {p.split("/")[4] for p in listing if p.startswith(".sdo/diagnostics/detectors/learned/")}
     playbooks = {p.split("/")[2] for p in listing if p.startswith(".sdo/playbooks/") and p.count("/") >= 3}
-    return {"incident_detectors": len(incident_detectors), "playbooks": len(playbooks)}
+    return {"learned_detectors": len(learned_detectors), "playbooks": len(playbooks)}
 
 
 def load_firings(directory: Path, since: str | None = None) -> list[dict[str, Any]]:

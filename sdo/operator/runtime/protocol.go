@@ -230,22 +230,22 @@ type IncidentClosure struct {
 	Result                *IncidentResult
 	DispatchError         string
 	FinalDetectorStates   []DetectorEvaluation
-	// IncidentDetectorStates is the latest post-response evaluation of each
+	// LearnedDetectorStates is the latest post-response evaluation of each
 	// non-health detector that raised a finding in this incident. It is
 	// learning evidence for the broker, not a closure gate.
-	IncidentDetectorStates []DetectorEvaluation
+	LearnedDetectorStates []DetectorEvaluation
 	// PartialDetectorStates preserves confirmed per-finding observations on failed
 	// closures without granting global health or source-publication authority.
 	PartialDetectorStates []DetectorEvaluation
 	// DetectorTimeline summarizes, per finding, when each detector fired in this
 	// incident window and how that relates to dispatch. The booleans derive
-	// from it for analysis: a learned incident detector that fired before the
+	// from it for analysis: a learned detector that fired before the
 	// responder was dispatched, one that fired only while it ran, or only
 	// health detectors firing.
 	DetectorTimeline                    []DetectorTimelineEntry
-	IncidentDetectorFiredBeforeDispatch bool
-	IncidentDetectorFiredAfterDispatch  bool
-	NoIncidentDetectorFired             bool
+	LearnedDetectorFiredBeforeDispatch bool
+	LearnedDetectorFiredAfterDispatch  bool
+	NoLearnedDetectorFired             bool
 	// FinalStateChanges is the configuration diff against the healthy
 	// baseline at verification time: a composite fault's later
 	// component can land a few seconds after dispatch, while the incident is

@@ -42,7 +42,7 @@ func TestGateCompileRowsOnRealGo(t *testing.T) {
 		root := compileTree(t)
 		gatePodRead(t, root)
 		edit(t, root, gateFixtureDetector, `{APIVersion: "v1", Kind: "ConfigMap"},`, `{APIVersion: "v1", Kind: "ConfigMap"}, {APIVersion: "v1", Kind: "Pod"},`)
-		edit(t, root, ".sdo/diagnostics/detectors/incidents/missing-configmap/manifest.yaml", "      kind: ConfigMap\n", "      kind: ConfigMap\n    - apiVersion: v1\n      kind: Pod\n")
+		edit(t, root, ".sdo/diagnostics/detectors/learned/missing-configmap/manifest.yaml", "      kind: ConfigMap\n", "      kind: ConfigMap\n    - apiVersion: v1\n      kind: Pod\n")
 		if got := gateCompileDiagnostics(t, gateCompileRow{}, root); len(got) != 0 {
 			t.Fatalf("rejected: %v", got)
 		}

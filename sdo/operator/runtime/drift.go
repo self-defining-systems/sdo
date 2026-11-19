@@ -459,7 +459,7 @@ func (c *Controller) observeUnexplainedDrift(now time.Time, finding sdk.Finding)
 	c.tracker.SetPolicy(finding.DetectorID, 1, 1, 0)
 	changes := c.tracker.Observe(now, finding.DetectorID, findings)
 	c.recordEvaluation(finding.DetectorID, now, findings, nil)
-	c.recordFiring(sdk.DetectorSpec{ID: finding.DetectorID, Class: sdk.DetectorClassIncident, Owner: sdk.DetectorOwnerResponder}, now, findings, changes)
+	c.recordFiring(sdk.DetectorSpec{ID: finding.DetectorID, Class: sdk.DetectorClassLearned, Owner: sdk.DetectorOwnerResponder}, now, findings, changes)
 }
 
 func driftRefAllowed(view program.ReadView, ref sdk.ObjectRef) bool {

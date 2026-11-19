@@ -2337,7 +2337,7 @@ func (x *TelemetryPublish) GetOtlpTracesUrl() string {
 	return ""
 }
 
-// An incident-class detector that errored or fired while the app was judged
+// A learned detector that errored or fired while the app was judged
 // healthy at setup. Evidence of a noisy clue and nothing else: only health-class
 // detectors and user tests decide an install, and this detector is never disabled.
 type SetupNoisyDetector struct {
@@ -4393,24 +4393,24 @@ func (x *DetectorTimelineEntry) GetActivations() int32 {
 // IncidentClosure is the record the controller hands the broker when an
 // incident ends. Mirrors the Go runtime.IncidentClosure struct.
 type IncidentClosure struct {
-	state                               protoimpl.MessageState   `protogen:"open.v1"`
-	Request                             *IncidentRequest         `protobuf:"bytes,1,opt,name=request,proto3" json:"request,omitempty"`
-	Result                              *IncidentResult          `protobuf:"bytes,2,opt,name=result,proto3" json:"result,omitempty"`
-	DispatchError                       *string                  `protobuf:"bytes,3,opt,name=dispatch_error,json=dispatchError,proto3,oneof" json:"dispatch_error,omitempty"`
-	FinalDetectorStates                 []*DetectorEvaluation    `protobuf:"bytes,4,rep,name=final_detector_states,json=finalDetectorStates,proto3" json:"final_detector_states,omitempty"`
-	IncidentDetectorStates              []*DetectorEvaluation    `protobuf:"bytes,5,rep,name=incident_detector_states,json=incidentDetectorStates,proto3" json:"incident_detector_states,omitempty"`
-	DetectorTimeline                    []*DetectorTimelineEntry `protobuf:"bytes,6,rep,name=detector_timeline,json=detectorTimeline,proto3" json:"detector_timeline,omitempty"`
-	IncidentDetectorFiredBeforeDispatch bool                     `protobuf:"varint,7,opt,name=incident_detector_fired_before_dispatch,json=incidentDetectorFiredBeforeDispatch,proto3" json:"incident_detector_fired_before_dispatch,omitempty"`
-	IncidentDetectorFiredAfterDispatch  bool                     `protobuf:"varint,8,opt,name=incident_detector_fired_after_dispatch,json=incidentDetectorFiredAfterDispatch,proto3" json:"incident_detector_fired_after_dispatch,omitempty"`
-	NoIncidentDetectorFired             bool                     `protobuf:"varint,9,opt,name=no_incident_detector_fired,json=noIncidentDetectorFired,proto3" json:"no_incident_detector_fired,omitempty"`
-	FinalStateChanges                   *StateChanges            `protobuf:"bytes,10,opt,name=final_state_changes,json=finalStateChanges,proto3" json:"final_state_changes,omitempty"`
-	DetectedAt                          *timestamppb.Timestamp   `protobuf:"bytes,11,opt,name=detected_at,json=detectedAt,proto3" json:"detected_at,omitempty"`
-	DispatchedAt                        *timestamppb.Timestamp   `protobuf:"bytes,12,opt,name=dispatched_at,json=dispatchedAt,proto3" json:"dispatched_at,omitempty"`
-	ResponderCompletedAt                *timestamppb.Timestamp   `protobuf:"bytes,13,opt,name=responder_completed_at,json=responderCompletedAt,proto3" json:"responder_completed_at,omitempty"`
-	VerifiedAt                          *timestamppb.Timestamp   `protobuf:"bytes,14,opt,name=verified_at,json=verifiedAt,proto3" json:"verified_at,omitempty"`
-	HealthClearedAt                     *timestamppb.Timestamp   `protobuf:"bytes,15,opt,name=health_cleared_at,json=healthClearedAt,proto3,oneof" json:"health_cleared_at,omitempty"`
-	CleanedHelpers                      []string                 `protobuf:"bytes,19,rep,name=cleaned_helpers,json=cleanedHelpers,proto3" json:"cleaned_helpers,omitempty"`
-	ObservationGeneration               string                   `protobuf:"bytes,20,opt,name=observation_generation,json=observationGeneration,proto3" json:"observation_generation,omitempty"`
+	state                              protoimpl.MessageState   `protogen:"open.v1"`
+	Request                            *IncidentRequest         `protobuf:"bytes,1,opt,name=request,proto3" json:"request,omitempty"`
+	Result                             *IncidentResult          `protobuf:"bytes,2,opt,name=result,proto3" json:"result,omitempty"`
+	DispatchError                      *string                  `protobuf:"bytes,3,opt,name=dispatch_error,json=dispatchError,proto3,oneof" json:"dispatch_error,omitempty"`
+	FinalDetectorStates                []*DetectorEvaluation    `protobuf:"bytes,4,rep,name=final_detector_states,json=finalDetectorStates,proto3" json:"final_detector_states,omitempty"`
+	LearnedDetectorStates              []*DetectorEvaluation    `protobuf:"bytes,5,rep,name=learned_detector_states,json=learnedDetectorStates,proto3" json:"learned_detector_states,omitempty"`
+	DetectorTimeline                   []*DetectorTimelineEntry `protobuf:"bytes,6,rep,name=detector_timeline,json=detectorTimeline,proto3" json:"detector_timeline,omitempty"`
+	LearnedDetectorFiredBeforeDispatch bool                     `protobuf:"varint,7,opt,name=learned_detector_fired_before_dispatch,json=learnedDetectorFiredBeforeDispatch,proto3" json:"learned_detector_fired_before_dispatch,omitempty"`
+	LearnedDetectorFiredAfterDispatch  bool                     `protobuf:"varint,8,opt,name=learned_detector_fired_after_dispatch,json=learnedDetectorFiredAfterDispatch,proto3" json:"learned_detector_fired_after_dispatch,omitempty"`
+	NoLearnedDetectorFired             bool                     `protobuf:"varint,9,opt,name=no_learned_detector_fired,json=noLearnedDetectorFired,proto3" json:"no_learned_detector_fired,omitempty"`
+	FinalStateChanges                  *StateChanges            `protobuf:"bytes,10,opt,name=final_state_changes,json=finalStateChanges,proto3" json:"final_state_changes,omitempty"`
+	DetectedAt                         *timestamppb.Timestamp   `protobuf:"bytes,11,opt,name=detected_at,json=detectedAt,proto3" json:"detected_at,omitempty"`
+	DispatchedAt                       *timestamppb.Timestamp   `protobuf:"bytes,12,opt,name=dispatched_at,json=dispatchedAt,proto3" json:"dispatched_at,omitempty"`
+	ResponderCompletedAt               *timestamppb.Timestamp   `protobuf:"bytes,13,opt,name=responder_completed_at,json=responderCompletedAt,proto3" json:"responder_completed_at,omitempty"`
+	VerifiedAt                         *timestamppb.Timestamp   `protobuf:"bytes,14,opt,name=verified_at,json=verifiedAt,proto3" json:"verified_at,omitempty"`
+	HealthClearedAt                    *timestamppb.Timestamp   `protobuf:"bytes,15,opt,name=health_cleared_at,json=healthClearedAt,proto3,oneof" json:"health_cleared_at,omitempty"`
+	CleanedHelpers                     []string                 `protobuf:"bytes,19,rep,name=cleaned_helpers,json=cleanedHelpers,proto3" json:"cleaned_helpers,omitempty"`
+	ObservationGeneration              string                   `protobuf:"bytes,20,opt,name=observation_generation,json=observationGeneration,proto3" json:"observation_generation,omitempty"`
 	// Confirmed per-finding observations on a failed closure; never global health authority.
 	PartialDetectorStates         []*DetectorEvaluation `protobuf:"bytes,21,rep,name=partial_detector_states,json=partialDetectorStates,proto3" json:"partial_detector_states,omitempty"`
 	VerifiedWhileResponderRunning bool                  `protobuf:"varint,22,opt,name=verified_while_responder_running,json=verifiedWhileResponderRunning,proto3" json:"verified_while_responder_running,omitempty"`
@@ -4496,9 +4496,9 @@ func (x *IncidentClosure) GetFinalDetectorStates() []*DetectorEvaluation {
 	return nil
 }
 
-func (x *IncidentClosure) GetIncidentDetectorStates() []*DetectorEvaluation {
+func (x *IncidentClosure) GetLearnedDetectorStates() []*DetectorEvaluation {
 	if x != nil {
-		return x.IncidentDetectorStates
+		return x.LearnedDetectorStates
 	}
 	return nil
 }
@@ -4510,23 +4510,23 @@ func (x *IncidentClosure) GetDetectorTimeline() []*DetectorTimelineEntry {
 	return nil
 }
 
-func (x *IncidentClosure) GetIncidentDetectorFiredBeforeDispatch() bool {
+func (x *IncidentClosure) GetLearnedDetectorFiredBeforeDispatch() bool {
 	if x != nil {
-		return x.IncidentDetectorFiredBeforeDispatch
+		return x.LearnedDetectorFiredBeforeDispatch
 	}
 	return false
 }
 
-func (x *IncidentClosure) GetIncidentDetectorFiredAfterDispatch() bool {
+func (x *IncidentClosure) GetLearnedDetectorFiredAfterDispatch() bool {
 	if x != nil {
-		return x.IncidentDetectorFiredAfterDispatch
+		return x.LearnedDetectorFiredAfterDispatch
 	}
 	return false
 }
 
-func (x *IncidentClosure) GetNoIncidentDetectorFired() bool {
+func (x *IncidentClosure) GetNoLearnedDetectorFired() bool {
 	if x != nil {
-		return x.NoIncidentDetectorFired
+		return x.NoLearnedDetectorFired
 	}
 	return false
 }
@@ -5871,17 +5871,17 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x05value:\x028\x01:\x9d\x02\xbaH\x99\x02\x1a\x80\x01\n" +
 	"\x1etimeline.last_seen_after_first\x120last_seen_at must not precede first_activated_at\x1a,this.last_seen_at >= this.first_activated_at\x1a\x93\x01\n" +
 	"\x1ctimeline.cleared_after_first\x12.cleared_at must not precede first_activated_at\x1aC!has(this.cleared_at) || this.cleared_at >= this.first_activated_atB\r\n" +
-	"\v_cleared_at\"\x8e\x11\n" +
+	"\v_cleared_at\"\x86\x11\n" +
 	"\x0fIncidentClosure\x12L\n" +
 	"\arequest\x18\x01 \x01(\v2*.sdodev.contracts.v1alpha1.IncidentRequestB\x06\xbaH\x03\xc8\x01\x01R\arequest\x12A\n" +
 	"\x06result\x18\x02 \x01(\v2).sdodev.contracts.v1alpha1.IncidentResultR\x06result\x12*\n" +
 	"\x0edispatch_error\x18\x03 \x01(\tH\x00R\rdispatchError\x88\x01\x01\x12a\n" +
-	"\x15final_detector_states\x18\x04 \x03(\v2-.sdodev.contracts.v1alpha1.DetectorEvaluationR\x13finalDetectorStates\x12g\n" +
-	"\x18incident_detector_states\x18\x05 \x03(\v2-.sdodev.contracts.v1alpha1.DetectorEvaluationR\x16incidentDetectorStates\x12]\n" +
-	"\x11detector_timeline\x18\x06 \x03(\v20.sdodev.contracts.v1alpha1.DetectorTimelineEntryR\x10detectorTimeline\x12T\n" +
-	"'incident_detector_fired_before_dispatch\x18\a \x01(\bR#incidentDetectorFiredBeforeDispatch\x12R\n" +
-	"&incident_detector_fired_after_dispatch\x18\b \x01(\bR\"incidentDetectorFiredAfterDispatch\x12;\n" +
-	"\x1ano_incident_detector_fired\x18\t \x01(\bR\x17noIncidentDetectorFired\x12W\n" +
+	"\x15final_detector_states\x18\x04 \x03(\v2-.sdodev.contracts.v1alpha1.DetectorEvaluationR\x13finalDetectorStates\x12e\n" +
+	"\x17learned_detector_states\x18\x05 \x03(\v2-.sdodev.contracts.v1alpha1.DetectorEvaluationR\x15learnedDetectorStates\x12]\n" +
+	"\x11detector_timeline\x18\x06 \x03(\v20.sdodev.contracts.v1alpha1.DetectorTimelineEntryR\x10detectorTimeline\x12R\n" +
+	"&learned_detector_fired_before_dispatch\x18\a \x01(\bR\"learnedDetectorFiredBeforeDispatch\x12P\n" +
+	"%learned_detector_fired_after_dispatch\x18\b \x01(\bR!learnedDetectorFiredAfterDispatch\x129\n" +
+	"\x19no_learned_detector_fired\x18\t \x01(\bR\x16noLearnedDetectorFired\x12W\n" +
 	"\x13final_state_changes\x18\n" +
 	" \x01(\v2'.sdodev.contracts.v1alpha1.StateChangesR\x11finalStateChanges\x12C\n" +
 	"\vdetected_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\n" +
@@ -6193,7 +6193,7 @@ var file_sdodev_contracts_v1alpha1_messages_proto_depIdxs = []int32{
 	33,  // 93: sdodev.contracts.v1alpha1.IncidentClosure.request:type_name -> sdodev.contracts.v1alpha1.IncidentRequest
 	43,  // 94: sdodev.contracts.v1alpha1.IncidentClosure.result:type_name -> sdodev.contracts.v1alpha1.IncidentResult
 	8,   // 95: sdodev.contracts.v1alpha1.IncidentClosure.final_detector_states:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
-	8,   // 96: sdodev.contracts.v1alpha1.IncidentClosure.incident_detector_states:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
+	8,   // 96: sdodev.contracts.v1alpha1.IncidentClosure.learned_detector_states:type_name -> sdodev.contracts.v1alpha1.DetectorEvaluation
 	47,  // 97: sdodev.contracts.v1alpha1.IncidentClosure.detector_timeline:type_name -> sdodev.contracts.v1alpha1.DetectorTimelineEntry
 	13,  // 98: sdodev.contracts.v1alpha1.IncidentClosure.final_state_changes:type_name -> sdodev.contracts.v1alpha1.StateChanges
 	63,  // 99: sdodev.contracts.v1alpha1.IncidentClosure.detected_at:type_name -> google.protobuf.Timestamp

@@ -7,7 +7,7 @@ Status: proposed (2026-11-04), revised after an adversarial review (see "Review 
 
 Learned memory is organized per (symptom x service) and binds too widely:
 
-1. Responder incident detectors filter a journey SLO finding (`scenario-slo.home-timeline-read`) and
+1. Responder learned detectors filter a journey SLO finding (`scenario-slo.home-timeline-read`) and
    bind a hard-coded Deployment name. Hint bindings apply to every program with a `deployment` role,
    and the learned stall diagnoses ("matches source, not yet restarted") match any healthy Deployment.
    Result: 3-6 restarts across every service on the failing journey.
@@ -36,7 +36,7 @@ program (no new observation, no runtime or proto change):
   to its backing Deployment/StatefulSet by selector, with an evidence string.
 - `Result.Implicates(ref) (bool, string)`: diagnose gate; a program returns NoMatch for a component the
   current findings do not implicate.
-- `localize.BindSuspects(f sdk.Finding, r Result, role string) []sdk.Finding`: an incident detector
+- `localize.BindSuspects(f sdk.Finding, r Result, role string) []sdk.Finding`: a learned detector
   emits one finding per suspect workload with `ParameterBindings[role]`, instead of a literal name.
   Each copy's fingerprint is the finding's fingerprint (or the controller default,
   `sdk.FindingFingerprint`) suffixed by the workload, so the copies stay distinct findings.
@@ -49,7 +49,7 @@ failing path), even when a healthy write lists the Redis; the ACL program's own
 evidence (an `Observe` of `ACL DRYRUN` on the bound Redis's Pod) then selects the Redis.
 
 Ownership: SDK (production, deterministic, no I/O). Health detectors and the judge are unchanged.
-Responders use it in the incident detectors and playbooks they own. Binding still flows through the
+Responders use it in the learned detectors and playbooks they own. Binding still flows through the
 existing finding `ParameterBindings` (binding source `hint`/`finding`).
 
 ### (b) Publication checks in the shared `validate.Check` (static layer)
@@ -58,7 +58,7 @@ Run by both `sdo-operator memory check` and the broker, on changed paths only (e
 validating until edited):
 
 - `playbook.live-object-name`: a changed Go or script file under `.sdo/playbooks/`, `.sdo/lib/` or
-  `.sdo/diagnostics/detectors/incidents/` contains a string literal with a controller-generated Pod
+  `.sdo/diagnostics/detectors/learned/` contains a string literal with a controller-generated Pod
   name (`<name>-<template-hash>-<suffix>`, both drawn from Kubernetes' `SafeEncodeString` alphabet
   `bcdfghjklmnpqrstvwxz2456789`, hash 6-10, suffix 5). Hint: derive the Pod from the bound workload
   (owner relation) and use a typed exec (`EnsureExec`/`Command{Pod: ...}`), which needs no receipt.
@@ -120,7 +120,7 @@ An independent review found that the note blamed the wrong mechanism first and t
   that lists no playbook still offers its named bindings to every program. That broad offer stays for
   controller drift and source-inventory findings, which list none by design. A responder's incident
   detector that sets named bindings (`ParameterBindings`, `localize.BindSuspects`) must declare its
-  playbooks: the blocking rule `detector.unscoped-binding` (changed incident detectors only) replaces the
+  playbooks: the blocking rule `detector.unscoped-binding` (changed learned detectors only) replaces the
   dropped literal-binding rule. A literal binding in a scoped detector reaches only that detector's own
   playbooks, so it is still allowed.
 - `program.BindFinding` compares a finding's playbooks by logical ID only (the `Finding.Playbooks`
@@ -139,11 +139,11 @@ did not stop it:
 - It required the Mitigate to match too, and the second reflection's Mitigate differed in one argument
   (`ACL SETUSER default on +@all` against `... default +@all`). A rule that needs whole-program equality misses
   any copy that also varies the repair a little.
-- Nothing compared incident detectors: the second detector differed only in the scenario it filtered and the
+- Nothing compared learned detectors: the second detector differed only in the scenario it filtered and the
   literal Deployment it bound. No learned detector used `localize.BindSuspects`, and the skill text alone did not
   make reflection parameterize an existing playbook.
 
-What changed (shared `validate.Check`, added playbooks and incident detectors only):
+What changed (shared `validate.Check`, added playbooks and learned detectors only):
 
 - Signatures compare syntax trees without positions (layout and comments ignored), rewrite `var x T = v` to
   `x := v`, and treat `fmt.Errorf`/`errors.New` text and provenance fields as prose. Component names are
@@ -154,7 +154,7 @@ What changed (shared `validate.Check`, added playbooks and incident detectors on
   varied repair does not hide the copy. Safety kept: a Diagnose that names no component (or the same one) is not
   a component copy, so an alternative repair for one diagnosis still passes, and a new playbook that repeats only
   the Mitigate stays the `playbook.shared-repair` note.
-- `detector.component-copy` (blocking): a new incident detector equal to an existing one apart from IDs, prose
+- `detector.component-copy` (blocking): a new learned detector equal to an existing one apart from IDs, prose
   and the components it names. Hint: widen the existing detector to bind the component from the failure.
 - On the P8 memory (not committed), the user-timeline playbook is a `playbook.component-copy` of the
   home-timeline one and its detector a `detector.component-copy`.
@@ -168,7 +168,7 @@ form. So the generalized form is checked too:
 
 - `playbook.component-literal` (blocking): a changed program, with or without a role, adds a component name to a
   string literal outside its Spec, prose and error text. `detector.component-literal` (blocking): the same for a
-  changed incident detector that binds roles (`ParameterBindings`, `localize.BindSuspects`). Names the accepted
+  changed learned detector that binds roles (`ParameterBindings`, `localize.BindSuspects`). Names the accepted
   version of that playbook or detector already had are left alone, so editing old memory needs no rewrite; a
   new playbook must take its component from the role (or, role-less, from relation) from the first incident. This restores, for
   generalization rather than leakage, the literal-binding check dropped above.

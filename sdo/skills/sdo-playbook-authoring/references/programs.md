@@ -21,7 +21,7 @@ The authoring reference tool supplies the routing example.
   parameter or its default. Required scalar parameters need a `Default` so findings can bind them. Diagnose
   and Mitigate declare identical parameters. Two roles of one Kind never bind and are refused at save.
 - A finding's named `ParameterBindings` bind only the playbooks it lists (its detector's `possiblePlaybooks`);
-  findings that list none (controller drift) offer them to every program, so an incident detector that binds
+  findings that list none (controller drift) offer them to every program, so a learned detector that binds
   roles declares its playbooks (`detector.unscoped-binding`). Unnamed roles still bind from its resources.
 - An emergency literal is a declared parameter the responder supplies and justifies.
 - Action fields use the compiled SDK contract. The shared memory check also rejects unknown parameter

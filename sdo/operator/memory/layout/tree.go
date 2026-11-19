@@ -107,7 +107,7 @@ func HasDetectors(root string) (bool, error) {
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return false, err
 	}
-	for _, class := range []Class{ClassHealth, ClassIncident} {
+	for _, class := range []Class{ClassHealth, ClassLearned} {
 		entries, err := os.ReadDir(filepath.Join(root, DetectorsDir, class.Dir()))
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
@@ -187,8 +187,8 @@ func (c *collector) playbook(id string) *Playbook {
 
 func (c *collector) add(rel string, kind Kind, id string, read func() ([]byte, error)) error {
 	switch kind {
-	case KindLegacyDetectorManifest:
-		return fmt.Errorf("legacy detector manifest %s is not part of schema version %d", rel, CurrentSchemaVersion)
+	case KindLegacyDetectorManifest, KindLegacyDetectorFile:
+		return fmt.Errorf("legacy detector file %s is not part of schema version %d", rel, CurrentSchemaVersion)
 	case KindGoal, KindArchitecture:
 		data, err := read()
 		if err != nil {
@@ -242,7 +242,7 @@ func (c *collector) add(rel string, kind Kind, id string, read func() ([]byte, e
 		}
 		playbook := c.playbook(playbookID)
 		playbook.Scripts = append(playbook.Scripts, File{Name: name, Content: data})
-	case KindHealthDetectorManifest, KindIncidentDetectorManifest:
+	case KindHealthDetectorManifest, KindLearnedDetectorManifest:
 		class, _ := kind.Class()
 		data, err := read()
 		if err != nil {
@@ -254,7 +254,7 @@ func (c *collector) add(rel string, kind Kind, id string, read func() ([]byte, e
 		}
 		c.detector(class, id).Manifest = manifest
 		c.manifests[class.Dir()+"/"+id] = true
-	case KindHealthDetectorSource, KindIncidentDetectorSource:
+	case KindHealthDetectorSource, KindLearnedDetectorSource:
 		class, _ := kind.Class()
 		data, err := read()
 		if err != nil {

@@ -64,7 +64,7 @@ type storeReadDetector struct{}
 const storeReadID = "store-policy"
 
 func (storeReadDetector) Spec() sdk.DetectorSpec {
-	return sdk.DetectorSpec{ID: "store-policy-detector", Class: sdk.DetectorClassIncident, Owner: sdk.DetectorOwnerResponder, Interval: time.Minute, Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Pod"}}}
+	return sdk.DetectorSpec{ID: "store-policy-detector", Class: sdk.DetectorClassLearned, Owner: sdk.DetectorOwnerResponder, Interval: time.Minute, Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Pod"}}}
 }
 func (storeReadDetector) PodReads() []podread.Query {
 	return []podread.Query{{ID: storeReadID, Target: podread.Target{Image: "synthetic-store"}, Args: []string{"store-cli", "get", "policy"}, Interval: time.Minute}}

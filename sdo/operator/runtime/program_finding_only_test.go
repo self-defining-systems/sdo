@@ -143,7 +143,7 @@ func TestDriftAndControllerEntrypointsCannotInvokePlaybookDiagnosis(t *testing.T
 type sevenRoleDetector struct{ finding sdk.Finding }
 
 func (sevenRoleDetector) Spec() sdk.DetectorSpec {
-	return sdk.DetectorSpec{ID: "discovery", Class: sdk.DetectorClassIncident, Playbooks: []string{"consul-bind-and-discovery"}}
+	return sdk.DetectorSpec{ID: "discovery", Class: sdk.DetectorClassLearned, Playbooks: []string{"consul-bind-and-discovery"}}
 }
 func (d sevenRoleDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
 	return []sdk.Finding{d.finding}, nil

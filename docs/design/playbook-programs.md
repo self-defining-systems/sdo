@@ -137,7 +137,7 @@ A playbook program is accepted only if:
 
 What is not a gate (2026-10-27): a verified cause without a program or detector
 link, a skipped healthy replay (no controller capture), and a recorded fault no
-incident detector reaches (`program.repeat-unreachable`) are recorded as
+learned detector reaches (`program.repeat-unreachable`) are recorded as
 coverage gaps (ledger `reflection_coverage_gaps`, commit trailers, check
 report), never refused: the repeat's act-verify loop is the safety net. The
 memory edge derives the playbook `fault_class` from its ID, accepts literal

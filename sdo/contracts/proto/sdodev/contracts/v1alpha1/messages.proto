@@ -283,7 +283,7 @@ message TelemetryPublish {
   string otlp_traces_url = 3;
 }
 
-// An incident-class detector that errored or fired while the app was judged
+// A learned detector that errored or fired while the app was judged
 // healthy at setup. Evidence of a noisy clue and nothing else: only health-class
 // detectors and user tests decide an install, and this detector is never disabled.
 message SetupNoisyDetector {
@@ -695,11 +695,11 @@ message IncidentClosure {
   IncidentResult result = 2;
   optional string dispatch_error = 3;
   repeated DetectorEvaluation final_detector_states = 4;
-  repeated DetectorEvaluation incident_detector_states = 5;
+  repeated DetectorEvaluation learned_detector_states = 5;
   repeated DetectorTimelineEntry detector_timeline = 6;
-  bool incident_detector_fired_before_dispatch = 7;
-  bool incident_detector_fired_after_dispatch = 8;
-  bool no_incident_detector_fired = 9;
+  bool learned_detector_fired_before_dispatch = 7;
+  bool learned_detector_fired_after_dispatch = 8;
+  bool no_learned_detector_fired = 9;
   StateChanges final_state_changes = 10;
   google.protobuf.Timestamp detected_at = 11 [(buf.validate.field).required = true];
   google.protobuf.Timestamp dispatched_at = 12 [(buf.validate.field).required = true];

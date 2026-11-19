@@ -139,3 +139,7 @@ depends_on = ["benchmarks.devswap"]
 [[modules]]
 path = "benchmarks.sregym.repository_git"
 depends_on = []
+
+[[modules]]
+path = "benchmarks.sregym.hosts"
+depends_on = []

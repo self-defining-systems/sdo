@@ -53,12 +53,12 @@ func evaluateOnceClassed(t *testing.T, detectors []sdk.Detector, extra ...string
 	return verdict, nil
 }
 
-// A learned incident detector (a drift detector comparing live workloads with
+// A learned detector (a drift detector comparing live workloads with
 // the accepted source) fires while an advance legitimately changes the live
-// state. The gate judges health-class detectors only: the incident detector
+// state. The gate judges health-class detectors only: the learned detector
 // neither holds the advance nor hides a firing health detector.
 func TestEvaluateOnceGatesOnTheSelectedClassesOnly(t *testing.T) {
-	drift := classedDetector("deployment-image-drift", sdk.DetectorClassIncident, true)
+	drift := classedDetector("deployment-image-drift", sdk.DetectorClassLearned, true)
 	healthy := classedDetector("workload-health", sdk.DetectorClassHealth, false)
 	gating := evaluation.FormatClasses(evaluation.GatingClasses)
 
@@ -66,10 +66,10 @@ func TestEvaluateOnceGatesOnTheSelectedClassesOnly(t *testing.T) {
 		t.Fatalf("every class: %+v, %v; want firing (the control: the drift detector fires)", got, err)
 	}
 	if got, err := evaluateOnceClassed(t, []sdk.Detector{healthy, drift}, "--classes", gating); err != nil || got.Status != evaluation.Clear || len(got.Findings) != 0 {
-		t.Fatalf("gating classes: %+v, %v; want clear: an incident detector must not hold an advance", got, err)
+		t.Fatalf("gating classes: %+v, %v; want clear: a learned detector must not hold an advance", got, err)
 	}
 	broken := classedDetector("workload-health", sdk.DetectorClassHealth, true)
-	if got, err := evaluateOnceClassed(t, []sdk.Detector{broken, classedDetector("deployment-image-drift", sdk.DetectorClassIncident, false)}, "--classes", gating); err != nil || got.Status != evaluation.Firing {
+	if got, err := evaluateOnceClassed(t, []sdk.Detector{broken, classedDetector("deployment-image-drift", sdk.DetectorClassLearned, false)}, "--classes", gating); err != nil || got.Status != evaluation.Firing {
 		t.Fatalf("firing health detector: %+v, %v; want firing", got, err)
 	}
 	if _, err := evaluateOnceClassed(t, []sdk.Detector{healthy}, "--classes", "mystery"); err == nil || !strings.Contains(err.Error(), "mystery") {

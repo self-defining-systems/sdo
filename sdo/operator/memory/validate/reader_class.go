@@ -13,11 +13,11 @@ import (
 	"sdo.dev/operator/memory/layout"
 )
 
-// readerClassDiagnostics rejects a changed incident-class detector package
+// readerClassDiagnostics rejects a changed learned detector package
 // that implements appstate.Reader. A reader exposes application state to the
 // controller on its own schedule; like health detectors it belongs to the
 // detection designer and the human upkeep import, and responders, whose
-// reflection grant covers incident detectors only, must not add one. The
+// reflection grant covers learned detectors only, must not add one. The
 // existing ownership grants then keep readers away from responders, so this
 // is the only new rule.
 //
@@ -28,7 +28,7 @@ import (
 func readerClassDiagnostics(root string, paths []string) []Diagnostic {
 	changed := map[string]bool{}
 	for _, p := range paths {
-		if kind, id, ok := layout.Classify(p); ok && (kind == layout.KindIncidentDetectorManifest || kind == layout.KindIncidentDetectorSource) {
+		if kind, id, ok := layout.Classify(p); ok && (kind == layout.KindLearnedDetectorManifest || kind == layout.KindLearnedDetectorSource) {
 			changed[id] = true
 		}
 	}
@@ -39,7 +39,7 @@ func readerClassDiagnostics(root string, paths []string) []Diagnostic {
 	sort.Strings(ids)
 	var diagnostics []Diagnostic
 	for _, id := range ids {
-		dir := filepath.Join(root, filepath.FromSlash(layout.DetectorDir(layout.ClassIncident, id)))
+		dir := filepath.Join(root, filepath.FromSlash(layout.DetectorDir(layout.ClassLearned, id)))
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
@@ -50,10 +50,10 @@ func readerClassDiagnostics(root string, paths []string) []Diagnostic {
 				continue
 			}
 			if implementsReader(filepath.Join(dir, name)) {
-				path := layout.DetectorDir(layout.ClassIncident, id) + "/" + name
+				path := layout.DetectorDir(layout.ClassLearned, id) + "/" + name
 				diagnostics = append(diagnostics, Diagnostic{Rule: RuleDetectorReaderClass, Path: path,
-					Message: "incident detector " + id + " implements appstate.Reader, and a reader must be a health detector",
-					Hint:    "app-state readers belong to the detection designer: put the reader in .sdo/diagnostics/detectors/health/<id>/; an incident detector reads a reader's state with appstate.Require"})
+					Message: "learned detector " + id + " implements appstate.Reader, and a reader must be a health detector",
+					Hint:    "app-state readers belong to the detection designer: put the reader in .sdo/diagnostics/detectors/health/<id>/; a learned detector reads a reader's state with appstate.Require"})
 				break
 			}
 		}

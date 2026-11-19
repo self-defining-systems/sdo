@@ -72,7 +72,7 @@ func validateDetectorSpec(spec sdk.DetectorSpec) error {
 		return fmt.Errorf("interval must be greater than zero")
 	}
 	if spec.Class != "" || spec.Owner != "" {
-		if spec.Class != sdk.DetectorClassHealth && spec.Class != sdk.DetectorClassIncident {
+		if spec.Class != sdk.DetectorClassHealth && spec.Class != sdk.DetectorClassLearned {
 			return fmt.Errorf("unsupported detector class %q", spec.Class)
 		}
 		expectedOwner := sdk.DetectorOwnerResponder
@@ -98,8 +98,8 @@ func validateDetectorSpec(spec sdk.DetectorSpec) error {
 		if strings.TrimSpace(spec.OriginatingCommit) == "" {
 			return fmt.Errorf("originating commit is required")
 		}
-		if spec.Class == sdk.DetectorClassIncident && strings.TrimSpace(spec.OriginatingIncident) == "" {
-			return fmt.Errorf("incident detector originating incident is required")
+		if spec.Class == sdk.DetectorClassLearned && strings.TrimSpace(spec.OriginatingIncident) == "" {
+			return fmt.Errorf("learned detector originating incident is required")
 		}
 	}
 	seenWatches := make(map[string]struct{}, len(spec.Watches))

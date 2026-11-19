@@ -1,6 +1,6 @@
 """Read per-detector manifests from an operational repository for analysis and assurance.
 
-Each detector owns ``.sdo/diagnostics/detectors/<health|incidents>/<id>/manifest.yaml``. These readers
+Each detector owns ``.sdo/diagnostics/detectors/<health|learned>/<id>/manifest.yaml``. These readers
 are the benchmark-side counterpart of the Go ``memory/layout`` package and exist only because the
 benchmarks inspect finished repositories; production code never imports them.
 """
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 DETECTORS_DIR = ".sdo/diagnostics/detectors"
 MANIFEST_NAME = "manifest.yaml"
-CLASS_DIRS = ("health", "incidents")
+CLASS_DIRS = ("health", "learned")
 
 
 def _parse(text: str) -> dict[str, Any] | None:

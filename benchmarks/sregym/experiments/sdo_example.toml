@@ -1,7 +1,7 @@
 # Example SDO experiment: two identical source-backed incidents answered by SDO
 # with Codex gpt-6-luna. Stage 0 starts cold from a fresh application workspace.
 # Stage 1 retains the application repository from stage 0 so the second response
-# sees accumulated .sdo/ outcomes, playbooks, and incident detectors.
+# sees accumulated .sdo/ outcomes, playbooks, and learned detectors.
 #
 # Usage:
 #   bash scripts/run_sregym.sh benchmarks/sregym/experiments/sdo_example.toml

@@ -69,9 +69,9 @@ The broker runs the same check on every commit.
 
 ## After an incident (responders)
 
-- A fault only a probe caught, with no cause check naming it: add an incident detector for its mechanism.
+- A fault only a probe caught, with no cause check naming it: add a learned detector for its mechanism.
 - A detector that fired while nothing was wrong: tighten it with the outcome's evidence.
-- Responders own incident detectors; health detectors and the map belong to onboarding.
+- Responders own learned detectors; health detectors and the map belong to onboarding.
 
 <!-- reference-topics -->
 ## Reference topics

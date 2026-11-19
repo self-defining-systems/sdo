@@ -301,6 +301,7 @@ def up(args: Any) -> int:
     from benchmarks.sregym.fastloop.dev import prepare_dev_mount, prepare_evidence_root
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
     from benchmarks.sregym.fastloop.host_limits import HostLimits, NodeLimits, apply_node_limits
+    from benchmarks.sregym.fastloop.lane_cgroup import default_shim_dir, shim_environment
     from benchmarks.sregym.fastloop.toy_cni import CALICO_IMAGES, install_calico
     from benchmarks.sregym.fastloop.toy_images import load_images
 
@@ -333,8 +334,9 @@ def up(args: Any) -> int:
             "--config", str(config), "--kubeconfig", str(kubeconfig), "--wait", "0s",
         ],
         check=True,
+        env={**os.environ, **shim_environment(getattr(args, "lane_cgroup", None), cluster, default_shim_dir())},
     )  # fmt: skip
-    apply_node_limits(cluster, NodeLimits(args.cpu_limit, args.memory_limit, args.pids_limit))
+    apply_node_limits(cluster, NodeLimits.from_args(args))
     images = Images(controller=args.controller_image, responder=args.responder_image)
     pull_missing_images([*prerequisite_images(), *CALICO_IMAGES])
     load_images(

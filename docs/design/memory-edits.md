@@ -58,7 +58,7 @@ Corpus/lib support playbooks and diagnostics; they do not add independent owners
 | `playbooks/<id>/{diagnose,mitigate}.go`, `*_test.go` | Responder; exactly one Diagnoser, optional Mitigator; judgment-only programs may omit mitigation |
 | `playbooks/<id>/scripts/*.sh` | Existing prose playbooks retain scripts and current script checks; program playbooks forbid scripts and shell guidance, as on drift-p1 |
 | `lib/<package>/*.go` | Responder shared deterministic helpers, covered transitively by import checks and replay |
-| `diagnostics/detectors/<health\|incidents>/<id>/{manifest.yaml,*.go}` | Judge owns health; responder owns incident detectors; class and owner must agree with location |
+| `diagnostics/detectors/<health\|learned>/<id>/{manifest.yaml,*.go}` | Judge owns health; responder owns learned detectors; class and owner must agree with location |
 | `diagnostics/traffic/{generators,workloads}/...` | Existing ownership table: judge, except responder incident-scoped traffic during reflection |
 | `corpus/<case>/case.json` | Agent authors capture references, bindings, label associations and negative-witness selections; never raw observations |
 | `corpus/<case>/{open,fixed,healthy,recordings,labels}.json` | Go-derived, protected replay files; keep the sdktest five-file read format, extending it for phase-specific recordings |

@@ -41,7 +41,7 @@ func liveObjectNameDiagnostics(root string, paths []string) []Diagnostic {
 				continue
 			}
 			texts = []string{string(data)}
-		case (kind == layout.KindPlaybookProgram || kind == layout.KindLibrary || kind == layout.KindIncidentDetectorSource) && strings.HasSuffix(p, ".go") && !strings.HasSuffix(p, "_test.go"):
+		case (kind == layout.KindPlaybookProgram || kind == layout.KindLibrary || kind == layout.KindLearnedDetectorSource) && strings.HasSuffix(p, ".go") && !strings.HasSuffix(p, "_test.go"):
 			texts = goStringLiterals(filepath.Join(root, filepath.FromSlash(p)))
 		default:
 			continue

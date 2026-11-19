@@ -68,7 +68,7 @@ def test_standard_incident_report_uses_reconciled_usd_and_completeness(tmp_path:
     from tests.unit.benchmarks.sregym.analysis.test_incident_cost import PROBLEM_A, _sdo_stage
 
     root = tmp_path / "pipeline"
-    stage = _sdo_stage(root, 0, "first", PROBLEM_A, responder={}, reflection={}, warm=False, incident_detectors=0)
+    stage = _sdo_stage(root, 0, "first", PROBLEM_A, responder={}, reflection={}, warm=False, learned_detectors=0)
     # experiment_model reads the resolved provider/model from this config.
     (stage / "experiment_config.toml").write_text(
         '[runner]\nagent = "sdo_codex"\n[agent.sdo_codex]\nprovider = "claude"\nmodel = "claude-opus-5-5"\n'
