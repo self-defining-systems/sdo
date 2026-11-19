@@ -265,7 +265,7 @@ func (v snapshotReadView) DatabaseUsers(t DatabaseTarget) ([]DatabaseUser, error
 }
 func (v *checkedReadView) DatabaseUsers(t DatabaseTarget) ([]DatabaseUser, error) {
 	r, err := v.ReadView.DatabaseUsers(t)
-	v.check(err)
+	v.check("DatabaseUsers", err)
 	v.record("database_users", podTarget(t.Pod, t.Container), fmt.Sprintf("%d users", len(r)), err)
 	return r, err
 }

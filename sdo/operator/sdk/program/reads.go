@@ -41,25 +41,25 @@ func (v snapshotReadView) QueryMetrics(q metrics.Query) metrics.Result {
 func (v *checkedReadView) MetricResult(id string) (metrics.Result, bool) {
 	r, ok := v.ReadView.MetricResult(id)
 	if !ok {
-		v.check(fmt.Errorf("metric %q unavailable", id))
+		v.check("MetricResult", fmt.Errorf("metric %q unavailable", id))
 	} else if r.Error != "" {
-		v.check(fmt.Errorf("metric %q: %s", id, r.Error))
+		v.check("MetricResult", fmt.Errorf("metric %q: %s", id, r.Error))
 	}
 	return r, ok
 }
 func (v *checkedReadView) AlertsResult() (metrics.AlertsResult, bool) {
 	r, ok := v.ReadView.AlertsResult()
 	if !ok {
-		v.check(fmt.Errorf("alerts unavailable"))
+		v.check("AlertsResult", fmt.Errorf("alerts unavailable"))
 	} else if r.Error != "" {
-		v.check(fmt.Errorf("alerts: %s", r.Error))
+		v.check("AlertsResult", fmt.Errorf("alerts: %s", r.Error))
 	}
 	return r, ok
 }
 func (v *checkedReadView) QueryMetrics(q metrics.Query) metrics.Result {
 	r := v.ReadView.QueryMetrics(q)
 	if r.Error != "" {
-		v.check(fmt.Errorf("metric %q: %s", q.ID, r.Error))
+		v.check("QueryMetrics", fmt.Errorf("metric %q: %s", q.ID, r.Error))
 	}
 	return r
 }
@@ -97,7 +97,7 @@ func (v snapshotReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured,
 }
 func (v *checkedReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
 	object, err := v.ReadView.Object(ref)
-	v.check(err)
+	v.check("Object", err)
 	return object, err
 }
 

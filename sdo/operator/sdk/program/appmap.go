@@ -236,12 +236,12 @@ func (v snapshotReadView) DataChecks() (map[string]string, error) {
 
 func (v *checkedReadView) AppMap() (AppMap, error) {
 	m, err := v.ReadView.AppMap()
-	v.check(err)
+	v.check("AppMap", err)
 	return m, err
 }
 
 func (v *checkedReadView) DataChecks() (map[string]string, error) {
 	checks, err := v.ReadView.DataChecks()
-	v.check(err)
+	v.check("DataChecks", err)
 	return checks, err
 }
