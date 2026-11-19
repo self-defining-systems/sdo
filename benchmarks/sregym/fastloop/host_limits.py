@@ -19,12 +19,16 @@ from benchmarks.sregym.adapter import WaitKind, parse_memory_size, wait_for
 from benchmarks.sregym.fastloop.lane_cgroup import (
     DEFAULT_LANE_CPUS,
     NodeCgroup,
+    choose_cpuset,
     default_shim_dir,
     describe_mode,
+    format_cpu_list,
+    parse_cpu_list,
     read_node_cgroup,
     shim_environment,
     split_cpus,
     verify_node,
+    visible_cpu_count,
 )
 
 if TYPE_CHECKING:
@@ -94,6 +98,77 @@ def _update(node: str, *flags: str) -> None:
     subprocess.run(["docker", "update", *flags, node], check=True, timeout=wait_for(WaitKind.CLUSTER_OP))
 
 
+def host_cpus() -> tuple[int, ...]:
+    """The host CPUs a lane node may be pinned to."""
+    return tuple(sorted(os.sched_getaffinity(0)))
+
+
+def _running_cpusets() -> dict[str, frozenset[int]]:
+    """Every running container's ``--cpuset-cpus`` by name (empty: not pinned)."""
+    ids = subprocess.run(
+        ["docker", "ps", "-q"], check=True, capture_output=True, text=True, timeout=wait_for(WaitKind.CLUSTER_OP)
+    ).stdout.split()
+    if not ids:
+        return {}
+    rows = subprocess.run(
+        ["docker", "inspect", "--format", "{{.Name}}|{{.HostConfig.CpusetCpus}}", *ids],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=wait_for(WaitKind.CLUSTER_OP),
+    ).stdout.splitlines()
+    held = {}
+    for row in rows:
+        name, separator, cpuset = row.partition("|")
+        if separator:
+            held[name.lstrip("/")] = parse_cpu_list(cpuset)
+    return held
+
+
+@contextmanager
+def _cpuset_lock() -> Iterator[None]:
+    """Serialize CPU choice across this host's lanes so two lanes never pick the same free CPUs at once."""
+    directory = HostLimits.from_env().directory
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / "cpuset.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
+def _pin_and_update(
+    nodes: list[str],
+    cpus: str,
+    flags: list[str],
+    *,
+    read: Callable[[str], NodeCgroup | None],
+    parent: str | None,
+    memory_bytes: int | None,
+) -> None:
+    """``docker update`` each node with ``flags`` plus a cpuset of ``ceil(cpus)`` host CPUs, then verify it.
+
+    A node already pinned to that many CPUs keeps them; otherwise it takes the CPUs other containers use least.
+    """
+    count = min(visible_cpu_count(float(cpus)), len(host_cpus()))
+    with _cpuset_lock():
+        held = _running_cpusets()
+        others = [cpuset for name, cpuset in held.items() if name not in nodes]
+        for node in nodes:
+            current = held.get(node, frozenset())
+            chosen = current if len(current) == count else choose_cpuset(count, host_cpus(), others)
+            others.append(chosen)
+            node_flags = [*flags, "--cpuset-cpus", format_cpu_list(chosen)]
+            _update(node, *node_flags)
+            verify_node(
+                node,
+                lambda node=node, node_flags=node_flags: _update(node, *node_flags),
+                cpus=float(cpus),
+                memory_bytes=memory_bytes,
+                visible_cpus=count,
+                parent=parent,
+                read=read,
+            )
+
+
 def apply_node_limits(
     cluster: str,
     limits: NodeLimits | None = None,
@@ -116,16 +191,7 @@ def apply_node_limits(
         "--pids-limit",
         str(limits.pids),
     ]
-    for node in nodes:
-        _update(node, *flags)
-        verify_node(
-            node,
-            lambda node=node: _update(node, *flags),
-            cpus=float(cpus),
-            memory_bytes=parse_memory_size(limits.memory),
-            parent=parent,
-            read=read,
-        )
+    _pin_and_update(nodes, cpus, flags, read=read, parent=parent, memory_bytes=parse_memory_size(limits.memory))
 
 
 def apply_lane_cpu(
@@ -135,20 +201,11 @@ def apply_lane_cpu(
     read: Callable[[str], NodeCgroup | None] = read_node_cgroup,
     parent: str | None = None,
 ) -> None:
-    """Re-apply only the lane CPU cap (a claim must not touch memory a lane was created with) and verify it."""
+    """Re-apply only the lane CPU cap and cpuset (a claim must not touch memory a lane was created with); verify."""
     parent = parent if parent is not None else configured_parent()
     nodes = _lane_nodes(cluster)
     cpus = split_cpus(float(lane_cpus), len(nodes))
-    for node in nodes:
-        _update(node, "--cpus", cpus)
-        verify_node(
-            node,
-            lambda node=node: _update(node, "--cpus", cpus),
-            cpus=float(cpus),
-            memory_bytes=None,
-            parent=parent,
-            read=read,
-        )
+    _pin_and_update(nodes, cpus, ["--cpus", cpus], read=read, parent=parent, memory_bytes=None)
 
 
 def configured_parent() -> str | None:

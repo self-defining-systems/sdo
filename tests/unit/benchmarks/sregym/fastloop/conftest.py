@@ -92,6 +92,8 @@ def isolated_host_limits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     """Hermetic tests must never join the live lanes' host semaphore."""
     monkeypatch.setenv("FASTLOOP_HOST_LOCK_DIR", str(tmp_path / "host-locks"))
     monkeypatch.setenv("FASTLOOP_HOST_REDEPLOYS", "2")
+    # Node CPU pinning must not depend on how many CPUs this test machine has.
+    monkeypatch.setattr("benchmarks.sregym.fastloop.host_limits.host_cpus", lambda: tuple(range(16)))
 
 
 @pytest.fixture(autouse=True)
