@@ -19,6 +19,9 @@ takes `detection.self_heal_hold: 60s` from `sdo-bench.yaml`; the hold is bound i
 - `install.py` (`--journeys-file FILE` passes the free-text user journeys to `host`; without it the onboarding agent discovers them): provisions the namespaces and Secrets (credentials copied by `kubectl --from-file`, never read) and
   runs `sdo-operator host --deployment-plan --config sdo-bench.yaml [--config F]...` with the agent provider, model
   and effort as `SDO_AGENT_*` variables. No deployer agent runs; the detection designer and the controller do.
+  `--deployer` drops the provided plan so SDO's deployer agent deploys from the repository; it requires
+  `--registry-host H[:P]` (the registry its image builds push to and the nodes pull from; `--registry-insecure` for a
+  plain-HTTP lane registry), and `host` refuses a launch with neither a plan nor a registry host.
 - `sdo-bench.yaml`: the benchmark profile, the only operator configuration file every benchmark harness passes
   (fuzzops hooks and install, the SREGym adapter and fastloop). It holds only the fields that differ from production
   defaults ([`docs/config.md`](../../docs/config.md)): `response.repair_policy: recorded-actions`. `config.py` builds

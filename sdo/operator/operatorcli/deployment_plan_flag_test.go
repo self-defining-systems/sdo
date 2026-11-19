@@ -17,7 +17,7 @@ func hostArgs(extra ...string) []string {
 		"host", "--repository", "/repo", "--namespace", "app", "--application", "app", "--health-objective", "stay healthy",
 		"--operation-id", "op-1", "--controller-image", "controller:test", "--responder-image", "responder:test",
 		"--buildkit-image", "buildkit@sha256:" + strings.Repeat("a", 64), "--registry-push-secret", "push",
-		"--repository-pvc", "repo", "--credentials-secret", "creds", "--config", testModelConfig,
+		"--repository-pvc", "repo", "--credentials-secret", "creds", "--registry-host", "registry.local:5000", "--config", testModelConfig,
 	}
 	return append(args, extra...)
 }
