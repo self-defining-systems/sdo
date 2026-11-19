@@ -521,3 +521,45 @@ def test_fake_claude_executable_reports_the_real_cli_limit_line(
     )
     assert turn.session_id == "fake-session"
     assert turn.rate_limit_wait_seconds == 30
+
+
+@pytest.mark.parametrize("umask", [0o002, 0o022, 0o077])
+def test_host_pool_admits_a_worker_uid_regardless_of_provisioning_umask(tmp_path: Path, umask: int) -> None:
+    """Workers run as a different UID than the provisioner, so every token must be other-writable."""
+    import os
+    import stat
+
+    from libs.agent_cli.provider_capacity import prepare_host_pool
+
+    root, alias = tmp_path / "pool", tmp_path / "evidence" / "hotel" / "opus-pool"
+    previous = os.umask(umask)
+    try:
+        prepare_host_pool(root, [alias], capacity=2)
+    finally:
+        os.umask(previous)
+    for directory in (root, alias):
+        assert stat.S_IMODE(directory.stat().st_mode) & 0o005 == 0o005
+        for name in ("capacity", "slot-0.lock", "slot-1.lock"):
+            assert stat.S_IMODE((directory / name).stat().st_mode) & 0o666 == 0o666
+
+
+def test_reprovisioning_repairs_a_live_pool_without_replacing_its_inodes(tmp_path: Path) -> None:
+    import stat
+
+    from libs.agent_cli.provider_capacity import prepare_host_pool
+
+    root, alias = tmp_path / "pool", tmp_path / "hotel" / "opus-pool"
+    prepare_host_pool(root, [alias], capacity=2)
+    held = [OpusPool(root, 2).try_acquire() for _ in range(2)]
+    inode = (root / "slot-0.lock").stat().st_ino
+    for name in ("capacity", "slot-0.lock", "slot-1.lock"):
+        (root / name).chmod(0o664)
+    try:
+        prepare_host_pool(root, [alias], capacity=2)
+        assert (alias / "slot-0.lock").stat().st_ino == inode
+        assert stat.S_IMODE((alias / "slot-1.lock").stat().st_mode) == 0o666
+        assert OpusPool(alias, 2).try_acquire() is None
+    finally:
+        for handle in held:
+            if handle is not None:
+                handle.close()
