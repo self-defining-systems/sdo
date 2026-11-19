@@ -218,8 +218,8 @@ type Detector interface {
 type DetectorClass string
 
 const (
-	DetectorClassHealth   DetectorClass = "health"
-	DetectorClassIncident DetectorClass = "incident"
+	DetectorClassHealth  DetectorClass = "health"
+	DetectorClassLearned DetectorClass = "learned"
 )
 type DetectorOwner string
 

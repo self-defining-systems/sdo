@@ -447,7 +447,7 @@ Create temporary Git repositories with `.sdo/` fixtures. Test:
 
 - optional human-owned free text in `goal.md`;
 - Go upkeep ownership and deterministic manifest inventory in `arch.md`;
-- responder-only updates under `playbooks/` and incident detectors;
+- responder-only updates under `playbooks/` and learned detectors;
 - judge ownership of health detectors;
 - append-only controller outcomes;
 - path containment, symlink rejection, and commit attribution.

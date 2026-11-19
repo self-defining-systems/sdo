@@ -25,8 +25,8 @@ The legacy controller checkpoint is recognized by its exact name,
 `sdo.dev/state-revision` annotation and `runtime-state.json` key. Retiring it
 prevents restored controller state from resurrecting old onboarding authority.
 
-Setup and incident-class detectors: only health-class detectors and user tests decide whether an install or
-start-up is healthy and accepted. An incident-class detector (designer-authored or learned alike) never affects
+Setup and learned detectors: only health-class detectors and user tests decide whether an install or
+start-up is healthy and accepted. A learned detector (whoever wrote it) never affects
 acceptance and is never disabled at setup. When one fires or errors while the app is judged healthy it stays
 enabled and is recorded as noisy evidence: a log line and `NamespaceOnboarding.setup_noisy` (detector ID,
 accepted revision, `errored` or `fired`, the error or the fired rule IDs). The earlier quarantine is gone:

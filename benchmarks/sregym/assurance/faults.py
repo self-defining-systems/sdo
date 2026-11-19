@@ -282,11 +282,11 @@ def _memory_files(
         body=readme_body.strip("\n").replace("{playbook_dir}", "."),
         detector_id=detector_id,
     )
-    detector_dir = f".sdo/diagnostics/detectors/incidents/{detector_id}"
+    detector_dir = f".sdo/diagnostics/detectors/learned/{detector_id}"
     playbook_path = f".sdo/playbooks/{playbook}"
     manifest = (
         "apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\n"
-        f"id: {detector_id}\nconstructor: New\nclass: incident\nowner: responder\nwatches:\n"
+        f"id: {detector_id}\nconstructor: New\nclass: learned\nowner: responder\nwatches:\n"
         + "".join(f"  - apiVersion: {api}\n    kind: {kind}\n" for api, kind in watches)
         + "interval: 30s\npersistence:\n  firing: 1\n  clearing: 2\n"
         "batching:\n  severity: critical\n  debounce: 500ms\n"
@@ -345,7 +345,7 @@ func New() sdk.Detector {{ return Detector{{}} }}
 
 func (Detector) Spec() sdk.DetectorSpec {{
 \treturn sdk.DetectorSpec{{
-\t\tID: detectorID, Class: sdk.DetectorClassIncident, Owner: sdk.DetectorOwnerResponder,
+\t\tID: detectorID, Class: sdk.DetectorClassLearned, Owner: sdk.DetectorOwnerResponder,
 \t\tWatches:             []sdk.WatchKind{{{watches}}},
 \t\tInterval:            30 * time.Second,
 \t\tPersistence:         sdk.PersistencePolicy{{Firing: 1, Clearing: 2}},
@@ -378,7 +378,7 @@ _README = """# {title}
 
 ## Verification
 
-This playbook was learned from an incident whose cause the controller confirmed: the incident detector
+This playbook was learned from an incident whose cause the controller confirmed: the learned detector
 `{detector_id}` encodes the cause, the health detectors that fired at dispatch cleared after the repair, and
 the opening alerts cleared and stayed clear (Recovered) after the repair.
 """
@@ -595,7 +595,7 @@ func TestIgnoresNearMissWhenConfigMapExists(t *testing.T) {
 """
 
 _CM_README = """
-The incident detector establishes that `<DEPLOYMENT>` in `<NAMESPACE>` mounts the absent ConfigMap `<CONFIGMAP>`
+The learned detector establishes that `<DEPLOYMENT>` in `<NAMESPACE>` mounts the absent ConfigMap `<CONFIGMAP>`
 and that its pods report `FailedMount`. Restore the ConfigMap from the manifest under `kubernetes/` that defines it,
 or, for `mongo-<svc>-script`, from the root init script `k8s-<svc>-mongo.sh`; then replace the stuck pods.
 

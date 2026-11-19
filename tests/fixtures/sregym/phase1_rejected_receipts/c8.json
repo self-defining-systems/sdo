@@ -176,7 +176,7 @@
    "fault_injection_request": 6.393039568327367
   },
   "fault_injection_deferred": true,
-  "incident_detector_states": [
+  "learned_detector_states": [
    {
     "detector_id": "mongodb-geo-init-configmap-missing",
     "error": null,

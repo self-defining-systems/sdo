@@ -66,55 +66,61 @@ const (
 	// adds the agent's findings to each outcome document; version 10 adds the changes the agent reported;
 	// version 11 retires disabled_setup_detectors from outcome documents;
 	// version 12 lets a recorded failed read carry its error_class (absent,
-	// refused, unavailable or invalid). Versions 4 to 12 need no conversion: no
+	// refused, unavailable or invalid). Version 13 renames the incident detector class to learned (the migration
+	// moves detectors/incidents to detectors/learned and rewrites class values).
+	// Versions 4 to 12 need no conversion: no
 	// earlier repository holds those files, an earlier outcome keeps what it
 	// recorded (the retired field is dropped on read), an earlier case is valid
 	// without the optional labels, and an earlier recording without a class reads
 	// as unavailable.
-	CurrentSchemaVersion = 12
+	CurrentSchemaVersion = 13
 )
 
 // Kind names a class of file in operational memory.
 type Kind string
 
 const (
-	KindSchemaVersion            Kind = "schema-version"
-	KindGoal                     Kind = "goal"
-	KindArchitecture             Kind = "architecture"
-	KindSources                  Kind = "sources"
-	KindLifecycleProvenance      Kind = "lifecycle-provenance"
-	KindDiagnosticsModule        Kind = "diagnostics-module"
-	KindLegacyDetectorManifest   Kind = "legacy-detector-manifest"
-	KindHealthDetectorManifest   Kind = "health-detector-manifest"
-	KindIncidentDetectorManifest Kind = "incident-detector-manifest"
-	KindHealthDetectorSource     Kind = "health-detector-source"
-	KindIncidentDetectorSource   Kind = "incident-detector-source"
-	KindTrafficGenerator         Kind = "traffic-generator"
-	KindTrafficWorkload          Kind = "traffic-workload"
-	KindPlaybookProgram          Kind = "playbook-program"
-	KindLibrary                  Kind = "library"
-	KindCorpus                   Kind = "corpus"
-	KindPlaybookIndex            Kind = "playbook-index"
-	KindPlaybook                 Kind = "playbook"
-	KindPlaybookScript           Kind = "playbook-script"
-	KindDeploymentPlan           Kind = "deployment-plan"
-	KindDeploymentFile           Kind = "deployment-file"
-	KindDeploymentOverlay        Kind = "deployment-overlay"
-	KindDeploymentPatch          Kind = "deployment-patch"
-	KindTelemetrySources         Kind = "telemetry-sources"
-	KindTelemetryBackends        Kind = "telemetry-backends"
-	KindDataCheck                Kind = "data-check"
-	KindOutcome                  Kind = "outcome"
+	KindSchemaVersion          Kind = "schema-version"
+	KindGoal                   Kind = "goal"
+	KindArchitecture           Kind = "architecture"
+	KindSources                Kind = "sources"
+	KindLifecycleProvenance    Kind = "lifecycle-provenance"
+	KindDiagnosticsModule      Kind = "diagnostics-module"
+	KindLegacyDetectorManifest Kind = "legacy-detector-manifest"
+	// KindLegacyDetectorFile is a file of a detector package in the retired
+	// detectors/incidents directory (schema 12 and earlier). Only an Upkeep
+	// schema migration may touch it, to move the package to detectors/learned.
+	KindLegacyDetectorFile      Kind = "legacy-detector-file"
+	KindHealthDetectorManifest  Kind = "health-detector-manifest"
+	KindLearnedDetectorManifest Kind = "learned-detector-manifest"
+	KindHealthDetectorSource    Kind = "health-detector-source"
+	KindLearnedDetectorSource   Kind = "learned-detector-source"
+	KindTrafficGenerator        Kind = "traffic-generator"
+	KindTrafficWorkload         Kind = "traffic-workload"
+	KindPlaybookProgram         Kind = "playbook-program"
+	KindLibrary                 Kind = "library"
+	KindCorpus                  Kind = "corpus"
+	KindPlaybookIndex           Kind = "playbook-index"
+	KindPlaybook                Kind = "playbook"
+	KindPlaybookScript          Kind = "playbook-script"
+	KindDeploymentPlan          Kind = "deployment-plan"
+	KindDeploymentFile          Kind = "deployment-file"
+	KindDeploymentOverlay       Kind = "deployment-overlay"
+	KindDeploymentPatch         Kind = "deployment-patch"
+	KindTelemetrySources        Kind = "telemetry-sources"
+	KindTelemetryBackends       Kind = "telemetry-backends"
+	KindDataCheck               Kind = "data-check"
+	KindOutcome                 Kind = "outcome"
 )
 
 // IsDetectorManifest reports whether the kind is a per-detector manifest.
 func (k Kind) IsDetectorManifest() bool {
-	return k == KindHealthDetectorManifest || k == KindIncidentDetectorManifest
+	return k == KindHealthDetectorManifest || k == KindLearnedDetectorManifest
 }
 
 // IsDetectorSource reports whether the kind is a file of a detector package.
 func (k Kind) IsDetectorSource() bool {
-	return k == KindHealthDetectorSource || k == KindIncidentDetectorSource
+	return k == KindHealthDetectorSource || k == KindLearnedDetectorSource
 }
 
 // Class returns the detector class a detector kind belongs to.
@@ -122,8 +128,8 @@ func (k Kind) Class() (Class, bool) {
 	switch k {
 	case KindHealthDetectorManifest, KindHealthDetectorSource:
 		return ClassHealth, true
-	case KindIncidentDetectorManifest, KindIncidentDetectorSource:
-		return ClassIncident, true
+	case KindLearnedDetectorManifest, KindLearnedDetectorSource:
+		return ClassLearned, true
 	}
 	return "", false
 }
@@ -133,38 +139,38 @@ func (k Kind) Class() (Class, bool) {
 type Class string
 
 const (
-	ClassHealth   Class = "health"
-	ClassIncident Class = "incident"
+	ClassHealth  Class = "health"
+	ClassLearned Class = "learned"
 )
 
 // Dir is the directory name below DetectorsDir that holds the class.
 func (c Class) Dir() string {
-	if c == ClassIncident {
-		return "incidents"
+	if c == ClassLearned {
+		return "learned"
 	}
 	return "health"
 }
 
 // Owner is the only actor that may own detectors of the class.
 func (c Class) Owner() string {
-	if c == ClassIncident {
+	if c == ClassLearned {
 		return "responder"
 	}
 	return "health_judge"
 }
 
-func (c Class) valid() bool { return c == ClassHealth || c == ClassIncident }
+func (c Class) valid() bool { return c == ClassHealth || c == ClassLearned }
 
 func (c Class) ManifestKind() Kind {
-	if c == ClassIncident {
-		return KindIncidentDetectorManifest
+	if c == ClassLearned {
+		return KindLearnedDetectorManifest
 	}
 	return KindHealthDetectorManifest
 }
 
 func (c Class) SourceKind() Kind {
-	if c == ClassIncident {
-		return KindIncidentDetectorSource
+	if c == ClassLearned {
+		return KindLearnedDetectorSource
 	}
 	return KindHealthDetectorSource
 }
@@ -173,8 +179,8 @@ func classOfDir(name string) (Class, bool) {
 	switch name {
 	case "health":
 		return ClassHealth, true
-	case "incidents":
-		return ClassIncident, true
+	case "learned":
+		return ClassLearned, true
 	}
 	return "", false
 }
@@ -310,6 +316,9 @@ func classifyDiagnostics(parts []string) (Kind, string, bool) {
 	case len(parts) == 2 && parts[0] == "telemetry" && parts[1] == "backends.yaml":
 		return KindTelemetryBackends, "", true
 	case len(parts) >= 4 && parts[0] == "detectors":
+		if parts[1] == legacyIncidentDir && ValidDetectorID(parts[2]) {
+			return KindLegacyDetectorFile, parts[2], true
+		}
 		class, ok := classOfDir(parts[1])
 		if !ok || !ValidDetectorID(parts[2]) {
 			return "", "", false
@@ -527,7 +536,7 @@ func ArtifactID(reference string) (string, error) {
 // change the detector program that a running controller must reload.
 func RequiresControllerRollout(changedPaths []string) bool {
 	for _, p := range changedPaths {
-		if kind, _, ok := Classify(p); ok && (kind == KindLegacyDetectorManifest || kind == KindIncidentDetectorManifest || kind == KindIncidentDetectorSource || kind == KindPlaybookProgram || kind == KindLibrary) {
+		if kind, _, ok := Classify(p); ok && (kind == KindLegacyDetectorManifest || kind == KindLegacyDetectorFile || kind == KindLearnedDetectorManifest || kind == KindLearnedDetectorSource || kind == KindPlaybookProgram || kind == KindLibrary) {
 			return true
 		}
 	}

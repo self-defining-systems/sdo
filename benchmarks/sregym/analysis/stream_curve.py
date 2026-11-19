@@ -68,15 +68,15 @@ class Row:
     reflection_skipped: str | None = None
     match_reasons: str = ""
     detectors_after: int | None = None
-    incident_detectors_after: int | None = None
+    learned_detectors_after: int | None = None
     playbooks_after: int | None = None
-    fired_incident_detectors: str = ""
+    fired_learned_detectors: str = ""
     foreign_detector_firings: str = ""
     # Detector firing telemetry. None means the run predates it (unknown, not False).
     firing_telemetry: bool | None = None
-    incident_detector_fired_before_dispatch: bool | None = None
-    incident_detector_fired_after_dispatch: bool | None = None
-    no_incident_detector_fired: bool | None = None
+    learned_detector_fired_before_dispatch: bool | None = None
+    learned_detector_fired_after_dispatch: bool | None = None
+    no_learned_detector_fired: bool | None = None
     fired_detectors: str = ""
 
 
@@ -113,9 +113,9 @@ def firing_columns(receipt: dict[str, Any], stream: list[dict[str, Any]]) -> dic
 
     unknown: dict[str, Any] = {
         "firing_telemetry": None,
-        "incident_detector_fired_before_dispatch": None,
-        "incident_detector_fired_after_dispatch": None,
-        "no_incident_detector_fired": None,
+        "learned_detector_fired_before_dispatch": None,
+        "learned_detector_fired_after_dispatch": None,
+        "no_learned_detector_fired": None,
         "fired_detectors": "",
     }
     if receipt.get("detector_firing_available"):
@@ -123,9 +123,9 @@ def firing_columns(receipt: dict[str, Any], stream: list[dict[str, Any]]) -> dic
         fired = {str(e.get("detector_id")): str(e.get("relation")) for e in timeline}
         return {
             "firing_telemetry": True,
-            "incident_detector_fired_before_dispatch": receipt.get("incident_detector_fired_before_dispatch"),
-            "incident_detector_fired_after_dispatch": receipt.get("incident_detector_fired_after_dispatch"),
-            "no_incident_detector_fired": receipt.get("no_incident_detector_fired"),
+            "learned_detector_fired_before_dispatch": receipt.get("learned_detector_fired_before_dispatch"),
+            "learned_detector_fired_after_dispatch": receipt.get("learned_detector_fired_after_dispatch"),
+            "no_learned_detector_fired": receipt.get("no_learned_detector_fired"),
             "fired_detectors": ";".join(f"{name}:{relation}" for name, relation in fired.items()),
         }
     incident_id = receipt.get("incident_id")
@@ -145,9 +145,9 @@ def firing_columns(receipt: dict[str, Any], stream: list[dict[str, Any]]) -> dic
     incident_relations = {n: r for n, r in relations.items() if classes[n] != "health"}
     return {
         "firing_telemetry": True,
-        "incident_detector_fired_before_dispatch": "before_dispatch" in incident_relations.values(),
-        "incident_detector_fired_after_dispatch": "after_dispatch" in incident_relations.values(),
-        "no_incident_detector_fired": None,
+        "learned_detector_fired_before_dispatch": "before_dispatch" in incident_relations.values(),
+        "learned_detector_fired_after_dispatch": "after_dispatch" in incident_relations.values(),
+        "no_learned_detector_fired": None,
         "fired_detectors": ";".join(f"{name}:{relation}" for name, relation in relations.items()),
     }
 
@@ -168,7 +168,7 @@ def _git_show(repo: Path, rev: str, path: str) -> str | None:
 
 
 def memory_at(repo: Path, rev: str) -> tuple[int, int, int] | None:
-    """(detectors, incident detectors, playbooks) registered in ``.sdo/`` at commit ``rev``."""
+    """(detectors, learned detectors, playbooks) registered in ``.sdo/`` at commit ``rev``."""
 
     detectors = git_detector_manifests(repo, rev)
     if detectors is None:
@@ -180,7 +180,7 @@ def memory_at(repo: Path, rev: str) -> tuple[int, int, int] | None:
         check=False,
     ).stdout.splitlines()
     playbooks = [p for p in listing if p.endswith("/README.md") and p.count("/") == 3]
-    return len(detectors), sum(1 for d in detectors if d.get("class") == "incident"), len(playbooks)
+    return len(detectors), sum(1 for d in detectors if d.get("class") == "learned"), len(playbooks)
 
 
 def _receipts(pipeline_dir: Path) -> list[dict[str, Any]]:
@@ -208,7 +208,7 @@ def _detector_origins(repo: Path, rev: str) -> dict[str, str | None]:
     return {
         str(d.get("id") or d.get("name")): d.get("originatingIncident")
         for d in detectors
-        if isinstance(d, dict) and d.get("class") == "incident"
+        if isinstance(d, dict) and d.get("class") == "learned"
     }
 
 
@@ -247,7 +247,7 @@ def _sdo_row(
     fired: list[str] = []
     foreign: list[str] = []
     origins = _detector_origins(workspace, str(receipt["reflection_commit"])) if memory else {}
-    for state in receipt.get("incident_detector_states") or []:
+    for state in receipt.get("learned_detector_states") or []:
         if isinstance(state, dict) and state.get("firing", state.get("state") == "firing"):
             name = str(state.get("detector") or state.get("id") or state.get("name"))
             fired.append(name)
@@ -275,9 +275,9 @@ def _sdo_row(
         reflection_skipped=stage.reflection_skipped_reason,
         match_reasons=";".join(stage.match_reasons),
         detectors_after=memory[0] if memory else None,
-        incident_detectors_after=memory[1] if memory else None,
+        learned_detectors_after=memory[1] if memory else None,
         playbooks_after=memory[2] if memory else None,
-        fired_incident_detectors=";".join(fired),
+        fired_learned_detectors=";".join(fired),
         foreign_detector_firings=";".join(foreign),
         **firing_columns(receipt, stream or []),
     )
@@ -397,7 +397,7 @@ def plot(rows: list[Row], out: Path) -> Path | None:
     axes[2].step(xs, [r.playbooks_after for r in sdo_rows_], where="post", label="playbooks", color="#1f6feb")
     axes[2].step(xs, [r.detectors_after for r in sdo_rows_], where="post", label="detectors", color="#d29922")
     axes[2].step(
-        xs, [r.incident_detectors_after for r in sdo_rows_], where="post", label="incident detectors", color="#2da44e"
+        xs, [r.learned_detectors_after for r in sdo_rows_], where="post", label="learned detectors", color="#2da44e"
     )
     axes[2].set_title("SDO operational memory")
     for axis in axes:
@@ -443,9 +443,9 @@ def main(argv: list[str] | None = None) -> int:
                 "kind": r.kind,
                 "warm_path": r.warm_path,
                 "firing_telemetry": r.firing_telemetry,
-                "incident_detector_fired_before_dispatch": r.incident_detector_fired_before_dispatch,
-                "incident_detector_fired_after_dispatch": r.incident_detector_fired_after_dispatch,
-                "no_incident_detector_fired": r.no_incident_detector_fired,
+                "learned_detector_fired_before_dispatch": r.learned_detector_fired_before_dispatch,
+                "learned_detector_fired_after_dispatch": r.learned_detector_fired_after_dispatch,
+                "no_learned_detector_fired": r.no_learned_detector_fired,
                 "fired_detectors": r.fired_detectors,
             }
             for r in rows

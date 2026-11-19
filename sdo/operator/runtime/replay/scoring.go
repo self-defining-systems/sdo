@@ -29,10 +29,10 @@ func (r *Result) hasFailures() bool {
 }
 
 // Class is the existing manifest-backed role checked by the builder's generated
-// registration contracts. Family links govern incident detectors, not health.
+// registration contracts. Family links govern learned detectors, not health.
 func (r *Result) scoreDetector(phase string, row DetectorResult, familyMatch bool, c Case) {
 	trigger := phase + ":detector:" + row.ID
-	if row.Class != sdk.DetectorClassHealth && row.Class != sdk.DetectorClassIncident {
+	if row.Class != sdk.DetectorClassHealth && row.Class != sdk.DetectorClassLearned {
 		r.Errors = append(r.Errors, trigger+": invalid detector class")
 		return
 	}

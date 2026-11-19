@@ -107,7 +107,7 @@ func Decode(stdout []byte) (Verdict, error) {
 
 // GatingClasses are the detector classes whose verdict gates an upstream
 // advance: the health objective and the designer's health detectors judge the
-// candidate. Incident detectors (learned by reflection, responder-owned) are
+// candidate. Learned detectors (learned by reflection, responder-owned) are
 // not part of the gate: they compare live state against a baseline the advance
 // legitimately changes, and a real fault after the advance reaches them
 // through ordinary detection.
@@ -122,7 +122,7 @@ func ParseClasses(value string) ([]sdk.DetectorClass, error) {
 	var classes []sdk.DetectorClass
 	for _, name := range strings.Split(value, ",") {
 		class := sdk.DetectorClass(strings.TrimSpace(name))
-		if class != sdk.DetectorClassHealth && class != sdk.DetectorClassIncident {
+		if class != sdk.DetectorClassHealth && class != sdk.DetectorClassLearned {
 			return nil, fmt.Errorf("unknown detector class %q", name)
 		}
 		classes = append(classes, class)

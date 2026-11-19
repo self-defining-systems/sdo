@@ -38,8 +38,8 @@ const gateProgramFixture = "../../../../tests/fixtures/sdo/playbook_program_app/
 const gateProgramInvalid = "program.invalid"
 
 const (
-	gateCache          = ".sdo/diagnostics/detectors/incidents/cache/detector.go"
-	gateCacheManifest  = ".sdo/diagnostics/detectors/incidents/cache/manifest.yaml"
+	gateCache          = ".sdo/diagnostics/detectors/learned/cache/detector.go"
+	gateCacheManifest  = ".sdo/diagnostics/detectors/learned/cache/manifest.yaml"
 	gateHealth         = ".sdo/diagnostics/detectors/health/health/detector.go"
 	gateHealthManifest = ".sdo/diagnostics/detectors/health/health/manifest.yaml"
 	gateReadme         = ".sdo/playbooks/base/README.md"
@@ -47,7 +47,7 @@ const (
 )
 
 func gateIncidentManifest(id, firing, origin string) string {
-	return "apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\nid: " + id + "\nconstructor: New\nclass: incident\nowner: responder\nwatches:\n  - apiVersion: v1\n    kind: Pod\ninterval: 30s\npersistence:\n  firing: " + firing + "\n  clearing: 1\nbatching:\n  severity: warn\n  debounce: \"0\"\npossiblePlaybooks:\n  - base\noriginatingIncident: " + origin + "\noriginatingCommit: abc\n"
+	return "apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\nid: " + id + "\nconstructor: New\nclass: learned\nowner: responder\nwatches:\n  - apiVersion: v1\n    kind: Pod\ninterval: 30s\npersistence:\n  firing: " + firing + "\n  clearing: 1\nbatching:\n  severity: warn\n  debounce: \"0\"\npossiblePlaybooks:\n  - base\noriginatingIncident: " + origin + "\noriginatingCommit: abc\n"
 }
 
 func gateReadmeText(extra string) string {
@@ -164,7 +164,7 @@ func gateWithRepairVerifier(name string, verified bool, row gateRow) gateRow {
 	return row
 }
 
-// gateUnscopedBinding rewrites the cache incident detector to bind a role by
+// gateUnscopedBinding rewrites the cache learned detector to bind a role by
 // name, with the given manifest and Spec playbook declarations.
 func gateUnscopedBinding(manifestPlaybooks, specPlaybooks string) func(*testing.T, string) {
 	return func(t *testing.T, r string) {
@@ -176,7 +176,7 @@ func gateUnscopedBinding(manifestPlaybooks, specPlaybooks string) func(*testing.
 	}
 }
 
-// gateStateReader makes the incident detector an app-state reader, which only
+// gateStateReader makes the learned detector an app-state reader, which only
 // a health-class detector may be.
 func gateStateReader(t *testing.T, r string) {
 	edit(t, r, gateCache, "\"sdo.dev/operator/sdk\"\n", "\"sdo.dev/operator/sdk\"\n\t\"sdo.dev/operator/sdk/appstate\"\n")
@@ -386,9 +386,9 @@ var gateRows = []gateRow{
 	{name: "architecture missing", kind: gateStatic, rules: []string{RuleArchitectureMissing}, path: ".sdo/arch.md", edit: gateOverlay("architecture-missing")},
 	{name: "sources invalid", kind: gateStatic, rules: []string{RuleSourcesInvalid}, path: layout.SourcesFile, edit: gateOverlay("sources-invalid")},
 	{name: "goal owner", kind: gateStatic, rules: []string{RuleGoalOwner}, path: ".sdo/goal.md", edit: gateOverlay("goal-owner")},
-	{name: "manifest missing", kind: gateStatic, rules: []string{RuleManifestMissing}, path: ".sdo/diagnostics/detectors/incidents/orphan", edit: gateOverlay("manifest-missing")},
-	{name: "detector without Go source", kind: gateStatic, rules: []string{RuleDetectorNoSource}, path: ".sdo/diagnostics/detectors/incidents/cache", edit: gateOverlay("detector-no-source")},
-	{name: "duplicate id", kind: gateStatic, rules: []string{RuleDuplicateID}, path: ".sdo/diagnostics/detectors/incidents/health/manifest.yaml", edit: gateOverlay("duplicate-id")},
+	{name: "manifest missing", kind: gateStatic, rules: []string{RuleManifestMissing}, path: ".sdo/diagnostics/detectors/learned/orphan", edit: gateOverlay("manifest-missing")},
+	{name: "detector without Go source", kind: gateStatic, rules: []string{RuleDetectorNoSource}, path: ".sdo/diagnostics/detectors/learned/cache", edit: gateOverlay("detector-no-source")},
+	{name: "duplicate id", kind: gateStatic, rules: []string{RuleDuplicateID}, path: ".sdo/diagnostics/detectors/learned/health/manifest.yaml", edit: gateOverlay("duplicate-id")},
 	{name: "detector names an unknown playbook", kind: gateStatic, rules: []string{RuleUnknownPlaybook}, path: gateCacheManifest, edit: gateOverlay("unknown-playbook")},
 	{name: "playbook without README", kind: gateStatic, rules: []string{RulePlaybookNoReadme}, path: ".sdo/playbooks/extra", edit: gateOverlay("playbook-missing-readme")},
 	{name: "playbook owner", kind: gateStatic, rules: []string{RulePlaybookOwner}, path: gateReadme, edit: gateOverlay("playbook-owner")},
@@ -456,10 +456,10 @@ var gateRows = []gateRow{
 		}},
 
 	// Ownership: who may change what, in which phase.
-	{name: "responder edits an incident detector in reflection", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, edit: gateWrite(gateCache, "package cache\n\n// tuned\n")},
-	{name: "responder adds an incident detector in reflection", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, edit: func(t *testing.T, r string) {
-		write(t, r, ".sdo/diagnostics/detectors/incidents/dns/manifest.yaml", gateIncidentManifest("dns", "1", "inc-2"))
-		write(t, r, ".sdo/diagnostics/detectors/incidents/dns/detector.go", "package dns\n")
+	{name: "responder edits a learned detector in reflection", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, edit: gateWrite(gateCache, "package cache\n\n// tuned\n")},
+	{name: "responder adds a learned detector in reflection", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, edit: func(t *testing.T, r string) {
+		write(t, r, ".sdo/diagnostics/detectors/learned/dns/manifest.yaml", gateIncidentManifest("dns", "1", "inc-2"))
+		write(t, r, ".sdo/diagnostics/detectors/learned/dns/detector.go", "package dns\n")
 	}},
 	gateAppFileDenied(Responder, ReflectionPhase), gateAppFileDenied(Responder, InitialPhase),
 	gateAppFileDenied(Deployer, InitialPhase), gateAppFileDenied(Deployer, AdvancePhase), gateAppFileDenied(Deployer, ProposalPhase),
@@ -518,7 +518,7 @@ var gateRows = []gateRow{
 	{name: "upstream advance cannot change memory", kind: gateOwnership, actor: Upstream, phase: AdvancePhase, rules: []string{RuleOwnershipDenied}, path: layout.GoalFile,
 		edit: gateWrite(layout.GoalFile, "---\nschema_version: 1\nowner: human\n---\nNew goal\n")},
 	{name: "upkeep stamps the schema alone", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, edit: func(t *testing.T, r string) {
-		write(t, r, layout.SchemaVersionFile, "12\n")
+		write(t, r, layout.SchemaVersionFile, "13\n")
 		write(t, r, layout.DiagnosticsGoModFile, "module m\n")
 	}},
 	{name: "upkeep migration drops a retired Go-installed generic detector", kind: gateOwnership, actor: Upkeep, phase: InitialPhase,
@@ -527,16 +527,26 @@ var gateRows = []gateRow{
 			gateStrandedDetector(t, r, "synthetic-retired", "lifecycle-bootstrap")
 		},
 		edit: func(t *testing.T, r string) {
-			write(t, r, layout.SchemaVersionFile, "12\n")
+			write(t, r, layout.SchemaVersionFile, "13\n")
 			remove(t, r, layout.DetectorDir(layout.ClassHealth, "synthetic-retired"))
 		}},
+	{name: "upkeep migration moves incident-era detectors to the learned directory", kind: gateOwnership, actor: Upkeep, phase: InitialPhase,
+		prepare: func(t *testing.T, r string) {
+			write(t, r, layout.SchemaVersionFile, "12\n")
+			gateRetireLearnedDirectory(t, r)
+		},
+		edit: func(t *testing.T, r string) {
+			gateRestoreLearnedDirectory(t, r)
+		}},
+	{name: "a responder cannot write the retired incidents directory", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied},
+		edit: gateWrite(".sdo/diagnostics/detectors/incidents/old/detector.go", "package old\n")},
 	{name: "upkeep migration cannot drop an authored detector", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, rules: []string{RuleUpkeepMigration},
 		prepare: func(t *testing.T, r string) {
 			write(t, r, layout.SchemaVersionFile, "7\n")
 			gateStrandedDetector(t, r, "synthetic-authored", "initial")
 		},
 		edit: func(t *testing.T, r string) {
-			write(t, r, layout.SchemaVersionFile, "12\n")
+			write(t, r, layout.SchemaVersionFile, "13\n")
 			remove(t, r, layout.DetectorDir(layout.ClassHealth, "synthetic-authored"))
 		}},
 	{name: "responder cannot edit the goal", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, path: layout.GoalFile,
@@ -548,17 +558,17 @@ var gateRows = []gateRow{
 	{name: "responder cannot edit an unclassified memory path", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied}, edit: gateWrite(".sdo/notes.txt", "x\n")},
 	{name: "responder cannot change a health manifest", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleOwnershipDenied, RuleProtectedDetector},
 		edit: func(t *testing.T, r string) { edit(t, r, gateHealthManifest, "interval: 30s", "interval: 20s") }},
-	{name: "responder incident detector must fire on first match", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleResponderFiring}, edit: func(t *testing.T, r string) {
-		write(t, r, ".sdo/diagnostics/detectors/incidents/dns/manifest.yaml", gateIncidentManifest("dns", "2", "inc-2"))
-		write(t, r, ".sdo/diagnostics/detectors/incidents/dns/detector.go", "package dns\n")
+	{name: "responder learned detector must fire on first match", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleResponderFiring}, edit: func(t *testing.T, r string) {
+		write(t, r, ".sdo/diagnostics/detectors/learned/dns/manifest.yaml", gateIncidentManifest("dns", "2", "inc-2"))
+		write(t, r, ".sdo/diagnostics/detectors/learned/dns/detector.go", "package dns\n")
 	}},
 	{name: "responder cannot rewrite detector provenance", kind: gateOwnership, actor: Responder, phase: ReflectionPhase, rules: []string{RuleProvenanceRewrite},
 		edit: func(t *testing.T, r string) {
 			edit(t, r, gateCacheManifest, "originatingIncident: inc-1", "originatingIncident: inc-9")
 		}},
-	{name: "health judge cannot add an incident detector", kind: gateOwnership, actor: HealthJudge, phase: InitialPhase, rules: []string{RuleOwnershipDenied, RuleProtectedDetector}, edit: func(t *testing.T, r string) {
-		write(t, r, ".sdo/diagnostics/detectors/incidents/dns/manifest.yaml", gateIncidentManifest("dns", "1", "inc-2"))
-		write(t, r, ".sdo/diagnostics/detectors/incidents/dns/detector.go", "package dns\n")
+	{name: "health judge cannot add a learned detector", kind: gateOwnership, actor: HealthJudge, phase: InitialPhase, rules: []string{RuleOwnershipDenied, RuleProtectedDetector}, edit: func(t *testing.T, r string) {
+		write(t, r, ".sdo/diagnostics/detectors/learned/dns/manifest.yaml", gateIncidentManifest("dns", "1", "inc-2"))
+		write(t, r, ".sdo/diagnostics/detectors/learned/dns/detector.go", "package dns\n")
 	}},
 	{name: "health judge initial map probe without a Go-installable traffic detector", kind: gateOwnership, actor: HealthJudge, phase: InitialPhase, rules: []string{RuleInitialNeedsDetectors},
 		prepare: func(t *testing.T, r string) { write(t, r, layout.ArchitectureFile, mapInventory) },
@@ -686,9 +696,9 @@ var gateRows = []gateRow{
 	gateReflection("script names a StatefulSet Pod and a Service", gateClean(), gateUpdated("base"), func(t *testing.T, r string) {
 		edit(t, r, ".sdo/playbooks/base/scripts/fix.sh", "\n", "\nkubectl exec cache-0 -- true # svc/post-storage-service\n")
 	}),
-	gateReflection("incident detector binds roles without declaring a playbook", gateClean(), gateUpdated(), gateUnscopedBinding("possiblePlaybooks: []", "Playbooks: nil,"), RuleDetectorUnscopedBinding, RuleDetectorNamesNoPlaybook),
-	gateReflection("incident detector binds roles for its declared playbook", gateClean(), gateUpdated(), gateUnscopedBinding("possiblePlaybooks:\n  - base", `Playbooks: []string{"base"},`)),
-	gateReflection("incident detector implements an app-state reader", gateClean(), gateUpdated(), gateStateReader, RuleDetectorReaderClass),
+	gateReflection("learned detector binds roles without declaring a playbook", gateClean(), gateUpdated(), gateUnscopedBinding("possiblePlaybooks: []", "Playbooks: nil,"), RuleDetectorUnscopedBinding, RuleDetectorNamesNoPlaybook),
+	gateReflection("learned detector binds roles for its declared playbook", gateClean(), gateUpdated(), gateUnscopedBinding("possiblePlaybooks:\n  - base", `Playbooks: []string{"base"},`)),
+	gateReflection("learned detector implements an app-state reader", gateClean(), gateUpdated(), gateStateReader, RuleDetectorReaderClass),
 	{name: "accepted corpus case rewritten", kind: gateCheck, actor: Responder, phase: ReflectionPhase, rules: []string{gateProgramInvalid, RuleCorpusImmutable},
 		prepare: func(t *testing.T, r string) {
 			gateOutcome(gateClean())(t, r)
@@ -793,18 +803,18 @@ type gateCompileRow struct {
 }
 
 const (
-	gateFixtureDetector = ".sdo/diagnostics/detectors/incidents/missing-configmap/detector.go"
-	gateFixtureTest     = ".sdo/diagnostics/detectors/incidents/missing-configmap/detector_test.go"
+	gateFixtureDetector = ".sdo/diagnostics/detectors/learned/missing-configmap/detector.go"
+	gateFixtureTest     = ".sdo/diagnostics/detectors/learned/missing-configmap/detector_test.go"
 )
 
 var gateCompileRows = []gateCompileRow{
 	{name: "does not build", rule: RuleDetectorCompile, path: gateFixtureDetector,
-		fake: testutil.GoRule{Verb: "build", Output: "detectors/incidents/missing-configmap/detector.go:17: undefined: undefinedValue"},
+		fake: testutil.GoRule{Verb: "build", Output: "detectors/learned/missing-configmap/detector.go:17: undefined: undefinedValue"},
 		real: func(t *testing.T, root string) {
 			edit(t, root, gateFixtureDetector, "return Detector{}", "return undefinedValue")
 		}},
 	{name: "fails go vet", rule: RuleDetectorVet, path: gateFixtureDetector,
-		fake: testutil.GoRule{Verb: "vet", Output: "detectors/incidents/missing-configmap/detector.go:17: fmt.Sprintf format %d has arg of wrong type string"},
+		fake: testutil.GoRule{Verb: "vet", Output: "detectors/learned/missing-configmap/detector.go:17: fmt.Sprintf format %d has arg of wrong type string"},
 		real: func(t *testing.T, root string) {
 			edit(t, root, gateFixtureDetector, "return Detector{}", "_ = fmt.Sprintf(\"%d\", \"not a number\")\n\treturn Detector{}")
 		}},
@@ -813,7 +823,7 @@ var gateCompileRows = []gateCompileRow{
 		real: func(t *testing.T, root string) {
 			edit(t, root, gateFixtureTest, "len(findings) != 1", "len(findings) == 1")
 		}},
-	{name: "fires on the healthy baseline", rule: RuleDetectorHealthyBaseline, path: layout.DetectorDir(layout.ClassIncident, "missing-configmap"), baseline: true,
+	{name: "fires on the healthy baseline", rule: RuleDetectorHealthyBaseline, path: layout.DetectorDir(layout.ClassLearned, "missing-configmap"), baseline: true,
 		fake: testutil.GoRule{Verb: "test", ArgContains: gateHealthyBaselineStage, Output: "    healthy_baseline_test.go:15: detector.healthy-baseline[missing-configmap]: detector \"missing-configmap\" reported an active finding on healthy baseline snapshot empty-namespace.json"},
 		real: gateFiresOnHealthyBaseline},
 	// A healthy-baseline fault never hides another failure of the generated
@@ -826,7 +836,7 @@ var gateCompileRows = []gateCompileRow{
 			from := filepath.Join(root, filepath.Dir(gateFixtureDetector))
 			to := filepath.Join(filepath.Dir(from), "copied-configmap")
 			copyTree(t, from, to)
-			edit(t, root, ".sdo/diagnostics/detectors/incidents/copied-configmap/manifest.yaml", "id: missing-configmap", "id: copied-configmap")
+			edit(t, root, ".sdo/diagnostics/detectors/learned/copied-configmap/manifest.yaml", "id: missing-configmap", "id: copied-configmap")
 		}},
 	{name: "a query names a source nothing binds", rule: RuleTelemetryUnbound, path: layout.DiagnosticsDir,
 		fake: testutil.GoRule{Verb: "test", Output: "--- FAIL: TestDetectorQueriesResolveToBoundSources\n    telemetry_binding_test.go:30: telemetry.unbound[missing-configmap]: query \"q\": telemetry source \"nope\" is not bound; bound: none"},
@@ -867,7 +877,7 @@ func gateQueriesSource(t *testing.T, root string, sources ...string) {
 }
 
 // gateHealthyBaselineStage selects the generated healthy-baseline replay stage.
-const gateHealthyBaselineStage = "-run ^TestIncidentDetectorsStayQuietOnHealthyBaseline$"
+const gateHealthyBaselineStage = "-run ^TestLearnedDetectorsStayQuietOnHealthyBaseline$"
 
 // gateFiresOnHealthyBaseline makes the fixture detector fire on an empty namespace.
 func gateFiresOnHealthyBaseline(t *testing.T, root string) {
@@ -1090,4 +1100,38 @@ func gateStrandedDetector(t *testing.T, root, id, origin string) {
 	manifest = strings.Replace(manifest, "originatingCommit: initial", "originatingCommit: "+origin, 1)
 	write(t, root, layout.DetectorManifestPath(layout.ClassHealth, id), manifest)
 	write(t, root, layout.DetectorDir(layout.ClassHealth, id)+"/detector.go", "package synthetic\n")
+}
+
+// gateRetireLearnedDirectory rewrites the base's learned detectors the way a
+// schema 11 repository holds them: in detectors/incidents with class incident.
+func gateRetireLearnedDirectory(t *testing.T, root string) {
+	t.Helper()
+	detectors := filepath.Join(root, filepath.FromSlash(layout.DetectorsDir))
+	if err := os.Rename(filepath.Join(detectors, "learned"), filepath.Join(detectors, "incidents")); err != nil {
+		t.Fatal(err)
+	}
+	err := filepath.WalkDir(filepath.Join(detectors, "incidents"), func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		text := strings.ReplaceAll(string(data), "class: learned", "class: incident")
+		text = strings.ReplaceAll(text, "DetectorClassLearned", "DetectorClassIncident")
+		return os.WriteFile(p, []byte(text), 0o644)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// gateRestoreLearnedDirectory is the schema 13 transformation the broker
+// recomputes: the detectors/incidents directory becomes detectors/learned.
+func gateRestoreLearnedDirectory(t *testing.T, root string) {
+	t.Helper()
+	if _, err := layout.Migrate(root); err != nil {
+		t.Fatal(err)
+	}
 }

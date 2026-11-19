@@ -177,7 +177,7 @@ exited `UNCOVERED`, which is why historical stage tables show mostly
 incident's alert set and the stage's writes: once every finding is clear
 it exits `CLEARED` when Recovered holds (every user test of the alert set passed again
 after the writes settled). An applied program whose post-apply diagnose still
-`MATCH`es keeps the wait open for the incident detectors' longest rolling
+`MATCH`es keeps the wait open for the learned detectors' longest rolling
 window, then hands off. Historical receipts may carry `restored_source` and
 waits may show `recovered below operation strength` or an `UNCOVERED` churn
 hand-off; both are gone. A finding on a

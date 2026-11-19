@@ -114,7 +114,7 @@ def _sdo_stage(
     responder: dict[str, int],
     reflection: dict[str, int],
     warm: bool,
-    incident_detectors: int,
+    learned_detectors: int,
     passed: bool = True,
     lifecycle: dict[str, int] | None = None,
 ) -> Path:
@@ -150,13 +150,13 @@ def _sdo_stage(
         )
     sdo = stage / "application_workspace" / ".sdo"
     detectors = [{"id": "health-objective", "class": "health"}] + [
-        {"id": f"incident-{n}", "class": "incident"} for n in range(incident_detectors)
+        {"id": f"incident-{n}", "class": "learned"} for n in range(learned_detectors)
     ]
     for detector in detectors:
-        directory = sdo / "diagnostics" / "detectors" / ("health" if detector["class"] == "health" else "incidents")
+        directory = sdo / "diagnostics" / "detectors" / ("health" if detector["class"] == "health" else "learned")
         (directory / detector["id"]).mkdir(parents=True)
         (directory / detector["id"] / "manifest.yaml").write_text(yaml.safe_dump(detector), encoding="utf-8")
-    for playbook in ["health-objective"] + [f"incident-{n}" for n in range(incident_detectors)]:
+    for playbook in ["health-objective"] + [f"incident-{n}" for n in range(learned_detectors)]:
         (sdo / "playbooks" / playbook).mkdir(parents=True)
         (sdo / "playbooks" / playbook / "README.md").write_text("# playbook\n", encoding="utf-8")
     (sdo / "playbooks" / "README.md").write_text("# index\n", encoding="utf-8")
@@ -184,11 +184,11 @@ def pipeline(tmp_path: Path) -> Path:
         responder=_usage(600, 100),
         reflection=_usage(1_500, 100),
         warm=False,
-        incident_detectors=1,
+        learned_detectors=1,
         lifecycle=_usage(10_000, 0),
     )
-    _sdo_stage(root, 1, "repeat", PROBLEM_A, responder=_usage(200, 0), reflection={}, warm=True, incident_detectors=1)
-    _sdo_stage(root, 2, "variant", PROBLEM_B, responder=_usage(900, 0), reflection={}, warm=False, incident_detectors=2)
+    _sdo_stage(root, 1, "repeat", PROBLEM_A, responder=_usage(200, 0), reflection={}, warm=True, learned_detectors=1)
+    _sdo_stage(root, 2, "variant", PROBLEM_B, responder=_usage(900, 0), reflection={}, warm=False, learned_detectors=2)
     aborted = root / "stage_1_repeat.20260927_141722"
     aborted.mkdir()
     state = {
@@ -229,7 +229,7 @@ def test_loads_stage_metrics_from_receipts_rollouts_and_memory(pipeline: Path) -
     assert repeat.reflection_skipped_reason is not None
     assert repeat.reflection.total() == 0
     assert variant.memory is not None
-    assert (variant.memory.detectors, variant.memory.incident_detectors, variant.memory.playbooks) == (3, 2, 3)
+    assert (variant.memory.detectors, variant.memory.learned_detectors, variant.memory.playbooks) == (3, 2, 3)
 
 
 def test_cumulative_totals_and_break_even_against_codex(pipeline: Path, codex_dirs: list[Path]) -> None:
@@ -303,7 +303,7 @@ def test_reflection_turn_seconds_count_only_the_stage_incident_in_a_shared_usage
 
     root = tmp_path / "20260927_000000_pipeline_sdo-codex-luna-persistent"
     stage = _sdo_stage(
-        root, 0, "first", PROBLEM_A, responder=_usage(1, 0), reflection=_usage(1, 0), warm=False, incident_detectors=1
+        root, 0, "first", PROBLEM_A, responder=_usage(1, 0), reflection=_usage(1, 0), warm=False, learned_detectors=1
     )
     run = stage / "runs" / f"000000_{PROBLEM_A}" / "worker_0" / "results" / "sdo_codex" / PROBLEM_A / "run_1"
     receipt_path = run / "sdo_production_receipt_strict.json"
@@ -597,7 +597,7 @@ def test_headline_ttm_is_unknown_without_the_grading_wait(tmp_path: Path) -> Non
 def test_cumulative_time_and_tables_use_the_judge_free_ttm(tmp_path: Path, capsys) -> None:
     root = tmp_path / "20260927_000000_pipeline_sdo-codex-luna-persistent"
     stage = _sdo_stage(
-        root, 0, "first", PROBLEM_A, responder=_usage(1, 0), reflection=_usage(1, 0), warm=False, incident_detectors=1
+        root, 0, "first", PROBLEM_A, responder=_usage(1, 0), reflection=_usage(1, 0), warm=False, learned_detectors=1
     )
     results = stage / "runs" / f"000000_{PROBLEM_A}" / "worker_0" / "results"
     (results / "sdo_codex_ALL_results.csv").unlink()
@@ -677,7 +677,7 @@ def test_resumed_reflection_counts_only_its_own_turn_not_the_responder_before_it
     responder, reflection = _usage(500, 10, cached=400), _usage(300, 20, cached=250)
     session_total = _usage(800, 30, cached=650)
     stage = _sdo_stage(
-        root, 0, "first", PROBLEM_A, responder=responder, reflection=session_total, warm=False, incident_detectors=1
+        root, 0, "first", PROBLEM_A, responder=responder, reflection=session_total, warm=False, learned_detectors=1
     )
     run = stage / "runs" / f"000000_{PROBLEM_A}" / "worker_0" / "results" / "sdo_codex" / PROBLEM_A / "run_1"
     receipt_path = run / "sdo_production_receipt_strict.json"
@@ -698,7 +698,7 @@ def test_fresh_session_reflection_keeps_the_receipt_usage(tmp_path: Path) -> Non
     root = tmp_path / "20260927_000000_pipeline_sdo-codex-luna-persistent-fresh"
     reflection = _usage(300, 20, cached=250)
     stage = _sdo_stage(
-        root, 0, "first", PROBLEM_A, responder=_usage(500, 10), reflection=reflection, warm=False, incident_detectors=1
+        root, 0, "first", PROBLEM_A, responder=_usage(500, 10), reflection=reflection, warm=False, learned_detectors=1
     )
     run = stage / "runs" / f"000000_{PROBLEM_A}" / "worker_0" / "results" / "sdo_codex" / PROBLEM_A / "run_1"
     receipt_path = run / "sdo_production_receipt_strict.json"
@@ -786,7 +786,7 @@ class TestTokenBreakdown:
         root = tmp_path / "pipeline"
         stage = _sdo_stage(
             root, 0, "first", PROBLEM_A, responder=_usage(300, 30, cached=200), reflection={}, warm=True,
-            incident_detectors=0,
+            learned_detectors=0,
         )  # fmt: skip
         run = stage / "runs" / f"000000_{PROBLEM_A}" / "worker_0" / "results" / "sdo_codex" / PROBLEM_A / "run_1"
         rollout = run / "sdo_runtime" / "codex" / "sessions" / "2026" / "09" / "27" / "rollout-x-session-0.jsonl"
@@ -818,7 +818,7 @@ class TestPricing:
         root = tmp_path / "pipeline"
         stage = _sdo_stage(
             root, 0, "first", PROBLEM_A, responder=_usage(1_000, 100, cached=900), reflection={}, warm=True,
-            incident_detectors=0,
+            learned_detectors=0,
         )  # fmt: skip
         _config(stage, "sdo_codex", "gpt-6-luna", provider="codex")
         codex = _codex_experiment(tmp_path / "codex", [(PROBLEM_A, True, 2_000)])
@@ -953,7 +953,7 @@ def test_a_fresh_reflection_takes_its_breakdown_from_its_own_rollout(tmp_path: P
     root = tmp_path / "20260927_000000_pipeline_sdo-codex-luna-persistent-fresh"
     stage = _sdo_stage(
         root, 0, "first", PROBLEM_A, responder=_usage(500, 10), reflection=_usage(300, 30, cached=200), warm=False,
-        incident_detectors=1,
+        learned_detectors=1,
     )  # fmt: skip
     run = stage / "runs" / f"000000_{PROBLEM_A}" / "worker_0" / "results" / "sdo_codex" / PROBLEM_A / "run_1"
     receipt_path = run / "sdo_production_receipt_strict.json"
@@ -979,7 +979,7 @@ def test_a_stage_stopped_before_its_drain_keeps_responder_tokens_from_its_stage_
     root = tmp_path / "20260927_000000_pipeline_sdo-codex-luna-sequence"
     responder = _usage(500, 10, cached=400)
     stage = _sdo_stage(
-        root, 0, "first", PROBLEM_A, responder=responder, reflection=_usage(0, 0), warm=False, incident_detectors=1
+        root, 0, "first", PROBLEM_A, responder=responder, reflection=_usage(0, 0), warm=False, learned_detectors=1
     )
     run = stage / "runs" / f"000000_{PROBLEM_A}" / "worker_0" / "results" / "sdo_codex" / PROBLEM_A / "run_1"
     # The pipeline stopped before the next stage drained this incident: no strict receipt.

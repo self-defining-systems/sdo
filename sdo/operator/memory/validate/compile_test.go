@@ -85,7 +85,7 @@ func TestCompileStageDiagnostics(t *testing.T) {
 	} {
 		t.Run(stage.name, func(t *testing.T) {
 			bin := t.TempDir()
-			script := "#!/bin/sh\nif [ \"$1\" = \"" + stage.name + "\" ]; then\n printf '%s\\n' 'detectors/incidents/missing-configmap/detector.go:17: synthetic stage failure'\n exit 1\nfi\nexit 0\n"
+			script := "#!/bin/sh\nif [ \"$1\" = \"" + stage.name + "\" ]; then\n printf '%s\\n' 'detectors/learned/missing-configmap/detector.go:17: synthetic stage failure'\n exit 1\nfi\nexit 0\n"
 			if err := os.WriteFile(filepath.Join(bin, "go"), []byte(script), 0755); err != nil {
 				t.Fatal(err)
 			}

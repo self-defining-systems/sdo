@@ -46,18 +46,18 @@ def test_firing_columns_report_detectors_and_booleans_from_the_receipt() -> None
             _timeline_entry("learned-crashloop", "incident", "before_dispatch"),
             _timeline_entry("health-objective", "health", "no_incident"),
         ],
-        "incident_detector_fired_before_dispatch": True,
-        "incident_detector_fired_after_dispatch": False,
-        "no_incident_detector_fired": False,
+        "learned_detector_fired_before_dispatch": True,
+        "learned_detector_fired_after_dispatch": False,
+        "no_learned_detector_fired": False,
     }
 
     columns = firing_columns(receipt, [])
 
     assert columns == {
         "firing_telemetry": True,
-        "incident_detector_fired_before_dispatch": True,
-        "incident_detector_fired_after_dispatch": False,
-        "no_incident_detector_fired": False,
+        "learned_detector_fired_before_dispatch": True,
+        "learned_detector_fired_after_dispatch": False,
+        "no_learned_detector_fired": False,
         "fired_detectors": "learned-crashloop:before_dispatch;health-objective:no_incident",
     }
 
@@ -66,38 +66,38 @@ def test_firing_columns_for_a_run_without_telemetry_are_unknown_not_false() -> N
     columns = firing_columns({"incident_id": "demo-1"}, [])
 
     assert columns["firing_telemetry"] is None
-    assert columns["incident_detector_fired_before_dispatch"] is None
-    assert columns["incident_detector_fired_after_dispatch"] is None
-    assert columns["no_incident_detector_fired"] is None
+    assert columns["learned_detector_fired_before_dispatch"] is None
+    assert columns["learned_detector_fired_after_dispatch"] is None
+    assert columns["no_learned_detector_fired"] is None
     assert columns["fired_detectors"] == ""
 
 
 def test_firing_columns_fall_back_to_the_stream_when_the_receipt_lacks_a_timeline() -> None:
     stream = [
-        {"event": "activated", "detector_id": "learned", "detector_class": "incident", "incident_id": ""},
+        {"event": "activated", "detector_id": "learned", "detector_class": "learned", "incident_id": ""},
         {
             "event": "batched",
             "detector_id": "learned",
-            "detector_class": "incident",
+            "detector_class": "learned",
             "incident_id": "demo-1",
             "dispatch_relation": "before_dispatch",
         },
         {
             "event": "activated",
             "detector_id": "late",
-            "detector_class": "incident",
+            "detector_class": "learned",
             "incident_id": "demo-1",
             "dispatch_relation": "after_dispatch",
         },
-        {"event": "batched", "detector_id": "other", "detector_class": "incident", "incident_id": "demo-2"},
+        {"event": "batched", "detector_id": "other", "detector_class": "learned", "incident_id": "demo-2"},
     ]
 
     columns = firing_columns({"incident_id": "demo-1"}, stream)
 
     assert columns["firing_telemetry"] is True
-    assert columns["incident_detector_fired_before_dispatch"] is True
-    assert columns["incident_detector_fired_after_dispatch"] is True
-    assert columns["no_incident_detector_fired"] is None
+    assert columns["learned_detector_fired_before_dispatch"] is True
+    assert columns["learned_detector_fired_after_dispatch"] is True
+    assert columns["no_learned_detector_fired"] is None
     assert columns["fired_detectors"] == "learned:before_dispatch;late:after_dispatch"
 
 

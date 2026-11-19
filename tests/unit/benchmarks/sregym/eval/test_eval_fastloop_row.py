@@ -286,7 +286,7 @@ def memory_repo(tmp_path: Path) -> tuple[Path, str, str]:
     base = git(repo, "rev-parse", "HEAD")
     for name, body in (
         (".sdo/playbooks/new/p.go", "package x\n"),
-        (".sdo/diagnostics/detectors/incidents/d1/main.go", "package x\n"),
+        (".sdo/diagnostics/detectors/learned/d1/main.go", "package x\n"),
         (".sdo/corpus/case1/case.json", "{}\n"),
         (".sdo/lib/helpers/h.go", "package y\n"),
     ):

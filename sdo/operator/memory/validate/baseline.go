@@ -9,13 +9,13 @@ import (
 	"sdo.dev/operator/memory/layout"
 )
 
-func candidateHasIncidentDetector(candidate string) (bool, error) {
+func candidateHasLearnedDetector(candidate string) (bool, error) {
 	detectors, err := layout.ReadDetectors(filepath.Join(candidate, layout.DiagnosticsDir))
 	if err != nil {
 		return false, err
 	}
 	for _, detector := range detectors {
-		if detector.Class == layout.ClassIncident {
+		if detector.Class == layout.ClassLearned {
 			return true, nil
 		}
 	}
@@ -28,7 +28,7 @@ func BaselineGateRequired(candidate string, changedPaths []string) (bool, error)
 	// Reuse rollout dependency classification so editing those files cannot
 	// silently drop the healthy replay input on either acceptance transport.
 	if layout.RequiresControllerRollout(changedPaths) {
-		return candidateHasIncidentDetector(candidate)
+		return candidateHasLearnedDetector(candidate)
 	}
 	return false, nil
 }

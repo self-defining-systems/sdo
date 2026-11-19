@@ -74,7 +74,7 @@ var telemetryKinds = []layout.Kind{layout.KindTelemetrySources, layout.KindTelem
 // judge and reflection both edit final files and use this shared ownership policy.
 var grants = []grant{
 	{actor: Human, phase: ImportPhase, kinds: []layout.Kind{
-		layout.KindIncidentDetectorManifest, layout.KindIncidentDetectorSource,
+		layout.KindLearnedDetectorManifest, layout.KindLearnedDetectorSource,
 		layout.KindPlaybookIndex, layout.KindPlaybook, layout.KindPlaybookScript,
 		layout.KindPlaybookProgram, layout.KindLibrary, layout.KindCorpus,
 	}, only: func(kind layout.Kind, id string) bool {
@@ -101,8 +101,8 @@ var grants = []grant{
 
 	{actor: Human, phase: InitialPhase, kinds: []layout.Kind{layout.KindGoal, layout.KindSources}},
 	{actor: Upkeep, phase: InitialPhase, kinds: []layout.Kind{
-		layout.KindArchitecture, layout.KindSchemaVersion, layout.KindDiagnosticsModule, layout.KindLegacyDetectorManifest,
-		layout.KindHealthDetectorManifest, layout.KindIncidentDetectorManifest, layout.KindHealthDetectorSource, layout.KindIncidentDetectorSource,
+		layout.KindArchitecture, layout.KindSchemaVersion, layout.KindDiagnosticsModule, layout.KindLegacyDetectorManifest, layout.KindLegacyDetectorFile,
+		layout.KindHealthDetectorManifest, layout.KindLearnedDetectorManifest, layout.KindHealthDetectorSource, layout.KindLearnedDetectorSource,
 	}},
 	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindHealthDetectorManifest, layout.KindHealthDetectorSource}},
 	// Telemetry bindings are the detection designer's alone; responders name
@@ -116,7 +116,7 @@ var grants = []grant{
 	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindTrafficGenerator, layout.KindTrafficWorkload}, only: notIncidentTraffic},
 	{actor: HealthJudge, phase: InitialPhase, kinds: []layout.Kind{layout.KindPlaybookIndex, layout.KindPlaybook}, only: healthObjectiveOnly},
 	{actor: Responder, phase: ReflectionPhase, kinds: []layout.Kind{
-		layout.KindIncidentDetectorManifest, layout.KindIncidentDetectorSource,
+		layout.KindLearnedDetectorManifest, layout.KindLearnedDetectorSource,
 		layout.KindPlaybookIndex, layout.KindPlaybook, layout.KindPlaybookScript, layout.KindPlaybookProgram, layout.KindLibrary, layout.KindCorpus,
 	}},
 	{actor: Responder, phase: ReflectionPhase, kinds: []layout.Kind{layout.KindTrafficGenerator, layout.KindTrafficWorkload}, only: incidentTraffic},
@@ -304,7 +304,7 @@ func (s *run) patchOwnership(ctx context.Context) error {
 
 func changesManifests(paths []string) bool {
 	for _, p := range paths {
-		if kind, _, ok := layout.Classify(p); ok && (kind.IsDetectorManifest() || kind == layout.KindLegacyDetectorManifest) {
+		if kind, _, ok := layout.Classify(p); ok && (kind.IsDetectorManifest() || kind == layout.KindLegacyDetectorManifest || kind == layout.KindLegacyDetectorFile) {
 			return true
 		}
 	}
@@ -409,7 +409,7 @@ func (s *run) detectorOwnership(base string) error {
 	}
 	protected := layout.ClassHealth
 	if actor == HealthJudge {
-		protected = layout.ClassIncident
+		protected = layout.ClassLearned
 	}
 	old := map[string]layout.DetectorManifest{}
 	for _, det := range before {
@@ -433,11 +433,11 @@ func (s *run) detectorOwnership(base string) error {
 		case !existed && det.class == protected:
 			deny(RuleProtectedDetector, det.manifestAt, fmt.Sprintf("actor %s added protected %s detector %s", actor, protected, det.id))
 		}
-		if existed && (actor == Responder || actor == Human) && prior.DetectorClass() == layout.ClassIncident && (prior.OriginatingIncident != current.OriginatingIncident || prior.OriginatingCommit != current.OriginatingCommit) {
+		if existed && (actor == Responder || actor == Human) && prior.DetectorClass() == layout.ClassLearned && (prior.OriginatingIncident != current.OriginatingIncident || prior.OriginatingCommit != current.OriginatingCommit) {
 			deny(RuleProvenanceRewrite, det.manifestAt, fmt.Sprintf("responder rewrote detector %s provenance", det.id))
 		}
-		if (actor == Responder || actor == Human) && det.class == layout.ClassIncident && (!existed || !reflect.DeepEqual(prior, current)) && current.Persistence.Firing != 1 {
-			deny(RuleResponderFiring, det.manifestAt, fmt.Sprintf("new or changed incident detector %s must fire on first match (persistence.firing: 1)", det.id))
+		if (actor == Responder || actor == Human) && det.class == layout.ClassLearned && (!existed || !reflect.DeepEqual(prior, current)) && current.Persistence.Firing != 1 {
+			deny(RuleResponderFiring, det.manifestAt, fmt.Sprintf("new or changed learned detector %s must fire on first match (persistence.firing: 1)", det.id))
 		}
 	}
 	for _, det := range before {

@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-const nilContextPanic = `ok  	sdo.dev/diagnostics/detectors/incident/a	0.01s
-ok  	sdo.dev/diagnostics/detectors/incident/b	0.01s
+const nilContextPanic = `ok  	sdo.dev/diagnostics/detectors/learned/a	0.01s
+ok  	sdo.dev/diagnostics/detectors/learned/b	0.01s
 --- FAIL: TestScenarioDetectsWrongBodyNearMiss (0.00s)
 panic: cannot create context from nil parent [recovered]
 	panic: cannot create context from nil parent
@@ -18,15 +18,15 @@ context.WithDeadlineCause(...)
 	/usr/local/go/src/context/context.go:600
 sdo.dev/operator/sdk/traffic.(*Engine).Iterate(...)
 	/home/x/sdk/traffic/engine.go:195
-sdo.dev/diagnostics/detectors/incident/c.TestScenarioDetectsWrongBodyNearMiss(0x1)
-	/tmp/sdo-operator-build-123/detectors/incident/c/detector_test.go:16 +0x1d
-FAIL	sdo.dev/diagnostics/detectors/incident/c	0.02s
+sdo.dev/diagnostics/detectors/learned/c.TestScenarioDetectsWrongBodyNearMiss(0x1)
+	/tmp/sdo-operator-build-123/detectors/learned/c/detector_test.go:16 +0x1d
+FAIL	sdo.dev/diagnostics/detectors/learned/c	0.02s
 FAIL
 `
 
 func TestSummarizeGoTestKeepsPanicAndAuthoredFrame(t *testing.T) {
 	message, path := summarizeGoTest(nilContextPanic)
-	for _, want := range []string{"cannot create context from nil parent", "detectors/incident/c/detector_test.go:16", "--- FAIL: TestScenarioDetectsWrongBodyNearMiss"} {
+	for _, want := range []string{"cannot create context from nil parent", "detectors/learned/c/detector_test.go:16", "--- FAIL: TestScenarioDetectsWrongBodyNearMiss"} {
 		if !strings.Contains(message, want) {
 			t.Errorf("summary lacks %q:\n%s", want, message)
 		}
@@ -39,7 +39,7 @@ func TestSummarizeGoTestKeepsPanicAndAuthoredFrame(t *testing.T) {
 	if len(message) > len(nilContextPanic)/2 {
 		t.Errorf("summary is not shorter: %d of %d bytes", len(message), len(nilContextPanic))
 	}
-	if !strings.HasSuffix(path, "detectors/incident/c/detector_test.go") {
+	if !strings.HasSuffix(path, "detectors/learned/c/detector_test.go") {
 		t.Errorf("path = %q", path)
 	}
 }

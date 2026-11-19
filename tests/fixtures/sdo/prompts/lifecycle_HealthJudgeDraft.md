@@ -46,7 +46,7 @@ Edit files directly in this checkout:
   fault_class: health-objective-failure, originating_incident: lifecycle-bootstrap, then repair guidance with
   logical IDs and placeholders such as <AFFECTED_RESOURCE>, plus the skill's Request metrics, Fixtures, Probe costs and
   Calibration sections; and the index `.sdo/playbooks/README.md` listing the playbooks.
-Preserve incident detectors, other playbooks, the human goal, outcomes, schema-version and diagnostics go.mod.
+Preserve learned detectors, other playbooks, the human goal, outcomes, schema-version and diagnostics go.mod.
 Never put physical operational-memory paths in Go, the map or narrative; use logical IDs.
 
 The shared memory check installs generic detectors for workloads, Services, wiring, events, nodes, saturation,

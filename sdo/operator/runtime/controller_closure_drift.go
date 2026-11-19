@@ -79,7 +79,7 @@ func (c *Controller) verifyClosureSource(ctx context.Context, now time.Time, sna
 		if finding.DetectorID == "drift.unexplained" {
 			c.tracker.SetPolicy(finding.DetectorID, 1, 1, 0)
 			changes := c.tracker.ObserveBinding(now, finding, !resolved)
-			c.recordFiring(sdk.DetectorSpec{ID: finding.DetectorID, Class: sdk.DetectorClassIncident}, now, active[finding.DetectorID], changes)
+			c.recordFiring(sdk.DetectorSpec{ID: finding.DetectorID, Class: sdk.DetectorClassLearned}, now, active[finding.DetectorID], changes)
 		}
 	}
 	ids := make([]string, 0, len(active))

@@ -127,7 +127,7 @@ def test_diff_checks_follow_the_reflection_ownership_classes() -> None:
         ".sdo/playbooks/drift/README.md",
         ".sdo/playbooks/health-objective/README.md",
         ".sdo/corpus/drift-case/open.json",
-        ".sdo/diagnostics/detectors/incidents/drift/detector.go",
+        ".sdo/diagnostics/detectors/learned/drift/detector.go",
         ".sdo/diagnostics/detectors/health/workload/detector.go",
         ".sdo/outcomes/abc.json",
         "kubernetes/deployment.yaml",

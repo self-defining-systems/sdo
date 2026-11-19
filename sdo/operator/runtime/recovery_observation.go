@@ -45,7 +45,7 @@ func (c *Controller) alertSetHealthDetectors(request IncidentRequest) []string {
 }
 
 // recoveryDetectorIDs is the health authority for both recovery publication and
-// the final live recheck. Legacy bundles without health use incident detectors.
+// the final live recheck. Legacy bundles without health use learned detectors.
 func (c *Controller) recoveryDetectorIDs(request IncidentRequest) []string {
 	ids := c.alertSetHealthDetectors(request)
 	if len(ids) == 0 {

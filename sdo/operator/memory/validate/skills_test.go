@@ -146,7 +146,7 @@ func exampleTree(t *testing.T) string {
 	root := t.TempDir()
 	memory := filepath.Join(root, ".sdo")
 	copyTree(t, filepath.Join(skillsRoot, "sdo-detectors", "assets", "restart-loop"),
-		filepath.Join(memory, "diagnostics", "detectors", "incidents", "restart-loop"))
+		filepath.Join(memory, "diagnostics", "detectors", "learned", "restart-loop"))
 	copyTree(t, filepath.Join(skillsRoot, "sdo-playbook-authoring", "assets", "restart-loop"),
 		filepath.Join(memory, "playbooks", "restart-loop"))
 	write(t, root, ".sdo/goal.md", "---\nschema_version: 1\nowner: human\napplication: demo\n---\nKeep the application healthy.\n")

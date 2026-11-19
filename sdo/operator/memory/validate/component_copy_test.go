@@ -121,7 +121,7 @@ func New() sdk.Detector { return Detector{} }
 
 func (Detector) Spec() sdk.DetectorSpec {
 	return sdk.DetectorSpec{
-		ID: "orders-cache-acl", Class: sdk.DetectorClassIncident, Owner: sdk.DetectorOwnerResponder,
+		ID: "orders-cache-acl", Class: sdk.DetectorClassLearned, Owner: sdk.DetectorOwnerResponder,
 		Description:         "detect cache NOPERM failures in the orders read journey",
 		Watches:             []sdk.WatchKind{traffic.Watch},
 		Interval:            2 * time.Second,
@@ -154,7 +154,7 @@ func (d Detector) Detect(ctx context.Context, snapshot sdk.DetectionContext) ([]
 `
 
 func componentManifest(id, playbook, origin string) string {
-	return "apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\nid: " + id + "\nconstructor: New\nclass: incident\nowner: responder\nwatches:\n  - apiVersion: sdo.dev/v1alpha1\n    kind: SyntheticTraffic\ninterval: 2s\npersistence:\n  firing: 1\n  clearing: 2\nbatching:\n  severity: critical\n  debounce: 500ms\npossiblePlaybooks:\n  - " + playbook + "\noriginatingIncident: " + origin + "\noriginatingCommit: abc\n"
+	return "apiVersion: sdo.dev/v1alpha1\nkind: DetectorManifest\nsdkVersion: v0.1\nid: " + id + "\nconstructor: New\nclass: learned\nowner: responder\nwatches:\n  - apiVersion: sdo.dev/v1alpha1\n    kind: SyntheticTraffic\ninterval: 2s\npersistence:\n  firing: 1\n  clearing: 2\nbatching:\n  severity: critical\n  debounce: 500ms\npossiblePlaybooks:\n  - " + playbook + "\noriginatingIncident: " + origin + "\noriginatingCommit: abc\n"
 }
 
 func componentReadme(id, origin string) string {
@@ -181,8 +181,8 @@ func gateComponentCopy(name string, change func(t *testing.T, diagnose, mitigate
 			write(t, r, ".sdo/playbooks/orders-cache-acl/diagnose.go", componentDiagnose)
 			write(t, r, ".sdo/playbooks/orders-cache-acl/mitigate.go", componentMitigate)
 			write(t, r, ".sdo/playbooks/orders-cache-acl/README.md", componentReadme("orders-cache-acl", "inc-0"))
-			write(t, r, ".sdo/diagnostics/detectors/incidents/orders-cache-acl/detector.go", componentDetector)
-			write(t, r, ".sdo/diagnostics/detectors/incidents/orders-cache-acl/manifest.yaml", componentManifest("orders-cache-acl", "orders-cache-acl", "inc-0"))
+			write(t, r, ".sdo/diagnostics/detectors/learned/orders-cache-acl/detector.go", componentDetector)
+			write(t, r, ".sdo/diagnostics/detectors/learned/orders-cache-acl/manifest.yaml", componentManifest("orders-cache-acl", "orders-cache-acl", "inc-0"))
 			generateIndex(t, r)
 			gateOutcome(gateClean())(t, r)
 		},
@@ -201,8 +201,8 @@ func gateComponentCopy(name string, change func(t *testing.T, diagnose, mitigate
 					playbook = "orders-cache-acl"
 					detector = strings.ReplaceAll(detector, `"carts-cache-acl"}`, `"orders-cache-acl"}`)
 				}
-				write(t, r, ".sdo/diagnostics/detectors/incidents/carts-cache-acl/detector.go", gateFormatted(t, detector))
-				write(t, r, ".sdo/diagnostics/detectors/incidents/carts-cache-acl/manifest.yaml", componentManifest("carts-cache-acl", playbook, gateIncident))
+				write(t, r, ".sdo/diagnostics/detectors/learned/carts-cache-acl/detector.go", gateFormatted(t, detector))
+				write(t, r, ".sdo/diagnostics/detectors/learned/carts-cache-acl/manifest.yaml", componentManifest("carts-cache-acl", playbook, gateIncident))
 			}
 		},
 		request: func(r *Request) {
@@ -241,10 +241,10 @@ var componentCopyRows = []gateRow{
 	gateComponentCopy("new playbook with different evidence on another component passes", func(t *testing.T, diagnose, mitigate, _ string) (string, string, string) {
 		return strings.Replace(diagnose, `"NOPERM"`, `"OOM"`, 1), strings.Replace(mitigate, `"ACL", "SETUSER", "default", "on", "+@all"`, `"CONFIG", "SET", "maxmemory", "0"`, 1), ""
 	}, RulePlaybookComponentLiteral),
-	gateComponentCopy("new incident detector copies another for a different component", func(t *testing.T, _, _, detector string) (string, string, string) {
+	gateComponentCopy("new learned detector copies another for a different component", func(t *testing.T, _, _, detector string) (string, string, string) {
 		return "", "", strings.ReplaceAll(detector, "filtered", "kept")
 	}, RuleDetectorComponentCopy, RuleDetectorComponentLiteral),
-	gateComponentCopy("new incident detector with its own evidence passes", func(t *testing.T, _, _, detector string) (string, string, string) {
+	gateComponentCopy("new learned detector with its own evidence passes", func(t *testing.T, _, _, detector string) (string, string, string) {
 		return "", "", strings.Replace(detector, `"NOPERM"`, `"OOM"`, 1)
 	}, RuleDetectorComponentLiteral),
 }

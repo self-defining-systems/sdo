@@ -116,7 +116,7 @@ def incident(
         request.memory_snapshot.detectors.append(
             MemoryDetector(
                 id="detector-0",
-                detector_class="incident",
+                detector_class="learned",
                 owner="responder",
                 originating_incident="prior-toy",
                 possible_playbook_ids=["repair-0"],

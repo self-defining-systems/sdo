@@ -294,11 +294,11 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
                         "steps": [
                             {
                                 "kind": "write",
-                                "path": ".sdo/diagnostics/detectors/incidents/synthetic/detector.go",
+                                "path": ".sdo/diagnostics/detectors/learned/synthetic/detector.go",
                                 "text": "package synthetic\n",
                             }
                         ],
-                        "result": {"note": "Added synthetic incident detector"},
+                        "result": {"note": "Added synthetic learned detector"},
                     },
                 ],
             }
@@ -371,7 +371,7 @@ def test_responder_repair_tool_cli_and_reflection_edit_against_fake_api(scripted
                 idempotency_key=f"reflection:{incident}:{'a' * 40}",
             )
             assert reflected.note
-            assert (root / ".sdo/diagnostics/detectors/incidents/synthetic/detector.go").exists()
+            assert (root / ".sdo/diagnostics/detectors/learned/synthetic/detector.go").exists()
             assert not failures
         finally:
             stop.set()

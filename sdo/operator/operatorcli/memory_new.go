@@ -28,7 +28,7 @@ func (l *stringList) Set(v string) error { *l = append(*l, v); return nil }
 func memoryNew(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("memory new", flag.ContinueOnError)
 	root := flags.String("root", "", "repository checkout (default: the Git checkout containing the current directory)")
-	class := flags.String("class", string(layout.ClassIncident), "detector class: incident or health")
+	class := flags.String("class", string(layout.ClassLearned), "detector class: learned or health")
 	incident := flags.String("incident", getenv(memoryIncidentEnv), "originating incident (default $"+memoryIncidentEnv+")")
 	var playbooks stringList
 	flags.Var(&playbooks, "playbook", "playbook ID the detector may surface (repeatable)")
@@ -109,13 +109,13 @@ Repair: state the minimal change that restores <RESOURCE_NAME>, and how to verif
 }
 
 func scaffoldDetector(ctx context.Context, root, id string, class layout.Class, playbooks []string, incident string) ([]string, error) {
-	if class != layout.ClassIncident && class != layout.ClassHealth {
-		return nil, fmt.Errorf("unknown detector class %q (incident or health)", class)
+	if class != layout.ClassLearned && class != layout.ClassHealth {
+		return nil, fmt.Errorf("unknown detector class %q (learned or health)", class)
 	}
 	if !layout.ValidDetectorID(id) {
 		return nil, fmt.Errorf("invalid detector ID %q (pattern %s)", id, layout.DetectorIDPattern)
 	}
-	for _, other := range []layout.Class{layout.ClassIncident, layout.ClassHealth} {
+	for _, other := range []layout.Class{layout.ClassLearned, layout.ClassHealth} {
 		if taken, err := exists(root, layout.DetectorDir(other, id)); err != nil || taken {
 			return nil, errors.Join(err, fmt.Errorf("detector %s already exists", id))
 		}
@@ -130,7 +130,7 @@ func scaffoldDetector(ctx context.Context, root, id string, class layout.Class, 
 		PossiblePlaybooks: append([]string{}, playbooks...),
 		OriginatingCommit: headCommit(ctx, root),
 	}
-	if class == layout.ClassIncident {
+	if class == layout.ClassLearned {
 		manifest.OriginatingIncident = incident
 	}
 	if err := manifest.Validate(); err != nil {
@@ -181,7 +181,7 @@ func (d detectorTemplateData) ClassConstant() string {
 	if d.Manifest.DetectorClass() == layout.ClassHealth {
 		return "sdk.DetectorClassHealth"
 	}
-	return "sdk.DetectorClassIncident"
+	return "sdk.DetectorClassLearned"
 }
 
 func (d detectorTemplateData) OwnerConstant() string {

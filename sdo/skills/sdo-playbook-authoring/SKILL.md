@@ -7,7 +7,7 @@ description: Start here for reflection. Turn recorded hand repairs into validate
 
 Work in the proposal checkout, in this order. Open other files only when a step or a diagnostic names them.
 
-1. **Add detection.** A new or materially changed playbook with a program ships with a cause-specific incident detector
+1. **Add detection.** A new or materially changed playbook with a program ships with a cause-specific learned detector
    in this reflection ([how](../sdo-detectors/references/cause-specific.md)); skip it only when just the generic symptom exists, and say so in the outcome reason. Health detectors stay designer-owned.
    **Ask the check what is left.** Use supplied diagnostics without repeating a rejected probe. Otherwise call `check_memory` with `learning_decision: no_change` and a one-line `no_change_reason`.
    If it passes and no detection gap remains, return that decision immediately. Its diagnostics identify required work: uncovered hand
@@ -61,7 +61,7 @@ Keep revisions that applied cleanly unless this incident shows failure or incomp
 <!-- /replay:on -->
 
 - `reflection.detector-required`: no finding binds the program's roles. List the playbook in the detector it names, or copy
-  `assets/examples/detectors/crashloop-script-repair/` to `.sdo/diagnostics/detectors/incidents/<id>/`,
+  `assets/examples/detectors/crashloop-script-repair/` to `.sdo/diagnostics/detectors/learned/<id>/`,
   keep its manifest and `Spec` in step, and bind the role in `ParameterBindings`.
 
 <!-- replay:on -->

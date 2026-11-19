@@ -120,7 +120,7 @@ def test_merged_is_not_available_before_the_merge(tmp_path: Path, base_repo: tup
 
 def test_a_colliding_playbook_is_renamed_and_its_detector_follows(tmp_path: Path, base_repo: tuple[Path, str]) -> None:
     s = store(tmp_path, base_repo)
-    detector = ".sdo/diagnostics/detectors/incidents/d-{n}/manifest.yaml"
+    detector = ".sdo/diagnostics/detectors/learned/d-{n}/manifest.yaml"
     first = lane(
         tmp_path,
         "a",

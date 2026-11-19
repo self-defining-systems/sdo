@@ -78,7 +78,7 @@ func aclStage(t *testing.T, ensureOK, stillFailing bool) (*DeterministicResponse
 	settling.observed.Store(1)                                   // no rollout to wait for
 	world := &aclWorld{settlingWorld: settling, ensureOK: ensureOK, stillFailing: stillFailing}
 	clock := settling.clock
-	stall := trafficLearnedStall{settlingDetector{id: "api-acl", class: sdk.DetectorClassIncident, playbooks: []string{"api-acl"}, clock: clock}}
+	stall := trafficLearnedStall{settlingDetector{id: "api-acl", class: sdk.DetectorClassLearned, playbooks: []string{"api-acl"}, clock: clock}}
 	health := trafficLearnedStall{settlingDetector{id: "traffic-health", class: sdk.DetectorClassHealth, clock: clock}}
 	detectors := []sdk.Detector{health, stall}
 	acl := aclProgram{trafficStallProgram{restartProgram{id: "api-acl"}}}

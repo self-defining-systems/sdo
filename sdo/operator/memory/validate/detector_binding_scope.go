@@ -12,25 +12,25 @@ import (
 	"sdo.dev/operator/memory/layout"
 )
 
-// unscopedBindingDiagnostics rejects a changed incident detector that binds
+// unscopedBindingDiagnostics rejects a changed learned detector that binds
 // program roles by name but declares no playbook. program.BindFinding applies
 // a finding's named bindings only to the playbooks it lists, and a finding
 // that lists none (its detector declares none) offers them to every program:
 // the detector's literal or localized target would then reach every program
 // with a role of that name. Controller-generated drift findings keep that
-// broad offer; a responder's incident detector must scope its claim.
+// broad offer; a responder's learned detector must scope its claim.
 //
 // Limit: this is a name match in the detector's own non-test files. Bindings
 // set inside a shared .sdo/lib helper, or in a Finding literal built outside
 // the detector directory, are not seen, so such a detector keeps the broad
 // offer. The sound check sits at the binding call (core.ValidateFinding
-// refusing an incident-class finding with ParameterBindings and no
+// refusing a learned finding with ParameterBindings and no
 // Playbooks); it is not enforced yet because it would turn accepted
 // detectors that bind this way into evaluation errors at runtime.
 func unscopedBindingDiagnostics(root string, paths []string) []Diagnostic {
 	changed := map[string]bool{}
 	for _, p := range paths {
-		if kind, id, ok := layout.Classify(p); ok && (kind == layout.KindIncidentDetectorManifest || kind == layout.KindIncidentDetectorSource) {
+		if kind, id, ok := layout.Classify(p); ok && (kind == layout.KindLearnedDetectorManifest || kind == layout.KindLearnedDetectorSource) {
 			changed[id] = true
 		}
 	}
@@ -41,7 +41,7 @@ func unscopedBindingDiagnostics(root string, paths []string) []Diagnostic {
 	sort.Strings(ids)
 	var diagnostics []Diagnostic
 	for _, id := range ids {
-		manifestPath := layout.DetectorManifestPath(layout.ClassIncident, id)
+		manifestPath := layout.DetectorManifestPath(layout.ClassLearned, id)
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(manifestPath)))
 		if err != nil {
 			continue
@@ -50,7 +50,7 @@ func unscopedBindingDiagnostics(root string, paths []string) []Diagnostic {
 		if err != nil || len(manifest.PossiblePlaybooks) > 0 {
 			continue
 		}
-		dir := filepath.Join(root, filepath.FromSlash(layout.DetectorDir(layout.ClassIncident, id)))
+		dir := filepath.Join(root, filepath.FromSlash(layout.DetectorDir(layout.ClassLearned, id)))
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
@@ -62,7 +62,7 @@ func unscopedBindingDiagnostics(root string, paths []string) []Diagnostic {
 			}
 			if bindsByName(filepath.Join(dir, name)) {
 				diagnostics = append(diagnostics, Diagnostic{Rule: RuleDetectorUnscopedBinding, Path: manifestPath,
-					Message: "incident detector " + id + " binds program roles by name but declares no playbook, so its bindings reach every program with a role of that name",
+					Message: "learned detector " + id + " binds program roles by name but declares no playbook, so its bindings reach every program with a role of that name",
 					Hint:    "list the playbooks these bindings are for in possiblePlaybooks and Spec Playbooks; a finding's named bindings bind only the playbooks it lists"})
 				break
 			}
@@ -88,7 +88,7 @@ func bindsByName(file string) bool {
 	return found
 }
 
-// namedPlaybookDiagnostics holds a changed responder incident detector to its
+// namedPlaybookDiagnostics holds a changed responder learned detector to its
 // one job: retrieval. It must name at least one playbook, and each named
 // playbook must exist. The semantic check already rejects a missing playbook
 // whenever the memory holds any; this adds the case of a memory with none, so a
@@ -96,7 +96,7 @@ func bindsByName(file string) bool {
 func namedPlaybookDiagnostics(root string, paths []string) []Diagnostic {
 	changed := map[string]bool{}
 	for _, p := range paths {
-		if kind, id, ok := layout.Classify(p); ok && (kind == layout.KindIncidentDetectorManifest || kind == layout.KindIncidentDetectorSource) {
+		if kind, id, ok := layout.Classify(p); ok && (kind == layout.KindLearnedDetectorManifest || kind == layout.KindLearnedDetectorSource) {
 			changed[id] = true
 		}
 	}
@@ -117,7 +117,7 @@ func namedPlaybookDiagnostics(root string, paths []string) []Diagnostic {
 	}
 	var diagnostics []Diagnostic
 	for _, id := range ids {
-		manifestPath := layout.DetectorManifestPath(layout.ClassIncident, id)
+		manifestPath := layout.DetectorManifestPath(layout.ClassLearned, id)
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(manifestPath)))
 		if err != nil {
 			continue
@@ -128,8 +128,8 @@ func namedPlaybookDiagnostics(root string, paths []string) []Diagnostic {
 		}
 		if len(manifest.PossiblePlaybooks) == 0 {
 			diagnostics = append(diagnostics, Diagnostic{Rule: RuleDetectorNamesNoPlaybook, Path: manifestPath,
-				Message: "incident detector " + id + " names no playbook",
-				Hint:    "a responder's incident detector exists to retrieve the playbook for its cause: list that playbook in possiblePlaybooks, Spec Playbooks and each finding's Playbooks, or delete the detector"})
+				Message: "learned detector " + id + " names no playbook",
+				Hint:    "a responder's learned detector exists to retrieve the playbook for its cause: list that playbook in possiblePlaybooks, Spec Playbooks and each finding's Playbooks, or delete the detector"})
 			continue
 		}
 		if anyPlaybook {
@@ -138,7 +138,7 @@ func namedPlaybookDiagnostics(root string, paths []string) []Diagnostic {
 		for _, reference := range manifest.PossiblePlaybooks {
 			if layout.ValidPlaybookID(reference) && !exists(reference) {
 				diagnostics = append(diagnostics, Diagnostic{Rule: RuleUnknownPlaybook, Path: manifestPath,
-					Message: "incident detector " + id + " names playbook " + reference + ", which does not exist",
+					Message: "learned detector " + id + " names playbook " + reference + ", which does not exist",
 					Hint:    "write the playbook in the same change or remove it from possiblePlaybooks"})
 			}
 		}

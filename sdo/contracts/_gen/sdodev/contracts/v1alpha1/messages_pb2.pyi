@@ -839,16 +839,16 @@ class DetectorTimelineEntry(_message.Message):
     def __init__(self, detector_id: _Optional[str] = ..., detector_class: _Optional[str] = ..., owner: _Optional[str] = ..., rule_id: _Optional[str] = ..., fingerprint: _Optional[str] = ..., parameter_bindings: _Optional[_Mapping[str, _common_pb2.ObjectRef]] = ..., surfaced_playbook_ids: _Optional[_Iterable[str]] = ..., first_activated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., last_seen_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., relation: _Optional[str] = ..., activations: _Optional[int] = ...) -> None: ...
 
 class IncidentClosure(_message.Message):
-    __slots__ = ("request", "result", "dispatch_error", "final_detector_states", "incident_detector_states", "detector_timeline", "incident_detector_fired_before_dispatch", "incident_detector_fired_after_dispatch", "no_incident_detector_fired", "final_state_changes", "detected_at", "dispatched_at", "responder_completed_at", "verified_at", "health_cleared_at", "cleaned_helpers", "observation_generation", "partial_detector_states", "verified_while_responder_running", "closure_stability_window", "unconfirmed_reason", "unconfirmed_detail", "source_check_notes", "state_persistence_failure", "frozen", "recovery_verification", "escalated_at")
+    __slots__ = ("request", "result", "dispatch_error", "final_detector_states", "learned_detector_states", "detector_timeline", "learned_detector_fired_before_dispatch", "learned_detector_fired_after_dispatch", "no_learned_detector_fired", "final_state_changes", "detected_at", "dispatched_at", "responder_completed_at", "verified_at", "health_cleared_at", "cleaned_helpers", "observation_generation", "partial_detector_states", "verified_while_responder_running", "closure_stability_window", "unconfirmed_reason", "unconfirmed_detail", "source_check_notes", "state_persistence_failure", "frozen", "recovery_verification", "escalated_at")
     REQUEST_FIELD_NUMBER: _ClassVar[int]
     RESULT_FIELD_NUMBER: _ClassVar[int]
     DISPATCH_ERROR_FIELD_NUMBER: _ClassVar[int]
     FINAL_DETECTOR_STATES_FIELD_NUMBER: _ClassVar[int]
-    INCIDENT_DETECTOR_STATES_FIELD_NUMBER: _ClassVar[int]
+    LEARNED_DETECTOR_STATES_FIELD_NUMBER: _ClassVar[int]
     DETECTOR_TIMELINE_FIELD_NUMBER: _ClassVar[int]
-    INCIDENT_DETECTOR_FIRED_BEFORE_DISPATCH_FIELD_NUMBER: _ClassVar[int]
-    INCIDENT_DETECTOR_FIRED_AFTER_DISPATCH_FIELD_NUMBER: _ClassVar[int]
-    NO_INCIDENT_DETECTOR_FIRED_FIELD_NUMBER: _ClassVar[int]
+    LEARNED_DETECTOR_FIRED_BEFORE_DISPATCH_FIELD_NUMBER: _ClassVar[int]
+    LEARNED_DETECTOR_FIRED_AFTER_DISPATCH_FIELD_NUMBER: _ClassVar[int]
+    NO_LEARNED_DETECTOR_FIRED_FIELD_NUMBER: _ClassVar[int]
     FINAL_STATE_CHANGES_FIELD_NUMBER: _ClassVar[int]
     DETECTED_AT_FIELD_NUMBER: _ClassVar[int]
     DISPATCHED_AT_FIELD_NUMBER: _ClassVar[int]
@@ -871,11 +871,11 @@ class IncidentClosure(_message.Message):
     result: IncidentResult
     dispatch_error: str
     final_detector_states: _containers.RepeatedCompositeFieldContainer[DetectorEvaluation]
-    incident_detector_states: _containers.RepeatedCompositeFieldContainer[DetectorEvaluation]
+    learned_detector_states: _containers.RepeatedCompositeFieldContainer[DetectorEvaluation]
     detector_timeline: _containers.RepeatedCompositeFieldContainer[DetectorTimelineEntry]
-    incident_detector_fired_before_dispatch: bool
-    incident_detector_fired_after_dispatch: bool
-    no_incident_detector_fired: bool
+    learned_detector_fired_before_dispatch: bool
+    learned_detector_fired_after_dispatch: bool
+    no_learned_detector_fired: bool
     final_state_changes: StateChanges
     detected_at: _timestamp_pb2.Timestamp
     dispatched_at: _timestamp_pb2.Timestamp
@@ -894,7 +894,7 @@ class IncidentClosure(_message.Message):
     frozen: bool
     recovery_verification: RecoveryVerification
     escalated_at: _timestamp_pb2.Timestamp
-    def __init__(self, request: _Optional[_Union[IncidentRequest, _Mapping]] = ..., result: _Optional[_Union[IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., final_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., incident_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., detector_timeline: _Optional[_Iterable[_Union[DetectorTimelineEntry, _Mapping]]] = ..., incident_detector_fired_before_dispatch: _Optional[bool] = ..., incident_detector_fired_after_dispatch: _Optional[bool] = ..., no_incident_detector_fired: _Optional[bool] = ..., final_state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verified_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., health_cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cleaned_helpers: _Optional[_Iterable[str]] = ..., observation_generation: _Optional[str] = ..., partial_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., verified_while_responder_running: _Optional[bool] = ..., closure_stability_window: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., unconfirmed_reason: _Optional[_Union[ClosureUnconfirmedReason, str]] = ..., unconfirmed_detail: _Optional[str] = ..., source_check_notes: _Optional[_Iterable[str]] = ..., state_persistence_failure: _Optional[_Union[StatePersistenceFailure, _Mapping]] = ..., frozen: _Optional[bool] = ..., recovery_verification: _Optional[_Union[RecoveryVerification, _Mapping]] = ..., escalated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
+    def __init__(self, request: _Optional[_Union[IncidentRequest, _Mapping]] = ..., result: _Optional[_Union[IncidentResult, _Mapping]] = ..., dispatch_error: _Optional[str] = ..., final_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., learned_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., detector_timeline: _Optional[_Iterable[_Union[DetectorTimelineEntry, _Mapping]]] = ..., learned_detector_fired_before_dispatch: _Optional[bool] = ..., learned_detector_fired_after_dispatch: _Optional[bool] = ..., no_learned_detector_fired: _Optional[bool] = ..., final_state_changes: _Optional[_Union[StateChanges, _Mapping]] = ..., detected_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., dispatched_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., responder_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verified_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., health_cleared_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., cleaned_helpers: _Optional[_Iterable[str]] = ..., observation_generation: _Optional[str] = ..., partial_detector_states: _Optional[_Iterable[_Union[DetectorEvaluation, _Mapping]]] = ..., verified_while_responder_running: _Optional[bool] = ..., closure_stability_window: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., unconfirmed_reason: _Optional[_Union[ClosureUnconfirmedReason, str]] = ..., unconfirmed_detail: _Optional[str] = ..., source_check_notes: _Optional[_Iterable[str]] = ..., state_persistence_failure: _Optional[_Union[StatePersistenceFailure, _Mapping]] = ..., frozen: _Optional[bool] = ..., recovery_verification: _Optional[_Union[RecoveryVerification, _Mapping]] = ..., escalated_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class RecoveryVerification(_message.Message):
     __slots__ = ("since", "writes_settled", "writes", "opening_keys", "stable_since", "joined_keys")
