@@ -70,9 +70,19 @@ class InstallConfig:
     #: ``False``: no provided plan; SDO's deployer agent writes it from the repository (the production path), so
     #: it can add what the app lacks (request metrics, a telemetry overlay). ``True`` (default): the benchmark path.
     provided_plan: bool = True
+    #: The registry the deployer agent's image builds push to and the nodes pull from (host[:port], for a kind lane
+    #: the registry's name on the kind network); required without a provided plan, unused with one.
+    registry_host: str = ""
+    #: The registry speaks plain HTTP (a lane's local registry).
+    registry_insecure: bool = False
 
     def __post_init__(self) -> None:
         self.host_env()
+        if not self.provided_plan and not self.registry_host:
+            raise ValueError(
+                "registry_host is required without a provided plan: the deployer agent builds the app's images "
+                "and pushes them to that registry (sdo-operator host refuses the launch without it)"
+            )
         for name in ("namespace", "control_namespace", "objective", "controller_image", "responder_image", "model"):
             if not getattr(self, name):
                 raise ValueError(f"{name} is required")
@@ -125,6 +135,10 @@ class InstallConfig:
             "--kubeconfig",
             str(self.kubeconfig),
         ]
+        if self.registry_host:
+            args += ["--registry-host", self.registry_host]
+        if self.registry_insecure:
+            args.append("--registry-insecure")
         if self.journeys_file is not None:
             args += ["--journeys-file", str(self.journeys_file)]
         return [*args, *config.config_args((config.BENCH_PROFILE, *self.config_files))]
@@ -298,6 +312,13 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="no provided plan: SDO's deployer agent deploys from the repository (needs --source for the app's code)",
     )
+    p.add_argument(
+        "--registry-host",
+        default="",
+        help="registry the deployer's image builds push to and the nodes pull from (host[:port]; for a kind lane "
+        "its name on the kind network); required with --deployer",
+    )
+    p.add_argument("--registry-insecure", action="store_true", help="the registry speaks plain HTTP")
     a = p.parse_args(argv)
     cfg = InstallConfig(
         pack=a.pack.resolve(),
@@ -323,6 +344,8 @@ def main(argv: list[str] | None = None) -> int:
         config_files=tuple(path.resolve() for path in a.config),
         journeys_file=a.journeys_file.resolve() if a.journeys_file else None,
         provided_plan=not a.deployer,
+        registry_host=a.registry_host,
+        registry_insecure=a.registry_insecure,
     )
     cfg.work.mkdir(parents=True, exist_ok=True)
     return install(cfg, description=a.description)
