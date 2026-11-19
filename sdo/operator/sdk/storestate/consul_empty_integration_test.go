@@ -1,3 +1,5 @@
+//go:build integration
+
 package storestate_test
 
 import (
