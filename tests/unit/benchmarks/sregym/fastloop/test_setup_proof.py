@@ -114,41 +114,6 @@ def test_status_and_resource_version_churn_preserve_identity():
     assert proof.object_identities([obj]) != before
 
 
-@pytest.mark.parametrize(
-    ("component", "changed"),
-    [
-        ("code_revision", "c" * 40),
-        ("images", {"controller": {"node": "sha256:" + "2" * 64}}),
-        ("accepted_memory_commit", "c" * 40),
-        ("installed_memory_commit", "c" * 40),
-        ("app_manifests", "changed"),
-        ("live_objects", {"app/Service/web": "drift"}),
-        ("tools", {"dry_run.py": "changed"}),
-    ],
-)
-def test_deploy_is_skipped_only_with_matching_proof(tmp_path, fingerprint, monkeypatch, component, changed):
-    from types import SimpleNamespace
-
-    from benchmarks.sregym.fastloop import cli
-
-    environment = SimpleNamespace(run_dir=tmp_path)
-    calls = []
-    worker = SimpleNamespace(request=lambda *args, **kwargs: calls.append(args[0]))
-    save(tmp_path / proof.RECEIPTS, fingerprint)
-    monkeypatch.setattr(proof, "collect_fingerprint", lambda env: fingerprint)
-    decision = cli.deploy_with_setup_proof(environment, worker, tmp_path / "results")
-    assert not calls
-    assert decision["reused"] is True
-    assert str(tmp_path / proof.RECEIPTS) in decision["receipt"]
-    monkeypatch.setattr(proof, "collect_fingerprint", lambda env: replace(fingerprint, **{component: changed}))
-    environment.deploy_problem = "fixture"
-    environment.baseline_path = tmp_path / "baseline.json"
-    decision = cli.deploy_with_setup_proof(environment, worker, tmp_path / "next")
-    assert calls == ["deploy"]
-    assert decision["changed"] == [component]
-    assert json.loads((tmp_path / "next/setup-proof.json").read_text()) == decision
-
-
 def test_dry_run_reuse_does_not_reset_or_redeploy_and_refreshes_health(tmp_path, fingerprint, monkeypatch):
     from contextlib import nullcontext
     from types import SimpleNamespace

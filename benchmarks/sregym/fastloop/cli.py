@@ -801,7 +801,11 @@ def _sdo_agent(
             before_proof=getattr(args, "admission_before_proof", None),
             pre_onboarding_hook=getattr(args, "pre_onboarding_hook", None),
         )
-        ops = EvalAdmissionOps(ops, admission, fresh=fresh_memory_start)  # type: ignore[assignment]
+        from benchmarks.sregym.fastloop.setup_proof import seal_after_admission
+
+        ops = EvalAdmissionOps(  # type: ignore[assignment]
+            ops, admission, fresh=fresh_memory_start, on_proven=lambda proof: seal_after_admission(environment, proof)
+        )
 
     def start_native(context: object) -> bool:
         nonlocal fresh_memory_start
@@ -1035,11 +1039,14 @@ def deploy_with_setup_proof(
     allow_reuse: bool = True,
     redeploy: bool = False,
 ) -> dict[str, Any]:
-    """Reuse only the deploy/warm-up evidence; per-injection admission still runs."""
-    from benchmarks.sregym.fastloop.setup_proof import check_reuse
+    """Reuse the application deploy while it matches its last passing admission; per-injection admission still runs.
+
+    The row-start wipe has removed SDO's install, so the decision binds only what the deploy establishes.
+    """
+    from benchmarks.sregym.fastloop.setup_proof import check_application_reuse
 
     if allow_reuse:
-        _, decision = check_reuse(environment)
+        decision = check_application_reuse(environment)
     else:
         decision = {"reused": False, "receipt": None, "changed": ["setup_reuse_requires_sdo_admission"]}
     results_dir.mkdir(parents=True, exist_ok=True)
