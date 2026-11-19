@@ -84,7 +84,7 @@ from benchmarks.sregym.repository_git import host_clone_command, host_git_comman
 from sdo.agents.provider import AGENT_EFFORTS
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from benchmarks.sregym.adapter import ClusterOps, RuntimeConfig
     from benchmarks.sregym.fastloop.composite import CompositeSettings
@@ -1214,6 +1214,22 @@ def _run(args: argparse.Namespace) -> int:
 DEFAULT_CLAUDE_MODEL = "claude-sonnet-5-5"
 
 
+def opus_pool_missing(model: str, environ: Mapping[str, str]) -> str | None:
+    """Why SDO's workers would refuse every Opus session of this row, or None.
+
+    The worker admits an Opus session only through a filesystem pool (``libs.agent_cli.provider_capacity``); without
+    one the incident opens and every dispatch fails after the fault is injected.
+    """
+    if "opus" not in model.lower():
+        return None
+    mode = environ.get("SDO_OPUS_POOL_MODE", "shared")
+    if mode in {"per_host", "per_account"} and environ.get("SDO_OPUS_POOL_HOST_PATH", "").strip():
+        return None
+    if environ.get("SDO_OPUS_POOL_NFS_SERVER", "").strip() or environ.get("SDO_OPUS_POOL_DIR", "").strip():
+        return None
+    return f"model {model} needs an Opus session pool (SDO_OPUS_POOL_HOST_PATH, _NFS_SERVER or _DIR)"
+
+
 def _agent_model(args: argparse.Namespace) -> str:
     """``--model``, else the agent's default: stock Claude Code runs Sonnet 5.5, everything else gpt-6-luna.
 
@@ -1416,6 +1432,8 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
         )
         prepare_dev_mount(*mount_args, environment.parallel_root, evidence_root=environment.evidence_root)
     environment.apply_operator_env(os.environ)
+    if args.agent == "sdo" and (missing := opus_pool_missing(args.model, os.environ)):
+        raise SystemExit(f"eval: {missing}; configure the pool before the row deploys or injects")
     if environment.eks is not None:
         from benchmarks.sregym.fastloop.eks_lane import provision_opus_pool
 
