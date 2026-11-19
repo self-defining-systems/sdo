@@ -60,38 +60,57 @@ OWN_PAGE_WINDOW_SECONDS = 120.0
 
 #: Attempts after the first that a row gets when it is rejected before the fault is injected.
 ADMISSION_RETRIES = 5
-#: Pre-injection failures that say the host was slow or the lane not yet settled (not the application): SDO's install
-#: window rejecting an incomplete observation, a no-fault oracle rehearsal that ran while a recreated app still
-#: registered, a namespace stuck Terminating. Both arms retry them identically.
-PRE_INJECTION_RETRY_MARKERS = ("SDO rejected onboarding", "no-fault rehearsal has unhealthy", "wipe could not remove")
-
-
+#: Pre-injection failures that may say the host was slow or the lane not yet settled (not the application): SDO's
+#: install window rejecting an incomplete observation, a no-fault oracle rehearsal that ran while a recreated app still
+#: registered, a namespace stuck Terminating. Both arms retry them identically (``_rejected_before_injection``).
 #: Lane time the pre-injection retries of one cell may use, about one normal row: a failed attempt reinstalls SDO
 #: from scratch (5-6 min), and six of them held a lane for 30-66 min while every later row waited.
 ADMISSION_RETRY_BUDGET_SECONDS = 900
 
 
-def _rejected_before_injection(results: Path) -> str | None:
-    """The attempt's pre-injection rejection cause, when it is one of the retryable kinds; ``None`` otherwise.
-
-    The cause is normalized (numbers dropped), so two rejections that differ only in their timings compare equal.
-    """
-    path = results / "incidents.jsonl"
-    if not path.is_file():
-        return None
+def _json(path: Path) -> dict[str, Any]:
     try:
-        record = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
-    except (OSError, ValueError, IndexError):
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _rejected_before_injection(results: Path) -> str | None:
+    """The attempt's structured pre-injection rejection cause, when it is a retryable kind; ``None`` otherwise.
+
+    The cause comes from the attempt's structured evidence, never from its prose (which carries durations, counts and
+    generated pod names): the controller's onboarding rejection cause (``admission/onboarding.json``), the problem
+    whose no-fault rehearsal failed (``oracle-rehearsals``), or the wipe. A rejection without structured evidence is
+    ``<kind>:unknown``, so two of them count as the same cause.
+    """
+    record = next(iter(_json_lines(results / "incidents.jsonl")), None)
+    if record is None:
         return None
     injection = record.get("injection") or {}
+    if injection.get("state") != "not_injected" or injection.get("stage") != "pre_injection":
+        return None
     text = f"{record.get('error') or ''} {record.get('infra_error') or ''}"
-    if (
-        injection.get("state") == "not_injected"
-        and injection.get("stage") == "pre_injection"
-        and any(marker in text for marker in PRE_INJECTION_RETRY_MARKERS)
-    ):
-        return re.sub(r"\d+(\.\d+)?", "N", text.strip())
+    if "SDO rejected onboarding" in text:
+        cause = _json(results / "admission" / "onboarding.json").get("rejected_cause")
+        return "onboarding:" + (cause if isinstance(cause, str) and cause else "unknown")
+    if "no-fault rehearsal has unhealthy" in text:
+        failed = [
+            row.get("problem_id")
+            for row in (_json(path) for path in sorted((results / "oracle-rehearsals").glob("*.json")))
+            if (row.get("verdict") or {}).get("success") is not True
+        ]
+        return "no_fault_rehearsal:" + (failed[-1] if failed and isinstance(failed[-1], str) else "unknown")
+    if "wipe could not remove" in text:
+        return "wipe:namespaces_not_removed"
     return None
+
+
+def _json_lines(path: Path) -> list[dict[str, Any]]:
+    try:
+        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except (OSError, ValueError):
+        return []
 
 
 class RowSettings(BaseModel):
@@ -311,6 +330,8 @@ class FastloopRowRunner:
         self._lock = threading.Lock()
         self._state: dict[str, dict[str, Any]] = {}
         self.records: dict[str, IncidentRecord] = {}
+        #: Cell id -> the structured cause of the cell's last pre-injection rejection, the reason ``grade`` reports.
+        self.rejections: dict[str, str] = {}
 
     # LaneBackend -------------------------------------------------------------------------------------------------
 
@@ -388,6 +409,10 @@ class FastloopRowRunner:
 
     def grade(self, lane: Lane, cell: Cell) -> Verdict:
         record = self.records.get(cell.id)
+        cause = self.rejections.get(cell.id)
+        if cause is not None and (record is None or record.oracle is None):
+            # The scheduler parks on this reason: the structured cause, never prose with durations in it.
+            raise RuntimeError(f"eval: rejected before injection ({cause})")
         if record is None or record.oracle is None:
             raise RuntimeError("eval: the row produced no oracle verdict")
         harm = (
@@ -445,7 +470,8 @@ class FastloopRowRunner:
         results = environment.run_dir / "results"
         completed: int | None = None
         first_started: float | None = None
-        previous_cause: str | None = None
+        causes: list[str] = []
+        longest = 0.0
         for admission_try in range(1 + ADMISSION_RETRIES):
             attempt = len(list((environment.run_dir / "results").glob(f"{run_id(self.stage, cell, 0)[:-3]}-a*")))
             row_id = run_id(self.stage, cell, attempt)
@@ -483,19 +509,22 @@ class FastloopRowRunner:
                 return map_record(record, cell, None, state["fallback_page_at"])
             completed = self._finish_process(directory, state)
             cause = _rejected_before_injection(results)
+            longest = max(longest, self._now() - started)
+            # The fault was never injected: the install window or the clean-app rehearsal failed on a slow or loaded
+            # host, not on the application. Both arms start the next attempt from a clean wipe, but only while the
+            # cause is new in this cell and another attempt as long as the longest so far still fits the cell's lane
+            # time budget: a repeated cause is deterministic, and the row ends with it instead of holding the lane.
             retry = (
                 admission_try < ADMISSION_RETRIES
                 and cause is not None
-                and cause != previous_cause
-                and self._now() - first_started < ADMISSION_RETRY_BUDGET_SECONDS
+                and cause not in causes
+                and self._now() - first_started + longest <= ADMISSION_RETRY_BUDGET_SECONDS
             )
             self._record_attempt(directory, row_id, started, cause, retried=retry)
+            if cause is not None:
+                causes.append(cause)
+                self.rejections[cell.id] = cause
             if retry:
-                # The fault was never injected: the install window or the clean-app rehearsal failed on a slow or
-                # loaded host, not on the application. Both arms start the next attempt from a clean wipe, but only
-                # while the cause is new and the cell has not used about one row of lane time: a repeated cause is
-                # deterministic, and the row ends with it instead of holding the lane for another install.
-                previous_cause = cause
                 continue
             break
         # The row ended without an online end: an error before the grade, or a row that finished in one step.

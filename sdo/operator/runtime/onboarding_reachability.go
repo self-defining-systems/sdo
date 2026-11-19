@@ -149,8 +149,10 @@ type onboardingReachabilityState struct {
 	configurations map[string]string
 	invalid        bool
 	invalidReason  string
+	invalidCause   string
 	startedAt      time.Time
 	waitReason     string
+	waitCause      string
 	resumedAt      time.Time
 	servedTargets  map[string]bool
 	// firing maps each warning-or-worse finding seen after warm-up to the
@@ -240,20 +242,18 @@ func (c *Controller) prepareOnboardingReachability(ctx context.Context, now time
 	state.candidate = nil
 	verified, err := c.onboardingCommitReady(ctx, c.pendingOnboarding.AcceptedCommit)
 	if err != nil {
-		c.waitForOnboarding(ctx, "accepted lineage unavailable")
+		c.waitForOnboarding(ctx, "accepted lineage unavailable", "lineage_unavailable")
 		return snapshot
 	}
 	if !verified {
-		state.invalid = true
-		state.invalidReason = "accepted install lineage changed"
+		state.invalidate("accepted install lineage changed", "lineage_changed")
 		return snapshot
 	}
 	c.mu.Lock()
 	busy := c.incidentOpen || c.currentIncidentRequest != nil || c.closureBlocksNextLocked()
 	c.mu.Unlock()
 	if busy {
-		state.invalid = true
-		state.invalidReason = "incident work interrupted install window"
+		state.invalidate("incident work interrupted install window", "incident_work")
 		return snapshot
 	}
 	window, ok := servicehealth.ReachabilityFrom(snapshot)
@@ -278,14 +278,13 @@ func (c *Controller) prepareOnboardingReachability(ctx context.Context, now time
 	for _, target := range targets {
 		config, ok := servicehealth.ReachabilityTargetConfiguration(snapshot, target)
 		if !ok {
-			c.waitForOnboarding(ctx, "target configuration unavailable: "+target.ID())
+			c.waitForOnboarding(ctx, "target configuration unavailable: "+target.ID(), "target_configuration_unavailable:"+target.ID())
 			return snapshot
 		}
 		current[target.ID()] = config
 	}
 	if state.configurations != nil && !reflect.DeepEqual(state.configurations, current) {
-		state.invalid = true
-		state.invalidReason = fmt.Sprintf("target configuration changed: before=%v after=%v", state.configurations, current)
+		state.invalidate(fmt.Sprintf("target configuration changed: before=%v after=%v", state.configurations, current), "target_configuration_changed")
 	}
 	state.configurations = current
 	if state.invalid || !detectorsConfirmed(detectors, snapshot) || !onboardingSamplesSince(window, state.resumedAt) {
@@ -449,7 +448,7 @@ func (c *Controller) checkOnboardingHealth(ctx context.Context, snapshot sdk.Det
 	}
 	var contradiction *baselineContradictionError
 	if !errors.As(err, &contradiction) {
-		c.waitForOnboarding(ctx, err.Error())
+		c.waitForOnboarding(ctx, err.Error(), "baseline_unavailable")
 		return false
 	}
 	// Unavailable replicas during a rollout are the rollout, not a
@@ -457,18 +456,18 @@ func (c *Controller) checkOnboardingHealth(ctx context.Context, snapshot sdk.Det
 	// own expiry bounds the wait) rather than rejecting the namespace on
 	// the first iteration of the rollout it caused.
 	if rolling := rollingWorkloads(snapshot); len(rolling) > 0 {
-		c.waitForOnboarding(ctx, "rollout in progress: "+strings.Join(rolling, ", "))
+		c.waitForOnboarding(ctx, "rollout in progress: "+strings.Join(rolling, ", "), "rollout_in_progress")
 		return false
 	}
 	worst := contradiction.active[0]
 	if unobserved(worst) {
 		state.firing = nil
-		c.waitForOnboarding(ctx, "incomplete observation: "+findingNote(worst))
+		c.waitForOnboarding(ctx, "incomplete observation: "+findingNote(worst), "incomplete_observation:"+findingCause(worst))
 		return false
 	}
 	if !detectorsConfirmed(c.detectorList(), snapshot) {
 		state.firing = nil
-		c.waitForOnboarding(ctx, "warm-up not settled while "+contradiction.detector+" reports: "+findingNote(worst))
+		c.waitForOnboarding(ctx, "warm-up not settled while "+contradiction.detector+" reports: "+findingNote(worst), "warm_up:"+findingCause(worst))
 		return false
 	}
 	c.mu.Lock()
@@ -490,11 +489,10 @@ func (c *Controller) checkOnboardingHealth(ctx context.Context, snapshot sdk.Det
 		persisted = persisted || first < iteration
 	}
 	if !persisted {
-		c.waitForOnboarding(ctx, "confirming "+contradiction.detector+" over a second evaluation: "+findingNote(worst))
+		c.waitForOnboarding(ctx, "confirming "+contradiction.detector+" over a second evaluation: "+findingNote(worst), "confirming:"+findingCause(worst))
 		return false
 	}
-	state.invalid = true
-	state.invalidReason = err.Error()
+	state.invalidate(err.Error(), "baseline_firing:"+findingCause(worst))
 	return false
 }
 
@@ -519,17 +517,41 @@ func findingNote(f sdk.Finding) string {
 	return f.RuleID
 }
 
-func (c *Controller) onboardingRejectionReason(expired bool) string {
+// onboardingRejection is the rejection's human reason and its cause: the class (window contradicted or expired)
+// and the stable cause of what held it, without timings or generated names.
+func (c *Controller) onboardingRejection(expired bool) (string, string) {
 	if state := c.onboardingReachability; state != nil && state.invalid {
 		if state.invalidReason != "" {
-			return "install window contradicted: " + state.invalidReason
+			return "install window contradicted: " + state.invalidReason, "window_contradicted/" + state.invalidCause
 		}
-		return "install boundary contradicted or interrupted"
+		return "install boundary contradicted or interrupted", "window_contradicted/boundary"
 	}
 	if expired {
-		return "install observation window expired; incomplete observations: " + c.onboardingReachability.waitReason
+		return "install observation window expired; incomplete observations: " + c.onboardingReachability.waitReason,
+			"window_expired/" + c.onboardingReachability.waitCause
 	}
-	return ""
+	return "", ""
+}
+
+// invalidate marks the install window contradicted, with its reason and its stable cause.
+func (s *onboardingReachabilityState) invalidate(reason, cause string) {
+	s.invalid, s.invalidReason, s.invalidCause = true, reason, cause
+}
+
+// generatedNameKinds are kinds whose objects get generated names; a cause names only their kind.
+var generatedNameKinds = map[string]bool{"Pod": true, "ReplicaSet": true, "Job": true, "Event": true, "EndpointSlice": true}
+
+// findingCause is a finding's stable identity for a rejection cause: detector, rule and the primary object's kind,
+// plus its name when the name is authored rather than generated. Summaries and evidence carry timings and counts.
+func findingCause(f sdk.Finding) string {
+	cause := f.DetectorID + "/" + f.RuleID
+	if kind := f.PrimaryResource.Kind; kind != "" {
+		cause += "/" + kind
+		if f.PrimaryResource.Name != "" && !generatedNameKinds[kind] {
+			cause += "/" + f.PrimaryResource.Name
+		}
+	}
+	return cause
 }
 
 // rollingWorkloads names the workloads whose controller has not finished

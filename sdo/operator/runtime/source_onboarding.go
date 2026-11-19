@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"slices"
+	"sort"
+	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -144,25 +147,25 @@ func (c *Controller) beginOnboarding(ctx context.Context, detectors []sdk.Detect
 	// Every wait names itself, so an expired window reports what held it
 	// rather than an earlier, since-resolved reason.
 	if all := len(c.detectorList()); len(detectors) != all {
-		c.waitForOnboarding(ctx, fmt.Sprintf("install sweep pending: this step evaluated %d of %d detectors", len(detectors), all))
+		c.waitForOnboarding(ctx, fmt.Sprintf("install sweep pending: this step evaluated %d of %d detectors", len(detectors), all), "install_sweep_pending")
 		return nil
 	}
 	// Availability is checked before the create-once claim. Missing inventory
 	// is not a failed evaluation and can recover on a later iteration.
 	if len(c.healthDetectorIDs) == 0 {
-		c.waitForOnboarding(ctx, "health detectors unavailable")
+		c.waitForOnboarding(ctx, "health detectors unavailable", "health_detectors_unavailable")
 		return nil
 	}
 	if ConsumesServiceReachability(detectors) && (c.onboardingReachability == nil || c.onboardingReachability.candidate == nil) {
-		c.waitForOnboarding(ctx, "service reachability reference not captured")
+		c.waitForOnboarding(ctx, "service reachability reference not captured", "reachability_reference_missing")
 		return nil
 	}
 	if !c.pendingInventoryClear(c.pendingOnboarding, now) {
-		c.waitForOnboarding(ctx, "accepted inventory or informer readiness unavailable")
+		c.waitForOnboarding(ctx, "accepted inventory or informer readiness unavailable", "inventory_unavailable")
 		return nil
 	}
 	if ready, err := c.onboardingCommitReady(ctx, c.pendingOnboarding.AcceptedCommit); err != nil || !ready {
-		c.waitForOnboarding(ctx, "accepted lineage unavailable or unverified")
+		c.waitForOnboarding(ctx, "accepted lineage unavailable or unverified", "lineage_unverified")
 		return nil
 	}
 	actionCtx, cancel, err := c.actionContext(ctx)
@@ -183,7 +186,7 @@ func (c *Controller) beginOnboarding(ctx context.Context, detectors []sdk.Detect
 				loadErr = c.SetNamespaceOnboarding(existing)
 			}
 			if loadErr == nil && existing == nil {
-				loadErr = c.rejectPendingOnboarding(ctx, "install evaluation attempt was already consumed without completion")
+				loadErr = c.rejectPendingOnboarding(ctx, "install evaluation attempt was already consumed without completion", "attempt_consumed")
 			}
 			if loadErr == nil {
 				loadErr = c.prepareSourceInventory(ctx)
@@ -215,7 +218,7 @@ func (c *Controller) finishOnboarding(ctx context.Context, record *contracts.Nam
 	eligible := !c.incidentOpen && !c.closureBlocksNextLocked() && c.lastAcknowledgedIncidentID == "" && c.incidentDetectedAt.IsZero() && len(c.failedClosures) == 0 && commitVerified
 	c.mu.Unlock()
 	if !eligible || (c.onboardingReachability != nil && c.onboardingReachability.invalid) || errored || len(findings) != 0 || len(c.healthDetectorIDs) == 0 || !c.pendingInventoryClear(record, now) {
-		return c.rejectPendingOnboarding(ctx, "first install evaluation was not healthy, quiet and source verified")
+		return c.rejectPendingOnboarding(ctx, "first install evaluation was not healthy, quiet and source verified", "first_evaluation_unhealthy")
 	}
 	actionCtx, cancel, err := c.actionContext(ctx)
 	if err != nil {
@@ -268,15 +271,17 @@ func (c *Controller) observePendingOnboarding(ctx context.Context, now time.Time
 	c.mu.Unlock()
 	verified, err := c.onboardingCommitReady(ctx, c.pendingOnboarding.AcceptedCommit)
 	if busy {
-		c.onboardingReachability.invalid = true
-		c.onboardingReachability.invalidReason = "incident work interrupted install window"
+		c.onboardingReachability.invalidate("incident work interrupted install window", "incident_work")
 	} else if err == nil && !verified {
-		c.onboardingReachability.invalid = true
-		c.onboardingReachability.invalidReason = "accepted install lineage changed"
+		c.onboardingReachability.invalidate("accepted install lineage changed", "lineage_changed")
 	}
 	if findings, observed := c.pendingInventoryFindings(c.pendingOnboarding, now); observed && len(findings) != 0 {
-		c.onboardingReachability.invalid = true
-		c.onboardingReachability.invalidReason = fmt.Sprintf("source inventory contradicted install: %v", findings)
+		causes := make([]string, 0, len(findings))
+		for _, finding := range findings {
+			causes = append(causes, findingCause(finding))
+		}
+		sort.Strings(causes)
+		c.onboardingReachability.invalidate(fmt.Sprintf("source inventory contradicted install: %v", findings), "source_inventory:"+strings.Join(slices.Compact(causes), ","))
 	}
 }
 
@@ -319,13 +324,13 @@ func (c *Controller) onboardingCommitVerified(ctx context.Context, installed str
 
 // Rejection is durable, distinct from consuming a ready evaluation attempt.
 // Monitoring resumes even when automatic onboarding cannot establish authority.
-func (c *Controller) rejectPendingOnboarding(ctx context.Context, reason string) error {
+func (c *Controller) rejectPendingOnboarding(ctx context.Context, reason, cause string) error {
 	actionCtx, cancel, err := c.actionContext(ctx)
 	if err != nil {
 		return err
 	}
 	defer cancel()
-	if err := onboarding.Reject(actionCtx, c.onboardingClient, c.onboardingControl, reason); err != nil {
+	if err := onboarding.Reject(actionCtx, c.onboardingClient, c.onboardingControl, reason, cause); err != nil {
 		return err
 	}
 	c.pendingOnboarding = nil
@@ -344,10 +349,10 @@ func (c *Controller) onboardingCommitReady(ctx context.Context, installed string
 	}
 	return memory.HealthRefreshPreservesInstall(ctx, c.config.RepositoryWorktree, installed, current)
 }
-func (c *Controller) waitForOnboarding(ctx context.Context, reason string) {
+func (c *Controller) waitForOnboarding(ctx context.Context, reason, cause string) {
 	if c.onboardingReachability == nil || c.onboardingReachability.waitReason == reason {
 		return
 	}
-	c.onboardingReachability.waitReason = reason
+	c.onboardingReachability.waitReason, c.onboardingReachability.waitCause = reason, cause
 	slog.InfoContext(ctx, "namespace onboarding not ready", "reason", reason)
 }
