@@ -2307,16 +2307,19 @@ def transcripts(env: Mapping[str, str], out: Callable[[str], None] = _print) -> 
 # ---- baseline subcommand -------------------------------------------------------------------------------------
 
 
-def rebranch_bundle(raw: Path, out: Path, branch: str, work: Path) -> str:
-    """Rewrite a one-branch bundle so its branch is ``branch``; returns the commit."""
+def rebranch_bundle(raw: Path, out: Path, branch: str, work: Path, expected: str = "") -> str:
+    """Rewrite a one-head bundle (a branch, or ``HEAD`` of a detached checkout) so its one branch is ``branch``;
+    returns the commit. With ``expected``, refuse a bundle whose head is not that commit."""
     shutil.rmtree(work, ignore_errors=True)
-    listed = _run(["git", "bundle", "list-heads", str(raw)], "git bundle list-heads").stdout.split()
-    branches = [ref.removeprefix("refs/heads/") for ref in listed if ref.startswith("refs/heads/")]
-    if len(branches) != 1:
-        raise HookError(f"the archived bundle has {len(branches)} branches, expected one")
-    _run(["git", "clone", "-q", "-b", branches[0], str(raw), str(work)], "git clone bundle")
-    _run(["git", "-C", str(work), "checkout", "-q", "-B", branch], f"git checkout {branch}")
-    commit = _run(["git", "-C", str(work), "rev-parse", "HEAD"], "git rev-parse").stdout.strip()
+    listed = _run(["git", "bundle", "list-heads", str(raw)], "git bundle list-heads").stdout.splitlines()
+    refs = [line.partition(" ")[2].strip() for line in listed if line.strip()]
+    if len(refs) != 1:
+        raise HookError(f"the archived bundle has {len(refs)} heads ({', '.join(refs)}), expected one")
+    _run(["git", "init", "-q", str(work)], "git init")
+    _run(["git", "-C", str(work), "fetch", "-q", str(raw), f"{refs[0]}:refs/heads/{branch}"], "git fetch bundle")
+    commit = _run(["git", "-C", str(work), "rev-parse", f"refs/heads/{branch}"], "git rev-parse").stdout.strip()
+    if expected and commit != expected:
+        raise HookError(f"the bundled head {commit[:12]} is not the controller's HEAD {expected[:12]}")
     _run(["git", "-C", str(work), "bundle", "create", str(out.resolve()), branch], "git bundle create")
     if why := bundle_problem(out, branch, commit):
         raise HookError(why)
@@ -2331,16 +2334,19 @@ def archive_baseline(a: argparse.Namespace) -> Baseline:
     out.mkdir(parents=True, exist_ok=True)
     control = a.control_namespace or f"{a.namespace}-sdo"
     kube = Kube(a.context, str(a.kubeconfig.resolve()))
+    # the controller holds its accepted memory at a detached HEAD: bundle HEAD itself (never a branch it may not
+    # have), then check the bundled commit against the HEAD read on its own
+    git = "git -c safe.directory='*'"
+    head = kube.exec_controller(control, f"cd {APPLICATION_ROOT} && {git} rev-parse HEAD").decode().strip()
     script = (
-        f"cd {APPLICATION_ROOT} && b=$(git -c safe.directory='*' symbolic-ref --short HEAD) && "
-        "git -c safe.directory='*' bundle create /tmp/sdo-baseline.bundle \"$b\" >/dev/null 2>&1 && "
-        "cat /tmp/sdo-baseline.bundle; rc=$?; rm -f /tmp/sdo-baseline.bundle; exit $rc"
+        f'cd {APPLICATION_ROOT} && f=$(mktemp) && {git} bundle create "$f" HEAD >/dev/null 2>&1 && '
+        'cat "$f"; rc=$?; rm -f "$f"; exit $rc'
     )
     data = kube.exec_controller(control, script, timeout=600)
     with tempfile.TemporaryDirectory() as tmp:
         raw = Path(tmp) / "raw.bundle"
         raw.write_bytes(data)
-        commit = rebranch_bundle(raw, out / "memory.bundle", a.branch, Path(tmp) / "repo")
+        commit = rebranch_bundle(raw, out / "memory.bundle", a.branch, Path(tmp) / "repo", expected=head)
     env = {
         "KUBECONFIG": str(a.kubeconfig.resolve()),
         "FUZZOPS_KUBE_CONTEXT": a.context,

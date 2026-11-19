@@ -696,6 +696,55 @@ def test_rebranch_bundle_writes_the_named_branch(tmp_path: Path) -> None:
     assert heads.stdout.split() == [commit, "refs/heads/baseline"]
 
 
+def _detached_controller_repo(tmp: Path) -> tuple[Path, str]:
+    """A controller-like repository: the accepted memory checked out at a detached HEAD, a stale branch behind it."""
+    repo = tmp / "controller-repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    (repo / "README.md").write_text("synthetic\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "synthetic base")
+    (repo / "learned.txt").write_text("synthetic learned\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "synthetic learned")
+    head = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "--detach", head)
+    _git(repo, "branch", "-f", "main", "HEAD~1")
+    return repo, head
+
+
+def test_archive_baseline_bundles_a_detached_head_as_the_named_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the controller keeps its accepted memory at a detached HEAD; the archive must bundle that commit, not a branch
+    repo, head = _detached_controller_repo(tmp_path)
+    monkeypatch.setattr(hooks, "APPLICATION_ROOT", str(repo))
+    monkeypatch.setattr(hooks, "helm_render", lambda env, namespace: [{"kind": "ConfigMap", "metadata": {"name": "c"}}])
+    monkeypatch.setattr(hooks, "checkout_revision", lambda: COMMIT)
+
+    def exec_controller(self: Kube, control: str, script: str, timeout: float = 300) -> bytes:
+        return subprocess.run(["sh", "-c", script], check=True, capture_output=True).stdout
+
+    monkeypatch.setattr(Kube, "exec_controller", exec_controller)
+    out = tmp_path / "archived"
+    code = hooks.baseline_main(
+        ["--kubeconfig", str(tmp_path / "kubeconfig"), "--context", "kind-c", "--namespace", "ns1", "--out", str(out)]
+    )
+    assert code == 0
+    baseline = Baseline.load(out)
+    assert baseline.commit == head
+    assert hooks.bundle_problem(out / "memory.bundle", "baseline", head) == ""
+
+
+def test_rebranch_bundle_refuses_a_bundle_whose_head_is_not_the_expected_commit(tmp_path: Path) -> None:
+    raw, _ = _bundle(tmp_path, branch="main")
+    out = tmp_path / "new-baseline" / "memory.bundle"
+    out.parent.mkdir()
+    with pytest.raises(HookError, match="not the controller"):
+        hooks.rebranch_bundle(raw, out, "baseline", tmp_path / "work", expected=COMMIT)
+    assert not out.exists()
+
+
 # ---- evidence sink: transcripts and collect ------------------------------------------------------------------
 
 

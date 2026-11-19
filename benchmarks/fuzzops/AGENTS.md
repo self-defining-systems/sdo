@@ -96,7 +96,8 @@ it is read: each known flag maps to its key (`--response-timeout` to `response.t
 `--watch-only` to `mode`, ...), and a flag without a key, or one the hook sets, is refused with its name. The memory
 names its namespaces, so a baseline restores only into its own namespace. `python -m benchmarks.fuzzops.hooks baseline
 --kubeconfig F --context C --namespace NS --out DIR [--objective ...] [--branch B] [--pack P] [--config JSON]`
-archives a running lane's accepted memory (bundle from the controller's application repository) and its live render
+archives a running lane's accepted memory (the controller's application repository bundled at its HEAD, which is
+detached, as branch `B`, checked against the HEAD read separately) and its live render
 as a new format-2 baseline. Never commit baseline data into this repository.
 
 ## Fresh install (to make a baseline)
