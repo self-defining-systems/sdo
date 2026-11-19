@@ -32,6 +32,7 @@ _UNITS = {"": 1, "b": 1, "k": 1024, "m": 1024**2, "g": 1024**3}
 PRESSURE_FILE = Path("/proc/pressure/memory")
 MEMINFO_FILE = Path("/proc/meminfo")
 KIND_CLUSTER_LABEL = "io.x-k8s.kind.cluster"
+HOST_ENV_FILE = "~/.config/sdo/host.env"
 
 
 class HostMemoryRefused(ValueError):
@@ -71,6 +72,25 @@ class HostMemoryPolicy:
             max_pressure_avg60=float(env.get("SDO_HOST_MEMORY_PSI_MAX", default.max_pressure_avg60)),
             lane_budget_bytes=None if budget is None else int(float(budget) * _GIB),
         )
+
+
+def host_env(environ: Mapping[str, str]) -> dict[str, str]:
+    """``environ`` over the ``SDO_HOST_*`` lines of the host guard file, so a set-up host needs no exported variables.
+
+    The file is ``SDO_HOST_ENV_FILE`` or ``~/.config/sdo/host.env`` (written by ``python -m benchmarks.sregym.hosts``);
+    a missing or unreadable file contributes nothing and an explicit environment variable always wins.
+    """
+    path = Path(environ.get("SDO_HOST_ENV_FILE") or HOST_ENV_FILE).expanduser()
+    values: dict[str, str] = {}
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        match = re.match(r"\s*(?:export\s+)?(SDO_HOST_[A-Z_]+)=(.*)", line)
+        if match:
+            values[match[1]] = match[2].strip().strip("'\"")
+    return {**values, **environ}
 
 
 def parse_memory_size(text: str) -> int:
