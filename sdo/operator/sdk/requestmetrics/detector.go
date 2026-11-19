@@ -6,9 +6,13 @@
 //
 // The detector is deterministic and does no I/O: the controller freezes the
 // declared queries into the detection snapshot (so a recorded snapshot replays
-// the same findings), and the package only reads those results. A request
-// metric that lacks the declared series or labels is reported as "not
-// instrumented", never as silence.
+// the same findings), and the package only reads those results. A declared
+// request metric that lacks its series or labels is reported as "not
+// instrumented", never as silence. An operation the map gives no request
+// metric at all (Operation.Unmeasurable) is not applicable: the detector
+// raises nothing for it and names it in its coverage note
+// (ConfirmationReason while confirmed), so an application without request
+// metrics never fails acceptance, opens or holds an incident here.
 package requestmetrics
 
 import (
@@ -127,8 +131,10 @@ type Operation struct {
 	Route   string
 	// Method restricts the operation to one HTTP method; empty matches any.
 	Method string
-	// Unmeasurable, when set, says why the map cannot tell this operation's
-	// requests apart; the detector then reports it as not instrumented.
+	// Unmeasurable, when set, says why the map gives this operation no request
+	// metric to read (no entries record for its entry service, or one beyond
+	// the entries the detector reads). The operation is then not applicable:
+	// no finding, only the coverage note ConfirmationReason returns.
 	Unmeasurable string
 
 	// undeclared marks an operation the detector derived from a route of the
@@ -271,11 +277,10 @@ func (d *detector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Fi
 	}
 	var findings []sdk.Finding
 	for _, op := range d.cfg.Operations {
-		plan, ok := d.entries[op.Service]
-		if !ok || op.Unmeasurable != "" {
-			findings = append(findings, d.notInstrumented(ctx, op, op.Unmeasurable))
-			continue
+		if op.Unmeasurable != "" {
+			continue // not applicable: named in the coverage note, never a finding
 		}
+		plan := d.entries[op.Service]
 		if why := plan.instrumentation(results); why != "" {
 			if len(results[plan.pres.ID].Series) == 0 && serviceStarting(ctx, op.Service) {
 				continue // the scrape target is a pod still inside its startup, not a missing instrument
@@ -297,11 +302,60 @@ func (d *detector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Fi
 // Confirmed implements the observation confirmation contract: health cannot be
 // established while the metrics source has not scraped a declared service's
 // metric at all (no series), because that says nothing about the application.
-// Query errors are reported by Detect, not pending.
-func (d *detector) Confirmed(ctx sdk.DetectionContext) bool { return d.ConfirmationReason(ctx) == "" }
+// Query errors are reported by Detect, not pending. Not-applicable operations
+// never hold confirmation.
+func (d *detector) Confirmed(ctx sdk.DetectionContext) bool { return d.unscraped(ctx) == "" }
 
-// ConfirmationReason names the declared services whose metric has no series.
+// ConfirmationReason names the declared services whose metric has no series
+// while unconfirmed. Once confirmed it is the coverage note naming the
+// operations the detector is not applicable to, or "".
 func (d *detector) ConfirmationReason(ctx sdk.DetectionContext) string {
+	if why := d.unscraped(ctx); why != "" {
+		return why
+	}
+	return d.notApplicable()
+}
+
+// notApplicable words the operations the map gives no request metric, grouped
+// by reason, or "" when every operation is measurable.
+func (d *detector) notApplicable() string {
+	byReason := map[string][]string{}
+	var reasons []string
+	for _, op := range d.cfg.Operations {
+		if op.Unmeasurable == "" {
+			continue
+		}
+		if _, seen := byReason[op.Unmeasurable]; !seen {
+			reasons = append(reasons, op.Unmeasurable)
+		}
+		byReason[op.Unmeasurable] = append(byReason[op.Unmeasurable], op.ID)
+	}
+	if len(reasons) == 0 {
+		return ""
+	}
+	sort.Strings(reasons)
+	parts := make([]string, 0, len(reasons))
+	for _, why := range reasons {
+		ids := byReason[why]
+		sort.Strings(ids)
+		noun := "operation"
+		if len(ids) > 1 {
+			noun = "operations"
+		}
+		parts = append(parts, fmt.Sprintf("%s %s (%s)", noun, strings.Join(ids, ", "), why))
+	}
+	note := "request metrics not applicable to " + strings.Join(parts, "; ")
+	if len(note) > maxNoteBytes {
+		note = note[:maxNoteBytes] + "..."
+	}
+	return note
+}
+
+// maxNoteBytes bounds the coverage note; its head names the cause.
+const maxNoteBytes = 600
+
+// unscraped names the declared services whose metric has no series yet.
+func (d *detector) unscraped(ctx sdk.DetectionContext) string {
 	if d.err != nil {
 		return ""
 	}
