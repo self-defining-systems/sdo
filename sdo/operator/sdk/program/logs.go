@@ -68,7 +68,7 @@ func (snapshotReadView) LogsWithOptions(sdk.ObjectRef, corev1.PodLogOptions) (st
 }
 func (v *checkedReadView) LogsWithOptions(ref sdk.ObjectRef, options corev1.PodLogOptions) (string, error) {
 	r, err := v.ReadView.LogsWithOptions(ref, options)
-	v.check(err)
+	v.check("LogsWithOptions", err)
 	v.record("logs", podTarget(ref, options.Container), fmt.Sprintf("%d bytes", len(r)), err)
 	return r, err
 }
@@ -155,7 +155,7 @@ func (snapshotReadView) LogMatches(sdk.ObjectRef, string, time.Duration, string,
 }
 func (v *checkedReadView) LogMatches(ref sdk.ObjectRef, container string, since time.Duration, pattern string, max int) (LogMatchResult, error) {
 	r, err := v.ReadView.LogMatches(ref, container, since, pattern, max)
-	v.check(err)
+	v.check("LogMatches", err)
 	outcome := fmt.Sprintf("%d lines matched of %d scanned", len(r.Lines), r.Scanned)
 	if r.ScanTruncated {
 		outcome += " (scan truncated)"

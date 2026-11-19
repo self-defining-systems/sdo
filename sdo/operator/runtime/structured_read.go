@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/storeops"
 )
@@ -25,7 +26,7 @@ func (v LiveReadView) Read(q program.Query) (program.Observation, error) {
 	}
 	t := q.Store.Target
 	if t.Pod.Namespace != v.Namespace() {
-		return program.Observation{}, fmt.Errorf("store read outside snapshot namespace")
+		return program.Observation{}, sdk.Classified("store read outside snapshot namespace", sdk.ErrInvalidRead)
 	}
 	if err := (TypedPlanClient{ProtectedNamespace: v.ProtectedNamespace}).checkPlanNamespace(t.Pod.Namespace); err != nil {
 		return program.Observation{}, err

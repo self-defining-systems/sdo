@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/appstate"
@@ -385,9 +386,11 @@ func (s *Server) Evaluate(ctx context.Context, request *pb.EvaluateRequest) (*pb
 		result := &pb.MemoryDetectorResult{DetectorId: id}
 		d := s.detectors[id]
 		if d == nil {
-			result.Error = "detector is not registered"
+			result.Error, result.ErrorClass = "detector is not registered", sdk.ReadClassUnavailable
 		} else {
-			result.Findings, result.Error = s.runDetector(ctx, d, s.detectionView(snapshot))
+			var failure detectorFailure
+			result.Findings, failure = s.runDetector(ctx, d, s.detectionView(snapshot))
+			result.Error, result.ErrorClass = failure.text, failure.class
 		}
 		response.Results = append(response.Results, result)
 	}
@@ -412,12 +415,12 @@ func withinTransportBudget(ctx context.Context) (context.Context, context.Cancel
 // runDetector runs one detector, abandoning it when it outlives ctx. A detector
 // that ignores its context keeps its goroutine, so it is never started twice
 // concurrently: the leak is bounded by the number of detectors.
-func (s *Server) runDetector(ctx context.Context, d sdk.Detector, view sdk.DetectionContext) ([]*pb.Finding, string) {
+func (s *Server) runDetector(ctx context.Context, d sdk.Detector, view sdk.DetectionContext) ([]*pb.Finding, detectorFailure) {
 	id := d.Spec().ID
 	s.runMu.Lock()
 	if s.running[id] {
 		s.runMu.Unlock()
-		return nil, "detector is still running a previous evaluation"
+		return nil, detectorFailure{"detector is still running a previous evaluation", sdk.ReadClassUnavailable}
 	}
 	if s.running == nil {
 		s.running = map[string]bool{}
@@ -426,7 +429,7 @@ func (s *Server) runDetector(ctx context.Context, d sdk.Detector, view sdk.Detec
 	s.runMu.Unlock()
 	type outcome struct {
 		findings []*pb.Finding
-		failure  string
+		failure  detectorFailure
 	}
 	done := make(chan outcome, 1)
 	go func() {
@@ -442,19 +445,25 @@ func (s *Server) runDetector(ctx context.Context, d sdk.Detector, view sdk.Detec
 	case got := <-done:
 		return got.findings, got.failure
 	case <-ctx.Done():
-		return nil, fmt.Sprintf("detector evaluation abandoned: %v", ctx.Err())
+		return nil, detectorFailure{fmt.Sprintf("detector evaluation abandoned: %v", ctx.Err()), sdk.ReadClassUnavailable}
 	}
 }
-func detect(ctx context.Context, d sdk.Detector, snapshot sdk.DetectionContext) (findings []*pb.Finding, failure string) {
+
+// detectorFailure is why a detector produced no answer: its text and its read
+// class (sdk.ReadErrorClass). A panic is a deterministic program fault, so it is
+// invalid; an error with no class is unavailable.
+type detectorFailure struct{ text, class string }
+
+func detect(ctx context.Context, d sdk.Detector, snapshot sdk.DetectionContext) (findings []*pb.Finding, failure detectorFailure) {
 	defer func() {
 		if value := recover(); value != nil {
 			findings = nil
-			failure = fmt.Sprintf("detector panic: %v", value)
+			failure = detectorFailure{fmt.Sprintf("detector panic: %v", value), sdk.ReadClassInvalid}
 		}
 	}()
 	got, err := d.Detect(ctx, snapshot)
 	if err != nil {
-		return nil, err.Error()
+		return nil, detectorFailure{err.Error(), sdk.ReadErrorClass(err)}
 	}
 	for _, f := range got {
 		id := f.DetectorID
@@ -471,12 +480,12 @@ func detect(ctx context.Context, d sdk.Detector, snapshot sdk.DetectionContext) 
 		if f.Metadata != nil {
 			out.Metadata, err = encodeStruct(f.Metadata)
 			if err != nil {
-				return nil, err.Error()
+				return nil, detectorFailure{err.Error(), sdk.ReadClassUnavailable}
 			}
 		}
 		findings = append(findings, out)
 	}
-	return findings, ""
+	return findings, detectorFailure{}
 }
 func ref(r sdk.ObjectRef) *pb.ObjectRef {
 	return &pb.ObjectRef{ApiVersion: r.APIVersion, Kind: r.Kind, Namespace: r.Namespace, Name: r.Name}
@@ -508,6 +517,19 @@ func observe(snapshot *sdktest.Snapshot, o *pb.MemoryObservation) error {
 		snapshot.ObservedAtTime = &at
 	}
 	snapshot.HeldKeys = append([]string(nil), o.HeldKeys...)
+	snapshot.CompleteKindList = nil
+	for _, kind := range o.CompleteKinds {
+		cut := strings.LastIndex(kind, "/")
+		if cut <= 0 || cut == len(kind)-1 {
+			return fmt.Errorf("invalid complete kind %q", kind)
+		}
+		version, name := kind[:cut], kind[cut+1:]
+		gv, err := schema.ParseGroupVersion(version)
+		if err != nil {
+			return fmt.Errorf("invalid complete kind %q: %w", kind, err)
+		}
+		snapshot.CompleteKindList = append(snapshot.CompleteKindList, gv.WithKind(name))
+	}
 	if o.SelfHealHold != nil {
 		if err := o.SelfHealHold.CheckValid(); err != nil {
 			return err

@@ -1,7 +1,6 @@
 package sdktest
 
 import (
-	"fmt"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -12,7 +11,7 @@ func (v *RecordingReadView) WebhookCAMatchesSecret(t program.WebhookCA) (bool, e
 	}
 	r, err := v.ReadView.WebhookCAMatchesSecret(t)
 	if err != nil {
-		err = fmt.Errorf("webhook CA observation unavailable")
+		err = safeReadError("webhook CA observation unavailable", err)
 	}
 	v.record("WebhookCAMatchesSecret", []any{t}, r, err)
 	return r, err
@@ -32,7 +31,7 @@ func (s Snapshot) WebhookCAMatchesSecret(t program.WebhookCA) (bool, error) {
 func (v *RecordingReadView) AdmissionWebhooksFor(subject sdk.ObjectRef) ([]program.AdmissionWebhook, error) {
 	r, err := v.ReadView.AdmissionWebhooksFor(subject)
 	if err != nil {
-		err = fmt.Errorf("admission webhook observation unavailable")
+		err = safeReadError("admission webhook observation unavailable", err)
 	}
 	v.record("AdmissionWebhooksFor", []any{subject}, r, err)
 	return r, err

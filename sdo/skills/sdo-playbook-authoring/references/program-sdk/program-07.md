@@ -119,6 +119,20 @@ type Verdict struct {
     of repairing it (see Escalate).
 
 func RunDiagnose(ctx context.Context, p Diagnoser, v ReadView, b Bindings, deadline time.Duration) (verdict Verdict)
+    RunDiagnose runs a Diagnose over v with a deadline and the read rules every
+    diagnosis shares. Reads fail by class (sdk.ReadErrorClass): a refused or
+    absent read is an observation the program may reason on and never changes
+    the verdict; an unavailable read is "SDO could not observe" and an invalid
+    read is a program bug. A failed read prevents clearance, not a positive
+    finding:
+
+      - a latched invalid read makes the verdict Unknown;
+      - a latched unavailable read turns NoMatch into Unknown, because the
+        program cleared on missing evidence;
+      - a latched unavailable read leaves Match standing, and every failed
+        read is appended as evidence ("read unavailable") so the closing turn,
+        the outcome and the audit see what the program did not observe;
+      - Unknown and NeedsJudgement are unchanged.
 
 func (v Verdict) Validate() error
 

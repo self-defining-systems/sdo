@@ -22,7 +22,7 @@ func Kubernetes(view ReadView, sourceBindings ...Bindings) (*kubeclient.ReadClie
 	}
 	fail := func(err error) error {
 		if checked, ok := view.(*checkedReadView); ok {
-			checked.check(err)
+			checked.check("Kubernetes", err)
 		}
 		return err
 	}

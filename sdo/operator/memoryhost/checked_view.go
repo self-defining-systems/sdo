@@ -8,7 +8,11 @@ import (
 )
 
 // checkedView prevents programs swallowing an unavailable primitive and
-// returning a plan anyway. This is the same fail-closed rule as diagnosis.
+// returning a plan anyway. This is the same fail-closed rule as diagnosis: only a
+// read SDO could not observe (unavailable) or one the program may not make
+// (invalid) fails Mitigate, because a plan built over them has no later check on
+// its inputs. A refused or absent read is an observation, so a fallback over a
+// refused credential builds its plan.
 type checkedView struct {
 	program.ReadView
 	mu  sync.Mutex
@@ -16,12 +20,16 @@ type checkedView struct {
 }
 
 func (v *checkedView) check(err error) {
-	if err != nil {
-		v.mu.Lock()
-		defer v.mu.Unlock()
-		if v.err == nil {
-			v.err = err
-		}
+	if err == nil {
+		return
+	}
+	if class := sdk.ReadErrorClass(err); class != sdk.ReadClassUnavailable && class != sdk.ReadClassInvalid {
+		return
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.err == nil {
+		v.err = err
 	}
 }
 func (v *checkedView) failure() error { v.mu.Lock(); defer v.mu.Unlock(); return v.err }

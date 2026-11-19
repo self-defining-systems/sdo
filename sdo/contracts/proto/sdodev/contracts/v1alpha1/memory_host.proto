@@ -97,6 +97,10 @@ message MemoryObservation {
   // Alert keys (detector ID, NUL, fingerprint) of the incident open at the
   // snapshot (sdk.HeldAlertSource). Empty means none is open.
   repeated string held_keys = 16;
+  // The kinds ("<apiVersion>/<Kind>") the controller's snapshot lists completely
+  // for its namespace (sdk.CompleteKindSource). Only for these is a missing
+  // object absent; for any other kind the host cannot say. Empty means none.
+  repeated string complete_kinds = 17;
 }
 // ReadStateRequest names one reader (the ID of a health detector that
 // implements appstate.Reader). The host reads against its latest complete
@@ -129,6 +133,10 @@ message MemoryDetectorResult {
   string detector_id = 1;
   repeated Finding findings = 2;
   string error = 3;
+  // error_class is the read class of error: absent, refused, unavailable or
+  // invalid (sdk.ReadErrorClass). Empty means unclassified, which reads as
+  // unavailable; a detector that panicked is invalid.
+  string error_class = 4;
 }
 message EvaluateResponse { repeated MemoryDetectorResult results = 1; }
 
@@ -140,6 +148,10 @@ message MemoryReadReceipt {
   google.protobuf.Value arguments = 3;
   google.protobuf.Value result = 4;
   string error = 5;
+  // error_class is the read class of error: absent, refused, unavailable or
+  // invalid (sdk.ReadErrorClass). A replay rebuilds an error of the same class.
+  // Empty means a legacy receipt, which reads as unavailable.
+  string error_class = 6;
 }
 message MemoryProgramInput {
   string program_id = 1;

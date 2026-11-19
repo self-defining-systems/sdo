@@ -98,7 +98,7 @@ func ObjectIdentity(o unstructured.Unstructured) ObjectRef {
 // ErrObjectNotCaptured means the snapshot cannot say whether the object
 // exists: its kind was not listed completely. It is a gap in evidence, never
 // an absence.
-var ErrObjectNotCaptured = errors.New("object not captured")
+var ErrObjectNotCaptured = Classified("object not captured", ErrUnavailable)
 
 // ErrObjectAbsent means the object was observed to be missing: the API
 // answered NotFound, or the snapshot holds a complete list of the object's
@@ -142,7 +142,7 @@ func FindObject(objects []unstructured.Unstructured, ref ObjectRef) (*unstructur
 // (the caller guarantees the namespace), and ErrObjectNotCaptured otherwise.
 func FindObjectIn(objects []unstructured.Unstructured, complete []schema.GroupVersionKind, ref ObjectRef) (*unstructured.Unstructured, error) {
 	if strings.EqualFold(ref.Kind, "Secret") {
-		return nil, fmt.Errorf("Secret reads forbidden")
+		return nil, Classified("Secret reads forbidden", ErrInvalidRead)
 	}
 	for _, o := range objects {
 		if ObjectIdentity(o) == ref {

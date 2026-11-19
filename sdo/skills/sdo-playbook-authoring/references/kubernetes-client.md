@@ -36,3 +36,37 @@ and phase replay. Keep observation streams finite. Missing recordings never
 become an empty list or a healthy response. Secret endpoints and mutation
 methods are unavailable to this read client; write intent remains an executor
 plan. Exec effects require explicit undo rather than object restoration.
+
+## Read errors have a class
+A `ReadView` error says which of four things happened. Test it with `errors.Is`; an error with no class
+is `sdk.ErrUnavailable`.
+
+| class | sentinel | meaning | what a program may do |
+|---|---|---|---|
+| observed | none (a value) | SDO saw the state, including "not there" | reason on it |
+| refused | `sdk.ErrRefused` | the target answered and said no: a database login or catalog read the database rejected, a credential reference with no usable value in the container | reason on it, for example try the next credential |
+| unavailable | `sdk.ErrUnavailable` | SDO could not observe: no client, kind not captured, timeout, transport, no accepted source, a read a recording does not hold | only "I do not know" |
+| invalid | `sdk.ErrInvalidRead` | the program asked something illegal: a Secret read, a ref outside the namespace, an ambiguous database target, the read budget | a program bug; fix the program |
+
+`sdk.ReadErrorClass(err)` names the class.
+
+Replay agrees with live. A recording stores each failed read's `error_class` next to its text, a replay
+rebuilds an error of the same class, and a recording written before classes existed reads as unavailable. A
+database catalog read is recorded by target and credential reference (never a value), so a fallback that
+tries one credential and then another replays both reads.
+
+### What a failed read does to a verdict
+
+A failed read prevents clearance, not a positive finding. SDO latches every unavailable or invalid read
+your Diagnose made, in order; refused and absent reads never latch.
+
+- An invalid read makes the verdict Unknown, whatever you returned.
+- An unavailable read turns NoMatch into Unknown: you cleared on missing evidence.
+- An unavailable read leaves Match standing, and each failed read rides with it as evidence
+  (`read unavailable`, the method and the error). Unknown and NeedsJudgement are unchanged.
+- Return an error only for `sdk.ErrUnavailable`. A refused login is a fact: try the next credential, or
+  conclude from the refusal. Do not write `users, _ := v.DatabaseUsers(t)` and return NoMatch on an empty
+  list; an unavailable read makes that NoMatch Unknown.
+
+Mitigate is stricter: a plan has no later check on its inputs, so an unavailable or invalid read fails it,
+and a refused or absent read does not.

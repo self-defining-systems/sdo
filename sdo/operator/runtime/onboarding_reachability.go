@@ -307,7 +307,7 @@ func (c *Controller) detectorList() []sdk.Detector {
 	for _, d := range c.detectors {
 		list = append(list, d)
 	}
-	return c.enabledSetupDetectors(list)
+	return list
 }
 
 func (c *Controller) publishOnboardingReachability(ctx context.Context) {

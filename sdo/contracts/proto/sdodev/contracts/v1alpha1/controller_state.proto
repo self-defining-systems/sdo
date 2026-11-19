@@ -212,7 +212,8 @@ message ControllerState {
   // observers judge a hung controller by it and never by evaluation_iteration.
   int64 step_count = 44;
   string setup_evaluated_revision = 46;
-  repeated DisabledSetupDetector disabled_setup_detectors = 47;
+  reserved 47;
+  reserved "disabled_setup_detectors";
   // Preserve completion policy when the acknowledged closure payload is retired.
   string last_acknowledged_external_incident_id = 48;
   // The install's start-up period: no incident opens until the controller has

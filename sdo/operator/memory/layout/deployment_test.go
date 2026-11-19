@@ -61,8 +61,8 @@ func TestMigrateToSchema4OnlyStamps(t *testing.T) {
 	if err != nil || !changed {
 		t.Fatalf("Migrate = %v, %v; want changed", changed, err)
 	}
-	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "10\n" {
-		t.Fatalf("schema-version = %q, want 10", got)
+	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "12\n" {
+		t.Fatalf("schema-version = %q, want 12", got)
 	}
 	var files []string
 	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
@@ -98,10 +98,65 @@ func TestMigrateToSchema8KeepsExistingCorpusCases(t *testing.T) {
 	if err != nil || !changed {
 		t.Fatalf("Migrate = %v, %v; want changed", changed, err)
 	}
-	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "10\n" {
-		t.Fatalf("schema-version = %q, want 10", got)
+	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "12\n" {
+		t.Fatalf("schema-version = %q, want 12", got)
 	}
 	if got, _ := os.ReadFile(filepath.Join(root, filepath.FromSlash(CorpusDir+"/case-1/labels.json"))); string(got) != labels {
 		t.Fatalf("an existing case changed: %q", got)
+	}
+}
+
+// A repository at schema 10 may hold an outcome document that still carries the
+// retired disabled_setup_detectors. Migration stamps it and leaves every outcome
+// byte for byte; readers drop the retired field.
+func TestMigrateToSchema11KeepsExistingOutcomes(t *testing.T) {
+	root := t.TempDir()
+	outcome := `{"incident_id":"i","disabled_setup_detectors":[{"detector_id":"learned"}]}` + "\n"
+	const path = ".sdo/outcomes/0000.json"
+	for rel, content := range map[string]string{SchemaVersionFile: "10\n", GoalFile: "Goal\n", path: outcome} {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	changed, err := Migrate(root)
+	if err != nil || !changed {
+		t.Fatalf("Migrate = %v, %v; want changed", changed, err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "12\n" {
+		t.Fatalf("schema-version = %q, want 12", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, filepath.FromSlash(path))); string(got) != outcome {
+		t.Fatalf("an existing outcome changed: %q", got)
+	}
+}
+
+// A repository at schema 11 holds recordings whose failed reads carry no class.
+// Migration stamps it and leaves every recording byte for byte: a recording
+// with no error_class reads as unavailable.
+func TestMigrateToSchema12KeepsExistingRecordings(t *testing.T) {
+	root := t.TempDir()
+	recordings := `[{"method":"DiffAgainstSource","arguments":[],"result":{},"error":"object not captured"}]` + "\n"
+	for rel, content := range map[string]string{SchemaVersionFile: "11\n", GoalFile: "Goal\n", CorpusDir + "/case-1/recordings.json": recordings} {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	changed, err := Migrate(root)
+	if err != nil || !changed {
+		t.Fatalf("Migrate = %v, %v; want changed", changed, err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "12\n" {
+		t.Fatalf("schema-version = %q, want 12", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(root, filepath.FromSlash(CorpusDir+"/case-1/recordings.json"))); string(got) != recordings {
+		t.Fatalf("an existing recording changed: %q", got)
 	}
 }

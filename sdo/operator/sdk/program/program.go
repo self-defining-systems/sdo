@@ -453,6 +453,19 @@ func (p Plan) Validate() error {
 	return nil
 }
 
+// RunDiagnose runs a Diagnose over v with a deadline and the read rules every
+// diagnosis shares. Reads fail by class (sdk.ReadErrorClass): a refused or
+// absent read is an observation the program may reason on and never changes the
+// verdict; an unavailable read is "SDO could not observe" and an invalid read is a
+// program bug. A failed read prevents clearance, not a positive finding:
+//
+//   - a latched invalid read makes the verdict Unknown;
+//   - a latched unavailable read turns NoMatch into Unknown, because the program
+//     cleared on missing evidence;
+//   - a latched unavailable read leaves Match standing, and every failed read is
+//     appended as evidence ("read unavailable") so the closing turn, the outcome
+//     and the audit see what the program did not observe;
+//   - Unknown and NeedsJudgement are unchanged.
 func RunDiagnose(ctx context.Context, p Diagnoser, v ReadView, b Bindings, deadline time.Duration) (verdict Verdict) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -465,8 +478,9 @@ func RunDiagnose(ctx context.Context, p Diagnoser, v ReadView, b Bindings, deadl
 	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 	type outcome struct {
-		verdict Verdict
-		err     error
+		verdict  Verdict
+		err      error
+		failures []readFailure
 	}
 	result := make(chan outcome, 1)
 	checked := &checkedReadView{ReadView: v, maxReads: MaxDiagnoseReads}
@@ -477,10 +491,7 @@ func RunDiagnose(ctx context.Context, p Diagnoser, v ReadView, b Bindings, deadl
 			}
 		}()
 		verdict, err := p.Diagnose(ctx, checked, b)
-		if readErr := checked.failure(); readErr != nil {
-			err = readErr
-		}
-		result <- outcome{verdict, err}
+		result <- outcome{verdict, err, checked.failures()}
 	}()
 	traced := func(v Verdict) Verdict {
 		v.Reads = checked.trace()
@@ -496,7 +507,7 @@ func RunDiagnose(ctx context.Context, p Diagnoser, v ReadView, b Bindings, deadl
 		if err := got.verdict.Validate(); err != nil {
 			return traced(unknown(err))
 		}
-		return traced(got.verdict)
+		return traced(withReadFailures(got.verdict, got.failures))
 	}
 }
 
@@ -507,8 +518,8 @@ func unknown(err error) Verdict {
 // checkedReadView prevents an unavailable observation from being treated as clearance.
 type checkedReadView struct {
 	ReadView
-	mu  sync.Mutex
-	err error
+	mu     sync.Mutex
+	failed []readFailure
 	// maxReads bounds Read calls when positive (a Diagnose); reads counts them.
 	maxReads, reads int
 	steps           []ReadStep
@@ -548,40 +559,113 @@ func podTarget(ref sdk.ObjectRef, container string) string {
 	return ref.Namespace + "/" + ref.Name + "/" + container
 }
 
-func (v *checkedReadView) check(err error) {
-	if err != nil {
-		v.mu.Lock()
-		defer v.mu.Unlock()
-		if v.err == nil {
-			v.err = err
+// readFailure is one read the diagnosis could not trust: SDO could not observe it
+// (unavailable) or the program was not allowed to make it (invalid).
+type readFailure struct {
+	method string
+	err    error
+	class  string
+}
+
+func (f readFailure) observed() string { return f.method + ": " + f.err.Error() }
+
+// maxReadFailures bounds the failed reads one diagnosis keeps; later ones are
+// dropped, so a program that loops on a dead source stays bounded.
+const maxReadFailures = 32
+
+// withReadFailures applies the verdict rule to the reads a diagnosis latched.
+func withReadFailures(verdict Verdict, failures []readFailure) Verdict {
+	if len(failures) == 0 {
+		return verdict
+	}
+	var invalid []readFailure
+	for _, f := range failures {
+		if f.class == sdk.ReadClassInvalid {
+			invalid = append(invalid, f)
 		}
 	}
+	switch {
+	case len(invalid) > 0:
+		return unknownFromReads(invalid)
+	case verdict.Result == NoMatch:
+		return unknownFromReads(failures)
+	case verdict.Result == Match:
+		evidence := append([]Evidence(nil), verdict.Evidence...)
+		for _, f := range failures {
+			evidence = append(evidence, Evidence{Fact: "read unavailable", Observed: f.observed(), Expected: "observation"})
+		}
+		verdict.Evidence = evidence
+	}
+	return verdict
 }
-func (v *checkedReadView) failure() error { v.mu.Lock(); defer v.mu.Unlock(); return v.err }
+
+func unknownFromReads(failures []readFailure) Verdict {
+	v := Verdict{Result: Unknown}
+	for _, f := range failures {
+		v.Evidence = append(v.Evidence, Evidence{Fact: "diagnosis", Observed: f.observed(), Expected: "successful diagnosis"})
+	}
+	return v
+}
+
+// check latches a failed read whose class is unavailable or invalid; refused and
+// absent reads are observations and never latch.
+func (v *checkedReadView) check(method string, err error) {
+	if err == nil {
+		return
+	}
+	class := sdk.ReadErrorClass(err)
+	if class != sdk.ReadClassUnavailable && class != sdk.ReadClassInvalid {
+		return
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if len(v.failed) >= maxReadFailures {
+		return
+	}
+	v.failed = append(v.failed, readFailure{method: method, err: err, class: class})
+}
+
+// failure returns the first latched failed read's error, or nil. A detector's
+// CheckReads uses it: whatever it could not observe prevents clearance.
+func (v *checkedReadView) failure() error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if len(v.failed) == 0 {
+		return nil
+	}
+	return v.failed[0].err
+}
+
+// failures returns the latched failed reads, oldest first.
+func (v *checkedReadView) failures() []readFailure {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return append([]readFailure(nil), v.failed...)
+}
 func (v *checkedReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error) {
 	result, err := v.ReadView.Logs(ref, container, since)
-	v.check(err)
+	v.check("Logs", err)
 	v.record("logs", podTarget(ref, container), fmt.Sprintf("%d bytes", len(result)), err)
 	return result, err
 }
 func (v *checkedReadView) ProbeTCP(ref sdk.ObjectRef, port int32) (ProbeResult, error) {
 	result, err := v.ReadView.ProbeTCP(ref, port)
-	v.check(err)
+	v.check("ProbeTCP", err)
 	return result, err
 }
 func (v *checkedReadView) ProbeHTTP(ref sdk.ObjectRef, request HTTPProbe) (ProbeResult, error) {
 	result, err := v.ReadView.ProbeHTTP(ref, request)
-	v.check(err)
+	v.check("ProbeHTTP", err)
 	return result, err
 }
 func (v *checkedReadView) DiffAgainstSource(ref sdk.ObjectRef) (Diff, error) {
 	result, err := v.ReadView.DiffAgainstSource(ref)
-	v.check(err)
+	v.check("DiffAgainstSource", err)
 	return result, err
 }
 func (v *checkedReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (Diff, error) {
 	result, err := v.ReadView.DiffAgainstBaseline(ref)
-	v.check(err)
+	v.check("DiffAgainstBaseline", err)
 	return result, err
 }
 
@@ -595,31 +679,31 @@ func (v *checkedReadView) UnderlyingReadView() ReadView { return v.ReadView }
 
 func (v *checkedReadView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error) {
 	result, err := sdk.ScopedSource(v.ReadView).ScopedDeployments(namespace)
-	v.check(err)
+	v.check("ScopedDeployments", err)
 	return result, err
 }
 
 func (v *checkedReadView) ScopedServices(namespace string) ([]corev1.Service, error) {
 	result, err := sdk.ScopedSource(v.ReadView).ScopedServices(namespace)
-	v.check(err)
+	v.check("ScopedServices", err)
 	return result, err
 }
 
 func (v *checkedReadView) ScopedEndpoints(namespace string) ([]corev1.Endpoints, error) {
 	result, err := sdk.ScopedSource(v.ReadView).ScopedEndpoints(namespace)
-	v.check(err)
+	v.check("ScopedEndpoints", err)
 	return result, err
 }
 
 func (v *checkedReadView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error) {
 	result, err := sdk.ScopedSource(v.ReadView).MutatingWebhookConfigurations()
-	v.check(err)
+	v.check("MutatingWebhookConfigurations", err)
 	return result, err
 }
 
 func (v *checkedReadView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error) {
 	result, err := sdk.ScopedSource(v.ReadView).ValidatingWebhookConfigurations()
-	v.check(err)
+	v.check("ValidatingWebhookConfigurations", err)
 	return result, err
 }
 
@@ -634,9 +718,9 @@ func (v *checkedReadView) TrafficWindow(name string) (traffic.Window, bool) {
 	if source, ok := v.ReadView.(traffic.Source); ok {
 		r, ok := source.TrafficWindow(name)
 		if !ok {
-			v.check(fmt.Errorf("traffic %q unavailable", name))
+			v.check("TrafficWindow", fmt.Errorf("traffic %q unavailable", name))
 		} else if r.LoadError != "" {
-			v.check(fmt.Errorf("traffic %q: %s", name, r.LoadError))
+			v.check("TrafficWindow", fmt.Errorf("traffic %q: %s", name, r.LoadError))
 		}
 		return r, ok
 	}
@@ -645,12 +729,12 @@ func (v *checkedReadView) TrafficWindow(name string) (traffic.Window, bool) {
 
 func (v *checkedReadView) MutatingWebhookConfiguration(name string) (*admissionv1.MutatingWebhookConfiguration, error) {
 	result, err := sdk.ScopedSource(v.ReadView).MutatingWebhookConfiguration(name)
-	v.check(err)
+	v.check("MutatingWebhookConfiguration", err)
 	return result, err
 }
 
 func (v *checkedReadView) ValidatingWebhookConfiguration(name string) (*admissionv1.ValidatingWebhookConfiguration, error) {
 	result, err := sdk.ScopedSource(v.ReadView).ValidatingWebhookConfiguration(name)
-	v.check(err)
+	v.check("ValidatingWebhookConfiguration", err)
 	return result, err
 }

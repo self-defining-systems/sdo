@@ -56,7 +56,7 @@ func ValidateKubernetesRead(r KubernetesRequest) error {
 }
 func (v *checkedReadView) Observe(o ExternalOperation) (int32, error) {
 	r, err := v.ReadView.Observe(o)
-	v.check(err)
+	v.check("Observe", err)
 	target := "http"
 	if o.Exec != nil {
 		target = podTarget(o.Exec.Pod, o.Exec.Container)
@@ -66,7 +66,7 @@ func (v *checkedReadView) Observe(o ExternalOperation) (int32, error) {
 }
 func (v *checkedReadView) KubernetesRead(q KubernetesRequest) (json.RawMessage, error) {
 	r, err := v.ReadView.KubernetesRead(q)
-	v.check(err)
+	v.check("KubernetesRead", err)
 	v.record("kubernetes_read", q.Path, fmt.Sprintf("%d bytes", len(r)), err)
 	return r, err
 }

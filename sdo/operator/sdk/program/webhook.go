@@ -40,7 +40,7 @@ func (v snapshotReadView) WebhookCAMatchesSecret(t WebhookCA) (bool, error) {
 }
 func (v *checkedReadView) WebhookCAMatchesSecret(t WebhookCA) (bool, error) {
 	r, err := v.ReadView.WebhookCAMatchesSecret(t)
-	v.check(err)
+	v.check("WebhookCAMatchesSecret", err)
 	return r, err
 }
 
@@ -54,6 +54,6 @@ func (v snapshotReadView) AdmissionWebhooksFor(subject sdk.ObjectRef) ([]Admissi
 }
 func (v *checkedReadView) AdmissionWebhooksFor(subject sdk.ObjectRef) ([]AdmissionWebhook, error) {
 	r, err := v.ReadView.AdmissionWebhooksFor(subject)
-	v.check(err)
+	v.check("AdmissionWebhooksFor", err)
 	return r, err
 }

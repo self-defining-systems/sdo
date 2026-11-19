@@ -186,7 +186,7 @@ func headOf(t *testing.T, dir string) string { return gitIn(t, dir, "rev-parse",
 func TestInstallSurvivesUpkeepSchemaMigration(t *testing.T) {
 	dir := installedRepo(t)
 	installed := headOf(t, dir)
-	writeFile(t, dir, ".sdo/schema-version", "10\n")
+	writeFile(t, dir, ".sdo/schema-version", "12\n")
 	gitIn(t, dir, "add", "-A")
 	gitIn(t, dir, "commit", "-q", "-m", "sdo(memory-migration): validated initial"+upkeepTrailers)
 	ok, err := memory.HealthRefreshPreservesInstall(context.Background(), dir, installed, headOf(t, dir))
@@ -209,7 +209,7 @@ func TestInstallWindowRejectsUpkeepCommitThatIsNotAMigration(t *testing.T) {
 func TestInstallWindowRejectsUpkeepMigrationThatChangesSource(t *testing.T) {
 	dir := installedRepo(t)
 	installed := headOf(t, dir)
-	writeFile(t, dir, ".sdo/schema-version", "10\n")
+	writeFile(t, dir, ".sdo/schema-version", "12\n")
 	writeFile(t, dir, "main.go", "package main // v3\n")
 	gitIn(t, dir, "add", "-A")
 	gitIn(t, dir, "commit", "-q", "-m", "migration plus source"+upkeepTrailers)
@@ -221,7 +221,7 @@ func TestInstallWindowRejectsUpkeepMigrationThatChangesSource(t *testing.T) {
 func TestInstallWindowRejectsUnrelatedCommitAfterMigration(t *testing.T) {
 	dir := installedRepo(t)
 	installed := headOf(t, dir)
-	writeFile(t, dir, ".sdo/schema-version", "10\n")
+	writeFile(t, dir, ".sdo/schema-version", "12\n")
 	gitIn(t, dir, "add", "-A")
 	gitIn(t, dir, "commit", "-q", "-m", "migration"+upkeepTrailers)
 	writeFile(t, dir, ".sdo/playbooks/p/README.md", "x\n")
@@ -243,7 +243,7 @@ func TestInstallWithoutJudgeSurvivesUpkeepSchemaMigration(t *testing.T) {
 	gitIn(t, dir, "add", "-A")
 	gitIn(t, dir, "commit", "-qm", "baseline without a judge")
 	installed := headOf(t, dir)
-	writeFile(t, dir, ".sdo/schema-version", "10\n")
+	writeFile(t, dir, ".sdo/schema-version", "12\n")
 	gitIn(t, dir, "add", "-A")
 	gitIn(t, dir, "commit", "-q", "-m", "sdo(memory-migration): validated initial"+upkeepTrailers)
 	ok, err := memory.HealthRefreshPreservesInstall(context.Background(), dir, installed, headOf(t, dir))

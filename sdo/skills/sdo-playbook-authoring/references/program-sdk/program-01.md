@@ -99,7 +99,7 @@ const ProbeIdentityParam = "username"
 
 VARIABLES
 
-var ErrDeadline = errors.New("diagnosis read budget exhausted")
+var ErrDeadline = sdk.Classified("diagnosis read budget exhausted", sdk.ErrInvalidRead)
     ErrDeadline is returned by a Read past a Diagnose's read budget. A Diagnose
     turns it into Unknown.
 

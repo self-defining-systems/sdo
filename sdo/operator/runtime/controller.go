@@ -152,7 +152,6 @@ type Controller struct {
 	onboardingClient            kubernetes.Interface
 	onboardingControl           string
 	namespaceOnboarding         *contracts.NamespaceOnboarding
-	disabledSetupDetectors      []*contracts.DisabledSetupDetector
 	setupEvaluatedRevision      string
 	sourceInventoryError        string
 	sourceInventoryRetryAt      time.Time
@@ -657,7 +656,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	} else {
 		c.observeSourceInventory(now)
 	}
-	detectors := c.enabledSetupDetectors(c.scheduler.SelectEvents(now, events))
+	detectors := c.scheduler.SelectEvents(now, events)
 	probes := c.dueGateProbes(now, detectors)
 	var objectChanges []ObjectChange
 	// freshObjectChanges counts the changes the cluster delivered this step;
@@ -718,7 +717,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			// This extra install sweep must not postpone ordinary fault checks.
 			deadlines := c.scheduler.Deadlines()
 			c.scheduler.ExpediteAll(now)
-			detectors = c.enabledSetupDetectors(c.scheduler.SelectEvents(now, nil))
+			detectors = c.scheduler.SelectEvents(now, nil)
 			c.scheduler.RestoreDeadlines(deadlines)
 		}
 	}
@@ -736,6 +735,10 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	setupResults, setupHealthy := c.setupHealth(ctx, snapshot, detectors, onboardingCandidate)
 	sampleFindings := make([]sdk.Finding, 0)
 	errored := confirmationExpired
+	// installErrored and gatingFindings are what decide the install: only a
+	// health-class detector's error or finding counts (see gatesSetup).
+	installErrored := confirmationExpired
+	gatingFindings := make([]sdk.Finding, 0)
 	erroredIDs := map[string]bool{}
 	c.mu.Lock()
 	c.evaluationIteration++
@@ -745,13 +748,9 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	// returns, so a hung or slow detector never delays another's finding. Each
 	// detector's tracker state is its own; the one cross-detector step, opening
 	// an incident early, is gated by earlyDispatchSafe.
-	skipLearned := onboardingCandidate == nil && (c.pendingOnboarding != nil || setupSweep && !confirmed && !confirmationExpired)
 	var fresh []sdk.Detector
 	for _, detector := range detectors {
 		spec := detector.Spec()
-		if skipLearned && learnedIncidentDetector(spec) {
-			continue
-		}
 		if _, cached := setupResults[spec.ID]; !cached {
 			fresh = append(fresh, detector)
 		}
@@ -784,6 +783,11 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			c.recordDetectorError(spec.ID, now, detectErr)
 			errored = true
 			erroredIDs[spec.ID] = true
+			if gatesSetup(spec) {
+				installErrored = true
+			} else if setupHealthy {
+				c.recordSetupNoise(ctx, spec, setupNoiseErrored, detectErr.Error(), onboardingCandidate)
+			}
 			return nil
 		}
 		if status == DetectorEvaluationPending {
@@ -800,8 +804,12 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			return nil
 		}
 		validFindings := findings
-		if setupHealthy && learnedIncidentDetector(spec) && c.disableSetupDetector(spec, validFindings, now, onboardingCandidate) {
-			return nil
+		if gatesSetup(spec) {
+			gatingFindings = append(gatingFindings, validFindings...)
+		} else if setupHealthy {
+			if rules := firedRules(validFindings); rules != "" {
+				c.recordSetupNoise(ctx, spec, setupNoiseFired, rules, onboardingCandidate)
+			}
 		}
 		changes := c.tracker.Observe(now, spec.ID, validFindings)
 		c.observeGate(spec.ID, now, validFindings)
@@ -837,9 +845,6 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	// between detectors changes no decision; sampleFindings is sorted below.
 	for _, detector := range detectors {
 		spec := detector.Spec()
-		if skipLearned && learnedIncidentDetector(spec) {
-			continue
-		}
 		if result, cached := setupResults[spec.ID]; cached {
 			if err := apply(detector, result); err != nil && dispatchErr == nil {
 				dispatchErr = err
@@ -856,7 +861,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		c.setupEvaluatedRevision = c.config.SourceCommit
 		c.mu.Unlock()
 	}
-	if err := c.finishOnboarding(ctx, onboardingCandidate, sampleFindings, errored, now); err != nil {
+	if err := c.finishOnboarding(ctx, onboardingCandidate, gatingFindings, installErrored, now); err != nil {
 		return err
 	}
 	if deferInventory && c.pendingOnboarding == nil {
@@ -1448,11 +1453,10 @@ func (c *Controller) incidentRequest(now time.Time, findings []sdk.Finding) Inci
 	return IncidentRequest{Telemetry: c.config.Telemetry,
 		SchemaVersion: ProtocolSchemaVersion, Application: c.config.Application, Namespace: c.config.Namespace,
 		IncidentID: incidentID, Findings: findings,
-		PriorResponseProgress:  priorResponseProgress(c.config.RepositoryWorktree, findings),
-		DriftEvents:            driftEvents,
-		NamespaceOnboarding:    cloneNamespaceOnboarding(c.namespaceOnboarding),
-		DisabledSetupDetectors: cloneDisabledSetupDetectors(c.disabledSetupDetectors),
-		DetectorHistory:        compactDetectorHistory(c.history), SurfacedPlaybooks: surfacedPlaybooks(findings),
+		PriorResponseProgress: priorResponseProgress(c.config.RepositoryWorktree, findings),
+		DriftEvents:           driftEvents,
+		NamespaceOnboarding:   cloneNamespaceOnboarding(c.namespaceOnboarding),
+		DetectorHistory:       compactDetectorHistory(c.history), SurfacedPlaybooks: surfacedPlaybooks(findings),
 		RelevantOutcomes: relevantOutcomeEvidence(
 			c.config.RepositoryWorktree, findings, c.config.SourceCommit, c.detectorOrigins(),
 		),
@@ -2256,8 +2260,8 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		return nil, err
 	}
 	message := &contracts.ControllerState{
-		DisabledSetupDetectors: cloneDisabledSetupDetectors(c.disabledSetupDetectors), SetupEvaluatedRevision: c.setupEvaluatedRevision,
-		Version: RuntimeStateVersion, SchedulerDeadlines: timestampsContract(c.scheduler.Deadlines()), FindingStates: findingStates,
+		SetupEvaluatedRevision: c.setupEvaluatedRevision,
+		Version:                RuntimeStateVersion, SchedulerDeadlines: timestampsContract(c.scheduler.Deadlines()), FindingStates: findingStates,
 		PendingBatch: &contracts.BatcherState{
 			Findings: batch, Deadlines: timestampsContract(pendingBatch.Deadlines), Deadline: optionalTimestamp(pendingBatch.Deadline),
 		},
@@ -2346,7 +2350,6 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	c.acceptedSourceDriftRevision = state.GetAcceptedSourceDriftRevision()
 	c.ownershipAdoption = adoptionState(state.GetOwnershipAdoption())
 	c.namespaceOnboarding = cloneNamespaceOnboarding(state.GetNamespaceOnboarding())
-	c.disabledSetupDetectors = cloneDisabledSetupDetectors(state.GetDisabledSetupDetectors())
 	c.setupEvaluatedRevision = state.GetSetupEvaluatedRevision()
 	c.sourceInventory = nil
 	c.dispatchError = state.DispatchError

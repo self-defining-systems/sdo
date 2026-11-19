@@ -85,7 +85,8 @@ message OutcomeRecord {
   // verified the closure. Information only; never a verdict.
   repeated string source_check_notes = 38;
   DriftReprompt drift_reprompt = 39;
-  repeated DisabledSetupDetector disabled_setup_detectors = 40;
+  reserved 40;
+  reserved "disabled_setup_detectors";
   StatePersistenceFailure state_persistence_failure = 41;
   // Controller-observed: the closure's recovery verification set, strength
   // per component and whether it recovered after SDO's last write settled.

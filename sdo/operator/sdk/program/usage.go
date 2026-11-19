@@ -14,11 +14,11 @@ func (snapshotReadView) NodeUsage(sdk.ObjectRef) (*metricsv1beta1.NodeMetrics, e
 }
 func (v *checkedReadView) PodUsage(ref sdk.ObjectRef) (*metricsv1beta1.PodMetrics, error) {
 	r, e := v.ReadView.PodUsage(ref)
-	v.check(e)
+	v.check("PodUsage", e)
 	return r, e
 }
 func (v *checkedReadView) NodeUsage(ref sdk.ObjectRef) (*metricsv1beta1.NodeMetrics, error) {
 	r, e := v.ReadView.NodeUsage(ref)
-	v.check(e)
+	v.check("NodeUsage", e)
 	return r, e
 }

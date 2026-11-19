@@ -102,8 +102,10 @@ func AppendCapturedRecordings(repositoryMount, incidentID, phase string, added [
 
 // firstObservationKey identifies a state read within its phase. Catalogs are
 // mutable: a later responder call cannot replace the first observation at this
-// immutable capture boundary, even with another credential source or an
-// equivalent shell.
+// immutable capture boundary, even with an equivalent shell. The credential
+// reference (never a value) is part of the key: whether a catalog answers or
+// refuses depends on who asks, so a program that falls back to another
+// credential makes a second observation, and a replay must hold both.
 func firstObservationKey(call sdktest.PrimitiveCall) (string, bool, error) {
 	phase := call.Phase
 	if phase == "" {
@@ -131,7 +133,6 @@ func databaseCaptureIdentity(call sdktest.PrimitiveCall) (string, error) {
 	if err := target.Validate(); err != nil {
 		return "", fmt.Errorf("invalid captured database target")
 	}
-	target.Auth = nil
 	target.Shell = ""
 	phase := call.Phase
 	if phase == "" {
@@ -409,7 +410,7 @@ func CaptureRepairedProgramReads(repositoryMount, incidentID string, view progra
 }
 
 // recordedReadKey identifies one read independent of its phase. A catalog read
-// is identified like its capture: credential source and shell do not matter.
+// is identified like its capture: the credential reference matters, the shell does not.
 func recordedReadKey(call sdktest.PrimitiveCall) string {
 	if call.Method == "DatabaseUsers" {
 		call.Phase = ""

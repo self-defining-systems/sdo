@@ -3,7 +3,6 @@ package program
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -29,7 +28,7 @@ const (
 
 // ErrDeadline is returned by a Read past a Diagnose's read budget. A Diagnose
 // turns it into Unknown.
-var ErrDeadline = errors.New("diagnosis read budget exhausted")
+var ErrDeadline = sdk.Classified("diagnosis read budget exhausted", sdk.ErrInvalidRead)
 
 // Query is one structured read; exactly one kind is set.
 //
@@ -293,12 +292,12 @@ func (v *checkedReadView) Read(q Query) (Observation, error) {
 		v.mu.Unlock()
 		if over {
 			err := fmt.Errorf("%w: a Diagnose makes at most %d reads", ErrDeadline, v.maxReads)
-			v.check(err)
+			v.check("Read", err)
 			return Observation{}, err
 		}
 	}
 	o, err := v.ReadView.Read(q)
-	v.check(err)
+	v.check("Read", err)
 	target := "probe"
 	if q.Store != nil {
 		target = podTarget(q.Store.Target.Pod, q.Store.Target.Container) + " " + q.Store.Scope.Collection

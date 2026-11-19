@@ -95,7 +95,7 @@ func (v *LiveReadView) DatabaseUsers(t program.DatabaseTarget) ([]program.Databa
 		return nil, err
 	}
 	if t.Pod.Namespace != v.Namespace() {
-		return nil, fmt.Errorf("database catalog outside snapshot namespace")
+		return nil, sdk.Classified("database catalog outside snapshot namespace", sdk.ErrInvalidRead)
 	}
 	if err := v.refuseControl(t.Pod.Namespace); err != nil {
 		return nil, err

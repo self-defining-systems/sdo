@@ -4,6 +4,9 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
+
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
@@ -58,5 +61,35 @@ func TestDurableControllerDropsRetiredSweepCursorOnly(t *testing.T) {
 		if err := UnmarshalDurable([]byte(withUnknown), new(contracts.ControllerState)); err == nil {
 			t.Fatal("cursor migration accepted unrelated unknown field")
 		}
+	}
+}
+
+// The setup quarantine was retired: a stored document that still carries a
+// disabled_setup_detectors list is migrated with the list dropped, so it decodes
+// under the current schema, while a strict decode of the raw bytes refuses it.
+func TestRetiredSetupQuarantineIsDroppedFromStoredDocuments(t *testing.T) {
+	list := `[{"detector_id":"learned","accepted_revision":"abc","fingerprints":["f"],"reason":"fired on the confirmed-healthy app at setup"}]`
+	for name, c := range map[string]struct {
+		data    string
+		message func() proto.Message
+	}{
+		"controller state":     {`{"version":"sdo.controller/v1","disabled_setup_detectors":` + list + `}`, func() proto.Message { return new(contracts.ControllerState) }},
+		"namespace onboarding": {`{"namespace":"app","disabled_setup_detectors":` + list + `}`, func() proto.Message { return new(contracts.NamespaceOnboarding) }},
+		"incident request":     {`{"application":"app","disabled_setup_detectors":` + list + `}`, func() proto.Message { return new(contracts.IncidentRequest) }},
+		"outcome record":       {`{"incident_id":"i","disabled_setup_detectors":` + list + `}`, func() proto.Message { return new(contracts.OutcomeRecord) }},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := protojson.Unmarshal([]byte(c.data), c.message()); err == nil {
+				t.Fatal("the current schema accepted the retired field")
+			}
+			message := c.message()
+			migrated, err := migrateRetired([]byte(c.data), message.ProtoReflect().Descriptor())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := protojson.Unmarshal(migrated, message); err != nil {
+				t.Fatalf("a stored document with the retired field no longer decodes: %v", err)
+			}
+		})
 	}
 }
