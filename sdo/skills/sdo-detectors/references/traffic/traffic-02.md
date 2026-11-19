@@ -9,11 +9,13 @@ func CheckDetects(ctx context.Context, scenario Scenario, class FaultClass) erro
     error or timeout, not by being unable to build its requests.
 
 func CheckProbeLoad(workloads []Workload, catalog Catalog) error
-    CheckProbeLoad rejects a health-probe set whose sampling sends more than
-    ProbeRateCap requests per second, counting each scenario's steps from the
-    catalog (a scenario the catalog does not hold counts one). The check is
-    deterministic, so the memory check refuses the set before the controller
-    would have to run it over the cap.
+    CheckProbeLoad rejects a health-probe set whose floor load exceeds
+    ProbeRateCap requests per second: the load of sampling every scenario once
+    per sample interval, at the lowest rate that does so (a workload's own or
+    default rate above that is not counted, since an unset rate is the default
+    and the designer did not choose it). Each scenario's steps come from the
+    catalog (one when it is absent). The check is deterministic, so the memory
+    check refuses a set no choice of rate could bring under the cap.
 
 func DefaultLatencyNote(id string) string
     DefaultLatencyNote is the non-blocking memory-check note for a scenario
