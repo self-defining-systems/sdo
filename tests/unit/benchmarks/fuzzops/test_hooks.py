@@ -343,8 +343,18 @@ def test_plain_pack_keeps_a_pack_with_manifests(tmp_path: Path) -> None:
         ({"queuedReflectionsUnknown": True}, "reflection queue unknown"),
         ({"version": "sdo.controller/v1"}, ""),
         # A new install's start-up period holds until SDO has seen it healthy or the bound passes.
-        ({"startup": {"began_at": "t", "bound_at": "t"}}, "startup baseline pending"),
-        ({"startup": {"beganAt": "t", "boundAt": "t"}}, "startup baseline pending"),
+        ({"startup": {"began_at": "t"}}, "startup baseline pending"),
+        ({"startup": {"began_at": "t", "bound_at": "t"}}, "startup baseline pending (bound t)"),
+        ({"startup": {"beganAt": "t", "boundAt": "t"}}, "startup baseline pending (bound t)"),
+        # The controller names what holds the period, so a gate that fails on it names the cause.
+        (
+            {"startup": {"began_at": "t", "bound_at": "u", "holders": ["firing: user test checkout", "batched: x"]}},
+            "startup baseline pending (bound u): firing: user test checkout; batched: x",
+        ),
+        (
+            {"startup": {"began_at": "t", "holders": ["healthy since v; established after 2m0s"]}},
+            "startup baseline pending: healthy since v; established after 2m0s",
+        ),  # fmt: skip
         ({"startup": {"began_at": "t", "established_at": "t"}}, ""),
         ({"startup": {"began_at": "t", "bound_reached_at": "t"}}, ""),
         ({"startup": {"skipped_reason": "restored-state"}}, ""),

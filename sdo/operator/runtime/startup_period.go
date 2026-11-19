@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/sdk"
 )
 
 // startupSkippedRestored names a period that did not run because the restored
@@ -29,6 +31,9 @@ type startupPeriod struct {
 	skipped                                 string
 	stretch                                 healthyStretch
 	ran                                     map[string]bool
+	// holders is what kept the last pass from counting toward the healthy
+	// window, or since when it has been healthy; reported, never decided on.
+	holders []string
 }
 
 func newStartupPeriod(began, bound time.Time) *startupPeriod {
@@ -52,8 +57,16 @@ func (p *startupPeriod) contract() *contracts.StartupPeriod {
 	}
 	return &contracts.StartupPeriod{
 		BeganAt: optionalTimestamp(p.began), BoundAt: optionalTimestamp(p.bound), EstablishedAt: optionalTimestamp(p.established),
-		BoundReachedAt: optionalTimestamp(p.boundReached), SkippedReason: p.skipped,
+		BoundReachedAt: optionalTimestamp(p.boundReached), SkippedReason: p.skipped, Holders: p.reportedHolders(),
 	}
+}
+
+// reportedHolders is holders while the period is open, else none.
+func (p *startupPeriod) reportedHolders() []string {
+	if p.skipped != "" || !p.established.IsZero() || !p.boundReached.IsZero() {
+		return nil
+	}
+	return slices.Clone(p.holders)
 }
 
 // restoredStartupPeriod continues the persisted period of this install. State
@@ -96,20 +109,116 @@ func (c *Controller) observeStartup(now time.Time) {
 		return
 	}
 	quiet := c.quiet()
+	var holders []string
+	if !quiet {
+		holders = c.startupBusyHolders()
+	}
 	if c.config.StartupWarmupSettled != nil && !c.config.StartupWarmupSettled() {
 		quiet = false
+		holders = append(holders, "measurement warm-up not settled")
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	var unevaluated []string
 	for id := range c.detectors {
 		if c.openerDetector(id) && !c.startup.ran[id] {
 			quiet = false
+			unevaluated = append(unevaluated, id)
 		}
 	}
-	if event, _ := c.startup.stretch.observe(now, quiet); event == stretchSettled {
-		c.startup.established = now.UTC()
-		slog.Info("controller_startup", "event", "established", "began_at", c.startup.began, "established_at", c.startup.established)
+	if len(unevaluated) > 0 {
+		slices.Sort(unevaluated)
+		holders = append(holders, "not yet evaluated: "+boundedLabels(unevaluated))
 	}
+	event, start := c.startup.stretch.observe(now, quiet)
+	switch {
+	case event == stretchSettled:
+		c.startup.established = now.UTC()
+		holders = nil
+		slog.Info("controller_startup", "event", "established", "began_at", c.startup.began, "established_at", c.startup.established)
+	case quiet:
+		holders = []string{fmt.Sprintf("healthy since %s; established after %s", start.UTC().Format(time.RFC3339), c.startup.stretch.settle)}
+	}
+	c.startup.holders = holders
+}
+
+// startupHoldersShown is how many findings one holder line names before it
+// counts the rest.
+const startupHoldersShown = 8
+
+// startupBusyHolders names why the controller is not quiet (Controller.quiet):
+// an open incident or pending closure, the firing or confirming openers, and
+// the batched findings not already named. Takes c.mu itself.
+func (c *Controller) startupBusyHolders() []string {
+	var holders []string
+	c.mu.Lock()
+	if c.incidentOpen {
+		holders = append(holders, "incident open")
+	}
+	if c.closureBlocksNextLocked() {
+		holders = append(holders, "closure pending")
+	}
+	c.mu.Unlock()
+	var firing []sdk.Finding
+	named := map[string]bool{}
+	for _, state := range c.tracker.Snapshot() {
+		if (state.Active || state.FiringCount > 0) && c.opens(state.Finding) {
+			finding := state.Finding
+			if finding.DetectorID == "" {
+				finding.DetectorID = state.DetectorID
+			}
+			firing = append(firing, finding)
+			named[detectFindingLabel(finding)] = true
+		}
+	}
+	var batched []sdk.Finding
+	for _, finding := range c.batcher.Snapshot().Findings {
+		if !named[detectFindingLabel(finding)] {
+			batched = append(batched, finding)
+		}
+	}
+	if len(firing) > 0 {
+		holders = append(holders, "firing: "+startupHolderLabels(firing))
+	}
+	if len(batched) > 0 {
+		holders = append(holders, "batched: "+startupHolderLabels(batched))
+	}
+	return holders
+}
+
+// startupHolderLabels names findings the way the agent addresses them,
+// de-duplicated, critical first, bounded.
+func startupHolderLabels(findings []sdk.Finding) string {
+	rank := map[sdk.FindingSeverity]int{sdk.SeverityCritical: 0, sdk.SeverityWarning: 1, sdk.SeverityInfo: 2}
+	seen := map[string]int{}
+	for _, finding := range findings {
+		label, severity := detectFindingLabel(finding), len(rank)
+		if r, ok := rank[finding.Severity]; ok {
+			severity = r
+		}
+		if previous, ok := seen[label]; !ok || severity < previous {
+			seen[label] = severity
+		}
+	}
+	labels := make([]string, 0, len(seen))
+	for label := range seen {
+		labels = append(labels, label)
+	}
+	slices.SortFunc(labels, func(a, b string) int {
+		if seen[a] != seen[b] {
+			return seen[a] - seen[b]
+		}
+		return strings.Compare(a, b)
+	})
+	return boundedLabels(labels)
+}
+
+// boundedLabels joins the first startupHoldersShown labels and counts the rest.
+func boundedLabels(labels []string) string {
+	if len(labels) <= startupHoldersShown {
+		return strings.Join(labels, ", ")
+	}
+	return fmt.Sprintf("%s (+%d more)", strings.Join(labels[:startupHoldersShown], ", "), len(labels)-startupHoldersShown)
 }
 
 // startupHolds is the dispatch decision: true while the period holds. The

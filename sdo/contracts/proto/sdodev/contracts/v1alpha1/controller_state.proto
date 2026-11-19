@@ -249,6 +249,13 @@ message StartupPeriod {
   // Why no period ran although one is configured: "restored-state" for an
   // install whose persisted state predates the period.
   string skipped_reason = 5 [(buf.validate.field).string = {in: ["", "restored-state"]}];
+  // While the period holds, what kept the last evaluation pass from counting
+  // toward the healthy window: firing or confirming openers, batched
+  // findings, openers not yet evaluated in this process, unsettled
+  // measurement warm-up, an open incident; or, when nothing does, since when
+  // the window has been healthy. Informational, recomputed each pass, empty
+  // once the period ends.
+  repeated string holders = 6;
 }
 
 // ReflectionDecision is the learning decision the broker recorded for an

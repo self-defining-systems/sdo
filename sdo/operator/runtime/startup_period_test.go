@@ -3,6 +3,9 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -331,5 +334,62 @@ func TestStartupDoesNotHingeOnAnUnqualifiedScenario(t *testing.T) {
 	period := startupState(t, c)
 	if period.GetEstablishedAt() == nil || period.GetBoundReachedAt() != nil {
 		t.Fatalf("period = %v, want established by the settle window", period)
+	}
+}
+
+// While the period holds, the controller state names what holds it, so an
+// operator or harness waiting on a new install sees the cause rather than
+// "pending": an opener not yet evaluated, then the firing opener (never a
+// clue, which does not hold it), then the healthy window's start; nothing
+// once the period ends.
+func TestStartupStateNamesWhatHoldsThePeriod(t *testing.T) {
+	probe := probeSamples(200, func(i int) bool { return i >= 3 && i < 10 })
+	for i := 0; i < 3; i++ {
+		probe.errors[i] = errors.New("probe helper not ready")
+	}
+	clue := controllerDetector("cluster-wiring", time.Second, clueFinding("web"))
+	c := startupController(t, 30*time.Minute, 0, clue, probe)
+	holders := func() []string { return startupState(t, c).GetHolders() }
+	step(t, c, 0)
+	if got, want := holders(), []string{"not yet evaluated: traffic-probe"}; !slices.Equal(got, want) {
+		t.Fatalf("holders = %q, want %q", got, want)
+	}
+	for second := int64(1); second <= 5; second++ {
+		step(t, c, second)
+	}
+	if got, want := holders(), []string{"firing: user test browse-items"}; !slices.Equal(got, want) {
+		t.Fatalf("holders = %q, want %q", got, want)
+	}
+	var healthySince time.Time
+	for second := int64(6); second < 200 && startupState(t, c).GetEstablishedAt() == nil; second++ {
+		step(t, c, second)
+		if got := holders(); len(got) == 1 && strings.HasPrefix(got[0], "healthy since ") && healthySince.IsZero() {
+			healthySince = at(second)
+			want := "healthy since " + healthySince.Format(time.RFC3339) + "; established after 2m0s"
+			if got[0] != want {
+				t.Fatalf("holders = %q, want %q", got, want)
+			}
+		}
+	}
+	if healthySince.IsZero() || startupState(t, c).GetEstablishedAt() == nil {
+		t.Fatalf("period = %v: never reported a healthy window, or never established", startupState(t, c))
+	}
+	if got := holders(); len(got) != 0 {
+		t.Fatalf("holders after establishment = %q, want none", got)
+	}
+}
+
+// Many holding findings are named critical first and the rest counted, so the
+// persisted state stays small.
+func TestStartupHolderLabelsAreBoundedAndCriticalFirst(t *testing.T) {
+	findings := []sdk.Finding{{DetectorID: "kubernetes-events", RuleID: "warn-rule", Severity: sdk.SeverityWarning,
+		PrimaryResource: sdk.ObjectRef{Kind: "Pod", Name: "a"}}}
+	for i := 0; i < startupHoldersShown+1; i++ {
+		finding := userTestFinding(fmt.Sprintf("s%02d", i))
+		findings = append(findings, finding, finding)
+	}
+	got := startupHolderLabels(findings)
+	if !strings.HasPrefix(got, "user test s00, user test s01, ") || !strings.HasSuffix(got, "(+2 more)") {
+		t.Fatalf("labels = %q, want critical first, de-duplicated, with the rest counted", got)
 	}
 }
