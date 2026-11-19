@@ -163,7 +163,7 @@ def test_parser_defaults_match_the_benchmark_configuration() -> None:
     assert build_parser().parse_args(["run", "--run-dir", "x", "--agent", "sdo", "--replay", "off"]).replay == "off"
     up = build_parser().parse_args(["up", "--run-dir", "x"])
     resolve_node_limits(up)
-    assert (up.cpu_limit, up.memory_limit) == ("3", DEFAULT_MEMORY_LIMIT)
+    assert (up.cpu_limit, up.lane_cpus, up.memory_limit) == (None, "6", DEFAULT_MEMORY_LIMIT)
     assert up.cluster_prefix == "fastloop-w"
     assert up.no_sandbox is False
     assert up.kind_worker_nodes == 1

@@ -31,6 +31,7 @@ from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
 from benchmarks.sregym.fastloop.dev import EVIDENCE_NODE_ROOT
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
 from benchmarks.sregym.fastloop.host_limits import HostLimits, NodeLimits, apply_node_limits
+from benchmarks.sregym.fastloop.lane_cgroup import default_shim_dir, shim_environment
 from benchmarks.sregym.fastloop.toy_upstream import UpstreamLayout, serve_upstream
 from benchmarks.sregym.repository_git import host_git_command
 
@@ -316,7 +317,7 @@ def up(args: Any) -> int:
     worktree = (args.dev_mount or ROOT).resolve()
     if (run_dir / "fastloop.json").exists():
         env = FastloopEnvironment.load(run_dir)
-        apply_node_limits(env.cluster, NodeLimits(args.cpu_limit, args.memory_limit, args.pids_limit))
+        apply_node_limits(env.cluster, NodeLimits.from_args(args))
         if env.dev_mount is None:
             raise ValueError("toy environment requires a development mount")
         if not ToyWorker(env).request("health")["healthy"]:
@@ -393,8 +394,9 @@ def up(args: Any) -> int:
             "0s",
         ],
         check=True,
+        env={**os.environ, **shim_environment(getattr(args, "lane_cgroup", None), cluster, default_shim_dir())},
     )
-    apply_node_limits(cluster, NodeLimits(args.cpu_limit, args.memory_limit, args.pids_limit))
+    apply_node_limits(cluster, NodeLimits.from_args(args))
     created = time.monotonic()
     images = Images(controller=args.controller_image, responder=args.responder_image)
     from benchmarks.sregym.fastloop.toy_images import load_images
