@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"path"
 	"strings"
+
+	"sdo.dev/operator/imagesrc"
 )
 
 // Validate checks repository-relative, literal build paths. External images
@@ -19,8 +21,12 @@ func (i ImageInputs) Validate() error {
 	if i.ContextPath == "" && i.DockerfilePath == "" {
 		return nil
 	}
-	for _, p := range []string{i.ContextPath, i.DockerfilePath} {
-		if p == "" || path.IsAbs(p) || path.Clean(p) != p || p == ".." || strings.HasPrefix(p, "../") || strings.ContainsAny(p, "\\\x00") || p == ".sdo" || strings.HasPrefix(p, ".sdo/") {
+	for _, input := range []struct {
+		path       string
+		dockerfile bool
+	}{{i.ContextPath, false}, {i.DockerfilePath, true}} {
+		p := input.path
+		if p == "" || path.IsAbs(p) || path.Clean(p) != p || p == ".." || strings.HasPrefix(p, "../") || strings.ContainsAny(p, "\\\x00") || !imagesrc.BuildInputAllowed(p, input.dockerfile) {
 			return fmt.Errorf("invalid image build input path %q", p)
 		}
 	}
