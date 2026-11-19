@@ -66,7 +66,12 @@ type IncidentRequest struct {
 	// OpeningKeys they are the alert set Recovered waits on (alertKeys).
 	JoinedKeys      []string
 	ExternalMessage string
-	Telemetry       *contracts.TelemetryContext
+	// Page is the text of a page received through the external incident inbox
+	// in detector mode. With no OpeningKeys the page opened the incident
+	// (pageOpened); otherwise it joined a detected one. Either way Recovered
+	// waits for the responder's return: no detector can clear a page.
+	Page      string
+	Telemetry *contracts.TelemetryContext
 	// NamespaceOnboarding is the namespace's installer record. Every incident of
 	// an onboarded namespace carries it; it does not mean onboarding is under way.
 	NamespaceOnboarding *contracts.NamespaceOnboarding
@@ -242,7 +247,7 @@ type IncidentClosure struct {
 	// from it for analysis: a learned detector that fired before the
 	// responder was dispatched, one that fired only while it ran, or only
 	// health detectors firing.
-	DetectorTimeline                    []DetectorTimelineEntry
+	DetectorTimeline                   []DetectorTimelineEntry
 	LearnedDetectorFiredBeforeDispatch bool
 	LearnedDetectorFiredAfterDispatch  bool
 	NoLearnedDetectorFired             bool

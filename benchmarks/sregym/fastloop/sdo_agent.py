@@ -47,6 +47,7 @@ from benchmarks.sregym.fastloop.evidence_queue import (
     snapshot_id_for,
     stash_checkpoint_inputs,
 )
+from benchmarks.sregym.fastloop.injection_marker import write_injection_marker
 from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow, RecoveryWaitTimeout, ResolutionGradePoint
 from benchmarks.sregym.fastloop.records import AgentName, PostClosureWait, RecoveryTrigger, TokenCounts
 from benchmarks.sregym.fastloop.replay import CheckpointStore, capture_checkpoints
@@ -400,6 +401,7 @@ class SdoPersistentAgent:
             if self.learn_before_recovery:
                 self._continuity_before = self._controller_identity()
             windows.append(inject())
+            write_injection_marker(settings.results_dir, windows[0].started_at)
 
         def measure_verified(incident_id: str, detected_at: datetime | None, verified_at: datetime | None) -> None:
             if not windows:

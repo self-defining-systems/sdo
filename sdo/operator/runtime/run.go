@@ -881,17 +881,18 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					Source: planSource, SourceCommit: controller.CurrentAcceptedCommit(), BaselineSource: baselineOf(stateTracker)})
 			},
 		})
-	} else {
-		controller.ExternalIncidents = func(ctx context.Context) (*ExternalIncident, error) {
-			alert, err := lifecycleio.ReadExternalIncident(ctx, bootstrapProvider.Client, *controlNamespace)
-			if errors.Is(err, lifecycleio.ErrInvalidAlert) {
-				return nil, fmt.Errorf("%w: %w", ErrInvalidExternalIncident, err)
-			}
-			if err != nil || alert == nil {
-				return nil, err
-			}
-			return &ExternalIncident{ID: alert.Id, Namespace: alert.Namespace, Message: alert.Message}, nil
+	}
+	// The inbox opens every incident in external mode and is the page in
+	// detector mode (page.go); watch-only ignores it.
+	controller.ExternalIncidents = func(ctx context.Context) (*ExternalIncident, error) {
+		alert, err := lifecycleio.ReadExternalIncident(ctx, bootstrapProvider.Client, *controlNamespace)
+		if errors.Is(err, lifecycleio.ErrInvalidAlert) {
+			return nil, fmt.Errorf("%w: %w", ErrInvalidExternalIncident, err)
 		}
+		if err != nil || alert == nil {
+			return nil, err
+		}
+		return &ExternalIncident{ID: alert.Id, Namespace: alert.Namespace, Message: alert.Message}, nil
 	}
 	if options.NativeBroker != nil {
 		if err := controller.SetIncidentBroker(*options.NativeBroker); err != nil {

@@ -399,6 +399,51 @@ class IncidentEvidenceExport(Protocol):
     def export(self, config: RuntimeConfig, incident_id: str, receipt_dir: Path) -> dict[str, Any]: ...
 
 
+EXTERNAL_INCIDENT_CONFIGMAP = "sdo-external-incident"
+EXTERNAL_INCIDENT_KEY = "incident.json"
+#: The ExternalIncident contract's message bound (characters).
+EXTERNAL_INCIDENT_MESSAGE_LIMIT = 4096
+
+
+def read_runtime_state(control_namespace: str, *, kubeconfig: Path | None = None) -> dict[str, Any]:
+    """The controller's published runtime state (``{}`` while its ConfigMap does not exist)."""
+    completed = kubectl(
+        ["get", "configmap/sdo-controller-state", "-o", "json"],
+        namespace=control_namespace,
+        kubeconfig=kubeconfig,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return {}
+    document = json.loads(completed.stdout)
+    state = json.loads(document.get("data", {}).get("runtime-state.json", "{}"))
+    return state if isinstance(state, dict) else {}
+
+
+def apply_external_incident(
+    control_namespace: str, namespace: str, incident_id: str, message: str, *, kubeconfig: Path | None = None
+) -> None:
+    """Write the ``sdo-external-incident`` inbox (ProtoJSON ``ExternalIncident``); SDO dedups by ``incident_id``."""
+    if not incident_id:
+        raise ValueError("external incident id must not be empty")
+    if len(message) > EXTERNAL_INCIDENT_MESSAGE_LIMIT:
+        raise ValueError(f"external incident message exceeds {EXTERNAL_INCIDENT_MESSAGE_LIMIT} characters")
+    alert = {"id": incident_id, "namespace": namespace, "message": message}
+    kubectl(
+        ["apply", "-f", "-"],
+        namespace=control_namespace,
+        kubeconfig=kubeconfig,
+        input_text=json.dumps(
+            {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {"name": EXTERNAL_INCIDENT_CONFIGMAP, "namespace": control_namespace},
+                "data": {EXTERNAL_INCIDENT_KEY: json.dumps(alert)},
+            }
+        ),
+    )
+
+
 class KubectlClusterOps:
     """Production implementation over kubectl and the SDO controller installer."""
 
@@ -753,14 +798,7 @@ class KubectlClusterOps:
         )
 
     def runtime_state(self, control_namespace: str) -> dict[str, Any]:
-        completed = kubectl(
-            ["get", "configmap/sdo-controller-state", "-o", "json"], namespace=control_namespace, check=False
-        )
-        if completed.returncode != 0:
-            return {}
-        document = json.loads(completed.stdout)
-        state = json.loads(document.get("data", {}).get("runtime-state.json", "{}"))
-        return state if isinstance(state, dict) else {}
+        return read_runtime_state(control_namespace)
 
     def controller_logs(self, control_namespace: str) -> str:
         pod = self.controller_pod(control_namespace)
@@ -788,22 +826,8 @@ class KubectlClusterOps:
         self, control_namespace: str, namespace: str, incident_id: str, application: str
     ) -> None:
         # The page states only what an on-call human would know: users see errors. It never names a fault.
-        alert = {
-            "id": incident_id,
-            "namespace": namespace,
-            "message": f"operator page: users of {application} report errors",
-        }
-        kubectl(
-            ["apply", "-f", "-"],
-            namespace=control_namespace,
-            input_text=json.dumps(
-                {
-                    "apiVersion": "v1",
-                    "kind": "ConfigMap",
-                    "metadata": {"name": "sdo-external-incident", "namespace": control_namespace},
-                    "data": {"incident.json": json.dumps(alert)},
-                }
-            ),
+        apply_external_incident(
+            control_namespace, namespace, incident_id, f"operator page: users of {application} report errors"
         )
 
     def collect_receipt(self, config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:

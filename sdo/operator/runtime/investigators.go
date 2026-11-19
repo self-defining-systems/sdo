@@ -84,15 +84,16 @@ func investigatorSymptomFor(set detectSuspectSet, request IncidentRequest) inves
 			opening[scenario] = true
 		}
 	}
-	page := strings.ToLower(request.ExternalMessage)
+	reported := pageText(request)
+	page := strings.ToLower(reported)
 	spaced := strings.NewReplacer("-", " ", "_", " ")
 	var named, rest []failingTest
 	for _, test := range set.failing {
 		id := strings.ToLower(test.id)
 		switch {
-		case request.ExternalMessage != "" && (strings.Contains(page, id) || strings.Contains(page, spaced.Replace(id))):
+		case reported != "" && (strings.Contains(page, id) || strings.Contains(page, spaced.Replace(id))):
 			named = append(named, test)
-		case request.ExternalMessage == "" && opening[test.id]:
+		case reported == "" && opening[test.id]:
 			named = append(named, test)
 		default:
 			rest = append(rest, test)
@@ -108,8 +109,8 @@ func investigatorSymptomFor(set detectSuspectSet, request IncidentRequest) inves
 	var out strings.Builder
 	var result investigatorSymptom
 	switch {
-	case request.ExternalMessage != "":
-		fmt.Fprintf(&out, "Reported symptom (the page that opened this incident, verbatim): %s\n", redactDetectText(request.ExternalMessage, investigatorPageCap))
+	case reported != "":
+		fmt.Fprintf(&out, "Reported symptom (the page that opened this incident, verbatim): %s\n", redactDetectText(reported, investigatorPageCap))
 		if len(named) > 0 {
 			fmt.Fprintf(&out, "Failing operations the page names: %s\n", lines(named, investigatorTestNames))
 		}
