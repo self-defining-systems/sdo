@@ -137,10 +137,10 @@ type Controller struct {
 	batcher                  *Batcher
 	provider                 SnapshotProvider
 	// observationTrace times the phases of the hold on observationMu; the holder owns it.
-	observationTrace *phaseTrace
-	dispatcher               Dispatcher
-	responseStagesRunning    bool
-	midStage                 midIncidentStage
+	observationTrace      *phaseTrace
+	dispatcher            Dispatcher
+	responseStagesRunning bool
+	midStage              midIncidentStage
 	// tuneMidStage lets a test inject the stage's clock and waits.
 	tuneMidStage                func(*DeterministicResponseStage)
 	history                     []DetectorEvaluation
@@ -246,17 +246,19 @@ type Controller struct {
 	// retained bad alert is reported once rather than every cycle.
 	rejectedExternalIncident           string
 	lastAcknowledgedExternalIncidentID string
-	incidentView                       *IncidentView
-	broker                             IncidentBroker
-	gitRead                            gitRead
-	openers                            openers
-	workspaceResults                   chan workspaceCompletion
-	closureResults                     chan closureCompletion
-	acknowledgmentResults              chan acknowledgmentCompletion
-	reflectionResults                  chan reflectionCompletion
-	head                               headPollState
-	reflections                        reflectionQueueState
-	busy                               busyWindow
+	// lastPageID is the last page (the inbox in detector mode) accepted.
+	lastPageID            string
+	incidentView          *IncidentView
+	broker                IncidentBroker
+	gitRead               gitRead
+	openers               openers
+	workspaceResults      chan workspaceCompletion
+	closureResults        chan closureCompletion
+	acknowledgmentResults chan acknowledgmentCompletion
+	reflectionResults     chan reflectionCompletion
+	head                  headPollState
+	reflections           reflectionQueueState
+	busy                  busyWindow
 	// startup holds a new install's openers until the application is seen
 	// healthy or the bound passes; nil when the period is off.
 	startup *startupPeriod
@@ -1063,7 +1065,12 @@ func (c *Controller) attachBeforeLaunch(findings []sdk.Finding, opening bool) bo
 	for _, finding := range findings {
 		finding.Fingerprint = FindingFingerprint(finding)
 		key := FindingStateKey(finding.DetectorID, finding.Fingerprint)
-		if opening && !slices.Contains(request.OpeningKeys, key) {
+		switch {
+		case opening && pageOpened(request) && !slices.Contains(request.JoinedKeys, key):
+			// The page opened the incident; a detector alert joins its set.
+			request.JoinedKeys = append(request.JoinedKeys, key)
+			sort.Strings(request.JoinedKeys)
+		case opening && !pageOpened(request) && !slices.Contains(request.OpeningKeys, key):
 			request.OpeningKeys = append(request.OpeningKeys, key)
 			sort.Strings(request.OpeningKeys)
 		}
@@ -1100,6 +1107,7 @@ func (c *Controller) canAttachBeforeLaunchLocked() bool {
 }
 
 func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot sdk.DetectionContext) error {
+	c.readPage(ctx, now, snapshot)
 	c.mu.Lock()
 	incidentOpen := c.incidentOpen || c.earlyReportPendingLocked()
 	closurePending := c.closureBlocksNextLocked() && c.broker != nil
@@ -1736,6 +1744,11 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		return
 	}
 	early := !c.responderDone
+	// No detector can clear a page: only the responder's return can.
+	if early && awaitsResponderReturn(c.currentIncidentRequest) {
+		c.mu.Unlock()
+		return
+	}
 	requiresStability := early || c.codePath != nil && c.codePath.Selection.DetectorSource == "shell"
 	if early && c.responseStagesRunning || !early && c.closurePreparingLocked() {
 		c.mu.Unlock()
@@ -2033,10 +2046,10 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		Request:                       *cloneIncidentRequest(c.currentIncidentRequest), Result: cloneIncidentResult(c.currentIncidentResult),
 		DispatchError: c.dispatchError, FinalDetectorStates: finalStates,
 		LearnedDetectorStates: c.learnedDetectorStates(),
-		PartialDetectorStates:  c.reflectionDetectorStates(verified),
-		FinalStateChanges:      finalChanges,
-		HealthClearedAt:        healthClearedAt,
-		DetectedAt:             c.incidentDetectedAt, DispatchedAt: c.incidentDispatchedAt,
+		PartialDetectorStates: c.reflectionDetectorStates(verified),
+		FinalStateChanges:     finalChanges,
+		HealthClearedAt:       healthClearedAt,
+		DetectedAt:            c.incidentDetectedAt, DispatchedAt: c.incidentDispatchedAt,
 		ResponderCompletedAt: c.responderCompletedAt, VerifiedAt: verifiedAt,
 		CleanedHelpers: append([]string(nil), c.cleanedHelpers...),
 	}
@@ -2301,7 +2314,7 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		DispatchState:       dispatchState,
 		IncidentFindingKeys: append([]string(nil), c.incidentFindingKeys...), ClosureState: c.closureState,
 		ClosureReceipt: closureReceiptContract(c.closureReceipt), ClosureFailure: closureFailureContract(c.closureFailure), FailedClosures: cloneFailedClosures(c.failedClosures),
-		LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID, LastAcknowledgedExternalIncidentId: c.lastAcknowledgedExternalIncidentID, QueuedReflectionIncidentIds: append([]string(nil), c.reflections.queued...), QueuedReflectionsUnknown: c.reflections.unknown,
+		LastAcknowledgedIncidentId: c.lastAcknowledgedIncidentID, LastAcknowledgedExternalIncidentId: c.lastAcknowledgedExternalIncidentID, LastPageId: c.lastPageID, QueuedReflectionIncidentIds: append([]string(nil), c.reflections.queued...), QueuedReflectionsUnknown: c.reflections.unknown,
 		EvaluationIteration: int32(c.evaluationIteration), StepCount: c.stepCount, DetectorTimeline: timeline, IncidentView: view,
 		NamespaceOnboarding: cloneNamespaceOnboarding(c.namespaceOnboarding),
 		AcceptedSourceDrift: driftEventsContract(c.acceptedSourceDrift), AcceptedSourceDriftRevision: c.acceptedSourceDriftRevision,
@@ -2403,6 +2416,7 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	}
 	c.lastAcknowledgedIncidentID = state.GetLastAcknowledgedIncidentId()
 	c.lastAcknowledgedExternalIncidentID = state.GetLastAcknowledgedExternalIncidentId()
+	c.lastPageID = state.GetLastPageId()
 	c.evaluationIteration = int(state.GetEvaluationIteration())
 	c.stepCount = state.GetStepCount()
 	c.timeline = cloneTimeline(detectorTimelineState(state.GetDetectorTimeline()))

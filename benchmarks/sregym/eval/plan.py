@@ -61,7 +61,8 @@ class EvalConfig(BaseModel):
     passes: tuple[PlanPass, ...] = ALL_PASSES
     hold_seconds: float = Field(default=DEFAULT_HOLD_SECONDS, gt=0)
     probe_interval_seconds: float = Field(default=3.0, ge=MIN_INTERVAL_SECONDS, le=MAX_INTERVAL_SECONDS)
-    #: The fallback page would go this long after injection; the hook is not built, so it is recorded only.
+    #: The SDO arm is paged this long after injection when it has not opened its own incident
+    #: (``page.FallbackPageHook``).
     fallback_page_seconds: float = Field(default=120.0, gt=0)
     cell_cap_seconds: float = Field(default=1800.0, gt=0)
     #: After the agent ends, keep probing at most this long for the hold to be satisfied.

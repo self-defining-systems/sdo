@@ -2676,8 +2676,14 @@ type IncidentRequest struct {
 	// the incident response. The text is Go's brief; the session runs the
 	// investigator skill and returns its report in IncidentResult.investigation_report.
 	InvestigatorBrief string `protobuf:"bytes,43,opt,name=investigator_brief,json=investigatorBrief,proto3" json:"investigator_brief,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Go-owned: the text of a page (a person's or on-call system's report
+	// through the external incident inbox) received in detector mode. With no
+	// opening_keys the page opened the incident; otherwise it joined a detected
+	// one. Recovered on an incident holding a page is judged only after the
+	// responder returned, since no detector can clear a page.
+	Page          string `protobuf:"bytes,44,opt,name=page,proto3" json:"page,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *IncidentRequest) Reset() {
@@ -2965,6 +2971,13 @@ func (x *IncidentRequest) GetJoinedKeys() []string {
 func (x *IncidentRequest) GetInvestigatorBrief() string {
 	if x != nil {
 		return x.InvestigatorBrief
+	}
+	return ""
+}
+
+func (x *IncidentRequest) GetPage() string {
+	if x != nil {
+		return x.Page
 	}
 	return ""
 }
@@ -5651,7 +5664,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x02id\x12%\n" +
 	"\tnamespace\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\tnamespace\x12$\n" +
 	"\amessage\x18\x03 \x01(\tB\n" +
-	"\xbaH\ar\x05\x10\x01\x18\x80 R\amessage\"\x95\x16\n" +
+	"\xbaH\ar\x05\x10\x01\x18\x80 R\amessage\"\xf5\x16\n" +
 	"\x0fIncidentRequest\x12>\n" +
 	"\x0eschema_version\x18\x01 \x01(\tB\x17\xbaH\x14r\x12\n" +
 	"\x10sdo.dev/v1alpha1R\rschemaVersion\x12)\n" +
@@ -5697,8 +5710,9 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x10\x80\b\"\x05r\x03\x18\x80\x10R\rrecentChanges\x12\x1f\n" +
 	"\vjoined_keys\x18* \x03(\tR\n" +
 	"joinedKeys\x127\n" +
-	"\x12investigator_brief\x18+ \x01(\tB\b\xbaH\x05r\x03\x18\x80 R\x11investigatorBrief:\xd3\x02\xbaH\xcf\x02\x1a\xcc\x02\n" +
-	"\x10incident.trigger\x12^detected incidents require findings and history; external incidents carry no detector evidence\x1a\xd7\x01this.external_message == '' ? (size(this.findings) > 0 && size(this.detector_history) > 0) : (size(this.findings) == 0 && size(this.detector_history) == 0 && size(this.drift_events) == 0 && !has(this.state_changes))J\x04\b\v\x10\fJ\x04\b\f\x10\rJ\x04\b\x13\x10\x14J\x04\b\x18\x10\x19J\x04\b \x10!J\x04\b!\x10\"R\x19architecture_summary_pathR\x15health_objective_pathR\tfollow_upR\x18disabled_setup_detectorsR\x0emetrics_source\"\xb8\x02\n" +
+	"\x12investigator_brief\x18+ \x01(\tB\b\xbaH\x05r\x03\x18\x80 R\x11investigatorBrief\x12\x1c\n" +
+	"\x04page\x18, \x01(\tB\b\xbaH\x05r\x03\x18\x80 R\x04page:\x95\x03\xbaH\x91\x03\x1a\x8e\x03\n" +
+	"\x10incident.trigger\x12xdetected incidents require findings and history unless a page opened them; external incidents carry no detector evidence\x1a\xff\x01this.external_message == '' ? ((size(this.findings) > 0 && size(this.detector_history) > 0) || this.page != '') : (this.page == '' && size(this.findings) == 0 && size(this.detector_history) == 0 && size(this.drift_events) == 0 && !has(this.state_changes))J\x04\b\v\x10\fJ\x04\b\f\x10\rJ\x04\b\x13\x10\x14J\x04\b\x18\x10\x19J\x04\b \x10!J\x04\b!\x10\"R\x19architecture_summary_pathR\x15health_objective_pathR\tfollow_upR\x18disabled_setup_detectorsR\x0emetrics_source\"\xb8\x02\n" +
 	"\x10ResponseProgress\x12\x1f\n" +
 	"\vincident_id\x18\x01 \x01(\tR\n" +
 	"incidentId\x12]\n" +

@@ -815,7 +815,11 @@ type ControllerState struct {
 	Startup *StartupPeriod `protobuf:"bytes,49,opt,name=startup,proto3" json:"startup,omitempty"`
 	// When the open incident escalated: its responder returned, or its response
 	// timeout passed, before Recovered held. No agent is dispatched again.
-	EscalatedAt   *timestamppb.Timestamp `protobuf:"bytes,50,opt,name=escalated_at,json=escalatedAt,proto3" json:"escalated_at,omitempty"`
+	EscalatedAt *timestamppb.Timestamp `protobuf:"bytes,50,opt,name=escalated_at,json=escalatedAt,proto3" json:"escalated_at,omitempty"`
+	// The ID of the last page (the external incident inbox read in detector
+	// mode) the controller accepted, by opening an incident or joining the open
+	// one. A page is accepted once; the producer may leave it in the inbox.
+	LastPageId    string `protobuf:"bytes,51,opt,name=last_page_id,json=lastPageId,proto3" json:"last_page_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1128,6 +1132,13 @@ func (x *ControllerState) GetEscalatedAt() *timestamppb.Timestamp {
 		return x.EscalatedAt
 	}
 	return nil
+}
+
+func (x *ControllerState) GetLastPageId() string {
+	if x != nil {
+		return x.LastPageId
+	}
+	return ""
 }
 
 // StartupPeriod records whether a new install has been seen healthy: one
@@ -2042,7 +2053,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\tpermanent\x18\b \x01(\bR\tpermanent\x12\x16\n" +
 	"\x06action\x18\t \x01(\tR\x06action\x12Q\n" +
 	"\x06reason\x18\n" +
-	" \x01(\x0e2/.sdodev.contracts.v1alpha1.ClosureFailureReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\x06reason\"\xae$\n" +
+	" \x01(\x0e2/.sdodev.contracts.v1alpha1.ClosureFailureReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\x06reason\"\xd0$\n" +
 	"\x0fControllerState\x122\n" +
 	"\aversion\x18\x01 \x01(\tB\x18\xbaH\x15r\x13\n" +
 	"\x11sdo.controller/v1R\aversion\x12s\n" +
@@ -2087,7 +2098,9 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\x18setup_evaluated_revision\x18. \x01(\tR\x16setupEvaluatedRevision\x12R\n" +
 	"&last_acknowledged_external_incident_id\x180 \x01(\tR\"lastAcknowledgedExternalIncidentId\x12B\n" +
 	"\astartup\x181 \x01(\v2(.sdodev.contracts.v1alpha1.StartupPeriodR\astartup\x12=\n" +
-	"\fescalated_at\x182 \x01(\v2\x1a.google.protobuf.TimestampR\vescalatedAt\x1aa\n" +
+	"\fescalated_at\x182 \x01(\v2\x1a.google.protobuf.TimestampR\vescalatedAt\x12 \n" +
+	"\flast_page_id\x183 \x01(\tR\n" +
+	"lastPageId\x1aa\n" +
 	"\x17SchedulerDeadlinesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
 	"\x05value\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05value:\x028\x01\x1ai\n" +
