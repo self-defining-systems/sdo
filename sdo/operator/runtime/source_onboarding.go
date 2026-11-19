@@ -138,7 +138,13 @@ func (c *Controller) attachOnboardingReference(reference *servicehealth.Reachabi
 }
 
 func (c *Controller) beginOnboarding(ctx context.Context, detectors []sdk.Detector, now time.Time) *contracts.NamespaceOnboarding {
-	if c.pendingOnboarding == nil || len(detectors) != len(c.detectorList()) {
+	if c.pendingOnboarding == nil {
+		return nil
+	}
+	// Every wait names itself, so an expired window reports what held it
+	// rather than an earlier, since-resolved reason.
+	if all := len(c.detectorList()); len(detectors) != all {
+		c.waitForOnboarding(ctx, fmt.Sprintf("install sweep pending: this step evaluated %d of %d detectors", len(detectors), all))
 		return nil
 	}
 	// Availability is checked before the create-once claim. Missing inventory
@@ -148,6 +154,7 @@ func (c *Controller) beginOnboarding(ctx context.Context, detectors []sdk.Detect
 		return nil
 	}
 	if ConsumesServiceReachability(detectors) && (c.onboardingReachability == nil || c.onboardingReachability.candidate == nil) {
+		c.waitForOnboarding(ctx, "service reachability reference not captured")
 		return nil
 	}
 	if !c.pendingInventoryClear(c.pendingOnboarding, now) {
