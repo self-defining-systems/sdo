@@ -6,11 +6,14 @@ import csv
 import json
 from typing import TYPE_CHECKING
 
+import pytest
+
 from benchmarks.sregym.eval.results import (
     MANIFEST_FILE,
     ResultRow,
     ResultsTable,
     TokenRow,
+    cost_note,
     verify_manifest,
     write_manifest,
 )
@@ -71,3 +74,19 @@ def test_csv_has_fixed_columns_with_flattened_tokens(tmp_path: Path) -> None:
     assert loaded[0]["time_to_mitigate_s"] == "42.0"
     assert loaded[0]["pass"] == "pass1"
     assert "schema" in loaded[0]
+
+
+@pytest.mark.parametrize(
+    ("usd", "path", "no_page", "pending", "expected"),
+    [
+        (0.3, "responder", False, False, None),
+        (0.0, "deterministic", False, False, "playbook-applied"),
+        (0.0, None, True, False, "no-page"),
+        (None, "responder", False, False, "cost-unavailable"),
+        (0.0, "responder", False, False, "no-agent-usage"),
+        (None, "responder", False, True, "pending"),
+    ],
+)
+def test_a_row_without_a_positive_online_cost_names_why(usd, path, no_page, pending, expected) -> None:
+    note = cost_note(TokenRow(usd=usd), resolution_path=path, no_page=no_page, pending=pending)
+    assert (note is None) if expected is None else note.startswith(expected)

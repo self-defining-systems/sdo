@@ -329,3 +329,13 @@ def test_a_closing_turn_with_requests_but_no_usage_log_stays_unknown(tmp_path: P
     assert row.offline.usd is None
     closing = json.loads((cell.directory(config) / "closing.json").read_text())
     assert closing["offline_source"] == "incident-record"
+
+
+def test_row_json_names_why_its_cost_is_pending_and_the_sealed_row_carries_the_cost(tmp_path: Path) -> None:
+    row, cell, config, _, _ = run_draining(tmp_path)
+    online = json.loads((cell.directory(config) / "row.json").read_text())
+    assert online["cost_note"].startswith("pending")
+    sealed = json.loads((cell.directory(config) / "manifest.json").read_text())  # sealed after the drain
+    assert sealed["status"] == row.status
+    assert row.online.usd  # the sealed row has a positive cost and so needs no reason
+    assert row.cost_note is None
