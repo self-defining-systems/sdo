@@ -310,14 +310,56 @@ func TestHeldKeysReplayWithTheSnapshot(t *testing.T) {
 	}
 }
 
-func TestUnmeasurableOperationIsReportedWithItsReason(t *testing.T) {
+// An operation the map gives no request-metrics source (no entries record)
+// is not applicable to the detector: it raises nothing, confirms health, and
+// names the operation and the reason as a coverage note, so an application
+// without request metrics never fails acceptance or opens an incident here.
+// Operations it can measure are judged as usual.
+func TestUnmeasurableOperationIsNotApplicableNotAFinding(t *testing.T) {
 	d := requestmetrics.NewDetector(requestmetrics.Config{
+		Spec:    sdk.DetectorSpec{ID: "request-metrics"},
+		Entries: []requestmetrics.Entry{entry()},
+		Operations: []requestmetrics.Operation{
+			{ID: "package-download", Service: "web", Route: pkgRoute, Method: "GET"},
+			{ID: "upload", Service: "gateway", Route: "/u", Unmeasurable: "no entries record for service gateway"},
+			{ID: "search", Service: "gateway", Route: "/s", Unmeasurable: "no entries record for service gateway"},
+		},
+		Rule: requestmetrics.DefaultRule(),
+	})
+	confirmer := d.(interface {
+		Confirmed(sdk.DetectionContext) bool
+		ConfirmationReason(sdk.DetectionContext) string
+	})
+	healthy := snapshot(nil, healthyBaseline(), presence())
+	got, err := d.Detect(context.Background(), healthy)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("findings = %+v, %v", got, err)
+	}
+	if !confirmer.Confirmed(healthy) {
+		t.Fatalf("not-applicable operations held confirmation: %s", confirmer.ConfirmationReason(healthy))
+	}
+	note := confirmer.ConfirmationReason(healthy)
+	for _, want := range []string{"not applicable", "upload", "search", "no entries record for service gateway"} {
+		if !strings.Contains(note, want) {
+			t.Fatalf("coverage note %q does not name %q", note, want)
+		}
+	}
+	if strings.Contains(note, "package-download") {
+		t.Fatalf("coverage note names a measured operation: %q", note)
+	}
+	failing := snapshot(failingFor(3), healthyBaseline(), presence())
+	got, err = d.Detect(context.Background(), failing)
+	if err != nil || len(got) != 1 || got[0].RuleID != requestmetrics.RuleErrors || got[0].Metadata["operation"] != "package-download" {
+		t.Fatalf("a measured operation's errors were not judged: %+v, %v", got, err)
+	}
+	// Only unmeasurable operations: no entries, no queries, nothing raised.
+	only := requestmetrics.NewDetector(requestmetrics.Config{
 		Spec:       sdk.DetectorSpec{ID: "request-metrics"},
 		Operations: []requestmetrics.Operation{{ID: "upload", Service: "gateway", Route: "/u", Unmeasurable: "no entries record for service gateway"}},
 		Rule:       requestmetrics.DefaultRule(),
 	})
-	got, err := d.Detect(context.Background(), sdktest.Snapshot{NamespaceName: "app"})
-	if err != nil || len(got) != 1 || !strings.Contains(got[0].Evidence, "no entries record") {
+	got, err = only.Detect(context.Background(), sdktest.Snapshot{NamespaceName: "app"})
+	if err != nil || len(got) != 0 {
 		t.Fatalf("findings = %+v, %v", got, err)
 	}
 }

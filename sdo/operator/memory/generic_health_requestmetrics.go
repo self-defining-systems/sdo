@@ -36,8 +36,10 @@ const (
 // plannedRequestMetrics derives the detector configuration from the accepted
 // application map: one entry per service with an entries record that an
 // operation enters through, one operation per map operation. An operation the
-// map cannot tell apart is kept with the reason, so it is reported rather
-// than skipped. A map without operations plans nothing.
+// map gives no request metric is kept with the reason (Unmeasurable): the
+// detector reports it as not applicable in its coverage note, never as a
+// finding, so it is visible rather than silently skipped. A map without
+// operations plans nothing.
 func plannedRequestMetrics(root string) (requestmetrics.Config, bool) {
 	parsed, _, ok := acceptedMap(root)
 	if !ok || len(parsed.Operations) == 0 {
@@ -130,7 +132,7 @@ import (
 // New watches the application's request metrics per user operation: failed
 // requests that are numerous, a real share and far above the healthy share,
 // on consecutive steps. An operation without the declared series or labels is
-// reported as not instrumented.
+// reported as not instrumented; one with no request metric is not applicable.
 func New() sdk.Detector {
 	return requestmetrics.NewDetector(requestmetrics.Config{
 		Spec: sdk.DetectorSpec{
