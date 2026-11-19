@@ -161,3 +161,31 @@ def test_down_deletes_the_cluster_only_after_the_final_copy(tmp_path: Path, monk
     lane.state_path.write_text("{}")
     assert cli.main(["down", "--run-dir", str(lane.run_dir), "--delete-cluster"]) == 0
     assert order == ["teardown", "delete cluster"]
+
+
+def test_copy_out_merges_run_level_directories_and_is_idempotent(tmp_path: Path) -> None:
+    lane = _lane(tmp_path, sink_root=tmp_path / "sink")
+    results = lane.run_dir / "results" / "r1"
+    results.mkdir(parents=True)
+    run = _sink_run(lane, results)
+    (run / "telemetry").mkdir()
+    (run / "telemetry" / "first.json").write_text("{}\n")
+    evidence_sink.copy_out_run(lane, results)
+    destination = results / "evidence"
+    assert (destination / "telemetry" / "first.json").is_file()
+
+    # The sink grew: a new file in the existing run-level directory, a grown file, and a new directory.
+    (run / "telemetry" / "second.json").write_text('{"a": 1}\n')
+    (run / "telemetry" / "first.json").write_text('{"grown": true}\n')
+    (run / "extra").mkdir()
+    (run / "extra" / "x.txt").write_text("x\n")
+    (destination / "telemetry" / "destination-only.txt").write_text("keep\n")
+    receipt = evidence_sink.copy_out_run(lane, results)
+
+    assert (destination / "telemetry" / "second.json").read_text() == '{"a": 1}\n'
+    assert (destination / "telemetry" / "first.json").read_text() == '{"grown": true}\n'
+    assert (destination / "extra" / "x.txt").is_file()
+    assert (destination / "telemetry" / "destination-only.txt").read_text() == "keep\n"
+    again = evidence_sink.copy_out_run(lane, results)
+    assert (again.files, again.bytes) == (receipt.files, receipt.bytes)
+    assert evidence_sink.settle_lane_evidence(lane) == []
