@@ -645,3 +645,17 @@ def test_row_settings_default_to_six_cpus_per_lane_and_an_auto_parent(tmp_path: 
     assert (default.lane_cpus, default.lane_cgroup_parent) == (6.0, "auto")
     with pytest.raises(ValueError, match="lane_cpus"):
         settings(tmp_path, lane_cpus=0)
+
+
+def test_every_attempt_is_recorded_with_its_normalized_cause(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """In-cell rejections are visible to the scheduler's lane accounting and parking, one line per attempt."""
+    first = rejected_record("SDO rejected onboarding after 390.1s (traffic-probe-read-later has not succeeded)")
+    other = rejected_record("SDO rejected onboarding after 12.5s (healthy baseline traffic-links is firing)")
+    attempts, _ = execute_attempts(tmp_path, monkeypatch, "sdo", [first, other, record()])
+    lines = [json.loads(line) for line in (tmp_path / "attempts.jsonl").read_text().splitlines()]
+    assert [line["run_id"] for line in lines] == attempts.run_ids
+    assert lines[0]["cause"] == "SDO rejected onboarding after Ns (traffic-probe-read-later has not succeeded)"
+    assert lines[0]["retried"] is True
+    assert lines[2]["cause"] is None
+    assert lines[2]["retried"] is False
+    assert all("started" in line and "ended" in line for line in lines)

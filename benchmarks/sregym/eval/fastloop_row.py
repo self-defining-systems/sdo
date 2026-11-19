@@ -412,6 +412,14 @@ class FastloopRowRunner:
 
     # ArmExecutor -------------------------------------------------------------------------------------------------
 
+    def _record_attempt(
+        self, directory: Path, row_id: str, started: float, cause: str | None, *, retried: bool
+    ) -> None:
+        """One line per attempt, so lane accounting and parking see in-cell rejections, not only the cell's end."""
+        line = {"run_id": row_id, "started": started, "ended": self._now(), "cause": cause, "retried": retried}
+        with (directory / "attempts.jsonl").open("a", encoding="utf-8") as attempts:
+            attempts.write(json.dumps(line) + "\n")
+
     def execute(self, lane: Lane, cell: Cell, injection: Injection, directory: Path, context: ArmContext) -> ArmResult:
         """Start the row and return at its online end; the same process keeps running until ``drain``."""
         with self._lock:
@@ -471,15 +479,18 @@ class FastloopRowRunner:
                 record = IncidentRecord.model_validate_json(online.read_text(encoding="utf-8"))
                 self.records[cell.id] = record
                 state["online_end"] = self._now()
+                self._record_attempt(directory, row_id, started, None, retried=False)
                 return map_record(record, cell, None, state["fallback_page_at"])
             completed = self._finish_process(directory, state)
             cause = _rejected_before_injection(results)
-            if (
+            retry = (
                 admission_try < ADMISSION_RETRIES
                 and cause is not None
                 and cause != previous_cause
                 and self._now() - first_started < ADMISSION_RETRY_BUDGET_SECONDS
-            ):
+            )
+            self._record_attempt(directory, row_id, started, cause, retried=retry)
+            if retry:
                 # The fault was never injected: the install window or the clean-app rehearsal failed on a slow or
                 # loaded host, not on the application. Both arms start the next attempt from a clean wipe, but only
                 # while the cause is new and the cell has not used about one row of lane time: a repeated cause is
