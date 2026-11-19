@@ -469,6 +469,30 @@ def linger_enabled(ctx: Context) -> bool:
     return result.stdout.strip() == "yes"
 
 
+def plan_credential_modes(ctx: Context) -> Plan:
+    """Tighten an existing profile in place (dir 700, essentials 600); nothing is copied or read."""
+    plan = Plan()
+    cred = ctx.host.credentials
+    if cred is None:
+        return plan
+    profile = ctx.path(cred.profile_dir)
+    targets = (
+        (profile, "700", ctx.target.run(["test", "-d", profile]).ok),
+        *(
+            (path, "600", ctx.target.run(["test", "-f", path]).ok)
+            for path in (
+                posixpath.join(profile, "settings.json"),
+                posixpath.join(profile, ".claude.json"),
+                ctx.path(cred.key_path),
+            )
+        ),
+    )
+    for path, mode, present in targets:
+        if present and ctx.target.run(["stat", "-c", "%a", path]).stdout.strip() != mode:
+            plan.changes.append(command_change(ctx, "credentials", f"chmod {mode} {path}", ["chmod", mode, path]))
+    return plan
+
+
 def _digest(data: bytes | None) -> str | None:
     return None if data is None else hashlib.sha256(data).hexdigest()
 
@@ -601,7 +625,15 @@ def plan_remove(ctx: Context) -> Plan:
 def build_plan(ctx: Context) -> Plan:
     """Every step in dependency order: refuse first, then root parts, then user parts."""
     merged = Plan()
-    for step in (plan_lane_root, plan_slice, plan_mglru, plan_sysctl, plan_guard, plan_diskwatch):
+    for step in (
+        plan_lane_root,
+        plan_slice,
+        plan_mglru,
+        plan_sysctl,
+        plan_guard,
+        plan_diskwatch,
+        plan_credential_modes,
+    ):
         part = step(ctx)
         merged.changes.extend(part.changes)
         merged.notes.extend(part.notes)

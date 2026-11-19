@@ -20,6 +20,7 @@ class FakeTarget:
     sudo_calls: list[list[str]] = field(default_factory=list)
     commands: dict[tuple[str, ...], str] = field(default_factory=dict)
     dirs: set[str] = field(default_factory=set)
+    modes: dict[str, str] = field(default_factory=dict)
 
     def run(self, argv: Sequence[str], *, stdin: bytes | None = None, timeout: float = 60) -> Result:
         argv = list(argv)
@@ -27,6 +28,8 @@ class FakeTarget:
             return Result(0 if self._exists(argv[2]) else 1)
         if argv[:2] == ["test", "-d"]:
             return Result(0 if argv[2] in self.dirs else 1)
+        if argv[:2] == ["test", "-f"]:
+            return Result(0 if argv[2] in self.files else 1)
         if argv[:2] == ["test", "-s"]:
             return Result(0 if self.files.get(argv[2]) else 1)
         if argv[:2] == ["test", "-w"]:
@@ -41,7 +44,12 @@ class FakeTarget:
             self.dirs.add(argv[-1])
             return Result(0)
         if argv[:3] == ["stat", "-c", "%a"]:
+            if argv[3] in self.modes:
+                return Result(0, self.modes[argv[3]].encode() + b"\n")
             return Result(0, b"700\n") if argv[3] in self.dirs else Result(1)
+        if argv[:1] == ["chmod"]:
+            self.modes[argv[2]] = argv[1]
+            return Result(0)
         if argv[:1] in (["env"], ["loginctl"]):
             return Result(0, b"inactive\n")
         if argv[:1] == ["mkdir"]:

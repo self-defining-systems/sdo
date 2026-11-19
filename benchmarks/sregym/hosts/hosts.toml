@@ -39,18 +39,23 @@ profile_dir = "/mnt/data/shli/.claude-gcp"
 [hosts.chelan4]
 lane_root = "/mnt/data/shli/sdo-lanes"
 
+# The running lanes use the ovh4- prefix and this env file.
 [hosts.chelan4.guard]
-lane_prefix = "c4-"
+lane_prefix = "ovh4-"
+env_file = "/mnt/data/shli/sdo-lanes/host-main.env"
 
 [hosts.chelan4.credentials]
 profile_dir = "/mnt/data/shli/.claude-gcp"
 
-# spokane1: the root filesystem is NFS, so everything lives on the local /mnt/nvme1 disk.
+# spokane1: the root filesystem is NFS, so everything lives on the local /mnt/nvme1 disk. Lanes, evidence and the
+# eval scripts are under /mnt/nvme1/shli-sdo; the running lanes use the sdm- prefix.
 [hosts.spokane1]
-lane_root = "/mnt/nvme1/shli-sdo/sdo-lanes"
+lane_root = "/mnt/nvme1/shli-sdo"
 
 [hosts.spokane1.guard]
-lane_prefix = "s1-"
+lane_prefix = "sdm-"
+env_file = "/mnt/nvme1/shli-sdo/host-main.env"
 
 [hosts.spokane1.credentials]
-profile_dir = "/mnt/nvme1/shli-sdo/.claude-gcp"
+profile_dir = "/mnt/nvme1/shli/.claude-gcp"
+key_path = "/mnt/nvme1/shli/.claude-gcp/gcp-key.json"
