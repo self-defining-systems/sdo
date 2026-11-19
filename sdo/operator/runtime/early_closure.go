@@ -37,37 +37,58 @@ func (g *responderClosureGuard) resultSnapshot(request IncidentRequest, at time.
 	return earlyResultSnapshotLocked(g.loop, request, at)
 }
 
-func acquireClosureGuard(l *ResponderLoop) (*responderClosureGuard, func(), bool) {
+// closureGuardState says why a closure pass could or could not observe the loop.
+type closureGuardState int
+
+const (
+	// closureGuardHeld: the guard is held and the pass observed the loop.
+	closureGuardHeld closureGuardState = iota
+	// closureGuardBusy: a short lock was in use, so this pass saw nothing. It
+	// says nothing about safety: a write made meanwhile moves the mutation
+	// revision the next observed pass compares, so the pass is skipped and the
+	// stability window is left alone.
+	closureGuardBusy
+	// closureGuardUnsafe: a write is in flight or unsettled (a running
+	// operation, a pending mitigation, a gate or receipt error), so recovery
+	// cannot be proved now and the stability window restarts.
+	closureGuardUnsafe
+)
+
+// acquireClosureGuard holds the loop for one closure pass. Responder reads
+// (`sdo detect --wait` polls for minutes) hold operationMu for reading, so the
+// guard shares it: only a writer, which takes operationMu exclusively, is a
+// reason to call the loop unsafe.
+func acquireClosureGuard(l *ResponderLoop) (*responderClosureGuard, func(), closureGuardState) {
 	noop := func() {}
 	if l == nil {
-		return &responderClosureGuard{}, noop, true
+		return &responderClosureGuard{}, noop, closureGuardHeld
 	}
-	if !l.operationMu.TryLock() {
-		return nil, noop, false
+	if !l.operationMu.TryRLock() {
+		return nil, noop, closureGuardUnsafe
 	}
 	if !l.mu.TryLock() {
-		l.operationMu.Unlock()
-		return nil, noop, false
+		l.operationMu.RUnlock()
+		return nil, noop, closureGuardBusy
 	}
-	release := func() { l.mu.Unlock(); l.operationMu.Unlock() }
+	release := func() { l.mu.Unlock(); l.operationMu.RUnlock() }
 	// MP exposes reservations through this optional, no-I/O interface. Keep the
 	// closure guard usable before that implementation is integrated.
 	if pending, ok := any(l).(interface{ hasPendingMitigationsLocked() bool }); ok {
 		if pending.hasPendingMitigationsLocked() {
 			release()
-			return nil, noop, false
+			return nil, noop, closureGuardUnsafe
 		}
 	} else {
 		for _, application := range l.applicationsLog {
 			if application.Pending {
 				release()
-				return nil, noop, false
+				return nil, noop, closureGuardUnsafe
 			}
 		}
 	}
 	if l.gateError != nil {
 		release()
-		return nil, noop, false
+		return nil, noop, closureGuardUnsafe
 	}
 	var guard *apihistory.MutationObservation
 	if l.MutationGate != nil {
@@ -75,7 +96,7 @@ func acquireClosureGuard(l *ResponderLoop) (*responderClosureGuard, func(), bool
 		guard, err = l.MutationGate.TryObserve()
 		if err != nil || guard == nil {
 			release()
-			return nil, noop, false
+			return nil, noop, closureGuardUnsafe
 		}
 	}
 	l.closureReceipts = nil
@@ -86,7 +107,7 @@ func acquireClosureGuard(l *ResponderLoop) (*responderClosureGuard, func(), bool
 				guard.Close()
 			}
 			release()
-			return nil, noop, false
+			return nil, noop, closureGuardUnsafe
 		}
 		l.closureReceipts = receipts
 		if guard != nil {
@@ -98,7 +119,7 @@ func acquireClosureGuard(l *ResponderLoop) (*responderClosureGuard, func(), bool
 			guard.Close()
 		}
 		release()
-	}, true
+	}, closureGuardHeld
 }
 
 // The controller-owned receipts survive a missing final model report. Only an
