@@ -360,6 +360,34 @@ def test_opus_refuses_to_run_without_shared_pool(tmp_path: Path) -> None:
     assert not agent.requests
 
 
+@pytest.mark.parametrize("fault", ["empty_capacity", "unreadable"])
+def test_a_misprovisioned_host_pool_fails_the_turn_with_the_named_pool_error(tmp_path: Path, fault: str) -> None:
+    """Every way a provisioned pool can be unusable reaches the worker as the same named pool error."""
+    from libs.agent_cli.provider_capacity import prepare_host_pool
+
+    pool = tmp_path / "pool"
+    prepare_host_pool(pool, [], capacity=2)
+    if fault == "empty_capacity":
+        (pool / "capacity").write_text("")
+    else:
+        (pool / "capacity").chmod(0o000)
+    environment = {
+        "SDO_OPUS_POOL_DIR": str(pool),
+        "SDO_OPUS_POOL_MODE": "per_host",
+        "SDO_OPUS_POOL_HOST_ID": "host-a",
+        "SDO_OPUS_MAX_SESSIONS": "2",
+    }
+    try:
+        with (
+            pytest.raises(ProviderRateLimited, match=r"shared Opus pool unavailable \(") as raised,
+            ProviderCapacity(environment=environment).opus_session("claude-opus-5-5"),
+        ):
+            pass
+    finally:
+        (pool / "capacity").chmod(0o664)
+    assert not raised.value.retryable
+
+
 @pytest.mark.parametrize("location", ["checkout", "child", "symlink"])
 def test_pool_metadata_cannot_enter_the_agent_checkout(tmp_path: Path, location: str) -> None:
     workspace = tmp_path / "checkout"

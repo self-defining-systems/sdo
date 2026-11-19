@@ -320,6 +320,9 @@ class ProviderCapacity:
             # Name the errno so a misprovisioned pool is not mistaken for contention.
             reason = f"shared Opus pool unavailable ({errno.errorcode.get(exc.errno or 0, type(exc).__name__)})"
             raise self.exhausted(reason, kind="concurrency") from exc
+        except ValueError as exc:
+            # Unprovisioned or conflicting capacity metadata: the same named pool failure, never an unwrapped error.
+            raise self.exhausted(f"shared Opus pool unavailable ({exc})", kind="concurrency") from exc
         try:
             yield
         finally:

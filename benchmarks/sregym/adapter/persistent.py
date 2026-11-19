@@ -36,13 +36,14 @@ from typing import TYPE_CHECKING, Any, Protocol, get_args, get_type_hints
 from google.protobuf import json_format
 from pydantic import BaseModel, ConfigDict, Field
 
-from benchmarks.sregym.adapter.budgets import Deadline, WaitKind, wait_for
+from benchmarks.sregym.adapter.budgets import DEFAULT_BOUNDS, Deadline, SdoBounds, WaitKind, wait_for
 from benchmarks.sregym.adapter.cluster_resources import kubectl
 from benchmarks.sregym.adapter.deployment_source import DeploymentPolicyConfig
 from benchmarks.sregym.adapter.eval_guards import (
     INCIDENT_EXECUTION_LABEL,
     STANDBY_LABEL,
     BusyDeadline,
+    HarnessInfrastructureError,
     ProgressWatch,
     busy_until,
     idle_standby_jobs,
@@ -143,17 +144,52 @@ class ControllerStalledError(PersistentControllerError):
     """
 
 
-class ResponderDispatchError(PersistentControllerError):
+class ResponderDispatchError(PersistentControllerError, HarnessInfrastructureError):
     """The controller kept failing to start the responder for an open incident, so no agent can repair it.
 
-    An infrastructure fault (an unusable provider pool, a broken worker), not an agent outcome: the wait ends at
-    the dispatch bound naming the controller's last dispatch error instead of running out the verification budget.
+    An infrastructure fault (an unusable provider pool, a broken worker), not an agent outcome: the wait ends once
+    the controller itself reports :data:`DISPATCH_FAILURE_ATTEMPTS` consecutive failed dispatch attempts, naming its
+    last dispatch error, instead of running out the verification budget.
     """
 
+    infra_error = "dispatch_failed"
 
-#: How long an open incident's responder dispatch may keep failing before the stage ends; longer than one
-#: in-turn provider admission wait, so contention that resolves is never cut short.
-DISPATCH_FAILURE_BOUND_SECONDS = wait_for(WaitKind.OPERATION)
+
+#: Capped retries the controller must have spent before a dispatch counts as undispatchable.
+DISPATCH_RETRIES_AT_CAP = 3
+
+
+def _dispatch_failure_attempts(bounds: SdoBounds = DEFAULT_BOUNDS) -> int:
+    """Consecutive failed dispatch attempts that end the stage: the controller's backoff reaches its cap, then
+    :data:`DISPATCH_RETRIES_AT_CAP` more capped retries fail too.
+
+    A real provider rate limit never gets here: the worker waits it out inside its turn (``ProviderCapacity``,
+    up to its retry budget) while the dispatch is RUNNING, so a failed attempt is a worker that could not start
+    at all. With the default 2 s to 120 s backoff that is ten attempts, at least 243 s and at most 486 s of
+    controller backoff.
+    """
+    attempts, backoff = 1, bounds.dispatch_retry_initial_seconds
+    while backoff < bounds.dispatch_retry_max_seconds:
+        attempts, backoff = attempts + 1, backoff * 2
+    return attempts + DISPATCH_RETRIES_AT_CAP
+
+
+DISPATCH_FAILURE_ATTEMPTS = _dispatch_failure_attempts()
+
+
+def undispatchable(state: dict[str, Any]) -> bool:
+    """Whether the controller reports the open incident's responder as unable to start.
+
+    Judged only from the controller's own state: a dispatch waiting to retry (PENDING, responder not done) after
+    :data:`DISPATCH_FAILURE_ATTEMPTS` consecutive failures. ``dispatch_error`` alone is never the signal: it stays
+    set while a later retry runs, and a terminal Job failure sets it with the responder done (a failed closure).
+    """
+    return (
+        bool(state.get("incident_open"))
+        and state.get("dispatch_state") == "DISPATCH_STATE_PENDING"
+        and not state.get("responder_done")
+        and int(state.get("dispatch_failure_attempts") or 0) >= DISPATCH_FAILURE_ATTEMPTS
+    )
 
 
 class ReflectionDeadlineError(PersistentControllerError):
@@ -2115,7 +2151,6 @@ def _wait_for_verified_incident(
     detected = False
     state: dict[str, Any] = {}
     summary = ""
-    dispatch_failing_since: float | None = None
     next_report = started + wait_for(WaitKind.MINUTE)
     while budget.left() > 0:
         state = ops.runtime_state(control)
@@ -2124,28 +2159,18 @@ def _wait_for_verified_incident(
             break
         now = clock.monotonic()
         dispatch_error = str(state.get("dispatch_error") or "")
-        dispatch_failing_since = (
-            (dispatch_failing_since if dispatch_failing_since is not None else now)
-            if dispatch_error and state.get("incident_open")
-            else None
-        )
         if now >= next_report:
             next_report = now + wait_for(WaitKind.MINUTE)
             logger.info(
                 "waiting for controller verification in %s: %.0fs elapsed, %.0fs left, incident_open=%s, "
-                "dispatch_state=%s%s",
+                "dispatch_state=%s, failed dispatch attempts=%s%s",
                 control,
                 now - started,
                 budget.left(),
                 bool(state.get("incident_open")),
                 state.get("dispatch_state") or "-",
+                state.get("dispatch_failure_attempts") or 0,
                 f", dispatch_error={dispatch_error}" if dispatch_error else "",
-            )
-        if dispatch_failing_since is not None and now - dispatch_failing_since >= DISPATCH_FAILURE_BOUND_SECONDS:
-            request = state.get("incident_request") or {}
-            raise ResponderDispatchError(
-                f"controller in {control!r} could not start the responder for incident "
-                f"{request.get('incident_id', '?')!r} for {now - dispatch_failing_since:.0f}s: {dispatch_error}"
             )
         observed = _observe_state(
             state,
@@ -2180,6 +2205,14 @@ def _wait_for_verified_incident(
                 busy_until=busy_until(state),
             )
         _raise_observation_failure(observed, state)
+        # Only after any closure was returned or raised: a responder that cannot start ends the stage.
+        if undispatchable(state):
+            request = state.get("incident_request") or {}
+            raise ResponderDispatchError(
+                f"controller in {control!r} could not start the responder for incident "
+                f"{request.get('incident_id', '?')!r} after {state.get('dispatch_failure_attempts')} failed "
+                f"dispatch attempts: {dispatch_error}"
+            )
         # Follow-up collection starts only after a durable receipt drain. Native
         # ACK plus idle is terminal even if a benchmark fault probe stays red.
         # Unknown reads, queued reflection/rollout and any new incident cannot

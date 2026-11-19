@@ -31,6 +31,7 @@ from benchmarks.sregym.adapter.cluster_resources import (
     wait_submission_bridge,
 )
 from benchmarks.sregym.adapter.deployment_source import raw_source, source_from_config
+from benchmarks.sregym.adapter.eval_guards import HarnessInfrastructureError
 from benchmarks.sregym.adapter.fault_gate import (
     AWAITING_FAULT_INJECTION,
     FaultGateError,
@@ -588,8 +589,10 @@ def _configure_turn_usage_log(logs_dir: str | None) -> None:
         os.environ[TURN_USAGE_LOG_ENV] = str(Path(logs_dir) / "sdo_turn_usage.jsonl")
 
 
-class SeededControllerNotReadyError(NativeOperatorError):
+class SeededControllerNotReadyError(NativeOperatorError, HarnessInfrastructureError):
     """A seeded persistent controller never had a ready owned Pod within its rollout bound; the row ends."""
+
+    infra_error = "controller_not_ready"
 
 
 def _wait_for_installed_controller(

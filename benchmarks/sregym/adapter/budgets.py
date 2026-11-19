@@ -35,9 +35,19 @@ class SdoBounds:
     retry_backoff_seconds: float = 182.0
     #: Commit, cleanup and detector-rollout handoff after the last attempt. Eval assumption.
     closeout_seconds: float = 120.0
+    #: Responder dispatch retries back off exponentially from this delay (dispatch_retry.go
+    #: ``defaultDispatchRetryInitialBackoff``), with equal jitter: each delay uniform in [backoff/2, backoff].
+    dispatch_retry_initial_seconds: float = 2.0
+    #: ... up to this cap (dispatch_retry.go ``defaultDispatchRetryMaxBackoff``).
+    dispatch_retry_max_seconds: float = 120.0
 
     def __post_init__(self) -> None:
-        for name in ("response_timeout_seconds", "verification_timeout_seconds"):
+        for name in (
+            "response_timeout_seconds",
+            "verification_timeout_seconds",
+            "dispatch_retry_initial_seconds",
+            "dispatch_retry_max_seconds",
+        ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive, got {getattr(self, name)}")
         for name in ("retry_backoff_seconds", "closeout_seconds"):

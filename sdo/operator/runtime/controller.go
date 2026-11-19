@@ -2309,7 +2309,8 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		History: evaluationsContract(history), IncidentOpen: c.incidentOpen, ResponderDone: c.responderDone,
 		DispatchError: c.dispatchError, IncidentDetectedAt: optionalTimestamp(c.incidentDetectedAt),
 		IncidentDispatchedAt: optionalTimestamp(c.incidentDispatchedAt), ResponderCompletedAt: optionalTimestamp(c.responderCompletedAt),
-		EscalatedAt:         optionalTimestamp(c.escalatedAt),
+		EscalatedAt:             optionalTimestamp(c.escalatedAt),
+		DispatchFailureAttempts: int32(c.dispatchFailureAttempts),
 		DetectorClearSince:  timestampsContract(c.detectorClearSince),
 		DispatchState:       dispatchState,
 		IncidentFindingKeys: append([]string(nil), c.incidentFindingKeys...), ClosureState: c.closureState,
@@ -2394,6 +2395,7 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	c.setupEvaluatedRevision = state.GetSetupEvaluatedRevision()
 	c.sourceInventory = nil
 	c.dispatchError = state.DispatchError
+	c.dispatchFailureAttempts = int(state.GetDispatchFailureAttempts())
 	c.incidentDetectedAt = controllerTime(state.GetIncidentDetectedAt())
 	c.incidentDispatchedAt = controllerTime(state.GetIncidentDispatchedAt())
 	c.responderCompletedAt = controllerTime(state.GetResponderCompletedAt())
