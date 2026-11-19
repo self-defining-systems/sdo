@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/types/known/timestamppb"
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
@@ -16,6 +17,7 @@ import (
 	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 func TestOnboardingIncompleteHealthIsNotContradiction(t *testing.T) {
@@ -245,4 +247,62 @@ type emptyDetector struct{ *sequenceDetector }
 
 func (emptyDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
 	return nil, nil
+}
+
+// remoteConsumer is a traffic consumer as the memory host registers it: it
+// has no Confirmed method of its own; its probe workload's samples confirm it.
+type remoteConsumer struct{ *sequenceDetector }
+
+func (remoteConsumer) TrafficWorkloads() []string { return []string{"probe"} }
+
+// warmingTraffic serves a probe window that holds no samples until warm, then
+// three fresh successes: a probe sampled slower than start-up takes.
+type warmingTraffic struct{ warm *bool }
+
+func (p warmingTraffic) Snapshot(context.Context) (sdk.DetectionContext, error) {
+	workload := traffic.Workload{APIVersion: traffic.APIVersion, Kind: traffic.WorkloadKind, Name: "probe", Purpose: traffic.PurposeHealthProbe, Scenarios: []traffic.WorkloadScenario{{ID: "call"}}}.WithDefaults()
+	at := time.Unix(2000, 0).UTC()
+	observed := traffic.ScenarioObservations{Scenario: traffic.Descriptor{ID: "call"}}
+	if *p.warm {
+		observed.Qualified = true
+		for i := 0; i < 3; i++ {
+			observed.Samples = append(observed.Samples, traffic.Sample{At: at.Add(time.Duration(i-3) * 10 * time.Second), Outcome: traffic.OutcomeOK, Latency: time.Millisecond})
+		}
+	}
+	return sdktest.Snapshot{Traffic: map[string]traffic.Window{"probe": {Workload: workload, ObservedAt: at, Scenarios: []traffic.ScenarioObservations{observed}}}}, nil
+}
+
+// A probe that warms up after start-up's full batch must still let the install
+// be claimed once it is warm, whatever batch the step that finds it warm
+// selects. In production every detector runs behind the memory host, so none
+// carries a Confirmed method of its own; the install sweep must not depend on one.
+func TestInstallIsClaimedWhenProbesWarmAfterTheFirstBatch(t *testing.T) {
+	start := time.Unix(1000, 0).UTC()
+	cfg := testControllerConfig()
+	cfg.SourceCommit = strings.Repeat("a", 40)
+	probe := remoteConsumer{quietHealth()}
+	probe.spec.ID, probe.spec.Interval = "probe", 30*time.Second
+	health := quietHealth()
+	health.spec.Interval = 5 * time.Second
+	warm := false
+	c, err := NewController(cfg, []sdk.Detector{probe, health}, warmingTraffic{&warm}, &recordingDispatcher{requests: make(chan IncidentRequest, 4)}, start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.onboardingClient, c.onboardingControl = fake.NewSimpleClientset(), "control"
+	c.onboardingReachability = &onboardingReachabilityState{}
+	c.pendingOnboarding = &contracts.NamespaceOnboarding{Namespace: cfg.Namespace, AcceptedCommit: cfg.SourceCommit, EstablishedAt: timestamppb.New(start)}
+	if err := c.Step(context.Background(), start, nil); err != nil {
+		t.Fatal(err)
+	}
+	if c.namespaceOnboarding != nil {
+		t.Fatal("a cold probe let start-up's batch claim the install")
+	}
+	warm = true
+	if err := c.Step(context.Background(), start.Add(5*time.Second), nil); err != nil {
+		t.Fatal(err)
+	}
+	if c.namespaceOnboarding == nil {
+		t.Fatalf("the install was not claimed once the probe was warm; stale pending reason %q", c.onboardingReachability.waitReason)
+	}
 }
