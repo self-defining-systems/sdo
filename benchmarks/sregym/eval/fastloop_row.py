@@ -397,6 +397,8 @@ class FastloopRowRunner:
         )
         command = row_command(self.settings, environment, cell, row_id, stream, state["planned"])
         (directory / "command.json").write_text(json.dumps(command, indent=2) + "\n", encoding="utf-8")
+        results = environment.run_dir / "results"
+        completed: int | None = None
         for admission_try in range(1 + ADMISSION_RETRIES):
             attempt = len(list((environment.run_dir / "results").glob(f"{run_id(self.stage, cell, 0)[:-3]}-a*")))
             row_id = run_id(self.stage, cell, attempt)
