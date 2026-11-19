@@ -503,6 +503,82 @@ def test_the_drain_of_a_row_that_never_started_is_not_applicable(
     assert runner.drain(lane, cell(), tmp_path, fake.context()).status == "not_applicable"
 
 
+def rejected_record(message: str, *, stage: str = "pre_injection") -> IncidentRecord:
+    return record(
+        injection={"state": "not_injected", "stage": stage},
+        detected_at=None,
+        dispatched_at=None,
+        responder_started_at=None,
+        responder_finished_at=None,
+        resolved_at=None,
+        reflection_started_at=None,
+        oracle=None,
+        resolution_path=None,
+        error=message,
+    )
+
+
+class Attempts:
+    """``fastloop run`` attempts that each finish in one step with the next scripted record."""
+
+    def __init__(self, env: Any, records: list[IncidentRecord]) -> None:
+        self.env, self.records, self.run_ids = env, records, []
+
+    def start(self, command: list[str], **kwargs: Any) -> FakeRow:
+        row = command[command.index("--run-id") + 1]
+        self.run_ids.append(row)
+        results = self.env.run_dir / "results" / row
+        results.mkdir(parents=True)
+        (results / "incidents.jsonl").write_text(
+            self.records[min(len(self.run_ids), len(self.records)) - 1].model_dump_json() + "\n"
+        )
+        return FakeRow(returncode=0)
+
+
+def execute_attempts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, arm: Arm, records: list[IncidentRecord]) -> Any:
+    env = environment(tmp_path)
+    monkeypatch.setattr("benchmarks.sregym.eval.fastloop_row.FastloopEnvironment.load", lambda directory: env)
+    monkeypatch.setattr(FastloopRowRunner, "_fetch", lambda *args: None)
+    attempts = Attempts(env, records)
+    runner = FastloopRowRunner(
+        settings(tmp_path), "small", start=attempts.start, sleep=lambda s: None, head=lambda workspace: "h"
+    )
+    context = ArmContext(config=make_config(tmp_path), page_hook=NoPageHook(), now=lambda: 0.0, sleep=lambda s: None)
+    lane = runner.claim(cell(arm), "h1", "snap" if arm == "sdo" else None)
+    result = runner.execute(lane, cell(arm), Injection(at=0), tmp_path, context)
+    return attempts, result
+
+
+@pytest.mark.parametrize("arm", ["sdo", "vanilla"])
+def test_a_row_rejected_before_injection_is_retried_on_a_fresh_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, arm: Arm
+) -> None:
+    flake = rejected_record("no-fault rehearsal has unhealthy samples")
+    attempts, result = execute_attempts(tmp_path, monkeypatch, arm, [flake, record()])
+    assert len(attempts.run_ids) == 2
+    assert attempts.run_ids[1].endswith("-a1")
+    assert result.status != "error"
+
+
+def test_the_pre_injection_retry_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarks.sregym.eval.fastloop_row import ADMISSION_RETRIES
+
+    flake = rejected_record("SDO rejected onboarding: the first install was not healthy")
+    attempts, _ = execute_attempts(tmp_path, monkeypatch, "sdo", [flake])
+    assert len(attempts.run_ids) == 1 + ADMISSION_RETRIES
+
+
+def test_a_failure_after_injection_is_never_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    broken = rejected_record("no-fault rehearsal has unhealthy samples", stage="injection")
+    attempts, _ = execute_attempts(tmp_path, monkeypatch, "sdo", [broken, record()])
+    assert len(attempts.run_ids) == 1
+
+
+def test_an_unrelated_pre_injection_error_is_not_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts, _ = execute_attempts(tmp_path, monkeypatch, "sdo", [rejected_record("some other failure"), record()])
+    assert len(attempts.run_ids) == 1
+
+
 def test_every_claim_reapplies_the_lane_cpu_cap_to_that_lanes_cluster(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
