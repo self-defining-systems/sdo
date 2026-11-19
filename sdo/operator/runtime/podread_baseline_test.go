@@ -39,7 +39,8 @@ func promoted(b *PodReadBaseline, query podread.Query) []string {
 // healthy stretch become the reference only once the stretch lasted
 // DefaultStateSettle, so neither the first clear evaluation nor a reading
 // taken during a fault still below its firing threshold is absorbed. A
-// restarted controller starts with an empty holder and waits the same way.
+// holder with nothing persisted (a first start, or a restored record that no
+// longer describes the store) waits the same way.
 func TestPodReadBaselineSettlesInEveryMode(t *testing.T) {
 	for name, baseline := range map[string]StateBaseline{"without state baseline": nil, "with state baseline": &boundaryBaseline{}} {
 		t.Run(name, func(t *testing.T) {

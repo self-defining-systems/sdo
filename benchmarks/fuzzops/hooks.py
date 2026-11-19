@@ -554,8 +554,10 @@ def idle_verdict(
 
 def _store_baseline_pending(state: dict[str, Any], controller_log: str | None) -> str:
     """Why a data store is still unbaselined ("" when none is). A RestoreStoreItem needs the controller's promoted
-    healthy baseline of the store (storestate.Baseline), which is in-memory and logged once as
-    ``store_baseline_promoted``; the state ConfigMap carries no coverage note, so the gate reads the log.
+    healthy baseline of the store (storestate.Baseline), logged as ``store_baseline_promoted`` when promoted and
+    again (``restored=true``) when a restarted controller adopts the one it persisted, so a seed import or reset
+    that restarts the controller over the same store Pods waits for no new promotion; the state ConfigMap carries
+    no coverage note, so the gate reads the log.
     Every store the controller evaluates (its state history and its log) must have been promoted. Without the log
     the gate holds."""
     stores = {

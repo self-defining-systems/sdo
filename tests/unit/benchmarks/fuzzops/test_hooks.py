@@ -1420,6 +1420,26 @@ def test_idle_verdict_releases_once_every_evaluated_store_is_promoted() -> None:
     assert idle_verdict(state, NOW, True, NOW, controller_log=log) == ""
 
 
+def test_idle_verdict_after_a_restart_needs_no_new_promotion_when_baselines_were_restored() -> None:
+    """A seed import or reset restarts the controller over the same store Pods; the restarted controller adopts the
+    baselines it persisted on its first evaluation and logs them as promoted, so the lane is idle at once. A store
+    whose persisted baseline no longer describes it is discarded and still waits for a promotion."""
+    state = _store_history(("store-state-postgresql", ""), ("store-state-redis", ""))
+    restarted = _log(
+        EVALUATED,
+        "2026/11/19 21:49:45 INFO store_baseline_promoted component=postgresql restored=true",
+        "2026/11/19 21:49:45 INFO store_baseline_promoted component=redis restored=true",
+    )
+    assert idle_verdict(state, NOW, True, NOW, controller_log=restarted) == ""
+
+    replaced = _log(
+        EVALUATED,
+        "2026/11/19 21:49:45 INFO store_baseline_promoted component=postgresql restored=true",
+        '2026/11/19 21:49:45 INFO store_baseline_discarded component=redis reason="store Pods or query changed"',
+    )
+    assert idle_verdict(state, NOW, True, NOW, controller_log=replaced) == "blind: no promoted baseline yet for redis"
+
+
 def test_idle_verdict_needs_the_controller_log_to_judge_baselines() -> None:
     state = _store_history(("store-state-postgresql", ""))
 

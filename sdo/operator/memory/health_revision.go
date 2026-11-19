@@ -38,33 +38,9 @@ func healthGit(ctx context.Context, repository string, args ...string) ([]byte, 
 // the effective deployment inputs under .sdo/deployment (agents write only
 // .sdo/, so patches and deployment files are where source changes live).
 func HealthInputs(ctx context.Context, repository, revision string) (HealthRevision, error) {
-	commit, err := healthGit(ctx, repository, "rev-parse", "--verify", revision+"^{commit}")
+	revision, source, detectors, err := treeInputs(ctx, repository, revision)
 	if err != nil {
 		return HealthRevision{}, err
-	}
-	revision = strings.TrimSpace(string(commit))
-	entries, err := healthGit(ctx, repository, "ls-tree", "-r", "-z", "--full-tree", revision)
-	if err != nil {
-		return HealthRevision{}, err
-	}
-	source, detectors := sha256.New(), sha256.New()
-	for _, entry := range bytes.Split(entries, []byte{0}) {
-		if len(entry) == 0 {
-			continue
-		}
-		_, path, ok := bytes.Cut(entry, []byte{'\t'})
-		if !ok {
-			return HealthRevision{}, errors.New("invalid health provenance tree")
-		}
-		name := string(path)
-		if !layout.IsMemoryPath(name) || layout.IsEffectiveDeploymentInput(name) {
-			source.Write(entry)
-			source.Write([]byte{0})
-		}
-		if strings.HasPrefix(name, layout.DetectorsDir+"/health/") || strings.HasPrefix(name, layout.DiagnosticsDir+"/traffic/") || strings.HasPrefix(name, layout.LibrariesDir+"/") || name == layout.DiagnosticsGoModFile {
-			detectors.Write(entry)
-			detectors.Write([]byte{0})
-		}
 	}
 	goal, err := healthGit(ctx, repository, "show", revision+":"+layout.GoalFile)
 	if err != nil {
@@ -78,7 +54,50 @@ func HealthInputs(ctx context.Context, repository, revision string) (HealthRevis
 	if objective == "" {
 		return HealthRevision{}, errors.New("accepted human objective is empty")
 	}
-	return HealthRevision{Commit: revision, SourceInputs: fmt.Sprintf("%x", source.Sum(nil)), Objective: objective, DetectorRevision: fmt.Sprintf("%x", detectors.Sum(nil))}, nil
+	return HealthRevision{Commit: revision, SourceInputs: source, Objective: objective, DetectorRevision: detectors}, nil
+}
+
+// SourceInputs is HealthRevision.SourceInputs of one revision: the digest of
+// every tracked input outside operational memory plus the effective
+// deployment inputs, without reading the health objective. It identifies the
+// deployment a revision describes, so controller state taken from a running
+// deployment (the promoted store baselines) can be bound to it.
+func SourceInputs(ctx context.Context, repository, revision string) (string, error) {
+	_, source, _, err := treeInputs(ctx, repository, revision)
+	return source, err
+}
+
+// treeInputs resolves revision and digests its source and detector inputs.
+func treeInputs(ctx context.Context, repository, revision string) (commit, source, detectors string, err error) {
+	resolved, err := healthGit(ctx, repository, "rev-parse", "--verify", revision+"^{commit}")
+	if err != nil {
+		return "", "", "", err
+	}
+	commit = strings.TrimSpace(string(resolved))
+	entries, err := healthGit(ctx, repository, "ls-tree", "-r", "-z", "--full-tree", commit)
+	if err != nil {
+		return "", "", "", err
+	}
+	sourceDigest, detectorDigest := sha256.New(), sha256.New()
+	for _, entry := range bytes.Split(entries, []byte{0}) {
+		if len(entry) == 0 {
+			continue
+		}
+		_, path, ok := bytes.Cut(entry, []byte{'\t'})
+		if !ok {
+			return "", "", "", errors.New("invalid health provenance tree")
+		}
+		name := string(path)
+		if !layout.IsMemoryPath(name) || layout.IsEffectiveDeploymentInput(name) {
+			sourceDigest.Write(entry)
+			sourceDigest.Write([]byte{0})
+		}
+		if strings.HasPrefix(name, layout.DetectorsDir+"/health/") || strings.HasPrefix(name, layout.DiagnosticsDir+"/traffic/") || strings.HasPrefix(name, layout.LibrariesDir+"/") || name == layout.DiagnosticsGoModFile {
+			detectorDigest.Write(entry)
+			detectorDigest.Write([]byte{0})
+		}
+	}
+	return commit, fmt.Sprintf("%x", sourceDigest.Sum(nil)), fmt.Sprintf("%x", detectorDigest.Sum(nil)), nil
 }
 
 // ShapeOf returns the desired-state shape digest of repository at revision
