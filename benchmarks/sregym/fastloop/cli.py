@@ -924,6 +924,31 @@ def _recapture_application_baseline(environment: FastloopEnvironment) -> None:
         tuple(capture_application_baseline(cluster, namespace) for namespace in namespaces),
         installed=True,
     )
+    _record_deployed_source(environment)
+
+
+def _record_deployed_source(environment: FastloopEnvironment) -> None:
+    """The workspace revision a deploy just used is the application source the lane now runs.
+
+    A workspace without a readable revision records nothing, so the next row-start decision recreates.
+    """
+    from benchmarks.sregym.fastloop.wipe import DeployedApplicationSource, WipeError, application_source_identity
+
+    try:
+        identity = application_source_identity(environment.workspace)
+    except (WipeError, OSError) as exc:
+        logger.warning("deployed application source not recorded: %s", exc)
+        return
+    DeployedApplicationSource(environment.kubeconfig, environment.namespace).record(identity)
+
+
+def _deployed_source_change(environment: FastloopEnvironment) -> Tier2Reason | None:
+    """Recreate when the warm app was deployed from other application content than the row's planned commit."""
+    from benchmarks.sregym.fastloop.wipe import DeployedApplicationSource, application_source_identity
+
+    return DeployedApplicationSource(environment.kubeconfig, environment.namespace).reason(
+        application_source_identity(environment.workspace)
+    )
 
 
 def recreate_application(
@@ -996,8 +1021,12 @@ def restore_lane_identities(environment: FastloopEnvironment, results_dir: Path)
 
 
 def _record_fresh_deploy(environment: FastloopEnvironment) -> None:
-    """A deploy `up` just performed is a whole-application recreation: the lane's first row need not redeploy it."""
+    """A deploy `up` just performed is a whole-application recreation of the workspace's source.
+
+    The lane's first row keeps it only when it plans the same application source (``_deployed_source_change``).
+    """
     LaneInjectionState(environment.kubeconfig, environment.namespace).recreated()
+    _record_deployed_source(environment)
 
 
 def _application_needs_redeploy(
@@ -1028,6 +1057,7 @@ def _application_needs_redeploy(
         stuck_pods,
         lane_state=LaneInjectionState(environment.kubeconfig, environment.namespace),
         current_data_faults=current_data_faults,
+        source_change=lambda: _deployed_source_change(environment),
     )
 
 

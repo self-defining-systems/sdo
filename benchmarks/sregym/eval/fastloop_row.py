@@ -416,7 +416,9 @@ class FastloopRowRunner:
             # The scheduler parks on this reason: the structured cause, never prose with durations in it.
             raise RuntimeError(f"eval: rejected before injection ({cause})")
         if record is None or record.oracle is None:
-            raise RuntimeError("eval: the row produced no oracle verdict")
+            # The caller sees only this error; name the row's own failure (onboarding rejection, setup, recovery).
+            cause = f": {record.error}" if record is not None and record.error else ""
+            raise RuntimeError(f"eval: the row produced no oracle verdict{cause}")
         harm = (
             json.dumps([r.model_dump(mode="json") for r in record.fault_reversions], default=str)
             if record.fault_reversions

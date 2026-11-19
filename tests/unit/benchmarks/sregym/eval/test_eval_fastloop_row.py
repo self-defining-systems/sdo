@@ -733,3 +733,14 @@ def test_every_attempt_is_recorded_with_its_normalized_cause(tmp_path: Path, mon
     assert lines[2]["cause"] is None
     assert lines[2]["retried"] is False
     assert all("started" in line and "ended" in line for line in lines)
+
+
+def test_a_row_without_a_verdict_names_the_rows_own_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The dispatcher sees only the grade error: it must carry why the row stopped, not a generic no-verdict."""
+    env = environment(tmp_path)
+    monkeypatch.setattr("benchmarks.sregym.eval.fastloop_row.FastloopEnvironment.load", lambda directory: env)
+    runner = FastloopRowRunner(settings(tmp_path), "small", start=lambda command, **kw: FakeRow(returncode=3))
+    lane = runner.claim(cell(), "h1", None)
+    runner.records[cell().id] = record(oracle=None, error="ValueError: eval: SDO rejected onboarding after 9s (x)")
+    with pytest.raises(RuntimeError, match="no oracle verdict.*SDO rejected onboarding"):
+        runner.grade(lane, cell())
