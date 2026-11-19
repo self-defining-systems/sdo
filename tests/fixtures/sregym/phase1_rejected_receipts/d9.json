@@ -57,7 +57,7 @@
    "fault_injection_request": 0.07688417192548513
   },
   "fault_injection_deferred": true,
-  "incident_detector_states": [],
+  "learned_detector_states": [],
   "incident_id": "Hotel Reservation-1790642587085780380",
   "incident_resolution_scope": "detected_to_independently_verified_health",
   "incident_resolution_seconds": 44.644879,

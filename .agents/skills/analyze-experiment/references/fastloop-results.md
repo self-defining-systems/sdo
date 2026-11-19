@@ -32,7 +32,7 @@ recovery is an eval failure, not an SDO repair or a repeat encounter.
 
 ## Finding-triggered playbook diagnosis
 
-Current controllers run incident detectors continuously. Playbook Diagnose runs only while handling detector findings, with one binding per finding/program; watch events and timers never enumerate playbook roles. Accepted-source drift remains `drift.unexplained`. Program diagnoses and matches belong to incident coverage, responder commands, and self-check evidence.
+Current controllers run learned detectors continuously. Playbook Diagnose runs only while handling detector findings, with one binding per finding/program; watch events and timers never enumerate playbook roles. Accepted-source drift remains `drift.unexplained`. Program diagnoses and matches belong to incident coverage, responder commands, and self-check evidence.
 
 Historical runs can contain `drift.<program>` findings and `DriftEvent.source` values `watch event program match` or `periodic program sweep`. Those were proactive playbook detections, with their own firing/clearing confirmation timers; do not interpret them as current detector-driven coverage. Current controller state has no program sweep cursor, and the former sweep/persistence flags have been removed.
 

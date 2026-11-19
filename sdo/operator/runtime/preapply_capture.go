@@ -61,22 +61,29 @@ func (l *ResponderLoop) capturePreApplySnapshot(ctx context.Context, refs ...sdk
 	if l.Provider == nil {
 		return errors.New("pre-apply snapshot provider is unavailable")
 	}
+	endSnapshot := l.phase("preapply_snapshot")
 	snapshot, err := l.Provider.Snapshot(ctx)
+	endSnapshot()
 	if err != nil {
 		return fmt.Errorf("pre-apply snapshot: %w", err)
 	}
-	if err := memory.CaptureIncidentSnapshot(l.CorpusSessionRoot, l.Request.IncidentID, "open@pre-apply", snapshot, l.Request.Namespace, append(findingCaptureRefs(l.Request.Findings), refs...)...); err != nil {
+	endWrite := l.phase("preapply_capture_write")
+	err = memory.CaptureIncidentSnapshot(l.CorpusSessionRoot, l.Request.IncidentID, "open@pre-apply", snapshot, l.Request.Namespace, append(findingCaptureRefs(l.Request.Findings), refs...)...)
+	endWrite()
+	if err != nil {
 		return fmt.Errorf("capture pre-apply snapshot: %w", err)
 	}
 	l.preApplyCaptured = true
 	if l.ReadView != nil {
 		// Evidence never delays a write for longer than a diagnosis may take.
+		endBoundary := l.phase("preapply_boundary_observations")
 		budget, cancel := context.WithTimeout(ctx, min(l.deadline(), sourceComparisonCaptureBudget))
 		comparisons := boundaryObservations(budget, snapshot, l.ReadView(snapshot))
 		cancel()
 		if err := memory.AppendCapturedRecordings(l.CorpusSessionRoot, l.Request.IncidentID, "open@pre-apply", comparisons); err != nil {
 			slog.Warn("source comparison evidence gap", "incident_id", l.Request.IncidentID, "error", err)
 		}
+		endBoundary()
 	}
 	return nil
 }

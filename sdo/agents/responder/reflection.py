@@ -134,6 +134,18 @@ def _changes_section(changes: Sequence[str]) -> str:
     return "Your recorded changes:\n" + "\n".join(changes)
 
 
+#: Slack on top of the memory-check bound for the check's own start-up and the tool's output handling.
+_CHECK_TOOL_SLACK_SECONDS = 30
+
+
+def closing_tool_timeouts() -> dict[str, str]:
+    """The closing turn's Bash tool bound (Claude Code's ``BASH_DEFAULT_TIMEOUT_MS`` and ``BASH_MAX_TIMEOUT_MS``): the
+    memory-check bound plus slack. The CLI's own default is 2 minutes, shorter than a check on a cold Go cache, so the
+    agent's foreground check was moved to the background and the agent slept blind until it guessed the check ended."""
+    milliseconds = str((memory_check_timeout_seconds() + _CHECK_TOOL_SLACK_SECONDS) * 1000)
+    return {"BASH_DEFAULT_TIMEOUT_MS": milliseconds, "BASH_MAX_TIMEOUT_MS": milliseconds}
+
+
 def closing_prompt(*, incident_id: str, changes: Sequence[str]) -> RenderedPrompt:
     """The learning turn: about 600 bytes plus the change list Go rendered from the recording, when there is one."""
     return render_prompt(
@@ -391,6 +403,7 @@ class CodexSessionBackend:
                 timeout_seconds=timeout_seconds,
                 resume_session_id=session_id,
                 executor=self.executor,
+                environment=closing_tool_timeouts(),
                 **session_turn_options(self.provider, worktree, phase="reflection"),
             )
         except StructuredTurnError as exc:

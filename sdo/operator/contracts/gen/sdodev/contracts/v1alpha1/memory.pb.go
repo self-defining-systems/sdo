@@ -274,7 +274,7 @@ type MemoryArtifact struct {
 	Kind  string                 `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
 	Id    string                 `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`
 	Path  string                 `protobuf:"bytes,3,opt,name=path,proto3" json:"path,omitempty"`
-	// Detector class (health or incident); empty for other kinds.
+	// Detector class (health or learned); empty for other kinds.
 	DetectorClass string `protobuf:"bytes,4,opt,name=detector_class,json=detectorClass,proto3" json:"detector_class,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

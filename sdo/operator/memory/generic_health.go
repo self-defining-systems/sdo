@@ -126,7 +126,7 @@ func PrepareHealthWith(root string, options HealthOptions) error {
 
 // The generic detectors whose findings are Kubernetes failure conditions that
 // outlived Kubernetes' own self-healing (a give-up signal, or the self-heal
-// hold). They open incidents; every other generic detector reports clues.
+// hold). They open incidents; every other generic detector reports clues (findings that open nothing).
 const (
 	WorkloadHealthDetectorID      = "workload-health"
 	WorkloadControllersDetectorID = "workload-controllers"

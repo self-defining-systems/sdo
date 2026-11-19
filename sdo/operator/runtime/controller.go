@@ -136,6 +136,8 @@ type Controller struct {
 	tracker                  *FindingStateTracker
 	batcher                  *Batcher
 	provider                 SnapshotProvider
+	// observationTrace times the phases of the hold on observationMu; the holder owns it.
+	observationTrace *phaseTrace
 	dispatcher               Dispatcher
 	responseStagesRunning    bool
 	midStage                 midIncidentStage
@@ -560,14 +562,14 @@ func (c *Controller) stepPaused(ctx context.Context, now time.Time) error {
 	// Harvest a queued responder result before retirement can judge its
 	// incident ownerless. Ownerless work is bookkeeping, not observation: a
 	// pause must not hold it.
-	c.processDispatchCompletions(now)
-	c.resumePendingLearnedPass(ctx)
-	if err := c.retireExpiredIncident(ctx, now); err != nil {
+	c.timePhase("dispatch_completions", func() { c.processDispatchCompletions(now) })
+	c.timePhase("learned_pass", func() { c.resumePendingLearnedPass(ctx) })
+	if err := c.timePhaseErr("retire_expired", func() error { return c.retireExpiredIncident(ctx, now) }); err != nil {
 		return err
 	}
-	c.finishEarlyReport(ctx, now)
-	c.processBrokerCompletions()
-	if err := c.driveQueuedReflections(ctx, now); err != nil {
+	c.timePhase("early_report", func() { c.finishEarlyReport(ctx, now) })
+	c.timePhase("broker_completions", c.processBrokerCompletions)
+	if err := c.timePhaseErr("queued_reflections", func() error { return c.driveQueuedReflections(ctx, now) }); err != nil {
 		return err
 	}
 	after, err := c.ExportState()
@@ -604,16 +606,17 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	}
 	// Harvest a queued responder result before retirement can judge its
 	// incident ownerless.
-	c.processDispatchCompletions(now)
-	if err := c.retireExpiredIncident(ctx, now); err != nil {
+	ctx = c.observationPhaseCtx(ctx)
+	c.timePhase("dispatch_completions", func() { c.processDispatchCompletions(now) })
+	if err := c.timePhaseErr("retire_expired", func() error { return c.retireExpiredIncident(ctx, now) }); err != nil {
 		return err
 	}
-	c.finishEarlyReport(ctx, now)
-	c.processBrokerCompletions()
-	if err := c.driveQueuedReflections(ctx, now); err != nil {
+	c.timePhase("early_report", func() { c.finishEarlyReport(ctx, now) })
+	c.timePhase("broker_completions", c.processBrokerCompletions)
+	if err := c.timePhaseErr("queued_reflections", func() error { return c.driveQueuedReflections(ctx, now) }); err != nil {
 		return err
 	}
-	c.driveHeadPoll(ctx, now)
+	c.timePhase("head_poll", func() { c.driveHeadPoll(ctx, now) })
 	if c.config.ExternalIncidentsOnly {
 		c.maybeCloseIncident(ctx, now, nil)
 		if c.ExternalIncidents != nil {
@@ -638,7 +641,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			return nil
 		}
 	}
-	if err := c.prepareSourceInventory(ctx); err != nil {
+	if err := c.timePhaseErr("source_inventory", func() error { return c.prepareSourceInventory(ctx) }); err != nil {
 		return err
 	}
 	deferInventory := c.pendingOnboarding != nil
@@ -678,12 +681,16 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		c.refreshIncidentView(now, false)
 		return err
 	}
+	endSnapshot := c.observationPhase("snapshot")
 	snapshot, err := c.provider.Snapshot(ctx)
+	endSnapshot()
 	if err != nil {
 		return fmt.Errorf("create detection snapshot: %w", err)
 	}
-	c.processDrift(ctx, now, snapshot, objectChanges)
-	c.signals.Observe(now, snapshot)
+	c.timePhase("drift", func() {
+		c.processDrift(ctx, now, snapshot, objectChanges)
+		c.signals.Observe(now, snapshot)
+	})
 
 	// Startup's full batch may precede confirmation. Once the observation
 	// windows are ready, evaluate every detector together on this snapshot;
@@ -694,7 +701,9 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		onboardingDetectors = c.detectorList()
 	}
 	unreferencedSnapshot := snapshot
-	snapshot = c.prepareOnboardingReachability(ctx, now, snapshot, onboardingDetectors)
+	c.timePhase("onboarding_reachability", func() {
+		snapshot = c.prepareOnboardingReachability(ctx, now, snapshot, onboardingDetectors)
+	})
 	var onboardingCandidate *contracts.NamespaceOnboarding
 	confirmed := detectorsConfirmed(onboardingDetectors, snapshot)
 	if !confirmed && c.pendingOnboarding != nil {
@@ -721,7 +730,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			c.scheduler.RestoreDeadlines(deadlines)
 		}
 	}
-	if confirmed || confirmationExpired {
+	if confirmationExpired || confirmed && c.onboardingHealthSettled(ctx, snapshot) {
 		onboardingCandidate = c.beginOnboarding(ctx, detectors, now)
 	}
 	// An earlier claimed/crashed attempt cannot lend provisional exclusions to
@@ -732,7 +741,9 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			c.onboardingReachability.candidate = nil
 		}
 	}
+	endSetupHealth := c.observationPhase("setup_health")
 	setupResults, setupHealthy := c.setupHealth(ctx, snapshot, detectors, onboardingCandidate)
+	endSetupHealth()
 	sampleFindings := make([]sdk.Finding, 0)
 	errored := confirmationExpired
 	// installErrored and gatingFindings are what decide the install: only a
@@ -837,7 +848,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		}
 		// Every fast detector is applied and only slow ones remain: the
 		// incident opens now rather than after the slowest returns.
-		return c.dispatchReady(ctx, now, snapshot)
+		return c.timePhaseErr("dispatch", func() error { return c.dispatchReady(ctx, now, snapshot) })
 	}
 	// Results cached by setup health apply first, in batch order; the rest
 	// apply in completion order, so a fast detector's finding never waits for
@@ -851,10 +862,12 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			}
 		}
 	}
-	evaluateDetectorsEach(ctx, fresh, snapshot, func(detector sdk.Detector, result setupDetection) {
-		if err := apply(detector, result); err != nil && dispatchErr == nil {
-			dispatchErr = err
-		}
+	c.timePhase("detectors", func() {
+		evaluateDetectorsEach(ctx, fresh, snapshot, func(detector sdk.Detector, result setupDetection) {
+			if err := apply(detector, result); err != nil && dispatchErr == nil {
+				dispatchErr = err
+			}
+		})
 	})
 	if setupHealthy {
 		c.mu.Lock()
@@ -896,7 +909,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		retryCommit := c.ownershipAdoption.SourceCommit
 		c.mu.Unlock()
 		if retryCommit != c.config.SourceCommit || !now.Before(retryAt) {
-			if err := c.adoptOwnership(ctx, now, snapshot); err != nil {
+			if err := c.timePhaseErr("adopt_ownership", func() error { return c.adoptOwnership(ctx, now, snapshot) }); err != nil {
 				c.recordAdoptionError(now, err)
 				if c.OnError != nil {
 					c.OnError(fmt.Errorf("ownership adoption: %w", err))
@@ -905,8 +918,10 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		}
 	}
 
-	c.maybeCloseIncident(ctx, now, snapshot)
+	c.timePhase("close_incident", func() { c.maybeCloseIncident(ctx, now, snapshot) })
+	endDispatch := c.observationPhase("dispatch")
 	err = c.dispatchReady(ctx, now, snapshot)
+	endDispatch()
 	c.refreshIncidentView(now, true)
 	if err == nil {
 		err = dispatchErr
@@ -1435,12 +1450,12 @@ func (c *Controller) CurrentAcceptedCommit() string {
 	return c.config.SourceCommit
 }
 
-// detectorOrigins maps each learned incident detector to the incident it was
+// detectorOrigins maps each learned detector to the incident it was
 // learned from.
 func (c *Controller) detectorOrigins() map[string]string {
 	origins := make(map[string]string)
 	for id, spec := range c.detectorSpecs {
-		if spec.Class == sdk.DetectorClassIncident && spec.OriginatingIncident != "" {
+		if spec.Class == sdk.DetectorClassLearned && spec.OriginatingIncident != "" {
 			origins[id] = spec.OriginatingIncident
 		}
 	}
@@ -2004,7 +2019,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		ObservationGeneration:         generation,
 		Request:                       *cloneIncidentRequest(c.currentIncidentRequest), Result: cloneIncidentResult(c.currentIncidentResult),
 		DispatchError: c.dispatchError, FinalDetectorStates: finalStates,
-		IncidentDetectorStates: c.incidentDetectorStates(),
+		LearnedDetectorStates: c.learnedDetectorStates(),
 		PartialDetectorStates:  c.reflectionDetectorStates(verified),
 		FinalStateChanges:      finalChanges,
 		HealthClearedAt:        healthClearedAt,
@@ -2064,8 +2079,8 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 	closure.DetectorTimeline = cloneTimeline(c.timeline)
 	sortTimeline(closure.DetectorTimeline)
-	closure.IncidentDetectorFiredBeforeDispatch, closure.IncidentDetectorFiredAfterDispatch,
-		closure.NoIncidentDetectorFired = timelineSummary(closure.DetectorTimeline)
+	closure.LearnedDetectorFiredBeforeDispatch, closure.LearnedDetectorFiredAfterDispatch,
+		closure.NoLearnedDetectorFired = timelineSummary(closure.DetectorTimeline)
 	c.emitLifecycleLocked(&contracts.LifecycleEvent{
 		Event: PhaseClosed, RecordedAt: contractTimestamp(verifiedAt), IncidentId: closure.Request.IncidentID,
 		HealthClearedAt:               optionalContractTimestamp(closure.HealthClearedAt),
@@ -2169,10 +2184,10 @@ func (c *Controller) finalVerificationStates() ([]DetectorEvaluation, bool) {
 	return c.latestEvaluations(ids, c.recoveryObservationEpochLocked(), true)
 }
 
-// incidentDetectorStates reports the latest evaluation since responder
+// learnedDetectorStates reports the latest evaluation since responder
 // completion of each non-health detector that raised a finding in the current
 // incident. Detectors that have not evaluated since then are omitted.
-func (c *Controller) incidentDetectorStates() []DetectorEvaluation {
+func (c *Controller) learnedDetectorStates() []DetectorEvaluation {
 	health := make(map[string]struct{}, len(c.healthDetectorIDs))
 	for _, detectorID := range c.healthDetectorIDs {
 		health[detectorID] = struct{}{}

@@ -545,3 +545,27 @@ func TestNoSeriesBeyondTheStartupAllowanceIsReported(t *testing.T) {
 		t.Fatalf("findings = %+v", got)
 	}
 }
+
+// A metrics source that has not scraped the target yet says nothing about the
+// application: the detector cannot confirm health, so an install waits for the
+// first scrape instead of reading the empty answer as a defect.
+func TestUnscrapedMetricsAreNotConfirmed(t *testing.T) {
+	confirmer, ok := newDetector().(interface {
+		Confirmed(sdk.DetectionContext) bool
+		ConfirmationReason(sdk.DetectionContext) string
+	})
+	if !ok {
+		t.Fatal("request-metrics detector has no confirmation contract")
+	}
+	unscraped := snapshot(nil, nil, nil)
+	if confirmer.Confirmed(unscraped) {
+		t.Fatal("an operation with no series confirmed health")
+	}
+	if reason := confirmer.ConfirmationReason(unscraped); !strings.Contains(reason, "has not scraped") {
+		t.Fatalf("confirmation reason does not name the missing scrape: %q", reason)
+	}
+	scraped := snapshot(nil, healthyBaseline(), presence())
+	if !confirmer.Confirmed(scraped) {
+		t.Fatalf("a scraped target stayed unconfirmed: %s", confirmer.ConfirmationReason(scraped))
+	}
+}

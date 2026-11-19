@@ -145,6 +145,10 @@ type onboardingReachabilityState struct {
 	waitReason     string
 	resumedAt      time.Time
 	servedTargets  map[string]bool
+	// firing maps each warning-or-worse finding seen after warm-up to the
+	// evaluation iteration that first saw it; a finding contradicts the install
+	// only once a later iteration sees it again.
+	firing map[string]int
 }
 
 type onboardingSnapshotProvider struct {
@@ -153,6 +157,7 @@ type onboardingSnapshotProvider struct {
 }
 
 func (p onboardingSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
+	defer measurePhase(ctx, "onboarding_snapshot")()
 	snapshot, err := p.Base.Snapshot(ctx)
 	if err != nil {
 		return nil, err
@@ -421,28 +426,89 @@ func onboardingSamplesSince(window servicehealth.ReachabilityWindow, since time.
 	return true
 }
 
-// Incomplete reads cannot authorize onboarding and cannot contradict it.
+// Incomplete reads cannot authorize onboarding and cannot contradict it. Nor
+// can the warm-up of SDO's own measurement pipeline: an unobserved finding
+// (below warning: no series yet, too few samples) waits, and a warning waits
+// until every detector's observation window is confirmed (probe traffic
+// warmed, metrics scraped) and then persists across two evaluation iterations.
+// The window's expiry bounds every wait.
 func (c *Controller) checkOnboardingHealth(ctx context.Context, snapshot sdk.DetectionContext) bool {
+	state := c.onboardingReachability
 	_, err := healthyBaselineGoal(ctx, c.detectorList(), snapshot)
 	if err == nil {
+		state.firing = nil
 		return true
 	}
 	var contradiction *baselineContradictionError
-	if errors.As(err, &contradiction) {
-		// Unavailable replicas during a rollout are the rollout, not a
-		// contradiction of the install: wait for it to settle (the window's
-		// own expiry bounds the wait) rather than rejecting the namespace on
-		// the first iteration of the rollout it caused.
-		if rolling := rollingWorkloads(snapshot); len(rolling) > 0 {
-			c.waitForOnboarding(ctx, "rollout in progress: "+strings.Join(rolling, ", "))
-			return false
-		}
-		c.onboardingReachability.invalid = true
-		c.onboardingReachability.invalidReason = err.Error()
-	} else {
+	if !errors.As(err, &contradiction) {
 		c.waitForOnboarding(ctx, err.Error())
+		return false
 	}
+	// Unavailable replicas during a rollout are the rollout, not a
+	// contradiction of the install: wait for it to settle (the window's
+	// own expiry bounds the wait) rather than rejecting the namespace on
+	// the first iteration of the rollout it caused.
+	if rolling := rollingWorkloads(snapshot); len(rolling) > 0 {
+		c.waitForOnboarding(ctx, "rollout in progress: "+strings.Join(rolling, ", "))
+		return false
+	}
+	worst := contradiction.active[0]
+	if unobserved(worst) {
+		state.firing = nil
+		c.waitForOnboarding(ctx, "incomplete observation: "+findingNote(worst))
+		return false
+	}
+	if !detectorsConfirmed(c.detectorList(), snapshot) {
+		state.firing = nil
+		c.waitForOnboarding(ctx, "warm-up not settled while "+contradiction.detector+" reports: "+findingNote(worst))
+		return false
+	}
+	c.mu.Lock()
+	iteration := c.evaluationIteration
+	c.mu.Unlock()
+	seen := state.firing
+	state.firing = map[string]int{}
+	persisted := false
+	for _, finding := range contradiction.active {
+		if unobserved(finding) {
+			continue
+		}
+		key := finding.DetectorID + "\x00" + sdk.FindingFingerprint(finding)
+		first, ok := seen[key]
+		if !ok {
+			first = iteration
+		}
+		state.firing[key] = first
+		persisted = persisted || first < iteration
+	}
+	if !persisted {
+		c.waitForOnboarding(ctx, "confirming "+contradiction.detector+" over a second evaluation: "+findingNote(worst))
+		return false
+	}
+	state.invalid = true
+	state.invalidReason = err.Error()
 	return false
+}
+
+// onboardingHealthSettled gates the create-once install evaluation: a claimed
+// evaluation that meets an incomplete observation is rejected for good, so the
+// install's health check (checkOnboardingHealth) must hold first. Without an
+// install window there is nothing to wait on.
+func (c *Controller) onboardingHealthSettled(ctx context.Context, snapshot sdk.DetectionContext) bool {
+	if c.pendingOnboarding == nil || c.onboardingReachability == nil {
+		return true
+	}
+	return c.checkOnboardingHealth(ctx, snapshot)
+}
+
+func findingNote(f sdk.Finding) string {
+	if f.Evidence != "" {
+		return f.Evidence
+	}
+	if f.Summary != "" {
+		return f.Summary
+	}
+	return f.RuleID
 }
 
 func (c *Controller) onboardingRejectionReason(expired bool) string {

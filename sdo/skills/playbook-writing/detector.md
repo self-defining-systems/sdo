@@ -1,8 +1,8 @@
 # The detector for your playbook
 
-A detector makes the next occurrence find your playbook: its finding names the playbook, so SDO tries that one first. It never opens an incident; it is a clue. Write one only when something specific to this cause exists. A generic symptom (a timeout, "not ready") is not one: add none and say so in your reply.
+A detector makes the next occurrence find your playbook: its finding names the playbook, so SDO tries that one first. It is a learned detector: it never opens an incident or gates an install. Write one only when something specific to this cause exists. A generic symptom (a timeout, "not ready") is not one: add none and say so in your reply.
 
-Write `.sdo/diagnostics/detectors/incidents/<id>/` with `manifest.yaml`, `detector.go` and `detector_test.go`. Copy `/opt/sdo/sdo/skills/sdo-playbook-authoring/assets/examples/detectors/crashloop-script-repair/` and change:
+Write `.sdo/diagnostics/detectors/learned/<id>/` with `manifest.yaml`, `detector.go` and `detector_test.go`. Copy `/opt/sdo/sdo/skills/sdo-playbook-authoring/assets/examples/detectors/crashloop-script-repair/` and change:
 
 - `id`, package name, and `possiblePlaybooks`, `Spec().Playbooks` and each finding's `Playbooks`: your playbook's ID (all three agree; it must exist, written in this same change). `originatingIncident` is this incident.
 - The signal: the state your playbook's `Diagnose` tests, read from the snapshot (`snapshot.Deployments()`, `Pods()`, ...), the probe's failure text (`traffic.MatchFailures`) or, for a store's own state (an account, role, setting or table gone), the store-state readings (below). Never a log substring of `Finding.Evidence`. Keep `interval: 30s`, `persistence.firing: 1`.

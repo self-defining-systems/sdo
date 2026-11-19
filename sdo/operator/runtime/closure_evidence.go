@@ -160,15 +160,41 @@ func (c *Controller) closureEvidenceLocked(ctx context.Context, in closureEviden
 const observationHoldWarn = time.Second
 
 // lockObservation takes observationMu for the named holder and returns its
-// release. Every holder goes through it so a stall names its cause.
+// release. Every holder goes through it so a stall names its cause; a holder
+// that times its phases (observationPhase) also names where the hold went.
 func (c *Controller) lockObservation(holder string) func() {
 	c.observationMu.Lock()
 	start := c.clock()
+	trace := newPhaseTrace(c.clock)
+	c.observationTrace = trace
 	return func() {
 		held := c.clock().Sub(start)
+		c.observationTrace = nil
 		c.observationMu.Unlock()
 		if held >= observationHoldWarn {
-			slog.Warn("observation_lock_held", "holder", holder, "held_ms", held.Milliseconds())
+			slog.Warn("observation_lock_held", append([]any{"holder", holder, "held_ms", held.Milliseconds()}, trace.logAttrs(held)...)...)
 		}
 	}
+}
+
+// observationPhase begins the named phase of the current observation hold and
+// returns its end. Only the holder calls it, so the trace needs no lock of its own.
+func (c *Controller) observationPhase(name string) func() { return c.observationTrace.begin(name) }
+
+// observationPhaseCtx carries the current hold's trace to the snapshot
+// providers, which charge their own layers to it.
+func (c *Controller) observationPhaseCtx(ctx context.Context) context.Context {
+	return withPhaseTrace(ctx, c.observationTrace)
+}
+
+// timePhase runs fn as the named phase of the current observation hold.
+func (c *Controller) timePhase(name string, fn func()) {
+	defer c.observationPhase(name)()
+	fn()
+}
+
+// timePhaseErr runs fn as the named phase of the current observation hold.
+func (c *Controller) timePhaseErr(name string, fn func() error) error {
+	defer c.observationPhase(name)()
+	return fn()
 }

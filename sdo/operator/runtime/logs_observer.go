@@ -85,6 +85,7 @@ type LogsSnapshotProvider struct {
 }
 
 func (p LogsSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
+	defer measurePhase(ctx, "logs")()
 	base, err := p.Base.Snapshot(ctx)
 	if err != nil || p.Observer == nil {
 		return base, err

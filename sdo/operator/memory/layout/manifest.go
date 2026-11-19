@@ -87,8 +87,8 @@ func (m DetectorManifest) Validate() error {
 	if m.Owner != class.Owner() {
 		return fmt.Errorf("detector %s owner must be %s", m.ID, class.Owner())
 	}
-	if class == ClassIncident && m.OriginatingIncident == "" {
-		return fmt.Errorf("incident detector %s must identify origin", m.ID)
+	if class == ClassLearned && m.OriginatingIncident == "" {
+		return fmt.Errorf("learned detector %s must identify origin", m.ID)
 	}
 	if m.OriginatingCommit == "" {
 		return fmt.Errorf("detector %s needs originatingCommit", m.ID)

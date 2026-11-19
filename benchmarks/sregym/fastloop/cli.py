@@ -38,6 +38,7 @@ from benchmarks.sregym.adapter import (
     assert_host_headroom,
     assert_host_memory_admission,
     assert_lane_budget,
+    host_env,
     kubectl,
     parse_memory_size,
     running_lane_caps,
@@ -357,8 +358,8 @@ def resolve_node_limits(args: argparse.Namespace) -> None:
 
 
 def up_host_memory_policy(args: argparse.Namespace) -> HostMemoryPolicy:
-    """The host memory policy: ``SDO_HOST_*`` environment, each value overridable by its ``up`` flag."""
-    base = HostMemoryPolicy.from_env(os.environ)
+    """The host memory policy: ``SDO_HOST_*`` environment or host guard file, each overridable by its ``up`` flag."""
+    base = HostMemoryPolicy.from_env(host_env(os.environ))
     reserve, pressure, budget = (
         getattr(args, name, None) for name in ("host_reserve_gib", "host_psi_max", "host_lane_budget_gib")
     )
@@ -390,7 +391,7 @@ def assert_lane_host_memory(args: argparse.Namespace, *, running: dict[str, int]
     if running is None:
         # Our lanes are every cluster under the host-wide prefix (lane clusters are named <prefix><lane>, so the
         # lane's own prefix would see only itself).
-        scope = getattr(args, "host_lane_prefix", None) or os.environ.get("SDO_HOST_LANE_PREFIX") or prefix
+        scope = getattr(args, "host_lane_prefix", None) or host_env(os.environ).get("SDO_HOST_LANE_PREFIX") or prefix
         running = running_lane_caps(scope, default_node_bytes=node)
     assert_host_memory_admission(0 if cluster in running else cap, policy)
     assert_lane_budget(cluster, cap, running, policy)
@@ -2406,7 +2407,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--healthy-baseline",
         action="store_true",
-        help="record the healthy namespace before each injection and reject learned incident detectors that fire on it",
+        help="record the healthy namespace before each injection and reject learned detectors that fire on it",
     )
     run.add_argument(
         "--inject-before-resume",

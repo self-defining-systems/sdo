@@ -36,10 +36,76 @@ func TestOnboardingIncompleteHealthIsNotContradiction(t *testing.T) {
 	if c.checkOnboardingHealth(context.Background(), sdktest.Snapshot{}) {
 		t.Fatal("unhealthy observation authorized onboarding")
 	}
+	if c.onboardingReachability.invalid {
+		t.Fatal("the first warm evaluation of a finding rejected the install")
+	}
+	c.evaluationIteration++
+	if c.checkOnboardingHealth(context.Background(), sdktest.Snapshot{}) {
+		t.Fatal("unhealthy observation authorized onboarding")
+	}
 	if !c.onboardingReachability.invalid || !strings.Contains(c.onboardingReachability.invalidReason, "health-objective") {
-		t.Fatal("confirmed contradiction was not retained")
+		t.Fatal("persistent contradiction was not retained")
 	}
 }
+
+// An informational finding (request metrics that have no series yet, too few
+// samples) is an incomplete observation: the install waits, however many
+// evaluations repeat it, and the window's expiry bounds the wait.
+func TestOnboardingWaitsOnUnobservedFindings(t *testing.T) {
+	d := &warmingDetector{sequenceDetector: controllerDetector("request-metrics", time.Second), warm: true}
+	d.spec.Class = sdk.DetectorClassHealth
+	d.spec.Owner = sdk.DetectorOwnerHealthJudge
+	d.always = sdk.Finding{DetectorID: "request-metrics", RuleID: "request-metrics.not-instrumented", Status: sdk.FindingActive, Severity: sdk.SeverityInfo, Summary: "http_requests_total has no series"}
+	c := &Controller{onboardingReachability: &onboardingReachabilityState{}, detectors: map[string]sdk.Detector{d.spec.ID: d}}
+	for i := 0; i < 3; i++ {
+		c.evaluationIteration++
+		if c.checkOnboardingHealth(context.Background(), sdktest.Snapshot{}) {
+			t.Fatal("an unobserved finding authorized onboarding")
+		}
+		if c.onboardingReachability.invalid {
+			t.Fatalf("an unobserved finding contradicted the install: %s", c.onboardingReachability.invalidReason)
+		}
+	}
+	if !strings.Contains(c.onboardingReachability.waitReason, "has no series") {
+		t.Fatalf("wait reason does not carry the observation gap: %q", c.onboardingReachability.waitReason)
+	}
+}
+
+// A warning is a contradiction only once traffic warm-up has settled: a
+// detector still warming (its confirmation window incomplete) waits, however
+// long the finding repeats.
+func TestOnboardingWarningWaitsForWarmUp(t *testing.T) {
+	d := &warmingDetector{sequenceDetector: controllerDetector("synthetic", time.Second)}
+	d.spec.Class = sdk.DetectorClassHealth
+	d.spec.Owner = sdk.DetectorOwnerHealthJudge
+	d.always = sdk.Finding{DetectorID: "synthetic", RuleID: "slo", Status: sdk.FindingActive, Severity: sdk.SeverityWarning}
+	c := &Controller{onboardingReachability: &onboardingReachabilityState{}, detectors: map[string]sdk.Detector{d.spec.ID: d}}
+	for i := 0; i < 3; i++ {
+		c.evaluationIteration++
+		if c.checkOnboardingHealth(context.Background(), sdktest.Snapshot{}) || c.onboardingReachability.invalid {
+			t.Fatal("a warming detector's finding rejected or authorized the install")
+		}
+	}
+	d.warm = true
+	for i := 0; i < 2; i++ {
+		c.evaluationIteration++
+		c.checkOnboardingHealth(context.Background(), sdktest.Snapshot{})
+	}
+	if !c.onboardingReachability.invalid {
+		t.Fatal("a warning that persisted after warm-up did not contradict the install")
+	}
+}
+
+type warmingDetector struct {
+	*sequenceDetector
+	always sdk.Finding
+	warm   bool
+}
+
+func (d *warmingDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
+	return []sdk.Finding{d.always}, nil
+}
+func (d *warmingDetector) Confirmed(sdk.DetectionContext) bool { return d.warm }
 
 type slowWindowDetector struct{ *sequenceDetector }
 
@@ -130,6 +196,8 @@ func TestOnboardingWaitsForARolloutInsteadOfRejecting(t *testing.T) {
 	if c.checkOnboardingHealth(context.Background(), sdktest.Snapshot{DeploymentList: []appsv1.Deployment{settled}}) {
 		t.Fatal("unhealthy settled workload authorized onboarding")
 	}
+	c.evaluationIteration++
+	c.checkOnboardingHealth(context.Background(), sdktest.Snapshot{DeploymentList: []appsv1.Deployment{settled}})
 	if !c.onboardingReachability.invalid {
 		t.Fatal("a firing detector outside any rollout must still contradict the install")
 	}
@@ -138,7 +206,7 @@ func TestOnboardingWaitsForARolloutInsteadOfRejecting(t *testing.T) {
 // No health detector ID is reserved for the human goal: the shared check
 // installs the generic health detectors and the judge may author others. A
 // baseline is authorized by any independently evaluated health detector, and
-// by none when no health detector exists (only incident detectors, or none).
+// by none when no health detector exists (only learned detectors, or none).
 func TestHealthyBaselineGoalNeedsAHealthDetectorNotAReservedID(t *testing.T) {
 	health := controllerDetector("workload-health", time.Second, sdk.Finding{})
 	health.spec.Class = sdk.DetectorClassHealth
@@ -148,9 +216,33 @@ func TestHealthyBaselineGoalNeedsAHealthDetectorNotAReservedID(t *testing.T) {
 	}
 	incident := controllerDetector("crash", time.Second, sdk.Finding{})
 	if ok, err := healthyBaselineGoal(context.Background(), []sdk.Detector{incident}, sdktest.Snapshot{}); err == nil || ok {
-		t.Fatal("an incident detector authorized the baseline")
+		t.Fatal("a learned detector authorized the baseline")
 	}
 	if ok, err := healthyBaselineGoal(context.Background(), nil, sdktest.Snapshot{}); err == nil || ok {
 		t.Fatal("no detectors authorized the baseline")
 	}
+}
+
+// The create-once install evaluation is claimed only when the install's own
+// health check holds: a claimed evaluation that meets an unobserved finding is
+// rejected for good, so the finding is met before the claim and waits instead.
+func TestOnboardingIsNotClaimedOnUnobservedHealth(t *testing.T) {
+	d := &warmingDetector{sequenceDetector: controllerDetector("request-metrics", time.Second), warm: true}
+	d.spec.Class = sdk.DetectorClassHealth
+	d.spec.Owner = sdk.DetectorOwnerHealthJudge
+	d.always = sdk.Finding{DetectorID: "request-metrics", RuleID: "request-metrics.not-instrumented", Status: sdk.FindingActive, Severity: sdk.SeverityInfo, Summary: "no series"}
+	c := &Controller{pendingOnboarding: &contracts.NamespaceOnboarding{}, onboardingReachability: &onboardingReachabilityState{}, detectors: map[string]sdk.Detector{d.spec.ID: d}}
+	if c.onboardingHealthSettled(context.Background(), sdktest.Snapshot{}) {
+		t.Fatal("the install evaluation would be claimed over an unobserved finding")
+	}
+	c.detectors = map[string]sdk.Detector{d.spec.ID: &emptyDetector{d.sequenceDetector}}
+	if !c.onboardingHealthSettled(context.Background(), sdktest.Snapshot{}) {
+		t.Fatal("a quiet install was held back")
+	}
+}
+
+type emptyDetector struct{ *sequenceDetector }
+
+func (emptyDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
+	return nil, nil
 }

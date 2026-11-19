@@ -141,11 +141,11 @@ import (
     "sdo.dev/operator/sdk/sdktest"
 )
 
-func TestIncidentDetectorsStayQuietOnHealthyBaseline(t *testing.T) {
+func TestLearnedDetectorsStayQuietOnHealthyBaseline(t *testing.T) {
     snapshots, err := sdktest.LoadSnapshots("testdata/healthy-baseline")
     if err != nil { t.Fatalf("detector.healthy-baseline: cannot evaluate controller healthy capture: %v", err) }
     for _, detector := range All() {
-        if detector.Spec().Class != sdk.DetectorClassIncident { continue }
+        if detector.Spec().Class != sdk.DetectorClassLearned { continue }
         for _, violation := range sdktest.HealthyBaselineViolations(detector, snapshots) {
             t.Error("detector.healthy-baseline[" + detector.Spec().ID + "]: " + violation)
         }

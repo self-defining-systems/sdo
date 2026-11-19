@@ -225,7 +225,7 @@ func TestLateJoinedFindingKeepsItsAfterDispatchRelation(t *testing.T) {
 	controller.noteBatchedLocked("synthetic", []sdk.Finding{late})
 	controller.mu.Unlock()
 	changes := controller.tracker.Observe(now.Add(2*time.Second), "late", []sdk.Finding{late})
-	controller.recordFiring(sdk.DetectorSpec{ID: "late", Class: sdk.DetectorClassIncident}, now.Add(2*time.Second), []sdk.Finding{late}, changes)
+	controller.recordFiring(sdk.DetectorSpec{ID: "late", Class: sdk.DetectorClassLearned}, now.Add(2*time.Second), []sdk.Finding{late}, changes)
 	relations := firings.relations(FindingFingerprint(late))
 	if len(relations) < 2 {
 		t.Fatalf("late-joined finding records %v, want batched and activated", relations)

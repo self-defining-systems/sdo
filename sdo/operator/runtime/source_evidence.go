@@ -30,6 +30,7 @@ func (l *ResponderLoop) recordSourceComparisons(ctx context.Context, phase strin
 	if l.CorpusSessionRoot == "" || l.ReadView == nil || l.Provider == nil {
 		return
 	}
+	defer l.phase("source_comparison")()
 	var view program.ReadView
 	for _, ref := range refs {
 		key := phase + "\x00" + fmt.Sprint(ref)
@@ -39,7 +40,9 @@ func (l *ResponderLoop) recordSourceComparisons(ctx context.Context, phase strin
 		if view == nil {
 			// Evidence never delays a write for longer than a diagnosis may take.
 			snapshotCtx, cancel := context.WithTimeout(ctx, l.deadline())
+			endSnapshot := l.phase("source_comparison_snapshot")
 			snapshot, err := l.Provider.Snapshot(snapshotCtx)
+			endSnapshot()
 			cancel()
 			if err != nil {
 				slog.Warn("source comparison evidence gap", "incident_id", l.Request.IncidentID, "error", err)

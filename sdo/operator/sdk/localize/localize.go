@@ -1,5 +1,5 @@
 // Package localize ranks the application components that can explain the
-// active synthetic-traffic failures, so incident detectors and playbook
+// active synthetic-traffic failures, so learned detectors and playbook
 // programs bind and gate a repair on the faulty component instead of on every
 // Service a failing journey touches.
 //
@@ -58,7 +58,7 @@ type Result struct {
 }
 
 // Inputs declares the observations localization reads. Embed it in an
-// incident detector that calls FromContext so the controller sends the
+// learned detector that calls FromContext so the controller sends the
 // traffic window and Service reachability to that detector.
 type Inputs struct {
 	// Workload is the traffic workload to judge, "health" when empty.

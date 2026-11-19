@@ -37,7 +37,7 @@ func (c *healthyReplayCompile) run(_ context.Context, request Request) ([]Diagno
 		return nil, nil
 	}
 	message, _, _ = strings.Cut(message, "\n")
-	return []Diagnostic{{Rule: RuleDetectorHealthyBaseline, Path: layout.DetectorDir(layout.ClassIncident, "cache"), Message: message}}, nil
+	return []Diagnostic{{Rule: RuleDetectorHealthyBaseline, Path: layout.DetectorDir(layout.ClassLearned, "cache"), Message: message}}, nil
 }
 
 func (c *healthyReplayCompile) baseRuns(candidate string) int {

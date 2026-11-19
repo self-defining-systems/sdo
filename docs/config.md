@@ -107,7 +107,7 @@ the onboarding agent discovers them (production requires them; a harness that ha
 | `learning.replay` | `SDO_LEARNING_REPLAY` | string | `on` | replay and corpus capture: on or off |
 | `learning.reflection_guidance` | `SDO_LEARNING_REFLECTION_GUIDANCE` | string | `baseline` | the agent's learning instructions: baseline learns from each confirmed cause; generalize compares related incident signatures and parameterizes a shared playbook; generalize-spec favors predicates visible in resource spec or status. None changes the detector SDK or the validator |
 | `learning.force_reflection` | `SDO_LEARNING_FORCE_REFLECTION` | bool | `false` | always dispatch reflection after a verified closure (not with a frozen mode) |
-| `learning.healthy_baseline` | `SDO_LEARNING_HEALTHY_BASELINE` | bool | `false` | opt-in detector gate: a proposal that changes incident detector source is replayed against healthy snapshots a runner recorded with sdo-operator baseline-write (one sdktest.Snapshot JSON per file, outside the accepted repository); a detector that fires on one fails validation, and a missing baseline fails closed. It never reads benchmark verdicts |
+| `learning.healthy_baseline` | `SDO_LEARNING_HEALTHY_BASELINE` | bool | `false` | opt-in detector gate: a proposal that changes learned detector source is replayed against healthy snapshots a runner recorded with sdo-operator baseline-write (one sdktest.Snapshot JSON per file, outside the accepted repository); a detector that fires on one fails validation, and a missing baseline fails closed. It never reads benchmark verdicts |
 
 ### `deployment`
 

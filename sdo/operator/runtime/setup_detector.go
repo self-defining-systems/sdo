@@ -12,8 +12,8 @@ import (
 )
 
 // Only health-class detectors and user tests decide whether an install or a
-// start-up is healthy and accepted. An incident-class detector, designer-authored
-// or learned alike, is a clue: when it errors or fires while the app is judged
+// start-up is healthy and accepted. A learned detector, whoever wrote it,
+// never gates: when it errors or fires while the app is judged
 // healthy it stays enabled and is recorded as noisy evidence, nothing else.
 
 // maxSetupNoiseBytes bounds the detail a noisy-detector record keeps (the
@@ -29,12 +29,12 @@ const (
 // health-class detector does.
 func gatesSetup(spec sdk.DetectorSpec) bool { return spec.Class == sdk.DetectorClassHealth }
 
-// recordSetupNoise notes an incident-class detector that errored or fired on the
+// recordSetupNoise notes a learned detector that errored or fired on the
 // healthy app at setup. It logs, and records the evidence on the install being
 // completed. It changes nothing else.
 func (c *Controller) recordSetupNoise(ctx context.Context, spec sdk.DetectorSpec, outcome, detail string, candidate *contracts.NamespaceOnboarding) {
 	detail = clipSetupDetail(detail)
-	slog.WarnContext(ctx, "incident detector is noisy on the healthy app at setup", "detector", spec.ID, "outcome", outcome, "detail", detail)
+	slog.WarnContext(ctx, "learned detector is noisy on the healthy app at setup", "detector", spec.ID, "outcome", outcome, "detail", detail)
 	if candidate == nil {
 		return
 	}

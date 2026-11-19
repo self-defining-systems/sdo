@@ -56,11 +56,11 @@ if TYPE_CHECKING:
 OWN_PAGE_WINDOW_SECONDS = 120.0
 
 
-
-#: Rows retried when SDO's install window rejects the lane before any injection (host load, helper start-up).
+#: Attempts after the first that a row gets when it is rejected before the fault is injected.
 ADMISSION_RETRIES = 5
-#: Errors raised before any injection by transient lane state: SDO's install window ending on an incomplete read, the
-#: no-fault oracle rehearsal run while a freshly recreated app still registers, a namespace stuck Terminating.
+#: Pre-injection failures that say the host was slow or the lane not yet settled (not the application): SDO's install
+#: window rejecting an incomplete observation, a no-fault oracle rehearsal that ran while a recreated app still
+#: registered, a namespace stuck Terminating. Both arms retry them identically.
 PRE_INJECTION_RETRY_MARKERS = ("SDO rejected onboarding", "no-fault rehearsal has unhealthy", "wipe could not remove")
 
 
@@ -676,7 +676,7 @@ def _recovery(record: IncidentRecord | None) -> dict[str, Any]:
 #: Where each kind of learning lives under the accepted memory, and what names a unit of it.
 _LEARNING_ROOTS = {
     "playbooks": ".sdo/playbooks/",
-    "detectors": ".sdo/diagnostics/detectors/incidents/",
+    "detectors": ".sdo/diagnostics/detectors/learned/",
     "lib": ".sdo/lib/",
     "corpus": ".sdo/corpus/",
 }

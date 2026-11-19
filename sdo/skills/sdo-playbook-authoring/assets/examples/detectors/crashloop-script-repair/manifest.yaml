@@ -3,7 +3,7 @@ kind: DetectorManifest
 sdkVersion: v0.1
 id: crashloop-script-repair
 constructor: New
-class: incident
+class: learned
 owner: responder
 watches:
     - apiVersion: apps/v1

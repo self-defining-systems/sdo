@@ -269,7 +269,7 @@ func (c *Controller) noteBatchedLocked(incidentID string, findings []sdk.Finding
 		spec := c.detectorSpecs[finding.DetectorID]
 		if spec.ID == "" {
 			spec.ID = finding.DetectorID
-			spec.Class = sdk.DetectorClassIncident
+			spec.Class = sdk.DetectorClassLearned
 			spec.Owner = sdk.DetectorOwnerResponder
 		}
 		if index := c.timelineIndexLocked(finding.DetectorID, fingerprint); index >= 0 {

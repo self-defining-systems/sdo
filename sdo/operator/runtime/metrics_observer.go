@@ -258,6 +258,7 @@ type MetricsSnapshotProvider struct {
 }
 
 func (p MetricsSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
+	defer measurePhase(ctx, "metrics")()
 	base, err := p.Base.Snapshot(ctx)
 	if err != nil || p.Observer == nil {
 		return base, err

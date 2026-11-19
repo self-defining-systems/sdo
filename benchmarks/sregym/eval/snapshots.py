@@ -4,7 +4,7 @@ Per app the store keeps one repository holding the onboarding ``base`` commit, e
 (``refs/first-try/<problem>``), and the snapshots built from them: ``own:<problem>`` (base plus that problem's own
 delta) and ``merged`` (base plus every first try's delta). Snapshots are built with git plumbing on a temporary
 index, so no checkout is touched. A delta is what a first try changed under the memory roots in ``DELTA_ROOTS``; its
-unit is the directory directly under a root (a playbook, an incident detector, a corpus case, a lib directory), the
+unit is the directory directly under a root (a playbook, a learned detector, a corpus case, a lib directory), the
 same layout the Go operational-memory reader classifies. A file directly under a root is not a unit: the playbook
 index (``.sdo/playbooks/README.md``) is derived, never merged, and is regenerated from the merged playbooks' READMEs
 (as ``layout.GeneratePlaybookIndex`` does); any other such file is not part of the layout and raises
@@ -53,11 +53,11 @@ if TYPE_CHECKING:
 #: Where a first try's learning lives. The Go memory layout owns these paths; keep the list in one place.
 DELTA_ROOTS = (
     ".sdo/playbooks/",
-    ".sdo/diagnostics/detectors/incidents/",
+    ".sdo/diagnostics/detectors/learned/",
     ".sdo/lib/",
     ".sdo/corpus/",
 )
-RENAMEABLE = (".sdo/playbooks/", ".sdo/diagnostics/detectors/incidents/", ".sdo/corpus/")
+RENAMEABLE = (".sdo/playbooks/", ".sdo/diagnostics/detectors/learned/", ".sdo/corpus/")
 PLAYBOOKS_ROOT = ".sdo/playbooks/"
 CORPUS_ROOT = ".sdo/corpus/"
 #: Derived files directly under a delta root: regenerated from the merged tree, never taken from a delta.

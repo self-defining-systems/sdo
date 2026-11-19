@@ -30,7 +30,7 @@ func (windowedLagProbe) EvaluationWindow(sdk.DetectionContext) time.Duration {
 }
 
 func (p lagProbe) Spec() sdk.DetectorSpec {
-	return sdk.DetectorSpec{ID: "traffic-health", Class: sdk.DetectorClassIncident, Owner: sdk.DetectorOwnerResponder,
+	return sdk.DetectorSpec{ID: "traffic-health", Class: sdk.DetectorClassLearned, Owner: sdk.DetectorOwnerResponder,
 		Watches:  []sdk.WatchKind{{APIVersion: "apps/v1", Kind: "Deployment"}},
 		Interval: time.Second, Persistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1},
 		Batching: sdk.BatchingPolicy{Severity: sdk.SeverityCritical}, Playbooks: []string{"api-request-stall"}, OriginatingCommit: "seed"}

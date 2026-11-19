@@ -444,7 +444,7 @@ class Verdict:
 @dataclass(frozen=True)
 class MemorySize:
     detectors: int
-    incident_detectors: int
+    learned_detectors: int
     playbooks: int
 
 
@@ -1144,7 +1144,7 @@ def memory_size(workspace: Path) -> MemorySize | None:
     playbooks = list((sdo / "playbooks").glob("*/README.md"))
     return MemorySize(
         detectors=len(detectors),
-        incident_detectors=sum(1 for item in detectors if item.get("class") == "incident"),
+        learned_detectors=sum(1 for item in detectors if item.get("class") == "learned"),
         playbooks=len(playbooks),
     )
 
@@ -1749,7 +1749,7 @@ def render(report: Report) -> str:
                 _fmt_num(stage.reflection_turn_seconds, 1),
                 _fmt_bool(stage.warm_path),
                 _fmt_bool(stage.warm_prompt),
-                f"{memory.detectors}({memory.incident_detectors})/{memory.playbooks}" if memory else "-",
+                f"{memory.detectors}({memory.learned_detectors})/{memory.playbooks}" if memory else "-",
             ]
         )
     sections = [

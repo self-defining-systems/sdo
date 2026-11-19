@@ -295,7 +295,10 @@ func (c *Controller) responderResultVerification(ctx context.Context, incidentID
 	if c.config.ExternalIncidentsOnly {
 		return ToolResponse{Command: "verify", VerificationStatus: VerificationAwaitingResponderCompletion, Summary: "External incident: declare completion by returning your result. No detector verification is available."}
 	}
+	ctx = c.observationPhaseCtx(ctx)
+	endSnapshot := c.observationPhase("snapshot")
 	snapshot, err := c.provider.Snapshot(ctx)
+	endSnapshot()
 	if err != nil {
 		return ToolResponse{Command: "verify", Error: "create verification snapshot: " + err.Error()}
 	}
@@ -305,7 +308,9 @@ func (c *Controller) responderResultVerification(ctx context.Context, incidentID
 	if !current {
 		return ToolResponse{Command: "verify", Error: "incident is no longer current"}
 	}
+	endSource := c.observationPhase("closure_source")
 	source := c.verifyClosureSource(ctx, lifecycleio.Now().UTC(), snapshot, result)
+	endSource()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != incidentID {

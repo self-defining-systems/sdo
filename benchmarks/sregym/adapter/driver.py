@@ -638,7 +638,7 @@ def _has_accepted_lifecycle(repository: Path) -> bool:
     native = False
     try:
         native = (
-            (sdo / "schema-version").read_text(encoding="utf-8").strip() == "12"
+            (sdo / "schema-version").read_text(encoding="utf-8").strip() == "13"
             and (sdo / "goal.md").is_file()
             and (sdo / "arch.md").is_file()
         )

@@ -28,8 +28,8 @@
       "observed_at": "1970-01-01T00:00:17Z"
     },
     "health_cleared_at": "1970-01-01T00:00:02Z",
-    "incident_detector_fired_before_dispatch": true,
-    "incident_detector_states": [
+    "learned_detector_fired_before_dispatch": true,
+    "learned_detector_states": [
       {
         "detector_id": "workload-health",
         "evaluated_at": "1970-01-01T00:00:17Z",

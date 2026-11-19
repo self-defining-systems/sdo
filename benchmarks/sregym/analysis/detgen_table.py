@@ -1,6 +1,6 @@
 """Per-incident table for a detector-generalization pipeline (SDO arm).
 
-Joins :func:`incident_cost.load_sdo_pipeline` with the incident detectors and
+Joins :func:`incident_cost.load_sdo_pipeline` with the learned detectors and
 playbooks present in each stage's chained workspace, for example::
 
     uv run python -m benchmarks.sregym.analysis.detgen_table third_party/sregym/logs/<pipeline>
@@ -40,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
             stage.reflection.output_tokens,
             stage.reflection_attempts,
             stage.warm_path,
-            _count(seed, "diagnostics/detectors/incidents/*"),
+            _count(seed, "diagnostics/detectors/learned/*"),
         )
     return 0
 

@@ -8,6 +8,15 @@ func CheckDetects(ctx context.Context, scenario Scenario, class FaultClass) erro
     returns an error unless the scenario fails the way a probe must: with an
     error or timeout, not by being unable to build its requests.
 
+func CheckProbeLoad(workloads []Workload, catalog Catalog) error
+    CheckProbeLoad rejects a health-probe set whose floor load exceeds
+    ProbeRateCap requests per second: the load of sampling every scenario once
+    per sample interval, at the lowest rate that does so (a workload's own or
+    default rate above that is not counted, since an unset rate is the default
+    and the designer did not choose it). Each scenario's steps come from the
+    catalog (one when it is absent). The check is deterministic, so the memory
+    check refuses a set no choice of rate could bring under the cap.
+
 func DefaultLatencyNote(id string) string
     DefaultLatencyNote is the non-blocking memory-check note for a scenario
     DefaultLatencyScenarios returns.
@@ -210,16 +219,4 @@ func (e *Engine) ScenarioAt(iteration uint64) Scenario
     ScenarioAt is the scenario iteration runs. The choice depends only on the
     iteration number: it follows the workload's SamplingPlan, which gives every
     scenario of a health probe its floor and shares the rest by weight.
-
-func (e *Engine) ShareSetup(source *Engine)
-    ShareSetup makes e use source's record of completed setup steps, so a setup
-    step that succeeded in either engine is never run again by the other.
-    A process that runs the same catalog in several engines (a continuous probe
-    and its verify bursts) shares one record: data a setup step wrote and that
-    was lost afterwards then fails every engine instead of being written again.
-    Both engines must run the same catalog.
-
-func (e *Engine) UseExec(execer Execer)
-    UseExec lets scenarios run EXEC steps on ssh targets through execer.
-    An engine without one records such steps as invalid.
 ```

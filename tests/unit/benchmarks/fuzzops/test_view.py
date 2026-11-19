@@ -56,7 +56,7 @@ def _ledger() -> dict[str, Any]:
         },
         "reflection_paths": [
             ".sdo/playbooks/probe-drift/diagnose.go",
-            ".sdo/diagnostics/detectors/incidents/probe-detector/detector.go",
+            ".sdo/diagnostics/detectors/learned/probe-detector/detector.go",
             ".sdo/corpus/case/open.json",
         ],
         "outcome_document": {

@@ -19,4 +19,4 @@ func compileRequest(root string) Request {
 	return Request{Root: root, Layers: Compile, OperatorRoot: filepath.Join("..", "..")}
 }
 
-const detectorSource = ".sdo/diagnostics/detectors/incidents/missing-configmap/detector.go"
+const detectorSource = ".sdo/diagnostics/detectors/learned/missing-configmap/detector.go"

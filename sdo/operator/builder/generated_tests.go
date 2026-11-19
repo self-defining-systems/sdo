@@ -19,7 +19,7 @@ const corpusTest = "TestProgramCorpus"
 // own stage after every other generated test passed, so its violations never
 // share output with, or hide, another gate's failure, and the detector IDs it
 // names have already passed the registration and controller-start contracts.
-const healthyBaselineTestName = "TestIncidentDetectorsStayQuietOnHealthyBaseline"
+const healthyBaselineTestName = "TestLearnedDetectorsStayQuietOnHealthyBaseline"
 
 // separateStages are the generated tests the main generated stage skips.
 const separateStages = "^(" + corpusTest + "|" + healthyBaselineTestName + ")$"

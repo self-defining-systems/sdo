@@ -5,7 +5,7 @@ diagnostic; look it up here.
 
 ## Location and registration
 
-- A detector is a directory of Go files plus one `manifest.yaml`: incident detectors under the incidents directory
+- A detector is a directory of Go files plus one `manifest.yaml`: learned detectors under the learned directory
   of diagnostics, health detectors under the health directory. The directory name is the detector ID. Create it
   with `memory new detector`. Enforced by: `layout.unknown-path`, `manifest.location`, `manifest.missing`,
   `detector.no-go-source`.
@@ -17,7 +17,7 @@ diagnostic; look it up here.
   `kind: DetectorManifest`, `sdkVersion: v0.1`, `id`, `constructor` (default `New`), `class`, `owner`, `watches`,
   `interval`, `persistence`, `batching`, `possiblePlaybooks`, and provenance. Enforced by: `yaml.parse`,
   `manifest.parse`, `manifest.invalid`.
-- `class: incident` pairs with `owner: responder` and needs `originatingIncident`; `class: health` pairs with
+- `class: learned` pairs with `owner: responder` and needs `originatingIncident`; `class: health` pairs with
   `owner: health_judge`. Both need `originatingCommit`. Enforced by: `manifest.invalid`.
 - `Spec()` in `detector.go` equals the manifest field for field (ID, class, owner, interval, persistence,
   batching, watches, playbooks, provenance). Enforced by: `detector.test`.
@@ -55,7 +55,7 @@ evaluates a detector when a watched kind changes.
   opens; `persistence.clearing` is how many consecutive quiet evaluations close it. Both are integers of at least
   1. `batching.severity` is `info`, `warn`, or `critical`; `batching.debounce` is `"0"` or a positive duration;
   `interval` is a positive duration such as `30s`. Enforced by: `manifest.invalid`.
-- A responder's new or changed incident detector must use `persistence.firing: 1`: it was taught by an incident
+- A responder's new or changed learned detector must use `persistence.firing: 1`: it was taught by an incident
   that already happened, so it fires on first match. Use `clearing: 2` or more to avoid flapping. Enforced by:
   `ownership.responder-firing`.
 Advice, not validator-checked: health detectors judge steady state, so use `firing: 2` and `clearing: 2` unless the
@@ -75,26 +75,26 @@ Advice, not validator-checked: tests and recorded-state replay run as informatio
   `^[a-z][a-z0-9_-]*$`, never paths. Every listed ID names an existing playbook. Enforced by: `manifest.invalid`,
   `ref.unknown-playbook`, `detector.compile`.
 - Detector source must not contain physical `.sdo/` paths. Enforced by: `text.physical-path`.
-- A finding's named `ParameterBindings` bind only the playbooks it lists, so an incident detector that binds roles
+- A finding's named `ParameterBindings` bind only the playbooks it lists, so a learned detector that binds roles
   (`ParameterBindings`, `localize.BindSuspects`) declares the playbooks those bindings are for; a reused playbook
   is listed by every detector whose binding it needs. Enforced by: `detector.unscoped-binding`.
-- A responder's incident detector exists to retrieve the playbook for its cause: it names at least one playbook, and each named
+- A responder's learned detector exists to retrieve the playbook for its cause: it names at least one playbook, and each named
   playbook exists (in the same change when it is new). Enforced by: `detector.names-no-playbook`, `ref.unknown-playbook`.
-- One incident detector covers every component that fails the same way: a new incident detector that copies an
+- One learned detector covers every component that fails the same way: a new learned detector that copies an
   existing one apart from IDs, prose and the scenario or workload it names is rejected; widen the existing one to
   bind the component from the failure (`localize.BindSuspects`) while it stays keyed on the cause's own signal. Enforced by: `detector.component-copy`.
-- An incident detector that binds roles never adds a component name (an accepted-source object or traffic scenario
+- A learned detector that binds roles never adds a component name (an accepted-source object or traffic scenario
   ID) outside its Spec and prose: accept scenario failures (`traffic.RuleIDPrefix`) that match the cause's failure text (`traffic.MatchFailures`) and bind with
   `localize.BindSuspects` ([example](../../sdo-playbook-authoring/references/programs.md#localized-components)).
   Names the accepted version already had are left alone. Enforced by:
   `detector.component-literal`.
 - An app-state reader (a package implementing `appstate.Reader`, see [app-state readers](app-state.md)) is a health
-  detector: an incident detector that implements it is rejected; incident detectors read a reader's state with
+  detector: a learned detector that implements it is rejected; learned detectors read a reader's state with
   `appstate.Require`. Enforced by: `detector.reader-class`.
 
 ## Ownership
 
-- The onboarding agent owns health detectors and the responder owns incident detectors; neither may add, change, or
+- The onboarding agent owns health detectors and the responder owns learned detectors; neither may add, change, or
   remove the other's. Enforced by: `ownership.protected-detector`, `ownership.denied`.
 - The initial onboarding proposal adds health detectors only. Enforced by: `ownership.initial-health-only`.
 - A responder keeps the provenance (`originatingIncident`, `originatingCommit`) of an existing detector. Enforced
