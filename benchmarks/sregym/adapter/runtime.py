@@ -96,9 +96,14 @@ class RuntimeConfig:
     shared_accepted_id: str = ""
     # Evidence sink node directory and run ID (see ``NativeInstallConfig``); empty: no sink.
     evidence_sink_host_path: str = ""
+    evidence_sink_volume: str = ""
     evidence_run_id: str = ""
+    # ``kind`` (node containers on this host) or ``eks`` (an existing cluster reached only by its API).
+    lane_platform: str = "kind"
 
     def __post_init__(self) -> None:
+        if self.lane_platform not in {"kind", "eks"}:
+            raise ValueError(f"lane_platform must be kind or eks, got {self.lane_platform!r}")
         if bool(self.source_branch_url) != bool(self.source_branch):
             raise ValueError("source_branch_url and source_branch must be given together")
         if self.source_branch.strip().lower() in {"main", "master"}:
@@ -193,6 +198,7 @@ def native_install_config(config: RuntimeConfig) -> NativeInstallConfig:
         deployment_policy=config.deployment_policy,
         shared_accepted_id=config.shared_accepted_id,
         evidence_sink_host_path=config.evidence_sink_host_path,
+        evidence_sink_volume=config.evidence_sink_volume,
         evidence_run_id=config.evidence_run_id,
     )
 

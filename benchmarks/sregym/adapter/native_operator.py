@@ -73,13 +73,22 @@ def validate_code_path_overrides(value: str) -> None:
         raise ValueError("code_path_overrides must be a JSON object")
 
 
-def validate_evidence_sink(host_path: str, run_id: str) -> None:
+def validate_evidence_sink(host_path: str, run_id: str, volume: str = "") -> None:
     """Shape checks only; the Go installer owns the sink rules (volume kind, run ID charset)."""
 
     if host_path and not host_path.startswith("/"):
         raise ValueError("evidence_sink_host_path must be an absolute node path")
-    if run_id and not host_path:
-        raise ValueError("evidence_run_id requires evidence_sink_host_path")
+    if host_path and volume:
+        raise ValueError("an evidence sink is a node path or a volume, not both")
+    if volume:
+        try:
+            document = json.loads(volume)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"evidence_sink_volume must be a VolumeSource JSON object: {exc}") from exc
+        if not isinstance(document, dict) or len(document) != 1:
+            raise ValueError("evidence_sink_volume must be a VolumeSource JSON object with one source")
+    if run_id and not (host_path or volume):
+        raise ValueError("evidence_run_id requires an evidence sink (node path or volume)")
 
 
 def _seconds(value: int | None) -> str | None:
@@ -142,10 +151,12 @@ class NativeInstallConfig:
     # Evidence sink: a directory on the node (for kind, an extraMounts target) that receives run evidence and
     # outlives the control namespace; empty keeps evidence on the repository PVC. The run ID names the run directory.
     evidence_sink_host_path: str = ""
+    # Or a durable VolumeSource JSON (``SDO_EVIDENCE_VOLUME``), for a lane whose nodes the runner cannot mount.
+    evidence_sink_volume: str = ""
     evidence_run_id: str = ""
 
     def __post_init__(self) -> None:
-        validate_evidence_sink(self.evidence_sink_host_path, self.evidence_run_id)
+        validate_evidence_sink(self.evidence_sink_host_path, self.evidence_run_id, self.evidence_sink_volume)
         for name in ("frozen_memory", "external_incidents"):
             if type(getattr(self, name)) is not bool:
                 raise TypeError(f"{name} must be a boolean")
@@ -227,6 +238,7 @@ class NativeInstallConfig:
             model=self.model,
             effort=self.agent_effort,
             evidence_host_path=self.evidence_sink_host_path,
+            evidence_volume=self.evidence_sink_volume,
             evidence_run_id=self.evidence_run_id,
             mode=self.mode,
         )

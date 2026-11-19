@@ -64,6 +64,7 @@ depends_on = [
 path = "benchmarks.sregym.adapter"
 depends_on = [
     "benchmarks.fuzzops",
+    "benchmarks.lanes",
     "benchmarks.sregym.repository_git",
     "libs.agent_cli",
     "sdo.agents.health_judge",
@@ -77,6 +78,7 @@ path = "benchmarks.sregym.fastloop"
 depends_on = [
     "benchmarks.common.replay",
     "benchmarks.fuzzops",
+    "benchmarks.lanes",
     "benchmarks.sregym.repository_git",
     "libs.agent_cli",
     "benchmarks.sregym.faults",

@@ -104,6 +104,7 @@ def operator_env(
     model: str = "",
     effort: str = "",
     evidence_host_path: str = "",
+    evidence_volume: str = "",
     evidence_run_id: str = "",
     mode: str = "",
 ) -> dict[str, str]:
@@ -113,13 +114,16 @@ def operator_env(
         raise ValueError(f"mode must be one of {MODES}, got {mode!r}")
     if evidence_host_path and not evidence_host_path.startswith("/"):
         raise ValueError("the evidence host path must be an absolute node path")
-    if evidence_run_id and not evidence_host_path:
-        raise ValueError("an evidence run ID requires an evidence host path")
+    if evidence_host_path and evidence_volume:
+        raise ValueError("an evidence sink is a host path or a volume, not both")
+    if evidence_run_id and not (evidence_host_path or evidence_volume):
+        raise ValueError("an evidence run ID requires an evidence sink (host path or volume)")
     values = {
         "SDO_AGENT_PROVIDER": provider,
         "SDO_AGENT_MODEL": model,
         "SDO_AGENT_EFFORT": effort,
         "SDO_EVIDENCE_HOST_PATH": evidence_host_path,
+        "SDO_EVIDENCE_VOLUME": evidence_volume,
         "SDO_EVIDENCE_RUN_ID": evidence_run_id,
         "SDO_MODE": mode,
     }

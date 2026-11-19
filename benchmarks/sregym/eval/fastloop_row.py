@@ -355,10 +355,15 @@ class FastloopRowRunner:
     def claim(self, cell: Cell, lane_id: str, snapshot_commit: str | None) -> Lane:
         directory = self.settings.lane_environments[lane_id]
         environment = FastloopEnvironment.load(directory)
-        placements = self._apply_cpu(
-            environment.cluster,
-            f"{self.settings.lane_cpus:g}",
-            parent=resolve_cgroup_parent(self.settings.lane_cgroup_parent),
+        # An EKS lane's capacity is its instance type; there are no node containers to cap or place.
+        placements = (
+            self._apply_cpu(
+                environment.cluster,
+                f"{self.settings.lane_cpus:g}",
+                parent=resolve_cgroup_parent(self.settings.lane_cgroup_parent),
+            )
+            if environment.platform == "kind"
+            else ()
         )
         if snapshot_commit:
             self._fetch(cell.app, environment, snapshot_commit)
