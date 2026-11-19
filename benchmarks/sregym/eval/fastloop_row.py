@@ -466,6 +466,10 @@ class FastloopRowRunner:
             + "\n",
             encoding="utf-8",
         )
+        attempt = len(list((environment.run_dir / "results").glob(f"{run_id(self.stage, cell, 0)[:-3]}-a*")))
+        row_id = run_id(self.stage, cell, attempt)
+        command = row_command(self.settings, environment, cell, row_id, stream, state["planned"])
+        (directory / "command.json").write_text(json.dumps(command, indent=2) + "\n", encoding="utf-8")
         started = self._now()
         out = (directory / "row.stdout.log").open("a")
         err = (directory / "row.stderr.log").open("a")

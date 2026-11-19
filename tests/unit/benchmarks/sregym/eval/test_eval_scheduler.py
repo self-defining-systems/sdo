@@ -81,9 +81,9 @@ def test_a_cell_that_errors_holds_its_lane_and_the_rest_continue(tmp_path: Path)
     scheduler = Scheduler(build_plan(config), context, Store(), ResultsTable(tmp_path), gate=no_wait_gate())
     rows = scheduler.run()
     assert len(rows) == 2
-    # both lanes error in turn: the first cell holds one lane, the second runs on the other, then none remain
+    # one error is a bad cell, not a bad lane: no lane is held until it errors twice in a row
     assert {r.status for r in rows} == {"error"}
-    assert sorted(lane for _, lane in scheduler.pools.held) == ["h1", "h2"]
+    assert scheduler.pools.held == []
 
 
 def test_with_every_lane_held_remaining_cells_fail_fast(tmp_path: Path) -> None:
@@ -94,7 +94,7 @@ def test_with_every_lane_held_remaining_cells_fail_fast(tmp_path: Path) -> None:
     backend = FakeBackend(clock, fail_at="claim")
     context, _ = make_context(config, clock, backend=backend)
     rows = Scheduler(build_plan(config), context, Store(), ResultsTable(tmp_path), gate=no_wait_gate()).run()
-    assert sorted(r.reason or "" for r in rows).count("no lane left: every lane of the pool is held") == 2
+    assert sorted(r.reason or "" for r in rows).count("no lane left: every lane of the pool is held") == 1
 
 
 def test_finished_cells_are_skipped_on_restart(tmp_path: Path) -> None:

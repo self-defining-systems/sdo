@@ -194,8 +194,9 @@ class Scheduler:
             try:
                 self.gate.admit()
                 row = run_cell(cell, self.context, lane)
+                errored = row.status == "error"
                 # A lane whose closing turn was not drained (or whose drain failed) is never handed out again.
-                reusable = row.status != "error" and row.closing_status not in ("not_drained", "error")
+                reusable = not errored and row.closing_status not in ("not_drained", "error")
             finally:
                 self.pools.release(cell.pool, lane, reusable=reusable, errored=errored)
         self.table.append(row)
