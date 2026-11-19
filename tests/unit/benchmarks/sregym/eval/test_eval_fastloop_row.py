@@ -84,6 +84,11 @@ class FakeRow:
         self.returncode = -9
 
 
+@pytest.fixture(autouse=True)
+def _no_docker(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("benchmarks.sregym.eval.fastloop_row.apply_lane_cpu", lambda *args, **kwargs: None)
+
+
 def settings(tmp_path: Path, **overrides: Any) -> RowSettings:
     values: dict[str, Any] = {
         "code_root": tmp_path,
@@ -496,3 +501,31 @@ def test_the_drain_of_a_row_that_never_started_is_not_applicable(
     runner = fake.runner()
     lane = runner.claim(cell(), "h1", None)
     assert runner.drain(lane, cell(), tmp_path, fake.context()).status == "not_applicable"
+
+
+def test_every_claim_reapplies_the_lane_cpu_cap_to_that_lanes_cluster(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        "benchmarks.sregym.eval.fastloop_row.FastloopEnvironment.load", lambda directory: environment(tmp_path)
+    )
+    monkeypatch.setattr("benchmarks.sregym.eval.fastloop_row.subprocess.run", lambda command, **kw: None)
+    monkeypatch.setattr("benchmarks.sregym.eval.fastloop_row.resolve_cgroup_parent", lambda setting: setting)
+    applied: list[tuple[str, str, str | None]] = []
+
+    def apply_cpu(cluster: str, lane_cpus: str, *, parent: str | None = None) -> None:
+        applied.append((cluster, lane_cpus, parent))
+
+    runner = FastloopRowRunner(
+        settings(tmp_path, lane_cpus=4, lane_cgroup_parent="x.slice"), "small", apply_cpu=apply_cpu
+    )
+    runner.claim(cell("vanilla", "vanilla"), "h1", None)
+    runner.claim(cell("vanilla", "vanilla"), "h1", None)
+    assert applied == [("c", "4", "x.slice")] * 2  # idempotent: the same cap, every claim
+
+
+def test_row_settings_default_to_six_cpus_per_lane_and_an_auto_parent(tmp_path: Path) -> None:
+    default = settings(tmp_path)
+    assert (default.lane_cpus, default.lane_cgroup_parent) == (6.0, "auto")
+    with pytest.raises(ValueError, match="lane_cpus"):
+        settings(tmp_path, lane_cpus=0)

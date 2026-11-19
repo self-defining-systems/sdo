@@ -59,6 +59,12 @@ from benchmarks.sregym.fastloop.gitlab_faults import add_faults_parser
 from benchmarks.sregym.fastloop.gitlab_rehearsal import add_gitlab_rehearse_parser
 from benchmarks.sregym.fastloop.gitlab_replay import add_gitlab_replay_parser
 from benchmarks.sregym.fastloop.host_limits import DEFAULT_MEMORY_LIMIT, DEFAULT_PIDS_LIMIT, HostLimits, NodeLimits
+from benchmarks.sregym.fastloop.lane_cgroup import (
+    DEFAULT_LANE_CPUS,
+    describe_mode,
+    resolve_cgroup_parent,
+    slice_memory_max,
+)
 from benchmarks.sregym.fastloop.loop import LoopConfig, run_incidents, write_loop_manifest
 from benchmarks.sregym.fastloop.records import AgentSummary, IncidentRecord, load_records, summarize
 from benchmarks.sregym.fastloop.stream import load_stream_config
@@ -202,7 +208,9 @@ def up_worker_environment(args: argparse.Namespace, *, workspace: Path) -> dict[
         "SREGYM_KIND_NETWORK_POLICY_CANARY_IMAGE": images.controller,
         "SREGYM_KIND_REQUIRED_IMAGES": json.dumps([images.controller, images.responder]),
         "SREGYM_REUSE_CLUSTER": "1",
-        "SREGYM_WORKER_CPU_LIMIT": args.cpu_limit,
+        **({"SREGYM_WORKER_CPU_LIMIT": args.cpu_limit} if args.cpu_limit is not None else {}),
+        "SDO_LANE_CPUS": args.lane_cpus,
+        "SDO_LANE_CGROUP_PARENT": args.lane_cgroup or "",
         "SREGYM_WORKER_MEMORY_LIMIT": args.memory_limit,
         "SREGYM_WORKER_PIDS_LIMIT": str(args.pids_limit),
         **HostLimits(args.host_lock_dir.resolve(), args.host_redeploys).worker_env(),
@@ -324,12 +332,21 @@ GITLAB_CPU_LIMIT = "8"
 GITLAB_MEMORY_LIMIT = "20g"
 
 
+_UNRESOLVED: Any = object()
+
+
 def resolve_node_limits(args: argparse.Namespace) -> None:
     """Fill the node limits ``up`` left unset with the selected app's defaults."""
 
     gitlab = getattr(args, "app", None) == "gitlab"
-    if args.cpu_limit is None:
-        args.cpu_limit = GITLAB_CPU_LIMIT if gitlab else "3"
+    if args.cpu_limit is None and gitlab:
+        args.cpu_limit = GITLAB_CPU_LIMIT  # else the lane cap below is split across the nodes
+    if getattr(args, "lane_cpus", None) is None:
+        args.lane_cpus = os.environ.get("SDO_LANE_CPUS") or DEFAULT_LANE_CPUS
+    if getattr(args, "lane_cgroup", _UNRESOLVED) is _UNRESOLVED:
+        args.lane_cgroup = resolve_cgroup_parent(
+            getattr(args, "lane_cgroup_parent", None) or os.environ.get("SDO_LANE_CGROUP_PARENT")
+        )
     if args.memory_limit is None:
         args.memory_limit = GITLAB_MEMORY_LIMIT if gitlab else DEFAULT_MEMORY_LIMIT
 
@@ -340,11 +357,16 @@ def up_host_memory_policy(args: argparse.Namespace) -> HostMemoryPolicy:
     reserve, pressure, budget = (
         getattr(args, name, None) for name in ("host_reserve_gib", "host_psi_max", "host_lane_budget_gib")
     )
-    return HostMemoryPolicy(
+    policy = HostMemoryPolicy(
         reserve_bytes=base.reserve_bytes if reserve is None else int(reserve * 1024**3),
         max_pressure_avg60=base.max_pressure_avg60 if pressure is None else pressure,
         lane_budget_bytes=base.lane_budget_bytes if budget is None else int(budget * 1024**3),
     )
+    parent = getattr(args, "lane_cgroup", None)
+    if policy.lane_budget_bytes is None and parent is not None:
+        # The parent slice already caps the fleet: its MemoryMax is the budget when none was configured.
+        policy = replace(policy, lane_budget_bytes=slice_memory_max(parent))
+    return policy
 
 
 def assert_lane_host_memory(args: argparse.Namespace, *, running: dict[str, int] | None = None) -> None:
@@ -376,7 +398,8 @@ def _admit_lane(args: argparse.Namespace) -> None:
 
 def _up(args: argparse.Namespace) -> int:
     resolve_node_limits(args)
-    NodeLimits(args.cpu_limit, args.memory_limit, args.pids_limit)
+    NodeLimits.from_args(args)
+    logger.info(describe_mode(args.lane_cgroup))
     HostLimits(args.host_lock_dir.resolve(), args.host_redeploys)
     _admit_lane(args)
     up_preflight(args)
@@ -2097,7 +2120,19 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument(
         "--cpu-limit",
         default=None,
-        help="docker --cpus per kind node (default 3, as the benchmark workers use; gitlab: 8)",
+        help="docker --cpus per kind node; default: --lane-cpus split across the lane's nodes (gitlab: 8)",
+    )
+    up.add_argument(
+        "--lane-cpus",
+        default=None,
+        help="CPU cap of the whole lane, split across its kind nodes "
+        f"(default env SDO_LANE_CPUS or {DEFAULT_LANE_CPUS})",
+    )
+    up.add_argument(
+        "--lane-cgroup-parent",
+        default=None,
+        help="systemd slice for the kind nodes' cgroups (default env SDO_LANE_CGROUP_PARENT or auto: sdo-eval.slice "
+        "when the host has it, else none; 'none' disables)",
     )
     up.add_argument(
         "--memory-limit",

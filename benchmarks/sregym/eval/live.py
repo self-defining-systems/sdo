@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
 import tomllib
@@ -24,11 +25,29 @@ from benchmarks.sregym.eval.cell import CellContext
 from benchmarks.sregym.eval.fastloop_row import FastloopRowRunner, RecordAccountant, RowSettings, TranscriptPresenceGate
 from benchmarks.sregym.eval.results import ResultsTable
 from benchmarks.sregym.eval.scheduler import LoadGate, Scheduler, SnapshotStore
+from benchmarks.sregym.fastloop.lane_cgroup import describe_mode, resolve_cgroup_parent, slice_memory_max
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from benchmarks.sregym.eval.plan import Cell, Plan
+
+
+logger = logging.getLogger(__name__)
+
+
+def assert_slice_budget(parent: str | None, plan: Plan) -> None:
+    """With a parent slice and no configured ``lane_budget_gib``, the slice's ``MemoryMax`` is the lane budget."""
+    logger.info(describe_mode(parent))
+    config = plan.config
+    if parent is None or config.lane_budget_gib is not None:
+        return
+    limit = slice_memory_max(parent)
+    need = len(plan.config.lanes_in_use()) * config.lane_memory_cap_gib * 1024**3
+    if limit is not None and need > limit:
+        raise ValueError(
+            f"eval: lane memory caps {need / 1024**3:g} GiB exceed {parent} MemoryMax {limit / 1024**3:g} GiB"
+        )
 
 
 class NoStore:
@@ -69,6 +88,7 @@ def run_live(config_path: Path, plan: Plan) -> int:
     if "snapshot_repos" not in row and raw.get("store"):
         row["snapshot_repos"] = store.repositories()  # type: ignore[attr-defined]
     settings = RowSettings.model_validate(row)
+    assert_slice_budget(resolve_cgroup_parent(settings.lane_cgroup_parent), plan)
     runner = FastloopRowRunner(settings, config.stage, import_memory=import_memory)
     gate = load_factory(raw["gate"])() if "gate" in raw else TranscriptPresenceGate()
     accountant = load_factory(raw["accountant"])() if "accountant" in raw else RecordAccountant(runner.records)

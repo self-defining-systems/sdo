@@ -41,7 +41,7 @@ def test_every_kind_node_receives_all_limits(monkeypatch: pytest.MonkeyPatch) ->
         return subprocess.CompletedProcess(argv, 0, "lane-control-plane\nlane-worker\n", "")
 
     monkeypatch.setattr(subprocess, "run", run)
-    apply_node_limits("lane", NodeLimits(cpu="2.5", memory="24g", pids=4096))
+    apply_node_limits("lane", NodeLimits(cpu="2.5", memory="24g", pids=4096), read=lambda _node: None)
     assert [argv for argv, _ in calls[1:]] == [
         ["docker", "update", "--cpus", "2.5", "--memory", "24g", "--memory-swap", "24g", "--pids-limit", "4096", node]
         for node in ("lane-control-plane", "lane-worker")

@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
 from benchmarks.sregym.eval.__main__ import load_config
 from benchmarks.sregym.eval.live import NoStore, build_store, load_factory
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def test_load_config_ignores_the_live_tables(tmp_path: Path) -> None:
@@ -49,3 +46,22 @@ def test_factories_are_module_attr() -> None:
     assert load_factory("json:dumps")({}) == "{}"
     with pytest.raises(ValueError, match="module:attr"):
         load_factory("json")
+
+
+def _plan(**overrides: object):
+    from types import SimpleNamespace
+
+    from tests.unit.benchmarks.sregym.eval.eval_fakes import make_config
+
+    return SimpleNamespace(config=make_config(Path("/runs"), **overrides))
+
+
+def test_the_slice_memory_max_bounds_the_lanes_when_no_budget_is_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarks.sregym.eval import live
+
+    monkeypatch.setattr(live, "slice_memory_max", lambda parent: 100 * 1024**3)
+    live.assert_slice_budget("sdo-eval.slice", _plan())  # h1 h2 v1: 3 lanes x 32 GiB = 96 GiB <= 100
+    with pytest.raises(ValueError, match="exceed sdo-eval.slice MemoryMax 100 GiB"):
+        live.assert_slice_budget("sdo-eval.slice", _plan(lane_memory_cap_gib=40))
+    live.assert_slice_budget("sdo-eval.slice", _plan(lane_budget_gib=500, lane_memory_cap_gib=40))  # configured wins
+    live.assert_slice_budget(None, _plan(lane_memory_cap_gib=400))  # no slice: unchecked
