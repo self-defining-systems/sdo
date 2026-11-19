@@ -9,6 +9,7 @@ from agentshim.testing import FakeExecutor, FakeRun
 from agentshim.testing.claude_stream import ClaudeFramePeer
 
 from libs.agent_cli.structured import run_structured_turn
+from sdo.agents.provider import memory_check_timeout_seconds
 from sdo.agents.responder.reflection import ClaudeSessionBackend, SessionReflector
 from sdo.agents.responder.reflection_worker import run_reflection_task
 from sdo.contracts import ReflectionResult
@@ -119,3 +120,28 @@ def test_a_claude_session_that_cannot_resume_is_a_typed_failure_not_a_new_sessio
         ),
     )
     assert (result.status, result.failure_reason) == ("failed", "session_unavailable")
+
+
+def test_the_closing_turn_lets_a_foreground_memory_check_finish_inside_the_tool_timeout(
+    tmp_path: Path, prepare_reflection_memory
+) -> None:
+    """A check that outlasts the CLI's 2-minute Bash default is moved to the background, and the agent then sleeps blind
+    (measured: a 120 s limit, then ``sleep 240`` for a check that ended earlier). The closing turn's Bash tool bound is
+    the memory-check bound plus slack, so the agent can run the check in the foreground."""
+    prepare_reflection_memory(tmp_path, INCIDENT)
+    closing = ScriptedAgent(
+        lambda _: reply("claude", {"note": "restarts it"}, session_id=RESPONDER_SESSION, branch="reflection")
+    )
+    result = run_reflection_task(
+        _task(tmp_path, _learning_request(tmp_path)),
+        "result",
+        Publisher(),
+        reflector=SessionReflector(
+            ClaudeSessionBackend(reasoning_effort="medium", executor=closing.executor, memory_checker=_passing)
+        ),
+    )
+    assert result.status == "completed"
+    environment = closing.executor.spawns[-1].env
+    bound = str((memory_check_timeout_seconds() + 30) * 1000)
+    assert environment["BASH_DEFAULT_TIMEOUT_MS"] == bound
+    assert environment["BASH_MAX_TIMEOUT_MS"] == bound

@@ -26,4 +26,6 @@ Check:
 1. `sdo-operator memory check`
 2. `sdo-operator memory test <id>`
 
+Run each in the foreground; it can take a few minutes. Your Bash tool waits for it, so do not background it or `sleep` to wait.
+
 Then reply with one line: what it does, or why nothing here is worth one.
