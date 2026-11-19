@@ -346,6 +346,21 @@ def _no_closing(lane: Lane | None, result: ArmResult | None) -> ClosingResult:
     )
 
 
+def _fallback_offline(fallback: TokenRow, *, drained: bool) -> tuple[TokenRow, str]:
+    """Offline cost from the incident record when the closing turn left no usage log.
+
+    A record of a drained closing that counts zero model requests is a verified zero: the learning gate skipped the
+    agent call, so no log exists by design. Any other record without a log stays what the record says, cost unknown.
+    """
+    if (
+        drained
+        and fallback.requests == 0
+        and not any((fallback.uncached_input, fallback.cache_read, fallback.cache_write, fallback.output))
+    ):
+        return TokenRow(uncached_input=0, cache_read=0, cache_write=0, output=0, requests=0, usd=0.0), "no-closing-turn"
+    return fallback, "incident-record"
+
+
 def _seal(
     row: ResultRow,
     cell: Cell,
@@ -366,11 +381,11 @@ def _seal(
         if measured is not None:
             offline, source, evidence = measured, "reflection-usage", True
         elif closing.offline_fallback is not None:
-            offline, source = closing.offline_fallback, "incident-record"
+            offline, source = _fallback_offline(closing.offline_fallback, drained=closing.status == "drained")
         elif closing.status == "drained":
             offline, source = TokenRow(), "missing"
     elif closing.offline_fallback is not None:
-        offline, source = closing.offline_fallback, "incident-record"
+        offline, source = _fallback_offline(closing.offline_fallback, drained=closing.status == "drained")
     memory_commit = closing.memory_commit_after if closing.status == "drained" else None
     if closing.status == "not_applicable":
         memory_commit = closing.memory_commit_after

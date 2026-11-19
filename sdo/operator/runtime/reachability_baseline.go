@@ -35,6 +35,19 @@ func (e *baselineContradictionError) Error() string {
 // not yet observable (no series, too few samples), never a fault.
 func unobserved(f sdk.Finding) bool { return f.Severity == sdk.SeverityInfo }
 
+// currentFindings drops predicted findings (sdk.Predicted): a forecast from a
+// trend is evidence, not a condition that holds now, so it never decides
+// whether an install is healthy.
+func currentFindings(findings []sdk.Finding) []sdk.Finding {
+	current := make([]sdk.Finding, 0, len(findings))
+	for _, finding := range findings {
+		if !sdk.Predicted(finding) {
+			current = append(current, finding)
+		}
+	}
+	return current
+}
+
 func healthyBaselineGoal(ctx context.Context, detectors []sdk.Detector, snapshot sdk.DetectionContext) (bool, error) {
 	evaluatedHealth := false
 	var health []sdk.Detector
@@ -57,7 +70,7 @@ func healthyBaselineGoal(ctx context.Context, detectors []sdk.Detector, snapshot
 		if err != nil {
 			return false, fmt.Errorf("healthy baseline %s: %w", spec.ID, err)
 		}
-		for _, finding := range findings {
+		for _, finding := range currentFindings(findings) {
 			if finding.Status != sdk.FindingActive {
 				continue
 			}
