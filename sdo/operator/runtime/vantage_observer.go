@@ -89,6 +89,7 @@ type VantageSnapshotProvider struct {
 }
 
 func (p VantageSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
+	defer measurePhase(ctx, "vantage")()
 	base, err := p.Base.Snapshot(ctx)
 	if err != nil {
 		return base, err
@@ -125,7 +126,9 @@ type vantageJob struct {
 }
 
 func (o *VantageObserver) collect(ctx context.Context, base sdk.DetectionContext) map[string]vantage.Result {
+	endWait := measurePhase(ctx, "vantage_lock_wait")
 	o.mu.Lock()
+	endWait()
 	defer o.mu.Unlock()
 	now := o.clock().UTC()
 	results := map[string]vantage.Result{}

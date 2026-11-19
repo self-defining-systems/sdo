@@ -401,6 +401,7 @@ type AppStateSnapshotProvider struct {
 }
 
 func (p AppStateSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
+	defer measurePhase(ctx, "app_state")()
 	base, err := p.Base.Snapshot(ctx)
 	if err != nil {
 		return base, err

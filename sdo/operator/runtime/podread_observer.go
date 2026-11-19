@@ -68,6 +68,7 @@ type PodReadsSnapshotProvider struct {
 }
 
 func (p PodReadsSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
+	defer measurePhase(ctx, "pod_reads")()
 	base, err := p.Base.Snapshot(ctx)
 	if err != nil {
 		return base, err

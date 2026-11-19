@@ -145,6 +145,7 @@ type ReadSnapshotProvider struct {
 }
 
 func (p ReadSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
+	defer measurePhase(ctx, "read_view")()
 	s, err := p.Base.Snapshot(ctx)
 	if err != nil {
 		return nil, err

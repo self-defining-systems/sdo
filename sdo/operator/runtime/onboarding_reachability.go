@@ -153,6 +153,7 @@ type onboardingSnapshotProvider struct {
 }
 
 func (p onboardingSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
+	defer measurePhase(ctx, "onboarding_snapshot")()
 	snapshot, err := p.Base.Snapshot(ctx)
 	if err != nil {
 		return nil, err
