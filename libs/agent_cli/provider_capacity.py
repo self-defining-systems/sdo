@@ -157,7 +157,9 @@ def prepare_host_pool(directory: Path, aliases: list[Path], *, capacity: int = D
 
     Hard links preserve flock exclusion across different node-visible paths.
     Existing independent files and cross-filesystem aliases fail closed; live
-    files are never replaced. Use a shared writable umask for the worker UID.
+    files are never replaced. Workers run as a different UID than the
+    provisioner and open tokens read-write, so modes are set explicitly
+    (never left to the umask), and re-provisioning repairs a live pool in place.
     """
     pool = OpusPool(directory, capacity)
     handle = pool.try_acquire()  # Also validates immutable capacity metadata.
@@ -166,8 +168,10 @@ def prepare_host_pool(directory: Path, aliases: list[Path], *, capacity: int = D
     names = ["capacity", *(f"slot-{slot}.lock" for slot in range(capacity))]
     for name in names[1:]:
         (directory / name).touch(exist_ok=True)
+    _grant_worker_access(directory, names)
     for alias in aliases:
         alias.mkdir(parents=True, exist_ok=True)
+        _grant_worker_access(alias, [])
         for name in names:
             source, destination = directory / name, alias / name
             try:
@@ -175,6 +179,14 @@ def prepare_host_pool(directory: Path, aliases: list[Path], *, capacity: int = D
             except FileExistsError:
                 if not source.samefile(destination):
                     raise ValueError(f"Opus pool alias uses a different inode: {destination}") from None
+
+
+def _grant_worker_access(directory: Path, names: list[str]) -> None:
+    """Let any worker UID traverse the pool and open its tokens read-write."""
+    directory.chmod(directory.stat().st_mode | 0o555)
+    for name in names:
+        token = directory / name
+        token.chmod(token.stat().st_mode | 0o666)
 
 
 def _now() -> datetime:
