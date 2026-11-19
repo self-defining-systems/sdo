@@ -58,7 +58,7 @@ OWN_PAGE_WINDOW_SECONDS = 120.0
 
 
 #: Rows retried when SDO's install window rejects the lane before any injection (host load, helper start-up).
-ADMISSION_RETRIES = 2
+ADMISSION_RETRIES = 5
 #: Errors raised before any injection by transient lane state: SDO's install window ending on an incomplete read, the
 #: no-fault oracle rehearsal run while a freshly recreated app still registers, a namespace stuck Terminating.
 PRE_INJECTION_RETRY_MARKERS = ("SDO rejected onboarding", "no-fault rehearsal has unhealthy", "wipe could not remove")
