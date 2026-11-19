@@ -155,6 +155,7 @@ func (e PlanExecutor) clock() func() time.Time {
 // plan is compensated; once every write has landed, a failed rollout wait or
 // health verification is reported and left to the caller.
 func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan program.Plan, dryRun bool) (result PlanApplicationResult, err error) {
+	plan = e.createAbsentSourceRestores(ctx, plan)
 	if handled, result, err := e.applyContractActions(ctx, incident, plan, dryRun); handled {
 		return result, err
 	}

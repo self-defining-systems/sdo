@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -153,8 +154,11 @@ func SourceDepartures(in DepartureInput, objects []sdk.ObjectRef) []SourceDepart
 		departure := SourceDeparture{Ref: ref, Kind: DepartureChanged}
 		missing := false
 		if reader, ok := in.View.(sdk.ObjectReader); ok && !diff.SourceAbsent {
+			// The ObjectReader contract reports an absent identity as
+			// ErrObjectAbsent, never as a nil object; a nil object without an
+			// error is tolerated as absent too.
 			object, err := reader.Object(ref)
-			if err == nil && object == nil {
+			if errors.Is(err, sdk.ErrObjectAbsent) || err == nil && object == nil {
 				missing = true
 				departure.Kind = DepartureMissing
 			} else if err == nil && sdoWroteLast(object) {

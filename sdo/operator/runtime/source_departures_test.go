@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -32,7 +33,8 @@ func (v departureView) DiffAgainstSource(ref sdk.ObjectRef) (sdk.SourceDiff, err
 
 func (v departureView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
 	if v.gone[ref.Kind+"/"+ref.Name] {
-		return nil, nil
+		// The sdk.ObjectReader contract: an absent identity is ErrObjectAbsent, never a nil object.
+		return nil, fmt.Errorf("%w: %s/%s", sdk.ErrObjectAbsent, ref.Kind, ref.Name)
 	}
 	object := &unstructured.Unstructured{}
 	if entries, ok := v.written[ref.Kind+"/"+ref.Name]; ok {
