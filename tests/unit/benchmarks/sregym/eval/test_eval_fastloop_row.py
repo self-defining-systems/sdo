@@ -512,8 +512,9 @@ def test_the_drain_of_a_row_that_never_started_is_not_applicable(
     assert runner.drain(lane, cell(), tmp_path, fake.context()).status == "not_applicable"
 
 
-def rejected_record(message: str, *, stage: str = "pre_injection") -> IncidentRecord:
-    return record(
+def rejected_record(message: str, *, stage: str = "pre_injection", cause: str | None = None) -> IncidentRecord:
+    """A row stopped before injection; ``cause`` is the controller's structured onboarding rejection cause."""
+    built = record(
         injection={"state": "not_injected", "stage": stage},
         detected_at=None,
         dispatched_at=None,
@@ -525,32 +526,61 @@ def rejected_record(message: str, *, stage: str = "pre_injection") -> IncidentRe
         resolution_path=None,
         error=message,
     )
+    CAUSES[id(built)] = cause
+    return built
+
+
+#: Structured onboarding causes of scripted records (the admission's onboarding.json ``rejected_cause``).
+CAUSES: dict[int, str | None] = {}
 
 
 class Attempts:
-    """``fastloop run`` attempts that each finish in one step with the next scripted record."""
+    """``fastloop run`` attempts that each finish in one step with the next scripted record.
 
-    def __init__(self, env: Any, records: list[IncidentRecord]) -> None:
+    ``durations`` advances the runner's clock by each attempt's seconds, as a real attempt takes lane time.
+    """
+
+    def __init__(self, env: Any, records: list[IncidentRecord], durations: list[float] | None = None) -> None:
         self.env, self.records, self.run_ids = env, records, []
+        self.clock, self.durations = 0.0, durations or []
+
+    def now(self) -> float:
+        return self.clock
 
     def start(self, command: list[str], **kwargs: Any) -> FakeRow:
         row = command[command.index("--run-id") + 1]
         self.run_ids.append(row)
         results = self.env.run_dir / "results" / row
         results.mkdir(parents=True)
-        (results / "incidents.jsonl").write_text(
-            self.records[min(len(self.run_ids), len(self.records)) - 1].model_dump_json() + "\n"
-        )
+        scripted = self.records[min(len(self.run_ids), len(self.records)) - 1]
+        (results / "incidents.jsonl").write_text(scripted.model_dump_json() + "\n")
+        cause = CAUSES.get(id(scripted))
+        if cause is not None:
+            (results / "admission").mkdir()
+            (results / "admission" / "onboarding.json").write_text(json.dumps({"rejected_cause": cause}))
+        if self.durations:
+            self.clock += self.durations[min(len(self.run_ids), len(self.durations)) - 1]
         return FakeRow(returncode=0)
 
 
-def execute_attempts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, arm: Arm, records: list[IncidentRecord]) -> Any:
+def execute_attempts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    arm: Arm,
+    records: list[IncidentRecord],
+    durations: list[float] | None = None,
+) -> Any:
     env = environment(tmp_path)
     monkeypatch.setattr("benchmarks.sregym.eval.fastloop_row.FastloopEnvironment.load", lambda directory: env)
     monkeypatch.setattr(FastloopRowRunner, "_fetch", lambda *args: None)
-    attempts = Attempts(env, records)
+    attempts = Attempts(env, records, durations)
     runner = FastloopRowRunner(
-        settings(tmp_path), "small", start=attempts.start, sleep=lambda s: None, head=lambda workspace: "h"
+        settings(tmp_path),
+        "small",
+        start=attempts.start,
+        sleep=lambda s: None,
+        head=lambda workspace: "h",
+        now=attempts.now if durations else None,
     )
     context = ArmContext(config=make_config(tmp_path), page_hook=NoPageHook(), now=lambda: 0.0, sleep=lambda s: None)
     lane = runner.claim(cell(arm), "h1", "snap" if arm == "sdo" else None)
@@ -569,12 +599,72 @@ def test_a_row_rejected_before_injection_is_retried_on_a_fresh_attempt(
     assert result.status != "error"
 
 
+def onboarding_rejection(cause: str, seconds: float = 283.786) -> IncidentRecord:
+    return rejected_record(f"eval: SDO rejected onboarding after {seconds}s (prose that varies)", cause=cause)
+
+
 def test_the_pre_injection_retry_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from benchmarks.sregym.eval.fastloop_row import ADMISSION_RETRIES
 
-    flake = rejected_record("SDO rejected onboarding: the first install was not healthy")
-    attempts, _ = execute_attempts(tmp_path, monkeypatch, "sdo", [flake])
+    flakes = [onboarding_rejection(f"window_expired/incomplete_observation:check-{name}") for name in "abcdefgh"]
+    attempts, _ = execute_attempts(tmp_path, monkeypatch, "sdo", flakes)
     assert len(attempts.run_ids) == 1 + ADMISSION_RETRIES
+
+
+def test_a_rejection_that_repeats_its_cause_stops_the_row(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The structured cause decides, never the prose: other timings and pod names are the same rejection."""
+    cause = "window_expired/incomplete_observation:request-metrics/request-metrics.not-instrumented/Pod"
+    first, again = onboarding_rejection(cause, 283.786), onboarding_rejection(cause, 274.988)
+    attempts, _ = execute_attempts(tmp_path, monkeypatch, "sdo", [first, again, record()])
+    assert len(attempts.run_ids) == 2
+
+
+def test_causes_that_differ_only_in_digits_are_different(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    v1 = onboarding_rejection("window_expired/incomplete_observation:traffic-v1/scenario")
+    v2 = onboarding_rejection("window_expired/incomplete_observation:traffic-v2/scenario")
+    attempts, result = execute_attempts(tmp_path, monkeypatch, "sdo", [v1, v2, record()])
+    assert len(attempts.run_ids) == 3
+    assert result.status != "error"
+
+
+def test_a_cause_seen_earlier_in_the_cell_stops_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    a, b = onboarding_rejection("window_expired/a"), onboarding_rejection("window_contradicted/b")
+    attempts, _ = execute_attempts(tmp_path, monkeypatch, "sdo", [a, b, a, record()])
+    assert len(attempts.run_ids) == 3
+
+
+def test_an_attempt_starts_only_if_it_fits_the_lane_time_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Decided before starting: two 400 s attempts leave 100 s of a 900 s budget, too little for a third."""
+    from benchmarks.sregym.eval.fastloop_row import ADMISSION_RETRY_BUDGET_SECONDS
+
+    assert ADMISSION_RETRY_BUDGET_SECONDS == 900
+    flakes = [onboarding_rejection(f"window_expired/check-{name}") for name in "abcdef"]
+    attempts, _ = execute_attempts(tmp_path, monkeypatch, "sdo", flakes, durations=[400.0])
+    assert len(attempts.run_ids) == 2
+
+
+def test_a_rejection_without_a_structured_cause_is_one_cause(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A controller that records no cause cannot tell rejections apart: they count as the same one."""
+    old = [rejected_record(f"eval: SDO rejected onboarding: reason {n}") for n in range(4)]
+    attempts, _ = execute_attempts(tmp_path, monkeypatch, "sdo", old)
+    assert len(attempts.run_ids) == 2
+
+
+def test_the_row_error_carries_the_cause_not_the_prose(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The scheduler parks on the row's reason, so it is the normalized cause, without durations."""
+    from benchmarks.sregym.eval.fastloop_row import FastloopRowRunner
+
+    cause = "window_expired/incomplete_observation:x/y"
+    attempts, _ = execute_attempts(
+        tmp_path, monkeypatch, "sdo", [onboarding_rejection(cause, 1.5), onboarding_rejection(cause, 2.5)]
+    )
+    runner = FastloopRowRunner.__new__(FastloopRowRunner)
+    runner.records, runner.rejections = {cell("sdo").id: rejected_record("x")}, {cell("sdo").id: "onboarding:" + cause}
+    with pytest.raises(RuntimeError) as raised:
+        runner.grade(None, cell("sdo"))  # type: ignore[arg-type]
+    assert str(raised.value) == f"eval: rejected before injection (onboarding:{cause})"
 
 
 def test_a_failure_after_injection_is_never_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -629,3 +719,17 @@ def test_row_settings_default_to_six_cpus_per_lane_and_an_auto_parent(tmp_path: 
     assert (default.lane_cpus, default.lane_cgroup_parent) == (6.0, "auto")
     with pytest.raises(ValueError, match="lane_cpus"):
         settings(tmp_path, lane_cpus=0)
+
+
+def test_every_attempt_is_recorded_with_its_normalized_cause(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """In-cell rejections are visible to the scheduler's lane accounting and parking, one line per attempt."""
+    first = onboarding_rejection("window_expired/incomplete_observation:traffic-probe-read-later/scenario", 390.1)
+    other = onboarding_rejection("window_contradicted/baseline_firing:traffic-links/rule", 12.5)
+    attempts, _ = execute_attempts(tmp_path, monkeypatch, "sdo", [first, other, record()])
+    lines = [json.loads(line) for line in (tmp_path / "attempts.jsonl").read_text().splitlines()]
+    assert [line["run_id"] for line in lines] == attempts.run_ids
+    assert lines[0]["cause"] == "onboarding:window_expired/incomplete_observation:traffic-probe-read-later/scenario"
+    assert lines[0]["retried"] is True
+    assert lines[2]["cause"] is None
+    assert lines[2]["retried"] is False
+    assert all("started" in line and "ended" in line for line in lines)

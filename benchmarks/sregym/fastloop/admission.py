@@ -286,7 +286,9 @@ class LaneAdmission:
             if not output.strip():
                 records[key] = None
             elif key == "rejected":
-                records[key] = {"reason": json.loads(output)["data"]["reason"]}
+                data = json.loads(output)["data"]
+                # The controller's structured cause (class and check, no timings) beside its human reason.
+                records[key] = {"reason": data["reason"], "cause": data.get("cause")}
             else:
                 records[key] = json.loads(json.loads(output)["data"]["onboarding.json"])
         status = (self._controller_job(control) or {}).get("status", {})
@@ -334,12 +336,14 @@ class LaneAdmission:
             record = records["complete"] or {}
             done = bool(record.get("acceptedCommit") and record.get("objects"))
             rejected = (records["rejected"] or {}).get("reason")
+            rejected_cause = (records["rejected"] or {}).get("cause")
             crashed = (records["controller_failed"] or {}).get("reason")
             evidence = {
                 "passed": done,
                 "accepted_commit": record.get("acceptedCommit"),
                 "pending": records["pending"] is not None,
                 "rejected_reason": rejected,
+                "rejected_cause": rejected_cause,
                 "controller_failed": crashed,
                 "last_error": error,
                 "seconds": round(time.monotonic() - started, 3),

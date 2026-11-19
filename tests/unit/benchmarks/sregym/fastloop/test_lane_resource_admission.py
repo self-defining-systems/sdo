@@ -343,7 +343,7 @@ def test_rejected_onboarding_fails_at_once_with_the_controller_reason(lane, monk
     rejected = {
         "complete": None,
         "pending": {"acceptedCommit": "a" * 40},
-        "rejected": {"reason": "install window contradicted or expired"},
+        "rejected": {"reason": "install window contradicted or expired", "cause": "window_expired/x"},
         "controller_failed": None,
     }
     monkeypatch.setattr(
@@ -357,6 +357,7 @@ def test_rejected_onboarding_fails_at_once_with_the_controller_reason(lane, monk
     evidence = json.loads((gate.directory / "onboarding.json").read_text())
     assert evidence["passed"] is False
     assert evidence["rejected_reason"] == "install window contradicted or expired"
+    assert evidence["rejected_cause"] == "window_expired/x"
     assert (gate.directory / "onboarding-controller.log").read_text() == "controller line\n"
 
 
@@ -394,7 +395,11 @@ def test_onboarding_reads_the_real_cluster_records(lane, monkeypatch):
     assert quiet == {"complete": None, "pending": None, "rejected": None, "controller_failed": None}
 
     cluster["configmap/sdo-namespace-onboarding-rejected"] = {"data": {"reason": "install window expired"}}
-    assert gate._onboarding("hotel-reservation-sdo")["rejected"] == {"reason": "install window expired"}
+    assert gate._onboarding("hotel-reservation-sdo")["rejected"] == {"reason": "install window expired", "cause": None}
+    cluster["configmap/sdo-namespace-onboarding-rejected"] = {
+        "data": {"reason": "expired", "cause": "window_expired/y"}
+    }
+    assert gate._onboarding("hotel-reservation-sdo")["rejected"] == {"reason": "expired", "cause": "window_expired/y"}
 
     cluster["job/sdo-controller-run"] = {"status": {"failed": 1}}
     assert gate._onboarding("hotel-reservation-sdo")["controller_failed"] is None
