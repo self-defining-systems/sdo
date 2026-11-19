@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import os
 import re
-import shlex
 import subprocess
 from pathlib import Path
 
 import pytest
 import tomllib
+
+from tests.unit.sdo.operator.image_gate import controller_validation_gate
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 PYTHON_DOCKERFILES = ("sdo/operator/Dockerfile.runtime",)
@@ -156,31 +157,20 @@ def test_image_build_smokes_offline_go_tools_as_nonroot() -> None:
     assert "tests/fixtures/sdo/playbook_program_app:/fixture:ro" in script
 
 
-def _controller_validation_gate(script: str) -> tuple[list[str], dict[str, Path]]:
-    """The controller image's validation smoke as the build script runs it: the ``sdo-operator`` argv after the
-    image, and its volume mounts (container path -> repository path)."""
-    lines = script.splitlines()
-    (at,) = [i for i, line in enumerate(lines) if '"${image}:${tag}" sdo-operator' in line]
-    argv = shlex.split(lines[at].split('"${image}:${tag}"', 1)[1])
-    mounts: dict[str, Path] = {}
-    i = at - 1
-    while lines[i].rstrip().endswith("\\") and "docker run" not in lines[i]:
-        for spec in re.findall(r'--volume "\$\{repo_root\}/([^:"]+):([^:"]+)(?::ro)?"', lines[i]):
-            mounts[spec[1]] = REPO_ROOT / spec[0]
-        i -= 1
-    return argv, mounts
-
-
-@pytest.mark.go_integration
-def test_the_controller_image_validation_gate_runs_on_the_built_operator(operator_binary: Path) -> None:
+def test_the_controller_image_validation_gate_command_runs_on_the_prepared_operator(
+    operator_binary: Path, tmp_path: Path
+) -> None:
     # the gate once hard-coded the validation child's private argument list, which drifted from the Go CLI and
-    # failed every image build after the images were built; run the script's own command on the real binary
-    argv, mounts = _controller_validation_gate((REPO_ROOT / "scripts/build_sdo_images.sh").read_text())
+    # failed every image build after the images were built; the script's own command, on an empty candidate (no
+    # compile), must reach the validation child and pass. The full fixture run is the nightly
+    # test_image_validation_gate.py.
+    argv, mounts = controller_validation_gate((REPO_ROOT / "scripts/build_sdo_images.sh").read_text())
     assert argv[0] == "sdo-operator"
-    args = [str(mounts.get(arg, arg)) for arg in argv[1:]]
-    env = {**os.environ, "SDO_OPERATOR_ROOT": str(REPO_ROOT / "sdo/operator"), "GOFLAGS": "-mod=mod"}
+    assert set(mounts) & set(argv), "the gate validates a mounted fixture"
+    args = [str(tmp_path) if arg in mounts else arg for arg in argv[1:]]
+    env = {**os.environ, "SDO_OPERATOR_ROOT": str(REPO_ROOT / "sdo/operator")}
     proc = subprocess.run(
-        [str(operator_binary), *args], env=env, capture_output=True, text=True, timeout=600, check=False
+        [str(operator_binary), *args], env=env, capture_output=True, text=True, timeout=60, check=False
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
 
