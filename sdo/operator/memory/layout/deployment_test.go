@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"sdo.dev/operator/imagesrc"
 )
 
 func TestClassifyDeployment(t *testing.T) {
@@ -158,5 +160,15 @@ func TestMigrateToSchema12KeepsExistingRecordings(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(filepath.Join(root, filepath.FromSlash(CorpusDir+"/case-1/recordings.json"))); string(got) != recordings {
 		t.Fatalf("an existing recording changed: %q", got)
+	}
+}
+
+// The build-input rule's authored Dockerfile directory is this layout's "build" deployment files.
+func TestAuthoredDockerfilesAreBuildDeploymentFiles(t *testing.T) {
+	if imagesrc.AuthoredDockerfileDir != DeploymentDir+"/build" {
+		t.Fatalf("imagesrc.AuthoredDockerfileDir = %q, want %q", imagesrc.AuthoredDockerfileDir, DeploymentDir+"/build")
+	}
+	if kind, id, ok := Classify(imagesrc.AuthoredDockerfileDir + "/api/Dockerfile"); !ok || kind != KindDeploymentFile || id != "build" {
+		t.Fatalf("Classify = %q, %q, %v; want a build deployment file", kind, id, ok)
 	}
 }

@@ -61,6 +61,10 @@ func PlanBuilds(checkout string, builds []*contracts.ImageBuild) ([]Planned, err
 		if contextProblem != "" || dockerfileProblem != "" {
 			continue
 		}
+		if problem := memoryInputProblem(label, contextRel, dockerfileRel); problem != "" {
+			problems = append(problems, problem)
+			continue
+		}
 		if problem := copySourceProblem(checkout, label, contextRel, dockerfileRel); problem != "" {
 			problems = append(problems, problem)
 			continue
@@ -71,6 +75,19 @@ func PlanBuilds(checkout string, builds []*contracts.ImageBuild) ([]Planned, err
 		return nil, fmt.Errorf("the plan's image_builds do not match the checkout, so no build was started. All paths are relative to the checkout root. %s", strings.Join(problems, " "))
 	}
 	return planned, nil
+}
+
+// memoryInputProblem applies imagesrc.BuildInputAllowed, the rule the recorded inputs are later checked against,
+// before any build starts.
+func memoryInputProblem(label, contextRel, dockerfileRel string) string {
+	var problems []string
+	if !imagesrc.BuildInputAllowed(contextRel, false) {
+		problems = append(problems, fmt.Sprintf("%s context_path %q is in operational memory (.sdo/); the build context is the application source (for example services/api).", label, contextRel))
+	}
+	if !imagesrc.BuildInputAllowed(dockerfileRel, true) {
+		problems = append(problems, fmt.Sprintf("%s dockerfile_path %q is memory a build may not read; an authored Dockerfile goes under %s/ (for example %s/api/Dockerfile).", label, dockerfileRel, imagesrc.AuthoredDockerfileDir, imagesrc.AuthoredDockerfileDir))
+	}
+	return strings.Join(problems, " ")
 }
 
 // dockerfileInContext applies the one convention for dockerfile_path: it is
