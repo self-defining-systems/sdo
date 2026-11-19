@@ -557,6 +557,7 @@ def _up(args: argparse.Namespace) -> int:
             if prior is not None
             else None
         )
+        up_revision: str | None = None
         if prior is not None and cluster["cluster"] == prior.cluster and (args.redeploy or history is not None):
             from benchmarks.sregym.adapter import control_namespace_for
             from benchmarks.sregym.fastloop.reset import KubectlResetCluster, require_terminal_reflection
@@ -583,11 +584,16 @@ def _up(args: argparse.Namespace) -> int:
             )
             app_recreated = True
         else:
+            from benchmarks.sregym.fastloop.deployed_application import workspace_revision
+
+            # The revision `up` deploys is fixed before the deploy, as in every later recreation.
+            up_revision = workspace_revision(placeholder.workspace)
             deployed = worker.request(
                 "deploy",
                 problem_id=args.problem,
                 baseline_path=str(placeholder.baseline_path),
                 redeploy=args.redeploy,
+                revision=up_revision,
                 timeout=DEPLOY_OP_TIMEOUT_SECONDS,
             )
         app = worker.request("app_info", problem_id=args.problem)
@@ -614,7 +620,7 @@ def _up(args: argparse.Namespace) -> int:
             tuple(capture_application_baseline(cluster, namespace) for namespace in namespaces),
             installed=True,
         )
-        _record_fresh_deploy(environment)
+        _record_fresh_deploy(environment, up_revision)
     elif not app_recreated:
         from benchmarks.sregym.fastloop.baseline_recovery import seal_existing_install
 
@@ -926,18 +932,34 @@ def _recapture_application_baseline(environment: FastloopEnvironment) -> None:
     )
 
 
-def _record_deployed_source(environment: FastloopEnvironment) -> None:
-    """After a completed deploy, bind the workspace's source to the live app it produced."""
-    from benchmarks.sregym.fastloop.deployed_application import record_deployed_application
+def _record_deployed_source(environment: FastloopEnvironment, revision: str | None) -> None:
+    """After a completed deploy of ``revision`` and its baseline capture, stamp the baseline with that source."""
+    from benchmarks.sregym.fastloop.deployed_application import forget_deployed_source, record_deployed_source
 
-    record_deployed_application(environment)
+    if revision is None:
+        forget_deployed_source(environment)
+    else:
+        record_deployed_source(environment, revision)
 
 
-def _deployed_source_change(environment: FastloopEnvironment, revision: str = "HEAD") -> Tier2Reason | None:
-    """Why the running app is not the deploy of the row's planned source; unknown facts recreate."""
+def _deployed_source_change(environment: FastloopEnvironment, revision: str | None) -> Tier2Reason | None:
+    """Why the running app is not the deploy of the row's application revision; unknown facts recreate."""
     from benchmarks.sregym.fastloop.deployed_application import deployed_application_change
+    from benchmarks.sregym.fastloop.wipe import Tier2Reason, Tier2Trigger
 
+    if revision is None:
+        return Tier2Reason(Tier2Trigger.ACCEPTED_SOURCE_CHANGED, "the row's application revision is unknown")
     return deployed_application_change(environment, revision)
+
+
+def _application_revision(args: argparse.Namespace, environment: FastloopEnvironment) -> str | None:
+    """The source this row's application must be: its arm's planned commit, else the workspace head.
+
+    Fixed once, before any deploy: another lane's publication may move the head while this row deploys.
+    """
+    from benchmarks.sregym.fastloop.deployed_application import workspace_revision
+
+    return getattr(args, "planned_commit", None) or workspace_revision(environment.workspace)
 
 
 def recreate_application(
@@ -946,8 +968,17 @@ def recreate_application(
     reason: Tier2Reason,
     tier1: Tier1Receipt,
     results_dir: Path,
+    *,
+    revision: str | None = None,
 ) -> dict[str, Any]:
-    """The reset transaction shared by explicit redeploy and row-start recreation."""
+    """The reset transaction shared by explicit redeploy and row-start recreation.
+
+    It deploys ``revision`` (default: the head, read before the deploy) and stamps the new baseline with it
+    only after the whole transaction completed.
+    """
+    from benchmarks.sregym.fastloop.deployed_application import forget_deployed_source, workspace_revision
+
+    revision = revision or workspace_revision(environment.workspace)
     deployed: dict[str, Any] = {}
 
     def deploy() -> None:
@@ -957,6 +988,7 @@ def recreate_application(
                 problem_id=environment.deploy_problem,
                 baseline_path=str(environment.baseline_path),
                 redeploy=True,
+                revision=revision,
                 timeout=DEPLOY_OP_TIMEOUT_SECONDS,
             )
         )
@@ -969,10 +1001,7 @@ def recreate_application(
             restore_social_fixture(environment.kubeconfig)
         _recapture_application_baseline(environment)
 
-    from benchmarks.sregym.fastloop.deployed_application import forget_deployed_application
-
-    # Until the transaction completes, no record vouches for the app being replaced.
-    forget_deployed_application(environment)
+    forget_deployed_source(environment)
     run_tier2(
         reason,
         tier1,
@@ -985,7 +1014,7 @@ def recreate_application(
         injection_state=LaneInjectionState(environment.kubeconfig, environment.namespace),
         timeout_seconds=wait_for(WaitKind.ROLLOUT),
     ).write(results_dir)
-    _record_deployed_source(environment)
+    _record_deployed_source(environment, revision)
     return deployed
 
 
@@ -1024,60 +1053,54 @@ def _setup_application(
     redeploy_reason: Tier2Reason | None,
     warm: bool,
 ) -> None:
-    """Every row path leaves the app the deploy of the workspace's source, or recreates it.
+    """Every row path leaves the app the deploy of its arm's application revision, or recreates it.
 
     The Tier-1 path decided ``redeploy_reason`` (including the deployed-source check); a warm lane proved it in
-    its transaction. Rows that do not wipe at start (vanilla, shared-accepted and parallel lanes) check here, so
-    none of them keeps a seed app or one a previous row changed.
+    its transaction. Rows that do not wipe at start (vanilla, shared-accepted and parallel lanes) check here.
+    Only the deployed application follows the revision: the workspace, and everything an agent can read from
+    it, is never moved by this setup.
     """
+    from benchmarks.sregym.fastloop.wipe import Tier1Receipt
+
+    revision = _application_revision(args, environment) if environment.app != "toy" else None
     if tier1 is not None and redeploy_reason is not None:
-        recreate_application(environment, worker, redeploy_reason, tier1, results_dir)
-        return
-    if tier1 is not None:
-        run_tier2(
-            None,
-            tier1,
-            cluster=KubectlLaneCluster(environment.kubeconfig),
-            namespaces=(),
-            deploy=lambda: None,
-            timeout_seconds=wait_for(WaitKind.ROLLOUT),
-        ).write(results_dir)
-    if not warm:
-        _keep_or_recreate_without_wipe(environment, worker, results_dir, args, tier1=tier1)
-    if environment.app != "toy":
-        _write_ran_source(environment, results_dir)
-
-
-def _keep_or_recreate_without_wipe(
-    environment: FastloopEnvironment,
-    worker: SregymWorker,
-    results_dir: Path,
-    args: argparse.Namespace,
-    *,
-    tier1: Tier1Receipt | None,
-) -> None:
-    from benchmarks.sregym.fastloop.wipe import Tier1Receipt, reseed_workspace
-
-    if tier1 is None and environment.app != "toy":
-        planned = getattr(args, "planned_commit", None)
-        if planned and not environment.shared_accepted_id:
-            # A row without a Tier-1 wipe (vanilla) still runs its arm's source: put the workspace there first.
-            reseed_workspace(environment.workspace, planned)
-        changed = _deployed_source_change(environment)
+        recreate_application(environment, worker, redeploy_reason, tier1, results_dir, revision=revision)
+    else:
+        if tier1 is not None:
+            run_tier2(
+                None,
+                tier1,
+                cluster=KubectlLaneCluster(environment.kubeconfig),
+                namespaces=(),
+                deploy=lambda: None,
+                timeout_seconds=wait_for(WaitKind.ROLLOUT),
+            ).write(results_dir)
+        changed = (
+            _deployed_source_change(environment, revision)
+            if tier1 is None and not warm and environment.app != "toy"
+            else None
+        )
         if changed is not None:
             logger.info("Tier-2 recreate of the application: %s (%s)", changed.trigger.value, changed.detail)
-            recreate_application(environment, worker, changed, Tier1Receipt(0.0, (), False, ()), results_dir)
-            return
-    deploy_with_setup_proof(
-        environment, worker, results_dir, allow_reuse=args.agent == "sdo" and environment.app != "toy"
-    )
+            recreate_application(
+                environment, worker, changed, Tier1Receipt(0.0, (), False, ()), results_dir, revision=revision
+            )
+        elif not warm:
+            deploy_with_setup_proof(
+                environment,
+                worker,
+                results_dir,
+                allow_reuse=args.agent == "sdo" and environment.app != "toy",
+                revision=revision,
+            )
+    if environment.app != "toy":
+        _write_ran_source(environment, results_dir, revision)
 
 
-def _write_ran_source(environment: FastloopEnvironment, results_dir: Path) -> None:
-    """Record which application source this row runs, only when the live app is verifiably its deploy."""
-    from benchmarks.sregym.fastloop.deployed_application import application_source_identity, workspace_revision
+def _write_ran_source(environment: FastloopEnvironment, results_dir: Path, revision: str | None) -> None:
+    """Record which application source this row runs: set only when the live app is verifiably its deploy."""
+    from benchmarks.sregym.fastloop.deployed_application import application_source_identity
 
-    revision = workspace_revision(environment.workspace)
     source = None
     if revision is not None and _deployed_source_change(environment, revision) is None:
         source = application_source_identity(environment.workspace, revision)
@@ -1087,21 +1110,20 @@ def _write_ran_source(environment: FastloopEnvironment, results_dir: Path) -> No
     )
 
 
-def _record_fresh_deploy(environment: FastloopEnvironment) -> None:
-    """A deploy `up` just performed is a whole-application recreation of the workspace's source.
-
-    The lane's first row keeps it only when it plans the same application source (``_deployed_source_change``).
-    """
+def _record_fresh_deploy(environment: FastloopEnvironment, revision: str | None) -> None:
+    """A deploy `up` just performed is a whole-application recreation of ``revision`` (read before it)."""
     LaneInjectionState(environment.kubeconfig, environment.namespace).recreated()
-    _record_deployed_source(environment)
+    _record_deployed_source(environment, revision)
 
 
 def _application_needs_redeploy(
     environment: FastloopEnvironment,
     marker: AttemptMarker,
     current_data_faults: tuple[str, ...] = (),
+    *,
+    revision: str | None = None,
 ) -> Tier2Reason | None:
-    """Decide tier 2 from incoming faults, lane injection facts and live application health."""
+    """Decide tier 2 from incoming faults, lane injection facts, live application health and its source."""
     from benchmarks.sregym.fastloop.clean_start import assert_clean_baseline
     from benchmarks.sregym.fastloop.wipe import await_healthy_pods, tier2_reason
     from benchmarks.sregym.fastloop.workload_readiness import workload_identity
@@ -1124,7 +1146,7 @@ def _application_needs_redeploy(
         stuck_pods,
         lane_state=LaneInjectionState(environment.kubeconfig, environment.namespace),
         current_data_faults=current_data_faults,
-        source_change=lambda: _deployed_source_change(environment),
+        source_change=lambda: _deployed_source_change(environment, revision),
     )
 
 
@@ -1135,10 +1157,13 @@ def deploy_with_setup_proof(
     *,
     allow_reuse: bool = True,
     redeploy: bool = False,
+    revision: str | None = None,
 ) -> dict[str, Any]:
     """Reuse the application deploy while it matches its last passing admission; per-injection admission still runs.
 
-    The row-start wipe has removed SDO's install, so the decision binds only what the deploy establishes.
+    The row-start wipe has removed SDO's install, so the decision binds only what the deploy establishes. A deploy
+    that actually deployed (the app was unhealthy) captures the baseline and stamps it with ``revision``; a skipped
+    deploy changes nothing, so the existing stamp keeps (or does not keep) vouching.
     """
     from benchmarks.sregym.fastloop.setup_proof import check_application_reuse
 
@@ -1152,13 +1177,17 @@ def deploy_with_setup_proof(
         logger.info("Setup proof reused %s; injection admission remains required", decision["receipt"])
     else:
         logger.info("Full setup required: %s", ", ".join(decision["changed"]))
-        worker.request(
+        reply = worker.request(
             "deploy",
             problem_id=environment.deploy_problem,
             baseline_path=str(environment.baseline_path),
             redeploy=redeploy,
+            revision=revision,
             timeout=DEPLOY_OP_TIMEOUT_SECONDS,
         )
+        if isinstance(reply, dict) and reply.get("deployed") is True:
+            _recapture_application_baseline(environment)
+            _record_deployed_source(environment, revision)
     return decision
 
 
@@ -1444,9 +1473,17 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
         accepted_repository=environment.workspace if environment.shared_accepted_id else None,
     )
     write_loop_manifest(config)
+    if args.agent != "sdo" and environment.app != "toy":
+        # A vanilla arm does not own the workspace: its app is deployed, restored and compared from the arm's
+        # revision while the head (and everything readable there) stays where it is.
+        environment.app_revision = _application_revision(args, environment)
     marker = AttemptMarker(environment.run_dir)
     redeploy_reason = (
-        _application_needs_redeploy(environment, marker, incoming_data_faults) if tier1 is not None else None
+        _application_needs_redeploy(
+            environment, marker, incoming_data_faults, revision=_application_revision(args, environment)
+        )
+        if tier1 is not None
+        else None
     )
     if redeploy_reason is not None:
         logger.info(

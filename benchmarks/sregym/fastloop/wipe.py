@@ -551,10 +551,6 @@ def tier2_reason(
     pending = marker.pending()
     if pending is not None:
         return pending
-    if source_change is not None:
-        changed = source_change()
-        if changed is not None:
-            return changed
     try:
         restore_invariant()
     except (ValueError, RuntimeError) as exc:
@@ -562,7 +558,8 @@ def tier2_reason(
     stuck = unhealthy_pods()
     if stuck:
         return Tier2Reason(Tier2Trigger.PODS_UNHEALTHY, "pods unhealthy after the restore: " + ", ".join(stuck))
-    return None
+    # Last, on a settled app: whether it is still the deploy of the row's application source.
+    return source_change() if source_change is not None else None
 
 
 @dataclass(frozen=True)

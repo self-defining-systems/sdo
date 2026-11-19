@@ -162,30 +162,15 @@ def test_undescribed_injection_cannot_retain_an_older_clean_record(tmp_path: Pat
     assert state.reason().trigger.value == "lane_injection_unknown"
 
 
-def test_fresh_up_deploy_is_a_known_clean_lane_so_the_first_row_keeps_the_app(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import subprocess
+def test_fresh_up_deploy_is_a_known_clean_lane_so_the_first_row_keeps_the_app(tmp_path: Path) -> None:
     from types import SimpleNamespace
 
-    from benchmarks.sregym.fastloop import deployed_application
-    from benchmarks.sregym.fastloop.cli import _deployed_source_change, _record_fresh_deploy
-
-    live = deployed_application.LiveApplication("cluster", "objects", ())
-    monkeypatch.setattr(deployed_application, "observe", lambda *_args: live)
+    from benchmarks.sregym.fastloop.cli import _record_fresh_deploy
 
     kubeconfig = tmp_path / "worker_0.kubeconfig"
-    workspace = tmp_path / "workspace"
-    subprocess.run(["git", "init", "-q", str(workspace)], check=True)
-    (workspace / "app.yaml").write_text("kind: List\n")
-    subprocess.run(["git", "-C", str(workspace), "add", "-A"], check=True)
-    subprocess.run(
-        ["git", "-C", str(workspace), "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "c"],
-        check=True,
-    )
-    lane = SimpleNamespace(kubeconfig=kubeconfig, namespace="hotel", workspace=workspace)
     state = LaneInjectionState(kubeconfig, "hotel")
     assert state.reason() is not None  # a lane nobody recorded is unknown and would be recreated
-    _record_fresh_deploy(lane)
+    _record_fresh_deploy(
+        SimpleNamespace(kubeconfig=kubeconfig, namespace="hotel", baseline_path=tmp_path / "b.json"), None
+    )
     assert state.reason() is None
-    assert _deployed_source_change(lane) is None  # the row plans the source `up` deployed

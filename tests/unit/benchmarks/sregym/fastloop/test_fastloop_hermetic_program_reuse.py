@@ -118,10 +118,11 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     # `up` deployed this workspace's source; the simulated cluster does not change underneath it.
     from benchmarks.sregym.fastloop import deployed_application
 
+    monkeypatch.setattr(deployed_application, "cluster_instance", lambda _kubeconfig: "fake")
     monkeypatch.setattr(
-        deployed_application, "observe", lambda *_args: deployed_application.LiveApplication("fake", "fixture", ())
+        deployed_application, "live_objects", lambda _kubeconfig, namespace: app.list_objects(namespace)
     )
-    deployed_application.record_deployed_application(lane)
+    deployed_application.record_deployed_source(lane, deployed_application.workspace_revision(workspace) or "")
     # Model the newly required admission I/O from this simulated application's
     # actual readiness and routing state. The pure production predicates still
     # run; only the Kubernetes/prober subprocess boundaries are replaced.

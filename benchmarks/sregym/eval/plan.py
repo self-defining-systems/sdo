@@ -186,7 +186,9 @@ def build_plan(config: EvalConfig) -> Plan:
                 continue
             for index, problem in enumerate(shuffled):
                 snapshot = {
-                    # Source-equal baseline: vanilla runs the SDO base's application source.
+                    # Source-equal baseline: vanilla runs the SDO base's application source, so it is
+                    # source-equal to pass1 only. pass2/pass2-own plan later commits that may carry source
+                    # repairs; compare their rows with vanilla by ``app_source``, not by arm.
                     "vanilla": BASE,
                     "pass1": BASE,
                     "pass2": MERGED,
