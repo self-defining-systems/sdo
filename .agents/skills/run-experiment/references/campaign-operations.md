@@ -90,6 +90,12 @@ Then compare measured wall time with it, per problem and per series, as results 
 
 ## 6. Fix
 
+- **Fix the cause, not the symptom.** For every issue a run or a check finds, ask why it happened in the first place, and keep asking until you reach the mechanism. Then ask what change would make the whole class impossible or caught early, and make that change.
+  - Examples of a principled fix: a test, a preflight check, a guard in the harness, or a corrected design.
+  - A restart, a requeue or a rebuild is not a fix.
+  - A hotfix is allowed only to keep rows flowing while the principled fix lands. Record both, and never close an issue on the hotfix.
+  - Check whether the same class can occur in other arms, apps or hosts, and fix it there too.
+- **Hand the why-chain to whoever fixes it.** When a checker or delegate reports an issue, the fixer gets the why-chain along with it and returns the principled change.
 - Validate a fix by replaying recorded incidents on the branch, in minutes, before rebuilding lanes; use a lane rerun only to confirm.
 - Cut every worktree from `origin/main`, not from the shared checkout's branch.
 - Cap concurrent agent builds and tests per host (for example `GOFLAGS=-p=4`).
