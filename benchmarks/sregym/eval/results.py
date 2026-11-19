@@ -40,6 +40,9 @@ class ResultRow(BaseModel):
     arm: str
     snapshot: str | None = None
     snapshot_commit: str | None = None
+    #: Identity of the application source the row ran (tree outside SDO memory plus ``.sdo/deployment``),
+    #: verified against the live app at row setup. Rows with equal identities ran the same application.
+    app_source: str | None = None
     lane: str | None = None
     status: CellStatus
     #: Why a cell is not gradable (missing transcripts, evidence gate) or errored.

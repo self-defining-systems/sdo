@@ -43,6 +43,15 @@ if TYPE_CHECKING:
     from benchmarks.sregym.fastloop.reset import HealthWorker
 
 
+def planned_application_unchanged(environment: Any, planned_commit: str | None) -> None:
+    """A warm lane keeps its app only while it is the deploy of the planned source; otherwise fall back."""
+    from benchmarks.sregym.fastloop.deployed_application import deployed_application_change
+
+    changed = deployed_application_change(environment, planned_commit or "HEAD")
+    if changed is not None:
+        raise ValueError(f"warm lane application is not the planned deploy: {changed.trigger.value} ({changed.detail})")
+
+
 class WarmEnvironment:
     def __init__(
         self,
@@ -111,6 +120,7 @@ class WarmEnvironment:
             raise ValueError("warm transaction cannot prove data-plane isolation")
         if AttemptMarker(env.run_dir).pending() is not None:
             raise ValueError("previous attempt did not finish cleanly")
+        planned_application_unchanged(env, self.planned_commit)
         record = PersistentState.load(env.state_path).controllers.get(env.namespace)
         pod = self.ops.controller_pod(self.control)
         if record is None or pod is None or record.controller_pod_uid != pod.uid:

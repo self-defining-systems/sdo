@@ -126,18 +126,48 @@ def test_row_command_pins_the_snapshot_and_names_the_arm_agent(tmp_path: Path) -
     assert "--healthy-baseline" in command
 
 
-def test_vanilla_command_has_no_planned_commit_and_its_own_agent(tmp_path: Path) -> None:
+def test_vanilla_command_pins_its_source_and_names_its_own_agent(tmp_path: Path) -> None:
     command = row_command(
         settings(tmp_path, extra_args={"vanilla": ("--x", "1")}),
         environment(tmp_path),
         cell("vanilla", "vanilla"),
         "rid",
         tmp_path / "s.json",
-        None,
+        "base123",
     )
     assert command[command.index("--agent") + 1] == "claudecode"
-    assert "--planned-commit" not in command
+    assert command[command.index("--planned-commit") + 1] == "base123"
     assert command[-2:] == ["--x", "1"]
+
+
+def test_a_vanilla_row_runs_the_base_source_and_reports_the_source_it_ran(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Vanilla claims the same snapshot commit as the SDO base, and the row says which app source it ran."""
+    env = environment(tmp_path)
+    monkeypatch.setattr("benchmarks.sregym.eval.fastloop_row.FastloopEnvironment.load", lambda directory: env)
+    fetched: list[list[str]] = []
+    monkeypatch.setattr(
+        "benchmarks.sregym.eval.fastloop_row.subprocess.run", lambda command, **kw: fetched.append(command) or None
+    )
+    commands: list[list[str]] = []
+
+    def fake_start(command: list[str], **kwargs: Any) -> FakeRow:
+        commands.append(command)
+        results = env.run_dir / "results" / command[command.index("--run-id") + 1]
+        results.mkdir(parents=True)
+        (results / "incidents.jsonl").write_text(record().model_dump_json() + "\n")
+        (results / "app-source.json").write_text(json.dumps({"source": "identity-of-base", "revision": "base123"}))
+        return FakeRow(returncode=0)
+
+    runner = FastloopRowRunner(settings(tmp_path), "small", start=fake_start, sleep=lambda seconds: None)
+    vanilla = Cell(app="hotel", problem="prob_a", arm="vanilla", pass_="vanilla", snapshot="base", order=0)
+    lane = runner.claim(vanilla, "h1", "base123")
+    assert any("base123" in command for command in fetched)
+    context = ArmContext(config=make_config(tmp_path), page_hook=NoPageHook(), now=lambda: 0.0, sleep=lambda s: None)
+    result = runner.execute(lane, vanilla, Injection(at=0), tmp_path, context)
+    assert commands[0][commands[0].index("--planned-commit") + 1] == "base123"
+    assert result.app_source == "identity-of-base"
 
 
 def test_coord_wraps_the_row_in_the_lane_guard(tmp_path: Path) -> None:

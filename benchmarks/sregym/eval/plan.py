@@ -120,7 +120,7 @@ class Cell(BaseModel):
     problem: str
     arm: Arm
     pass_: PlanPass
-    #: Memory snapshot the cell runs on (``base``, ``merged``, ``own:<problem>``); ``None`` for vanilla.
+    #: Memory snapshot the cell runs on (``base``, ``merged``, ``own:<problem>``); vanilla runs ``base``.
     snapshot: str | None
     #: Position in the app's recorded random order.
     order: int = Field(ge=0)
@@ -186,7 +186,8 @@ def build_plan(config: EvalConfig) -> Plan:
                 continue
             for index, problem in enumerate(shuffled):
                 snapshot = {
-                    "vanilla": None,
+                    # Source-equal baseline: vanilla runs the SDO base's application source.
+                    "vanilla": BASE,
                     "pass1": BASE,
                     "pass2": MERGED,
                     "pass2-own": own_snapshot(problem),

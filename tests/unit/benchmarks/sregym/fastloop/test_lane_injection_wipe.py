@@ -162,11 +162,17 @@ def test_undescribed_injection_cannot_retain_an_older_clean_record(tmp_path: Pat
     assert state.reason().trigger.value == "lane_injection_unknown"
 
 
-def test_fresh_up_deploy_is_a_known_clean_lane_so_the_first_row_keeps_the_app(tmp_path: Path) -> None:
+def test_fresh_up_deploy_is_a_known_clean_lane_so_the_first_row_keeps_the_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import subprocess
     from types import SimpleNamespace
 
+    from benchmarks.sregym.fastloop import deployed_application
     from benchmarks.sregym.fastloop.cli import _deployed_source_change, _record_fresh_deploy
+
+    live = deployed_application.LiveApplication("cluster", "objects", ())
+    monkeypatch.setattr(deployed_application, "observe", lambda *_args: live)
 
     kubeconfig = tmp_path / "worker_0.kubeconfig"
     workspace = tmp_path / "workspace"

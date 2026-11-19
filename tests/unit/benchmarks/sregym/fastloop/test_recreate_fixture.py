@@ -30,6 +30,7 @@ def test_recreated_application_restores_the_social_fixture(monkeypatch, tmp_path
         namespace=namespace,
         kubeconfig=Path("/lane/kubeconfig"),
         deploy_problem="problem",
+        workspace=tmp_path,
         baseline_path=tmp_path / "baseline.json",
         worker_env={},
     )

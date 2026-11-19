@@ -20,7 +20,6 @@ restore of objects can undo it.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import subprocess
@@ -340,6 +339,7 @@ class Tier2Trigger(StrEnum):
     LANE_LAST_INJECTION_DATA_FAULTS = "lane_last_injection_data_faults"
     LANE_INJECTION_UNKNOWN = "lane_injection_unknown"
     ACCEPTED_SOURCE_CHANGED = "accepted_source_changed"
+    DEPLOYED_APPLICATION_CHANGED = "deployed_application_changed"
     RESTORE_INVARIANT = "restore_invariant"
     PODS_UNHEALTHY = "pods_unhealthy"
 
@@ -479,64 +479,6 @@ class LaneInjectionState:
                 Tier2Trigger.LANE_LAST_INJECTION_DATA_FAULTS,
                 "lane's last injection changed application data: " + ", ".join(faults),
                 tuple(faults),
-            )
-        return None
-
-
-# Top-level repository entries that never change what the application deploys, except the deployment
-# artifact class, which does (plan, authored files, telemetry overlay, source patches).
-_UNDEPLOYED_TOP_LEVEL = frozenset({".sdo", ".sdo-runtime"})
-_DEPLOYED_MEMORY = ".sdo/deployment"
-
-
-def application_source_identity(workspace: Path, revision: str = "HEAD") -> str:
-    """Content identity of what a revision deploys: its tree outside SDO memory, plus ``.sdo/deployment``."""
-    entries = []
-    for argv in (["ls-tree", revision], ["ls-tree", revision, "--", _DEPLOYED_MEMORY]):
-        completed = subprocess.run(host_git_command(workspace, *argv), capture_output=True, text=True, check=False)
-        if completed.returncode:
-            raise WipeError(f"eval: cannot read {revision} in {workspace}: {completed.stderr.strip()}")
-        entries.extend(
-            line
-            for line in completed.stdout.splitlines()
-            if line.partition("\t")[2] == _DEPLOYED_MEMORY or line.partition("\t")[2] not in _UNDEPLOYED_TOP_LEVEL
-        )
-    return hashlib.sha256("\n".join(sorted(set(entries))).encode()).hexdigest()
-
-
-class DeployedApplicationSource:
-    """Which accepted application content the lane's running application was deployed from.
-
-    ``fastloop up`` deploys from its seed and a row's setup skips the deploy while the app is healthy,
-    so without this fact a lane rebuilt from a seed keeps serving the seed's application to rows that
-    plan another accepted commit. Missing or malformed records are unknown and recreate the app.
-    """
-
-    def __init__(self, kubeconfig: Path, namespace: str) -> None:
-        if not namespace or "/" in namespace or "\\" in namespace:
-            raise ValueError("deployed application source requires an application namespace")
-        self.path = kubeconfig.with_name(f"{kubeconfig.name}.{namespace}.deployed-source.json")
-
-    def record(self, identity: str) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_name(self.path.name + ".tmp")
-        temporary.write_text(json.dumps({"version": 1, "identity": identity}) + "\n", encoding="utf-8")
-        os.replace(temporary, self.path)
-
-    def reason(self, planned: str) -> Tier2Reason | None:
-        try:
-            document = json.loads(self.path.read_text(encoding="utf-8"))
-            recorded = document["identity"] if document.get("version") == 1 else None
-        except (OSError, ValueError, KeyError, TypeError, AttributeError):
-            recorded = None
-        if not isinstance(recorded, str) or not recorded:
-            return Tier2Reason(
-                Tier2Trigger.ACCEPTED_SOURCE_CHANGED, "the lane does not record which source its application runs"
-            )
-        if recorded != planned:
-            return Tier2Reason(
-                Tier2Trigger.ACCEPTED_SOURCE_CHANGED,
-                f"the application runs source {recorded[:12]}; the row plans {planned[:12]}",
             )
         return None
 
