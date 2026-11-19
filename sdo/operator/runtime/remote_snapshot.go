@@ -35,6 +35,9 @@ func memoryCycle(view sdk.DetectionContext) *CycleReadView {
 type memoryPreparation struct {
 	mu           sync.Mutex
 	refsOnce     sync.Once
+	acceptedOnce sync.Once
+	accepted     []sdk.ObjectRef
+	acceptedErr  error
 	mirrorOnce   sync.Once
 	mirror       map[string]*pb.MemoryObject
 	mirrorErr    error

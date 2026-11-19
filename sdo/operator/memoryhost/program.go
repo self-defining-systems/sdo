@@ -95,7 +95,7 @@ func (s *Server) programView(ctx context.Context, input *pb.MemoryProgramInput) 
 		if err != nil {
 			return nil, program.Bindings{}, err
 		}
-		view = diffReadView{ReadView: view, diffs: &sdktest.ReplayReadView{Calls: calls}}
+		view = diffReadView{ReadView: view, diffs: &sdktest.ReplayReadView{Calls: calls}, snapshot: snapshot}
 	}
 	recorder := &sdktest.RecordingReadView{ReadView: s.programObjects(view, snapshot)}
 

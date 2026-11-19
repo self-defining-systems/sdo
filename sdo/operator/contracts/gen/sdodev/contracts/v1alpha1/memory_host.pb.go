@@ -492,7 +492,11 @@ type MemoryObservation struct {
 	AppState map[string]*structpb.Struct `protobuf:"bytes,15,rep,name=app_state,json=appState,proto3" json:"app_state,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// Alert keys (detector ID, NUL, fingerprint) of the incident open at the
 	// snapshot (sdk.HeldAlertSource). Empty means none is open.
-	HeldKeys      []string `protobuf:"bytes,16,rep,name=held_keys,json=heldKeys,proto3" json:"held_keys,omitempty"`
+	HeldKeys []string `protobuf:"bytes,16,rep,name=held_keys,json=heldKeys,proto3" json:"held_keys,omitempty"`
+	// The kinds ("<apiVersion>/<Kind>") the controller's snapshot lists completely
+	// for its namespace (sdk.CompleteKindSource). Only for these is a missing
+	// object absent; for any other kind the host cannot say. Empty means none.
+	CompleteKinds []string `protobuf:"bytes,17,rep,name=complete_kinds,json=completeKinds,proto3" json:"complete_kinds,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -621,6 +625,13 @@ func (x *MemoryObservation) GetAppState() map[string]*structpb.Struct {
 func (x *MemoryObservation) GetHeldKeys() []string {
 	if x != nil {
 		return x.HeldKeys
+	}
+	return nil
+}
+
+func (x *MemoryObservation) GetCompleteKinds() []string {
+	if x != nil {
+		return x.CompleteKinds
 	}
 	return nil
 }
@@ -1591,7 +1602,7 @@ const file_sdodev_contracts_v1alpha1_memory_host_proto_rawDesc = "" +
 	"\x03ref\x18\x01 \x01(\v2$.sdodev.contracts.v1alpha1.ObjectRefR\x03ref\x12/\n" +
 	"\x06object\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x06object\",\n" +
 	"\x0eMirrorResponse\x12\x1a\n" +
-	"\bsequence\x18\x01 \x01(\x04R\bsequence\"\xd4\v\n" +
+	"\bsequence\x18\x01 \x01(\x04R\bsequence\"\xfb\v\n" +
 	"\x11MemoryObservation\x12;\n" +
 	"\vobserved_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"observedAt\x12S\n" +
@@ -1608,7 +1619,8 @@ const file_sdodev_contracts_v1alpha1_memory_host_proto_rawDesc = "" +
 	"\avantage\x18\f \x03(\v29.sdodev.contracts.v1alpha1.MemoryObservation.VantageEntryR\avantage\x12?\n" +
 	"\x0eself_heal_hold\x18\x0e \x01(\v2\x19.google.protobuf.DurationR\fselfHealHold\x12W\n" +
 	"\tapp_state\x18\x0f \x03(\v2:.sdodev.contracts.v1alpha1.MemoryObservation.AppStateEntryR\bappState\x12\x1b\n" +
-	"\theld_keys\x18\x10 \x03(\tR\bheldKeys\x1aS\n" +
+	"\theld_keys\x18\x10 \x03(\tR\bheldKeys\x12%\n" +
+	"\x0ecomplete_kinds\x18\x11 \x03(\tR\rcompleteKinds\x1aS\n" +
 	"\fTrafficEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12-\n" +
 	"\x05value\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x05value:\x028\x01\x1aS\n" +

@@ -142,8 +142,21 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string, refs ...sdk.Ob
 			s.SecretList = append(s.SecretList, *object.DeepCopy())
 		}
 	}
+	// The kinds the source lists completely stay complete, except those whose
+	// objects the budget trim dropped: a replay may assert an object is absent
+	// only where the live capture could have.
+	s.CompleteKindList = sdk.CompleteKinds(view)
 	if err := s.trimToBudget(MaxCapturedSnapshotBytes); err != nil {
 		return Snapshot{}, err
+	}
+	if len(s.TrimmedObjects) > 0 {
+		kept := s.CompleteKindList[:0:0]
+		for _, kind := range s.CompleteKindList {
+			if s.TrimmedObjects[kind.Kind] == 0 {
+				kept = append(kept, kind)
+			}
+		}
+		s.CompleteKindList = kept
 	}
 	return s, nil
 }

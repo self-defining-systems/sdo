@@ -44,6 +44,8 @@ per probe and two seconds total. Open recordings live in the existing protected
 `*-routing.done` files prevent resampling an immutable capture. Missing, capped,
 or failed reads remain Unknown, not a refused connection.
 
+Absence: a captured snapshot carries `complete_kinds`, the kinds its capture listed completely for the application namespace (a kind whose objects the budget trim dropped is removed). Only for those kinds is a missing object absent (`Diff{LiveAbsent}`, `sdk.ErrObjectAbsent`); a legacy capture without the field asserts absence for no kind, so a missing object stays unavailable. The memory host answers the same way: the controller ships `complete_kinds` in the `MemoryObservation`, freezes the source diff of every declared-but-missing object (at most 256; over that nothing is frozen and the host answers unavailable) and one `AcceptedRefs` receipt holding the accepted inventory, and the host answers an object that is absent from a complete list and not in that inventory as `{SourceAbsent, LiveAbsent}`. An `unrecorded DiffAgainstSource` error in a host-path Diagnose therefore means the object was neither in the snapshot, nor bound, nor declared-and-missing (or its kind was not complete). `AcceptedRefs` is a host input and appears in recordings as a call no program made.
+
 Source comparisons: from REPLAY1 the controller records `DiffAgainstSource` for
 every non-derived namespace object and every accepted-source object at detect and
 pre-apply (into the phase recordings) and in the healthy baseline's `readings`,

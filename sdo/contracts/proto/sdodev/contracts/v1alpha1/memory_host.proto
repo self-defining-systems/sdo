@@ -97,6 +97,10 @@ message MemoryObservation {
   // Alert keys (detector ID, NUL, fingerprint) of the incident open at the
   // snapshot (sdk.HeldAlertSource). Empty means none is open.
   repeated string held_keys = 16;
+  // The kinds ("<apiVersion>/<Kind>") the controller's snapshot lists completely
+  // for its namespace (sdk.CompleteKindSource). Only for these is a missing
+  // object absent; for any other kind the host cannot say. Empty means none.
+  repeated string complete_kinds = 17;
 }
 // ReadStateRequest names one reader (the ID of a health detector that
 // implements appstate.Reader). The host reads against its latest complete

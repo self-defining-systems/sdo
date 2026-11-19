@@ -161,6 +161,23 @@ func (v LiveReadView) probe(ref sdk.ObjectRef, port int32, request *program.HTTP
 	return v.Prober.Probe(ctx, ref, port, request)
 }
 
+// AcceptedRefs lists the identities accepted source declares for the snapshot
+// namespace, the inventory a host needs to tell a deleted declared object from
+// one nobody declares. It fails, as DiffAgainstSource does, without an accepted
+// source.
+func (v LiveReadView) AcceptedRefs(ctx context.Context) ([]sdk.ObjectRef, error) {
+	if v.SourceRevision != nil {
+		v.SourceCommit = v.SourceRevision()
+	}
+	lister, ok := v.Source.(interface {
+		AcceptedManifestRefs(context.Context, string, string) ([]sdk.ObjectRef, error)
+	})
+	if v.Source == nil || v.SourceCommit == "" || !ok {
+		return nil, errors.New("accepted source is unavailable")
+	}
+	return lister.AcceptedManifestRefs(ctx, v.SourceCommit, v.Namespace())
+}
+
 func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error) {
 	if v.SourceRevision != nil {
 		v.SourceCommit = v.SourceRevision()
