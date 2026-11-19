@@ -209,3 +209,17 @@ def test_the_node_pool_is_created_once_and_never_resized() -> None:
     assert "chown -R 65532:65532 /lane/opus-pool" in script
     completed = subprocess.run(["sh", "-n", "-c", script], check=False)
     assert completed.returncode == 0
+
+
+def test_an_opus_row_without_a_session_pool_fails_before_it_injects() -> None:
+    assert cli.opus_pool_missing("claude-opus-5-5", {}) is not None
+    assert cli.opus_pool_missing("claude-opus-5-5", {"SDO_OPUS_POOL_MODE": "per_host"}) is not None
+    assert (
+        cli.opus_pool_missing(
+            "claude-opus-5-5",
+            {"SDO_OPUS_POOL_MODE": "per_host", "SDO_OPUS_POOL_HOST_PATH": "/var/lib/sdo-lane/opus-pool"},
+        )
+        is None
+    )
+    assert cli.opus_pool_missing("claude-opus-5-5", {"SDO_OPUS_POOL_NFS_SERVER": "nfs.example"}) is None
+    assert cli.opus_pool_missing("claude-sonnet-5-5", {}) is None
