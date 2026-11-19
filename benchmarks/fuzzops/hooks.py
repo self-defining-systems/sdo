@@ -332,6 +332,10 @@ BASELINE_MISSING_RECORD = "no-baseline.json"
 #: How long the pre-inject gate waits for promoted store baselines before injecting without them.
 BASELINE_WAIT_MAX_S = 600.0
 BASELINE_BLIND = "blind: no promoted baseline yet for "
+#: Written by ``watch`` (fuzzops starts it right after the inject) with the run it observes; removed at every run or
+#: lane boundary (``collect`` and the lane verbs). While it stands, ``idle`` answers for settle or the window end, and
+#: store baselines (which only an inject needs) are not waited for.
+INJECTED_RECORD = "injected.json"
 #: The projected sources under the lane's evidence directory (``devtree``).
 DEV_DIRECTORY = ".dev"
 
@@ -483,8 +487,17 @@ def idle_reason(state: dict[str, Any] | None) -> str:
     if state.get("queued_reflections_unknown") or state.get("queuedReflectionsUnknown"):
         return "reflection queue unknown"
     if _startup_holding(state):
-        return "startup baseline pending"
+        return "startup baseline pending" + _startup_holders(state.get("startup") or {})
     return ""
+
+
+def _startup_holders(startup: dict[str, Any]) -> str:
+    """The bound and what the controller recorded as holding the period on its last pass (``holders``: the firing
+    openers, batched findings, unevaluated openers or warm-up, or since when it has been healthy). The controller owns
+    which findings hold it; this only renders them."""
+    bound = startup.get("bound_at") or startup.get("boundAt")
+    holders = [str(holder) for holder in startup.get("holders") or []]
+    return (f" (bound {bound})" if bound else "") + (": " + "; ".join(holders) if holders else "")
 
 
 def _incident_id(state: dict[str, Any]) -> str:
@@ -1283,6 +1296,38 @@ def reset_when_running(
         sleep(15.0)
 
 
+def after_inject(env: Mapping[str, str]) -> bool:
+    """Whether this ``idle`` call comes after the run's inject (settle, the window end) rather than before it (the
+    inject gate). The bench names the cell's own incident only in settle; ``watch`` starts only after the inject and
+    records its run, which the gate's own call (``BENCH_RUN`` set to the next run) never matches."""
+    if env.get(OWN_DETECTED_ENV):
+        return True
+    lane = env.get("BENCH_LANE_DIR")
+    if not lane:
+        return False
+    try:
+        record = json.loads((Path(lane) / INJECTED_RECORD).read_text())
+    except (OSError, ValueError):
+        return False
+    run = env.get("BENCH_RUN", "")
+    return isinstance(record, dict) and (not run or record.get("run") == run)
+
+
+def mark_injected(env: Mapping[str, str]) -> None:
+    lane = env.get("BENCH_LANE_DIR")
+    if lane:
+        record = {"run": env.get("BENCH_RUN", ""), "since": _now()}
+        (Path(lane) / INJECTED_RECORD).write_text(json.dumps(record) + "\n")
+
+
+def end_run(env: Mapping[str, str]) -> None:
+    """A run or lane boundary: the next ``idle`` is an inject gate again, with its own store-baseline wait."""
+    lane = env.get("BENCH_LANE_DIR")
+    if lane:
+        (Path(lane) / INJECTED_RECORD).unlink(missing_ok=True)
+    clear_baseline_wait(env)
+
+
 def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     control = control_namespace(env)
     kube = _kube(env)
@@ -1303,7 +1348,9 @@ def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
         return 0
     # No log yet: baselines are judged by the second verdict, after the log read an otherwise idle controller earns.
     why = idle_verdict(state, updated, ready, datetime.now(UTC), baselines=False)
-    if not why:
+    # Store baselines gate only the inject: after it, settle and the window end need idle twice in a row, which a
+    # store whose baseline the fault reset (it re-promotes only later) would never give.
+    if not why and not after_inject(env):
         # Only an otherwise idle controller is worth the full log read the baselines need.
         try:
             log = controller_log(kube, control)
@@ -1313,10 +1360,11 @@ def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
         why = idle_verdict(state, updated, ready, datetime.now(UTC), controller_log=log)
         if why.startswith(BASELINE_BLIND) and baseline_wait_expired(env, why):
             why = ""
+        elif not why:
+            clear_baseline_wait(env)
     if why:
         out(why)
         return 1
-    clear_baseline_wait(env)
     record_prepared_state(env, kube, control)
     out("idle")
     return 0
@@ -1325,7 +1373,9 @@ def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
 def baseline_wait_expired(env: Mapping[str, str], why: str, now: datetime | None = None) -> bool:
     """Whether the pre-inject gate has waited ``BASELINE_WAIT_MAX_S`` for store baselines. The first hold is
     recorded in the lane directory; once the bound passes, the missing stores are noted (``no-baseline.json``, also in
-    ``BENCH_OUT``) and the gate lets the inject go, so a memory whose baselines never promote does not stall forever."""
+    ``BENCH_OUT``) and the gate lets the inject go, so a memory whose baselines never promote does not stall forever.
+    An expired wait stays expired (every later poll is idle, as a gate that needs idle for a span requires) until
+    the stores are promoted or the run ends (``end_run``)."""
     lane = env.get("BENCH_LANE_DIR")
     if not lane:
         return False
@@ -1384,6 +1434,7 @@ def record_prepared_state(env: Mapping[str, str], kube: Kube, control: str) -> N
 
 def watch(env: Mapping[str, str]) -> int:
     """The observer only: the evidence sink carries the transcripts, so no snapshot is sealed on the PVC."""
+    mark_injected(env)
     argv = ["--control-namespace", control_namespace(env)]
     fault = env.get("BENCH_FAULT", "none")
     if fault and fault != "none":
@@ -2307,16 +2358,19 @@ def transcripts(env: Mapping[str, str], out: Callable[[str], None] = _print) -> 
 # ---- baseline subcommand -------------------------------------------------------------------------------------
 
 
-def rebranch_bundle(raw: Path, out: Path, branch: str, work: Path) -> str:
-    """Rewrite a one-branch bundle so its branch is ``branch``; returns the commit."""
+def rebranch_bundle(raw: Path, out: Path, branch: str, work: Path, expected: str = "") -> str:
+    """Rewrite a one-head bundle (a branch, or ``HEAD`` of a detached checkout) so its one branch is ``branch``;
+    returns the commit. With ``expected``, refuse a bundle whose head is not that commit."""
     shutil.rmtree(work, ignore_errors=True)
-    listed = _run(["git", "bundle", "list-heads", str(raw)], "git bundle list-heads").stdout.split()
-    branches = [ref.removeprefix("refs/heads/") for ref in listed if ref.startswith("refs/heads/")]
-    if len(branches) != 1:
-        raise HookError(f"the archived bundle has {len(branches)} branches, expected one")
-    _run(["git", "clone", "-q", "-b", branches[0], str(raw), str(work)], "git clone bundle")
-    _run(["git", "-C", str(work), "checkout", "-q", "-B", branch], f"git checkout {branch}")
-    commit = _run(["git", "-C", str(work), "rev-parse", "HEAD"], "git rev-parse").stdout.strip()
+    listed = _run(["git", "bundle", "list-heads", str(raw)], "git bundle list-heads").stdout.splitlines()
+    refs = [line.partition(" ")[2].strip() for line in listed if line.strip()]
+    if len(refs) != 1:
+        raise HookError(f"the archived bundle has {len(refs)} heads ({', '.join(refs)}), expected one")
+    _run(["git", "init", "-q", str(work)], "git init")
+    _run(["git", "-C", str(work), "fetch", "-q", str(raw), f"{refs[0]}:refs/heads/{branch}"], "git fetch bundle")
+    commit = _run(["git", "-C", str(work), "rev-parse", f"refs/heads/{branch}"], "git rev-parse").stdout.strip()
+    if expected and commit != expected:
+        raise HookError(f"the bundled head {commit[:12]} is not the controller's HEAD {expected[:12]}")
     _run(["git", "-C", str(work), "bundle", "create", str(out.resolve()), branch], "git bundle create")
     if why := bundle_problem(out, branch, commit):
         raise HookError(why)
@@ -2331,16 +2385,19 @@ def archive_baseline(a: argparse.Namespace) -> Baseline:
     out.mkdir(parents=True, exist_ok=True)
     control = a.control_namespace or f"{a.namespace}-sdo"
     kube = Kube(a.context, str(a.kubeconfig.resolve()))
+    # the controller holds its accepted memory at a detached HEAD: bundle HEAD itself (never a branch it may not
+    # have), then check the bundled commit against the HEAD read on its own
+    git = "git -c safe.directory='*'"
+    head = kube.exec_controller(control, f"cd {APPLICATION_ROOT} && {git} rev-parse HEAD").decode().strip()
     script = (
-        f"cd {APPLICATION_ROOT} && b=$(git -c safe.directory='*' symbolic-ref --short HEAD) && "
-        "git -c safe.directory='*' bundle create /tmp/sdo-baseline.bundle \"$b\" >/dev/null 2>&1 && "
-        "cat /tmp/sdo-baseline.bundle; rc=$?; rm -f /tmp/sdo-baseline.bundle; exit $rc"
+        f'cd {APPLICATION_ROOT} && f=$(mktemp) && {git} bundle create "$f" HEAD >/dev/null 2>&1 && '
+        'cat "$f"; rc=$?; rm -f "$f"; exit $rc'
     )
     data = kube.exec_controller(control, script, timeout=600)
     with tempfile.TemporaryDirectory() as tmp:
         raw = Path(tmp) / "raw.bundle"
         raw.write_bytes(data)
-        commit = rebranch_bundle(raw, out / "memory.bundle", a.branch, Path(tmp) / "repo")
+        commit = rebranch_bundle(raw, out / "memory.bundle", a.branch, Path(tmp) / "repo", expected=head)
     env = {
         "KUBECONFIG": str(a.kubeconfig.resolve()),
         "FUZZOPS_KUBE_CONTEXT": a.context,
@@ -2402,6 +2459,10 @@ VERBS = (
 )
 
 
+#: Verbs that end a run or start a lane over: the next ``idle`` is an inject gate (``end_run``).
+RUN_BOUNDARY_VERBS = frozenset({"prepare", "swap", "reset", "snapshot", "collect", "reset-incidents", "teardown"})
+
+
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if not args or args[0] not in (*VERBS, "baseline"):
@@ -2409,6 +2470,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     verb, env = args[0], os.environ
     try:
+        if verb in RUN_BOUNDARY_VERBS:
+            end_run(env)
         if verb == "baseline":
             return baseline_main(args[1:])
         if verb == "watch":

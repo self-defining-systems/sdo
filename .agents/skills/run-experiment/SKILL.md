@@ -37,7 +37,7 @@ Live runs spend real money and quota.
 
 The experiment is the incidents; everything else is overhead to remove.
 
-1. Before launching, write the expected duration of each phase (preflight, build, lane, gate, each incident). Record actual start and end times in a timings file in the run directory as you go.
+1. Before launching, write each phase's in-principle minimum and expected duration, then record actual times in the run directory. Actual time far above the minimum is a bug to find ([campaign-operations.md](references/campaign-operations.md)).
 2. When a phase takes more than twice its estimate, or setup outlasts the incidents, stop waiting. Find the slow step from its logs, fix it, and add a guard or test so it cannot recur. Do not just note it in the report.
 3. Prefer removing a step to speeding it up: a warm lane beats a faster image load, and a dev mount beats both.
 4. Report each slow-loop fix with its before and after times.
@@ -62,6 +62,8 @@ The experiment is the incidents; everything else is overhead to remove.
 - Report times in the user's time zone.
 
 Read [references/failure-modes.md](references/failure-modes.md) before step 8, and whenever a run behaves unexpectedly.
+
+For a campaign (many lanes, hosts or arms), read [references/campaign-operations.md](references/campaign-operations.md) before launching, then add each costly mistake there.
 
 For offline worker replay use `fastloop replay --run-dir <results/run> --incident N --stage responder|reflection|broker`: agent scripts are the only execution path, with no live fallback. Prompts, rollouts, tool calls and outcomes remain readable analysis evidence. See [the testing guide](../../../docs/testing-guide.md).
 

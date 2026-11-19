@@ -26,3 +26,13 @@ Each row comes from `results/<timestamp>-sdo/incidents.jsonl`. The outcome docum
 - Count repeats on new targets caught without the investigator: the opening finding must name a learned `drift/<program>`, with no investigator dispatch for that fault in the controller log. Confirm from the accepted commits that the program was learned after the class's first catch; use the finding's drift-event source to distinguish a periodic sweep from classification of a change. Report this count over all repeats, including misses, separately from agent-selected learned mitigation (coverage plus applied and verified program evidence).
 - For each failure: the root cause with `file:line`, the evidence directory, and the cheapest test that reproduces it.
 - State plainly what the run does not show. For example, a scripted run does not show learning.
+
+## Efficiency
+
+One table, per stage (setup, claim/reset/gate, detect, agent work, verification, learning, collect): the in-principle minimum, the actual time and where the excess went. Then:
+
+- agent-active share = agent active time / run wall time;
+- throughput in rows per hour and speedup over serial (sum of per-run wall times / campaign wall time);
+- lane utilization = busy lane-time / (lanes × wall);
+- the campaign minimum, max(longest dependency chain, total per-run minimum / lanes), against the actual wall time.
+

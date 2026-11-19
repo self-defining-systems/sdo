@@ -343,8 +343,18 @@ def test_plain_pack_keeps_a_pack_with_manifests(tmp_path: Path) -> None:
         ({"queuedReflectionsUnknown": True}, "reflection queue unknown"),
         ({"version": "sdo.controller/v1"}, ""),
         # A new install's start-up period holds until SDO has seen it healthy or the bound passes.
-        ({"startup": {"began_at": "t", "bound_at": "t"}}, "startup baseline pending"),
-        ({"startup": {"beganAt": "t", "boundAt": "t"}}, "startup baseline pending"),
+        ({"startup": {"began_at": "t"}}, "startup baseline pending"),
+        ({"startup": {"began_at": "t", "bound_at": "t"}}, "startup baseline pending (bound t)"),
+        ({"startup": {"beganAt": "t", "boundAt": "t"}}, "startup baseline pending (bound t)"),
+        # The controller names what holds the period, so a gate that fails on it names the cause.
+        (
+            {"startup": {"began_at": "t", "bound_at": "u", "holders": ["firing: user test checkout", "batched: x"]}},
+            "startup baseline pending (bound u): firing: user test checkout; batched: x",
+        ),
+        (
+            {"startup": {"began_at": "t", "holders": ["healthy since v; established after 2m0s"]}},
+            "startup baseline pending: healthy since v; established after 2m0s",
+        ),  # fmt: skip
         ({"startup": {"began_at": "t", "established_at": "t"}}, ""),
         ({"startup": {"began_at": "t", "bound_reached_at": "t"}}, ""),
         ({"startup": {"skipped_reason": "restored-state"}}, ""),
@@ -495,7 +505,82 @@ def test_idle_gives_up_waiting_for_store_baselines_after_the_bound_and_records_i
     assert lines[-1] == "idle"
     assert "redis" in json.loads((lane / hooks.BASELINE_MISSING_RECORD).read_text())["reason"]
     assert (out / hooks.BASELINE_MISSING_RECORD).is_file()
-    assert not (lane / hooks.BASELINE_WAIT_RECORD).exists()
+
+
+def _unpromoted_store_lane(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, **extra: str) -> dict[str, str]:
+    """An otherwise idle controller whose redis store baseline is not promoted (a fault reset it), on a lane."""
+    fresh = (datetime.now(UTC) - timedelta(seconds=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    state = {
+        "version": "sdo.controller/v1",
+        "history": [{"detector_id": "store-state-redis", "evaluated_at": fresh, "status": "clear"}],
+    }
+    configmap = {"metadata": {"managedFields": [{"time": fresh}]}, "data": {"runtime-state.json": json.dumps(state)}}
+    pods = {"items": [{"metadata": {"name": "p"}, "status": {"conditions": [{"type": "Ready", "status": "True"}]}}]}
+    monkeypatch.setattr(
+        hooks.subprocess, "run", _fake_kubectl({"configmap": configmap, "pods": pods, "logs": "no promotions"}, [])
+    )
+    lane = tmp_path / "lane"
+    lane.mkdir(exist_ok=True)
+    return {
+        "FUZZOPS_NAMESPACE": "ns1",
+        "FUZZOPS_KUBE_CONTEXT": "kind-c",
+        "KUBECONFIG": "/k",
+        "BENCH_LANE_DIR": str(lane),
+        **extra,
+    }
+
+
+def _expire_baseline_wait(env: dict[str, str]) -> None:
+    started = datetime.now(UTC) - timedelta(seconds=hooks.BASELINE_WAIT_MAX_S + 5)
+    record = Path(env["BENCH_LANE_DIR"]) / hooks.BASELINE_WAIT_RECORD
+    record.write_text(json.dumps({"since": started.strftime("%Y-%m-%dT%H:%M:%SZ")}))
+
+
+def test_an_expired_store_baseline_wait_answers_idle_on_every_poll_until_the_run_ends(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # the bench's waits need idle twice in a row (settle) or for a span (the inject gate): an expired wait that
+    # answered idle once and then restarted itself would hold them for another full wait, again and again
+    env = _unpromoted_store_lane(monkeypatch, tmp_path, BENCH_RUN="r1")
+    lines: list[str] = []
+    assert hooks.idle(env, out=lines.append) == 1
+    _expire_baseline_wait(env)
+    assert [hooks.idle(env, out=lines.append) for _ in range(3)] == [0, 0, 0], lines
+    hooks.end_run(env)
+    assert hooks.idle(env, out=lines.append) == 1
+    assert lines[-1].startswith(hooks.BASELINE_BLIND)
+
+
+@pytest.mark.parametrize(
+    "settle_env",
+    [
+        # settle with the cell's own incident known
+        {"BENCH_OWN_DETECTED_AT": "2026-01-01T00:00:00Z"},
+        # settle without it (no BENCH_RUN), and the window end inside the run (its own BENCH_RUN)
+        {},
+        {"BENCH_RUN": "r1"},
+    ],
+)
+def test_after_the_inject_an_unpromoted_store_baseline_never_holds_idle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, settle_env: dict[str, str]
+) -> None:
+    gate = _unpromoted_store_lane(monkeypatch, tmp_path, BENCH_RUN="r1")
+    hooks.mark_injected(gate)  # ``watch`` started for r1: the inject happened
+    env = _unpromoted_store_lane(monkeypatch, tmp_path, **settle_env)
+    lines: list[str] = []
+    assert [hooks.idle(env, out=lines.append) for _ in range(2)] == [0, 0], lines
+    assert not (tmp_path / "lane" / hooks.BASELINE_WAIT_RECORD).exists()
+
+
+def test_the_next_runs_inject_gate_still_waits_for_store_baselines(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # a run that ended without its boundary verb (the bench lost it) does not exempt the next run's gate
+    hooks.mark_injected(_unpromoted_store_lane(monkeypatch, tmp_path, BENCH_RUN="r1"))
+    env = _unpromoted_store_lane(monkeypatch, tmp_path, BENCH_RUN="r2")
+    lines: list[str] = []
+    assert hooks.idle(env, out=lines.append) == 1
+    assert lines[-1].startswith(hooks.BASELINE_BLIND)
 
 
 def test_idle_reports_a_missing_controller_as_busy(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -694,6 +779,55 @@ def test_rebranch_bundle_writes_the_named_branch(tmp_path: Path) -> None:
     assert hooks.rebranch_bundle(raw, out, "baseline", tmp_path / "work") == commit
     heads = subprocess.run(["git", "bundle", "list-heads", str(out)], check=True, capture_output=True, text=True)
     assert heads.stdout.split() == [commit, "refs/heads/baseline"]
+
+
+def _detached_controller_repo(tmp: Path) -> tuple[Path, str]:
+    """A controller-like repository: the accepted memory checked out at a detached HEAD, a stale branch behind it."""
+    repo = tmp / "controller-repo"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    (repo / "README.md").write_text("synthetic\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "synthetic base")
+    (repo / "learned.txt").write_text("synthetic learned\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "synthetic learned")
+    head = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "--detach", head)
+    _git(repo, "branch", "-f", "main", "HEAD~1")
+    return repo, head
+
+
+def test_archive_baseline_bundles_a_detached_head_as_the_named_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the controller keeps its accepted memory at a detached HEAD; the archive must bundle that commit, not a branch
+    repo, head = _detached_controller_repo(tmp_path)
+    monkeypatch.setattr(hooks, "APPLICATION_ROOT", str(repo))
+    monkeypatch.setattr(hooks, "helm_render", lambda env, namespace: [{"kind": "ConfigMap", "metadata": {"name": "c"}}])
+    monkeypatch.setattr(hooks, "checkout_revision", lambda: COMMIT)
+
+    def exec_controller(self: Kube, control: str, script: str, timeout: float = 300) -> bytes:
+        return subprocess.run(["sh", "-c", script], check=True, capture_output=True).stdout
+
+    monkeypatch.setattr(Kube, "exec_controller", exec_controller)
+    out = tmp_path / "archived"
+    code = hooks.baseline_main(
+        ["--kubeconfig", str(tmp_path / "kubeconfig"), "--context", "kind-c", "--namespace", "ns1", "--out", str(out)]
+    )
+    assert code == 0
+    baseline = Baseline.load(out)
+    assert baseline.commit == head
+    assert hooks.bundle_problem(out / "memory.bundle", "baseline", head) == ""
+
+
+def test_rebranch_bundle_refuses_a_bundle_whose_head_is_not_the_expected_commit(tmp_path: Path) -> None:
+    raw, _ = _bundle(tmp_path, branch="main")
+    out = tmp_path / "new-baseline" / "memory.bundle"
+    out.parent.mkdir()
+    with pytest.raises(HookError, match="not the controller"):
+        hooks.rebranch_bundle(raw, out, "baseline", tmp_path / "work", expected=COMMIT)
+    assert not out.exists()
 
 
 # ---- evidence sink: transcripts and collect ------------------------------------------------------------------

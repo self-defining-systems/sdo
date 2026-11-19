@@ -174,6 +174,9 @@ func ParseHostLaunchEnv(args []string, environ []string) (HostConfig, error) {
 	if err != nil {
 		return HostConfig{}, err
 	}
+	if providedPlan == nil && *registryHost == "" {
+		return HostConfig{}, errors.New("no --deployment-plan: the deployer agent builds the application's images and pushes them only to the trusted registry, so --registry-host is required (add --registry-insecure for a plain-HTTP registry)")
+	}
 	controlForTelemetry := *control
 	if controlForTelemetry == "" {
 		controlForTelemetry = *namespace

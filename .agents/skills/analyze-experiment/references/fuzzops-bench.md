@@ -71,7 +71,9 @@ overlay files it passed are under the lane's `sdo-config/`.
 - An `idle` reason starting `alarm:` means SDO had an incident open; on a gate that is a false alarm while gating
   (`gates.jsonl` `alarm: true`). Other reasons: `busy:` (closure or reflection, or `startup baseline pending`: a new
   install's start-up period still holds openers until SDO has seen it healthy; the controller state's `startup`
-  records `began_at`, `bound_at`, `established_at` or `bound_reached_at`), `down:` (controller pod not Ready or
+  records `began_at`, `bound_at`, `established_at` or `bound_reached_at`, and while it holds `holders`: the firing
+  openers, batched findings, unevaluated openers or warm-up that held the last pass, or since when it has been healthy;
+  the reason reads `startup baseline pending (bound T): <holders>`), `down:` (controller pod not Ready or
   no state), `stale:` (state ConfigMap not written for over 60 s; every controller step advances `step_count`).
 - A run owns `[inject_at, settle_end]`. SDO incidents belong to it when detected inside, or open at the inject and
   naming the faulted component. Each run's `operator/memory` copy holds every outcome of the lane so far; select by

@@ -89,4 +89,34 @@ def test_the_plan_is_provided_unless_the_deployer_agent_is_asked_for() -> None:
     plan = {"source": {"renderer_id": "raw"}}
     provided = _config().host_args(Path("/w/app"), plan)
     assert json.loads(provided[provided.index("--deployment-plan") + 1]) == plan
-    assert "--deployment-plan" not in _config(provided_plan=False).host_args(Path("/w/app"), plan)
+    deployer = _config(provided_plan=False, registry_host="registry.local:5000").host_args(Path("/w/app"), plan)
+    assert "--deployment-plan" not in deployer
+
+
+def test_the_deployer_launch_names_the_registry_its_builds_push_to() -> None:
+    # the deployer task was once refused before any model call: the launch named no registry host
+    args = _config(provided_plan=False, registry_host="registry.local:5000", registry_insecure=True).host_args(
+        Path("/w/app"), {}
+    )
+    assert args[args.index("--registry-host") + 1] == "registry.local:5000"
+    assert "--registry-insecure" in args
+    assert args.index("--registry-insecure") < args.index("--config")
+    with pytest.raises(ValueError, match="registry_host"):
+        _config(provided_plan=False)
+    assert "--registry-host" not in _config().host_args(Path("/w/app"), {})
+
+
+def test_the_command_line_passes_the_deployer_registry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from benchmarks.fuzzops import install as module
+
+    seen: list[InstallConfig] = []
+    monkeypatch.setattr(module, "install", lambda cfg, description="": seen.append(cfg) or 0)
+    required = [
+        "--pack", "/synthetic/pack", "--work", str(tmp_path / "work"), "--namespace", "app",
+        "--control-namespace", "app-sdo", "--objective", "o", "--controller-image", "c",
+        "--responder-image", "r", "--operator-binary", "/synthetic/b", "--kubeconfig", "/synthetic/k",
+        "--model", "m", "--deployer", "--registry-host", "registry.local:5000", "--registry-insecure",
+    ]  # fmt: skip
+    assert main(required) == 0
+    assert seen[0].registry_host == "registry.local:5000"
+    assert seen[0].registry_insecure

@@ -54,3 +54,30 @@ func hasCheck(checks []operability.Check, id string) bool {
 	}
 	return false
 }
+
+// An application without request metrics for some operation passes O4: the
+// request-metrics detector reports such an operation as not applicable, which
+// reaches the gate as a coverage note on a clear verdict, never a firing
+// floor detector (source_fault) that no deployer or designer could fix.
+func TestRequestMetricsNotApplicableOperationsPassO4WithANote(t *testing.T) {
+	verdict := HealthVerdict{
+		Outcome: VerificationClear, Summary: "accepted health detectors report clear",
+		CoverageNotes: []DetectorState{{DetectorID: "request-metrics", Status: "clear", Reason: "request metrics not applicable to operation reserve: no entries record for service frontend"}},
+	}
+	checks := verdictChecks(verdict)
+	var o4, o3 *operability.Check
+	for i := range checks {
+		switch checks[i].ID {
+		case "O4.detectors":
+			o4 = &checks[i]
+		case "O3.detector-coverage":
+			o3 = &checks[i]
+		}
+	}
+	if o4 == nil || o4.Status != operability.StatusPass {
+		t.Fatalf("O4.detectors = %+v", o4)
+	}
+	if o3 == nil || o3.Status != operability.StatusNote || !strings.Contains(o3.Detail, "request-metrics: request metrics not applicable to operation reserve") {
+		t.Fatalf("O3.detector-coverage = %+v", o3)
+	}
+}

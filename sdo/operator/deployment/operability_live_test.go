@@ -100,6 +100,13 @@ func TestLiveChecksFailPerReceiptDefect(t *testing.T) {
 	if c := statusOf(LiveChecks(LiveInput{Receipt: good, Desired: desiredOf(t, deployer, root, plan)}), "O2.inputs"); c.Status != operability.StatusPass {
 		t.Fatalf("a receipt with valid inputs must pass O2.inputs: %+v", c)
 	}
+	// An image built from upstream source with a deployer-authored Dockerfile, where the deployer's skill puts it.
+	authored := good
+	authored.ContainerImages = []rendered.DeployedImage{good.ContainerImages[0]}
+	authored.ContainerImages[0].Inputs = rendered.ImageInputs{SourceImage: "web:1", ContextPath: "services/web", DockerfilePath: ".sdo/deployment/build/web/Dockerfile"}
+	if c := statusOf(LiveChecks(LiveInput{Receipt: authored, Desired: desiredOf(t, deployer, root, plan)}), "O2.inputs"); c.Status != operability.StatusPass {
+		t.Fatalf("an authored Dockerfile under .sdo/deployment/build must pass O2.inputs: %+v", c)
+	}
 	for name, tc := range map[string]struct {
 		mutate func(*lifecycle.DeploymentReceipt)
 		want   string

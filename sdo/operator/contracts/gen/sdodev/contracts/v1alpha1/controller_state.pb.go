@@ -1159,6 +1159,13 @@ type StartupPeriod struct {
 	// Why no period ran although one is configured: "restored-state" for an
 	// install whose persisted state predates the period.
 	SkippedReason string `protobuf:"bytes,5,opt,name=skipped_reason,json=skippedReason,proto3" json:"skipped_reason,omitempty"`
+	// While the period holds, what kept the last evaluation pass from counting
+	// toward the healthy window: firing or confirming openers, batched
+	// findings, openers not yet evaluated in this process, unsettled
+	// measurement warm-up, an open incident; or, when nothing does, since when
+	// the window has been healthy. Informational, recomputed each pass, empty
+	// once the period ends.
+	Holders       []string `protobuf:"bytes,6,rep,name=holders,proto3" json:"holders,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1226,6 +1233,13 @@ func (x *StartupPeriod) GetSkippedReason() string {
 		return x.SkippedReason
 	}
 	return ""
+}
+
+func (x *StartupPeriod) GetHolders() []string {
+	if x != nil {
+		return x.Holders
+	}
+	return nil
 }
 
 // ReflectionDecision is the learning decision the broker recorded for an
@@ -2114,13 +2128,14 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"*state.failed_closure_has_permanent_failure\x126a failed closure requires its permanent failure record\x1aXthis.closure_state != 5 || (has(this.closure_failure) && this.closure_failure.permanent)\x1a\xe0\x02\n" +
 	"-state.closure_failure_matches_pending_closure\x12da closure failure must belong to the pending closure and its permanence must match the closure state\x1a\xc8\x01!has(this.closure_failure) || (has(this.pending_closure) && this.closure_failure.incident_id == this.pending_closure.request.incident_id && this.closure_failure.permanent == (this.closure_state == 5))\x1a\x9c\x01\n" +
 	"!state.pending_closure_has_payload\x129pending or processing closure requires its frozen payload\x1a<!(this.closure_state in [1, 2]) || has(this.pending_closure)\x1a\x9c\x01\n" +
-	"#state.committed_closure_has_receipt\x127committed or acknowledging closure requires its receipt\x1a<!(this.closure_state in [3, 4]) || has(this.closure_receipt)J\x04\b\x0e\x10\x0fJ\x04\b\x0f\x10\x10J\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x1a\x10\x1bJ\x04\b/\x100J\x04\b \x10!J\x04\b!\x10\"J\x04\b\"\x10#J\x04\b-\x10.R\x18detector_review_requiredR\x1bdetector_review_required_atR\x16detector_review_reasonR\x19incident_observed_changesR\x10pending_releasesR\x18disabled_setup_detectorsR\x13drift_investigationR\x0fdrift_admissionR\x15program_sweep_cursorsR\x18verification_deadline_at\"\xc6\x02\n" +
+	"#state.committed_closure_has_receipt\x127committed or acknowledging closure requires its receipt\x1a<!(this.closure_state in [3, 4]) || has(this.closure_receipt)J\x04\b\x0e\x10\x0fJ\x04\b\x0f\x10\x10J\x04\b\x10\x10\x11J\x04\b\x12\x10\x13J\x04\b\x1a\x10\x1bJ\x04\b/\x100J\x04\b \x10!J\x04\b!\x10\"J\x04\b\"\x10#J\x04\b-\x10.R\x18detector_review_requiredR\x1bdetector_review_required_atR\x16detector_review_reasonR\x19incident_observed_changesR\x10pending_releasesR\x18disabled_setup_detectorsR\x13drift_investigationR\x0fdrift_admissionR\x15program_sweep_cursorsR\x18verification_deadline_at\"\xe0\x02\n" +
 	"\rStartupPeriod\x125\n" +
 	"\bbegan_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\abeganAt\x125\n" +
 	"\bbound_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\aboundAt\x12A\n" +
 	"\x0eestablished_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\restablishedAt\x12D\n" +
 	"\x10bound_reached_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x0eboundReachedAt\x12>\n" +
-	"\x0eskipped_reason\x18\x05 \x01(\tB\x17\xbaH\x14r\x12R\x00R\x0erestored-stateR\rskippedReason\"\xa7\x05\n" +
+	"\x0eskipped_reason\x18\x05 \x01(\tB\x17\xbaH\x14r\x12R\x00R\x0erestored-stateR\rskippedReason\x12\x18\n" +
+	"\aholders\x18\x06 \x03(\tR\aholders\"\xa7\x05\n" +
 	"\x12ReflectionDecision\x12W\n" +
 	"\x11learning_decision\x18\x01 \x01(\tB*\xbaH'r%R\aupdatedR\tno_changeR\asdk_gapR\x06failedR\x10learningDecision\x12(\n" +
 	"\x10no_change_reason\x18\x02 \x01(\tR\x0enoChangeReason\x12!\n" +

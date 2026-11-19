@@ -210,6 +210,7 @@ jobs:
             tests/unit/libs/agent_cli/test_claude_accounts.py \
             tests/unit/benchmarks/sregym/test_memory_cli.py \
             tests/unit/benchmarks/sregym/fastloop/test_shared_image_registry.py \
+            tests/unit/sdo/operator/test_image_validation_gate.py \
             tests/unit/benchmarks/sregym/fastloop/test_fake_kube.py \
             tests/unit/benchmarks/sregym/adapter/test_processes.py \
             tests/unit/sdo/agents/lifecycle/test_supplied_reads.py \

@@ -7,12 +7,15 @@ example agentshim 0.6.8 lacks the 0.7 usage API that ``libs/agent_cli`` uses).
 
 from __future__ import annotations
 
+import os
 import re
-import shlex
+import subprocess
 from pathlib import Path
 
 import pytest
 import tomllib
+
+from tests.unit.sdo.operator.image_gate import controller_validation_gate
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 PYTHON_DOCKERFILES = ("sdo/operator/Dockerfile.runtime",)
@@ -152,10 +155,24 @@ def test_image_build_smokes_offline_go_tools_as_nonroot() -> None:
     assert "command -v sdo-operator" in script
     assert "go list ./program" in script
     assert "tests/fixtures/sdo/playbook_program_app:/fixture:ro" in script
-    assert "sdo-operator validation-child /fixture /opt/sdo/sdo/operator" in script
-    # Arity of RunValidationChild: candidate root, operator root, healthy baseline, replay mode, telemetry policy.
-    (line,) = [line for line in script.splitlines() if "sdo-operator validation-child" in line]
-    assert len(shlex.split(line.split("sdo-operator validation-child", 1)[1])) == 5
+
+
+def test_the_controller_image_validation_gate_command_runs_on_the_prepared_operator(
+    operator_binary: Path, tmp_path: Path
+) -> None:
+    # the gate once hard-coded the validation child's private argument list, which drifted from the Go CLI and
+    # failed every image build after the images were built; the script's own command, on an empty candidate (no
+    # compile), must reach the validation child and pass. The full fixture run is the nightly
+    # test_image_validation_gate.py.
+    argv, mounts = controller_validation_gate((REPO_ROOT / "scripts/build_sdo_images.sh").read_text())
+    assert argv[0] == "sdo-operator"
+    assert set(mounts) & set(argv), "the gate validates a mounted fixture"
+    args = [str(tmp_path) if arg in mounts else arg for arg in argv[1:]]
+    env = {**os.environ, "SDO_OPERATOR_ROOT": str(REPO_ROOT / "sdo/operator")}
+    proc = subprocess.run(
+        [str(operator_binary), *args], env=env, capture_output=True, text=True, timeout=60, check=False
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
 
 
 def test_image_npm_installs_are_pinned_to_exact_versions() -> None:
