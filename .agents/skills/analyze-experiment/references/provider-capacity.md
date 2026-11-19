@@ -56,3 +56,11 @@ exclusion for denominators. The host's shared `account-state.jsonl` carries one
 stable transition ID per account health change, with crash deduplication. Known
 five-hour/seven-day quota exhaustion starts in cooldown; setup-token usageAPI403
 is unknown eligibility and never an auth failure. Consult actual CLI results.
+
+`dispatch_failed` and `controller_not_ready` are the same kind of infrastructure
+exclusion: no agent worked on the incident. `dispatch_failed` means the controller
+reported `dispatch_failure_attempts` (its own count of consecutive failed responder
+dispatches, in `sdo-controller-state`) past the bound derived from its 2 s to 2 min
+retry backoff while the dispatch was PENDING (composite `stop_reason=dispatch_failed`).
+A host Opus pool that the responder UID cannot open shows up there as
+`shared Opus pool unavailable (<errno or reason>)`, not as contention.

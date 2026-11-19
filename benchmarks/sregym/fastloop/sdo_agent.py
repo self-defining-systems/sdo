@@ -34,6 +34,7 @@ from benchmarks.sregym.adapter import (
     StageInputs,
     WaitKind,
     drain_pending_incident,
+    harness_infra_error,
     pause_for_recovery,
     record_failed_closure,
     run_persistent_stage,
@@ -434,8 +435,9 @@ class SdoPersistentAgent:
                 logger.exception("could not export provider wait evidence")
             evidence = read_provider_waits(receipt_dir, after=windows[0].started_at if windows else None)
             # Stable worker-owned diagnostics, or an interrupted/exhausted wait,
-            # survive controller wrapping and hard worker deadlines.
-            if (
+            # survive controller wrapping and hard worker deadlines. A responder the
+            # controller could not start keeps its own name, whatever its last error said.
+            if harness_infra_error(exc) is None and (
                 rate_limit_failure(exc) is not None
                 or "rate_limited:" in str(exc)
                 or "account_exhausted:" in str(exc)

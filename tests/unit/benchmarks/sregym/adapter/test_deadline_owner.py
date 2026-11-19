@@ -14,8 +14,10 @@ import pytest
 from benchmarks.sregym.adapter import Clock
 from benchmarks.sregym.adapter.budgets import Deadline, DeadlineExhaustedError, WaitKind, wait_for
 from benchmarks.sregym.adapter.persistent import (
+    DISPATCH_FAILURE_ATTEMPTS,
     ControllerStalledError,
     PersistentControllerError,
+    ResponderDispatchError,
     _wait_for_verified_incident,
 )
 
@@ -177,6 +179,122 @@ def test_a_live_controller_whose_evaluations_stand_still_keeps_the_full_verifica
 
     assert not isinstance(raised.value, ControllerStalledError)
     assert "verified no new incident within 600s" in str(raised.value)
+
+
+_POOL_FAILURE = 'agent task "incident-blocked" failed: rate_limited: shared Opus pool unavailable'
+
+
+@dataclass
+class _DispatchOps:
+    """A live controller as it publishes a responder dispatch: ``dispatch_error`` is sticky across retries.
+
+    Each failed attempt bumps the controller's own count and returns to PENDING after the controller's backoff;
+    once *recovers_after_attempts* is reached the next retry runs (RUNNING) with the old error still set.
+    A *terminal* Job failure finishes the responder (``responder_done``) with the error set.
+    """
+
+    clock: _ManualClock
+    recovers_after_attempts: int | None = None
+    terminal: bool = False
+    attempts: int = 0
+    next_failure_at: float = 0.0
+    iteration: int = 0
+
+    def runtime_state(self, control: str) -> dict[str, Any]:
+        self.iteration += 1
+        recovered = self.recovers_after_attempts is not None and self.attempts >= self.recovers_after_attempts
+        if not recovered and not self.terminal and self.clock.now >= self.next_failure_at:
+            self.attempts += 1
+            backoff = min(2.0 * 2 ** (self.attempts - 1), 120.0)
+            self.next_failure_at = self.clock.now + backoff / 2  # the shortest jittered delay
+        state: dict[str, Any] = {
+            "incident_open": True,
+            "dispatch_state": "DISPATCH_STATE_RUNNING" if recovered else "DISPATCH_STATE_PENDING",
+            "dispatch_error": _POOL_FAILURE,
+            "dispatch_failure_attempts": self.attempts,
+            "step_count": self.iteration,
+            "incident_request": {"incident_id": "incident-blocked"},
+            "busy_until": "2099-01-01T00:00:00Z",
+        }
+        if self.terminal:
+            state.update(dispatch_state="DISPATCH_STATE_COMPLETED", responder_done=True, dispatch_failure_attempts=0)
+        return state
+
+
+def test_a_responder_that_never_dispatches_ends_the_wait_with_a_named_error(caplog: pytest.LogCaptureFixture) -> None:
+    """The row ends once the controller reports enough failed attempts, naming the error, and logs each minute."""
+    manual = _ManualClock()
+    started = manual.now
+    ops = _DispatchOps(manual)
+    caplog.set_level("INFO", logger="benchmarks.sregym.adapter.persistent")
+
+    with pytest.raises(ResponderDispatchError) as raised:
+        _wait_for_verified_incident(ops, "astro-sdo", set(), 2400.0, _sleeping_clock(manual))  # type: ignore[arg-type]
+
+    message = str(raised.value)
+    assert "shared Opus pool unavailable" in message
+    assert "incident-blocked" in message
+    assert ops.attempts == DISPATCH_FAILURE_ATTEMPTS
+    # The controller's backoff ran through its 2-minute cap more than once before the stage gave up.
+    assert manual.now - started >= 2 * 120.0
+    assert manual.now - started <= 600.0
+    progress = [
+        record.getMessage() for record in caplog.records if "waiting for controller verification" in record.getMessage()
+    ]
+    assert progress
+    assert "shared Opus pool unavailable" in progress[-1]
+
+
+def test_a_retry_that_runs_after_a_blip_keeps_the_full_verification_budget() -> None:
+    """``dispatch_error`` stays set while the retried responder works; only PENDING after many failures counts."""
+    manual = _ManualClock()
+    ops = _DispatchOps(manual, recovers_after_attempts=DISPATCH_FAILURE_ATTEMPTS - 1)
+
+    with pytest.raises(PersistentControllerError) as raised:
+        _wait_for_verified_incident(ops, "astro-sdo", set(), 1200.0, _sleeping_clock(manual))  # type: ignore[arg-type]
+
+    assert not isinstance(raised.value, ResponderDispatchError)
+    assert "verified no new incident within 1200s" in str(raised.value)
+
+
+def test_a_terminal_job_failure_is_not_a_dispatch_failure() -> None:
+    """A failed Job finishes the responder: health alone decides the closure, never ResponderDispatchError."""
+    manual = _ManualClock()
+    ops = _DispatchOps(manual, terminal=True)
+
+    with pytest.raises(PersistentControllerError) as raised:
+        _wait_for_verified_incident(ops, "astro-sdo", set(), 600.0, _sleeping_clock(manual))  # type: ignore[arg-type]
+
+    assert not isinstance(raised.value, ResponderDispatchError)
+
+
+def test_a_verified_closure_wins_over_an_undispatchable_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarks.sregym.adapter import persistent
+    from sdo.contracts import ControllerObservation
+
+    manual = _ManualClock()
+    ops = _DispatchOps(manual)
+    ops.attempts = DISPATCH_FAILURE_ATTEMPTS
+    ops.next_failure_at = float("inf")
+    monkeypatch.setattr(
+        persistent, "_observe_state", lambda *_a, **_kw: ControllerObservation(verified_incident_id="incident-blocked")
+    )
+
+    verified = _wait_for_verified_incident(ops, "astro-sdo", set(), 600.0, _sleeping_clock(manual))  # type: ignore[arg-type]
+
+    assert verified is not None
+    assert verified.incident_id == "incident-blocked"
+
+
+def test_dispatch_failures_are_ended_by_infra_errors_the_runner_requeues() -> None:
+    from benchmarks.sregym.adapter import harness_infra_error
+    from benchmarks.sregym.adapter.driver import SeededControllerNotReadyError
+
+    assert harness_infra_error(ResponderDispatchError("x")) == "dispatch_failed"
+    wrapped = RuntimeError("stage failed")
+    wrapped.__cause__ = SeededControllerNotReadyError("never ready")
+    assert harness_infra_error(wrapped) == "controller_not_ready"
+    assert harness_infra_error(PersistentControllerError("x")) is None
 
 
 def _clock_subtractions(node: ast.AST) -> bool:

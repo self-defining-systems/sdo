@@ -819,9 +819,16 @@ type ControllerState struct {
 	// The ID of the last page (the external incident inbox read in detector
 	// mode) the controller accepted, by opening an incident or joining the open
 	// one. A page is accepted once; the producer may leave it in the inbox.
-	LastPageId    string `protobuf:"bytes,51,opt,name=last_page_id,json=lastPageId,proto3" json:"last_page_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	LastPageId string `protobuf:"bytes,51,opt,name=last_page_id,json=lastPageId,proto3" json:"last_page_id,omitempty"`
+	// Consecutive failed dispatch attempts of the open incident's responder
+	// that did not prove the responder stopped (each re-runs after the dispatch
+	// retry backoff). Zero once a dispatch completes, times out or fails
+	// terminally, and for a fresh incident. Observers judge an undispatchable
+	// responder by this count, never by dispatch_error, which stays set while a
+	// later retry runs.
+	DispatchFailureAttempts int32 `protobuf:"varint,52,opt,name=dispatch_failure_attempts,json=dispatchFailureAttempts,proto3" json:"dispatch_failure_attempts,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *ControllerState) Reset() {
@@ -1139,6 +1146,13 @@ func (x *ControllerState) GetLastPageId() string {
 		return x.LastPageId
 	}
 	return ""
+}
+
+func (x *ControllerState) GetDispatchFailureAttempts() int32 {
+	if x != nil {
+		return x.DispatchFailureAttempts
+	}
+	return 0
 }
 
 // StartupPeriod records whether a new install has been seen healthy: one
@@ -2067,7 +2081,7 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\tpermanent\x18\b \x01(\bR\tpermanent\x12\x16\n" +
 	"\x06action\x18\t \x01(\tR\x06action\x12Q\n" +
 	"\x06reason\x18\n" +
-	" \x01(\x0e2/.sdodev.contracts.v1alpha1.ClosureFailureReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\x06reason\"\xd0$\n" +
+	" \x01(\x0e2/.sdodev.contracts.v1alpha1.ClosureFailureReasonB\b\xbaH\x05\x82\x01\x02\x10\x01R\x06reason\"\x8c%\n" +
 	"\x0fControllerState\x122\n" +
 	"\aversion\x18\x01 \x01(\tB\x18\xbaH\x15r\x13\n" +
 	"\x11sdo.controller/v1R\aversion\x12s\n" +
@@ -2114,7 +2128,8 @@ const file_sdodev_contracts_v1alpha1_controller_state_proto_rawDesc = "" +
 	"\astartup\x181 \x01(\v2(.sdodev.contracts.v1alpha1.StartupPeriodR\astartup\x12=\n" +
 	"\fescalated_at\x182 \x01(\v2\x1a.google.protobuf.TimestampR\vescalatedAt\x12 \n" +
 	"\flast_page_id\x183 \x01(\tR\n" +
-	"lastPageId\x1aa\n" +
+	"lastPageId\x12:\n" +
+	"\x19dispatch_failure_attempts\x184 \x01(\x05R\x17dispatchFailureAttempts\x1aa\n" +
 	"\x17SchedulerDeadlinesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x120\n" +
 	"\x05value\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05value:\x028\x01\x1ai\n" +

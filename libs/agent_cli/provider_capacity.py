@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import json
 import math
@@ -129,7 +130,9 @@ class OpusPool:
                     raise FileNotFoundError(f"host Opus pool is not provisioned: {self.directory / name}")
         # Never unlink lock files, including during release. Replacing an inode
         # would let a second host acquire a different lock for the same token.
-        with (self.directory / "capacity").open("a+" if self.create else "r+", encoding="utf-8") as metadata:
+        # A provisioned pool is only read and locked: flock needs no write
+        # access, and pods run as a UID that may not own the host's files.
+        with (self.directory / "capacity").open("a+" if self.create else "r", encoding="utf-8") as metadata:
             fcntl.flock(metadata, fcntl.LOCK_EX)
             metadata.seek(0)
             recorded = metadata.read().strip()
@@ -142,7 +145,7 @@ class OpusPool:
                 metadata.flush()
                 os.fsync(metadata.fileno())
         for slot in range(self.capacity):
-            handle = (self.directory / f"slot-{slot}.lock").open("a" if self.create else "r+", encoding="utf-8")
+            handle = (self.directory / f"slot-{slot}.lock").open("a" if self.create else "r", encoding="utf-8")
             try:
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
@@ -314,7 +317,12 @@ class ProviderCapacity:
                 if handle is None:
                     raise self.exhausted("Opus admission budget exhausted", kind="concurrency")
         except OSError as exc:
-            raise self.exhausted("shared Opus pool unavailable", kind="concurrency") from exc
+            # Name the errno so a misprovisioned pool is not mistaken for contention.
+            reason = f"shared Opus pool unavailable ({errno.errorcode.get(exc.errno or 0, type(exc).__name__)})"
+            raise self.exhausted(reason, kind="concurrency") from exc
+        except ValueError as exc:
+            # Unprovisioned or conflicting capacity metadata: the same named pool failure, never an unwrapped error.
+            raise self.exhausted(f"shared Opus pool unavailable ({exc})", kind="concurrency") from exc
         try:
             yield
         finally:
