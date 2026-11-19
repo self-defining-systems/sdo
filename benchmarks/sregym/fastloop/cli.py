@@ -841,9 +841,7 @@ def _runtime_config(args: argparse.Namespace, environment: FastloopEnvironment, 
         ),
         # An EKS lane's sink is a claim in the control namespace that fastloop pulls before deleting it.
         evidence_sink_volume=(
-            evidence_claim_volume()
-            if environment.evidence_root is not None and environment.platform == "eks"
-            else ""
+            evidence_claim_volume() if environment.evidence_root is not None and environment.platform == "eks" else ""
         ),
         evidence_run_id=lane_evidence_run_id(environment, results_dir) if environment.evidence_root is not None else "",
         lane_platform=environment.platform,

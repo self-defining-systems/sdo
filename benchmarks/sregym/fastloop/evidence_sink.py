@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.fuzzops import sink
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -166,7 +167,7 @@ def pull_cluster_sink(environment: FastloopEnvironment) -> bool:
         capture_output=True,
         text=True,
         check=False,
-        timeout=60,
+        timeout=wait_for(WaitKind.MINUTE),
     )
     if claim.returncode != 0:
         if "NotFound" in claim.stderr:
@@ -180,7 +181,7 @@ def pull_cluster_sink(environment: FastloopEnvironment) -> bool:
             capture_output=True,
             text=True,
             check=False,
-            timeout=120,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
         )
         if created.returncode != 0:
             raise EvidenceSinkError(f"evidence pull pod: {created.stderr.strip()[-300:]}")
@@ -189,7 +190,7 @@ def pull_cluster_sink(environment: FastloopEnvironment) -> bool:
             capture_output=True,
             text=True,
             check=False,
-            timeout=240,
+            timeout=2 * wait_for(WaitKind.SLOW_COMMAND),
         )
         if ready.returncode != 0:
             raise EvidenceSinkError(f"evidence pull pod not ready: {ready.stderr.strip()[-300:]}")
@@ -204,7 +205,7 @@ def pull_cluster_sink(environment: FastloopEnvironment) -> bool:
             stdin=tar.stdout,
             capture_output=True,
             check=False,
-            timeout=900,
+            timeout=3 * wait_for(WaitKind.ROLLOUT),
         )
         assert tar.stdout is not None
         tar.stdout.close()
@@ -213,10 +214,20 @@ def pull_cluster_sink(environment: FastloopEnvironment) -> bool:
             raise EvidenceSinkError(f"evidence pull: {error or extract.stderr.decode()[-300:].strip()}")
     finally:
         subprocess.run(
-            kube("-n", control, "delete", "pod", name, "--ignore-not-found", "--wait=false", "--grace-period=0", "--force"),
+            kube(
+                "-n",
+                control,
+                "delete",
+                "pod",
+                name,
+                "--ignore-not-found",
+                "--wait=false",
+                "--grace-period=0",
+                "--force",
+            ),
             capture_output=True,
             check=False,
-            timeout=120,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
         )
     return True
 

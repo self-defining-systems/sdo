@@ -81,11 +81,11 @@ def test_an_eks_worker_builds_from_source_and_never_caps_kind_nodes(tmp_path: Pa
     assert not {key for key in env if key.startswith(("SREGYM_WORKER_", "SDO_LANE_", "SREGYM_KIND_REQUIRED"))}
 
 
-def test_eks_images_are_current_while_ecr_holds_their_digests(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_eks_images_are_current_while_ecr_holds_their_digests(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     held: list[str] = []
-    monkeypatch.setattr("benchmarks.lanes.eks.EksProvider.holds", lambda self, reference: held.append(reference) or True)
+    monkeypatch.setattr(
+        "benchmarks.lanes.eks.EksProvider.holds", lambda self, reference: held.append(reference) or True
+    )
     monkeypatch.setattr(cli, "node_images_match", lambda *a: pytest.fail("an EKS lane has no kind nodes"))
     environment = eks_environment(tmp_path)
     assert cli.lane_images_current(environment)
@@ -109,7 +109,9 @@ def test_eks_delivery_publishes_built_images_under_their_declared_names(monkeypa
             loader("eks-1", [])
 
 
-def test_the_eks_attach_fences_by_cluster_identity_without_kind(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_the_eks_attach_fences_by_cluster_identity_without_kind(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     fenced: list[str] = []
     monkeypatch.setenv("FASTLOOP_EKS_LANE", LANE.model_dump_json())
     monkeypatch.setenv("SREGYM_KIND_CLUSTER_NAME", "eks-1")
