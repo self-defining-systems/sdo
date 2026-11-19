@@ -23,6 +23,7 @@ from benchmarks.sregym.hosts.steps import (
     installed_diskwatch,
     merge_env,
     parse_timespan_percent,
+    plan_credential_modes,
     plan_credentials,
     plan_remove,
     render_slice,
@@ -357,3 +358,19 @@ def test_new_host_gets_the_controllers_watcher_script_and_a_user_timer() -> None
 def test_missing_watcher_with_no_controller_copy_blocks_the_plan() -> None:
     ctx, _ = _diskwatch_ctx()
     assert [n.step for n in build_plan(ctx).blocked if n.step == "diskwatch"] == ["diskwatch"]
+
+
+def test_existing_credential_profile_is_tightened_in_place_without_copying() -> None:
+    ctx, target, _ = _credential_hosts()
+    target.dirs.add("/home/u/.claude-gcp")
+    target.modes["/home/u/.claude-gcp"] = "755"
+    for path in ("/home/u/.claude-gcp/settings.json", "/home/u/.claude-gcp/.claude.json", "/home/u/key.json"):
+        target.files[path] = b"x"
+        target.modes[path] = "644" if path.endswith("key.json") else "600"
+    plan = plan_credential_modes(ctx)
+    assert [c.title for c in plan.changes] == ["chmod 700 /home/u/.claude-gcp", "chmod 600 /home/u/key.json"]
+    for change in plan.changes:
+        change.apply()
+    assert plan_credential_modes(ctx).changes == []
+    assert target.files["/home/u/key.json"] == b"x"
+    assert all(c.step != "credentials" for c in build_plan(ctx).changes)  # tightened: nothing left to do
