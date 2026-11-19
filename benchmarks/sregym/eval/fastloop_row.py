@@ -495,17 +495,26 @@ class FastloopRowRunner:
         """
         if state["fallback_page_at"] is not None:
             return
-        injected = read_injection_marker(state["results"])
-        if injected is None:
+        marker = read_injection_marker(state["results"])
+        if marker is None or state.get("own_incident_at") is not None:
             return
+        injected = marker.started_at
         try:
-            paged_at = context.page_hook.page(lane, cell, injected)
+            paged_at = context.page_hook.page(lane, cell, injected, marker.known_incident_ids)
         except Exception as exc:
             (directory / "page.json").write_text(
                 json.dumps({"injected_at": injected, "error": f"{type(exc).__name__}: {exc}"}) + "\n",
                 encoding="utf-8",
             )
             return
+        own_at = context.page_hook.own_incident_at(cell)
+        if paged_at is None and own_at is not None:
+            # SDO opened an incident of its own since injection: no fallback; the record's detection is the page.
+            state["own_incident_at"] = own_at
+            (directory / "page.json").write_text(
+                json.dumps({"injected_at": injected, "decided_at": own_at, "source": "own"}) + "\n",
+                encoding="utf-8",
+            )
         if paged_at is not None:
             state["fallback_page_at"] = paged_at
             (directory / "page.json").write_text(

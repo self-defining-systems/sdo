@@ -20,7 +20,7 @@ from benchmarks.sregym.eval.page import (
     lane_notice,
 )
 from benchmarks.sregym.eval.plan import Arm, Cell, build_plan
-from benchmarks.sregym.fastloop.injection_marker import read_injection_marker, write_injection_marker
+from benchmarks.sregym.fastloop.injection_marker import InjectionMarker, read_injection_marker, write_injection_marker
 from tests.unit.benchmarks.sregym.eval.eval_fakes import Clock, FakeExecutor, make_config, make_context
 from tests.unit.benchmarks.sregym.eval.test_eval_fastloop_row import Row, cell
 
@@ -51,9 +51,11 @@ class FakeCluster:
     fail_sends: int = 0
     sent: list[tuple[str, str]] = field(default_factory=list)
     checks: int = 0
+    known: list[frozenset[str]] = field(default_factory=list)
 
-    def own_incident(self, lane: Lane) -> bool:
+    def own_incident(self, lane: Lane, known: frozenset[str]) -> bool:
         self.checks += 1
+        self.known.append(known)
         return self.own
 
     def send(self, lane: Lane, incident_id: str, message: str) -> None:
@@ -96,6 +98,15 @@ def test_an_own_incident_means_no_page_now_or_later() -> None:
     clock.now += 60
     assert hook.page(make_lane(), sdo_cell(), INJECTED) is None
     assert cluster.sent == []
+    assert hook.own == {sdo_cell().id: INJECTED + FALLBACK + 1}
+
+
+def test_the_hook_judges_own_incidents_against_the_ids_known_at_injection() -> None:
+    clock, cluster = Clock(INJECTED), FakeCluster()
+    hook = make_hook(cluster, clock)
+    clock.now = INJECTED + FALLBACK
+    hook.page(make_lane(), sdo_cell(), INJECTED, known_incident_ids=frozenset({"before"}))
+    assert cluster.known == [frozenset({"before"})]
 
 
 def test_the_vanilla_arm_is_never_paged() -> None:
@@ -171,11 +182,12 @@ def test_the_kubectl_cluster_writes_the_external_incident_inbox_and_reads_own_in
 
     monkeypatch.setattr(persistent, "kubectl", fake_kubectl)
     cluster, lane = KubectlPageCluster(), make_lane()
-    assert cluster.own_incident(lane) is True
+    assert cluster.own_incident(lane, frozenset()) is True
     assert calls[0][1]["namespace"] == "hotel-reservation-sdo"
     assert calls[0][1]["kubeconfig"] == Path("/kube/config")
+    assert cluster.own_incident(lane, frozenset({"i"})) is False  # the incident predates injection
     cluster.send(lane, "page-abc", "text")
-    args, kwargs = calls[1]
+    args, kwargs = calls[2]
     assert args == ["apply", "-f", "-"]
     document = json.loads(kwargs["input_text"])
     assert document["metadata"] == {"name": "sdo-external-incident", "namespace": "hotel-reservation-sdo"}
@@ -192,12 +204,26 @@ def test_the_inbox_refuses_an_oversized_message(monkeypatch: pytest.MonkeyPatch)
         persistent.apply_external_incident("c", "n", "page-1", "x" * 4097)
 
 
-def test_own_incident_is_open_requested_or_awaiting_acknowledgement() -> None:
-    assert has_own_incident({"incident_open": True})
-    assert has_own_incident({"incident_request": {"incident_id": "i"}})
-    assert has_own_incident({"pending_closure": {"request": {}}})
-    assert not has_own_incident({"busy_until": "2026-11-18T12:00:00Z", "startup": {"began_at": "x"}})
-    assert not has_own_incident({})
+def test_own_incident_is_any_incident_opened_since_injection_even_one_already_closed() -> None:
+    none: frozenset[str] = frozenset()
+    assert has_own_incident({"incident_open": True}, none)
+    assert has_own_incident({"incident_request": {"incident_id": "i"}}, none)
+    assert has_own_incident({"pending_closure": {"request": {"incident_id": "i"}}}, none)
+    # Opened, Recovered and acknowledged before the deadline: only the acknowledgement remains.
+    assert has_own_incident({"last_acknowledged_incident_id": "new"}, frozenset({"old"}))
+    assert not has_own_incident({"last_acknowledged_incident_id": "old"}, frozenset({"old"}))
+    assert not has_own_incident({"busy_until": "2026-11-18T12:00:00Z", "startup": {"began_at": "x"}}, none)
+    assert not has_own_incident({}, none)
+
+
+def test_state_incident_ids_are_the_request_pending_closure_and_last_acknowledgement() -> None:
+    state = {
+        "incident_request": {"incident_id": "a"},
+        "pending_closure": {"request": {"incident_id": "b"}},
+        "last_acknowledged_incident_id": "c",
+    }
+    assert persistent.state_incident_ids(state) == frozenset({"a", "b", "c"})
+    assert persistent.state_incident_ids({}) == frozenset()
 
 
 def test_the_injection_marker_round_trips_and_is_absent_before_injection(tmp_path: Path) -> None:
@@ -205,10 +231,10 @@ def test_the_injection_marker_round_trips_and_is_absent_before_injection(tmp_pat
 
     assert read_injection_marker(tmp_path) is None
     started = datetime(2026, 11, 18, 12, 0, 5, tzinfo=timezone.utc)
-    write_injection_marker(tmp_path, started)
-    assert read_injection_marker(tmp_path) == started.timestamp()
+    write_injection_marker(tmp_path, started, frozenset({"before"}))
+    assert read_injection_marker(tmp_path) == InjectionMarker(started.timestamp(), frozenset({"before"}))
     with pytest.raises(ValueError, match="timezone"):
-        write_injection_marker(tmp_path, datetime(2026, 11, 18))
+        write_injection_marker(tmp_path, datetime(2026, 11, 18), frozenset())
 
 
 # The row: the hook is polled while the row runs, from the marker's injection time. -----------------------------------
@@ -238,7 +264,7 @@ def paged_row(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, own: bool, arm
 
 
 def write_injection_marker_at(results: Path, epoch: float) -> None:
-    (results / "injection.json").write_text(json.dumps({"started_at": epoch}))
+    (results / "injection.json").write_text(json.dumps({"started_at": epoch, "known_incident_ids": ["before"]}))
 
 
 def test_a_row_without_an_own_incident_is_paged_at_the_deadline_and_the_page_is_its_clock(
@@ -271,7 +297,10 @@ def test_a_row_with_its_own_incident_is_not_paged(tmp_path: Path, monkeypatch: p
     _, cluster, result = paged_row(tmp_path, monkeypatch, own=True)
     assert cluster.sent == []
     assert result.page_source == "own"  # the record's own detection inside the window
-    assert not (tmp_path / "page.json").exists()
+    assert cluster.known[:1] == [frozenset({"before"})]
+    page = json.loads((tmp_path / "page.json").read_text())
+    assert page["source"] == "own"
+    assert "paged_at" not in page
 
 
 def test_the_vanilla_row_is_not_paged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
