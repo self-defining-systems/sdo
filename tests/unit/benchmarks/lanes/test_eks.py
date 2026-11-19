@@ -133,7 +133,9 @@ def test_the_fence_is_the_server_and_the_kube_system_uid_not_node_names() -> Non
 
 def test_network_policy_must_be_enforced_by_the_vpc_cni() -> None:
     def daemonset(args: list[str]) -> str:
-        return json.dumps({"spec": {"template": {"spec": {"containers": [{"name": "aws-eks-nodeagent", "args": args}]}}}})
+        return json.dumps(
+            {"spec": {"template": {"spec": {"containers": [{"name": "aws-eks-nodeagent", "args": args}]}}}}
+        )
 
     on = FakeRun([(("daemonset", "aws-node"), 0, daemonset(["--enable-network-policy=true"]), "")])
     eks.require_network_policy("/k", run=on)
@@ -159,7 +161,9 @@ def test_push_creates_the_tagged_repository_once_and_returns_the_stored_digest()
     assert eks.pin_image(ecr, "sdo-controller:t") == f"{REGISTRY}/sdo/sdo-controller@{digest}"
     create = next(call for call in run.calls if "create-repository" in call)
     assert create[create.index("--tags") + 1] == "Key=Project,Value=p"
-    assert run.inputs[run.calls.index(["docker", "login", "--username", "AWS", "--password-stdin", REGISTRY])] == "secret"
+    assert (
+        run.inputs[run.calls.index(["docker", "login", "--username", "AWS", "--password-stdin", REGISTRY])] == "secret"
+    )
     assert eks.publish_app_image(ecr, "built:abc", "yinfangchen/hotelreservation:latest") == digest
     assert sum("get-login-password" in call for call in run.calls) == 1
 

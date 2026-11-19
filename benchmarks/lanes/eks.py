@@ -159,7 +159,9 @@ class Ecr:
         )
         if completed.returncode != 0:
             # Never echo a password; stderr of docker login and aws carries none.
-            raise EksLaneError(f"{argv[0]} {argv[1] if len(argv) > 1 else ''} failed: {completed.stderr.strip()[-600:]}")
+            raise EksLaneError(
+                f"{argv[0]} {argv[1] if len(argv) > 1 else ''} failed: {completed.stderr.strip()[-600:]}"
+            )
         return completed.stdout
 
     def login(self) -> None:
@@ -455,9 +457,7 @@ def ensure_node_agent(
             sleep(5)
 
 
-def write_node_file(
-    kubeconfig: str, relative: str, content: str, *, run: Runner = subprocess.run
-) -> list[str]:
+def write_node_file(kubeconfig: str, relative: str, content: str, *, run: Runner = subprocess.run) -> list[str]:
     """Write ``/etc/containerd/certs.d/<relative>`` on every node through its agent; returns the nodes."""
 
     if relative.startswith("/") or ".." in relative.split("/"):
@@ -467,7 +467,9 @@ def write_node_file(
     agents = node_agents(kubeconfig, run=run)
     for node, pod in agents.items():
         completed = run(
-            _kubectl(kubeconfig, "-n", NODE_AGENT_NAMESPACE, "exec", "-i", pod, "-c", "agent", "--", "sh", "-c", script),
+            _kubectl(
+                kubeconfig, "-n", NODE_AGENT_NAMESPACE, "exec", "-i", pod, "-c", "agent", "--", "sh", "-c", script
+            ),
             input=content,
             capture_output=True,
             text=True,
@@ -539,9 +541,7 @@ class EksProvider:
         self._ecr = Ecr(lane, run=run)
 
     @classmethod
-    def attach(
-        cls, kubeconfig: str, *, registry: str, run: Runner = subprocess.run, **settings: Any
-    ) -> EksProvider:
+    def attach(cls, kubeconfig: str, *, registry: str, run: Runner = subprocess.run, **settings: Any) -> EksProvider:
         """Fence the cluster ``kubeconfig`` reaches, require NetworkPolicy and start the node agent."""
 
         server, uid = cluster_identity(kubeconfig, run=run)
