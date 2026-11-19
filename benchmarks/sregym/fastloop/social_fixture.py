@@ -32,7 +32,7 @@ from benchmarks.sregym.adapter import Deadline, WaitKind, kubectl, wait_for
 from benchmarks.sregym.fastloop.transient_cleanup import retire_pods, wait_deleted
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Collection, Iterator, Sequence
     from pathlib import Path
 
 NAMESPACE = "social-network"
@@ -344,8 +344,11 @@ print("SOCIAL_FIXTURE_SEEDED");"""
 
 USER_MONGO = "user-mongodb.social-network.svc.cluster.local:27017"
 GRAPH_MONGO = "social-graph-mongodb.social-network.svc.cluster.local:27017"
+TIMELINE_MONGO = "user-timeline-mongodb.social-network.svc.cluster.local:27017"
 # The id's low 12 bits are the user service's per-millisecond counter.
 COUNTER_BITS = 12
+# Field on a user document recording the id an interrupted rekey was moving it to.
+PENDING_FIELD = "sdo_rekey_to"
 
 
 def gateway_carries(user_id: int) -> bool:
@@ -357,6 +360,8 @@ def gateway_carries(user_id: int) -> bool:
 class Identity:
     username: str
     user_id: int
+    # The target a previous, interrupted rekey recorded on this user's document.
+    pending: int | None = None
 
 
 @dataclass(frozen=True)
@@ -390,7 +395,8 @@ class IdentityRepair:
     users: int
     graph_nodes: int
     rekeyed: tuple[Rekey, ...]
-    # Social-graph ids no user holds (a user removed from the user store keeps its graph node and edges).
+    # Social-graph ids no user holds or is being moved to (a user removed from the user store
+    # keeps its graph node and the edges pointing at it).
     orphans: tuple[int, ...]
 
     def __bool__(self) -> bool:
@@ -430,24 +436,39 @@ def _free_carried_id(old_id: int, taken: set[int]) -> int:
     raise ValueError(f"eval: social identity {old_id} has no free gateway-carried id in its millisecond block")
 
 
-def plan_identity_repair(users: Sequence[Identity], graph: Sequence[GraphNode]) -> IdentityRepair:
-    """Rekey every user the gateway cannot carry; drop graph ids no user holds."""
+def plan_identity_repair(
+    users: Sequence[Identity], graph: Sequence[GraphNode], also_taken: Collection[int] = ()
+) -> IdentityRepair:
+    """Rekey every user the gateway cannot carry; drop graph ids no user holds.
+
+    A new id is never any id the stores already mention (users, pending targets, graph
+    nodes, follow edges, and also_taken: ids keying posts or timelines), so it inherits no
+    data and the orphan cleanup cannot reach it. A user with a recorded target resumes to
+    that same target, so an interrupted run converges instead of orphaning its own work.
+    """
     by_id = {user.user_id: user.username for user in users}
     if len(by_id) != len(users):
         raise ValueError("eval: social user store holds one user id twice; recreate the application")
-    taken = set(by_id) | {node.user_id for node in graph}
-    rekeyed = []
-    for user in sorted(users, key=lambda row: (row.user_id, row.username)):
-        if gateway_carries(user.user_id):
-            continue
-        new_id = _free_carried_id(user.user_id, taken)
-        taken.add(new_id)
-        gateway_id = int(float(user.user_id))
-        rekeyed.append(Rekey(user.username, user.user_id, new_id, gateway_id, by_id.get(gateway_id)))
     referenced = {node.user_id for node in graph}
     for node in graph:
         referenced.update(node.followers, node.followees)
-    orphans = tuple(sorted(referenced - set(by_id)))
+    taken = set(by_id) | referenced | set(also_taken) | {u.pending for u in users if u.pending is not None}
+    rekeyed = []
+    for user in sorted(users, key=lambda row: (row.user_id, row.username)):
+        if user.pending is not None:
+            new_id = user.pending
+            if not gateway_carries(new_id):
+                raise ValueError(f"eval: social user {user.username} records a rekey target the gateway rounds")
+        elif gateway_carries(user.user_id):
+            continue
+        else:
+            new_id = _free_carried_id(user.user_id, taken)
+            taken.add(new_id)
+        gateway_id = int(float(user.user_id))
+        impersonates = by_id.get(gateway_id) if gateway_id != user.user_id else None
+        rekeyed.append(Rekey(user.username, user.user_id, new_id, gateway_id, impersonates))
+    moving = {row.old_id for row in rekeyed} | {row.new_id for row in rekeyed}
+    orphans = tuple(sorted(referenced - set(by_id) - moving))
     return IdentityRepair(len(users), len(graph), tuple(rekeyed), orphans)
 
 
@@ -455,23 +476,33 @@ def _json_lines(output: str) -> list[dict[str, Any]]:
     return [json.loads(line) for line in output.splitlines() if line.strip()]
 
 
-def read_social_identities(config: Path) -> tuple[list[Identity], list[GraphNode]]:
-    """Read users and the follow graph with exact 64-bit ids (decimal strings, never doubles)."""
+_ID_JS = "function id(v){return v.toString().replace(/[^0-9-]/g,'');}"
+
+
+def read_social_identities(config: Path) -> tuple[list[Identity], list[GraphNode], frozenset[int]]:
+    """Read users, the follow graph and timeline owners with exact 64-bit ids (decimal strings)."""
     users_script = (
-        f'var u=new Mongo("{USER_MONGO}").getDB("user").user;'
-        "function id(v){return v.toString().replace(/[^0-9-]/g,'');}"
-        "u.find({}, {username:1,user_id:1}).forEach(function(d){"
-        "print(JSON.stringify({username:d.username,user_id:id(d.user_id)}));});"
+        f'var c=new Mongo("{USER_MONGO}").getDB("user").user;{_ID_JS}'
+        f"c.find({{}}, {{username:1,user_id:1,{PENDING_FIELD}:1}}).forEach(function(d){{"
+        f"var p=d.{PENDING_FIELD}; print(JSON.stringify({{username:d.username,user_id:id(d.user_id),"
+        "pending:(p===undefined||p===null)?null:id(p)}));});"
     )
     graph_script = (
-        f'var g=new Mongo("{GRAPH_MONGO}").getDB("social-graph").getCollection("social-graph");'
-        "function id(v){return v.toString().replace(/[^0-9-]/g,'');}"
+        f'var c=new Mongo("{GRAPH_MONGO}").getDB("social-graph").getCollection("social-graph");{_ID_JS}'
         "function ids(l){return (l||[]).map(function(e){return id(e.user_id);});}"
-        "g.find({}).forEach(function(d){print(JSON.stringify("
+        "c.find({}).forEach(function(d){print(JSON.stringify("
         "{user_id:id(d.user_id),followers:ids(d.followers),followees:ids(d.followees)}));});"
     )
+    # Every post a user composes enters that user's timeline document, so its owners cover post creators.
+    timeline_script = (
+        f'var c=new Mongo("{TIMELINE_MONGO}").getDB("user-timeline").getCollection("user-timeline");{_ID_JS}'
+        'c.distinct("user_id").forEach(function(v){print(id(v));});'
+    )
     with helper_cleanup(config):
-        users = [Identity(row["username"], int(row["user_id"])) for row in _json_lines(_mongo(config, users_script))]
+        users = [
+            Identity(row["username"], int(row["user_id"]), None if row["pending"] is None else int(row["pending"]))
+            for row in _json_lines(_mongo(config, users_script))
+        ]
         graph = [
             GraphNode(
                 int(row["user_id"]),
@@ -480,20 +511,29 @@ def read_social_identities(config: Path) -> tuple[list[Identity], list[GraphNode
             )
             for row in _json_lines(_mongo(config, graph_script))
         ]
-    return users, graph
+        owners = frozenset(int(line) for line in _mongo(config, timeline_script).split())
+    return users, graph, owners
 
 
+# Each step is idempotent and the target is recorded on the user document before anything
+# moves, so a run interrupted at any point is resumed by the next one to the same id.
 _REPAIR_SCRIPT = f"""var plan=JSON.parse(cat("/dev/stdin"));
 var u=new Mongo("{USER_MONGO}").getDB("user").user;
 var g=new Mongo("{GRAPH_MONGO}").getDB("social-graph").getCollection("social-graph");
 plan.rekey.forEach(function(r){{
-  var o=NumberLong(r.old), n=NumberLong(r.new);
-  assert.eq(u.updateOne({{username:r.username,user_id:o}},{{$set:{{user_id:n}}}}).modifiedCount, 1);
-  g.updateOne({{user_id:o}},{{$set:{{user_id:n}}}});
+  var o=NumberLong(r.old), n=NumberLong(r.new), mark={{}}; mark["{PENDING_FIELD}"]=n;
+  assert.eq(u.updateOne({{username:r.username}},{{$set:mark}}).matchedCount, 1);
+  if (r.old!=r.new) {{
+    if (g.count({{user_id:n}})==0) g.updateOne({{user_id:o}},{{$set:{{user_id:n}}}});
+    else g.deleteMany({{user_id:o}});
+  }}
+  if (g.count({{user_id:n}})==0) g.insertOne({{user_id:n,followers:[],followees:[]}});
   ["followers","followees"].forEach(function(k){{
     var q={{}}; q[k+".user_id"]=o; var s={{}}; s[k+".$[e].user_id"]=n;
     g.updateMany(q,{{$set:s}},{{arrayFilters:[{{"e.user_id":o}}]}});
   }});
+  var done={{}}; done["{PENDING_FIELD}"]="";
+  assert.eq(u.updateOne({{username:r.username}},{{$set:{{user_id:n}},$unset:done}}).matchedCount, 1);
 }});
 plan.orphans.forEach(function(v){{
   var o=NumberLong(v);
@@ -503,28 +543,47 @@ plan.orphans.forEach(function(v){{
 print("SOCIAL_IDENTITIES_REPAIRED");"""
 
 
+def _empty_id_caches(config: Path) -> None:
+    """Empty the caches keyed by user id or username; their Mongo stores refill them."""
+    if _exec(config, "social-graph-redis", ["redis-cli", "FLUSHALL"]).strip() != "OK":
+        raise RuntimeError("eval: social identity restore could not empty social-graph-redis")
+    selector = json.loads(
+        kubectl(
+            ["get", "deployment/user-memcached", "-o", "jsonpath={.spec.selector.matchLabels}"],
+            namespace=NAMESPACE,
+            kubeconfig=config,
+        ).stdout
+    )
+    labels = ",".join(f"{key}={value}" for key, value in sorted(selector.items()))
+    pods = kubectl(["get", "pods", "-l", labels, "-o", "name"], namespace=NAMESPACE, kubeconfig=config).stdout.split()
+    if not pods:
+        raise RuntimeError(f"eval: social identity restore found no user-memcached pod for selector {labels}")
+    # Deleting the pods empties memcached without changing the Deployment the baseline captured.
+    kubectl(["delete", *pods, "--wait=true"], namespace=NAMESPACE, kubeconfig=config)
+    kubectl(["rollout", "status", "deployment/user-memcached", "--timeout=90s"], namespace=NAMESPACE, kubeconfig=config)
+
+
 def restore_social_identities(config: Path) -> IdentityRepair:
-    """Hold the identity invariant; call only while no prober is running (after the SDO namespace wipe).
+    """Hold the identity invariant; call only while no prober runs (after the SDO namespace wipe).
 
     A rekeyed user keeps its username, password hash and follow edges under an id the
-    gateway carries. The graph's Redis cache and the user service's username->id cache
-    are keyed by the old ids, so both are emptied; their stores fill them again.
+    gateway carries. Posts and timelines under the old id stay: nothing reads them under the
+    new id, which owns none, and removing them would dangle the home-timeline references
+    the post fixture keeps coherent. Session tokens carrying the old id died with the prober.
+    The id caches are emptied on every run, so a run that failed after its Mongo rewrite
+    cannot leave stale entries behind a store that now looks clean.
     """
-    repair = plan_identity_repair(*read_social_identities(config))
-    if not repair:
-        return repair
-    plan = {
-        "rekey": [{"username": row.username, "old": str(row.old_id), "new": str(row.new_id)} for row in repair.rekeyed],
-        "orphans": [str(value) for value in repair.orphans],
-    }
-    with helper_cleanup(config):
-        if "SOCIAL_IDENTITIES_REPAIRED" not in _mongo(config, _REPAIR_SCRIPT, json.dumps(plan)):
-            raise RuntimeError("eval: social identity repair did not complete")
-    if _exec(config, "social-graph-redis", ["redis-cli", "FLUSHALL"]).strip() != "OK":
-        raise RuntimeError("eval: social identity repair could not empty social-graph-redis")
-    # Deleting the pod empties memcached without changing the Deployment the baseline captured.
-    kubectl(
-        ["delete", "pods", "--selector=service=user-memcached", "--wait=true"], namespace=NAMESPACE, kubeconfig=config
-    )
-    kubectl(["rollout", "status", "deployment/user-memcached", "--timeout=90s"], namespace=NAMESPACE, kubeconfig=config)
+    users, graph, owners = read_social_identities(config)
+    repair = plan_identity_repair(users, graph, owners)
+    if repair:
+        plan = {
+            "rekey": [
+                {"username": row.username, "old": str(row.old_id), "new": str(row.new_id)} for row in repair.rekeyed
+            ],
+            "orphans": [str(value) for value in repair.orphans],
+        }
+        with helper_cleanup(config):
+            if "SOCIAL_IDENTITIES_REPAIRED" not in _mongo(config, _REPAIR_SCRIPT, json.dumps(plan)):
+                raise RuntimeError("eval: social identity repair did not complete")
+    _empty_id_caches(config)
     return repair

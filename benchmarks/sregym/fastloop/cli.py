@@ -977,8 +977,16 @@ def restore_lane_identities(environment: FastloopEnvironment, results_dir: Path)
         return
     from benchmarks.sregym.fastloop.social_fixture import restore_social_identities
 
-    repair = restore_social_identities(environment.kubeconfig)
-    (results_dir / "social-identities.json").write_text(json.dumps(repair.to_json(), indent=2) + "\n")
+    receipt = results_dir / "social-identities.json"
+    try:
+        repair = restore_social_identities(environment.kubeconfig)
+    except Exception as exc:  # recorded; admission stays the gate
+        # A failed repair leaves the lane as it was without this step; the install's admission still
+        # judges it, and the receipt names this cause instead of the row crashing the same way each time.
+        receipt.write_text(json.dumps({"error": f"{type(exc).__name__}: {exc}"}, indent=2) + "\n")
+        logger.error("Social identity restore failed at row start; the row proceeds: %s", exc)
+        return
+    receipt.write_text(json.dumps(repair.to_json(), indent=2) + "\n")
     if repair:
         logger.warning("Social identities repaired at row start: %s", repair.describe())
 
