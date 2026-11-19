@@ -36,6 +36,9 @@ NODE_AGENT = "sdo-lane-node-agent"
 NODE_AGENT_NAMESPACE = "kube-system"
 #: Where the agent mounts the node's ``/etc/containerd/certs.d``.
 AGENT_CERTS = "/certs"
+#: A node directory the lane's workloads own (pools, caches); the agent mounts it at ``AGENT_LANE``.
+NODE_LANE_ROOT = "/var/lib/sdo-lane"
+AGENT_LANE = "/lane"
 #: An AWS CLI image on ECR Public (anonymous pulls, no Docker Hub limit); pinned by tag.
 NODE_AGENT_IMAGE = "public.ecr.aws/aws-cli/aws-cli:2.22.35"
 #: ECR tokens last 12 h; the agent refreshes every 6 h and is unready once its header is 8 h old.
@@ -354,14 +357,18 @@ def node_agent_manifest(lane: EksLane) -> dict[str, Any]:
                                 },
                                 "periodSeconds": 10,
                             },
-                            "volumeMounts": [{"name": "certs", "mountPath": AGENT_CERTS}],
+                            "volumeMounts": [
+                                {"name": "certs", "mountPath": AGENT_CERTS},
+                                {"name": "lane", "mountPath": AGENT_LANE},
+                            ],
                         }
                     ],
                     "volumes": [
                         {
                             "name": "certs",
                             "hostPath": {"path": "/etc/containerd/certs.d", "type": "DirectoryOrCreate"},
-                        }
+                        },
+                        {"name": "lane", "hostPath": {"path": NODE_LANE_ROOT, "type": "DirectoryOrCreate"}},
                     ],
                 },
             },
@@ -457,28 +464,41 @@ def ensure_node_agent(
             sleep(5)
 
 
-def write_node_file(kubeconfig: str, relative: str, content: str, *, run: Runner = subprocess.run) -> list[str]:
-    """Write ``/etc/containerd/certs.d/<relative>`` on every node through its agent; returns the nodes."""
+def run_on_nodes(
+    kubeconfig: str, script: str, *, input_text: str | None = None, run: Runner = subprocess.run
+) -> list[str]:
+    """Run ``sh -c script`` on every Ready node through its agent; returns the nodes.
 
-    if relative.startswith("/") or ".." in relative.split("/"):
-        raise EksLaneError(f"node file path must stay inside certs.d: {relative!r}")
-    target = f"{AGENT_CERTS}/{relative}"
-    script = f"mkdir -p {shlex.quote(target.rsplit('/', 1)[0])} && cat > {shlex.quote(target)}.tmp && mv {shlex.quote(target)}.tmp {shlex.quote(target)}"
+    The script sees the node's containerd ``certs.d`` at ``/certs`` and the lane's node directory
+    (``/var/lib/sdo-lane``) at ``/lane``, as root, and nothing else of the node.
+    """
+
     agents = node_agents(kubeconfig, run=run)
     for node, pod in agents.items():
         completed = run(
             _kubectl(
                 kubeconfig, "-n", NODE_AGENT_NAMESPACE, "exec", "-i", pod, "-c", "agent", "--", "sh", "-c", script
             ),
-            input=content,
+            input=input_text,
             capture_output=True,
             text=True,
             check=False,
             timeout=120,
         )
         if completed.returncode != 0:
-            raise EksLaneError(f"writing {relative} on {node}: {completed.stderr.strip()[-600:]}")
+            raise EksLaneError(f"node script on {node}: {completed.stderr.strip()[-600:]}")
     return sorted(agents)
+
+
+def write_node_file(kubeconfig: str, relative: str, content: str, *, run: Runner = subprocess.run) -> list[str]:
+    """Write ``/etc/containerd/certs.d/<relative>`` on every node through its agent; returns the nodes."""
+
+    if relative.startswith("/") or ".." in relative.split("/"):
+        raise EksLaneError(f"node file path must stay inside certs.d: {relative!r}")
+    target = shlex.quote(f"{AGENT_CERTS}/{relative}")
+    directory = shlex.quote(f"{AGENT_CERTS}/{relative}".rsplit("/", 1)[0])
+    script = f"mkdir -p {directory} && cat > {target}.tmp && mv {target}.tmp {target}"
+    return run_on_nodes(kubeconfig, script, input_text=content, run=run)
 
 
 def cluster_identity(kubeconfig: str, *, run: Runner = subprocess.run) -> tuple[str, str]:
@@ -568,6 +588,9 @@ class EksProvider:
 
     def write_node_file(self, relative: str, content: str) -> list[str]:
         return write_node_file(self._kubeconfig, relative, content, run=self._run)
+
+    def run_on_nodes(self, script: str) -> list[str]:
+        return run_on_nodes(self._kubeconfig, script, run=self._run)
 
     def release(self) -> None:
         """Attach-only: the cluster and its node group stay; scaling and deletion belong to the account's tooling."""

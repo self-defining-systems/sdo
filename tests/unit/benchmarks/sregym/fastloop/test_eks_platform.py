@@ -186,3 +186,25 @@ def test_only_an_eks_lane_pulls_its_sink_from_the_cluster(tmp_path: Path, monkey
     monkeypatch.setattr(subprocess, "run", run)
     # The control namespace (and its claim) is gone: nothing in the cluster to lose.
     assert evidence_sink.pull_cluster_sink(eks_environment(tmp_path)) is False
+
+
+def test_an_eks_lane_runs_opus_through_a_per_node_pool_named_by_its_cluster(tmp_path: Path) -> None:
+    environ = {"SDO_OPUS_POOL_HOST_PATH": "/opt/sdo-evidence/opus-pool", "SDO_OPUS_POOL_DIR": "/x"}
+    eks_environment(tmp_path).apply_operator_env(environ)
+    assert environ["SDO_OPUS_POOL_MODE"] == "per_host"
+    assert environ["SDO_OPUS_POOL_HOST_ID"] == "eks-lane-1"
+    assert environ["SDO_OPUS_POOL_HOST_PATH"] == "/var/lib/sdo-lane/opus-pool"
+    assert environ["SDO_OPUS_MAX_SESSIONS"] == "4"
+    assert "SDO_OPUS_POOL_DIR" not in environ
+
+
+def test_the_node_pool_is_created_once_and_never_resized() -> None:
+    from benchmarks.sregym.fastloop.eks_lane import opus_pool_script
+
+    script = opus_pool_script(3)
+    assert "touch /lane/opus-pool/slot-0.lock /lane/opus-pool/slot-1.lock /lane/opus-pool/slot-2.lock" in script
+    assert "[ -s /lane/opus-pool/capacity ] || printf '3\\n'" in script
+    assert 'not 3" >&2; exit 1' in script
+    assert "chown -R 65532:65532 /lane/opus-pool" in script
+    completed = subprocess.run(["sh", "-n", "-c", script], check=False)
+    assert completed.returncode == 0

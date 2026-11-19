@@ -39,6 +39,10 @@ class LaneProvider(Protocol):
         """Write a containerd ``certs.d`` file on every node; returns the nodes."""
         ...
 
+    def run_on_nodes(self, script: str) -> list[str]:
+        """Run a shell script on every node with the lane's node directory at ``/lane``; returns the nodes."""
+        ...
+
     def release(self) -> None:
         """Give the lane back (attach-only providers leave the cluster as it was attached)."""
         ...
