@@ -12,10 +12,13 @@ from benchmarks.sregym.fastloop import cli
 from benchmarks.sregym.fastloop.host_limits import NodeLimits, apply_lane_cpu, apply_node_limits
 from benchmarks.sregym.fastloop.lane_cgroup import (
     CgroupMismatch,
+    CpusetExhausted,
     NodeCgroup,
     describe_mode,
     install_docker_shim,
     kind_run_flags,
+    place_cpus,
+    read_host_cores,
     read_node_cgroup,
     resolve_cgroup_parent,
     shim_environment,
@@ -196,15 +199,25 @@ def test_shim_environment_is_empty_without_a_parent_and_puts_the_shim_first_with
 
 
 class Docker:
-    """Records docker/kind calls; ``state`` is what the node cgroup holds after the n-th ``docker update``."""
+    """Records docker/kind calls; ``cpusets`` is every running container's ``--cpuset-cpus`` (updated by calls)."""
 
-    def __init__(self, nodes: str = "lane-control-plane\nlane-worker\n") -> None:
+    def __init__(self, nodes: str = "lane-control-plane\nlane-worker\n", cpusets: dict[str, str] | None = None) -> None:
         self.nodes = nodes
         self.calls: list[list[str]] = []
+        self.cpusets = dict.fromkeys(nodes.split(), "") | (cpusets or {})
 
     def __call__(self, argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         self.calls.append(argv)
-        return subprocess.CompletedProcess(argv, 0, self.nodes if argv[0] == "kind" else "", "")
+        out = ""
+        if argv[0] == "kind":
+            out = self.nodes
+        elif argv[1:3] == ["ps", "-q"]:
+            out = "".join(f"{name}\n" for name in self.cpusets)
+        elif argv[1] == "inspect":
+            out = "".join(f"/{name}|{self.cpusets[name]}\n" for name in argv[4:])
+        elif argv[1] == "update" and "--cpuset-cpus" in argv:
+            self.cpusets[argv[-1]] = argv[argv.index("--cpuset-cpus") + 1]
+        return subprocess.CompletedProcess(argv, 0, out, "")
 
     def updates(self) -> list[list[str]]:
         return [c for c in self.calls if c[:2] == ["docker", "update"]]
@@ -231,8 +244,11 @@ def test_applying_node_limits_twice_issues_the_same_updates_and_reads_back(monke
         "16g",
         "--pids-limit",
         "4096",
+        "--cpuset-cpus",
+        "0-1,8",
         "lane-control-plane",
     ]
+    assert first[1][-3:] == ["--cpuset-cpus", "2-3,10", "lane-worker"]
     assert reads == ["lane-control-plane", "lane-worker"] * 2
 
 
@@ -266,8 +282,97 @@ def test_claim_cpu_reapply_touches_only_cpus_of_our_cluster(monkeypatch: pytest.
     assert docker.calls[0] == ["kind", "get", "nodes", "--name", "lane"]
     assert (
         docker.updates()
-        == [["docker", "update", "--cpus", "3", node] for node in ("lane-control-plane", "lane-worker")] * 2
+        == [
+            ["docker", "update", "--cpus", "3", "--cpuset-cpus", cpuset, node]
+            for node, cpuset in (("lane-control-plane", "0-1,8"), ("lane-worker", "2-3,10"))
+        ]
+        * 2
     )
+
+
+# --- visible CPUs: runtimes size thread pools and direct buffers from the CPUs they can see ------------------------
+
+
+CORES = tuple(frozenset({core, core + 8}) for core in range(8))  # SMT siblings i and i+8, as conftest pins
+
+
+def test_the_cpuset_size_is_the_cap_taken_from_free_whole_cores_first() -> None:
+    """Visibility: a node capped at 3 CPUs sees exactly 3, starting with cores nobody else holds."""
+    assert place_cpus(3, CORES, []).cpus == frozenset({0, 8, 1})
+    assert place_cpus(2, CORES, [frozenset({0, 1})]).cpus == frozenset({2, 10})
+
+
+def test_a_core_whose_sibling_another_container_holds_is_not_preferred() -> None:
+    placement = place_cpus(2, CORES, [frozenset({8})])
+    assert (placement.cpus, placement.shared) == (frozenset({1, 9}), frozenset())
+
+
+def test_without_enough_free_cores_the_least_loaded_cpus_fill_the_set_and_the_overlap_is_named() -> None:
+    """Placement is best effort: share cores rather than refuse the lane."""
+    placement = place_cpus(6, CORES, [frozenset(range(6))], node="lane-worker")
+    assert placement.cpus == frozenset({6, 14, 7, 15, 8, 9})
+    assert placement.shared == frozenset({8, 9})
+
+
+def test_only_a_cap_larger_than_the_host_is_refused() -> None:
+    with pytest.raises(CpusetExhausted, match="lane-worker is capped at 17 CPUs but this host has only 16"):
+        place_cpus(17, CORES, [], node="lane-worker")
+
+
+def test_a_capped_node_sees_only_its_cap_on_cores_no_other_container_holds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 3-CPU node on a big host sees 3 CPUs (opensearch seeing 224 exhausted its direct memory)."""
+    docker = Docker("lane-control-plane\nlane-worker\n", {"someone-else": "0-3", "unpinned": ""})
+    monkeypatch.setattr(subprocess, "run", docker)
+    placements = apply_node_limits("lane", NodeLimits(cpu="2.5", memory="16g"), read=lambda _node: None)
+    assert docker.cpusets["lane-control-plane"] == "4-5,12"
+    assert docker.cpusets["lane-worker"] == "6-7,14"
+    assert docker.cpusets["someone-else"] == "0-3"
+    assert all(not placement.shared for placement in placements)
+
+
+def test_a_lane_that_does_not_fit_in_free_cores_still_starts_and_logs_its_overlap(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    docker = Docker("lane-control-plane\nlane-worker\n", {"other-experiment": "0-5"})
+    monkeypatch.setattr(subprocess, "run", docker)
+    placements = apply_node_limits("lane", NodeLimits(cpu="3", memory="16g"), read=lambda _node: None)
+    assert docker.cpusets["lane-control-plane"] == "6-7,14"
+    assert docker.cpusets["lane-worker"] == "8-10"
+    assert [placement.record()["shared"] for placement in placements] == ["", "8-10"]
+    assert "lane-worker pinned to 8-10 shares cores" in caplog.text
+
+
+def test_a_node_already_on_cpus_no_one_else_holds_keeps_them(monkeypatch: pytest.MonkeyPatch) -> None:
+    docker = Docker("lane-worker\n", {"lane-worker": "4,12", "other": "0-2"})
+    monkeypatch.setattr(subprocess, "run", docker)
+    apply_lane_cpu("lane", "2", read=lambda _node: None)
+    assert docker.updates() == [["docker", "update", "--cpus", "2", "--cpuset-cpus", "4,12", "lane-worker"]]
+
+
+def test_a_node_pinned_onto_another_containers_cpus_is_moved_to_free_cores(monkeypatch: pytest.MonkeyPatch) -> None:
+    docker = Docker("lane-worker\n", {"lane-worker": "4,12", "other": "12"})
+    monkeypatch.setattr(subprocess, "run", docker)
+    apply_lane_cpu("lane", "2", read=lambda _node: None)
+    assert docker.cpusets["lane-worker"] == "0,8"
+
+
+def test_host_cores_group_smt_siblings_from_sysfs(tmp_path: Path) -> None:
+    for cpu, siblings in ((0, "0,2"), (1, "1,3"), (2, "0,2"), (3, "1,3")):
+        topology = tmp_path / f"cpu{cpu}" / "topology"
+        topology.mkdir(parents=True)
+        (topology / "thread_siblings_list").write_text(f"{siblings}\n")
+    assert read_host_cores(tmp_path, frozenset(range(4))) == (frozenset({0, 2}), frozenset({1, 3}))
+    assert read_host_cores(tmp_path, frozenset({0, 1})) == (frozenset({0}), frozenset({1}))  # affinity limits it
+
+
+def test_a_node_that_still_shows_every_host_cpu_fails_closed_naming_the_cause(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(subprocess, "run", Docker("lane-control-plane\n"))
+    with pytest.raises(CgroupMismatch, match="exposes 224 CPUs to its workloads but is capped at 6"):
+        apply_node_limits(
+            "lane",
+            NodeLimits(),
+            read=lambda _node: NodeCgroup("/p/docker-a.scope", 6.0, 16 * GIB, visible_cpus=224),
+        )
 
 
 def test_the_node_cgroup_is_read_from_the_containers_own_scope(tmp_path: Path) -> None:
@@ -279,12 +384,13 @@ def test_the_node_cgroup_is_read_from_the_containers_own_scope(tmp_path: Path) -
     directory.mkdir(parents=True)
     (directory / "cpu.max").write_text("300000 100000\n")
     (directory / "memory.max").write_text(f"{16 * GIB}\n")
+    (directory / "cpuset.cpus.effective").write_text("4-6,10\n")
 
     def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(argv, 0, "42\n", "")
 
     state = read_node_cgroup("lane-worker", run=run, root=tmp_path / "cg", proc=tmp_path / "proc")
-    assert state == NodeCgroup(f"/{scope}", 3.0, 16 * GIB)
+    assert state == NodeCgroup(f"/{scope}", 3.0, 16 * GIB, visible_cpus=4)
     assert state is not None
     assert state.under("sdo-eval.slice")
     assert not state.under("system.slice")

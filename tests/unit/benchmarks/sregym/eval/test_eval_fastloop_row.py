@@ -609,6 +609,21 @@ def test_every_claim_reapplies_the_lane_cpu_cap_to_that_lanes_cluster(
     assert applied == [("c", "4", "x.slice")] * 2  # idempotent: the same cap, every claim
 
 
+def test_a_claim_records_each_nodes_cpuset_and_its_shared_cores(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from benchmarks.sregym.fastloop.lane_cgroup import CpuPlacement
+
+    monkeypatch.setattr(
+        "benchmarks.sregym.eval.fastloop_row.FastloopEnvironment.load", lambda directory: environment(tmp_path)
+    )
+    monkeypatch.setattr("benchmarks.sregym.eval.fastloop_row.resolve_cgroup_parent", lambda setting: setting)
+    placement = CpuPlacement("c-worker", frozenset({4, 5, 6}), frozenset({6}))
+    runner = FastloopRowRunner(settings(tmp_path), "small", apply_cpu=lambda *a, **kw: [placement])
+    lane = runner.claim(cell("vanilla", "vanilla"), "h1", None)
+    assert json.loads(lane.info["cpu_placement"]) == [{"node": "c-worker", "cpuset": "4-6", "shared": "6"}]
+
+
 def test_row_settings_default_to_six_cpus_per_lane_and_an_auto_parent(tmp_path: Path) -> None:
     default = settings(tmp_path)
     assert (default.lane_cpus, default.lane_cgroup_parent) == (6.0, "auto")
