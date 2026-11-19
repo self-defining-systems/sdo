@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/kubereads"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -22,7 +23,7 @@ func (v LiveReadView) DatabaseUsers(t program.DatabaseTarget) ([]program.Databas
 		return nil, err
 	}
 	if t.Pod.Namespace != v.Namespace() {
-		return nil, fmt.Errorf("database catalog outside snapshot namespace")
+		return nil, sdk.Classified("database catalog outside snapshot namespace", sdk.ErrInvalidRead)
 	}
 	captured, err := v.Object(t.Pod)
 	if err != nil || captured == nil || captured.GetUID() == "" {

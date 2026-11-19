@@ -3,7 +3,6 @@ package program
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -29,7 +28,7 @@ const (
 
 // ErrDeadline is returned by a Read past a Diagnose's read budget. A Diagnose
 // turns it into Unknown.
-var ErrDeadline = errors.New("diagnosis read budget exhausted")
+var ErrDeadline = sdk.Classified("diagnosis read budget exhausted", sdk.ErrInvalidRead)
 
 // Query is one structured read; exactly one kind is set.
 //

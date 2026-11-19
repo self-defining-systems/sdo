@@ -9,6 +9,14 @@ package sdk // import "sdo.dev/operator/sdk"
 CONSTANTS
 
 const (
+	ReadClassAbsent      = "absent"
+	ReadClassRefused     = "refused"
+	ReadClassUnavailable = "unavailable"
+	ReadClassInvalid     = "invalid"
+)
+    Read error classes, as ReadErrorClass names them and recordings store them.
+
+const (
 	DeployerFieldManager        = "sdo-deployer"
 	AcceptanceFieldManager      = "sdo-acceptance"
 	ReplicasHandoffFieldManager = "sdo-replicas-handoff"
@@ -49,6 +57,29 @@ const ObservationObserved = "observed"
 
 VARIABLES
 
+var (
+	// ErrUnavailable marks a read that could not observe the state.
+	ErrUnavailable = errors.New("read unavailable")
+	// ErrRefused marks a read the target itself answered with a refusal.
+	ErrRefused = errors.New("read refused by target")
+	// ErrInvalidRead marks a read the program was not allowed to make.
+	ErrInvalidRead = errors.New("invalid read")
+)
+    A read answers one of four things, and a live view, the memory host and a
+    replay give the same answer for the same world:
+
+      - observed: SDO saw the state, including "it is not there" (an absent
+        object is a value, see ErrObjectAbsent); a program may reason on it.
+      - refused: the target answered and said no (a database login was
+        rejected); a program may reason on it and try something else.
+      - unavailable: SDO could not observe (no client, kind not captured,
+        timeout, no accepted source); a program may only treat it as "I do not
+        know".
+      - invalid: the program asked something illegal (a Secret read, a ref
+        outside the namespace, the read budget); a program bug.
+
+    An error that carries no class is unavailable: fail closed.
+
 var ErrNoFieldComparison = errors.New("diff holds no accepted/observed field comparison")
     ErrNoFieldComparison means a diff holds no accepted/observed field
     comparison, such as a baseline diff or a diff read from an unavailable
@@ -59,7 +90,7 @@ var ErrObjectAbsent = errors.New("object is absent from snapshot")
     answered NotFound, or the snapshot holds a complete list of the object's
     kind without it. Absence is an observation a program may reason on.
 
-var ErrObjectNotCaptured = errors.New("object not captured")
+var ErrObjectNotCaptured = Classified("object not captured", ErrUnavailable)
     ErrObjectNotCaptured means the snapshot cannot say whether the object
     exists: its kind was not listed completely. It is a gap in evidence,
     never an absence.
@@ -74,6 +105,11 @@ FUNCTIONS
 func CanonicalObjectKind(raw string) string
     CanonicalObjectKind accepts kubectl aliases and group-qualified kinds.
     Unknown kind spelling is preserved, without inventing an API version.
+
+func Classified(text string, class error) error
+    Classified returns a sentinel error with its own text that also matches
+    class (ErrUnavailable, ErrRefused or ErrInvalidRead) under errors.Is,
+    without changing the text readers and recordings already show.
 
 func ClearingHorizon(detector Detector, view DetectionContext) time.Duration
     ClearingHorizon is how long after a condition resolves a fresh evaluation
@@ -98,6 +134,12 @@ func ContainerStartupAllowance(pod corev1.Pod, name string) time.Duration
 func DecodeTypedObjects(target any, objects []unstructured.Unstructured) error
     DecodeTypedObjects maintains the legacy typed fixture edge without a kind
     map. New kinds remain in Objects and are available through ObjectReader.
+
+func ErrorWithClass(text, class string) error
+    ErrorWithClass rebuilds a recorded read error: the same text, wrapping the
+    sentinel of class, so a replayed failure classifies exactly as it did live.
+    An unknown or empty class is a legacy recording and reads as unavailable,
+    except the SDK's own absent message, which was always an observation.
 
 func FindObject(objects []unstructured.Unstructured, ref ObjectRef) (*unstructured.Unstructured, error)
     FindObject finds ref in objects. A miss is ErrObjectNotCaptured: nothing
@@ -180,42 +222,4 @@ func ProjectWebhookCABundles(value any)
     ProjectWebhookCABundles removes raw caBundle bytes from arbitrary JSON
     trees. It projects embedded last-applied JSON too and mutates only the
     detached tree.
-
-func ProjectWebhookCAJSON(raw []byte) ([]byte, error)
-    ProjectWebhookCAJSON retains the Kubernetes response shape and numeric
-    values while hiding CA bytes before a raw read can reach programs or
-    recordings.
-
-func SDOFieldManagers() []string
-    SDOFieldManagers lists every field manager SDO writes application objects
-    as.
-
-func ScopedObject(source ScopedObservationSource, ref ObjectRef) (*unstructured.Unstructured, error)
-    ScopedObject reads one object of a declared scoped observation target.
-    It is the single projection shared by live and host-side read views.
-
-func SecretDataChangedAt(meta metav1.ObjectMeta) time.Time
-    SecretDataChangedAt derives when a manager other than SDO last wrote a
-    Secret's data from its object metadata alone. managedFields list the field
-    paths each manager owns and when it last changed the object, never values;
-    a manager that owns only labels or annotations does not move the time,
-    and SDO's own managers never do. Data a before-first-apply entry owns dates
-    from creation, the only bound metadata gives for it.
-
-func SelfHealHold(ctx DetectionContext) time.Duration
-    SelfHealHold returns the context's self-heal hold, or DefaultSelfHealHold
-    when the context carries none.
-
-func ServiceExpectsEndpoints(service corev1.Service) bool
-    ServiceExpectsEndpoints reports whether Kubernetes can back a Service with
-    Endpoints, EndpointSlices, or selected pods. ExternalName Services are DNS
-    aliases: Kubernetes never gives them endpoints, even when a selector is left
-    over from a type change. A detector must not report an ExternalName Service
-    for missing ready endpoints or pods.
-
-func SortObjects(objects []unstructured.Unstructured)
-func SourceComparisonText(accepted, observed []byte) string
-    SourceComparisonText renders the accepted and observed comparable fields of
-    one object as SourceDiff.Text. Each side is one JSON document, or null when
-    that side is absent. Sides, Field and ContainerChanges parse this form.
 ```

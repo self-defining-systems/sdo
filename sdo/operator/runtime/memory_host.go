@@ -292,7 +292,7 @@ func (d *preparedRemoteDetector) Detect(ctx context.Context, _ sdk.DetectionCont
 	}
 	result := response.Results[0]
 	if result.Error != "" {
-		return nil, errors.New(result.Error)
+		return nil, sdk.ErrorWithClass(result.Error, result.ErrorClass)
 	}
 	return findingsState(result.Findings), nil
 }

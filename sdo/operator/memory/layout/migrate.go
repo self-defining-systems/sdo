@@ -162,6 +162,10 @@ var schemaMigrations = map[int]func(*schemaPlan) error{
 	// earlier outcome that carries it is read with the field dropped: the step
 	// only stamps.
 	11: func(*schemaPlan) error { return nil },
+	// Version 12 adds the optional error_class to recorded failed reads. An
+	// earlier recording stays valid without it and reads as unavailable: the
+	// step only stamps and leaves every recording byte for byte.
+	12: func(*schemaPlan) error { return nil },
 }
 
 type fileRewrite struct {

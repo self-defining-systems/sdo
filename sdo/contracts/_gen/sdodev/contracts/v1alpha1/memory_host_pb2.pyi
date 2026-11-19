@@ -198,14 +198,16 @@ class EvaluateRequest(_message.Message):
     def __init__(self, detector_ids: _Optional[_Iterable[str]] = ..., mirror_sequence: _Optional[int] = ..., observation: _Optional[_Union[MemoryObservation, _Mapping]] = ..., reads: _Optional[_Iterable[_Union[MemoryReadReceipt, _Mapping]]] = ...) -> None: ...
 
 class MemoryDetectorResult(_message.Message):
-    __slots__ = ("detector_id", "findings", "error")
+    __slots__ = ("detector_id", "findings", "error", "error_class")
     DETECTOR_ID_FIELD_NUMBER: _ClassVar[int]
     FINDINGS_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
+    ERROR_CLASS_FIELD_NUMBER: _ClassVar[int]
     detector_id: str
     findings: _containers.RepeatedCompositeFieldContainer[_messages_pb2.Finding]
     error: str
-    def __init__(self, detector_id: _Optional[str] = ..., findings: _Optional[_Iterable[_Union[_messages_pb2.Finding, _Mapping]]] = ..., error: _Optional[str] = ...) -> None: ...
+    error_class: str
+    def __init__(self, detector_id: _Optional[str] = ..., findings: _Optional[_Iterable[_Union[_messages_pb2.Finding, _Mapping]]] = ..., error: _Optional[str] = ..., error_class: _Optional[str] = ...) -> None: ...
 
 class EvaluateResponse(_message.Message):
     __slots__ = ("results",)
@@ -214,16 +216,18 @@ class EvaluateResponse(_message.Message):
     def __init__(self, results: _Optional[_Iterable[_Union[MemoryDetectorResult, _Mapping]]] = ...) -> None: ...
 
 class MemoryReadReceipt(_message.Message):
-    __slots__ = ("operation", "arguments", "result", "error")
+    __slots__ = ("operation", "arguments", "result", "error", "error_class")
     OPERATION_FIELD_NUMBER: _ClassVar[int]
     ARGUMENTS_FIELD_NUMBER: _ClassVar[int]
     RESULT_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
+    ERROR_CLASS_FIELD_NUMBER: _ClassVar[int]
     operation: str
     arguments: _struct_pb2.Value
     result: _struct_pb2.Value
     error: str
-    def __init__(self, operation: _Optional[str] = ..., arguments: _Optional[_Union[_struct_pb2.Value, _Mapping]] = ..., result: _Optional[_Union[_struct_pb2.Value, _Mapping]] = ..., error: _Optional[str] = ...) -> None: ...
+    error_class: str
+    def __init__(self, operation: _Optional[str] = ..., arguments: _Optional[_Union[_struct_pb2.Value, _Mapping]] = ..., result: _Optional[_Union[_struct_pb2.Value, _Mapping]] = ..., error: _Optional[str] = ..., error_class: _Optional[str] = ...) -> None: ...
 
 class MemoryProgramInput(_message.Message):
     __slots__ = ("program_id", "bindings", "mirror_sequence", "observation", "reads")

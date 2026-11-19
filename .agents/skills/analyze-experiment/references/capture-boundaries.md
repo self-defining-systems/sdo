@@ -30,7 +30,14 @@ Only actual primitive reads may supply replay answers. Shared runtime reads add 
 survive JSON capture/load, including unavailable results. Before the fix that put `traffic.WindowSet` and
 `metrics.ResultSet` in `inputs.Sources`, controller captures (taken through the cycle read view)
 had no `traffic` or `metrics` fields: their absence in such a run is that bug, not an idle generator. `readings` uses the existing
-PrimitiveCall method/arguments/result/error shape. Later Diagnose calls remain in the
+PrimitiveCall method/arguments/result/error shape. A failed call also carries `error_class`
+(`absent`, `refused`, `unavailable` or `invalid`; the memory-host receipt's `error_class` is the same
+field). Read it before concluding a read "failed": a `refused` catalog login or an `absent` object is an
+observation the program may reason on, `unavailable` is "SDO could not observe", `invalid` is a program
+bug. A recording with no `error_class` predates the field and reads as `unavailable`. `DatabaseUsers`
+captures are keyed by target **and credential reference** (never a value), so a program that tries an
+admin credential and falls back to another leaves one recording per credential; before this key the
+second credential's call was dropped and the fallback could not replay. Later Diagnose calls remain in the
 existing phase-specific recording files; metrics/traffic calls are recorded there too.
 Repeated logical reads can appear even though the runtime served one cached source read.
 Count source cost separately; a recording count is not a network-request count. A late ConfigMap

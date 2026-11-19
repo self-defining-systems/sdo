@@ -85,7 +85,7 @@ func absenceInputs(view sdk.DetectionContext, frozen map[sdk.ObjectRef]bool, wan
 	refs, listErr := acceptedRefs(view, lister)
 	call := sdktest.PrimitiveCall{Method: memoryhost.AcceptedRefsMethod, Arguments: []byte("[]")}
 	if listErr != nil {
-		call.Result, call.Error = []byte("null"), listErr.Error()
+		call.Result, call.Error, call.ErrorClass = []byte("null"), listErr.Error(), sdk.ReadErrorClass(listErr)
 	} else {
 		encoded, err := json.Marshal(refs)
 		if err != nil {
