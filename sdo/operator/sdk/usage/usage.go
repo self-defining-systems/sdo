@@ -4,6 +4,7 @@ package usage
 import (
 	"fmt"
 	"math"
+	"sort"
 	"time"
 
 	"sdo.dev/operator/sdk"
@@ -152,41 +153,43 @@ type Point struct {
 	Value float64
 }
 
-// TimeToThreshold fits least squares against seconds since the first point.
-// False means insufficient or non-increasing data; zero means already reached.
+// TimeToThreshold is how long the newest point takes to reach threshold at the
+// series' growth rate: the median slope over every pair of points (Theil-Sen),
+// so a burst covering under about a quarter of the window cannot set the rate
+// the way it sets a least-squares slope. False means insufficient or
+// non-increasing data; zero means already reached.
 func TimeToThreshold(points []Point, threshold float64) (time.Duration, bool) {
 	if len(points) < 2 || !finite(threshold) {
 		return 0, false
 	}
-	var x, y, xx, xy float64
 	for i, p := range points {
 		if !finite(p.Value) || (i > 0 && !p.At.After(points[i-1].At)) {
 			return 0, false
 		}
-		t := p.At.Sub(points[0].At).Seconds()
-		x += t
-		y += p.Value
-		xx += t * t
-		xy += t * p.Value
 	}
-	n := float64(len(points))
-	denom := n*xx - x*x
-	if denom <= 0 {
-		return 0, false
-	}
-	slope := (n*xy - x*y) / denom
-	if points[len(points)-1].Value >= threshold {
+	last := points[len(points)-1]
+	if last.Value >= threshold {
 		return 0, true
+	}
+	slopes := make([]float64, 0, len(points)*(len(points)-1)/2)
+	for i := range points {
+		for j := i + 1; j < len(points); j++ {
+			slopes = append(slopes, (points[j].Value-points[i].Value)/points[j].At.Sub(points[i].At).Seconds())
+		}
+	}
+	sort.Float64s(slopes)
+	slope := slopes[len(slopes)/2]
+	if len(slopes)%2 == 0 {
+		slope = (slopes[len(slopes)/2-1] + slope) / 2
 	}
 	if slope <= 0 {
 		return 0, false
 	}
-	intercept := (y - slope*x) / n
-	seconds := (threshold-intercept)/slope - points[len(points)-1].At.Sub(points[0].At).Seconds()
+	seconds := (threshold - last.Value) / slope
 	if !finite(seconds) || seconds > float64(math.MaxInt64)/float64(time.Second) {
 		return 0, false
 	}
-	return time.Duration(math.Max(0, seconds) * float64(time.Second)), true
+	return time.Duration(seconds * float64(time.Second)), true
 }
 func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
 

@@ -53,6 +53,13 @@ const MaxAdmissionWebhooks = 16
 
 const MaxObservationObjects = 500
 const MaxObservationTargets = 32
+const MetadataPredicted = "predicted"
+    MetadataPredicted is the Metadata key, set to true, of a finding about a
+    condition the detector forecasts from a trend rather than one that holds
+    now (a volume that will fill within hours). Such a finding is evidence;
+    a gate on current health, such as install admission, never treats it as a
+    contradiction.
+
 const ObservationObserved = "observed"
 
 VARIABLES
@@ -201,6 +208,9 @@ func PodStarting(ctx DetectionContext, pod corev1.Pod) bool
     or a pod whose containers have not started yet within the self-heal hold of
     its creation (image pull, scheduling, init containers).
 
+func Predicted(finding Finding) bool
+    Predicted reports whether the finding is a forecast (MetadataPredicted).
+
 func ProjectCABundle(ca []byte) []byte
     ProjectCABundle replaces certificate bytes with an idempotent digest.
     It is shared by typed observations, raw API reads and capture projection.
@@ -216,10 +226,4 @@ func ProjectMutatingWebhook(o admissionv1.MutatingWebhookConfiguration) admissio
 func ProjectObservationObject(object *unstructured.Unstructured) (*unstructured.Unstructured, error)
     ProjectObservationObject uses exactly the SDK projection for source and
     drift.
-
-func ProjectValidatingWebhook(o admissionv1.ValidatingWebhookConfiguration) admissionv1.ValidatingWebhookConfiguration
-func ProjectWebhookCABundles(value any)
-    ProjectWebhookCABundles removes raw caBundle bytes from arbitrary JSON
-    trees. It projects embedded last-applied JSON too and mutates only the
-    detached tree.
 ```
