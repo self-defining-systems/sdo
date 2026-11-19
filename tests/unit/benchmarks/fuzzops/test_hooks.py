@@ -495,7 +495,82 @@ def test_idle_gives_up_waiting_for_store_baselines_after_the_bound_and_records_i
     assert lines[-1] == "idle"
     assert "redis" in json.loads((lane / hooks.BASELINE_MISSING_RECORD).read_text())["reason"]
     assert (out / hooks.BASELINE_MISSING_RECORD).is_file()
-    assert not (lane / hooks.BASELINE_WAIT_RECORD).exists()
+
+
+def _unpromoted_store_lane(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, **extra: str) -> dict[str, str]:
+    """An otherwise idle controller whose redis store baseline is not promoted (a fault reset it), on a lane."""
+    fresh = (datetime.now(UTC) - timedelta(seconds=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    state = {
+        "version": "sdo.controller/v1",
+        "history": [{"detector_id": "store-state-redis", "evaluated_at": fresh, "status": "clear"}],
+    }
+    configmap = {"metadata": {"managedFields": [{"time": fresh}]}, "data": {"runtime-state.json": json.dumps(state)}}
+    pods = {"items": [{"metadata": {"name": "p"}, "status": {"conditions": [{"type": "Ready", "status": "True"}]}}]}
+    monkeypatch.setattr(
+        hooks.subprocess, "run", _fake_kubectl({"configmap": configmap, "pods": pods, "logs": "no promotions"}, [])
+    )
+    lane = tmp_path / "lane"
+    lane.mkdir(exist_ok=True)
+    return {
+        "FUZZOPS_NAMESPACE": "ns1",
+        "FUZZOPS_KUBE_CONTEXT": "kind-c",
+        "KUBECONFIG": "/k",
+        "BENCH_LANE_DIR": str(lane),
+        **extra,
+    }
+
+
+def _expire_baseline_wait(env: dict[str, str]) -> None:
+    started = datetime.now(UTC) - timedelta(seconds=hooks.BASELINE_WAIT_MAX_S + 5)
+    record = Path(env["BENCH_LANE_DIR"]) / hooks.BASELINE_WAIT_RECORD
+    record.write_text(json.dumps({"since": started.strftime("%Y-%m-%dT%H:%M:%SZ")}))
+
+
+def test_an_expired_store_baseline_wait_answers_idle_on_every_poll_until_the_run_ends(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # the bench's waits need idle twice in a row (settle) or for a span (the inject gate): an expired wait that
+    # answered idle once and then restarted itself would hold them for another full wait, again and again
+    env = _unpromoted_store_lane(monkeypatch, tmp_path, BENCH_RUN="r1")
+    lines: list[str] = []
+    assert hooks.idle(env, out=lines.append) == 1
+    _expire_baseline_wait(env)
+    assert [hooks.idle(env, out=lines.append) for _ in range(3)] == [0, 0, 0], lines
+    hooks.end_run(env)
+    assert hooks.idle(env, out=lines.append) == 1
+    assert lines[-1].startswith(hooks.BASELINE_BLIND)
+
+
+@pytest.mark.parametrize(
+    "settle_env",
+    [
+        # settle with the cell's own incident known
+        {"BENCH_OWN_DETECTED_AT": "2026-01-01T00:00:00Z"},
+        # settle without it (no BENCH_RUN), and the window end inside the run (its own BENCH_RUN)
+        {},
+        {"BENCH_RUN": "r1"},
+    ],
+)
+def test_after_the_inject_an_unpromoted_store_baseline_never_holds_idle(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, settle_env: dict[str, str]
+) -> None:
+    gate = _unpromoted_store_lane(monkeypatch, tmp_path, BENCH_RUN="r1")
+    hooks.mark_injected(gate)  # ``watch`` started for r1: the inject happened
+    env = _unpromoted_store_lane(monkeypatch, tmp_path, **settle_env)
+    lines: list[str] = []
+    assert [hooks.idle(env, out=lines.append) for _ in range(2)] == [0, 0], lines
+    assert not (tmp_path / "lane" / hooks.BASELINE_WAIT_RECORD).exists()
+
+
+def test_the_next_runs_inject_gate_still_waits_for_store_baselines(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # a run that ended without its boundary verb (the bench lost it) does not exempt the next run's gate
+    hooks.mark_injected(_unpromoted_store_lane(monkeypatch, tmp_path, BENCH_RUN="r1"))
+    env = _unpromoted_store_lane(monkeypatch, tmp_path, BENCH_RUN="r2")
+    lines: list[str] = []
+    assert hooks.idle(env, out=lines.append) == 1
+    assert lines[-1].startswith(hooks.BASELINE_BLIND)
 
 
 def test_idle_reports_a_missing_controller_as_busy(monkeypatch: pytest.MonkeyPatch) -> None:

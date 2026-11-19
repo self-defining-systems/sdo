@@ -332,6 +332,10 @@ BASELINE_MISSING_RECORD = "no-baseline.json"
 #: How long the pre-inject gate waits for promoted store baselines before injecting without them.
 BASELINE_WAIT_MAX_S = 600.0
 BASELINE_BLIND = "blind: no promoted baseline yet for "
+#: Written by ``watch`` (fuzzops starts it right after the inject) with the run it observes; removed at every run or
+#: lane boundary (``collect`` and the lane verbs). While it stands, ``idle`` answers for settle or the window end, and
+#: store baselines (which only an inject needs) are not waited for.
+INJECTED_RECORD = "injected.json"
 #: The projected sources under the lane's evidence directory (``devtree``).
 DEV_DIRECTORY = ".dev"
 
@@ -1283,6 +1287,38 @@ def reset_when_running(
         sleep(15.0)
 
 
+def after_inject(env: Mapping[str, str]) -> bool:
+    """Whether this ``idle`` call comes after the run's inject (settle, the window end) rather than before it (the
+    inject gate). The bench names the cell's own incident only in settle; ``watch`` starts only after the inject and
+    records its run, which the gate's own call (``BENCH_RUN`` set to the next run) never matches."""
+    if env.get(OWN_DETECTED_ENV):
+        return True
+    lane = env.get("BENCH_LANE_DIR")
+    if not lane:
+        return False
+    try:
+        record = json.loads((Path(lane) / INJECTED_RECORD).read_text())
+    except (OSError, ValueError):
+        return False
+    run = env.get("BENCH_RUN", "")
+    return isinstance(record, dict) and (not run or record.get("run") == run)
+
+
+def mark_injected(env: Mapping[str, str]) -> None:
+    lane = env.get("BENCH_LANE_DIR")
+    if lane:
+        record = {"run": env.get("BENCH_RUN", ""), "since": _now()}
+        (Path(lane) / INJECTED_RECORD).write_text(json.dumps(record) + "\n")
+
+
+def end_run(env: Mapping[str, str]) -> None:
+    """A run or lane boundary: the next ``idle`` is an inject gate again, with its own store-baseline wait."""
+    lane = env.get("BENCH_LANE_DIR")
+    if lane:
+        (Path(lane) / INJECTED_RECORD).unlink(missing_ok=True)
+    clear_baseline_wait(env)
+
+
 def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     control = control_namespace(env)
     kube = _kube(env)
@@ -1303,7 +1339,9 @@ def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
         return 0
     # No log yet: baselines are judged by the second verdict, after the log read an otherwise idle controller earns.
     why = idle_verdict(state, updated, ready, datetime.now(UTC), baselines=False)
-    if not why:
+    # Store baselines gate only the inject: after it, settle and the window end need idle twice in a row, which a
+    # store whose baseline the fault reset (it re-promotes only later) would never give.
+    if not why and not after_inject(env):
         # Only an otherwise idle controller is worth the full log read the baselines need.
         try:
             log = controller_log(kube, control)
@@ -1313,10 +1351,11 @@ def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
         why = idle_verdict(state, updated, ready, datetime.now(UTC), controller_log=log)
         if why.startswith(BASELINE_BLIND) and baseline_wait_expired(env, why):
             why = ""
+        elif not why:
+            clear_baseline_wait(env)
     if why:
         out(why)
         return 1
-    clear_baseline_wait(env)
     record_prepared_state(env, kube, control)
     out("idle")
     return 0
@@ -1325,7 +1364,9 @@ def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
 def baseline_wait_expired(env: Mapping[str, str], why: str, now: datetime | None = None) -> bool:
     """Whether the pre-inject gate has waited ``BASELINE_WAIT_MAX_S`` for store baselines. The first hold is
     recorded in the lane directory; once the bound passes, the missing stores are noted (``no-baseline.json``, also in
-    ``BENCH_OUT``) and the gate lets the inject go, so a memory whose baselines never promote does not stall forever."""
+    ``BENCH_OUT``) and the gate lets the inject go, so a memory whose baselines never promote does not stall forever.
+    An expired wait stays expired (every later poll is idle, as a gate that needs idle for a span requires) until
+    the stores are promoted or the run ends (``end_run``)."""
     lane = env.get("BENCH_LANE_DIR")
     if not lane:
         return False
@@ -1384,6 +1425,7 @@ def record_prepared_state(env: Mapping[str, str], kube: Kube, control: str) -> N
 
 def watch(env: Mapping[str, str]) -> int:
     """The observer only: the evidence sink carries the transcripts, so no snapshot is sealed on the PVC."""
+    mark_injected(env)
     argv = ["--control-namespace", control_namespace(env)]
     fault = env.get("BENCH_FAULT", "none")
     if fault and fault != "none":
@@ -2402,6 +2444,10 @@ VERBS = (
 )
 
 
+#: Verbs that end a run or start a lane over: the next ``idle`` is an inject gate (``end_run``).
+RUN_BOUNDARY_VERBS = frozenset({"prepare", "swap", "reset", "snapshot", "collect", "reset-incidents", "teardown"})
+
+
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if not args or args[0] not in (*VERBS, "baseline"):
@@ -2409,6 +2455,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     verb, env = args[0], os.environ
     try:
+        if verb in RUN_BOUNDARY_VERBS:
+            end_run(env)
         if verb == "baseline":
             return baseline_main(args[1:])
         if verb == "watch":
