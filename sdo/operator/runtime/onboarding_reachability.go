@@ -27,9 +27,17 @@ type confirmedDetector interface {
 	Confirmed(sdk.DetectionContext) bool
 }
 
+// detectorsNeedConfirmation reports whether any detector can be unconfirmed:
+// one with its own contract, or a traffic consumer, which detectorConfirmed
+// judges by its workloads' samples. A detector run behind the memory host has
+// no contract of its own, so a consumer must count without one, or an install
+// whose probes warm after start-up's full batch is never swept and expires.
 func detectorsNeedConfirmation(detectors []sdk.Detector) bool {
 	for _, detector := range detectors {
 		if _, ok := detector.(confirmedDetector); ok {
+			return true
+		}
+		if _, ok := detector.(traffic.Consumer); ok {
 			return true
 		}
 	}
