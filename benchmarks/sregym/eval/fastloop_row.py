@@ -62,18 +62,23 @@ ADMISSION_RETRIES = 2
 PRE_INJECTION_RETRY_MARKERS = ("SDO rejected onboarding", "no-fault rehearsal has unhealthy", "wipe could not remove")
 
 
-def _admission_rejected_before_injection(results: Path) -> bool:
+def _rejected_before_injection(results: Path) -> bool:
+    """Whether the attempt's record says it stopped before any injection, for one of the retryable causes."""
     path = results / "incidents.jsonl"
     if not path.is_file():
         return False
     try:
-        record = json.loads(path.read_text().splitlines()[0])
+        record = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
     except (OSError, ValueError, IndexError):
         return False
-    error = str(record.get("error") or "")
-    return (record.get("injection") or {}).get("state") == "not_injected" and any(
-        marker in error for marker in PRE_INJECTION_RETRY_MARKERS
+    injection = record.get("injection") or {}
+    text = f"{record.get('error') or ''} {record.get('infra_error') or ''}"
+    return (
+        injection.get("state") == "not_injected"
+        and injection.get("stage") == "pre_injection"
+        and any(marker in text for marker in PRE_INJECTION_RETRY_MARKERS)
     )
+
 
 class RowSettings(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -466,32 +471,38 @@ class FastloopRowRunner:
             + "\n",
             encoding="utf-8",
         )
-        attempt = len(list((environment.run_dir / "results").glob(f"{run_id(self.stage, cell, 0)[:-3]}-a*")))
-        row_id = run_id(self.stage, cell, attempt)
-        command = row_command(self.settings, environment, cell, row_id, stream, state["planned"])
-        (directory / "command.json").write_text(json.dumps(command, indent=2) + "\n", encoding="utf-8")
-        started = self._now()
-        out = (directory / "row.stdout.log").open("a")
-        err = (directory / "row.stderr.log").open("a")
-        process = self._start(command, cwd=self.settings.code_root, stdout=out, stderr=err)
-        results = environment.run_dir / "results" / row_id
-        state.update(
-            {"results": results, "process": process, "handles": (out, err), "started": started, "online_end": None}
-        )
-        deadline = started + context.config.cell_cap_seconds + 600
-        online = online_checkpoint_path(results / "incidents.jsonl", 0)
-        while not online.is_file() and process.poll() is None:
-            if self._now() > deadline:
-                self._stop(process)
-                break
-            self._sleep(self.settings.poll_seconds)
-        if online.is_file():
-            record = IncidentRecord.model_validate_json(online.read_text(encoding="utf-8"))
-            self.records[cell.id] = record
-            state["online_end"] = self._now()
-            return map_record(record, cell, memory_head=None)
+        for admission_try in range(1 + ADMISSION_RETRIES):
+            attempt = len(list((environment.run_dir / "results").glob(f"{run_id(self.stage, cell, 0)[:-3]}-a*")))
+            row_id = run_id(self.stage, cell, attempt)
+            command = row_command(self.settings, environment, cell, row_id, stream, state["planned"])
+            (directory / "command.json").write_text(json.dumps(command, indent=2) + "\n", encoding="utf-8")
+            started = self._now()
+            out = (directory / "row.stdout.log").open("a")
+            err = (directory / "row.stderr.log").open("a")
+            process = self._start(command, cwd=self.settings.code_root, stdout=out, stderr=err)
+            results = environment.run_dir / "results" / row_id
+            state.update(
+                {"results": results, "process": process, "handles": (out, err), "started": started, "online_end": None}
+            )
+            deadline = started + context.config.cell_cap_seconds + 600
+            online = online_checkpoint_path(results / "incidents.jsonl", 0)
+            while not online.is_file() and process.poll() is None:
+                if self._now() > deadline:
+                    self._stop(process)
+                    break
+                self._sleep(self.settings.poll_seconds)
+            if online.is_file():
+                record = IncidentRecord.model_validate_json(online.read_text(encoding="utf-8"))
+                self.records[cell.id] = record
+                state["online_end"] = self._now()
+                return map_record(record, cell, memory_head=None)
+            completed = self._finish_process(directory, state)
+            if admission_try < ADMISSION_RETRIES and _rejected_before_injection(results):
+                # The fault was never injected: the install window or the clean-app rehearsal failed on a slow or
+                # loaded host, not on the application. Both arms start the next attempt from a clean wipe.
+                continue
+            break
         # The row ended without an online end: an error before the grade, or a row that finished in one step.
-        completed = self._finish_process(directory, state)
         path = results / "incidents.jsonl"
         if not path.is_file():
             return ArmResult(
