@@ -1769,7 +1769,12 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	safe := true
 	var closureGuard *responderClosureGuard
 	if early {
-		closureGuard, release, safe = acquireClosureGuard(loop)
+		var state closureGuardState
+		closureGuard, release, state = acquireClosureGuard(loop)
+		if state == closureGuardBusy {
+			return
+		}
+		safe = state == closureGuardHeld
 		if safe {
 			guard = closureGuard.observation
 		}
