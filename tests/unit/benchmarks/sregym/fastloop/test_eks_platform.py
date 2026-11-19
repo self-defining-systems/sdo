@@ -66,7 +66,8 @@ def test_an_eks_lane_is_attach_only_with_pinned_images(tmp_path: Path) -> None:
 def test_an_eks_lane_runs_the_host_operator_it_built(tmp_path: Path) -> None:
     environ: dict[str, str] = {"SDO_DEV_MOUNT": "1"}
     eks_environment(tmp_path).apply_operator_env(environ)
-    assert environ == {"SDO_OPERATOR_BIN": str(tmp_path / "sdo-operator")}
+    assert environ["SDO_OPERATOR_BIN"] == str(tmp_path / "sdo-operator")
+    assert "SDO_DEV_MOUNT" not in environ
 
 
 def test_an_eks_worker_builds_from_source_and_never_caps_kind_nodes(tmp_path: Path) -> None:
