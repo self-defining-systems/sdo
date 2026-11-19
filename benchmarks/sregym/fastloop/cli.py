@@ -734,6 +734,10 @@ def _up(args: argparse.Namespace) -> int:
             cluster_scoped(KubectlLaneCluster(environment.kubeconfig).list_objects()),
         )
     environment.save()
+    if environment.eks is not None:
+        from benchmarks.sregym.fastloop.eks_lane import provision_opus_pool
+
+        provision_opus_pool(environment)
     if app_recreated:
         AttemptMarker(environment.run_dir).end(())
     if environment.parallel_root is not None:
@@ -1624,6 +1628,11 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
         )
         prepare_dev_mount(*mount_args, environment.parallel_root, evidence_root=environment.evidence_root)
     environment.apply_operator_env(os.environ)
+    if environment.eks is not None:
+        from benchmarks.sregym.fastloop.eks_lane import provision_opus_pool
+
+        # Nodes may have been replaced since the last row (scale to zero and back).
+        provision_opus_pool(environment)
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
     results_dir.mkdir(parents=True, exist_ok=True)
     (results_dir / "fault_descriptions.json").write_text(
