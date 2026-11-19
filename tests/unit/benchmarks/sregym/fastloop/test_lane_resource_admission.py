@@ -952,6 +952,8 @@ def test_warm_transaction_consumes_real_admission_and_exact_revision(lane, monke
         full_reset=lambda: pytest.fail("proof must not reset directly"),
     )
     warm.admission = gate
+    # Fresh-install equivalence of the resident state has its own tests (test_resident_start.py).
+    monkeypatch.setattr(WarmEnvironment, "_require_fresh_equivalent", lambda self, *args: None)
     if evaluated_revision == "a" * 40:
         assert warm.prove(datetime.now(timezone.utc), "a" * 40)["passed"] is True
     else:

@@ -195,7 +195,32 @@ class WarmEnvironment:
         state = self.ops.runtime_state(self.control)
         if state.get("setup_evaluated_revision") != revision:
             raise ValueError("controller has not evaluated the accepted revision")
+        self._require_fresh_equivalent(state, not_before, revision)
         return proof
+
+    def _require_fresh_equivalent(self, state: dict[str, Any], not_before: datetime, revision: str) -> None:
+        """The resident install starts this row only from what a fresh install would hold at injection."""
+        from benchmarks.sregym.fastloop.resident_start import ResidentStart, resident_start_violations
+        from benchmarks.sregym.fastloop.setup_proof import digest
+
+        env = self.environment
+        names = kubectl(["get", "configmaps", "-o", "name"], namespace=self.control, kubeconfig=env.kubeconfig).stdout
+        record = PersistentState.load(env.state_path).controllers.get(env.namespace)
+        reference = env.run_dir / "fresh-onboarding" / f"{self.planned_commit or revision}.json"
+        violations = resident_start_violations(
+            ResidentStart(
+                state=state,
+                planned_commit=self.planned_commit or revision,
+                accepted_head=revision,
+                boundary=not_before.isoformat().replace("+00:00", "Z"),
+                control_configmaps=tuple(name.removeprefix("configmap/") for name in names.split()),
+                config_digest=digest(controller_settings(record.runtime_config)) if record else "",
+                expected_config_digest=digest(controller_settings(runtime_config_payload(self.config))),
+                onboarding_reference=json.loads(reference.read_text()) if reference.is_file() else None,
+            )
+        )
+        if violations:
+            raise ValueError("eval: resident install differs from a fresh install: " + "; ".join(violations))
 
     def full_reset(self) -> None:
         if self.environment.shared_accepted_id:
