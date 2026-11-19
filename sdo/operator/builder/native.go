@@ -28,6 +28,10 @@ type Config struct {
 	// IncidentCapture is the controller's capture directory of the incident under test (its open@* snapshots). Set, every
 	// program's Mitigate is run on it and its plan validated.
 	IncidentCapture string
+	// OwnIncidentCapture is the same capture offered to the own-incident replay: the Diagnose of every playbook new in
+	// the change is run on it. It differs from IncidentCapture only where the caller can supply the capture but is not a
+	// reflection check, as in the broker's validation subprocess.
+	OwnIncidentCapture string
 	// ProgramModule pins JIT imports to the accepted diagnostics module name.
 	// It never compiles checkout detector code.
 	ProgramModule string

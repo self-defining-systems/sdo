@@ -14,6 +14,7 @@ from benchmarks.sregym.eval.cell import (
     Lane,
     Verdict,
 )
+from benchmarks.sregym.eval.closing import ClosingResult
 from benchmarks.sregym.eval.health import ProbeResult, ProbeSample
 from benchmarks.sregym.eval.plan import AppConfig, EvalConfig
 from benchmarks.sregym.eval.results import TokenRow
@@ -179,3 +180,38 @@ def make_context(
         sleep=clock.sleep,
     )
     return context, backend
+
+
+@dataclass
+class DrainingExecutor(FakeExecutor):
+    """An executor whose row ends at the committed outcome and whose closing turn drains on the held lane."""
+
+    drain_seconds: float = 600.0
+    closing_status: str = "drained"
+    closing_commit: str | None = "closing-head"
+    backend: FakeBackend | None = None
+    during_drain: list[object] = field(default_factory=list)
+    drain_error: str | None = None
+
+    def drain(self, lane: Lane, cell: Cell, directory: Path, context: ArmContext) -> ClosingResult:
+        # What a runner may observe while the lane is still held: the online row is already on disk.
+        self.during_drain.append(
+            {
+                "row_json": (directory / "row.json").is_file(),
+                "manifest": (directory / "manifest.json").is_file(),
+                "released": list(self.backend.released) if self.backend else None,
+            }
+        )
+        if self.drain_error:
+            raise RuntimeError(self.drain_error)
+        self.clock.sleep(self.drain_seconds)
+        return ClosingResult(
+            status=self.closing_status,  # type: ignore[arg-type]
+            incident_id="incident-1",
+            closing_s=self.drain_seconds - 40,
+            recovery_s=25.0,
+            memory_commit_after=self.closing_commit if self.closing_status == "drained" else None,
+            decision="updated" if self.closing_status == "drained" else "not_drained",
+            learning={"playbooks": {"added": ["p-new"]}, "commit": self.closing_commit},
+            offline_fallback=TokenRow(uncached_input=1, cache_read=2, cache_write=3, output=4, requests=5, usd=0.5),
+        )

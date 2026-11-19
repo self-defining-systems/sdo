@@ -52,6 +52,17 @@ if TYPE_CHECKING:
     )
     from benchmarks.sregym.adapter.fault_reversion import FaultReversion, grade_faults
     from benchmarks.sregym.adapter.healthy_baseline import HealthyBaselineCaptureOps, kubectl_capture_ops
+    from benchmarks.sregym.adapter.host_memory import (
+        HostMemoryPolicy,
+        HostMemoryRefused,
+        assert_host_memory_admission,
+        assert_lane_budget,
+        host_check,
+        host_memory_refusal,
+        memory_pressure_avg60,
+        parse_memory_size,
+        running_lane_caps,
+    )
     from benchmarks.sregym.adapter.image_entrypoints import (
         BENCHMARK_IMAGE_ENTRY_POINTS,
         assert_image_entrypoints,
@@ -118,6 +129,7 @@ if TYPE_CHECKING:
         runtime_config_payload,
         teardown,
         wait_for_maintenance_ack,
+        wait_for_outcome_commit,
     )
     from benchmarks.sregym.adapter.processes import bind_state
     from benchmarks.sregym.adapter.runtime import (
@@ -148,6 +160,15 @@ _EXPORTS: dict[str, str] = {
     "replace_allocated": "kubernetes_content",
     "Deadline": "budgets",
     "DeadlineExhaustedError": "budgets",
+    "HostMemoryPolicy": "host_memory",
+    "HostMemoryRefused": "host_memory",
+    "assert_host_memory_admission": "host_memory",
+    "assert_lane_budget": "host_memory",
+    "host_check": "host_memory",
+    "host_memory_refusal": "host_memory",
+    "memory_pressure_avg60": "host_memory",
+    "parse_memory_size": "host_memory",
+    "running_lane_caps": "host_memory",
     "HELPER_NAMESPACE": "lane_resources",
     "LaneResourcePolicy": "lane_resources",
     "allowed_namespaces": "lane_resources",
@@ -221,6 +242,7 @@ _EXPORTS: dict[str, str] = {
     "pause_for_recovery": "persistent",
     "record_failed_closure": "persistent",
     "run_persistent_stage": "persistent",
+    "wait_for_outcome_commit": "persistent",
     "teardown": "persistent",
     "RuntimeConfig": "runtime",
     "DeploymentPolicyConfig": "deployment_source",
@@ -276,6 +298,15 @@ __all__ = [
     "assert_host_disk_headroom",
     "assert_host_headroom",
     "assert_lane_resources",
+    "HostMemoryPolicy",
+    "HostMemoryRefused",
+    "assert_host_memory_admission",
+    "assert_lane_budget",
+    "host_check",
+    "host_memory_refusal",
+    "memory_pressure_avg60",
+    "parse_memory_size",
+    "running_lane_caps",
     "StabilizationError",
     "assert_stable_workloads",
     "incident_work_open",
@@ -347,6 +378,7 @@ __all__ = [
     "run_persistent_stage",
     "teardown",
     "wait_for_maintenance_ack",
+    "wait_for_outcome_commit",
 ]
 
 

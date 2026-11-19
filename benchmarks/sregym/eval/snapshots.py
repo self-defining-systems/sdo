@@ -4,21 +4,29 @@ Per app the store keeps one repository holding the onboarding ``base`` commit, e
 (``refs/first-try/<problem>``), and the snapshots built from them: ``own:<problem>`` (base plus that problem's own
 delta) and ``merged`` (base plus every first try's delta). Snapshots are built with git plumbing on a temporary
 index, so no checkout is touched. A delta is what a first try changed under the memory roots in ``DELTA_ROOTS``; its
-unit is the first path segment under a root (a playbook, an incident detector, a corpus case, a lib file).
+unit is the directory directly under a root (a playbook, an incident detector, a corpus case, a lib directory), the
+same layout the Go operational-memory reader classifies. A file directly under a root is not a unit: the playbook
+index (``.sdo/playbooks/README.md``) is derived, never merged, and is regenerated from the merged playbooks' READMEs
+(as ``layout.GeneratePlaybookIndex`` does); any other such file is not part of the layout and raises
+``MemoryLayoutError``. Nothing that is not a directory unit is ever renamed.
 
 Merge rules, per delta unit in recorded problem order:
 
 - absent from the merge: copied;
 - identical to a unit already merged: a duplicate, recorded;
 - a playbook, detector or corpus unit that collides with different content: renamed ``<id>-<hash of problem>``, with
-  the id rewritten in every text file of that problem's delta (so a detector keeps naming its renamed playbook);
-- a lib file that collides with different content: kept as first merged, a conflict recorded (it cannot be renamed
-  because other code imports it by name);
+  the id rewritten in every text file of that problem's delta (so a detector keeps naming its renamed playbook),
+  except a corpus case's captures, which are digest-bound evidence: only its ``labels.json`` is rewritten;
+- a lib directory that collides with different content: kept as first merged, a conflict recorded (it cannot be
+  renamed because other code imports it by name);
 - units that are equal once their own id is masked are near-duplicates, recorded and kept.
 
-After each problem's delta the memory check runs (an injected callable); a delta that fails it is excluded and
-recorded, so the merged snapshot always passes. Conflicts, renames, duplicates and near-duplicates go to
-``merge-report.json`` as data. This module never writes into a lane or the accepted repository of an install.
+After each problem's delta the memory check runs (an injected callable; ``memory_check_command`` is the real one: the
+operator's accepted-checkout audit, the same structural, semantic and compile validation dispatch and the broker rely
+on, without controller-only context); a delta that fails it is excluded and recorded, so the merged snapshot always
+passes. Conflicts, renames, duplicates and near-duplicates go to
+``merge-report.json`` as data, with the number of corpus cases the merged snapshot carries and the playbooks no case
+names. This module never writes into a lane or the accepted repository of an install.
 """
 
 from __future__ import annotations
@@ -35,6 +43,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import yaml
+
 from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
@@ -48,12 +58,21 @@ DELTA_ROOTS = (
     ".sdo/corpus/",
 )
 RENAMEABLE = (".sdo/playbooks/", ".sdo/diagnostics/detectors/incidents/", ".sdo/corpus/")
+PLAYBOOKS_ROOT = ".sdo/playbooks/"
+CORPUS_ROOT = ".sdo/corpus/"
+#: Derived files directly under a delta root: regenerated from the merged tree, never taken from a delta.
+PLAYBOOK_INDEX = ".sdo/playbooks/README.md"
+PLAYBOOK_FILE = "README.md"
 _IDENTITY = {
     "GIT_AUTHOR_NAME": "sdo-eval",
     "GIT_AUTHOR_EMAIL": "sdo-eval@localhost",
     "GIT_COMMITTER_NAME": "sdo-eval",
     "GIT_COMMITTER_EMAIL": "sdo-eval@localhost",
 }
+
+
+class MemoryLayoutError(ValueError):
+    """A delta holds a file under a memory root that is neither a unit directory nor a derived file."""
 
 
 @dataclass(frozen=True)
@@ -67,7 +86,21 @@ def no_check(repo: Path, commit: str) -> CheckResult:
     return CheckResult(ok=True, ran=False, output="memory check not configured")
 
 
-def command_check(command: Sequence[str], *, timeout: float = 600.0) -> Callable[[Path, str], CheckResult]:
+def memory_check_command(operator: Path) -> list[str]:
+    """The offline memory check: ``sdo-operator memory check --accepted`` on a checkout of the commit.
+
+    The accepted audit is the structural, semantic and compile validation of a clean accepted tree (layout, derived
+    playbook index, ownership-free), so it needs no SDO_ACTOR/SDO_PHASE/SDO_BASE_COMMIT or controller telemetry
+    context. The environment (``command_check(..., env=...)``) carries ``SDO_OPERATOR_ROOT`` (operator sources) and
+    ``SDO_TELEMETRY_POLICY`` (the install's telemetry policy, so detector queries resolve against its provided sources
+    as in the broker; without it ``telemetry.unbound`` fails). Replay is off: the
+    check is for the tree's shape and compilability, not for re-running recorded incidents."""
+    return [str(operator), "memory", "check", "--accepted", "--replay", "off", "--root", "{root}"]
+
+
+def command_check(
+    command: Sequence[str], *, timeout: float = 600.0, env: Mapping[str, str] | None = None
+) -> Callable[[Path, str], CheckResult]:
     """Run ``command`` in a checkout of the commit; ``{root}`` in an argument is replaced by its path."""
 
     def check(repo: Path, commit: str) -> CheckResult:
@@ -76,8 +109,17 @@ def command_check(command: Sequence[str], *, timeout: float = 600.0) -> Callable
             subprocess.run(["git", "clone", "-q", "--shared", "--no-checkout", str(repo), str(root)], check=True)
             subprocess.run(host_git_command(root, "checkout", "-q", "--detach", commit), check=True)
             argv = [part.replace("{root}", str(root)) for part in command]
-            completed = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False, cwd=root)
-        return CheckResult(completed.returncode == 0, True, (completed.stdout + completed.stderr)[-4000:])
+            completed = subprocess.run(
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+                cwd=root,
+                env={**os.environ, **(env or {})},
+            )
+        # Diagnostics are stdout; stderr is progress logging that would push them out of a tail.
+        return CheckResult(completed.returncode == 0, True, completed.stdout[-3000:] + completed.stderr[-1000:])
 
     return check
 
@@ -96,6 +138,10 @@ class MergeReport:
     near_duplicates: list[dict[str, str]] = field(default_factory=list)
     conflicts: list[dict[str, str]] = field(default_factory=list)
     check: dict[str, Any] = field(default_factory=dict)
+    #: Replay cases the merged snapshot carries, and the merged playbooks no case names: a playbook without a case is
+    #: never replayed against anything, so the report says so rather than leaving it for a reader to discover.
+    corpus_cases: int = 0
+    playbooks_without_case: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -129,13 +175,67 @@ def _slug(problem: str) -> str:
 
 
 def _unit_of(path: str) -> tuple[str, str] | None:
-    """(root, unit path) for a path under a delta root, else ``None``."""
+    """(root, unit directory) for a path under a delta root, else ``None``.
+
+    The playbook index is derived and has no unit (``None``). Any other file directly under a root is not part of the
+    memory layout and raises, so a merge never renames or carries a file the reader would refuse."""
     for root in DELTA_ROOTS:
         if path.startswith(root):
-            first = path[len(root) :].split("/", 1)[0]
-            if first:
-                return root, root + first
+            first, slash, _ = path[len(root) :].partition("/")
+            if path == PLAYBOOK_INDEX:
+                return None
+            if not slash:
+                raise MemoryLayoutError(f"{path}: not a memory unit (a directory below {root}) nor a derived file")
+            return root, root + first
     return None
+
+
+def _index_title(readme: str, playbook: str) -> str:
+    """The title ``layout.GeneratePlaybookIndex`` gives a playbook: its first ``# `` heading, else its id."""
+    text = readme
+    if text.startswith("---\n"):
+        _, closed, body = text[4:].partition("---\n")
+        if closed:
+            text = body
+    for line in text.split("\n"):
+        if line.startswith("# "):
+            title = line[2:].strip()
+            if title:
+                return title.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+            break
+    return playbook
+
+
+def _is_retired(readme: str) -> bool:
+    """Whether the README's front matter retires the playbook; malformed metadata stays listed (as in Go)."""
+    if not readme.startswith("---\n"):
+        return False
+    parts = readme.split("---\n", 2)
+    if len(parts) != 3:
+        return False
+    try:
+        meta = yaml.safe_load(parts[1]) or {}
+    except yaml.YAMLError:
+        return False
+    if not isinstance(meta, dict) or meta.get("status", "active") != "retired":
+        return False
+    reason = meta.get("retired_reason")
+    return isinstance(reason, str) and bool(reason.strip())
+
+
+def generate_playbook_index(readmes: Mapping[str, str]) -> str | None:
+    """The playbook index for ``{playbook id: README text}``: one line per active playbook, sorted by id.
+
+    Mirrors ``layout.GeneratePlaybookIndex`` (the Go check refuses an index that differs from it); ``None`` when no
+    playbook has a README."""
+    if not readmes:
+        return None
+    lines = [
+        f"- [{_index_title(text, playbook)}]({playbook}/{PLAYBOOK_FILE})\n"
+        for playbook, text in sorted(readmes.items())
+        if not _is_retired(text)
+    ]
+    return "# Playbooks\n" + ("\n" + "".join(lines) if lines else "")
 
 
 def _digest(unit: Unit) -> str:
@@ -165,7 +265,8 @@ class GitSnapshotStore:
     def from_config(cls, table: Mapping[str, Any]) -> GitSnapshotStore:
         bases = {app: (Path(spec["repo"]), spec["commit"]) for app, spec in table["bases"].items()}
         command = table.get("check_command")
-        return cls(Path(table["root"]), bases, check=command_check(command) if command else no_check)
+        env = table.get("check_env") or None
+        return cls(Path(table["root"]), bases, check=command_check(command, env=env) if command else no_check)
 
     def repositories(self) -> dict[str, Path]:
         return {app: self._repo(app) for app in self._bases}
@@ -241,8 +342,10 @@ class GitSnapshotStore:
         changed: set[str] = set()
         for index in range(0, len(out) - 1, 2):
             status, path = out[index].decode(), out[index + 1].decode()
+            if status.startswith("D"):
+                continue
             unit = _unit_of(path)
-            if unit and not status.startswith("D"):
+            if unit:
                 changed.add(unit[1])
         units: dict[str, Unit] = {}
         for unit_path in sorted(changed):
@@ -278,8 +381,27 @@ class GitSnapshotStore:
                 _git(repo, "update-index", "--force-remove", "--", path, env=env)
             for path, entry in writes.items():
                 _git(repo, "update-index", "--add", "--cacheinfo", f"{entry.mode},{entry.sha},{path}", env=env)
+            if any(path.startswith(PLAYBOOKS_ROOT) for path in (*writes, *removes)):
+                self._regenerate_index(repo, env)
             tree = _git(repo, "write-tree", env=env).decode().strip()
         return _git(repo, "commit-tree", tree, "-p", parent, "-m", message).decode().strip()
+
+    def _regenerate_index(self, repo: Path, env: Mapping[str, str]) -> None:
+        """Rewrite the playbook index in the temporary index from the playbook READMEs it holds."""
+        listing = _git(repo, "ls-files", "-s", "-z", "--", PLAYBOOKS_ROOT, env=env).split(b"\0")
+        readmes: dict[str, str] = {}
+        for line in listing:
+            if not line:
+                continue
+            meta, path = line.decode().split("\t", 1)
+            playbook, _, name = path[len(PLAYBOOKS_ROOT) :].partition("/")
+            if name == PLAYBOOK_FILE:
+                readmes[playbook] = _git(repo, "cat-file", "blob", meta.split(" ")[1]).decode("utf-8", "replace")
+        index = generate_playbook_index(readmes)
+        if index is None:
+            return
+        sha = _git(repo, "hash-object", "-w", "--stdin", data=index.encode()).decode().strip()
+        _git(repo, "update-index", "--add", "--cacheinfo", f"100644,{sha},{PLAYBOOK_INDEX}", env=env)
 
     def _apply(self, repo: Path, parent: str, units: Mapping[str, Unit], message: str) -> str:
         """``parent`` with each unit replaced by the given files."""
@@ -371,6 +493,7 @@ class GitSnapshotStore:
                     )
                 masked.setdefault(key, (problem, unit_path))
         report.merged = current
+        report.corpus_cases, report.playbooks_without_case = self._case_coverage(repo, current)
         with self._lock:
             self._merged[app] = current
             self.reports[app] = report
@@ -399,16 +522,45 @@ class GitSnapshotStore:
                 continue
             if renames:
                 new_id = renames.get(unit_path[len(root) :], unit_path[len(root) :])
-                out[root + new_id] = self._rewrite(repo, files, renames)
+                # A corpus case's captures are digest-bound evidence; only its labels name a playbook.
+                only = "labels.json" if root == CORPUS_ROOT else None
+                out[root + new_id] = self._rewrite(repo, files, renames, only=only)
             else:
                 out[unit_path] = files
         if renames:
             notes["renames"] = renames
         return (out or None), notes
 
-    def _rewrite(self, repo: Path, files: Unit, renames: Mapping[str, str]) -> Unit:
+    def _case_coverage(self, repo: Path, commit: str) -> tuple[int, list[str]]:
+        """The corpus cases in the commit, and its playbooks that no case's ``root_cause_program_ids`` names."""
+        named: set[str] = set()
+        cases = 0
+        playbooks: set[str] = set()
+        for line in _git(repo, "ls-tree", "-r", "-z", commit, "--", ".sdo/corpus/", PLAYBOOKS_ROOT).split(b"\0"):
+            if not line:
+                continue
+            meta, path = line.decode().split("\t", 1)
+            sha = meta.split(" ")[2]
+            if path.startswith(PLAYBOOKS_ROOT):
+                parts = path[len(PLAYBOOKS_ROOT) :].split("/")
+                if len(parts) > 1:
+                    playbooks.add(parts[0])
+            elif path.endswith("/labels.json"):
+                cases += 1
+                try:
+                    labels = json.loads(_git(repo, "cat-file", "blob", sha))
+                except ValueError:
+                    continue
+                named.update(labels.get("root_cause_program_ids") or [])
+        return cases, sorted(playbooks - named)
+
+    def _rewrite(self, repo: Path, files: Unit, renames: Mapping[str, str], *, only: str | None = None) -> Unit:
+        """``files`` with each renamed id replaced in their text; ``only`` limits that to the one file naming ids."""
         result: Unit = {}
         for rel, entry in files.items():
+            if only is not None and rel != only:
+                result[rel] = entry
+                continue
             blob = _git(repo, "cat-file", "blob", entry.sha)
             try:
                 text = blob.decode("utf-8")

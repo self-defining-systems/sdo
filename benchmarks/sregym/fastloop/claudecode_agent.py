@@ -32,13 +32,14 @@ from typing import TYPE_CHECKING, Any
 from benchmarks.fuzzops.cellevidence import trial_problems
 from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.claudecode_accounting import CellAccounting, account_cell
-from benchmarks.sregym.fastloop.codex_agent import SubmissionStub
 from benchmarks.sregym.fastloop.loop import AgentOutcome, InjectionWindow
 from benchmarks.sregym.fastloop.records import AgentName, TokenCounts
 from libs.agent_cli.claude_stream import disallowed_tools_args
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
+
+    from benchmarks.sregym.fastloop.codex_agent import SubmissionStub
 
 DEFAULT_MODEL = "claude-sonnet-5-5"
 #: ``clients/claudecode/claudecode_agent.py``'s ``ALLOWED_TOOLS`` (a test pins it to the file).
@@ -78,7 +79,7 @@ CLEANUP_PERIOD_DAYS = 36500
 STREAM_FILE = "transcript.jsonl"
 STDERR_FILE = "claude-code.stderr"
 SESSION_DIR = "session-dir"
-KILL_GRACE_SECONDS = 15.0
+KILL_GRACE_SECONDS = wait_for(WaitKind.SNAPSHOT_READ)
 
 _PROMPT_SCRIPT = """
 import json, sys
@@ -116,7 +117,9 @@ def claudecode_command(
     return command
 
 
-def stock_prompt(sregym_dir: Path, app_info: dict[str, Any], api_base: str, *, timeout: float = 300) -> str:
+def stock_prompt(
+    sregym_dir: Path, app_info: dict[str, Any], api_base: str, *, timeout: float = wait_for(WaitKind.ROLLOUT)
+) -> str:
     """SREGym's own claudecode instruction for *app_info*, pointed at *api_base* (no SDO memory appendix)."""
     from urllib.parse import urlsplit
 
@@ -326,7 +329,11 @@ def run_claudecode_cell(
     result = CellResult(clock, returncode, timed_out, error, problems, accounting, cell_dir)
     try:
         version = subprocess.run(
-            [settings.claude_binary, "--version"], capture_output=True, text=True, timeout=30, check=False
+            [settings.claude_binary, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=wait_for(WaitKind.COMMAND),
+            check=False,
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         version = ""

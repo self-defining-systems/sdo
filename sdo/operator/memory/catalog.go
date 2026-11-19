@@ -78,6 +78,11 @@ const MaxSnapshotBytes = 512 * 1024
 var ErrSnapshotBudget = errors.New("operational memory snapshot exceeds worker task budget")
 var ErrSnapshotIncomplete = errors.New("operational memory needs an architecture")
 
+// ErrUnreadable marks operational memory at a commit that the logical reader
+// rejects: a file outside the layout, an unsafe tree entry, a malformed
+// artifact. Reading it again cannot succeed, unlike a Git or IO failure.
+var ErrUnreadable = errors.New("operational memory is not readable")
+
 // CandidateSnapshot projects authored files exactly as dispatch does, without
 // requiring an accepted clean checkout. Acceptance uses the same size witness.
 func CandidateSnapshot(root, acceptedCommit string) (*contracts.OperationalMemorySnapshot, error) {

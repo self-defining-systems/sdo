@@ -37,7 +37,7 @@ SCHEMA_VERSION = "sdo.fastloop-incident/v2"
 #: A second pass only re-proves that cleanup is repeatable, which credential-slot
 #: rehearsals check; on astronomy it costs another ~170 s alert-silence oracle.
 EVAL_CLEANUP_PASSES = 1
-AgentName = Literal["sdo", "codex", "claudecode"]
+AgentName = Literal["sdo", "codex", "claudecode", "external"]
 #: What let harness fault recovery run once the row was over: SDO's natural closure, a closure SDO
 #: permanently failed or retired, the reflection deadline with SDO still working, or no SDO incident.
 RecoveryTrigger = Literal["natural_closure", "closure_failed", "reflection_deadline", "no_incident"]
@@ -266,6 +266,9 @@ class IncidentRecord(_PersistedModel):
     provider: str | None = None
     model: str
     reasoning_effort: str | None = None
+    #: The external agent's label (for example its build) and the state directory it kept; ``None`` for other agents.
+    agent_label: str | None = None
+    agent_state_dir: str | None = None
     replay: Literal["on", "off"] | None = None
     injection: InjectionState
     dispatched_at: AwareDatetime | None = None
@@ -320,6 +323,12 @@ class IncidentRecord(_PersistedModel):
     sdo_outcome_classification: str | None = None
     #: Wall time from verified recovery until reflection and detector rollout were live.
     reflection_seconds: float | None = None
+    #: When SDO's outcome for the incident was committed (the controller's closure acknowledgement), ``None`` for an
+    #: arm with no such event or when the wait did not observe it.
+    outcome_committed_at: datetime | None = None
+    #: When the row's online part ended: graded, and for SDO its outcome committed. Everything after it (the closing
+    #: turn, the end-of-row recovery) is offline to the row's wall.
+    online_ended_at: datetime | None = None
     baseline_gate_seconds: float | None = None
     #: One-time setup paid inside this incident (lifecycle and controller install), excluded from resolution.
     setup_seconds: float | None = None
@@ -532,6 +541,12 @@ def persist_grade_checkpoint(path: Path, record: IncidentRecord) -> None:
         os.link(temporary, path)
     finally:
         os.unlink(temporary)
+
+
+def online_checkpoint_path(results_path: Path, index: int) -> Path:
+    """Where the row publishes its online end: graded, outcome committed, before the closing turn begins."""
+
+    return results_path.with_suffix(".online") / f"{index:06d}.json"
 
 
 def _csv_row(record: IncidentRecord) -> dict[str, Any]:

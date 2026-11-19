@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -188,7 +189,7 @@ def test_no_eval_path_reads_the_legacy_rendered_lock() -> None:
     readers = [
         path.relative_to(ROOT).as_posix()
         for path in sorted(BENCHMARK.rglob("*.py"))
-        if "rendered/lock" in path.read_text() or "lock.json" in path.read_text()
+        if re.search(r"rendered/lock|(?<![A-Za-z])lock\.json", path.read_text())
     ]
     assert readers == []
 

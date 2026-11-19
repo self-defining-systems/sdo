@@ -82,3 +82,23 @@ func (workspace *Workspace) generatedNotes(name string) ([]string, error) {
 	}
 	return recorded, nil
 }
+
+// OwnIncidentResults reads the generated own-incident replay's verdicts: one
+// per playbook new in the change, written whether or not the replay failed.
+func (workspace *Workspace) OwnIncidentResults() ([]sdktest.OwnIncidentResult, error) {
+	data, err := os.ReadFile(filepath.Join(workspace.Directory, "generated", "own-incident-replay.json"))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > 1<<20 {
+		return nil, fmt.Errorf("own-incident replay verdicts exceed 1 MiB")
+	}
+	var results []sdktest.OwnIncidentResult
+	if err := json.Unmarshal(data, &results); err != nil {
+		return nil, fmt.Errorf("decode own-incident replay verdicts: %w", err)
+	}
+	return results, nil
+}

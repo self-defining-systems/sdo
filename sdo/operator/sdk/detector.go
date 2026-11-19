@@ -209,6 +209,11 @@ func ConfigMapReferencesForDeployment(deployment appsv1.Deployment) []ConfigMapR
 type SourceDiff struct {
 	// SourceAbsent is true only after a successful accepted-source lookup finds no object.
 	SourceAbsent bool `json:"source_absent,omitempty"`
+	// LiveAbsent is true when the object was observed to be missing live (the
+	// API answered NotFound, or a complete list of its kind lacks it). It is
+	// an observation, never an error. With SourceAbsent false the object is
+	// declared but missing (MissingButInSource).
+	LiveAbsent bool `json:"live_absent,omitempty"`
 	// Changed reports declared fields that differ and fields that source does
 	// not declare and that were absent when SDO accepted (adopted) the object.
 	// Server defaults, fields present at acceptance and kubernetes.io/k8s.io
@@ -226,6 +231,12 @@ type SourceDiff struct {
 // PresentButNotInSource is true while the object exists live but not in accepted source.
 // Unlike SourceAbsent it turns false after the delete, so delete-style Diagnose matches on it.
 func (d SourceDiff) PresentButNotInSource() bool { return d.Changed && d.SourceAbsent }
+
+// MissingButInSource is true while accepted source declares the object and it is
+// absent live: a deleted object. It is the mirror of PresentButNotInSource, and
+// turns false once CreateFromSource has recreated the object, so a
+// recreate-style Diagnose matches on it and the post-plan re-diagnose clears.
+func (d SourceDiff) MissingButInSource() bool { return d.Changed && d.LiveAbsent && !d.SourceAbsent }
 
 // DetectionContext is the frozen snapshot read by detectors and, through
 // ReadView, by programs.

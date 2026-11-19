@@ -3,7 +3,9 @@
 SREGym's mitigation oracle is a one-shot verdict, and SDO's own probes are SDO's. The runner therefore samples app
 health itself every 2-5 s from injection to the end of the cell, and decides afterwards: users are healthy from the
 start of the last unbroken run of passing samples that lasts at least ``hold_seconds`` and reaches the end of the
-probing. A sampling gap breaks a run, because an unknown second is not a healthy one.
+probing. A sampling gap is unknown time, not unhealthy time: it neither breaks a run of passing samples nor counts
+toward the hold's evidence, and the assessment reports how much of the span was unknown (``gap_seconds``) so a caller
+can flag poor coverage.
 """
 
 from __future__ import annotations
@@ -56,6 +58,15 @@ class HealthAssessment:
     #: Consecutive samples further apart than ``max_gap_seconds``.
     gaps: int
     samples: int
+    #: Total unknown time: the sum of the intervals between consecutive samples longer than ``max_gap_seconds``.
+    gap_seconds: float = 0.0
+    #: Time from the first to the last sample.
+    span_seconds: float = 0.0
+
+    @property
+    def coverage(self) -> float:
+        """Fraction of the sampled span that was observed (1.0 when no gap)."""
+        return 1.0 if self.span_seconds <= 0 else max(0.0, 1.0 - self.gap_seconds / self.span_seconds)
 
 
 def assess_health(samples: Iterable[ProbeSample], *, hold_seconds: float, max_gap_seconds: float) -> HealthAssessment:
@@ -68,15 +79,18 @@ def assess_health(samples: Iterable[ProbeSample], *, hold_seconds: float, max_ga
     unhealthy = 0.0
     flaps = 0
     gaps = 0
+    gap_seconds = 0.0
     run_start: float | None = None
     previous: ProbeSample | None = None
     for sample in ordered:
-        broken_by_gap = previous is not None and sample.at - previous.at > max_gap_seconds
-        if broken_by_gap:
-            gaps += 1
-        if previous is not None and not previous.healthy:
-            unhealthy += min(sample.at - previous.at, max_gap_seconds)
-        if run_start is not None and (broken_by_gap or not sample.healthy):
+        if previous is not None:
+            interval = sample.at - previous.at
+            if interval > max_gap_seconds:
+                gaps += 1
+                gap_seconds += interval
+            if not previous.healthy:
+                unhealthy += min(interval, max_gap_seconds)
+        if run_start is not None and not sample.healthy:
             flaps += 1
             run_start = None
         if sample.healthy:
@@ -99,6 +113,8 @@ def assess_health(samples: Iterable[ProbeSample], *, hold_seconds: float, max_ga
         flaps=flaps,
         gaps=gaps,
         samples=len(ordered),
+        gap_seconds=gap_seconds,
+        span_seconds=ordered[-1].at - ordered[0].at if ordered else 0.0,
     )
 
 

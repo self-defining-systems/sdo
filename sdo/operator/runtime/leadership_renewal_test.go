@@ -69,7 +69,7 @@ func TestRenewalUnderThrottlingNeverEndsTheProcess(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	errs := maintainLeadership(ctx, elector, 5*time.Second, clock)
+	errs, _ := maintainLeadership(ctx, elector, 5*time.Second, clock)
 	<-clock.ticker
 	// Step the clock until twenty renewals were attempted. The renewal loop
 	// handles each attempt's result before it waits for the next tick, so by
@@ -114,7 +114,7 @@ func TestTakenLeaseIsTheTypedLeadershipLoss(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	errs := maintainLeadership(ctx, elector, 5*time.Second, clock)
+	errs, _ := maintainLeadership(ctx, elector, 5*time.Second, clock)
 	<-clock.ticker
 	// The ticker exists, so one step delivers the one tick; the attempt finds
 	// the Lease held by someone else and the loop reports it. Block for the

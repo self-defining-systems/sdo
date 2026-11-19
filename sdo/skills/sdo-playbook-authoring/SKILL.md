@@ -49,7 +49,8 @@ Keep revisions that applied cleanly unless this incident shows failure or incomp
   relation (selector, owner, mount) where that is natural. Memory belongs to this application and may name its own tables, resources and commands; generalize over what varies between incidents, not away from the application. A partial program beats none.
 - Write values only as `FromSource`, `FromObserved` or `FromParam` (a declared scalar with a default).
 - Diagnose returns Match on positive evidence about the bound component, NoMatch when absent, an error
-  (Unknown) when a read is unavailable. A healthy, source-matching object is no evidence. Confirm the fault class on the
+  (Unknown) when a read is unavailable. A deleted object is
+  `MissingButInSource()`. A healthy, source-matching object is no evidence. Confirm the fault class on the
   bound target (image, ports, a read or exec); NoMatch on a workload of the wrong kind, with a near-miss test.
 - Mitigate returns to accepted or observed state: [more program rules](references/programs.md#more-program-rules).
 - `RunScript`: inline bash byte-identical to the recorded command, application inputs only through

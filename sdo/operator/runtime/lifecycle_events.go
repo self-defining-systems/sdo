@@ -48,6 +48,10 @@ const (
 	PhaseDispatched = "responder_dispatched"
 	// PhaseResponderCompleted: the responder finished (successfully or as a terminal Job failure).
 	PhaseResponderCompleted = "responder_completed"
+	// PhaseDispatchFailed: the responder's task could not be prepared (permanently, or past
+	// response.dispatch_prepare_bound), so the incident escalated without an agent; reason is
+	// "<class>: <error>".
+	PhaseDispatchFailed = "responder_dispatch_failed"
 	// PhaseClosed: the controller cut the incident closure after verifying health or timing out.
 	PhaseClosed = "incident_closed"
 	// PhaseClosureCommitted: the broker committed the authoritative outcome for the closure.
@@ -66,7 +70,7 @@ func phaseRank(p string) int {
 		return 3
 	case PhaseDispatched:
 		return 4
-	case PhaseResponderCompleted:
+	case PhaseDispatchFailed, PhaseResponderCompleted:
 		return 5
 	case PhaseClosed:
 		return 6

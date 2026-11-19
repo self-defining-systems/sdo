@@ -4,6 +4,10 @@ Each (app, arm) has a pool of lanes. A cell takes any free lane of its pool (the
 claim), so the number of cells in flight is bounded by the lanes and, on top of that, by host load. The merge of an
 app's pass-1 deltas is a lane-free step that pass-2 cells wait for; a pass-2 own-delta cell waits only for its own
 problem's pass-1 cell. A finished cell directory with a verified manifest is skipped on restart.
+
+A cell holds its lane through its closing turn: ``run_cell`` returns only after the closing record is written, so a
+lane is never claimed again, the pass-1 delta is never taken, and the merge never starts before a cell's
+``closing.json`` is terminal.
 """
 
 from __future__ import annotations
@@ -44,7 +48,12 @@ class SnapshotStore(Protocol):
 
 
 class LoadGate:
-    """Admit a cell start only while the load average is under ``max_load``, at most one start per spacing."""
+    """Admit a cell start only while the load average is under ``max_load`` and the host has memory room.
+
+    ``host_check`` returns why the host cannot take another lane now (low MemAvailable, memory pressure), or
+    ``None``; a refusal pauses every new start and is logged once per distinct reason. Starts are at most one per
+    spacing.
+    """
 
     def __init__(
         self,
@@ -54,8 +63,11 @@ class LoadGate:
         loadavg: Callable[[], float] = lambda: os.getloadavg()[0],
         now: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        host_check: Callable[[], str | None] | None = None,
     ) -> None:
         self._max_load = max_load
+        self._host_check = host_check
+        self._last_reason: str | None = None
         self._spacing = spacing_seconds
         self._loadavg = loadavg
         self._now = now
@@ -63,6 +75,7 @@ class LoadGate:
         self._lock = threading.Lock()
         self._next_start = 0.0
         self.waited = 0.0
+        self.memory_waited = 0.0
 
     def admit(self) -> float:
         """Block until a start is allowed; returns the seconds waited."""
@@ -76,6 +89,17 @@ class LoadGate:
                 if self._loadavg() >= self._max_load:
                     self._sleep(min(5.0, max(self._spacing, 1.0)))
                     continue
+                if (reason := self._host_check() if self._host_check else None) is not None:
+                    if reason != self._last_reason:
+                        logger.warning("cell start paused: %s", reason)
+                        self._last_reason = reason
+                    paused = self._now()
+                    self._sleep(5.0)
+                    self.memory_waited += self._now() - paused
+                    continue
+                if self._last_reason is not None:
+                    logger.info("host memory admits cell starts again")
+                    self._last_reason = None
                 self._next_start = self._now() + self._spacing
                 break
         waited = self._now() - started
@@ -170,8 +194,8 @@ class Scheduler:
             try:
                 self.gate.admit()
                 row = run_cell(cell, self.context, lane)
-                errored = row.status == "error"
-                reusable = not errored
+                # A lane whose closing turn was not drained (or whose drain failed) is never handed out again.
+                reusable = row.status != "error" and row.closing_status not in ("not_drained", "error")
             finally:
                 self.pools.release(cell.pool, lane, reusable=reusable, errored=errored)
         self.table.append(row)

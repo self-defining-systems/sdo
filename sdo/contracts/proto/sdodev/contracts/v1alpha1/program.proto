@@ -280,6 +280,25 @@ message ProgramRun {
   // returned. A NoMatch is attributed to the condition behind its last read:
   // a trace that ends at a log read means the command after it never ran.
   repeated ReadStep read_trace = 10;
+  // How this playbook came to be tried on this finding: "detector" (a finding
+  // names it), "role_less_scan" (a playbook with no object role is tried on every
+  // finding), "role_bound" (its object roles bound from a finding's resources),
+  // "credited" or "suspect". Attribution only; it filters nothing.
+  string retrieval = 11 [(buf.validate.field).string = {in: ["", "detector", "role_less_scan", "role_bound", "credited", "suspect"]}];
+}
+
+// One playbook's diagnosis as the stage and the page report it, whether or not it
+// matched, so a playbook that cannot recognise its fault never goes unseen.
+message PlaybookVerdict {
+  string playbook_id = 1 [(buf.validate.field).string.min_len = 1];
+  string program_revision = 2;
+  string result = 3 [(buf.validate.field).string = {in: ["match", "no_match", "unknown", "needs_judgement"]}];
+  // Why a diagnosis was Unknown or NoMatch: the evidence or the error, short.
+  string reason = 4;
+  string retrieval = 5 [(buf.validate.field).string = {in: ["", "detector", "role_less_scan", "role_bound", "credited", "suspect"]}];
+  // Outcomes in which this playbook was tried and returned Unknown. A counter that
+  // gates nothing.
+  int32 unknown_on_recurrence = 6;
 }
 
 message ReadStep {
@@ -443,6 +462,8 @@ message ReflectionEligibility {
 message PlaybookCoverage {
   repeated PlaybookMatch matches = 1;
   repeated string unexplained_finding_fingerprints = 2;
+  // Playbooks tried whose diagnosis was Unknown or needed judgement.
+  repeated PlaybookVerdict unresolved = 3;
 }
 message PlaybookMatch {
   string playbook_id = 1;
@@ -454,6 +475,8 @@ message PlaybookMatch {
   string mitigate_command = 6;
   int32 verified_successes = 7;
   int32 verified_failures = 8;
+  // How this playbook came to be tried (see ProgramRun.retrieval).
+  string retrieval = 9 [(buf.validate.field).string = {in: ["", "detector", "role_less_scan", "role_bound", "credited", "suspect"]}];
 }
 
 message RemoveServicePort {

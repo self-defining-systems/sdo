@@ -25,7 +25,7 @@ func (c *Controller) PendingDispatchEffect() (DispatchEffect, bool) {
 	if c.dispatchState != contracts.DispatchState_DISPATCH_STATE_PENDING || c.currentIncidentRequest == nil || c.earlyReportPendingLocked() {
 		return DispatchEffect{}, false
 	}
-	if !c.dispatchRetryDueLocked() {
+	if !c.dispatchRetryDueLocked() || c.dispatchNeedsPreparationLocked() {
 		return DispatchEffect{}, false
 	}
 	return DispatchEffect{Request: *cloneIncidentRequest(c.currentIncidentRequest)}, true

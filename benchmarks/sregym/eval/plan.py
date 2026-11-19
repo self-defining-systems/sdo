@@ -71,6 +71,14 @@ class EvalConfig(BaseModel):
     max_load: float = Field(default=40.0, gt=0)
     #: Minimum gap between cell starts, because the load average lags a burst of starts.
     admit_spacing_seconds: float = Field(default=5.0, ge=0)
+    #: Host memory admission (``benchmarks.sregym.adapter.host_memory``): start a cell only while MemAvailable covers
+    #: the lane's cap plus this reserve and memory PSI ``some avg60`` is under ``max_memory_pressure``.
+    host_reserve_gib: float = Field(default=32.0, ge=0)
+    max_memory_pressure: float = Field(default=10.0, gt=0, le=100)
+    #: Total Docker memory cap of one lane (per-node cap times its kind nodes: 2 x 16 GiB by default).
+    lane_memory_cap_gib: float = Field(default=32.0, gt=0)
+    #: Budget for the summed caps of the lanes this plan uses; ``None`` leaves it unchecked.
+    lane_budget_gib: float | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
     def lanes_for_passes(self) -> Self:
@@ -84,7 +92,25 @@ class EvalConfig(BaseModel):
                 raise ValueError(f"app {app.name}: vanilla pass selected but no vanilla_lanes")
         if ("pass2" in self.passes or "pass2-own" in self.passes) and "pass1" not in self.passes:
             raise ValueError("pass 2 needs pass 1 in the plan")
+        if self.lane_budget_gib is not None:
+            used = len(self.lanes_in_use())
+            if used * self.lane_memory_cap_gib > self.lane_budget_gib:
+                raise ValueError(
+                    f"lane memory caps {used * self.lane_memory_cap_gib:g} GiB ({used} lanes x "
+                    f"{self.lane_memory_cap_gib:g} GiB) exceed the host lane budget {self.lane_budget_gib:g} GiB"
+                )
         return self
+
+    def lanes_in_use(self) -> frozenset[tuple[str, str]]:
+        """(app, lane) for every lane a selected pass can claim."""
+        sdo = any(p in self.passes for p in ("pass1", "pass2", "pass2-own"))
+        lanes: set[tuple[str, str]] = set()
+        for app in self.apps:
+            if sdo:
+                lanes.update((app.name, lane) for lane in app.sdo_lanes)
+            if "vanilla" in self.passes:
+                lanes.update((app.name, lane) for lane in app.vanilla_lanes)
+        return frozenset(lanes)
 
 
 class Cell(BaseModel):

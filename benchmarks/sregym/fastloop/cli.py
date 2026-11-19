@@ -31,7 +31,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from benchmarks.sregym.adapter import WaitKind, assert_host_disk_headroom, assert_host_headroom, kubectl, wait_for
+from benchmarks.sregym.adapter import (
+    HostMemoryPolicy,
+    WaitKind,
+    assert_host_disk_headroom,
+    assert_host_headroom,
+    assert_host_memory_admission,
+    assert_lane_budget,
+    kubectl,
+    parse_memory_size,
+    running_lane_caps,
+    wait_for,
+)
 from benchmarks.sregym.fastloop.accepted_source import AcceptedSource, deployment_source_for_environment
 from benchmarks.sregym.fastloop.baseline_recovery import (
     KubectlApplicationCluster,
@@ -328,10 +339,51 @@ def resolve_node_limits(args: argparse.Namespace) -> None:
         args.memory_limit = GITLAB_MEMORY_LIMIT if gitlab else DEFAULT_MEMORY_LIMIT
 
 
+def up_host_memory_policy(args: argparse.Namespace) -> HostMemoryPolicy:
+    """The host memory policy: ``SDO_HOST_*`` environment, each value overridable by its ``up`` flag."""
+    base = HostMemoryPolicy.from_env(os.environ)
+    reserve, pressure, budget = (
+        getattr(args, name, None) for name in ("host_reserve_gib", "host_psi_max", "host_lane_budget_gib")
+    )
+    return HostMemoryPolicy(
+        reserve_bytes=base.reserve_bytes if reserve is None else int(reserve * 1024**3),
+        max_pressure_avg60=base.max_pressure_avg60 if pressure is None else pressure,
+        lane_budget_bytes=base.lane_budget_bytes if budget is None else int(budget * 1024**3),
+    )
+
+
+def assert_lane_host_memory(args: argparse.Namespace, *, running: dict[str, int] | None = None) -> None:
+    """Refuse to create or start a lane the host has no memory for, or past the host's lane budget.
+
+    The lane cap is the node cap times its kind nodes. A lane that already runs holds its memory, so only the
+    reserve and the pressure gate apply to it; foreign clusters are neither counted nor touched.
+    """
+    node = parse_memory_size(args.memory_limit)
+    cap = node * (1 + getattr(args, "kind_worker_nodes", 1))
+    prefix = (
+        "fastloop-dev-w" if args.dev_mount is not None and args.cluster_prefix == "fastloop-w" else args.cluster_prefix
+    )
+    cluster = f"{prefix}{args.worker_id}"
+    policy = up_host_memory_policy(args)
+    if running is None:
+        # Our lanes are every cluster under the host-wide prefix (lane clusters are named <prefix><lane>, so the
+        # lane's own prefix would see only itself).
+        scope = getattr(args, "host_lane_prefix", None) or os.environ.get("SDO_HOST_LANE_PREFIX") or prefix
+        running = running_lane_caps(scope, default_node_bytes=node)
+    assert_host_memory_admission(0 if cluster in running else cap, policy)
+    assert_lane_budget(cluster, cap, running, policy)
+
+
+def _admit_lane(args: argparse.Namespace) -> None:
+    """The host memory gate ``up`` passes before it touches anything (a seam so tests need not read /proc)."""
+    assert_lane_host_memory(args)
+
+
 def _up(args: argparse.Namespace) -> int:
     resolve_node_limits(args)
     NodeLimits(args.cpu_limit, args.memory_limit, args.pids_limit)
     HostLimits(args.host_lock_dir.resolve(), args.host_redeploys)
+    _admit_lane(args)
     up_preflight(args)
     if args.app == "toy":
         from benchmarks.sregym.fastloop.toy import up
@@ -543,6 +595,7 @@ def _up(args: argparse.Namespace) -> int:
             tuple(capture_application_baseline(cluster, namespace) for namespace in namespaces),
             installed=True,
         )
+        _record_fresh_deploy(environment)
     elif not app_recreated:
         from benchmarks.sregym.fastloop.baseline_recovery import seal_existing_install
 
@@ -794,6 +847,16 @@ def _wipes_at_row_start(args: argparse.Namespace, environment: FastloopEnvironme
     return args.agent == "sdo" and environment.app != "toy" and not environment.shared_accepted_id
 
 
+def row_start_tier2(args: argparse.Namespace, *, wiped_at_start: bool, incidents: int) -> bool:
+    """Whether the row leaves its fault recovery to the next row's start (Tier-2) instead of paying it at its end.
+
+    Only a one-incident SDO row that wiped at start defers it; ``--end-of-row-recovery`` makes it pay the same
+    recovery and cleanup a vanilla row pays, inside the row.
+    """
+
+    return wiped_at_start and incidents == 1 and not getattr(args, "end_of_row_recovery", False)
+
+
 def _warm_reset_args(args: argparse.Namespace, environment: FastloopEnvironment) -> argparse.Namespace:
     # A warm caller retains accepted knowledge by default. An explicitly
     # selected planned revision still owns the ordinary reset semantics.
@@ -884,6 +947,11 @@ def recreate_application(
     return deployed
 
 
+def _record_fresh_deploy(environment: FastloopEnvironment) -> None:
+    """A deploy `up` just performed is a whole-application recreation: the lane's first row need not redeploy it."""
+    LaneInjectionState(environment.kubeconfig, environment.namespace).recreated()
+
+
 def _application_needs_redeploy(
     environment: FastloopEnvironment,
     marker: AttemptMarker,
@@ -946,9 +1014,28 @@ def deploy_with_setup_proof(
     return decision
 
 
+def _check_external_args(args: argparse.Namespace) -> None:
+    """The ``--agent-*`` flags belong to ``--agent external`` and need a command; fail before touching the lane."""
+    flags = tuple(
+        getattr(args, name, None)
+        for name in ("agent_command", "agent_label", "agent_state_map", "agent_closing_timeout", "agent_env")
+    )
+    if args.agent != "external":
+        if any(flags):
+            raise SystemExit("--agent-* flags apply to --agent external only")
+        return
+    if not args.agent_command or not args.agent_command.strip():
+        raise SystemExit("--agent external requires --agent-command")
+    if bad := [item for item in args.agent_env if "=" not in item or item.startswith("=")]:
+        raise SystemExit(f"--agent-env expects KEY=VALUE, got {bad}")
+    if args.agent_state_map is not None and not args.agent_state_map.is_file():
+        raise SystemExit(f"--agent-state-map {args.agent_state_map} is not a file")
+
+
 def _run(args: argparse.Namespace) -> int:
     from benchmarks.sregym.fastloop.warm_lane import own_lane
 
+    _check_external_args(args)
     if getattr(args, "sweep_service", None) and (args.stream is None or args.agent != "sdo"):
         raise SystemExit("--sweep-service requires an SDO --stream run")
     # A full-reset caller must obey the same ownership as a warm caller; otherwise
@@ -978,9 +1065,14 @@ DEFAULT_CLAUDE_MODEL = "claude-sonnet-5-5"
 
 
 def _agent_model(args: argparse.Namespace) -> str:
-    """``--model``, else the agent's default: stock Claude Code runs Sonnet 5.5, everything else gpt-6-luna."""
-    if args.model:
+    """``--model``, else the agent's default: stock Claude Code runs Sonnet 5.5, everything else gpt-6-luna.
+
+    The external command picks its own model; the row records ``--model`` as declared, else ``unspecified``.
+    """
+    if getattr(args, "model", None):
         return str(args.model)
+    if args.agent == "external":
+        return "unspecified"
     return DEFAULT_CLAUDE_MODEL if args.agent == "claudecode" else "gpt-6-luna"
 
 
@@ -1182,7 +1274,9 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
     )
     config = LoopConfig(
         ablation_arm=arm_memory.arm if arm_memory else None,
-        row_start_tier2=tier1 is not None and (len(stream) if stream else args.incidents) == 1,
+        row_start_tier2=row_start_tier2(
+            args, wiped_at_start=tier1 is not None, incidents=len(stream) if stream else args.incidents
+        ),
         delivery_record_path=environment.run_dir / "image_delivery.jsonl",
         image_delivery=environment.image_delivery,
         image_delivery_reason=environment.image_delivery_reason,
@@ -1316,8 +1410,9 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
                     diagnosis_grading=grading_mode,
                     on_failed_incident=reset_failed if args.continue_on_error else None,
                 )
-            elif args.agent == "claudecode":
-                records = _run_claudecode(
+            elif args.agent in ("claudecode", "external"):
+                run_baseline = _run_claudecode if args.agent == "claudecode" else _run_external
+                records = run_baseline(
                     args,
                     environment,
                     results_dir,
@@ -1489,6 +1584,84 @@ def _run_claudecode(
     }
     with SubmissionStub(app_info=app_info) as stub:
         agent = ClaudeCodeBaselineAgent(
+            settings,
+            stub=stub,
+            prompt_for=lambda _problem_id, api_base: stock_prompt(environment.sregym_dir, app_info, api_base),
+        )
+        if stream_faults:
+            from benchmarks.sregym.fastloop.composite import TrackedAgent, reader_for
+
+            agent = TrackedAgent(  # type: ignore[assignment]
+                agent,
+                reader=reader_for(environment.namespace, environment.kubeconfig),
+                report_dir=results_dir,
+                settings=_composite_settings(args),
+                stream_faults=stream_faults,
+            )
+        return run_incidents(
+            agent, driver, config, grader=grader, diagnosis_grading=grading_mode, on_failed_incident=on_failed_incident
+        )
+
+
+def _external_settings(args: argparse.Namespace, kubeconfig: Path, results_dir: Path) -> Any:
+    """The external arm's settings from ``--agent-*`` flags (a shell-quoted command, ``KEY=VALUE`` environment)."""
+    import shlex
+
+    from benchmarks.sregym.fastloop.external_agent import DEFAULT_CLOSING_PROMPT, ExternalAgentSettings
+
+    state_map: dict[str, Path] = {}
+    if args.agent_state_map:
+        state_map = {str(k): Path(str(v)) for k, v in json.loads(args.agent_state_map.read_text()).items()}
+    closing_prompt = (
+        args.agent_closing_prompt_file.read_text() if args.agent_closing_prompt_file else DEFAULT_CLOSING_PROMPT
+    )
+    return ExternalAgentSettings(
+        command=tuple(shlex.split(args.agent_command)),
+        label=args.agent_label or Path(shlex.split(args.agent_command)[0]).name,
+        results_dir=results_dir,
+        kubeconfig=kubeconfig,
+        incident_timeout_seconds=float(args.timeout),
+        closing_timeout_seconds=args.agent_closing_timeout,
+        closing_prompt=closing_prompt,
+        evidence_grace_seconds=args.agent_evidence_grace,
+        state_map=state_map,
+        model=args.model,
+        extra_env=dict(item.split("=", 1) for item in args.agent_env),
+    )
+
+
+def _run_external(
+    args: argparse.Namespace,
+    environment: FastloopEnvironment,
+    results_dir: Path,
+    worker: SregymWorker,
+    driver: SregymFaultDriver,
+    config: LoopConfig,
+    grader: DiagnosisGrader | None = None,
+    grading_mode: str = "off",
+    stream_faults: dict[str, tuple[FaultSpec, ...]] | None = None,
+    on_failed_incident: Callable[[], None] | None = None,
+) -> list[IncidentRecord]:
+    """Any external agent command, no SDO in the lane: SREGym's own stock instruction, the command does the rest."""
+    from benchmarks.sregym.fastloop.claudecode_agent import stock_prompt
+    from benchmarks.sregym.fastloop.codex_agent import SubmissionStub
+    from benchmarks.sregym.fastloop.external_agent import ExternalBaselineAgent
+
+    results_dir.mkdir(parents=True, exist_ok=True)
+    proxy = worker.request(
+        "proxy",
+        port=args.proxy_port or _free_port(),
+        hide=[f"{environment.namespace}-sdo"],
+        kubeconfig=str(results_dir / "agent.kubeconfig"),
+    )
+    settings = _external_settings(args, Path(str(proxy["kubeconfig"])), results_dir)
+    app_info = {
+        "app_name": environment.application,
+        "namespace": environment.namespace,
+        "descriptions": environment.description,
+    }
+    with SubmissionStub(app_info=app_info) as stub:
+        agent = ExternalBaselineAgent(
             settings,
             stub=stub,
             prompt_for=lambda _problem_id, api_base: stock_prompt(environment.sregym_dir, app_info, api_base),
@@ -1955,6 +2128,32 @@ def build_parser() -> argparse.ArgumentParser:
         default=1,
         help="kind worker nodes beside the control plane (default 1, as every experiment lane)",
     )
+    up.add_argument(
+        "--host-reserve-gib",
+        type=float,
+        default=None,
+        help="refuse unless MemAvailable >= the lane's cap + this reserve "
+        "(default env SDO_HOST_MEMORY_RESERVE_GIB or 32)",
+    )
+    up.add_argument(
+        "--host-psi-max",
+        type=float,
+        default=None,
+        help="refuse while memory PSI some avg60 is at or above this (default env SDO_HOST_MEMORY_PSI_MAX or 10)",
+    )
+    up.add_argument(
+        "--host-lane-budget-gib",
+        type=float,
+        default=None,
+        help="refuse a lane that takes the summed caps of our running lanes past this "
+        "(default env SDO_HOST_LANE_BUDGET_GIB; unset: unchecked)",
+    )
+    up.add_argument(
+        "--host-lane-prefix",
+        default=None,
+        help="cluster-name prefix that marks OUR lanes for the lane budget (default env SDO_HOST_LANE_PREFIX, "
+        "else --cluster-prefix)",
+    )
     up.add_argument("--builder", default="fastloop", help="private buildx builder for the application image")
     up.add_argument(
         "--agent-registrations", type=Path, help="toy: SDO worker registration directory (default scripted)"
@@ -2034,7 +2233,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = commands.add_parser("run", help="loop incidents against the warm environment")
     run.add_argument("--run-dir", type=Path, required=True)
-    run.add_argument("--agent", choices=("sdo", "codex", "claudecode"), required=True)
+    run.add_argument("--agent", choices=("sdo", "codex", "claudecode", "external"), required=True)
     run.add_argument(
         "--warm-lane",
         action="store_true",
@@ -2086,6 +2285,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--require-full-cleanup", action="store_true", help="require v2 recovery and application baseline")
     run.add_argument(
+        "--end-of-row-recovery",
+        action="store_true",
+        help="pay the harness fault recovery and cleanup at the row's end even for a row that wiped at start "
+        "(an arm-neutral end of row; without it a one-incident SDO row leaves it to the next row's start)",
+    )
+    run.add_argument(
         "--cleanup-passes",
         type=int,
         choices=(1, 2),
@@ -2095,7 +2300,31 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--model",
         default=None,
-        help="agent model (default: gpt-6-luna; claude-sonnet-5-5 for --agent claudecode, SREGym's stock Claude Code)",
+        help="agent model (default: gpt-6-luna; claude-sonnet-5-5 for --agent claudecode, SREGym's stock Claude Code; "
+        "recorded as declared for --agent external, whose command picks its own)",
+    )
+    external = run.add_argument_group("external agent (--agent external)", "see fastloop/README.md for the contract")
+    external.add_argument("--agent-command", help="the command to run per cell and phase (shell-quoted)")
+    external.add_argument("--agent-label", help="the arm's label on every row (default: the command's name)")
+    external.add_argument(
+        "--agent-env", action="append", default=[], metavar="KEY=VALUE", help="extra environment for the command"
+    )
+    external.add_argument(
+        "--agent-state-map",
+        type=Path,
+        help="JSON file {problem_id: state dir}: that cell starts from a copy of the state a previous pass kept",
+    )
+    external.add_argument(
+        "--agent-closing-timeout",
+        type=float,
+        help="seconds for the closing phase after the oracle grade (default: no closing phase)",
+    )
+    external.add_argument("--agent-closing-prompt-file", type=Path, help="the closing phase's text (default: neutral)")
+    external.add_argument(
+        "--agent-evidence-grace",
+        type=float,
+        default=1.5 * wait_for(WaitKind.MINUTE),
+        help="seconds past a phase's deadline before the arm kills the command's process group",
     )
     run.add_argument("--provider", choices=("codex", "claude"), default="codex", help="SDO agent provider")
     run.add_argument(

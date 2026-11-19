@@ -77,6 +77,7 @@ broker found `reflection_commit` on the accepted branch, `reflection_failed` for
 decision,
 or `reflection_without_commit`; ledgers before this rule logged `reflection_committed` for all three.
 Frozen requests live under the ledger's `reflection-tasks/` directory.
+The closure receipt (`BrokerLedger.receipt`) is the acknowledgment-time statement and is never rewritten: it binds the proposal and outcome commits, and its `reflection_commit` is empty on every closure whose reflection is queued behind the acknowledgment. The reflection commit is in the ledger's `reflection_commit` alone. Strict receipt validation requires the closure-time commits to equal the ledger's, a named receipt reflection to equal the ledger's, and an omitted one only when the ledger required and queued a reflection; ledgers rejected before this rule failed with "closure receipt commits disagree with broker ledger" on every learning closure.
 `ControllerState.failed_closures` is an outbox, archived before the next state CAS
 as content-addressed `sdo-failed-closure-*` ConfigMaps (`failed-closure.json`, label
 `sdo.dev/closure-archive=failed`). Exhausted closures retain evidence and allow

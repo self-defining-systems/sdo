@@ -6,10 +6,14 @@ inject, the agent, the one-shot oracle, learning and fenced recovery. This adapt
 
 - ``claim`` loads the lane's fastloop environment and, for an SDO cell, fetches the snapshot commit from the app's
   snapshot repository into the lane's accepted-memory workspace (the row-start wipe then reseeds at that commit);
-- ``execute`` runs the row subprocess and maps its ``IncidentRecord`` to an ``ArmResult`` (injection time, page,
-  agent end, recovery, tokens inputs, phase seconds from the row prelude and driver timings);
-- ``grade`` returns the row's own final oracle verdict (read once, at the end of the agent's work);
-- ``collect`` copies the row's results directory into the cell directory.
+- ``execute`` starts the row subprocess and returns at the row's online end (the grade is frozen and, for SDO, the
+  outcome is committed: the ``incidents.online`` checkpoint), mapping that partial ``IncidentRecord`` to an
+  ``ArmResult`` (injection time, page, agent end, recovery, tokens inputs, phase seconds);
+- ``grade`` returns the row's own oracle verdict (read once, at the end of the agent's work);
+- ``collect`` copies the row's results directory into the cell directory (called at the row's end and again after
+  the drain, so the closing turn's result is in the evidence);
+- ``drain`` waits on the held lane for the same row process to finish its closing turn, end-of-row fault recovery
+  and exit, or stops it at ``drain_timeout_seconds``, and reports the closing (``ClosingResult``).
 
 UNVERIFIED LIVE. Command flags mirror ``fastloop.sequence.execute_row``; the arm-specific flags (vanilla agent name,
 provider, model) are settings. Page time, injection time and the phase mapping come from record fields that this module
@@ -24,6 +28,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -31,10 +36,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from benchmarks.sregym.adapter import kubectl
 from benchmarks.sregym.eval.cell import Accounting, ArmResult, Injection, Lane, Verdict
+from benchmarks.sregym.eval.closing import ClosingResult
 from benchmarks.sregym.eval.health import ProbeResult, http_probe
 from benchmarks.sregym.eval.results import TokenRow
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
-from benchmarks.sregym.fastloop.records import IncidentRecord, TokenCounts, load_records
+from benchmarks.sregym.fastloop.records import IncidentRecord, TokenCounts, load_records, online_checkpoint_path
 from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
@@ -83,6 +89,13 @@ class RowSettings(BaseModel):
     model: str = "claude-sonnet-5-5"
     timeout_seconds: int = Field(default=1800, gt=0)
     detection_timeout_seconds: int = Field(default=300, gt=0)
+    #: How long a row may take after its online end (closing turn, its memory check, end-of-row recovery) before the
+    #: drain stops it and reports ``not_drained``: ``closing_turn_timeout`` + ``memory_check_timeout`` + 120 s.
+    drain_timeout_seconds: int = Field(default=1500, gt=0)
+    poll_seconds: float = Field(default=1.0, gt=0)
+    #: Both arms pay the harness fault recovery and cleanup at their row's end (an SDO row would otherwise defer it to
+    #: the next claim). Turn it off only to reproduce a run that deferred it.
+    end_of_row_recovery: bool = True
     #: Extra ``fastloop run`` flags per arm, after the defaults.
     extra_args: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     #: ``coord`` binary and lease for ``lane_guard``; ``None`` runs the row without the lease guard.
@@ -123,6 +136,8 @@ def row_command(
         "--require-full-cleanup",
         "--continue-on-error",
     ]
+    if settings.end_of_row_recovery:
+        run.append("--end-of-row-recovery")
     if planned:
         run += ["--planned-commit", planned]
     run += list(settings.extra_args.get(cell.arm, ()))
@@ -243,16 +258,16 @@ class FastloopRowRunner:
         settings: RowSettings,
         stage: str,
         *,
-        run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+        start: Callable[..., Any] = subprocess.Popen,
         now: Callable[[], float] | None = None,
+        sleep: Callable[[float], None] = time.sleep,
         import_memory: Callable[[str, str, Path, str], None] | None = None,
         head: Callable[[Path], str] | None = None,
     ) -> None:
-        import time
-
         self.settings = settings
         self.stage = stage
-        self._run = run
+        self._start = start
+        self._sleep = sleep
         #: ``(app, problem, workspace, commit)``: make a first try's accepted memory fetchable from the snapshot store.
         self._import_memory = import_memory
         self._head = head or _workspace_head
@@ -434,6 +449,7 @@ class FastloopRowRunner:
     # ArmExecutor -------------------------------------------------------------------------------------------------
 
     def execute(self, lane: Lane, cell: Cell, injection: Injection, directory: Path, context: ArmContext) -> ArmResult:
+        """Start the row and return at its online end; the same process keeps running until ``drain``."""
         with self._lock:
             state = self._state[lane.id]
         environment: FastloopEnvironment = state["environment"]
@@ -451,32 +467,27 @@ class FastloopRowRunner:
             encoding="utf-8",
         )
         started = self._now()
-        for admission_try in range(1 + ADMISSION_RETRIES):
-            attempt = len(list((environment.run_dir / "results").glob(f"{run_id(self.stage, cell, 0)[:-3]}-a*")))
-            row_id = run_id(self.stage, cell, attempt)
-            command = row_command(self.settings, environment, cell, row_id, stream, state["planned"])
-            (directory / "command.json").write_text(json.dumps(command, indent=2) + "\n", encoding="utf-8")
-            with (directory / "row.stdout.log").open("a") as out, (directory / "row.stderr.log").open("a") as err:
-                completed = self._run(
-                    command,
-                    cwd=self.settings.code_root,
-                    stdout=out,
-                    stderr=err,
-                    check=False,
-                    timeout=context.config.cell_cap_seconds + 600,
-                )
-            results = environment.run_dir / "results" / row_id
-            retryable = admission_try < ADMISSION_RETRIES and cell.arm == "sdo"
-            if retryable and _admission_rejected_before_injection(results):
-                # The fault was never injected: SDO's install window failed on an incomplete or slow observation
-                # (a loaded host), not on the application. The next row starts from a clean wipe; try it again.
-                continue
-            break
-        state["results"] = results
-        (directory / "row-exit.json").write_text(
-            json.dumps({"returncode": completed.returncode, "wall_seconds": self._now() - started}) + "\n",
-            encoding="utf-8",
+        out = (directory / "row.stdout.log").open("a")
+        err = (directory / "row.stderr.log").open("a")
+        process = self._start(command, cwd=self.settings.code_root, stdout=out, stderr=err)
+        results = environment.run_dir / "results" / row_id
+        state.update(
+            {"results": results, "process": process, "handles": (out, err), "started": started, "online_end": None}
         )
+        deadline = started + context.config.cell_cap_seconds + 600
+        online = online_checkpoint_path(results / "incidents.jsonl", 0)
+        while not online.is_file() and process.poll() is None:
+            if self._now() > deadline:
+                self._stop(process)
+                break
+            self._sleep(self.settings.poll_seconds)
+        if online.is_file():
+            record = IncidentRecord.model_validate_json(online.read_text(encoding="utf-8"))
+            self.records[cell.id] = record
+            state["online_end"] = self._now()
+            return map_record(record, cell, memory_head=None)
+        # The row ended without an online end: an error before the grade, or a row that finished in one step.
+        completed = self._finish_process(directory, state)
         path = results / "incidents.jsonl"
         if not path.is_file():
             return ArmResult(
@@ -484,7 +495,7 @@ class FastloopRowRunner:
                 page_source="none",
                 agent_ended_at=self._now(),
                 status="error",
-                error=f"fastloop row exited {completed.returncode} without results",
+                error=f"fastloop row exited {completed} without results",
             )
         records = load_records(path)
         if len(records) != 1:
@@ -494,7 +505,174 @@ class FastloopRowRunner:
         head = self._head(environment.workspace) if cell.arm == "sdo" else None
         if head and self._import_memory is not None:
             self._import_memory(cell.app, cell.problem, environment.workspace, head)
+        state["finished"] = True
         return map_record(record, cell, memory_head=head)
+
+    def _stop(self, process: Any) -> None:
+        process.terminate()
+        try:
+            process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+    def _finish_process(self, directory: Path, state: dict[str, Any]) -> int | None:
+        """Record the row process's exit (waiting for it) and close its log handles."""
+        process = state["process"]
+        code = process.poll()
+        if code is None:
+            code = process.wait(timeout=30)
+        for handle in state.get("handles", ()):
+            handle.close()
+        (directory / "row-exit.json").write_text(
+            json.dumps({"returncode": code, "wall_seconds": self._now() - state["started"]}) + "\n", encoding="utf-8"
+        )
+        return code  # type: ignore[no-any-return]
+
+    # ClosingDrain ------------------------------------------------------------------------------------------------
+
+    def drain(self, lane: Lane, cell: Cell, directory: Path, context: ArmContext) -> ClosingResult:
+        with self._lock:
+            state = self._state.get(lane.id)
+        if not state or "process" not in state:
+            return ClosingResult(status="not_applicable")
+        environment: FastloopEnvironment = state["environment"]
+        process = state["process"]
+        deadline = self._now() + self.settings.drain_timeout_seconds
+        stopped = False
+        while process.poll() is None:
+            if self._now() >= deadline:
+                self._stop(process)
+                stopped = True
+                break
+            self._sleep(self.settings.poll_seconds)
+        if state.get("finished"):
+            code: int | None = json.loads((directory / "row-exit.json").read_text(encoding="utf-8"))["returncode"]
+        else:
+            code = self._finish_process(directory, state)
+        record = self._final_record(state)
+        if record is not None:
+            self.records[cell.id] = record
+        else:
+            record = self.records.get(cell.id)
+        incident_id = record.incident_id if record else None
+        if stopped:
+            return ClosingResult(
+                status="not_drained",
+                incident_id=incident_id,
+                decision="not_drained",
+                error=f"the row did not finish within {self.settings.drain_timeout_seconds}s of its online end",
+            )
+        if code != 0 or state.get("final_missing"):
+            return ClosingResult(
+                status="error", incident_id=incident_id, error=f"fastloop row exited {code} after its online end"
+            )
+        sdo = cell.arm == "sdo"
+        head = self._head(environment.workspace) if sdo else None
+        if head and self._import_memory is not None:
+            self._import_memory(cell.app, cell.problem, environment.workspace, head)
+        ledger = _ledger(record)
+        decision = ledger.get("reflection_decision")
+        decision = decision if isinstance(decision, dict) else {}
+        planned = state.get("planned")
+        return ClosingResult(
+            status="drained",
+            incident_id=incident_id,
+            closing_s=record.reflection_seconds if record and sdo else None,
+            recovery_s=record.fault_recovery_seconds if record else None,
+            memory_commit_after=head,
+            decision=decision.get("learning_decision") if sdo else None,
+            failure_reason=decision.get("failure_reason") if sdo else None,
+            learning=learning_delta(environment.workspace, planned, head) if sdo and head and planned else {},
+            source_repair=_text(ledger.get("source_repair")),
+            source_repair_uncaptured=_text(ledger.get("source_repair_uncaptured")),
+            cleanup_turns_used=ledger.get("cleanup_turns_used")
+            if isinstance(ledger.get("cleanup_turns_used"), int)
+            else None,
+            phases={k: str(v) for k, v in (ledger.get("closure_phase_timestamps") or {}).items()},
+            recovery=_recovery(record),
+            offline_fallback=_tokens(record.reflection_tokens) if record and sdo else None,
+        )
+
+    def _final_record(self, state: dict[str, Any]) -> IncidentRecord | None:
+        path = state["results"] / "incidents.jsonl"
+        if not path.is_file():
+            state["final_missing"] = True
+            return None
+        records = load_records(path)
+        if len(records) != 1:
+            state["final_missing"] = True
+            return None
+        return records[0]
+
+
+def _text(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _ledger(record: IncidentRecord | None) -> dict[str, Any]:
+    """The native ledger of the incident's receipt (strict, else SDO's own rejected one), ``{}`` when absent."""
+    if record is None or not record.artifacts_dir:
+        return {}
+    directory = Path(record.artifacts_dir)
+    for name, unwrap in (("sdo_production_receipt_strict.json", False), ("sdo_rejected_production_receipt.json", True)):
+        path = directory / name
+        if not path.is_file():
+            continue
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        if unwrap and isinstance(document, dict):
+            document = document.get("receipt")
+        ledger = document.get("native_ledger") if isinstance(document, dict) else None
+        if isinstance(ledger, dict):
+            return ledger
+    return {}
+
+
+def _recovery(record: IncidentRecord | None) -> dict[str, Any]:
+    """What the end-of-row recovery did, the same fields for both arms."""
+    if record is None:
+        return {}
+    return {
+        "fault_recovery_seconds": record.fault_recovery_seconds,
+        "full_cleanup_verified": record.full_cleanup_verified,
+        "cleanup_passes_verified": record.cleanup_passes_verified,
+        "cleanup_skipped_reason": record.cleanup_skipped_reason,
+        "recovery_error": record.recovery_error,
+    }
+
+
+#: Where each kind of learning lives under the accepted memory, and what names a unit of it.
+_LEARNING_ROOTS = {
+    "playbooks": ".sdo/playbooks/",
+    "detectors": ".sdo/diagnostics/detectors/incidents/",
+    "lib": ".sdo/lib/",
+    "corpus": ".sdo/corpus/",
+}
+
+
+def learning_delta(workspace: Path, base: str, head: str) -> dict[str, Any]:
+    """What the closing turn added to accepted memory between ``base`` and ``head``, by unit, plus the commit."""
+    listing = subprocess.run(
+        host_git_command(
+            workspace, "diff", "--name-status", "--no-renames", base, head, "--", *_LEARNING_ROOTS.values()
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    delta: dict[str, Any] = {kind: {"added": set(), "modified": set(), "deleted": set()} for kind in _LEARNING_ROOTS}
+    names = {"A": "added", "M": "modified", "D": "deleted"}
+    for line in listing.splitlines():
+        status, _, path = line.partition("\t")
+        for kind, root in _LEARNING_ROOTS.items():
+            if path.startswith(root) and status[:1] in names:
+                unit = path[len(root) :].split("/", 1)[0]
+                delta[kind][names[status[:1]]].add(unit)
+    for kind in delta:
+        delta[kind] = {change: sorted(units) for change, units in delta[kind].items()}
+    return {**delta, "base": base, "commit": head}
 
 
 def _workspace_head(workspace: Path) -> str:

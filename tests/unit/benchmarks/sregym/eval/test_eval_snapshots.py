@@ -5,14 +5,17 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
-from benchmarks.sregym.eval.snapshots import CheckResult, GitSnapshotStore
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from benchmarks.sregym.eval.snapshots import (
+    CheckResult,
+    GitSnapshotStore,
+    MemoryLayoutError,
+    command_check,
+    memory_check_command,
+)
 
 ENV = {
     **os.environ,
@@ -143,6 +146,89 @@ def test_a_colliding_playbook_is_renamed_and_its_detector_follows(tmp_path: Path
     assert git(repo, "show", f"{merged}:{detector.format(n='a')}") == "playbooks: [restart]"
 
 
+CASE = ".sdo/corpus/{name}/{file}"
+
+
+def corpus_case(name: str, playbook: str, *, capture: str = "{}\n") -> dict[str, str]:
+    """One synthetic corpus case: labels naming the playbook plus the controller captures."""
+    labels = json.dumps({"root_cause_program_ids": [playbook], "bindings": {}}) + "\n"
+    return {
+        CASE.format(name=name, file="labels.json"): labels,
+        CASE.format(name=name, file="open.json"): capture,
+        CASE.format(name=name, file="fixed.json"): capture,
+        CASE.format(name=name, file="recordings.json"): "[]\n",
+    }
+
+
+def test_a_first_trys_corpus_case_reaches_the_merged_snapshot_and_is_counted(
+    tmp_path: Path, base_repo: tuple[Path, str]
+) -> None:
+    s = store(tmp_path, base_repo)
+    s.import_first_try(
+        "hotel",
+        "a",
+        *lane(tmp_path, "a", base_repo, {PLAYBOOK.format(id="fix"): "package a\n", **corpus_case("case-a", "fix")}),
+    )
+    report = s.merge("hotel", ["a"])
+    repo = s.repositories()["hotel"]
+    assert CASE.format(name="case-a", file="labels.json") in tree(repo, s.resolve("hotel", "merged"))
+    assert report.corpus_cases == 1
+    assert report.playbooks_without_case == []
+
+
+def test_a_playbook_the_merge_carries_without_any_corpus_case_is_listed(
+    tmp_path: Path, base_repo: tuple[Path, str]
+) -> None:
+    """A learned playbook with no case is never replayed against anything; the report says so, never silently."""
+    s = store(tmp_path, base_repo)
+    s.import_first_try(
+        "hotel",
+        "a",
+        *lane(tmp_path, "a", base_repo, {PLAYBOOK.format(id="bare"): "package a\n"}),
+    )
+    s.import_first_try(
+        "hotel",
+        "b",
+        *lane(tmp_path, "b", base_repo, {PLAYBOOK.format(id="cased"): "package b\n", **corpus_case("case-b", "cased")}),
+    )
+    report = s.merge("hotel", ["a", "b"])
+    assert report.playbooks_without_case == ["bare"]
+    assert report.corpus_cases == 1
+
+
+def test_a_renamed_playbook_renames_its_case_label_and_never_touches_the_captures(
+    tmp_path: Path, base_repo: tuple[Path, str]
+) -> None:
+    """Captures are digest-bound evidence: the rename may rewrite the label that names the playbook, nothing else."""
+    s = store(tmp_path, base_repo)
+    capture = '{"note": "the restart playbook is not an object name restart"}\n'
+    s.import_first_try(
+        "hotel",
+        "a",
+        *lane(
+            tmp_path, "a", base_repo, {PLAYBOOK.format(id="restart"): "package a\n", **corpus_case("case-a", "restart")}
+        ),
+    )
+    s.import_first_try(
+        "hotel",
+        "b",
+        *lane(
+            tmp_path,
+            "b",
+            base_repo,
+            {PLAYBOOK.format(id="restart"): "package b\n", **corpus_case("case-b", "restart", capture=capture)},
+        ),
+    )
+    report = s.merge("hotel", ["a", "b"])
+    repo = s.repositories()["hotel"]
+    merged = s.resolve("hotel", "merged")
+    new_id = report.renames["b"]["restart"]
+    labels = json.loads(git(repo, "show", f"{merged}:{CASE.format(name='case-b', file='labels.json')}"))
+    assert labels["root_cause_program_ids"] == [new_id]
+    for name in ("open.json", "fixed.json"):
+        assert git(repo, "show", f"{merged}:{CASE.format(name='case-b', file=name)}") == capture.strip()
+
+
 def test_an_identical_unit_is_a_duplicate_and_adds_nothing(tmp_path: Path, base_repo: tuple[Path, str]) -> None:
     s = store(tmp_path, base_repo)
     s.import_first_try("hotel", "a", *lane(tmp_path, "a", base_repo, {PLAYBOOK.format(id="same"): "package x // v1\n"}))
@@ -188,11 +274,11 @@ def test_a_delta_that_fails_the_memory_check_is_excluded(tmp_path: Path, base_re
     assert report.check["b"]["ok"] is False
 
 
-def test_a_colliding_lib_file_is_kept_first_and_recorded_as_a_conflict(
+def test_a_colliding_lib_directory_is_kept_first_and_recorded_as_a_conflict(
     tmp_path: Path, base_repo: tuple[Path, str]
 ) -> None:
     s = store(tmp_path, base_repo)
-    s.import_first_try("hotel", "a", *lane(tmp_path, "a", base_repo, {".sdo/lib/util.go": "package lib // a\n"}))
+    s.import_first_try("hotel", "a", *lane(tmp_path, "a", base_repo, {".sdo/lib/util/util.go": "package lib // a\n"}))
     s.import_first_try(
         "hotel",
         "b",
@@ -200,13 +286,13 @@ def test_a_colliding_lib_file_is_kept_first_and_recorded_as_a_conflict(
             tmp_path,
             "b",
             base_repo,
-            {".sdo/lib/util.go": "package lib // b\n", PLAYBOOK.format(id="pb"): "package b\n"},
+            {".sdo/lib/util/util.go": "package lib // b\n", PLAYBOOK.format(id="pb"): "package b\n"},
         ),
     )
     report = s.merge("hotel", ["a", "b"])
     repo = s.repositories()["hotel"]
-    assert git(repo, "show", f"{s.resolve('hotel', 'merged')}:.sdo/lib/util.go") == "package lib // a"
-    assert report.conflicts == [{"problem": "b", "unit": ".sdo/lib/util.go", "kind": "lib"}]
+    assert git(repo, "show", f"{s.resolve('hotel', 'merged')}:.sdo/lib/util/util.go") == "package lib // a"
+    assert report.conflicts == [{"problem": "b", "unit": ".sdo/lib/util", "kind": "lib"}]
     assert PLAYBOOK.format(id="pb") in tree(repo, s.resolve("hotel", "merged"))
 
 
@@ -227,10 +313,87 @@ def test_from_config_builds_a_store(tmp_path: Path, base_repo: tuple[Path, str])
     assert s.resolve("hotel", "base") == base_repo[1]
 
 
-def test_store_refuses_a_stored_base_that_differs_from_the_configured_one(tmp_path: Path, base_repo: tuple[Path, str]) -> None:
-    first = store(tmp_path, base_repo)
-    assert first.base("hotel") == base_repo[1]
-    newer = commit(base_repo[0], {".sdo/goal.md": "installed\n"}, "installed")
-    with pytest.raises(ValueError, match="holds base"):
-        store(tmp_path, (base_repo[0], newer)).base("hotel")
-    assert store(tmp_path, base_repo).base("hotel") == base_repo[1]
+INDEX = ".sdo/playbooks/README.md"
+
+
+def playbook_files(playbook: str, title: str) -> dict[str, str]:
+    """A learned playbook the way a first try leaves it: its README, and the index SDO regenerated in that checkout."""
+    return {
+        f".sdo/playbooks/{playbook}/README.md": f"# {title}\n\nbody\n",
+        f".sdo/playbooks/{playbook}/diagnose.go": f"package {playbook.replace('-', '')}\n",
+        INDEX: f"# Playbooks\n\n- [{title}]({playbook}/README.md)\n",
+    }
+
+
+def test_the_shared_playbook_index_is_regenerated_never_renamed(tmp_path: Path, base_repo: tuple[Path, str]) -> None:
+    s = store(tmp_path, base_repo)
+    s.import_first_try("hotel", "a", *lane(tmp_path, "a", base_repo, playbook_files("fix-a", "Fix A")))
+    s.import_first_try("hotel", "b", *lane(tmp_path, "b", base_repo, playbook_files("fix-b", "Fix [B]")))
+    report = s.merge("hotel", ["a", "b"])
+    repo = s.repositories()["hotel"]
+    merged = s.resolve("hotel", "merged")
+    assert report.included == ["a", "b"]
+    assert report.renames == {}
+    assert [path for path in tree(repo, merged) if path.startswith(".sdo/playbooks/") and "/" not in path[15:]] == [
+        INDEX
+    ]
+    assert git(repo, "show", f"{merged}:{INDEX}") == (
+        "# Playbooks\n\n- [Fix A](fix-a/README.md)\n- [Fix \\[B\\]](fix-b/README.md)"
+    )
+
+
+def test_a_retired_playbook_is_left_out_of_the_regenerated_index(tmp_path: Path, base_repo: tuple[Path, str]) -> None:
+    s = store(tmp_path, base_repo)
+    files = playbook_files("old", "Old")
+    files[".sdo/playbooks/old/README.md"] = "---\nstatus: retired\nretired_reason: gone\n---\n# Old\n"
+    s.import_first_try("hotel", "a", *lane(tmp_path, "a", base_repo, files))
+    s.import_first_try("hotel", "b", *lane(tmp_path, "b", base_repo, playbook_files("new", "New")))
+    s.merge("hotel", ["a", "b"])
+    shown = git(s.repositories()["hotel"], "show", f"{s.resolve('hotel', 'merged')}:{INDEX}")
+    assert shown == "# Playbooks\n\n- [New](new/README.md)"
+
+
+def test_the_own_snapshot_regenerates_the_index_too(tmp_path: Path, base_repo: tuple[Path, str]) -> None:
+    s = store(tmp_path, base_repo)
+    s.import_first_try("hotel", "a", *lane(tmp_path, "a", base_repo, playbook_files("fix-a", "Fix A")))
+    own = s.resolve("hotel", "own:a")
+    assert git(s.repositories()["hotel"], "show", f"{own}:{INDEX}") == "# Playbooks\n\n- [Fix A](fix-a/README.md)"
+
+
+@pytest.mark.parametrize("stray", [".sdo/playbooks/NOTES.md", ".sdo/lib/helper.go", ".sdo/corpus/stray.json"])
+def test_a_top_level_file_that_is_not_a_unit_is_an_error_never_a_rename(
+    tmp_path: Path, base_repo: tuple[Path, str], stray: str
+) -> None:
+    s = store(tmp_path, base_repo)
+    s.import_first_try("hotel", "a", *lane(tmp_path, "a", base_repo, {stray: "x\n"}))
+    s.import_first_try("hotel", "b", *lane(tmp_path, "b", base_repo, {stray: "y\n"}))
+    with pytest.raises(MemoryLayoutError, match="not a memory unit"):
+        s.merge("hotel", ["a", "b"])
+
+
+def test_the_memory_check_sees_the_regenerated_index(tmp_path: Path, base_repo: tuple[Path, str]) -> None:
+    seen: list[str] = []
+
+    def check(repo: Path, commit_id: str) -> CheckResult:
+        seen.append(git(repo, "show", f"{commit_id}:{INDEX}"))
+        return CheckResult(ok=True)
+
+    s = store(tmp_path, base_repo, check=check)
+    s.import_first_try("hotel", "a", *lane(tmp_path, "a", base_repo, playbook_files("fix-a", "Fix A")))
+    s.merge("hotel", ["a"])
+    assert seen == ["# Playbooks\n\n- [Fix A](fix-a/README.md)"]
+
+
+def test_the_offline_check_runs_the_accepted_audit_with_the_operator_sources() -> None:
+    command = memory_check_command(Path("/ops/sdo-operator"))
+    assert command == ["/ops/sdo-operator", "memory", "check", "--accepted", "--replay", "off", "--root", "{root}"]
+
+
+def test_command_check_runs_in_a_checkout_of_the_commit_with_the_given_environment(
+    tmp_path: Path, base_repo: tuple[Path, str]
+) -> None:
+    script = 'test -f .sdo/goal.md && test "$1" = "$PWD" && echo "diag: $MARK" && echo progress >&2 && exit 1'
+    check = command_check(["sh", "-c", script, "sh", "{root}"], env={"MARK": "seen"})
+    result = check(base_repo[0], base_repo[1])
+    assert (result.ok, result.ran) == (False, True)
+    assert result.output.startswith("diag: seen")

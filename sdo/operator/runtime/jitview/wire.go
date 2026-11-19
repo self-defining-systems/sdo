@@ -14,6 +14,7 @@ import (
 	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sync"
 
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/program"
 )
@@ -31,7 +32,16 @@ type Message struct {
 	Result                json.RawMessage                `json:"result,omitempty"`
 	Error                 string                         `json:"error,omitempty"`
 	UsageUnavailable      *metrics.UsageUnavailableError `json:"usage_unavailable,omitempty"`
+	// ObjectAbsent marks an error that is an observation of absence, which
+	// the program must still be able to recognize with errors.Is.
+	ObjectAbsent bool `json:"object_absent,omitempty"`
 }
+
+// absentError is the program-side form of sdk.ErrObjectAbsent.
+type absentError struct{ message string }
+
+func (e *absentError) Error() string { return e.message }
+func (e *absentError) Unwrap() error { return sdk.ErrObjectAbsent }
 
 type View struct {
 	mu     sync.Mutex
@@ -62,6 +72,9 @@ func (v *View) call(method string, args, outputs []any) error {
 	if response.Error != "" {
 		if response.UsageUnavailable != nil {
 			return response.UsageUnavailable
+		}
+		if response.ObjectAbsent {
+			return &absentError{message: response.Error}
 		}
 		return errors.New(response.Error)
 	}
@@ -142,6 +155,7 @@ func read(view program.ReadView, request Message) (response Message) {
 			if !value.IsNil() {
 				err := value.Interface().(error)
 				response.Error = err.Error()
+				response.ObjectAbsent = errors.Is(err, sdk.ErrObjectAbsent)
 				var unavailable *metrics.UsageUnavailableError
 				if errors.As(err, &unavailable) {
 					response.UsageUnavailable = unavailable

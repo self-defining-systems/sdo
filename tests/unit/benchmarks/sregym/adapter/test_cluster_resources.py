@@ -35,6 +35,7 @@ def test_preparation_isolates_registry_secret_and_maps_every_kind_node(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("FASTLOOP_DOCKERHUB_AUTH_FILE", raising=False)  # hermetic: never read the host's credentials
     config = _config(tmp_path)
     calls: list[tuple[list[str], str | None]] = []
 

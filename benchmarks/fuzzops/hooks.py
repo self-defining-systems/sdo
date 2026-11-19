@@ -59,7 +59,6 @@ import subprocess
 import sys
 import tempfile
 import time
-from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -67,7 +66,33 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from benchmarks.fuzzops import capture, cellevidence, config, devtree, observe, page, sink, view
+from benchmarks.devswap import devtree
+from benchmarks.devswap.binary import build_operator
+from benchmarks.devswap.controller import (
+    SWAP_STANDBY_WAIT_S,
+    controller_stopped,
+    is_ancestor,
+    repository_state,
+    restore_repository,
+    retire_standby,
+    set_controller_suspended,
+    wait_standby,
+    wipe_problems,
+)
+from benchmarks.devswap.kube import (
+    APPLICATION_ROOT,
+    CONTROLLER_CONTAINER,
+    CONTROLLER_JOB,
+    KUBECTL_TIMEOUT_S,
+    Kubectl,
+    SwapError,
+    run,
+)
+from benchmarks.devswap.seed import MemorySeed, PreparedMemory, SeedSteps, apply_seed, prepare_memory
+from benchmarks.devswap.swap import Phases, SwapPlan, SwapState, swap_compiled
+from benchmarks.devswap.timeline import Timeline
+from benchmarks.devswap.tree import regenerate_tree as regenerate_lane_tree
+from benchmarks.fuzzops import capture, cellevidence, config, observe, page, sink, view
 from benchmarks.fuzzops.install import (
     CREDENTIALS_SECRET,
     REPOSITORY_PVC,
@@ -78,19 +103,15 @@ from benchmarks.fuzzops.install import (
 from benchmarks.fuzzops.pack import SourcePack, images, write_attached_pack
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Mapping
+    from collections.abc import Callable, Mapping
 
 BASELINE_FILE = "baseline.json"
 BASELINE_FORMAT = 2
 STATE_CONFIGMAP = observe.STATE_CONFIGMAP
 STATE_KEY = observe.STATE_KEY
-CONTROLLER_JOB = "sdo-controller-run"
-CONTROLLER_CONTAINER = "controller"
-APPLICATION_ROOT = "/workspace/application"
 MEMORY_PATHS = (".sdo/outcomes", ".sdo/playbooks", ".sdo/corpus", ".sdo/lib")
 #: The controller state must have changed this recently for SDO to count as live.
 FRESH_S = 60.0
-KUBECTL_TIMEOUT_S = 25
 #: ``install-existing`` flags the hook sets from the lane, the operator block and the baseline.
 HOOK_FLAGS = frozenset(
     {
@@ -115,8 +136,16 @@ _DNS_LABEL = re.compile(r"^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$")
 _COMMIT = re.compile(r"^[0-9a-f]{40}$")
 
 
-class HookError(RuntimeError):
-    """A hook cannot do its job on this lane; the message is the one-line reason the bench records."""
+HookError = SwapError  # a hook cannot do its job on this lane; the message is the one-line reason the bench records
+
+
+class StoreMismatch(HookError):
+    """The lane's data stores are not the golden copy's (fuzzops' fingerprint check said so): the one failure a
+    full restore of the golden copy can undo, and so the only one a claim retries."""
+
+
+class SnapshotNotIdle(HookError):
+    """The golden copy is whole and the app serves again; only the operator was not idle afterwards."""
 
 
 def _print(line: str) -> None:
@@ -558,28 +587,8 @@ def _now() -> str:
 
 
 @dataclass
-class Kube:
-    """kubectl against one lane's cluster."""
-
-    context: str
-    kubeconfig: str = ""
-
-    def cmd(self, *args: str) -> list[str]:
-        out = ["kubectl"]
-        if self.kubeconfig:
-            out += ["--kubeconfig", self.kubeconfig]
-        if self.context:
-            out += ["--context", self.context]
-        return [*out, *args]
-
-    def _json(self, *args: str) -> dict[str, Any] | None:
-        proc = subprocess.run(
-            self.cmd(*args, "-o", "json"), capture_output=True, text=True, timeout=KUBECTL_TIMEOUT_S, check=False
-        )
-        if proc.returncode != 0:
-            return None
-        value = json.loads(proc.stdout)
-        return value if isinstance(value, dict) else None
+class Kube(Kubectl):
+    """kubectl against one lane's cluster, with the controller state ConfigMap and the accepted memory."""
 
     def state_configmap(self, control: str) -> tuple[dict[str, Any] | None, datetime | None]:
         """The controller state and when the controller last changed it (the newest managedFields time).
@@ -587,7 +596,7 @@ class Kube:
         The controller writes the ConfigMap only when its state changed, and every step pass advances the state's
         ``step_count`` heartbeat, so the last write time is the controller's last completed step.
         """
-        cm = self._json("-n", control, "get", "configmap", STATE_CONFIGMAP, "--show-managed-fields")
+        cm = self.get_json("-n", control, "get", "configmap", STATE_CONFIGMAP, "--show-managed-fields")
         if cm is None:
             return None, None
         meta = cm.get("metadata") or {}
@@ -600,26 +609,6 @@ class Kube:
     def state(self, control: str) -> dict[str, Any] | None:
         return self.state_configmap(control)[0]
 
-    def controller_pods(self, control: str) -> list[dict[str, Any]]:
-        pods = self._json("-n", control, "get", "pods", "-l", f"job-name={CONTROLLER_JOB}")
-        return list((pods or {}).get("items") or [])
-
-    def controller_suspended(self, control: str) -> bool | None:
-        """Whether the controller Job is suspended; None when the Job could not be read."""
-        job = self._json("-n", control, "get", "job", CONTROLLER_JOB)
-        if job is None:
-            return None
-        return bool((job.get("spec") or {}).get("suspend"))
-
-    def controller_ready(self, control: str) -> bool:
-        for pod in self.controller_pods(control):
-            if (pod.get("metadata") or {}).get("deletionTimestamp"):
-                continue
-            conditions = (pod.get("status") or {}).get("conditions") or []
-            if any(c.get("type") == "Ready" and c.get("status") == "True" for c in conditions):
-                return True
-        return False
-
     def controller_log_tail(self, control: str, lines: int = 3) -> str:
         pod = self.controller_pod(control)
         proc = subprocess.run(
@@ -628,35 +617,13 @@ class Kube:
         )  # fmt: skip
         return proc.stdout
 
-    def controller_pod(self, control: str) -> str:
-        names = [
-            p["metadata"]["name"]
-            for p in self.controller_pods(control)
-            if (p.get("status") or {}).get("phase") == "Running" and not p["metadata"].get("deletionTimestamp")
-        ]
-        if not names:
-            raise HookError(f"no running controller pod in {control}")
-        return sorted(names)[-1]
-
-    def exec_controller(self, control: str, script: str, timeout: float = 300) -> bytes:
-        pod = self.controller_pod(control)
-        proc = subprocess.run(
-            self.cmd("-n", control, "exec", pod, "-c", CONTROLLER_CONTAINER, "--", "sh", "-c", script),
-            capture_output=True,
-            timeout=timeout,
-            check=False,
-        )
-        if proc.returncode != 0:
-            raise HookError(f"exec in {pod} failed ({proc.returncode}): {proc.stderr.decode(errors='replace')[-300:]}")
-        return proc.stdout
-
     def copy_memory(self, control: str, dest: Path) -> bool:
         """Copy the accepted outcome records, playbooks, corpus cases and shared helpers into ``dest`` (replacing
         an older copy); a seed built from it keeps what a playbook needs to apply on its own."""
         tar = f"cd {APPLICATION_ROOT} && tar cf - " + " ".join(MEMORY_PATHS) + " 2>/dev/null; true"
         try:
             data = self.exec_controller(control, tar)
-        except HookError:
+        except SwapError:
             return False
         if not data:
             return False
@@ -831,50 +798,11 @@ def install_existing_launch(
     return [*args, *config.config_args(files)], {**environment, **evidence_env}
 
 
-def _run(args: list[str], what: str, timeout: float = 600, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-    proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False, **kwargs)
-    if proc.returncode != 0:
-        raise HookError(f"{what} failed ({proc.returncode}): {(proc.stderr or proc.stdout).strip()[-300:]}")
-    return proc
+_run = run
 
 
 def checkout_revision() -> str:
     return _run(["git", "rev-parse", "HEAD"], "git rev-parse").stdout.strip()
-
-
-def operator_cache_key(checkout: Path) -> str:
-    """The identity of the operator binary's source: the git tree ids of the compiled paths it is built from."""
-    ident = devtree.fingerprint(checkout)
-    return hashlib.sha256(
-        json.dumps({p: ident[p] for p in (devtree.BINARY_PATH, "sdo/contracts")}).encode()
-    ).hexdigest()[:20]
-
-
-def cached_operator_binary(checkout: Path, out: Callable[[str], None] = _print) -> Path:
-    """The ``sdo-operator`` binary of ``checkout``, built once per source tree on this host (``SDO_BINARY_CACHE``,
-    default ``~/.cache/sdo-operator-bins``): a swap onto a revision with the same operator source copies it."""
-    root = Path(os.environ.get("SDO_BINARY_CACHE") or Path.home() / ".cache" / "sdo-operator-bins")
-    target = root / operator_cache_key(checkout) / "sdo-operator"
-    if target.is_file():
-        out(f"operator binary from the cache: {target.parent.name}")
-        return target
-    started = time.monotonic()
-    staged = build_operator(target.with_name(f"sdo-operator.{os.getpid()}"))
-    staged.replace(target)
-    out(f"built the operator binary in {time.monotonic() - started:.0f}s")
-    return target
-
-
-def build_operator(out: Path) -> Path:
-    """``go build`` the pinned checkout's ``sdo-operator`` into ``out``."""
-    out.parent.mkdir(parents=True, exist_ok=True)
-    _run(
-        ["go", "build", "-o", str(out.resolve()), "./cmd/sdo-operator"],
-        "go build sdo-operator",
-        1200,
-        cwd="sdo/operator",
-    )
-    return out
 
 
 def load_images(cluster: str, wanted: list[str], log: Callable[[str], None], registry: Path | None = None) -> None:
@@ -1048,7 +976,7 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     shutil.rmtree(lane_dir / "pack", ignore_errors=True)
     attached = write_attached_pack(source, lane_dir / "pack").resolve()
     # (d) the operator binary of the pinned checkout
-    binary = build_operator(lane_dir / "bin" / "sdo-operator")
+    binary = build_operator(Path.cwd(), lane_dir / "bin" / "sdo-operator")
     dev_env = dev_mount_env(env, block, binary, out)
     # (e) the operator images on the workers
     image = block.images()
@@ -1639,169 +1567,12 @@ def teardown(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int
     return 0
 
 
-def is_ancestor(kube: Kube, control: str, ancestor: str, descendant: str) -> bool:
-    """Whether ``ancestor`` is in the history of ``descendant`` in the controller's accepted repository."""
-    script = (
-        f"cd {APPLICATION_ROOT} && git -c safe.directory='*' merge-base --is-ancestor {ancestor} {descendant} "
-        "&& echo yes || echo no"
-    )
-    return kube.exec_controller(control, script).decode().strip() == "yes"
-
-
-def repository_state(kube: Kube, control: str) -> dict[str, str]:
-    """The accepted repository as the controller holds it: head, uncommitted files and the outcome files."""
-    script = (
-        f"cd {APPLICATION_ROOT} && git -c safe.directory='*' rev-parse HEAD && echo -- && "
-        "git -c safe.directory='*' status --porcelain && echo -- && ls .sdo/outcomes 2>/dev/null; true"
-    )
-    head, status, outcomes = (part.strip() for part in kube.exec_controller(control, script).decode().split("--\n"))
-    return {"head": head, "status": status, "outcomes": outcomes}
-
-
-def wipe_problems(before: Mapping[str, str], now: Mapping[str, str]) -> list[str]:
-    """Why a lane is not what ``prepare`` left (``before``): the accepted head moved, files are uncommitted or
-    outcomes were written. A swapped lane must start every cell from the same memory as a fresh one."""
-    problems = []
-    if now["head"] != before["head"]:
-        problems.append(f"accepted head {now['head'][:12]} is not the prepared {before['head'][:12]}")
-    if now["status"]:
-        problems.append("uncommitted files in the accepted repository")
-    if now["outcomes"] != before["outcomes"]:
-        problems.append("outcomes changed since prepare")
-    return problems
-
-
-#: How long a controller that was just (re)started gets to bring up its ready standby. It is a bound, not a delay: a
-#: lane that is ready returns at once. 180 s was too short on a loaded host (three claim swaps failed on it with the
-#: controller still starting, and the lane was then torn down).
-SWAP_STANDBY_WAIT_S = 600.0
-
-
-def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
-    """Run the hooks checkout's Python sources on a prepared ``dev_mount`` lane without restarting the controller:
-    project them over the lane's base images, retire the idle responder standby so the next one imports them, and
-    assert the lane is still the baseline's (head, files, outcomes) with an idle operator. Refused when the lane
-    was prepared on a revision whose compiled code differs."""
-    block = _operator(env)
-    if not block.dev_mount:
-        raise HookError("swap needs settings.dev_mount")
-    lane_dir = Path(_need(env, "BENCH_LANE_DIR")).resolve()
-    record = json.loads((lane_dir / PREPARED_RECORD).read_text())
-    revision = checkout_revision()
-    compiled = record.get("compiled") or {}
-    contracts = record.get("contracts", "")
-    if not contracts and devtree.CONTRACTS_PATH in devtree.changed_compiled(Path.cwd(), compiled):
-        # a lane built before lanes recorded their descriptors: read them from the checkout it was built from
-        contracts = devtree.legacy_snapshot(Path.cwd(), compiled)
-    if why := devtree.swap_problem(Path.cwd(), compiled, rebuild_binary=True, contracts=contracts):
-        raise HookError(why)
-    started = time.monotonic()
-    kube, control = _kube(env), control_namespace(env)
-    binary = None
-    if devtree.binary_changed(Path.cwd(), compiled):
-        binary = cached_operator_binary(Path.cwd(), out)
-        # the lane's own copy (the hooks' CLI calls) follows the controller's
-        shutil.copy2(binary, lane_dir / "bin" / "sdo-operator")
-    if sink.pull_mode(env):
-        push_dev_tree(env, kube, control, lane_dir, binary, lambda _m: None)
-    else:
-        devtree.sync(Path.cwd(), Path(_need(env, "BENCH_EVIDENCE_HOST")) / DEV_DIRECTORY, binary)
-    if binary is not None:
-        # the controller process is the old binary: restart it on the new one (state, repository and install kept)
-        with controller_stopped(kube, control):
-            pass
-        record["compiled"] = devtree.fingerprint(Path.cwd())
-        record["contracts"] = devtree.contracts_snapshot(Path.cwd())
-    retire_standby(kube, control)
-    wait_standby(kube, control, SWAP_STANDBY_WAIT_S)
-    if "state" not in record:
-        raise HookError("the lane has no recorded prepared state (no idle verdict since prepare)")
-    if problems := wipe_problems(record["state"], repository_state(kube, control)):
-        # An idle lane's accepted memory moved (an incident opened and closed while it was held): return it to the
-        # prepared state with the lane's own reset, the same one a used lane gets, instead of refusing the claim.
-        out("the lane moved while held, restoring it: " + "; ".join(problems))
-        reset_lane(env, reset_steps(env, lambda: fuzzops_app(env, "reset")), out)
-    prove_golden(
-        lambda: fuzzops_app(env, "verify"),
-        lambda: reset_lane(env, reset_steps(env, lambda: fuzzops_app(env, "reset")), out),
-        out,
-    )
-    if why := idle_reason(kube.state(control)):
-        raise HookError(f"the operator is not idle: {why}")
-    record["revision"] = revision
-    memory = record["memory"]
-    if not block.seed:
-        # The pool's own memory, prepared as an install of this build would prepare it; a reset returns to that head.
-        prepared = regenerate_tree(env, kube, control, lane_dir, block, record["state"]["head"], out)
-        if prepared != record["state"]["head"]:
-            record["state"] = {**record["state"], "head": prepared}
-            memory = record["memory"] = prepared
-    (lane_dir / PREPARED_RECORD).write_text(json.dumps(record) + "\n")
-    if block.seed is None and apply_lane_config(kube, control, lane_dir, {}, dry_run=True):
-        # an earlier claim's config overlay (the seed's) is still on the lane: back to the lane's own
-        with controller_stopped(kube, control):
-            apply_lane_config(kube, control, lane_dir, {})
-        retire_standby(kube, control)
-        wait_standby(kube, control, SWAP_STANDBY_WAIT_S)
-        wait_idle(kube, control, RESET_IDLE_WAIT_S)
-    if block.seed is not None:
-        # The prepared record keeps the pool's own state: a reset returns the lane to it, never to a seed.
-        memory = seed_lane(env, block, out)
-    out(json.dumps(swap_receipt(lane_dir, revision, memory, time.monotonic() - started)))
-    return 0
-
-
-@dataclass(frozen=True)
-class TreeSteps:
-    """What ``prepare_accepted_tree`` does, one callable per step (tests substitute them)."""
-
-    export: Callable[[], Path]  # the accepted repository as a clone on the host
-    prepare: Callable[[Path], str]  # ``sdo-operator prepare-tree`` on the clone: its head afterwards
-    import_head: Callable[[Path, str], object]  # put the clone's head into the lane's accepted repository
-
-
-def prepare_accepted_tree(steps: TreeSteps, head: str, out: Callable[[str], None] = _print) -> str:
-    """Make the lane's accepted repository the tree an install of this build would start on: the same tree
-    preparation install-existing runs (generic detectors added, or regenerated to this build's template, committed).
-    Returns the resulting head; a tree that is already prepared is left alone. Preparing the result again must
-    change nothing, or the lane would differ from a fresh install."""
-    clone = steps.export()
-    prepared = steps.prepare(clone)
-    if prepared == head:
-        return head
-    again = steps.prepare(clone)
-    if again != prepared:
-        raise HookError(f"tree preparation is not stable: {prepared[:12]} prepares to {again}")
-    out(f"tree prepared: {head[:12]} -> {prepared[:12]}")
-    steps.import_head(clone, prepared)
-    return prepared
-
-
-def regenerate_tree(
-    env: Mapping[str, str],
-    kube: Kube,
-    control: str,
-    lane_dir: Path,
-    block: OperatorBlock,
-    head: str,
-    out: Callable[[str], None] = _print,
-) -> str:
-    """``prepare_accepted_tree`` on the lane: the accepted repository goes to the host as a bundle, the lane's own
-    operator binary prepares it with the settings of this launch, and a changed head is restored into the volume
-    with the controller stopped. Asserts the repository is the new head, clean, with the operator idle."""
+def tree_preparer(env: Mapping[str, str], lane_dir: Path, block: OperatorBlock) -> Callable[[Path, Path | None], str]:
+    """``sdo-operator prepare-tree`` of the lane's install on a clone of its accepted repository: its head after."""
     kubeconfig = Path(env["KUBECONFIG"]).resolve() if env.get("KUBECONFIG") else None
-    work = Path(tempfile.mkdtemp(prefix="sdo-prepare-tree-", dir=lane_dir))
 
-    def export() -> Path:
-        data = kube.exec_controller(
-            control, f"cd {APPLICATION_ROOT} && git -c safe.directory='*' bundle create - HEAD 2>/dev/null"
-        )
-        bundle = work / "accepted.bundle"
-        bundle.write_bytes(data)
-        _run(["git", "clone", "-q", str(bundle), str(work / "tree")], "clone the accepted repository")
-        return work / "tree"
-
-    def prepare(clone: Path) -> str:
+    def prepare(clone: Path, _placed: Path | None) -> str:
+        # the lane's own copy (``_binary``) is the placed binary: ``keep_lane_binary`` keeps it in step
         stored = json.loads((lane_dir / "install-existing-env.json").read_text())
         args, launch_env = install_existing_launch(
             _binary(env), clone, _baseline(block), block, kubeconfig or Path("/dev/null"), stored,
@@ -1811,41 +1582,111 @@ def regenerate_tree(
         proc = _run(args, "sdo-operator prepare-tree", 300, env={**os.environ, **launch_env})
         return str(json.loads(proc.stdout.strip().splitlines()[-1])["head"])
 
-    def import_head(clone: Path, new_head: str) -> None:
-        bundle = work / "prepared.bundle"
-        _run(["git", "-C", str(clone), "bundle", "create", str(bundle), "HEAD"], "bundle the prepared tree")
-        # as a reset does: end the idle standby first, so the wait below is for the new controller's own
-        retire_standby(kube, control)
-        with controller_stopped(kube, control):
-            restore_repository(kube, control, new_head, bundle)
-        wait_standby(kube, control, SWAP_STANDBY_WAIT_S)
-        now = repository_state(kube, control)
-        if now["head"] != new_head or now["status"]:
-            raise HookError(f"the lane's repository is {now['head'][:12]} after tree preparation, not {new_head[:12]}")
-        if why := wait_idle(kube, control, RESET_IDLE_WAIT_S):
-            raise HookError(f"the operator is not idle after tree preparation: {why}")
-
-    try:
-        return prepare_accepted_tree(TreeSteps(export, prepare, import_head), head, out)
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
+    return prepare
 
 
-@dataclass(frozen=True)
-class SeedSteps:
-    """What ``apply_seed`` does to the lane, one callable per step (tests substitute them)."""
+def swap(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
+    """Run the hooks checkout's sources on a prepared ``dev_mount`` lane: ``devswap.swap_compiled`` with this bench's
+    steps (the lane's golden copy, a seed's memory and configuration, the prepared record). A changed ``sdo/operator``
+    or additive ``sdo/contracts`` is carried by a binary built once per source tree; the controller restarts once for
+    it, and not at all for it when a later step (reset, seed, tree preparation) restarts it anyway. Refused when the
+    lane was prepared on a revision whose image or dependency files differ, or that a new contract breaks."""
+    block = _operator(env)
+    if not block.dev_mount:
+        raise HookError("swap needs settings.dev_mount")
+    lane_dir = Path(_need(env, "BENCH_LANE_DIR")).resolve()
+    record = json.loads((lane_dir / PREPARED_RECORD).read_text())
+    if "state" not in record:
+        raise HookError("the lane has no recorded prepared state (no idle verdict since prepare)")
+    revision = checkout_revision()
+    started = time.monotonic()
+    kube, control = _kube(env), control_namespace(env)
+    seeded: dict[str, str] = {}
 
-    reset_incidents: Callable[[], object]
-    retire_standby: Callable[[], object]
-    stop_controller: Callable[[], object]
-    #: Put the seed's config overlay on the stopped controller's configuration (the lane's own when it has none).
-    apply_config: Callable[[Mapping[str, Any]], object]
-    import_memory: Callable[[str], object]
-    start_controller: Callable[[], object]
-    wait_standby: Callable[[], object]
-    repository_state: Callable[[], Mapping[str, str]]
-    controller_idle: Callable[[], str]
-    is_ancestor: Callable[[str, str], bool]  # (ancestor, descendant) in the lane's accepted repository
+    def place(binary: Path | None) -> None:
+        if sink.pull_mode(env):
+            push_dev_tree(env, kube, control, lane_dir, binary, lambda _m: None)
+        else:
+            devtree.sync(Path.cwd(), Path(_need(env, "BENCH_EVIDENCE_HOST")) / DEV_DIRECTORY, binary)
+
+    def restore_moved(_problems: list[str]) -> None:
+        # the lane's own reset, the same one a used lane gets, instead of refusing the claim
+        reset_lane(env, reset_steps(env, lambda: fuzzops_app(env, "reset")), out)
+
+    def verify() -> None:
+        prove_golden(
+            lambda: fuzzops_app(env, "verify"),
+            lambda: reset_lane(env, reset_steps(env, lambda: fuzzops_app(env, "reset")), out),
+            out,
+        )
+
+    def finish() -> None:
+        if block.seed is None and apply_lane_config(kube, control, lane_dir, {}, dry_run=True):
+            # an earlier claim's config overlay (the seed's) is still on the lane: back to the lane's own
+            with controller_stopped(kube, control):
+                retire_standby(kube, control)
+                apply_lane_config(kube, control, lane_dir, {})
+            wait_standby(kube, control, SWAP_STANDBY_WAIT_S)
+            wait_idle(kube, control, RESET_IDLE_WAIT_S)
+
+    def seed_with_memory(timeline: Timeline) -> str:
+        seeded["memory"] = seed_lane(env, block, out, timeline)
+        return seeded["memory"]
+
+    def persist(state: SwapState) -> None:
+        """The record says what the lane runs and where its memory is, at each change (not only when the swap ends)."""
+        record["compiled"], record["contracts"] = dict(state.compiled), state.contracts
+        if state.head != record["state"]["head"]:
+            record["state"] = {**record["state"], "head": state.head}
+            record["memory"] = state.head
+        (lane_dir / PREPARED_RECORD).write_text(json.dumps(record) + "\n")
+
+    def keep_lane_binary(binary: Path) -> None:
+        """The hooks' own CLI calls run the lane's copy of the operator: replace it whole, never in place."""
+        staged = lane_dir / "bin" / "sdo-operator.new"
+        shutil.copy2(binary, staged)
+        staged.replace(lane_dir / "bin" / "sdo-operator")
+
+    result = swap_compiled(
+        SwapPlan(
+            kube=kube,
+            control=control,
+            checkout=Path.cwd(),
+            lane_compiled=record.get("compiled") or {},
+            lane_contracts=record.get("contracts", ""),
+            prepared=record["state"],
+            place=place,
+            idle=lambda: idle_reason(kube.state(control)),
+            wait_idle=lambda: wait_idle(kube, control, RESET_IDLE_WAIT_S),
+            work_root=lane_dir,
+            # The pool's own memory, prepared as an install of this build would; a reset returns to that head.
+            prepare_tree=None if block.seed else tree_preparer(env, lane_dir, block),
+            current_binary=lane_dir / "bin" / "sdo-operator",
+            on_binary=keep_lane_binary,
+            persist=persist,
+            restore_moved=restore_moved,
+            verify=verify,
+            finish=finish,
+            # The prepared record keeps the pool's own state: a reset returns the lane to it, never to a seed.
+            seed=None if block.seed is None else seed_with_memory,
+            legacy_checkouts="bench-sdo-hooks-*",
+        ),
+        out,
+    )
+    record["revision"] = revision
+    (lane_dir / PREPARED_RECORD).write_text(json.dumps(record) + "\n")
+    out(
+        json.dumps(
+            swap_receipt(
+                lane_dir,
+                revision,
+                seeded.get("memory") or str(record["memory"]),
+                time.monotonic() - started,
+                result.phases,
+            )
+        )
+    )
+    return 0
 
 
 def seed_problem(seed: Baseline, prepared: Baseline) -> str:
@@ -1859,31 +1700,6 @@ def seed_problem(seed: Baseline, prepared: Baseline) -> str:
     if seed.path(seed.render).read_text() != prepared.path(prepared.render).read_text():
         return "the seed's render differs from the lane's baseline render"
     return ""
-
-
-def apply_seed(steps: SeedSteps, seed: Baseline, out: Callable[[str], None] = _print) -> dict[str, Any]:
-    """Make a prepared, idle lane's accepted repository the seed's memory: close any incident, stop the controller (it
-    caches the accepted commit), import the seed's commit, start it again (the same install, state and images) and
-    assert the repository is the seed's commit, clean, with the operator idle."""
-    started = time.monotonic()
-    steps.reset_incidents()
-    steps.stop_controller()
-    # With the controller stopped nothing recreates the standby: the next one starts from the new configuration. Retired
-    # before the stop, a running controller would start a replacement from the old environment that the restart adopts.
-    steps.retire_standby()
-    steps.apply_config(seed.lane_overlay)
-    steps.import_memory(seed.commit)
-    steps.start_controller()
-    steps.wait_standby()
-    now = steps.repository_state()
-    # The controller's startup upkeep (schema, module) may commit on top of the seed; anything else moved the head.
-    if now["status"] or (now["head"] != seed.commit and not steps.is_ancestor(seed.commit, now["head"])):
-        raise HookError(f"the lane's repository is {now['head'][:12]} after the seed, not {seed.commit[:12]}")
-    if why := steps.controller_idle():
-        raise HookError(f"the operator is not idle after the seed: {why}")
-    receipt = {"seed": seed.commit, "head": now["head"], "seed_s": round(time.monotonic() - started, 1)}
-    out(json.dumps(receipt))
-    return receipt
 
 
 LANE_CONFIG_ORIGINAL = "original-config.yaml"
@@ -1973,82 +1789,85 @@ def wait_baselines_promoted(
     raise HookError(f"no promoted baseline for {sorted(missing) or 'any store'} after {timeout:.0f}s")
 
 
-def seed_lane(env: Mapping[str, str], block: OperatorBlock, out: Callable[[str], None] = _print) -> str:
-    """Import ``block.seed`` into the prepared, idle lane (its memory and its config overlay, the controller
-    restarted on them) and return the accepted tree's head. ``swap`` does it for a claim; ``prepare`` does it when
-    the claim fell back to a full build, so a seeded cell never runs on the pool's own memory or settings."""
+def seed_steps(
+    env: Mapping[str, str],
+    prepared: Callable[[], PreparedMemory],
+    preparer: Callable[[Path, Path | None], str],
+    out: Callable[[str], None] = _print,
+) -> SeedSteps:
+    """``SeedSteps`` on this bench's lane: its cluster, its operator binary and the configuration it keeps."""
+    lane_dir = Path(_need(env, "BENCH_LANE_DIR")).resolve()
+    kube, control = _kube(env), control_namespace(env)
+    binary, kubeconfig = _binary(env), Path(env["KUBECONFIG"]).resolve() if env.get("KUBECONFIG") else None
+    return SeedSteps(
+        prepare=prepared,
+        reset_incidents=lambda: reset_incidents(binary, control, kubeconfig),
+        retire_standby=lambda: retire_standby(kube, control),
+        stop_controller=lambda: set_controller_suspended(kube, control, True),
+        apply_config=lambda overlay: apply_lane_config(kube, control, lane_dir, overlay),
+        import_memory=lambda memory: restore_repository(kube, control, memory.head, memory.bundle),
+        start_controller=lambda: set_controller_suspended(kube, control, False),
+        wait_standby=lambda: wait_standby(kube, control, SWAP_STANDBY_WAIT_S),
+        repository_state=lambda: repository_state(kube, control),
+        controller_idle=lambda: wait_idle(kube, control, RESET_IDLE_WAIT_S),
+        is_ancestor=lambda ancestor, descendant: is_ancestor(kube, control, ancestor, descendant),
+        settle=lambda head: regenerate_lane_tree(
+            kube, control, lane_dir, head, preparer, lambda: wait_idle(kube, control, RESET_IDLE_WAIT_S), out
+        ),
+    )
+
+
+def seed_lane(
+    env: Mapping[str, str],
+    block: OperatorBlock,
+    out: Callable[[str], None] = _print,
+    timeline: Timeline | None = None,
+) -> str:
+    """Import ``block.seed`` into the prepared, idle lane (its memory, prepared by the build the lane runs, and its
+    config overlay; the controller restarted once, on them) and return the accepted tree's head. ``swap`` does it for
+    a claim; ``prepare`` does it when the claim fell back to a full build, so a seeded cell never runs on the pool's
+    own memory or settings."""
     assert block.seed is not None
     lane_dir = Path(_need(env, "BENCH_LANE_DIR")).resolve()
     kube, control = _kube(env), control_namespace(env)
     seed = Baseline.load(block.seed)
     if why := seed_problem(seed, _baseline(block)):
         raise HookError(why)
-    binary, kubeconfig = _binary(env), Path(env["KUBECONFIG"]).resolve() if env.get("KUBECONFIG") else None
-    bundle = seed.path(seed.bundle)
-    seeded = apply_seed(
-        SeedSteps(
-            reset_incidents=lambda: reset_incidents(binary, control, kubeconfig),
-            retire_standby=lambda: retire_standby(kube, control),
-            stop_controller=lambda: set_controller_suspended(kube, control, True),
-            apply_config=lambda overlay: apply_lane_config(kube, control, lane_dir, overlay),
-            import_memory=lambda commit: restore_repository(kube, control, commit, bundle),
-            start_controller=lambda: set_controller_suspended(kube, control, False),
-            wait_standby=lambda: wait_standby(kube, control, SWAP_STANDBY_WAIT_S),
-            repository_state=lambda: repository_state(kube, control),
-            controller_idle=lambda: wait_idle(kube, control, RESET_IDLE_WAIT_S),
-            is_ancestor=lambda ancestor, descendant: is_ancestor(kube, control, ancestor, descendant),
-        ),
-        seed,
-        out,
-    )
-    memory = regenerate_tree(env, kube, control, lane_dir, block, seeded["head"], out)
+    memory = MemorySeed(seed.commit, seed.path(seed.bundle), seed.lane_overlay)
+    t = timeline or Timeline(out, "seed.")
+    preparer = tree_preparer(env, lane_dir, block)
+    prepared: list[PreparedMemory] = []
+
+    def prepare() -> PreparedMemory:
+        prepared.append(prepare_memory(memory, preparer, None, lane_dir, out))
+        return prepared[-1]
+
+    try:
+        seeded = apply_seed(seed_steps(env, prepare, preparer, out), memory, out, t)
+    finally:
+        for kept in prepared:
+            if kept.bundle != memory.bundle:  # the prepared bundle was made for this import
+                kept.bundle.unlink(missing_ok=True)
     if seed.wait_baselines:
         waited = wait_baselines_promoted(kube, control, BASELINE_WAIT_S, out)
         (lane_dir / "baseline-wait.json").write_text(json.dumps({"waited_s": round(waited, 1)}) + "\n")
-    return memory
+    return str(seeded["head"])
 
 
-def swap_receipt(lane_dir: Path, revision: str, memory: str, seconds: float) -> dict[str, Any]:
-    """The last stdout line of ``swap``: ``prepare``'s fields (the bench reads both alike) plus its duration."""
-    return {
+def swap_receipt(
+    lane_dir: Path, revision: str, memory: str, seconds: float, phases: Phases | None = None
+) -> dict[str, Any]:
+    """The last stdout line of ``swap``: ``prepare``'s fields (the bench reads both alike) plus its duration and the
+    seconds of each phase."""
+    receipt: dict[str, Any] = {
         "pack": str((lane_dir / "pack").resolve()),
         "operator_version": revision,
         "memory": memory,
         "swap_s": round(seconds, 1),
     }
-
-
-def standby_jobs(kube: Kube, control: str) -> list[str]:
-    proc = subprocess.run(
-        kube.cmd("-n", control, "get", "jobs", "-o", "name"), capture_output=True, text=True, timeout=60, check=False
-    )
-    return [line for line in proc.stdout.split() if "sdo-standby-" in line]
-
-
-def retire_standby(kube: Kube, control: str) -> None:
-    for job in standby_jobs(kube, control):
-        _run(kube.cmd("-n", control, "delete", job, "--wait=false"), f"delete {job}", 60)
-
-
-def wait_standby(kube: Kube, control: str, timeout: float) -> None:
-    """Wait until a standby Job's pod is Ready (the controller recreates the standby it lost)."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if standby_jobs(kube, control):
-            proc = subprocess.run(
-                kube.cmd("-n", control, "get", "pods", "-o", "json"),
-                capture_output=True,
-                text=True,
-                timeout=60,
-                check=False,
-            )
-            for pod in json.loads(proc.stdout or "{}").get("items", []):
-                name = pod["metadata"]["name"]
-                conditions = pod.get("status", {}).get("conditions", [])
-                if "sdo-standby-" in name and any(c["type"] == "Ready" and c["status"] == "True" for c in conditions):
-                    return
-        time.sleep(2)
-    raise HookError(f"no ready responder standby within {timeout:.0f}s")
+    if phases is not None:
+        receipt["phases"] = dict(phases.seconds)
+    return receipt
 
 
 # ---- reset: the lane goes back to its prepared state in place ------------------------------------------------
@@ -2197,198 +2016,50 @@ def set_maintenance(env: Mapping[str, str], paused: bool, generation: str) -> No
     raise HookError(f"the controller did not acknowledge maintenance {generation} within {MAINTENANCE_ACK_WAIT_S:.0f}s")
 
 
-@contextmanager
-def controller_stopped(kube: Kube, control: str) -> Iterator[None]:
-    """The controller Job suspended for the block and resumed after it, also when the stop or the block fails: a
-    stopped controller cannot be asked for anything, so no failure may leave it suspended."""
-    try:
-        set_controller_suspended(kube, control, True)
-        yield
-    finally:
-        set_controller_suspended(kube, control, False)
-
-
-def set_controller_suspended(kube: Kube, control: str, suspended: bool, timeout: float = 300.0) -> None:
-    """Suspend or resume the controller Job. Suspending ends its pod (SIGTERM: the evidence sidecar's final pass runs)
-    and waits until none is left."""
-    _run(
-        kube.cmd("-n", control, "patch", "job", CONTROLLER_JOB, "-p", json.dumps({"spec": {"suspend": suspended}})),
-        "suspend the controller" if suspended else "resume the controller",
-        60,
-    )
-    if not suspended:
-        return
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if not kube.controller_pods(control):
-            return
-        time.sleep(2)
-    raise HookError(f"the controller pod did not end within {timeout:.0f}s")
-
-
-#: Where the restore pod receives a memory bundle: its own emptyDir (the controller image has a read-only root).
-BUNDLE_DIR = "/seed"
-
-
-def restore_script(
-    head: str, with_bundle: bool, root: str = APPLICATION_ROOT, bundle_dir: str = BUNDLE_DIR, broker_state: str = ""
-) -> str:
-    """The restore pod's shell: with a bundle, wait for it and unbundle its objects (whatever its refs are named), then
-    put the repository at ``head`` with no other file. ``broker_state`` is the broker's worktree root: a memory with
-    another history (a seed) leaves it describing the old one (a resumed proposal whose base is not an ancestor of
-    the new head), so it is emptied, as on a fresh install."""
-    git = "git -c safe.directory='*'"
-    steps = [f"cd {root}"]
-    if with_bundle:
-        # the pod waits for the bundle, streamed in by exec (the image need not hold tar for a copy)
-        steps.insert(0, f"until [ -e {bundle_dir}/memory.ready ]; do sleep 1; done")
-        steps.append(f"{git} bundle unbundle {bundle_dir}/memory.bundle >/dev/null")
-    if broker_state:
-        steps.append(f"rm -rf {broker_state}/* {broker_state}/.[!.]*")
-    steps += [f"{git} reset -q --hard {head}", f"{git} clean -q -fdx", f"{git} rev-parse HEAD"]
-    return " && ".join(steps)
-
-
-def restore_repository(kube: Kube, control: str, head: str, bundle: Path | None = None) -> None:
-    """With the controller stopped, put the accepted repository on its volume back at ``head`` with no other file
-    (outcomes and playbooks it learned go), in a short-lived pod that mounts the volume as the controller does.
-    With ``bundle`` the commit comes from that git bundle (a learned memory), fetched into the repository first."""
-    if not _COMMIT.match(head):
-        raise HookError(f"prepared head {head!r} is not a commit")
-    job = kube._json("-n", control, "get", "job", CONTROLLER_JOB) or {}
-    spec = ((job.get("spec") or {}).get("template") or {}).get("spec") or {}
-    container = next((c for c in spec.get("containers", []) if c.get("name") == CONTROLLER_CONTAINER), None)
-    if container is None:
-        raise HookError(f"no controller container in job {CONTROLLER_JOB}")
-    volume = next(
-        (v for v in spec.get("volumes", []) if v.get("persistentVolumeClaim") and v["name"] == "repository"), None
-    )
-    mount = next((m for m in container.get("volumeMounts", []) if m.get("name") == "repository"), None)
-    if volume is None or mount is None:
-        raise HookError("the controller job has no repository volume")
-    name = "sdo-restore-repository"
-    script = restore_script(
-        head, bundle is not None, broker_state=f"{mount['mountPath']}/worktrees" if bundle is not None else ""
-    )
-    pod = {
-        "apiVersion": "v1",
-        "kind": "Pod",
-        "metadata": {"name": name, "namespace": control},
-        "spec": {
-            "restartPolicy": "Never",
-            "securityContext": spec.get("securityContext") or {},
-            "containers": [
-                {
-                    "name": "restore",
-                    "image": container["image"],
-                    "imagePullPolicy": "IfNotPresent",
-                    "command": ["sh", "-c", script],
-                    "securityContext": container.get("securityContext") or {},
-                    "volumeMounts": [mount, {"name": "seed", "mountPath": BUNDLE_DIR}],
-                }
-            ],
-            "volumes": [volume, {"name": "seed", "emptyDir": {}}],
-        },
-    }
-    _run(
-        kube.cmd("-n", control, "delete", "pod", name, "--ignore-not-found", "--wait=true"),
-        "delete old restore pod",
-        120,
-    )
-    _run(kube.cmd("apply", "-f", "-"), "restore pod", 60, input=json.dumps(pod))
-    try:
-        if bundle is not None:
-            send_bundle(kube, control, name, bundle)
-        deadline = time.monotonic() + 180
-        while time.monotonic() < deadline:
-            proc = subprocess.run(
-                kube.cmd("-n", control, "get", "pod", name, "-o", "jsonpath={.status.phase}"),
-                capture_output=True,
-                text=True,
-                timeout=60,
-                check=False,
-            )
-            if proc.stdout.strip() == "Succeeded":
-                logs = _run(kube.cmd("-n", control, "logs", name), "restore pod log", 60).stdout.strip()
-                if logs.splitlines()[-1:] != [head]:
-                    raise HookError(f"repository is at {logs[-50:]!r}, not {head}")
-                return
-            if proc.stdout.strip() == "Failed":
-                logs = subprocess.run(
-                    kube.cmd("-n", control, "logs", name), capture_output=True, text=True, check=False
-                )
-                raise HookError(f"repository restore failed: {(logs.stdout + logs.stderr).strip()[-300:]}")
-            time.sleep(2)
-        raise HookError("repository restore pod did not finish in 180s")
-    finally:
-        subprocess.run(
-            kube.cmd("-n", control, "delete", "pod", name, "--ignore-not-found", "--wait=false"),
-            capture_output=True,
-            check=False,
-        )
-
-
-def send_bundle(kube: Kube, control: str, pod: str, bundle: Path) -> None:
-    """Stream ``bundle`` into the running restore pod at BUNDLE_DIR/memory.bundle and tell it to go on."""
-    deadline = time.monotonic() + 120
-    while time.monotonic() < deadline:
-        phase = subprocess.run(
-            kube.cmd("-n", control, "get", "pod", pod, "-o", "jsonpath={.status.phase}"),
-            capture_output=True,
-            text=True,
-            timeout=60,
-            check=False,
-        ).stdout.strip()
-        if phase == "Running":
-            break
-        time.sleep(1)
-    else:
-        raise HookError(f"restore pod {pod} did not start in 120s")
-    with bundle.open("rb") as handle:
-        proc = subprocess.run(
-            kube.cmd(
-                "-n",
-                control,
-                "exec",
-                "-i",
-                pod,
-                "--",
-                "sh",
-                "-c",
-                f"cat > {BUNDLE_DIR}/memory.bundle && touch {BUNDLE_DIR}/memory.ready",
-            ),
-            stdin=handle,
-            capture_output=True,
-            timeout=600,
-            check=False,
-        )
-    if proc.returncode != 0:
-        raise HookError(f"sending the memory bundle failed: {proc.stderr.decode()[-300:]}")
-
-
 FRESH_FINGERPRINT_ENV = "BENCH_FRESH_FINGERPRINT"
+STORE_MISMATCH_MARK = "the data stores are not the golden copy's"
 
 
 def golden_directory(env: Mapping[str, str]) -> Path:
     return Path(_need(env, "BENCH_LANE_DIR")).resolve() / GOLDEN_DIRECTORY
 
 
+GOLDEN_RESTORE_ATTEMPTS = 2
+
+
 def prove_golden(
-    verify: Callable[[], object], restore: Callable[[], object], out: Callable[[str], None] = _print
+    verify: Callable[[], object],
+    restore: Callable[[], object],
+    out: Callable[[str], None] = _print,
+    attempts: int = GOLDEN_RESTORE_ATTEMPTS,
 ) -> None:
     """A claimed lane's data stores must be the golden copy's before an operator is handed over: a fingerprint of
-    their structure, seeded content and row counts, recorded when the copy was taken. A mismatch forces a full restore
-    of the golden copy (which verifies itself); a lane that still differs fails the claim."""
+    their structure, seeded content and row counts, recorded when the copy was taken. A mismatch (``StoreMismatch``)
+    forces a full restore of the golden copy (which verifies itself) and a new proof, at most ``attempts`` times: a
+    restore whose own check raced an app that was still settling (a cache key rewritten, a schema change landing) is
+    tried again on the settled app instead of costing the lane. Any other failure (no golden copy, a controller that
+    does not start, a repository that cannot be restored) is not a store difference and is not retried: a second full
+    reset would hold the claim as long again before the pool rebuilds the lane. A lane that still differs fails the
+    claim, naming the last difference."""
+    if attempts < 1:
+        raise ValueError(f"attempts must be at least 1, not {attempts}")
     try:
         verify()
         return
-    except HookError as exc:
+    except StoreMismatch as exc:
         out(f"the lane's data stores differ from the golden copy, restoring them: {exc}")
-    restore()
-    try:
-        verify()
-    except HookError as exc:
-        raise HookError(f"the lane's data stores differ from the golden copy after a full restore: {exc}") from exc
+    last: HookError | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            restore()
+            verify()
+            return
+        except StoreMismatch as exc:
+            last = exc
+            if attempt < attempts:
+                out(f"restore {attempt} of {attempts} did not give the golden copy, restoring again: {exc}")
+    plural = "restore" if attempts == 1 else "restores"
+    raise StoreMismatch(f"the lane's data stores differ from the golden copy after {attempts} full {plural}: {last}")
 
 
 def fuzzops_app(env: Mapping[str, str], verb: str) -> dict[str, Any]:
@@ -2425,7 +2096,9 @@ def fuzzops_app(env: Mapping[str, str], verb: str) -> dict[str, Any]:
     )
     lines = [line for line in proc.stdout.splitlines() if line.strip()]
     if proc.returncode != 0:
-        raise HookError(f"app {verb} failed: {(proc.stderr.strip().splitlines() or ['no output'])[-1][-400:]}")
+        why = (proc.stderr.strip().splitlines() or ["no output"])[-1][-400:]
+        # fuzzops' verdict on the fingerprint ends its stderr: only this one is something a restore can undo
+        raise (StoreMismatch if STORE_MISMATCH_MARK in why else HookError)(f"app {verb} failed: {why}")
     try:
         return dict(json.loads(lines[-1]))
     except (IndexError, json.JSONDecodeError) as exc:
@@ -2525,6 +2198,16 @@ def wait_app_ready(kube: Kube, namespace: str, timeout: float = 600.0) -> None:
             )
 
 
+SNAPSHOT_QUIET_REASON = "idle for less than the quiet period"
+
+
+def incident_reason(why: str) -> bool:
+    """Whether a not-idle reason of ``wait_idle_stable`` is an incident's doing: one open (``alarm:``), one being
+    closed (``busy:``) or an operator idle again for less than the quiet period, which it was not before. A dead or
+    unreadable controller (``down:``, ``stale:``, a failed read) is not an incident to close."""
+    return why.startswith(("alarm:", "busy:")) or why == SNAPSHOT_QUIET_REASON
+
+
 def wait_idle_stable(kube: Kube, control: str, timeout: float, quiet: float) -> str:
     """Poll until the controller was idle ``quiet`` seconds in a row; the last reason when ``timeout`` passes."""
     deadline = time.monotonic() + timeout
@@ -2539,7 +2222,7 @@ def wait_idle_stable(kube: Kube, control: str, timeout: float, quiet: float) -> 
         elif time.monotonic() - since >= quiet:
             return ""
         time.sleep(3)
-    return why or "idle for less than the quiet period"
+    return why or SNAPSHOT_QUIET_REASON
 
 
 def snapshot(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
@@ -2547,6 +2230,10 @@ def snapshot(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int
     Run once on a prepared, idle lane; ``reset`` returns the lane to this state."""
     try:
         return _snapshot(env, out)
+    except SnapshotNotIdle:
+        # the copy is whole and was verified when it was taken; only the operator had not settled afterwards. The
+        # copy stays, and the manager decides (it waits for the operator and never claims the lane before)
+        raise
     except BaseException:
         # a snapshot that did not finish leaves no golden copy: the lane is released by teardown and rebuilt, and
         # a claim never restores a copy whose snapshot was reported failed
@@ -2566,8 +2253,24 @@ def _snapshot(env: Mapping[str, str], out: Callable[[str], None]) -> int:
         wait_app_ready(kube, _need(env, "FUZZOPS_NAMESPACE"))
     finally:
         set_maintenance(env, False, generation + "-resume")
-    if why := wait_idle_stable(kube, control, RESET_IDLE_WAIT_S, SNAPSHOT_QUIET_S):
-        raise HookError(f"the operator is not idle after the snapshot: {why}")
+    why = wait_idle_stable(kube, control, RESET_IDLE_WAIT_S, SNAPSHOT_QUIET_S)
+    if why and incident_reason(why):
+        # The app restarting after the copy opened an incident on the idle lane and it is still running (or closing)
+        # when the wait ends. Its outcome would be accepted after this point and move the accepted head that every
+        # claim asserts: the claim then restores the lane (about 100 s plus an idle wait). Close it and put the
+        # lane back now, while nobody waits for it. The responder may have edited app objects meanwhile, so the app
+        # goes through the real ``fuzzops app reset`` (it hash-checks every object against the golden copy, which
+        # exists and is not retaken: it must stay the fresh deploy's state).
+        out(f"the operator is not idle after the snapshot ({why}): putting the lane back")
+        try:
+            reset_lane(env, reset_steps(env, lambda: fuzzops_app(env, "reset")), out)
+            why = wait_idle_stable(kube, control, RESET_IDLE_WAIT_S, SNAPSHOT_QUIET_S)
+        except Exception as exc:  # the copy is whole whatever went wrong here: the claim restores a moved lane
+            why = f"{why}; the lane could not be put back: {exc}"
+    if why:
+        # the last stdout line tells the manager the copy is whole and was kept
+        out(json.dumps({"golden": "kept", "not_idle": why}))
+        raise SnapshotNotIdle(f"the operator is not idle after the snapshot: {why}")
     # the app restarting after the copy can open an incident on the idle lane; its outcome must not stay in the pool
     restore_moved_repository(
         env, reset_steps(env, lambda: {"match": True, "skipped": "app untouched"}), repository_state(kube, control), out
@@ -2726,6 +2429,10 @@ def main(argv: list[str] | None = None) -> int:
         return verbs[verb](env)
     except (HookError, ValueError, OSError, subprocess.SubprocessError) as exc:
         reason = " ".join(str(exc).split()) or type(exc).__name__
+        if isinstance(exc, SnapshotNotIdle):
+            # the manager reads the last STDOUT line ({"golden": "kept", ...}); the reason goes to stderr, which it logs
+            print(f"error: {reason}", file=sys.stderr, flush=True)
+            return 1
         print(reason if verb == "check" else f"error: {reason}", flush=True)
         return 1
 

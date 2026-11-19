@@ -167,3 +167,53 @@ uncached input / cache read / cache write / output, unique-request count, USD fr
 and the agentshim price table; the CLI's own cost is a cross-check). A timeout kills the process group and
 keeps the partial transcripts; a row whose session or sub-agent files are missing carries an error and is not
 gradable. `claudecode_agent.run_claudecode_cell` is the same executor for a per-cell runner.
+
+## External agent arm (`--agent external`)
+
+`run --agent external --agent-command 'CMD ARGS...'` runs any agent as an arm: SDO knows only the command, its
+arguments and environment. The instruction is SREGym's own stock instruction (the same one the vanilla arm gets),
+so the comparison is about the agent, not the prompt. Flags: `--agent-label` (on every row), `--agent-env KEY=VALUE`
+(repeatable), `--agent-closing-timeout` (turns the closing phase on), `--agent-closing-prompt-file`,
+`--agent-state-map` (JSON `{problem_id: state dir}`), `--agent-evidence-grace`, and `--model` (recorded as declared).
+An eval runner arm needs no code: map its `vanilla` arm to `external` in `RowSettings.agent_names` and put these flags
+in `extra_args`.
+
+One invocation is one phase of one cell (`incident`, then optionally `closing` after the oracle grade, so it never
+affects the grade):
+
+```text
+CMD ARGS... --phase incident|closing --cell-dir D --prompt-file F --kubeconfig K --deadline-epoch T [--state-in S]
+```
+
+- `--prompt-file`: the SREGym notice (incident) or a fixed neutral text (closing; no outcome or grade reaches the command);
+- `--kubeconfig`: the filtered proxy's for the incident phase, an *empty* file for the closing phase;
+- `--deadline-epoch`: the command stops its agent itself by then and still exports evidence; the arm kills the
+  command's process group only `--agent-evidence-grace` (default 90 s) after it, as a backstop;
+- `--state-in`: the state directory a previous pass kept for this problem (`--agent-state-map`); copy it, never move it;
+- environment: the arm's plus `SDO_EXTERNAL_PHASE`, `SDO_EXTERNAL_SUBMIT_URL` (incident), `SDO_EXTERNAL_STATE_OUT`
+  (`D/agent`, where the state to keep belongs) and `KUBECONFIG`. `D` is named after the problem: keep the agent's
+  working directory and environment free of it.
+
+The command writes `<D>/<phase>/agent-result.json` (schema `sdo.external-agent-result/v1`):
+
+```json
+{"schema": "sdo.external-agent-result/v1", "phase": "incident", "label": "...", "agent_version": "...",
+ "started_at": "...", "ended_at": "...", "timed_out": false,
+ "requests": "incident/requests.jsonl", "independent_requests": "incident/requests-independent.jsonl",
+ "required_evidence": ["incident/events.json"], "problems": [], "state_dir": "agent"}
+```
+
+Paths are relative to `D` (the phase directory is searched too) and stay inside it. The request logs are JSONL in
+the shape `ClaudeLedger` reads (`{"type": "assistant", "phase": ..., "message": {"id", "model", "usage": <raw
+provider usage>}}`, plus `{"type": "request_error"}` lines); a log shared by phases is split by `phase`. The
+optional independent log (a recorder outside the agent; its records also carry `http_status` and `complete`) is
+cross-checked: the same message ids and token fields, the only allowed difference being responses cut by a timeout
+(`complete: false`, priced from the independent record and flagged `partial`).
+
+A cell is not gradable (its row carries an error) when the result file is missing or invalid, a `required_evidence`
+file is missing or empty, `problems` is non-empty, the logs or `state_dir` are missing, no request was recorded or the
+cross-check fails. Per cell: `<phase>/prompt.txt`, `command.stdout`, `command.stderr`, `clock.json` (notice, start,
+end, return code, timeout, backstop kill, label), and `accounting.json` with one row per phase (incident online,
+closing offline; uncached / cache read / cache write / output tokens, unique requests, USD from the same price table
+as the vanilla arm, error counts, `partial`, cross-check). Rows record `agent_label` and `agent_state_dir`; the
+closing phase's tokens are the row's `reflection_tokens`.

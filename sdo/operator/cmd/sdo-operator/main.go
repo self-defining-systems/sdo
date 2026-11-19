@@ -243,6 +243,15 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "warm-build" {
+		// a controller start's compiles of the accepted memory, the executables discarded: fills the Go build cache the
+		// pod mounts before a controller restarts on a new operator source tree (takes the controller's arguments)
+		if err := operatorcli.RunWarmBuild(context.Background(), os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "prepare-tree" {
 		// install-existing's flags; only the tree preparation runs, on the --repository clone (hooks use it for pool lanes)
 		args := append([]string{"install-existing"}, os.Args[2:]...)
@@ -327,7 +336,9 @@ func main() {
 		}
 		return
 	}
-	if err := operatorcli.RunController(context.Background(), os.Args[1:]); err != nil && !errors.Is(err, context.Canceled) {
+	if err := operatorcli.RunController(context.Background(), os.Args[1:]); errors.Is(err, operatorcli.ErrTerminated) {
+		os.Exit(operatorcli.ExitTerminated)
+	} else if err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

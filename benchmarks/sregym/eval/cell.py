@@ -1,4 +1,7 @@
-"""One cell: claim a lane with a memory snapshot, inject, run the arm, grade once, collect, release.
+"""One cell: claim a lane with a memory snapshot, inject, run the arm, grade once, collect, drain, release.
+
+The row ends when the outcome is committed and graded (``row.json``). An arm with a closing turn then drains it on the
+still-held lane, the same process waits for it, and ``closing.json`` records it; the lane is released only after that.
 
 The runner owns the clock, the independent prober, the phase timings, the evidence gate and the files. Everything
 that touches a cluster, an agent or the accountant is behind a small interface, so the same state machine runs the
@@ -12,8 +15,14 @@ import dataclasses
 import json
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from benchmarks.sregym.eval.closing import (
+    CLOSING_FILE,
+    CLOSING_SCHEMA,
+    ClosingResult,
+    offline_tokens_from_evidence,
+)
 from benchmarks.sregym.eval.health import Prober, ProbeResult, ProbeSample, assess_health
 from benchmarks.sregym.eval.results import ResultRow, TokenRow, write_manifest
 from benchmarks.sregym.eval.timings import PhaseTimings
@@ -135,6 +144,15 @@ class ArmExecutor(Protocol):
         ...
 
 
+@runtime_checkable
+class ClosingDrain(Protocol):
+    """An arm whose row continues after its online end: the closing turn, the end-of-row recovery and the exit."""
+
+    def drain(self, lane: Lane, cell: Cell, directory: Path, context: ArmContext) -> ClosingResult:
+        """Wait on the held lane until the arm's own process is over, or stop it at its drain deadline."""
+        ...
+
+
 class Accountant(Protocol):
     def account(self, cell: Cell, directory: Path, result: ArmResult | None) -> Accounting: ...
 
@@ -183,6 +201,7 @@ def _round(value: float | None) -> float | None:
 def run_cell(cell: Cell, ctx: CellContext, lane_id: str) -> ResultRow:
     """Run one cell to a result row. Never raises for a cell failure: the row says what happened."""
     config = ctx.config
+    claimed_at = ctx.now()
     directory = cell.directory(config)
     directory.mkdir(parents=True, exist_ok=True)
     timings = PhaseTimings(now=ctx.now)
@@ -239,12 +258,10 @@ def run_cell(cell: Cell, ctx: CellContext, lane_id: str) -> ResultRow:
     except Exception as exc:
         error = error or f"collect: {type(exc).__name__}: {exc}"
         reusable = False
-    if lane is not None:
-        try:
-            ctx.backend.release(lane, reusable=reusable)
-        except Exception as exc:
-            error = error or f"release: {type(exc).__name__}: {exc}"
-    return _finish(
+    executor = ctx.executors[cell.arm]
+    drains = lane is not None and isinstance(executor, ClosingDrain)
+    row_ended_at = ctx.now()
+    row = _finish(
         cell,
         ctx,
         directory,
@@ -258,7 +275,126 @@ def run_cell(cell: Cell, ctx: CellContext, lane_id: str) -> ResultRow:
         gate,
         error,
         snapshot_commit,
+        row_wall_s=row_ended_at - claimed_at,
+        closing_pending=drains,
     )
+    closing = _drain(ctx, executor, lane, cell, directory) if drains else _no_closing(lane, result)
+    if drains and lane is not None:
+        try:
+            ctx.backend.collect(lane, cell, directory)  # the closing turn's result joins the evidence
+        except Exception as exc:
+            closing = dataclasses.replace(closing, status="error", error=closing.error or f"collect: {exc}")
+    drained_at = ctx.now()
+    if closing.status in ("not_drained", "error"):
+        reusable = False
+    final = _seal(
+        row,
+        cell,
+        ctx,
+        directory,
+        closing,
+        lane,
+        snapshot_commit,
+        row_wall_s=row_ended_at - claimed_at,
+        drain_s=drained_at - row_ended_at,
+        lane_occupancy_s=drained_at - claimed_at,
+    )
+    if lane is not None:
+        try:
+            ctx.backend.release(lane, reusable=reusable)
+        except Exception as exc:
+            final.reason = final.reason or f"release: {type(exc).__name__}: {exc}"
+            final.status = "error"
+    return final
+
+
+def _drain(ctx: CellContext, executor: Any, lane: Lane | None, cell: Cell, directory: Path) -> ClosingResult:
+    """The arm's closing drain on the held lane; a failing drain is a closing ``error``, never an exception."""
+    assert lane is not None
+    arm = ArmContext(config=ctx.config, page_hook=ctx.page_hook, now=ctx.now, sleep=ctx.sleep)
+    try:
+        return executor.drain(lane, cell, directory, arm)  # type: ignore[no-any-return]
+    except Exception as exc:
+        return ClosingResult(status="error", error=f"{type(exc).__name__}: {exc}")
+
+
+def _no_closing(lane: Lane | None, result: ArmResult | None) -> ClosingResult:
+    """An arm with no closing turn, or a cell that never got a lane: terminal at once; the arm's own delta stands."""
+    return ClosingResult(
+        status="not_applicable", memory_commit_after=result.memory_commit_after if result and lane else None
+    )
+
+
+def _seal(
+    row: ResultRow,
+    cell: Cell,
+    ctx: CellContext,
+    directory: Path,
+    closing: ClosingResult,
+    lane: Lane | None,
+    snapshot_commit: str | None,
+    *,
+    row_wall_s: float,
+    drain_s: float,
+    lane_occupancy_s: float,
+) -> ResultRow:
+    """Write ``closing.json``, fold it into the table row and seal the cell directory with its manifest."""
+    offline, source, evidence = row.offline, "arm", False
+    if closing.incident_id:
+        measured = offline_tokens_from_evidence(directory, closing.incident_id)
+        if measured is not None:
+            offline, source, evidence = measured, "reflection-usage", True
+        elif closing.offline_fallback is not None:
+            offline, source = closing.offline_fallback, "incident-record"
+        elif closing.status == "drained":
+            offline, source = TokenRow(), "missing"
+    elif closing.offline_fallback is not None:
+        offline, source = closing.offline_fallback, "incident-record"
+    memory_commit = closing.memory_commit_after if closing.status == "drained" else None
+    if closing.status == "not_applicable":
+        memory_commit = closing.memory_commit_after
+    document = {
+        "schema": CLOSING_SCHEMA,
+        "cell": cell.id,
+        "status": closing.status,
+        "incident_id": closing.incident_id,
+        "decision": closing.decision,
+        "failure_reason": closing.failure_reason,
+        "row_wall_s": _round(row_wall_s),
+        "drain_s": _round(drain_s),
+        "lane_occupancy_s": _round(lane_occupancy_s),
+        "closing_s": _round(closing.closing_s),
+        "recovery_s": _round(closing.recovery_s),
+        "memory_commit_after": memory_commit,
+        "learning": dict(closing.learning),
+        "source_repair": closing.source_repair,
+        "source_repair_uncaptured": closing.source_repair_uncaptured,
+        "cleanup_turns_used": closing.cleanup_turns_used,
+        "phases": dict(closing.phases),
+        "recovery": dict(closing.recovery),
+        "offline": offline.model_dump(),
+        "offline_source": source,
+        "evidence_has_closing_usage": evidence,
+        "error": closing.error,
+    }
+    _write(directory / CLOSING_FILE, document)
+    final = row.model_copy(
+        update={
+            "offline": offline,
+            "memory_commit_after": memory_commit,
+            "row_wall_s": _round(row_wall_s),
+            "drain_s": _round(drain_s),
+            "lane_occupancy_s": _round(lane_occupancy_s),
+            "closing_s": _round(closing.closing_s),
+            "recovery_s": _round(closing.recovery_s),
+            "closing_status": closing.status,
+            "closing_decision": closing.decision,
+        }
+    )
+    if closing.status == "error" and final.status != "error":
+        final.reason = final.reason or f"closing: {closing.error}"
+    final.manifest_sha256 = write_manifest(directory, _identity(cell, ctx.config, lane, snapshot_commit, final.status))
+    return final
 
 
 def _settle(prober: ProberLike, ctx: CellContext) -> None:
@@ -290,7 +426,11 @@ def _finish(
     gate: GateVerdict,
     error: str | None,
     snapshot_commit: str | None,
+    *,
+    row_wall_s: float,
+    closing_pending: bool,
 ) -> ResultRow:
+    """Write the online row: everything up to the committed, graded outcome. The manifest comes with the closing."""
     config = ctx.config
     max_gap = 2 * config.probe_interval_seconds + 2.0
     assessment = assess_health(samples, hold_seconds=config.hold_seconds, max_gap_seconds=max_gap)
@@ -349,12 +489,20 @@ def _finish(
         agent_seconds=timing_document["phases"]["agent"],
         overhead_seconds=timing_document["overhead_seconds"],
         online=accounting.online,
-        offline=accounting.offline,
+        offline=TokenRow() if closing_pending else accounting.offline,
         harm=verdict.harm if verdict else None,
-        memory_commit_after=result.memory_commit_after if result else None,
+        memory_commit_after=None if closing_pending else (result.memory_commit_after if result else None),
+        row_wall_s=_round(row_wall_s),
+        closing_status="pending" if closing_pending else None,
     )
     _write(directory / "row.json", row.flat())
-    identity = {
+    return row
+
+
+def _identity(
+    cell: Cell, config: EvalConfig, lane: Lane | None, snapshot_commit: str | None, status: str
+) -> dict[str, Any]:
+    return {
         "cell": cell.id,
         "stage": config.stage,
         "app": cell.app,
@@ -373,5 +521,3 @@ def _finish(
             "cell_cap_seconds": config.cell_cap_seconds,
         },
     }
-    row.manifest_sha256 = write_manifest(directory, identity)
-    return row

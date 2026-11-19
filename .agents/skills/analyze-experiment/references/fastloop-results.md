@@ -184,6 +184,16 @@ sample, including during composite resolution before its first receipt drain.
 Responder/reflection accounting completed later belongs to the final row, not
 to a replacement grade checkpoint.
 
+## Online end of the row
+
+`incidents.online/<index>.json` (`records.online_checkpoint_path`) is published once the grade is frozen and, for SDO,
+the controller has acknowledged the incident's closure (`outcome_committed_at`, the outcome commit), and before the
+closing turn (reflection, detector rollout) starts. It is a partial row: the injection, the grade and the outcome's
+online fields, with `online_ended_at` set and no reflection tokens or recovery. The final row repeats both timestamps.
+A runner that ends a row there treats everything after it (the closing turn, the end-of-row fault recovery) as the
+drain on the held lane. `--end-of-row-recovery` makes a one-incident SDO row pay the harness fault recovery and cleanup
+at its end, as every vanilla row does; without it the recovery is left to the next row's Tier-2 start.
+
 ## Healthy-baseline oracle exclusions
 
 `oracle-baselines.json` in the environment run directory records the raw no-fault
@@ -228,5 +238,9 @@ reflection-attempt cap. A pause-admission race goes through the same bounded fen
 another problem injection or grading attempt.
 
 Every incident row carries `operator_build`, the build ID of the SDO operator that ran it: the VCS stamp for a stamped binary, else `src-<16 hex>`, a digest of the operator's non-test source (`sdo-operator build-id <source-root>`). On the dev-mount path it hashes the mounted worktree source, so two rows with the same ID ran the same operator code and a changed ID means changed operator source. `null` on rows from image runs and older lanes.
+
+## External agent rows
+
+`--agent external` rows (any agent command; contract in `benchmarks/sregym/fastloop/README.md`) record `agent_label` and `agent_state_dir`, and `model` as declared. The cell directory `results/<run>/<index>_<problem>/` holds `incident/` and (when a closing timeout was set) `closing/`, each with `prompt.txt`, `agent-result.json`, `command.stdout`/`command.stderr`, `clock.json` and the command's evidence; `agent/` is the state it kept; the cell's `clock.json` has notice, start and end (top level is the incident phase) and `accounting.json` has one row per phase (`online` for the incident, offline for the closing), token split, unique requests, USD, error counts, `partial` and the request-log cross-check. The closing phase's tokens are the row's `reflection_tokens`. A row whose result file, evidence or accounting is missing or fails its cross-check carries an `external transcripts incomplete` error and is not gradable.
 
 The SDO arm's transcripts are copied out of the lane's evidence sink into `results/<run-id>/evidence/` when the run ends (also after a crash), with a receipt `evidence-copy.json`; a lane without a sink needs `--allow-no-evidence-sink`, recorded as `evidence-sink-waiver.json`. The evidence gate (`fastloop/evidence_gate.py`) then reads that copy with the fuzzops cell validator and sets `evidence_incomplete` on every SDO row whose own incident or investigator transcripts are missing (all rows when a lifecycle transcript is missing, or the sink was waived or not copied). Such a row has `grade_status=NOT-GRADED` and `not_graded_reason=evidence_incomplete: <problems>`; never count it in success rates.

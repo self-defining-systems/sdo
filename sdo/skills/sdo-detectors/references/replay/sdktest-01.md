@@ -190,38 +190,29 @@ const (
 	MitigationReplayObservedTransition        MitigationReplayStatus = "observed-transition"
 	MitigationReplaySkippedUnreplayableEffect MitigationReplayStatus = "skipped_unreplayable_effect"
 )
-type PrimitiveCall struct {
-	// Phase separates observations made before and after repair. Empty means open.
-	Phase     string          `json:"phase,omitempty"`
-	Method    string          `json:"method"`
-	Arguments json.RawMessage `json:"arguments"`
-	Result    json.RawMessage `json:"result"`
-	Error     string          `json:"error,omitempty"`
+type OwnIncidentOutcome string
+    OwnIncidentOutcome is what running a new playbook's Diagnose on the incident
+    it was written for says about it. There are exactly three: it recognises its
+    fault, it provably does not, or the capture cannot say.
+
+const (
+	// OwnIncidentMatch: Diagnose returned Match on the captured open state.
+	OwnIncidentMatch OwnIncidentOutcome = "match"
+	// OwnIncidentFailed is a definite failure: Diagnose read everything it
+	// asked for and returned NoMatch, so it cannot recognise the fault it was
+	// written for. The only outcome that may block publication.
+	OwnIncidentFailed OwnIncidentOutcome = "failed"
+	// OwnIncidentUnverified: the capture cannot decide. A read it lacks or
+	// holds an error for, a binding it cannot supply, or no capture at all.
+	OwnIncidentUnverified OwnIncidentOutcome = "unverified"
+)
+type OwnIncidentResult struct {
+	ProgramID string             `json:"program_id"`
+	Outcome   OwnIncidentOutcome `json:"outcome"`
+	Capture   string             `json:"capture,omitempty"`
+	Reason    string             `json:"reason,omitempty"`
 }
-    PrimitiveCall stores one live ReadView call for deterministic replay.
-
-func RecordPrimitiveCalls(view program.ReadView, calls []PrimitiveCall) ([]PrimitiveCall, error)
-    RecordPrimitiveCalls repeats previously observed reads on a fresh view.
-    It records errors as observations; malformed templates fail explicitly.
-
-type RecordingReadView struct {
-	program.ReadView
-	Calls    []PrimitiveCall
-	OnRecord func(PrimitiveCall)
-	// Has unexported fields.
-}
-    RecordingReadView serializes recorded calls and OnRecord callbacks. ReadView
-    must support concurrent reads; inspect Calls only after all readers finish.
-
-func (v *RecordingReadView) AdmissionWebhooksFor(subject sdk.ObjectRef) ([]program.AdmissionWebhook, error)
-
-func (v *RecordingReadView) AlertsResult() (metrics.AlertsResult, bool)
-
-func (v *RecordingReadView) AppMap() (program.AppMap, error)
-    AppMap records the accepted application map the wrapped view read.
-
-func (v *RecordingReadView) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.Unstructured, error)
-
-func (v *RecordingReadView) DataChecks() (map[string]string, error)
-    DataChecks records the accepted data checks the wrapped view read.
+    OwnIncidentResult is one playbook's own-incident replay verdict. Capture
+    names the open@* snapshot the outcome comes from; Reason says why a failed
+    or unverified outcome is one.
 ```

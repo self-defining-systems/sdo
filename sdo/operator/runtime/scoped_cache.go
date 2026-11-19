@@ -154,28 +154,6 @@ func scopedState(object *unstructured.Unstructured) objectState {
 	return state
 }
 
-// RetryObjectChange retains the oldest pre-image while allowing newer observed
-// state to coalesce; ordinary scheduling supplies the bounded retry cadence.
-func (c *KubernetesCache) RetryObjectChange(change ObjectChange) {
-	object := change.New
-	if object == nil {
-		object = change.Old
-	}
-	if object == nil {
-		return
-	}
-	key := object.GetAPIVersion() + "/" + object.GetKind() + "/" + object.GetNamespace() + "/" + object.GetName()
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if queued, ok := c.changes[key]; ok {
-		queued.Old = change.Old
-		c.changes[key] = queued
-	} else {
-		c.changes[key] = change
-		c.changeOrder = append(c.changeOrder, key)
-	}
-}
-
 func (c *KubernetesCache) reconcileScope(scope sdk.ObservationScope, revision string) {
 	if c.config.Scope.Identity() == scope.Identity() && c.config.Generation == revision {
 		return

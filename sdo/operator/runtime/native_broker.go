@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -816,6 +817,9 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 		if n.Replay != "off" && len(positive) > 0 {
 			if capture != "" {
 				paths, err := memory.RecordCorpus(workspace.Worktree, capture, effect.IncidentID, positive, origins, outcomeCaseContext(effect.Outcome))
+				if err != nil {
+					slog.Warn("corpus_case_not_recorded", "incident", effect.IncidentID, "playbooks", slices.Sorted(maps.Keys(positive)), "reason", err.Error())
+				}
 				prepared = err == nil && len(paths) > 0
 			}
 		}
@@ -849,6 +853,9 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 				return nil, err
 			}
 		}
+		if capture != "" && n.Replay != "off" {
+			recordNewPlaybookCases(ctx, workspace, capture, effect.IncidentID, outcomeCaseContext(effect.Outcome), origins)
+		}
 		// Keep Go-owned negative evidence even if the agent deleted or relabeled it.
 		if capture != "" && len(negative) > 0 {
 			if _, err := memory.RecordFixedNoMatchCorpus(workspace.Worktree, capture, effect.IncidentID, negative, origins); err != nil {
@@ -868,6 +875,34 @@ func (n NativeIncidentBroker) processReflection(ctx context.Context, ledger *con
 		}
 		if err := update(event); err != nil {
 			return nil, err
+		}
+	}
+}
+
+// recordNewPlaybookCases writes the first corpus case of every playbook the
+// closing turn introduced, from the incident's own capture: the incident the
+// playbook was written for is its first replay case. Only role-less playbooks
+// (the kind a closing turn writes) have bindings Go knows; one that declares
+// parameters gets none rather than a wrong case. A case that cannot be
+// recorded is logged with its reason, never dropped silently.
+func recordNewPlaybookCases(ctx context.Context, workspace IncidentWorkspace, capture, incidentID string, caseContext memory.CaseContext, origins map[string]string) {
+	fresh, err := memory.NewPlaybooks(ctx, workspace.Worktree, workspace.BaseCommit)
+	if err != nil {
+		slog.Warn("corpus_case_not_recorded", "incident", incidentID, "reason", "cannot tell which playbooks are new: "+err.Error())
+		return
+	}
+	recordFirstCases(workspace.Worktree, fresh, capture, incidentID, caseContext, origins)
+}
+
+// recordFirstCases writes one case per named role-less playbook.
+func recordFirstCases(worktree string, ids []string, capture, incidentID string, caseContext memory.CaseContext, origins map[string]string) {
+	for _, id := range ids {
+		if roles := validate.PlaybookRoles(worktree, id); len(roles) > 0 {
+			slog.Warn("corpus_case_not_recorded", "incident", incidentID, "playbook", id, "reason", "declares object roles "+strings.Join(roles, ", ")+"; the incident's bindings for them are unknown")
+			continue
+		}
+		if _, err := memory.RecordCorpus(worktree, capture, incidentID, map[string][]program.Bindings{id: {{}}}, origins, caseContext); err != nil {
+			slog.Warn("corpus_case_not_recorded", "incident", incidentID, "playbook", id, "reason", err.Error())
 		}
 	}
 }

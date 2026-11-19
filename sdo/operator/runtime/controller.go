@@ -26,6 +26,7 @@ import (
 	"sdo.dev/operator/onboarding"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
+	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -80,6 +81,11 @@ type ControllerConfig struct {
 	// response.after_playbook_wait; empty AfterPlaybook is the agent policy.
 	AfterPlaybook     string
 	AfterPlaybookWait time.Duration
+	// DispatchPrepareBound is response.dispatch_prepare_bound: how long a
+	// transient failure to prepare the responder's task retries before the
+	// incident escalates. Zero takes the default; it is capped by the response
+	// timeout.
+	DispatchPrepareBound time.Duration
 	// ClosureRetry bounds resubmission of a closure the broker rejects.
 	ClosureRetry ClosureRetryPolicy
 	// DispatchRetry bounds how quickly a transient dispatch failure
@@ -108,6 +114,9 @@ type dispatchCompletion struct {
 type Controller struct {
 	// heldKeys are the open incident's alert keys, published for the snapshot provider (sdk.HeldAlertSource).
 	heldKeys atomic.Pointer[[]string]
+	// baseProvider is the provider as given (a ReadSnapshotProvider in
+	// production); provider is its composition, see composeProvider.
+	baseProvider SnapshotProvider
 	// signals is the 15-minute ring the incident timeline is drawn from.
 	signals           *incidentSignals
 	ExternalIncidents func(context.Context) (*ExternalIncident, error)
@@ -217,14 +226,20 @@ type Controller struct {
 	// detectorClearSince maps each detector to the start of its current
 	// streak of clear evaluations; a firing or erroring evaluation ends
 	// the streak. Guarded by mu.
-	detectorClearSince         map[string]time.Time
-	pendingClosure             *IncidentClosure
-	closureState               contracts.ClosureState
-	closureReceipt             *ClosureReceipt
-	closureFailure             *ClosureFailure
-	failedClosures             []*contracts.FailedIncidentClosure
-	dispatchFailureAttempts    int
-	dispatchNextRetryAt        time.Time
+	detectorClearSince      map[string]time.Time
+	pendingClosure          *IncidentClosure
+	closureState            contracts.ClosureState
+	closureReceipt          *ClosureReceipt
+	closureFailure          *ClosureFailure
+	failedClosures          []*contracts.FailedIncidentClosure
+	dispatchFailureAttempts int
+	dispatchNextRetryAt     time.Time
+	// prepareRetries tracks the failing preparation of each incident's task.
+	prepareRetries *retryLedger
+	// driftRetries and driftDeferred bound the retry of drift changes whose
+	// classification failed (retryDrift): a backoff per object, then give up.
+	driftRetries               *retryLedger
+	driftDeferred              map[string]deferredDrift
 	lastAcknowledgedIncidentID string
 	// rejectedExternalIncident is the last invalid inbox alert logged, so a
 	// retained bad alert is reported once rather than every cycle.
@@ -322,6 +337,7 @@ func (c ControllerConfig) WithSettings(policy settings.Config) ControllerConfig 
 	c.StartupBound = time.Duration(policy.Response.StartupBound)
 	c.AfterPlaybook = policy.Response.AfterPlaybook
 	c.AfterPlaybookWait = time.Duration(policy.Response.AfterPlaybookWait)
+	c.DispatchPrepareBound = time.Duration(policy.Response.DispatchPrepareBound)
 	c.ExternalClues = policy.Response.ExternalClues
 	c.RequestMetricsOpens = !policy.Detection.RequestMetricsShadow
 	return c
@@ -402,6 +418,7 @@ func NewController(
 		return nil, err
 	}
 	config.DispatchRetry = dispatchRetry
+	config.DispatchPrepareBound = dispatchPrepareRetry(config).Bound
 	if err := core.ValidateDetectors(detectors); err != nil {
 		return nil, err
 	}
@@ -437,9 +454,34 @@ func NewController(
 		acknowledgmentResults: make(chan acknowledgmentCompletion, 1),
 		reflectionResults:     make(chan reflectionCompletion, 1), reflections: reflectionQueueState{rescan: true},
 		dispatchJitter: lifecycleio.DispatchJitter,
+		prepareRetries: newRetryLedger(dispatchPrepareRetry(config)),
+		driftRetries:   newRetryLedger(driftRetryPolicy),
 	}
-	controller.provider = heldSnapshotProvider{Base: provider, held: &controller.heldKeys}
+	controller.baseProvider = provider
+	controller.composeProvider()
 	return controller, nil
+}
+
+// composeProvider builds the snapshot provider the controller reads through:
+// the held alert keys and the install reachability reference decorate the
+// observation inputs, and the live read view is built last over the result so
+// it keeps its accepted source, commit, client, prober and baseline. A
+// decorator above the view could only flatten it. Every change to the base or
+// to a decoration goes through here.
+func (c *Controller) composeProvider() {
+	decorate := func(p SnapshotProvider) SnapshotProvider {
+		p = heldSnapshotProvider{Base: p, held: &c.heldKeys}
+		if c.onboardingReachability != nil {
+			p = onboardingSnapshotProvider{Base: p, State: c.onboardingReachability}
+		}
+		return p
+	}
+	if view, ok := c.baseProvider.(ReadSnapshotProvider); ok {
+		view.Base = decorate(view.Base)
+		c.provider = view
+		return
+	}
+	c.provider = decorate(c.baseProvider)
 }
 
 // publishHeldLocked records the open incident's alert keys for the snapshots
@@ -468,6 +510,9 @@ func (p heldSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContex
 	keys := p.held.Load()
 	if keys == nil || len(*keys) == 0 {
 		return base, nil
+	}
+	if _, built := base.(program.ReadView); built {
+		return nil, errors.New("held alert keys must decorate the snapshot beneath the read view; a decorator above it would drop the view's source, client and prober")
 	}
 	return heldContext{Carrier: inputs.New(base).WithHeld(*keys)}, nil
 }
@@ -615,10 +660,15 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	detectors := c.enabledSetupDetectors(c.scheduler.SelectEvents(now, events))
 	probes := c.dueGateProbes(now, detectors)
 	var objectChanges []ObjectChange
+	// freshObjectChanges counts the changes the cluster delivered this step;
+	// a deferred retry is the same observation again, not a new write.
+	freshObjectChanges := 0
 	if c.drift != nil {
 		if c.drift.Events != nil {
 			objectChanges = c.drift.Events.TakeObjectChanges()
 		}
+		freshObjectChanges = len(objectChanges)
+		objectChanges = c.dueDriftRetries(now, objectChanges)
 
 	}
 	if len(detectors) == 0 && len(probes) == 0 && len(objectChanges) == 0 && !c.adoptionNeeded && !c.hasRetainedDrift() {
@@ -815,7 +865,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	c.probeGate(ctx, now, snapshot, probes)
 	c.forgetGate()
 	c.settleGateProbes(now)
-	if len(objectChanges) > 0 {
+	if freshObjectChanges > 0 {
 		c.resetEarlyStability()
 	}
 	if len(detectors) > 0 {
@@ -1279,6 +1329,9 @@ func (c *Controller) nextWake() (time.Time, string) {
 	if retry := c.closureRetryWake(next); !retry.Equal(next) {
 		next, why = retry, "closure retry"
 	}
+	if retry := c.driftRetryWake(next); !retry.Equal(next) {
+		next, why = retry, "drift retry"
+	}
 	return next, why
 }
 
@@ -1567,6 +1620,20 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 			c.currentIncidentResult = &IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: completion.incidentID, Status: IncidentFailed, ResponderSessionID: completion.result.ResponderSessionID, Error: completion.err.Error(), Timing: TimingMetrics{StartedAt: startedAt, CompletedAt: c.responderCompletedAt}}
 		}
 		c.resetDispatchRetryLocked()
+	} else if prepare, ok := dispatchPrepareFailure(completion.err); ok {
+		// The agent stage could not freeze its task: the preparation policy
+		// decides between a bounded retry and an escalation without an agent.
+		cause := prepare.Err
+		c.mu.Unlock()
+		if !c.noteDispatchPrepareFailure(completion.incidentID, cause) {
+			c.mu.Lock()
+			c.responderDone = false
+			c.responderCompletedAt = time.Time{}
+			c.dispatchState = contracts.DispatchState_DISPATCH_STATE_PENDING
+			c.currentIncidentResult = nil
+			c.mu.Unlock()
+		}
+		return
 	} else if completion.err != nil {
 		// A watcher, transport, or leadership-guard failure does not prove that
 		// the durable responder Job stopped. Retry the same incident effect so
@@ -1809,7 +1876,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 			// An automatic stage has no provider session to resume. When its
 			// recovery wait ended with the opening alerts still firing, the
 			// first agent task takes over through the stage hand-off.
-			if now.Before(c.currentIncidentRequest.ResponseDeadline) &&
+			if now.Before(c.currentIncidentRequest.ResponseDeadline) && c.escalatedAt.IsZero() && c.dispatchRetryDueLocked() &&
 				stageHandoffWarranted(c.config.AfterPlaybook, c.currentIncidentRequest.PriorStages, c.recoveryScopeLocked(), verification.Findings, graceOver,
 					c.tracker.HasActiveKeys(alertKeys(c.currentIncidentRequest)), len(c.activeHealthDetectors()) > 0) {
 				request := *cloneIncidentRequest(c.currentIncidentRequest)
@@ -1828,6 +1895,11 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 				c.mu.Unlock()
 				_, err := c.prepareResponseStageHandoff(ctx, request)
 				if err != nil {
+					if _, prepare := dispatchPrepareFailure(err); prepare {
+						// The preparation policy retries or escalates; an
+						// escalation is saved by this pass's state save.
+						c.noteDispatchPrepareFailure(request.IncidentID, err)
+					}
 					c.reportBrokerError("handoff unrecovered automatic stage", err)
 					return
 				}
@@ -2413,26 +2485,6 @@ func (c *Controller) PersistState(ctx context.Context) error {
 		state, err = c.recoverInvalidState(err)
 		if err != nil {
 			return fmt.Errorf("snapshot controller state: %w", err)
-		}
-	}
-	if preparer, ok := c.dispatcher.(interface {
-		PrepareDispatch(context.Context, IncidentRequest) (IncidentRequest, error)
-	}); ok && state.DispatchState == contracts.DispatchState_DISPATCH_STATE_PENDING && state.IncidentRequest != nil && state.IncidentRequest.PreparedAgentTask == "" && !c.automaticResponsePending(state.IncidentRequest) {
-		prepared, err := preparer.PrepareDispatch(actionCtx, *incidentRequestState(state.IncidentRequest))
-		if err != nil {
-			return fmt.Errorf("prepare responder dispatch: %w", err)
-		}
-		c.mu.Lock()
-		if c.currentIncidentRequest == nil || !sameIncidentRequest(*c.currentIncidentRequest, *incidentRequestState(state.IncidentRequest)) {
-			c.mu.Unlock()
-			return ErrStateConflict
-		}
-		c.currentIncidentRequest = cloneIncidentRequest(&prepared)
-		c.publishHeldLocked()
-		c.mu.Unlock()
-		state.IncidentRequest, err = incidentRequestContract(prepared)
-		if err != nil {
-			return fmt.Errorf("prepared incident request: %w", err)
 		}
 	}
 	saved, stagedIncident, err := c.externalizePreparedTask(state)

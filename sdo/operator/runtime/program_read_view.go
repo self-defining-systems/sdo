@@ -18,6 +18,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
@@ -56,7 +57,7 @@ type LiveReadView struct {
 	BaselineSource StateBaseline
 }
 
-var errSnapshotObjectAbsent = sdk.ErrScopedObjectAbsent
+var errSnapshotObjectAbsent = sdk.ErrObjectAbsent
 
 func (v LiveReadView) context() context.Context {
 	if v.Context != nil {
@@ -196,7 +197,7 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	}
 	if errors.Is(err, ErrAcceptedManifestAbsent) {
 		if observed == nil {
-			return program.Diff{SourceAbsent: true}, nil
+			return program.Diff{SourceAbsent: true, LiveAbsent: true}, nil
 		}
 		encoded, encodeErr := json.Marshal(v.sourceComparableFields(observed.Object, ref))
 		if encodeErr != nil {
@@ -227,9 +228,10 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 		after, _ := json.Marshal(actual)
 		// Objects outside the application namespace are never accepted by
 		// adoption, so they carry no record and only declared fields compare.
-		return program.Diff{Changed: string(before) != string(after), Text: sdk.SourceComparisonText(before, after)}, nil
+		return program.Diff{Changed: string(before) != string(after), LiveAbsent: observed == nil, Text: sdk.SourceComparisonText(before, after)}, nil
 	}
 	if observed == nil {
+		// Declared by accepted source, absent live: a deleted object.
 		if v.Client != nil {
 			if _, err := dryRunAcceptedSource(ctx, v.Client, ref, source); err != nil {
 				return program.Diff{}, fmt.Errorf("normalize accepted manifest for %s/%s: %w", ref.Kind, ref.Name, err)
@@ -239,7 +241,7 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 		if err != nil {
 			return program.Diff{}, err
 		}
-		return program.Diff{Changed: true, Text: sdk.SourceComparisonText(before, []byte("null"))}, nil
+		return program.Diff{Changed: true, LiveAbsent: true, Text: sdk.SourceComparisonText(before, []byte("null"))}, nil
 	}
 	accepted := v.sourceComparableFields(source.Object, ref)
 	actual := v.sourceComparableFields(observed.Object, ref)
@@ -445,13 +447,64 @@ func (v LiveReadView) Object(ref sdk.ObjectRef) (object *unstructured.Unstructur
 		}
 	}
 	if source, ok := v.DetectionContext.(sdk.ObjectReader); ok {
-		return source.Object(ref)
+		object, err := source.Object(ref)
+		return v.presence(ref, object, err)
 	}
 	if ref.Namespace != v.Namespace() {
 		return v.scopedObject(ref)
 	}
-	return sdk.FindObject(sdk.TypedObjects(v.DetectionContext), ref)
+	object, err = sdk.FindObjectIn(sdk.TypedObjects(v.DetectionContext), v.completeKinds(ref), ref)
+	return v.presence(ref, object, err)
 }
+
+// completeKinds are the kinds the snapshot lists completely for ref's
+// namespace; only the snapshot namespace is covered by those lists.
+func (v LiveReadView) completeKinds(ref sdk.ObjectRef) []schema.GroupVersionKind {
+	if ref.Namespace != v.Namespace() {
+		return nil
+	}
+	return sdk.CompleteKinds(v.DetectionContext)
+}
+
+// presence is the one place a failed object read becomes an observation. The
+// object is absent when the API answered NotFound, or when a complete list of
+// its kind lacks it. Any other miss says nothing about the object: a kind the
+// snapshot did not list completely gets one GET, and without an answer stays
+// ErrObjectNotCaptured.
+func (v LiveReadView) presence(ref sdk.ObjectRef, object *unstructured.Unstructured, err error) (*unstructured.Unstructured, error) {
+	switch {
+	case err == nil || errors.Is(err, sdk.ErrObjectAbsent):
+		return object, err
+	case apierrors.IsNotFound(err):
+		return nil, fmt.Errorf("%w: %w", sdk.ErrObjectAbsent, err)
+	case errors.Is(err, sdk.ErrObjectNotCaptured):
+		if sdk.KindComplete(v.completeKinds(ref), ref) {
+			return nil, fmt.Errorf("%w: %s/%s %s/%s", sdk.ErrObjectAbsent, ref.APIVersion, ref.Kind, ref.Namespace, ref.Name)
+		}
+		if got, getErr := v.get(ref); getErr == nil {
+			return got, nil
+		} else if apierrors.IsNotFound(getErr) {
+			return nil, fmt.Errorf("%w: %w", sdk.ErrObjectAbsent, getErr)
+		}
+	}
+	return nil, err
+}
+
+// get reads one object of the snapshot namespace from the API, or fails when it
+// cannot ask.
+func (v LiveReadView) get(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	if v.Client == nil || ref.Namespace != v.Namespace() || strings.EqualFold(ref.Kind, "Secret") {
+		return nil, errors.New("object cannot be read from the API")
+	}
+	resource, err := resolveAcceptedResource(v.Client, ref)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(v.context(), 5*time.Second)
+	defer cancel()
+	return resource.get(ctx, ref)
+}
+
 func (v LiveReadView) snapshotObject(ref sdk.ObjectRef) (*unstructured.Unstructured, error) {
 	object, err := v.Object(ref)
 	if apierrors.IsNotFound(err) {

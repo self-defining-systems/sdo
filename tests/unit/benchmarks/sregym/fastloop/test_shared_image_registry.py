@@ -294,3 +294,36 @@ def test_containerd_image_store_still_rejects_a_node_holding_other_content(regis
     state.update(config="sha256:" + hashlib.sha256(raw).hexdigest(), push_config=CONFIG, node_config=OTHER_CONFIG)
     with pytest.raises(ValueError, match="identity"):
         image_delivery.registry_delivery("img1-a", ["app:frozen"])
+
+
+def _containerd_store(monkeypatch, commands, *, republished_identity=None):
+    """A containerd image store: a platform manifest digest is not an image ID, so ``docker tag <digest>`` fails."""
+    fake = image_delivery.subprocess.run
+
+    def run(argv, **kwargs):
+        if argv[:2] == ["docker", "tag"] and argv[2].startswith("sha256:"):
+            commands.append((argv, kwargs))
+            return CompletedProcess(argv, 1, "", "Error response from daemon: No such image")
+        if republished_identity and argv[:3] == ["docker", "image", "inspect"] and "/" in argv[-1]:
+            commands.append((argv, kwargs))
+            return CompletedProcess(argv, 0, republished_identity, "")
+        return fake(argv, **kwargs)
+
+    monkeypatch.setattr(image_delivery.subprocess, "run", run)
+
+
+def test_containerd_store_publishes_the_source_image_when_the_digest_is_not_an_image_id(registry, monkeypatch):
+    commands, _, _, _ = registry
+    _containerd_store(monkeypatch, commands)
+    image_delivery.registry_delivery("img1-c", ["controller:frozen"])
+    tags = [argv[2] for argv, _ in commands if argv[:2] == ["docker", "tag"]]
+    assert tags == [CONFIG, "controller:frozen"]
+    assert len([argv for argv, _ in commands if argv[:2] == ["docker", "push"]]) == 1
+
+
+def test_containerd_store_publication_fails_when_the_source_image_changed_underneath(registry, monkeypatch):
+    commands, _, _, _ = registry
+    _containerd_store(monkeypatch, commands, republished_identity=OTHER_CONFIG)
+    with pytest.raises(ValueError, match="changed while it was being published"):
+        image_delivery.registry_delivery("img1-d", ["controller:frozen"])
+    assert not [argv for argv, _ in commands if argv[:2] == ["docker", "push"]]

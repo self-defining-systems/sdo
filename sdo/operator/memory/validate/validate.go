@@ -148,6 +148,11 @@ type Request struct {
 	CaptureRoot      string
 	CaptureDirectory string
 	IncidentID       string
+	// OwnIncidentDirectory is the incident capture the own-incident replay reads
+	// when the compile runs apart from the reflection check that knows it (the
+	// broker's validation subprocess). Empty, the reflection check's own capture
+	// is used.
+	OwnIncidentDirectory string
 }
 
 // Diagnostic is one validation finding. Path is repository-relative and Line is

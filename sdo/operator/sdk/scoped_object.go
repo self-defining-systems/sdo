@@ -71,7 +71,7 @@ func ProjectObservationObject(object *unstructured.Unstructured) (*unstructured.
 
 // ErrScopedObjectAbsent reports a declared, observed scoped target that does
 // not contain the named object.
-var ErrScopedObjectAbsent = errors.New("object is absent from snapshot")
+var ErrScopedObjectAbsent = fmt.Errorf("%w", ErrObjectAbsent)
 
 // ScopedObject reads one object of a declared scoped observation target. It is
 // the single projection shared by live and host-side read views.

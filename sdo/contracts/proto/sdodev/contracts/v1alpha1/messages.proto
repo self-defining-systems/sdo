@@ -789,6 +789,8 @@ message StageReport {
   // Go-owned: set when this stage applied a repair whose detector confirmation
   // is still pending at hand-off.
   HandoffState handoff_state = 8;
+  // Every playbook the stage diagnosed, with its verdict and why, matched or not.
+  repeated PlaybookVerdict diagnoses = 9;
 }
 
 // HandoffState is what the controller knows about a repair its automatic stage

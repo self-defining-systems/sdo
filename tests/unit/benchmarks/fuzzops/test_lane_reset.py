@@ -4,13 +4,16 @@ while the controller is paused or stopped."""
 from __future__ import annotations
 
 import json
-from pathlib import Path  # noqa: TC003
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from benchmarks.fuzzops import hooks
 from benchmarks.fuzzops.hooks import HookError
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class Recorder:
@@ -152,7 +155,7 @@ def test_a_claim_whose_stores_differ_forces_a_full_restore_then_proves_it() -> N
     def verify() -> None:
         log.append("verify")
         if not state["clean"]:
-            raise hooks.HookError("pg/migrations differs")
+            raise hooks.StoreMismatch("pg/migrations differs")
 
     def restore() -> None:
         log.append("restore")
@@ -162,15 +165,125 @@ def test_a_claim_whose_stores_differ_forces_a_full_restore_then_proves_it() -> N
     assert [e for e in log if e in ("verify", "restore")] == ["verify", "restore", "verify"]
 
 
-def test_a_claim_whose_stores_still_differ_after_the_restore_fails_loudly() -> None:
+def test_a_claim_whose_stores_still_differ_after_the_restores_fails_loudly_after_at_most_two() -> None:
+    restores: list[int] = []
+
     def verify() -> None:
-        raise hooks.HookError("pg/migrations differs")
+        raise hooks.StoreMismatch("pg/migrations differs")
 
-    with pytest.raises(hooks.HookError, match="after a full restore: pg/migrations differs"):
-        hooks.prove_golden(verify, lambda: None, lambda _m: None)
+    with pytest.raises(hooks.HookError, match="after 2 full restores: pg/migrations differs"):
+        hooks.prove_golden(verify, lambda: restores.append(1), lambda _m: None)
+    assert len(restores) == 2
 
 
-def test_a_failed_snapshot_leaves_no_golden_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_restore_that_itself_fails_the_store_check_is_tried_once_more_before_the_claim_fails() -> None:
+    # the pool lane pc5 failed its claim because the restore's own verify raced the app (a key or the schema was
+    # still moving); the second restore, run on a settled app, proves the copy
+    log: list[str] = []
+    state = {"restores": 0}
+
+    def verify() -> None:
+        log.append("verify")
+        if state["restores"] == 0:
+            raise hooks.StoreMismatch("redis/cache:x:set has other content")
+
+    def restore() -> None:
+        state["restores"] += 1
+        log.append("restore")
+        if state["restores"] == 1:
+            raise hooks.StoreMismatch(
+                "app reset failed: reset: the data stores are not the golden copy's: postgres/columns differs"
+            )
+        log.append("restored")
+
+    hooks.prove_golden(verify, restore, log.append)
+    assert [e for e in log if e in ("verify", "restore", "restored")] == [
+        "verify",
+        "restore",
+        "restore",
+        "restored",
+        "verify",
+    ]
+
+
+def test_a_claim_fails_naming_the_last_difference_when_every_restore_attempt_fails_the_store_check() -> None:
+    calls: list[int] = []
+
+    def verify() -> None:
+        raise hooks.StoreMismatch("first")
+
+    def restore() -> None:
+        calls.append(1)
+        raise hooks.StoreMismatch("app reset failed: postgres/columns differs")
+
+    with pytest.raises(hooks.HookError, match="after 2 full restores: app reset failed: postgres/columns differs"):
+        hooks.prove_golden(verify, restore, lambda _m: None)
+    assert len(calls) == 2
+
+
+def test_a_restore_that_fails_for_another_reason_is_not_repeated() -> None:
+    # a controller that does not start, a repository restore that fails: a second full reset cannot help and would
+    # hold the claim for as long again before the pool rebuilds the lane
+    calls: list[int] = []
+
+    def verify() -> None:
+        raise hooks.StoreMismatch("pg/migrations differs")
+
+    def restore() -> None:
+        calls.append(1)
+        raise hooks.HookError("controller did not start in 900s")
+
+    with pytest.raises(hooks.HookError, match="controller did not start"):
+        hooks.prove_golden(verify, restore, lambda _m: None)
+    assert len(calls) == 1
+
+
+def test_a_verify_that_fails_for_another_reason_restores_nothing() -> None:
+    calls: list[int] = []
+
+    def verify() -> None:
+        raise hooks.HookError("no golden copy of the app in /lane/app-golden: run the snapshot verb first")
+
+    with pytest.raises(hooks.HookError, match="no golden copy"):
+        hooks.prove_golden(verify, lambda: calls.append(1), lambda _m: None)
+    assert calls == []
+
+
+def test_the_restore_attempts_must_be_at_least_one() -> None:
+    with pytest.raises(ValueError, match="at least 1"):
+        hooks.prove_golden(lambda: None, lambda: None, lambda _m: None, attempts=0)
+
+
+def test_the_fuzzops_verdict_that_the_stores_are_not_the_golden_copys_is_a_store_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = {**lane(tmp_path), "FUZZOPS_BIN": "/bin/fuzzops"}
+    golden = hooks.golden_directory(env)
+    golden.mkdir()
+    (golden / "meta.json").write_text("{}")
+
+    def run(stderr: str):
+        class Done:
+            returncode = 1
+            stdout = ""
+
+        Done.stderr = stderr  # type: ignore[attr-defined]
+        return lambda *_a, **_k: Done()
+
+    monkeypatch.setattr(
+        hooks.subprocess,
+        "run",
+        run("reset: the data stores are not the golden copy's: postgres/columns differs (reference a, now b)"),
+    )
+    with pytest.raises(hooks.StoreMismatch, match="postgres/columns differs"):
+        hooks.fuzzops_app(env, "reset")
+    monkeypatch.setattr(hooks.subprocess, "run", run("usage: fuzzops app up|down --pack DIR"))
+    with pytest.raises(hooks.HookError) as other:
+        hooks.fuzzops_app(env, "verify")
+    assert not isinstance(other.value, hooks.StoreMismatch)
+
+
+def _snapshot_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, idle: str, copy: object) -> tuple[Path, list[str]]:
     env = lane(tmp_path)
     golden = hooks.golden_directory(env)
     golden.mkdir()
@@ -178,12 +291,166 @@ def test_a_failed_snapshot_leaves_no_golden_copy(tmp_path: Path, monkeypatch: py
     monkeypatch.setattr(hooks, "set_maintenance", lambda *_a, **_k: None)
     monkeypatch.setattr(hooks, "_kube", lambda _e: None)
     monkeypatch.setattr(hooks, "control_namespace", lambda _e: "ns")
-    monkeypatch.setattr(hooks, "fuzzops_app", lambda _e, _v: {"match": True})
+
+    def copy_app(_e: object, _v: str) -> dict[str, object]:
+        if isinstance(copy, Exception):
+            raise copy
+        return {"match": True}
+
+    monkeypatch.setattr(hooks, "fuzzops_app", copy_app)
     monkeypatch.setattr(hooks, "wait_app_ready", lambda *_a, **_k: None)
-    monkeypatch.setattr(hooks, "wait_idle_stable", lambda *_a, **_k: "idle for less than the quiet period")
-    with pytest.raises(hooks.HookError, match="not idle after the snapshot"):
-        hooks.snapshot(env, lambda _m: None)
+    monkeypatch.setattr(hooks, "wait_idle_stable", lambda *_a, **_k: idle)
+    printed: list[str] = []
+    with pytest.raises(hooks.HookError):
+        hooks.snapshot(env, printed.append)
+    return golden, printed
+
+
+def test_a_snapshot_whose_only_failure_is_the_post_copy_idle_wait_keeps_the_good_golden_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(hooks, "reset_steps", lambda *_a, **_k: "steps")
+    monkeypatch.setattr(hooks, "reset_lane", lambda *_a, **_k: {})
+    golden, printed = _snapshot_env(tmp_path, monkeypatch, "idle for less than the quiet period", None)
+    assert (golden / "meta.json").is_file()
+    # the manager reads the last stdout line: the copy is whole, only the operator was not idle yet (still, after the
+    # lane's repository was put back)
+    assert json.loads(printed[-1]) == {"golden": "kept", "not_idle": "idle for less than the quiet period"}
+
+
+class BusySnapshot:
+    """What a snapshot with a busy operator did: the golden directory, what the hook printed, the ``reset_lane`` calls
+    (by the steps they got), the app verbs run for each steps object and the ``fuzzops app`` verbs actually run."""
+
+    def __init__(self) -> None:
+        self.golden = Path()
+        self.printed: list[str] = []
+        self.resets: list[str] = []
+        self.app_resets: list[Callable[[], dict[str, Any]]] = []
+        self.app_verbs: list[str] = []
+
+
+def _busy_snapshot_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, waits: list[str], reset_error: BaseException | None = None
+) -> BusySnapshot:
+    """A snapshot whose post-copy idle waits answer ``waits`` in turn, with ``reset_lane`` and the app stubbed."""
+    env = lane(tmp_path)
+    seen = BusySnapshot()
+    seen.golden = hooks.golden_directory(env)
+    seen.golden.mkdir()
+    (seen.golden / "meta.json").write_text("{}")
+
+    def fuzzops_app(_e: object, verb: str) -> dict[str, Any]:
+        seen.app_verbs.append(verb)
+        return {"match": True}
+
+    def steps_with(_env: object, app_reset: Callable[[], dict[str, Any]], *_a: object, **_k: object) -> str:
+        seen.app_resets.append(app_reset)
+        return f"steps{len(seen.app_resets)}"
+
+    def reset(_env: object, steps: object, _out: object = None) -> dict[str, object]:
+        seen.resets.append(str(steps))
+        if reset_error is not None:
+            raise reset_error
+        return {}
+
+    monkeypatch.setattr(hooks, "set_maintenance", lambda *_a, **_k: None)
+    monkeypatch.setattr(hooks, "_kube", lambda _e: None)
+    monkeypatch.setattr(hooks, "control_namespace", lambda _e: "ns")
+    monkeypatch.setattr(hooks, "fuzzops_app", fuzzops_app)
+    monkeypatch.setattr(hooks, "wait_app_ready", lambda *_a, **_k: None)
+    monkeypatch.setattr(hooks, "wait_idle_stable", lambda *_a, **_k: waits.pop(0))
+    monkeypatch.setattr(hooks, "reset_steps", steps_with)
+    monkeypatch.setattr(hooks, "repository_state", lambda *_a, **_k: {"head": "h" * 40, "status": "", "outcomes": ""})
+    monkeypatch.setattr(hooks, "reset_lane", reset)
+    monkeypatch.setattr(hooks, "restore_moved_repository", lambda *_a, **_k: False)
+    try:
+        hooks.snapshot(env, seen.printed.append)
+    except hooks.HookError:
+        pass
+    return seen
+
+
+def test_a_snapshot_whose_operator_is_busy_puts_the_lane_back_before_it_is_declared_done(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # an incident the copy's own app restart opened is still running when the wait ends: its outcome would be
+    # accepted after the copy and the claim would find the accepted head moved (a restore of ~100 s at the claim)
+    seen = _busy_snapshot_env(tmp_path, monkeypatch, ["alarm: incident open fg1-1", ""])
+    assert seen.resets == ["steps1"]
+    assert (seen.golden / "meta.json").is_file()
+    assert "snapshot_s" in json.loads(seen.printed[-1])  # done: not the kept-copy line the manager answers by waiting
+
+
+def test_the_put_back_runs_the_real_app_reset_and_never_retakes_the_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the responder may have edited app objects while the incident ran: only `fuzzops app reset` checks every object
+    seen = _busy_snapshot_env(tmp_path, monkeypatch, ["busy: closure open", ""])
+    assert seen.app_verbs == ["snapshot"]  # the one copy, taken before the incident
+    put_back = seen.app_resets[0]
+    assert put_back() == {"match": True}
+    assert seen.app_verbs == ["snapshot", "reset"]  # the put-back's app step is the real reset, not a stub
+    assert seen.app_resets[1]()["skipped"]  # the final moved-repository check leaves the app alone
+
+
+@pytest.mark.parametrize("why", ["idle for less than the quiet period", "alarm: incident open x", "busy: closure"])
+def test_an_incident_reason_triggers_the_put_back(why: str) -> None:
+    assert hooks.incident_reason(why)
+
+
+@pytest.mark.parametrize(
+    "why",
+    [
+        "down: controller pod not Ready",
+        "stale: state not updated for 90s",
+        "controller read failed: x",
+        "no controller state yet",
+    ],
+)
+def test_other_not_idle_reasons_keep_the_previous_behaviour(
+    why: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert not hooks.incident_reason(why)
+    seen = _busy_snapshot_env(tmp_path, monkeypatch, [why])
+    assert seen.resets == []
+    assert json.loads(seen.printed[-1]) == {"golden": "kept", "not_idle": why}
+
+
+def test_a_snapshot_that_is_idle_at_once_does_not_reset_the_lane_for_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = _busy_snapshot_env(tmp_path, monkeypatch, [""])
+    assert seen.resets == []
+    assert "snapshot_s" in json.loads(seen.printed[-1])
+
+
+def test_a_snapshot_still_busy_after_the_lane_was_put_back_keeps_its_copy_for_the_manager_to_wait(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = _busy_snapshot_env(tmp_path, monkeypatch, ["alarm: incident open x", "busy: again"])
+    assert seen.resets == ["steps1"]
+    assert (seen.golden / "meta.json").is_file()
+    assert json.loads(seen.printed[-1]) == {"golden": "kept", "not_idle": "busy: again"}
+
+
+@pytest.mark.parametrize("error", [hooks.HookError("not idle"), KeyError("state"), RuntimeError("boom")])
+def test_a_snapshot_whose_lane_cannot_be_put_back_keeps_its_whole_copy(
+    error: Exception, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the copy is whole and verified; only the put-back failed, whatever the error: a claim restores a moved lane
+    seen = _busy_snapshot_env(tmp_path, monkeypatch, ["alarm: incident open x"], error)
+    assert (seen.golden / "meta.json").is_file()
+    kept = json.loads(seen.printed[-1])
+    assert kept["golden"] == "kept"
+    assert "alarm: incident open x" in kept["not_idle"]
+    assert str(error).strip("'") in kept["not_idle"]
+
+
+def test_a_snapshot_whose_copy_fails_leaves_no_golden_copy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    golden, printed = _snapshot_env(tmp_path, monkeypatch, "", hooks.HookError("app snapshot failed: no space"))
     assert not golden.exists()
+    assert not any("golden" in line for line in printed)
 
 
 def test_the_snapshot_is_refused_for_an_app_that_differs_from_the_fresh_deploy(
@@ -300,16 +567,6 @@ def test_the_resume_step_patches_the_job_even_when_it_cannot_be_read(monkeypatch
     assert patched == [False, False]
 
 
-def test_an_unreadable_job_is_unknown_not_running(monkeypatch: pytest.MonkeyPatch) -> None:
-    kube = hooks.Kube(context="")
-    monkeypatch.setattr(kube, "_json", lambda *_a: None)
-    assert kube.controller_suspended("ns") is None
-    monkeypatch.setattr(kube, "_json", lambda *_a: {"spec": {"suspend": True}})
-    assert kube.controller_suspended("ns") is True
-    monkeypatch.setattr(kube, "_json", lambda *_a: {"spec": {}})
-    assert kube.controller_suspended("ns") is False
-
-
 def _wired(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, suspended: bool | None
 ) -> tuple[hooks.ResetSteps, list[float]]:
@@ -373,32 +630,6 @@ def test_the_wired_incident_reset_is_retried_not_a_single_attempt(
     assert 0 < now[0] < hooks.RESET_PATIENCE_S  # waited on the injected clock, not the wall clock
 
 
-def test_a_controller_stopped_block_always_resumes_the_job(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[bool] = []
-    monkeypatch.setattr(hooks, "set_controller_suspended", lambda _k, _c, suspended, **_: calls.append(suspended))
-    with hooks.controller_stopped(None, "ns"):  # type: ignore[arg-type]
-        pass
-    assert calls == [True, False]
-    calls.clear()
-    with pytest.raises(hooks.HookError, match="config overlay"), hooks.controller_stopped(None, "ns"):  # type: ignore[arg-type]
-        raise hooks.HookError("config overlay failed")
-    assert calls == [True, False]
-
-
-def test_a_stop_that_times_out_still_resumes_the_job(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[bool] = []
-
-    def suspend(_k: object, _c: str, suspended: bool, **_: object) -> None:
-        calls.append(suspended)
-        if suspended:
-            raise hooks.HookError("the controller pod did not end within 300s")
-
-    monkeypatch.setattr(hooks, "set_controller_suspended", suspend)
-    with pytest.raises(hooks.HookError, match="did not end"), hooks.controller_stopped(None, "ns"):  # type: ignore[arg-type]
-        pytest.fail("the block must not run")
-    assert calls == [True, False]
-
-
 def test_the_reset_needs_at_least_one_attempt(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="at least 1"):
         hooks.reset_lane_again(lane(tmp_path), _recording_steps(Recorder()), lambda _m: None, attempts=0)
@@ -406,3 +637,18 @@ def test_the_reset_needs_at_least_one_attempt(tmp_path: Path) -> None:
 
 def test_a_restarted_controller_gets_time_to_start_before_the_swap_gives_up() -> None:
     assert hooks.SWAP_STANDBY_WAIT_S >= 600
+
+
+def test_main_keeps_the_kept_copy_json_as_the_last_stdout_line_of_a_failed_snapshot(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # the manager decides from the last STDOUT line: an "error:" line after the JSON made it tear down a good copy
+    def not_idle(_env: object, out: object = print) -> int:
+        out(json.dumps({"golden": "kept", "not_idle": "idle for less than the quiet period"}))  # type: ignore[operator]
+        raise hooks.SnapshotNotIdle("the operator is not idle after the snapshot: idle for less than the quiet period")
+
+    monkeypatch.setattr(hooks, "snapshot", not_idle)
+    assert hooks.main(["snapshot"]) == 1
+    captured = capsys.readouterr()
+    assert json.loads(captured.out.strip().splitlines()[-1])["golden"] == "kept"
+    assert "not idle after the snapshot" in captured.err

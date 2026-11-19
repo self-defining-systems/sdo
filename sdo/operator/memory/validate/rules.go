@@ -159,6 +159,11 @@ const (
 	// Text, so reflection rewrites it with typed field comparisons.
 	RuleProgramDiffText = "program.diff-text-match"
 
+	// RuleOwnIncidentReplay is a new playbook's replay on the incident it was
+	// written for. Blocking only when Diagnose returns NoMatch there (a definite
+	// failure); a match or a capture that cannot say is an observation.
+	RuleOwnIncidentReplay = "playbook.own-incident-replay"
+
 	// Compile.
 	RuleProgramPlanInvalid      = "program.plan-invalid"
 	RuleProgramMitigationRepair = "program.mitigation-not-repaired"

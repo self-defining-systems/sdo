@@ -77,11 +77,11 @@ func (s *JSONStore) snapshotAt(ctx context.Context, commit string, candidate fun
 		}
 		fields := strings.SplitN(record, "\t", 2)
 		if len(fields) != 2 {
-			return nil, errors.New("invalid accepted memory tree entry")
+			return nil, fmt.Errorf("%w: invalid accepted memory tree entry", ErrUnreadable)
 		}
 		metadata, path := strings.Fields(fields[0]), fields[1]
 		if len(metadata) != 3 || !filepath.IsLocal(filepath.FromSlash(path)) || !layout.IsMemoryPath(path) {
-			return nil, errors.New("unsafe accepted memory tree entry")
+			return nil, fmt.Errorf("%w: unsafe accepted memory tree entry", ErrUnreadable)
 		}
 		// Corpus, outcomes and deployment source are not catalog
 		// content and can grow without bound over the application's lifetime.
@@ -89,7 +89,7 @@ func (s *JSONStore) snapshotAt(ctx context.Context, commit string, candidate fun
 			continue
 		}
 		if metadata[1] != "blob" || (metadata[0] != "100644" && metadata[0] != "100755") {
-			return nil, fmt.Errorf("operational memory requires regular files: %s", path)
+			return nil, fmt.Errorf("%w: operational memory requires regular files: %s", ErrUnreadable, path)
 		}
 		selected = append(selected, catalogBlob{path: path, object: metadata[2]})
 	}
@@ -100,7 +100,11 @@ func (s *JSONStore) snapshotAt(ctx context.Context, commit string, candidate fun
 	if err := s.exportCatalogBlobs(ctx, root, selected); err != nil {
 		return nil, err
 	}
-	return candidate(root, commit)
+	snapshot, err := candidate(root, commit)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrUnreadable, err)
+	}
+	return snapshot, nil
 }
 
 // catalogBlob names one immutable Git object and its validated relative path.

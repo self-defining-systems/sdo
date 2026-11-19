@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sdo.dev/operator/builder/internal/buildio"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
@@ -82,7 +83,58 @@ func stagePrograms(ctx context.Context, config Config, workspace, module string)
 	if config.Replay == "off" {
 		return os.Remove(filepath.Join(workspace, "generated", "programs_test.go"))
 	}
-	return generateIncidentPlanTest(config.IncidentCapture, workspace, programs)
+	if err := generateIncidentPlanTest(config.IncidentCapture, workspace, programs); err != nil {
+		return err
+	}
+	return generateOwnIncidentTest(config.OwnIncidentCapture, workspace, newPrograms(ctx, config.ApplicationRoot, programs))
+}
+
+// ownIncidentFixtures is where the own-incident test finds the capture.
+const ownIncidentFixtures = "own-incident"
+
+// generateOwnIncidentTest stages the incident's captured open state and a test
+// that runs Diagnose of every playbook new in this change on it. The capture
+// exists before Go writes a corpus case, so a playbook that has none yet is
+// still checked. No capture or no new playbook, no test.
+func generateOwnIncidentTest(capture, workspace string, ids []string) error {
+	if capture == "" || len(ids) == 0 {
+		return nil
+	}
+	paths, err := filepath.Glob(filepath.Join(capture, "open@*.json"))
+	if err != nil {
+		return err
+	}
+	fixtures := filepath.Join(workspace, "generated", "testdata", ownIncidentFixtures)
+	if err := os.MkdirAll(fixtures, 0o755); err != nil {
+		return err
+	}
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(fixtures, filepath.Base(path)), data, 0o644); err != nil {
+			return err
+		}
+	}
+	return os.WriteFile(filepath.Join(workspace, "generated", "own_incident_test.go"), []byte(programvalidation.OwnIncidentTests(ids)), 0o644)
+}
+
+// newPrograms names the playbooks among programs that the change under check
+// introduced (no program source in the accepted tree, HEAD). Without Git
+// history it names none, so an unattributable change is never judged new.
+func newPrograms(ctx context.Context, applicationRoot string, programs []programvalidation.Spec) []string {
+	fresh, err := memory.NewPlaybooks(ctx, applicationRoot, "HEAD")
+	if err != nil {
+		return nil
+	}
+	var ids []string
+	for _, item := range programs {
+		if slices.Contains(fresh, item.ID) {
+			ids = append(ids, item.ID)
+		}
+	}
+	return ids
 }
 
 // generateIncidentPlanTest stages the controller's captured open state of the incident under test and a test that runs

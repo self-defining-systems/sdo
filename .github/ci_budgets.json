@@ -90,6 +90,8 @@
     "_comment": "PR-tier tests allowed to exceed slow_test_seconds, with the reason. Go keys are '<package> <TopLevelTest>' (a subtest is covered by its parent); Python keys are pytest node ids without a parameter suffix. Keep this short: move the test to the integration/nightly tier (testing.Short skip or the nightly ignore list) instead of adding an entry.",
     "go": {
       "sdo.dev/operator/memory/validate TestApplicationMapAgainstCompiledScenarios": "compiles generated detector programs with real Go",
+      "sdo.dev/operator/memory/validate TestANewPlaybookThatDoesNotMatchItsOwnIncidentIsRefused": "compiles a new playbook with real Go on a git base and runs its Diagnose on a capture: the end-to-end proof that a definite failure blocks",
+      "sdo.dev/operator/memory/validate TestANewPlaybookThatMatchesItsOwnIncidentIsRecordedAsAMatch": "the same compile, for the passing side of the own-incident replay",
       "sdo.dev/operator/memory/validate TestGateCompileRowsOnRealGo": "compiles generated detector programs with real Go",
       "sdo.dev/operator/memory/validate TestPreexistingHealthyBaselineFaultsOnRealGo": "compiles generated detector programs with real Go",
       "sdo.dev/operator/builder TestEmptyCatalogControllerBuild": "builds the controller binary in an isolated module",
