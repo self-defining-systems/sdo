@@ -66,22 +66,32 @@ ADMISSION_RETRIES = 5
 PRE_INJECTION_RETRY_MARKERS = ("SDO rejected onboarding", "no-fault rehearsal has unhealthy", "wipe could not remove")
 
 
-def _rejected_before_injection(results: Path) -> bool:
-    """Whether the attempt's record says it stopped before any injection, for one of the retryable causes."""
+#: Lane time the pre-injection retries of one cell may use, about one normal row: a failed attempt reinstalls SDO
+#: from scratch (5-6 min), and six of them held a lane for 30-66 min while every later row waited.
+ADMISSION_RETRY_BUDGET_SECONDS = 900
+
+
+def _rejected_before_injection(results: Path) -> str | None:
+    """The attempt's pre-injection rejection cause, when it is one of the retryable kinds; ``None`` otherwise.
+
+    The cause is normalized (numbers dropped), so two rejections that differ only in their timings compare equal.
+    """
     path = results / "incidents.jsonl"
     if not path.is_file():
-        return False
+        return None
     try:
         record = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
     except (OSError, ValueError, IndexError):
-        return False
+        return None
     injection = record.get("injection") or {}
     text = f"{record.get('error') or ''} {record.get('infra_error') or ''}"
-    return (
+    if (
         injection.get("state") == "not_injected"
         and injection.get("stage") == "pre_injection"
         and any(marker in text for marker in PRE_INJECTION_RETRY_MARKERS)
-    )
+    ):
+        return re.sub(r"\d+(\.\d+)?", "N", text.strip())
+    return None
 
 
 class RowSettings(BaseModel):
@@ -426,12 +436,15 @@ class FastloopRowRunner:
         (directory / "command.json").write_text(json.dumps(command, indent=2) + "\n", encoding="utf-8")
         results = environment.run_dir / "results"
         completed: int | None = None
+        first_started: float | None = None
+        previous_cause: str | None = None
         for admission_try in range(1 + ADMISSION_RETRIES):
             attempt = len(list((environment.run_dir / "results").glob(f"{run_id(self.stage, cell, 0)[:-3]}-a*")))
             row_id = run_id(self.stage, cell, attempt)
             command = row_command(self.settings, environment, cell, row_id, stream, state["planned"])
             (directory / "command.json").write_text(json.dumps(command, indent=2) + "\n", encoding="utf-8")
             started = self._now()
+            first_started = started if first_started is None else first_started
             out = (directory / "row.stdout.log").open("a")
             err = (directory / "row.stderr.log").open("a")
             process = self._start(command, cwd=self.settings.code_root, stdout=out, stderr=err)
@@ -460,9 +473,18 @@ class FastloopRowRunner:
                 state["online_end"] = self._now()
                 return map_record(record, cell, None, state["fallback_page_at"])
             completed = self._finish_process(directory, state)
-            if admission_try < ADMISSION_RETRIES and _rejected_before_injection(results):
+            cause = _rejected_before_injection(results)
+            if (
+                admission_try < ADMISSION_RETRIES
+                and cause is not None
+                and cause != previous_cause
+                and self._now() - first_started < ADMISSION_RETRY_BUDGET_SECONDS
+            ):
                 # The fault was never injected: the install window or the clean-app rehearsal failed on a slow or
-                # loaded host, not on the application. Both arms start the next attempt from a clean wipe.
+                # loaded host, not on the application. Both arms start the next attempt from a clean wipe, but only
+                # while the cause is new and the cell has not used about one row of lane time: a repeated cause is
+                # deterministic, and the row ends with it instead of holding the lane for another install.
+                previous_cause = cause
                 continue
             break
         # The row ended without an online end: an error before the grade, or a row that finished in one step.

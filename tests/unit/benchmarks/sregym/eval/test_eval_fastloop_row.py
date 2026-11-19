@@ -544,13 +544,19 @@ class Attempts:
         return FakeRow(returncode=0)
 
 
-def execute_attempts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, arm: Arm, records: list[IncidentRecord]) -> Any:
+def execute_attempts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    arm: Arm,
+    records: list[IncidentRecord],
+    now: Any = None,
+) -> Any:
     env = environment(tmp_path)
     monkeypatch.setattr("benchmarks.sregym.eval.fastloop_row.FastloopEnvironment.load", lambda directory: env)
     monkeypatch.setattr(FastloopRowRunner, "_fetch", lambda *args: None)
     attempts = Attempts(env, records)
     runner = FastloopRowRunner(
-        settings(tmp_path), "small", start=attempts.start, sleep=lambda s: None, head=lambda workspace: "h"
+        settings(tmp_path), "small", start=attempts.start, sleep=lambda s: None, head=lambda workspace: "h", now=now
     )
     context = ArmContext(config=make_config(tmp_path), page_hook=NoPageHook(), now=lambda: 0.0, sleep=lambda s: None)
     lane = runner.claim(cell(arm), "h1", "snap" if arm == "sdo" else None)
@@ -572,9 +578,34 @@ def test_a_row_rejected_before_injection_is_retried_on_a_fresh_attempt(
 def test_the_pre_injection_retry_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from benchmarks.sregym.eval.fastloop_row import ADMISSION_RETRIES
 
-    flake = rejected_record("SDO rejected onboarding: the first install was not healthy")
-    attempts, _ = execute_attempts(tmp_path, monkeypatch, "sdo", [flake])
+    flakes = [rejected_record(f"SDO rejected onboarding: install observation {name} incomplete") for name in "abcdefgh"]
+    attempts, _ = execute_attempts(tmp_path, monkeypatch, "sdo", flakes)
     assert len(attempts.run_ids) == 1 + ADMISSION_RETRIES
+
+
+def test_a_rejection_that_repeats_its_cause_stops_the_row(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A second identical rejection is deterministic: another fresh install only holds the lane (30-66 min per cell)."""
+    first = rejected_record("SDO rejected onboarding after 283.786s (metric http_requests_total has no series)")
+    again = rejected_record("SDO rejected onboarding after 274.988s (metric http_requests_total has no series)")
+    attempts, _ = execute_attempts(tmp_path, monkeypatch, "sdo", [first, again, record()])
+    assert len(attempts.run_ids) == 2
+
+
+def test_a_new_rejection_cause_is_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    first = rejected_record("SDO rejected onboarding (metric http_requests_total has no series)")
+    other = rejected_record("SDO rejected onboarding (healthy baseline traffic-links is firing)")
+    attempts, result = execute_attempts(tmp_path, monkeypatch, "sdo", [first, other, record()])
+    assert len(attempts.run_ids) == 3
+    assert result.status != "error"
+
+
+def test_pre_injection_retries_stop_at_one_rows_lane_time(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarks.sregym.eval.fastloop_row import ADMISSION_RETRY_BUDGET_SECONDS
+
+    clock = iter(range(0, 100 * ADMISSION_RETRY_BUDGET_SECONDS, ADMISSION_RETRY_BUDGET_SECONDS // 2))
+    flakes = [rejected_record(f"SDO rejected onboarding: install observation {name} incomplete") for name in "abcdefgh"]
+    attempts, _ = execute_attempts(tmp_path, monkeypatch, "sdo", flakes, now=lambda: float(next(clock)))
+    assert len(attempts.run_ids) < 4
 
 
 def test_a_failure_after_injection_is_never_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
