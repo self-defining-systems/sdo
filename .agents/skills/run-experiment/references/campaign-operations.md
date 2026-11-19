@@ -19,13 +19,15 @@ Before launching, write down the least time each stage needs if nothing is waste
 Then compare measured wall time with it, per problem and per series, as results land.
 
 - **Actual above about 2× the minimum is a bug to find, not a fact to report.** Example: the agent diagnoses for 10 minutes but the problem takes an hour, so 50 minutes went to something other than the experiment. Break that time into stages from the cell's own timestamps and remove or shrink the largest one.
-- Report the ratio (actual / minimum) per stage in every progress digest. It shows overhead the per-row numbers hide.
+- Report the ratio (actual / minimum) per stage in every progress digest.
 
 ## 1. Plan
 
 - Align with the user first: questions, arms (system, baselines, controls), metrics, protocol and sample size.
-- Size the first round to give trustworthy results within one to three hours, using the series minimum above. Keep rounds small (one parallel wave), look at the results, then decide the next.
-- Write the expected time of each stage (preflight, build, lane setup, each problem phase, series) in the run directory. Record actual start and end times as you go.
+- Size the first round to give trustworthy results within one to three hours, using the series minimum above. Keep rounds small (one wave); look, then decide the next.
+- Write the expected time of each stage (preflight, build, lane setup, each problem phase, series) in the run directory. Record actual start and end times as you go. Count first build, baseline build and slow-app install time.
+- **Inventory every arm's starting state** (memory, baselines, seeds, images) first; build what is missing. Fix: a preflight that fails on a missing input.
+- **Order by rep:** rep 1 of every item before rep 2. Add a dependent run only once its input artifact is verified; "done without artifact" is a failure. Fix: the driver refuses to chain without it.
 
 ## 2. Set up
 
@@ -38,8 +40,10 @@ Then compare measured wall time with it, per problem and per series, as results 
 
   A host with hundreds of threads in disk sleep is stalled even if its CPU looks free.
 - **Separate experiments that share a host in both directions:** each gets its own cpuset or slice and a load gate. One side's cpuset does not keep the other side's unpinned lanes off its cores. Pick your cpuset only after reading every running container's `CpusetCpus` (`docker inspect`) and the SMT sibling pairs (`lscpu -e`): other experiments pin blocks too, and "the top N CPUs" can overlap them.
+- **Use only assigned hosts**; an existing `AllowedCPUs` on user or system slices blocks a dynamic cpuset partition. Re-check hosts every pass.
+- **Isolate every lane** with its own whole-core cpuset and memory limit (the bench's `lanes: {cpus, memory}`, never a hand-run `docker update`) and a load gate set from others' measured load. Re-pin cpusets after any `systemctl daemon-reload` (runc 1.1.x garbles `AllowedCPUs`).
 - **Stagger lane creation:** at most about three image imports at a time per host.
-- **Disk:** keep lanes, images and evidence on local disk, never NFS. Keep a disk watcher on every host.
+- **Disk:** keep lanes, images and evidence on local disk, never NFS. Keep a disk watcher on every host with a floor: prune only your own reclaimable data and pause new specs below it.
 - **Start every lane from an installed baseline, warm pool or snapshot**, never a fresh install per lane, unless install is the question. When each arm needs different memory, swap memory into a warm lane instead of rebuilding.
 - **Replace a harness script that may be running atomically:** check it (`bash -n`), write a temp file beside it and `mv` it over. Bash reads a running script incrementally, so an in-place `cp`/`scp` breaks every call in flight (builds failed mid-prepare with `unexpected EOF`).
 - **Check the inventory after every edit** (the runner must load it, e.g. `fuzzops-bench status`). One invalid value fails every manager pass on every host, and only the runner's log says so.
@@ -62,8 +66,10 @@ Then compare measured wall time with it, per problem and per series, as results 
 
   Compare each stage with its minimum. Setup or gates taking longer than the agent's work is the usual sign of waste.
 - After the first cell of each kind, read its row and logs before trusting the rest.
+- **Smoke the whole chain on one item per app before scaling**, including every hand-off (an archive feeding pass 2; the control arm starting clean).
+- **Record harness failures in `harness.tsv`**, apart from SDO failures; rerun the chain with an `-x<n>` run-id suffix.
 - **Never chain or grade a cell whose lane recorded OOM kills** (fuzzops `run.json` `isolation.oom_kills`): the runner still marks it done. Size lanes to the app (GitLab with SDO needs about 30 GiB).
-- **Stop a failure loop early.** The same failure on two or more lanes or hosts is a pipeline bug, not lane flakiness. Park that arm after the second repeat and find the root cause on recorded evidence. Automatic lane rebuilds on repeated pre-injection failures only burn lane time.
+- **Stop a failure loop early.** The same failure on two or more lanes or hosts is a pipeline bug, not lane flakiness. Park that arm after the second repeat (a lane after two build-check failures) and find the root cause on recorded evidence. Automatic lane rebuilds on repeated pre-injection failures only burn lane time.
 
 ## 4. Run a series: throughput and parallelism
 
@@ -75,6 +81,7 @@ Then compare measured wall time with it, per problem and per series, as results 
 - **Queue baselines independently.** If baseline cells are queued only as twins of treatment cells, a treatment stall silently stalls the baseline too.
 - **A fix blocks only the arms that depend on it.** Keep independent arms running.
 - **Respect serial chains.** Example: pass 2 waits for pass 1's learning. Start chains early and run independent work beside them. Start the next link only from a verified artifact: an archived memory must match the live repository's `rev-parse HEAD` (SDO's controller keeps it at a detached HEAD, and a branch-based archive silently fell back to the starting memory). Removing a queued experiment tears down its lanes and drops its staged inputs: remove only experiments with no lane bound, and re-add under a new name when frozen fields change.
+- **Know the runner's destructive verbs:** `fuzzops-bench remove` tears lanes down; use `keep_lanes`. Name binaries by commit.
 - Run all arms at once on the same problem set, never one arm after another.
 
 ## 5. Oversee
@@ -87,6 +94,7 @@ Then compare measured wall time with it, per problem and per series, as results 
   - host pressure, disk, and whether drivers are alive.
 
   The orchestrator acts on the findings and sends the user a short digest that starts with rows graded and cells running. A script watcher is only a helper.
+- **Check each stage against its alarm and keep the driver resumable** ([campaign-alarms.md](campaign-alarms.md)).
 - **A delegate's "healthy" covers only its own arm.** Check throughput across every arm yourself; never infer it from silence.
 - **After an agent dies** (rate limit, context handoff), check at once what it was driving or investigating, and relaunch the unfinished work.
 - **One orchestrator owns each experiment's** driver, lanes and host list. To change another experiment's placement, message its owning thread; never touch its lanes.
@@ -103,21 +111,13 @@ Then compare measured wall time with it, per problem and per series, as results 
 - Cut every worktree from `origin/main`, not from the shared checkout's branch.
 - Cap concurrent agent builds and tests per host (for example `GOFLAGS=-p=4`).
 
-## 7. Finish and clean up
+## 7. Analyze, finish and clean up
 
-- Tear down your own idle clusters when a round ends; idle leftovers still hold memory and processes.
+- **Put an efficiency section in every report** ([report.md](report.md#efficiency)); each row above its alarm names its cause and the guard now preventing it.
+- Remove your worktrees and tear down your own idle clusters when a round ends; idle leftovers still hold memory and processes.
 - **Never move platforms mid-campaign** (for example kind to a managed cloud cluster). It splits results by platform, and the harness may not support it.
 - **Cloud resources:**
   - tag everything, keep a manifest and a teardown script, and set a budget alarm;
   - a managed control plane still bills after its nodes scale to zero.
 
-## Reference timings seen
-
-Calibrate minimums with these and update them when you measure better ones.
-
-| stage | seen |
-| --- | --- |
-| kind lane up, SREGym app | 5-7 min |
-| GitLab lane, fresh / reused app / warm pool | 20-25 / about 11 / 1-2 min setup |
-| recommend-only cloud agent, injection to plan | about 4 min |
-| SDO SREGym row, warm lane, end to end | 25-35 min (much of it gates and settle, not agent work) |
+Reference timings: [campaign-alarms.md](campaign-alarms.md#reference-timings-seen).
