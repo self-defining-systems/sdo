@@ -283,7 +283,7 @@ class FastloopRowRunner:
         stage: str,
         *,
         start: Callable[..., Any] = subprocess.Popen,
-        apply_cpu: Callable[..., None] | None = None,
+        apply_cpu: Callable[..., Any] | None = None,
         now: Callable[[], float] | None = None,
         sleep: Callable[[float], None] = time.sleep,
         import_memory: Callable[[str, str, Path, str], None] | None = None,
@@ -307,7 +307,7 @@ class FastloopRowRunner:
     def claim(self, cell: Cell, lane_id: str, snapshot_commit: str | None) -> Lane:
         directory = self.settings.lane_environments[lane_id]
         environment = FastloopEnvironment.load(directory)
-        self._apply_cpu(
+        placements = self._apply_cpu(
             environment.cluster,
             f"{self.settings.lane_cpus:g}",
             parent=resolve_cgroup_parent(self.settings.lane_cgroup_parent),
@@ -328,6 +328,8 @@ class FastloopRowRunner:
                 "namespace": environment.namespace,
                 "kubeconfig": str(environment.kubeconfig),
                 "application": environment.application,
+                # Each node's cpuset and the CPUs it shares with other containers' cores (best-effort placement).
+                "cpu_placement": json.dumps([placement.record() for placement in placements or ()]),
                 "description": environment.description,
             },
         )

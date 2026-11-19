@@ -268,34 +268,46 @@ def read_host_cores(sysfs: Path, allowed: frozenset[int]) -> tuple[frozenset[int
 
 
 class CpusetExhausted(ValueError):
-    """Not enough whole physical cores are free of every other container's cpuset to pin a lane node."""
+    """A lane node's CPU cap is larger than this host has CPUs, so no cpuset can show the cap."""
 
 
-def is_whole_cores(cpus: frozenset[int], cores: Iterable[frozenset[int]]) -> bool:
-    """Whether ``cpus`` is a union of whole cores (every SMT sibling of each core it touches)."""
-    return all(core <= cpus or not core & cpus for core in cores) and cpus <= frozenset().union(*cores)
+@dataclass(frozen=True)
+class CpuPlacement:
+    """One node's cpuset: its size is the node's CPU cap; ``shared`` are CPUs on cores another container holds."""
+
+    node: str
+    cpus: frozenset[int]
+    shared: frozenset[int]
+
+    def record(self) -> dict[str, str]:
+        return {"node": self.node, "cpuset": format_cpu_list(self.cpus), "shared": format_cpu_list(self.shared)}
 
 
-def choose_cores(
-    count: int, cores: Iterable[frozenset[int]], held: frozenset[int], *, node: str = "node"
-) -> frozenset[int]:
-    """The lowest-numbered whole cores, none sharing a CPU or an SMT sibling with ``held``, holding ``count`` CPUs.
+def place_cpus(
+    count: int, cores: Iterable[frozenset[int]], held: Iterable[frozenset[int]], *, node: str = "node"
+) -> CpuPlacement:
+    """Exactly ``count`` host CPUs for a node, so its workloads see its cap (visibility is the requirement).
 
-    Raises ``CpusetExhausted`` rather than overlap another experiment's pinned cores.
+    Placement is best effort: CPUs of whole cores that no other container's cpuset touches (a held CPU's SMT
+    siblings count as held) come first, lowest core first; when those run out the least-loaded remaining CPUs
+    fill the set, which may share cores with, or overlap, other experiments. Only a cap larger than the host
+    raises ``CpusetExhausted``.
     """
-    free = sorted((core for core in cores if not core & held), key=min)
-    chosen: set[int] = set()
-    for core in free:
-        if len(chosen) >= count:
-            break
-        chosen |= core
+    cores = sorted(cores, key=min)
+    held = list(held)
+    every = frozenset().union(*cores)
+    if count > len(every):
+        raise CpusetExhausted(f"eval: {node} is capped at {count} CPUs but this host has only {len(every)}")
+    taken = frozenset().union(*held)
+    busy_cores = [core for core in cores if core & taken]
+    shared_cpus = frozenset().union(*busy_cores)
+    chosen: list[int] = [cpu for core in cores if not core & taken for cpu in sorted(core)][:count]
     if len(chosen) < count:
-        raise CpusetExhausted(
-            f"eval: cannot pin {node} to {count} CPUs: only {len(free)} whole cores ({len(chosen)} CPUs) are free "
-            f"of other containers' cpusets ({format_cpu_list(held) or 'none'} held); free cores or lower the lane cap "
-            "instead of overlapping another experiment"
-        )
-    return frozenset(chosen)
+        load = {cpu: sum(cpu in cpuset for cpuset in held) for cpu in every}
+        rest = sorted(every - set(chosen), key=lambda cpu: (load[cpu], cpu))
+        chosen += rest[: count - len(chosen)]
+    cpus = frozenset(chosen)
+    return CpuPlacement(node, cpus, cpus & shared_cpus)
 
 
 def cgroup_matches(

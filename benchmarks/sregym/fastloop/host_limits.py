@@ -18,13 +18,13 @@ from typing import TYPE_CHECKING, Any
 from benchmarks.sregym.adapter import WaitKind, parse_memory_size, wait_for
 from benchmarks.sregym.fastloop.lane_cgroup import (
     DEFAULT_LANE_CPUS,
+    CpuPlacement,
     NodeCgroup,
-    choose_cores,
     default_shim_dir,
     describe_mode,
     format_cpu_list,
-    is_whole_cores,
     parse_cpu_list,
+    place_cpus,
     read_host_cores,
     read_node_cgroup,
     shim_environment,
@@ -145,35 +145,51 @@ def _pin_and_update(
     read: Callable[[str], NodeCgroup | None],
     parent: str | None,
     memory_bytes: int | None,
-) -> None:
-    """``docker update`` each node with ``flags`` plus a whole-core cpuset of at least ``ceil(cpus)`` CPUs; verify.
+) -> list[CpuPlacement]:
+    """``docker update`` each node with ``flags`` plus a cpuset of exactly ``ceil(cpus)`` CPUs, then verify it.
 
-    Cores are exclusive: every running container's cpuset (other experiments included) and its SMT siblings are
-    excluded, and too few free cores fail with ``CpusetExhausted``. A node already pinned to whole free cores of
-    the right size keeps them.
+    The size is the fix: in-pod runtimes (JVM, Go) size themselves from the CPUs they see. Placement is best
+    effort (``place_cpus``): free whole cores first, else the least-loaded CPUs, which may share cores with other
+    experiments; that overlap is logged and returned for the lane's receipt, never refused. A node already
+    pinned to the right size on CPUs no one else holds keeps them.
     """
     count = visible_cpu_count(float(cpus))
     cores = host_cores()
+    placements = []
     with _cpuset_lock():
         pinned = _running_cpusets()
-        held = frozenset().union(*(cpuset for name, cpuset in pinned.items() if name not in nodes))
+        held = [cpuset for name, cpuset in pinned.items() if name not in nodes and cpuset]
         for node in nodes:
             current = pinned.get(node, frozenset())
-            size = len(choose_cores(count, cores, frozenset(), node=node))
-            keep = len(current) == size and not current & held and is_whole_cores(current, cores)
-            chosen = current if keep else choose_cores(count, cores, held, node=node)
-            held |= chosen
-            node_flags = [*flags, "--cpuset-cpus", format_cpu_list(chosen)]
+            taken = frozenset().union(*held)
+            if len(current) == count and not current & taken:
+                placement = CpuPlacement(
+                    node, current, frozenset(cpu for cpu in current for core in cores if cpu in core and core & taken)
+                )
+            else:
+                placement = place_cpus(count, cores, held, node=node)
+            if placement.shared:
+                logger.warning(
+                    "lane cpuset: %s pinned to %s shares cores with other containers' cpusets on %s (not enough "
+                    "free whole cores); its CPU count is right, its isolation is partial",
+                    node,
+                    format_cpu_list(placement.cpus),
+                    format_cpu_list(placement.shared),
+                )
+            held.append(placement.cpus)
+            placements.append(placement)
+            node_flags = [*flags, "--cpuset-cpus", format_cpu_list(placement.cpus)]
             _update(node, *node_flags)
             verify_node(
                 node,
                 lambda node=node, node_flags=node_flags: _update(node, *node_flags),
                 cpus=float(cpus),
                 memory_bytes=memory_bytes,
-                visible_cpus=len(chosen),
+                visible_cpus=count,
                 parent=parent,
                 read=read,
             )
+    return placements
 
 
 def apply_node_limits(
@@ -182,7 +198,7 @@ def apply_node_limits(
     *,
     read: Callable[[str], NodeCgroup | None] = read_node_cgroup,
     parent: str | None = None,
-) -> None:
+) -> list[CpuPlacement]:
     """Cap every node of ``cluster`` and read the result back from its cgroup (idempotent; safe to repeat)."""
     limits = limits or NodeLimits.from_env()
     parent = parent if parent is not None else configured_parent()
@@ -198,7 +214,7 @@ def apply_node_limits(
         "--pids-limit",
         str(limits.pids),
     ]
-    _pin_and_update(nodes, cpus, flags, read=read, parent=parent, memory_bytes=parse_memory_size(limits.memory))
+    return _pin_and_update(nodes, cpus, flags, read=read, parent=parent, memory_bytes=parse_memory_size(limits.memory))
 
 
 def apply_lane_cpu(
@@ -207,12 +223,12 @@ def apply_lane_cpu(
     *,
     read: Callable[[str], NodeCgroup | None] = read_node_cgroup,
     parent: str | None = None,
-) -> None:
+) -> list[CpuPlacement]:
     """Re-apply only the lane CPU cap and cpuset (a claim must not touch memory a lane was created with); verify."""
     parent = parent if parent is not None else configured_parent()
     nodes = _lane_nodes(cluster)
     cpus = split_cpus(float(lane_cpus), len(nodes))
-    _pin_and_update(nodes, cpus, ["--cpus", cpus], read=read, parent=parent, memory_bytes=None)
+    return _pin_and_update(nodes, cpus, ["--cpus", cpus], read=read, parent=parent, memory_bytes=None)
 
 
 def configured_parent() -> str | None:
