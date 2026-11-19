@@ -40,6 +40,8 @@ from benchmarks.sregym.eval.closing import ClosingResult
 from benchmarks.sregym.eval.health import ProbeResult, http_probe
 from benchmarks.sregym.eval.results import TokenRow
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+from benchmarks.sregym.fastloop.host_limits import apply_lane_cpu
+from benchmarks.sregym.fastloop.lane_cgroup import DEFAULT_LANE_CPUS, resolve_cgroup_parent
 from benchmarks.sregym.fastloop.records import IncidentRecord, TokenCounts, load_records, online_checkpoint_path
 from benchmarks.sregym.repository_git import host_git_command
 
@@ -81,6 +83,12 @@ class RowSettings(BaseModel):
     coord: Path | None = None
     lease: str = "le-hu"
     python: str = sys.executable
+    #: CPU cap of one lane (all its kind nodes together), re-applied with ``docker update`` at every claim so lanes
+    #: created before the cap existed get it too. Memory and PIDs stay as ``fastloop up`` set them.
+    lane_cpus: float = Field(default=float(DEFAULT_LANE_CPUS), gt=0)
+    #: systemd slice the lane's node containers should live under: ``auto`` (``sdo-eval.slice`` when the host has it),
+    #: ``none`` or a slice name. It applies when a lane is created; a claim only reports where the node is.
+    lane_cgroup_parent: str = "auto"
 
 
 def run_id(stage: str, cell: Cell, attempt: int) -> str:
@@ -239,6 +247,7 @@ class FastloopRowRunner:
         stage: str,
         *,
         start: Callable[..., Any] = subprocess.Popen,
+        apply_cpu: Callable[..., None] | None = None,
         now: Callable[[], float] | None = None,
         sleep: Callable[[float], None] = time.sleep,
         import_memory: Callable[[str, str, Path, str], None] | None = None,
@@ -247,6 +256,7 @@ class FastloopRowRunner:
         self.settings = settings
         self.stage = stage
         self._start = start
+        self._apply_cpu = apply_cpu or apply_lane_cpu
         self._sleep = sleep
         #: ``(app, problem, workspace, commit)``: make a first try's accepted memory fetchable from the snapshot store.
         self._import_memory = import_memory
@@ -261,6 +271,11 @@ class FastloopRowRunner:
     def claim(self, cell: Cell, lane_id: str, snapshot_commit: str | None) -> Lane:
         directory = self.settings.lane_environments[lane_id]
         environment = FastloopEnvironment.load(directory)
+        self._apply_cpu(
+            environment.cluster,
+            f"{self.settings.lane_cpus:g}",
+            parent=resolve_cgroup_parent(self.settings.lane_cgroup_parent),
+        )
         if cell.arm == "sdo" and snapshot_commit:
             self._fetch(cell.app, environment, snapshot_commit)
         with self._lock:
