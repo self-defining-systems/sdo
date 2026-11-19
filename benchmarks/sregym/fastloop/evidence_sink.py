@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -129,6 +130,20 @@ def _grew(source: Path, target: Path) -> bool:
     return source.stat().st_mtime >= target.stat().st_mtime
 
 
+def _merge_run_level(source: Path, destination: Path) -> None:
+    """Merge every run-level entry the interval copy does not own (telemetry, ...) into ``destination``: new and
+    grown files are copied, existing destination directories are merged into, and nothing there is deleted."""
+
+    owned = {sink.INCIDENTS, sink.TASKS, sink.LAYOUT_FILE, sink.INDEX_FILE}
+    for entry in sorted(source.iterdir()):
+        if entry.name in owned or entry.name.endswith(".tmp") or entry.is_symlink():
+            continue
+        if entry.is_dir():
+            shutil.copytree(entry, destination / entry.name, symlinks=True, dirs_exist_ok=True)
+        else:
+            shutil.copy2(entry, destination / entry.name)
+
+
 def copy_out_run(environment: FastloopEnvironment, results_dir: Path) -> SinkCopy:
     """Copy this results directory's sink run directory into ``results_dir/evidence`` and verify it.
 
@@ -145,6 +160,7 @@ def copy_out_run(environment: FastloopEnvironment, results_dir: Path) -> SinkCop
     destination = results_dir / COPY_DIRNAME
     try:
         copied = sink.copy_interval(source, destination, None, None)
+        _merge_run_level(source, destination)
         files, size = _verify_and_sync(source, destination)
     except (OSError, sink.SinkError) as exc:
         raise EvidenceSinkError(f"copying the sink run directory {run_id}: {exc}") from exc
