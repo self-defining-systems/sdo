@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import time
@@ -41,6 +42,8 @@ if TYPE_CHECKING:
 
     from benchmarks.sregym.adapter import ClusterOps, NativeInstallConfig
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+logger = logging.getLogger(__name__)
 
 
 def await_workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
@@ -317,6 +320,7 @@ class LaneAdmission:
         the controller is observing; only then may the stabilization clock start.
         """
         started = time.monotonic()
+        next_report = started + wait_for(WaitKind.MINUTE)
         self.directory.mkdir(parents=True, exist_ok=True)
         destination = self.directory / "onboarding.json"
         while True:
@@ -346,6 +350,17 @@ class LaneAdmission:
             # only delays the same failure.
             if done or rejected or crashed or time.monotonic() - started >= self.onboarding_timeout_seconds:
                 break
+            if time.monotonic() >= next_report:
+                next_report = time.monotonic() + wait_for(WaitKind.MINUTE)
+                logger.info(
+                    "waiting for SDO onboarding in %s: %.0fs elapsed, %.0fs left of %gs, pending record: %s%s",
+                    control,
+                    evidence["seconds"],
+                    self.onboarding_timeout_seconds - evidence["seconds"],
+                    self.onboarding_timeout_seconds,
+                    evidence["pending"],
+                    f", last error: {error}" if error else "",
+                )
             time.sleep(min(2, max(0, started + self.onboarding_timeout_seconds - time.monotonic())))
         destination.write_text(json.dumps(evidence, indent=2) + "\n")
         if not done:

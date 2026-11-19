@@ -143,6 +143,19 @@ class ControllerStalledError(PersistentControllerError):
     """
 
 
+class ResponderDispatchError(PersistentControllerError):
+    """The controller kept failing to start the responder for an open incident, so no agent can repair it.
+
+    An infrastructure fault (an unusable provider pool, a broken worker), not an agent outcome: the wait ends at
+    the dispatch bound naming the controller's last dispatch error instead of running out the verification budget.
+    """
+
+
+#: How long an open incident's responder dispatch may keep failing before the stage ends; longer than one
+#: in-turn provider admission wait, so contention that resolves is never cut short.
+DISPATCH_FAILURE_BOUND_SECONDS = wait_for(WaitKind.OPERATION)
+
+
 class ReflectionDeadlineError(PersistentControllerError):
     """The controller was read and still owned the closure when the acknowledgment deadline passed.
 
@@ -2102,11 +2115,38 @@ def _wait_for_verified_incident(
     detected = False
     state: dict[str, Any] = {}
     summary = ""
+    dispatch_failing_since: float | None = None
+    next_report = started + wait_for(WaitKind.MINUTE)
     while budget.left() > 0:
         state = ops.runtime_state(control)
         # A slow state read may have spent the stage budget; stop polling rather than start an observer with none.
         if budget.left() <= 0:
             break
+        now = clock.monotonic()
+        dispatch_error = str(state.get("dispatch_error") or "")
+        dispatch_failing_since = (
+            (dispatch_failing_since if dispatch_failing_since is not None else now)
+            if dispatch_error and state.get("incident_open")
+            else None
+        )
+        if now >= next_report:
+            next_report = now + wait_for(WaitKind.MINUTE)
+            logger.info(
+                "waiting for controller verification in %s: %.0fs elapsed, %.0fs left, incident_open=%s, "
+                "dispatch_state=%s%s",
+                control,
+                now - started,
+                budget.left(),
+                bool(state.get("incident_open")),
+                state.get("dispatch_state") or "-",
+                f", dispatch_error={dispatch_error}" if dispatch_error else "",
+            )
+        if dispatch_failing_since is not None and now - dispatch_failing_since >= DISPATCH_FAILURE_BOUND_SECONDS:
+            request = state.get("incident_request") or {}
+            raise ResponderDispatchError(
+                f"controller in {control!r} could not start the responder for incident "
+                f"{request.get('incident_id', '?')!r} for {now - dispatch_failing_since:.0f}s: {dispatch_error}"
+            )
         observed = _observe_state(
             state,
             known=known,

@@ -110,6 +110,32 @@ def test_host_pool_provisioning_rejects_an_independent_alias(tmp_path: Path) -> 
         prepare_host_pool(root, [alias], capacity=4)
 
 
+def test_a_worker_that_cannot_write_the_provisioned_host_pool_still_takes_a_token(tmp_path: Path) -> None:
+    """Pods run as a different UID than the provisioning host user, so host pool files are often read-only to them.
+
+    ``flock`` needs only a readable descriptor; a 0444 pool must admit the worker (a 2026-11-19 lane failed every
+    responder dispatch with "shared Opus pool unavailable" on a PermissionError for a 0664 pool owned by UID 1000).
+    """
+    from libs.agent_cli.provider_capacity import prepare_host_pool
+
+    root = tmp_path / "pool"
+    prepare_host_pool(root, [], capacity=2)
+    for path in root.iterdir():
+        path.chmod(0o444)
+    try:
+        first, second = OpusPool(root, 2, create=False), OpusPool(root, 2, create=False)
+        held = first.try_acquire()
+        assert held is not None
+        other = second.try_acquire()
+        assert other is not None
+        assert OpusPool(root, 2, create=False).try_acquire() is None
+        held.close()
+        other.close()
+    finally:
+        for path in root.iterdir():
+            path.chmod(0o664)
+
+
 @pytest.mark.parametrize("seed", range(8))
 def test_host_pool_seeded_acquire_release_schedules(tmp_path: Path, seed: int) -> None:
     import random

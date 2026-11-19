@@ -588,21 +588,34 @@ def _configure_turn_usage_log(logs_dir: str | None) -> None:
         os.environ[TURN_USAGE_LOG_ENV] = str(Path(logs_dir) / "sdo_turn_usage.jsonl")
 
 
+class SeededControllerNotReadyError(NativeOperatorError):
+    """A seeded persistent controller never had a ready owned Pod within its rollout bound; the row ends."""
+
+
 def _wait_for_installed_controller(
     install: NativeInstallConfig, *, timeout_seconds: float = wait_for(WaitKind.ROLLOUT)
 ) -> None:
-    """An unbounded persistent install returns at creation; wait for its ready Pod."""
+    """An unbounded persistent install returns at creation; wait for its ready Pod.
 
-    deadline = time.monotonic() + timeout_seconds
+    Ends at *timeout_seconds* with :class:`SeededControllerNotReadyError`, and logs when the controller is
+    ready, so the row log never stops at a stale "waiting" line.
+    """
+
+    started = time.monotonic()
+    deadline = started + timeout_seconds
     while True:
         try:
             inspect_existing(install)
-            return
         except NativeOperatorError as exc:
             if time.monotonic() >= deadline:
-                raise
+                raise SeededControllerNotReadyError(
+                    f"seeded controller not ready within {timeout_seconds:g}s: {exc}"
+                ) from exc
             logger.info("waiting for the seeded controller: %s", exc)
             time.sleep(wait_for(WaitKind.POLL))
+            continue
+        logger.info("seeded controller ready after %.0fs", time.monotonic() - started)
+        return
 
 
 _PRODUCTION_REGISTRATIONS = Path(__file__).resolve().parents[3] / "sdo" / "agents" / "registrations"

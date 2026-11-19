@@ -16,6 +16,7 @@ from benchmarks.sregym.adapter.budgets import Deadline, DeadlineExhaustedError, 
 from benchmarks.sregym.adapter.persistent import (
     ControllerStalledError,
     PersistentControllerError,
+    ResponderDispatchError,
     _wait_for_verified_incident,
 )
 
@@ -177,6 +178,63 @@ def test_a_live_controller_whose_evaluations_stand_still_keeps_the_full_verifica
 
     assert not isinstance(raised.value, ControllerStalledError)
     assert "verified no new incident within 600s" in str(raised.value)
+
+
+_POOL_FAILURE = 'agent task "incident-blocked" failed: rate_limited: shared Opus pool unavailable'
+
+
+@dataclass
+class _UndispatchableOps:
+    """A live controller whose responder dispatch fails on every retry, as seen live on 2026-11-19."""
+
+    clock: _ManualClock
+    dispatch_error: str = _POOL_FAILURE
+    clears_after: float | None = None
+    started: float = 0.0
+    iteration: int = 0
+
+    def runtime_state(self, control: str) -> dict[str, Any]:
+        self.iteration += 1
+        cleared = self.clears_after is not None and self.clock.now - self.started >= self.clears_after
+        return {
+            "incident_open": True,
+            "dispatch_state": "DISPATCH_STATE_RUNNING" if cleared else "DISPATCH_STATE_PENDING",
+            "dispatch_error": "" if cleared else self.dispatch_error,
+            "step_count": self.iteration,
+            "incident_request": {"incident_id": "incident-blocked"},
+            "busy_until": "2099-01-01T00:00:00Z",
+        }
+
+
+def test_a_responder_that_never_dispatches_ends_the_wait_with_a_named_error(caplog: pytest.LogCaptureFixture) -> None:
+    """The row ends at the dispatch bound naming the dispatch error, and logs progress each minute meanwhile."""
+    manual = _ManualClock()
+    ops = _UndispatchableOps(manual, started=manual.now)
+    caplog.set_level("INFO", logger="benchmarks.sregym.adapter.persistent")
+
+    with pytest.raises(ResponderDispatchError) as raised:
+        _wait_for_verified_incident(ops, "astro-sdo", set(), 2400.0, _sleeping_clock(manual))  # type: ignore[arg-type]
+
+    message = str(raised.value)
+    assert "shared Opus pool unavailable" in message
+    assert "incident-blocked" in message
+    assert manual.now - ops.started <= wait_for(WaitKind.OPERATION) + wait_for(WaitKind.MINUTE)
+    progress = [
+        record.getMessage() for record in caplog.records if "waiting for controller verification" in record.getMessage()
+    ]
+    assert len(progress) >= int(wait_for(WaitKind.OPERATION) // wait_for(WaitKind.MINUTE)) - 1
+    assert "shared Opus pool unavailable" in progress[-1]
+
+
+def test_a_dispatch_error_that_clears_keeps_the_full_verification_budget() -> None:
+    manual = _ManualClock()
+    ops = _UndispatchableOps(manual, started=manual.now, clears_after=wait_for(WaitKind.ROLLOUT))
+
+    with pytest.raises(PersistentControllerError) as raised:
+        _wait_for_verified_incident(ops, "astro-sdo", set(), 1200.0, _sleeping_clock(manual))  # type: ignore[arg-type]
+
+    assert not isinstance(raised.value, ResponderDispatchError)
+    assert "verified no new incident within 1200s" in str(raised.value)
 
 
 def _clock_subtractions(node: ast.AST) -> bool:

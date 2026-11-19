@@ -416,6 +416,20 @@ def test_unfinished_onboarding_keeps_the_controller_log(lane, monkeypatch):
     assert (gate.directory / "onboarding-controller.log").read_text() == "window never started\n"
 
 
+def test_unfinished_onboarding_logs_progress_each_minute(lane, monkeypatch, caplog):
+    """A long onboarding wait is never silent in the row log: one line a minute names what it waits for."""
+    gate, _ = lane
+    gate.onboarding_timeout_seconds = 300
+    first_adoption(gate, monkeypatch, finishes_at=10_000)
+    _patch_kubectl(monkeypatch, lambda *args, **kwargs: SimpleNamespace(stdout=""))
+    caplog.set_level("INFO", logger=admission.__name__)
+    with pytest.raises(ValueError, match=r"did not finish within 300s"):
+        gate.prove("hotel-reservation-sdo")
+    progress = [record.getMessage() for record in caplog.records if "waiting for SDO onboarding" in record.getMessage()]
+    assert len(progress) >= 4
+    assert "left of 300s" in progress[-1]
+
+
 def wall_clock(gate, monkeypatch, now):
     """Wall time that follows the faked monotonic clock, so ``busy_until`` is seconds after the start."""
     monkeypatch.setattr(gate, "_wall_now", lambda: EPOCH + timedelta(seconds=now[0]))
