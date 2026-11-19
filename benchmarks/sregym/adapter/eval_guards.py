@@ -35,11 +35,20 @@ def validate_setup_commit(validation: str) -> None:
 
 
 def is_install_plan_record(actor: str, origin: str, paths: list[str]) -> bool:
-    """The commit install-existing makes to record the lane's deployment plan over an installed snapshot.
+    """The commits install-existing makes over an installed snapshot: the lane's deployment plan record and the
+    regenerated generic detectors (`sdo: prepare the generic detectors`, which appears whenever the operator build
+    changed a generated detector).
 
-    It carries no broker validation (the installer, not the broker, writes it) and touches only the plan file.
+    They carry no broker validation (the installer, not the broker, writes them) and touch only the plan file or
+    generated detector sources under `.sdo/diagnostics/`.
     """
-    return actor == "human" and origin == "install-existing" and paths == [".sdo/deployment/plan.yaml"]
+    return (
+        actor == "human"
+        and origin == "install-existing"
+        and bool(paths)
+        and all(path == ".sdo/deployment/plan.yaml" or path.startswith(".sdo/diagnostics/") for path in paths)
+        and all(".." not in Path(path).parts for path in paths)
+    )
 
 
 def is_health_setup(actor: str, phase: str, paths: list[str]) -> bool:

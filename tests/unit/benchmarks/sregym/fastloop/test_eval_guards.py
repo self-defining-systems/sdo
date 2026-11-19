@@ -657,6 +657,15 @@ def test_lineage_admits_the_install_plan_record_over_an_installed_snapshot(tmp_p
         check=True,
     )
     assert setup_lineage(repository, seed)["passed"] is True
+    (repository / ".sdo/diagnostics/detectors/health/request-metrics").mkdir(parents=True)
+    (repository / ".sdo/diagnostics/detectors/health/request-metrics/detector.go").write_text("package x")
+    subprocess.run(["git", "-C", str(repository), "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm",
+         "sdo: prepare the generic detectors\n\nSDO-Actor: human\nSDO-Phase: initial\nSDO-Origin: install-existing"],
+        check=True,
+    )
+    assert setup_lineage(repository, seed)["passed"] is True
     _commit(repository, "other", ["SDO-Actor: human", "SDO-Phase: initial", "SDO-Origin: install-existing"])
     with pytest.raises(ValueError, match="unvalidated setup commit"):
         setup_lineage(repository, seed)
