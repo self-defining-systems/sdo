@@ -5,7 +5,9 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
@@ -197,5 +199,46 @@ func TestStageAppliesTheBuiltInRestoreOnlyWhenTheSwitchIsOn(t *testing.T) {
 	attempt := restoreAttempt(report)
 	if attempt == nil || attempt.GetSkipReason() == stageBuiltinRestoreManual {
 		t.Fatalf("with the switch on the stage must not skip it as manual: %v", attempt)
+	}
+}
+
+// snapshotRestoreView reads objects through the snapshot's own sdk.ObjectReader
+// (an absent object of a completely listed kind is ErrObjectAbsent) and has
+// canned source comparisons.
+type snapshotRestoreView struct {
+	*sdktest.ReplayReadView
+	diffs map[string]sdk.SourceDiff
+}
+
+func (v snapshotRestoreView) DiffAgainstSource(ref sdk.ObjectRef) (sdk.SourceDiff, error) {
+	return v.diffs[ref.Kind+"/"+ref.Name], nil
+}
+
+// A source-declared ConfigMap a workload mounts, deleted outside SDO, is a
+// missing object: the built-in playbook and `sdo detect` restore it with
+// CreateFromSource, never with a field restore that needs a live object.
+func TestSourceRestoreRecreatesADeletedSourceDeclaredObject(t *testing.T) {
+	app := detectApp("create")
+	for i := range app.DeploymentList {
+		if app.DeploymentList[i].Name == "api" {
+			app.DeploymentList[i].Spec.Template.Spec.Volumes = []corev1.Volume{{Name: "script", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "init-script"}}}}}
+		}
+	}
+	app.CompleteKindList = []schema.GroupVersionKind{{Version: "v1", Kind: "ConfigMap"}}
+	request := detectRequest()
+	deleted := detectOnset.Add(-4 * time.Second)
+	request.DriftEvents = []sdk.DriftEvent{{Ref: dref("ConfigMap", "init-script"), Manager: "unknown", ObservedAt: deleted, Fields: []sdk.DriftField{{Path: "data.init.sh"}}}}
+	view := snapshotRestoreView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: app.Snapshot}, diffs: map[string]sdk.SourceDiff{"ConfigMap/init-script": {Changed: true}}}
+	restore := sourceRestoreProgram{evidence: newRestoreEvidence(request)}
+	verdict, err := restore.Diagnose(context.Background(), view, restoreAPI())
+	if err != nil || verdict.Result != program.Match {
+		t.Fatalf("verdict %+v, err %v", verdict, err)
+	}
+	plan, err := restore.Mitigate(context.Background(), view, restoreAPI())
+	if err != nil || len(plan.Actions) != 1 {
+		t.Fatalf("plan %+v, err %v", plan, err)
+	}
+	if action, ok := plan.Actions[0].(program.CreateFromSource); !ok || action.Ref.Name != "init-script" {
+		t.Fatalf("a deleted object is created from source, got %#v", plan.Actions[0])
 	}
 }

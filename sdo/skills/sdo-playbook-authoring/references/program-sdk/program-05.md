@@ -61,8 +61,10 @@ func ReadFrom(view sdk.DetectionContext) ReadView
 type ReconcileFromSource struct{ Ref sdk.ObjectRef }
     ReconcileFromSource restores a whole source-owned object to accepted source,
     removing additions SourceDiff reports; prefer SetField for one field.
-    For a Secret the controller writes the literal data of the accepted render
-    (the keys the source declares; other keys stay) and nothing records a value:
+    An object accepted source declares that is absent is created from source,
+    exactly as CreateFromSource (the receipt names the create). For a Secret
+    the controller writes the literal data of the accepted render (the keys
+    the source declares; other keys stay) and nothing records a value:
     the receipt names the keys. It refuses a Secret whose source has no literal
     data or whose render is not deterministic (a generated password); then
     Escalate. Restart the readers that started after the foreign change with
@@ -215,12 +217,4 @@ type Rollback struct {
 	ToRevision string
 }
     Rollback restores a workload's fields from an explicit earlier revision.
-
-type RolloutView interface {
-	Deployments() []appsv1.Deployment
-	ReplicaSets() []appsv1.ReplicaSet
-	Pods() []corev1.Pod
-}
-    RolloutView is the observation a stalled-rollout release is chosen from.
-    ReadView and detector snapshots satisfy it.
 ```
