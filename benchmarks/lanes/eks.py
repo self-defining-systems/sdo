@@ -232,6 +232,33 @@ class Ecr:
         return digest
 
 
+def _holds(ecr: Ecr, reference: str) -> bool:
+    """Whether ECR still stores the image a pinned ``<registry>/<repository>@sha256:...`` reference names."""
+
+    name, _, digest = reference.partition("@")
+    registry, _, repository = name.partition("/")
+    if registry != ecr.lane.registry or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        return False
+    found = ecr._run(
+        [
+            "aws",
+            "ecr",
+            "describe-images",
+            "--region",
+            ecr.lane.region,
+            "--repository-name",
+            repository,
+            "--image-ids",
+            f"imageDigest={digest}",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    return found.returncode == 0
+
+
 def publish_app_image(ecr: Ecr, local: str, declared: str) -> str:
     """Make nodes resolve ``declared`` to the bytes of ``local`` through the mirror; returns the digest."""
 
@@ -531,6 +558,10 @@ class EksProvider:
 
     def pin(self, local: str) -> str:
         return pin_image(self._ecr, local)
+
+    def holds(self, reference: str) -> bool:
+        """Whether a reference :meth:`pin` returned still names a stored image."""
+        return _holds(self._ecr, reference)
 
     def publish(self, local: str, declared: str) -> str:
         return publish_app_image(self._ecr, local, declared)

@@ -27,6 +27,10 @@ class LaneProvider(Protocol):
         """Make a local image pullable by every node; returns its immutable reference."""
         ...
 
+    def holds(self, reference: str) -> bool:
+        """Whether a reference :meth:`pin` returned still resolves to the same image for every node."""
+        ...
+
     def publish(self, local: str, declared: str) -> str:
         """Make every node resolve ``declared`` to the bytes of the local image ``local``; returns its digest."""
         ...

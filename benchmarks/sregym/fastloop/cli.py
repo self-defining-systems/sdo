@@ -118,7 +118,7 @@ def _worker(environment: FastloopEnvironment) -> SregymWorker:
         assert_runtime_images(
             environment.images, environment.dev_mount or REPO_ROOT, dev_mount=environment.dev_mount is not None
         )
-    if not node_images_match(environment.cluster, environment.images):
+    if not lane_images_current(environment):
         raise ValueError("eval: lane image source differs from the checked local images; redeliver with fastloop up")
     return SregymWorker(
         worker_argv(environment.sregym_dir, private_tmp=environment.private_tmp),
@@ -195,6 +195,20 @@ def node_images_match(cluster: str, images: Images) -> bool:
                 if manifest.returncode != 0 or local.stdout.strip() not in manifest.stdout.split():
                     return False
     return True
+
+
+def lane_images_current(environment: FastloopEnvironment) -> bool:
+    """Whether every node of the lane still runs the images the lane recorded.
+
+    A kind lane compares the node containers' images with the local ones; an EKS lane's images are digests, so they
+    are current while ECR still stores them.
+    """
+    if environment.eks is not None:
+        from benchmarks.lanes.eks import EksProvider
+
+        provider = EksProvider(environment.eks, str(environment.kubeconfig))
+        return all(provider.holds(image) for image in (environment.images.controller, environment.images.responder))
+    return node_images_match(environment.cluster, environment.images)
 
 
 def up_worker_environment(args: argparse.Namespace, *, workspace: Path) -> dict[str, str]:
@@ -557,8 +571,7 @@ def _up(args: argparse.Namespace) -> int:
             and previous.worker_env == worker_env
             and previous.deploy_problem == args.problem
             and previous.kubeconfig.is_file()
-            # An EKS lane's images are digests, so equal references are equal content.
-            and (eks_platform or node_images_match(previous.cluster, images))
+            and lane_images_current(previous)
         ):
             if previous.namespace == "astronomy-shop":
                 from benchmarks.sregym.adapter import prepare_oracle_observability
