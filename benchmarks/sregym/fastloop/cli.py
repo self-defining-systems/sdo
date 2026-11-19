@@ -966,6 +966,23 @@ def recreate_application(
     return deployed
 
 
+def restore_lane_identities(environment: FastloopEnvironment, results_dir: Path) -> None:
+    """Row start, after the SDO namespace wipe: the app holds only identities its gateway can carry.
+
+    An identity the gateway rounds onto another user's id outlives rows and fails every
+    signed-in probe step at install; repairing it here, while no prober runs, keeps that
+    lane state from rejecting each later install, and the receipt names what was repaired.
+    """
+    if environment.namespace != "social-network":
+        return
+    from benchmarks.sregym.fastloop.social_fixture import restore_social_identities
+
+    repair = restore_social_identities(environment.kubeconfig)
+    (results_dir / "social-identities.json").write_text(json.dumps(repair.to_json(), indent=2) + "\n")
+    if repair:
+        logger.warning("Social identities repaired at row start: %s", repair.describe())
+
+
 def _record_fresh_deploy(environment: FastloopEnvironment) -> None:
     """A deploy `up` just performed is a whole-application recreation: the lane's first row need not redeploy it."""
     LaneInjectionState(environment.kubeconfig, environment.namespace).recreated()
@@ -1342,6 +1359,8 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
             deploy_with_setup_proof(
                 environment, worker, results_dir, allow_reuse=args.agent == "sdo" and environment.app != "toy"
             )
+        if tier1 is not None:
+            restore_lane_identities(environment, results_dir)
         if environment.app != "toy":
             rehearsal_problems = dict.fromkeys(problem for ids in incidents for problem in ids)
             for rehearsal_index, problem_id in enumerate(rehearsal_problems):
