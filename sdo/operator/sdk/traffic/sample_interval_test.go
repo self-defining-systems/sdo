@@ -94,3 +94,24 @@ func TestSampleIntervalValidation(t *testing.T) {
 		}
 	}
 }
+
+// The memory check rejects a probe set that sends more than the cap, naming the
+// rate and the way out, instead of leaving the controller to log it.
+func TestCheckProbeLoadRejectsAnOverCapProbeSet(t *testing.T) {
+	var catalog Catalog
+	for i := 0; i < 18; i++ {
+		catalog = append(catalog, Scenario{ID: fmt.Sprintf("scenario-%02d", i), Steps: make([]Step, 2)})
+	}
+	err := CheckProbeLoad([]Workload{intervalWorkload(t, "10s", 18)}, catalog)
+	if err == nil {
+		t.Fatal("an 18-scenario probe at the 10 s floor was accepted")
+	}
+	for _, want := range []string{"3.6 requests/s", "3/s cap", "sampleInterval"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("message %q lacks %q", err, want)
+		}
+	}
+	if err := CheckProbeLoad([]Workload{intervalWorkload(t, "30s", 18)}, catalog); err != nil {
+		t.Fatalf("a probe set under the cap was rejected: %v", err)
+	}
+}

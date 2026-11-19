@@ -48,6 +48,7 @@ var Watch = sdk.WatchKind{ ... }
 func BuildHTTPRequest(ctx context.Context, baseURL string, request Request) (*http.Request, error)
 func CheckCatalog(ctx context.Context, catalog Catalog) []error
 func CheckDetects(ctx context.Context, scenario Scenario, class FaultClass) error
+func CheckProbeLoad(workloads []Workload, catalog Catalog) error
 func DefaultLatencyNote(id string) string
 func DefaultLatencyScenarios(workloads []Workload) []string
 func FailingUserScenarios(ctx sdk.DetectionContext) []string

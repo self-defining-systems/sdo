@@ -294,6 +294,37 @@ func (d *detector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Fi
 	return findings, nil
 }
 
+// Confirmed implements the observation confirmation contract: health cannot be
+// established while the metrics source has not scraped a declared service's
+// metric at all (no series), because that says nothing about the application.
+// Query errors are reported by Detect, not pending.
+func (d *detector) Confirmed(ctx sdk.DetectionContext) bool { return d.ConfirmationReason(ctx) == "" }
+
+// ConfirmationReason names the declared services whose metric has no series.
+func (d *detector) ConfirmationReason(ctx sdk.DetectionContext) string {
+	if d.err != nil {
+		return ""
+	}
+	var unscraped []string
+	seen := map[string]bool{}
+	for _, op := range d.cfg.Operations {
+		plan, ok := d.entries[op.Service]
+		if !ok || op.Unmeasurable != "" || seen[op.Service] {
+			continue
+		}
+		seen[op.Service] = true
+		r, ok := metrics.ResultFrom(ctx, plan.pres.ID)
+		if !ok || r.Error != "" || len(r.Series) > 0 {
+			continue
+		}
+		unscraped = append(unscraped, fmt.Sprintf("%s (metric %s%s)", op.Service, plan.Metric, plan.Selector))
+	}
+	if len(unscraped) == 0 {
+		return ""
+	}
+	return "the metrics source has not scraped " + strings.Join(unscraped, ", ") + " yet"
+}
+
 // instrumentation reports why the entry's metric cannot be judged per
 // operation, or "" when it can.
 func (p entryPlan) instrumentation(results map[string]metrics.Result) string {

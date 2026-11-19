@@ -21,11 +21,19 @@ func objectiveDigest(objective string) string {
 // finding, error, missing health detector, or learned detector can authorize a
 // baseline. No detector ID is reserved for the human goal: the generic health
 // detectors the shared check installs evaluate it independently.
-type baselineContradictionError struct{ detector string }
+type baselineContradictionError struct {
+	detector string
+	// active is every active finding of the health detectors, worst first.
+	active []sdk.Finding
+}
 
 func (e *baselineContradictionError) Error() string {
 	return "healthy baseline " + e.detector + " is firing"
 }
+
+// unobserved reports a finding below warning severity: a note about what is
+// not yet observable (no series, too few samples), never a fault.
+func unobserved(f sdk.Finding) bool { return f.Severity == sdk.SeverityInfo }
 
 func healthyBaselineGoal(ctx context.Context, detectors []sdk.Detector, snapshot sdk.DetectionContext) (bool, error) {
 	evaluatedHealth := false
@@ -41,6 +49,7 @@ func healthyBaselineGoal(ctx context.Context, detectors []sdk.Detector, snapshot
 		health = append(health, detector)
 	}
 	evaluated := evaluateDetectors(ctx, health, snapshot)
+	var contradiction *baselineContradictionError
 	for _, detector := range health {
 		spec := detector.Spec()
 		evaluatedHealth = true
@@ -49,10 +58,23 @@ func healthyBaselineGoal(ctx context.Context, detectors []sdk.Detector, snapshot
 			return false, fmt.Errorf("healthy baseline %s: %w", spec.ID, err)
 		}
 		for _, finding := range findings {
-			if finding.Status == sdk.FindingActive {
-				return false, &baselineContradictionError{detector: spec.ID}
+			if finding.Status != sdk.FindingActive {
+				continue
+			}
+			if contradiction == nil {
+				contradiction = &baselineContradictionError{detector: spec.ID}
+			}
+			contradiction.active = append(contradiction.active, finding)
+			if unobserved(contradiction.active[0]) && !unobserved(finding) {
+				// The error names the worst finding, which is first.
+				last := len(contradiction.active) - 1
+				contradiction.active[0], contradiction.active[last] = contradiction.active[last], contradiction.active[0]
+				contradiction.detector = spec.ID
 			}
 		}
+	}
+	if contradiction != nil {
+		return false, contradiction
 	}
 	if !evaluatedHealth {
 		return false, fmt.Errorf("healthy baseline requires an independently evaluated health detector")

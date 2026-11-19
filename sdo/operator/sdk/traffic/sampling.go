@@ -1,6 +1,7 @@
 package traffic
 
 import (
+	"fmt"
 	"math"
 	"time"
 )
@@ -144,4 +145,25 @@ func MeasureProbeLoad(workloads []Workload, requestsPerIteration map[string]int)
 		}
 	}
 	return load
+}
+
+// Message explains an over-cap load and the ways out of it.
+func (l ProbeLoad) Message() string {
+	return fmt.Sprintf("sampling every scenario at least every %s (the %s floor, or a workload's sampleInterval up to %s) sends %.1f requests/s, above the %.0f/s cap; no scenario was starved: lengthen sampleInterval, or remove or merge scenarios", MinSampleInterval, MinSampleInterval, MaxSampleInterval, l.RequestsPerSecond, l.Cap)
+}
+
+// CheckProbeLoad rejects a health-probe set whose sampling sends more than
+// ProbeRateCap requests per second, counting each scenario's steps from the
+// catalog (a scenario the catalog does not hold counts one). The check is
+// deterministic, so the memory check refuses the set before the controller
+// would have to run it over the cap.
+func CheckProbeLoad(workloads []Workload, catalog Catalog) error {
+	requests := make(map[string]int, len(catalog))
+	for _, scenario := range catalog {
+		requests[scenario.ID] = len(scenario.Steps)
+	}
+	if load := MeasureProbeLoad(workloads, requests); load.OverCap() {
+		return fmt.Errorf("probe load: %s", load.Message())
+	}
+	return nil
 }

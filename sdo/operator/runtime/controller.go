@@ -730,7 +730,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 			c.scheduler.RestoreDeadlines(deadlines)
 		}
 	}
-	if confirmed || confirmationExpired {
+	if confirmationExpired || confirmed && c.onboardingHealthSettled(ctx, snapshot) {
 		onboardingCandidate = c.beginOnboarding(ctx, detectors, now)
 	}
 	// An earlier claimed/crashed attempt cannot lend provisional exclusions to
