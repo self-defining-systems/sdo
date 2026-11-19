@@ -249,17 +249,19 @@ def run_cell(cell: Cell, ctx: CellContext, lane_id: str) -> ResultRow:
             samples = prober.stop()
     gate = GateVerdict(gradable=False, reasons=("cell did not reach collection",))
     accounting = Accounting(TokenRow(), TokenRow())
+    executor = ctx.executors[cell.arm]
+    drains = lane is not None and isinstance(executor, ClosingDrain)
     try:
         with timings.phase("collect"):
             if lane is not None:
                 ctx.backend.collect(lane, cell, directory)
             accounting = ctx.accountant.account(cell, directory, result)
-            gate = ctx.gate.check(cell, directory)
+            # The evidence a cell is judged on (final incident record, verified evidence copy) is complete only
+            # after the closing turn: a draining cell is gated once, after its closing evidence is collected.
+            gate = GateVerdict(gradable=True) if drains else ctx.gate.check(cell, directory)
     except Exception as exc:
         error = error or f"collect: {type(exc).__name__}: {exc}"
         reusable = False
-    executor = ctx.executors[cell.arm]
-    drains = lane is not None and isinstance(executor, ClosingDrain)
     row_ended_at = ctx.now()
     row = _finish(
         cell,
@@ -287,6 +289,25 @@ def run_cell(cell: Cell, ctx: CellContext, lane_id: str) -> ResultRow:
     drained_at = ctx.now()
     if closing.status in ("not_drained", "error"):
         reusable = False
+    if drains and lane is not None and row.status == "graded":
+        try:
+            accounting = ctx.accountant.account(cell, directory, result)
+            gate = ctx.gate.check(cell, directory)
+        except Exception as exc:
+            gate = GateVerdict(gradable=False, reasons=(f"evidence gate: {type(exc).__name__}: {exc}",))
+        _write(
+            directory / "accounting.json",
+            {"online": accounting.online.model_dump(), "offline": accounting.offline.model_dump(), **accounting.detail},
+        )
+        row = row.model_copy(update={"online": accounting.online})
+        if not gate.gradable:
+            row = row.model_copy(
+                update={
+                    "status": "not_graded",
+                    "reason": "; ".join(gate.reasons) or "evidence gate refused",
+                    "success": None,
+                }
+            )
     final = _seal(
         row,
         cell,
