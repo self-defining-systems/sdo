@@ -105,6 +105,11 @@ func Migrate(root string) (bool, error) {
 			return false, err
 		}
 	}
+	if version < 13 {
+		if err := migrateLearnedClass(root); err != nil {
+			return false, fmt.Errorf("migrate to schema 13: %w", err)
+		}
+	}
 	target := filepath.Join(root, filepath.FromSlash(SchemaVersionFile))
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return false, err
@@ -166,6 +171,99 @@ var schemaMigrations = map[int]func(*schemaPlan) error{
 	// earlier recording stays valid without it and reads as unavailable: the
 	// step only stamps and leaves every recording byte for byte.
 	12: func(*schemaPlan) error { return nil },
+	// Version 13 renames the incident detector class to learned: the
+	// detectors/incidents directory becomes detectors/learned, each manifest's
+	// class value becomes learned, and detector source names sdk.DetectorClassLearned.
+	// The rename runs after the earlier steps wrote their files (see
+	// migrateLearnedClass); planning only refuses a repository holding both
+	// directories, before any file changes.
+	13: func(p *schemaPlan) error {
+		_, noIncidents := os.Lstat(filepath.Join(p.root, filepath.FromSlash(DetectorsDir), legacyIncidentDir))
+		_, noLearned := os.Lstat(filepath.Join(p.root, filepath.FromSlash(DetectorsDir), ClassLearned.Dir()))
+		if noIncidents == nil && noLearned == nil {
+			return errors.New("detectors hold both " + legacyIncidentDir + " and " + ClassLearned.Dir() + " directories")
+		}
+		return nil
+	},
+}
+
+const (
+	// legacyIncidentDir and legacyIncidentClass are what schema versions before
+	// 13 called the learned detector class.
+	legacyIncidentDir   = "incidents"
+	legacyIncidentClass = "incident"
+)
+
+// detectorDirNames are the directories below DetectorsDir a repository of any
+// supported schema version may hold.
+var detectorDirNames = []string{ClassHealth.Dir(), ClassLearned.Dir(), legacyIncidentDir}
+
+var (
+	legacyClassConstant = regexp.MustCompile(`\bDetectorClassIncident\b`)
+	legacyClassLiteral  = regexp.MustCompile(`DetectorClass\(\s*"incident"\s*\)`)
+	legacyManifestClass = regexp.MustCompile(`(?m)^class:[ \t]*"?incident"?[ \t]*$`)
+)
+
+// RewriteLearnedClass renames the schema-version 12 incident class in detector
+// source to its schema-version 13 name.
+func RewriteLearnedClass(source string) string {
+	source = legacyClassConstant.ReplaceAllString(source, "DetectorClassLearned")
+	return legacyClassLiteral.ReplaceAllString(source, `DetectorClass("learned")`)
+}
+
+// migrateLearnedClass applies the version 13 step to the checkout at root:
+// it moves detectors/incidents to detectors/learned, sets the class of every
+// manifest below it to learned and renames the class in detector Go source.
+// A repository without incident detectors changes nothing.
+func migrateLearnedClass(root string) error {
+	detectors := filepath.Join(root, filepath.FromSlash(DetectorsDir))
+	from, to := filepath.Join(detectors, legacyIncidentDir), filepath.Join(detectors, ClassLearned.Dir())
+	if _, err := os.Lstat(from); err == nil {
+		if _, err := os.Lstat(to); err == nil {
+			return errors.New("detectors hold both " + legacyIncidentDir + " and " + ClassLearned.Dir() + " directories")
+		}
+		if err := os.Rename(from, to); err != nil {
+			return fmt.Errorf("move %s to %s: %w", legacyIncidentDir, ClassLearned.Dir(), err)
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return filepath.WalkDir(detectors, func(p string, entry fs.DirEntry, walkErr error) error {
+		if errors.Is(walkErr, fs.ErrNotExist) {
+			return nil
+		}
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || entry.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+		rel, _ := filepath.Rel(detectors, p)
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		inLearned := parts[0] == ClassLearned.Dir()
+		var rewrite func(string) string
+		switch {
+		case strings.HasSuffix(entry.Name(), ".go"):
+			rewrite = RewriteLearnedClass
+		case inLearned && len(parts) == 3 && entry.Name() == ManifestFileName:
+			rewrite = func(source string) string { return legacyManifestClass.ReplaceAllString(source, "class: learned") }
+		default:
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		updated := rewrite(string(data))
+		if updated == string(data) {
+			return nil
+		}
+		return os.WriteFile(p, []byte(updated), info.Mode().Perm())
+	})
 }
 
 type fileRewrite struct {
@@ -202,8 +300,8 @@ func planPlaybookRewrites(root string, steps []migrationStep) ([]fileRewrite, er
 			locations = append(locations, location{step.from, step.to})
 		}
 	} else {
-		for _, class := range []Class{ClassHealth, ClassIncident} {
-			parent := filepath.Join(root, filepath.FromSlash(DetectorsDir), class.Dir())
+		for _, name := range detectorDirNames {
+			parent := filepath.Join(root, filepath.FromSlash(DetectorsDir), name)
 			entries, err := os.ReadDir(parent)
 			if errors.Is(err, fs.ErrNotExist) {
 				continue
@@ -317,8 +415,8 @@ func AcceptedDetectors(root string) ([]DetectorManifest, error) {
 		return nil, err
 	}
 	if manifests == nil {
-		for _, class := range []Class{ClassHealth, ClassIncident} {
-			parent := filepath.Join(root, filepath.FromSlash(DetectorsDir), class.Dir())
+		for _, name := range detectorDirNames {
+			parent := filepath.Join(root, filepath.FromSlash(DetectorsDir), name)
 			entries, err := os.ReadDir(parent)
 			if errors.Is(err, fs.ErrNotExist) {
 				continue
@@ -337,6 +435,9 @@ func AcceptedDetectors(root string) ([]DetectorManifest, error) {
 				manifest, err := ParseDetectorManifest(data)
 				if err != nil {
 					return nil, fmt.Errorf("detector %s: %w", entry.Name(), err)
+				}
+				if manifest.Class == legacyIncidentClass {
+					manifest.Class = string(ClassLearned)
 				}
 				manifests = append(manifests, manifest)
 			}
@@ -379,6 +480,13 @@ func planMigration(root string, data []byte) ([]migrationStep, error) {
 	var steps []migrationStep
 	seen := map[string]bool{}
 	for _, detector := range legacy {
+		legacyDir := detector.Class
+		if detector.Class == legacyIncidentClass {
+			detector.Class = string(ClassLearned)
+			legacyDir = legacyIncidentDir
+		} else {
+			legacyDir = detector.DetectorClass().Dir()
+		}
 		class := detector.DetectorClass()
 		if !class.valid() || !ValidDetectorID(detector.ID) {
 			return nil, fmt.Errorf("legacy detector %q has invalid class %q or id", detector.ID, detector.Class)
@@ -389,7 +497,7 @@ func planMigration(root string, data []byte) ([]migrationStep, error) {
 		}
 		seen[key] = true
 		legacyPackage := path.Clean(strings.TrimPrefix(detector.Package, "./"))
-		if !strings.HasPrefix(legacyPackage, "detectors/"+class.Dir()+"/") || strings.Contains(legacyPackage, "..") {
+		if !strings.HasPrefix(legacyPackage, "detectors/"+legacyDir+"/") || strings.Contains(legacyPackage, "..") {
 			return nil, fmt.Errorf("legacy detector %s package %q is outside its owned directory", detector.ID, detector.Package)
 		}
 		from := filepath.Join(root, filepath.FromSlash(DiagnosticsDir), filepath.FromSlash(legacyPackage))

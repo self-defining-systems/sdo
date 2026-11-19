@@ -37,7 +37,7 @@ func parseMemoryImport(args []string, getenv func(string) string) (memoryImportC
 	f.StringVar(&c.ID, "id", "", "unique operator import ID")
 	f.StringVar(&c.ApplicationNamespace, "application-namespace", "", "application observation namespace")
 	f.StringVar(&c.OperatorRoot, "operator-root", operatorRootDefault(getenv), "installed Go operator modules")
-	f.StringVar(&c.HealthyBaseline, "healthy-baseline", "", "directory of captured healthy snapshots to validate incident detectors against")
+	f.StringVar(&c.HealthyBaseline, "healthy-baseline", "", "directory of captured healthy snapshots to validate learned detectors against")
 	positional, err := parseFlags(f, args[1:])
 	if err != nil {
 		return c, err

@@ -522,7 +522,7 @@ type closureRecheck struct {
 	// Bound is how long an incomplete recheck may wait: the longest clearing
 	// horizon of the incomplete detectors plus two of their cadences.
 	Bound time.Duration
-	// Skipped lists incident detectors the adopted policy no longer has. They
+	// Skipped lists learned detectors the adopted policy no longer has. They
 	// are not evidence either way; the detectors in force decided.
 	Skipped []string
 	// SourceNotes lists source checks that could not run (the accepted source
@@ -602,7 +602,7 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 	for _, id := range ordered {
 		detector := c.detectors[id]
 		if detector == nil && !slices.Contains(c.healthDetectorIDs, id) {
-			// The adopted policy no longer has this incident detector. The
+			// The adopted policy no longer has this learned detector. The
 			// repository moving is not evidence about the cluster; the
 			// detectors in force still decide, provided one remains.
 			gone = append(gone, id)

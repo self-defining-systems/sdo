@@ -22,7 +22,7 @@ const workedExamples = "../../../skills/sdo-playbook-authoring/assets/examples"
 // The authoring skill points reflection at these worked examples, so they pass
 // the same reflection check a learned playbook must: compile, format, labels,
 // receipt links, a Match on their own fault capture and NoMatch on healthy. The example
-// incident detector compiles and loads with them. One tree and
+// learned detector compiles and loads with them. One tree and
 // one check cover every example, so a new example costs no extra compile.
 func TestWorkedExamplesPassTheReflectionMemoryCheck(t *testing.T) {
 	if testing.Short() {
@@ -78,7 +78,7 @@ func TestWorkedExamplesPassTheReflectionMemoryCheck(t *testing.T) {
 	for _, part := range []string{"playbooks", "corpus"} {
 		copyTree(t, filepath.Join(workedExamples, part), filepath.Join(root, ".sdo", part))
 	}
-	copyTree(t, filepath.Join(workedExamples, "detectors"), filepath.Join(root, ".sdo/diagnostics/detectors/incidents"))
+	copyTree(t, filepath.Join(workedExamples, "detectors"), filepath.Join(root, ".sdo/diagnostics/detectors/learned"))
 	index := "# Playbooks\n\n- [base](base/README.md)\n"
 	for _, id := range ids {
 		index += "- [" + id + "](" + id + "/README.md)\n"

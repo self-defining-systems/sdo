@@ -100,7 +100,7 @@ func TestMemoryCheckCleanTreeExitsZero(t *testing.T) {
 // into a located diagnostic and exit status 1, so the clean-tree contracts above
 // cannot pass without running the stages.
 func TestMemoryCheckReportsACompilerStageFailureAtItsFile(t *testing.T) {
-	testutil.FakeGo(t, testutil.GoRule{Verb: "vet", Output: "detectors/incidents/missing-configmap/detector.go:7:2: synthetic vet failure"})
+	testutil.FakeGo(t, testutil.GoRule{Verb: "vet", Output: "detectors/learned/missing-configmap/detector.go:7:2: synthetic vet failure"})
 	root := copyFixture(t, goodFixture)
 	prepareCleanReflection(t, root)
 	env := memoryCheckEnv(t)
@@ -127,7 +127,7 @@ func TestMemoryCheckReportsDiagnosticsAsLines(t *testing.T) {
 
 func TestMemoryCheckJSONIsMemoryCheckReport(t *testing.T) {
 	root := copyFixture(t, goodFixture)
-	if err := os.WriteFile(filepath.Join(root, ".sdo/schema-version"), []byte("13\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".sdo/schema-version"), []byte("14\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	code, stdout, _ := runMemory(t, memoryCheckEnv(t), "check", "--root", root, "--json")
@@ -162,7 +162,7 @@ func TestMemoryCheckReportNamesTheCommitItChecked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".sdo/schema-version"), []byte("13\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".sdo/schema-version"), []byte("14\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, stdout, _ := runMemory(t, memoryCheckEnv(t), "check", "--root", root, "--json")
@@ -239,7 +239,7 @@ func TestMemoryListIdentifiesArtifactsByLogicalID(t *testing.T) {
 	for want, path := range map[key]string{
 		{"playbook", "base"}:      ".sdo/playbooks/base/README.md",
 		{"script", "base/fix.sh"}: ".sdo/playbooks/base/scripts/fix.sh",
-		{"detector", "cache"}:     ".sdo/diagnostics/detectors/incidents/cache/manifest.yaml",
+		{"detector", "cache"}:     ".sdo/diagnostics/detectors/learned/cache/manifest.yaml",
 		{"detector", "health"}:    ".sdo/diagnostics/detectors/health/health/manifest.yaml",
 		{"goal", ""}:              ".sdo/goal.md",
 		{"architecture", ""}:      ".sdo/arch.md",
@@ -279,7 +279,7 @@ func TestMemoryNewScaffoldsPassCheck(t *testing.T) {
 	for _, detector := range tree.Detectors {
 		found[detector.Manifest.ID] = detector.Class
 	}
-	if found["disk-pressure"] != layout.ClassIncident || found["ready-pods"] != layout.ClassHealth {
+	if found["disk-pressure"] != layout.ClassLearned || found["ready-pods"] != layout.ClassHealth {
 		t.Fatalf("detectors = %v", found)
 	}
 }
@@ -326,7 +326,7 @@ func TestMemoryNewDetectorScaffoldsBuildVetAndPassTheirTests(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".sdo"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".sdo/schema-version"), []byte("12\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".sdo/schema-version"), []byte("13\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{

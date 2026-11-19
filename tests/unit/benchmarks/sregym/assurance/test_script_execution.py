@@ -391,7 +391,7 @@ def test_resumed_reflection_accounts_its_tokens_and_edits_final_files(
     # The closing turn returns one line; Go derives the playbook IDs from the checkout diff.
     assert turn.note == "Encoded deny-all-networkpolicy-isolation"
     manifest = (
-        worktree / ".sdo/diagnostics/detectors/incidents/deny-all-networkpolicy-isolation/manifest.yaml"
+        worktree / ".sdo/diagnostics/detectors/learned/deny-all-networkpolicy-isolation/manifest.yaml"
     ).read_text()
     assert f'originatingIncident: "{request.incident_id}"' in manifest
     assert (worktree / ".sdo/playbooks/deny-all-networkpolicy-isolation/README.md").exists()

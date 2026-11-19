@@ -12,7 +12,7 @@ type Detector struct{}
 
 func New() sdk.Detector { return Detector{} }
 func (Detector) Spec() sdk.DetectorSpec {
-	return sdk.DetectorSpec{ID: "service-targetport-mismatch", Class: sdk.DetectorClassIncident, Owner: sdk.DetectorOwnerResponder,
+	return sdk.DetectorSpec{ID: "service-targetport-mismatch", Class: sdk.DetectorClassLearned, Owner: sdk.DetectorOwnerResponder,
 		Watches: []sdk.WatchKind{{APIVersion: "v1", Kind: "Service"}, {APIVersion: "v1", Kind: "Pod"}}, Interval: time.Second,
 		Persistence: sdk.PersistencePolicy{Firing: 1, Clearing: 1}, Batching: sdk.BatchingPolicy{Severity: sdk.SeverityWarning, Debounce: 500 * time.Millisecond},
 		Playbooks: []string{"service-targetport-mismatch"}, OriginatingIncident: "scripted-incident", OriginatingCommit: "reflection"}

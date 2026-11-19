@@ -48,7 +48,7 @@ message MemoryArtifact {
   string kind = 1 [(buf.validate.field).string.min_len = 1];
   string id = 2;
   string path = 3 [(buf.validate.field).string.min_len = 1];
-  // Detector class (health or incident); empty for other kinds.
+  // Detector class (health or learned); empty for other kinds.
   string detector_class = 4;
 }
 

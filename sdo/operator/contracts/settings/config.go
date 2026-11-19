@@ -169,7 +169,7 @@ type Learning struct {
 	Replay             string `yaml:"replay" doc:"replay and corpus capture: on or off"`
 	ReflectionGuidance string `yaml:"reflection_guidance" doc:"the agent's learning instructions: baseline learns from each confirmed cause; generalize compares related incident signatures and parameterizes a shared playbook; generalize-spec favors predicates visible in resource spec or status. None changes the detector SDK or the validator"`
 	ForceReflection    bool   `yaml:"force_reflection" doc:"always dispatch reflection after a verified closure (not with a frozen mode)"`
-	HealthyBaseline    bool   `yaml:"healthy_baseline" doc:"opt-in detector gate: a proposal that changes incident detector source is replayed against healthy snapshots a runner recorded with sdo-operator baseline-write (one sdktest.Snapshot JSON per file, outside the accepted repository); a detector that fires on one fails validation, and a missing baseline fails closed. It never reads benchmark verdicts"`
+	HealthyBaseline    bool   `yaml:"healthy_baseline" doc:"opt-in detector gate: a proposal that changes learned detector source is replayed against healthy snapshots a runner recorded with sdo-operator baseline-write (one sdktest.Snapshot JSON per file, outside the accepted repository); a detector that fires on one fails validation, and a missing baseline fails closed. It never reads benchmark verdicts"`
 }
 
 // Deployment bounds deployment attempts and the policy they run under.

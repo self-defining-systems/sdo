@@ -122,7 +122,7 @@ func DecodeRegistration(wire *pb.MemoryDetectorRegistration) (Registration, erro
 		if err = appstate.ValidateID(r.ID); err != nil {
 			return r, fmt.Errorf("detector %s: %w", r.ID, err)
 		}
-		// The validator keeps readers out of incident detectors; this is the
+		// The validator keeps readers out of learned detectors; this is the
 		// runtime's own refusal, so a reader smuggled in through a shared
 		// helper type still never runs.
 		if r.Class != sdk.DetectorClassHealth {

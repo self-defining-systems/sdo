@@ -16,7 +16,7 @@ SDO_OPERATOR_ROOT="$PWD/sdo/operator" uv run python -m benchmarks.sregym.ablatio
 
 `full` preserves every byte. `detectors-only` removes playbooks (including
 scripts and programs), shared helpers and corpus, and preserves detector code, tests and manifests unchanged.
-Detector playbook hints are advisory when the playbook catalog is absent. `playbooks-only` removes every health and incident detector;
+Detector playbook hints are advisory when the playbook catalog is absent. `playbooks-only` removes every health and learned detector;
 playbook Markdown, program code, helpers and corpus are preserved byte for byte.
 Reports record source and output commits, artifact counts, metadata edits and
 whether the verified branch was pushed. No Markdown is rewritten.

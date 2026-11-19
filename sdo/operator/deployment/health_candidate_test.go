@@ -136,7 +136,7 @@ func TestVerifyCandidateReportsAFiringCandidateAsASourceFault(t *testing.T) {
 }
 
 // An advance is judged by the gating detector set (the health objective and the
-// designer's health detectors, never learned incident detectors), against the
+// designer's health detectors, never learned detectors), against the
 // candidate's own deployment: the probe is told the classes and receives the
 // images the candidate applied as pins.
 func TestVerifyCandidateScopesTheProbeToGatingClassesAndTheCandidatesImages(t *testing.T) {
@@ -153,7 +153,7 @@ func TestVerifyCandidateScopesTheProbeToGatingClassesAndTheCandidatesImages(t *t
 	}
 	got := scopes[0]
 	if !slices.Equal(got.Classes, []sdk.DetectorClass{sdk.DetectorClassHealth}) {
-		t.Fatalf("gating classes = %v, want health only (incident detectors do not gate an advance)", got.Classes)
+		t.Fatalf("gating classes = %v, want health only (learned detectors do not gate an advance)", got.Classes)
 	}
 	if got.Pins.EffectiveTree == "" || got.Pins.EffectiveTree != receipt.EffectiveTree || got.Pins.BaseTree != receipt.BaseTree || len(got.Pins.Images) != 1 || got.Pins.Images[0].Applied != receipt.ContainerImages[0].Applied {
 		t.Fatalf("pins = %+v, want the candidate receipt's images", got.Pins)

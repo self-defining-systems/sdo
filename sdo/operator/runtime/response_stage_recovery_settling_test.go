@@ -61,7 +61,7 @@ func (d windowedSettlingDetector) EvaluationWindow(sdk.DetectionContext) time.Du
 
 func (d settlingDetector) Spec() sdk.DetectorSpec {
 	owner := sdk.DetectorOwnerHealthJudge
-	if d.class == sdk.DetectorClassIncident {
+	if d.class == sdk.DetectorClassLearned {
 		owner = sdk.DetectorOwnerResponder
 	}
 	return sdk.DetectorSpec{ID: d.id, Class: d.class, Owner: owner,
@@ -94,7 +94,7 @@ type settlingCase struct {
 	// healAfter is when, after the restart, the windowed detectors stop
 	// reporting the fault; zero means the fault persists.
 	healAfter time.Duration
-	// stallWindow is the learned incident detector's window; zero means it
+	// stallWindow is the learned detector's window; zero means it
 	// judges current state only.
 	stallWindow time.Duration
 	blind       bool
@@ -208,7 +208,7 @@ func (p trafficStallProgram) Diagnose(_ context.Context, view program.ReadView, 
 	return program.Verdict{Result: program.NoMatch}, nil
 }
 
-// settlingStage builds the R3b shape: a learned incident detector reports a
+// settlingStage builds the R3b shape: a learned detector reports a
 // request stall on Deployment api and names the learned restart playbook, the
 // judge's traffic-health detector reports the same journey unexplained, and
 // both judge a rolling window. The restart's first rollout sample is still in
@@ -255,7 +255,7 @@ func settlingStageOn(t *testing.T, tc settlingCase, world *settlingWorld) (*Dete
 		healAt = clock.Now().Add(tc.healAfter)
 	}
 	traffic := windowedSettlingDetector{settlingDetector{id: "traffic-health", class: sdk.DetectorClassHealth, window: 60 * time.Second, clock: clock, healAt: healAt}}
-	stall := settlingDetector{id: "api-request-stall", class: sdk.DetectorClassIncident, window: tc.stallWindow, playbooks: []string{"api-request-stall"}, clock: clock, healAt: healAt}
+	stall := settlingDetector{id: "api-request-stall", class: sdk.DetectorClassLearned, window: tc.stallWindow, playbooks: []string{"api-request-stall"}, clock: clock, healAt: healAt}
 	var stallDetector sdk.Detector = stall
 	if tc.stallWindow > 0 {
 		stallDetector = windowedSettlingDetector{stall}

@@ -1450,12 +1450,12 @@ func (c *Controller) CurrentAcceptedCommit() string {
 	return c.config.SourceCommit
 }
 
-// detectorOrigins maps each learned incident detector to the incident it was
+// detectorOrigins maps each learned detector to the incident it was
 // learned from.
 func (c *Controller) detectorOrigins() map[string]string {
 	origins := make(map[string]string)
 	for id, spec := range c.detectorSpecs {
-		if spec.Class == sdk.DetectorClassIncident && spec.OriginatingIncident != "" {
+		if spec.Class == sdk.DetectorClassLearned && spec.OriginatingIncident != "" {
 			origins[id] = spec.OriginatingIncident
 		}
 	}
@@ -2019,7 +2019,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		ObservationGeneration:         generation,
 		Request:                       *cloneIncidentRequest(c.currentIncidentRequest), Result: cloneIncidentResult(c.currentIncidentResult),
 		DispatchError: c.dispatchError, FinalDetectorStates: finalStates,
-		IncidentDetectorStates: c.incidentDetectorStates(),
+		LearnedDetectorStates: c.learnedDetectorStates(),
 		PartialDetectorStates:  c.reflectionDetectorStates(verified),
 		FinalStateChanges:      finalChanges,
 		HealthClearedAt:        healthClearedAt,
@@ -2079,8 +2079,8 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	}
 	closure.DetectorTimeline = cloneTimeline(c.timeline)
 	sortTimeline(closure.DetectorTimeline)
-	closure.IncidentDetectorFiredBeforeDispatch, closure.IncidentDetectorFiredAfterDispatch,
-		closure.NoIncidentDetectorFired = timelineSummary(closure.DetectorTimeline)
+	closure.LearnedDetectorFiredBeforeDispatch, closure.LearnedDetectorFiredAfterDispatch,
+		closure.NoLearnedDetectorFired = timelineSummary(closure.DetectorTimeline)
 	c.emitLifecycleLocked(&contracts.LifecycleEvent{
 		Event: PhaseClosed, RecordedAt: contractTimestamp(verifiedAt), IncidentId: closure.Request.IncidentID,
 		HealthClearedAt:               optionalContractTimestamp(closure.HealthClearedAt),
@@ -2184,10 +2184,10 @@ func (c *Controller) finalVerificationStates() ([]DetectorEvaluation, bool) {
 	return c.latestEvaluations(ids, c.recoveryObservationEpochLocked(), true)
 }
 
-// incidentDetectorStates reports the latest evaluation since responder
+// learnedDetectorStates reports the latest evaluation since responder
 // completion of each non-health detector that raised a finding in the current
 // incident. Detectors that have not evaluated since then are omitted.
-func (c *Controller) incidentDetectorStates() []DetectorEvaluation {
+func (c *Controller) learnedDetectorStates() []DetectorEvaluation {
 	health := make(map[string]struct{}, len(c.healthDetectorIDs))
 	for _, detectorID := range c.healthDetectorIDs {
 		health[detectorID] = struct{}{}

@@ -41,7 +41,7 @@ func escalationStage(t *testing.T, mitigator program.Mitigator, diagnoser progra
 	settling.effectAt = settling.clock.Now().Add(24 * time.Hour)
 	settling.observed.Store(1)
 	clock := settling.clock
-	stall := trafficLearnedStall{settlingDetector{id: "api-acl", class: sdk.DetectorClassIncident, playbooks: []string{"api-acl"}, clock: clock}}
+	stall := trafficLearnedStall{settlingDetector{id: "api-acl", class: sdk.DetectorClassLearned, playbooks: []string{"api-acl"}, clock: clock}}
 	detectors := []sdk.Detector{stall}
 	var mitigators []program.Mitigator
 	if mitigator != nil {

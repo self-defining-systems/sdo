@@ -26,7 +26,7 @@ Read [validator rules](rules.md) before changing a manifest or when a diagnostic
 
 ## Cause-specific detectors
 
-A new or changed playbook with a program ships with an incident detector keyed on its cause, unless only the generic
+A new or changed playbook with a program ships with a learned detector keyed on its cause, unless only the generic
 symptom exists (say so in the outcome reason): [cause-specific detectors](cause-specific.md).
 
 ## Runtime reads

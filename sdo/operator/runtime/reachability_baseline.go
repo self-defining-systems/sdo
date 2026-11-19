@@ -18,7 +18,7 @@ func objectiveDigest(objective string) string {
 }
 
 // healthyBaselineGoal is independent of the generic reachability policy. No
-// finding, error, missing health detector, or incident detector can authorize a
+// finding, error, missing health detector, or learned detector can authorize a
 // baseline. No detector ID is reserved for the human goal: the generic health
 // detectors the shared check installs evaluate it independently.
 type baselineContradictionError struct{ detector string }

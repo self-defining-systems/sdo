@@ -122,7 +122,7 @@ func cloneIncidentClosure(closure *IncidentClosure) *IncidentClosure {
 	copy.Request = *cloneIncidentRequest(&closure.Request)
 	copy.Result = cloneIncidentResult(closure.Result)
 	copy.FinalDetectorStates = cloneEvaluations(closure.FinalDetectorStates)
-	copy.IncidentDetectorStates = cloneEvaluations(closure.IncidentDetectorStates)
+	copy.LearnedDetectorStates = cloneEvaluations(closure.LearnedDetectorStates)
 	copy.PartialDetectorStates = cloneEvaluations(closure.PartialDetectorStates)
 	copy.DetectorTimeline = cloneTimeline(closure.DetectorTimeline)
 	copy.SourceCheckNotes = append([]string(nil), closure.SourceCheckNotes...)

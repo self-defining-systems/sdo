@@ -153,8 +153,8 @@ func CheckFindingRoles(spec ProgramSpec) error
     each declared kind, a finding on one object of that kind (with one object
     of every other declared kind as related resources) must bind a role of that
     kind. Kinds where BindFinding refuses the probe need named ParameterBindings
-    from an incident detector, as for a required pair of one kind; those
-    stay allowed. Two optional roles of one kind (aliases) never bind and are
+    from a learned detector, as for a required pair of one kind; those stay
+    allowed. Two optional roles of one kind (aliases) never bind and are
     refused.
 
 func CheckReads(view ReadView) (sdk.DetectionContext, func() error)

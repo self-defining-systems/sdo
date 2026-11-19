@@ -20,7 +20,7 @@ func New() sdk.Detector { return Detector{} }
 func (Detector) Spec() sdk.DetectorSpec {
 	return sdk.DetectorSpec{
 		ID:                  "crashloop-script-repair",
-		Class:               sdk.DetectorClassIncident,
+		Class:               sdk.DetectorClassLearned,
 		Owner:               sdk.DetectorOwnerResponder,
 		Description:         "find Deployments whose Pods are crash looping",
 		Watches:             []sdk.WatchKind{{APIVersion: "apps/v1", Kind: "Deployment"}, {APIVersion: "v1", Kind: "Pod"}},

@@ -55,12 +55,12 @@ def test_parses_cli_output_into_generated_messages() -> None:
     )
     assert [(o.incident_id, o.classification) for o in outcomes] == [("i-1", "success")]
     listing = parse_listing(
-        '{"artifacts": [{"kind": "detector", "id": "a", "path": "p", "detector_class": "incident"},'
+        '{"artifacts": [{"kind": "detector", "id": "a", "path": "p", "detector_class": "learned"},'
         ' {"kind": "detector", "id": "b", "path": "q", "detector_class": "health"},'
         ' {"kind": "playbook", "id": "c", "path": "r"}]}'
     )
     assert artifact_ids(listing, "detector") == ["a", "b"]
-    assert artifact_ids(listing, "detector", detector_class="incident") == ["a"]
+    assert artifact_ids(listing, "detector", detector_class="learned") == ["a"]
     assert artifact_ids(listing, "playbook") == ["c"]
 
 
@@ -73,6 +73,6 @@ def test_reads_stored_outcomes_through_the_cli() -> None:
 @pytest.mark.usefixtures("cli")
 def test_lists_artifacts_through_the_cli() -> None:
     listing = read_listing(GOOD_MEMORY)
-    assert artifact_ids(listing, "detector", detector_class="incident") == ["cache"]
+    assert artifact_ids(listing, "detector", detector_class="learned") == ["cache"]
     assert artifact_ids(listing, "detector", detector_class="health") == ["health"]
     assert artifact_ids(listing, "playbook") == ["base"]

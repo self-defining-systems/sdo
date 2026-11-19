@@ -152,7 +152,7 @@ func (c *Controller) observeSourceInventory(now time.Time) {
 		}
 		changes := c.tracker.ObserveBinding(now, state.Finding, false)
 		c.batcher.RemoveKeys(changes.Cleared)
-		c.recordFiring(sdk.DetectorSpec{ID: state.DetectorID, Class: sdk.DetectorClassIncident, Owner: sdk.DetectorOwnerResponder}, now, nil, changes)
+		c.recordFiring(sdk.DetectorSpec{ID: state.DetectorID, Class: sdk.DetectorClassLearned, Owner: sdk.DetectorOwnerResponder}, now, nil, changes)
 	}
 }
 

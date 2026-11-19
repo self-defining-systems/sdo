@@ -3,7 +3,7 @@ kind: DetectorManifest
 sdkVersion: v0.1
 id: service-targetport-mismatch
 constructor: New
-class: incident
+class: learned
 owner: responder
 watches: [{apiVersion: v1, kind: Service}, {apiVersion: v1, kind: Pod}]
 interval: 1s

@@ -20,7 +20,7 @@ func New() sdk.Detector { return Detector{} }
 func (Detector) Spec() sdk.DetectorSpec {
 	return sdk.DetectorSpec{
 		ID:                  "restart-loop",
-		Class:               sdk.DetectorClassIncident,
+		Class:               sdk.DetectorClassLearned,
 		Owner:               sdk.DetectorOwnerResponder,
 		Description:         "find containers that keep restarting while waiting in CrashLoopBackOff",
 		Watches:             []sdk.WatchKind{{APIVersion: "v1", Kind: "Pod"}},

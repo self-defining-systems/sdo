@@ -93,7 +93,7 @@ commands:
   ls [--root .] [--kind goal|architecture|playbook|script|detector] [--json]
         List artifacts by logical ID.
   new playbook <id> [--root .] [--incident I]
-  new detector <id> [--root .] [--class incident|health] [--playbook ID]... [--incident I]
+  new detector <id> [--root .] [--class learned|health] [--playbook ID]... [--incident I]
         Scaffold a minimal artifact that passes "memory check".
   outcomes [--root .] [--json]
         Print the stored outcome records of every incident.`

@@ -3,7 +3,7 @@
 GENERATED from `memory/layout/paths.go` and `memory/validate/ownership.go`. Do not edit.
 Regenerate from `sdo/operator` with `SDO_UPDATE_LAYOUT_REFERENCE=1 go test ./memory/validate -run '^TestMemoryLayoutReference$'`.
 
-Schema version: 12. Paths are repository-relative and used only while editing a proposal checkout; worker results and memory prose use logical IDs.
+Schema version: 13. Paths are repository-relative and used only while editing a proposal checkout; worker results and memory prose use logical IDs.
 
 - Playbook, library and corpus IDs: `^[a-z][a-z0-9_-]*$`.
 - Detector IDs: `^[a-z0-9][a-z0-9_.-]*$`.
@@ -21,10 +21,11 @@ Schema version: 12. Paths are repository-relative and used only while editing a 
 | `.sdo/diagnostics/go.mod` | `diagnostics-module` | `go.mod` | changeable by upkeep in the initial phase |
 | `.sdo/diagnostics/go.sum` | `diagnostics-module` | `go.sum` | changeable by upkeep in the initial phase |
 | `.sdo/diagnostics/manifest.yaml` | `legacy-detector-manifest` | `—` | changeable by upkeep in the initial phase |
+| `.sdo/diagnostics/detectors/incidents/<detector-id>/detector.go` | `legacy-detector-file` | `detector-id` | changeable by upkeep in the initial phase |
 | `.sdo/diagnostics/detectors/health/<detector-id>/manifest.yaml` | `health-detector-manifest` | `detector-id` | changeable by health_judge in the initial phase or upkeep in the initial phase |
 | `.sdo/diagnostics/detectors/health/<detector-id>/detector.go` | `health-detector-source` | `detector-id` | changeable by health_judge in the initial phase or upkeep in the initial phase |
-| `.sdo/diagnostics/detectors/incidents/<detector-id>/manifest.yaml` | `incident-detector-manifest` | `detector-id` | changeable by human in the import phase or responder in the reflection phase or upkeep in the initial phase |
-| `.sdo/diagnostics/detectors/incidents/<detector-id>/detector.go` | `incident-detector-source` | `detector-id` | changeable by human in the import phase or responder in the reflection phase or upkeep in the initial phase |
+| `.sdo/diagnostics/detectors/learned/<detector-id>/manifest.yaml` | `learned-detector-manifest` | `detector-id` | changeable by human in the import phase or responder in the reflection phase or upkeep in the initial phase |
+| `.sdo/diagnostics/detectors/learned/<detector-id>/detector.go` | `learned-detector-source` | `detector-id` | changeable by human in the import phase or responder in the reflection phase or upkeep in the initial phase |
 | `.sdo/diagnostics/traffic/generators/application/generator.go` | `traffic-generator` | `application` | changeable by health_judge in the initial phase |
 | `.sdo/diagnostics/traffic/generators/incident/generator.go` | `traffic-generator` | `incident` | changeable by responder in the reflection phase |
 | `.sdo/diagnostics/traffic/workloads/application.yaml` | `traffic-workload` | `application` | changeable by health_judge in the initial phase |

@@ -62,7 +62,7 @@ func TestCapturedSnapshotKeepsTheObservationsDetectorsRead(t *testing.T) {
 	if _, ok := captured.ServiceReachability(); !ok {
 		t.Fatal("captured snapshot lost the Service reachability window")
 	}
-	detector := traffic.NewDetector(sdk.DetectorSpec{ID: "journey-stall", Class: sdk.DetectorClassIncident}, "health")
+	detector := traffic.NewDetector(sdk.DetectorSpec{ID: "journey-stall", Class: sdk.DetectorClassLearned}, "health")
 	if violations := sdktest.HealthyBaselineViolations(detector, []sdktest.Snapshot{captured}); len(violations) > 0 {
 		t.Fatalf("traffic detector fails the healthy replay of a capture: %v", violations)
 	}

@@ -32,7 +32,7 @@ def test_memory_delta_separates_new_from_widened_detectors_and_playbooks(tmp_pat
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "config", "user.email", "t@example.com")
     _git(tmp_path, "config", "user.name", "t")
-    old = tmp_path / ".sdo/diagnostics/detectors/incidents/old_one"
+    old = tmp_path / ".sdo/diagnostics/detectors/learned/old_one"
     old.mkdir(parents=True)
     (old / "detector.go").write_text("package old_one\n", encoding="utf-8")
     playbook = tmp_path / ".sdo/playbooks/old-pb"
@@ -42,7 +42,7 @@ def test_memory_delta_separates_new_from_widened_detectors_and_playbooks(tmp_pat
     _git(tmp_path, "commit", "-q", "-m", "base")
 
     (old / "detector.go").write_text("package old_one\n// widened\n", encoding="utf-8")
-    sibling = tmp_path / ".sdo/diagnostics/detectors/incidents/sibling"
+    sibling = tmp_path / ".sdo/diagnostics/detectors/learned/sibling"
     sibling.mkdir()
     (sibling / "detector.go").write_text("package sibling\n", encoding="utf-8")
     (playbook / "README.md").write_text("y\n", encoding="utf-8")

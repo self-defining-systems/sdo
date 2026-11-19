@@ -214,7 +214,7 @@ _FAULT_OBJECTS = {
 }
 
 
-#: The incident detector each fault class's scripted reflection learns.
+#: The learned detector each fault class's scripted reflection learns.
 _FAULT_DETECTORS = {
     "network_policy_block": "deny-all-networkpolicy-isolation",
     "missing_configmap": "required-configmap-missing",
@@ -691,7 +691,7 @@ class ScriptedAgent:
         )
         return [
             Check("no-state-diff-leak", not foreign, f"state changes {changes}"),
-            Check("no-foreign-incident-finding", not other_detectors, f"foreign incident detectors {other_detectors}"),
+            Check("no-foreign-incident-finding", not other_detectors, f"foreign learned detectors {other_detectors}"),
         ]
 
 

@@ -1,9 +1,9 @@
-"""Per-incident detector-firing table for a late-firing integration pipeline.
+"""Per-learned detector-firing table for a late-firing integration pipeline.
 
 Joins, for each stage of an SDO persistent-controller pipeline, the strict
 receipt (detector timeline), the result CSV (fault injection time, TTD/TTM),
 the receipt's native broker ledger (request findings, surfaced playbooks, reflection decision), the
-durable detector-firing stream, and the learned incident detectors in the
+durable detector-firing stream, and the learned detectors in the
 chained workspace. Output is JSON on stdout so it can be tabulated.
 
     uv run python -m benchmarks.sregym.analysis.lfint_table third_party/sregym/logs/<pipeline>
@@ -60,7 +60,7 @@ def _firings(stage_dirs: dict[int, Path]) -> list[dict[str, Any]]:
 
 
 def _detector_sources(workspace: Path) -> dict[str, dict[str, Any]]:
-    root = workspace / ".sdo" / "diagnostics" / "detectors" / "incidents"
+    root = workspace / ".sdo" / "diagnostics" / "detectors" / "learned"
     out: dict[str, dict[str, Any]] = {}
     if not root.is_dir():
         return out
@@ -118,22 +118,22 @@ def build(pipeline: Path) -> dict[str, Any]:
             for e in timeline
         ]
         for key in (
-            "incident_detector_fired_before_dispatch",
-            "incident_detector_fired_after_dispatch",
-            "no_incident_detector_fired",
+            "learned_detector_fired_before_dispatch",
+            "learned_detector_fired_after_dispatch",
+            "no_learned_detector_fired",
         ):
             row[key] = receipt.get(key, closure.get(key))
         row["request_finding_detectors"] = sorted({f["detector_id"] for f in request.get("findings") or []})
         row["request_playbooks"] = [p["playbook_id"] for p in request.get("surfaced_playbooks") or []]
-        row["closure_incident_detector_states"] = [
-            [s["detector_id"], s.get("status")] for s in closure.get("incident_detector_states") or []
+        row["closure_learned_detector_states"] = [
+            [s["detector_id"], s.get("status")] for s in closure.get("learned_detector_states") or []
         ]
         row["reflection_decision"] = (ledger.get("reflection_decision") or {}).get("learning_decision")
         rusage = receipt.get("usage") or {}
         row["responder_usage"] = {k: rusage.get(k) for k in ("input_tokens", "output_tokens") if k in rusage}
         nxt = stage_dirs.get(index + 1)
         workspace = (nxt or stage_dir) / "application_workspace"
-        row["incident_detectors_after"] = _detector_sources(workspace)
+        row["learned_detectors_after"] = _detector_sources(workspace)
         row["playbook_dirs_after"] = sorted(p.name for p in (workspace / ".sdo" / "playbooks").glob("*") if p.is_dir())
         inject = row.get("fault_injected_at")
         if inject and closure.get("verified_at"):

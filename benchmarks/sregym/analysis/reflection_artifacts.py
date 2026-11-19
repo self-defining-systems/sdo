@@ -28,7 +28,7 @@ def find_ledger(stage: Path, suffix: str) -> dict[str, Any]:
 
 
 def memory_delta(clone: Path) -> dict[str, list[str]]:
-    """Incident detectors and playbooks the reflection added or modified, relative to the outcome commit."""
+    """Learned detectors and playbooks the reflection added or modified, relative to the outcome commit."""
 
     added: list[str] = []
     modified: list[str] = []
@@ -40,8 +40,8 @@ def memory_delta(clone: Path) -> dict[str, list[str]]:
         return sorted({p.split(marker, 1)[1].split("/", 1)[0] for p in paths if marker in p})
 
     return {
-        "new_detectors": kinds(added, "detectors/incidents/"),
-        "modified_detectors": kinds(modified, "detectors/incidents/"),
+        "new_detectors": kinds(added, "detectors/learned/"),
+        "modified_detectors": kinds(modified, "detectors/learned/"),
         "new_playbooks": kinds(added, ".sdo/playbooks/"),
         "modified_playbooks": kinds(modified, ".sdo/playbooks/"),
         "changed_paths": sorted(added + modified),

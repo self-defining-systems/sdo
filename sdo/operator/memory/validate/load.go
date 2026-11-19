@@ -108,7 +108,7 @@ func (s *run) complete() bool {
 
 func changesDetectors(paths []string) bool {
 	for _, p := range paths {
-		if kind, _, ok := layout.Classify(p); ok && (kind.IsDetectorManifest() || kind.IsDetectorSource() || kind == layout.KindLegacyDetectorManifest) {
+		if kind, _, ok := layout.Classify(p); ok && (kind.IsDetectorManifest() || kind.IsDetectorSource() || kind == layout.KindLegacyDetectorManifest || kind == layout.KindLegacyDetectorFile) {
 			return true
 		}
 	}
@@ -288,7 +288,7 @@ func (s *run) walk(ctx context.Context) error {
 	})
 }
 
-var invalidIDPath = regexp.MustCompile(`^\.sdo/(?:playbooks/([^/]+)/.+|diagnostics/detectors/(?:health|incidents)/([^/]+)/.+)$`)
+var invalidIDPath = regexp.MustCompile(`^\.sdo/(?:playbooks/([^/]+)/.+|diagnostics/detectors/(?:health|learned)/([^/]+)/.+)$`)
 
 func (s *run) visit(rel, abs string) error {
 	kind, id, ok := s.req.classify(rel)
@@ -369,10 +369,10 @@ func (s *run) visit(rel, abs string) error {
 		playbookID, _, _ := strings.Cut(id, "/")
 		book := s.playbook(playbookID)
 		book.scripts = append(book.scripts, file)
-	case layout.KindHealthDetectorManifest, layout.KindIncidentDetectorManifest:
+	case layout.KindHealthDetectorManifest, layout.KindLearnedDetectorManifest:
 		class, _ := kind.Class()
 		s.loadManifest(class, id, file)
-	case layout.KindHealthDetectorSource, layout.KindIncidentDetectorSource:
+	case layout.KindHealthDetectorSource, layout.KindLearnedDetectorSource:
 		class, _ := kind.Class()
 		det := s.detector(class, id)
 		det.files = append(det.files, file)
@@ -408,7 +408,7 @@ func (s *run) markUnread(kind layout.Kind, id, rel string) {
 		s.parseFailed[rel] = true
 	case layout.KindPlaybook:
 		s.playbook(id).hasReadme = true
-	case layout.KindHealthDetectorManifest, layout.KindIncidentDetectorManifest:
+	case layout.KindHealthDetectorManifest, layout.KindLearnedDetectorManifest:
 		class, _ := kind.Class()
 		det := s.detector(class, id)
 		det.hasManifest, det.manifestAt = true, rel

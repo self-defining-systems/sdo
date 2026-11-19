@@ -23,7 +23,7 @@ const (
 	RuleDetectorFiresHealthy = "detector.fires-on-healthy"
 )
 
-// CheckRepeat proves the recorded repeat path through real incident detectors,
+// CheckRepeat proves the recorded repeat path through real learned detectors,
 // production candidate selection, diagnosis and the production repair replay.
 // Case-file bindings never select the object roles used by this check. When no
 // finding selects the playbook the mitigation is still replayed with the case
@@ -58,7 +58,7 @@ func CheckRepeat(ctx context.Context, registry program.ProgramRegistry, detector
 	}
 	var findings []sdk.Finding
 	for _, d := range detectors {
-		if d.Spec().Class != sdk.DetectorClassIncident {
+		if d.Spec().Class != sdk.DetectorClassLearned {
 			continue
 		}
 		healthy := newReadView(ctx, c.Corpus.Healthy, c.Corpus.PhaseRecordings("healthy"), source)
@@ -78,7 +78,7 @@ func CheckRepeat(ctx context.Context, registry program.ProgramRegistry, detector
 				return fail(RuleDetectorInvalid, fmt.Sprintf("detector %q emitted an invalid finding: %v", d.Spec().ID, err))
 			}
 			if f.Status == sdk.FindingActive {
-				return fail(RuleDetectorFiresHealthy, fmt.Sprintf("incident detector %q fires on the recorded healthy state", d.Spec().ID))
+				return fail(RuleDetectorFiresHealthy, fmt.Sprintf("learned detector %q fires on the recorded healthy state", d.Spec().ID))
 			}
 		}
 		faulty := newReadView(ctx, c.Corpus.Open, c.Corpus.PhaseRecordings("open"), source)
@@ -103,7 +103,7 @@ func CheckRepeat(ctx context.Context, registry program.ProgramRegistry, detector
 		}
 	}
 	if len(findings) == 0 {
-		return unreachable("no active incident detector finding")
+		return unreachable("no active learned detector finding")
 	}
 	view := newReadView(ctx, c.Corpus.Open, c.Corpus.PhaseRecordings("open"), source)
 	// This is the same entry point used by incident coverage and responder tools,

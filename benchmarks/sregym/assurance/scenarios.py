@@ -27,9 +27,9 @@ class Expectation:
     resolution: Resolution = "mitigated"
     #: True: the warm path must fire; False: it must not; None: either.
     warm: bool | None = None
-    #: Incident detectors that must be registered in memory after the incident.
+    #: Learned detectors that must be registered in memory after the incident.
     learned: tuple[str, ...] = ()
-    #: Incident detectors that must NOT be registered after the incident.
+    #: Learned detectors that must NOT be registered after the incident.
     not_learned: tuple[str, ...] = ()
     #: The broker skipped the reflection model turn deterministically.
     reflection_skipped: bool | None = None

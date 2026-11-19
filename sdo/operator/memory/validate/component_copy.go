@@ -27,7 +27,7 @@ var proseFields = map[string]bool{"Reason": true, "Rationale": true, "Fact": tru
 var messageCalls = map[string]bool{"fmt.Errorf": true, "errors.New": true}
 
 // memoryNames are the names copy detection sets aside. ids are logical
-// playbook and incident detector IDs; components are what a role or binding
+// playbook and learned detector IDs; components are what a role or binding
 // supplies on another incident: accepted-source object names and the
 // scenario IDs of the traffic workloads.
 type memoryNames struct {
@@ -39,7 +39,7 @@ func (n memoryNames) all() []string { return append(append([]string(nil), n.ids.
 
 func loadMemoryNames(ctx context.Context, r Request) memoryNames {
 	var names memoryNames
-	for _, dir := range []string{layout.PlaybooksDir, layout.DetectorDir(layout.ClassIncident, "")} {
+	for _, dir := range []string{layout.PlaybooksDir, layout.DetectorDir(layout.ClassLearned, "")} {
 		entries, _ := os.ReadDir(filepath.Join(r.Root, filepath.FromSlash(dir)))
 		for _, entry := range entries {
 			if entry.IsDir() {
@@ -194,12 +194,12 @@ func duplicateRepairDiagnostics(ctx context.Context, r Request, paths []string) 
 		case duplicate:
 			diagnostics = append(diagnostics, Diagnostic{Rule: RuleDuplicateRepair, Path: where,
 				Message: fmt.Sprintf("new playbook %q copies %q: same parameter kinds, Diagnose and Mitigate apart from names and prose", id, match),
-				Hint:    fmt.Sprintf("keep one playbook per repair method: refine %q (bind the component by its role %s, widen its incident detector) and remove the new playbook's files", match, roles)})
+				Hint:    fmt.Sprintf("keep one playbook per repair method: refine %q (bind the component by its role %s, widen its learned detector) and remove the new playbook's files", match, roles)})
 		case component:
 			named := componentLiterals(filepath.Join(r.Root, layout.PlaybooksDir, id), names.components)
 			diagnostics = append(diagnostics, Diagnostic{Rule: RulePlaybookComponentCopy, Path: where,
 				Message: fmt.Sprintf("new playbook %q diagnoses the same failure as %q on another component: the two Diagnose differ only in the components they name (%s)", id, match, strings.Join(named, ", ")),
-				Hint:    fmt.Sprintf("parameterize %q by its role %s instead of copying it: derive per-component values (scenario, container, Service) from the bound object through ReadView, let its incident detector bind the role from the failure (localize.BindSuspects), and remove the new playbook's files; keep a separate playbook only with evidence that tells the two failures apart", match, roles)})
+				Hint:    fmt.Sprintf("parameterize %q by its role %s instead of copying it: derive per-component values (scenario, container, Service) from the bound object through ReadView, let its learned detector bind the role from the failure (localize.BindSuspects), and remove the new playbook's files; keep a separate playbook only with evidence that tells the two failures apart", match, roles)})
 		case shared:
 			r.noteGaps(Diagnostic{Rule: RuleSharedRepair, Path: where,
 				Message: fmt.Sprintf("new playbook %q repeats the repair of %q with a different Diagnose", id, match),
@@ -209,14 +209,14 @@ func duplicateRepairDiagnostics(ctx context.Context, r Request, paths []string) 
 	return diagnostics, nil
 }
 
-// detectorCopyDiagnostics rejects an incident detector added by this change
-// that is another incident detector apart from IDs, prose, layout,
+// detectorCopyDiagnostics rejects a learned detector added by this change
+// that is another learned detector apart from IDs, prose, layout,
 // identifier spelling and the components it names (the scenario it filters,
 // the workload it binds). One detector covers every component that fails
 // the same way: it binds the component from the failure.
 func detectorCopyDiagnostics(ctx context.Context, r Request, paths []string) []Diagnostic {
-	dir := func(id string) string { return layout.DetectorDir(layout.ClassIncident, id) }
-	added := addedIDs(ctx, r, paths, map[layout.Kind]bool{layout.KindIncidentDetectorSource: true, layout.KindIncidentDetectorManifest: true}, dir)
+	dir := func(id string) string { return layout.DetectorDir(layout.ClassLearned, id) }
+	added := addedIDs(ctx, r, paths, map[layout.Kind]bool{layout.KindLearnedDetectorSource: true, layout.KindLearnedDetectorManifest: true}, dir)
 	if len(added) == 0 {
 		return nil
 	}
@@ -248,7 +248,7 @@ func detectorCopyDiagnostics(ctx context.Context, r Request, paths []string) []D
 			}
 			named := componentLiterals(filepath.Join(r.Root, filepath.FromSlash(dir(id))), names.components)
 			diagnostics = append(diagnostics, Diagnostic{Rule: RuleDetectorComponentCopy, Path: dir(id),
-				Message: fmt.Sprintf("new incident detector %q copies %q apart from IDs, prose and the components it names (%s)", id, other, strings.Join(named, ", ")),
+				Message: fmt.Sprintf("new learned detector %q copies %q apart from IDs, prose and the components it names (%s)", id, other, strings.Join(named, ", ")),
 				Hint:    fmt.Sprintf("widen %q instead of copying it: keep it keyed on the cause's own failure text or log pattern, bind the component from the failure (localize.BindSuspects, or the failing finding's resource), list every playbook it binds, and remove the new detector's files", other)})
 			break
 		}

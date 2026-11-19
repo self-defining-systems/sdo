@@ -12,7 +12,7 @@ kind: DetectorManifest
 sdkVersion: v0.1
 id: cause
 constructor: New
-class: incident
+class: learned
 owner: responder
 watches:
   - apiVersion: apps/v1
@@ -32,7 +32,7 @@ originatingCommit: synthetic
 func namedPlaybookRoot(t *testing.T, playbooks string, existing ...string) string {
 	t.Helper()
 	root := t.TempDir()
-	dir := filepath.Join(root, ".sdo/diagnostics/detectors/incidents/cause")
+	dir := filepath.Join(root, ".sdo/diagnostics/detectors/learned/cause")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func namedPlaybookRoot(t *testing.T, playbooks string, existing ...string) strin
 	return root
 }
 
-var causeDetectorPaths = []string{".sdo/diagnostics/detectors/incidents/cause/manifest.yaml"}
+var causeDetectorPaths = []string{".sdo/diagnostics/detectors/learned/cause/manifest.yaml"}
 
 func TestNamedPlaybookDiagnostics(t *testing.T) {
 	for _, row := range []struct {

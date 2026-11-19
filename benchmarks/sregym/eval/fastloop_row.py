@@ -566,7 +566,7 @@ def _recovery(record: IncidentRecord | None) -> dict[str, Any]:
 #: Where each kind of learning lives under the accepted memory, and what names a unit of it.
 _LEARNING_ROOTS = {
     "playbooks": ".sdo/playbooks/",
-    "detectors": ".sdo/diagnostics/detectors/incidents/",
+    "detectors": ".sdo/diagnostics/detectors/learned/",
     "lib": ".sdo/lib/",
     "corpus": ".sdo/corpus/",
 }

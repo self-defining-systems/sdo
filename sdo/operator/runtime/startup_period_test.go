@@ -141,7 +141,7 @@ func TestStartupBoundOpensHeldOpeners(t *testing.T) {
 	}
 }
 
-// Only openers count: a clue detector that errors does not hold the period.
+// Only openers count: a detector that opens nothing and errors does not hold the period.
 func TestStartupIgnoresClueErrors(t *testing.T) {
 	flaky := controllerDetector("cluster-wiring", time.Second, sdk.Finding{})
 	for i := 0; i < 200; i += 2 {

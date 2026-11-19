@@ -2401,7 +2401,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--healthy-baseline",
         action="store_true",
-        help="record the healthy namespace before each injection and reject learned incident detectors that fire on it",
+        help="record the healthy namespace before each injection and reject learned detectors that fire on it",
     )
     run.add_argument(
         "--inject-before-resume",

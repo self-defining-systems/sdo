@@ -16,7 +16,7 @@ import (
 // repair, so they bind only programs the finding lists by logical ID (the
 // Finding.Playbooks contract; the controller rejects any other reference). A
 // finding that lists no playbook (drift and source-inventory findings) offers
-// them to every program; the memory check refuses an incident detector that
+// them to every program; the memory check refuses a learned detector that
 // sets named bindings without declaring its playbooks.
 func BindFinding(spec ProgramSpec, finding sdk.Finding) (Bindings, error) {
 	b := Bindings{Objects: ObjectBindings{}}
@@ -85,7 +85,7 @@ func BindFinding(spec ProgramSpec, finding sdk.Finding) (Bindings, error) {
 // each declared kind, a finding on one object of that kind (with one object of
 // every other declared kind as related resources) must bind a role of that
 // kind. Kinds where BindFinding refuses the probe need named ParameterBindings
-// from an incident detector, as for a required pair of one kind; those stay
+// from a learned detector, as for a required pair of one kind; those stay
 // allowed. Two optional roles of one kind (aliases) never bind and are refused.
 func CheckFindingRoles(spec ProgramSpec) error {
 	var kinds []Kind

@@ -89,8 +89,8 @@ func CandidateShellSnapshot(root, commit string) (*contracts.OperationalMemorySn
 				return fmt.Errorf("shell detector needs class and ID directories")
 			}
 			class, owner := "health", "health_judge"
-			if parts[0] == "incidents" {
-				class, owner = "incident", "responder"
+			if parts[0] == "learned" {
+				class, owner = "learned", "responder"
 			} else if parts[0] != "health" {
 				return fmt.Errorf("unknown shell detector class")
 			}

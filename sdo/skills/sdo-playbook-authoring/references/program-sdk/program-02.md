@@ -129,7 +129,7 @@ func BindFinding(spec ProgramSpec, finding sdk.Finding) (Bindings, error)
     repair, so they bind only programs the finding lists by logical ID (the
     Finding.Playbooks contract; the controller rejects any other reference).
     A finding that lists no playbook (drift and source-inventory findings)
-    offers them to every program; the memory check refuses an incident detector
+    offers them to every program; the memory check refuses a learned detector
     that sets named bindings without declaring its playbooks.
 
 func (b Bindings) Clone() Bindings
