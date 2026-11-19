@@ -55,16 +55,9 @@ def write_kind_config(
     return destination
 
 
-def prepare_dev_mount(
-    worktree: Path,
-    sregym_dir: Path | None,
-    run_dir: Path,
-    parallel_root: Path | None = None,
-    *,
-    evidence_root: Path | None = None,
-) -> Path:
-    if not (worktree / "sdo" / "operator" / "go.mod").is_file():
-        raise ValueError(f"--dev-mount is not an SDO worktree: {worktree}")
+def build_host_operator(worktree: Path) -> Path:
+    """Build ``<worktree>/.fastloop/sdo-operator``, the operator CLI the host side of a lane runs."""
+
     output = worktree / ".fastloop" / "sdo-operator"
     output.parent.mkdir(exist_ok=True)
     # Each lane owns its build output; publication stays atomic for running binaries.
@@ -79,6 +72,20 @@ def prepare_dev_mount(
         os.replace(temporary_output, output)
     finally:
         temporary_output.unlink(missing_ok=True)
+    return output
+
+
+def prepare_dev_mount(
+    worktree: Path,
+    sregym_dir: Path | None,
+    run_dir: Path,
+    parallel_root: Path | None = None,
+    *,
+    evidence_root: Path | None = None,
+) -> Path:
+    if not (worktree / "sdo" / "operator" / "go.mod").is_file():
+        raise ValueError(f"--dev-mount is not an SDO worktree: {worktree}")
+    build_host_operator(worktree)
     if sregym_dir is None:
         destination = run_dir / "kind-dev.yaml"
         destination.write_text(

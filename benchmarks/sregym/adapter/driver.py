@@ -750,6 +750,8 @@ def _launch_native_lifecycle(
         registry_push_secret=args.registry_push_secret,
         registry_insecure=True,
         kind_cluster_name=kind_cluster_name,
+        lane_platform=getattr(args, "lane_platform", "kind"),
+        evidence_claim=bool(install_config and install_config.evidence_sink_volume),
     )
     from benchmarks.sregym.adapter.persistent import record_cleanup_target
 
@@ -843,6 +845,7 @@ def launch_native_lifecycle(config: RuntimeConfig, health_objective: str, api_ba
 
     args = argparse.Namespace(
         kind_cluster_name=config.kind_cluster_name,
+        lane_platform=config.lane_platform,
         registry_push_secret=config.registry_push_secret,
         buildkit_image=config.buildkit_image,
         max_deployment_attempts=config.max_deployment_attempts,

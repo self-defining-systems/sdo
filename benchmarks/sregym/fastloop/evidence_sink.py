@@ -21,11 +21,13 @@ import json
 import os
 import re
 import shutil
+import subprocess
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.fuzzops import sink
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -144,6 +146,92 @@ def _merge_run_level(source: Path, destination: Path) -> None:
             shutil.copy2(entry, destination / entry.name)
 
 
+def pull_cluster_sink(environment: FastloopEnvironment) -> bool:
+    """An EKS lane's sink is a claim in the control namespace: copy all of it into the host evidence root.
+
+    Returns whether a claim was there to pull. Safe to repeat (the sink only appends). A kind lane's sink is
+    already the host directory, so nothing happens.
+    """
+
+    if environment.platform != "eks" or environment.evidence_root is None:
+        return False
+    from benchmarks.sregym.adapter import control_namespace_for
+
+    control = control_namespace_for(environment.namespace)
+
+    def kube(*args: str) -> list[str]:
+        return ["kubectl", "--kubeconfig", str(environment.kubeconfig), *args]
+
+    claim = subprocess.run(
+        kube("-n", control, "get", "pvc", sink.EVIDENCE_CLAIM, "-o", "name"),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=wait_for(WaitKind.MINUTE),
+    )
+    if claim.returncode != 0:
+        if "NotFound" in claim.stderr:
+            return False
+        raise EvidenceSinkError(f"cannot read the lane's evidence claim: {claim.stderr.strip()[-300:]}")
+    name = f"evidence-pull-{os.getpid()}"
+    try:
+        created = subprocess.run(
+            kube("apply", "-f", "-"),
+            input=json.dumps(sink.puller_manifest(control, name)),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
+        )
+        if created.returncode != 0:
+            raise EvidenceSinkError(f"evidence pull pod: {created.stderr.strip()[-300:]}")
+        ready = subprocess.run(
+            kube("-n", control, "wait", f"pod/{name}", "--for=condition=Ready", f"--timeout={sink.PULL_READY_TIMEOUT}"),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2 * wait_for(WaitKind.SLOW_COMMAND),
+        )
+        if ready.returncode != 0:
+            raise EvidenceSinkError(f"evidence pull pod not ready: {ready.stderr.strip()[-300:]}")
+        environment.evidence_root.mkdir(parents=True, exist_ok=True)
+        tar = subprocess.Popen(
+            kube("-n", control, "exec", name, "-c", "pull", "--", "tar", "-C", "/sink", "-cf", "-", "."),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        extract = subprocess.run(
+            ["tar", "-C", str(environment.evidence_root), "-xf", "-"],
+            stdin=tar.stdout,
+            capture_output=True,
+            check=False,
+            timeout=3 * wait_for(WaitKind.ROLLOUT),
+        )
+        assert tar.stdout is not None
+        tar.stdout.close()
+        error = (tar.stderr.read() if tar.stderr else b"").decode()[-300:].strip()
+        if tar.wait() != 0 or extract.returncode != 0:
+            raise EvidenceSinkError(f"evidence pull: {error or extract.stderr.decode()[-300:].strip()}")
+    finally:
+        subprocess.run(
+            kube(
+                "-n",
+                control,
+                "delete",
+                "pod",
+                name,
+                "--ignore-not-found",
+                "--wait=false",
+                "--grace-period=0",
+                "--force",
+            ),
+            capture_output=True,
+            check=False,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
+        )
+    return True
+
+
 def copy_out_run(environment: FastloopEnvironment, results_dir: Path) -> SinkCopy:
     """Copy this results directory's sink run directory into ``results_dir/evidence`` and verify it.
 
@@ -153,6 +241,7 @@ def copy_out_run(environment: FastloopEnvironment, results_dir: Path) -> SinkCop
 
     if environment.evidence_root is None:
         raise EvidenceSinkError("the lane has no evidence sink (created without --evidence-root)")
+    pull_cluster_sink(environment)
     run_id = lane_evidence_run_id(environment, results_dir)
     source = environment.evidence_root / run_id
     if why := sink.layout_problem(source):
@@ -203,6 +292,10 @@ def settle_lane_evidence(environment: FastloopEnvironment) -> list[str]:
 
     if environment.evidence_root is None:
         return []
+    try:
+        pull_cluster_sink(environment)
+    except EvidenceSinkError as exc:
+        return [f"pulling the lane's evidence claim: {exc}"]
     results_root = environment.run_dir / "results"
     failures: list[str] = []
     for results_dir in sorted(p for p in results_root.iterdir() if p.is_dir()) if results_root.is_dir() else []:

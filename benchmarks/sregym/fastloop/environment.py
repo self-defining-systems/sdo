@@ -7,10 +7,15 @@ import os
 import re
 from collections.abc import MutableMapping  # noqa: TC003
 from pathlib import Path  # noqa: TC003 - Pydantic resolves this annotation at runtime.
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from benchmarks.lanes.eks import EksLane  # noqa: TC001 - Pydantic runtime schema.
 from benchmarks.sregym.fastloop.lane_installability import LaneTopology  # noqa: TC001 - Pydantic runtime schema.
+
+#: Where a lane's cluster runs: kind node containers on this host, or an existing EKS cluster reached by its API.
+LanePlatform = Literal["kind", "eks"]
 
 ENVIRONMENT_FILENAME = "fastloop.json"
 DEFAULT_PROBLEM = "missing_configmap_hotel_reservation"
@@ -36,6 +41,11 @@ class Images(BaseModel):
 class FastloopEnvironment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    platform: LanePlatform = "kind"
+    #: The EKS lane's registry and cluster fence (``platform == "eks"`` only).
+    eks: EksLane | None = None
+    #: The host operator CLI of a lane without a dev mount (an EKS lane builds it at ``up``).
+    host_operator: Path | None = None
     lane_topology: LaneTopology | None = None
     image_delivery: str = "unknown"
     image_delivery_reason: str = ""
@@ -102,6 +112,17 @@ class FastloopEnvironment(BaseModel):
             raise ValueError(f"pinned_tools requires an immutable controller digest, not {controller!r}")
         return self
 
+    @model_validator(mode="after")
+    def eks_lanes_attach_only(self) -> FastloopEnvironment:
+        if (self.platform == "eks") != (self.eks is not None):
+            raise ValueError("an EKS lane records its EKS settings, and only an EKS lane does")
+        if self.platform == "eks":
+            if self.dev_mount is not None or self.parallel_root is not None:
+                raise ValueError("an EKS lane has no node mounts (dev mount, parallel root)")
+            if not self.pinned_tools:
+                raise ValueError("an EKS lane runs pinned images: the controller must be a digest reference")
+        return self
+
     @property
     def controller_dev_mount(self) -> bool:
         """Whether the controller (and the workers it launches) run the dev-mounted sources."""
@@ -113,6 +134,12 @@ class FastloopEnvironment(BaseModel):
 
         if self.dev_mount is not None:
             environ["SDO_OPERATOR_BIN"] = str(self.dev_mount / ".fastloop/sdo-operator")
+        elif self.host_operator is not None:
+            environ["SDO_OPERATOR_BIN"] = str(self.host_operator)
+        if self.eks is not None:
+            from benchmarks.sregym.fastloop.eks_lane import apply_opus_pool_env
+
+            apply_opus_pool_env(self, environ)
         if self.controller_dev_mount:
             environ["SDO_DEV_MOUNT"] = "1"
         else:
