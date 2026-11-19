@@ -192,6 +192,9 @@ class DrainingExecutor(FakeExecutor):
     backend: FakeBackend | None = None
     during_drain: list[object] = field(default_factory=list)
     drain_error: str | None = None
+    offline_fallback: TokenRow | None = TokenRow(
+        uncached_input=1, cache_read=2, cache_write=3, output=4, requests=5, usd=0.5
+    )
 
     def drain(self, lane: Lane, cell: Cell, directory: Path, context: ArmContext) -> ClosingResult:
         # What a runner may observe while the lane is still held: the online row is already on disk.
@@ -213,5 +216,5 @@ class DrainingExecutor(FakeExecutor):
             memory_commit_after=self.closing_commit if self.closing_status == "drained" else None,
             decision="updated" if self.closing_status == "drained" else "not_drained",
             learning={"playbooks": {"added": ["p-new"]}, "commit": self.closing_commit},
-            offline_fallback=TokenRow(uncached_input=1, cache_read=2, cache_write=3, output=4, requests=5, usd=0.5),
+            offline_fallback=self.offline_fallback,
         )

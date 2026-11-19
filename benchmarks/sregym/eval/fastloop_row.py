@@ -221,12 +221,13 @@ def map_record(record: IncidentRecord, cell: Cell, memory_head: str | None) -> A
     )
 
 
-def _tokens(counts: TokenCounts) -> TokenRow:
+def _tokens(counts: TokenCounts, *, requests: bool = False) -> TokenRow:
     return TokenRow(
         uncached_input=counts.input_tokens - counts.cached_input_tokens - counts.cache_write_input_tokens,
         cache_read=counts.cached_input_tokens,
         cache_write=counts.cache_write_input_tokens,
         output=counts.output_tokens,
+        requests=counts.model_requests if requests else None,
     )
 
 
@@ -548,7 +549,7 @@ class FastloopRowRunner:
             else None,
             phases={k: str(v) for k, v in (ledger.get("closure_phase_timestamps") or {}).items()},
             recovery=_recovery(record),
-            offline_fallback=_tokens(record.reflection_tokens) if record and sdo else None,
+            offline_fallback=_tokens(record.reflection_tokens, requests=True) if record and sdo else None,
         )
 
     def _final_record(self, state: dict[str, Any]) -> IncidentRecord | None:

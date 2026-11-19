@@ -312,3 +312,20 @@ def test_a_draining_cell_whose_evidence_never_completes_is_not_graded_after_the_
     assert row.status == "not_graded"
     assert row.success is None
     assert row.reason == "no verified evidence copy (evidence-copy.json)"
+
+
+def test_a_closing_turn_that_made_no_model_call_costs_exactly_zero_not_unknown(tmp_path: Path) -> None:
+    """The learning gate can skip the closing turn's agent call; the incident record then says zero requests."""
+    none = TokenRow(uncached_input=0, cache_read=0, cache_write=0, output=0, requests=0)
+    row, cell, config, _, _ = run_draining(tmp_path, offline_fallback=none)
+    assert row.offline == TokenRow(uncached_input=0, cache_read=0, cache_write=0, output=0, requests=0, usd=0.0)
+    closing = json.loads((cell.directory(config) / "closing.json").read_text())
+    assert closing["offline_source"] == "no-closing-turn"
+
+
+def test_a_closing_turn_with_requests_but_no_usage_log_stays_unknown(tmp_path: Path) -> None:
+    some = TokenRow(uncached_input=0, cache_read=0, cache_write=0, output=0, requests=3)
+    row, cell, config, _, _ = run_draining(tmp_path, offline_fallback=some)
+    assert row.offline.usd is None
+    closing = json.loads((cell.directory(config) / "closing.json").read_text())
+    assert closing["offline_source"] == "incident-record"
