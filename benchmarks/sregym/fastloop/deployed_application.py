@@ -1,0 +1,206 @@
+"""Whether a lane's running application is the deploy of a row's application revision.
+
+The invariant: every harness deploy of the application (``fastloop up``, a row-start recreation, a setup-proof
+deploy that actually deployed) captures the application baseline and stamps it with the source it deployed: the
+revision fixed before the deploy, that revision's source identity, the cluster instance and the digest of the
+captured baseline. The baseline is the state every fault restore returns the app to. A row keeps the app only
+when the stamp names the row's application source, belongs to this cluster and this baseline, and the live app
+still matches the baseline; anything unknown recreates.
+
+Comparison uses the fields the restore machinery restores (``RESTORED_FIELDS`` over the kinds it lists), so
+"the app" means exactly what a restore can put back. Labels and object annotations are outside it, as for
+restore: SDO's install annotates objects (``sdo.dev/accepted-paths``) without changing the application. Images
+are compared by the refs in the workload specs: a source build publishes a lane-local tag only during a deploy,
+which re-stamps, so a tag cannot change underneath a stamp. Secrets, Ingress and HPA are not restored and so not
+compared; a fault there is handled by the fault's own recovery.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import subprocess
+from typing import TYPE_CHECKING, Any
+
+from benchmarks.sregym.adapter import kubectl
+from benchmarks.sregym.fastloop.wipe import Tier2Reason, Tier2Trigger, WipeError
+from benchmarks.sregym.repository_git import host_git_command
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+SOURCE_KEY = "application_source"
+# Top-level repository entries that never change what the application deploys, except the deployment
+# artifact class, which does (plan, authored files, telemetry overlay, source patches). Every other file is
+# in the source images' build context, whose digest decides the built image, so it counts.
+_UNDEPLOYED_TOP_LEVEL = frozenset({".sdo", ".sdo-runtime"})
+_DEPLOYED_MEMORY = ".sdo/deployment"
+# A rollout restart re-creates pods from the same template; it does not change what is deployed.
+RESTART_ANNOTATION = "kubectl.kubernetes.io/restartedAt"
+# Everything a stamp cannot vouch for; each recreates.
+_UNKNOWN = (OSError, ValueError, LookupError, TypeError, AttributeError, RuntimeError, subprocess.SubprocessError)
+
+
+def application_source_identity(workspace: Path, revision: str) -> str:
+    """Content identity of what a revision deploys: its tree outside SDO memory, plus ``.sdo/deployment``."""
+    entries = []
+    for argv in (["ls-tree", revision], ["ls-tree", revision, "--", _DEPLOYED_MEMORY]):
+        completed = subprocess.run(host_git_command(workspace, *argv), capture_output=True, text=True, check=False)
+        if completed.returncode:
+            raise WipeError(f"eval: cannot read {revision} in {workspace}: {completed.stderr.strip()}")
+        entries.extend(
+            line
+            for line in completed.stdout.splitlines()
+            if line.partition("\t")[2] == _DEPLOYED_MEMORY or line.partition("\t")[2] not in _UNDEPLOYED_TOP_LEVEL
+        )
+    return hashlib.sha256("\n".join(sorted(set(entries))).encode()).hexdigest()
+
+
+def workspace_revision(workspace: Path) -> str | None:
+    completed = subprocess.run(
+        host_git_command(workspace, "rev-parse", "--verify", "HEAD^{commit}"),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return (completed.stdout.strip() or None) if completed.returncode == 0 else None
+
+
+def cluster_instance(kubeconfig: Path) -> str:
+    """The cluster incarnation: a rebuilt kind cluster gets a new kube-system UID even at the same paths."""
+    uid = kubectl(
+        ["get", "namespace", "kube-system", "-o", "jsonpath={.metadata.uid}"], namespace=None, kubeconfig=kubeconfig
+    ).stdout.strip()
+    if not uid:
+        raise ValueError("cluster has no kube-system UID")
+    return uid
+
+
+def live_objects(kubeconfig: Path, namespace: str) -> list[dict[str, Any]]:
+    from benchmarks.sregym.fastloop.baseline_recovery import KubectlApplicationCluster
+
+    return KubectlApplicationCluster(kubeconfig).list_objects(namespace)
+
+
+def _transient(value: dict[str, Any]) -> bool:
+    """Jobs a schedule or a TTL creates and removes on their own are not part of the deployed application."""
+    if value.get("kind") != "Job":
+        return False
+    owners = value.get("metadata", {}).get("ownerReferences") or []
+    return any(owner.get("kind") == "CronJob" for owner in owners) or (
+        value.get("spec", {}).get("ttlSecondsAfterFinished") is not None
+    )
+
+
+def application_content(objects: list[dict[str, Any]], namespace: str) -> dict[tuple[str, str], Any]:
+    """Restorable content per application object, partitioned exactly as baseline capture and restore are."""
+    from benchmarks.sregym.fastloop.baseline_recovery import _ApplicationOwnership, _content, _identity
+
+    content = {}
+    for value in _ApplicationOwnership.from_objects(objects).application_objects(objects, namespace):
+        if _transient(value):
+            continue
+        fields = json.loads(json.dumps(_content(value), default=str))
+        template = fields[0].get("template") if isinstance(fields[0], dict) else None
+        metadata = template.get("metadata") if isinstance(template, dict) else None
+        annotations = metadata.get("annotations") if isinstance(metadata, dict) else None
+        if isinstance(metadata, dict) and isinstance(annotations, dict):
+            annotations.pop(RESTART_ANNOTATION, None)
+            if not annotations:
+                del metadata["annotations"]
+        content[_identity(value)] = fields
+    return content
+
+
+def _baseline_digest(environment: Any) -> str:
+    """Digest of the captured baseline's application content, every namespace it holds."""
+    from benchmarks.sregym.fastloop.baseline_recovery import APPLICATION_BASELINE_KEY
+
+    document = json.loads(environment.baseline_path.read_text(encoding="utf-8"))
+    namespaces = document[APPLICATION_BASELINE_KEY]["namespaces"]
+    rows = sorted(
+        [item["namespace"], [list(key), value]]
+        for item in namespaces
+        for key, value in application_content(item["objects"], item["namespace"]).items()
+    )
+    if not rows:
+        raise ValueError("the application baseline holds no application objects")
+    return hashlib.sha256(json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _write_stamp(environment: Any, stamp: dict[str, Any] | None) -> None:
+    path = environment.baseline_path
+    document = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    if stamp is None:
+        if SOURCE_KEY not in document:
+            return
+        document.pop(SOURCE_KEY)
+    else:
+        document[SOURCE_KEY] = stamp
+    temporary = path.with_suffix(".source.tmp")
+    temporary.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def forget_deployed_source(environment: Any) -> None:
+    """Before a deploy replaces the app, no stamp may vouch for it."""
+    _write_stamp(environment, None)
+
+
+def record_deployed_source(environment: Any, revision: str) -> None:
+    """After a completed deploy of ``revision`` and its baseline capture: stamp the baseline with that source.
+
+    Unreadable facts leave no stamp, so the next row recreates rather than trusting an unknown app.
+    """
+    try:
+        stamp = {
+            "version": 1,
+            "revision": revision,
+            "source": application_source_identity(environment.workspace, revision),
+            "cluster": cluster_instance(environment.kubeconfig),
+            "baseline": _baseline_digest(environment),
+        }
+    except _UNKNOWN:
+        forget_deployed_source(environment)
+        return
+    _write_stamp(environment, stamp)
+
+
+def deployed_application_change(environment: Any, revision: str) -> Tier2Reason | None:
+    """Why the running app is not the deploy of ``revision``; ``None`` keeps it. Never raises for unknowns."""
+    from benchmarks.sregym.fastloop.baseline_recovery import load_application_baseline
+
+    try:
+        stamp = json.loads(environment.baseline_path.read_text(encoding="utf-8")).get(SOURCE_KEY)
+        recorded = stamp["source"] if isinstance(stamp, dict) and stamp.get("version") == 1 else None
+        planned = application_source_identity(environment.workspace, revision)
+        baseline = _baseline_digest(environment)
+    except _UNKNOWN as exc:
+        return Tier2Reason(Tier2Trigger.ACCEPTED_SOURCE_CHANGED, f"the deployed application source is unknown: {exc}")
+    if not isinstance(recorded, str) or stamp.get("baseline") != baseline:
+        return Tier2Reason(
+            Tier2Trigger.ACCEPTED_SOURCE_CHANGED, "no deploy stamp vouches for the lane's application baseline"
+        )
+    if recorded != planned:
+        return Tier2Reason(
+            Tier2Trigger.ACCEPTED_SOURCE_CHANGED,
+            f"the application is the deploy of {stamp.get('revision', '?')[:12]}; the row runs {revision[:12]}",
+        )
+    try:
+        if stamp.get("cluster") != cluster_instance(environment.kubeconfig):
+            return Tier2Reason(Tier2Trigger.DEPLOYED_APPLICATION_CHANGED, "the stamp belongs to another cluster")
+        baselines = load_application_baseline(environment.baseline_path, environment.namespace) or ()
+        changed = [
+            item.namespace
+            for item in baselines
+            if application_content(live_objects(environment.kubeconfig, item.namespace), item.namespace)
+            != application_content(item.objects, item.namespace)
+        ]
+    except _UNKNOWN as exc:
+        return Tier2Reason(Tier2Trigger.DEPLOYED_APPLICATION_CHANGED, f"the live application is unknown: {exc}")
+    if not baselines or changed:
+        return Tier2Reason(
+            Tier2Trigger.DEPLOYED_APPLICATION_CHANGED,
+            "the live application differs from its deploy's baseline in " + (", ".join(changed) or "every namespace"),
+        )
+    return None

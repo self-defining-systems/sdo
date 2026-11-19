@@ -14,6 +14,8 @@ from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.accepted_source import AcceptedSource, deployment_source_for, manifest_paths_for
 from benchmarks.sregym.repository_git import host_git_command
 
+APP_REVISION_ENV = "FASTLOOP_APP_REVISION"
+
 
 def configure_source_deployment(app: Any) -> None:
     """Bind deployment at the app boundary, including redeploy and row recreation."""
@@ -28,6 +30,8 @@ def configure_source_deployment(app: Any) -> None:
             app.namespace,
             manifest_paths_for(application),
             deployment_source_for(application),
+            # The row fixes the revision before the deploy; the head may move meanwhile.
+            os.environ.get(APP_REVISION_ENV) or None,
         )
         # Resolve the revision before any build or Kubernetes write. Never let
         # a modified worktree or an old capture supply desired application bytes.

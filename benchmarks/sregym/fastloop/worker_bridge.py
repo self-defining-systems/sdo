@@ -203,13 +203,21 @@ def main() -> int:
 
                 return verify_baseline_traffic(problem, verdict)
             return verdict
-        reply = handle_with_surge_guard(
-            handle,
-            self,
-            request,
-            namespaces=_incident_namespaces(worker, self),
-            kubeconfig=Path(os.environ["KUBECONFIG"]),
-        )
+        from benchmarks.sregym.fastloop.source_deployment import APP_REVISION_ENV
+
+        pinned = request.get("revision") if op == "deploy" else None
+        if pinned:
+            os.environ[APP_REVISION_ENV] = str(pinned)
+        try:
+            reply = handle_with_surge_guard(
+                handle,
+                self,
+                request,
+                namespaces=_incident_namespaces(worker, self),
+                kubeconfig=Path(os.environ["KUBECONFIG"]),
+            )
+        finally:
+            os.environ.pop(APP_REVISION_ENV, None)
         if op == "recover" and request.get("fault") is None and reply.get("success") is True:
             remove_injected_objects(Path(os.environ["KUBECONFIG"]))
         if op == "deploy" and reply.get("deployed") is False:

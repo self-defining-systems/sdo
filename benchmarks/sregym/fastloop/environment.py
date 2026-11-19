@@ -36,6 +36,10 @@ class Images(BaseModel):
 class FastloopEnvironment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    #: The application revision of the running row when its arm does not own the workspace (vanilla): what the
+    #: app is deployed, restored and compared from, while the workspace head stays. Never persisted.
+    app_revision: str | None = Field(default=None, exclude=True)
+
     lane_topology: LaneTopology | None = None
     image_delivery: str = "unknown"
     image_delivery_reason: str = ""

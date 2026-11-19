@@ -76,6 +76,8 @@ class ArmResult:
     phase_seconds: Mapping[str, float] = field(default_factory=dict)
     #: Head of the lane's accepted memory after the cell (SDO arm); the first-try delta is taken from it.
     memory_commit_after: str | None = None
+    #: Identity of the application source the row verified it ran (both arms); ``None`` when unverified.
+    app_source: str | None = None
     error: str | None = None
 
 
@@ -520,6 +522,7 @@ def _finish(
         arm=cell.arm,
         snapshot=cell.snapshot,
         snapshot_commit=snapshot_commit,
+        app_source=result.app_source if result else None,
         lane=lane.id if lane else None,
         status=status,
         reason=reason,

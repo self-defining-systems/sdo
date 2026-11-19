@@ -29,6 +29,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -146,6 +147,15 @@ class RowSettings(BaseModel):
     #: systemd slice the lane's node containers should live under: ``auto`` (``sdo-eval.slice`` when the host has it),
     #: ``none`` or a slice name. It applies when a lane is created; a claim only reports where the node is.
     lane_cgroup_parent: str = "auto"
+
+
+def _ran_source(results: Path) -> str | None:
+    """The application source identity the row verified it ran (``app-source.json`` written at row setup)."""
+    try:
+        value = json.loads((results / "app-source.json").read_text(encoding="utf-8")).get("source")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return value if isinstance(value, str) and value else None
 
 
 def run_id(stage: str, cell: Cell, attempt: int) -> str:
@@ -343,13 +353,11 @@ class FastloopRowRunner:
             f"{self.settings.lane_cpus:g}",
             parent=resolve_cgroup_parent(self.settings.lane_cgroup_parent),
         )
-        if cell.arm == "sdo" and snapshot_commit:
+        if snapshot_commit:
             self._fetch(cell.app, environment, snapshot_commit)
         with self._lock:
-            self._state[lane_id] = {
-                "environment": environment,
-                "planned": snapshot_commit if cell.arm == "sdo" else None,
-            }
+            # Every arm runs the application source of its snapshot; vanilla's is the SDO base (source-equal).
+            self._state[lane_id] = {"environment": environment, "planned": snapshot_commit}
         return Lane(
             id=lane_id,
             app=cell.app,
@@ -416,7 +424,9 @@ class FastloopRowRunner:
             # The scheduler parks on this reason: the structured cause, never prose with durations in it.
             raise RuntimeError(f"eval: rejected before injection ({cause})")
         if record is None or record.oracle is None:
-            raise RuntimeError("eval: the row produced no oracle verdict")
+            # The caller sees only this error; name the row's own failure (onboarding rejection, setup, recovery).
+            cause = f": {record.error}" if record is not None and record.error else ""
+            raise RuntimeError(f"eval: the row produced no oracle verdict{cause}")
         harm = (
             json.dumps([r.model_dump(mode="json") for r in record.fault_reversions], default=str)
             if record.fault_reversions
@@ -508,7 +518,9 @@ class FastloopRowRunner:
                 self.records[cell.id] = record
                 state["online_end"] = self._now()
                 self._record_attempt(directory, row_id, started, None, retried=False)
-                return map_record(record, cell, None, state["fallback_page_at"])
+                return replace(
+                    map_record(record, cell, None, state["fallback_page_at"]), app_source=_ran_source(results)
+                )
             completed = self._finish_process(directory, state)
             cause = _rejected_before_injection(results)
             longest = max(longest, self._now() - started)
@@ -548,7 +560,7 @@ class FastloopRowRunner:
         if head and self._import_memory is not None:
             self._import_memory(cell.app, cell.problem, environment.workspace, head)
         state["finished"] = True
-        return map_record(record, cell, head, state["fallback_page_at"])
+        return replace(map_record(record, cell, head, state["fallback_page_at"]), app_source=_ran_source(results))
 
     def _fallback_page(
         self, lane: Lane, cell: Cell, directory: Path, state: dict[str, Any], context: ArmContext

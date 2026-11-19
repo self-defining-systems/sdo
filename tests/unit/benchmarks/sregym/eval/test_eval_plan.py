@@ -52,7 +52,8 @@ def test_snapshots_and_dependencies(tmp_path: Path) -> None:
     assert by_id["hotel/pass2/a"].needs == (merge_id("hotel"),)
     assert by_id["hotel/pass2-own/a"].snapshot == "own:a"
     assert by_id["hotel/pass2-own/a"].needs == ("hotel/pass1/a",)
-    assert by_id["hotel/vanilla/a"].snapshot is None
+    # Source-equal baseline: vanilla runs the same application source as the SDO base it is compared with.
+    assert by_id["hotel/vanilla/a"].snapshot == "base"
     assert by_id["hotel/vanilla/a"].arm == "vanilla"
     assert by_id["hotel/vanilla/a"].needs == ()
 
