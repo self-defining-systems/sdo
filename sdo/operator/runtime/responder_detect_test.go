@@ -191,7 +191,7 @@ func TestDetectWaitReturnsWhenAFailingTestPasses(t *testing.T) {
 		t.Fatal(response.Error)
 	}
 	first := strings.SplitN(response.Text, "\n", 2)[0]
-	if first != "wait: after 4s, create newest request passed (was failing); cleared user test create" {
+	if first != "wait: after 4s, cleared user test create" {
 		t.Fatalf("first line = %q", first)
 	}
 	if got := clock.Since(started); got != 4*time.Second {
@@ -224,7 +224,7 @@ func TestDetectWaitOnATestSendsItOnceThenWatchesTheSchedule(t *testing.T) {
 	if len(world.bursts) != 1 {
 		t.Fatalf("sent %d times, want once", len(world.bursts))
 	}
-	if first := strings.SplitN(response.Text, "\n", 2)[0]; !strings.HasPrefix(first, "wait: after ") || !strings.Contains(first, "create newest request passed") {
+	if first := strings.SplitN(response.Text, "\n", 2)[0]; !strings.HasPrefix(first, "wait: after ") || !strings.Contains(first, "cleared user test create") {
 		t.Fatalf("first line = %q", first)
 	}
 }
@@ -257,45 +257,13 @@ func TestDetectWorksTheSameForAPagedIncident(t *testing.T) {
 		t.Fatalf("paged detect create:\n%s", sent.Text)
 	}
 	waited := loop.Handle(context.Background(), ToolRequest{Command: "detect", Name: "create", WaitSeconds: 30})
-	if first := strings.SplitN(waited.Text, "\n", 2)[0]; !strings.Contains(first, "create newest request passed") {
+	if first := strings.SplitN(waited.Text, "\n", 2)[0]; !strings.Contains(first, "cleared user test create") {
 		t.Fatalf("paged wait first line = %q", first)
 	}
 }
 
-// growingDetector keeps one finding (same fingerprint) whose summary counts
-// errors, growing from the third read on.
-type growingDetector struct{ reads *int }
-
-func (growingDetector) Spec() sdk.DetectorSpec {
-	return sdk.DetectorSpec{ID: "growing.errors", Interval: time.Second}
-}
-
-func (d growingDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
-	*d.reads++
-	errors := min(*d.reads, 3)
-	return []sdk.Finding{{RuleID: "errors", Status: sdk.FindingActive, Summary: fmt.Sprintf("%d errors on checkout", errors)}}, nil
-}
-
-func TestDetectWaitReturnsWhenAFindingChangesItsText(t *testing.T) {
-	reads := 0
-	world := &detectWorld{}
-	loop, clock := detectWorldLoop(world)
-	loop.Detectors = []sdk.Detector{growingDetector{reads: &reads}}
-	response := loop.Handle(context.Background(), ToolRequest{Command: "detect", Name: "growing.errors", WaitSeconds: 60})
-	if response.Error != "" {
-		t.Fatal(response.Error)
-	}
-	first := strings.SplitN(response.Text, "\n", 2)[0]
-	if !strings.Contains(first, "changed growing.errors errors: 2 errors on checkout") || strings.Contains(first, "no change") {
-		t.Fatalf("first line = %q, want the changed finding named", first)
-	}
-	if got := clock.Since(detectNow()); got >= 60*time.Second {
-		t.Fatalf("waited %s, want a return at the change, not the cap", got)
-	}
-}
-
-// tickingDetector's only change over reads is an age in its text; from the
-// fourth read its error count and status change too.
+// A wait returns early only on a real change of the incident's state. An
+// alert-set member whose text, counts or ages move with time is an idle tick.
 type tickingDetector struct{ reads *int }
 
 func (tickingDetector) Spec() sdk.DetectorSpec {
@@ -304,25 +272,133 @@ func (tickingDetector) Spec() sdk.DetectorSpec {
 
 func (d tickingDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
 	*d.reads++
-	errors, status := 5, "degraded"
-	if *d.reads >= 5 {
-		errors, status = 9, "failing"
-	}
 	return []sdk.Finding{{RuleID: "age", Status: sdk.FindingActive,
-		Summary:  fmt.Sprintf("%d errors, %s, failing for %dm%ds since 07:%02d:10Z", errors, status, *d.reads/60, *d.reads%60, *d.reads),
+		Summary:  fmt.Sprintf("%d errors, failing for %dm%ds since 07:%02d:10Z", 5+*d.reads, *d.reads/60, *d.reads%60, *d.reads),
 		Evidence: fmt.Sprintf("oldest error %dms ago", *d.reads*37)}}, nil
 }
 
-func TestDetectWaitIgnoresATickingAgeButNotACountOrStatus(t *testing.T) {
+func waitWasIdle(t *testing.T, response ToolResponse, clock autoClock, seconds int) {
+	t.Helper()
+	if response.Error != "" {
+		t.Fatal(response.Error)
+	}
+	first := strings.SplitN(response.Text, "\n", 2)[0]
+	if want := fmt.Sprintf("wait: no change in %ds", seconds); first != want {
+		t.Fatalf("first line = %q, want %q", first, want)
+	}
+	if got := clock.Since(detectNow()); got != time.Duration(seconds)*time.Second {
+		t.Fatalf("waited %s, want the whole %ds", got, seconds)
+	}
+}
+
+func TestDetectWaitIgnoresChangingTextCountsAndAges(t *testing.T) {
 	reads := 0
-	loop, _ := detectWorldLoop(&detectWorld{})
+	loop, clock := detectWorldLoop(&detectWorld{})
 	loop.Detectors = []sdk.Detector{tickingDetector{reads: &reads}}
 	response := loop.Handle(context.Background(), ToolRequest{Command: "detect", Name: "ticking.age", WaitSeconds: 60})
-	first := strings.SplitN(response.Text, "\n", 2)[0]
-	if !strings.Contains(first, "changed ticking.age age: 9 errors, failing") {
-		t.Fatalf("first line = %q, want the wait to end on the count and status change, not on the age", first)
+	waitWasIdle(t, response, clock, 60)
+	if reads < 20 {
+		t.Fatalf("read %d times in a 60s wait, want it polling to the deadline", reads)
 	}
-	if reads < 5 {
-		t.Fatalf("the wait ended after %d reads, on a ticking age alone", reads)
+}
+
+// clueDetector raises a finding outside the alert set from its third read on.
+type clueDetector struct{ reads *int }
+
+func (clueDetector) Spec() sdk.DetectorSpec {
+	return sdk.DetectorSpec{ID: "traffic-links", Interval: time.Second}
+}
+
+func (d clueDetector) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
+	*d.reads++
+	if *d.reads < 3 {
+		return nil, nil
 	}
+	return []sdk.Finding{{RuleID: "latency", Status: sdk.FindingActive, Summary: "Service/mongodb-rate latency"}}, nil
+}
+
+func detectAlertSet(loop *ResponderLoop, detectorID string, scenarios ...string) []string {
+	var keys []string
+	for _, scenario := range scenarios {
+		finding := sdk.Finding{DetectorID: detectorID, RuleID: traffic.RuleIDPrefix + scenario, Status: sdk.FindingActive, Summary: scenario + " failing"}
+		keys = append(keys, FindingStateKey(detectorID, FindingFingerprint(finding)))
+	}
+	loop.Request.OpeningKeys = keys
+	return keys
+}
+
+func TestDetectWaitIgnoresAFindingOutsideTheAlertSet(t *testing.T) {
+	reads := 0
+	loop, clock := detectWorldLoop(&detectWorld{})
+	loop.Detectors = []sdk.Detector{trafficDetector{}, clueDetector{reads: &reads}}
+	detectAlertSet(loop, "traffic.health", "create")
+	response := loop.Handle(context.Background(), ToolRequest{Command: "detect", WaitSeconds: 60})
+	waitWasIdle(t, response, clock, 60)
+	if reads < 3 {
+		t.Fatalf("the clue detector ran %d times: the wait never saw its finding", reads)
+	}
+}
+
+func TestDetectWaitReturnsWhenAnAlertSetMemberClears(t *testing.T) {
+	loop, clock := detectWorldLoop(&detectWorld{healAfter: 4})
+	detectAlertSet(loop, "traffic.health", "create")
+	response := loop.Handle(context.Background(), ToolRequest{Command: "detect", WaitSeconds: 60})
+	if first := strings.SplitN(response.Text, "\n", 2)[0]; !strings.HasPrefix(first, "wait: after ") || !strings.Contains(first, "cleared user test create") {
+		t.Fatalf("first line = %q", first)
+	}
+	if clock.Since(detectNow()) >= 60*time.Second {
+		t.Fatal("the wait ran to its deadline past a cleared alert")
+	}
+}
+
+func TestDetectWaitReturnsWhenATestJoinsTheAlertSet(t *testing.T) {
+	loop, clock := detectWorldLoop(&detectWorld{})
+	keys := detectAlertSet(loop, "traffic.health", "create")
+	joined := FindingStateKey("traffic.health", "later")
+	calls := 0
+	loop.CurrentEvidence = func() *IncidentRequest {
+		calls++
+		current := loop.Request
+		if calls > 4 {
+			current.JoinedKeys = []string{joined}
+		}
+		current.OpeningKeys = keys
+		return &current
+	}
+	response := loop.Handle(context.Background(), ToolRequest{Command: "detect", WaitSeconds: 60})
+	if first := strings.SplitN(response.Text, "\n", 2)[0]; !strings.Contains(first, "joined the alert set") {
+		t.Fatalf("first line = %q", first)
+	}
+	if clock.Since(detectNow()) >= 60*time.Second {
+		t.Fatal("the wait ran to its deadline past a joined alert")
+	}
+}
+
+// failingReads makes the world's snapshot fail on reads in [from, to).
+type failingReads struct {
+	*detectWorld
+	from, to int
+}
+
+func (w failingReads) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
+	w.detectWorld.mu.Lock()
+	n := w.detectWorld.reads + 1
+	w.detectWorld.mu.Unlock()
+	if n >= w.from && n < w.to {
+		w.detectWorld.mu.Lock()
+		w.detectWorld.reads++
+		w.detectWorld.mu.Unlock()
+		return nil, fmt.Errorf("snapshot unavailable")
+	}
+	return w.detectWorld.Snapshot(ctx)
+}
+
+// A read that fails in the middle of a wait observed nothing: the wait goes on
+// to its deadline instead of returning "no change" early.
+func TestDetectWaitSurvivesAFailedRead(t *testing.T) {
+	loop, clock := detectWorldLoop(&detectWorld{})
+	loop.Provider = failingReads{detectWorld: &detectWorld{}, from: 3, to: 6}
+	detectAlertSet(loop, "traffic.health", "create")
+	response := loop.Handle(context.Background(), ToolRequest{Command: "detect", WaitSeconds: 60})
+	waitWasIdle(t, response, clock, 60)
 }

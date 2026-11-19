@@ -3,7 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -228,107 +228,64 @@ func (l *ResponderLoop) unknownDetectName(ctx context.Context, name string) stri
 	return fmt.Sprintf("no user test, detector or summary item named %q; user tests: %s; detectors: %s", name, orNone(strings.Join(tests, ", ")), orNone(strings.Join(detectors, ", ")))
 }
 
-// detectWatch is what `sdo detect --wait` compares: the active findings and,
-// for every user test, whether its newest request passed. A finding that keeps
-// its fingerprint but changes its summary, counts or evidence counts as changed.
+// detectWatch is what `sdo detect --wait` compares: the incident's alert set
+// and which of its members are active. Only findings in the alert set count;
+// clues, other detectors' findings and a member's changing counts or text are
+// not changes of the incident's state.
 type detectWatch struct {
-	alerts  map[string]string // fingerprint -> label
-	content map[string]string // fingerprint -> the finding's summary and evidence
-	summary map[string]string // fingerprint -> the finding's summary line
-	failing map[string]bool   // user tests with an active finding
-	newest  map[string]bool   // user test -> newest request passed
+	members []string          // the alert set's keys; empty when the incident names none
+	active  map[string]string // key -> label of an active finding in the alert set (any finding when the set is empty)
 }
 
-func (l *ResponderLoop) watchState(ctx context.Context, response ToolResponse, name string) detectWatch {
-	watch := detectWatch{alerts: map[string]string{}, content: map[string]string{}, summary: map[string]string{}, failing: map[string]bool{}, newest: map[string]bool{}}
+func (l *ResponderLoop) watchState(response ToolResponse, name string) detectWatch {
+	request := l.liveRequest()
+	keys := alertKeys(&request)
+	members := slices.Clone(keys)
+	sort.Strings(members)
+	watch := detectWatch{members: members, active: map[string]string{}}
 	for _, finding := range response.Findings {
-		test, isTest := strings.CutPrefix(finding.RuleID, traffic.RuleIDPrefix)
-		if name != "" && finding.DetectorID != name && test != name {
+		if finding.Status != sdk.FindingActive {
 			continue
 		}
-		fingerprint := finding.Fingerprint
-		if fingerprint == "" {
-			fingerprint = FindingFingerprint(finding)
+		if len(keys) > 0 && !slices.Contains(keys, findingKey(finding)) {
+			continue
 		}
-		watch.alerts[fingerprint] = detectFindingLabel(finding)
-		watch.content[fingerprint] = stableFindingText(finding.Summary) + "\x00" + stableFindingText(finding.Evidence)
-		watch.summary[fingerprint] = finding.Summary
-		if isTest {
-			watch.failing[test] = true
+		if test, _ := strings.CutPrefix(finding.RuleID, traffic.RuleIDPrefix); name != "" && finding.DetectorID != name && test != name {
+			continue
 		}
-	}
-	for _, window := range l.userTestWindows(ctx) {
-		for _, observed := range window.Scenarios {
-			id := observed.Scenario.ID
-			if name == id {
-				watch.failing[id] = true
-			}
-			var newest *traffic.Sample
-			for i := range observed.Samples {
-				sample := &observed.Samples[i]
-				if sample.Outcome == traffic.OutcomeInvalid {
-					continue
-				}
-				if newest == nil || !sample.At.Before(newest.At) {
-					newest = sample
-				}
-			}
-			if newest != nil {
-				watch.newest[id] = newest.Outcome == traffic.OutcomeOK
-			}
-		}
+		watch.active[findingKey(finding)] = detectFindingLabel(finding)
 	}
 	return watch
 }
 
-// watchChange describes how after differs from before; "" when it does not.
-// A user test counts when it was failing at the start of the wait.
+// watchChange describes how after differs from before; "" when it does not. A
+// change is a user test or alert joining the alert set, or a member alert
+// clearing or raising again. Nothing that moves with time alone is one.
 func watchChange(before, after detectWatch) string {
 	var changes []string
-	tests := make([]string, 0, len(before.failing))
-	for id := range before.failing {
-		tests = append(tests, id)
-	}
-	sort.Strings(tests)
-	for _, id := range tests {
-		was, known := before.newest[id]
-		now, sampled := after.newest[id]
-		switch {
-		case !sampled || known && was == now:
-		case now:
-			changes = append(changes, id+" newest request passed (was failing)")
-		default:
-			changes = append(changes, id+" newest request failed (was passing)")
+	for _, key := range after.members {
+		if !slices.Contains(before.members, key) {
+			label := after.active[key]
+			if label == "" {
+				label = strings.ReplaceAll(key, "\x00", " ")
+			}
+			changes = append(changes, "joined the alert set: "+label)
 		}
 	}
 	var raised, cleared []string
-	for fingerprint, label := range after.alerts {
-		if _, ok := before.alerts[fingerprint]; !ok {
-			raised = append(raised, "new alert "+label)
-		} else if before.content[fingerprint] != after.content[fingerprint] {
-			raised = append(raised, "changed "+label+": "+truncateDetectText(after.summary[fingerprint], 120))
+	for key, label := range after.active {
+		if _, was := before.active[key]; !was {
+			raised = append(raised, "alert active again: "+label)
 		}
 	}
-	for fingerprint, label := range before.alerts {
-		if _, ok := after.alerts[fingerprint]; !ok {
+	for key, label := range before.active {
+		if _, is := after.active[key]; !is {
 			cleared = append(cleared, "cleared "+label)
 		}
 	}
 	sort.Strings(raised)
 	sort.Strings(cleared)
-	changes = append(append(changes, raised...), cleared...)
-	return strings.Join(changes, "; ")
-}
-
-// tickingText matches what moves with time alone: timestamps, clock times and
-// durations or ages ("3m12s", "45s", "1.5h", "120ms"). Counts and statuses do
-// not match, so a change in them still counts.
-var tickingText = regexp.MustCompile(`\d{4}-\d\d-\d\d[T ]\d\d:\d\d(:\d\d(\.\d+)?)?(Z|[+-]\d\d:?\d\d)?|\b\d\d:\d\d(:\d\d)?Z?\b|\b(\d+(\.\d+)?(ns|us|µs|ms|s|m|h|d|w))+\b`)
-
-// stableFindingText drops the time-driven values from a finding's text so
-// `sdo detect --wait` compares only what is not a clock tick.
-func stableFindingText(text string) string {
-	return tickingText.ReplaceAllString(text, "~")
+	return strings.Join(append(append(changes, cleared...), raised...), "; ")
 }
 
 // truncateDetectText cuts text to at most n runes for a one-line change note.
@@ -342,8 +299,8 @@ func truncateDetectText(text string, n int) string {
 
 // waitDetect answers `sdo detect [NAME] --wait SECONDS`: it reads the state
 // now, reads again every detectPollInterval and returns as soon as a failing
-// test or alert changes, a new alert raises, a finding's text or counts change, the incident recovers or the time
-// passes. A user-test NAME sends its request once, at the start. The call is
+// alert-set member clears or raises again, a user test joins the alert set, the incident recovers or the time
+// passes; a failed read is skipped and an idle tick never returns early. A user-test NAME sends its request once, at the start. The call is
 // recorded once, with the last read.
 func (l *ResponderLoop) waitDetect(ctx context.Context, request ToolRequest) ToolResponse {
 	if request.WaitSeconds < 0 || request.WaitSeconds > detectMaxWaitSeconds {
@@ -359,7 +316,7 @@ func (l *ResponderLoop) waitDetect(ctx context.Context, request ToolRequest) Too
 	l.operationMu.RUnlock()
 	change := ""
 	if prepared && response.Error == "" {
-		before := l.watchState(ctx, response, request.Name)
+		before := l.watchState(response, request.Name)
 		poll.noSend = true
 		for {
 			if l.detectIncidentRecovered() {
@@ -371,12 +328,15 @@ func (l *ResponderLoop) waitDetect(ctx context.Context, request ToolRequest) Too
 				break
 			}
 			l.operationMu.RLock()
-			read, response, prepared = l.readOnce(ctx, poll)
+			nextRead, next, nextPrepared := l.readOnce(ctx, poll)
 			l.operationMu.RUnlock()
-			if !prepared || response.Error != "" {
-				break
+			if !nextPrepared || next.Error != "" {
+				// A read that failed observed nothing: the wait goes on, and
+				// shows the last good read.
+				continue
 			}
-			if change = watchChange(before, l.watchState(ctx, response, request.Name)); change != "" {
+			read, response = nextRead, next
+			if change = watchChange(before, l.watchState(response, request.Name)); change != "" {
 				break
 			}
 		}

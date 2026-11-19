@@ -9,7 +9,8 @@ description: Reading and changing an application through SDO's `sdo` command.
 state against last healthy, log errors, clues. `more:` lines expand one. `.sdo/arch.md` is the map.
 
 - `sdo detect [NAME] [--wait SECONDS]`: NAME is a user test (sends its request now), a detector or an item;
-  `--wait` returns on a change
+  `--wait` waits up to SECONDS and returns early only when the incident's state changes: an alert in its alert set
+  clears or raises again, a user test joins the set, or Recovered holds. Use it instead of `sleep`
 - `sdo map [path OP | near COMPONENT]`: the map, a path, neighbours
 - `sdo changes`, `sdo timeline`: CSV; `--since 30m`, `--component NODE`, `--limit N`; changes name an actor
   (agent is you, sdo, kubernetes, other), nearest onset first
