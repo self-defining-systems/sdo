@@ -296,6 +296,8 @@ func (DeleteObject) action() {}
 
 // ReconcileFromSource restores a whole source-owned object to accepted source,
 // removing additions SourceDiff reports; prefer SetField for one field.
+// An object accepted source declares that is absent is created from source,
+// exactly as CreateFromSource (the receipt names the create).
 // For a Secret the controller writes the literal data of the accepted render
 // (the keys the source declares; other keys stay) and nothing records a value:
 // the receipt names the keys. It refuses a Secret whose source has no literal

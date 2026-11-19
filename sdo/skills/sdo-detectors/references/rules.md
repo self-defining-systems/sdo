@@ -109,7 +109,10 @@ The shared memory check installs these constructors from the SDK. Wiring checks 
 protocol-specific declared targets, required template references/keys, PVC binding, Ingress backends,
 total NetworkPolicy isolation and local ExternalName aliases. Other controller kinds, persistent
 warning events and application-node health also require no application-source expectations.
-Saturation covers memory and PVC bytes/inodes (90% or short forecasts); CPU throttling is opt-in
+Saturation covers memory and PVC bytes/inodes (90% observed, or a forecast to fill within four hours
+from the median growth rate over at least five minutes; a forecast is marked `sdk.MetadataPredicted`,
+never decides an install, and is skipped on a volume whose filesystem is over twice its claim, a
+shared host disk); CPU throttling is opt-in
 because collecting cAdvisor counters adds a kubelet request and substantial parsing allocation.
 Runtime-crash patterns cover Go panic/fatal, Python traceback, Java OOM/thread exceptions and
 segmentation faults; `logs.Appeared` supplies transition persistence (firing 1, clearing 2).

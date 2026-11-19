@@ -274,7 +274,7 @@ def test_a_lane_whose_closing_errored_is_never_handed_to_the_next_cell(tmp_path:
 
 
 class _EvidenceAfterDrainGate:
-    """The evidence an SDO cell is judged on (final incident record, evidence copy) exists only after the closing turn."""
+    """The evidence an SDO cell is judged on (final record, evidence copy) exists only after the closing turn."""
 
     def check(self, cell, directory):
         from benchmarks.sregym.eval.cell import GateVerdict
@@ -302,10 +302,30 @@ def _run_with_gate(tmp_path: Path, backend_cls, gate):
 
 def test_the_evidence_gate_judges_a_draining_cell_after_its_closing_evidence_is_collected(tmp_path: Path) -> None:
     row = _run_with_gate(tmp_path, _LateEvidenceBackend, _EvidenceAfterDrainGate())
-    assert row.status == "graded" and row.success is True and row.reason is None
+    assert row.status == "graded"
+    assert row.success is True
+    assert row.reason is None
 
 
 def test_a_draining_cell_whose_evidence_never_completes_is_not_graded_after_the_drain(tmp_path: Path) -> None:
     row = _run_with_gate(tmp_path, FakeBackend, _EvidenceAfterDrainGate())
-    assert row.status == "not_graded" and row.success is None
+    assert row.status == "not_graded"
+    assert row.success is None
     assert row.reason == "no verified evidence copy (evidence-copy.json)"
+
+
+def test_a_closing_turn_that_made_no_model_call_costs_exactly_zero_not_unknown(tmp_path: Path) -> None:
+    """The learning gate can skip the closing turn's agent call; the incident record then says zero requests."""
+    none = TokenRow(uncached_input=0, cache_read=0, cache_write=0, output=0, requests=0)
+    row, cell, config, _, _ = run_draining(tmp_path, offline_fallback=none)
+    assert row.offline == TokenRow(uncached_input=0, cache_read=0, cache_write=0, output=0, requests=0, usd=0.0)
+    closing = json.loads((cell.directory(config) / "closing.json").read_text())
+    assert closing["offline_source"] == "no-closing-turn"
+
+
+def test_a_closing_turn_with_requests_but_no_usage_log_stays_unknown(tmp_path: Path) -> None:
+    some = TokenRow(uncached_input=0, cache_read=0, cache_write=0, output=0, requests=3)
+    row, cell, config, _, _ = run_draining(tmp_path, offline_fallback=some)
+    assert row.offline.usd is None
+    closing = json.loads((cell.directory(config) / "closing.json").read_text())
+    assert closing["offline_source"] == "incident-record"

@@ -1380,15 +1380,28 @@ func (c *Controller) recordEvaluation(detectorID string, now time.Time, findings
 	}
 }
 
+// recordDetectorError records a failed or skipped evaluation (see noObservation).
 func (c *Controller) recordDetectorError(detectorID string, now time.Time, err error) {
 	c.history = append(c.history, DetectorEvaluation{
 		DetectorID: detectorID, EvaluatedAt: now.UTC(), Status: DetectorEvaluationError, Error: err.Error(),
 		Fingerprints: []string{},
 	})
-	c.trackClearStreak(detectorID, now, false)
+	if !noObservation(err) {
+		c.trackClearStreak(detectorID, now, false)
+	}
 	if c.OnError != nil {
 		c.OnError(fmt.Errorf("detector %q: %w", detectorID, err))
 	}
+}
+
+// noObservation reports that an evaluation produced no observation of health:
+// the memory host still running the previous pass, an abandoned or overrun
+// evaluation, an unavailable read. That is not evidence the alert returned, so
+// it is recorded but never ends a clear streak; only an active finding in the
+// incident's alert set does. A detector never observed clear has no streak, so
+// the proof still fails closed for it.
+func noObservation(err error) bool {
+	return errors.Is(err, sdk.ErrUnavailable) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // trackClearStreak records when detectorID began its current streak of clear

@@ -256,8 +256,8 @@ def run_cell(cell: Cell, ctx: CellContext, lane_id: str) -> ResultRow:
             if lane is not None:
                 ctx.backend.collect(lane, cell, directory)
             accounting = ctx.accountant.account(cell, directory, result)
-            # The evidence a cell is judged on (final incident record, verified evidence copy) is complete only after the
-            # closing turn: a draining cell is gated once, after its closing evidence is collected.
+            # The evidence a cell is judged on (final incident record, verified evidence copy) is complete only
+            # after the closing turn: a draining cell is gated once, after its closing evidence is collected.
             gate = GateVerdict(gradable=True) if drains else ctx.gate.check(cell, directory)
     except Exception as exc:
         error = error or f"collect: {type(exc).__name__}: {exc}"

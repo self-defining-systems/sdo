@@ -41,8 +41,11 @@ func ThrottledFraction(samples []Sample) (float64, bool)
     identity.
 
 func TimeToThreshold(points []Point, threshold float64) (time.Duration, bool)
-    TimeToThreshold fits least squares against seconds since the first point.
-    False means insufficient or non-increasing data; zero means already reached.
+    TimeToThreshold is how long the newest point takes to reach threshold at the
+    series' growth rate: the median slope over every pair of points (Theil-Sen),
+    so a burst covering under about a quarter of the window cannot set the
+    rate the way it sets a least-squares slope. False means insufficient or
+    non-increasing data; zero means already reached.
 
 
 TYPES

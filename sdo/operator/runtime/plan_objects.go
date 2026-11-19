@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sdo.dev/operator/runtime/internal/lifecycleio"
+	"slices"
 	"time"
+
+	"sdo.dev/operator/runtime/internal/lifecycleio"
 
 	jsonpatch "github.com/evanphx/json-patch"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -62,6 +64,53 @@ func objectActionOperation(action program.Action) string {
 	}
 	return ""
 }
+// absentRestoreReason is the reason a ReconcileFromSource of an absent object runs as a create.
+const absentRestoreReason = "restore from accepted source: the object is absent, so it is created as source declares it"
+
+// createAbsentSourceRestores runs each ReconcileFromSource whose target the API
+// reports NotFound as CreateFromSource. Restoring a source-declared object that
+// is gone means creating it from accepted source; the create path records the
+// pre-image as absent, rechecks absence before writing, deletes exactly the
+// created UID on rollback, and settles against the object it created. The
+// recorded plan names the create that ran. A Secret keeps its own restore path,
+// and any read other than NotFound leaves the action for the pre-image read to
+// report.
+func (e PlanExecutor) createAbsentSourceRestores(ctx context.Context, plan program.Plan) program.Plan {
+	if e.Client == nil {
+		return plan
+	}
+	var actions []program.Action
+	for index, action := range plan.Actions {
+		var ref sdk.ObjectRef
+		switch a := action.(type) {
+		case program.ReconcileFromSource:
+			ref = a.Ref
+		case *program.ReconcileFromSource:
+			if a == nil {
+				continue
+			}
+			ref = a.Ref
+		default:
+			continue
+		}
+		if ref.Kind == "Secret" || ref.Namespace == "" || ref.Name == "" {
+			continue
+		}
+		if _, err := e.Client.Get(ctx, ref); !apierrors.IsNotFound(err) {
+			continue
+		}
+		if actions == nil {
+			actions = slices.Clone(plan.Actions)
+		}
+		actions[index] = program.CreateFromSource{Ref: ref, Reason: absentRestoreReason}
+	}
+	if actions == nil {
+		return plan
+	}
+	plan.Actions = actions
+	return plan
+}
+
 func hasObjectActions(plan program.Plan) bool {
 	for _, a := range plan.Actions {
 		if objectActionOperation(a) != "" {
