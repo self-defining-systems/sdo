@@ -51,6 +51,7 @@ func withUsage(base SnapshotProvider, detectors []sdk.Detector, client kubernete
 	return &usageSnapshotProvider{Base: base, client: client, throttling: throttling, clock: clock}
 }
 func (p *usageSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
+	defer measurePhase(ctx, "usage")()
 	base, err := p.Base.Snapshot(ctx)
 	if err != nil {
 		return nil, err

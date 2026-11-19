@@ -23,6 +23,29 @@ snapshot and protected capture write per incident, plus the existing tool
 request/response round trip for a typed plan application. Existing `responder_tool_timing`
 `capture_ms` and `total_ms` include this work.
 
+Phase timing attributes slow calls. `responder_tool_timing` and the controller's
+`observation_lock_held` warning (a hold of 1 s or more; `holder` names the pass) carry a
+`phase_ms` group and `unattributed_ms`, always on. Each phase is charged only its own time
+(a phase begun inside another is subtracted from it), so the phases plus `unattributed_ms`
+equal `total_ms` / `held_ms`; a large `unattributed_ms` means the time went in code no
+phase names. Controller step phases: `dispatch_completions`, `retire_expired`,
+`early_report`, `broker_completions`, `queued_reflections`, `head_poll`,
+`source_inventory`, `snapshot` (the controller's own share of the snapshot), `drift`,
+`onboarding_reachability`, `setup_health`, `detectors`, `adopt_ownership`,
+`close_incident`, `dispatch`. The agent-facing verify hold has `snapshot` and
+`closure_source`. Snapshot layers, in both records: `kubernetes_cache`
+(with `kubernetes_cache_lock_wait`, `kubernetes_cache_scope`,
+`kubernetes_cache_scoped_read` inside it), `traffic`, `pod_admission`, `usage`, `logs`,
+`pod_reads`, `vantage` (and `vantage_lock_wait`), `app_state`, `metrics`,
+`onboarding_snapshot`, `read_view`. Responder tool phases: `snapshot`, `corpus_capture`
+(the disk write), `detectors`, `diagnose`, `preapply_capture` with `preapply_snapshot`,
+`preapply_capture_write` and `preapply_boundary_observations`, `checkout_state`,
+`persist_application`, `executor_apply`, `verify`, and `source_comparison` with its own
+`source_comparison_snapshot`; the source comparison is not part of `capture_ms`. A layer
+used by two snapshots in one call (for example the apply's verify snapshot and the
+source-comparison snapshot) reports their sum. Read the largest phase before changing
+locking.
+
 Captures do not invent primitive recordings. New pre-apply recording files begin
 empty; snapshot `readings` may already hold actual detector reads made on that exact snapshot.
 Only actual primitive reads may supply replay answers. Shared runtime reads add optional

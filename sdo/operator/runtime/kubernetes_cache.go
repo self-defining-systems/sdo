@@ -455,19 +455,28 @@ func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, e
 	if clock == nil {
 		clock = lifecycleio.Now
 	}
+	defer measurePhase(ctx, "kubernetes_cache")()
+	endWait := measurePhase(ctx, "kubernetes_cache_lock_wait")
 	c.scopedMu.Lock()
+	endWait()
 	defer c.scopedMu.Unlock()
 	if c.config.AcceptedScope != nil {
+		endScope := measurePhase(ctx, "kubernetes_cache_scope")
 		scope, revision, err := c.config.AcceptedScope(ctx)
 		if err != nil {
+			endScope()
 			return nil, err
 		}
 		if err = scope.Within(c.config.Ceiling); err != nil {
+			endScope()
 			return nil, err
 		}
 		c.reconcileScope(scope, revision)
+		endScope()
 	}
+	endScoped := measurePhase(ctx, "kubernetes_cache_scoped_read")
 	scoped, err := c.readScoped(ctx)
+	endScoped()
 	if err != nil {
 		return nil, err
 	}

@@ -420,6 +420,7 @@ type TrafficSnapshotProvider struct {
 }
 
 func (p TrafficSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
+	defer measurePhase(ctx, "traffic")()
 	base, err := p.Base.Snapshot(ctx)
 	if err != nil {
 		return nil, err

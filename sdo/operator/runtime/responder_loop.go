@@ -297,6 +297,8 @@ type ResponderLoop struct {
 	sourceCompared      map[string]bool
 	stageNotes          []StageNote
 	timing              toolTiming
+	// trace times the phases of the Handle call in progress (nil outside one).
+	trace *phaseTrace
 	preApplyCaptured    bool
 	saveToolState       func(context.Context, []byte) error
 	operationMu         sync.RWMutex
@@ -556,10 +558,15 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		before = l.CachedFindings().Findings
 	}
 	l.timing = toolTiming{}
+	trace := newPhaseTrace(l.clock)
+	l.trace = trace
+	ctx = withPhaseTrace(ctx, trace)
 	defer func() {
-		slog.Info("responder_tool_timing", "incident_id", l.Request.IncidentID, "command", request.Command,
+		total := l.clock().Sub(started)
+		slog.Info("responder_tool_timing", append([]any{"incident_id", l.Request.IncidentID, "command", request.Command,
 			"capture_ms", l.timing.capture.Milliseconds(), "refresh_ms", l.timing.refresh.Milliseconds(),
-			"persist_ms", l.timing.persist.Milliseconds(), "total_ms", l.clock().Sub(started).Milliseconds())
+			"persist_ms", l.timing.persist.Milliseconds(), "total_ms", total.Milliseconds()}, trace.logAttrs(total)...)...)
+		l.trace = nil
 	}()
 	defer func() { l.capturePhase = "" }()
 	if l.CurrentEvidence != nil {
@@ -994,13 +1001,20 @@ func (l *ResponderLoop) deadline() time.Duration {
 	return DefaultDiagnosisDeadline
 }
 
+// phase begins the named phase of the Handle call in progress and returns its
+// end; outside a call it measures nothing. The caller holds l.mu, as l.trace is
+// set and cleared under it.
+func (l *ResponderLoop) phase(name string) func() { return l.trace.begin(name) }
+
 func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, error) {
 	started := l.clock()
 	defer func() { l.timing.capture += l.clock().Sub(started) }()
 	if l.Provider == nil {
 		return nil, errors.New("snapshot provider is unavailable")
 	}
+	endSnapshot := l.phase("snapshot")
 	snapshot, err := l.Provider.Snapshot(ctx)
+	endSnapshot()
 	if err != nil {
 		return nil, err
 	}
@@ -1008,7 +1022,10 @@ func (l *ResponderLoop) snapshotView(ctx context.Context) (program.ReadView, err
 		return nil, errors.New("live read view is unavailable")
 	}
 	if l.CorpusSessionRoot != "" && l.capturePhase != "" {
-		if err := memory.CaptureIncidentSnapshot(l.CorpusSessionRoot, l.Request.IncidentID, l.capturePhase, snapshot, l.Request.Namespace, findingCaptureRefs(l.Request.Findings)...); err != nil {
+		endCapture := l.phase("corpus_capture")
+		err := memory.CaptureIncidentSnapshot(l.CorpusSessionRoot, l.Request.IncidentID, l.capturePhase, snapshot, l.Request.Namespace, findingCaptureRefs(l.Request.Findings)...)
+		endCapture()
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -1125,7 +1142,9 @@ func (l *ResponderLoop) refresh(ctx context.Context, diagnose bool) ([]sdk.Findi
 	}
 	findings := make([]sdk.Finding, 0)
 	states := make([]DetectorEvaluation, 0, len(l.Detectors))
+	endDetectors := l.phase("detectors")
 	results := evaluateDetectors(ctx, l.Detectors, view)
+	endDetectors()
 	for _, detector := range l.Detectors {
 		result := results[detector.Spec().ID]
 		observed, err := result.findings, result.err
@@ -1152,7 +1171,9 @@ func (l *ResponderLoop) refresh(ctx context.Context, diagnose bool) ([]sdk.Findi
 	if !diagnose {
 		return findings, nil, states, ""
 	}
+	endDiagnose := l.phase("diagnose")
 	runs := l.selectCandidates(ctx, view, findings, false)
+	endDiagnose()
 	l.stampProgramRuns(runs)
 	l.runs = append(l.runs, runs...)
 	return findings, runs, states, ""
@@ -1316,7 +1337,9 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		return
 	}
 	// A missing capture is an evidence gap; it must not block the repair.
+	endPreApply := l.phase("preapply_capture")
 	_ = l.capturePreApply(ctx, planCaptureRefs(batch)...)
+	endPreApply()
 	l.applySeq++
 	if !request.stage {
 		l.spendLoop()
@@ -1328,7 +1351,9 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		programIDs = append(programIDs, plan.programID)
 	}
 	entry := RecordedPlanApplication{ID: id, ProgramIDs: programIDs, PlanIDs: append([]string(nil), request.PlanIDs...), Result: PlanApplicationResult{Plan: batch}, StartedAt: started, Pending: true}
+	endCheckout := l.phase("checkout_state")
 	entry.RunningCommit, entry.RunningDirty, _ = l.checkoutState(ctx, request.stage, request.Command)
+	endCheckout()
 	if l.applicationBindings == nil {
 		l.applicationBindings = map[string][]recoveryBinding{}
 	}
@@ -1338,8 +1363,11 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 		actionStart += len(plan.plan.Actions)
 	}
 	l.applicationsLog = append(l.applicationsLog, entry)
-	if err := l.persistToolState(ctx); err != nil {
-		response.Error = err.Error()
+	endPersist := l.phase("persist_application")
+	persistErr := l.persistToolState(ctx)
+	endPersist()
+	if persistErr != nil {
+		response.Error = persistErr.Error()
 		return
 	}
 	executor := l.Executor
@@ -1350,7 +1378,9 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	if request.stage && request.rolloutTimeout > 0 {
 		executor.RolloutTimeout = request.rolloutTimeout
 	}
+	endExecutor := l.phase("executor_apply")
 	result, err := executor.Apply(ctx, l.mitigationIncident(selected), batch, false)
+	endExecutor()
 	response.ActionReports = result.ActionReports
 	completed := l.clock().UTC()
 	if result.RolloutPending != nil {
@@ -1365,7 +1395,9 @@ func (l *ResponderLoop) apply(ctx context.Context, request ToolRequest, response
 	}
 	response.RolloutPending = result.RolloutPending
 	if result.RolloutPending == nil {
+		endVerify := l.phase("verify")
 		l.verify(ctx, selected, response, request.stage)
+		endVerify()
 		// apply verifies its own batch: one complete act→verify cycle.
 		if !request.stage && response.Error == "" {
 			l.closeLoop()
@@ -1443,7 +1475,9 @@ func (l *ResponderLoop) verify(ctx context.Context, applied []selectedPlan, resp
 	}
 	findings := make([]sdk.Finding, 0)
 	states := make([]DetectorEvaluation, 0, len(l.Detectors))
+	endDetectors := l.phase("detectors")
 	results := evaluateDetectors(ctx, l.Detectors, view)
+	endDetectors()
 	for _, detector := range l.Detectors {
 		result := results[detector.Spec().ID]
 		observed, err := result.findings, result.err

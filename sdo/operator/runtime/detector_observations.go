@@ -153,6 +153,7 @@ type podAdmissionSnapshotProvider struct {
 }
 
 func (p podAdmissionSnapshotProvider) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
+	defer measurePhase(ctx, "pod_admission")()
 	base, err := p.Base.Snapshot(ctx)
 	if err != nil {
 		return nil, err
