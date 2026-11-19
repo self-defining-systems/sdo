@@ -50,6 +50,7 @@ Then compare measured wall time with it, per problem and per series, as results 
 - **Run drivers under systemd.** Start every long-lived driver, feeder or loop with `systemd-run --user --unit=<name> --collect -p Restart=always -p RestartSec=30 -E PATH=$PATH -E HOME=$HOME --working-directory=<dir> -p StandardOutput=append:<log> <cmd>`.
   - Processes started from an agent session die when the session is recycled; `setsid nohup` does not escape its cgroup.
   - Restart with `systemctl --user restart`, never kill and relaunch by hand.
+- **Every row runs and records its arm's source.** Rebuilt lanes served the seed app. Fix: each row recreates when deployed and planned source differ.
 - **Smoke a new pipeline with several parallel cells**, watched live. Change one layer at a time (runner, SDO build, memory, lanes, dispatcher), and keep the last working pipeline producing rows meanwhile.
 
 ## 3. Run one problem
@@ -69,7 +70,7 @@ Then compare measured wall time with it, per problem and per series, as results 
 - **Smoke the whole chain on one item per app before scaling**, including every hand-off (an archive feeding pass 2; the control arm starting clean).
 - **Record harness failures in `harness.tsv`**, apart from SDO failures; rerun the chain with an `-x<n>` run-id suffix.
 - **Never chain or grade a cell whose lane recorded OOM kills** (fuzzops `run.json` `isolation.oom_kills`): the runner still marks it done. Size lanes to the app (GitLab with SDO needs about 30 GiB).
-- **Stop a failure loop early.** The same failure on two or more lanes or hosts is a pipeline bug, not lane flakiness. Park that arm after the second repeat (a lane after two build-check failures) and find the root cause on recorded evidence. Automatic lane rebuilds on repeated pre-injection failures only burn lane time.
+- **Stop a failure loop early.** The same failure on two or more lanes or hosts is a pipeline bug, not lane flakiness. Park that arm after the second repeat (a lane after two build-check failures) and find the root cause on recorded evidence.
 
 ## 4. Run a series: throughput and parallelism
 

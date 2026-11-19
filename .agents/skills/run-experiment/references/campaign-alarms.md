@@ -19,6 +19,8 @@ These tighten the general rule that actual above 2× the minimum is a bug.
 
 - **Keep the driver resumable:** chaining logic in a script with state on disk, never in one agent turn. Write decisions and a status line (every 30 minutes) to `NOTES.md` in the run directory so a replacement can take over after a rate limit. Spread agents across accounts.
 - **Wait by bounded foreground polling** (about every 5 minutes), never by ending a turn on a monitor.
+- **Every harness wait has a deadline and logs progress.** A wait that ends silently (for example for a seeded controller Pod that never becomes ready) holds a lane for an hour while the driver counts it as running. Fix: bound the wait, end the row with a named error so the driver requeues it, and give the driver a stall rule that covers every wait.
+- **Count failures per problem, not per lane, and park on the second identical one.** A problem that fails the same way on every lane is requeued forever when only lane failures are counted (one failed 17 times at 30 minutes each).
 
 ## Reference timings seen
 
