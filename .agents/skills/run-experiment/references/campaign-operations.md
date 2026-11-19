@@ -37,10 +37,12 @@ Then compare measured wall time with it, per problem and per series, as results 
   - other experiments' clusters already there.
 
   A host with hundreds of threads in disk sleep is stalled even if its CPU looks free.
-- **Separate experiments that share a host in both directions:** each gets its own cpuset or slice and a load gate. One side's cpuset does not keep the other side's unpinned lanes off its cores.
+- **Separate experiments that share a host in both directions:** each gets its own cpuset or slice and a load gate. One side's cpuset does not keep the other side's unpinned lanes off its cores. Pick your cpuset only after reading every running container's `CpusetCpus` (`docker inspect`) and the SMT sibling pairs (`lscpu -e`): other experiments pin blocks too, and "the top N CPUs" can overlap them.
 - **Stagger lane creation:** at most about three image imports at a time per host.
 - **Disk:** keep lanes, images and evidence on local disk, never NFS. Keep a disk watcher on every host.
 - **Start every lane from an installed baseline, warm pool or snapshot**, never a fresh install per lane, unless install is the question. When each arm needs different memory, swap memory into a warm lane instead of rebuilding.
+- **Replace a harness script that may be running atomically:** check it (`bash -n`), write a temp file beside it and `mv` it over. Bash reads a running script incrementally, so an in-place `cp`/`scp` breaks every call in flight (builds failed mid-prepare with `unexpected EOF`).
+- **Check the inventory after every edit** (the runner must load it, e.g. `fuzzops-bench status`). One invalid value fails every manager pass on every host, and only the runner's log says so.
 - **Run drivers under systemd.** Start every long-lived driver, feeder or loop with `systemd-run --user --unit=<name> --collect -p Restart=always -p RestartSec=30 -E PATH=$PATH -E HOME=$HOME --working-directory=<dir> -p StandardOutput=append:<log> <cmd>`.
   - Processes started from an agent session die when the session is recycled; `setsid nohup` does not escape its cgroup.
   - Restart with `systemctl --user restart`, never kill and relaunch by hand.
@@ -60,6 +62,7 @@ Then compare measured wall time with it, per problem and per series, as results 
 
   Compare each stage with its minimum. Setup or gates taking longer than the agent's work is the usual sign of waste.
 - After the first cell of each kind, read its row and logs before trusting the rest.
+- **Never chain or grade a cell whose lane recorded OOM kills** (fuzzops `run.json` `isolation.oom_kills`): the runner still marks it done. Size lanes to the app (GitLab with SDO needs about 30 GiB).
 - **Stop a failure loop early.** The same failure on two or more lanes or hosts is a pipeline bug, not lane flakiness. Park that arm after the second repeat and find the root cause on recorded evidence. Automatic lane rebuilds on repeated pre-injection failures only burn lane time.
 
 ## 4. Run a series: throughput and parallelism
@@ -67,11 +70,11 @@ Then compare measured wall time with it, per problem and per series, as results 
 - **Measure throughput as graded rows per hour, overall and per lane.** Compare it with `lanes / per-problem minimum`.
   - When adding lanes does not raise rows per hour, parallelism is not helping. The usual causes: a host bottleneck (load, disk sleep, memory, image pulls), a shared serial step (build gate, registry, one driver loop, a lock), or a dependency chain.
   - Find the bottleneck before adding more lanes.
-- **Never let lanes idle while work is queued.** Relaunch after a failed gate, and fill idle lanes first.
-- **Spread across every quiet host.** Move off a failing host within about 15 minutes, and delegate the host repair.
+- **Never let lanes idle while work is queued.** Relaunch after a failed gate, and fill idle lanes first. A free lane kept for reuse still holds its cpuset cores: when a queued build on the same host waits for cores, retire the idle lane (a build waited 29 minutes behind one).
+- **Spread across every quiet host.** Move off a failing host within about 15 minutes, and delegate the host repair. Drain a host by emptying its lane list, not by setting its limits to zero (the runner rejects zero), and let in-flight cells finish collect first. Keep the runner's local host even with no lanes: adding and grading use its checkouts.
 - **Queue baselines independently.** If baseline cells are queued only as twins of treatment cells, a treatment stall silently stalls the baseline too.
 - **A fix blocks only the arms that depend on it.** Keep independent arms running.
-- **Respect serial chains.** Example: pass 2 waits for pass 1's learning. Start chains early and run independent work beside them.
+- **Respect serial chains.** Example: pass 2 waits for pass 1's learning. Start chains early and run independent work beside them. Start the next link only from a verified artifact: an archived memory must match the live repository's `rev-parse HEAD` (SDO's controller keeps it at a detached HEAD, and a branch-based archive silently fell back to the starting memory). Removing a queued experiment tears down its lanes and drops its staged inputs: remove only experiments with no lane bound, and re-add under a new name when frozen fields change.
 - Run all arms at once on the same problem set, never one arm after another.
 
 ## 5. Oversee
