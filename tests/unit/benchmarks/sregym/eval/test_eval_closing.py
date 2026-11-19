@@ -271,3 +271,44 @@ def test_a_lane_whose_closing_errored_is_never_handed_to_the_next_cell(tmp_path:
     rows = scheduler.run()
     assert scheduler.pools.held == [("hotel", "h1")]
     assert sorted(r.reason or "" for r in rows).count("no lane left: every lane of the pool is held") == 1
+
+
+class _EvidenceAfterDrainGate:
+    """The evidence an SDO cell is judged on (final record, evidence copy) exists only after the closing turn."""
+
+    def check(self, cell, directory):
+        from benchmarks.sregym.eval.cell import GateVerdict
+
+        ok = (directory / "closing-evidence.json").is_file()
+        return GateVerdict(ok, () if ok else ("no verified evidence copy (evidence-copy.json)",))
+
+
+class _LateEvidenceBackend(FakeBackend):
+    def collect(self, lane, cell, directory):
+        super().collect(lane, cell, directory)
+        if self.calls.count("collect") >= 2:  # the second collect is the closing turn's
+            (directory / "closing-evidence.json").write_text("{}\n")
+
+
+def _run_with_gate(tmp_path: Path, backend_cls, gate):
+    clock = Clock()
+    config = make_config(tmp_path)
+    backend = backend_cls(clock)
+    drainer = DrainingExecutor(clock, backend=backend)
+    ctx, _ = make_context(config, clock, backend=backend, executor=drainer, gate=gate)
+    cell = first(config, "pass1")
+    return run_cell(cell, ctx, "hotel-lane")
+
+
+def test_the_evidence_gate_judges_a_draining_cell_after_its_closing_evidence_is_collected(tmp_path: Path) -> None:
+    row = _run_with_gate(tmp_path, _LateEvidenceBackend, _EvidenceAfterDrainGate())
+    assert row.status == "graded"
+    assert row.success is True
+    assert row.reason is None
+
+
+def test_a_draining_cell_whose_evidence_never_completes_is_not_graded_after_the_drain(tmp_path: Path) -> None:
+    row = _run_with_gate(tmp_path, FakeBackend, _EvidenceAfterDrainGate())
+    assert row.status == "not_graded"
+    assert row.success is None
+    assert row.reason == "no verified evidence copy (evidence-copy.json)"
