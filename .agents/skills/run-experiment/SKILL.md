@@ -63,6 +63,8 @@ The experiment is the incidents; everything else is overhead to remove.
 
 Read [references/failure-modes.md](references/failure-modes.md) before step 8, and whenever a run behaves unexpectedly.
 
+For a campaign (many lanes, hosts or arms), read [references/campaign-operations.md](references/campaign-operations.md) before launching, then add each costly mistake there.
+
 For offline worker replay use `fastloop replay --run-dir <results/run> --incident N --stage responder|reflection|broker`: agent scripts are the only execution path, with no live fallback. Prompts, rollouts, tool calls and outcomes remain readable analysis evidence. See [the testing guide](../../../docs/testing-guide.md).
 
 For toy activation evidence, require populated passing `memory_host_activations` in each changing-memory incident row; see the fastloop README activation-continuity contract. Harness stage budgets use wall time at every scripted time scale.
