@@ -115,3 +115,18 @@ func TestCheckProbeLoadRejectsAnOverCapProbeSet(t *testing.T) {
 		t.Fatalf("a probe set under the cap was rejected: %v", err)
 	}
 }
+
+// The default rate of a workload that sets none is not the designer's choice:
+// only the floor load of sampling each scenario once per interval is checked.
+func TestCheckProbeLoadIgnoresTheDefaultRate(t *testing.T) {
+	catalog := Catalog{{ID: "scenario-00", Steps: make([]Step, 1)}}
+	var workloads []Workload
+	for i := 0; i < 3; i++ {
+		w := intervalWorkload(t, "10s", 1)
+		w.Name, w.RatePerSecond = fmt.Sprintf("probe-%d", i), DefaultRatePerSecond
+		workloads = append(workloads, w)
+	}
+	if err := CheckProbeLoad(workloads, catalog); err != nil {
+		t.Fatalf("three single-scenario probes at the default rate were rejected: %v", err)
+	}
+}

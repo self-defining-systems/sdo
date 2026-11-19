@@ -152,17 +152,26 @@ func (l ProbeLoad) Message() string {
 	return fmt.Sprintf("sampling every scenario at least every %s (the %s floor, or a workload's sampleInterval up to %s) sends %.1f requests/s, above the %.0f/s cap; no scenario was starved: lengthen sampleInterval, or remove or merge scenarios", MinSampleInterval, MinSampleInterval, MaxSampleInterval, l.RequestsPerSecond, l.Cap)
 }
 
-// CheckProbeLoad rejects a health-probe set whose sampling sends more than
-// ProbeRateCap requests per second, counting each scenario's steps from the
-// catalog (a scenario the catalog does not hold counts one). The check is
-// deterministic, so the memory check refuses the set before the controller
-// would have to run it over the cap.
+// CheckProbeLoad rejects a health-probe set whose floor load exceeds
+// ProbeRateCap requests per second: the load of sampling every scenario once
+// per sample interval, at the lowest rate that does so (a workload's own or
+// default rate above that is not counted, since an unset rate is the default
+// and the designer did not choose it). Each scenario's steps come from the
+// catalog (one when it is absent). The check is deterministic, so the memory
+// check refuses a set no choice of rate could bring under the cap.
 func CheckProbeLoad(workloads []Workload, catalog Catalog) error {
 	requests := make(map[string]int, len(catalog))
 	for _, scenario := range catalog {
 		requests[scenario.ID] = len(scenario.Steps)
 	}
-	if load := MeasureProbeLoad(workloads, requests); load.OverCap() {
+	floor := make([]Workload, 0, len(workloads))
+	for _, workload := range workloads {
+		if workload.Purpose == PurposeHealthProbe && len(workload.Scenarios) > 0 {
+			workload.RatePerSecond = float64(len(workload.Scenarios)) / workload.EffectiveSampleInterval().Seconds()
+		}
+		floor = append(floor, workload)
+	}
+	if load := MeasureProbeLoad(floor, requests); load.OverCap() {
 		return fmt.Errorf("probe load: %s", load.Message())
 	}
 	return nil

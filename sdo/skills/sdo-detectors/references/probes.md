@@ -116,7 +116,7 @@ about a minute of a fault. A probe sampled every 45 to 60 s never collects them,
 so never stretch `sampleInterval` past qualification to save load. Reduce cost by making each iteration cheap (fewer
 and smaller requests, a lighter read-back, no needless fan-out) and by trimming scenarios, not by sampling less often.
 The onboarding check is red for a scenario that stays pending or under-sampled through the healthy window.
-The memory check also refuses a probe set that sends more than the probe-load cap (3 requests/s over all health
+The memory check also refuses a probe set whose floor load exceeds the probe-load cap (3 requests/s over all health
 probes, each scenario sampled at least every `sampleInterval`): it names the rate. Fix it by trimming or merging
 scenarios and making each cheaper, or by a modest `sampleInterval` (up to 30 s) when scenarios are many, never by
 stretching it past qualification.
