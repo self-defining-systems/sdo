@@ -527,5 +527,5 @@ def test_every_claim_reapplies_the_lane_cpu_cap_to_that_lanes_cluster(
 def test_row_settings_default_to_six_cpus_per_lane_and_an_auto_parent(tmp_path: Path) -> None:
     default = settings(tmp_path)
     assert (default.lane_cpus, default.lane_cgroup_parent) == (6.0, "auto")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="lane_cpus"):
         settings(tmp_path, lane_cpus=0)

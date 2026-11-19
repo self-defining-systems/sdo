@@ -15,8 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from benchmarks.sregym.adapter import WaitKind, wait_for
-from benchmarks.sregym.adapter.host_memory import parse_memory_size
+from benchmarks.sregym.adapter import WaitKind, parse_memory_size, wait_for
 from benchmarks.sregym.fastloop.lane_cgroup import (
     DEFAULT_LANE_CPUS,
     NodeCgroup,

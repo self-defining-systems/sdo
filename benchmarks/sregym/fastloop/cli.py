@@ -2125,7 +2125,8 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument(
         "--lane-cpus",
         default=None,
-        help=f"CPU cap of the whole lane, split across its kind nodes (default env SDO_LANE_CPUS or {DEFAULT_LANE_CPUS})",
+        help="CPU cap of the whole lane, split across its kind nodes "
+        f"(default env SDO_LANE_CPUS or {DEFAULT_LANE_CPUS})",
     )
     up.add_argument(
         "--lane-cgroup-parent",

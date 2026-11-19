@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import argparse
 import subprocess
-from pathlib import Path
-from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -22,6 +22,9 @@ from benchmarks.sregym.fastloop.lane_cgroup import (
     slice_memory_max,
     split_cpus,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 GIB = 1024**3
 
@@ -99,9 +102,9 @@ def test_up_resolves_lane_cpus_and_parent_into_the_worker_environment(
 def test_the_slice_memory_max_is_the_lane_budget_when_none_is_configured(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SDO_HOST_LANE_BUDGET_GIB", raising=False)
     monkeypatch.setattr(cli, "slice_memory_max", lambda parent: 128 * GIB)
-    assert cli.up_host_memory_policy(SimpleNamespace(lane_cgroup="sdo-eval.slice")).lane_budget_bytes == 128 * GIB
-    assert cli.up_host_memory_policy(SimpleNamespace(lane_cgroup=None)).lane_budget_bytes is None
-    configured = SimpleNamespace(lane_cgroup="sdo-eval.slice", host_lane_budget_gib=64)
+    assert cli.up_host_memory_policy(argparse.Namespace(lane_cgroup="sdo-eval.slice")).lane_budget_bytes == 128 * GIB
+    assert cli.up_host_memory_policy(argparse.Namespace(lane_cgroup=None)).lane_budget_bytes is None
+    configured = argparse.Namespace(lane_cgroup="sdo-eval.slice", host_lane_budget_gib=64)
     assert cli.up_host_memory_policy(configured).lane_budget_bytes == 64 * GIB
 
 
@@ -189,7 +192,7 @@ def test_shim_environment_is_empty_without_a_parent_and_puts_the_shim_first_with
     assert (tmp_path / "shim" / "docker").stat().st_mode & 0o111
 
 
-# --- per-node limits: idempotent update, read back, re-apply -----------------------------------------------------------
+# --- per-node limits: idempotent update, read back, re-apply ---------------------------------------------------------
 
 
 class Docker:
@@ -282,13 +285,16 @@ def test_the_node_cgroup_is_read_from_the_containers_own_scope(tmp_path: Path) -
 
     state = read_node_cgroup("lane-worker", run=run, root=tmp_path / "cg", proc=tmp_path / "proc")
     assert state == NodeCgroup(f"/{scope}", 3.0, 16 * GIB)
-    assert state is not None and state.under("sdo-eval.slice") and not state.under("system.slice")
+    assert state is not None
+    assert state.under("sdo-eval.slice")
+    assert not state.under("system.slice")
     nested = NodeCgroup("/sdo.slice/sdo-eval.slice/docker-a.scope", None, None)  # systemd nests a-b.slice under a.slice
     assert nested.under("sdo-eval.slice")
     (directory / "cpu.max").write_text("max 100000\n")
     (directory / "memory.max").write_text("max\n")
     unlimited = read_node_cgroup("lane-worker", run=run, root=tmp_path / "cg", proc=tmp_path / "proc")
-    assert unlimited is not None and (unlimited.cpus, unlimited.memory_bytes) == (None, None)
+    assert unlimited is not None
+    assert (unlimited.cpus, unlimited.memory_bytes) == (None, None)
 
 
 def test_a_container_that_cannot_be_inspected_is_unverifiable(tmp_path: Path) -> None:
