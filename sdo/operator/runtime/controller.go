@@ -652,7 +652,8 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		// Persist known contradictions before snapshot acquisition or an idle
 		// return: either may fail, and a restart must not erase this evidence.
 		if c.onboardingReachability != nil && c.onboardingReachability.invalid {
-			if err := c.rejectPendingOnboarding(ctx, c.onboardingRejectionReason(false)); err != nil {
+			reason, cause := c.onboardingRejection(false)
+			if err := c.rejectPendingOnboarding(ctx, reason, cause); err != nil {
 				return err
 			}
 			deferInventory = false
@@ -709,17 +710,20 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	var onboardingCandidate *contracts.NamespaceOnboarding
 	confirmed := detectorsConfirmed(onboardingDetectors, snapshot)
 	if !confirmed && c.pendingOnboarding != nil {
-		var reasons []string
+		var reasons, unconfirmed []string
 		for _, detector := range onboardingDetectors {
 			if !detectorConfirmed(detector, snapshot) {
 				reasons = append(reasons, detector.Spec().ID+": "+detectorConfirmationReason(detector, snapshot))
+				unconfirmed = append(unconfirmed, detector.Spec().ID)
 			}
 		}
-		c.waitForOnboarding(ctx, strings.Join(reasons, "; "))
+		sort.Strings(unconfirmed)
+		c.waitForOnboarding(ctx, strings.Join(reasons, "; "), "unconfirmed:"+strings.Join(unconfirmed, ","))
 	}
 	confirmationExpired := c.onboardingConfirmationExpired(now, snapshot)
 	if c.pendingOnboarding != nil && (confirmationExpired || c.onboardingReachability != nil && c.onboardingReachability.invalid) {
-		if err := c.rejectPendingOnboarding(ctx, c.onboardingRejectionReason(confirmationExpired)); err != nil {
+		reason, cause := c.onboardingRejection(confirmationExpired)
+		if err := c.rejectPendingOnboarding(ctx, reason, cause); err != nil {
 			return err
 		}
 	}
@@ -2309,7 +2313,8 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		History: evaluationsContract(history), IncidentOpen: c.incidentOpen, ResponderDone: c.responderDone,
 		DispatchError: c.dispatchError, IncidentDetectedAt: optionalTimestamp(c.incidentDetectedAt),
 		IncidentDispatchedAt: optionalTimestamp(c.incidentDispatchedAt), ResponderCompletedAt: optionalTimestamp(c.responderCompletedAt),
-		EscalatedAt:         optionalTimestamp(c.escalatedAt),
+		EscalatedAt:             optionalTimestamp(c.escalatedAt),
+		DispatchFailureAttempts: int32(c.dispatchFailureAttempts),
 		DetectorClearSince:  timestampsContract(c.detectorClearSince),
 		DispatchState:       dispatchState,
 		IncidentFindingKeys: append([]string(nil), c.incidentFindingKeys...), ClosureState: c.closureState,
@@ -2394,6 +2399,7 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	c.setupEvaluatedRevision = state.GetSetupEvaluatedRevision()
 	c.sourceInventory = nil
 	c.dispatchError = state.DispatchError
+	c.dispatchFailureAttempts = int(state.GetDispatchFailureAttempts())
 	c.incidentDetectedAt = controllerTime(state.GetIncidentDetectedAt())
 	c.incidentDispatchedAt = controllerTime(state.GetIncidentDispatchedAt())
 	c.responderCompletedAt = controllerTime(state.GetResponderCompletedAt())

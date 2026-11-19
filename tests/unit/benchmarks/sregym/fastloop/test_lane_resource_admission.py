@@ -343,7 +343,7 @@ def test_rejected_onboarding_fails_at_once_with_the_controller_reason(lane, monk
     rejected = {
         "complete": None,
         "pending": {"acceptedCommit": "a" * 40},
-        "rejected": {"reason": "install window contradicted or expired"},
+        "rejected": {"reason": "install window contradicted or expired", "cause": "window_expired/x"},
         "controller_failed": None,
     }
     monkeypatch.setattr(
@@ -357,6 +357,7 @@ def test_rejected_onboarding_fails_at_once_with_the_controller_reason(lane, monk
     evidence = json.loads((gate.directory / "onboarding.json").read_text())
     assert evidence["passed"] is False
     assert evidence["rejected_reason"] == "install window contradicted or expired"
+    assert evidence["rejected_cause"] == "window_expired/x"
     assert (gate.directory / "onboarding-controller.log").read_text() == "controller line\n"
 
 
@@ -394,7 +395,11 @@ def test_onboarding_reads_the_real_cluster_records(lane, monkeypatch):
     assert quiet == {"complete": None, "pending": None, "rejected": None, "controller_failed": None}
 
     cluster["configmap/sdo-namespace-onboarding-rejected"] = {"data": {"reason": "install window expired"}}
-    assert gate._onboarding("hotel-reservation-sdo")["rejected"] == {"reason": "install window expired"}
+    assert gate._onboarding("hotel-reservation-sdo")["rejected"] == {"reason": "install window expired", "cause": None}
+    cluster["configmap/sdo-namespace-onboarding-rejected"] = {
+        "data": {"reason": "expired", "cause": "window_expired/y"}
+    }
+    assert gate._onboarding("hotel-reservation-sdo")["rejected"] == {"reason": "expired", "cause": "window_expired/y"}
 
     cluster["job/sdo-controller-run"] = {"status": {"failed": 1}}
     assert gate._onboarding("hotel-reservation-sdo")["controller_failed"] is None
@@ -414,6 +419,20 @@ def test_unfinished_onboarding_keeps_the_controller_log(lane, monkeypatch):
     with pytest.raises(ValueError, match=r"did not finish within 120s"):
         gate.prove("hotel-reservation-sdo")
     assert (gate.directory / "onboarding-controller.log").read_text() == "window never started\n"
+
+
+def test_unfinished_onboarding_logs_progress_each_minute(lane, monkeypatch, caplog):
+    """A long onboarding wait is never silent in the row log: one line a minute names what it waits for."""
+    gate, _ = lane
+    gate.onboarding_timeout_seconds = 300
+    first_adoption(gate, monkeypatch, finishes_at=10_000)
+    _patch_kubectl(monkeypatch, lambda *args, **kwargs: SimpleNamespace(stdout=""))
+    caplog.set_level("INFO", logger=admission.__name__)
+    with pytest.raises(ValueError, match=r"did not finish within 300s"):
+        gate.prove("hotel-reservation-sdo")
+    progress = [record.getMessage() for record in caplog.records if "waiting for SDO onboarding" in record.getMessage()]
+    assert len(progress) >= 4
+    assert "left of 300s" in progress[-1]
 
 
 def wall_clock(gate, monkeypatch, now):
@@ -952,6 +971,8 @@ def test_warm_transaction_consumes_real_admission_and_exact_revision(lane, monke
         full_reset=lambda: pytest.fail("proof must not reset directly"),
     )
     warm.admission = gate
+    # Fresh-install equivalence of the resident state has its own tests (test_resident_start.py).
+    monkeypatch.setattr(WarmEnvironment, "_require_fresh_equivalent", lambda self, *args: None)
     if evaluated_revision == "a" * 40:
         assert warm.prove(datetime.now(timezone.utc), "a" * 40)["passed"] is True
     else:

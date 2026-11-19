@@ -38,13 +38,15 @@ def test_every_kind_node_receives_all_limits(monkeypatch: pytest.MonkeyPatch) ->
 
     def run(argv, **kwargs):
         calls.append((argv, kwargs))
-        return subprocess.CompletedProcess(argv, 0, "lane-control-plane\nlane-worker\n", "")
+        out = "lane-control-plane\nlane-worker\n" if argv[0] == "kind" else ""
+        return subprocess.CompletedProcess(argv, 0, out, "")
 
     monkeypatch.setattr(subprocess, "run", run)
     apply_node_limits("lane", NodeLimits(cpu="2.5", memory="24g", pids=4096), read=lambda _node: None)
-    assert [argv for argv, _ in calls[1:]] == [
-        ["docker", "update", "--cpus", "2.5", "--memory", "24g", "--memory-swap", "24g", "--pids-limit", "4096", node]
-        for node in ("lane-control-plane", "lane-worker")
+    assert [argv for argv, _ in calls if argv[:2] == ["docker", "update"]] == [
+        ["docker", "update", "--cpus", "2.5", "--memory", "24g", "--memory-swap", "24g", "--pids-limit", "4096"]
+        + ["--cpuset-cpus", cpuset, node]
+        for node, cpuset in (("lane-control-plane", "0-1,8"), ("lane-worker", "2-3,10"))
     ]
     assert all(kwargs["check"] for _, kwargs in calls)
 

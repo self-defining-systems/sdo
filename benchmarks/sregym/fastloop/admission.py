@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import time
@@ -41,6 +42,8 @@ if TYPE_CHECKING:
 
     from benchmarks.sregym.adapter import ClusterOps, NativeInstallConfig
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+logger = logging.getLogger(__name__)
 
 
 def await_workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
@@ -287,7 +290,9 @@ class LaneAdmission:
             if not output.strip():
                 records[key] = None
             elif key == "rejected":
-                records[key] = {"reason": json.loads(output)["data"]["reason"]}
+                data = json.loads(output)["data"]
+                # The controller's structured cause (class and check, no timings) beside its human reason.
+                records[key] = {"reason": data["reason"], "cause": data.get("cause")}
             else:
                 records[key] = json.loads(json.loads(output)["data"]["onboarding.json"])
         status = (self._controller_job(control) or {}).get("status", {})
@@ -321,6 +326,7 @@ class LaneAdmission:
         the controller is observing; only then may the stabilization clock start.
         """
         started = time.monotonic()
+        next_report = started + wait_for(WaitKind.MINUTE)
         self.directory.mkdir(parents=True, exist_ok=True)
         destination = self.directory / "onboarding.json"
         while True:
@@ -334,12 +340,14 @@ class LaneAdmission:
             record = records["complete"] or {}
             done = bool(record.get("acceptedCommit") and record.get("objects"))
             rejected = (records["rejected"] or {}).get("reason")
+            rejected_cause = (records["rejected"] or {}).get("cause")
             crashed = (records["controller_failed"] or {}).get("reason")
             evidence = {
                 "passed": done,
                 "accepted_commit": record.get("acceptedCommit"),
                 "pending": records["pending"] is not None,
                 "rejected_reason": rejected,
+                "rejected_cause": rejected_cause,
                 "controller_failed": crashed,
                 "last_error": error,
                 "seconds": round(time.monotonic() - started, 3),
@@ -350,6 +358,17 @@ class LaneAdmission:
             # only delays the same failure.
             if done or rejected or crashed or time.monotonic() - started >= self.onboarding_timeout_seconds:
                 break
+            if time.monotonic() >= next_report:
+                next_report = time.monotonic() + wait_for(WaitKind.MINUTE)
+                logger.info(
+                    "waiting for SDO onboarding in %s: %.0fs elapsed, %.0fs left of %gs, pending record: %s%s",
+                    control,
+                    evidence["seconds"],
+                    self.onboarding_timeout_seconds - evidence["seconds"],
+                    self.onboarding_timeout_seconds,
+                    evidence["pending"],
+                    f", last error: {error}" if error else "",
+                )
             time.sleep(min(2, max(0, started + self.onboarding_timeout_seconds - time.monotonic())))
         destination.write_text(json.dumps(evidence, indent=2) + "\n")
         if not done:
@@ -604,8 +623,16 @@ class LaneAdmission:
 class EvalAdmissionOps:
     """Prove health while ACTIVE, before either ordinary or simultaneous injection."""
 
-    def __init__(self, inner: ClusterOps, admission: LaneAdmission, *, fresh: bool = False) -> None:
+    def __init__(
+        self,
+        inner: ClusterOps,
+        admission: LaneAdmission,
+        *,
+        fresh: bool = False,
+        on_proven: Callable[[dict[str, Any]], object] | None = None,
+    ) -> None:
         self._inner, self.admission, self._fresh = inner, admission, fresh
+        self._on_proven = on_proven
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
@@ -615,8 +642,15 @@ class EvalAdmissionOps:
     ) -> dict[str, float]:
         started = time.monotonic()
         self._inner.set_maintenance(control_namespace, paused=False, generation=generation + "-proof")
-        self.admission.prove(control_namespace, fresh=self._fresh)
+        proof = self.admission.prove(control_namespace, fresh=self._fresh)
         self._fresh = False
+        if self._on_proven is not None:
+            # The proven, still fault-free lane seals what its next row may reuse. A failed seal only costs that
+            # reuse (the next row deploys), never this row.
+            try:
+                self._on_proven(proof)
+            except Exception as exc:  # recorded; the next row's decision names the missing receipt
+                logger.warning("application setup not sealed after admission: %s", exc)
         seconds = time.monotonic() - started
         result = dict(self._inner.inject_after_resume(control_namespace, generation, inject))
         result["traffic_stabilization"] = seconds

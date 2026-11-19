@@ -110,6 +110,32 @@ def test_host_pool_provisioning_rejects_an_independent_alias(tmp_path: Path) -> 
         prepare_host_pool(root, [alias], capacity=4)
 
 
+def test_a_worker_that_cannot_write_the_provisioned_host_pool_still_takes_a_token(tmp_path: Path) -> None:
+    """Pods run as a different UID than the provisioning host user, so host pool files are often read-only to them.
+
+    ``flock`` needs only a readable descriptor; a 0444 pool must admit the worker (a 2026-11-19 lane failed every
+    responder dispatch with "shared Opus pool unavailable" on a PermissionError for a 0664 pool owned by UID 1000).
+    """
+    from libs.agent_cli.provider_capacity import prepare_host_pool
+
+    root = tmp_path / "pool"
+    prepare_host_pool(root, [], capacity=2)
+    for path in root.iterdir():
+        path.chmod(0o444)
+    try:
+        first, second = OpusPool(root, 2, create=False), OpusPool(root, 2, create=False)
+        held = first.try_acquire()
+        assert held is not None
+        other = second.try_acquire()
+        assert other is not None
+        assert OpusPool(root, 2, create=False).try_acquire() is None
+        held.close()
+        other.close()
+    finally:
+        for path in root.iterdir():
+            path.chmod(0o664)
+
+
 @pytest.mark.parametrize("seed", range(8))
 def test_host_pool_seeded_acquire_release_schedules(tmp_path: Path, seed: int) -> None:
     import random
@@ -332,6 +358,34 @@ def test_opus_refuses_to_run_without_shared_pool(tmp_path: Path) -> None:
             provider_capacity=capacity(tmp_path, Clock()),
         )
     assert not agent.requests
+
+
+@pytest.mark.parametrize("fault", ["empty_capacity", "unreadable"])
+def test_a_misprovisioned_host_pool_fails_the_turn_with_the_named_pool_error(tmp_path: Path, fault: str) -> None:
+    """Every way a provisioned pool can be unusable reaches the worker as the same named pool error."""
+    from libs.agent_cli.provider_capacity import prepare_host_pool
+
+    pool = tmp_path / "pool"
+    prepare_host_pool(pool, [], capacity=2)
+    if fault == "empty_capacity":
+        (pool / "capacity").write_text("")
+    else:
+        (pool / "capacity").chmod(0o000)
+    environment = {
+        "SDO_OPUS_POOL_DIR": str(pool),
+        "SDO_OPUS_POOL_MODE": "per_host",
+        "SDO_OPUS_POOL_HOST_ID": "host-a",
+        "SDO_OPUS_MAX_SESSIONS": "2",
+    }
+    try:
+        with (
+            pytest.raises(ProviderRateLimited, match=r"shared Opus pool unavailable \(") as raised,
+            ProviderCapacity(environment=environment).opus_session("claude-opus-5-5"),
+        ):
+            pass
+    finally:
+        (pool / "capacity").chmod(0o664)
+    assert not raised.value.retryable
 
 
 @pytest.mark.parametrize("location", ["checkout", "child", "symlink"])

@@ -126,19 +126,33 @@ def image_identity(nodes: list[dict[str, Any]], references: dict[str, str]) -> d
     return images
 
 
-def collect_fingerprint(
-    environment: FastloopEnvironment,
-    *,
-    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
-    monotonic: Callable[[], float] = time.monotonic,
-) -> SetupFingerprint:
+class _Reader:
     """Local files, GETs and one read-only PVC HEAD read share one snapshot-read budget."""
-    budget = Deadline.after(wait_for(WaitKind.SNAPSHOT_READ), "setup fingerprint", monotonic)
 
-    def execute(command: list[str]) -> str:
-        timeout = budget.bounded_timeout(command[0], minimum=WaitKind.POLL_FAST)
-        return run(command, check=True, text=True, capture_output=True, timeout=timeout).stdout.strip()
+    def __init__(self, run: Callable[..., subprocess.CompletedProcess[str]], monotonic: Callable[[], float]) -> None:
+        self.budget = Deadline.after(wait_for(WaitKind.SNAPSHOT_READ), "setup fingerprint", monotonic)
+        self._run = run
 
+    def __call__(self, command: list[str]) -> str:
+        timeout = self.budget.bounded_timeout(command[0], minimum=WaitKind.POLL_FAST)
+        return self._run(command, check=True, text=True, capture_output=True, timeout=timeout).stdout.strip()
+
+    def finish(self) -> None:
+        if self.budget.left() <= 0:
+            raise TimeoutError("eval: setup fingerprint exceeded 15 seconds")
+
+
+@dataclass(frozen=True)
+class _Runtime:
+    """What every setup proof binds besides live objects: committed code, the accepted workspace and tools."""
+
+    code_revision: str
+    accepted: str
+    app_manifests: str
+    tools: dict[str, str]
+
+
+def _runtime(environment: FastloopEnvironment, execute: _Reader) -> _Runtime:
     root = Path(__file__).resolve().parents[3]
     revision = execute(
         host_git_command(root, "describe", "--always", "--abbrev=40", "--dirty", "--match=__eval_no_tag__")
@@ -150,66 +164,6 @@ def collect_fingerprint(
     accepted = execute(host_git_command(environment.workspace, "rev-parse", "HEAD"))
     if execute(host_git_command(environment.workspace, "status", "--porcelain", "--untracked-files=all")):
         raise ValueError("eval: accepted workspace has uncommitted changes")
-    base = ["kubectl", "--kubeconfig", str(environment.kubeconfig), "--request-timeout=4s", "get"]
-    # Retained infrastructure (for example CoreDNS) must not escape warm reuse
-    # checks merely because it lives outside the application/control namespaces.
-    # The explicit resource list excludes Secrets and observation-only objects.
-    objects = json.loads(execute([*base, RESOURCES, "--all-namespaces", "-o", "json"]))["items"]
-    cluster = json.loads(execute([*base, CLUSTER_RESOURCES, "-o", "json"]))["items"]
-    nodes = [obj for obj in cluster if obj["kind"] == "Node"]
-    states = [
-        obj
-        for obj in objects
-        if obj["kind"] == "ConfigMap"
-        and obj["metadata"]["name"] == "sdo-controller-state"
-        and obj["metadata"].get("namespace") == environment.namespace + "-sdo"
-    ]
-    if len(states) != 1:
-        raise ValueError("eval: installed controller state is unavailable")
-    # The persisted drift revision is an inventory content hash, not Git HEAD.
-    # Read the actual accepted repository through its current owning Pod.
-    controllers = [
-        obj
-        for obj in objects
-        if obj["kind"] == "Pod"
-        and obj["metadata"].get("namespace") == environment.namespace + "-sdo"
-        and not obj["metadata"].get("deletionTimestamp")
-        and any(
-            owner.get("kind") == "Job" and owner.get("name") == "sdo-controller-run"
-            for owner in obj["metadata"].get("ownerReferences", [])
-        )
-    ]
-    if len(controllers) != 1:
-        raise ValueError("eval: installed controller Pod identity is unavailable")
-    controller = controllers[0]
-    containers = [row for row in controller["spec"]["containers"] if row["name"] == "controller"]
-    if len(containers) != 1:
-        raise ValueError("eval: installed controller container is unavailable")
-    arguments = containers[0].get("args", [])
-    if "--app" not in arguments or arguments.index("--app") + 1 >= len(arguments):
-        raise ValueError("eval: installed accepted repository path is unavailable")
-    repository = arguments[arguments.index("--app") + 1]
-    if not repository.startswith("/"):
-        raise ValueError("eval: installed accepted repository path must be absolute")
-    installed = execute(
-        [
-            *base[:-1],
-            "exec",
-            "pod/" + controller["metadata"]["name"],
-            "-n",
-            environment.namespace + "-sdo",
-            "-c",
-            "controller",
-            "--",
-            "git",
-            "-C",
-            repository,
-            "rev-parse",
-            "HEAD",
-        ]
-    )
-    if installed != accepted:
-        raise ValueError("eval: installed accepted-memory commit differs from accepted workspace")
     paths = [environment.baseline_path]
     for selection in manifest_paths_for_environment(environment):
         path = (environment.workspace / selection).resolve()
@@ -265,17 +219,96 @@ def collect_fingerprint(
         tools["mounted-code-revision"] = mounted_revision
         binary = environment.dev_mount / ".fastloop/sdo-operator"
         tools["installed-operator"] = hashlib.sha256(binary.read_bytes()).hexdigest()
-    if budget.left() <= 0:
-        raise TimeoutError("eval: setup fingerprint exceeded 15 seconds")
+    return _Runtime(revision, accepted, digest(manifests), tools)
+
+
+def _live(environment: FastloopEnvironment, execute: _Reader) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    base = ["kubectl", "--kubeconfig", str(environment.kubeconfig), "--request-timeout=4s", "get"]
+    # Retained infrastructure (for example CoreDNS) must not escape warm reuse
+    # checks merely because it lives outside the application/control namespaces.
+    # The explicit resource list excludes Secrets and observation-only objects.
+    objects = json.loads(execute([*base, RESOURCES, "--all-namespaces", "-o", "json"]))["items"]
+    cluster = json.loads(execute([*base, CLUSTER_RESOURCES, "-o", "json"]))["items"]
+    return objects, cluster
+
+
+def collect_fingerprint(
+    environment: FastloopEnvironment,
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> SetupFingerprint:
+    """Local files, GETs and one read-only PVC HEAD read share one snapshot-read budget."""
+    execute = _Reader(run, monotonic)
+    runtime = _runtime(environment, execute)
+    objects, cluster = _live(environment, execute)
+    nodes = [obj for obj in cluster if obj["kind"] == "Node"]
+    states = [
+        obj
+        for obj in objects
+        if obj["kind"] == "ConfigMap"
+        and obj["metadata"]["name"] == "sdo-controller-state"
+        and obj["metadata"].get("namespace") == environment.namespace + "-sdo"
+    ]
+    if len(states) != 1:
+        raise ValueError("eval: installed controller state is unavailable")
+    # The persisted drift revision is an inventory content hash, not Git HEAD.
+    # Read the actual accepted repository through its current owning Pod.
+    controllers = [
+        obj
+        for obj in objects
+        if obj["kind"] == "Pod"
+        and obj["metadata"].get("namespace") == environment.namespace + "-sdo"
+        and not obj["metadata"].get("deletionTimestamp")
+        and any(
+            owner.get("kind") == "Job" and owner.get("name") == "sdo-controller-run"
+            for owner in obj["metadata"].get("ownerReferences", [])
+        )
+    ]
+    if len(controllers) != 1:
+        raise ValueError("eval: installed controller Pod identity is unavailable")
+    controller = controllers[0]
+    containers = [row for row in controller["spec"]["containers"] if row["name"] == "controller"]
+    if len(containers) != 1:
+        raise ValueError("eval: installed controller container is unavailable")
+    arguments = containers[0].get("args", [])
+    if "--app" not in arguments or arguments.index("--app") + 1 >= len(arguments):
+        raise ValueError("eval: installed accepted repository path is unavailable")
+    repository = arguments[arguments.index("--app") + 1]
+    if not repository.startswith("/"):
+        raise ValueError("eval: installed accepted repository path must be absolute")
+    installed = execute(
+        [
+            "kubectl",
+            "--kubeconfig",
+            str(environment.kubeconfig),
+            "--request-timeout=4s",
+            "exec",
+            "pod/" + controller["metadata"]["name"],
+            "-n",
+            environment.namespace + "-sdo",
+            "-c",
+            "controller",
+            "--",
+            "git",
+            "-C",
+            repository,
+            "rev-parse",
+            "HEAD",
+        ]
+    )
+    if installed != runtime.accepted:
+        raise ValueError("eval: installed accepted-memory commit differs from accepted workspace")
+    execute.finish()
     return SetupFingerprint(
         environment.cluster,
-        revision,
+        runtime.code_revision,
         image_identity(nodes, environment.images.model_dump()),
-        accepted,
+        runtime.accepted,
         installed,
-        digest(manifests),
+        runtime.app_manifests,
         object_identities(objects + cluster),
-        tools,
+        runtime.tools,
     )
 
 
@@ -328,6 +361,172 @@ def reuse_decision(directory: Path, fingerprint: SetupFingerprint) -> dict[str, 
         return {"reused": not changed, "receipt": str(path), "changed": changed}
     except (OSError, ValueError, KeyError, TypeError) as exc:
         return {"reused": False, "receipt": None, "changed": [f"passing_receipt_unavailable: {exc}"]}
+
+
+APPLICATION_SCHEMA = "sdo.application-setup-proof/v1"
+APPLICATION_RECEIPTS = "application-setup-proof"
+# Kinds whose objects are the running state of a configuration, not configuration the deploy establishes.
+RUNTIME_KINDS = frozenset({"Pod", "ReplicaSet"})
+# Annotations a rollout or kubectl rewrites while the configuration stays the same.
+VOLATILE_ANNOTATIONS = frozenset(
+    {"kubectl.kubernetes.io/last-applied-configuration", "deployment.kubernetes.io/revision"}
+)
+RESTARTED_AT = "kubectl.kubernetes.io/restartedAt"
+# Objects the SDO install puts in the application namespace carry this label; a Tier-1 wipe removes them.
+INSTALL_LABEL = "sdo.dev/application-namespace"
+
+
+def application_identities(objects: list[dict[str, Any]], control_namespace: str) -> dict[str, str]:
+    """Configuration identity of what the application deploy establishes, outside the SDO install.
+
+    The install (its namespace, cluster RBAC named after it, the volumes bound to its claims and labelled
+    helpers) is what a row-start wipe deletes and the row reinstalls, so it never takes part. Runtime (Pods,
+    ReplicaSets, status, resource versions, rollout revisions and restarts) does not either:
+    the admission after the deploy decision re-proves health afresh. An object that was
+    restored to its proven configuration keeps its identity; an added, removed or edited object, or a rebuilt lane
+    (new Node or Namespace UID), changes it.
+    """
+    if not control_namespace or "/" in control_namespace:
+        raise ValueError("eval: application setup identity requires the control namespace")
+    result = {}
+    for obj in objects:
+        metadata = obj["metadata"]
+        if obj["kind"] == "Secret":
+            raise ValueError("eval: setup inventory must exclude Secrets")
+        namespace = metadata.get("namespace")
+        if (
+            obj["kind"] in RUNTIME_KINDS
+            or namespace == control_namespace
+            or (namespace is None and control_namespace in metadata["name"])
+            or INSTALL_LABEL in (metadata.get("labels") or {})
+            or (obj.get("spec", {}).get("claimRef") or {}).get("namespace") == control_namespace
+        ):
+            continue
+        key = f"{namespace or '<cluster>'}/{obj['kind']}/{metadata['name']}"
+        if key in result:
+            raise ValueError(f"eval: duplicate live identity: {key}")
+        stable = json.loads(
+            json.dumps({name: value for name, value in obj.items() if name not in {"metadata", "status"}})
+        )
+        template = stable.get("spec", {}).get("template", {}).get("metadata", {})
+        # A rollout restart (row start restarts Jaeger) restarts Pods; the configuration stays the same.
+        (template.get("annotations") or {}).pop(RESTARTED_AT, None)
+        if template.get("annotations") == {}:
+            del template["annotations"]
+        if stable.get("spec", {}).get("template", {}).get("metadata") == {}:
+            del stable["spec"]["template"]["metadata"]
+        kept = {
+            name: json.loads(json.dumps(metadata[name]))
+            for name in ("name", "namespace", "labels", "annotations", "deletionTimestamp", "finalizers")
+            if name in metadata
+        }
+        for name in VOLATILE_ANNOTATIONS:
+            kept.get("annotations", {}).pop(name, None)
+        kept["owners"] = sorted(f"{row.get('kind')}/{row.get('name')}" for row in metadata.get("ownerReferences", []))
+        if obj["kind"] in {"Node", "Namespace"}:
+            # A recreated lane or application namespace is a different setup even with equal configuration.
+            kept["uid"] = metadata.get("uid")
+        stable["metadata"] = kept
+        result[key] = digest(stable)
+    return dict(sorted(result.items()))
+
+
+@dataclass(frozen=True)
+class ApplicationFingerprint:
+    """What a row's application deploy establishes and depends on; never the SDO install a row-start wipe removes."""
+
+    lane: str
+    code_revision: str
+    images: dict[str, Any]
+    app_manifests: str
+    live_objects: dict[str, str]
+    tools: dict[str, str]
+
+    def __post_init__(self) -> None:
+        for key, value in asdict(self).items():
+            if not value:
+                raise ValueError(f"eval: application setup fingerprint has no {key}")
+
+
+def collect_application_fingerprint(
+    environment: FastloopEnvironment,
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> ApplicationFingerprint:
+    execute = _Reader(run, monotonic)
+    runtime = _runtime(environment, execute)
+    objects, cluster = _live(environment, execute)
+    execute.finish()
+    return ApplicationFingerprint(
+        environment.cluster,
+        runtime.code_revision,
+        image_identity([obj for obj in cluster if obj["kind"] == "Node"], environment.images.model_dump()),
+        runtime.app_manifests,
+        application_identities(objects + cluster, environment.namespace + "-sdo"),
+        runtime.tools,
+    )
+
+
+def _application_proof(admission: dict[str, Any]) -> dict[str, Any]:
+    if admission.get("passed") is not True:
+        raise ValueError("eval: only a passing pre-injection admission can seal an application setup")
+    return {"fault_injected": False, "admission": admission}
+
+
+def seal_application_receipt(directory: Path, fingerprint: ApplicationFingerprint, admission: dict[str, Any]) -> Path:
+    """Seal the application this lane proved healthy before injection; the latest seal replaces earlier ones."""
+    document = {
+        "schema_version": APPLICATION_SCHEMA,
+        "fingerprint": asdict(fingerprint),
+        "proof": _application_proof(admission),
+    }
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / (digest(document) + ".json")
+    path.write_text(json.dumps(document, indent=2) + "\n")
+    temporary = directory / "latest.tmp"
+    temporary.write_text(json.dumps({"receipt": path.name}) + "\n")
+    temporary.replace(directory / "latest.json")
+    return path
+
+
+def application_reuse_decision(directory: Path, fingerprint: ApplicationFingerprint) -> dict[str, Any]:
+    try:
+        name = json.loads((directory / "latest.json").read_text())["receipt"]
+        if Path(name).name != name:
+            raise ValueError("invalid receipt path")
+        path = directory / name
+        document = json.loads(path.read_text())
+        if path.stem != digest(document) or document["schema_version"] != APPLICATION_SCHEMA:
+            raise ValueError("invalid receipt content")
+        _application_proof(document["proof"]["admission"])
+        if document["proof"].get("fault_injected") is not False:
+            raise ValueError("receipt does not prove a no-fault setup")
+        expected = ApplicationFingerprint(**document["fingerprint"])
+        changed = sorted(key for key, value in asdict(fingerprint).items() if getattr(expected, key) != value)
+        return {"reused": not changed, "receipt": str(path), "changed": changed}
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return {"reused": False, "receipt": None, "changed": [f"passing_receipt_unavailable: {exc}"]}
+
+
+def check_application_reuse(environment: FastloopEnvironment) -> dict[str, Any]:
+    """Row start, after the SDO wipe: reuse the deployed application only while it matches its last passing seal.
+
+    Unavailable evidence runs the deploy; it never grants a skip.
+    """
+    directory = environment.run_dir / APPLICATION_RECEIPTS
+    if not (directory / "latest.json").is_file():
+        return {"reused": False, "receipt": None, "changed": ["no_passing_receipt"]}
+    try:
+        return application_reuse_decision(directory, collect_application_fingerprint(environment))
+    except (OSError, ValueError, KeyError, TypeError, TimeoutError, subprocess.SubprocessError) as exc:
+        return {"reused": False, "receipt": None, "changed": [f"fingerprint_unavailable: {exc}"]}
+
+
+def seal_after_admission(environment: FastloopEnvironment, admission: dict[str, Any]) -> Path:
+    return seal_application_receipt(
+        environment.run_dir / APPLICATION_RECEIPTS, collect_application_fingerprint(environment), admission
+    )
 
 
 def check_reuse(environment: FastloopEnvironment) -> tuple[SetupFingerprint | None, dict[str, Any]]:

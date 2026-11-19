@@ -21,6 +21,24 @@ class WorkloadNotReadyError(ValueError):
     """The installed workload has not finished rolling out or becoming Ready."""
 
 
+def _container_trouble(pod: dict[str, Any]) -> str:
+    """Why a pod's containers are not running cleanly: restarts, the waiting reason and the last exit."""
+    notes = []
+    for status in pod.get("status", {}).get("containerStatuses", []):
+        restarts = status.get("restartCount", 0)
+        waiting = status.get("state", {}).get("waiting", {}).get("reason")
+        last = status.get("lastState", {}).get("terminated")
+        if not restarts and not waiting and not last:
+            continue
+        parts = [f"{restarts} restarts"]
+        if waiting:
+            parts.append(waiting)
+        if last:
+            parts.append(f"last exit {last.get('exitCode')} ({last.get('reason')})")
+        notes.append(f"container {status.get('name')}: {', '.join(parts)}")
+    return f" [{'; '.join(notes)}]" if notes else ""
+
+
 def workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
     listing = json.loads(
         kubectl(
@@ -76,6 +94,7 @@ def workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
         if ready != desired or len(selected) != desired:
             pods = ", ".join(
                 f"{pod['metadata'].get('name', pod['metadata'].get('uid'))} {pod.get('status', {}).get('phase')}"
+                + _container_trouble(pod)
                 for pod in selected
             )
             raise WorkloadNotReadyError(

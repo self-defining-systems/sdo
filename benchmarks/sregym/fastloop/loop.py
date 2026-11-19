@@ -21,7 +21,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
-from benchmarks.sregym.adapter import WaitKind, wait_for
+from benchmarks.sregym.adapter import WaitKind, harness_infra_error, wait_for
 from benchmarks.sregym.fastloop.records import (
     AgentName,
     DiagnosisGrade,
@@ -51,6 +51,11 @@ if TYPE_CHECKING:
     from benchmarks.sregym.fastloop.continuity import ActivationContinuity
 
 logger = logging.getLogger(__name__)
+
+#: Infrastructure errors that end a row before any agent outcome exists: the row is neither graded nor scored,
+#: and its independent grade is frozen as evidence. Provider capacity, a responder the controller could not
+#: start, and a seeded controller that never became ready.
+NOT_AGENT_OUTCOMES = frozenset({"rate_limited", "account_exhausted", "dispatch_failed", "controller_not_ready"})
 
 
 class RecoveryWaitTimeout(RuntimeError):
@@ -651,6 +656,11 @@ def _run_one(
             if isinstance(exc, RateLimitedRun):
                 limited_waits = list(exc.evidence.intervals)
                 account_events = list(exc.evidence.account_events)
+        elif harness := harness_infra_error(exc):
+            # The lane could not run the incident (a responder that cannot start, a seeded controller never
+            # ready): an infrastructure error the runner requeues, never a graded agent outcome.
+            infra_error = harness
+            errors.append(_describe(exc))
         else:
             errors.append(_describe(exc))
         from benchmarks.sregym.fastloop.runtime_observation import ObservationUnavailable
@@ -661,7 +671,7 @@ def _run_one(
     recovered = bool(windows)
     if (
         windows
-        and infra_error not in ("rate_limited", "account_exhausted")
+        and infra_error not in NOT_AGENT_OUTCOMES
         and grader is not None
         and outcome is not None
         and outcome.diagnosis.strip()
@@ -673,14 +683,14 @@ def _run_one(
     elif windows and grader is not None:
         diagnosis_grade = DiagnosisGrade(
             skipped=True,
-            skip_reason=infra_error if infra_error in ("rate_limited", "account_exhausted") else "no diagnosis text",
+            skip_reason=infra_error if infra_error in NOT_AGENT_OUTCOMES else "no diagnosis text",
         )
 
-    if windows and oracle_finished_at is None and infra_error not in ("rate_limited", "account_exhausted"):
+    if windows and oracle_finished_at is None and infra_error not in NOT_AGENT_OUTCOMES:
         measure_resolution(ResolutionGradePoint(outcome.incident_id, outcome.resolved_at) if outcome else None)
 
     online_ended_at: datetime | None = None
-    if windows and oracle_finished_at is not None and infra_error not in ("rate_limited", "account_exhausted"):
+    if windows and oracle_finished_at is not None and infra_error not in NOT_AGENT_OUTCOMES:
         # The row's online part is over once the grade is frozen and the agent's outcome is committed. Publish it
         # before the closing turn starts, so a runner can end the row here and wait for the rest as the drain.
         if outcome is not None:
@@ -806,7 +816,7 @@ def _run_one(
         online_ended_at=online_ended_at,
         **outcome_fields,
     )
-    if infra_error in ("rate_limited", "account_exhausted"):
+    if infra_error in NOT_AGENT_OUTCOMES:
         try:
             persist_grade_checkpoint(config.results_path.with_suffix(".grades") / f"{index:06d}.json", record)
         except FileExistsError:

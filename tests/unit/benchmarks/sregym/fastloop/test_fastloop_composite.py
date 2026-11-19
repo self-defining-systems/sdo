@@ -109,6 +109,8 @@ class FakeOps:
 
     second_incident: bool = True
     wedge: bool = False
+    #: The responder never starts: the controller reports failed dispatch attempts past the bound.
+    undispatchable: bool = False
     fixed: set[str] = field(default_factory=set)
     pods: dict[str, ControllerPod] = field(default_factory=dict)
     states: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -184,6 +186,18 @@ class FakeOps:
     ) -> dict[str, float]:
         inject()
         self.fixed |= {"readiness:geo", "configmap:mongodb-rate"}
+        if self.undispatchable:
+            self.states[control_namespace].update(
+                {
+                    "incident_open": True,
+                    "dispatch_state": "DISPATCH_STATE_PENDING",
+                    "dispatch_error": "rate_limited: shared Opus pool unavailable",
+                    "dispatch_failure_attempts": 99,
+                    "incident_request": {"incident_id": "incident-1"},
+                    "incident_detected_at": INJECTED.isoformat(),
+                }
+            )
+            return {"controller_baseline_wait": 1.0}
         if self.wedge:
             self.states[control_namespace].update(
                 {
@@ -682,6 +696,21 @@ def test_a_controller_that_never_closes_the_incident_is_reported_not_waited_on(t
     assert outcome.responder_tokens == TokenCounts(input_tokens=500, cached_input_tokens=400, output_tokens=50)
     assert outcome.error is not None
     assert "without a verified closure" in outcome.error
+    assert ops.maintenance[-1] == "paused"
+
+
+def test_a_responder_that_never_starts_ends_the_composite_as_a_named_infra_failure(tmp_path: Path) -> None:
+    from benchmarks.sregym.adapter import ResponderDispatchError, harness_infra_error
+
+    ops = FakeOps(undispatchable=True)
+    agent = _agent(tmp_path, ops)
+
+    with pytest.raises(ResponderDispatchError) as raised:
+        agent.resolve(0, PROBLEM, _inject)
+
+    report = json.loads((tmp_path / "reports" / f"composite_000_{PROBLEM}.json").read_text(encoding="utf-8"))
+    assert report["stop_reason"] == "dispatch_failed"
+    assert harness_infra_error(raised.value) == "dispatch_failed"
     assert ops.maintenance[-1] == "paused"
 
 

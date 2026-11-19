@@ -270,3 +270,18 @@ def test_two_reflections_one_backing_off_182_seconds_are_waited_out():
     assert wait_for(WaitKind.REFLECTION_ATTEMPT, 2) >= 2 * attempt
     # The fixed 600 s recovery wait that lost row 52/012 is far below it.
     assert wait_for(WaitKind.REFLECTION_ATTEMPT, 2) > 6 * wait_for(WaitKind.OPERATION)
+
+
+def test_dispatch_retry_bounds_mirror_the_go_controller_defaults():
+    """The undispatchable-responder bound is derived from the controller's own backoff, so the two must agree."""
+    from benchmarks.sregym.adapter.persistent import DISPATCH_FAILURE_ATTEMPTS
+
+    source = (Path(__file__).resolve().parents[5] / "sdo/operator/runtime/dispatch_retry.go").read_text()
+    initial = re.search(r"defaultDispatchRetryInitialBackoff\s*=\s*(\d+)\s*\*\s*time\.Second", source)
+    maximum = re.search(r"defaultDispatchRetryMaxBackoff\s*=\s*(\d+)\s*\*\s*time\.Minute", source)
+    assert initial
+    assert maximum
+    assert DEFAULT_BOUNDS.dispatch_retry_initial_seconds == float(initial.group(1))
+    assert DEFAULT_BOUNDS.dispatch_retry_max_seconds == 60.0 * float(maximum.group(1))
+    # Backoff 2, 4, ..., 64, then capped at 120 from attempt 7, plus three capped retries.
+    assert DISPATCH_FAILURE_ATTEMPTS == 10

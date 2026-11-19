@@ -616,6 +616,46 @@ def test_replaced_pod_under_unchanged_template_is_named_as_readiness_loss_not_ro
     assert "currency-z4xmb Pending" in message
 
 
+def test_a_crash_looping_pod_names_its_last_termination_in_the_readiness_failure(monkeypatch):
+    """A StatefulSet whose only pod keeps crashing names the crash, not just "Running"."""
+    from benchmarks.sregym.fastloop import admission
+
+    workload = {
+        "kind": "StatefulSet",
+        "metadata": {"name": "search", "generation": 1},
+        "spec": {"replicas": 1, "selector": {"matchLabels": {"app": "search"}}},
+        "status": {
+            "observedGeneration": 1,
+            "replicas": 1,
+            "updatedReplicas": 1,
+            "currentRevision": "r1",
+            "updateRevision": "r1",
+        },
+    }
+    pod = {
+        "kind": "Pod",
+        "metadata": {"uid": "p", "name": "search-0", "labels": {"app": "search"}},
+        "status": {
+            "phase": "Running",
+            "conditions": [{"type": "Ready", "status": "False"}],
+            "containerStatuses": [
+                {
+                    "name": "search",
+                    "restartCount": 7,
+                    "state": {"waiting": {"reason": "CrashLoopBackOff"}},
+                    "lastState": {"terminated": {"reason": "Error", "exitCode": 127}},
+                }
+            ],
+        },
+    }
+    _patch_kubectl(monkeypatch, lambda *a, **kw: SimpleNamespace(stdout=json.dumps({"items": [workload, pod]})))
+    with pytest.raises(ValueError, match="workload not Ready: StatefulSet/search") as refused:
+        admission.workload_identity(Path("unused"), "any-app")
+    message = str(refused.value)
+    assert "search-0 Running" in message
+    assert "container search: 7 restarts, CrashLoopBackOff, last exit 127 (Error)" in message
+
+
 @pytest.mark.parametrize("reverse", [False, True])
 def test_verify_burst_cannot_shadow_qualified_health_scenarios(reverse):
     from benchmarks.sregym.adapter.eval_guards import qualified_scenarios

@@ -157,6 +157,25 @@ def test_rate_limited_agent_is_not_graded_and_cleanup_still_runs(tmp_path: Path)
     assert frozen["not_graded_reason"] == "rate_limited"
 
 
+def test_a_responder_that_never_started_is_a_named_infra_error_not_a_grade(tmp_path: Path) -> None:
+    from benchmarks.sregym.adapter import ResponderDispatchError
+
+    clock = FakeClock()
+    driver = FakeDriver(clock, oracle_success=False)
+
+    class UndispatchableAgent(FakeAgent):
+        def resolve(self, index, problem_id, inject):
+            inject()
+            raise ResponderDispatchError("controller could not start the responder: shared Opus pool unavailable")
+
+    (record,) = run_incidents(UndispatchableAgent(clock), driver, _config(tmp_path, 1), monotonic=clock.monotonic)
+    assert record.infra_error == "dispatch_failed"
+    assert record.grade_status == "NOT-GRADED"
+    assert record.oracle is None
+    assert "shared Opus pool unavailable" in (record.error or "")
+    assert driver.events == ["inject:p1", "recover", "oracle"]
+
+
 @pytest.mark.parametrize("phase", ["responder", "reflection"])
 def test_account_exhaustion_at_either_agent_phase_is_not_an_sdo_failure(tmp_path: Path, phase: str) -> None:
     from libs.agent_cli.errors import AccountExhausted

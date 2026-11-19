@@ -33,6 +33,7 @@ from benchmarks.sregym.adapter import (
     DetectionMissError,
     PersistentControllerError,
     PersistentState,
+    ResponderDispatchError,
     WaitKind,
     collect_followup_incident,
     drain_pending_incident,
@@ -365,6 +366,10 @@ class CompositeSdoAgent(SdoPersistentAgent):
             except DetectionMissError:
                 stop_reason = "detection_miss"
                 raise
+            except ResponderDispatchError:
+                # No agent could start: an infrastructure failure the runner requeues, not a wedged closure to grade.
+                stop_reason = "dispatch_failed"
+                raise
             except PersistentControllerError as stage_error:
                 if not injected:
                     raise
@@ -453,6 +458,7 @@ class CompositeSdoAgent(SdoPersistentAgent):
                     "no_closure_within_deadline",
                     "controller_stalled",
                     "closure_failed",
+                    "dispatch_failed",
                 }:
                     # The controller stopped itself; nothing will acknowledge a pause.
                     self._ops.set_maintenance(control, paused=True, generation=f"composite-{index:03d}-wedged")

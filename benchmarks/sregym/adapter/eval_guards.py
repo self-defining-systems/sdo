@@ -24,6 +24,28 @@ HEALTH_SETUP_PATHS = (
 )
 
 
+class HarnessInfrastructureError(Exception):
+    """A row ended because the harness or the lane could not run the incident, not because of an agent outcome.
+
+    ``infra_error`` names the cause in the incident record, so the row reports an error and the dispatcher
+    requeues it instead of grading it.
+    """
+
+    infra_error = "harness_infrastructure"
+
+
+def harness_infra_error(exc: BaseException) -> str | None:
+    """The ``infra_error`` of the first :class:`HarnessInfrastructureError` in *exc*'s cause chain."""
+    seen: set[int] = set()
+    cause: BaseException | None = exc
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        if isinstance(cause, HarnessInfrastructureError):
+            return cause.infra_error
+        cause = cause.__cause__ or cause.__context__
+    return None
+
+
 class StabilizationError(RuntimeError):
     """The app never established independent and controller traffic proof."""
 

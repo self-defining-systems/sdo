@@ -10,6 +10,10 @@ Two layers, both without root:
 * per-node ``docker update --cpus/--memory`` (``host_limits``), re-applied on every claim and read back from the
   container's own cgroup files, because a ``systemctl daemon-reload`` can drop properties set through
   ``docker update`` on some runc versions.
+* per-node ``--cpuset-cpus`` of ``ceil(cpus)`` host CPUs. A CPU quota is invisible inside the node (the pods'
+  cgroups show ``cpu.max max``), so without a cpuset a JVM or Go runtime on a 224-CPU host sizes its thread pools
+  and direct buffers for 224 CPUs inside a 6-CPU lane (an OpenSearch with a 400 MiB heap starts 224 netty workers
+  and exhausts its 200 MiB direct-memory limit).
 
 Without the slice (a host that has none) only the per-node limits and the admission budget apply.
 """
@@ -17,6 +21,7 @@ Without the slice (a host that has none) only the per-node limits and the admiss
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import stat
@@ -28,7 +33,7 @@ from typing import TYPE_CHECKING
 from benchmarks.sregym.adapter import WaitKind, wait_for
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Iterable, Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +183,8 @@ class NodeCgroup:
     path: str
     cpus: float | None  # None: unlimited
     memory_bytes: int | None
+    #: CPUs the node's workloads can see (``cpuset.cpus.effective``); None when unreadable.
+    visible_cpus: int | None = None
 
     def under(self, parent: str) -> bool:
         # systemd nests "a-b.slice" under "a.slice", so the slice is a path component, not necessarily the first
@@ -212,12 +219,103 @@ def read_node_cgroup(
         memory = (directory / "memory.max").read_text().strip()
     except (OSError, ValueError, StopIteration, subprocess.SubprocessError):
         return None
+    try:
+        visible: int | None = len(parse_cpu_list((directory / "cpuset.cpus.effective").read_text()))
+    except (OSError, ValueError):
+        visible = None
     cpus = None if fields[0] == "max" else int(fields[0]) / int(fields[1])
-    return NodeCgroup(path, cpus, None if memory == "max" else int(memory))
+    return NodeCgroup(path, cpus, None if memory == "max" else int(memory), visible)
 
 
-def cgroup_matches(state: NodeCgroup, *, cpus: float | None, memory_bytes: int | None) -> bool:
+def parse_cpu_list(text: str) -> frozenset[int]:
+    """A cgroup/Docker CPU list such as ``0-2,7`` as a set; empty text is the empty set."""
+    cpus: set[int] = set()
+    for part in filter(None, text.strip().split(",")):
+        first, _, last = part.partition("-")
+        cpus.update(range(int(first), int(last or first) + 1))
+    return frozenset(cpus)
+
+
+def format_cpu_list(cpus: Iterable[int]) -> str:
+    """The shortest Docker ``--cpuset-cpus`` text for ``cpus``: ranges joined by commas."""
+    ordered, parts = sorted(set(cpus)), []
+    start = previous = None
+    for cpu in [*ordered, None]:
+        if cpu is not None and previous is not None and cpu == previous + 1:
+            previous = cpu
+            continue
+        if start is not None:
+            parts.append(str(start) if start == previous else f"{start}-{previous}")
+        start = previous = cpu
+    return ",".join(parts)
+
+
+def visible_cpu_count(cpus: float) -> int:
+    """How many CPUs a node capped at ``cpus`` should show its workloads."""
+    return max(1, math.ceil(cpus - 1e-9))
+
+
+def read_host_cores(sysfs: Path, allowed: frozenset[int]) -> tuple[frozenset[int], ...]:
+    """Physical cores as sets of SMT siblings (``cpu*/topology/thread_siblings_list``), limited to ``allowed``."""
+    cores = set()
+    for path in sysfs.glob("cpu[0-9]*/topology/thread_siblings_list"):
+        core = parse_cpu_list(path.read_text()) & allowed
+        if core:
+            cores.add(core)
+    if not cores:  # no topology to read: every CPU is its own core
+        cores = {frozenset({cpu}) for cpu in allowed}
+    return tuple(sorted(cores, key=min))
+
+
+class CpusetExhausted(ValueError):
+    """A lane node's CPU cap is larger than this host has CPUs, so no cpuset can show the cap."""
+
+
+@dataclass(frozen=True)
+class CpuPlacement:
+    """One node's cpuset: its size is the node's CPU cap; ``shared`` are CPUs on cores another container holds."""
+
+    node: str
+    cpus: frozenset[int]
+    shared: frozenset[int]
+
+    def record(self) -> dict[str, str]:
+        return {"node": self.node, "cpuset": format_cpu_list(self.cpus), "shared": format_cpu_list(self.shared)}
+
+
+def place_cpus(
+    count: int, cores: Iterable[frozenset[int]], held: Iterable[frozenset[int]], *, node: str = "node"
+) -> CpuPlacement:
+    """Exactly ``count`` host CPUs for a node, so its workloads see its cap (visibility is the requirement).
+
+    Placement is best effort: CPUs of whole cores that no other container's cpuset touches (a held CPU's SMT
+    siblings count as held) come first, lowest core first; when those run out the least-loaded remaining CPUs
+    fill the set, which may share cores with, or overlap, other experiments. Only a cap larger than the host
+    raises ``CpusetExhausted``.
+    """
+    cores = sorted(cores, key=min)
+    held = list(held)
+    every = frozenset().union(*cores)
+    if count > len(every):
+        raise CpusetExhausted(f"eval: {node} is capped at {count} CPUs but this host has only {len(every)}")
+    taken = frozenset().union(*held)
+    busy_cores = [core for core in cores if core & taken]
+    shared_cpus = frozenset().union(*busy_cores)
+    chosen: list[int] = [cpu for core in cores if not core & taken for cpu in sorted(core)][:count]
+    if len(chosen) < count:
+        load = {cpu: sum(cpu in cpuset for cpuset in held) for cpu in every}
+        rest = sorted(every - set(chosen), key=lambda cpu: (load[cpu], cpu))
+        chosen += rest[: count - len(chosen)]
+    cpus = frozenset(chosen)
+    return CpuPlacement(node, cpus, cpus & shared_cpus)
+
+
+def cgroup_matches(
+    state: NodeCgroup, *, cpus: float | None, memory_bytes: int | None, visible_cpus: int | None = None
+) -> bool:
     if cpus is not None and (state.cpus is None or abs(state.cpus - cpus) > 0.01 * cpus):
+        return False
+    if visible_cpus is not None and state.visible_cpus is not None and state.visible_cpus != visible_cpus:
         return False
     return memory_bytes is None or state.memory_bytes == memory_bytes
 
@@ -228,20 +326,28 @@ def verify_node(
     *,
     cpus: float | None,
     memory_bytes: int | None,
+    visible_cpus: int | None = None,
     parent: str | None = None,
     read: Callable[[str], NodeCgroup | None] = read_node_cgroup,
 ) -> NodeCgroup | None:
     """Read the node's cgroup after an update, re-apply once on a mismatch and fail closed if it still differs.
 
     ``None`` means the files could not be read: the limit is unverifiable here, which is logged, not an error.
+    ``visible_cpus`` is how many CPUs the node's workloads must see (its cpuset), checked when readable.
     """
+    expected = {"cpus": cpus, "memory_bytes": memory_bytes, "visible_cpus": visible_cpus}
     state = read(container)
     if state is None:
         logger.warning("lane cgroup: cannot read the cgroup of %s; limits are unverified", container)
         return None
-    if not cgroup_matches(state, cpus=cpus, memory_bytes=memory_bytes):
+    if not cgroup_matches(state, **expected):
         logger.warning(
-            "lane cgroup: %s holds %s, expected cpus=%s memory=%s; re-applying", container, state, cpus, memory_bytes
+            "lane cgroup: %s holds %s, expected cpus=%s memory=%s visible_cpus=%s; re-applying",
+            container,
+            state,
+            cpus,
+            memory_bytes,
+            visible_cpus,
         )
         reapply()
         state = read(container) or state
@@ -249,6 +355,12 @@ def verify_node(
             raise CgroupMismatch(
                 f"eval: {container} cgroup holds cpus={state.cpus} memory={state.memory_bytes} after docker update; "
                 f"expected cpus={cpus} memory={memory_bytes}"
+            )
+        if not cgroup_matches(state, cpus=None, memory_bytes=None, visible_cpus=visible_cpus):
+            raise CgroupMismatch(
+                f"eval: {container} exposes {state.visible_cpus} CPUs to its workloads but is capped at {cpus} CPUs "
+                f"after docker update --cpuset-cpus; JVM and Go runtimes size thread pools and direct buffers from "
+                f"the CPUs they see and overrun the cap (expected {visible_cpus} visible CPUs)"
             )
     if parent is not None and not state.under(parent):
         logger.info(
