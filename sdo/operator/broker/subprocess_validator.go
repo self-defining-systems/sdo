@@ -154,6 +154,33 @@ func validationChildRequest(args []string, registry *telemetry.Registry) (valida
 	return validate.Request{Replay: args[5], Root: args[2], OperatorRoot: args[3], HealthyBaseline: args[4], Layers: validate.Compile, Telemetry: policy, TelemetryRegistry: registry, OwnIncidentDirectory: args[7]}, nil
 }
 
+// ValidationSelfTestCommand is the public entry point image smoke tests call:
+// `sdo-operator validation-self-test CANDIDATE` runs the validation subprocess
+// exactly as the broker does (this binary re-executed with childArguments, the
+// operator root from SDO_OPERATOR_ROOT or the image default, an open
+// telemetry policy) on one candidate checkout, so a caller never encodes the
+// child's private argument list.
+const ValidationSelfTestCommand = "validation-self-test"
+
+// RunValidationSelfTest handles ValidationSelfTestCommand before normal
+// launch: exit 0 when the candidate validates, 1 with the diagnostics or the
+// infrastructure error on stderr otherwise, 2 on a usage error.
+func RunValidationSelfTest() {
+	if len(os.Args) < 2 || os.Args[1] != ValidationSelfTestCommand {
+		return
+	}
+	if len(os.Args) != 3 {
+		fmt.Fprintf(os.Stderr, "usage: sdo-operator %s CANDIDATE\n", ValidationSelfTestCommand)
+		os.Exit(2)
+	}
+	ctx := context.WithValue(context.Background(), telemetryPolicyKey{}, telemetry.Policy{})
+	if err := (SubprocessValidator{}).Validator()(ctx, os.Args[2], nil); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
 // RunValidationChild is called before normal launch by both the operator CLI
 // and synthesized controllers, so the child always runs the parent's binary.
 // registry is the composition root's telemetry adapter registry, the one the

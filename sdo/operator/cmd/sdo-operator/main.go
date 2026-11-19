@@ -20,6 +20,7 @@ var sourceHash string
 
 func main() {
 	broker.RunValidationChild(telemetrysources.Registry())
+	broker.RunValidationSelfTest()
 	if len(os.Args) == 2 && os.Args[1] == "shell-detector-runner" {
 		if err := shellpath.RunInCluster(context.Background()); err != nil {
 			fmt.Fprintln(os.Stderr, err)
