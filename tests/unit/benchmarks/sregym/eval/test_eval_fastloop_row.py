@@ -104,6 +104,8 @@ def environment(tmp_path: Path) -> Any:
         cluster="c",
         kubeconfig=tmp_path / "kc",
         namespace="hotel-reservation",
+        application="hotel-reservation",
+        description="A synthetic hotel application.",
         workspace=tmp_path / "ws",
         seed_commit="seed",
         evidence_root=None,
@@ -166,10 +168,17 @@ def test_sdo_record_maps_own_page_recovery_and_phases() -> None:
     assert set(result.phase_seconds) <= set(PHASES)
 
 
-def test_a_late_sdo_incident_is_no_page_because_the_fallback_hook_is_not_built() -> None:
+def test_a_late_sdo_incident_without_a_fallback_page_is_no_page() -> None:
     result = map_record(record(detected_at=at(400)), cell(), None)
     assert result.paged_at is None
     assert result.page_source == "none"
+
+
+def test_a_fallback_page_is_the_clock_even_though_the_incident_it_opened_is_late() -> None:
+    page = T0.timestamp() + 121
+    result = map_record(record(detected_at=at(125)), cell(), None, fallback_page_at=page)
+    assert result.paged_at == page
+    assert result.page_source == "fallback"
 
 
 def test_vanilla_page_is_the_instruction_handoff_and_has_no_sdo_recovery() -> None:

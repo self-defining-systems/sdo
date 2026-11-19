@@ -16,6 +16,7 @@ from __future__ import annotations
 import importlib
 import json
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 import tomllib
@@ -23,6 +24,7 @@ import tomllib
 from benchmarks.sregym.adapter import HostMemoryPolicy, host_check
 from benchmarks.sregym.eval.cell import CellContext
 from benchmarks.sregym.eval.fastloop_row import FastloopRowRunner, RecordAccountant, RowSettings, TranscriptPresenceGate
+from benchmarks.sregym.eval.page import FallbackPageHook, KubectlPageCluster
 from benchmarks.sregym.eval.results import ResultsTable
 from benchmarks.sregym.eval.scheduler import LoadGate, Scheduler, SnapshotStore
 from benchmarks.sregym.fastloop.lane_cgroup import describe_mode, resolve_cgroup_parent, slice_memory_max
@@ -103,6 +105,8 @@ def run_live(config_path: Path, plan: Plan) -> int:
         accountant=accountant,
         gate=gate,
         resolve_snapshot=resolve,
+        # Pages only the SDO arm (the hook ignores every other arm).
+        page_hook=FallbackPageHook(config.fallback_page_seconds, KubectlPageCluster(), time.time),
     )
     root = config.runs_root / config.stage
     plan.write(root / "plan.json")

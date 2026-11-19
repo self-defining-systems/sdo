@@ -41,6 +41,7 @@ from benchmarks.sregym.eval.health import ProbeResult, http_probe
 from benchmarks.sregym.eval.results import TokenRow
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 from benchmarks.sregym.fastloop.host_limits import apply_lane_cpu
+from benchmarks.sregym.fastloop.injection_marker import read_injection_marker
 from benchmarks.sregym.fastloop.lane_cgroup import DEFAULT_LANE_CPUS, resolve_cgroup_parent
 from benchmarks.sregym.fastloop.records import IncidentRecord, TokenCounts, load_records, online_checkpoint_path
 from benchmarks.sregym.repository_git import host_git_command
@@ -52,7 +53,8 @@ if TYPE_CHECKING:
     from benchmarks.sregym.eval.cell import ArmContext
     from benchmarks.sregym.eval.plan import Cell
 
-#: A page counts as SDO's own only when its incident opened this soon after injection (the fallback page is not built).
+#: A page counts as SDO's own only when its incident opened this soon after injection; later, the fallback page
+#: (``page.FallbackPageHook``, at ``EvalConfig.fallback_page_seconds``) is the clock.
 OWN_PAGE_WINDOW_SECONDS = 120.0
 
 
@@ -177,8 +179,13 @@ def _epoch(value: datetime | None) -> float | None:
     return None if value is None else value.timestamp()
 
 
-def map_record(record: IncidentRecord, cell: Cell, memory_head: str | None) -> ArmResult:
-    """The arm-neutral view of a fastloop incident record."""
+def map_record(
+    record: IncidentRecord, cell: Cell, memory_head: str | None, fallback_page_at: float | None = None
+) -> ArmResult:
+    """The arm-neutral view of a fastloop incident record.
+
+    ``fallback_page_at`` is when the harness paged SDO because it had no incident of its own; it is then the clock.
+    """
     injected = _epoch(record.injection_started_at)
     agent_end = (
         _epoch(record.responder_finished_at) or _epoch(record.resolved_at) or _epoch(record.mitigation_applied_at)
@@ -186,7 +193,9 @@ def map_record(record: IncidentRecord, cell: Cell, memory_head: str | None) -> A
     sdo = cell.arm == "sdo"
     page: float | None
     source: str
-    if sdo:
+    if sdo and fallback_page_at is not None:
+        page, source = fallback_page_at, "fallback"
+    elif sdo:
         detected = _epoch(record.detected_at)
         if detected is not None and injected is not None and detected - injected <= OWN_PAGE_WINDOW_SECONDS:
             page, source = detected, "own"
@@ -326,6 +335,8 @@ class FastloopRowRunner:
                 "cluster": environment.cluster,
                 "namespace": environment.namespace,
                 "kubeconfig": str(environment.kubeconfig),
+                "application": environment.application,
+                "description": environment.description,
             },
         )
 
@@ -498,11 +509,19 @@ class FastloopRowRunner:
             process = self._start(command, cwd=self.settings.code_root, stdout=out, stderr=err)
             results = environment.run_dir / "results" / row_id
             state.update(
-                {"results": results, "process": process, "handles": (out, err), "started": started, "online_end": None}
+                {
+                    "results": results,
+                    "process": process,
+                    "handles": (out, err),
+                    "started": started,
+                    "online_end": None,
+                    "fallback_page_at": None,
+                }
             )
             deadline = started + context.config.cell_cap_seconds + 600
             online = online_checkpoint_path(results / "incidents.jsonl", 0)
             while not online.is_file() and process.poll() is None:
+                self._fallback_page(lane, cell, directory, state, context)
                 if self._now() > deadline:
                     self._stop(process)
                     break
@@ -511,7 +530,7 @@ class FastloopRowRunner:
                 record = IncidentRecord.model_validate_json(online.read_text(encoding="utf-8"))
                 self.records[cell.id] = record
                 state["online_end"] = self._now()
-                return map_record(record, cell, memory_head=None)
+                return map_record(record, cell, None, state["fallback_page_at"])
             completed = self._finish_process(directory, state)
             if admission_try < ADMISSION_RETRIES and _rejected_before_injection(results):
                 # The fault was never injected: the install window or the clean-app rehearsal failed on a slow or
@@ -537,7 +556,43 @@ class FastloopRowRunner:
         if head and self._import_memory is not None:
             self._import_memory(cell.app, cell.problem, environment.workspace, head)
         state["finished"] = True
-        return map_record(record, cell, memory_head=head)
+        return map_record(record, cell, head, state["fallback_page_at"])
+
+    def _fallback_page(
+        self, lane: Lane, cell: Cell, directory: Path, state: dict[str, Any], context: ArmContext
+    ) -> None:
+        """Offer the page hook the injection time once the row has injected; record the page in ``page.json``.
+
+        A failing page is recorded and retried at the next poll; it never stops the row.
+        """
+        if state["fallback_page_at"] is not None:
+            return
+        marker = read_injection_marker(state["results"])
+        if marker is None or state.get("own_incident_at") is not None:
+            return
+        injected = marker.started_at
+        try:
+            paged_at = context.page_hook.page(lane, cell, injected, marker.known_incident_ids)
+        except Exception as exc:
+            (directory / "page.json").write_text(
+                json.dumps({"injected_at": injected, "error": f"{type(exc).__name__}: {exc}"}) + "\n",
+                encoding="utf-8",
+            )
+            return
+        own_at = context.page_hook.own_incident_at(cell)
+        if paged_at is None and own_at is not None:
+            # SDO opened an incident of its own since injection: no fallback; the record's detection is the page.
+            state["own_incident_at"] = own_at
+            (directory / "page.json").write_text(
+                json.dumps({"injected_at": injected, "decided_at": own_at, "source": "own"}) + "\n",
+                encoding="utf-8",
+            )
+        if paged_at is not None:
+            state["fallback_page_at"] = paged_at
+            (directory / "page.json").write_text(
+                json.dumps({"injected_at": injected, "paged_at": paged_at, "source": "fallback"}) + "\n",
+                encoding="utf-8",
+            )
 
     def _stop(self, process: Any) -> None:
         process.terminate()

@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 from google.protobuf import json_format
 
-from sdo.agents.responder.incident_opening import symptom
+from sdo.agents.responder.incident_opening import opened_on, symptom
 from sdo.contracts import Finding, IncidentRequest
 
 OPENED = datetime(2026, 1, 1, 12, 0, 40, tzinfo=UTC)
@@ -143,6 +143,22 @@ def test_an_external_alert_is_stated_as_is() -> None:
     request = IncidentRequest(incident_id="x", namespace="app", external_message="disk full")
     request.detected_at.FromDatetime(OPENED)
     assert symptom(request) == "Opened on external alert at 12:00:40 UTC; return when it is fixed:\ndisk full"
+
+
+def test_a_page_that_opened_a_detected_incident_is_stated_as_is() -> None:
+    request = IncidentRequest(incident_id="x", namespace="app", page="users see errors\non checkout")
+    request.detected_at.FromDatetime(OPENED)
+    assert (
+        symptom(request) == "Opened on a page at 12:00:40 UTC; return when it is fixed:\nusers see errors\non checkout"
+    )
+    assert opened_on(request) == "page"
+
+
+def test_a_page_that_joined_a_detected_incident_leaves_its_symptom() -> None:
+    finding = _test_finding("a")
+    request = _request(finding)
+    request.page = "users see errors"
+    assert "page" not in symptom(request)
 
 
 def test_an_external_alert_reaches_the_agent_whole_with_its_line_breaks() -> None:

@@ -327,8 +327,8 @@ message ExternalIncident {
 message IncidentRequest {
   option (buf.validate.message).cel = {
     id: "incident.trigger"
-    message: "detected incidents require findings and history; external incidents carry no detector evidence"
-    expression: "this.external_message == '' ? (size(this.findings) > 0 && size(this.detector_history) > 0) : (size(this.findings) == 0 && size(this.detector_history) == 0 && size(this.drift_events) == 0 && !has(this.state_changes))"
+    message: "detected incidents require findings and history unless a page opened them; external incidents carry no detector evidence"
+    expression: "this.external_message == '' ? ((size(this.findings) > 0 && size(this.detector_history) > 0) || this.page != '') : (this.page == '' && size(this.findings) == 0 && size(this.detector_history) == 0 && size(this.drift_events) == 0 && !has(this.state_changes))"
   };
   string schema_version = 1 [(buf.validate.field).string.const = "sdo.dev/v1alpha1"];
   string application = 2 [(buf.validate.field).string.min_len = 1];
@@ -400,6 +400,12 @@ message IncidentRequest {
   // the incident response. The text is Go's brief; the session runs the
   // investigator skill and returns its report in IncidentResult.investigation_report.
   string investigator_brief = 43 [(buf.validate.field).string.max_len = 4096];
+  // Go-owned: the text of a page (a person's or on-call system's report
+  // through the external incident inbox) received in detector mode. With no
+  // opening_keys the page opened the incident; otherwise it joined a detected
+  // one. Recovered on an incident holding a page is judged only after the
+  // responder returned, since no detector can clear a page.
+  string page = 44 [(buf.validate.field).string.max_len = 4096];
 }
 
 message ResponseProgress {

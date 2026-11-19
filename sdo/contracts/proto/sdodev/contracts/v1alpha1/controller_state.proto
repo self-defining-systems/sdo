@@ -224,6 +224,10 @@ message ControllerState {
   // When the open incident escalated: its responder returned, or its response
   // timeout passed, before Recovered held. No agent is dispatched again.
   google.protobuf.Timestamp escalated_at = 50;
+  // The ID of the last page (the external incident inbox read in detector
+  // mode) the controller accepted, by opening an incident or joining the open
+  // one. A page is accepted once; the producer may leave it in the inbox.
+  string last_page_id = 51;
   reserved 32, 33, 34, 45;
   reserved "drift_investigation", "drift_admission", "program_sweep_cursors", "verification_deadline_at";
 }

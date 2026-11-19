@@ -826,7 +826,7 @@ func buildDetectSummary(in detectInput) detectSummary {
 	}
 	opened := "Kubernetes condition"
 	switch {
-	case in.Request.ExternalMessage != "":
+	case pageText(in.Request) != "":
 		opened = "page"
 	case len(failing) > 0:
 		opened = "user tests"
@@ -840,6 +840,9 @@ func buildDetectSummary(in detectInput) detectSummary {
 	}
 	if line := alertSetLine(&in.Request); line != "" {
 		header = append(header, line)
+	}
+	if in.Request.Page != "" {
+		header = append(header, "page: no detector clears a page; Recovered is judged after you return, once the alert set stays clear for the stability window. Return when it is fixed.")
 	}
 	for _, note := range in.Request.PriorStages {
 		for _, mitigation := range note.GetMitigations() {

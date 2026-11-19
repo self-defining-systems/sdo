@@ -145,6 +145,10 @@ func openingKeys(request *IncidentRequest) []string {
 	if len(request.OpeningKeys) > 0 {
 		return request.OpeningKeys
 	}
+	if request.Page != "" {
+		// A page opened it: its findings are clues, not opening alerts.
+		return nil
+	}
 	return findingKeys(request.Findings)
 }
 
