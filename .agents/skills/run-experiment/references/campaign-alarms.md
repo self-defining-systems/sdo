@@ -4,7 +4,7 @@ Thresholds and habits that turn the in-principle minimum into checks. Each alarm
 
 ## Alarm per stage
 
-These come on top of the general rule that actual above 2× the minimum is a bug.
+These tighten the general rule that actual above 2× the minimum is a bug.
 
 | stage | alarm |
 | --- | --- |
