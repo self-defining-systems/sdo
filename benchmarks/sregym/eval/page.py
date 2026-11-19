@@ -13,15 +13,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from benchmarks.sregym.adapter import apply_external_incident, control_namespace_for, read_runtime_state
+from benchmarks.sregym.adapter import (
+    apply_external_incident,
+    control_namespace_for,
+    read_runtime_state,
+    state_incident_ids,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from benchmarks.sregym.eval.cell import Cell, Lane
-
-#: Controller state keys that mean SDO has its own incident (open, requested, or closed but not yet acknowledged).
-OWN_INCIDENT_KEYS = ("incident_open", "incident_request", "pending_closure")
 
 
 def incident_notice(application: str, namespace: str, description: str) -> str:
@@ -34,14 +36,15 @@ def lane_notice(lane: Lane) -> str:
     return incident_notice(lane.info["application"], lane.info["namespace"], lane.info.get("description", ""))
 
 
-def has_own_incident(state: dict[str, Any]) -> bool:
-    """Whether the controller's runtime state shows an incident SDO opened itself."""
-    return any(bool(state.get(key)) for key in OWN_INCIDENT_KEYS)
+def has_own_incident(state: dict[str, Any], known: frozenset[str]) -> bool:
+    """Whether SDO opened an incident since injection: one is open, or the state names an incident ID not ``known``
+    at injection (open, awaiting acknowledgement, or already Recovered, closed and acknowledged)."""
+    return bool(state.get("incident_open")) or bool(state_incident_ids(state) - known)
 
 
 class PageCluster(Protocol):
-    def own_incident(self, lane: Lane) -> bool:
-        """Whether SDO has opened its own incident on the lane's cluster."""
+    def own_incident(self, lane: Lane, known: frozenset[str]) -> bool:
+        """Whether SDO opened an incident of its own on the lane's cluster since injection."""
         ...
 
     def send(self, lane: Lane, incident_id: str, message: str) -> None:
@@ -52,9 +55,9 @@ class PageCluster(Protocol):
 class KubectlPageCluster:
     """The lane's controller state and external-incident inbox, over kubectl and the lane kubeconfig."""
 
-    def own_incident(self, lane: Lane) -> bool:
+    def own_incident(self, lane: Lane, known: frozenset[str]) -> bool:
         control = control_namespace_for(lane.info["namespace"])
-        return has_own_incident(read_runtime_state(control, kubeconfig=_kubeconfig(lane)))
+        return has_own_incident(read_runtime_state(control, kubeconfig=_kubeconfig(lane)), known)
 
     def send(self, lane: Lane, incident_id: str, message: str) -> None:
         namespace = lane.info["namespace"]
@@ -86,22 +89,30 @@ class FallbackPageHook:
     notice: Callable[[Lane], str] = lane_notice
     new_id: Callable[[], str] = _page_id
     paged: dict[str, float] = field(default_factory=dict)
+    #: When the hook found the cell's own incident instead of paging.
+    own: dict[str, float] = field(default_factory=dict)
     decided: set[str] = field(default_factory=set)
 
     def __post_init__(self) -> None:
         if self.fallback_page_seconds <= 0:
             raise ValueError("fallback_page_seconds must be positive")
 
-    def page(self, lane: Lane, cell: Cell, injected_at: float) -> float | None:
+    def page(
+        self, lane: Lane, cell: Cell, injected_at: float, known_incident_ids: frozenset[str] = frozenset()
+    ) -> float | None:
         if cell.arm != "sdo" or cell.id in self.decided:
             return None
         if self.now() < injected_at + self.fallback_page_seconds:
             return None
-        if self.cluster.own_incident(lane):
+        if self.cluster.own_incident(lane, known_incident_ids):
             self.decided.add(cell.id)
+            self.own[cell.id] = self.now()
             return None
         self.cluster.send(lane, self.new_id(), self.notice(lane))
         self.decided.add(cell.id)
         at = self.now()
         self.paged[cell.id] = at
         return at
+
+    def own_incident_at(self, cell: Cell) -> float | None:
+        return self.own.get(cell.id)

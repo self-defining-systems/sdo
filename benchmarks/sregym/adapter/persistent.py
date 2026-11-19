@@ -420,6 +420,17 @@ def read_runtime_state(control_namespace: str, *, kubeconfig: Path | None = None
     return state if isinstance(state, dict) else {}
 
 
+def state_incident_ids(state: dict[str, Any]) -> frozenset[str]:
+    """The incident IDs a controller state names: the open request, the pending closure and the last acknowledgement.
+
+    The same IDs the Go controller observation reports as known; one not seen before is an incident opened since.
+    """
+    request = state.get("incident_request") or {}
+    pending = (state.get("pending_closure") or {}).get("request") or {}
+    ids = (request.get("incident_id"), pending.get("incident_id"), state.get("last_acknowledged_incident_id"))
+    return frozenset(str(item) for item in ids if item)
+
+
 def apply_external_incident(
     control_namespace: str, namespace: str, incident_id: str, message: str, *, kubeconfig: Path | None = None
 ) -> None:

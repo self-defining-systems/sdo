@@ -96,17 +96,29 @@ class GateVerdict:
 class PageHook(Protocol):
     """Fallback page when SDO has not opened its own incident (``page.FallbackPageHook``).
 
-    An arm polls ``page`` while it waits, once the fault's injection time is known. It returns the page time when this
-    call sent the page, else ``None``; a hook pages at most once per cell.
+    An arm polls ``page`` while it waits, once the fault's injection time is known, with the incident IDs SDO's
+    controller already named before injection. It returns the page time when this call sent the page, else ``None``;
+    a hook pages at most once per cell.
     """
 
-    def page(self, lane: Lane, cell: Cell, injected_at: float) -> float | None: ...
+    def page(
+        self, lane: Lane, cell: Cell, injected_at: float, known_incident_ids: frozenset[str] = frozenset()
+    ) -> float | None: ...
+
+    def own_incident_at(self, cell: Cell) -> float | None:
+        """When the hook found that SDO had opened an incident of its own since injection (so it did not page)."""
+        ...
 
 
 class NoPageHook:
     """Never pages: the arm's own page (or instruction) is its clock."""
 
-    def page(self, lane: Lane, cell: Cell, injected_at: float) -> float | None:
+    def page(
+        self, lane: Lane, cell: Cell, injected_at: float, known_incident_ids: frozenset[str] = frozenset()
+    ) -> float | None:
+        return None
+
+    def own_incident_at(self, cell: Cell) -> float | None:
         return None
 
 
