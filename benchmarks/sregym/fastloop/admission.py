@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import time
@@ -41,6 +42,8 @@ if TYPE_CHECKING:
 
     from benchmarks.sregym.adapter import ClusterOps, NativeInstallConfig
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+logger = logging.getLogger(__name__)
 
 
 def await_workload_identity(kubeconfig: Path, namespace: str) -> dict[str, Any]:
@@ -591,8 +594,16 @@ class LaneAdmission:
 class EvalAdmissionOps:
     """Prove health while ACTIVE, before either ordinary or simultaneous injection."""
 
-    def __init__(self, inner: ClusterOps, admission: LaneAdmission, *, fresh: bool = False) -> None:
+    def __init__(
+        self,
+        inner: ClusterOps,
+        admission: LaneAdmission,
+        *,
+        fresh: bool = False,
+        on_proven: Callable[[dict[str, Any]], object] | None = None,
+    ) -> None:
         self._inner, self.admission, self._fresh = inner, admission, fresh
+        self._on_proven = on_proven
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
@@ -602,8 +613,15 @@ class EvalAdmissionOps:
     ) -> dict[str, float]:
         started = time.monotonic()
         self._inner.set_maintenance(control_namespace, paused=False, generation=generation + "-proof")
-        self.admission.prove(control_namespace, fresh=self._fresh)
+        proof = self.admission.prove(control_namespace, fresh=self._fresh)
         self._fresh = False
+        if self._on_proven is not None:
+            # The proven, still fault-free lane seals what its next row may reuse. A failed seal only costs that
+            # reuse (the next row deploys), never this row.
+            try:
+                self._on_proven(proof)
+            except Exception as exc:  # recorded; the next row's decision names the missing receipt
+                logger.warning("application setup not sealed after admission: %s", exc)
         seconds = time.monotonic() - started
         result = dict(self._inner.inject_after_resume(control_namespace, generation, inject))
         result["traffic_stabilization"] = seconds
