@@ -552,6 +552,41 @@ Reset also handles namespaces absent after an older abort: it recreates only
 the namespace named by the captured application baseline. Authorization/read
 failures never become absence; system and SDO control namespaces are refused.
 
+## EKS lanes
+
+`up --platform eks` attaches a lane to an existing EKS cluster; it never creates or deletes one (cluster and node
+group lifecycle belong to the account's own tooling). The lane provider is `benchmarks/lanes/eks.py`.
+
+```bash
+export KUBECONFIG=/path/to/cluster-admin-serviceaccount.kubeconfig   # static token, no aws exec plugin
+uv run python -m benchmarks.sregym.fastloop up --platform eks --no-dev-mount \
+  --ecr-registry <account>.dkr.ecr.<region>.amazonaws.com --ecr-tag Project=<tag> \
+  --run-dir "$RUN" --evidence-root "$EVIDENCE" --seed "$SEED" --problem misconfig_app_hotel_res \
+  --cluster-prefix eks-lane- --worker-id 1 --sregym-dir "$SREGYM" \
+  --controller-image sdo-controller:$TAG --responder-image sdo-sregym-responder:$TAG
+```
+
+- **Cluster.** NetworkPolicy enforcement in the VPC CNI is required (checked at attach), and the cluster carries only
+  what a kind lane carries: SDO admission rejects any namespace outside the lane's infrastructure and app set, and the
+  row-start wipe deletes it. Label one node `node-role.kubernetes.io/control-plane=` (SREGym pins its observability
+  stack to that label). The lane is fenced by the API server URL and the `kube-system` UID, not node names, so a node
+  group scaled to zero and back is the same lane.
+- **Images.** `up` pushes the local controller and responder images to `<registry>/sdo/<name>` and records their
+  digests (`pinned_tools`); a lane is current while ECR still holds them. The app is built from source on this host
+  and published under its declared name: a `kube-system` DaemonSet (`sdo-lane-node-agent`) keeps a containerd mirror
+  for `docker.io` on every node that tries `<registry>/v2/sdo-mirror/docker.io/...` first and falls back to Docker
+  Hub. Manifests keep their image names, so SDO sees no image drift.
+- **No mounts.** There is no dev mount: the code under test is the images' code, and `up` builds the host operator at
+  `.fastloop/sdo-operator`. Accepted memory is the lane's workspace, as on kind; share it across hosts through the
+  remote memory branch below, not `--parallel-root`.
+- **Evidence.** The controller's evidence sink is a claim (`sdo-evidence`) in the control namespace; every copy and
+  every settle before a namespace delete first pulls it over the API into `--evidence-root`, so the receipts and
+  refusals of the evidence sink section hold unchanged.
+- **Opus.** SDO admits Opus sessions only through a pool: an EKS lane keeps one per node at
+  `/var/lib/sdo-lane/opus-pool` (`per_host`, host ID = the lane's cluster), provisioned at `up` and at every row start.
+- **Rows.** `run`, `reset` and the eval runner work as on kind; the claim applies no node CPU cap (the instance type
+  is the capacity). `eval-dry-run` needs a scripted-worker responder image pinned to the lane.
+
 ## Lanes on several hosts: one GitHub memory branch per app and run
 
 `benchmarks/sregym/fastloop/remote_memory.py` shares an app's accepted memory between lanes on any
