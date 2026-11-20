@@ -602,3 +602,33 @@ func TestBenchEksLanesAreMadeInParallel(t *testing.T) {
 		t.Fatalf("the second cluster-up began after the first ended (serial):\n%s", times)
 	}
 }
+
+// The node agent pre-pulls the lane's list through the mirror on every node (and so on a node that joins later); the
+// list is written by `prepull`, with unqualified names spelled out the way containerd resolves them.
+func TestEksNodeAgentPrepullsTheLanesImageList(t *testing.T) {
+	s := newEksScript(t)
+	kc := filepath.Join(t.TempDir(), "kc")
+	if out, err := s.run(nil, "up", "eks1", kc); err != nil {
+		t.Fatalf("up: %v\n%s", err, out)
+	}
+	applied := s.file("applied.yaml")
+	for _, want := range []string{"prepull() {", "ctr -n k8s.io images pull --hosts-dir /certs", "name: sdo-lane-prepull", "optional: true", "path: /usr/bin/ctr", "path: /run/containerd"} {
+		if !strings.Contains(applied, want) {
+			t.Errorf("the node agent manifest lacks %q", want)
+		}
+	}
+	// the mirror writer and the prepull share one loop: the list is read only once the mirror headers are in place
+	if i, j := strings.Index(applied, "date +%s > /certs/.sdo-mirror-refreshed"), strings.Index(applied, "\n                prepull\n"); i < 0 || j < i {
+		t.Errorf("prepull does not follow the mirror refresh in the agent loop")
+	}
+	out, err := s.run(nil, "prepull", kc, "busybox:1.36", "yinfangchen/hotelreservation:latest", "123456789012.dkr.ecr.us-west-2.amazonaws.com/sdo/sdo-controller@sha256:"+strings.Repeat("a", 64))
+	if err != nil || !strings.Contains(out, "EKS_PREPULL 3 images") {
+		t.Fatalf("prepull: %v\n%s", err, out)
+	}
+	log := s.log()
+	for _, want := range []string{"docker.io/library/busybox:1.36", "docker.io/yinfangchen/hotelreservation:latest", "sdo-controller@sha256:"} {
+		if !strings.Contains(log, want) {
+			t.Errorf("the pre-pull list lacks %q:\n%s", want, log)
+		}
+	}
+}

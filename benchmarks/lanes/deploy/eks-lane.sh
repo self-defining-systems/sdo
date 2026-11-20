@@ -6,6 +6,7 @@
 #   eks-lane.sh down NAME [KUBECONFIG]              # delete the cluster, its node group and the kubeconfig
 #   eks-lane.sh push IMAGE...                       # make nodes resolve each local image under its declared name (ECR mirror)
 #   eks-lane.sh pin IMAGE...                        # push a pinned image to ECR; prints <registry>/<repo>@sha256:...
+#   eks-lane.sh prepull KUBECONFIG IMAGE...         # the node agent pre-pulls these on every node, now and on node join
 #   eks-lane.sh nodes KUBECONFIG SCRIPT             # run sh -c SCRIPT as root on every node (certs.d at /certs, /var/lib/sdo-lane at /lane)
 #   eks-lane.sh exists NAME                         # exit 0 the cluster exists, 1 it does not, 2 cannot tell
 #   eks-lane.sh fence KUBECONFIG                    # print "<api server> <kube-system uid>" the kubeconfig reaches
@@ -358,6 +359,24 @@ cmd_pin() {
   done
 }
 
+# cmd_prepull KUBECONFIG IMAGE...: the lane's pre-pull list (ConfigMap sdo-lane-prepull in kube-system). The node agent pulls
+# each image on every node, now and on every node that joins, through the mirror. An unqualified name is spelled out the way
+# containerd resolves it; a reference with its own registry (an ECR digest pin) is kept.
+cmd_prepull() {
+  local kc=${1:?kubeconfig}; shift
+  [ $# -gt 0 ] || die "prepull KUBECONFIG IMAGE..."
+  local img name tag list=""
+  for img in "$@"; do
+    case $img in
+      *@*) list+="$img"$'\n';;
+      *) read -r name tag <<<"$(split_ref "$img")"; list+="$name:$tag"$'\n';;
+    esac
+  done
+  kubectl --kubeconfig "$kc" -n kube-system create configmap sdo-lane-prepull --from-literal=images="$list" --dry-run=client -o yaml |
+    kubectl --kubeconfig "$kc" apply -f - >/dev/null
+  echo "EKS_PREPULL $# images"
+}
+
 cmd_nodes() {
   local kc=${1:?kubeconfig} script=${2:?script} pods pod
   pods=$(kubectl --kubeconfig "$kc" -n kube-system get pods -l app.kubernetes.io/name=sdo-lane-node-agent -o jsonpath='{.items[*].metadata.name}')
@@ -392,6 +411,7 @@ case $verb in
   push) cmd_push "$@";;
   pin) cmd_pin "$@";;
   nodes) cmd_nodes "$@";;
+  prepull) cmd_prepull "$@";;
   fence) cmd_fence "$@";;
   exists) cmd_exists "$@";;
   *) echo "usage: $0 up|down|push|pin|nodes|fence ..." >&2; exit 2;;

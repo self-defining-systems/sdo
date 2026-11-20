@@ -52,6 +52,7 @@ kubectl)
   *" get daemonset aws-node"*) [ -n "${FAKE_NO_NETPOL:-}" ] || echo "[--enable-network-policy=true]";;
   *" get namespace kube-system"*) echo 0b1c-uid;;
   *" get pods -l app.kubernetes.io/name=sdo-lane-node-agent"*) echo "agent-1 agent-2";;
+  *"create configmap sdo-lane-prepull"*) printf 'kind: ConfigMap\nname: sdo-lane-prepull\n%s\n' "$*" ;;
   *" apply -f -"*) cat >> "$S/applied.yaml";;
   esac;;
 docker) :;;
