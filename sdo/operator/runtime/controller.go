@@ -1625,6 +1625,11 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 			c.emitLifecycleLocked(&contracts.LifecycleEvent{Event: PhaseResponderCompleted, RecordedAt: contractTimestamp(observedAt), IncidentId: completion.incidentID, DispatchError: completion.err != nil})
 		}
 		c.mu.Unlock()
+		if completion.err != nil && terminal == nil {
+			// The verified incident keeps waiting for a final result that this dispatch will not deliver:
+			// say why instead of waiting silently for the response deadline.
+			c.reportBrokerError("responder dispatch ended with an error after the incident verified", completion.err)
+		}
 		return
 	}
 	var jobFailed *ResponderJobFailedError
