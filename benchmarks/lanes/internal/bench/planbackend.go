@@ -40,6 +40,11 @@ type PlanBackend struct {
 // PlanAdd adds a plan from a plan file: its templates are rendered once per arm and each result is validated as a spec
 // and against the inventory (the pins must be checked out on a usable host).
 func PlanAdd(root Root, file string, w io.Writer) error {
+	release, err := lockAdds(root)
+	if err != nil {
+		return err
+	}
+	defer release()
 	inv, err := LoadInventory(string(root))
 	if err != nil {
 		return err
