@@ -78,7 +78,9 @@ jobs:
       actions: write
       contents: read
     name: controller end-to-end (envtest, fake kubelet, scripted agents)
-    runs-on: ubuntu-latest
+    # Pinned: the fake kubelet runs each Pod in bwrap and the scripted agents nest a second bwrap, which
+    # fails on ubuntu-26.04 (ubuntu-latest moved there on 2026-11-17) with "No permissions to create a new namespace".
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
