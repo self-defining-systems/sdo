@@ -71,6 +71,7 @@ depends_on = [
 [[modules]]
 path = "benchmarks.sregym.fastloop"
 depends_on = [
+    "benchmarks.common.replay",
     "benchmarks.fuzzops",
     "benchmarks.sregym.repository_git",
     "libs.agent_cli",
@@ -127,6 +128,10 @@ path = "benchmarks.sregym.run"
 depends_on = [
     "benchmarks.sregym.runner",
 ]
+
+[[modules]]
+path = "benchmarks.common.replay"
+depends_on = []
 
 [[modules]]
 path = "benchmarks.devswap"

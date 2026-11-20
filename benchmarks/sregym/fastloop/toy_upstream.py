@@ -21,8 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.common.replay.replay import ReplayError, replay_patch, run_git
 from benchmarks.sregym.adapter import WaitKind, wait_for
-from benchmarks.sregym.fastloop.replay_upstream import ReplayError, replay_patch, run_git
 from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
@@ -187,7 +187,7 @@ def push_change(
 
 
 def replay_commit(name: str, remote: str, layout: UpstreamLayout, *, directory: Path = COMMITS_DIR) -> str:
-    """Replay ``<name>.patch`` onto the lane's SDO branch as an engineer would (``replay_upstream.replay_patch``).
+    """Replay ``<name>.patch`` onto the lane's SDO branch as an engineer would (``replay.replay_patch``).
 
     Returns the pushed commit SHA. A patch that does not apply, or a push that keeps losing the race, raises
     ``UpstreamError`` and changes nothing on the branch.
