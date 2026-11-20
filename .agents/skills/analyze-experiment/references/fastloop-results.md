@@ -209,6 +209,9 @@ Collateral and traffic failures still fail the aggregate. Plain excluded faults
 fall back to fresh independent application health and traffic. Recovery always
 regrades current state while preserving the initial exclusion set. The composite analysis
 table exposes `oracle_invalid`. Do not count an excluded fault as fixed or unfixed.
+An alert-based oracle verdict (pass or fail) carries `firing_alerts`: a list of
+`{alertname, source, severity, active_at}` for the alerts that failed it (empty on a pass), so the
+alert-timing failure class reads from the row instead of being inferred from timing.
 Historical C64 candidates: as-e/000 and as-e/001, and the first/repeat rows for
 seed42 astronomy slots 6, 8, 39 and 40 (TRIAGE3 reported eight affected rows;
 confirm row/slot overlap before re-grading). Raw historical grades remain intact.
