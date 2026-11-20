@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -104,10 +105,24 @@ func fuzzopsArgv(c WorkloadCall) ([]string, error) {
 	return append(op, c.Args...), nil
 }
 
+// activeRE is how `fuzzops active-instance` and `undo-instance` say whether the fault is active.
+var activeRE = regexp.MustCompile(`active=(true|false)`)
+
 func (w fuzzopsWorkload) Call(ctx context.Context, c WorkloadCall) (int, string, error) {
 	argv, err := fuzzopsArgv(c)
 	if err != nil {
 		return -1, "", err
+	}
+	if c.Verb == VerbRun && (c.Action == "active" || c.Action == "undo") && c.Stdout != nil {
+		// The contract's answer is {"active": bool}; fuzzops prints active=<bool>, which goes to the log.
+		var text bytes.Buffer
+		final := c.Stdout
+		c.Stdout = io.MultiWriter(&text, c.Log)
+		code, tail, err := runAdapter(ctx, w.dir, exec.CommandContext(ctx, filepath.Join(w.dir, "bin", "fuzzops"), argv...), c, "fuzzops "+strings.Join(argv, " "))
+		if m := activeRE.FindStringSubmatch(text.String()); m != nil {
+			fmt.Fprintf(final, "{\"active\":%s}\n", m[1])
+		}
+		return code, tail, err
 	}
 	return runAdapter(ctx, w.dir, exec.CommandContext(ctx, filepath.Join(w.dir, "bin", "fuzzops"), argv...), c, "fuzzops "+strings.Join(argv, " "))
 }
