@@ -22,8 +22,9 @@ Verbs:
                   The record (last line) has
                   ``operator``, ``valid``, ``lifecycle.inject_at`` and the SREGym summary; the accepted memory after the
                   run is exported to ``$FUZZOPS_EXEC_OUT/memory`` (``memory.bundle`` and ``memory.json``).
-                  ``active``/``undo``: the last run's verdict: clear only when it never injected or fastloop
-                  verified the full cleanup with no recovery error; in flight, killed or unknown is active.
+                  ``active``/``undo``: the last run's verdict: clear only when it never injected, or with no
+                  recovery error fastloop verified the full cleanup or the oracle saw the fault mitigated; in flight,
+                  killed or unknown is active.
 ``grade``         ``report``: ``$WORKLOAD_RESULTS/runs.jsonl`` (the run records) rewritten as one grade per run.
 ``footprint``     unsupported.
 """
@@ -659,7 +660,11 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
     record["valid"] = not why
     record["invalid_reason"] = why or ""
     record["error"] = summary["error"] or failure or ""
-    cleared = not summary["injected_at"] or (summary["full_cleanup_verified"] and not summary["recovery_error"])
+    # Clear: never injected, or no recovery error and either fastloop verified the full cleanup or the problem's oracle
+    # saw the fault mitigated (fastloop then leaves the full cleanup to the next row's start, row_start_tier2).
+    cleared = not summary["injected_at"] or (
+        not summary["recovery_error"] and (bool(summary["full_cleanup_verified"]) or summary["success"])
+    )
     write_fault_state(env_dir, problem, "clear" if cleared else "active")
     return (0 if record["valid"] else 1), record
 

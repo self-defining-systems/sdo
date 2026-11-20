@@ -313,14 +313,24 @@ def active_after(tmp_path: Path, row: dict | None, *, killed: bool = False) -> b
     return result["active"]
 
 
+FAILED_ORACLE = {"kind": "mitigation", "success": False, "details": {}}
+
+
 def test_run_active_is_false_only_when_the_run_verified_its_cleanup(tmp_path):
-    assert active_after(tmp_path, {"full_cleanup_verified": True}) is False
+    assert active_after(tmp_path, {"full_cleanup_verified": True, "oracle": FAILED_ORACLE}) is False
+
+
+def test_a_fault_the_oracle_saw_mitigated_is_clear_when_fastloop_defers_its_cleanup(tmp_path):
+    # fastloop leaves the full cleanup of a mitigated row to the next row's start (cleanup_skipped_reason
+    # row_start_tier2): the problem's own oracle saw the fault mitigated, so the lane holds no live fault.
+    row = {"full_cleanup_verified": False, "cleanup_skipped_reason": "row_start_tier2"}
+    assert active_after(tmp_path, row) is False
 
 
 @pytest.mark.parametrize(
     "row",
     [
-        {"full_cleanup_verified": False},
+        {"full_cleanup_verified": False, "oracle": FAILED_ORACLE},
         {"full_cleanup_verified": True, "recovery_error": "fault still present"},
         None,
     ],
