@@ -1,0 +1,15 @@
+# One SREGym repeat-vs-first item: p1 runs the problem from the lane's onboarding memory with the scripted agent
+# registrations (no model calls); p2 runs it again seeded with the memory p1's closing turn left.
+# The pins are the SDO checkout that holds the adapter (workload and subject are the same checkout).
+plan: sgl-repeat-hotel
+pins: {workload: sregym@6c6bf6d8, subject: sregym@6c6bf6d8}
+arms:
+  - {name: p1, spec: specs/p1.json}
+  - {name: p2, spec: specs/p2.json}
+items:
+  - {id: hotel-misconfig, vars: {problem: misconfig_app_hotel_res}}
+reps: 1
+parallel: 1
+isolation: one-way-ok
+artifacts: {memory: {path: "${run}/exec/memory", verify: exists}}
+edges: [{from: p1, to: p2, artifact: memory}]
