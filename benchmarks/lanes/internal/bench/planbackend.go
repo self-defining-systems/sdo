@@ -85,6 +85,7 @@ func PlanControl(root Root, name string, f func(dir string) error) error {
 // planSpecCheck is the check of one rendered spec: the platform's own spec validation and the inventory (the pins
 // must be checked out on a usable host).
 func planSpecCheck(inv Inventory) func([]byte) error {
+	pins := map[string]string{} // the pin check's answers, one per host and pin
 	return func(b []byte) error {
 		s, err := ParseSpec(b)
 		if err != nil {
@@ -97,7 +98,7 @@ func planSpecCheck(inv Inventory) func([]byte) error {
 		if s.Operator.Hooks != "" && inv.HookCommand[s.Operator.Hooks] == "" {
 			return fmt.Errorf("hosts.yaml has no hook_command for %s", s.Operator.Hooks)
 		}
-		return nil
+		return checkPins(context.Background(), inv, s, nil, pins)
 	}
 }
 

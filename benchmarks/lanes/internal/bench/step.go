@@ -227,10 +227,8 @@ func RunStep(ctx context.Context, path string) error {
 	switch {
 	case err != nil:
 		r.fail("fuzzops version: %v", err)
-	case s.FuzzopsRev != "" && r.res.Fuzzops.Modified:
-		r.fail("fuzzops binary was built from a modified checkout (%s): runs must be measured by the pinned revision", r.res.Fuzzops.Revision)
-	case s.FuzzopsRev != "" && !strings.HasPrefix(r.res.Fuzzops.Revision, s.FuzzopsRev):
-		r.fail("fuzzops binary is %s, not the pinned %s (rebuild bin/fuzzops)", r.res.Fuzzops.Revision, s.FuzzopsRev)
+	case pinMismatch(r.res.Fuzzops, s.FuzzopsRev) != "":
+		r.fail("%s", pinMismatch(r.res.Fuzzops, s.FuzzopsRev))
 	default:
 		switch s.Kind {
 		case StepBuild:
