@@ -690,6 +690,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}
 		dispatcher = KubernetesJobDispatcher{
 			AcceptedRepository: resolvedRoot,
+			OnUsageProblem:     func(err error) { fmt.Fprintln(stderr, "responder usage dropped:", err) },
 			CoverageProvider:   selectedCodePath.Coverage,
 			APIProxyImage:      apiProxyImage,
 			Recording:          policy.Agent.Recording,

@@ -11,12 +11,14 @@ import (
 // The storage edge owns physical paths; the worker owns provider normalization. A stopped investigator counts
 // through its last checkpoint and marks the total partial; nil means nothing was observed.
 func (d KubernetesJobDispatcher) ResponderUsage(id string) (*contracts.UsageMetrics, error) {
-	total, err := memory.ResponderUsage(d.RepositoryMountPath, d.RepositoryPVCSubPath, id)
+	total, problems, err := memory.ResponderUsage(d.RepositoryMountPath, d.RepositoryPVCSubPath, id)
+	d.reportUsageProblems(problems)
 	if err != nil || !d.Investigators.Enabled() {
 		return total, err
 	}
 	for index := 1; index <= d.Investigators.Count; index++ {
-		usage, err := memory.ResponderUsage(d.RepositoryMountPath, d.RepositoryPVCSubPath, investigatorID(id, index))
+		usage, problems, err := memory.ResponderUsage(d.RepositoryMountPath, d.RepositoryPVCSubPath, investigatorID(id, index))
+		d.reportUsageProblems(problems)
 		if err != nil {
 			return nil, fmt.Errorf("investigator %d usage: %w", index, err)
 		}
@@ -30,6 +32,16 @@ func (d KubernetesJobDispatcher) ResponderUsage(id string) (*contracts.UsageMetr
 		total = memory.AddUsage(total, usage)
 	}
 	return total, nil
+}
+
+// reportUsageProblems records usage shape problems as evidence; they never fail the incident.
+func (d KubernetesJobDispatcher) reportUsageProblems(problems []error) {
+	if d.OnUsageProblem == nil {
+		return
+	}
+	for _, problem := range problems {
+		d.OnUsageProblem(problem)
+	}
 }
 
 func (c *Controller) responderUsage(id string) (*contracts.UsageMetrics, error) {
