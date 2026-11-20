@@ -57,7 +57,7 @@ func Names(plansRoot string) []string {
 // Add validates the plan file, copies it and its templates under plansRoot/<name> and writes the lock and an empty
 // state. validate, when non-nil, checks a rendered spec (the platform's own spec validation) for one node per arm.
 // A plan name is never reused.
-func Add(plansRoot, file string, clock Clock, validate func(specJSON []byte) error) (*Lock, error) {
+func Add(plansRoot, file string, clock Clock, validate func(specJSON []byte) error, opts ...Option) (*Lock, error) {
 	raw, err := os.ReadFile(file)
 	if err != nil {
 		return nil, err
@@ -71,6 +71,9 @@ func Add(plansRoot, file string, clock Clock, validate func(specJSON []byte) err
 		return nil, err
 	}
 	base := filepath.Dir(abs)
+	if err := p.resolvePins(base, optionsOf(opts)); err != nil {
+		return nil, fmt.Errorf("%s: %w", file, err)
+	}
 	items, err := p.LoadItems(base)
 	if err != nil {
 		return nil, err
@@ -152,3 +155,25 @@ func readJSONFile(path string, v any) error {
 }
 
 func readJSONFileBytes(b []byte, v any) error { return json.Unmarshal(b, v) }
+
+// AllExperiments lists every experiment name the plan in dir has released or may have released: each node's attempts,
+// including the next one (a submit whose state write was lost).
+func AllExperiments(dir string) []string {
+	st, err := LoadState(dir)
+	var lock Lock
+	if err != nil || readJSONFile(lockFile(dir), &lock) != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, n := range st.Nodes {
+		for a := 1; a <= n.Attempt+1; a++ {
+			name := ExpName(lock.Plan, n.ID, a)
+			if !seen[name] {
+				seen[name] = true
+				out = append(out, name)
+			}
+		}
+	}
+	return out
+}

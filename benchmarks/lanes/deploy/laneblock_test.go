@@ -62,7 +62,7 @@ func blockSetup(t *testing.T) *blockEnv {
 	sc := filepath.Join(dir, "bin", "systemctl")
 	os.WriteFile(sc, []byte(fakeSystemctl), 0o755)
 	b.vars = append(os.Environ(), "SC_STATE="+b.sc, "SDO_EVAL_CGROUP_ROOT="+b.cg, "SDO_EVAL_STATE="+b.state, "SDO_EVAL_ONLINE="+filepath.Join(dir, "online"),
-		"SDO_EVAL_MEMINFO="+filepath.Join(dir, "meminfo"), "SDO_EVAL_SYSTEMCTL="+sc, "SDO_EVAL_SYSFS="+filepath.Join(dir, "sys"))
+		"SDO_EVAL_MEMINFO="+filepath.Join(dir, "meminfo"), "SDO_EVAL_SYSTEMCTL="+sc, "SDO_EVAL_SYSFS="+filepath.Join(dir, "sys"), "SDO_EVAL_DROPIN_DIR="+filepath.Join(dir, "dropin"))
 	return b
 }
 
@@ -175,7 +175,14 @@ func TestLaneExecRunsTheCommandInTheLaneCgroup(t *testing.T) {
 	pidFile := filepath.Join(b.dir, "pid")
 	b.must("lane-exec", "tp-c1", "--cpus", "41-42", "--memory", "2G", "--", "sh", "-c", "echo $$ > "+pidFile)
 	lane := filepath.Join(b.cg, "lanes.slice", "lanes-tp_c1.slice")
-	procs, _ := os.ReadFile(filepath.Join(lane, "cgroup.procs"))
+	// cgroup v2 no-internal-processes: the lane slice itself never holds the step, only its leaf does
+	if direct, _ := os.ReadFile(filepath.Join(lane, "cgroup.procs")); strings.TrimSpace(string(direct)) != "" {
+		t.Errorf("the lane slice holds processes directly: %q", direct)
+	}
+	if st := b.must("block", "status"); strings.Contains(st, "defect") {
+		t.Errorf("status reports a defect for a correct step:\n%s", st)
+	}
+	procs, _ := os.ReadFile(filepath.Join(lane, "step", "cgroup.procs"))
 	pid, _ := os.ReadFile(pidFile)
 	if strings.TrimSpace(string(procs)) == "" || strings.TrimSpace(string(procs)) != strings.TrimSpace(string(pid)) {
 		t.Errorf("the command is not in the lane cgroup: cgroup.procs %q, command pid %q", procs, pid)
@@ -185,6 +192,22 @@ func TestLaneExecRunsTheCommandInTheLaneCgroup(t *testing.T) {
 	}
 	if out, err := b.do("lane-exec", "c1", "--cpus", "1-2", "--", "true"); err == nil || !strings.Contains(out, "not inside the block") {
 		t.Errorf("cpus outside the block: %v\n%s", err, out)
+	}
+}
+
+// A lane slice with a process directly in it is a defect `block status` names with a reason.
+func TestBlockStatusReportsALaneSliceHoldingProcesses(t *testing.T) {
+	b := blockSetup(t)
+	b.must("block", "reserve", "--cpus", "40-55", "--memory", "8G")
+	lane := filepath.Join(b.cg, "lanes.slice", "lanes-x.slice")
+	if err := os.MkdirAll(lane, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lane, "cgroup.procs"), []byte("123\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if st := b.must("block", "status"); !strings.Contains(st, "defect lanes-x.slice 1 process(es) directly in cgroup.procs") {
+		t.Errorf("no defect reported:\n%s", st)
 	}
 }
 
@@ -234,5 +257,58 @@ func TestBlockStateSurvivesAWipeOfRunAndMigratesFromIt(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(b.state, "block")); err == nil {
 		t.Error("the legacy file was left behind")
+	}
+}
+
+// kubepods.slice is created at boot by a k3s agent, after the reservation was applied, and is a plain cgroup directory
+// the helper never saw as a unit. Status must look at the cgroups, not only at systemd: a slice whose cpus overlap the
+// block means the reservation is not two-way.
+func (b *blockEnv) cgroup(name, file, cpus string) {
+	b.t.Helper()
+	d := filepath.Join(b.cg, name)
+	os.MkdirAll(d, 0o755)
+	if err := os.WriteFile(filepath.Join(d, file), []byte(cpus+"\n"), 0o644); err != nil {
+		b.t.Fatal(err)
+	}
+}
+
+func TestStatusIsNotTwoWayWhileASliceThatAppearedLaterIsNotShrunk(t *testing.T) {
+	b := blockSetup(t)
+	b.must("block", "reserve", "--cpus", "40-55", "--memory", "8G", "--host-reserve-cpus", "2")
+	b.cgroup("kubepods.slice", "cpuset.cpus.effective", "0-55")
+	if st := b.must("block", "status"); !strings.Contains(st, "two-way no") || !strings.Contains(st, "kubepods.slice") {
+		t.Fatalf("a slice that reaches into the block must make the reservation one-way, and be named:\n%s", st)
+	}
+	b.cgroup("kubepods.slice", "cpuset.cpus.effective", "0-39")
+	if st := b.must("block", "status"); !strings.Contains(st, "two-way yes") {
+		t.Fatalf("once the slice is outside the block:\n%s", st)
+	}
+}
+
+// The reservation reaches slices whenever they appear: a persistent drop-in for each (a unit created later picks it up
+// at creation) and, on the gc timer, a re-apply to any slice found overlapping the block.
+func TestReservationAppliesToSlicesThatAppearLater(t *testing.T) {
+	b := blockSetup(t)
+	b.must("block", "reserve", "--cpus", "40-55", "--memory", "8G", "--host-reserve-cpus", "2")
+	drop := filepath.Join(b.dir, "dropin", "kubepods.slice.d", "50-lane-reserve.conf")
+	if got, err := os.ReadFile(drop); err != nil || !strings.Contains(string(got), "AllowedCPUs=0-39") {
+		t.Fatalf("no persistent drop-in for a slice that does not exist yet: %v %q", err, got)
+	}
+	b.cgroup("kubepods.slice", "cpuset.cpus", "0-55")
+	b.must("gc")
+	if got := cgfile(t, filepath.Join(b.cg, "kubepods.slice"), "cpuset.cpus"); got != "0-39" {
+		t.Fatalf("gc must re-apply the reservation to a slice that overlaps the block: cpuset.cpus %q", got)
+	}
+	if st := b.must("block", "status"); !strings.Contains(st, "two-way yes") {
+		t.Fatalf("status after the re-apply:\n%s", st)
+	}
+	b.must("block", "unreserve")
+	if _, err := os.Stat(drop); err == nil {
+		t.Error("unreserve must remove the drop-ins")
+	}
+	b.cgroup("kubepods.slice", "cpuset.cpus", "0-55")
+	b.must("gc")
+	if got := cgfile(t, filepath.Join(b.cg, "kubepods.slice"), "cpuset.cpus"); got != "0-55" {
+		t.Errorf("without a block gc must not touch other slices: %q", got)
 	}
 }

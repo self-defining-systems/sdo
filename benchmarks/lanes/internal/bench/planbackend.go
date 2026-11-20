@@ -40,11 +40,151 @@ type PlanBackend struct {
 // PlanAdd adds a plan from a plan file: its templates are rendered once per arm and each result is validated as a spec
 // and against the inventory (the pins must be checked out on a usable host).
 func PlanAdd(root Root, file string, w io.Writer) error {
+	release, err := lockAdds(root)
+	if err != nil {
+		return err
+	}
+	defer release()
 	inv, err := LoadInventory(string(root))
 	if err != nil {
 		return err
 	}
-	lock, err := plan.Add(root.PlansDir(), file, SystemClock{}, func(b []byte) error {
+	lock, err := plan.Add(root.PlansDir(), file, SystemClock{}, planSpecCheck(inv), plan.WithResolver(GitResolve))
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "plan %s added: %d nodes, workload %s, subject %s\n", lock.Plan, lock.Nodes, lock.Pins.Workload, lock.Pins.Subject)
+	return nil
+}
+
+// GitResolve is the plan engine's ref resolver: the full commit a ref names in the git checkout at dir.
+func GitResolve(dir, ref string) (string, error) {
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}").Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse %s in %s failed (is it a git checkout with that ref?)", ref, dir)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// PlanDryRun runs every check of PlanAdd and prints the expanded plan (items, arms, edges, order), as JSON when
+// jsonOut. It creates nothing under the root.
+func PlanDryRun(root Root, file string, jsonOut bool, w io.Writer) error {
+	inv, err := LoadInventory(string(root))
+	if err != nil {
+		return err
+	}
+	pv, err := plan.DryRun(root.PlansDir(), file, SystemClock{}, planSpecCheck(inv), plan.WithResolver(GitResolve))
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		b, _ := json.MarshalIndent(pv, "", " ")
+		_, err = fmt.Fprintln(w, string(b))
+		return err
+	}
+	pv.Render(w)
+	return nil
+}
+
+// PlanRemove is `lanes plan remove`: it marks the plan for cleanup and, when no manager runs, does the cleanup itself.
+// Cleanup cancels the plan's experiments (queued runs are dropped; a run on a lane finishes), moves them and the plan's
+// directory under <root>/plans/.removed/<name>-<time>/ (results and state stay there) and so frees the plan's name. A
+// run still on a lane delays the move of its experiment until it ends; the manager carries on every pass.
+func PlanRemove(root Root, name string, keep bool, w io.Writer) error {
+	dir := plan.Dir(root.PlansDir(), name)
+	if _, err := os.Stat(dir); err != nil {
+		return fmt.Errorf("no plan %q under %s", name, root.PlansDir())
+	}
+	if keep {
+		return plan.RemovePlan(dir, false)
+	}
+	if err := plan.PurgePlan(dir); err != nil {
+		return err
+	}
+	lf, err := os.OpenFile(root.path("bench.lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return err
+	}
+	defer lf.Close()
+	if syscall.Flock(int(lf.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
+		fmt.Fprintf(w, "plan %s marked for removal; the manager cleans it up on its next pass\n", name)
+		return nil
+	}
+	done, err := purgePlan(root, name)
+	if err != nil {
+		return err
+	}
+	if !done {
+		fmt.Fprintf(w, "plan %s: experiments still run on lanes; the next manager pass finishes the removal when they end\n", name)
+		return nil
+	}
+	fmt.Fprintf(w, "plan %s removed; its name is free\n", name)
+	return nil
+}
+
+// purgePlan advances the cleanup of a plan marked for removal; done when the plan directory has moved to the archive.
+// It is idempotent: a restart repeats whatever the last pass did not finish.
+func purgePlan(root Root, name string) (done bool, err error) {
+	dir := plan.Dir(root.PlansDir(), name)
+	b := &PlanBackend{Root: root}
+	exps := plan.AllExperiments(dir)
+	for _, exp := range exps {
+		if err := b.Cancel(context.Background(), exp); err != nil {
+			return false, err
+		}
+	}
+	archive, err := plan.SetArchive(dir, filepath.Join(root.PlansDir(), ".removed", name+"-"+time.Now().UTC().Format("2006-01-02_150405")))
+	if err != nil {
+		return false, err
+	}
+	if err := os.MkdirAll(filepath.Join(archive, "experiments"), 0o755); err != nil {
+		return false, err
+	}
+	pending := false
+	for _, exp := range exps {
+		src := root.path(exp)
+		if _, err := os.Stat(src); err != nil {
+			continue
+		}
+		if b.laneBound(exp) {
+			pending = true
+			continue
+		}
+		if err := os.Rename(src, filepath.Join(archive, "experiments", exp)); err != nil {
+			return false, err
+		}
+	}
+	if pending {
+		return false, nil
+	}
+	// The plan directory moves last, into the archive directory itself: its files sit beside experiments/.
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return false, err
+	}
+	for _, e := range ents {
+		if err := os.Rename(filepath.Join(dir, e.Name()), filepath.Join(archive, e.Name())); err != nil {
+			return false, err
+		}
+	}
+	return true, os.Remove(dir)
+}
+
+// PlanControl applies a control request (pause, resume, remove, skip) to the plan's directory. The manager applies it
+// on its next pass; the request is on disk until then, so a restart loses nothing.
+func PlanControl(root Root, name string, f func(dir string) error) error {
+	dir := plan.Dir(root.PlansDir(), name)
+	if _, err := os.Stat(dir); err != nil {
+		return fmt.Errorf("no plan %q under %s", name, root.PlansDir())
+	}
+	return f(dir)
+}
+
+// planSpecCheck is the check of one rendered spec: the platform's own spec validation and the inventory (the pins
+// must be checked out on a usable host).
+func planSpecCheck(inv Inventory) func([]byte) error {
+	pins := map[string]string{} // the pin check's answers, one per host and pin
+	return func(b []byte) error {
 		s, err := ParseSpec(b)
 		if err != nil {
 			return err
@@ -56,13 +196,8 @@ func PlanAdd(root Root, file string, w io.Writer) error {
 		if s.Operator.Hooks != "" && inv.HookCommand[s.Operator.Hooks] == "" {
 			return fmt.Errorf("hosts.yaml has no hook_command for %s", s.Operator.Hooks)
 		}
-		return nil
-	})
-	if err != nil {
-		return err
+		return checkPins(context.Background(), inv, s, nil, pins)
 	}
-	fmt.Fprintf(w, "plan %s added: %d nodes, workload %s, subject %s\n", lock.Plan, lock.Nodes, lock.Pins.Workload, lock.Pins.Subject)
-	return nil
 }
 
 // Submit adds the experiment unless it exists.
@@ -358,7 +493,7 @@ func (b *PlanBackend) StartStep(_ context.Context, j plan.StepJob) error {
 		return err
 	}
 	go func() { _ = cmd.Wait() }()
-	started, _ := json.Marshal(map[string]any{"at": time.Now().UTC(), "timeout_s": int(j.Timeout.Seconds())})
+	started, _ := json.Marshal(map[string]any{"at": time.Now().UTC(), "timeout_s": int(j.Timeout.Seconds()), "pid": cmd.Process.Pid})
 	return os.WriteFile(filepath.Join(j.Dir, "started.json"), started, 0o644)
 }
 
@@ -383,6 +518,33 @@ func (b *PlanBackend) ObserveStep(_ context.Context, dir string) (plan.StepObser
 		return plan.StepObservation{Phase: plan.PhaseFailed, Detail: "no exit record past the step's timeout (lost)"}, nil
 	}
 	return plan.StepObservation{Phase: plan.PhaseRunning}, nil
+}
+
+// Cancel removes the experiment: its queued runs are dropped; a run already on a lane finishes and its results stay
+// (the platform has no way to stop one mid-run).
+func (b *PlanBackend) Cancel(_ context.Context, exp string) error {
+	err := Remove(b.Root, exp, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+// CancelStep kills the step's process group (setsid made it a group of its own) and records exit 143, as a killed
+// step would.
+func (b *PlanBackend) CancelStep(_ context.Context, dir string) error {
+	var st struct {
+		PID int `json:"pid"`
+	}
+	if err := readJSON(filepath.Join(dir, "started.json"), &st); err == nil && st.PID > 1 {
+		if err := syscall.Kill(-st.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return err
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "exit")); err == nil {
+		return nil
+	}
+	return os.WriteFile(filepath.Join(dir, "exit"), []byte("143\n"), 0o644)
 }
 
 var _ plan.Backend = (*PlanBackend)(nil)
@@ -442,10 +604,16 @@ func PlansSummary(root Root, w io.Writer) {
 			done, fly, queued, blocked, failed = done+a.Done, fly+a.Inflight, queued+a.Queued, blocked+a.Blocked, failed+a.Failed+a.Skipped+a.Parked
 		}
 		state := "running"
-		if s.Complete {
+		switch {
+		case s.Complete:
 			state = "complete"
+		case s.Removed:
+			state = "removed"
+		case s.Paused:
+			state = "paused"
 		}
-		fmt.Fprintf(w, "plan %-24s %-8s done %d, in flight %d, queued %d, blocked %d, failed %d (lanes plan status %s)\n", n, state, done, fly, queued, blocked, failed, n)
+		fmt.Fprintf(w, "plan %-24s %-8s nodes done %d, in flight %d, queued %d, blocked %d, failed %d; items %d/%d done, %d parked, %d alarm(s) (lanes plan status %s)\n",
+			n, state, done, fly, queued, blocked, failed, s.Items.Done, s.Items.Total, s.Items.Parked, len(s.Alarms), n)
 	}
 }
 

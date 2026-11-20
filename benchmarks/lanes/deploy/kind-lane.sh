@@ -191,6 +191,18 @@ up)
   fi
   adopt_evidence "$name" "$ev"
   ./lane-limits.sh apply "$name"   # no-op without FUZZOPS_LANE_*; sets an adopted cluster's nodes to the lane's share
+  if [ -n "${FUZZOPS_LANE_MEMORY:-}" ]; then
+    # the limit is read back from docker, never assumed: a node with no memory limit can take the whole host
+    for n in $(kind get nodes --name "$name"); do
+      case $n in *external-load-balancer*) continue ;; esac
+      mem=$(docker inspect -f '{{.HostConfig.Memory}}' "$n" 2>/dev/null || true)
+      [ "${mem:-0}" -gt 0 ] 2>/dev/null || {
+        echo "kind-lane: node $n has no memory limit (HostConfig.Memory '${mem:-}'), the lane's memory is $FUZZOPS_LANE_MEMORY: deleting the lane" >&2
+        kind delete cluster --name "$name" >&2 || true
+        exit 1
+      }
+    done
+  fi
   for n in $(kind get nodes --name "$name"); do
     docker exec "$n" test -d /bench-evidence || { echo "node $n has no /bench-evidence mount: not a lane (delete and recreate it)" >&2; exit 1; }
     docker exec "$n" mkdir -p /etc/containerd/certs.d/_default

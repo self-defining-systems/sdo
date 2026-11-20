@@ -34,6 +34,10 @@ type Manager struct {
 	// RootPointer, when set, is the file Serve records the root in (PointerPath), so
 	// `fuzzops view` finds it with no flag.
 	RootPointer string
+	// Now is the manager's clock (default the wall clock); tests set a fake one.
+	Now func() time.Time
+	// HostPreflight, when set, must pass for a host that was unreachable before it takes work again.
+	HostPreflight func(ctx context.Context, host string) error
 
 	inv Inventory
 	// invGood: inv is an inventory that loaded; invErr: why hosts.yaml was refused since (used instead of it).
@@ -52,8 +56,15 @@ type Manager struct {
 	// planGrading counts the background grading jobs the plans' backends started.
 	planGrading sync.WaitGroup
 
+	// down: hosts that stopped answering and since when; alarmed: the alarms standing (raised once each).
+	down    map[string]time.Time
+	downMu  sync.Mutex
+	seeded  bool
+	alarmed map[string]bool
+
 	reservations map[string]Reservation
 	drift        map[string]string
+	foreign      map[string]string // host -> slices that hold containers pinned inside the block (live one-way)
 	driftAt      map[string]time.Time
 }
 
@@ -89,6 +100,13 @@ func (m *Manager) Serve(ctx context.Context) error {
 	}
 }
 
+func (m *Manager) now() time.Time {
+	if m.Now != nil {
+		return m.Now()
+	}
+	return time.Now()
+}
+
 func (m *Manager) logf(f string, a ...any) {
 	line := fmt.Sprintf("%s %s\n", time.Now().UTC().Format(time.RFC3339), fmt.Sprintf(f, a...))
 	if m.Log != nil {
@@ -100,7 +118,13 @@ func (m *Manager) logf(f string, a ...any) {
 	}
 }
 
+// ops reaches host through the manager's bounds (guardedOps): no call waits longer than its bound, and none waits at
+// all on a host marked unreachable.
 func (m *Manager) ops(host string) HostOps {
+	return guardedOps{in: m.rawOps(host), m: m, host: host}
+}
+
+func (m *Manager) rawOps(host string) HostOps {
 	h := m.inv.Hosts[host]
 	if m.Ops != nil {
 		return m.Ops(host, h)
@@ -115,6 +139,88 @@ func (m *Manager) ops(host string) HostOps {
 	return sshHost{name: host, h: h, fuzzops: m.inv.Checkouts.Fuzzops}
 }
 
+// stepsOn is the step of each lane of host that has one in flight, or given up as an orphan (lane -> step id).
+func (m *Manager) stepsOn(host string) map[string]string {
+	steps := map[string]string{}
+	for _, l := range m.lanes {
+		switch {
+		case l.Host != host:
+		case l.Step != nil:
+			steps[l.Lane] = l.Step.ID
+		case l.Orphan != nil:
+			steps[l.Lane] = l.Orphan.ID
+		}
+	}
+	return steps
+}
+
+type hostProbe struct {
+	pr  Probe
+	err error
+}
+
+// probeAll probes every host at once. Each probe ends within its bound (guardedOps), so a wedged host delays the
+// pass by at most that and the others are never queued behind it.
+func (m *Manager) probeAll(ctx context.Context) map[string]hostProbe {
+	out := map[string]hostProbe{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for name := range m.inv.Hosts {
+		steps := m.stepsOn(name)
+		var fz []string
+		for _, byHost := range m.inv.Checkouts.Fuzzops {
+			if p := byHost[name]; p != "" {
+				fz = append(fz, p)
+			}
+		}
+		sort.Strings(fz)
+		ops := m.ops(name)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			pr, err := ops.Probe(ctx, steps, fz)
+			mu.Lock()
+			out[name] = hostProbe{pr, err}
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	return out
+}
+
+// seedDown restores, after a restart, which hosts were unreachable and since when.
+func (m *Manager) seedDown() {
+	if m.seeded {
+		return
+	}
+	m.seeded = true
+	var prev map[string]HostStatus
+	_ = readJSON(m.Root.path("hosts.status.json"), &prev)
+	m.downMu.Lock()
+	defer m.downMu.Unlock()
+	for name, st := range prev {
+		if st.Error != "" && !st.DownSince.IsZero() {
+			if m.down == nil {
+				m.down = map[string]time.Time{}
+			}
+			m.down[name] = st.DownSince
+		}
+	}
+}
+
+// markDown records that host did not answer and returns since when it has not.
+func (m *Manager) markDown(host string) time.Time {
+	m.downMu.Lock()
+	defer m.downMu.Unlock()
+	if m.down == nil {
+		m.down = map[string]time.Time{}
+	}
+	if _, ok := m.down[host]; !ok {
+		m.down[host] = m.now().UTC()
+	}
+	return m.down[host]
+}
+
 // Reconcile is one pass: adopt, then continue sequences, then bind lanes, then release idle operators.
 func (m *Manager) Reconcile(ctx context.Context) error {
 	if err := m.loadInventory(); err != nil {
@@ -123,37 +229,60 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 	if err := m.load(); err != nil {
 		return err
 	}
+	m.seedDown()
 	m.checkReservations(ctx)
 	m.hosts = map[string]HostStatus{}
 	reachable := map[string]bool{}
+	probes := m.probeAll(ctx)
+	var names []string
 	for name := range m.inv.Hosts {
-		steps := map[string]string{}
-		for _, l := range m.lanes {
-			if l.Host == name && l.Step != nil {
-				steps[l.Lane] = l.Step.ID
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		pr, err := probes[name].pr, probes[name].err
+		steps := m.stepsOn(name)
+		if err == nil && m.isDown(name) && m.HostPreflight != nil {
+			// A host that was unreachable takes work again only once its preflight passes.
+			_, perr := bounded(ctx, hostCallBound, "preflight of "+name, func(c context.Context) (struct{}, error) { return none(m.HostPreflight(c, name)) })
+			if perr != nil {
+				err = fmt.Errorf("preflight failed, not admitted: %v", perr)
 			}
 		}
-		var fz []string
-		for _, byHost := range m.inv.Checkouts.Fuzzops {
-			if p := byHost[name]; p != "" {
-				fz = append(fz, p)
-			}
-		}
-		sort.Strings(fz)
-		pr, err := m.ops(name).Probe(ctx, steps, fz)
-		st := HostStatus{At: time.Now().UTC(), Load5: pr.Load5, Free: pr.Free, Inflight: pr.Inflight}
+		st := HostStatus{At: m.now().UTC(), Load5: pr.Load5, Free: pr.Free, Inflight: pr.Inflight}
 		if err != nil {
-			st.Error = err.Error()
+			since := m.markDown(name)
+			st.Error, st.DownSince = err.Error(), since
 			m.hosts[name] = st
+			m.hostLost(name, since, err)
 			continue
+		}
+		if m.isDown(name) {
+			m.downMu.Lock()
+			delete(m.down, name)
+			m.downMu.Unlock()
+			m.alarmClear(AlarmHostUnreachable, name)
+			m.logf("host %s answers again and is admitted", name)
 		}
 		reachable[name] = true
 		m.hosts[name] = st
+		if min := m.inv.Hosts[name].MinFreeBytes(); min > 0 && pr.Free > 0 && pr.Free < min {
+			m.alarm(AlarmDiskFloor, name, fmt.Sprintf("%s free, below the floor %s: no new build starts until it is above", size(pr.Free), m.inv.Hosts[name].MinFree))
+		} else {
+			m.alarmClear(AlarmDiskFloor, name)
+		}
 		for lane, state := range pr.Steps {
 			// Only this root's lanes with a step in flight count: a host shared with another bench root, or an
 			// older host binary, may report others, and a settled step may still be on disk.
 			l := m.lanes[lane]
-			if l == nil || l.Step == nil || l.Step.ID != steps[lane] {
+			if l == nil {
+				continue
+			}
+			if l.Step == nil && l.Orphan != nil && l.Orphan.ID == steps[lane] {
+				m.settleOrphan(ctx, l, state)
+				continue
+			}
+			if l.Step == nil || l.Step.ID != steps[lane] {
 				continue
 			}
 			switch state {
@@ -166,6 +295,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 				m.died(ctx, l)
 			case StepRunning:
 				l.Step.Phase = pr.Phases[lane]
+				m.enforceBound(ctx, l)
 			}
 		}
 	}
@@ -223,6 +353,14 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 // which the next pass of this manager picks up. A plan that does not load is logged and left alone.
 func (m *Manager) tickPlans(ctx context.Context) {
 	for _, name := range plan.Names(m.Root.PlansDir()) {
+		if ctl, err := plan.LoadControl(plan.Dir(m.Root.PlansDir(), name)); err == nil && ctl.Purge {
+			if done, err := purgePlan(m.Root, name); err != nil {
+				m.logf("plan %s: removal: %v", name, err)
+			} else if done {
+				m.logf("plan %s removed; its name is free", name)
+			}
+			continue
+		}
 		e, err := plan.Open(plan.Dir(m.Root.PlansDir(), name), &PlanBackend{Root: m.Root, Inv: m.inv, Log: m.Log, Grading: &m.planGrading}, SystemClock{})
 		if err != nil {
 			m.logf("plan %s: %v", name, err)
@@ -265,7 +403,7 @@ func (m *Manager) loadInventory() error {
 		m.logf("hosts.yaml refused, the last inventory that loaded is used until it is fixed: %v", err)
 	}
 	m.invErr = err.Error()
-	return writeFile(errPath, []byte(time.Now().UTC().Format(time.RFC3339)+" "+m.invErr+"\n"))
+	return writeFile(errPath, []byte(m.now().UTC().Format(time.RFC3339)+" "+m.invErr+"\n"))
 }
 
 func (m *Manager) load() error {
@@ -286,7 +424,7 @@ func (m *Manager) load() error {
 	for _, ln := range m.inv.Lanes() {
 		// A lane the bench has not seen yet, on a host that makes its clusters: its first build makes it
 		// (kind-lane.sh up is idempotent, and refuses a cluster made without the evidence mount).
-		l := &LaneFile{Lane: ln.Cluster, Host: ln.Host, State: LaneFree, Since: time.Now().UTC()}
+		l := &LaneFile{Lane: ln.Cluster, Host: ln.Host, State: LaneFree, Since: m.now().UTC()}
 		switch err := readJSON(m.Root.LanePath(ln.Cluster), l); {
 		case errors.Is(err, os.ErrNotExist):
 			l.Gone = m.inv.Hosts[ln.Host].ClusterUp != ""
@@ -342,7 +480,7 @@ const maxAutoResets = 2
 // resetDown returns lanes that went down to use without a human: recreated (a lane-specific cause lives in its
 // cluster or its record), at most maxAutoResets times in a row; then the lane is retired and the reason logged.
 func (m *Manager) resetDown() {
-	now := time.Now().UTC()
+	now := m.now().UTC()
 	for _, l := range m.sortedLanes() {
 		if l.State != LaneDown || l.Step != nil || now.Sub(l.Since) < downRetryAfter {
 			continue
@@ -373,7 +511,7 @@ func (m *Manager) setState(l *LaneFile, state, reason string) {
 	if l.State != state || l.Reason != reason {
 		m.logf("lane %s: %s -> %s %s", l.Lane, l.State, state, reason)
 	}
-	l.State, l.Reason, l.Since = state, reason, time.Now().UTC()
+	l.State, l.Reason, l.Since = state, reason, m.now().UTC()
 }
 
 // unbind frees the lane from its sequence (its operator stays until the next build or release).
@@ -441,12 +579,22 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 		// probe decides. A step that never ran shows as dead and is followed by a recover step.
 		m.logf("lane %s: start %s: %v (the probe decides whether it runs)", l.Lane, s.ID, err)
 	}
-	l.Step = &StepRef{ID: s.ID, Kind: s.Kind, Started: time.Now().UTC(), Run: s.Run}
+	l.Step = &StepRef{ID: s.ID, Kind: s.Kind, Started: m.now().UTC(), Run: s.Run, Bound: Seconds(stepBound(s.Kind, limitSpec).Seconds())}
 	if s.Run != nil {
 		l.Step.RunID = s.Run.ID
 	}
 	m.logf("lane %s: started %s", l.Lane, s.ID)
 	return true
+}
+
+// preparedFor is the operator and app a build of x puts on l (before it has run).
+func (m *Manager) preparedFor(l *LaneFile, x *Experiment) *Prepared {
+	s := x.Measured()
+	p := &Prepared{Experiment: x.Name, Namespace: s.Namespace, AppPack: filepath.Join(m.inv.FuzzopsPath(s.Fuzzops, l.Host), s.App)}
+	if o := s.Operator; o.Hooks != "" {
+		p.Hooks, p.HooksPath, p.Command = o.Hooks, m.inv.HooksPath(o.Hooks, o.Revision, l.Host), m.inv.HookCommand[o.Hooks]
+	}
+	return p
 }
 
 // expStep is the experiment part of a build or run step.
@@ -465,9 +613,8 @@ func (m *Manager) expStep(ctx context.Context, l *LaneFile, x *Experiment, kind 
 		st.BuildBad = &b
 	}
 	if kind == StepBuild {
-		p := &Prepared{Experiment: x.Name, Namespace: s.Namespace, AppPack: filepath.Join(fz, s.App)}
+		p := m.preparedFor(l, x)
 		if o := s.Operator; o.Hooks != "" {
-			p.Hooks, p.HooksPath, p.Command = o.Hooks, m.inv.HooksPath(o.Hooks, o.Revision, l.Host), m.inv.HookCommand[o.Hooks]
 			op := &HookOperator{Hooks: o.Hooks, Revision: o.Revision, Settings: o.Settings}
 			if x.Lock.Baseline != nil {
 				path, err := m.ops(l.Host).Stage(ctx, m.Root, *x.Lock.Baseline)
@@ -500,7 +647,7 @@ func (m *Manager) unhold(ctx context.Context, l *LaneFile) {
 	if l.State != LaneHeld || l.Step != nil || evidenceProblems(l.HeldRun) != "" {
 		return
 	}
-	if time.Since(l.Since) < time.Minute && strings.HasPrefix(l.Reason, "unhold failed") {
+	if m.now().Sub(l.Since) < time.Minute && strings.HasPrefix(l.Reason, "unhold failed") {
 		return
 	}
 	if l.Prepared != nil && l.Prepared.Hooks != "" {
@@ -661,17 +808,17 @@ func (m *Manager) claimWaitExceeded(x *Experiment, s Spec) bool {
 	}
 	since, ok := m.claimSince[x.Name]
 	if !ok {
-		m.claimSince[x.Name] = time.Now()
+		m.claimSince[x.Name] = m.now()
 		return false
 	}
-	waited := time.Since(since)
+	waited := m.now().Sub(since)
 	if waited < s.ClaimWaitBound() {
 		return false
 	}
 	delete(m.claimSince, x.Name)
 	msg := fmt.Sprintf("claim wait exceeded: %s waited %s for a lane of pool %s (bound %s); resume it once the pool has lanes", x.Name, waited.Round(time.Second), s.Claim, s.ClaimWaitBound())
 	m.logf("%s", msg)
-	if err := writeFile(m.Root.PausedPath(x.Name), []byte("paused "+time.Now().UTC().Format(time.RFC3339)+": "+msg+"\n")); err != nil {
+	if err := writeFile(m.Root.PausedPath(x.Name), []byte("paused "+m.now().UTC().Format(time.RFC3339)+": "+msg+"\n")); err != nil {
 		m.logf("%s: pause: %v", x.Name, err)
 	}
 	x.Paused = true
@@ -701,7 +848,7 @@ func (m *Manager) explainIdle(waiting map[string]string, reachable map[string]bo
 		names = append(names, n)
 	}
 	sort.Strings(names)
-	now := time.Now().UTC()
+	now := m.now().UTC()
 	for _, l := range m.sortedLanes() {
 		if l.State != LaneFree || l.Step != nil || len(names) == 0 {
 			l.Idle, l.IdleLogged = "", time.Time{}
@@ -896,7 +1043,7 @@ func (m *Manager) wave(x *Experiment) []Seq {
 	if len(next) == 0 {
 		return nil
 	}
-	waves = append(waves, Wave{Seqs: next, Started: time.Now().UTC()})
+	waves = append(waves, Wave{Seqs: next, Started: m.now().UTC()})
 	if err := writeJSON(m.Root.WavesPath(x.Name), waves); err != nil {
 		m.logf("%s: waves: %v", x.Name, err)
 		return nil
@@ -908,7 +1055,7 @@ func (m *Manager) wave(x *Experiment) []Seq {
 // died handles a step that was killed: a recover step undoes what it may have left.
 func (m *Manager) died(ctx context.Context, l *LaneFile) {
 	dead := l.Step
-	m.logf("lane %s: step %s died", l.Lane, dead.ID)
+	m.logf("lane %s: step %s died %s", l.Lane, dead.ID, dead.Killed)
 	l.Step = nil
 	if dead.Kind == StepRecover {
 		m.setState(l, LaneDown, "recover step died")
@@ -916,7 +1063,11 @@ func (m *Manager) died(ctx context.Context, l *LaneFile) {
 	}
 	if dead.Kind == StepRun && l.Experiment != "" && l.Seq != nil {
 		if x := m.exps[l.Experiment]; x != nil {
-			m.endRun(x, l, dead.Run, Result{Status: StatusInvalid, Reason: "lane lost: step died"})
+			reason := "lane lost: step died"
+			if dead.Killed != "" {
+				reason = "lane lost: step " + dead.Killed
+			}
+			m.endRun(x, l, dead.Run, Result{Status: StatusInvalid, Reason: reason})
 		}
 	}
 	if dead.Kind == StepBuild {
@@ -984,7 +1135,7 @@ func (m *Manager) adopt(ctx context.Context, l *LaneFile) error {
 	if res.Transcripts != "" {
 		l.Transcripts = res.Transcripts
 		m.logf("lane %s: transcripts missing after teardown: %s", l.Lane, res.Transcripts)
-		_ = appendJSONL(m.Root.path("transcripts.jsonl"), map[string]any{"lane": l.Lane, "host": l.Host, "step": ref.ID, "at": time.Now().UTC(), "check": res.Transcripts})
+		_ = appendJSONL(m.Root.path("transcripts.jsonl"), map[string]any{"lane": l.Lane, "host": l.Host, "step": ref.ID, "at": m.now().UTC(), "check": res.Transcripts})
 	}
 	switch ref.Kind {
 	case StepBuild:
@@ -998,13 +1149,13 @@ func (m *Manager) adopt(ctx context.Context, l *LaneFile) error {
 				// A claimant that paid a whole build (no pool lane, or one whose cluster was gone): counted in status.
 				m.logf("lane %s: claimant %s runs on a fresh build (an app copy, not a pool lane)", l.Lane, x.Name)
 				_ = appendJSONL(m.Root.path(freshBuildsFile), map[string]any{"experiment": x.Name, "pool": x.Measured().Claim,
-					"lane": l.Lane, "host": l.Host, "step": ref.ID, "at": time.Now().UTC()})
+					"lane": l.Lane, "host": l.Host, "step": ref.ID, "at": m.now().UTC()})
 			}
 		case res.Recycle != "":
 			// Not claimable (nothing was swapped): counted and logged, not a build failure of the lane; the release
 			// returns it by reset, else rebuilds it.
 			m.logf("lane %s: pool lane recycled, not claimed: %s", l.Lane, res.Recycle)
-			_ = appendJSONL(m.Root.path("recycled.jsonl"), map[string]any{"lane": l.Lane, "host": l.Host, "pool": res.Prepared.Experiment, "at": time.Now().UTC(), "why": res.Recycle})
+			_ = appendJSONL(m.Root.path("recycled.jsonl"), map[string]any{"lane": l.Lane, "host": l.Host, "pool": res.Prepared.Experiment, "at": m.now().UTC(), "why": res.Recycle})
 			m.unbind(l, "pool lane recycled: "+res.Recycle)
 		default:
 			l.BuildFailures++
@@ -1133,7 +1284,7 @@ func (m *Manager) endRun(x *Experiment, l *LaneFile, rs *RunSpec, res Result) {
 		}
 		status, reason = StatusInvalid, "sequence broken: not ready: "+res.Reason
 	}
-	now := time.Now().UTC()
+	now := m.now().UTC()
 	rf := RunFile{ID: rs.ID, Experiment: x.Name, Fault: rs.Fault, Sequence: l.Seq.Q, Position: rs.Position, Seed: rs.Seed,
 		Attempt: l.Attempt, Status: status, Reason: reason, Lane: l.Lane, Host: l.Host, OperatorLabel: rs.Label, Fuzzops: res.Fuzzops,
 		Started: res.Started, Ended: res.Ended, InjectAt: res.InjectAt, SettleEnd: res.SettleEnd, Capped: res.Capped, Isolation: res.Isolation}
@@ -1154,7 +1305,7 @@ func (m *Manager) breakRest(x *Experiment, l *LaneFile, rs *RunSpec, why string)
 	if rs == nil || l.Seq == nil {
 		return
 	}
-	s, now := x.Measured(), time.Now().UTC()
+	s, now := x.Measured(), m.now().UTC()
 	seeds := s.Seeds(l.Seq.Q)
 	for pos := rs.Position + 1; pos <= len(seeds); pos++ {
 		m.writeRun(x, RunFile{ID: RunID(rs.Fault, l.Seq.Q, pos, l.Attempt), Experiment: x.Name, Fault: rs.Fault, Sequence: l.Seq.Q,

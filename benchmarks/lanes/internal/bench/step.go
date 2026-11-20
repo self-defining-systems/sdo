@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -226,10 +227,8 @@ func RunStep(ctx context.Context, path string) error {
 	switch {
 	case err != nil:
 		r.fail("fuzzops version: %v", err)
-	case s.FuzzopsRev != "" && r.res.Fuzzops.Modified:
-		r.fail("fuzzops binary was built from a modified checkout (%s): runs must be measured by the pinned revision", r.res.Fuzzops.Revision)
-	case s.FuzzopsRev != "" && !strings.HasPrefix(r.res.Fuzzops.Revision, s.FuzzopsRev):
-		r.fail("fuzzops binary is %s, not the pinned %s (rebuild bin/fuzzops)", r.res.Fuzzops.Revision, s.FuzzopsRev)
+	case pinMismatch(r.res.Fuzzops, s.FuzzopsRev) != "":
+		r.fail("%s", pinMismatch(r.res.Fuzzops, s.FuzzopsRev))
 	default:
 		switch s.Kind {
 		case StepBuild:
@@ -451,6 +450,11 @@ func (r *stepRunner) recoverLane(ctx context.Context, p *Prepared) bool {
 	var err error
 	for {
 		code, why, err = r.call(ctx, r.laneEnv(p), nil, VerbAppReset, "recover", "--namespace", p.Namespace, "--pack", p.AppPack)
+		if errors.Is(err, ErrUnsupported) {
+			// The workload leaves nothing to undo between runs (docs/contract.md: unsupported is skipped).
+			r.interval("recover", start, true, "unsupported by the workload")
+			return true
+		}
 		if code == lanelock.ExitInvalid && err == nil {
 			r.interval("recover", start, false, "invalid: "+why)
 			r.config("fuzzops recover cannot run on pack %s (exit %d, not retried): %s", p.AppPack, code, why)
@@ -770,6 +774,11 @@ func (r *stepRunner) recordFresh(ctx context.Context, p *Prepared) bool {
 		if code, _, err = r.call(ctx, r.laneEnv(p), io.Discard, VerbAppSnapshot, "write", "--pack", p.AppPack, "--namespace", p.Namespace, "--out", file); err == nil && code == 0 {
 			return true
 		}
+		if errors.Is(err, ErrUnsupported) {
+			// No fingerprint: a later reuse finds none and rebuilds the app copy (appMatchesFresh).
+			r.logf("app-snapshot write unsupported by the workload: no fingerprint of the fresh copy")
+			return true
+		}
 		time.Sleep(r.poll)
 	}
 	r.fail("fingerprint of the fresh app copy: exit %d %v", code, errOrEmpty(err))
@@ -905,6 +914,10 @@ func (r *stepRunner) makeCluster(ctx context.Context, p *Prepared) bool {
 	start := time.Now()
 	r.phase(PhaseImages, "")
 	code, _, err := r.call(ctx, r.laneEnv(p), nil, VerbAppUp, "images", "--pack", p.AppPack, "--cluster", s.Lane)
+	if errors.Is(err, ErrUnsupported) {
+		r.interval("images", start, true, "unsupported by the workload")
+		return true
+	}
 	r.interval("images", start, err == nil && code == 0, fmt.Sprintf("exit %d %s", code, errOrEmpty(err)))
 	if err != nil || code != 0 {
 		r.fail("app images: exit %d %s", code, errOrEmpty(err))
@@ -1276,8 +1289,6 @@ func (r *stepRunner) settle(ctx context.Context, p *Prepared, injectAt, own time
 	r.interval("settle", start, !r.res.Capped, r.res.Reason)
 }
 
-var activeRE = regexp.MustCompile(`active=(true|false)`)
-
 // safety: `fuzzops recover`, then the fault must not be active; one undo is
 // tried, else the lane goes down with the fault named.
 func (r *stepRunner) safety(ctx context.Context, p *Prepared, rs *RunSpec) {
@@ -1300,14 +1311,16 @@ func (r *stepRunner) safety(ctx context.Context, p *Prepared, rs *RunSpec) {
 	active := func(verb string) (bool, error) {
 		var out bytes.Buffer
 		code, _, err := r.call(ctx, env, &out, VerbRun, verb, "--file", rs.Instances, "--id", rs.Fault, "--pack", p.AppPack, "--namespace", p.Namespace)
-		m := activeRE.FindStringSubmatch(out.String())
+		var answer struct {
+			Active *bool `json:"active"`
+		}
 		switch {
 		case err != nil:
 			return true, err
-		case code != 0 || m == nil:
+		case code != 0 || json.Unmarshal([]byte(lastNonEmpty(out.Bytes())), &answer) != nil || answer.Active == nil:
 			return true, fmt.Errorf("%s exit %d: %s", verb, code, strings.TrimSpace(out.String()))
 		}
-		return m[1] == "true", nil
+		return *answer.Active, nil
 	}
 	on, err := active("active")
 	if on || err != nil {

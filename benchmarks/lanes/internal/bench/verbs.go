@@ -25,6 +25,11 @@ func Add(ctx context.Context, root Root, specFile string, log io.Writer) error {
 	if err != nil {
 		return err
 	}
+	release, err := lockAdds(root)
+	if err != nil {
+		return err
+	}
+	defer release()
 	inv, err := LoadInventory(string(root))
 	if err != nil {
 		return err
@@ -40,6 +45,9 @@ func Add(ctx context.Context, root Root, specFile string, log io.Writer) error {
 	}
 	if s.Operator.Hooks != "" && inv.HookCommand[s.Operator.Hooks] == "" {
 		return fmt.Errorf("hosts.yaml has no hook_command for %s", s.Operator.Hooks)
+	}
+	if err := checkPins(ctx, inv, s, log, map[string]string{}); err != nil {
+		return fmt.Errorf("%s: %w", s.Name, err)
 	}
 	base := filepath.Dir(specFile)
 	resolve := func(p string) string {
@@ -215,12 +223,13 @@ func LaneReset(root Root, lane string) error {
 
 // HostStatus is what the manager last saw on a host (<root>/hosts.status.json).
 type HostStatus struct {
-	At       time.Time `json:"at"`
-	Load5    float64   `json:"load5"`
-	Builds   int       `json:"builds"`
-	Free     int64     `json:"free_bytes,omitempty"` // free space of the staging filesystem
-	Error    string    `json:"error,omitempty"`
-	Inflight []string  `json:"inflight,omitempty"` // in-flight markers on the host's lanes
+	At        time.Time `json:"at"`
+	Load5     float64   `json:"load5"`
+	Builds    int       `json:"builds"`
+	Free      int64     `json:"free_bytes,omitempty"` // free space of the staging filesystem
+	Error     string    `json:"error,omitempty"`
+	DownSince time.Time `json:"down_since,omitempty"`
+	Inflight  []string  `json:"inflight,omitempty"` // in-flight markers on the host's lanes
 }
 
 // Experiment states (Status).

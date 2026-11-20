@@ -37,30 +37,62 @@ const (
 
 // Pin is a checkout identity, name@revision. The revision is recorded in the lock and in every row; the engine
 // writes it into the spec of every run.
+//
+// A pin may also name a ref instead of a revision: name@HEAD, name@origin/main, or name@ref:/path/to/checkout. The
+// ref is resolved to a full revision once, when the plan is added (see WithResolver), in the checkout at /path or, with
+// none, in the directory of the plan file; the stored plan and the lock carry the revision, never the ref.
 type Pin struct {
 	Name, Rev string
+	Ref, Dir  string // unresolved: set only between parsing and the resolution at add
 }
 
-func (p Pin) String() string { return p.Name + "@" + p.Rev }
+func (p Pin) String() string {
+	if p == (Pin{}) {
+		return "none"
+	}
+	if p.Ref != "" {
+		if p.Dir != "" {
+			return p.Name + "@" + p.Ref + ":" + p.Dir
+		}
+		return p.Name + "@" + p.Ref
+	}
+	return p.Name + "@" + p.Rev
+}
 
 // UnmarshalJSON reads "name@rev".
 func (p *Pin) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		*p = Pin{}
+		return nil
+	}
 	var s string
 	if err := json.Unmarshal(b, &s); err != nil {
 		return fmt.Errorf("pin: want a string name@revision: %w", err)
 	}
 	name, rev, ok := strings.Cut(s, "@")
-	if !ok || name == "" || !revRE.MatchString(rev) {
-		return fmt.Errorf("pin %q: want name@revision (revision: 7-40 hex digits)", s)
+	if ok && name != "" && revRE.MatchString(rev) {
+		*p = Pin{Name: name, Rev: rev}
+		return nil
 	}
-	p.Name, p.Rev = name, rev
+	ref, dir, _ := strings.Cut(rev, ":")
+	if !ok || name == "" || !refRE.MatchString(ref) || (dir != "" && !filepath.IsAbs(dir)) {
+		return fmt.Errorf("pin %q: want name@revision (7-40 hex digits) or name@ref[:/abs/checkout]", s)
+	}
+	*p = Pin{Name: name, Ref: ref, Dir: dir}
 	return nil
 }
 
 // MarshalJSON writes "name@rev".
-func (p Pin) MarshalJSON() ([]byte, error) { return json.Marshal(p.String()) }
+func (p Pin) MarshalJSON() ([]byte, error) {
+	if p == (Pin{}) {
+		return []byte("null"), nil
+	}
+	return json.Marshal(p.String())
+}
 
-// Pins are the checkouts per role: the workload adapter and the subject adapter.
+// Pins are the checkouts per role: the workload adapter and the subject adapter. The subject pin is optional: an
+// operator with no hooks checkout (a builtin one) has no revision, so a plan of such specs pins only the workload and
+// the engine writes no operator.revision. A spec that needs a revision and gets none is refused by the spec check.
 type Pins struct {
 	Workload Pin `json:"workload"`
 	Subject  Pin `json:"subject"`
@@ -76,9 +108,20 @@ type Arm struct {
 }
 
 // Item is one thing the arms run: a problem, a fault, an instance. Vars are available to templates as ${item.<var>}.
+//
+// Group names an entry of Plan.Groups whose vars and spec overrides the item inherits. Spec is a typed override merged
+// over the arm's rendered template (see mergeSpec): any spec field, numbers, lists and nested maps included.
 type Item struct {
-	ID   string            `json:"id"`
+	ID    string            `json:"id"`
+	Vars  map[string]string `json:"vars,omitempty"`
+	Group string            `json:"group,omitempty"`
+	Spec  map[string]any    `json:"spec,omitempty"`
+}
+
+// Group is what several items share: vars (as ${item.<var>}, item vars win) and a spec override (item spec wins).
+type Group struct {
 	Vars map[string]string `json:"vars,omitempty"`
+	Spec map[string]any    `json:"spec,omitempty"`
 }
 
 // Items is the item list: written out, or read from a JSON file (`from`, and `select`: the key of the array in a
@@ -134,8 +177,18 @@ func itemsOf(list []any) ([]Item, error) {
 			it := Item{ID: id}
 			vars, _ := v["vars"].(map[string]any)
 			for k := range v {
-				if k != "id" && k != "vars" {
-					return nil, fmt.Errorf("items[%d] (%s): unknown field %q (want id, vars)", i, id, k)
+				if k != "id" && k != "vars" && k != "group" && k != "spec" {
+					return nil, fmt.Errorf("items[%d] (%s): unknown field %q (want id, vars, group, spec)", i, id, k)
+				}
+			}
+			if g, ok := v["group"]; ok {
+				if it.Group, ok = g.(string); !ok || it.Group == "" {
+					return nil, fmt.Errorf("items[%d] (%s): group is not a name", i, id)
+				}
+			}
+			if sp, ok := v["spec"]; ok {
+				if it.Spec, ok = sp.(map[string]any); !ok {
+					return nil, fmt.Errorf("items[%d] (%s): spec is not a map", i, id)
 				}
 			}
 			for k, x := range vars {
@@ -201,12 +254,14 @@ type Step struct {
 
 // Plan is plan.yaml.
 type Plan struct {
-	Name  string `json:"plan"`
-	Pins  Pins   `json:"pins"`
-	Arms  []Arm  `json:"arms"`
-	Items Items  `json:"items"`
-	Reps  int    `json:"reps,omitempty"`
-	Order string `json:"order,omitempty"`
+	Name string `json:"plan"`
+	Pins Pins   `json:"pins"`
+	Arms []Arm  `json:"arms"`
+	// Groups are shared vars and spec overrides items name with `group` (one plan, several apps).
+	Groups map[string]Group `json:"groups,omitempty"`
+	Items  Items            `json:"items"`
+	Reps   int              `json:"reps,omitempty"`
+	Order  string           `json:"order,omitempty"`
 	// Parallel bounds the experiments released and not yet ended (default 4): the manager's lanes decide how many run.
 	Parallel  int                    `json:"parallel,omitempty"`
 	Edges     []Edge                 `json:"edges,omitempty"`
@@ -226,6 +281,7 @@ var (
 	idRE   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 	kindRE = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,23}$`)
 	revRE  = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+	refRE  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/~^-]*$`)
 )
 
 // Parse reads plan text (JSON or the YAML subset) and validates it.
@@ -268,8 +324,8 @@ func (p *Plan) Validate() error {
 	if !nameRE.MatchString(p.Name) {
 		bad("plan %q: lowercase letters, digits and '-', at most 24", p.Name)
 	}
-	if p.Pins.Workload.Name == "" || p.Pins.Subject.Name == "" {
-		bad("pins: workload and subject are both required (name@revision)")
+	if p.Pins.Workload.Name == "" {
+		bad("pins: workload is required (name@revision); subject is required unless the operator is builtin")
 	}
 	if p.Reps < 1 {
 		bad("reps must be at least 1")
@@ -297,6 +353,14 @@ func (p *Plan) Validate() error {
 			bad("arm %q: no spec template", a.Name)
 		}
 		arms[a.Name] = true
+	}
+	for name, g := range p.Groups {
+		if !idRE.MatchString(name) {
+			bad("group %q: letters, digits, '.', '_' and '-'", name)
+		}
+		if err := checkOverride(g.Spec); err != nil {
+			bad("group %q: %v", name, err)
+		}
 	}
 	steps := map[string]bool{}
 	for _, s := range p.Steps {
@@ -455,6 +519,14 @@ func (p *Plan) LoadItems(dir string) ([]Item, error) {
 	}
 	seen := map[string]bool{}
 	for _, it := range list {
+		if it.Group != "" {
+			if _, ok := p.Groups[it.Group]; !ok {
+				return nil, fmt.Errorf("item %q: group %q is not declared in groups", it.ID, it.Group)
+			}
+		}
+		if err := checkOverride(it.Spec); err != nil {
+			return nil, fmt.Errorf("item %q: %v", it.ID, err)
+		}
 		if !idRE.MatchString(it.ID) {
 			return nil, fmt.Errorf("item %q: letters, digits, '.', '_' and '-'", it.ID)
 		}
@@ -586,4 +658,51 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// Resolver turns a ref into a full revision in a checkout directory (git rev-parse). The engine runs no process
+// itself: the runner supplies one.
+type Resolver func(dir, ref string) (string, error)
+
+// Option configures Add, DryRun and RenderSpecs.
+type Option func(*options)
+
+type options struct{ resolve Resolver }
+
+// WithResolver lets the plan name its pins by ref; each is resolved once, at add.
+func WithResolver(r Resolver) Option { return func(o *options) { o.resolve = r } }
+
+func optionsOf(opts []Option) options {
+	var o options
+	for _, f := range opts {
+		f(&o)
+	}
+	return o
+}
+
+var fullRevRE = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// resolvePins replaces every ref pin with the full revision it names now. base is the plan file's directory.
+func (p *Plan) resolvePins(base string, o options) error {
+	for _, pin := range []*Pin{&p.Pins.Workload, &p.Pins.Subject} {
+		if pin.Ref == "" {
+			continue
+		}
+		if o.resolve == nil {
+			return fmt.Errorf("pin %s names a ref, and no resolver is available to resolve it", pin)
+		}
+		dir := pin.Dir
+		if dir == "" {
+			dir = base
+		}
+		rev, err := o.resolve(dir, pin.Ref)
+		if err != nil {
+			return fmt.Errorf("pin %s: resolving %s in %s: %w", pin, pin.Ref, dir, err)
+		}
+		if !fullRevRE.MatchString(rev) {
+			return fmt.Errorf("pin %s: %q is not a full revision", pin, rev)
+		}
+		*pin = Pin{Name: pin.Name, Rev: rev}
+	}
+	return nil
 }

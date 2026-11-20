@@ -162,6 +162,11 @@ type Backend interface {
 	ObserveStep(ctx context.Context, dir string) (StepObservation, error)
 	// RunData reads the newest run of an experiment for its results row.
 	RunData(ctx context.Context, exp string) (RunData, error)
+	// Cancel stops an experiment: its queued runs are dropped and it is not observed again. Cancelling an experiment
+	// that is gone is not an error.
+	Cancel(ctx context.Context, exp string) error
+	// CancelStep stops a running step started in dir.
+	CancelStep(ctx context.Context, dir string) error
 	// Capacity reads lanes, hosts and the queue for the alarms.
 	Capacity(ctx context.Context) (Capacity, error)
 }

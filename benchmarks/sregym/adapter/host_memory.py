@@ -24,7 +24,7 @@ from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 from benchmarks.sregym.adapter.lane_resources import host_available_memory
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Mapping, Sequence
 
 _GIB = 1024**3
 _SIZE = re.compile(r"([1-9][0-9]*)([bkmgBKMG]?)")
@@ -175,6 +175,27 @@ def host_check(
     return check
 
 
+def inspect_listed(
+    template: str,
+    ids: Sequence[str],
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]] | None = None,
+    timeout: float,
+) -> list[str]:
+    """``docker inspect --format TEMPLATE`` of containers ``docker ps`` just listed: a line per one still there.
+
+    On a shared host other users' containers come and go: one that exited after the listing is not running, so docker's
+    "No such object" for it is skipped (docker still prints the others). Any other failure raises.
+    """
+    inspected = (run or subprocess.run)(
+        ["docker", "inspect", "--format", template, *ids], capture_output=True, text=True, check=False, timeout=timeout
+    )
+    errors = [line for line in inspected.stderr.splitlines() if line.strip()]
+    if inspected.returncode and (not errors or not all("No such object" in line for line in errors)):
+        raise subprocess.CalledProcessError(inspected.returncode, inspected.args, inspected.stdout, inspected.stderr)
+    return inspected.stdout.splitlines()
+
+
 def running_lane_caps(
     cluster_prefix: str,
     *,
@@ -190,13 +211,7 @@ def running_lane_caps(
     if not listed:
         return {}
     template = '{{index .Config.Labels "' + KIND_CLUSTER_LABEL + '"}} {{.Name}} {{.HostConfig.Memory}}'
-    rows = run(
-        ["docker", "inspect", "--format", template, *listed],
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=timeout,
-    ).stdout.splitlines()
+    rows = inspect_listed(template, listed, run=run, timeout=timeout)
     caps: dict[str, int] = {}
     for row in rows:
         fields = row.split()

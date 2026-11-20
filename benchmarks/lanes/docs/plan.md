@@ -7,7 +7,7 @@ above the experiments: each node of a plan is one experiment (spec) that it adds
 its inputs are verified. All state is on disk, so a restart continues where the last pass stopped.
 
 ```yaml
-plan: tp-gitlab-1                      # at most 24 characters; never reused
+plan: tp-gitlab-1                      # at most 24 characters; free again after `plan remove`
 pins: {workload: fuzzops@4652656, subject: sdo@9b2cadb7f}    # written into every spec (fuzzops, operator.revision)
 arms:                                  # declaration order is the order inside an item
   - {name: p1,   spec: specs/p1.json}  # spec template: ${plan} ${arm} ${item} ${item.<var>} ${rep} ${name} ${artifact.<kind>}
@@ -25,6 +25,27 @@ stages: {pre-inject: 12m, post-inject: 25m}    # per-stage minimum; the runner a
 alarms: {factor: 2, idle_lane: 10m, arm_stall: 90m, hook: "notify-send lanes \"$ALARM_DETAIL\""}
 ```
 
+- **Groups and spec overrides.** One plan can cover several apps. `groups:` names shared `vars` and a `spec` override; an
+  item picks one with `group:` and may add `vars` and a `spec` of its own:
+  ```yaml
+  groups:
+    gitlab: {vars: {pool: tp2-pool-g}, spec: {app: examples/gitlab, namespace: fg1, lane: {cpus: 8, memory: 30Gi}, hosts: [spokane1, chelan4], claim: "${item.pool}"}}
+  items:
+    - {id: gmem, group: gitlab, vars: {a: "..."}}
+    - {id: gbig, group: gitlab, spec: {lane: {cpus: 16}}}     # merges into the group's lane map
+  ```
+  The override is merged over the arm's rendered template: maps merge key by key, every other value (numbers, lists,
+  strings) replaces, `null` removes the key. Values keep their type; strings inside get the `${...}` variables (group vars
+  are `${item.<var>}`, item vars win). The merged result is validated as a spec at `plan add` for every item (unknown
+  fields and wrong types are refused, naming the arm and item), and an override may not set the engine-owned fields
+  (`name`, `fuzzops`, `operator.revision`, `retries`, `isolation`). `items.from` entries take `group` and `spec` too.
+- **Builtin operators.** `pins.subject` is optional. An operator with no hooks checkout (`operator.builtin`) has no
+  revision: pin only the workload, and the engine writes no `operator.revision` (the spec check refuses a hooks operator
+  without a revision, and a builtin one with it). Results then carry `subject_pinned: none`.
+- **Pins by ref.** A pin may name a ref instead of a revision: `pins: {workload: fuzzops@HEAD, subject: sdo@origin/main}`,
+  or with the checkout to ask, `sdo@HEAD:/abs/path/to/checkout`. `plan add` resolves it once with
+  `git rev-parse` (in that checkout, or in the plan file's own directory) and stores the full revision in the plan, the lock and
+  every spec, so a plan kept inside the pinned checkout does not lag one commit. Revisions (7-40 hex) work as before.
 - **Order.** Nodes are `(rep, item, arm)`, arms in dependency-then-declaration order, so every comparison's partner is
   released right after its pair, never behind a whole arm and never by name order. A node blocked on an input is passed
   over; the next ready node takes its slot, and the blocked one goes first as soon as it is ready.
@@ -67,8 +88,26 @@ alarms: {factor: 2, idle_lane: 10m, arm_stall: 90m, hook: "notify-send lanes \"$
   `source-mismatch` and runs again. A grade that is still being made delays the row, not the next run; a plan is
   complete once every row is written. The real backend grades a done run through the workload's grade verb in the
   background and reads the line for the run's operator label from `results/runs.jsonl`.
-- **Commands.** `lanes plan add FILE`, `lanes plan status [NAME] [--json]` (per arm: done, in-flight, queued, blocked,
-  failed, skipped; the next runs; why the first blocked ones wait). `lanes plan results NAME [--tsv] [--final] [--done] [--grade-fields a,b]` (JSON lines, or TSV with a header and a column
+- **Pause, remove, skip.** Requests are written to `<plan dir>/control.json` under a lock (never to `state.json`), so a
+  command cannot race the manager and a restart loses nothing; the manager applies them on its next pass, idempotently.
+  `lanes plan pause NAME` releases no new node and starts no new step (runs in flight are still watched and recorded);
+  `resume` undoes it. `lanes plan remove NAME` cleans the plan up and frees its name: its experiments are removed (queued
+  runs dropped; a run already on a lane finishes), they and the plan's directory (state, results, events) move to
+  `<root>/plans/.removed/<name>-<time>/`, and the name can be added again at once, so a corrected plan replaces a wrong
+  one without stopping the manager. With no manager running the command does it itself; otherwise the manager finishes
+  it within a pass, and an experiment whose run is still on a lane moves when the run ends. `remove --keep` only
+  retires the plan (waiting nodes and steps are skipped, runs in flight finish, the plan completes; directory and name
+  stay). `lanes plan skip NAME ITEM` skips the item: its unreleased nodes (also those
+  that come back for a retry) are skipped, in-flight ones finish, and a skip is not a failure (no parking).
+  `unskip` stops skipping new nodes; those already skipped stay skipped. `--cancel` (`remove --keep`, `skip`) also cancels the
+  runs in flight: the experiment is removed (its queued runs are dropped; a run already on a lane finishes, as with
+  `lanes remove`) and running steps get SIGTERM; the cancelled node is skipped with the reason. `plan status` shows
+  `paused`, `removed, draining` and the skipped items.
+- **Commands.** `lanes plan add FILE [--dry-run [--json]]` (`--dry-run` runs every check of `add` -- parse, items, groups, every item's rendered spec through the spec validator and the inventory, a taken name -- and prints the items, arms, edges, steps and the nodes in run order with their experiment names; nothing is stored under the root), `lanes plan status [NAME] [--json]` (per plan: the state -- running, paused, removed, complete -- and an
+  `items:` line that puts every item in one state: done, in flight, queued, blocked, parked, skipped or failed; per arm:
+  done, in-flight, queued, blocked, failed, skipped, parked nodes; every parked, failed and skipped item with its reason;
+  the alarms standing, with since when; the next runs and the next items; why the first blocked ones wait; `--json`
+  adds `item_rows`, one per item with its group, state and reason), `lanes plan results NAME [--tsv] [--final] [--done] [--grade-fields a,b]` (JSON lines, or TSV with a header and a column
   per stage and per named grade field; `--final` keeps each node's last attempt, `--done` only done rows).
   `lanes status` prints one line per plan and the recent alarms.
 

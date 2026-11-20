@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/self-defining-systems/sdo/benchmarks/lanes/internal/bench"
+	"github.com/self-defining-systems/sdo/benchmarks/lanes/internal/plan"
 )
 
 const usage = `usage: lanes VERB --root R ...
@@ -35,7 +36,7 @@ const usage = `usage: lanes VERB --root R ...
                              drop lanes whose cluster is gone, or register a lane that exists (run on the host)
   host reserve HOST|all | unreserve HOST [--drain] | status [HOST] | adopt HOST [--cpus LIST] | install-helper HOST
                              the hosts.yaml reserve: block: apply it through the root helper, undo it, show it, record an existing one
-  plan add FILE | status [NAME] [--json] | results NAME [--tsv] [--final] [--done] [--grade-fields a,b]   the plan engine: arms x items x reps with verified-artifact edges (docs/plan.md)
+  plan add FILE [--dry-run [--json]] | pause|resume|remove [--keep] NAME | skip [--cancel] NAME ITEM | unskip NAME ITEM | status [NAME] [--json] | results NAME [--tsv] [--final] [--done] [--grade-fields a,b]   the plan engine: arms x items x reps with verified-artifact edges (docs/plan.md)
   probe --staging S [--fuzzops F,..] LANE=STEP ...   how a host's steps stand, as JSON (the manager runs it over ssh)`
 
 func main() {
@@ -60,7 +61,10 @@ func run(verb string, args []string) int {
 	if verb == "results" {
 		fs.Var(&with, "with", "a baseline experiment whose noop runs grade this one (repeatable)")
 	}
-	jsonOut := fs.Bool("json", false, "plan status: print JSON")
+	jsonOut := fs.Bool("json", false, "plan status, plan add --dry-run: print JSON")
+	cancel := fs.Bool("cancel", false, "plan remove, plan skip: also cancel the runs in flight (their queued runs are dropped; a run on a lane finishes)")
+	keep := fs.Bool("keep", false, "plan remove: only retire the plan (no new work; runs in flight finish); its experiments and name stay")
+	dryRun := fs.Bool("dry-run", false, "plan add: validate fully and print the expanded plan; store nothing")
 	tsv := fs.Bool("tsv", false, "plan results: tab-separated rows with a header (default: JSON lines)")
 	final := fs.Bool("final", false, "plan results: only the last attempt of each node")
 	doneOnly := fs.Bool("done", false, "plan results: only done rows")
@@ -170,7 +174,7 @@ func run(verb string, args []string) int {
 	case "preflight":
 		err = bench.Preflight(ctx, r, specs, bench.PreflightOptions{MaxLoadPerCore: *maxLoad, AllowMemoryDiag: allow}, os.Stdout)
 	case "plan":
-		err = planVerb(r, pos, *jsonOut, bench.ResultsOptions{TSV: *tsv, Final: *final, Done: *doneOnly, GradeFields: *gradeFields})
+		err = planVerb(r, pos, *jsonOut, *dryRun, *cancel, *keep, bench.ResultsOptions{TSV: *tsv, Final: *final, Done: *doneOnly, GradeFields: *gradeFields})
 	case "lane":
 		if len(pos) != 2 || pos[0] != "reset" {
 			fmt.Fprintln(os.Stderr, usage)
@@ -258,14 +262,17 @@ func probe(args []string) int {
 }
 
 // planVerb is `lanes plan add FILE | status [NAME] | results NAME`.
-func planVerb(r bench.Root, pos []string, jsonOut bool, ro bench.ResultsOptions) error {
+func planVerb(r bench.Root, pos []string, jsonOut, dryRun, cancel, keep bool, ro bench.ResultsOptions) error {
 	if len(pos) == 0 {
-		return fmt.Errorf("plan: want add FILE | status [NAME]")
+		return fmt.Errorf("plan: want add FILE | pause|resume|remove NAME | skip NAME ITEM | status [NAME] | results NAME")
 	}
 	switch pos[0] {
 	case "add":
 		if len(pos) != 2 {
 			return fmt.Errorf("plan add: want FILE")
+		}
+		if dryRun {
+			return bench.PlanDryRun(r, pos[1], jsonOut, os.Stdout)
 		}
 		return bench.PlanAdd(r, pos[1], os.Stdout)
 	case "status":
@@ -281,6 +288,31 @@ func planVerb(r bench.Root, pos []string, jsonOut bool, ro bench.ResultsOptions)
 			return fmt.Errorf("plan results: want NAME")
 		}
 		return bench.PlanResults(r, pos[1], ro, os.Stdout, os.Stderr)
+	case "pause", "resume", "remove", "unskip":
+		want := 2
+		if pos[0] == "unskip" {
+			want = 3
+		}
+		if len(pos) != want {
+			return fmt.Errorf("plan %s: want NAME%s", pos[0], map[bool]string{true: " ITEM"}[want == 3])
+		}
+		switch pos[0] {
+		case "pause":
+			return bench.PlanControl(r, pos[1], plan.PausePlan)
+		case "resume":
+			return bench.PlanControl(r, pos[1], plan.ResumePlan)
+		case "remove":
+			if keep {
+				return bench.PlanControl(r, pos[1], func(d string) error { return plan.RemovePlan(d, cancel) })
+			}
+			return bench.PlanRemove(r, pos[1], false, os.Stdout)
+		}
+		return bench.PlanControl(r, pos[1], func(d string) error { return plan.UnskipItem(d, pos[2]) })
+	case "skip":
+		if len(pos) != 3 {
+			return fmt.Errorf("plan skip: want NAME ITEM")
+		}
+		return bench.PlanControl(r, pos[1], func(d string) error { return plan.SkipItem(d, pos[2], cancel) })
 	}
-	return fmt.Errorf("plan: unknown subcommand %q (want add, status, results)", pos[0])
+	return fmt.Errorf("plan: unknown subcommand %q (want add, status, results, pause, resume, remove, skip, unskip)", pos[0])
 }

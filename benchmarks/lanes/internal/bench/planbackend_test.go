@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -395,5 +396,22 @@ func TestPlanResultsCommandOnEmptyAndPartialFiles(t *testing.T) {
 	}
 	if err := PlanResults(root, "nope", ResultsOptions{}, &out, &errs); err == nil {
 		t.Fatal("unknown plan accepted")
+	}
+}
+
+// GitResolve answers the full commit of a ref, in the checkout it is given.
+func TestGitResolveNamesTheFullCommitOfARef(t *testing.T) {
+	d := t.TempDir()
+	for _, c := range [][]string{{"init", "-q"}, {"-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x"}} {
+		must(t, exec.Command("git", append([]string{"-C", d}, c...)...).Run())
+	}
+	want, err := exec.Command("git", "-C", d, "rev-parse", "HEAD").Output()
+	must(t, err)
+	got, err := GitResolve(d, "HEAD")
+	if err != nil || got != strings.TrimSpace(string(want)) || len(got) != 40 {
+		t.Fatalf("GitResolve = %q, %v", got, err)
+	}
+	if _, err := GitResolve(d, "no-such-ref"); err == nil {
+		t.Fatal("an unknown ref resolved")
 	}
 }

@@ -62,6 +62,10 @@ const (
 	// LaneHeld: the run's evidence is incomplete. The lane is neither recycled nor released (its cluster still holds
 	// what the evidence lacks) until the manifest lists no problems (a fix or a waiver).
 	LaneHeld = "held"
+	// LaneUnreachable: the lane's host stopped answering for longer than hostGrace. Its step (Orphan) is given up and
+	// its item went back to the queue; the lane is recovered, as every lane after a lost step is, once the host is
+	// admitted again.
+	LaneUnreachable = "unreachable"
 )
 
 // LaneFile is <root>/lanes/<cluster>.json, written by the manager only.
@@ -76,6 +80,9 @@ type LaneFile struct {
 	Attempt    int       `json:"attempt,omitempty"`
 	Position   int       `json:"position,omitempty"` // the run in progress or next
 	Step       *StepRef  `json:"step,omitempty"`
+	// Orphan is a step given up because its host stopped answering. It may still run there: when the host answers
+	// again it is killed, cleaned up and the lane is recovered before anything else uses it.
+	Orphan *StepRef `json:"orphan,omitempty"`
 	// Prepared is the operator last prepared on the lane (whatever
 	// experiment): every build tears it down first.
 	Prepared *Prepared `json:"prepared,omitempty"`
@@ -108,6 +115,9 @@ type StepRef struct {
 	Started time.Time `json:"started"`
 	// Phase is what the step was doing at the manager's last pass (nil: not known).
 	Phase *Phase `json:"phase,omitempty"`
+	// Bound is how long the step may run before the manager kills it (0: no bound recorded); Killed says why it was.
+	Bound  Seconds `json:"bound,omitempty"`
+	Killed string  `json:"killed,omitempty"`
 }
 
 // Prepared is an operator set up on a lane and how to tear it down, plus the app copy it runs on.

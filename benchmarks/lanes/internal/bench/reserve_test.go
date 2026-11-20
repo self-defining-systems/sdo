@@ -406,3 +406,12 @@ for a in "$@"; do f="$a"; done; cp "$f" "$FAKE/script.sh"
 		t.Errorf("the script itself must not travel on the sudo command's stdin:\n%s", log)
 	}
 }
+
+// A lane slice holding a process directly is a defect: it is named in the status parse and stops admission.
+func TestLaneSliceDefectStopsAdmission(t *testing.T) {
+	st := parseBlockStatus("block 8-15\ntwo-way yes\nslice lanes.slice AllowedCPUs=8-15\ndefect lanes-x.slice 1 process(es) directly in cgroup.procs (steps must run in step/)\n")
+	why := driftOf(Reservation{Block: "8-15", TwoWay: true}, st)
+	if !strings.Contains(why, "lanes-x.slice") || !strings.Contains(why, "directly in cgroup.procs") {
+		t.Fatalf("defect not a drift reason: %q", why)
+	}
+}

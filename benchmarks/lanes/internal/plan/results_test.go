@@ -235,3 +235,17 @@ func TestPlanIsNotCompleteWhileAGradeIsStillToCome(t *testing.T) {
 		t.Fatal("not complete after the row was written")
 	}
 }
+
+// The TSV is read by scripts: its fixed columns, their order and their names do not change. New columns go after
+// these, before the stage and grade columns, only with a docs/plan.md change that says so.
+func TestTSVFixedColumnsAreStable(t *testing.T) {
+	var b bytes.Buffer
+	if err := TSV(&b, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	const want = "plan\tnode\tarm\titem\trep\tattempt\texp\trun\tstatus\treason\tvalid\tgrade_error\thost\tlane\tisolation_mode\toom_kills" +
+		"\tworkload_pinned\tworkload_observed\tsubject_pinned\tsubject_observed\tapp\tsource_ok\tsubmitted\tended\tgrade\n"
+	if b.String() != want {
+		t.Fatalf("TSV header changed:\n got %q\nwant %q", b.String(), want)
+	}
+}

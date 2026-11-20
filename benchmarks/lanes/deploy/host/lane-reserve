@@ -29,7 +29,7 @@
 #
 # Test hooks exist only for an unprivileged caller (the tests run it as a plain user against a directory standing in for
 # the cgroup tree): SDO_EVAL_CGROUP_ROOT, SDO_EVAL_STATE, SDO_EVAL_NOW, SDO_EVAL_SYSTEMCTL, SDO_EVAL_DOCKER, SDO_EVAL_ONLINE,
-# SDO_EVAL_MEMINFO. As root they are not read, whatever the environment says.
+# SDO_EVAL_MEMINFO, SDO_EVAL_DROPIN_DIR. As root they are not read, whatever the environment says.
 set -euo pipefail
 umask 022
 
@@ -37,16 +37,17 @@ if [ "$(id -u)" = 0 ]; then
   PATH=/usr/sbin:/usr/bin:/sbin:/bin
   CG=/sys/fs/cgroup STATE=/run/sdo-eval-reserve BSTATE=/var/lib/lane-reserve now=$(date +%s)
   SYSTEMCTL=/usr/bin/systemctl DOCKER=/usr/bin/docker
-  ONLINE=/sys/devices/system/cpu/online MEMINFO=/proc/meminfo SYSFS=/sys/devices/system
+  ONLINE=/sys/devices/system/cpu/online MEMINFO=/proc/meminfo SYSFS=/sys/devices/system DROPIN=/etc/systemd/system
 else
   : "${SDO_EVAL_CGROUP_ROOT:?must run as root (SDO_EVAL_* test hooks are for tests)}"
   CG=$SDO_EVAL_CGROUP_ROOT STATE=${SDO_EVAL_STATE:?} now=${SDO_EVAL_NOW:-$(date +%s)}
   BSTATE=${SDO_EVAL_BLOCK_STATE:-$STATE.persist}
   SYSTEMCTL=${SDO_EVAL_SYSTEMCTL:-systemctl} DOCKER=${SDO_EVAL_DOCKER:-docker}
   ONLINE=${SDO_EVAL_ONLINE:-/sys/devices/system/cpu/online} MEMINFO=${SDO_EVAL_MEMINFO:-/proc/meminfo}
-  SYSFS=${SDO_EVAL_SYSFS:-/sys/devices/system}
+  SYSFS=${SDO_EVAL_SYSFS:-/sys/devices/system} DROPIN=${SDO_EVAL_DROPIN_DIR:-$STATE.dropin}
 fi
 LANES_SLICE=$CG/lanes.slice
+STEP_LEAF=step   # the leaf cgroup under a lane slice that every lane-exec step runs in (a lane slice holds no process itself)
 HOST_SLICES="user.slice system.slice machine.slice kubepods.slice"
 SLICE=$CG/eval.slice
 
@@ -200,6 +201,76 @@ settle() { # after the leases changed: reserve the union of the live leases, els
 slice_exists() { [ "$("$SYSTEMCTL" show "$1" -p LoadState --value 2>/dev/null || echo not-found)" != not-found ]; }
 slice_cpus() { "$SYSTEMCTL" show "$1" -p AllowedCPUs --value 2>/dev/null | tr ' ' ',' || true; }
 
+slice_cgroup_cpus() { # SLICE -> the cpus its cgroup may use now ("" : no cgroup, or unrestricted and unreadable)
+  local d=$CG/$1 f
+  for f in cpuset.cpus.effective cpuset.cpus; do
+    if [ -s "$d/$f" ]; then tr -d '\n' < "$d/$f"; return; fi
+  done
+}
+slice_overlaps() { # SLICE BLOCK: the slice's cgroup exists and may use a cpu of BLOCK (or says nothing: inherits everything)
+  local have
+  [ -d "$CG/$1" ] || return 1
+  have=$(slice_cgroup_cpus "$1")
+  [ -n "$have" ] || return 0
+  [ -n "$(comm -12 <(expand "$have" | sort -u) <(expand "$2" | sort -u))" ]
+}
+
+# The rule: every top-level slice except lanes.slice keeps off the block. The set is read from the cgroup tree at each
+# check (other teams' tools create slices of their own: sdo.slice, eval.slice), plus the usual names even before they
+# exist. A slice that is a deliberate root partition (cpuset.cpus.partition) is left alone.
+host_slices() {
+  local d s
+  { for s in $HOST_SLICES; do echo "$s"; done; for d in "$CG"/*.slice; do [ -d "$d" ] && basename "$d"; done; } | sort -u | while read -r s; do
+    [ "$s" != lanes.slice ] || continue
+    case $(cat "$CG/$s/cpuset.cpus.partition" 2>/dev/null || true) in root | isolated) continue ;; esac
+    echo "$s"
+  done
+}
+
+# foreign_pinned SLICE BLOCK: prints the cgroup (relative to the slice) of a container under SLICE that is pinned, with an
+# explicit cpuset.cpus, to a cpu inside BLOCK. Shrinking SLICE would change that container's effective cpuset, so a slice
+# that holds one is never shrunk.
+foreign_pinned() {
+  local f cpus
+  while IFS= read -r f; do
+    cpus=$(tr -d '\n' < "$f" 2>/dev/null || true)
+    [ -n "$cpus" ] || continue
+    if [ -n "$(comm -12 <(expand "$cpus" | sort -u) <(expand "$2" | sort -u))" ]; then
+      f=${f#"$CG/$1/"}; echo "${f%/cpuset.cpus}"; return 0
+    fi
+  done < <(find "$CG/$1" -mindepth 2 -maxdepth 6 -name cpuset.cpus 2>/dev/null)
+  return 1
+}
+
+dropin_path() { echo "$DROPIN/$1.d/50-lane-reserve.conf"; }
+
+apply_slice() { # SLICE COMP: put one top-level slice on COMP, whatever kind of slice it is
+  local s=$1 comp=$2
+  if slice_exists "$s"; then
+    [ "$(slice_cpus "$s")" = "$comp" ] || "$SYSTEMCTL" set-property "$s" "AllowedCPUs=$comp"
+  else
+    # not a unit (yet): a drop-in is read when systemd creates the unit, and the cgroup, if it is there now, is set directly
+    mkdir -p "$(dirname "$(dropin_path "$s")")"
+    printf '[Slice]\nAllowedCPUs=%s\n' "$comp" > "$(dropin_path "$s")"
+    if [ -d "$CG/$s" ]; then echo "$comp" > "$CG/$s/cpuset.cpus" 2>/dev/null || echo "lane-reserve: could not set $CG/$s/cpuset.cpus" >&2; fi
+  fi
+}
+
+block_reapply() { # the reservation, again, for any slice that no longer (or never) keeps off the block; run by gc
+  local b comp s
+  b=$(block_state_get block)
+  [ -n "$b" ] && [ "$b" != - ] || return 0
+  comp=$(complement "$b")
+  for s in $(host_slices); do
+    foreign_pinned "$s" "$b" >/dev/null && continue
+    if slice_exists "$s"; then
+      if [ "$(slice_cpus "$s")" != "$comp" ] || slice_overlaps "$s" "$b"; then apply_slice "$s" "$comp"; fi
+    elif slice_overlaps "$s" "$b" || [ ! -e "$(dropin_path "$s")" ]; then
+      apply_slice "$s" "$comp"
+    fi
+  done
+}
+
 complement() { # LIST -> online CPUs outside LIST, as a list
   comm -13 <(expand "$1" | sort -u) <(expand "$(cat "$ONLINE")" | sort -u) | sort -n | fmt_list
 }
@@ -231,15 +302,34 @@ block_show() { # one line per fact: what status prints and what reserve prints b
   echo "block ${b}"
   if [ "$b" != - ]; then
     local comp; comp=$(complement "$b")
-    for s in $HOST_SLICES; do
-      slice_exists "$s" || continue
-      [ "$(slice_cpus "$s")" = "$comp" ] || two=no
+    local bad p
+    for s in $(host_slices); do
+      bad=
+      if slice_exists "$s" && [ "$(slice_cpus "$s")" != "$comp" ]; then bad="AllowedCPUs=$(slice_cpus "$s")"; fi
+      # the cgroup itself is the truth: a slice created after the reservation is not a unit systemd knew when the property
+      # was set, and its cpus may still reach into the block
+      if slice_overlaps "$s" "$b"; then bad="${bad:+$bad }cpuset=$(slice_cgroup_cpus "$s")"; fi
+      [ -n "$bad" ] || continue
+      two=no
+      if p=$(foreign_pinned "$s" "$b"); then echo "foreign-pinned $s $p"; else echo "unexcluded $s $bad"; fi
     done
   else two=no; fi
   echo "two-way $two"
-  for s in $HOST_SLICES lanes.slice; do
+  for s in $(host_slices) lanes.slice; do
     slice_exists "$s" || continue
     echo "slice $s AllowedCPUs=$(slice_cpus "$s")"
+  done
+  lane_slice_defects
+}
+
+# A lane slice with a process directly in its cgroup.procs is a defect: cgroup v2 refuses controller-enabled children
+# (the node containers' scopes) under it, so kind cannot create nodes. One line per slice.
+lane_slice_defects() {
+  local d n
+  for d in "$LANES_SLICE"/lanes-*.slice; do
+    [ -f "$d/cgroup.procs" ] || continue
+    n=$(grep -c . "$d/cgroup.procs" || true)
+    [ "${n:-0}" -eq 0 ] || echo "defect $(basename "$d") $n process(es) directly in cgroup.procs (steps must run in $STEP_LEAF/)"
   done
 }
 
@@ -251,11 +341,8 @@ block_reserve() { # LIST MEMORY_BYTES HOST_RESERVE_CPUS
   echo "before:"; block_show | sed 's/^/  /'
   local prevs
   if [ -e "$BSTATE/block" ]; then prevs=$(block_prevs)
-  else prevs=$(for s in $HOST_SLICES lanes.slice; do slice_exists "$s" && echo "prev $s $(slice_cpus "$s")" || true; done); fi
-  for s in $HOST_SLICES; do
-    slice_exists "$s" || continue
-    [ "$(slice_cpus "$s")" = "$comp" ] || "$SYSTEMCTL" set-property "$s" "AllowedCPUs=$comp"
-  done
+  else prevs=$(for s in $(host_slices) lanes.slice; do slice_exists "$s" && echo "prev $s $(slice_cpus "$s")" || true; done); fi
+  for s in $(host_slices); do foreign_pinned "$s" "$list" >/dev/null && continue; apply_slice "$s" "$comp"; done
   "$SYSTEMCTL" start lanes.slice 2>/dev/null || true
   "$SYSTEMCTL" set-property lanes.slice "AllowedCPUs=$list" "MemoryMin=$mem"
   { echo "block $list"; echo "memory $mem"; echo "adopted 0"; [ -z "$prevs" ] || echo "$prevs"; } > "$BSTATE/block.new"
@@ -272,6 +359,7 @@ block_unreserve() {
     "$SYSTEMCTL" set-property "$s" "AllowedCPUs=${v:-}"
   done < "$BSTATE/block"
   slice_exists lanes.slice && "$SYSTEMCTL" set-property lanes.slice "AllowedCPUs=" "MemoryMin=0" || true
+  for s in $(host_slices); do rm -f "$(dropin_path "$s")"; done
   rm -f "$BSTATE/block"
   echo "after:"; block_show | sed 's/^/  /'
 }
@@ -322,7 +410,11 @@ lane_exec() {
   [ ! -e "$LANES_SLICE/cgroup.subtree_control" ] || echo "+cpuset +memory" > "$LANES_SLICE/cgroup.subtree_control" 2>/dev/null || true
   [ -z "$cpus" ] || echo "$cpus" > "$cg/cpuset.cpus"
   [ -z "$mem" ] || echo "$mem" > "$cg/memory.max"
-  echo $$ > "$cg/cgroup.procs"
+  # cgroup v2 no-internal-processes: a lane slice that holds a process directly cannot have controller-enabled children,
+  # and the node containers' scopes (docker --cgroup-parent=<lane slice>) are exactly that. So the step lives in a leaf
+  # below the lane slice; the slice keeps the limits (the leaf and the node scopes share its cap) and holds no process.
+  mkdir -p "$cg/$STEP_LEAF"
+  echo $$ > "$cg/$STEP_LEAF/cgroup.procs"
   exec 9>&-   # the helper's lock is not the command's
   if [ "$(id -u)" = 0 ] && [ -n "${SUDO_UID:-}" ]; then
     exec setpriv --reuid="$SUDO_UID" --regid="${SUDO_GID:-$SUDO_UID}" --init-groups "$@"
@@ -386,7 +478,7 @@ block)
   *) die "usage: block reserve|unreserve|adopt|status" ;;
   esac ;;
 lane-exec) shift; lane_exec "$@" ;;
-gc | repin) settle ;;
+gc | repin) settle; block_reapply ;;
 pin) pin "${2:-}" "${3:-}" ;;
 status)
   settle
