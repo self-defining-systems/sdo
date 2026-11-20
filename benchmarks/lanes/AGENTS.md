@@ -57,6 +57,37 @@ Lane isolation on a host is imported intact and behavior-identical; phase 1 adds
 - `deploy/host/` is the one-time root setup: `eval.slice` (the parent cgroup of every lane, `EvalSlice` in `internal/bench/lanestep.go`), the `sdo-eval-reserve` helper that holds the exclusive partition and repins runc `AllowedCPUs`, its gc timer and the sudoers rule.
 - `internal/bench` keeps the per-user core and memory ledger (`/var/tmp/fuzzops-lanes-<uid>`, `cpualloc.go`, the `ledger` verb), splits memory across nodes, and counts `oom_kill` from the lane's cgroup `memory.events` per run: a run with OOM kills is invalid unless the spec sets `accept_oom_kills`.
 
+### Core reservation (config plus commands)
+
+Nobody types `systemctl`. A host declares its lane block in hosts.yaml and the commands apply it through the root helper
+(`deploy/host/lane-reserve`; `sdo-eval-reserve` stays as an alias path):
+
+```yaml
+hosts:
+  spokane1:
+    reserve: {cpus: "88-111,200-223", memory: 400Gi, host_reserve_cpus: 2}   # or {cores: 24, numa: 3}
+    isolation: one-way-ok     # optional: allow lanes on this host with no active reservation (rows are flagged)
+```
+
+| command | does |
+|---|---|
+| `lanes host install-helper HOST` | the only sudo step: installs the helper, the `lanes.slice` unit and a sudoers rule limited to the helper |
+| `lanes host reserve HOST\|all` | shrinks `user.slice`, `system.slice`, `machine.slice` and `kubepods.slice` to the complement of the block and puts `lanes.slice` on it; idempotent; prints before and after; the replaced values are saved on the host |
+| `lanes host unreserve HOST [--drain]` | restores the saved values; refuses while lanes run unless `--drain` |
+| `lanes host status [HOST]` | the block, two-way or one-way, foreign containers pinned inside it, our containers outside it, drift |
+| `lanes host adopt HOST [--cpus LIST]` | records a reservation made by hand (nothing is changed) |
+
+The bench records the active block in `<root>/reservations/<host>.json`. Admission: every lane cpuset is a subset of the
+block; a host with no reservation admits no lanes unless the spec (`isolation: one-way-ok`) or the host says so, and
+those rows carry `isolation.mode: one-way-ok` (a `one-way` row ran on a block whose other slices still use it; a spec can
+require `isolation: two-way`). Every reconcile (at most once a minute per host) compares the live slices with the record;
+a mismatch or an unreadable host raises an alarm (`alarms.jsonl`, `bench.log`) and stops admission there.
+Every step of a reserved host starts as `sudo -n --preserve-env lane-reserve lane-exec LANE -- lanes step ...`, which
+moves the step's process into `lanes.slice/lanes-<lane>.slice` before it runs, so builds, the agent, hooks and kubectl are
+charged to the lane; the lane's kind nodes go to the same slice through the docker shim's `--cgroup-parent`.
+Tests use a fake systemctl and a fake cgroupfs (`deploy/laneblock_test.go`) and a fake helper (`internal/bench/reserve_test.go`);
+CI never runs the real helper.
+
 Next, as a separate PR: IO and pids limits, per-lane PSI, and a two-way slice that also protects lanes from other work on the host.
 
 Neutrality notes (not redesigned in phase 1): the slice name `eval.slice`, the helper and unit names `sdo-eval-reserve*`, the `FUZZOPS_LANE_*` and `FUZZOPS_EVAL_HELPER` variables and the ledger directory names are SDO and fuzzops era names. Hosts have them installed, so renaming needs a coordinated host change (design: M1).

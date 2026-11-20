@@ -101,7 +101,7 @@ func newLab(t *testing.T) *lab {
 	fake := testdata("fakefuzzops")
 	hook := testdata("hook.sh")
 	inv := `hosts:
-  h1: {local: true, staging: ` + dir + `/staging, max_builds: 1, max_load5: 100000, kubeconfigs: ` + dir + `/kube, evidence: ` + dir + `/evidence, clusters: [c1]}
+  h1: {local: true, isolation: one-way-ok, staging: ` + dir + `/staging, max_builds: 1, max_load5: 100000, kubeconfigs: ` + dir + `/kube, evidence: ` + dir + `/evidence, clusters: [c1]}
 checkouts:
   fuzzops: {0b528ac: {h1: ` + fake + `}}
   hooks:

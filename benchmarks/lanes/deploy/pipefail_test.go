@@ -14,6 +14,7 @@ import (
 // Under `set -o pipefail`, `producer | grep -q x` fails when grep finds x early: grep exits, the producer gets
 // SIGPIPE (exit 141), and the pipeline's status is 141, so the match reads as "no match" (a lane cluster that exists
 // is taken for missing). A shell script with pipefail writes `| grep x >/dev/null`, which reads all its input.
+//
 //ci:scoped walks only this module's own shell scripts
 func TestNoEarlyExitGrepUnderPipefail(t *testing.T) {
 	early := regexp.MustCompile(`\|\s*grep\s+-[a-zA-Z]*[qm]`)

@@ -1,3 +1,3 @@
 # /etc/sudoers.d/sdo-eval-reserve (visudo -c -f it first; mode 0440). Replace BENCHUSER with the account the bench runs as.
 # The helper validates every argument itself; it can only change eval.slice's cpuset partition and memory.min.
-BENCHUSER ALL=(root) NOPASSWD: /usr/local/sbin/sdo-eval-reserve
+BENCHUSER ALL=(root) NOPASSWD:SETENV: /usr/local/sbin/lane-reserve, /usr/local/sbin/sdo-eval-reserve

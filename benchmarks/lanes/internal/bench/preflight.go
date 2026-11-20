@@ -139,6 +139,8 @@ func (s specFile) baselineDir() string {
 }
 
 // hostRunner runs scripts on the local machine or over the host's ssh.
+func HostRunner(inv Inventory) runFn { return hostRunner(inv) }
+
 func hostRunner(inv Inventory) runFn {
 	return func(ctx context.Context, host, script string) (string, error) {
 		h := inv.Hosts[host]

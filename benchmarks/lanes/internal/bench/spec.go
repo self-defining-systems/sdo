@@ -93,6 +93,9 @@ type Spec struct {
 	// isolation.oom_kills > 0) as done. Default: such a run is invalid (retried like any invalid run), since a
 	// killed kubelet, etcd or app process changes what was measured.
 	AcceptOOMKills bool `json:"accept_oom_kills,omitempty"`
+	// Isolation "two-way" requires hosts whose other slices exclude the lane block; "one-way-ok" accepts a host with no
+	// reservation (its rows are flagged). Default: a reserved host, one-way or two-way. Infrastructure, not part of the identity.
+	Isolation string `json:"isolation,omitempty"`
 }
 
 // ClaimWaits reports whether the spec claims a pool and waits for its lanes instead of building its own.

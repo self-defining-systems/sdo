@@ -1,0 +1,372 @@
+#!/usr/bin/env bash
+# lane-reserve (formerly sdo-eval-reserve, which stays as an alias path): the root helper of the bench's lane limits (docs/bench.md, "Lane limits").
+#
+#   sdo-eval-reserve on LANE --cpus LIST [--lease 10m] [--memory-min SIZE]   # a measured run on LANE starts (or renews its lease)
+#   sdo-eval-reserve off LANE                                                # it ended
+#   sdo-eval-reserve status | gc | repin
+#   sdo-eval-reserve block reserve --cpus LIST [--memory SIZE] [--host-reserve-cpus N] | --cores N --numa M
+#   sdo-eval-reserve block unreserve | adopt --cpus LIST | status      # the host's persistent lane block (lanes.slice)
+#   sdo-eval-reserve lane-exec LANE [--cpus LIST] [--memory SIZE] -- CMD...   # run CMD inside the lane's cgroup
+#   sdo-eval-reserve pin CONTAINER_ID LIST    # AllowedCPUs of a lane node's scope, with systemd's encoder (deploy/lane-limits.sh)
+#
+# While at least one lane holds a live lease, eval.slice (the parent cgroup of every lane's node containers) is an
+# exclusive cpuset partition (cpuset.cpus.partition=root) on the union of the live leases' CPU lists: the kernel takes those
+# cores away from every other cgroup, so nothing else runs on them, and memory.min (the largest asked) protects the lanes'
+# memory. When the last lease ends or expires the slice is a plain member again, memory.min is put back, and the host is as
+# it was (a task that had been pinned to those cores with sched_setaffinity keeps the mask the kernel reset it to).
+# A lease is per lane and renewed by asking again (a lane counts once); the bench renews it every few minutes while a
+# run lasts, and one it stopped renewing (it died) expires after its --lease (default 10m) at the next call of any verb
+# (sdo-eval-reserve-gc.timer runs `gc` every minute, which also re-pins).
+#
+# `repin` (and every `on` and `gc`) re-checks each node scope under eval.slice against what docker says its cpuset is, and
+# fixes it with systemd's own encoder: runc 1.1.x's systemd driver encodes AllowedCPUs with the wrong byte order, and a
+# `systemctl daemon-reload` writes that into cpuset.cpus, which would move a lane onto other lanes' cores.
+#
+# Policy: a CPU list must be within the host's online CPUs and leave at least one online CPU outside it; --memory-min is
+# bounded by the host's RAM; numbers are length-checked before any arithmetic. Everything it is given is validated here:
+# a lane name, a CPU list, a duration and a size, nothing else. Installed as root at /usr/local/sbin/sdo-eval-reserve and
+# called by the bench as `sudo -n /usr/local/sbin/sdo-eval-reserve ...` (the one-line rule in sdo-eval-reserve.sudoers).
+#
+# Test hooks exist only for an unprivileged caller (the tests run it as a plain user against a directory standing in for
+# the cgroup tree): SDO_EVAL_CGROUP_ROOT, SDO_EVAL_STATE, SDO_EVAL_NOW, SDO_EVAL_SYSTEMCTL, SDO_EVAL_DOCKER, SDO_EVAL_ONLINE,
+# SDO_EVAL_MEMINFO. As root they are not read, whatever the environment says.
+set -euo pipefail
+umask 022
+
+if [ "$(id -u)" = 0 ]; then
+  PATH=/usr/sbin:/usr/bin:/sbin:/bin
+  CG=/sys/fs/cgroup STATE=/run/sdo-eval-reserve now=$(date +%s)
+  SYSTEMCTL=/usr/bin/systemctl DOCKER=/usr/bin/docker
+  ONLINE=/sys/devices/system/cpu/online MEMINFO=/proc/meminfo SYSFS=/sys/devices/system
+else
+  : "${SDO_EVAL_CGROUP_ROOT:?must run as root (SDO_EVAL_* test hooks are for tests)}"
+  CG=$SDO_EVAL_CGROUP_ROOT STATE=${SDO_EVAL_STATE:?} now=${SDO_EVAL_NOW:-$(date +%s)}
+  SYSTEMCTL=${SDO_EVAL_SYSTEMCTL:-systemctl} DOCKER=${SDO_EVAL_DOCKER:-docker}
+  ONLINE=${SDO_EVAL_ONLINE:-/sys/devices/system/cpu/online} MEMINFO=${SDO_EVAL_MEMINFO:-/proc/meminfo}
+  SYSFS=${SDO_EVAL_SYSFS:-/sys/devices/system}
+fi
+LANES_SLICE=$CG/lanes.slice
+HOST_SLICES="user.slice system.slice machine.slice kubepods.slice"
+SLICE=$CG/eval.slice
+
+die() { echo "sdo-eval-reserve: $*" >&2; exit 1; }
+
+LANE_RE='^[a-z0-9][a-z0-9.-]{0,62}$'
+LIST_RE='^[0-9]{1,5}(-[0-9]{1,5})?(,[0-9]{1,5}(-[0-9]{1,5})?)*$'
+
+expand() { # CPU list -> one number per line
+  local part lo hi
+  IFS=, read -ra parts <<<"$1"
+  for part in "${parts[@]}"; do
+    lo=${part%-*} hi=${part#*-}
+    [ "$lo" -le "$hi" ] || die "cpu list '$1': $lo-$hi runs backwards"
+    seq "$lo" "$hi"
+  done
+}
+
+fmt_list() { # sorted unique numbers on stdin -> CPU list
+  local out= start= prev= n
+  while read -r n; do
+    if [ -z "$start" ]; then start=$n prev=$n
+    elif [ "$n" -eq $((prev + 1)) ]; then prev=$n
+    else out+=${out:+,}$([ "$start" = "$prev" ] && echo "$start" || echo "$start-$prev"); start=$n prev=$n; fi
+  done
+  [ -z "$start" ] || out+=${out:+,}$([ "$start" = "$prev" ] && echo "$start" || echo "$start-$prev")
+  echo "$out"
+}
+
+check_cpus() { # LIST: syntax, ranges forward, within the online CPUs, leaves at least one online CPU out
+  [[ $1 =~ $LIST_RE ]] || die "--cpus LIST (for example 4-55)"
+  local part lo hi want online
+  IFS=, read -ra parts <<<"$1"
+  for part in "${parts[@]}"; do
+    lo=${part%-*} hi=${part#*-}
+    [ "$lo" -le "$hi" ] || die "cpus $1: $part runs backwards"
+  done
+  want=$(expand "$1" | sort -u)
+  online=$(expand "$(cat "$ONLINE")" | sort -u)
+  [ -z "$(comm -23 <(echo "$want") <(echo "$online"))" ] || die "cpus $1 are not all online (online: $(cat "$ONLINE"))"
+  [ -n "$(comm -13 <(echo "$want") <(echo "$online"))" ] || die "cpus $1 would leave no online CPU for the rest of the host"
+}
+
+size_bytes() { # 8G, 512M, 20Gi, 1048576 -> bytes, at most the host's RAM
+  local s=${1^^} n m=1 total
+  s=${s%B}; s=${s%I}
+  case $s in *K) m=1024 ;; *M) m=$((1 << 20)) ;; *G) m=$((1 << 30)) ;; *T) m=$((1 << 40)) ;; esac
+  n=${s%[KMGT]}
+  [[ $n =~ ^[0-9]{1,12}$ ]] || die "size '$1': want a whole number (at most 12 digits) with K, M, G or T"
+  total=$(awk '/^MemTotal:/ {printf "%.0f", $2 * 1024}' "$MEMINFO")
+  [ "$n" -le $((total / m)) ] || die "size '$1' is more than the host's RAM ($total bytes)"
+  echo $((n * m))
+}
+
+duration_s() { # 90s, 30m, 2h
+  [[ $1 =~ ^([0-9]{1,5})([smh])$ ]] || die "duration '$1': want 90s, 30m or 2h"
+  case ${BASH_REMATCH[2]} in s) echo "${BASH_REMATCH[1]}" ;; m) echo $((BASH_REMATCH[1] * 60)) ;; h) echo $((BASH_REMATCH[1] * 3600)) ;; esac
+}
+
+live_leases() { # lease files of lanes with an unexpired lease (expired ones are removed)
+  local f
+  for f in "$STATE"/lease.*; do
+    [ -e "$f" ] || continue
+    if [ "$(cut -d' ' -f1 "$f")" -gt "$now" ]; then echo "$f"; else rm -f "$f"; fi
+  done
+}
+
+reserved() { [ -d "$SLICE" ] && [ "$(cat "$SLICE/cpuset.cpus.partition" 2>/dev/null)" = root ]; }
+
+ensure_slice() {
+  [ -d "$SLICE" ] || [ "$(id -u)" != 0 ] || "$SYSTEMCTL" start eval.slice
+  [ -d "$SLICE" ] || die "$SLICE does not exist (install eval.slice, deploy/host/README.md)"
+}
+
+reserve() { # LIST MEMORY_MIN_BYTES
+  ensure_slice
+  # keep what an administrator had set as memory.min, to put it back
+  if [ ! -e "$STATE/memmin-prev" ]; then
+    if [ -e "$SLICE/memory.min" ]; then cat "$SLICE/memory.min" > "$STATE/memmin-prev"; else echo - > "$STATE/memmin-prev"; fi
+  fi
+  echo "$1" > "$SLICE/cpuset.cpus"
+  echo root > "$SLICE/cpuset.cpus.partition"
+  case $(cat "$SLICE/cpuset.cpus.partition") in
+  *invalid*)
+    echo member > "$SLICE/cpuset.cpus.partition"
+    echo "$1" > "$SLICE/cpuset.cpus"; echo root > "$SLICE/cpuset.cpus.partition"
+    case $(cat "$SLICE/cpuset.cpus.partition") in
+    *invalid*) echo member > "$SLICE/cpuset.cpus.partition"; die "the kernel refused cpus $1 as an exclusive partition (is another cgroup's partition on some of them?)" ;;
+    esac ;;
+  esac
+  if [ "${2:-0}" != 0 ] || [ -e "$SLICE/memory.min" ]; then echo "${2:-0}" > "$SLICE/memory.min"; fi
+}
+
+release() {
+  [ -d "$SLICE" ] || return 0
+  echo member > "$SLICE/cpuset.cpus.partition"
+  if [ -e "$STATE/memmin-prev" ]; then
+    local prev; prev=$(cat "$STATE/memmin-prev"); rm -f "$STATE/memmin-prev"
+    if [ "$prev" != - ] && [ -e "$SLICE/memory.min" ]; then echo "$prev" > "$SLICE/memory.min"; fi
+  fi
+}
+
+pin() { # SCOPE_ID LIST: set the AllowedCPUs property of a lane node's scope with systemd's own encoder (see deploy/lane-limits.sh)
+  [[ ${1:-} =~ ^[0-9a-f]{64}$ ]] || die "pin: a container id (64 hex digits)"
+  [[ ${2:-} =~ $LIST_RE ]] || die "pin: a CPU list"
+  [ -d "$SLICE/docker-$1.scope" ] || die "pin: no scope docker-$1.scope under eval.slice"
+  # a lane never swaps, and a systemd write of the scope would otherwise undo docker's swap limit
+  "$SYSTEMCTL" set-property --runtime "docker-$1.scope" "AllowedCPUs=$2" MemorySwapMax=0
+}
+
+repin() { # every node scope under eval.slice: systemd's property and cpuset.cpus must be what docker says the node's cpuset is
+  local d id want have prop
+  for d in "$SLICE"/docker-*.scope; do
+    [ -d "$d" ] || continue
+    id=${d##*/docker-}; id=${id%.scope}
+    want=$("$DOCKER" inspect -f '{{.HostConfig.CpusetCpus}}' "$id" 2>/dev/null) || continue
+    [[ $want =~ $LIST_RE ]] || continue
+    have=$(cat "$d/cpuset.cpus" 2>/dev/null || true)
+    prop=$("$SYSTEMCTL" show "docker-$id.scope" -p AllowedCPUs --value 2>/dev/null | tr ' ' ',' || true)
+    if [ "$have" != "$want" ] || { [ -n "$prop" ] && [ "$prop" != "$want" ]; }; then
+      echo "re-pinning $id: cpuset.cpus=$have AllowedCPUs=$prop, docker says $want" >&2
+      pin "$id" "$want" || true
+    fi
+  done
+}
+
+settle() { # after the leases changed: reserve the union of the live leases, else release
+  local f cpus="" mem=0 m n
+  for f in $(live_leases); do
+    cpus+=$(expand "$(cut -d' ' -f2 "$f")")$'\n'
+    m=$(cut -d' ' -f3 "$f"); [ "$m" -le "$mem" ] || mem=$m
+  done
+  if [ -n "$cpus" ]; then
+    n=$(sort -un <<<"$cpus" | fmt_list)
+    reserve "$n" "$mem"
+  elif reserved; then
+    release
+  fi
+  repin
+}
+
+
+# ---- the host's persistent lane block (lanes.slice) ----------------------------------------------------------------
+# `block reserve` shrinks the other top-level slices to the complement of the block and puts lanes.slice on the block;
+# the values it replaced are saved in $STATE/block and put back by `block unreserve`. Idempotent: a second reserve of the
+# same block changes nothing and keeps the first saved values. `block adopt` records a block somebody set by hand.
+
+slice_exists() { [ "$("$SYSTEMCTL" show "$1" -p LoadState --value 2>/dev/null || echo not-found)" != not-found ]; }
+slice_cpus() { "$SYSTEMCTL" show "$1" -p AllowedCPUs --value 2>/dev/null | tr ' ' ',' || true; }
+
+complement() { # LIST -> online CPUs outside LIST, as a list
+  comm -13 <(expand "$1" | sort -u) <(expand "$(cat "$ONLINE")" | sort -u) | sort -n | fmt_list
+}
+
+pick_cores() { # N NUMA -> the CPU list of the last N whole cores of NUMA node NUMA
+  local node=$SYSFS/node/node$2 cpus c sib seen=" " groups=()
+  [ -r "$node/cpulist" ] || die "numa node $2 has no cpulist ($node)"
+  cpus=$(expand "$(cat "$node/cpulist")")
+  for c in $cpus; do
+    sib=$(cat "$SYSFS/cpu/cpu$c/topology/thread_siblings_list" 2>/dev/null || echo "$c")
+    case $seen in *" $sib "*) continue ;; esac
+    seen+="$sib "; groups+=("$sib")
+  done
+  [ "$1" -ge 1 ] && [ "$1" -le "${#groups[@]}" ] || die "numa node $2 has ${#groups[@]} cores, not $1"
+  printf '%s\n' "${groups[@]: -$1}" | while read -r g; do expand "$g"; done | sort -un | fmt_list
+}
+
+block_state_get() { [ -e "$STATE/block" ] && sed -n "s/^$1 //p" "$STATE/block" | head -1 || true; }
+
+block_show() { # one line per fact: what status prints and what reserve prints before and after
+  local b s two=yes
+  b=$(block_state_get block); b=${b:--}
+  echo "block ${b}"
+  if [ "$b" != - ]; then
+    local comp; comp=$(complement "$b")
+    for s in $HOST_SLICES; do
+      slice_exists "$s" || continue
+      [ "$(slice_cpus "$s")" = "$comp" ] || two=no
+    done
+  else two=no; fi
+  echo "two-way $two"
+  for s in $HOST_SLICES lanes.slice; do
+    slice_exists "$s" || continue
+    echo "slice $s AllowedCPUs=$(slice_cpus "$s")"
+  done
+}
+
+block_reserve() { # LIST MEMORY_BYTES HOST_RESERVE_CPUS
+  local list=$1 mem=$2 keep=$3 comp s
+  check_cpus "$list"
+  comp=$(complement "$list")
+  [ "$(expand "$comp" | wc -l)" -ge "$keep" ] || die "the host reserve would be $(expand "$comp" | wc -l) CPUs, below host_reserve_cpus $keep"
+  echo "before:"; block_show | sed 's/^/  /'
+  if [ ! -e "$STATE/block" ]; then
+    { echo "adopted 0"; for s in $HOST_SLICES lanes.slice; do slice_exists "$s" && echo "prev $s $(slice_cpus "$s")" || true; done; } > "$STATE/block.prev"
+  fi
+  for s in $HOST_SLICES; do
+    slice_exists "$s" || continue
+    [ "$(slice_cpus "$s")" = "$comp" ] || "$SYSTEMCTL" set-property "$s" "AllowedCPUs=$comp"
+  done
+  "$SYSTEMCTL" start lanes.slice 2>/dev/null || true
+  "$SYSTEMCTL" set-property lanes.slice "AllowedCPUs=$list" "MemoryMin=$mem"
+  { echo "block $list"; echo "memory $mem"; cat "$STATE/block.prev"; } > "$STATE/block"
+  echo "after:"; block_show | sed 's/^/  /'
+}
+
+block_unreserve() {
+  [ -e "$STATE/block" ] || die "no block is recorded on this host"
+  echo "before:"; block_show | sed 's/^/  /'
+  local s v
+  while read -r k s v; do
+    [ "$k" = prev ] || continue
+    "$SYSTEMCTL" set-property "$s" "AllowedCPUs=${v:-}"
+  done < "$STATE/block"
+  slice_exists lanes.slice && "$SYSTEMCTL" set-property lanes.slice "AllowedCPUs=" "MemoryMin=0" || true
+  rm -f "$STATE/block" "$STATE/block.prev"
+  echo "after:"; block_show | sed 's/^/  /'
+}
+
+block_adopt() { # LIST: record what is there; changes nothing
+  check_cpus "$1"
+  { echo "block $1"; echo "memory 0"; echo "adopted 1"; } > "$STATE/block"
+  block_show
+}
+
+# lane-exec LANE [--cpus LIST] [--memory BYTES] -- CMD...: create the lane's cgroup under lanes.slice, enter it and run CMD there
+# as the calling user, so everything CMD starts (builds, the agent, hooks, kubectl) is charged to the lane.
+lane_exec() {
+  local lane=${1:-} cpus= mem=
+  [[ $lane =~ $LANE_RE ]] || die "lane-exec: a lane name"
+  shift
+  while [ $# -gt 0 ] && [ "$1" != -- ]; do
+    case $1 in
+    --cpus) cpus=${2:-}; shift 2 ;;
+    --memory) mem=$(size_bytes "${2:-}"); shift 2 ;;
+    *) die "lane-exec: unknown argument '$1'" ;;
+    esac
+  done
+  [ "${1:-}" = -- ] || die "lane-exec: LANE [--cpus LIST] [--memory SIZE] -- COMMAND..."
+  shift; [ $# -gt 0 ] || die "lane-exec: no command"
+  local b; b=$(block_state_get block)
+  [ -n "$b" ] || die "lane-exec: the host has no recorded lane block"
+  [ -z "$cpus" ] || { check_cpus "$cpus"; [ -z "$(comm -23 <(expand "$cpus" | sort -u) <(expand "$b" | sort -u))" ] || die "lane-exec: cpus $cpus are not inside the block $b"; }
+  local cg=$LANES_SLICE/lanes-${lane//-/_}.slice
+  mkdir -p "$cg"
+  [ ! -e "$LANES_SLICE/cgroup.subtree_control" ] || echo "+cpuset +memory" > "$LANES_SLICE/cgroup.subtree_control" 2>/dev/null || true
+  [ -z "$cpus" ] || echo "$cpus" > "$cg/cpuset.cpus"
+  [ -z "$mem" ] || echo "$mem" > "$cg/memory.max"
+  echo $$ > "$cg/cgroup.procs"
+  exec 9>&-   # the helper's lock is not the command's
+  if [ "$(id -u)" = 0 ] && [ -n "${SUDO_UID:-}" ]; then
+    exec setpriv --reuid="$SUDO_UID" --regid="${SUDO_GID:-$SUDO_UID}" --init-groups "$@"
+  fi
+  exec "$@"
+}
+
+mkdir -p "$STATE"
+exec 9>"$STATE/lock"
+flock 9
+
+verb=${1:-}
+case $verb in
+on)
+  lane=${2:-}; [[ $lane =~ $LANE_RE ]] || die "on: a lane name (lowercase letters, digits, - and .)"
+  shift 2
+  cpus= lease=10m mem=0
+  while [ $# -gt 0 ]; do
+    case $1 in
+    --cpus) cpus=${2:-}; shift 2 ;;
+    --lease) lease=${2:-}; shift 2 ;;
+    --memory-min) mem=$(size_bytes "${2:-}"); shift 2 ;;
+    *) die "on: unknown argument '$1'" ;;
+    esac
+  done
+  check_cpus "$cpus"
+  echo "$((now + $(duration_s "$lease"))) $cpus $mem" > "$STATE/lease.$lane"
+  settle
+  echo "reserved for $lane (cpus $(cat "$SLICE/cpuset.cpus"), $(live_leases | wc -l) lease(s))"
+  ;;
+off)
+  lane=${2:-}; [[ $lane =~ $LANE_RE ]] || die "off: a lane name"
+  rm -f "$STATE/lease.$lane"
+  settle
+  echo "released $lane ($(live_leases | wc -l) lease(s) left)"
+  ;;
+block)
+  case ${2:-} in
+  reserve)
+    shift 2; list= mem=0 keep=0 cores= numa=
+    while [ $# -gt 0 ]; do
+      case $1 in
+      --cpus) list=${2:-}; shift 2 ;;
+      --memory) mem=$(size_bytes "${2:-}"); shift 2 ;;
+      --host-reserve-cpus) [[ ${2:-} =~ ^[0-9]{1,4}$ ]] || die "--host-reserve-cpus N"; keep=$2; shift 2 ;;
+      --cores) [[ ${2:-} =~ ^[0-9]{1,4}$ ]] || die "--cores N"; cores=$2; shift 2 ;;
+      --numa) [[ ${2:-} =~ ^[0-9]{1,3}$ ]] || die "--numa N"; numa=$2; shift 2 ;;
+      *) die "block reserve: unknown argument '$1'" ;;
+      esac
+    done
+    if [ -z "$list" ]; then [ -n "$cores" ] && [ -n "$numa" ] || die "block reserve: --cpus LIST, or --cores N --numa M"; list=$(pick_cores "$cores" "$numa"); fi
+    block_reserve "$list" "$mem" "$keep" ;;
+  unreserve) block_unreserve ;;
+  adopt) [ "${3:-}" = --cpus ] || die "block adopt --cpus LIST"; block_adopt "${4:-}" ;;
+  status) block_show ;;
+  *) die "usage: block reserve|unreserve|adopt|status" ;;
+  esac ;;
+lane-exec) shift; lane_exec "$@" ;;
+gc | repin) settle ;;
+pin) pin "${2:-}" "${3:-}" ;;
+status)
+  settle
+  n=$(live_leases | wc -l)
+  if reserved; then
+    echo "reserved: cpus $(cat "$SLICE/cpuset.cpus"), $n lease(s): $(for f in $(live_leases); do basename "$f" | sed 's/^lease\.//'; done | tr '\n' ' ')"
+    # what the partition displaced: containers that are not lanes now share the remaining cores
+    others=$("$DOCKER" ps --format '{{.Names}}' 2>/dev/null | while read -r c; do
+      [ "$("$DOCKER" inspect -f '{{.HostConfig.CgroupParent}}' "$c" 2>/dev/null)" = eval.slice ] || echo "$c"; done | tr '\n' ' ' || true)
+    echo "confined to the other cpus while reserved: every cgroup outside eval.slice; containers: ${others:-none}"
+  else
+    echo "not reserved ($n lease(s))"
+  fi
+  ;;
+*) die "usage: on LANE --cpus LIST [--lease 10m] [--memory-min SIZE] | off LANE | status | gc | repin | pin ID LIST" ;;
+esac
