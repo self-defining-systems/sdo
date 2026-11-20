@@ -271,7 +271,7 @@ func TestEksLaneUpMakesWhatAKindLaneHas(t *testing.T) {
 	}
 	// the kubeconfig is a token one with the context the workloads derive from the lane name, mode 0600 on the admin one
 	b, err := os.ReadFile(kc)
-	if err != nil || !strings.Contains(string(b), "name: kind-sdo-lane-eks1") || !strings.Contains(string(b), "token: token") {
+	if err != nil || !strings.Contains(string(b), "name: kind-eks1") || !strings.Contains(string(b), "token: token") {
 		t.Fatalf("kubeconfig (%v):\n%s", err, b)
 	}
 	if st, err := os.Stat(kc + ".admin"); err != nil || st.Mode().Perm() != 0o600 {
@@ -306,6 +306,15 @@ func TestEksLaneUpMakesWhatAKindLaneHas(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(kc + ".entry"); strings.TrimSpace(string(b)) != "54.0.0.1" {
 		t.Errorf("entry address = %q", b)
+	}
+	// every stage of the up is measured
+	for _, want := range []string{"EKS_STAGE cluster_and_nodegroup_created", "EKS_STAGE nodes_ready", "EKS_STAGE node_agent_mirror_ready", "EKS_STAGE up_total"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in\n%s", want, out)
+		}
+	}
+	if b, _ := os.ReadFile(kc + ".stages"); !strings.Contains(string(b), "up_total ") {
+		t.Errorf("stages file = %q", b)
 	}
 	// idempotent: a second up attaches and creates nothing
 	if out, err := s.run(nil, "up", "eks1", kc, ev); err != nil || strings.Count(s.log(), "eksctl create cluster") != 1 {
@@ -463,5 +472,83 @@ func TestHostStatusOfAnEksHostReportsCredentialsAndCostNotKernelGates(t *testing
 	out.Reset()
 	if rc := HostCommand(context.Background(), root, []string{"reserve", "e"}, &out, &errw, helper, run); rc != 0 || !strings.Contains(out.String(), "nothing to reserve") {
 		t.Errorf("reserve all: rc %d: %s %s", rc, out.String(), errw.String())
+	}
+}
+
+// `exists` is the platform's answer to "is the lane's cluster there": 0 yes, 1 AWS says no, 2 cannot tell. The manager
+// forgets a lane it believes gone, so a failed call must never read as "gone".
+func TestEksLaneExistsDistinguishesGoneFromUnknown(t *testing.T) {
+	s := newEksScript(t)
+	code := func(extra ...string) int {
+		_, err := s.run(extra, "exists", "eks1")
+		if err == nil {
+			return 0
+		}
+		return err.(*exec.ExitError).ExitCode()
+	}
+	if c := code(); c != 1 {
+		t.Fatalf("no cluster: exit %d, want 1", c)
+	}
+	if out, err := s.run(nil, "up", "eks1", filepath.Join(t.TempDir(), "kc")); err != nil {
+		t.Fatalf("up: %v\n%s", err, out)
+	}
+	if c := code(); c != 0 {
+		t.Fatalf("cluster there: exit %d, want 0", c)
+	}
+	if c := code("FAKE_AWS_DOWN=1"); c != 2 {
+		t.Fatalf("aws unreachable: exit %d, want 2 (not gone)", c)
+	}
+}
+
+// A cluster whose node group was scaled down (by an idle policy outside lanes) gets its nodes back when `up` attaches it.
+func TestEksLaneUpRescalesAnAttachedClusterWithNoNodes(t *testing.T) {
+	s := newEksScript(t)
+	kc := filepath.Join(t.TempDir(), "kc")
+	if out, err := s.run(nil, "up", "eks1", kc); err != nil {
+		t.Fatalf("up: %v\n%s", err, out)
+	}
+	if strings.Contains(s.log(), "scale nodegroup") {
+		t.Fatalf("a cluster at its size was scaled:\n%s", s.log())
+	}
+	must(t, os.WriteFile(filepath.Join(s.state, "desired"), []byte("0\n"), 0o644))
+	if out, err := s.run(nil, "up", "eks1", kc); err != nil || !strings.Contains(s.log(), "eksctl scale nodegroup --cluster sdo-lane-eks1 --name workers --nodes 2 --nodes-min 0 --nodes-max 3") {
+		t.Fatalf("up of a scaled-down cluster: %v\n%s\n%s", err, out, s.log())
+	}
+}
+
+// A Down eks lane that may still have a cluster is cleaned (deleted), once per retry interval; a lane known gone, one with
+// a step, or a lane that is not Down is not.
+func TestEksDownLaneClustersAreDeletedNotLeftToBill(t *testing.T) {
+	m := eksManager(t)
+	m.lanes["eks1"].State, m.lanes["eks1"].Gone = LaneDown, false // failed or killed cluster-up: a cluster may be there
+	m.lanes["eks2"].State, m.lanes["eks2"].Gone = LaneDown, true  // known gone
+	m.lanes["eks3"].State, m.lanes["eks3"].Gone = LaneFree, false // free lanes follow the idle timeout
+	got := m.eksOrphanLanes()
+	if len(got) != 1 || got[0].Lane != "eks1" {
+		t.Fatalf("orphans = %v, want only eks1", got)
+	}
+	m.eksCleanAt = map[string]time.Time{"eks1": m.now()}
+	if got := m.eksOrphanLanes(); len(got) != 0 {
+		t.Fatalf("asked again at once: %v", got)
+	}
+	m.advance(eksCleanupRetry)
+	if got := m.eksOrphanLanes(); len(got) != 1 {
+		t.Fatalf("not asked again after the retry interval: %v", got)
+	}
+}
+
+// An up that attached a cluster and failed deletes it too: all-or-nothing, never a half-made lane left behind.
+func TestEksLaneUpFailureOfAnAttachedClusterDeletesIt(t *testing.T) {
+	s := newEksScript(t)
+	kc := filepath.Join(t.TempDir(), "kc")
+	if out, err := s.run(nil, "up", "eks1", kc); err != nil {
+		t.Fatalf("up: %v\n%s", err, out)
+	}
+	out, err := s.run([]string{"FAKE_NO_NETPOL=1"}, "up", "eks1", kc)
+	if err == nil {
+		t.Fatalf("attach with no network policy succeeded:\n%s", out)
+	}
+	if _, statErr := os.Stat(filepath.Join(s.state, "cluster-sdo-lane-eks1")); statErr == nil {
+		t.Errorf("the attached cluster was left:\n%s\n%s", out, s.log())
 	}
 }
