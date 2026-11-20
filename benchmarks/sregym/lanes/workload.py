@@ -21,7 +21,8 @@ Verbs:
                   directory a plan edge exported), else the lane's onboarding commit. The record (last line) has
                   ``operator``, ``valid``, ``lifecycle.inject_at`` and the SREGym summary; the accepted memory after the
                   run is exported to ``$FUZZOPS_EXEC_OUT/memory`` (``memory.bundle`` and ``memory.json``).
-                  ``active``/``undo``: ``active=false`` (the run's cleanup is verified inside fastloop run).
+                  ``active``/``undo``: the last run's verdict: clear only when it never injected or fastloop
+                  verified the full cleanup with no recovery error; in flight, killed or unknown is active.
 ``grade``         ``report``: ``$WORKLOAD_RESULTS/runs.jsonl`` (the run records) rewritten as one grade per run.
 ``footprint``     unsupported.
 """
@@ -394,10 +395,30 @@ def export_memory(ctx: Context, workspace: Path, out: Path, base: str) -> dict[s
     return meta
 
 
+FAULT_STATE = "lanes-fault.json"
+
+
+def write_fault_state(env_dir: Path, problem: str, state: str) -> None:
+    """The lane's fault verdict for `run active`: ``unknown`` while a run is in flight, then ``clear`` (never injected,
+    or fastloop verified the full cleanup with no recovery error) or ``active``."""
+    (env_dir / FAULT_STATE).write_text(json.dumps({"problem": problem, "state": state}) + "\n", encoding="utf-8")
+
+
+def fault_active(env_dir: Path, problem: str) -> bool:
+    """Whether the lane may still hold the fault: anything but a ``clear`` verdict for this problem is active."""
+    try:
+        verdict = json.loads((env_dir / FAULT_STATE).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return True
+    return not (verdict.get("state") == "clear" and verdict.get("problem") == problem)
+
+
 def run(ctx: Context) -> tuple[int, dict[str, Any]]:
     if ctx.action in ("active", "undo"):
-        # The platform reads `active=<bool>` from the result line.
-        return 0, {"active": False, "state": "active=false"}
+        # The adapter cannot undo a fault itself: both answer from the last run's verdict, and an unknown one is
+        # active (fail safe: the platform then takes the lane down instead of running the next item on a live fault).
+        active = fault_active(ctx.lane_env_dir(), ctx.args.get("id", ""))
+        return 0, {"active": active, "state": f"active={str(active).lower()}"}
     if ctx.action != "run":
         return UNSUPPORTED, {"unsupported": True}
     problem = ctx.args.get("instance") or ""
@@ -462,6 +483,8 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
     if planned:
         command += ["--planned-commit", planned]
     failure = ""
+    # Until the run's record says otherwise, its fault may be in place (a run killed mid-way leaves it).
+    write_fault_state(env_dir, problem, "unknown")
     try:
         ctx.long_runner(command, env=ctx.env, cwd=ctx.root)
     except AdapterError as error:
@@ -488,6 +511,8 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
     record["valid"] = not why
     record["invalid_reason"] = why or ""
     record["error"] = summary["error"] or failure or ""
+    cleared = not summary["injected_at"] or (summary["full_cleanup_verified"] and not summary["recovery_error"])
+    write_fault_state(env_dir, problem, "clear" if cleared else "active")
     return (0 if record["valid"] else 1), record
 
 

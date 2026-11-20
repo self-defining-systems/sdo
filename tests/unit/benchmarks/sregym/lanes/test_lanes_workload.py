@@ -283,10 +283,62 @@ def test_gate_is_clean_only_when_every_running_pod_is_ready(tmp_path):
     )
 
 
-def test_run_active_answers_inactive_in_the_result_line(tmp_path):
-    code, result = call("run", "active", ["--id", "p"], lane_env(tmp_path))
+PROBLEM = "misconfig_app_hotel_res"
+
+
+def active_after(tmp_path: Path, row: dict | None, *, killed: bool = False) -> bool:
+    """`run active` after a run whose fastloop record is row (None: no record), or that was killed mid-way."""
+    repo, base = accepted_repo(tmp_path)
+    env_dir = write_environment(tmp_path, repo, seed_commit=base)
+
+    def fast(argv, **_):
+        if killed:
+            raise SystemExit("killed")
+        run_id = list(argv)[list(argv).index("--run-id") + 1]
+        (env_dir / "results" / run_id).mkdir(parents=True)
+        if row is not None:
+            (env_dir / "results" / run_id / "incidents.jsonl").write_text(
+                json.dumps({**incident(run_id), **row}) + "\n"
+            )
+        return ""
+
+    env = lane_env(tmp_path, FUZZOPS_EXEC_OUT=str(tmp_path / "x"))
+    try:
+        call("run", "run", RUN_ARGS, env, runner=workload.run_process, long_runner=fast)
+    except SystemExit:
+        pass
+    code, result = call("run", "active", ["--file", "/i.json", "--id", PROBLEM], env)
     assert code == 0
-    assert "active=false" in json.dumps(result)
+    assert f"active={str(result['active']).lower()}" in json.dumps(result)
+    return result["active"]
+
+
+def test_run_active_is_false_only_when_the_run_verified_its_cleanup(tmp_path):
+    assert active_after(tmp_path, {"full_cleanup_verified": True}) is False
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"full_cleanup_verified": False},
+        {"full_cleanup_verified": True, "recovery_error": "fault still present"},
+        None,
+    ],
+)
+def test_run_active_is_true_when_the_fault_may_still_be_in_place(tmp_path, row):
+    assert active_after(tmp_path, row) is True
+
+
+def test_a_run_killed_mid_way_leaves_the_lane_active(tmp_path):
+    assert active_after(tmp_path, None, killed=True) is True
+
+
+def test_a_run_that_never_injected_leaves_no_fault(tmp_path):
+    assert active_after(tmp_path, {"injection": {"state": "not_injected", "stage": "pre_injection"}}) is False
+
+
+def test_run_active_with_no_verdict_on_the_lane_is_active(tmp_path):
+    assert call("run", "active", ["--id", PROBLEM], lane_env(tmp_path))[1]["active"] is True
 
 
 def incident(run_id: str, success: bool = True, before: str = "", after: str = "") -> dict:
