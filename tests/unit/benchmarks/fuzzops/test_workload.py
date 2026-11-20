@@ -51,16 +51,17 @@ def test_a_lane_that_is_not_eks_gets_the_built_in_command_unchanged(provider: st
     assert calls.env == [env]
 
 
-def test_on_eks_only_images_and_run_get_a_kind_shim() -> None:
-    calls = Calls()
-    workload.handle("app-up", _env("eks"), calls)
-    assert calls.argv == [BUILTIN]
-    assert calls.shim_seen
+def test_on_eks_only_images_up_and_run_get_a_kind_shim() -> None:
+    for action in ("images", "up"):  # a pack's up runs its images step again
+        calls = Calls()
+        workload.handle("app-up", _env("eks", action), calls)
+        assert calls.argv == [BUILTIN]
+        assert calls.shim_seen
     other = Calls()
-    for verb, action in (("app-up", "up"), ("gate", "check")):
+    for verb, action in (("app-up", "down"), ("gate", "check")):
         env = _env("eks", action)
         workload.handle(verb, env, other)
-    assert other.env == [_env("eks", "up"), _env("eks", "check")]
+    assert other.env == [_env("eks", "down"), _env("eks", "check")]
 
 
 def test_a_verb_the_built_in_workload_lacks_is_unsupported(capsys: pytest.CaptureFixture[str]) -> None:
@@ -140,11 +141,36 @@ def test_an_image_not_on_the_host_is_pulled_before_it_is_published() -> None:
     assert fake.pushed() == ["sdo-mirror/docker.io/jaegertracing/all-in-one:1.62.0"]
 
 
-def test_kind_get_nodes_lists_none_and_other_kind_commands_are_refused() -> None:
+def test_kind_get_nodes_lists_the_mirror_as_the_one_node_and_other_kind_commands_are_refused(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     assert workload.kind_shim(["get", "nodes", "--name", "c"], {}, lambda _: None) == 0
+    assert capsys.readouterr().out.split() == [workload.MIRROR_NODE]
     lines: list[str] = []
     assert workload.kind_shim(["create", "cluster"], {}, lines.append) == 2
     assert "no kind node" in lines[0]
+
+
+def test_the_docker_shim_answers_for_the_mirror_node_and_passes_everything_else_on(tmp_path: Path) -> None:
+    """A pack that preloads through ``ensure-images.sh`` needs a node to ``docker exec`` into: the mirror is it."""
+    shim = tmp_path / "shim"
+    shim.mkdir()
+    real = tmp_path / "real"
+    real.mkdir()
+    (real / "docker").write_text('#!/bin/sh\necho "real $*"\n')
+    (real / "docker").chmod(0o755)
+    workload.write_shim(shim)
+    env = {"PATH": f"{shim}{os.pathsep}{real}{os.pathsep}/usr/bin:/bin"}
+
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run([str(shim / "docker"), *args], env=env, capture_output=True, text=True, check=False)
+
+    mirror = run("exec", workload.MIRROR_NODE, "crictl", "pull", "img:1")
+    assert (mirror.returncode, mirror.stdout) == (0, "")
+    other = run("image", "inspect", "img:1")
+    assert (other.returncode, other.stdout) == (0, "real image inspect img:1\n")
+    node = run("exec", "some-kind-node", "crictl", "ps")
+    assert node.stdout == "real exec some-kind-node crictl ps\n"
 
 
 def test_kind_load_names_only_the_images() -> None:
