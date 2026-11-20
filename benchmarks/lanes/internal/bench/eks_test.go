@@ -271,7 +271,7 @@ func TestEksLaneUpMakesWhatAKindLaneHas(t *testing.T) {
 	}
 	// the kubeconfig is a token one with the context the workloads derive from the lane name, mode 0600 on the admin one
 	b, err := os.ReadFile(kc)
-	if err != nil || !strings.Contains(string(b), "name: kind-sdo-lane-eks1") || !strings.Contains(string(b), "token: token") {
+	if err != nil || !strings.Contains(string(b), "name: kind-eks1") || !strings.Contains(string(b), "token: token") {
 		t.Fatalf("kubeconfig (%v):\n%s", err, b)
 	}
 	if st, err := os.Stat(kc + ".admin"); err != nil || st.Mode().Perm() != 0o600 {
@@ -463,5 +463,30 @@ func TestHostStatusOfAnEksHostReportsCredentialsAndCostNotKernelGates(t *testing
 	out.Reset()
 	if rc := HostCommand(context.Background(), root, []string{"reserve", "e"}, &out, &errw, helper, run); rc != 0 || !strings.Contains(out.String(), "nothing to reserve") {
 		t.Errorf("reserve all: rc %d: %s %s", rc, out.String(), errw.String())
+	}
+}
+
+// `exists` is the platform's answer to "is the lane's cluster there": 0 yes, 1 AWS says no, 2 cannot tell. The manager
+// forgets a lane it believes gone, so a failed call must never read as "gone".
+func TestEksLaneExistsDistinguishesGoneFromUnknown(t *testing.T) {
+	s := newEksScript(t)
+	code := func(extra ...string) int {
+		_, err := s.run(extra, "exists", "eks1")
+		if err == nil {
+			return 0
+		}
+		return err.(*exec.ExitError).ExitCode()
+	}
+	if c := code(); c != 1 {
+		t.Fatalf("no cluster: exit %d, want 1", c)
+	}
+	if out, err := s.run(nil, "up", "eks1", filepath.Join(t.TempDir(), "kc")); err != nil {
+		t.Fatalf("up: %v\n%s", err, out)
+	}
+	if c := code(); c != 0 {
+		t.Fatalf("cluster there: exit %d, want 0", c)
+	}
+	if c := code("FAKE_AWS_DOWN=1"); c != 2 {
+		t.Fatalf("aws unreachable: exit %d, want 2 (not gone)", c)
 	}
 }

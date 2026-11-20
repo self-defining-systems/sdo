@@ -16,7 +16,13 @@ aws)
   "ecr describe-images") echo "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";;
   "eks update-kubeconfig") echo "apiVersion: v1" > "$(echo "$*" | sed 's/.*--kubeconfig //')";;
   "ec2 describe-subnets") echo us-west-2a;;
-  "eks describe-cluster") echo sg-0123;;
+  "eks describe-cluster")
+    case "$*" in
+    *clusterSecurityGroupId*) echo sg-0123;;
+    *) n=$(echo "$*" | sed 's/.*--name \([^ ]*\).*/\1/'); [ -n "${FAKE_AWS_DOWN:-}" ] && { echo "Could not connect to the endpoint URL" >&2; exit 255; }
+       [ -e "$S/cluster-$n" ] || { echo "An error occurred (ResourceNotFoundException) when calling the DescribeCluster operation: No cluster found for name: $n." >&2; exit 254; }
+       echo ACTIVE;;
+    esac;;
   "ec2 authorize-security-group-ingress") :;;
   esac;;
 eksctl)

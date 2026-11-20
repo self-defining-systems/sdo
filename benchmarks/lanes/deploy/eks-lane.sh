@@ -7,6 +7,7 @@
 #   eks-lane.sh push IMAGE...                       # make nodes resolve each local image under its declared name (ECR mirror)
 #   eks-lane.sh pin IMAGE...                        # push a pinned image to ECR; prints <registry>/<repo>@sha256:...
 #   eks-lane.sh nodes KUBECONFIG SCRIPT             # run sh -c SCRIPT as root on every node (certs.d at /certs, /var/lib/sdo-lane at /lane)
+#   eks-lane.sh exists NAME                         # exit 0 the cluster exists, 1 it does not, 2 cannot tell
 #   eks-lane.sh fence KUBECONFIG                    # print "<api server> <kube-system uid>" the kubeconfig reaches
 #
 # What `up` makes (the cross-cutting items of an EKS lane; each was a failure or a finding of the first lane):
@@ -17,7 +18,7 @@
 #    infra node (node-role.kubernetes.io/control-plane), every other node, or the only one, is a worker
 #    (node-role.kubernetes.io/worker, CC5).
 #  - kubeconfig: a service-account token (no aws binary or expiring exec credential needed by what uses it), the
-#    context named kind-NAME because workloads derive the context from the lane name. The admin kubeconfig stays at
+#    context named kind-<lane> because workloads derive the context from the lane name. The admin kubeconfig stays at
 #    KUBECONFIG.admin (0600).
 #  - the node agent (deploy/eks/node-agent.yaml): a containerd registry mirror to ECR for EKS_MIRROR_UPSTREAMS (default
 #    "docker.io ghcr.io quay.io registry.k8s.io") so app images keep their declared names (CC1, CC9), and the node-write seam (CC4).
@@ -131,9 +132,9 @@ wait_nodes() {
   done
 }
 
-# token_kubeconfig ADMIN OUT NAME: a kubeconfig of a cluster-admin service account.
+# token_kubeconfig ADMIN OUT NAME LANE: a kubeconfig of a cluster-admin service account; its context is kind-LANE.
 token_kubeconfig() {
-  local admin=$1 out=$2 name=$3
+  local admin=$1 out=$2 name=$3 lane=$4
   kubectl --kubeconfig "$admin" -n kube-system create serviceaccount sdo-lane-admin --dry-run=client -o yaml | kubectl --kubeconfig "$admin" apply -f - >/dev/null
   kubectl --kubeconfig "$admin" create clusterrolebinding sdo-lane-admin --clusterrole=cluster-admin --serviceaccount=kube-system:sdo-lane-admin --dry-run=client -o yaml | kubectl --kubeconfig "$admin" apply -f - >/dev/null
   kubectl --kubeconfig "$admin" apply -f - >/dev/null <<YAML
@@ -164,9 +165,9 @@ users:
 - name: sdo-lane-admin
   user: {token: $token}
 contexts:
-- name: kind-$name
+- name: kind-$lane
   context: {cluster: $name, user: sdo-lane-admin}
-current-context: kind-$name
+current-context: kind-$lane
 YAML
   mv "$out.tmp" "$out"
 }
@@ -253,7 +254,7 @@ cmd_up() {
   network_policy_enforced "$admin" || die "the cluster does not enforce NetworkPolicy: vpc-cni needs enableNetworkPolicy=true"
   label_nodes "$admin"
   kubectl --kubeconfig "$admin" -n kube-system delete pdb coredns metrics-server --ignore-not-found >/dev/null 2>&1 || true
-  token_kubeconfig "$admin" "$kc" "$name"
+  token_kubeconfig "$admin" "$kc" "$name" "$lane"
   storage_class "$kc"
   open_nodeports "$name"
   entry_host "$kc"
@@ -335,6 +336,18 @@ cmd_nodes() {
   done
 }
 
+# cmd_exists LANE: exit 0 when the lane's cluster exists, 1 when AWS says it does not, 2 when it cannot be told (a failed
+# call is never "gone": the manager forgets a lane it believes is gone, and its cluster would bill on).
+cmd_exists() {
+  local name=$PREFIX${1:?lane} err
+  if err=$(aws eks describe-cluster --name "$name" --region "$REGION" --query cluster.status --output text 2>&1); then
+    exit 0
+  fi
+  case $err in *ResourceNotFoundException*) exit 1;; esac
+  log "cannot tell whether $name exists: ${err: -200}"
+  exit 2
+}
+
 cmd_fence() {
   local kc=${1:?kubeconfig}
   echo "$(kubectl --kubeconfig "$kc" config view --minify -o jsonpath='{.clusters[0].cluster.server}') $(kubectl --kubeconfig "$kc" get namespace kube-system -o jsonpath='{.metadata.uid}')"
@@ -349,5 +362,6 @@ case $verb in
   pin) cmd_pin "$@";;
   nodes) cmd_nodes "$@";;
   fence) cmd_fence "$@";;
+  exists) cmd_exists "$@";;
   *) echo "usage: $0 up|down|push|pin|nodes|fence ..." >&2; exit 2;;
 esac

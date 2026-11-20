@@ -2,9 +2,11 @@ package bench
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -22,6 +24,20 @@ func (r *stepRunner) clusterExists(ctx context.Context) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, clusterCheckTimeout)
 	defer cancel()
 	env := append(append(os.Environ(), r.s.HostEnv...), "KUBECONFIG="+r.s.Kubeconfig)
+	if r.s.Provider == ProviderEks {
+		// AWS knows whether the cluster exists; a kubeconfig that does not match says nothing about it.
+		cmd := exec.CommandContext(ctx, "bash", filepath.Join(r.platform(), "deploy", "eks-lane.sh"), "exists", r.s.Lane)
+		cmd.Env = env
+		err := cmd.Run()
+		var ee *exec.ExitError
+		switch {
+		case err == nil:
+			return true, nil
+		case errors.As(err, &ee) && ee.ExitCode() == 1:
+			return false, nil
+		}
+		return true, fmt.Errorf("cluster %s: existence not known (inconclusive): %v", r.s.Lane, err)
+	}
 	if r.s.Provider != ProviderVcluster && r.s.Provider != ProviderEks {
 		cmd := exec.CommandContext(ctx, "kind", "get", "clusters")
 		cmd.Env = env
