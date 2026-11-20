@@ -281,7 +281,7 @@ func TestEksLaneUpMakesWhatAKindLaneHas(t *testing.T) {
 	}
 	// the node agent mirrors the upstream registries into this account's ECR
 	applied := s.file("applied.yaml")
-	for _, want := range []string{"123456789012.dkr.ecr.us-west-2.amazonaws.com", `--region "us-west-2"`, "docker.io ghcr.io", "sdo-mirror"} {
+	for _, want := range []string{"123456789012.dkr.ecr.us-west-2.amazonaws.com", `--region "us-west-2"`, "docker.io ghcr.io quay.io registry.k8s.io", "sdo-mirror"} {
 		if !strings.Contains(applied, want) {
 			t.Errorf("node agent manifest lacks %q", want)
 		}
@@ -386,7 +386,7 @@ func TestEksLanePushPublishesUnderTheDeclaredName(t *testing.T) {
 			t.Errorf("no %q in\n%s", want, log)
 		}
 	}
-	if out, err := s.run(nil, "push", "quay.io/a/b:1"); err == nil || !strings.Contains(out, "mirrors [docker.io ghcr.io], not quay.io") {
+	if out, err := s.run(nil, "push", "example.org/a/b:1"); err == nil || !strings.Contains(out, "mirrors [docker.io ghcr.io quay.io registry.k8s.io], not example.org") {
 		t.Errorf("an unmirrored upstream: %v\n%s", err, out)
 	}
 	pin, err := s.run(nil, "pin", "sdo-controller:v1")
