@@ -16,7 +16,10 @@ how often, and against which SLO.
 
 The Engine owns everything about when and how much: scheduling, arrival,
 rate and concurrency caps, timeouts, latency measurement and the random seed
-of every iteration, so a failing probe replays exactly. Generators only build
+of every iteration. Within one run an iteration replays exactly; a restarted
+prober counts from 0 again, so a per-run nonce keeps its values different from
+the last run's. Name created objects with Unique(prefix) (fixed-width token),
+never a constant or the iteration number alone. Generators only build
 requests and judge responses. The accepted memory host runs the engine; the
 controller runtime hands its observations to detectors built with NewDetector,
 which judge each scenario against a sliding-window SLO. The default SLO bounds
@@ -43,6 +46,7 @@ const MaxLinkExcerpt = 256
 const MethodExec = "EXEC"
 const RuleIDPrefix = "scenario-slo."
 const StateNow = "sdo.now"
+const UniqueWidth = 16
 var RequiredFaultClasses = []FaultClass{ ... }
 var Watch = sdk.WatchKind{ ... }
 func BuildHTTPRequest(ctx context.Context, baseURL string, request Request) (*http.Request, error)
@@ -116,6 +120,7 @@ type Param interface{ ... }
     func FromSeed(count int, render func(index int) string) Param
     func IntBetween(low int, high int) Param
     func OneOf(values ...string) Param
+    func Unique(prefix string) Param
 type Params map[string]Param
 type Passwords interface{ ... }
 type ProbeKeys interface{ ... }

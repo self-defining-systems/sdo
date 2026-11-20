@@ -779,3 +779,17 @@ func bodyExcerpt(body []byte, status int) string {
 	}
 	return bounded(text)
 }
+
+// UniqueWidth is the number of hex digits Unique appends.
+const UniqueWidth = 16
+
+// Unique is prefix plus UniqueWidth lowercase hex digits drawn from the
+// iteration's random source. Every iteration, and every prober run, gets a
+// different token, so names and keys cannot collide with objects an earlier
+// iteration or run left behind. The fixed width keeps one token from being a
+// prefix of another, so a prefix search matches only its own object.
+func Unique(prefix string) Param {
+	return paramFunc(func(rng *rand.Rand, _ State, _ map[string]string) (string, error) {
+		return fmt.Sprintf("%s%0*x", prefix, UniqueWidth, rng.Uint64()), nil
+	})
+}
