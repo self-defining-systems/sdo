@@ -18,11 +18,12 @@ type RenderedChecks struct {
 	pins map[string]string
 	mem  map[string]inputResult
 	desc map[string]*Described
+	foot map[string]*LaneLimit
 }
 
 // NewRenderedChecks starts a validation session; log says what a check could not ask (nil is silent).
 func NewRenderedChecks(log io.Writer) *RenderedChecks {
-	return &RenderedChecks{Log: log, pins: map[string]string{}, mem: map[string]inputResult{}, desc: map[string]*Described{}}
+	return &RenderedChecks{Log: log, pins: map[string]string{}, mem: map[string]inputResult{}, desc: map[string]*Described{}, foot: map[string]*LaneLimit{}}
 }
 
 // ValidateRendered is the one place that decides whether a rendered spec is acceptable. `plan add` and `--dry-run` call
@@ -39,6 +40,13 @@ func ValidateRendered(ctx context.Context, inv Inventory, s Spec, c *RenderedChe
 		return err
 	}
 	s.Described = described
+	fp, err := c.footprint(ctx, inv, s)
+	if err != nil {
+		return err
+	}
+	if fp != nil {
+		s.Lane = fp
+	}
 	if err := checkInputRules(s); err != nil {
 		return err
 	}

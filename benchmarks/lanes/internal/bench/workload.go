@@ -59,6 +59,8 @@ type builtinWorkload struct {
 	New func(dir string) Workload
 	// Identity is the shell command that prints the identity JSON ({"revision","modified"}) of the checkout at dir.
 	Identity func(dir string) string
+	// Footprint is the lane size the adapter wants for the app at path (nil: none, the platform default).
+	Footprint func(app string) *LaneLimit
 }
 
 // builtinWorkloads are the built-in adapters by the workload name a spec may carry (adapter_*.go registers them).

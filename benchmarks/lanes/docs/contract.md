@@ -76,7 +76,7 @@ The build check waits `max(ready_timeout, max_startup + 10m)` for `idle`: a subj
 | `gate` | `check` | `check` (journeys clean for a span) |
 | `run` | `run`, `active`, `undo` (answer `{"active": bool}`: whether the fault is still active) | `run` (record JSON on stdout), `active-instance`, `undo-instance` (their `active=<bool>` text is turned into the answer) |
 | `grade` | `report` | `report DIR` (`DIR/runs.jsonl` in, `report.md`, `grades.json` out) |
-| `footprint` | none | **unsupported**: lane size stays the spec's `lane` limit or the default |
+| `footprint` | none | the lane size the workload wants for its app (`BENCH_PACK` is the app), answered `{"cpus":8,"memory":"30Gi"}`. Lanes asks at `add` / `plan add` for a spec that sets no `lane`, on the manager's host, and records the answer in the experiment's lock (`lane`). Unsupported: the platform default (5 cores, 12Gi). The built-in fuzzops workload carries its own sizes (a GitLab pack gets 8 cores and 30Gi); lanes reads no app name. A lock written before keeps its size: a spec with no recorded `lane` still resolves to the same value |
 
 The built-in workload is the default (`workload` unset or `fuzzops` in the spec): it runs `bin/fuzzops` with the
 same command lines, environment, process-group and SIGTERM handling as before the contract existed, so existing

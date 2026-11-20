@@ -71,24 +71,21 @@ type LaneLimit struct {
 	Memory string `json:"memory"`
 }
 
-// DefaultLaneLimit is what a lane of the app at path gets when its spec says nothing. The light apps measured
-// 2-4 cores and 4-6 GiB. A GitLab lane is busy on about 8 cores during a rollout and holds 11-13 GiB of anonymous
-// memory in a quiet window, but with an operator beside it and its build's page cache it needs more: at 20Gi (two
-// workers of 8.5 GiB) a GitLab run with an attached operator had 6 processes OOM-killed inside its nodes, so a
-// GitLab lane gets 30Gi (workers of 12.75 GiB).
-func DefaultLaneLimit(app string) LaneLimit {
-	if strings.Contains(strings.ToLower(path.Base(strings.TrimRight(app, "/"))), "gitlab") {
-		return LaneLimit{CPUs: 8, Memory: "30Gi"}
-	}
-	return LaneLimit{CPUs: 5, Memory: "12Gi"}
-}
+// DefaultLaneLimit is what a lane gets when neither its spec nor its workload says: the light apps measured 2-4 cores
+// and 4-6 GiB. A workload that knows its app is bigger answers `footprint` (docs/contract.md).
+func DefaultLaneLimit() LaneLimit { return LaneLimit{CPUs: 5, Memory: "12Gi"} }
 
-// LaneLimit is the spec's lane limit, or its app's default.
+// LaneLimit is the spec's lane limit, else the footprint its workload gave for the app, else the default.
 func (s Spec) LaneLimit() LaneLimit {
 	if s.Lane != nil {
 		return *s.Lane
 	}
-	return DefaultLaneLimit(s.App)
+	if b, ok := builtinWorkloads[s.Workload]; ok && b.Footprint != nil {
+		if l := b.Footprint(s.App); l != nil {
+			return *l
+		}
+	}
+	return DefaultLaneLimit()
 }
 
 func (l LaneLimit) validate() []string {

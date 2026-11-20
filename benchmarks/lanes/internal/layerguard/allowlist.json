@@ -50,6 +50,12 @@
         "fuzzops": 7
       }
     },
+    "internal/bench/footprint.go": {
+      "reason": "looks the workload checkout up through the hosts.yaml key checkouts.fuzzops (inventory FuzzopsPath): a format key (audit B4, B10)",
+      "terms": {
+        "fuzzops": 1
+      }
+    },
     "internal/bench/hooks.go": {
       "reason": "hook operator file shape and the reset-incidents verb (audit A7, A8, C1)",
       "terms": {
@@ -88,8 +94,6 @@
     "internal/bench/lanes.go": {
       "reason": "DefaultLaneLimit names gitlab (audit B5); moves to the workload footprint verb",
       "terms": {
-        "app-names": 4,
-        "operator": 2,
         "sdo": 1
       }
     },
