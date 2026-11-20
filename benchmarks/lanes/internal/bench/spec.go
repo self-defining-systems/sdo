@@ -38,7 +38,10 @@ type Spec struct {
 	// derived, not part of the identity, and not read from a spec file.
 	Described *Described `json:"described,omitempty"`
 	Namespace string     `json:"namespace"`
-	Faults    Faults     `json:"faults"`
+	// Selector limits the lanes the spec may take to those whose labels (hosts.yaml lane_labels) include every pair. Placement
+	// only, not part of the identity.
+	Selector map[string]string `json:"selector,omitempty"`
+	Faults   Faults            `json:"faults"`
 	// Sequences: per fault, the seed lists run in order on one fresh lane each.
 	Sequences [][]int `json:"sequences"`
 	// Run holds extra `fuzzops run` flags, --key=value.

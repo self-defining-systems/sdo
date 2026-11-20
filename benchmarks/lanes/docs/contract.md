@@ -104,6 +104,24 @@ commands: they run in the pinned workload checkout with `LANES_INSTALL` (the ins
 set, and the platform defaults name `$LANES_INSTALL/deploy/...`. The pinned workload checkout is used only for workload verbs and the
 workload's own files; `TestPlatformCodeNeverComesFromTheWorkloadCheckout` fails on a platform path joined to a checkout.
 
+## Lane labels and selectors
+
+A host may label its lanes, and a spec may say which lanes it takes:
+
+```yaml
+hosts:
+  spokane1:
+    clusters: [cs1, sgl3]
+    lane_labels:
+      sgl3: {workload: sregym}       # any key and value; lanes does not interpret them
+```
+
+and in a spec (or a plan's spec template) `selector: {workload: sregym}`. A lane takes a build only when every pair of the
+spec's selector is among the lane's labels. A labeled lane is not taken by a spec with no selector unless one of its
+labels is `shared: "true"`; unlabeled lanes take any spec with no selector, as before, and a spec with a selector never
+takes an unlabeled lane. This holds for fresh builds, pool claims and resets alike. It replaces listing order as the way to keep a
+spec off a lane prepared for another workload. `lane_labels` may only name lanes in the host's `clusters`.
+
 ## What lanes is, and is not
 
 `lanes` is an experimental resource-management and dispatch layer and nothing more.
