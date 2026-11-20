@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -492,3 +493,57 @@ def test_an_unacknowledged_incident_of_an_earlier_run_is_carry_over_not_this_run
     result = sink.copy_interval(run, dest, start, end)
     assert [p.name[:12] for p in (dest / "incidents").iterdir()] == ["a7d6bb9e6e9b"]
     assert result.summary()["carry_over"] == [{"id": stale.name, "detected_at": "2026-11-20T15:24:38Z"}]
+
+
+# ---- a block-device claim attaches to one node: the throwaway pods follow the pod that holds it ----------------
+
+
+def _pods(*pods: dict[str, Any]) -> bytes:
+    return json.dumps({"items": list(pods)}).encode()
+
+
+def _pod(node: str, claim: str, phase: str = "Running") -> dict[str, Any]:
+    return {
+        "status": {"phase": phase},
+        "spec": {"nodeName": node, "volumes": [{"persistentVolumeClaim": {"claimName": claim}}]},
+    }
+
+
+def _listing(monkeypatch: pytest.MonkeyPatch, out: bytes, code: int = 0) -> None:
+    def run(argv: Any, **_kw: Any) -> subprocess.CompletedProcess[bytes]:
+        assert argv[-4:] == ["get", "pods", "-o", "json"]
+        return subprocess.CompletedProcess(argv, code, out, b"boom")
+
+    monkeypatch.setattr(sink.subprocess, "run", run)
+
+
+def test_claim_node_is_the_node_of_a_live_pod_that_mounts_the_evidence_claim(monkeypatch: pytest.MonkeyPatch) -> None:
+    _listing(
+        monkeypatch,
+        _pods(
+            _pod("done", sink.EVIDENCE_CLAIM, "Succeeded"),
+            _pod("other", "sdo-application-repository"),
+            _pod("n2", sink.EVIDENCE_CLAIM),
+        ),
+    )
+    assert sink.claim_node(lambda *a: ["kubectl", *a], "ns-sdo") == "n2"
+
+
+def test_claim_node_is_empty_when_no_pod_holds_the_claim(monkeypatch: pytest.MonkeyPatch) -> None:
+    _listing(monkeypatch, _pods(_pod("n1", "other")))
+    assert sink.claim_node(lambda *a: ["kubectl", *a], "ns-sdo") == ""
+    _listing(monkeypatch, b"")
+    assert sink.claim_node(lambda *a: ["kubectl", *a], "ns-sdo") == ""
+
+
+def test_claim_node_refuses_when_the_pods_cannot_be_listed(monkeypatch: pytest.MonkeyPatch) -> None:
+    _listing(monkeypatch, b"", 1)
+    with pytest.raises(sink.SinkError, match="cannot list"):
+        sink.claim_node(lambda *a: ["kubectl", *a], "ns-sdo")
+
+
+def test_the_throwaway_pods_run_on_the_given_node_and_float_without_one() -> None:
+    assert sink.puller_manifest("ns", "p", "n2")["spec"]["nodeName"] == "n2"
+    assert sink.pusher_manifest("ns", "p", "n2")["spec"]["nodeName"] == "n2"
+    assert "nodeName" not in sink.puller_manifest("ns", "p")["spec"]
+    assert "nodeName" not in sink.pusher_manifest("ns", "p")["spec"]
