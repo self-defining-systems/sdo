@@ -111,6 +111,7 @@ hook_command: {test: "` + hook + `"}
 	must(t, os.WriteFile(filepath.Join(l.specs, "instances.json"), []byte(`{"ids": ["a@x", "b@y"]}`), 0o644))
 	must(t, os.WriteFile(filepath.Join(l.specs, "base", "baseline.json"), []byte(`{}`), 0o644))
 	t.Setenv("FAKE_STATE", l.state)
+	t.Setenv("HOST_CANARY_PROCSYS", testdata("fakeprocsys")) // a lab host meets every kernel minimum
 	fakebin := testdata("fakebin")
 	t.Setenv("PATH", fakebin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	must(t, os.MkdirAll(dir, 0o755))

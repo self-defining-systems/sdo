@@ -147,7 +147,7 @@ func (h *healthState) Observe(c *Canary, th HealthThresholds) {
 // FILE:LINE:TEXT" and "rdma-shared" lines, and last one JSON line. ip is the rtnl-lock canary; the hung-task count comes
 // from the kernel, else from the log if readable. The HOST_CANARY_* variables only exist for tests.
 const canaryBody = `for kv in $KMIN; do k=${kv%=*}; m=${kv#*=}
-  v=$(timeout 3 sysctl -n "$k" 2>/dev/null) || continue
+  v=$(timeout 3 cat "${HOST_CANARY_PROCSYS:-/proc/sys}/$(printf %s "$k" | tr . /)" 2>/dev/null) || continue
   echo "sysctl $k $v"
   if [ "$v" -lt "$m" ] 2>/dev/null; then
     timeout 3 grep -HnE "^[[:space:]]*$k[[:space:]]*=" ${HOST_CANARY_SYSCTL_FILES:-/etc/sysctl.conf /etc/sysctl.d/*.conf /run/sysctl.d/*.conf /usr/lib/sysctl.d/*.conf} 2>/dev/null | tail -n 1 | sed "s/^/override $k /"

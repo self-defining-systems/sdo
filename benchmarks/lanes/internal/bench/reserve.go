@@ -740,6 +740,8 @@ func kernelStatus(ctx context.Context, inv Inventory, host string, run runFn, ou
 	}
 	if why := kernelLow(c, mins); why != "" {
 		fmt.Fprintf(out, "%s: NOT ADMITTED, kernel: %s\n", host, why)
+	} else if unread := unreadKernelSettings(c, mins); len(unread) > 0 {
+		fmt.Fprintf(out, "%s: kernel settings: not read (%s); the others are at or above their minimums\n", host, strings.Join(unread, ", "))
 	} else {
 		fmt.Fprintf(out, "%s: kernel settings at or above their minimums\n", host)
 	}

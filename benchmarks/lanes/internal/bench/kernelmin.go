@@ -124,3 +124,16 @@ func (m *Manager) observePSI(name string, c *Canary) {
 		m.logf("host %s: memory pressure is back under %.0f%%, new lanes and steps resume", name, max)
 	}
 }
+
+// unreadKernelSettings are the settings with a minimum that the probe could not read (a reading that is missing is not
+// a pass: status says so instead of "at or above their minimums").
+func unreadKernelSettings(c *Canary, mins map[string]int64) []string {
+	var out []string
+	for k := range mins {
+		if _, ok := c.Sysctl[k]; !ok {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
