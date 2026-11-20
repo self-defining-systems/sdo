@@ -6,6 +6,8 @@ delivery, detached steps that survive a manager restart, retries and results. It
 a benchmark plugs in as a *workload* adapter (the app, injection and grading) and a *subject* adapter (the operator
 under test). See [docs/contract.md](docs/contract.md).
 
+New here? Start with the [quickstart](docs/quickstart.md) (set up a host, run an eval, fix an alarm).
+
 Design: the lane-platform note in the experiment directory (`campaign-20261118/lane-platform/DESIGN.md`).
 
 ## Origin
