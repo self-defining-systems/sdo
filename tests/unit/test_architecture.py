@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import subprocess
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -205,6 +206,35 @@ def test_lanes_platform_and_production_go_do_not_depend_on_each_other() -> None:
     go_mod = (_REPO_ROOT / "benchmarks" / "lanes" / "go.mod").read_text()
     if "sdo.dev/" in go_mod:
         violations.append("benchmarks/lanes/go.mod: requires an SDO module")
+    assert not violations, "\n".join(violations)
+
+
+_REPLAY_TERMS = ("replay_upstream", "benchmarks/common/replay", "Replayed-From", "commit series", "commit-series")
+
+
+def test_lanes_platform_knows_nothing_of_the_commit_replayer() -> None:
+    """The replayer and its series specs are benchmark-side; lanes stays generic (no commits, replay or upstream)."""
+    violations = [
+        f"{p.relative_to(_REPO_ROOT)}: the lane platform cannot reference the commit replayer ({term!r})"
+        for p in (_REPO_ROOT / "benchmarks" / "lanes").rglob("*")
+        if p.is_file() and p.suffix in {".go", ".sh", ".mod", ".yaml"}
+        for term in _REPLAY_TERMS
+        if term in p.read_text(errors="ignore")
+    ]
+    assert not violations, "\n".join(violations)
+
+
+def test_commit_replayer_is_standalone() -> None:
+    """benchmarks/common/replay imports the standard library and itself only: no lanes, SREGym, fuzzops or SDO."""
+    root = _REPO_ROOT / "benchmarks" / "common" / "replay"
+    assert (root / "replay.py").is_file(), "the replayer lives in benchmarks/common/replay, not under a benchmark"
+    stdlib = sys.stdlib_module_names
+    violations = [
+        _fmt(p, lineno, module, "the replayer must stay standalone")
+        for p in _iter_py_files(root)
+        for module, lineno in _imports(p)
+        if module.split(".")[0] not in stdlib and not module.startswith("benchmarks.common.replay")
+    ]
     assert not violations, "\n".join(violations)
 
 

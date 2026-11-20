@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from benchmarks.sregym.fastloop import replay_upstream as rp
+from benchmarks.common.replay import replay as rp
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
