@@ -22,7 +22,7 @@ func (r *stepRunner) clusterExists(ctx context.Context) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, clusterCheckTimeout)
 	defer cancel()
 	env := append(append(os.Environ(), r.s.HostEnv...), "KUBECONFIG="+r.s.Kubeconfig)
-	if r.s.Provider != ProviderVcluster {
+	if r.s.Provider != ProviderVcluster && r.s.Provider != ProviderEks {
 		cmd := exec.CommandContext(ctx, "kind", "get", "clusters")
 		cmd.Env = env
 		if out, err := cmd.Output(); err == nil {

@@ -42,6 +42,9 @@ func (m *Manager) laneGate(lane string) string {
 	if why := m.crash[lane]; why != "" {
 		return why
 	}
+	if why := m.eksWhy[lane]; why != "" {
+		return why
+	}
 	if st := m.starve[lane]; st != nil && st.reason != "" {
 		return fmt.Sprintf("lane %s is unhealthy: starved (%s)", lane, st.reason)
 	}

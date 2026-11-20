@@ -1,0 +1,435 @@
+//go:build integration
+
+package bench
+
+import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+const eksHost = `hosts:
+  e:
+    local: true
+    provider: eks
+    eks: {region: us-west-2, account: "123456789012", budget_per_hour: 2.0, budget_total: 10, vcpu_quota: 24, max_lanes: 3, idle_timeout: 5m}
+    staging: /s
+    kubeconfigs: /k
+    evidence: /e
+    max_builds: 2
+    clusters: [eks1, eks2, eks3]
+`
+
+func TestEksHostDefaultsItsClusterCommandsAndEnv(t *testing.T) {
+	inv, err := loadInv(t, eksHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := inv.Hosts["e"]
+	if !h.IsEks() || !strings.HasPrefix(h.ClusterCommand(h.ClusterUp, "eks1"), "$LANES_INSTALL/deploy/eks-lane.sh up 'eks1' '/k/eks1' '/e/eks1'") ||
+		!strings.HasPrefix(h.ClusterCommand(h.ClusterDown, "eks1"), "$LANES_INSTALL/deploy/eks-lane.sh down 'eks1'") {
+		t.Fatalf("cluster commands %q %q", h.ClusterUp, h.ClusterDown)
+	}
+	env := strings.Join(h.EnvList(), " ")
+	for _, want := range []string{"BENCH_LANE_PROVIDER=eks", "BENCH_EVIDENCE_MODE=pull", "EKS_REGION=us-west-2", "AWS_REGION=us-west-2",
+		"BENCH_IMAGE_REGISTRY=123456789012.dkr.ecr.us-west-2.amazonaws.com"} {
+		if !strings.Contains(env, want) {
+			t.Errorf("env %q lacks %s", env, want)
+		}
+	}
+}
+
+// The host-safety gates are skipped for an eks host by design, so a setting for one is refused, not ignored.
+func TestEksHostRefusesTheHostSafetySettings(t *testing.T) {
+	for name, tc := range map[string]struct{ old, new, want string }{
+		"reserve":  {"    clusters:", "    reserve: {cpus: \"0-3\"}\n    clusters:", "provider eks has no host to reserve"},
+		"lanes":    {"    clusters:", "    lanes: {cpus: \"0-3\", memory: 4Gi}\n    clusters:", "no core or memory ledger"},
+		"kernel":   {"    clusters:", "    kernel_minimums: {vm.max_map_count: 1}\n    clusters:", "no kernel"},
+		"ssh":      {"    local: true", "    ssh: somewhere", "set local: true"},
+		"no eks":   {"    eks: {region: us-west-2, account: \"123456789012\", budget_per_hour: 2.0, budget_total: 10, vcpu_quota: 24, max_lanes: 3, idle_timeout: 5m}\n", "", "needs an eks: block"},
+		"no acct":  {`account: "123456789012", `, "", "eks.account is required"},
+		"no quota": {"vcpu_quota: 24", "vcpu_quota: 0", "vcpu_quota must be positive"},
+		"family":   {"max_lanes: 3", "max_lanes: 3, instance_families: [t2]", "unknown family"},
+		"lanes>cl": {"max_lanes: 3", "max_lanes: 9", "lists only 3 lane names"},
+	} {
+		body := strings.Replace(eksHost, tc.old, tc.new, 1)
+		if tc.old == "    local: true" {
+			body = strings.Replace(body, "    local: true\n", tc.new+"\n", 1)
+		}
+		_, err := loadInv(t, body)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want %q", name, err, tc.want)
+		}
+	}
+	if _, err := loadInv(t, strings.Replace(vcHost, "provider: vcluster", "provider: kind\n    eks: {region: r}", 1)); err == nil || !strings.Contains(err.Error(), "eks belongs to provider eks") {
+		t.Errorf("a kind host with eks: err = %v", err)
+	}
+}
+
+func TestEksPlanSizesTheLaneFromItsFootprint(t *testing.T) {
+	e := &HostEKS{Region: "r", BudgetPerHour: 9, VCPUQuota: 99}
+	for _, tc := range []struct {
+		cpus  int
+		mem   string
+		want  string
+		nodes int
+		usd   float64
+	}{
+		{5, "12Gi", "m6i.xlarge", 2, 0.4840},   // the default footprint: two 4 vCPU nodes
+		{8, "30Gi", "m6i.xlarge", 2, 0.4840},   // half of it fits 4 vCPUs and 16 GiB
+		{16, "64Gi", "m6i.2xlarge", 2, 0.8680}, // 8 vCPUs, 32 GiB per node
+		{2, "4Gi", "m6i.xlarge", 1, 0.2920},    // below 4 cores: one node, never under min_node_vcpus
+		{8, "100Gi", "m6i.4xlarge", 2, 1.6360}, // memory decides: 50 GiB per node needs 16 vCPUs
+		{30, "30Gi", "m6i.4xlarge", 2, 1.6360}, // 15 cores per node
+	} {
+		p, err := e.PlanLane(LaneLimit{CPUs: tc.cpus, Memory: tc.mem})
+		if err != nil || p.InstanceType != tc.want || p.Nodes != tc.nodes || p.USDPerHour != tc.usd {
+			t.Errorf("%d cores %s: %+v (%v), want %s x %d at $%.4f/h", tc.cpus, tc.mem, p, err, tc.want, tc.nodes, tc.usd)
+		}
+	}
+	// the cheapest family that fits wins: compute-optimised for a CPU-bound footprint, memory-optimised for a big one
+	e.InstanceFamilies = []string{"m6i", "c6i", "r6i"}
+	if p, _ := e.PlanLane(LaneLimit{CPUs: 8, Memory: "8Gi"}); p.InstanceType != "c6i.xlarge" {
+		t.Errorf("cpu-bound plan = %+v, want c6i.xlarge", p)
+	}
+	if p, _ := e.PlanLane(LaneLimit{CPUs: 8, Memory: "120Gi"}); p.InstanceType != "r6i.2xlarge" {
+		t.Errorf("memory-bound plan = %+v, want r6i.2xlarge", p)
+	}
+	if _, err := e.PlanLane(LaneLimit{CPUs: 8, Memory: "2Ti"}); err == nil {
+		t.Error("a footprint no instance holds was planned")
+	}
+}
+
+func TestJudgeNodesReady(t *testing.T) {
+	if err := judgeNodesReady("a=True\nb=False\n"); err != nil {
+		t.Errorf("one Ready node is healthy: %v", err)
+	}
+	if err := judgeNodesReady("a=False\nb=Unknown\n"); err == nil || !strings.Contains(err.Error(), "no Ready node") {
+		t.Errorf("no Ready node: %v", err)
+	}
+	if err := judgeNodesReady(""); err == nil {
+		t.Error("an empty node list is not healthy")
+	}
+}
+
+func eksManager(t *testing.T) *Manager {
+	t.Helper()
+	root := Root(t.TempDir())
+	must(t, os.WriteFile(root.path("hosts.yaml"), []byte(eksHost+"checkouts:\n  fuzzops: {abc: {e: /fz}}\n"), 0o644))
+	now := time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC)
+	m := &Manager{Root: root, Now: func() time.Time { return now }}
+	must(t, m.loadInventory())
+	m.lanes = map[string]*LaneFile{}
+	for _, c := range []string{"eks1", "eks2", "eks3"} {
+		m.lanes[c] = &LaneFile{Lane: c, Host: "e", State: LaneFree, Gone: true, Since: now}
+	}
+	return m
+}
+
+func (m *Manager) advance(d time.Duration) {
+	now := m.now().Add(d)
+	m.Now = func() time.Time { return now }
+}
+
+// Admission: a new cluster is held by max_lanes, the vCPU quota, the $/h budget and the total budget, in that order,
+// and the reason names the limit; a lane that already has its cluster is never held.
+func TestEksAdmissionHoldsNewClustersByLanesQuotaAndBudget(t *testing.T) {
+	m := eksManager(t)
+	h := m.inv.Hosts["e"]
+	small, _ := h.EKS.PlanLane(LaneLimit{CPUs: 5, Memory: "12Gi"}) // 8 vCPUs, $0.484/h
+	big, _ := h.EKS.PlanLane(LaneLimit{CPUs: 16, Memory: "64Gi"})  // 16 vCPUs, $0.868/h
+	l := m.eksLedger("e")
+	if why := m.eksAdmit("e", small); why != "" {
+		t.Fatalf("an empty host holds a lane: %s", why)
+	}
+	l.Open["eks1"] = eksOpen{Since: m.now(), EksPlan: small}
+	l.Open["eks2"] = eksOpen{Since: m.now(), EksPlan: small}
+	if why := m.eksAdmit("e", big); !strings.Contains(why, "vCPU quota (16 of 24") {
+		t.Errorf("16 + 16 vCPUs over a quota of 24: %q", why)
+	}
+	l.Open["eks3"] = eksOpen{Since: m.now(), EksPlan: small}
+	if why := m.eksAdmit("e", small); !strings.Contains(why, "max_lanes (3)") {
+		t.Errorf("a fourth lane: %q", why)
+	}
+	delete(l.Open, "eks3")
+	m.inv.Hosts["e"].EKS.BudgetPerHour = 1.0 // two lanes use $0.968/h
+	if why := m.eksAdmit("e", small); !strings.Contains(why, "budget ($0.97/h of $1.00/h in use)") {
+		t.Errorf("$/h budget: %q", why)
+	}
+	m.inv.Hosts["e"].EKS.BudgetPerHour = 2.0
+	m.advance(20 * time.Hour) // $0.968/h for 20 h is ~$19.4, over the total of $10
+	if why := m.eksAdmit("e", small); !strings.Contains(why, "of the total budget $10.00") {
+		t.Errorf("total budget: %q", why)
+	}
+	if !m.eksLaneAdmitted(&LaneFile{Lane: "eks1", Host: "e"}, Spec{}) {
+		t.Error("a lane that has its cluster was held")
+	}
+	if m.eksLaneAdmitted(&LaneFile{Lane: "eks3", Host: "e", Gone: true}, Spec{}) {
+		t.Error("a new cluster over the total budget was admitted")
+	}
+}
+
+// The ledger follows the lanes: a lane with a cluster, or one being made, is open from the pass that sees it; when the
+// cluster is gone its cost is recorded, and the status line shows the running estimate.
+func TestEksLedgerRecordsTheCostOfAClusterWhenItIsDeleted(t *testing.T) {
+	m := eksManager(t)
+	m.lanes["eks1"].Gone = false
+	m.eksSettle()
+	st := m.eksStatus("e")
+	if st.Lanes != 1 || st.VCPUs != 8 || st.USDPerHour != 0.484 {
+		t.Fatalf("status = %+v", st)
+	}
+	m.advance(2 * time.Hour)
+	if got := m.eksStatus("e").SpendUSD; got != 0.968 {
+		t.Fatalf("two hours of a $0.484/h lane = $%.4f", got)
+	}
+	m.lanes["eks1"].Gone = true
+	m.eksSettle()
+	var saved eksLedger
+	must(t, readJSON(m.Root.eksLedgerPath("e"), &saved))
+	if len(saved.Open) != 0 || saved.ClosedUSD != 0.968 || len(saved.Closed) != 1 || saved.Closed[0].Lane != "eks1" || saved.Closed[0].InstanceType != "m6i.xlarge" {
+		t.Fatalf("ledger = %+v", saved)
+	}
+	if s := m.eksStatus("e").String(); !strings.Contains(s, "0/3 lanes") || !strings.Contains(s, "spent ~$0.97 of $10.00") {
+		t.Errorf("status line %q", s)
+	}
+}
+
+func TestEksKeepsAFreeLaneUntilItsIdleTimeout(t *testing.T) {
+	m := eksManager(t)
+	l := &LaneFile{Lane: "eks1", Host: "e", Since: m.now()}
+	if m.eksIdle(l) {
+		t.Fatal("a lane freed just now is idle")
+	}
+	m.advance(5 * time.Minute)
+	if !m.eksIdle(l) {
+		t.Fatal("the idle timeout (5m) passed")
+	}
+}
+
+// --- the platform script, against fake aws, eksctl, kubectl and docker ---
+
+type eksScript struct {
+	t     *testing.T
+	state string
+	env   []string
+}
+
+func newEksScript(t *testing.T) *eksScript {
+	t.Helper()
+	s := &eksScript{t: t, state: t.TempDir()}
+	s.env = append(os.Environ(), "PATH="+testdata("fakeeks")+string(os.PathListSeparator)+os.Getenv("PATH"), "FAKE_STATE="+s.state,
+		"EKS_REGION=us-west-2", "EKS_INSTANCE_TYPE=m6i.xlarge", "EKS_NODES=2", "EKS_NODEPORT_CIDR=203.0.113.7/32")
+	return s
+}
+
+func (s *eksScript) run(extra []string, args ...string) (string, error) {
+	cmd := exec.Command("bash", append([]string{filepath.Join(pkgDir, "..", "..", "deploy", "eks-lane.sh")}, args...)...)
+	cmd.Env = append(append([]string(nil), s.env...), extra...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+func (s *eksScript) log() string {
+	b, _ := os.ReadFile(filepath.Join(s.state, "eks.log"))
+	return string(b)
+}
+
+func (s *eksScript) file(name string) string {
+	b, _ := os.ReadFile(filepath.Join(s.state, name))
+	return string(b)
+}
+
+func TestEksLaneUpMakesWhatAKindLaneHas(t *testing.T) {
+	s := newEksScript(t)
+	kc := filepath.Join(t.TempDir(), "kube", "eks1")
+	ev := filepath.Join(t.TempDir(), "ev")
+	out, err := s.run(nil, "up", "eks1", kc, ev)
+	if err != nil || !strings.Contains(out, "EKS_LANE_READY cluster=sdo-lane-eks1 instance=m6i.xlarge nodes=2") {
+		t.Fatalf("up: %v\n%s", err, out)
+	}
+	cfg := s.file("cfg-sdo-lane-eks1")
+	for _, want := range []string{`enableNetworkPolicy":"true"`, "instanceType: m6i.xlarge", "desiredCapacity: 2", "supportType: STANDARD", "{name: metrics-server}", "name: sdo-lane-eks1"} {
+		if !strings.Contains(cfg, want) {
+			t.Errorf("the cluster config lacks %q:\n%s", want, cfg)
+		}
+	}
+	log := s.log()
+	// CC5: the first node is the infra node, the others are workers
+	for _, want := range []string{"label node ip-10-0-0-1 node-role.kubernetes.io/control-plane=", "label node ip-10-0-0-2 node-role.kubernetes.io/worker="} {
+		if !strings.Contains(log, want) {
+			t.Errorf("no %q in\n%s", want, log)
+		}
+	}
+	if strings.Contains(log, "label node ip-10-0-0-1 node-role.kubernetes.io/worker") {
+		t.Error("the infra node of a two-node lane is also a worker")
+	}
+	// the kubeconfig is a token one with the context the workloads derive from the lane name, mode 0600 on the admin one
+	b, err := os.ReadFile(kc)
+	if err != nil || !strings.Contains(string(b), "name: kind-sdo-lane-eks1") || !strings.Contains(string(b), "token: token") {
+		t.Fatalf("kubeconfig (%v):\n%s", err, b)
+	}
+	if st, err := os.Stat(kc + ".admin"); err != nil || st.Mode().Perm() != 0o600 {
+		t.Errorf("admin kubeconfig: %v %v", st, err)
+	}
+	if _, err := os.Stat(ev); err != nil {
+		t.Errorf("evidence directory not made: %v", err)
+	}
+	// the node agent mirrors the upstream registries into this account's ECR
+	applied := s.file("applied.yaml")
+	for _, want := range []string{"123456789012.dkr.ecr.us-west-2.amazonaws.com", `--region "us-west-2"`, "docker.io ghcr.io", "sdo-mirror"} {
+		if !strings.Contains(applied, want) {
+			t.Errorf("node agent manifest lacks %q", want)
+		}
+	}
+	if strings.Contains(applied, "@ECR@") || strings.Contains(applied, "@REGION@") {
+		t.Error("node agent placeholders left in the manifest")
+	}
+	// the lane's requirements: one zone, gp3 default class that binds at placement, node ports open to the manager, an entry address
+	for _, want := range []string{"availabilityZones: [us-west-2a]", "{name: aws-ebs-csi-driver}", "AmazonEBSCSIDriverPolicy"} {
+		if !strings.Contains(cfg, want) {
+			t.Errorf("the cluster config lacks %q", want)
+		}
+	}
+	for _, want := range []string{"volumeBindingMode: WaitForFirstConsumer", "storageclass.kubernetes.io/is-default-class: \"true\"", "provisioner: ebs.csi.aws.com"} {
+		if !strings.Contains(applied, want) {
+			t.Errorf("the storage class lacks %q", want)
+		}
+	}
+	if !strings.Contains(log, "ec2 authorize-security-group-ingress --group-id sg-0123 --protocol tcp --port 30000-32767 --cidr 203.0.113.7/32") {
+		t.Errorf("node ports not opened:\n%s", log)
+	}
+	if b, _ := os.ReadFile(kc + ".entry"); strings.TrimSpace(string(b)) != "54.0.0.1" {
+		t.Errorf("entry address = %q", b)
+	}
+	// idempotent: a second up attaches and creates nothing
+	if out, err := s.run(nil, "up", "eks1", kc, ev); err != nil || strings.Count(s.log(), "eksctl create cluster") != 1 {
+		t.Fatalf("second up: %v\n%s\n%s", err, out, s.log())
+	}
+}
+
+// A single-node lane's only node is both the infra node and a worker.
+func TestEksLaneUpOfOneNodeLabelsItInfraAndWorker(t *testing.T) {
+	s := newEksScript(t)
+	if out, err := s.run([]string{"EKS_NODES=1"}, "up", "eks1", filepath.Join(t.TempDir(), "kc")); err != nil {
+		t.Fatalf("up: %v\n%s", err, out)
+	}
+	log := s.log()
+	if !strings.Contains(log, "label node ip-10-0-0-1 node-role.kubernetes.io/control-plane=") || !strings.Contains(log, "label node ip-10-0-0-1 node-role.kubernetes.io/worker=") {
+		t.Errorf("labels:\n%s", log)
+	}
+}
+
+// Nothing may bill after a failed up: the half-built cluster is deleted.
+func TestEksLaneUpFailureDeletesTheHalfBuiltCluster(t *testing.T) {
+	for name, extra := range map[string]string{"create fails": "FAKE_EKS_FAIL_CREATE=1", "no network policy": "FAKE_NO_NETPOL=1"} {
+		s := newEksScript(t)
+		out, err := s.run([]string{extra}, "up", "eks1", filepath.Join(t.TempDir(), "kc"))
+		if err == nil {
+			t.Fatalf("%s: up succeeded:\n%s", name, out)
+		}
+		if _, statErr := os.Stat(filepath.Join(s.state, "cluster-sdo-lane-eks1")); statErr == nil || !strings.Contains(s.log(), "eksctl delete cluster --name sdo-lane-eks1") {
+			t.Errorf("%s: the cluster was not deleted:\n%s\n%s", name, out, s.log())
+		}
+	}
+}
+
+func TestEksLaneUpRefusesAnotherAccountBeforeCreatingAnything(t *testing.T) {
+	s := newEksScript(t)
+	out, err := s.run([]string{"EKS_ACCOUNT=999999999999"}, "up", "eks1", filepath.Join(t.TempDir(), "kc"))
+	if err == nil || !strings.Contains(out, "credentials belong to account 123456789012, expected 999999999999") || strings.Contains(s.log(), "eksctl") {
+		t.Fatalf("up: %v\n%s\n%s", err, out, s.log())
+	}
+}
+
+func TestEksLaneDownDeletesTheClusterAndTheKubeconfig(t *testing.T) {
+	s := newEksScript(t)
+	kc := filepath.Join(t.TempDir(), "eks1")
+	if out, err := s.run(nil, "up", "eks1", kc); err != nil {
+		t.Fatalf("up: %v\n%s", err, out)
+	}
+	out, err := s.run(nil, "down", "eks1", kc)
+	if err != nil || !strings.Contains(out, "EKS_LANE_DELETED cluster=sdo-lane-eks1") {
+		t.Fatalf("down: %v\n%s", err, out)
+	}
+	for _, p := range []string{kc, kc + ".admin", kc + ".entry", filepath.Join(s.state, "cluster-sdo-lane-eks1")} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("%s still exists", p)
+		}
+	}
+	if out, err := s.run(nil, "down", "eks1", kc); err != nil || !strings.Contains(out, "does not exist") {
+		t.Errorf("a second down: %v\n%s", err, out)
+	}
+}
+
+// Image delivery: an app image keeps its declared name (the mirror repository is derived from it, with Docker's implicit
+// registry spelled out), a pinned image goes to <prefix>/<name>, and an upstream the lane does not mirror is refused.
+func TestEksLanePushPublishesUnderTheDeclaredName(t *testing.T) {
+	s := newEksScript(t)
+	out, err := s.run(nil, "push", "busybox:1.36", "yinfangchen/hotelreservation:latest", "ghcr.io/open-telemetry/demo:2.2.0-frontend", "kube-proxy")
+	if err != nil {
+		t.Fatalf("push: %v\n%s", err, out)
+	}
+	log := s.log()
+	for _, want := range []string{
+		"docker tag busybox:1.36 123456789012.dkr.ecr.us-west-2.amazonaws.com/sdo-mirror/docker.io/library/busybox:1.36",
+		"docker push --quiet 123456789012.dkr.ecr.us-west-2.amazonaws.com/sdo-mirror/docker.io/yinfangchen/hotelreservation:latest",
+		"sdo-mirror/ghcr.io/open-telemetry/demo:2.2.0-frontend",
+		"sdo-mirror/docker.io/library/kube-proxy:latest",
+		"docker login --username AWS --password-stdin 123456789012.dkr.ecr.us-west-2.amazonaws.com",
+	} {
+		if !strings.Contains(log, want) {
+			t.Errorf("no %q in\n%s", want, log)
+		}
+	}
+	if out, err := s.run(nil, "push", "quay.io/a/b:1"); err == nil || !strings.Contains(out, "mirrors [docker.io ghcr.io], not quay.io") {
+		t.Errorf("an unmirrored upstream: %v\n%s", err, out)
+	}
+	pin, err := s.run(nil, "pin", "sdo-controller:v1")
+	if err != nil || !strings.Contains(pin, "123456789012.dkr.ecr.us-west-2.amazonaws.com/sdo/sdo-controller@sha256:aaaa") {
+		t.Errorf("pin: %v\n%s", err, pin)
+	}
+}
+
+// --- a plan item through the manager on an eks host ---
+
+// The eks host makes its lane with the platform script (sized from the footprint), the host-safety gates do not run,
+// the cluster is kept while the lane is fresh, deleted once the host is unwanted and idle, and its cost is recorded.
+func TestBenchEksHostLaneLifecycle(t *testing.T) {
+	l := newLab(t)
+	inv, err := os.ReadFile(l.root.path("hosts.yaml"))
+	must(t, err)
+	s := strings.Replace(string(inv), "clusters: [c1]}", `clusters: [c1], provider: eks, eks: {region: us-west-2, account: "123456789012", budget_per_hour: 3, vcpu_quota: 16, idle_timeout: 1s}}`, 1)
+	must(t, os.WriteFile(l.root.path("hosts.yaml"), []byte(s), 0o644))
+	t.Setenv("PATH", testdata("fakeeks")+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HOST_CANARY_PROCSYS", "/nonexistent") // a canary read would fail: the eks host must not take one
+	l.add("e1", l.hooked, "a@x", "[[1]]", 0)
+	l.until("run done", func() bool { return l.exp("e1").Count(0).Done == 1 })
+	st, err := StatusOf(l.root, "")
+	must(t, err)
+	if len(st.Hosts) != 1 || st.Hosts[0].EKS == nil || st.Hosts[0].Unhealthy != "" {
+		t.Fatalf("host status = %+v", st.Hosts)
+	}
+	log := l.readPath(filepath.Join(l.state, "eks.log"))
+	if !strings.Contains(log, "eksctl create cluster") || !strings.Contains(log, "instanceType") && !strings.Contains(l.readPath(filepath.Join(l.state, "cfg-sdo-lane-c1")), "instanceType: m6i.xlarge") {
+		t.Fatalf("no cluster made sized for the footprint:\n%s", log)
+	}
+	l.until("cluster deleted and its cost recorded", func() bool {
+		var led eksLedger
+		return readJSON(l.root.eksLedgerPath("h1"), &led) == nil && len(led.Closed) == 1 && len(led.Open) == 0
+	})
+	if !strings.Contains(l.readPath(filepath.Join(l.state, "eks.log")), "eksctl delete cluster --name sdo-lane-c1") {
+		t.Fatal("the cluster was not deleted at the end")
+	}
+	var led eksLedger
+	must(t, readJSON(l.root.eksLedgerPath("h1"), &led))
+	if c := led.Closed[0]; c.Lane != "c1" || c.InstanceType != "m6i.xlarge" || c.Nodes != 2 || c.Until.Before(c.Since) {
+		t.Fatalf("cost record = %+v", c)
+	}
+	b, _ := json.Marshal(led)
+	t.Logf("ledger: %s", b)
+}

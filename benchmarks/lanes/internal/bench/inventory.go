@@ -80,6 +80,8 @@ type Host struct {
 	Health HostHealthConf `json:"health,omitempty"`
 	// Isolation "one-way-ok" lets lanes run on the host with no active reservation; its rows are flagged.
 	Isolation string `json:"isolation,omitempty"`
+	// EKS (provider eks) is the account the lanes' clusters are made in and what they may cost (eks.go).
+	EKS *HostEKS `json:"eks,omitempty"`
 }
 
 // Lane providers.
@@ -126,6 +128,15 @@ func (h Host) EnvFor(workload string) []string {
 // EnvList is Env as sorted KEY=VALUE pairs, plus the lane provider's variables (an explicit Env entry wins).
 func (h Host) EnvList() []string {
 	all := map[string]string{}
+	if h.IsEks() {
+		all["BENCH_LANE_PROVIDER"] = ProviderEks
+		all["BENCH_EVIDENCE_MODE"] = "pull"
+		if h.EKS != nil {
+			all["EKS_REGION"] = h.EKS.Region
+			all["AWS_REGION"] = h.EKS.Region
+			all["BENCH_IMAGE_REGISTRY"] = h.EKS.Registry()
+		}
+	}
 	if h.IsVcluster() {
 		all["FUZZOPS_LANE_PROVIDER"] = ProviderVcluster
 		all["BENCH_LANE_PROVIDER"] = ProviderVcluster
@@ -228,6 +239,10 @@ func LoadInventory(root string) (Inventory, error) {
 			h.ClusterUp, h.ClusterDown = vclusterUp, vclusterDown
 			inv.Hosts[name] = h
 		}
+		if h.IsEks() && h.ClusterUp == "" && h.ClusterDown == "" {
+			h.ClusterUp, h.ClusterDown = eksClusterUp, eksClusterDown
+			inv.Hosts[name] = h
+		}
 	}
 	if err := inv.Validate(); err != nil {
 		return Inventory{}, fmt.Errorf("%s: %w", p, err)
@@ -263,6 +278,9 @@ func (inv Inventory) Validate() error {
 		}
 		switch h.Provider {
 		case "", ProviderKind:
+			if h.EKS != nil {
+				errs = append(errs, fmt.Sprintf("host %s: eks belongs to provider eks", name))
+			}
 			if h.EntryHost != "" || h.HostKubeconfig != "" {
 				errs = append(errs, fmt.Sprintf("host %s: entry_host and host_kubeconfig belong to provider vcluster", name))
 			}
@@ -273,8 +291,12 @@ func (inv Inventory) Validate() error {
 			if !filepath.IsAbs(h.HostKubeconfig) {
 				errs = append(errs, fmt.Sprintf("host %s: provider vcluster needs host_kubeconfig (absolute path)", name))
 			}
+		case ProviderEks:
+			for _, e := range h.EKS.validate(h) {
+				errs = append(errs, fmt.Sprintf("host %s: %s", name, e))
+			}
 		default:
-			errs = append(errs, fmt.Sprintf("host %s: provider %q: want kind or vcluster", name, h.Provider))
+			errs = append(errs, fmt.Sprintf("host %s: provider %q: want kind, vcluster or eks", name, h.Provider))
 		}
 		for _, e := range h.laneLabelProblems() {
 			errs = append(errs, fmt.Sprintf("host %s: %s", name, e))
@@ -291,7 +313,7 @@ func (inv Inventory) Validate() error {
 		for _, e := range h.Lanes.validate() {
 			errs = append(errs, fmt.Sprintf("host %s: %s", name, e))
 		}
-		if h.ClusterUp != "" && !h.IsVcluster() && !strings.Contains(h.ClusterUp, "{evidence}") {
+		if h.ClusterUp != "" && !h.IsVcluster() && !h.IsEks() && !strings.Contains(h.ClusterUp, "{evidence}") {
 			errs = append(errs, fmt.Sprintf("host %s: cluster_up must mount {evidence} on every node", name))
 		}
 		if (h.ClusterUp == "") != (h.ClusterDown == "") {
@@ -301,8 +323,8 @@ func (inv Inventory) Validate() error {
 		switch {
 		case h.MaxBuilds < 1:
 			errs = append(errs, fmt.Sprintf("host %s: max_builds must be positive", name))
-		case h.MaxLoad5 < 0 || (h.MaxLoad5 == 0 && h.Reserve == nil):
-			errs = append(errs, fmt.Sprintf("host %s: max_load5 must be positive (it may be omitted or 0, meaning no load gate, only on a host with reserve:)", name))
+		case h.MaxLoad5 < 0 || (h.MaxLoad5 == 0 && h.Reserve == nil && !h.IsEks()):
+			errs = append(errs, fmt.Sprintf("host %s: max_load5 must be positive (it may be omitted or 0, meaning no load gate, only on a host with reserve: or provider eks)", name))
 		}
 		if h.MaxBuildFailures < 0 {
 			errs = append(errs, fmt.Sprintf("host %s: max_build_failures must be at least 1 (omit it for the default %d)", name, DefaultMaxBuildFailures))

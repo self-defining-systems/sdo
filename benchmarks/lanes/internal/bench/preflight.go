@@ -250,7 +250,11 @@ func runPreflight(ctx context.Context, inv Inventory, specs []specFile, opt Pref
 			planned := plannedLanes(inv, h, hs)
 			var out string
 			var err error
-			if host.IsVcluster() {
+			if host.IsEks() {
+				out, err = run(ctx, h, pre+eksAccountScript())
+				ok, d := judgeEksAccount(out, err, host.EKS)
+				add(7, "eks-account", h, ok, "%s", d)
+			} else if host.IsVcluster() {
 				out, err = run(ctx, h, pre+sharedClusterScript(host))
 				ok, d := judgeSharedCluster(out, err, planned)
 				add(7, "shared-cluster", h, ok, "%s", d)
@@ -281,7 +285,7 @@ func runPreflight(ctx context.Context, inv Inventory, specs []specFile, opt Pref
 				ids, kv := parseImages(out)
 				facts.Lock()
 				imageIDs[h] = ids
-				if !host.IsVcluster() {
+				if !host.IsVcluster() && !host.IsEks() {
 					kindImage[h] = effectiveKindImage(host, kv)
 				}
 				facts.Unlock()
@@ -413,6 +417,9 @@ func judgeSharedCluster(out string, err error, planned int) (bool, string) {
 
 // platformTools are the external programs the steps, hooks and probes run; a kind host also needs kind.
 func platformTools(h Host) []string {
+	if h.IsEks() {
+		return []string{"kubectl", "docker", "aws", "eksctl"} // no kernel to probe and no kind
+	}
 	t := []string{"kubectl", "docker", "ip"}
 	if !h.IsVcluster() {
 		t = append(t, "kind")
