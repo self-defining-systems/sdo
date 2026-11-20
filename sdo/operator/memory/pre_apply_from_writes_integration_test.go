@@ -44,6 +44,9 @@ func TestPreApplyCaptureOverlaysTheRecordedBeforeStatesOnTheDetectionSnapshot(t 
 	if err != nil {
 		t.Fatalf("no open@pre-apply capture for a raw write: %v", err)
 	}
+	if strings.Contains(string(raw), "redacted") {
+		t.Fatalf("a projected object leaked into the snapshot, which strict decoders reject: %s", raw)
+	}
 	var snapshot struct {
 		Objects []struct {
 			Kind     string                 `json:"kind"`
