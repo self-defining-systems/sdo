@@ -37,6 +37,8 @@ type Host struct {
 	MaxLoad5    float64                      `json:"max_load5"`   // no build starts at or above this 5-minute load; 0 or omitted: no load gate (hosts with reserve: only)
 	Kubeconfigs string                       `json:"kubeconfigs"` // directory with one kubeconfig file per cluster, named as the cluster
 	Clusters    []string                     `json:"clusters"`
+	// LaneLabels labels lanes (by cluster name): see LaneAccepts.
+	LaneLabels map[string]map[string]string `json:"lane_labels,omitempty"`
 	// MinFree is the disk floor of the staging filesystem ("150G"): no build starts below it; gc runs first.
 	MinFree string `json:"min_free,omitempty"`
 	// MaxBuildFailures is how many builds in a row may fail on one of the host's lanes before the lane is taken
@@ -273,6 +275,9 @@ func (inv Inventory) Validate() error {
 			}
 		default:
 			errs = append(errs, fmt.Sprintf("host %s: provider %q: want kind or vcluster", name, h.Provider))
+		}
+		for _, e := range h.laneLabelProblems() {
+			errs = append(errs, fmt.Sprintf("host %s: %s", name, e))
 		}
 		for _, e := range h.CrashLoop.validate() {
 			errs = append(errs, fmt.Sprintf("host %s: %s", name, e))

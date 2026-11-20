@@ -1016,6 +1016,9 @@ func (m *Manager) laneBlock(l *LaneFile, x *Experiment, s Spec, reachable map[st
 	if why := m.buildBlock(l.Host, s, reachable); why != "" {
 		return why
 	}
+	if !m.inv.LaneAccepts(l.Host, l.Lane, s) {
+		return fmt.Sprintf("the lane's labels [%s] do not match the spec's selector [%s]", labelsText(m.inv.Hosts[l.Host].LaneLabels[l.Lane]), labelsText(s.Selector))
+	}
 	if m.resetFits(l, x, s) {
 		return ""
 	}
@@ -1074,10 +1077,10 @@ func (m *Manager) freeLane(name string, s Spec, reachable map[string]bool) *Lane
 			m.gcWanted[h] = m.gcWanted[h] || floor
 			continue
 		}
-		if l := m.freeLaneOn(h, true); l != nil {
+		if l := m.freeLaneOn(h, true, s); l != nil {
 			return l
 		}
-		if l := m.freeLaneOn(h, false); l != nil {
+		if l := m.freeLaneOn(h, false, s); l != nil {
 			return l
 		}
 	}
@@ -1087,9 +1090,9 @@ func (m *Manager) freeLane(name string, s Spec, reachable map[string]bool) *Lane
 // freeLaneOn is the first free lane of host h that a build may take. A pool lane whose operator still runs is
 // released first (by reset), so that the next build can take it by swap. placed: only lanes that are not known to lack
 // cores: neither Gone nor one whose build waited for cores in vain (Unplaced); those come last.
-func (m *Manager) freeLaneOn(h string, placed bool) *LaneFile {
+func (m *Manager) freeLaneOn(h string, placed bool, s Spec) *LaneFile {
 	for _, l := range m.sortedLanes() {
-		if l.Host == h && l.State == LaneFree && l.Step == nil && !awaitsRelease(l) && !(placed && (l.Unplaced || l.Gone)) {
+		if l.Host == h && m.inv.LaneAccepts(h, l.Lane, s) && l.State == LaneFree && l.Step == nil && !awaitsRelease(l) && !(placed && (l.Unplaced || l.Gone)) {
 			return l
 		}
 	}
@@ -1133,7 +1136,7 @@ func (m *Manager) preemptWaitingBuilds(ctx context.Context, reachable map[string
 				continue
 			}
 			for _, f := range m.sortedLanes() {
-				if f.Host == h && f.State == LaneFree && f.Step == nil && !awaitsRelease(f) && !f.Gone && !f.Unplaced && !taken[f.Lane] {
+				if f.Host == h && m.inv.LaneAccepts(h, f.Lane, s) && f.State == LaneFree && f.Step == nil && !awaitsRelease(f) && !f.Gone && !f.Unplaced && !taken[f.Lane] {
 					cand = f
 					break
 				}
@@ -1695,7 +1698,7 @@ func (m *Manager) resettable(x *Experiment, s Spec, reachable map[string]bool) *
 
 // resetFits: l is a free lane at its golden copy whose operator profile is x's (resettable, without the host's limits).
 func (m *Manager) resetFits(l *LaneFile, x *Experiment, s Spec) bool {
-	if l.State != LaneFree || l.Step != nil || !resetAndReady(l) || l.Gone {
+	if l.State != LaneFree || l.Step != nil || !resetAndReady(l) || l.Gone || !m.inv.LaneAccepts(l.Host, l.Lane, s) {
 		return false
 	}
 	owner := m.exps[l.Prepared.Experiment]
