@@ -632,3 +632,30 @@ func TestEksNodeAgentPrepullsTheLanesImageList(t *testing.T) {
 		}
 	}
 }
+
+type startSpy struct {
+	HostOps
+	started []Step
+}
+
+func (s *startSpy) Start(_ context.Context, st Step) error {
+	s.started = append(s.started, st)
+	return nil
+}
+
+// A lane whose first builds failed has no recorded prepared state (the failure came before the workload was recorded):
+// the release that deletes its cluster needs none, so the cluster is deleted instead of left billing.
+func TestEksDownLaneWithNothingPreparedStillGetsItsClusterDeleted(t *testing.T) {
+	m := eksManager(t)
+	spy := &startSpy{}
+	m.Ops = func(string, Host) HostOps { return spy }
+	l := m.lanes["eks1"]
+	l.State, l.Gone, l.Prepared = LaneDown, false, nil
+	m.eksCleanDown(context.Background(), map[string]bool{"e": true})
+	if len(spy.started) != 1 || spy.started[0].Kind != StepRelease || !spy.started[0].DeleteCluster {
+		t.Fatalf("started = %+v, want one cluster-deleting release", spy.started)
+	}
+	if l.Step == nil {
+		t.Fatal("the lane has no step after the release started")
+	}
+}
