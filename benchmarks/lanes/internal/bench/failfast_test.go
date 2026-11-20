@@ -154,3 +154,13 @@ func TestBuildPreflightSkipsAFuzzopsWithoutPackLoad(t *testing.T) {
 		t.Errorf("want the cluster-up failure, got config=%q reason=%q", r.res.Config, r.res.Reason)
 	}
 }
+
+// A recover that fails because the lane's cluster does not exist (a build killed before its cluster was made) has no
+// fault to undo: the lane is not taken down for a fault that cannot be in place.
+func TestRecoverOfAMissingClusterDoesNotTakeTheLaneDown(t *testing.T) {
+	r := newRunner(t, missingCluster)
+	r.s.Fuzzops, _ = fakeFuzzops(t, `echo "namespace not found" >&2; exit 1`)
+	if ok := r.recoverLane(context.Background(), &Prepared{Namespace: "ns", AppPack: "/x/y"}); !ok || r.res.LaneDown != "" {
+		t.Errorf("ok=%v down=%q, want a lane that stays up (no cluster, no fault)", ok, r.res.LaneDown)
+	}
+}
