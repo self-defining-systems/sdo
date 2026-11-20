@@ -19,13 +19,17 @@ import (
 // ResponderUsage reads worker-normalized counters, never provider transcripts.
 // Atomic replacement gives one latest snapshot per process turn, including
 // turns of the same task resumed after worker restart. nil means unobserved.
-func ResponderUsage(repositoryMount, pvcSubPath, incidentID string) (*contracts.UsageMetrics, error) {
+//
+// A checkpoint whose counters fail decoding or validation is a usage shape problem, not an incident failure:
+// it is left out of the total, the total is marked partial, and the problem is returned beside it. Identity
+// problems (wrong incident, task or turn) still fail.
+func ResponderUsage(repositoryMount, pvcSubPath, incidentID string) (*contracts.UsageMetrics, []error, error) {
 	if repositoryMount == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	sub, err := IncidentSessionSubPath(pvcSubPath, incidentID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	base := pvcSubPath
 	if base == "" {
@@ -33,24 +37,26 @@ func ResponderUsage(repositoryMount, pvcSubPath, incidentID string) (*contracts.
 	}
 	relative, err := filepath.Rel(base, sub)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	directory := filepath.Join(repositoryMount, relative, "usage")
 	entries, err := os.ReadDir(directory)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var total *contracts.UsageMetrics
+	var problems []error
+	partial := false
 	for _, entry := range entries {
 		if !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(directory, entry.Name()))
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		var checkpoint struct {
 			Version    int             `json:"version"`
@@ -62,25 +68,35 @@ func ResponderUsage(repositoryMount, pvcSubPath, incidentID string) (*contracts.
 			Usage      json.RawMessage `json:"usage"`
 		}
 		if err := json.Unmarshal(data, &checkpoint); err != nil {
-			return nil, fmt.Errorf("decode usage checkpoint %s: %w", entry.Name(), err)
+			return nil, nil, fmt.Errorf("decode usage checkpoint %s: %w", entry.Name(), err)
 		}
 		suffix, continuation := strings.CutPrefix(checkpoint.TaskID, incidentID+"-continue-")
 		attempt, parseErr := strconv.Atoi(suffix)
 		validTask := checkpoint.TaskID == incidentID || (continuation && parseErr == nil && attempt > 0 && strconv.Itoa(attempt) == suffix)
 		if checkpoint.Version != 1 || checkpoint.IncidentID != incidentID || !validTask || checkpoint.Phase != "responder" || checkpoint.TurnID+".json" != entry.Name() || checkpoint.Complete == nil || len(checkpoint.Usage) == 0 || string(checkpoint.Usage) == "null" {
-			return nil, fmt.Errorf("usage checkpoint %s has invalid incident/task/phase/turn identity", entry.Name())
+			return nil, nil, fmt.Errorf("usage checkpoint %s has invalid incident/task/phase/turn identity", entry.Name())
 		}
 		usage := new(contracts.UsageMetrics)
 		if err := protojson.Unmarshal(checkpoint.Usage, usage); err != nil {
-			return nil, fmt.Errorf("decode usage counters %s: %w", entry.Name(), err)
+			problems = append(problems, fmt.Errorf("decode usage counters %s: %w", entry.Name(), err))
+			partial = true
+			continue
 		}
 		if err := wire.Validate(usage); err != nil {
-			return nil, fmt.Errorf("validate usage counters %s: %w", entry.Name(), err)
+			problems = append(problems, fmt.Errorf("validate usage counters %s: %w", entry.Name(), err))
+			partial = true
+			continue
 		}
 		usage.Partial = !*checkpoint.Complete
 		total = AddUsage(total, usage)
 	}
-	return total, nil
+	if partial {
+		if total == nil {
+			total = new(contracts.UsageMetrics)
+		}
+		total.Partial = true
+	}
+	return total, problems, nil
 }
 
 // AddUsage preserves unknown optional counters and partial accounting.

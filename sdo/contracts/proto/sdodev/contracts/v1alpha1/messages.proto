@@ -492,11 +492,6 @@ message UsageMetrics {
     expression: "has(this.cache_read_input_tokens) || this.cached_input_tokens <= this.input_tokens"
   };
   option (buf.validate.message).cel = {
-    id: "usage.cache_write_le_cached_when_no_read"
-    message: "cache_write_input_tokens must not exceed cached_input_tokens"
-    expression: "has(this.cache_read_input_tokens) || this.cache_write_input_tokens <= this.cached_input_tokens"
-  };
-  option (buf.validate.message).cel = {
     id: "usage.cached_aliases_read"
     message: "cached_input_tokens is an alias of cache_read_input_tokens and must equal it (or be zero pre-normalization)"
     expression: "!has(this.cache_read_input_tokens) || this.cached_input_tokens == 0 || this.cached_input_tokens == this.cache_read_input_tokens"

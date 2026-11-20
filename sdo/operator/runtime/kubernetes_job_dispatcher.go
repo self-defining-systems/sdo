@@ -29,6 +29,9 @@ const (
 // KubernetesJobDispatcher adapts the incident protocol to the shared,
 // implementation-neutral worker Job transport.
 type KubernetesJobDispatcher struct {
+	// OnUsageProblem receives usage checkpoints that were dropped for failing validation.
+	OnUsageProblem func(error)
+
 	CoverageProvider CoverageProvider
 
 	Standby *worker_registry.StandbyPool

@@ -5748,7 +5748,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x06passed\x18\x02 \x01(\bR\x06passed\x12!\n" +
 	"\adetails\x18\x03 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\adetails\x12C\n" +
 	"\vobserved_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\n" +
-	"observedAt\"\x9b\x12\n" +
+	"observedAt\"\xd0\x10\n" +
 	"\fUsageMetrics\x12$\n" +
 	"\tllm_calls\x18\x01 \x01(\x03B\a\xbaH\x04\"\x02(\x00R\bllmCalls\x12*\n" +
 	"\finput_tokens\x18\x02 \x01(\x03B\a\xbaH\x04\"\x02(\x00R\vinputTokens\x12,\n" +
@@ -5762,11 +5762,12 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x0emodel_requests\x18\n" +
 	" \x01(\x03B\a\xbaH\x04\"\x02(\x00H\x03R\rmodelRequests\x88\x01\x01\x129\n" +
 	"\x0etotal_cost_usd\x18\v \x01(\x01B\x0e\xbaH\v\x12\t)\x00\x00\x00\x00\x00\x00\x00\x00H\x04R\ftotalCostUsd\x88\x01\x01\x12\x18\n" +
-	"\apartial\x18\f \x01(\bR\apartial:\xf5\v\xbaH\xf1\v\x1a\x86\x01\n" +
+	"\apartial\x18\f \x01(\bR\apartial:\xaa\n" +
+	"\xbaH\xa6\n" +
+	"\x1a\x86\x01\n" +
 	"\x19usage.reasoning_le_output\x125reasoning_output_tokens must not exceed output_tokens\x1a2this.reasoning_output_tokens <= this.output_tokens\x1a\xd8\x01\n" +
 	"#usage.cache_write_1h_le_cache_write\x12Dcache_write_1h_input_tokens must not exceed cache_write_input_tokens\x1ak!has(this.cache_write_1h_input_tokens) || this.cache_write_1h_input_tokens <= this.cache_write_input_tokens\x1a\xaa\x01\n" +
-	"\"usage.cached_le_input_when_no_read\x120cached_input_tokens must not exceed input_tokens\x1aRhas(this.cache_read_input_tokens) || this.cached_input_tokens <= this.input_tokens\x1a\xc8\x01\n" +
-	"(usage.cache_write_le_cached_when_no_read\x12<cache_write_input_tokens must not exceed cached_input_tokens\x1a^has(this.cache_read_input_tokens) || this.cache_write_input_tokens <= this.cached_input_tokens\x1a\x89\x02\n" +
+	"\"usage.cached_le_input_when_no_read\x120cached_input_tokens must not exceed input_tokens\x1aRhas(this.cache_read_input_tokens) || this.cached_input_tokens <= this.input_tokens\x1a\x89\x02\n" +
 	"\x19usage.cached_aliases_read\x12kcached_input_tokens is an alias of cache_read_input_tokens and must equal it (or be zero pre-normalization)\x1a\x7f!has(this.cache_read_input_tokens) || this.cached_input_tokens == 0 || this.cached_input_tokens == this.cache_read_input_tokens\x1a\xd5\x01\n" +
 	"\x1eusage.read_plus_write_le_input\x12:cache reads plus cache writes must not exceed input_tokens\x1aw!has(this.cache_read_input_tokens) || this.cache_read_input_tokens + this.cache_write_input_tokens <= this.input_tokens\x1a\xae\x02\n" +
 	",usage.uncached_is_input_minus_read_and_write\x12Cuncached_input_tokens must equal input minus cache reads and writes\x1a\xb8\x01!has(this.cache_read_input_tokens) || !has(this.uncached_input_tokens) || this.uncached_input_tokens == this.input_tokens - this.cache_read_input_tokens - this.cache_write_input_tokensB\x1a\n" +
