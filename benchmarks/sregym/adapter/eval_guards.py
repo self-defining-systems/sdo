@@ -50,10 +50,23 @@ class StabilizationError(RuntimeError):
     """The app never established independent and controller traffic proof."""
 
 
-def validate_setup_commit(validation: str) -> None:
-    """The broker owns artifact ownership; admission only needs the commit to have passed its validation."""
-    if validation != "passed":
-        raise ValueError(f"unvalidated setup commit: validation={validation}")
+INSTALL_ORIGIN = "install-existing"
+# The only paths the Go installer writes: the standard goal, the deployment plan and the generic detectors.
+INSTALL_PATHS = (".sdo/goal.md", ".sdo/deployment/plan.yaml", ".sdo/diagnostics/")
+
+
+def validate_setup_commit(validation: str, origin: str = "", paths: list[str] | None = None) -> None:
+    """Admit a broker-validated commit, or an installer commit (no check runs at install) on installer paths only."""
+    if validation == "passed":
+        return
+    if (
+        not validation
+        and origin == INSTALL_ORIGIN
+        and paths
+        and all(path.startswith(INSTALL_PATHS) and ".." not in Path(path).parts for path in paths)
+    ):
+        return
+    raise ValueError(f"unvalidated setup commit: validation={validation} origin={origin}")
 
 
 def is_health_setup(actor: str, phase: str, paths: list[str]) -> bool:
@@ -91,7 +104,7 @@ def setup_lineage(repository: Path, seed: str, head: str = "HEAD") -> dict[str, 
             if line.startswith("SDO-") and ": " in line
         )
         paths = git("diff-tree", "--no-commit-id", "--name-only", "-r", sha).splitlines()
-        validate_setup_commit(trailers.get("SDO-Validation", ""))
+        validate_setup_commit(trailers.get("SDO-Validation", ""), trailers.get("SDO-Origin", ""), paths)
         actor, phase = trailers.get("SDO-Actor", ""), trailers.get("SDO-Phase", "")
         commits.append(
             {

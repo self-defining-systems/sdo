@@ -113,6 +113,7 @@ def test_lineage_labels_commits_beyond_health_setup(actor, phase, paths, expecte
 
 
 def _commit(repository, name, trailers):
+    (repository / name).parent.mkdir(parents=True, exist_ok=True)
     (repository / name).write_text(name)
     subprocess.run(["git", "-C", str(repository), "add", name], check=True)
     message = "\n".join(["change", "", *trailers])
@@ -144,20 +145,35 @@ def test_lineage_admits_a_controller_outcome_commit_and_reports_it(tmp_path):
         setup_lineage(repository, seed)
 
 
-def test_lineage_admits_sdo_install_commits_and_rejects_an_unstamped_commit(tmp_path):
-    """The installer stamps its own commits with SDO-Validation; an engineer's commit without it still fails."""
-    from benchmarks.sregym.adapter.eval_guards import setup_lineage
-
+def _seeded(tmp_path):
     repository = tmp_path / "repo"
     subprocess.run(["git", "init", "-q", str(repository)], check=True)
     _commit(repository, "seed", [])
     seed = subprocess.run(
         ["git", "-C", str(repository), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
     ).stdout.strip()
-    install = ["SDO-Actor: human", "SDO-Phase: initial", "SDO-Origin: install-existing", "SDO-Validation: passed"]
-    _commit(repository, "sdo: prepare the generic detectors", install)
-    assert len(setup_lineage(repository, seed)["commits"]) == 1
-    _commit(repository, "engineer", ["SDO-Actor: human", "SDO-Phase: initial", "SDO-Origin: install-existing"])
+    return repository, seed
+
+
+def test_lineage_admits_installer_commits_on_installer_paths_only(tmp_path):
+    """The installer runs no check, so its commits are admitted by origin and path only."""
+    from benchmarks.sregym.adapter.eval_guards import setup_lineage
+
+    repository, seed = _seeded(tmp_path)
+    install = ["SDO-Actor: human", "SDO-Phase: initial", "SDO-Origin: install-existing"]
+    _commit(repository, ".sdo/diagnostics/detectors/health/generic.go", install)
+    _commit(repository, ".sdo/goal.md", install)
+    assert len(setup_lineage(repository, seed)["commits"]) == 2
+    _commit(repository, ".sdo/playbooks/x.go", install)
+    with pytest.raises(ValueError, match="unvalidated setup commit"):
+        setup_lineage(repository, seed)
+
+
+def test_lineage_refuses_an_unstamped_engineer_commit(tmp_path):
+    from benchmarks.sregym.adapter.eval_guards import setup_lineage
+
+    repository, seed = _seeded(tmp_path)
+    _commit(repository, ".sdo/diagnostics/detectors/health/generic.go", [])
     with pytest.raises(ValueError, match="unvalidated setup commit"):
         setup_lineage(repository, seed)
 
