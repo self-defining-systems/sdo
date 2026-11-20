@@ -271,6 +271,10 @@ def app_up(ctx: Context) -> tuple[int, dict[str, Any]]:
             *pack.up_args,
             *shlex.split(ctx.env.get("SREGYM_LANES_UP_ARGS", "")),
         ]
+        if seed := ctx.env.get(f"SREGYM_LANES_SEED_{pack.application}"):
+            # The host's onboarded memory for this application (a git repository), per application: one host
+            # serves lanes of several apps.
+            command += ["--seed", seed]
         if evidence := ctx.env.get("BENCH_EVIDENCE_HOST"):
             command += ["--evidence-root", evidence]
         ctx.long_runner(command, env=ctx.env, cwd=ctx.root)

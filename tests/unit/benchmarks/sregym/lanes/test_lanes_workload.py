@@ -122,7 +122,12 @@ def test_check_pack_loads_app_json_or_answers_invalid(tmp_path):
 
 def test_app_up_runs_fastloop_up_for_a_new_lane_and_copies_its_kubeconfig(tmp_path):
     env = lane_env(
-        tmp_path, SREGYM_LANES_UP_ARGS="--lane-cpus 8", BENCH_EVIDENCE_HOST="/ev", SREGYM_LANES_CLUSTER_UP="1"
+        tmp_path,
+        SREGYM_LANES_UP_ARGS="--lane-cpus 8",
+        BENCH_EVIDENCE_HOST="/ev",
+        SREGYM_LANES_CLUSTER_UP="1",
+        SREGYM_LANES_SEED_hotel_reservation="/bases/hotel",
+        SREGYM_LANES_SEED_social_network="/bases/social",
     )
     runner = FakeRunner({"kind get clusters": "other\n"})
     seen: list[list[str]] = []
@@ -143,6 +148,7 @@ def test_app_up_runs_fastloop_up_for_a_new_lane_and_copies_its_kubeconfig(tmp_pa
     assert argv[argv.index("--problem") + 1] == "misconfig_app_hotel_res"
     assert "--lane-cpus" in argv
     assert argv[argv.index("--evidence-root") + 1] == "/ev"
+    assert argv[argv.index("--seed") + 1] == "/bases/hotel"  # the seed of the pack's application
     assert (tmp_path / "kube" / "sgl1").read_text() == "apiVersion: v1\n"
 
 
