@@ -10,6 +10,10 @@ spec that names this adapter behaves as a spec that names none, except on a lane
     mirror under the names the manifests declare (``benchmarks.lanes.eks.publish_app_image``; nodes try the mirror
     first and fall back to the upstream) and that has no nodes to list, so a pack that preloads through
     ``kind get nodes`` has nothing to do.
+``run``
+    The same shim, and ``FUZZOPS_IMAGE_PUBLISH`` naming it: a fault that builds a patched image (fuzzops
+    ``build-and-deploy-patched-image``, which says ``ImageMirror``) publishes it to the mirror instead of loading it
+    into a node, so such a fault is not excluded on EKS (``eks_faults`` reads the same field).
 ``footprint``
     A GitLab app wants 8 cores and 30Gi (the size the built-in workload gives it); other apps take the default.
 
@@ -29,15 +33,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.fuzzops import eks
-from benchmarks.lanes.eks import Ecr, EksLane, EksLaneError, mirror_repository, publish_app_image, split_reference
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
 UNSUPPORTED = 64
 REPO_ROOT = Path(__file__).resolve().parents[2]
-#: Tags that name a moving image: published every time, whatever the mirror holds.
-MOVING_TAGS = frozenset({"dev", "latest"})
 
 
 class WorkloadError(RuntimeError):
@@ -49,62 +50,6 @@ def footprint(app: str) -> dict[str, Any] | None:
     if "gitlab" in Path(app.rstrip("/")).name.lower():
         return {"cpus": 8, "memory": "30Gi"}
     return None
-
-
-def mirror_holds(ecr: Ecr, repository: str, tag: str, run: Callable[..., Any]) -> bool:
-    found = run(
-        [
-            "aws",
-            "ecr",
-            "describe-images",
-            "--region",
-            ecr.lane.region,
-            "--repository-name",
-            repository,
-            "--image-ids",
-            f"imageTag={tag}",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=120,
-    )
-    return found.returncode == 0
-
-
-def publish_images(
-    lane: EksLane,
-    images: Sequence[str],
-    log: Callable[[str], None],
-    run: Callable[..., Any] = subprocess.run,
-) -> list[str]:
-    """Publish each image to the mirror under its declared name; returns the ones published.
-
-    An image from a registry the lane does not mirror is left to the nodes to pull. A tag other than a moving one is
-    published once: the mirror already holding it is enough."""
-    ecr = Ecr(lane, run=run)
-    published: list[str] = []
-    for image in images:
-        try:
-            repository, tag = mirror_repository(lane, image)
-        except EksLaneError as exc:
-            log(f"not mirrored ({exc}); nodes pull {image} themselves")
-            continue
-        if (
-            split_reference(image)[1] not in MOVING_TAGS
-            and "@" not in image
-            and mirror_holds(ecr, repository, tag, run)
-        ):
-            log(f"{image}: already in the mirror")
-            continue
-        if run(["docker", "image", "inspect", image], capture_output=True, text=True, check=False).returncode != 0:
-            pulled = run(["docker", "pull", "-q", image], capture_output=True, text=True, check=False)
-            if pulled.returncode != 0:
-                raise WorkloadError(f"image {image} is not on this host and cannot be pulled: {pulled.stderr[-200:]}")
-        publish_app_image(ecr, image, image)
-        log(f"{image}: published to {lane.registry}/{repository}:{tag}")
-        published.append(image)
-    return published
 
 
 def kind_shim(
@@ -120,7 +65,7 @@ def kind_shim(
     if words[:2] == ["load", "docker-image"]:
         images = _load_images(words[2:])
         kubectl = _kubectl(env)
-        publish_images(eks.lane_from_env(env, kubectl, run), images, log, run)
+        eks.publish_images(eks.lane_from_env(env, kubectl, run), images, log, run)
         return 0
     log(f"kind {' '.join(words)}: not available on an EKS lane (no kind node)")
     return 2
@@ -178,13 +123,15 @@ def handle(
     if not builtin:
         print(json.dumps({"unsupported": True}))
         return UNSUPPORTED
-    if verb == "app-up" and env.get("WORKLOAD_ACTION") == "images" and eks.is_eks(env):
+    if eks.is_eks(env) and (verb == "run" or (verb == "app-up" and env.get("WORKLOAD_ACTION") == "images")):
         with tempfile.TemporaryDirectory(prefix="fuzzops-eks-shim-") as shim:
             write_shim(Path(shim))
             patched = {
                 **env,
                 "PATH": f"{shim}{os.pathsep}{env.get('PATH', '')}",
                 "PYTHONPATH": f"{REPO_ROOT}{os.pathsep}{env.get('PYTHONPATH', '')}".rstrip(os.pathsep),
+                # a fault that builds an image (fuzzops build-and-deploy-patched-image) publishes it through this
+                "FUZZOPS_IMAGE_PUBLISH": f"{shim}/kind load docker-image",
             }
             return call(builtin, patched)
     return call(builtin, env)

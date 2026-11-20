@@ -23,10 +23,18 @@ from __future__ import annotations
 import subprocess
 from typing import TYPE_CHECKING, Any
 
-from benchmarks.lanes.eks import Ecr, EksLane, EksLaneError, pin_image
+from benchmarks.lanes.eks import (
+    Ecr,
+    EksLane,
+    EksLaneError,
+    mirror_repository,
+    pin_image,
+    publish_app_image,
+    split_reference,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Mapping, Sequence
 
 PROVIDER_ENV = "BENCH_LANE_PROVIDER"
 REGISTRY_ENV = "BENCH_IMAGE_REGISTRY"
@@ -142,3 +150,63 @@ def storage_problem(classes: Mapping[str, Any]) -> str:
             "(volumeBindingMode must be WaitForFirstConsumer, or a claim pinned to a node can land in another zone)"
         )
     return ""
+
+
+#: Tags that name a moving image: published every time, whatever the mirror holds.
+MOVING_TAGS = frozenset({"dev", "latest"})
+
+
+def mirror_holds(ecr: Ecr, repository: str, tag: str, run: Callable[..., Any]) -> bool:
+    found = run(
+        [
+            "aws",
+            "ecr",
+            "describe-images",
+            "--region",
+            ecr.lane.region,
+            "--repository-name",
+            repository,
+            "--image-ids",
+            f"imageTag={tag}",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    return found.returncode == 0
+
+
+def publish_images(
+    lane: EksLane,
+    images: Sequence[str],
+    log: Callable[[str], None],
+    run: Callable[..., Any] = subprocess.run,
+) -> list[str]:
+    """Publish each image to the mirror under its declared name; returns the ones published.
+
+    An image from a registry the lane does not mirror is left to the nodes to pull. A tag other than a moving one is
+    published once: the mirror already holding it is enough."""
+    ecr = Ecr(lane, run=run)
+    published: list[str] = []
+    for image in images:
+        try:
+            repository, tag = mirror_repository(lane, image)
+        except EksLaneError as exc:
+            log(f"not mirrored ({exc}); nodes pull {image} themselves")
+            continue
+        if (
+            split_reference(image)[1] not in MOVING_TAGS
+            and "@" not in image
+            and mirror_holds(ecr, repository, tag, run)
+        ):
+            log(f"{image}: already in the mirror")
+            continue
+        if run(["docker", "image", "inspect", image], capture_output=True, text=True, check=False).returncode != 0:
+            pulled = run(["docker", "pull", "-q", image], capture_output=True, text=True, check=False)
+            if pulled.returncode != 0:
+                raise EksHookError(f"image {image} is not on this host and cannot be pulled: {pulled.stderr[-200:]}")
+        publish_app_image(ecr, image, image)
+        log(f"{image}: published to {lane.registry}/{repository}:{tag}")
+        published.append(image)
+    return published

@@ -24,13 +24,17 @@ func (a *act) Spec() action.Spec {{
 """
 
 
-def _fuzzops(tmp_path: Path) -> Path:
+def _fuzzops(tmp_path: Path, *, mirror: bool = False) -> Path:
     """A synthetic checkout: two plain actions, one node-level, and faults using them."""
     root = tmp_path / "fuzzops"
     for pkg, name, node in (
         ("patchfield", "patch-field", ""),
         ("throttle", "cgroup-throttle", "\t\tNodeLevel:   true,\n"),
-        ("builder", "build-and-deploy-patched-image", "\t\tNodeLevel:   true,\n"),
+        (
+            "builder",
+            "build-and-deploy-patched-image",
+            "\t\tNodeLevel:   true,\n" + ("\t\tImageMirror: true,\n" if mirror else ""),
+        ),
     ):
         (root / "internal" / "actions" / pkg).mkdir(parents=True)
         (root / "internal" / "actions" / pkg / f"{pkg}.go").write_text(ACTION_GO.format(pkg=pkg, name=name, node=node))
@@ -92,3 +96,11 @@ def test_the_matrix_file_carries_each_family_and_the_revision(tmp_path: Path) ->
     assert matrix["families"]["ds"]["eks"] is False
     assert matrix["families"]["ds"]["actions"] == ["cgroup-throttle"]
     json.dumps(matrix)
+
+
+def test_a_node_level_action_that_only_delivers_an_image_runs_on_eks(tmp_path: Path) -> None:
+    root = _fuzzops(tmp_path, mirror=True)
+    assert eks_faults.node_level_actions(root) == {"cgroup-throttle"}
+    verdicts = eks_faults.classify(root, ["built-fault@d", "slow-fault@x"])
+    assert verdicts["built-fault"].ok
+    assert not verdicts["slow-fault"].ok
