@@ -23,15 +23,15 @@ var consulSectionKinds = map[string][]ItemKind{
 // It prints the leader state, service names with the number of nodes that
 // provide each (the first 16), node names, member status, KV key counts per
 // top-level prefix (key names only, never a value) and whether ACLs are on.
-// A token read is reduced to that classification; no token is printed.
+// Blank output lines (an empty KV prints one) are not names. A token read is reduced to that classification; no token is printed.
 const consulScript = `export CONSUL_HTTP_ADDR=127.0.0.1:%d
 c(){ o=$(consul "$@" 2>&1)||{ printf 'ERR %%s\n' "$(printf '%%s' "$o"|grep -v '^$'|head -n1)";return 1;};printf '%%s\n' "$o";}
 echo '== info';c info|awk '/^ERR/{print;next} /^[ \t]+(leader|leader_addr|server|known_servers|num_peers|state) = /{sub(/^[ \t]+/,"");print}'
 echo '== services';s=$(c catalog services)&&printf '%%s\n' "$s"|head -n 65||printf '%%s\n' "$s"
 echo '== instances';case "$s" in ERR*);;*)for n in $(printf '%%s\n' "$s"|head -n 16);do printf '%%s\t%%s\n' "$n" "$(consul catalog nodes -service="$n" 2>/dev/null|tail -n +2|grep -c .)";done;;esac
-echo '== nodes';c catalog nodes|awk 'NR==1&&/^ERR/{print;exit} NR>1{print $1}'|head -n 33
-echo '== members';c members|awk 'NR==1&&/^ERR/{print;exit} NR>1{print $1"\t"$3"\t"$4}'|head -n 33
-echo '== kv';c kv get -keys -separator= ''|awk '/^ERR/{print;exit} {sub(/\/.*/,"/");n[$0]++;t++} END{for(k in n)print "prefix\t"k"\t"n[k];print "total\t"t+0}'|sort|head -n 33
+echo '== nodes';c catalog nodes|awk 'NR==1&&/^ERR/{print;exit} NR>1&&NF{print $1}'|head -n 33
+echo '== members';c members|awk 'NR==1&&/^ERR/{print;exit} NR>1&&NF{print $1"\t"$3"\t"$4}'|head -n 33
+echo '== kv';c kv get -keys -separator= ''|awk '/^ERR/{print;exit} !NF{next} {sub(/\/.*/,"/");n[$0]++;t++} END{for(k in n)print "prefix\t"k"\t"n[k];print "total\t"t+0}'|sort|head -n 33
 echo '== acl';o=$(consul acl token read -self 2>&1);case "$o" in *"ACL support disabled"*)echo disabled;;*AccessorID*|*"Permission denied"*|*"ACL not found"*|*403*)echo enabled;;*)printf 'ERR %%s\n' "$(printf '%%s' "$o"|head -n1|cut -c1-120|sed 's/[0-9a-f]\{8\}-[0-9a-f-]\{27\}/<id>/g')";;esac
 `
 
