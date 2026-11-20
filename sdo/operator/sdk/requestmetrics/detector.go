@@ -73,8 +73,8 @@ type Rule struct {
 	// for a thin-baseline jump to be called; fewer stay the clue.
 	ThinMinFailed float64
 	// Lookback is how far back the steps reach (at least Window). A raised
-	// error finding stays until a step after it confirms recovery, so a quiet
-	// stretch with few requests never clears it.
+	// error finding stays until a step after it confirms recovery, so a
+	// stretch with few requests never clears it; a window with none does.
 	Lookback time.Duration
 	// MinHealthy is the fewest requests, all healthy, that confirm recovery in
 	// one window; zero means MinFailed.
@@ -570,6 +570,18 @@ func (r Rule) confirmsRecovery(c counts, healthyClient float64) bool {
 	return c.total >= r.minHealthy() && c.server == 0 && c.client-healthyClient*c.total < 1
 }
 
+// quietNewest reports that the newest evaluation window saw no requests at
+// all: no failure is left to observe, so a raised finding has nothing to
+// stand on. The probe scenarios, not the absent traffic, vouch for the route.
+// A window with a few requests is not quiet; it needs enough healthy ones.
+func quietNewest(steps map[time.Time]counts, times []time.Time, observedAt time.Time, window time.Duration) bool {
+	if len(times) == 0 {
+		return true
+	}
+	last := times[len(times)-1]
+	return steps[last].total == 0 || (!observedAt.IsZero() && observedAt.Sub(last) >= window)
+}
+
 func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan, results map[string]metrics.Result) (sdk.Finding, bool) {
 	r := d.cfg.Rule
 	recent := results[plan.recent.ID]
@@ -586,6 +598,7 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 	if len(times) < r.Consecutive && !held {
 		return sdk.Finding{}, false
 	}
+	quiet := quietNewest(steps, times, recent.ObservedAt, r.Window)
 	healthyServer, healthyClient, enough, thinClient := plan.healthy(op, results[plan.base.ID].Series, r.MinBaselineRequests)
 	if held {
 		healthyServer, healthyClient, enough = 0, 0, true
@@ -633,6 +646,9 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 	}
 	heldUnconfirmed := ""
 	if best == nil && held {
+		if quiet {
+			return sdk.Finding{}, false
+		}
 		for _, t := range times {
 			if r.confirmsRecovery(steps[t], 0) {
 				return sdk.Finding{}, false
@@ -645,9 +661,13 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 		return sdk.Finding{}, false
 	}
 	// A finding that stopped holding stays until a later step has enough
-	// requests and none failed: no traffic is not recovery.
+	// requests and none failed, or the newest window has no requests at all
+	// (a route nobody calls cannot be failing). Few requests are not recovery.
 	unconfirmed := ""
 	if raisedAt < len(times)-1 {
+		if quiet {
+			return sdk.Finding{}, false
+		}
 		for _, t := range times[raisedAt+1:] {
 			if r.confirmsRecovery(steps[t], healthyClient) {
 				return sdk.Finding{}, false

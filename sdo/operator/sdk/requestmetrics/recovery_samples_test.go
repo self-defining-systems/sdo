@@ -139,3 +139,20 @@ func TestDetectorDeclaresTheLogQuery(t *testing.T) {
 		t.Fatalf("log queries = %+v", qs)
 	}
 }
+
+// A route nobody calls cannot be failing: once the newest window holds no
+// requests the finding clears, so the incident can reach Recovered.
+func TestRouteWithNoRequestsInTheWindowClearsTheFinding(t *testing.T) {
+	recent := quietAfterFailures(0, 0, 0, 0, 0, 0)
+	if got := detect(t, snapshot(recent, healthyBaseline(), presence())); len(got) != 0 {
+		t.Fatalf("a route with no requests stayed failing: %+v", got)
+	}
+}
+
+func TestHeldFindingClearsWhenTheRouteGetsNoRequests(t *testing.T) {
+	held := snapshot([]metrics.Series{series(pkgRoute, "200", steady(0, 60)...), series(webRoute, "200", steady(40, 60)...)}, pollutedBaseline(), presence())
+	held.HeldKeys = []string{pkgErrorsKey}
+	if got := detect(t, held); len(got) != 0 {
+		t.Fatalf("held finding stayed failing on zero samples: %+v", got)
+	}
+}

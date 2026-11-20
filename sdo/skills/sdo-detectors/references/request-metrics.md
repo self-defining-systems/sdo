@@ -11,9 +11,11 @@ app exports no request metric for it) is not applicable: no finding, never a fai
 coverage note ("request metrics not applicable to operation ...") that the operability report shows under
 `O3.detector-coverage`. Declare an `entries` record when the app does export the metric.
 
-A raised error finding does not clear because a route went quiet: it stays until a later 30 s window has at least 5
+A raised error finding does not clear because a route got few requests: it stays until a later 30 s window has at least 5
 requests and none failed (the detector looks back 5 minutes), and says "Insufficient recent traffic to confirm recovery"
-meanwhile; incident recovery waits on the same finding, so a low-volume route cannot read as recovered. Each error finding
+meanwhile; incident recovery waits on the same finding, so a low-volume route cannot read as recovered. A route with
+no requests at all in the newest 30 s window is not failing: the finding clears (the incident's probe scenarios vouch
+for the route). Each error finding
 also carries up to 3 recent failing requests (method, path with record ids, status, time) read from the entry service's pod
 logs through the recorded logs source (JSON access-log lines with a status field, and common/combined text lines;
 query strings are dropped). When none can be read the finding says why (no log result, no pod logs, lines not parseable,
