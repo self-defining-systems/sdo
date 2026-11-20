@@ -256,11 +256,10 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 			}
 		}
 		st := HostStatus{At: m.now().UTC(), Load5: pr.Load5, Free: pr.Free, Inflight: pr.Inflight}
-		switch {
-		case pr.Canary != nil:
+		// Only a reading of the host's kernel feeds the health gate. A host that does not answer at all is the
+		// unreachable state (bound.go), which has its own recovery.
+		if pr.Canary != nil {
 			m.observeHealth(name, pr.Canary)
-		case err != nil:
-			m.observeHealth(name, &Canary{Failed: err.Error(), HungTasks: -1})
 		}
 		if m.hostBlock(name) != "" {
 			st.Unhealthy = m.health[name].Reason()
