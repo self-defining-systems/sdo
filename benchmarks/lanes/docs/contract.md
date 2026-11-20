@@ -83,3 +83,21 @@ platform script and step-binary path resolves there. Host-configured commands (`
 commands: they run in the pinned workload checkout with `LANES_INSTALL` (the install) and `BENCH_WORKLOAD_DIR` (the checkout)
 set, and the platform defaults name `$LANES_INSTALL/deploy/...`. The pinned workload checkout is used only for workload verbs and the
 workload's own files; `TestPlatformCodeNeverComesFromTheWorkloadCheckout` fails on a platform path joined to a checkout.
+
+## What lanes is, and is not
+
+`lanes` is an experimental resource-management and dispatch layer and nothing more.
+
+- It owns resources: hosts, reservations, kernel minimums, health gates, lanes (clusters with limits), pools, the core
+  ledger, isolation and starvation.
+- It owns dispatch: plans to steps, placement, retries and parking, artifact edges as opaque data, alarms and
+  result-row collection.
+- It does not know what a run does or how it is graded (the workload adapter: fuzzops, SREGym), or what the subject is
+  (the subject adapter: SDO). Whatever it needs to know about either, it asks through a verb; a spec's
+  `operator.settings` is opaque to it.
+
+`internal/layerguard` enforces this: the non-test Go of `cmd/`, `internal/` and `deploy/` must not name SDO, an app,
+or an SDO configuration field, except what `internal/layerguard/allowlist.json` lists with a reason. The allowlist is a
+ratchet: a count that goes down must be lowered in the same change, and no count goes up. Adapter registrations
+(files named `adapter_*.go`: a built-in adapter for a workload or subject that predates the contract) are outside the
+count; they are listed in the same file and the list only shrinks.
