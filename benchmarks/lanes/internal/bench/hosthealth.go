@@ -35,6 +35,8 @@ type Canary struct {
 	RDMAShared bool `json:"rdma_shared,omitempty"`
 	// MemPSIFull is the host's memory pressure, "full" avg60 in percent (/proc/pressure/memory); 0 when not readable.
 	MemPSIFull float64 `json:"mem_psi_full,omitempty"`
+	// BlockMemPSIFull is the memory pressure ("full" avg60) of lanes.slice, the whole lane block; 0 when not readable.
+	BlockMemPSIFull float64 `json:"block_mem_psi_full,omitempty"`
 	// LanePSI is each lane slice's own pressure, by slice name (LaneSlice), read in the same call (starve.go).
 	LanePSI map[string]LanePSI `json:"lane_psi,omitempty"`
 }
@@ -45,7 +47,8 @@ type HostHealthConf struct {
 	IPSlow       string `json:"ip_slow,omitempty"`       // `ip -br link` slower than this is slow (default 2s)
 	SlowProbes   int    `json:"slow_probes,omitempty"`   // slow probes in a row that make the host unhealthy (default 2)
 	GoodProbes   int    `json:"good_probes,omitempty"`
-	// MemPSIFull is the memory pressure ("full" avg60, percent) over which the host takes no new work (default 40).
+	// MemPSIFull is the memory pressure ("full" avg60, percent) of lanes.slice over which the host takes no new work, and
+	// of the whole host over which the alarm host-pressure fires (default 40).
 	MemPSIFull float64 `json:"mem_psi_full,omitempty"` // good probes in a row that make it healthy again (default 3)
 	// LaneCPUPSISome and LaneMemPSIFull are the lane-level starvation thresholds (percent, avg60; starve.go): a lane
 	// whose cgroup cpu.pressure "some" or memory.pressure "full" is over them gets no new work (defaults 60 and 20).
@@ -172,6 +175,7 @@ const canaryBody = `for kv in $KMIN; do k=${kv%=*}; m=${kv#*=}
 done
 case $(timeout 3 rdma system show 2>/dev/null) in *"netns shared"*) [ -d /sys/module/ib_core ] && echo rdma-shared ;; esac
 [ -r "${HOST_CANARY_PSI_FILE:-/proc/pressure/memory}" ] && awk '/^full/{for(i=1;i<=NF;i++) if($i ~ /^avg60=/){sub("avg60=","",$i); print "psi-mem-full " $i}}' "${HOST_CANARY_PSI_FILE:-/proc/pressure/memory}"
+[ -r "${HOST_CANARY_LANES_DIR:-/sys/fs/cgroup/lanes.slice}/memory.pressure" ] && echo "psi-block-mem-full $(timeout 3 awk '$1=="full"{for(i=2;i<=NF;i++) if($i ~ /^avg60=/){sub("avg60=","",$i); print $i}}' "${HOST_CANARY_LANES_DIR:-/sys/fs/cgroup/lanes.slice}/memory.pressure" | head -n 1)"
 for d in ${HOST_CANARY_LANES_DIR:-/sys/fs/cgroup/lanes.slice}/lanes-*.slice; do
   [ -r "$d/cpu.pressure" ] && [ -r "$d/memory.pressure" ] || continue
   echo "lane-psi ${d##*/} $(timeout 3 awk '$1=="some"{for(i=2;i<=NF;i++) if($i ~ /^avg60=/){sub("avg60=","",$i); print $i}}' "$d/cpu.pressure" | head -n 1) $(timeout 3 awk '$1=="full"{for(i=2;i<=NF;i++) if($i ~ /^avg60=/){sub("avg60=","",$i); print $i}}' "$d/memory.pressure" | head -n 1)"
@@ -229,6 +233,8 @@ func parseCanary(out []byte) (*Canary, error) {
 			c.Override[f[1]] = strings.Join(f[2:], " ")
 		case len(f) == 2 && f[0] == "psi-mem-full":
 			c.MemPSIFull, _ = strconv.ParseFloat(f[1], 64)
+		case len(f) == 2 && f[0] == "psi-block-mem-full":
+			c.BlockMemPSIFull, _ = strconv.ParseFloat(f[1], 64)
 		case len(f) == 4 && f[0] == "lane-psi":
 			cpu, e1 := strconv.ParseFloat(f[2], 64)
 			mem, e2 := strconv.ParseFloat(f[3], 64)
