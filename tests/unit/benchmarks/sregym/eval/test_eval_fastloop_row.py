@@ -517,6 +517,32 @@ def test_a_row_that_exits_non_zero_after_its_online_end_is_a_closing_error(
     assert fake.imported == []
 
 
+def test_a_committed_closing_survives_a_failed_end_of_row_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Lane recovery and learning capture are separate: a recovery exit 1 still imports the accepted commit."""
+    repo, base, head = memory_repo(tmp_path)
+    fake = Row(tmp_path, monkeypatch, exit_code=1, exit_after=8)
+    fake.head = head
+    fake.env.workspace = repo
+    runner = fake.runner()
+    lane = runner.claim(cell(), "h1", base)
+    receipts = tmp_path / "art"
+    write_receipt(receipts, reflection_decision={"learning_decision": "updated"})
+    fake.final = record(
+        incident_id="incident-9",
+        artifacts_dir=str(receipts),
+        recovery_error="FastloopFaultError: full recovery failed; warm lane cannot be reused",
+    )
+    runner.execute(lane, cell(), Injection(at=0), tmp_path, fake.context())
+    closing = runner.drain(lane, cell(), tmp_path, fake.context())
+    assert closing.status == "error"  # the lane is still not reusable
+    assert "exited 1" in (closing.error or "")
+    assert closing.memory_commit_after == head
+    assert closing.decision == "updated"
+    assert fake.imported == [("hotel", "prob_a", head)]
+
+
 def test_a_vanilla_row_drains_its_recovery_with_no_closing_turn_or_memory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

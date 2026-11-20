@@ -189,6 +189,7 @@ class DrainingExecutor(FakeExecutor):
     drain_seconds: float = 600.0
     closing_status: str = "drained"
     closing_commit: str | None = "closing-head"
+    error_keeps_commit: bool = False
     backend: FakeBackend | None = None
     during_drain: list[object] = field(default_factory=list)
     drain_error: str | None = None
@@ -213,7 +214,9 @@ class DrainingExecutor(FakeExecutor):
             incident_id="incident-1",
             closing_s=self.drain_seconds - 40,
             recovery_s=25.0,
-            memory_commit_after=self.closing_commit if self.closing_status == "drained" else None,
+            memory_commit_after=self.closing_commit
+            if self.closing_status == "drained" or self.error_keeps_commit
+            else None,
             decision="updated" if self.closing_status == "drained" else "not_drained",
             learning={"playbooks": {"added": ["p-new"]}, "commit": self.closing_commit},
             offline_fallback=self.offline_fallback,
