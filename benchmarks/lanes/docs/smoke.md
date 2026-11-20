@@ -14,6 +14,9 @@ benchmarks/lanes/smoke/smoke.sh --host spokane1 --root /mnt/data/shli/cache/smok
 #   [--keep]                      keep the scratch directories after the run
 ```
 
+The host is the `--host` argument: spokane1, chelan4 (default `--host-dir` known for both) or any other host that has a
+reserved block (`lanes.slice`) and the root helper, given `--host-dir`. The block must have 2 free cores in the ledger.
+
 Output is `PASS`/`FAIL name reason` per step and a final line with the runtime. Exit status is 1 on any FAIL. The log of
 every command is `<root>/smoke.log`, the manager's `<root>/manager.log`.
 
