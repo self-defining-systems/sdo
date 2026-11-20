@@ -431,6 +431,41 @@ func (a CPUAllocator) Take(lane string, cores int, mem int64) ([]int, error) {
 			}
 			delete(st.Lanes, lane) // a different size: it is made anew
 		}
+		pinned := map[int][]string{} // cpu -> foreign containers pinned to it
+		if a.Foreign != nil {
+			if fs, err := a.Foreign(); err != nil {
+				a.logf("foreign pins not known, none excluded: %v", err)
+			} else {
+				for _, f := range fs {
+					for _, c := range f.CPUs {
+						pinned[c] = append(pinned[c], f.Name)
+					}
+				}
+			}
+		}
+		// What the block can ever place: its cores minus those a foreign container pins (a core is whole or not given
+		// out). A request above that is no wait for our own lanes to finish, so it fails now rather than queueing.
+		placeable, foreign := 0, map[string]bool{}
+		for _, core := range usable {
+			clash := false
+			for _, t := range core {
+				for _, n := range pinned[t] {
+					clash, foreign[n] = true, true
+				}
+			}
+			if !clash {
+				placeable++
+			}
+		}
+		if cores > placeable {
+			names := make([]string, 0, len(foreign))
+			for n := range foreign {
+				names = append(names, n)
+			}
+			sort.Strings(names)
+			return fmt.Errorf("%d cores asked, the block holds %d and foreign containers pin all but %d of them (%s): %w",
+				cores, len(usable), placeable, strings.Join(names, ", "), ErrNeverFits)
+		}
 		seen := false
 		for i := range st.Queue {
 			if st.Queue[i].Lane == lane {
@@ -450,18 +485,6 @@ func (a CPUAllocator) Take(lane string, cores int, mem int64) ([]int, error) {
 			used += e.Memory
 			for _, c := range e.CPUs {
 				taken[c] = true
-			}
-		}
-		pinned := map[int][]string{} // cpu -> foreign containers pinned to it
-		if a.Foreign != nil {
-			if fs, err := a.Foreign(); err != nil {
-				a.logf("foreign pins not known, none excluded: %v", err)
-			} else {
-				for _, f := range fs {
-					for _, c := range f.CPUs {
-						pinned[c] = append(pinned[c], f.Name)
-					}
-				}
 			}
 		}
 		var free [][]int

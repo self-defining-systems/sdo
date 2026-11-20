@@ -43,6 +43,9 @@ func Add(ctx context.Context, root Root, specFile string, log io.Writer) error {
 		return fmt.Errorf("no host of %v has the pinned fuzzops %s%s in hosts.yaml checkouts", s.Hosts, s.Fuzzops,
 			map[bool]string{true: " and hooks " + s.Operator.Hooks + " " + s.Operator.Revision}[s.Operator.Hooks != ""])
 	}
+	if err := checkLaneCapacity(inv, s); err != nil {
+		return fmt.Errorf("%s: %w", s.Name, err)
+	}
 	if s.Operator.Hooks != "" && inv.HookCommand[s.Operator.Hooks] == "" {
 		return fmt.Errorf("hosts.yaml has no hook_command for %s", s.Operator.Hooks)
 	}
@@ -155,6 +158,29 @@ func hookCheck(ctx context.Context, root Root, inv Inventory, s Spec, lock Lock,
 		return fmt.Errorf("hooks %s: %s", s.Operator.Hooks, r.Why("check"))
 	}
 	return nil
+}
+
+// checkLaneCapacity refuses a spec whose lane asks for more whole cores than any of its usable hosts' lane range
+// holds, as far as hosts.yaml tells (a host without lanes.cpus, or a vcluster host, limits nothing; the range's
+// hardware threads bound its cores). Foreign pins are live facts and are judged by the build itself.
+func checkLaneCapacity(inv Inventory, s Spec) error {
+	need := s.LaneLimit().CPUs
+	var small []string
+	for _, name := range inv.UsableHosts(s) {
+		h := inv.Hosts[name]
+		if h.IsVcluster() || !h.Lanes.Enabled() {
+			return nil
+		}
+		cpus, err := h.Lanes.CPUList()
+		if err != nil || len(cpus) >= need {
+			return nil
+		}
+		small = append(small, fmt.Sprintf("%s (lanes.cpus %s)", name, h.Lanes.CPUs))
+	}
+	if len(small) == 0 {
+		return nil
+	}
+	return fmt.Errorf("lane.cpus %d is more than the lane range of every usable host can ever hold: %s", need, strings.Join(small, ", "))
 }
 
 // Remove deletes an experiment's spec: its queued runs are dropped and runs in flight finish. Its lock and results
