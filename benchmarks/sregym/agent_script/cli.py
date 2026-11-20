@@ -52,6 +52,7 @@ def _role(schema: dict[str, Any], branch: str | None = None) -> str:
         ("detector_ids", "health-judge"),
         ("proposed", "source-deployment"),
         ("confirmed_root_causes", "responder"),
+        ("agent_changes", "responder"),
     ):
         if key in properties:
             return role
