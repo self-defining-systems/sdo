@@ -94,6 +94,10 @@ alarms: {factor: 2, idle_lane: 10m, arm_stall: 90m, hook: "notify-send lanes \"$
   `source-mismatch` and runs again. A grade that is still being made delays the row, not the next run; a plan is
   complete once every row is written. The real backend grades a done run through the workload's grade verb in the
   background and reads the line for the run's operator label from `results/runs.jsonl`.
+  An experiment that ran several runs on one lane (a `sequences` entry with several seeds, run in order with no reset
+  between them) has one row per run, in run order, with a 1-based `position` (the TSV gets a `position` column only when
+  a row has one); each run carries its own grade. A one-run experiment is one row, as before. A failed attempt is still
+  one row.
 - **Pause, remove, skip.** Requests are written to `<plan dir>/control.json` under a lock (never to `state.json`), so a
   command cannot race the manager and a restart loses nothing; the manager applies them on its next pass, idempotently.
   `lanes plan pause NAME` releases no new node and starts no new step (runs in flight are still watched and recorded);

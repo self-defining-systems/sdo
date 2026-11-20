@@ -218,6 +218,37 @@ edges: [{from: one, to: two, artifact: rec}]
 	}
 }
 
+// One experiment whose sequence has three seeds runs them in order on one lane, and the plan has a row for each.
+func TestPlanSequenceOfSeedsGivesOneRowPerRunOnTheManager(t *testing.T) {
+	l := newLab(t)
+	rev := strings.TrimSuffix(strings.TrimPrefix(l.hooked, "{hooks: test, revision: "), ", baseline: base, settings: {startup_bound: 0s}}")
+	tpl := fmt.Sprintf(`{"app": "examples/shop", "operator": {"hooks": "test", "baseline": "base"},
+ "namespace": "app1", "faults": {"instances": "instances.json", "ids": ["${item.fault}"]}, "sequences": [[1, 2, 3]], "run": {"window": "1s"},
+ "ready_for": "100ms", "ready_timeout": "%s", "cap": "%s", "lanes": 1, "hosts": ["h1"], "pause_after_wave": false}`, l.ready, l.cap)
+	must(t, os.WriteFile(filepath.Join(l.specs, "seq.json"), []byte(tpl), 0o644))
+	planFile := filepath.Join(l.specs, "plan.yaml")
+	must(t, os.WriteFile(planFile, []byte(`plan: seqrows
+pins: {workload: fuzzops@0b528ac, subject: test@`+rev+`}
+arms: [{name: one, spec: seq.json}]
+items: [{id: a, vars: {fault: "a@x"}}]
+parallel: 1
+isolation: one-way-ok
+`), 0o644))
+	must(t, PlanAdd(l.root, planFile, io.Discard))
+	dir := plan.Dir(l.root.PlansDir(), "seqrows")
+	var rows []plan.Row
+	l.until("three rows", func() bool {
+		rows, _, _ = plan.Results(dir, plan.RowFilter{})
+		return len(rows) == 3
+	})
+	l.m.planGrading.Wait()
+	for i, r := range rows {
+		if r.Position != i+1 || r.Status != "done" || r.Run == "" || (i > 0 && r.Run == rows[i-1].Run) {
+			t.Errorf("row %d = %+v", i+1, r)
+		}
+	}
+}
+
 // expNameOf is the experiment of a node in a loaded state.
 func expNameOf(t *testing.T, st *plan.State, id string) string {
 	t.Helper()
@@ -329,6 +360,39 @@ func TestPlanBackendRunDataReadsIdentityAndTheRunsGradeLine(t *testing.T) {
 	if rd.Run != "r1" || rd.Host != "h1" || rd.WorkloadObserved != "46526567aa4f8ad4c" || rd.SubjectObserved != "4844e69dba6c" || rd.App != "/co/examples/gitlab" ||
 		rd.Isolation.Mode != "two-way" || rd.Isolation.CPUs != "4-11" || rd.Pending || !strings.Contains(string(rd.Grade), `"bad_s":4`) {
 		t.Fatalf("RunData = %+v grade %s", rd, rd.Grade)
+	}
+}
+
+func TestPlanBackendRunsDataIsOnePerPositionOfASequenceEachWithItsOwnGrade(t *testing.T) {
+	l := newPlanLab(t)
+	ctx := context.Background()
+	end := time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
+	l.experiment("e", nil)
+	for i, pos := range []int{2, 1, 3} { // written out of order: the answer must not depend on it
+		id := fmt.Sprintf("r%d", pos)
+		rf := RunFile{ID: id, Experiment: "e", Status: StatusDone, Fault: "f", Sequence: 1, Position: pos, Attempt: 1, OperatorLabel: fmt.Sprintf("exec:e-r%d", pos), Ended: end.Add(time.Duration(i) * time.Minute)}
+		must(t, writeJSON(filepath.Join(l.root.RunDir("e", id), "run.json"), rf))
+	}
+	dir := l.root.path("e", "results")
+	must(t, os.MkdirAll(dir, 0o755))
+	must(t, os.WriteFile(filepath.Join(dir, "runs.jsonl"), []byte(`{"operator":"exec:e-r1","valid":true,"n":1}
+{"operator":"exec:e-r2","valid":true,"n":2}
+{"operator":"exec:e-r3","valid":false,"n":3}
+`), 0o644))
+	got, err := l.b.RunsData(ctx, "e")
+	if err != nil || len(got) != 3 {
+		t.Fatalf("RunsData = %+v %v", got, err)
+	}
+	for i, rd := range got {
+		if rd.Position != i+1 || rd.Run != fmt.Sprintf("r%d", i+1) || !strings.Contains(string(rd.Grade), fmt.Sprintf(`"n":%d`, i+1)) {
+			t.Fatalf("run %d = %+v grade %s", i+1, rd, rd.Grade)
+		}
+	}
+	// One run: the single element RunData answers, with no position.
+	l.experiment("one", map[string]RunFile{"r1": {ID: "r1", Status: StatusDone, Fault: "f", Sequence: 1, Position: 1, OperatorLabel: "exec:one-r1", Ended: end}})
+	one, _ := l.b.RunsData(ctx, "one")
+	if len(one) != 1 || one[0].Position != 0 {
+		t.Fatalf("one-run experiment: %+v", one)
 	}
 }
 

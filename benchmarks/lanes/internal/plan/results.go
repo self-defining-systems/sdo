@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -36,6 +37,9 @@ type Row struct {
 	Attempt int    `json:"attempt"`
 	Exp     string `json:"exp"`
 	Run     string `json:"run,omitempty"`
+	// Position is the run's place (1-based) among the several runs one experiment made on a lane; 0 for a one-run
+	// experiment. Such an experiment has one row per run.
+	Position int `json:"position,omitempty"`
 	// Status: done, or failed (the attempt ended with Reason).
 	Status string `json:"status"`
 	Reason string `json:"reason,omitempty"`
@@ -86,25 +90,42 @@ func (e *Engine) recordRows(ctx context.Context, st *State) {
 			if a.Rowed || a.Exp == "" {
 				continue
 			}
-			rd, err := e.Backend.RunData(ctx, a.Exp)
-			if err != nil && a.Reason == "" {
-				e.logf("run data %s: %v (next pass)", a.Exp, err)
+			var rds []RunData
+			var err error
+			if a.Reason == "" {
+				rds, err = e.Backend.RunsData(ctx, a.Exp)
+				if err != nil {
+					e.logf("run data %s: %v (next pass)", a.Exp, err)
+					continue
+				}
+			}
+			if len(rds) == 0 {
+				var rd RunData
+				rd, err = e.Backend.RunData(ctx, a.Exp)
+				if err != nil && a.Reason == "" {
+					e.logf("run data %s: %v (next pass)", a.Exp, err)
+					continue
+				}
+				rds = []RunData{rd}
+			}
+			if a.Reason == "" && now.Sub(a.Ended) < gradeWait && slices.ContainsFunc(rds, func(rd RunData) bool { return rd.Pending }) {
 				continue
 			}
-			if rd.Pending && a.Reason == "" && now.Sub(a.Ended) < gradeWait {
-				continue
+			wrote := true
+			for _, rd := range rds {
+				if err := appendRow(e.Dir, e.row(n, a, rd, err)); err != nil {
+					e.logf("results.jsonl: %v", err)
+					wrote = false
+					break
+				}
 			}
-			if err := appendRow(e.Dir, e.row(n, a, rd, err)); err != nil {
-				e.logf("results.jsonl: %v", err)
-				continue
-			}
-			a.Rowed = true
+			a.Rowed = wrote
 		}
 	}
 }
 
 func (e *Engine) row(n *NodeState, a *AttemptRecord, rd RunData, rdErr error) Row {
-	r := Row{Plan: e.Plan.Name, Node: n.ID, Arm: n.Arm, Item: n.Item, Rep: n.Rep, Attempt: a.Attempt, Exp: a.Exp, Run: rd.Run,
+	r := Row{Plan: e.Plan.Name, Node: n.ID, Arm: n.Arm, Item: n.Item, Rep: n.Rep, Attempt: a.Attempt, Exp: a.Exp, Run: rd.Run, Position: rd.Position,
 		Status: "done", Reason: a.Reason, Host: rd.Host, Lane: rd.Lane, Isolation: rd.Isolation, Submitted: a.Submitted, Ended: a.Ended,
 		Source: SourceID{WorkloadPinned: e.Plan.Pins.Workload.String(), WorkloadObserved: rd.WorkloadObserved,
 			SubjectPinned: e.Plan.Pins.Subject.String(), SubjectObserved: rd.SubjectObserved, App: rd.App, OK: e.sourceMismatch(rd) == ""}}
@@ -196,7 +217,7 @@ func Rows(dir string) (rows []Row, skipped int, err error) {
 			skipped++
 			continue
 		}
-		key := fmt.Sprintf("%s#%d", r.Node, r.Attempt)
+		key := fmt.Sprintf("%s#%d#%d", r.Node, r.Attempt, r.Position)
 		if i, ok := byKey[key]; ok {
 			rows[i] = r
 			continue
@@ -253,6 +274,11 @@ func TSV(w io.Writer, rows []Row, gradeFields []string) error {
 	stageCols := sortedKeys(stages)
 	head := []string{"plan", "node", "arm", "item", "rep", "attempt", "exp", "run", "status", "reason", "valid", "grade_error", "host", "lane",
 		"isolation_mode", "oom_kills", "workload_pinned", "workload_observed", "subject_pinned", "subject_observed", "app", "source_ok", "submitted", "ended"}
+	// The position column exists only when some row has one, so a plan of one-run experiments keeps its columns.
+	withPosition := slices.ContainsFunc(rows, func(r Row) bool { return r.Position > 0 })
+	if withPosition {
+		head = slices.Insert(head, 8, "position")
+	}
 	for _, s := range stageCols {
 		head = append(head, "stage_"+s+"_s")
 	}
@@ -266,6 +292,9 @@ func TSV(w io.Writer, rows []Row, gradeFields []string) error {
 		cols := []string{r.Plan, r.Node, r.Arm, r.Item, fmt.Sprint(r.Rep), fmt.Sprint(r.Attempt), r.Exp, r.Run, r.Status, r.Reason, fmt.Sprint(r.Valid),
 			r.GradeError, r.Host, r.Lane, r.Isolation.Mode, fmt.Sprint(r.Isolation.OOMKills), r.Source.WorkloadPinned, r.Source.WorkloadObserved,
 			r.Source.SubjectPinned, r.Source.SubjectObserved, r.Source.App, fmt.Sprint(r.Source.OK), stamp(r.Submitted), stamp(r.Ended)}
+		if withPosition {
+			cols = slices.Insert(cols, 8, fmt.Sprint(r.Position))
+		}
 		for _, s := range stageCols {
 			if d, ok := r.Stages[s]; ok {
 				cols = append(cols, fmt.Sprintf("%.0f", d))

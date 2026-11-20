@@ -2,8 +2,10 @@ package plan
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -54,6 +56,36 @@ func TestEachEndedAttemptHasARowWithGradeSourceStagesAndIsolation(t *testing.T) 
 	l.tick(l.open())
 	if again, _, _ := Results(e.Dir, RowFilter{}); len(again) != 3 {
 		t.Fatalf("rows grew to %d", len(again))
+	}
+}
+
+func TestAnExperimentWithSeveralRunsHasOneRowPerRun(t *testing.T) {
+	l := newLab(t)
+	e := l.add(retryPlan)
+	l.tick(e)
+	exp := l.fb.expOf("p1/a/r1")
+	run := func(n int, valid string) RunData {
+		return RunData{Run: fmt.Sprintf("run-%d", n), Position: n, Host: "h1", Lane: "c1", WorkloadObserved: "4652656", Isolation: Isolation{Mode: "two-way"},
+			Grade: []byte(`{"valid": ` + valid + `, "step": ` + fmt.Sprint(n) + `}`)}
+	}
+	l.fb.runs[exp] = []RunData{run(1, "true"), run(2, "true"), run(3, "false")}
+	finishAll(l, "p1/a/r1")
+	l.tick(e)
+	l.tick(l.open()) // a restart rows nothing twice
+
+	rows, _, _ := Results(e.Dir, RowFilter{Done: true})
+	var got []string
+	for _, r := range rows {
+		if r.Node == "p1/a/r1" {
+			got = append(got, fmt.Sprintf("%d:%s:%v", r.Position, r.Run, r.Valid))
+		}
+	}
+	if want := []string{"1:run-1:true", "2:run-2:true", "3:run-3:false"}; !slices.Equal(got, want) {
+		t.Fatalf("rows %v, want %v", got, want)
+	}
+	var buf bytes.Buffer
+	if err := TSV(&buf, rows, []string{"step"}); err != nil || !strings.Contains(strings.Split(buf.String(), "\n")[0], "\tposition\t") {
+		t.Fatalf("tsv lacks a position column: %v\n%s", err, buf.String())
 	}
 }
 

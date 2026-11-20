@@ -57,9 +57,12 @@ type Isolation struct {
 // RunData is what the backend knows of the newest run of an experiment, for the results row. Identity (Run, the
 // observed revisions, Isolation) is there as soon as the run ended; the grade may take longer (Pending).
 type RunData struct {
-	Run  string
-	Host string
-	Lane string
+	Run string
+	// Position is the run's place (1-based) among the runs of an experiment that ran several on one lane, in order; 0
+	// for an experiment that ran one.
+	Position int
+	Host     string
+	Lane     string
 	// WorkloadObserved and SubjectObserved are the revisions the run reports having used (empty: not reported); App
 	// is the application source identity (pack and image digests or commits, as the adapters name them).
 	WorkloadObserved string
@@ -162,6 +165,9 @@ type Backend interface {
 	ObserveStep(ctx context.Context, dir string) (StepObservation, error)
 	// RunData reads the newest run of an experiment for its results row.
 	RunData(ctx context.Context, exp string) (RunData, error)
+	// RunsData reads every done run of an experiment, in run order, for its results rows: one element for an
+	// experiment that ran once, several (Position set) for one that ran several runs on one lane.
+	RunsData(ctx context.Context, exp string) ([]RunData, error)
 	// Cancel stops an experiment: its queued runs are dropped and it is not observed again. Cancelling an experiment
 	// that is gone is not an error.
 	Cancel(ctx context.Context, exp string) error

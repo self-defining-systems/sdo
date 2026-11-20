@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -645,6 +646,66 @@ func (b *PlanBackend) RunData(_ context.Context, exp string) (plan.RunData, erro
 	if rf == nil {
 		return plan.RunData{}, nil
 	}
+	return b.runDataOf(exp, rf)
+}
+
+// doneRunStatus is the status a run that ended as a result carries in its run file.
+const doneRunStatus = "done"
+
+// RunsData reads every done run of an experiment that ran several on one lane (a sequence of seeds), one element
+// per position, in order, each graded under its own label. An experiment with at most one done run answers
+// the one element RunData does, so ordinary results are unchanged.
+func (b *PlanBackend) RunsData(ctx context.Context, exp string) ([]plan.RunData, error) {
+	x, err := b.Root.LoadExperiment(exp)
+	if err != nil {
+		return nil, err
+	}
+	latest := map[[3]int]RunFile{} // (fault index by name order, sequence, position) -> the newest attempt that is done
+	faults := map[string]int{}
+	for _, r := range sortedRuns(x) {
+		if r.Status != doneRunStatus {
+			continue
+		}
+		if _, ok := faults[r.Fault]; !ok {
+			faults[r.Fault] = len(faults)
+		}
+		k := [3]int{faults[r.Fault], r.Sequence, r.Position}
+		if old, ok := latest[k]; !ok || r.Attempt >= old.Attempt {
+			latest[k] = r
+		}
+	}
+	if len(latest) <= 1 {
+		rd, err := b.RunData(ctx, exp)
+		return []plan.RunData{rd}, err
+	}
+	keys := make([][3]int, 0, len(latest))
+	for k := range latest {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		for n := range keys[i] {
+			if keys[i][n] != keys[j][n] {
+				return keys[i][n] < keys[j][n]
+			}
+		}
+		return false
+	})
+	var out []plan.RunData
+	for _, k := range keys {
+		rf := latest[k]
+		rd, err := b.runDataOf(exp, &rf)
+		if err != nil {
+			return nil, err
+		}
+		rd.Position = len(out) + 1
+		out = append(out, rd)
+	}
+	return out, nil
+}
+
+// runDataOf is the results data of one run of the experiment: identity at once, the grade when the workload's grade
+// verb has produced it.
+func (b *PlanBackend) runDataOf(exp string, rf *RunFile) (plan.RunData, error) {
 	rd := plan.RunData{Run: rf.ID, Host: rf.Host, Lane: rf.Lane, WorkloadObserved: rf.Fuzzops.Revision}
 	if iso := rf.Isolation; iso != nil {
 		rd.Isolation = plan.Isolation{Mode: iso.Mode, OOMKills: iso.OOMKills, Reserved: iso.Reserved, CPUs: iso.CPUs, Memory: iso.Memory}

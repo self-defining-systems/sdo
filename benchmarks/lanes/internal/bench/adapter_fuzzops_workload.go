@@ -37,6 +37,13 @@ func init() {
 		New:       func(dir string) Workload { return fuzzopsWorkload{dir: dir} },
 		Identity:  func(dir string) string { return shellQuote(filepath.Join(dir, "bin", "fuzzops")) + " version" },
 		Footprint: fuzzopsFootprint,
+		CommandLine: func(dir string, c WorkloadCall) ([]string, error) {
+			argv, err := fuzzopsArgv(c)
+			if err != nil {
+				return nil, err
+			}
+			return append([]string{filepath.Join(dir, "bin", "fuzzops")}, argv...), nil
+		},
 	}
 	builtinWorkloads[""] = reg
 	builtinWorkloads[WorkloadFuzzops] = reg
