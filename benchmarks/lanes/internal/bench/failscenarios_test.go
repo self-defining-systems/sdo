@@ -37,7 +37,7 @@ func TestManagerRestartAdoptsRunningStepsAndRetriesLostOnesOnce(t *testing.T) {
 	if l.w.nStarted() != n || l.lane("c1").Step == nil || l.lane("c1").Step.ID != run.ID {
 		t.Fatalf("restart duplicated or dropped the running step: started %d->%d, lane %+v", n, l.w.nStarted(), l.lane("c1"))
 	}
-	l.w.finish(run.ID, Result{OK: true, Status: StatusDone, Prepared: &Prepared{Experiment: "e1", Namespace: "app1"}})
+	l.w.finish(run.ID, Result{OK: true, Status: StatusDone, Prepared: &Prepared{Experiment: "e1", Namespace: "app1", FuzzopsRev: "0b528ac"}})
 	restart()
 	l.pass()
 	if p := l.exp("e1").Progress(Seq{"a@x", 1}); p.State != SeqDone {

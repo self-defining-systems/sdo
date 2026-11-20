@@ -1231,7 +1231,7 @@ func TestBenchStalePreparedOnAMissingClusterIsRebuilt(t *testing.T) {
 	l.withClusters("1K")
 	l.set("no-cluster", "")
 	stale := LaneFile{Lane: "c1", Host: "h1", State: LaneFree, Since: time.Now().UTC(),
-		Prepared: &Prepared{Experiment: "gone", Hooks: "test", HooksPath: filepath.Dir(l.hooks), Command: "false", Namespace: "app1", AppPack: "x", Ready: true}}
+		Prepared: &Prepared{Experiment: "gone", Hooks: "test", HooksPath: filepath.Dir(l.hooks), Command: "false", Namespace: "app1", AppPack: "x", Ready: true, FuzzopsRev: "0b528ac"}}
 	must(t, writeJSON(l.root.LanePath("c1"), stale))
 	l.m = &Manager{Root: l.root, Poll: 50 * time.Millisecond, Bin: benchBin}
 	l.add("e1", l.hooked, "a@x", "[[1]]", 0)
