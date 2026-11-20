@@ -1,11 +1,13 @@
 // Package prebuilt is the imagesrc source for images that already exist in a
 // registry: it pins a tag to the digest the cluster or the registry reports.
-// It never builds and never sends a credential.
+// It never builds. It presents a credential only when a imagesrc.RegistryLogins
+// is configured and has a login for the image's own registry host.
 package prebuilt
 
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -32,7 +34,7 @@ const ID = "prebuilt"
 
 // Doc tells an agent what the prebuilt source does and when to choose it.
 const Doc = `Uses an image that already exists in a registry: the operator pins the tag the manifests name to its immutable digest. It is the default for every image without a declared source. Choose it for third-party or already-published images (databases, caches, public base images).
-Config: none (empty object). It never builds, so an image that only exists as source in this tree needs the buildkit source instead. Private images that need credentials cannot be resolved.`
+Config: none (empty object). It never builds, so an image that only exists as source in this tree needs the buildkit source instead. A private image resolves only when the operator was given a login for its registry.`
 
 const maxManifestBytes = 4 << 20
 
@@ -51,12 +53,15 @@ func resolveError(kind imagesrc.ResolveErrorKind, format string, args ...any) er
 }
 
 // statusError classifies a registry HTTP status.
-func statusError(response *http.Response, what string) error {
+func statusError(response *http.Response, what string, authenticated bool) error {
 	switch status := response.StatusCode; {
 	case status == http.StatusNotFound:
 		return resolveError(imagesrc.ResolveMissing, "registry has no such tag")
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
-		return resolveError(imagesrc.ResolveUnauthorized, "%s denied anonymous access (%s); the image is private or does not exist", what, response.Status)
+		if authenticated {
+			return resolveError(imagesrc.ResolveUnauthorized, "%s rejected the configured credentials (%s); check the login for this registry", what, response.Status)
+		}
+		return resolveError(imagesrc.ResolveUnauthorized, "%s denied anonymous access (%s); the image is private, does not exist, or the operator has no login for this registry", what, response.Status)
 	case status == http.StatusTooManyRequests || status == http.StatusRequestTimeout || status >= 500:
 		return resolveError(imagesrc.ResolveTransient, "%s answered %s", what, response.Status)
 	}
@@ -75,7 +80,10 @@ type ClusterImages interface {
 // no pull. Otherwise it asks the registry the reference names, anonymously,
 // with a HEAD request (Docker Hub does not count it as a pull) and a GET only
 // when the registry omits the digest header. Resolved digests are cached for
-// resolveCacheTTL. It never sends a credential, so private images fail closed.
+// resolveCacheTTL. Without a login for the image's registry host it is anonymous,
+// so private images fail closed; with one it answers the registry's Basic or
+// Bearer challenge. A credential is looked up for the image's own host only and
+// is never placed in an error.
 type Source struct {
 	// Client defaults to a guarded client that connects only to public addresses.
 	Client registryio.Doer
@@ -85,6 +93,9 @@ type Source struct {
 	InsecureHost string
 	// Cluster, when set, is consulted before the registry.
 	Cluster ClusterImages
+	// Credentials, when set, supplies the login for a registry host. It is read on
+	// every uncached resolve, so a rotated secret applies without a restart.
+	Credentials imagesrc.RegistryLogins
 	// Now is the cache clock; nil uses the wall clock.
 	Now func() time.Time
 
@@ -164,16 +175,38 @@ func (r *Source) resolve(ctx context.Context, named reference.Named, tagged refe
 	} else if refusedHost(host) {
 		return "", resolveError(imagesrc.ResolveRefused, "registry host %q is not a public registry name", host)
 	}
+	cred, err := r.credential(ctx, domain)
+	if err != nil {
+		return "", err
+	}
 	client := r.Client
 	if client == nil {
 		client = registryio.NewGuardedClient(registryio.ClientOptions{Timeout: 15 * time.Second, AllowHost: r.InsecureHost})
 	}
 	manifestURL := fmt.Sprintf("%s://%s/v2/%s/manifests/%s", scheme, host, repository, tagged.Tag())
-	digest, err := r.digest(ctx, client, manifestURL, scheme)
+	digest, err := r.digest(ctx, client, manifestURL, scheme, cred)
 	if err != nil {
 		return "", err
 	}
 	return reference.FamiliarName(named) + "@" + digest, nil
+}
+
+// credential is the login for the image's own registry host, nil for none.
+func (r *Source) credential(ctx context.Context, host string) (*imagesrc.RegistryLogin, error) {
+	if r.Credentials == nil {
+		return nil, nil
+	}
+	cred, ok, err := r.Credentials.For(ctx, host)
+	var resolve *imagesrc.ResolveError
+	switch {
+	case errors.As(err, &resolve):
+		return nil, err
+	case err != nil:
+		return nil, resolveError(imagesrc.ResolveRefused, "registry credentials for %q: %w", host, err)
+	case !ok:
+		return nil, nil
+	}
+	return &cred, nil
 }
 
 // refusedHost is a registry host that is an IP literal (bracketed IPv6
@@ -234,8 +267,8 @@ func sha256Digest(body []byte) string {
 
 // digest asks for the manifest digest: HEAD first, and a GET (verified against
 // the bytes) when the registry does not answer HEAD with a digest header.
-func (r *Source) digest(ctx context.Context, client registryio.Doer, target, scheme string) (string, error) {
-	_, header, err := r.fetch(ctx, client, http.MethodHead, target, "", scheme)
+func (r *Source) digest(ctx context.Context, client registryio.Doer, target, scheme string, cred *imagesrc.RegistryLogin) (string, error) {
+	_, header, err := r.fetch(ctx, client, http.MethodHead, target, "", scheme, cred)
 	var head *imagesrc.ResolveError
 	if err == nil {
 		if claimed := header.Get("Docker-Content-Digest"); digestPattern.MatchString(claimed) {
@@ -244,7 +277,7 @@ func (r *Source) digest(ctx context.Context, client registryio.Doer, target, sch
 	} else if !errors.As(err, &head) || head.Kind != imagesrc.ResolveRefused {
 		return "", err
 	}
-	body, header, err := r.fetch(ctx, client, http.MethodGet, target, "", scheme)
+	body, header, err := r.fetch(ctx, client, http.MethodGet, target, "", scheme, cred)
 	if err != nil {
 		return "", err
 	}
@@ -255,14 +288,16 @@ func (r *Source) digest(ctx context.Context, client registryio.Doer, target, sch
 	return digest, nil
 }
 
-func (r *Source) fetch(ctx context.Context, client registryio.Doer, method, target, token, scheme string) ([]byte, http.Header, error) {
+// fetch makes one registry request. authorization is the Authorization header
+// value to send ("" for the first, challenge-eliciting attempt).
+func (r *Source) fetch(ctx context.Context, client registryio.Doer, method, target, authorization, scheme string, cred *imagesrc.RegistryLogin) ([]byte, http.Header, error) {
 	request, err := http.NewRequestWithContext(ctx, method, target, nil)
 	if err != nil {
 		return nil, nil, resolveError(imagesrc.ResolveRefused, "registry request: %w", err)
 	}
 	request.Header.Set("Accept", manifestAccept)
-	if token != "" {
-		request.Header.Set("Authorization", "Bearer "+token)
+	if authorization != "" {
+		request.Header.Set("Authorization", authorization)
 	}
 	response, err := client.Do(request)
 	if err != nil {
@@ -270,14 +305,14 @@ func (r *Source) fetch(ctx context.Context, client registryio.Doer, method, targ
 	}
 	defer func() { _ = response.Body.Close() }()
 	switch {
-	case response.StatusCode == http.StatusUnauthorized && token == "":
-		token, err := r.token(ctx, client, response.Header.Get("WWW-Authenticate"), scheme)
+	case response.StatusCode == http.StatusUnauthorized && authorization == "":
+		authorization, err := r.authorize(ctx, client, response.Header.Get("WWW-Authenticate"), scheme, cred)
 		if err != nil {
 			return nil, nil, err
 		}
-		return r.fetch(ctx, client, method, target, token, scheme)
+		return r.fetch(ctx, client, method, target, authorization, scheme, cred)
 	case response.StatusCode != http.StatusOK:
-		return nil, nil, statusError(response, "registry")
+		return nil, nil, statusError(response, "registry", authorization != "" && cred != nil)
 	}
 	if method == http.MethodHead {
 		return nil, response.Header, nil
@@ -301,11 +336,33 @@ func requestError(what string, err error) error {
 	return &imagesrc.ResolveError{Kind: imagesrc.ResolveTransient, Err: fmt.Errorf("%s: %w", what, err)}
 }
 
-// token performs the anonymous Bearer exchange a registry challenge asks for.
-func (r *Source) token(ctx context.Context, client registryio.Doer, challenge, scheme string) (string, error) {
+// authorize answers a registry challenge with an Authorization header value:
+// the configured login for a Basic challenge, or a Bearer token from the
+// challenge's realm (obtained with the login when there is one, else anonymously).
+func (r *Source) authorize(ctx context.Context, client registryio.Doer, challenge, scheme string, cred *imagesrc.RegistryLogin) (string, error) {
+	if strings.HasPrefix(strings.ToLower(challenge), "basic") {
+		if cred == nil {
+			return "", resolveError(imagesrc.ResolveUnauthorized, "registry requires authentication and the operator has no login for it")
+		}
+		return basicAuth(cred), nil
+	}
+	token, err := r.token(ctx, client, challenge, scheme, cred)
+	if err != nil {
+		return "", err
+	}
+	return "Bearer " + token, nil
+}
+
+func basicAuth(cred *imagesrc.RegistryLogin) string {
+	return "Basic " + base64.StdEncoding.EncodeToString([]byte(cred.Username+":"+cred.Password))
+}
+
+// token performs the Bearer exchange a registry challenge asks for, presenting
+// the login to the token realm when there is one.
+func (r *Source) token(ctx context.Context, client registryio.Doer, challenge, scheme string, cred *imagesrc.RegistryLogin) (string, error) {
 	rest, found := strings.CutPrefix(challenge, "Bearer ")
 	if !found {
-		return "", resolveError(imagesrc.ResolveUnauthorized, "registry requires authentication; only anonymous pulls are supported")
+		return "", resolveError(imagesrc.ResolveUnauthorized, "registry requires an authentication scheme SDO does not support")
 	}
 	params := map[string]string{}
 	for _, part := range strings.Split(rest, ",") {
@@ -332,13 +389,16 @@ func (r *Source) token(ctx context.Context, client registryio.Doer, challenge, s
 	if err != nil {
 		return "", resolveError(imagesrc.ResolveRefused, "registry token request: %w", err)
 	}
+	if cred != nil {
+		request.Header.Set("Authorization", basicAuth(cred))
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		return "", requestError("registry token request", err)
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		return "", statusError(response, "registry token endpoint")
+		return "", statusError(response, "registry token endpoint", cred != nil)
 	}
 	var document struct{ Token, AccessToken string }
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&document); err != nil {

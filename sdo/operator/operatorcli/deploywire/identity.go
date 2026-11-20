@@ -16,6 +16,8 @@ import (
 
 	"google.golang.org/protobuf/types/known/durationpb"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"sdo.dev/operator/broker"
@@ -89,11 +91,7 @@ func (d Identity) Deployer(client kubernetes.Interface, target Target, environme
 	if err != nil || subPath == "." || subPath == ".." || filepath.IsAbs(subPath) || strings.HasPrefix(subPath, "../") {
 		return deployment.Deployer{}, errors.New("broker proposals must be inside the shared repository mount")
 	}
-	insecure := ""
-	if d.RegistryInsecure {
-		insecure = d.RegistryHost
-	}
-	pre := &prebuilt.Source{InsecureHost: insecure, Cluster: NodeImages{Client: client}}
+	pre := d.prebuiltSource(client, target.ControlNamespace)
 	var sources *imagesrc.Catalog
 	var materializer *rendered.Materializer
 	if d.RegistryHost == "" { // nowhere to push a build
@@ -118,6 +116,37 @@ func (d Identity) Deployer(client kubernetes.Interface, target Target, environme
 		Applier:    deployment.CommandBackend{ObserveLimit: d.RolloutTimeout, Progress: func(line string) { log.Print(line) }},
 		TreeDigest: broker.ProposalTreeDigest, Environment: environment, Policy: policy, AcceptedRoot: target.AcceptedRoot, Materializer: materializer,
 	}, nil
+}
+
+// prebuiltSource pins prebuilt images. The registry push Secret, a standard
+// dockerconfigjson, also serves as the login for resolving private images; it
+// may list several registries.
+func (d Identity) prebuiltSource(client kubernetes.Interface, controlNamespace string) *prebuilt.Source {
+	insecure := ""
+	if d.RegistryInsecure {
+		insecure = d.RegistryHost
+	}
+	source := &prebuilt.Source{InsecureHost: insecure, Cluster: NodeImages{Client: client}}
+	if d.RegistryPushSecret != "" {
+		source.Credentials = RegistryLogin(client, controlNamespace, d.RegistryPushSecret)
+	}
+	return source
+}
+
+// RegistryLogin serves registry logins from a dockerconfigjson Secret, read
+// through the Kubernetes API on every lookup so a rotated Secret applies. A
+// missing or unreadable-by-RBAC Secret means no login, never an error.
+func RegistryLogin(client kubernetes.Interface, namespace, name string) imagesrc.RegistryLogins {
+	return imagesrc.RegistryLoginsFromDockerConfig(func(ctx context.Context) ([]byte, error) {
+		secret, err := client.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) || apierrors.IsForbidden(err) {
+			return []byte(`{}`), nil
+		}
+		if err != nil {
+			return nil, &imagesrc.ResolveError{Kind: imagesrc.ResolveTransient, Err: fmt.Errorf("read registry Secret %s/%s: %w", namespace, name, err)}
+		}
+		return secret.Data[corev1.DockerConfigJsonKey], nil
+	})
 }
 
 // NodeImages reports the image names the cluster's nodes hold, so the image
