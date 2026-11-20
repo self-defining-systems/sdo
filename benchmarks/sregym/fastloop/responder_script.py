@@ -52,6 +52,7 @@ for event in request.drift_events:
             "summary": f"Removed source-absent NetworkPolicy/{event.ref.name}"
             if ref["kind"] == "NetworkPolicy"
             else f"Restored Service/{event.ref.name} from accepted source",
+            "at": _now(),
         }
     )
 if request.external_message:
@@ -79,6 +80,7 @@ if request.external_message:
             {
                 "resources": [json_format.MessageToDict(observed.ref, preserving_proto_field_name=True)],
                 "summary": f"Removed source-absent NetworkPolicy/{name}",
+                "at": _now(),
             }
         )
 """
@@ -127,7 +129,11 @@ if not first.get("healthy"):
         seen.add(key)
         _patch_from_source(request, ref)
         repairs.append(
-            {"resources": [ref], "summary": f"Restored {ref['kind']}/{ref['name']} from accepted source"}
+            {
+                "resources": [ref],
+                "summary": f"Restored {ref['kind']}/{ref['name']} from accepted source",
+                "at": _now(),
+            }
         )
 """
 
@@ -186,6 +192,17 @@ result = json_format.ParseDict(
         "applied_playbooks": [{"playbook_id": program_id} for program_id in programs],
         "repair_actions": [],  # the recording of the agent's own API calls is the receipt
         "repair_changes": [item["summary"] for item in repairs],
+        # With the agent recording off SDO knows the agent's cluster writes only from what it reports: each change,
+        # its object and when it took effect (outcome_derivation's agentChangeBeforeClear).
+        "agent_changes": [
+            {
+                "summary": item["summary"],
+                "target": "/".join((ref["kind"], ref.get("namespace") or request.namespace, ref["name"])),
+                "at": item["at"],
+            }
+            for item in repairs
+            for ref in item["resources"][:1]
+        ],
         "verification_evidence": [
             {
                 "name": "sdo detect",
@@ -270,6 +287,7 @@ def responder_script(request: IncidentRequest) -> AgentScript:
         "applied_playbooks",
         "repair_actions",
         "repair_changes",
+        "agent_changes",
         "verification_evidence",
         "timing",
     )
