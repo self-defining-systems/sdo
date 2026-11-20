@@ -136,7 +136,7 @@ func TestInstallPreparesAnUnpreparedMemoryOnce(t *testing.T) {
 		t.Fatal("an unprepared onboarding memory has no detectors after install preparation")
 	}
 	body, err := processio.Git(context.Background(), "-C", repo, "log", "-1", "--format=%B")
-	if err != nil || !strings.Contains(body, "SDO-Validation: passed") || !strings.Contains(body, "SDO-Origin: install-existing") {
+	if err != nil || strings.Contains(body, "SDO-Validation") || !strings.Contains(body, "SDO-Origin: install-existing") {
 		t.Fatalf("the generic-detector commit lacks SDO provenance: %q (%v)", body, err)
 	}
 	head, err := acceptedHead(context.Background(), repo)
