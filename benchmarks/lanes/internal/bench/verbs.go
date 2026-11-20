@@ -167,6 +167,36 @@ func checkLaneCapacity(inv Inventory, s Spec) error {
 	return fmt.Errorf("lane.cpus %d is more than the lane range of every usable host can ever hold: %s", need, strings.Join(small, ", "))
 }
 
+// checkPoolCapacity refuses a pool (hold) whose slot count (lanes) is above what its usable hosts' lane ranges can
+// place: lane range / lane.cpus per host, as far as hosts.yaml tells (a host without lanes.cpus, or a vcluster host,
+// limits nothing; the range's hardware threads bound its cores). A slot that cannot be placed builds for ever, waiting
+// for cores while it holds a pool slot. Foreign pins are live facts and are judged by the build itself.
+func checkPoolCapacity(inv Inventory, s Spec) error {
+	if !s.Hold {
+		return nil
+	}
+	per := s.LaneLimit().CPUs
+	total := 0
+	var parts []string
+	for _, name := range inv.UsableHosts(s) {
+		h := inv.Hosts[name]
+		if h.IsVcluster() || !h.Lanes.Enabled() {
+			return nil
+		}
+		cpus, err := h.Lanes.CPUList()
+		if err != nil {
+			return nil
+		}
+		n := len(cpus) / per
+		total += n
+		parts = append(parts, fmt.Sprintf("%s: %d cores (lanes.cpus %s) / %d per lane = %d", name, len(cpus), h.Lanes.CPUs, per, n))
+	}
+	if s.Lanes <= total {
+		return nil
+	}
+	return fmt.Errorf("pool %s asks for %d slots but its hosts place only %d (%s); lower lanes to at most %d, or use more hosts", s.Name, s.Lanes, total, strings.Join(parts, "; "), total)
+}
+
 // Remove deletes an experiment's spec: its queued runs are dropped and runs in flight finish. Its lock and results
 // stay. Its lanes return free: their operator is torn down and the app copy stays for a later reuse_app build or
 // claim. An experiment with keep_lanes keeps their clusters as an ended one does; teardown ignores keep_lanes, so the
