@@ -35,7 +35,8 @@ type Manager struct {
 	// `fuzzops view` finds it with no flag.
 	RootPointer string
 	// Now is the manager's clock (default the wall clock); tests set a fake one.
-	Now func() time.Time
+	Now           func() time.Time
+	HostPreflight func(ctx context.Context, host string) error
 
 	inv Inventory
 	// invGood: inv is an inventory that loaded; invErr: why hosts.yaml was refused since (used instead of it).

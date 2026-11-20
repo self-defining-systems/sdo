@@ -215,12 +215,13 @@ func LaneReset(root Root, lane string) error {
 
 // HostStatus is what the manager last saw on a host (<root>/hosts.status.json).
 type HostStatus struct {
-	At       time.Time `json:"at"`
-	Load5    float64   `json:"load5"`
-	Builds   int       `json:"builds"`
-	Free     int64     `json:"free_bytes,omitempty"` // free space of the staging filesystem
-	Error    string    `json:"error,omitempty"`
-	Inflight []string  `json:"inflight,omitempty"` // in-flight markers on the host's lanes
+	At        time.Time `json:"at"`
+	Load5     float64   `json:"load5"`
+	Builds    int       `json:"builds"`
+	Free      int64     `json:"free_bytes,omitempty"` // free space of the staging filesystem
+	Error     string    `json:"error,omitempty"`
+	DownSince time.Time `json:"down_since,omitempty"`
+	Inflight  []string  `json:"inflight,omitempty"` // in-flight markers on the host's lanes
 }
 
 // Experiment states (Status).
