@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -236,6 +237,10 @@ func newFlab(t *testing.T, hostLanes ...string) *flab {
 	l.writeInventory()
 	t.Setenv("FAKE_STATE", filepath.Join(dir, "fake"))
 	must(t, os.MkdirAll(filepath.Join(dir, "fake"), 0o755))
+	// The add-time pin check dials no host: every host's command runs here.
+	old := addHostRunner
+	addHostRunner = func(Inventory) runFn { return localRunner }
+	t.Cleanup(func() { addHostRunner = old })
 	l.m = &Manager{Root: l.root, Poll: time.Second, Ops: l.w.ops, Log: os.Stderr}
 	l.m.Now = func() time.Time { return l.now }
 	return l
@@ -382,4 +387,9 @@ func (l *flab) toRun(lane string) *Step {
 	l.runningStep(lane, StepBuild)
 	l.buildOK(lane)
 	return l.runningStep(lane, StepRun)
+}
+
+func localRunner(ctx context.Context, _ string, script string) (string, error) {
+	out, err := exec.CommandContext(ctx, "sh", "-c", script).Output()
+	return string(out), err
 }

@@ -41,6 +41,9 @@ func Add(ctx context.Context, root Root, specFile string, log io.Writer) error {
 	if s.Operator.Hooks != "" && inv.HookCommand[s.Operator.Hooks] == "" {
 		return fmt.Errorf("hosts.yaml has no hook_command for %s", s.Operator.Hooks)
 	}
+	if err := checkPins(ctx, inv, s, log, map[string]string{}); err != nil {
+		return fmt.Errorf("%s: %w", s.Name, err)
+	}
 	base := filepath.Dir(specFile)
 	resolve := func(p string) string {
 		if filepath.IsAbs(p) {
