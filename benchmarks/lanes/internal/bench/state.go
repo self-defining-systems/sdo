@@ -96,6 +96,9 @@ type LaneFile struct {
 	// deletes and creates it (an in-place reset failed or a fault left cluster-scoped residue).
 	Gone     bool `json:"gone,omitempty"`
 	Recreate bool `json:"recreate,omitempty"`
+	// Unplaced: the lane's build waited for cores that were not there and was cancelled so that a free lane that
+	// already holds cores could take its slot. The lane is offered last until a build on it succeeds.
+	Unplaced bool `json:"unplaced,omitempty"`
 	// GateRecreated: two failed gates already made the cluster anew (cleared by a done run).
 	GateRecreated bool `json:"gate_recreated,omitempty"`
 	// Transcripts is the last failed transcripts check of a teardown on the lane.
