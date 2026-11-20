@@ -179,9 +179,18 @@ def _docker(rows: str, inspect_code: int, inspect_err: str):
     return run
 
 
-def test_a_container_that_exits_between_ps_and_inspect_is_skipped() -> None:
-    # Other users' containers come and go: docker inspect exits 1 for the vanished one and prints the others.
-    run = _docker("c5-a /c5-a-worker 1073741824", 1, "Error: No such object: GONE\n")
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Error: No such object: GONE\n",
+        "error: no such object: GONE\n",
+        "Error response from daemon: No such container: GONE\n",
+    ],
+)
+def test_a_container_that_exits_between_ps_and_inspect_is_skipped(message: str) -> None:
+    # Other users' containers come and go: docker inspect exits 1 for the vanished one and prints the others
+    # (the wording differs between docker versions; spokane1's prints the lowercase one).
+    run = _docker("c5-a /c5-a-worker 1073741824", 1, message)
     assert running_lane_caps("c5-", default_node_bytes=16 * Gi, run=run) == {"c5-a": Gi}
 
 
