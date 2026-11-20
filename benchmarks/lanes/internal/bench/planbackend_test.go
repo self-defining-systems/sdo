@@ -156,7 +156,7 @@ func TestPlanBackendStepRunsDetachedAndIsObservedFromItsRecords(t *testing.T) {
 // artifact the second arm takes, and the manager's own passes drive the plan to its end.
 func TestPlanRunsOnTheManagerEndToEnd(t *testing.T) {
 	l := newLab(t)
-	rev := strings.TrimSuffix(strings.TrimPrefix(l.hooked, "{hooks: test, revision: "), ", baseline: base}")
+	rev := strings.TrimSuffix(strings.TrimPrefix(l.hooked, "{hooks: test, revision: "), ", baseline: base, settings: {startup_bound: 0s}}")
 	tpl := fmt.Sprintf(`{"app": "examples/shop", "operator": {"hooks": "test", "baseline": "base", "seed": "${artifact.rec}"},
  "namespace": "app1", "faults": {"instances": "instances.json", "ids": ["${item.fault}"]}, "sequences": [[1]], "run": {"window": "1s"},
  "ready_for": "100ms", "ready_timeout": "%s", "cap": "%s", "lanes": 1, "hosts": ["h1"], "pause_after_wave": false}`, l.ready, l.cap)

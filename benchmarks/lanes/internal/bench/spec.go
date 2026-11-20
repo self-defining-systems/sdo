@@ -311,11 +311,38 @@ func parseDur(field, v string) (time.Duration, error) {
 	return d, nil
 }
 
-// Durations returns ready_for, ready_timeout and cap (the spec is valid).
+// DefaultStartupBound is SDO's own response.startup_bound default: how long a new install may report busy
+// ("startup baseline pending") before its start-up period ends.
+const DefaultStartupBound = 30 * time.Minute
+
+// startupMargin is the wait added past the subject's start-up bound.
+const startupMargin = 10 * time.Minute
+
+// StartupBound is the subject's declared start-up bound: operator.settings.startup_bound (a duration; the hooks
+// render it as response.startup_bound), else SDO's default. A spec with no hooks has none (0), and 0s means the
+// subject has no start-up period.
+func (s Spec) StartupBound() time.Duration {
+	if s.Operator.Hooks == "" {
+		return 0
+	}
+	if v, ok := s.Operator.Settings["startup_bound"].(string); ok {
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			return d
+		}
+	}
+	return DefaultStartupBound
+}
+
+// Durations returns ready_for, the effective ready timeout and cap (the spec is valid). The ready timeout is
+// never shorter than the subject's start-up bound plus a margin: a lane is not failed for a wait the subject has
+// declared it may need.
 func (s Spec) Durations() (readyFor, readyTimeout, cap time.Duration) {
 	readyFor, _ = time.ParseDuration(s.ReadyFor)
 	readyTimeout, _ = time.ParseDuration(s.ReadyTimeout)
 	cap, _ = time.ParseDuration(s.Cap)
+	if b := s.StartupBound(); b > 0 {
+		readyTimeout = max(readyTimeout, b+startupMargin)
+	}
 	return
 }
 

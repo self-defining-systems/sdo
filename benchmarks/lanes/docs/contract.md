@@ -42,6 +42,8 @@ contract, unchanged (semantics in fuzzops `docs/bench.md`, "Hook contract").
 | `preflight` | called by `lanes preflight` once per hooks checkout per host. Answer: `{"checks":[{"check":"name","ok":true,"detail":"..."}]}`. **Unsupported falls back to the SDO operator's built-in checks** (credential call, sink, proto binding, baseline memory, `sdo-*` images), which is what preflight has always run |
 | `export-artifact`, `verify-artifact`, `reseed`, `verify-start` | defined, **not called yet**; every adapter answers unsupported |
 
+The build check waits `max(ready_timeout, startup_bound + 10m)` for `idle`: a subject reports busy through its own start-up period, and a lane is never failed for a wait shorter than it. `startup_bound` is `operator.settings.startup_bound` (default 30m, SDO response.startup_bound default; `0s` means no start-up period); the hooks must render the same value into the subject config.
+
 ## Workload verbs
 
 | verb | operations (`WORKLOAD_ACTION`) | built-in `fuzzops` workload runs |
