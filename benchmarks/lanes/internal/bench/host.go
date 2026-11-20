@@ -26,6 +26,9 @@ type HostOps interface {
 	Fetch(ctx context.Context, lane, id, dest string) error
 	// Clean removes a step's staging directory (only after Fetch).
 	Clean(ctx context.Context, lane, id string) error
+	// Kill ends a running step (its process group): TERM, then KILL after a few seconds. A step that is not there
+	// is no error.
+	Kill(ctx context.Context, lane, id string) error
 	// Stage makes an input of the root available on the host and returns its path there.
 	Stage(ctx context.Context, root Root, in Input) (string, error)
 	// GC removes from the host's staging every lane directory, step directory and staged input not in
@@ -148,6 +151,10 @@ func (h localHost) Start(ctx context.Context, s Step) error {
 		return err
 	}
 	return exec.CommandContext(ctx, "sh", "-c", detach(h.bin, p, laneExecPrefix(s))).Run()
+}
+
+func (h localHost) Kill(ctx context.Context, lane, id string) error {
+	return exec.CommandContext(ctx, "sh", "-c", killScript(filepath.Join(h.staging, lane, id, "step.json"), 5)).Run()
 }
 
 func (h localHost) Probe(_ context.Context, steps map[string]string, fuzzops []string) (Probe, error) {
