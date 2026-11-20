@@ -146,6 +146,12 @@ func (v *ReplayReadView) AlertsResult() (metrics.AlertsResult, bool)
 func (v *ReplayReadView) AppMap() (program.AppMap, error)
     AppMap replays the snapshot's ApplicationMap, else the recorded read.
 
+func (v *ReplayReadView) ConfigMaps() []corev1.ConfigMap
+
+func (v *ReplayReadView) CronJobs() []batchv1.CronJob
+
+func (v *ReplayReadView) DaemonSets() []appsv1.DaemonSet
+
 func (v *ReplayReadView) DataChecks() (map[string]string, error)
     DataChecks replays the snapshot's AcceptedDataChecks, else the recorded
     read.
@@ -155,6 +161,22 @@ func (v *ReplayReadView) DatabaseUsers(t program.DatabaseTarget) ([]program.Data
 func (v *ReplayReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, error)
 
 func (v *ReplayReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
+
+func (v *ReplayReadView) EndpointSlices() []discoveryv1.EndpointSlice
+
+func (v *ReplayReadView) Endpoints() []corev1.Endpoints
+
+func (v *ReplayReadView) Events() []corev1.Event
+
+func (v *ReplayReadView) HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
+
+func (v *ReplayReadView) Ingresses() []networkingv1.Ingress
+
+func (v *ReplayReadView) Jobs() []batchv1.Job
+
+func (v *ReplayReadView) KindsRead() map[string]bool
+    KindsRead names the object kinds the replayed program read from the
+    snapshot.
 
 func (v *ReplayReadView) KubernetesRead(q program.KubernetesRequest) (json.RawMessage, error)
 
@@ -168,11 +190,22 @@ func (v *ReplayReadView) MetricResult(id string) (metrics.Result, bool)
 
 func (v *ReplayReadView) MutatingWebhookConfigurations() ([]admissionv1.MutatingWebhookConfiguration, error)
 
+func (v *ReplayReadView) NetworkPolicies() []networkingv1.NetworkPolicy
+
 func (v *ReplayReadView) NodeUsage(ref sdk.ObjectRef) (*metricsv1beta1.NodeMetrics, error)
+
+func (v *ReplayReadView) Nodes() []corev1.Node
+
+func (v *ReplayReadView) Object(ref sdk.ObjectRef) (*unstructured.Unstructured, error)
+    Object notes the kind it reads, then answers from the snapshot.
 
 func (v *ReplayReadView) Observe(o program.ExternalOperation) (int32, error)
 
 func (v *ReplayReadView) ObservedView() (sdk.DetectionContext, func() error)
+
+func (v *ReplayReadView) PersistentVolumeClaims() []corev1.PersistentVolumeClaim
+
+func (v *ReplayReadView) PodDisruptionBudgets() []policyv1.PodDisruptionBudget
 
 func (v *ReplayReadView) PodUsage(ref sdk.ObjectRef) (*metricsv1beta1.PodMetrics, error)
 
@@ -186,10 +219,19 @@ func (v *ReplayReadView) Read(q program.Query) (program.Observation, error)
     Read serves a recorded answer; a query with no recorded answer is an
     UnrecordedError ("no recorded case").
 
+func (v *ReplayReadView) ReadyEndpointCountForService(namespace string, service string) int
+    ReadyEndpointCountForService notes the Endpoints and EndpointSlice reads it
+    makes.
+
+func (v *ReplayReadView) RecentEventsFor(namespace string, kind string, name string) []corev1.Event
+    RecentEventsFor notes the Event read it makes.
+
 func (v *ReplayReadView) Recorded(method string, arguments any, result any) error
     Recorded answers a state read from the first matching recorded reply without
     consuming it: a live read view freezes such reads per snapshot, so repeated
     identical reads see the same answer. Missing replies are *UnrecordedError.
+
+func (v *ReplayReadView) ReplicaSets() []appsv1.ReplicaSet
 
 func (v *ReplayReadView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error)
 
@@ -197,11 +239,9 @@ func (v *ReplayReadView) ScopedEndpoints(namespace string) ([]corev1.Endpoints, 
 
 func (v *ReplayReadView) ScopedServices(namespace string) ([]corev1.Service, error)
 
+func (v *ReplayReadView) Secrets() []sdk.SecretMetadata
+
+func (v *ReplayReadView) ServiceAccounts() []corev1.ServiceAccount
+
 func (v *ReplayReadView) ServiceReachability() (servicehealth.ReachabilityWindow, bool)
-
-func (v *ReplayReadView) TrafficWindow(name string) (traffic.Window, bool)
-
-func (v *ReplayReadView) ValidatingWebhookConfigurations() ([]admissionv1.ValidatingWebhookConfiguration, error)
-
-func (v *ReplayReadView) WebhookCAMatchesSecret(t program.WebhookCA) (bool, error)
 ```

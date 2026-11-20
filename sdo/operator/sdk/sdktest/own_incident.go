@@ -93,15 +93,17 @@ func DiagnoseOnIncident(d program.Diagnoser, dir string) (OwnIncidentResult, err
 			}
 		}
 		c.Open.SourceName = filepath.Base(path)
-		verdict := program.RunDiagnose(context.Background(), d, &ReplayReadView{Snapshot: c.Open, Calls: c.PhaseRecordings("open")}, program.Bindings{}, 5*time.Second)
+		view := &ReplayReadView{Snapshot: c.Open, Calls: c.PhaseRecordings("open")}
+		verdict := program.RunDiagnose(context.Background(), d, view, program.Bindings{}, 5*time.Second)
 		here := OwnIncidentResult{ProgramID: spec.ID, Capture: filepath.Base(path)}
 		switch verdict.Result {
 		case program.Match:
 			here.Outcome = OwnIncidentMatch
 			return here, nil
 		case program.NoMatch:
-			here.Outcome, here.Reason = OwnIncidentFailed, "Diagnose returned NoMatch on the incident it was written for: "+evidenceSummary(verdict)
-			if limit := captureLimits(snapshot); limit != "" {
+			here.Outcome, here.Reason = OwnIncidentFailed, "Diagnose returned NoMatch on the incident it was written for: "+evidenceSummary(verdict)+
+				". A Diagnose must match its own incident before it is saved: fix its conditions, or keep the playbook README-only"
+			if limit := captureLimits(snapshot, view.KindsRead()); limit != "" {
 				// What a capture withholds, a live read sees: the NoMatch may be the capture, not the playbook.
 				here.Outcome, here.Reason = OwnIncidentUnverified, "Diagnose returned NoMatch, but the capture "+limit+": "+evidenceSummary(verdict)
 			}
@@ -140,21 +142,31 @@ func evidenceSummary(v program.Verdict) string {
 	return strings.Join(parts, "; ")
 }
 
-// captureLimits says what a capture withholds that a live read sees, "" when it withholds nothing a Diagnose could
-// depend on: ConfigMap values are redacted and objects over the snapshot budget are dropped.
-func captureLimits(snapshot Snapshot) string {
-	for _, configMap := range snapshot.ConfigMapList {
-		if configMap.Annotations["sdo.dev/configmap-values-redacted"] == "true" {
-			return "redacts ConfigMap values"
+// captureLimits says what the capture withholds from the kinds Diagnose read that a live read sees, "" when it
+// withholds nothing Diagnose depended on: ConfigMap values are redacted and objects over the snapshot budget are
+// dropped. A limit on a kind Diagnose never read cannot be why it returned NoMatch.
+func captureLimits(snapshot Snapshot, read map[string]bool) string {
+	if read["ConfigMap"] {
+		for _, configMap := range snapshot.ConfigMapList {
+			if configMap.Annotations["sdo.dev/configmap-values-redacted"] == "true" {
+				return "redacts ConfigMap values, which Diagnose read"
+			}
+		}
+		for _, object := range snapshot.Objects {
+			if object.GetKind() == "ConfigMap" && object.GetAnnotations()["sdo.dev/configmap-values-redacted"] == "true" {
+				return "redacts ConfigMap values, which Diagnose read"
+			}
 		}
 	}
-	for _, object := range snapshot.Objects {
-		if object.GetKind() == "ConfigMap" && object.GetAnnotations()["sdo.dev/configmap-values-redacted"] == "true" {
-			return "redacts ConfigMap values"
+	var dropped []string
+	for kind, count := range snapshot.TrimmedObjects {
+		if count > 0 && read[kind] {
+			dropped = append(dropped, kind)
 		}
 	}
-	if len(snapshot.TrimmedObjects) > 0 {
-		return "dropped objects over its budget"
+	if len(dropped) > 0 {
+		sort.Strings(dropped)
+		return "dropped " + strings.Join(dropped, ", ") + " objects over its budget, which Diagnose read"
 	}
 	return ""
 }

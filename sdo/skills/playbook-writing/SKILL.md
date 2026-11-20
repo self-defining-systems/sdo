@@ -22,6 +22,8 @@ A playbook is `.sdo/playbooks/<id>/` with `diagnose.go` and `mitigate.go`. Copy 
 
 If the cause has a signal of its own, add a detector that names the playbook: [detector.md](detector.md).
 
+A `Diagnose` must match its own incident before you save it; one that cannot see its own fault is worse than none, so fix it or keep the playbook README-only.
+
 Check:
 1. `sdo-operator memory check`
 2. `sdo-operator memory test <id>`

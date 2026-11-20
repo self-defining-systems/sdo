@@ -103,20 +103,44 @@ func TestDiagnoseOnIncidentWithoutACaptureIsUnverified(t *testing.T) {
 	}
 }
 
-// A capture redacts ConfigMap values (a live read sees them) and drops objects over its budget, so a NoMatch on
-// such a capture may be the capture and not the playbook: it is unverified, never a definite failure.
-func TestDiagnoseOnIncidentDoesNotCallNoMatchDefiniteOnARedactedCapture(t *testing.T) {
-	noMatch := ownDiagnoser{spec: program.ProgramSpec{ID: "p"}, diagnose: func(program.ReadView) (program.Verdict, error) {
+// A capture redacts ConfigMap values (a live read sees them) and drops objects over its budget, but a NoMatch is
+// only unverified when Diagnose read a kind the capture withholds: otherwise the capture cannot be why it
+// never matched, and the playbook fails on its own incident.
+func TestDiagnoseOnIncidentDowngradesNoMatchOnlyWhenItReadWhatTheCaptureWithholds(t *testing.T) {
+	readNothingWithheld := func(view program.ReadView) (program.Verdict, error) {
+		_ = view.Deployments()
 		return program.Verdict{Result: program.NoMatch}, nil
-	}}
+	}
+	readConfigMaps := func(view program.ReadView) (program.Verdict, error) {
+		_ = view.ConfigMaps()
+		return program.Verdict{Result: program.NoMatch}, nil
+	}
+	readConfigMapObject := func(view program.ReadView) (program.Verdict, error) {
+		_, _ = view.Object(sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "script"})
+		return program.Verdict{Result: program.NoMatch}, nil
+	}
+	readEvents := func(view program.ReadView) (program.Verdict, error) {
+		_ = view.Events()
+		return program.Verdict{Result: program.NoMatch}, nil
+	}
 	redacted := corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "script", Namespace: "app", Annotations: map[string]string{"sdo.dev/configmap-values-redacted": "true"}}}
-	for name, snapshot := range map[string]Snapshot{
-		"redacted ConfigMap values": {NamespaceName: "app", ConfigMapList: []corev1.ConfigMap{redacted}},
-		"trimmed objects":           {NamespaceName: "app", TrimmedObjects: map[string]int{"Pod": 3}},
+	redactedSnapshot := Snapshot{NamespaceName: "app", ConfigMapList: []corev1.ConfigMap{redacted}}
+	trimmedSnapshot := Snapshot{NamespaceName: "app", TrimmedObjects: map[string]int{"Event": 3}}
+	for name, tc := range map[string]struct {
+		snapshot Snapshot
+		diagnose func(program.ReadView) (program.Verdict, error)
+		want     OwnIncidentOutcome
+	}{
+		"redacted ConfigMap, never read":      {redactedSnapshot, readNothingWithheld, OwnIncidentFailed},
+		"redacted ConfigMap, list read":       {redactedSnapshot, readConfigMaps, OwnIncidentUnverified},
+		"redacted ConfigMap, object read":     {redactedSnapshot, readConfigMapObject, OwnIncidentUnverified},
+		"trimmed Events, never read":          {trimmedSnapshot, readNothingWithheld, OwnIncidentFailed},
+		"trimmed Events, read":                {trimmedSnapshot, readEvents, OwnIncidentUnverified},
+		"trimmed Events, only ConfigMap read": {trimmedSnapshot, readConfigMaps, OwnIncidentFailed},
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			raw, err := json.Marshal(snapshot)
+			raw, err := json.Marshal(tc.snapshot)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -125,9 +149,12 @@ func TestDiagnoseOnIncidentDoesNotCallNoMatchDefiniteOnARedactedCapture(t *testi
 					t.Fatal(err)
 				}
 			}
-			got, err := DiagnoseOnIncident(noMatch, dir)
-			if err != nil || got.Outcome != OwnIncidentUnverified || !strings.Contains(got.Reason, "NoMatch") {
-				t.Fatalf("got %+v, %v; want unverified naming the NoMatch", got, err)
+			got, err := DiagnoseOnIncident(ownDiagnoser{spec: program.ProgramSpec{ID: "p"}, diagnose: tc.diagnose}, dir)
+			if err != nil || got.Outcome != tc.want || !strings.Contains(got.Reason, "NoMatch") {
+				t.Fatalf("got %+v, %v; want %s naming the NoMatch", got, err, tc.want)
+			}
+			if tc.want == OwnIncidentFailed && !strings.Contains(got.Reason, "match its own incident") {
+				t.Fatalf("a failure must say how to fix it: %q", got.Reason)
 			}
 		})
 	}
