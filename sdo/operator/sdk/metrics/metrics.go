@@ -301,6 +301,14 @@ type Consumer interface {
 	MetricQueries() []Query
 }
 
+// WindowDeclarer is implemented by metrics detectors that judge a rolling
+// window: MetricWindow is how long after a fault is gone they keep reporting
+// it. The runtime waits at least that long after a repair's last write before
+// it judges one of their findings persistent.
+type WindowDeclarer interface {
+	MetricWindow() time.Duration
+}
+
 // AlertConsumer is implemented by detectors that evaluate firing alerts.
 type AlertConsumer interface {
 	ConsumesAlerts() bool

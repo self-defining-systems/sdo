@@ -1070,6 +1070,13 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 				}
 				return max(horizon, 2*interval), window
 			}
+			// A finding about a workload also waits for a replacement pod to
+			// become Ready: the workload's observed startup, not a constant.
+			findingHorizon := func(finding sdk.Finding) time.Duration {
+				horizon, _ := horizonOf(finding.DetectorID)
+				resources := append([]sdk.ObjectRef{finding.PrimaryResource}, finding.RelatedResources...)
+				return horizon + sdk.ResourceStartupAllowance(view, resources...)
+			}
 			// A program that still diagnoses its fault after its write is not
 			// credited with recovery, whatever the members show; it gets the
 			// longest rolling window among the incident's detectors, since its
@@ -1107,8 +1114,7 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			}
 			for _, finding := range open {
 				fp := FindingFingerprint(finding)
-				horizon, _ := horizonOf(finding.DetectorID)
-				if settled >= horizon && stage.WaitBound <= 0 {
+				if settled >= findingHorizon(finding) && stage.WaitBound <= 0 {
 					branch = "finding " + fp + " persisted past its horizon after the stage's writes settled"
 					return nil
 				}

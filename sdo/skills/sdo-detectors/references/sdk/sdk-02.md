@@ -25,6 +25,13 @@ func ReadErrorClass(err error) string
     permissive one wins (invalid, then unavailable, then refused, then absent),
     so a program is never given more freedom than its worst read allowed.
 
+func ResourceStartupAllowance(ctx DetectionContext, resources ...ObjectRef) time.Duration
+    ResourceStartupAllowance is the longest startup allowance observed for the
+    workloads the given resources belong to: a Pod resolves to its workload,
+    any other resource names its own workload ("Kind/name"). A finding about a
+    workload cannot clear before a replacement pod has had that long to become
+    Ready. Zero means none is known.
+
 func SDOFieldManagers() []string
     SDOFieldManagers lists every field manager SDO writes application objects
     as.
@@ -192,39 +199,4 @@ const (
 	InitContainer      ContainerKind = "init"
 	EphemeralContainer ContainerKind = "ephemeral"
 )
-type DetectionContext interface {
-	StatefulSets() []appsv1.StatefulSet
-	DaemonSets() []appsv1.DaemonSet
-	Jobs() []batchv1.Job
-	CronJobs() []batchv1.CronJob
-	PersistentVolumeClaims() []corev1.PersistentVolumeClaim
-	ServiceAccounts() []corev1.ServiceAccount
-	HorizontalPodAutoscalers() []autoscalingv2.HorizontalPodAutoscaler
-	PodDisruptionBudgets() []policyv1.PodDisruptionBudget
-	Ingresses() []networkingv1.Ingress
-	Nodes() []corev1.Node
-	Secrets() []SecretMetadata
-
-	// DiffAgainstSource compares a captured resource with accepted source, including
-	// source absence. Runtime reads are frozen per snapshot and recorded for replay.
-	// DiffAgainstSource compares quantities by value and excludes controller bookkeeping (revision, last-applied and restart annotations, status and managedFields), accepted server defaults, and replicas targeted by an HPA.
-	DiffAgainstSource(ref ObjectRef) (SourceDiff, error)
-	// PodAdmission returns the frozen dry-run result, false when unobserved.
-	PodAdmission() (PodAdmissionResult, bool)
-	Namespace() string
-	ConfigMaps() []corev1.ConfigMap
-	Services() []corev1.Service
-	Pods() []corev1.Pod
-	Deployments() []appsv1.Deployment
-	ReplicaSets() []appsv1.ReplicaSet
-	Endpoints() []corev1.Endpoints
-	EndpointSlices() []discoveryv1.EndpointSlice
-	NetworkPolicies() []networkingv1.NetworkPolicy
-	Events() []corev1.Event
-	ReadyEndpointCountForService(namespace string, service string) int
-	PodsForService(namespace string, service string) []corev1.Pod
-	RecentEventsFor(namespace string, kind string, name string) []corev1.Event
-}
-    DetectionContext is the frozen snapshot read by detectors and, through
-    ReadView, by programs.
 ```
