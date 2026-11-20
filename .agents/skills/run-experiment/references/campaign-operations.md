@@ -119,5 +119,6 @@ Then compare measured wall time with it, per problem and per series, as results 
 - **Cloud resources:**
   - tag everything, keep a manifest and a teardown script, and set a budget alarm;
   - a managed control plane still bills after its nodes scale to zero.
+- **A cost of None or 0.0 on a graded row needs a stated reason.** The dispatcher once logged `usd=None/0.0` for 77 graded SDO rows (34 had real spend): it read the pre-drain `row.json` (which has no cost by design) instead of the sealed `results.jsonl` row. Read the sealed row, log the row's `cost_note`, and backfill old rows into a sidecar file the tables read instead of rewriting the dispatch log. Also dedupe every table on the dispatcher row key (keep the latest grade): two dispatcher instances wrote the same GRADED line twice.
 
 Reference timings: [campaign-alarms.md](campaign-alarms.md#reference-timings-seen).
