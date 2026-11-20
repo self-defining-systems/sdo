@@ -248,6 +248,30 @@ func TestKindLaneUpChecksTheCgroupParent(t *testing.T) {
 	}
 }
 
+// A memory limit that is only a number handed to docker is not a limit: after the lane is up, every node must read back
+// a non-zero HostConfig.Memory, or the lane is deleted and the up fails (an unlimited node can take the whole host).
+func TestKindLaneUpChecksTheMemoryLimitIsApplied(t *testing.T) {
+	for _, tc := range []struct {
+		mem string
+		ok  bool
+	}{{"4294967296", true}, {"0", false}, {"", false}} {
+		e := setup(t)
+		vars := e.with("KIND_NODE_PRELOAD=", "FUZZOPS_LANE_CPUSET=8-11", "FUZZOPS_LANE_MEMORY=4294967296", "FUZZOPS_LANE_SLICE=eval.slice", "STUB_CGROUP_PARENT=eval.slice", "STUB_NODE_MEMORY="+tc.mem)
+		out, err := e.run(vars, "kind-lane.sh", "up", "lane", filepath.Join(e.dir, "kc"), filepath.Join(e.dir, "ev"))
+		if tc.ok && err != nil {
+			t.Fatalf("memory %q: %v: %s", tc.mem, err, out)
+		}
+		if !tc.ok {
+			if err == nil || !strings.Contains(out, "no memory limit") {
+				t.Fatalf("memory %q must fail loudly: %v: %s", tc.mem, err, out)
+			}
+			if !strings.Contains(e.log(), "kind delete cluster --name lane") {
+				t.Errorf("memory %q: the unlimited lane was left:\n%s", tc.mem, e.log())
+			}
+		}
+	}
+}
+
 // The helper is run by an unprivileged user against a directory standing in for the cgroup tree: the SDO_EVAL_* hooks
 // exist for that and are not read as root.
 type reserveT struct {
