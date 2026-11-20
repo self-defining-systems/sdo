@@ -466,7 +466,11 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
         ctx.long_runner(command, env=ctx.env, cwd=ctx.root)
     except AdapterError as error:
         failure = str(error)
-    incident = _last_record(env_dir / "results" / run_id)
+    results = env_dir / "results" / run_id
+    if results.is_dir():
+        # The run's evidence travels with the run (the lane's environment is rebuilt with the lane).
+        shutil.copytree(results, exec_out / "fastloop-results", dirs_exist_ok=True)
+    incident = _last_record(results)
     if incident is None:
         return 1, {
             **record,

@@ -360,6 +360,7 @@ def test_run_records_the_incident_and_exports_the_learned_memory(tmp_path):
     assert memory["base"] == base
     assert memory["playbook_files_changed"] == [".sdo/playbooks/misconfig/README.md"]
     assert (exec_out / "memory" / "memory.bundle").is_file()
+    assert (exec_out / "fastloop-results" / "incidents.jsonl").is_file()
     assert record["memory"]["seeded"] is False
 
 
