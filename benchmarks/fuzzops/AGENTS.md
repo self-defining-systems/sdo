@@ -240,3 +240,7 @@ without agent cost; the incident record is the controller state, its lifecycle t
   lost with the control namespace. `evidence.py` (`sdo-operator runtime-artifacts` export, and the observer's
   `--operator-binary` closure snapshot) remains for manual pairs without a sink; export before deleting the namespace.
   Output goes to sdo-exp.
+
+## Commit series
+
+SDO over a series of upstream commits (engineers pushing to the branch SDO deploys from) runs on this adapter with `settings.source_branch`: see [benchmarks/commit_series](../commit_series/README.md).

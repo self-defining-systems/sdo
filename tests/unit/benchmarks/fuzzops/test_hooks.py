@@ -18,12 +18,14 @@ from benchmarks.fuzzops.hooks import (
     HookError,
     Kube,
     OperatorBlock,
+    SourceBranch,
     idle_reason,
     idle_verdict,
     install_existing_launch,
     plain_docs,
     plain_pack,
     render_difference,
+    source_branch_up,
     write_baseline,
 )
 
@@ -640,6 +642,46 @@ def test_install_existing_launch_passes_profile_baseline_and_experiment_config_a
         **SINK_ENV,
     }
     assert not any(arg.startswith(("--model", "--agent-", "--evidence-", "--response-")) for arg in args)
+
+
+def test_a_source_branch_setting_becomes_the_remote_sdo_deploys_from(tmp_path: Path) -> None:
+    root = _baseline_dir(tmp_path)
+    branch = {
+        "ref": "sdo-source",
+        "up": 'echo \'{"url": "git://r/x.git", "ref": "{ref}"}\' # {namespace}',
+        "down": "true",
+    }
+    block = OperatorBlock.load(_operator_file(tmp_path, root, model="gpt-x", source_branch=branch))
+    assert block.source_branch is not None
+    values = {"kubeconfig": "k", "namespace": "ns1", "control": "ns1-sdo", "image": "i", "repository": "/r"}
+    url, ref = source_branch_up(block.source_branch, values, tmp_path)
+    assert (url, ref) == ("git://r/x.git", "sdo-source")
+    assert json.loads((tmp_path / "source-branch.json").read_text())["url"] == "git://r/x.git"
+    args, _ = install_existing_launch(
+        tmp_path / "sdo-operator",
+        tmp_path / "app",
+        Baseline.load(root),
+        block,
+        tmp_path / "k",
+        SINK_ENV,
+        tmp_path / "c",
+        source_branch=(url, ref),
+    )
+    assert args[args.index("--source-branch-url") + 1] == "git://r/x.git"
+    assert args[args.index("--source-branch") + 1] == "sdo-source"
+    plain = OperatorBlock.load(_operator_file(tmp_path, root, model="gpt-x"))
+    assert plain.source_branch is None
+
+
+def test_a_source_branch_cannot_be_main_and_up_must_print_its_remote(tmp_path: Path) -> None:
+    root = _baseline_dir(tmp_path)
+    with pytest.raises(HookError, match="main or master"):
+        OperatorBlock.load(
+            _operator_file(tmp_path, root, model="m", source_branch={"ref": "main", "up": "true", "down": "true"})
+        )
+    silent = SourceBranch("sdo-source", "echo nothing", "true")
+    with pytest.raises(HookError, match="no JSON line"):
+        source_branch_up(silent, {}, tmp_path)
 
 
 def test_install_existing_launch_refuses_a_lane_without_an_evidence_sink(tmp_path: Path) -> None:
