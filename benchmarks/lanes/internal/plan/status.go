@@ -34,14 +34,18 @@ type StepStatus struct {
 
 // Status is what `lanes plan status` shows.
 type Status struct {
-	Plan     string       `json:"plan"`
-	Pins     Pins         `json:"pins"`
-	Order    string       `json:"order"`
-	Reps     int          `json:"reps"`
-	Parallel int          `json:"parallel"`
-	Complete bool         `json:"complete"`
-	Arms     []ArmStatus  `json:"arms"`
-	Steps    []StepStatus `json:"steps,omitempty"`
+	Plan     string `json:"plan"`
+	Pins     Pins   `json:"pins"`
+	Order    string `json:"order"`
+	Reps     int    `json:"reps"`
+	Parallel int    `json:"parallel"`
+	Complete bool   `json:"complete"`
+	// Paused, Removed and Skipped are the operator's requests (pause, remove, skip ITEM), see Control.
+	Paused  bool         `json:"paused,omitempty"`
+	Removed bool         `json:"removed,omitempty"`
+	Skipped []string     `json:"skipped,omitempty"`
+	Arms    []ArmStatus  `json:"arms"`
+	Steps   []StepStatus `json:"steps,omitempty"`
 	// Parked maps each parked item to the reason it failed twice with.
 	Parked map[string]string `json:"parked,omitempty"`
 	// Alarms are the keys of the alarms standing now.
@@ -58,7 +62,12 @@ func (e *Engine) Status() (*Status, error) {
 	if err != nil {
 		return nil, err
 	}
-	return e.statusOf(st), nil
+	out := e.statusOf(st)
+	if c, err := LoadControl(e.Dir); err == nil {
+		out.Paused, out.Removed = c.Paused, c.Removed
+		out.Skipped = sortedKeys(c.Skipped)
+	}
+	return out, nil
 }
 
 func (e *Engine) statusOf(st *State) *Status {
@@ -114,8 +123,13 @@ func (e *Engine) statusOf(st *State) *Status {
 // Render prints the status as text.
 func (s *Status) Render(w io.Writer) {
 	state := "running"
-	if s.Complete {
+	switch {
+	case s.Complete:
 		state = "complete"
+	case s.Removed:
+		state = "removed, draining"
+	case s.Paused:
+		state = "paused"
 	}
 	fmt.Fprintf(w, "plan %s (%s): workload %s, subject %s, %d rep(s), %s, parallel %d\n", s.Plan, state, s.Pins.Workload, s.Pins.Subject, s.Reps, s.Order, s.Parallel)
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
@@ -129,6 +143,9 @@ func (s *Status) Render(w io.Writer) {
 	}
 	for _, item := range sortedKeys(s.Parked) {
 		fmt.Fprintf(w, "parked:  item %s (%s twice)\n", item, s.Parked[item])
+	}
+	if len(s.Skipped) > 0 {
+		fmt.Fprintf(w, "skipped: items %v\n", s.Skipped)
 	}
 	for _, k := range s.Alarms {
 		fmt.Fprintf(w, "alarm:   %s\n", k)
