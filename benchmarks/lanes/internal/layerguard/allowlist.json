@@ -245,6 +245,18 @@
         "fuzzops": 3,
         "operator": 5
       }
+    },
+    "cmd/lanes/help.go": {
+      "reason": "help text of the FUZZOPS_BENCH_ROOT default and the --fuzzops probe flag (audit B9)",
+      "terms": {
+        "fuzzops": 3
+      }
+    },
+    "cmd/lanes/manager.go": {
+      "reason": "the systemd unit passes FUZZOPS_* env and reads FUZZOPS_BENCH_ROOT, the live names (audit B7, B9)",
+      "terms": {
+        "fuzzops": 3
+      }
     }
   },
   "adapter_files": {}
