@@ -523,16 +523,16 @@ func TestEksDownLaneClustersAreDeletedNotLeftToBill(t *testing.T) {
 	m.lanes["eks1"].State, m.lanes["eks1"].Gone = LaneDown, false // failed or killed cluster-up: a cluster may be there
 	m.lanes["eks2"].State, m.lanes["eks2"].Gone = LaneDown, true  // known gone
 	m.lanes["eks3"].State, m.lanes["eks3"].Gone = LaneFree, false // free lanes follow the idle timeout
-	got := m.eksDownOrphans()
+	got := m.eksOrphanLanes()
 	if len(got) != 1 || got[0].Lane != "eks1" {
 		t.Fatalf("orphans = %v, want only eks1", got)
 	}
 	m.eksCleanAt = map[string]time.Time{"eks1": m.now()}
-	if got := m.eksDownOrphans(); len(got) != 0 {
+	if got := m.eksOrphanLanes(); len(got) != 0 {
 		t.Fatalf("asked again at once: %v", got)
 	}
 	m.advance(eksCleanupRetry)
-	if got := m.eksDownOrphans(); len(got) != 1 {
+	if got := m.eksOrphanLanes(); len(got) != 1 {
 		t.Fatalf("not asked again after the retry interval: %v", got)
 	}
 }

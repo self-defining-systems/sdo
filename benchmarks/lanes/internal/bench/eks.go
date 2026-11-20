@@ -589,9 +589,9 @@ func statusEksHost(ctx context.Context, root Root, inv Inventory, host string, r
 // eksCleanupRetry is how long to wait before asking again to delete a Down lane's cluster.
 const eksCleanupRetry = 10 * time.Minute
 
-// eksDownOrphans are the lanes of eks hosts that are Down yet may still have a cluster (a failed or killed cluster-up):
+// eksOrphanLanes are the lanes of eks hosts that are Down yet may still have a cluster (a failed or killed cluster-up):
 // nothing will build on a Down lane, so its cluster is deleted, not left to bill. Asked again every eksCleanupRetry.
-func (m *Manager) eksDownOrphans() []*LaneFile {
+func (m *Manager) eksOrphanLanes() []*LaneFile {
 	var out []*LaneFile
 	for _, l := range m.sortedLanes() {
 		h := m.inv.Hosts[l.Host]
@@ -608,7 +608,7 @@ func (m *Manager) eksDownOrphans() []*LaneFile {
 
 // eksCleanDown deletes the clusters of Down eks lanes (a release that deletes the cluster).
 func (m *Manager) eksCleanDown(ctx context.Context, admit map[string]bool) {
-	for _, l := range m.eksDownOrphans() {
+	for _, l := range m.eksOrphanLanes() {
 		if !admit[l.Host] {
 			continue
 		}
