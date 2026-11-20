@@ -117,6 +117,9 @@ type BlockStatus struct {
 	Block  string            // "" : no block
 	TwoWay bool              // the other slices are the complement of the block
 	Slices map[string]string // slice -> AllowedCPUs
+	// Defects are lane slices that hold a process directly (cgroup v2 then refuses the node containers' scopes under
+	// them): "lanes-x.slice: reason".
+	Defects []string
 }
 
 func parseBlockStatus(out string) BlockStatus {
@@ -128,6 +131,8 @@ func parseBlockStatus(out string) BlockStatus {
 			st.Block = f[1]
 		case len(f) == 2 && f[0] == "two-way":
 			st.TwoWay = f[1] == "yes"
+		case len(f) >= 3 && f[0] == "defect":
+			st.Defects = append(st.Defects, f[1]+": "+strings.Join(f[2:], " "))
 		case len(f) >= 3 && f[0] == "slice":
 			st.Slices[f[1]] = strings.TrimPrefix(f[2], "AllowedCPUs=")
 		}
@@ -240,6 +245,8 @@ func driftOf(r Reservation, st BlockStatus) string {
 		return "the other slices no longer exclude the block (AllowedCPUs changed)"
 	case st.Slices["lanes.slice"] != r.Block:
 		return fmt.Sprintf("lanes.slice AllowedCPUs is %q, not %q", st.Slices["lanes.slice"], r.Block)
+	case len(st.Defects) > 0:
+		return "lane slice defect: " + strings.Join(st.Defects, "; ")
 	}
 	return ""
 }
@@ -497,6 +504,9 @@ func statusHost(ctx context.Context, root Root, inv Inventory, host string, help
 		fmt.Fprint(out, ", no record (lanes host adopt)")
 	}
 	fmt.Fprintln(out)
+	for _, d := range st.Defects {
+		fmt.Fprintf(out, "  DEFECT lane slice %s\n", d)
+	}
 	block, _ := ParseCPUList(st.Block)
 	in := map[int]bool{}
 	for _, c := range block {

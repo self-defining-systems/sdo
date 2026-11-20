@@ -175,7 +175,14 @@ func TestLaneExecRunsTheCommandInTheLaneCgroup(t *testing.T) {
 	pidFile := filepath.Join(b.dir, "pid")
 	b.must("lane-exec", "tp-c1", "--cpus", "41-42", "--memory", "2G", "--", "sh", "-c", "echo $$ > "+pidFile)
 	lane := filepath.Join(b.cg, "lanes.slice", "lanes-tp_c1.slice")
-	procs, _ := os.ReadFile(filepath.Join(lane, "cgroup.procs"))
+	// cgroup v2 no-internal-processes: the lane slice itself never holds the step, only its leaf does
+	if direct, _ := os.ReadFile(filepath.Join(lane, "cgroup.procs")); strings.TrimSpace(string(direct)) != "" {
+		t.Errorf("the lane slice holds processes directly: %q", direct)
+	}
+	if st := b.must("block", "status"); strings.Contains(st, "defect") {
+		t.Errorf("status reports a defect for a correct step:\n%s", st)
+	}
+	procs, _ := os.ReadFile(filepath.Join(lane, "step", "cgroup.procs"))
 	pid, _ := os.ReadFile(pidFile)
 	if strings.TrimSpace(string(procs)) == "" || strings.TrimSpace(string(procs)) != strings.TrimSpace(string(pid)) {
 		t.Errorf("the command is not in the lane cgroup: cgroup.procs %q, command pid %q", procs, pid)
@@ -185,6 +192,22 @@ func TestLaneExecRunsTheCommandInTheLaneCgroup(t *testing.T) {
 	}
 	if out, err := b.do("lane-exec", "c1", "--cpus", "1-2", "--", "true"); err == nil || !strings.Contains(out, "not inside the block") {
 		t.Errorf("cpus outside the block: %v\n%s", err, out)
+	}
+}
+
+// A lane slice with a process directly in it is a defect `block status` names with a reason.
+func TestBlockStatusReportsALaneSliceHoldingProcesses(t *testing.T) {
+	b := blockSetup(t)
+	b.must("block", "reserve", "--cpus", "40-55", "--memory", "8G")
+	lane := filepath.Join(b.cg, "lanes.slice", "lanes-x.slice")
+	if err := os.MkdirAll(lane, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(lane, "cgroup.procs"), []byte("123\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if st := b.must("block", "status"); !strings.Contains(st, "defect lanes-x.slice 1 process(es) directly in cgroup.procs") {
+		t.Errorf("no defect reported:\n%s", st)
 	}
 }
 
