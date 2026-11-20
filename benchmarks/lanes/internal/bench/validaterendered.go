@@ -43,8 +43,7 @@ func ValidateRendered(ctx context.Context, inv Inventory, s Spec, c *RenderedChe
 		return err
 	}
 	if len(inv.UsableHosts(s)) == 0 {
-		return fmt.Errorf("no host of %v has the pinned fuzzops %s%s in hosts.yaml checkouts", s.Hosts, s.Fuzzops,
-			map[bool]string{true: " and hooks " + s.Operator.Hooks + " " + s.Operator.Revision}[s.Operator.Hooks != ""])
+		return fmt.Errorf("no host of %v can take this spec: %s", s.Hosts, strings.Join(inv.UnusableReasons(s), "; "))
 	}
 	if err := checkLaneCapacity(inv, s); err != nil {
 		return err

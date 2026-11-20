@@ -34,7 +34,7 @@ func TestBuildsWaitingForCoresHoldNoChurnSlot(t *testing.T) {
 	m.Ops = func(string, Host) HostOps {
 		return waitingOps{churnOps: churnOps{started: &started}, waiting: map[string]bool{"c1": true, "c2": true}}
 	}
-	prepared := &Prepared{Experiment: "x", Hooks: "hk", FuzzopsRev: "abc"}
+	prepared := &Prepared{Experiment: "x", Hooks: "hk", WorkloadRev: "abc"}
 	writeLane(t, m, LaneFile{Lane: "c1", Host: "h1", State: LaneBuilding, Step: &StepRef{ID: "build-1", Kind: StepBuild}})
 	writeLane(t, m, LaneFile{Lane: "c2", Host: "h1", State: LaneBuilding, Step: &StepRef{ID: "build-2", Kind: StepBuild}})
 	writeLane(t, m, LaneFile{Lane: "c3", Host: "h1", State: LaneFree, Prepared: prepared})
@@ -56,7 +56,7 @@ func TestBuildPastLaneWaitHoldsItsChurnSlot(t *testing.T) {
 	m.Ops = func(string, Host) HostOps {
 		return waitingOps{churnOps: churnOps{started: &started}, waiting: map[string]bool{}}
 	}
-	prepared := &Prepared{Experiment: "x", Hooks: "hk", FuzzopsRev: "abc"}
+	prepared := &Prepared{Experiment: "x", Hooks: "hk", WorkloadRev: "abc"}
 	writeLane(t, m, LaneFile{Lane: "c1", Host: "h1", State: LaneBuilding, Step: &StepRef{ID: "build-1", Kind: StepBuild}})
 	writeLane(t, m, LaneFile{Lane: "c3", Host: "h1", State: LaneFree, Prepared: prepared})
 	if err := m.Reconcile(context.Background()); err != nil {

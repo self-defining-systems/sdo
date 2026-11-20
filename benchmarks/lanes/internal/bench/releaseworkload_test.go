@@ -30,7 +30,7 @@ func TestReleaseAndRecoverUseTheWorkloadAndCheckoutOfTheLanesPrepared(t *testing
 			t.Fatalf("%s was refused", kind)
 		}
 		s := l.w.last("c1", kind)
-		if s == nil || s.Fuzzops != want || s.Workload != "./adapter-x" || s.FuzzopsRev != "0b528ac" {
+		if s == nil || s.Fuzzops != want || s.Workload != "./adapter-x" || s.WorkloadRev != "0b528ac" {
 			t.Errorf("%s started with %+v, want checkout %s, workload ./adapter-x", kind, s, want)
 		}
 	}
@@ -64,7 +64,7 @@ func TestLoadBackfillsThePreparedFromItsExperimentsSpec(t *testing.T) {
 	must(t, writeJSON(l.root.LanePath("c1"), lf))
 	must(t, l.m.loadInventory())
 	must(t, l.m.load())
-	if p := l.m.lanes["c1"].Prepared; p.FuzzopsRev != "0b528ac" || p.Workload != "./adapter-x" {
+	if p := l.m.lanes["c1"].Prepared; p.WorkloadRev != "0b528ac" || p.Workload != "./adapter-x" {
 		t.Fatalf("prepared %+v", p)
 	}
 }

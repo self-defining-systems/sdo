@@ -521,9 +521,9 @@ func (m *Manager) load() error {
 	for _, l := range m.lanes {
 		// A lane prepared before the workload and checkout were recorded: they are the spec's that prepared it
 		// (the experiment the lane's prepared state names), not a guess among the host's checkouts.
-		if p := l.Prepared; p != nil && p.FuzzopsRev == "" {
+		if p := l.Prepared; p != nil && p.WorkloadRev == "" {
 			if x := m.exps[p.Experiment]; x != nil {
-				p.Workload, p.FuzzopsRev = x.Measured().Workload, x.Measured().Fuzzops
+				p.Workload, p.WorkloadRev = x.Measured().Workload, x.Measured().Fuzzops
 			}
 		}
 	}
@@ -678,16 +678,16 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 		if prep == nil {
 			prep = l.Prepared
 		}
-		if prep == nil || prep.FuzzopsRev == "" {
+		if prep == nil || prep.WorkloadRev == "" {
 			m.logf("lane %s: %s refused: no recorded workload and fuzzops checkout for the lane (it was prepared before they were recorded)", l.Lane, s.Kind)
 			return false
 		}
-		s.Fuzzops = m.inv.FuzzopsPath(prep.FuzzopsRev, l.Host)
+		s.Fuzzops = m.inv.FuzzopsPath(prep.WorkloadRev, l.Host)
 		if s.Fuzzops == "" {
-			m.logf("lane %s: %s refused: the lane's fuzzops %s has no checkout on %s", l.Lane, s.Kind, prep.FuzzopsRev, l.Host)
+			m.logf("lane %s: %s refused: the lane's fuzzops %s has no checkout on %s", l.Lane, s.Kind, prep.WorkloadRev, l.Host)
 			return false
 		}
-		s.Workload, s.FuzzopsRev = prep.Workload, prep.FuzzopsRev
+		s.Workload, s.WorkloadRev = prep.Workload, prep.WorkloadRev
 	}
 	if err := m.ops(l.Host).Start(ctx, s); err != nil {
 		// It may have started all the same (an ssh that timed out after the step began): the
@@ -706,7 +706,7 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 func (m *Manager) preparedFor(l *LaneFile, x *Experiment) *Prepared {
 	s := x.Measured()
 	p := &Prepared{Experiment: x.Name, Namespace: s.Namespace, AppPack: filepath.Join(m.inv.FuzzopsPath(s.Fuzzops, l.Host), s.App),
-		Workload: s.Workload, FuzzopsRev: s.Fuzzops}
+		Workload: s.Workload, WorkloadRev: s.Fuzzops}
 	if o := s.Operator; o.Hooks != "" {
 		p.Hooks, p.HooksPath, p.Command = o.Hooks, m.inv.HooksPath(o.Hooks, o.Revision, l.Host), m.inv.HookCommand[o.Hooks]
 	}
@@ -722,7 +722,7 @@ func (m *Manager) expStep(ctx context.Context, l *LaneFile, x *Experiment, kind 
 	if s.GateAfterCheck != "" {
 		gate, _ = time.ParseDuration(s.GateAfterCheck)
 	}
-	st := Step{Kind: kind, Experiment: x.Name, Fuzzops: fz, Workload: s.Workload, FuzzopsRev: s.Fuzzops, ReadyFor: Seconds(rf.Seconds()), GateAfterCheck: Seconds(gate.Seconds()),
+	st := Step{Kind: kind, Experiment: x.Name, Fuzzops: fz, Workload: s.Workload, WorkloadRev: s.Fuzzops, ReadyFor: Seconds(rf.Seconds()), GateAfterCheck: Seconds(gate.Seconds()),
 		ReadyTimeout: Seconds(rt.Seconds()), Cap: Seconds(cap.Seconds())}
 	if kind == StepBuild {
 		b := s.BuildBad()
@@ -1654,7 +1654,7 @@ func appCopy(p *Prepared, gone bool) *Prepared {
 		return nil
 	}
 	return &Prepared{Experiment: p.Experiment, Namespace: p.Namespace, AppPack: p.AppPack, Ready: true, Fault: p.Fault,
-		Workload: p.Workload, FuzzopsRev: p.FuzzopsRev}
+		Workload: p.Workload, WorkloadRev: p.WorkloadRev}
 }
 
 // claimable is a ready, unused lane of the Hold experiment x claims, on a host x can use, whose prepared operator

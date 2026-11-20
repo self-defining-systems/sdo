@@ -44,7 +44,7 @@ type Step struct {
 	Workload   string `json:"workload,omitempty"` // the workload adapter ("": fuzzops)
 	// IsolationMode is how the lane is isolated on its host (two-way, one-way, one-way-ok); recorded in the row.
 	IsolationMode string `json:"isolation_mode,omitempty"`
-	FuzzopsRev    string `json:"fuzzops_rev,omitempty"`
+	WorkloadRev   string `json:"workload_rev,omitempty"`
 	Kubeconfig    string `json:"kubeconfig"`
 	LaneDir       string `json:"lane_dir"` // BENCH_LANE_DIR: kept from one build to the next
 
@@ -239,8 +239,8 @@ func RunStep(ctx context.Context, path string) error {
 	switch {
 	case err != nil:
 		r.fail("fuzzops version: %v", err)
-	case pinMismatch(r.res.Fuzzops, s.FuzzopsRev) != "":
-		r.fail("%s", pinMismatch(r.res.Fuzzops, s.FuzzopsRev))
+	case pinMismatch(r.res.Fuzzops, s.WorkloadRev) != "":
+		r.fail("%s", pinMismatch(r.res.Fuzzops, s.WorkloadRev))
 	default:
 		switch s.Kind {
 		case StepBuild:

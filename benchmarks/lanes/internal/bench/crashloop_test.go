@@ -97,7 +97,7 @@ func TestCrashLoopingLaneGetsNoNewSteps(t *testing.T) {
 	if alarms() != 1 {
 		t.Fatalf("one alarm while it stays marked: %d", alarms())
 	}
-	lf := &LaneFile{Lane: "c1", Host: "h1", State: LaneFree, Prepared: &Prepared{FuzzopsRev: "abc"}}
+	lf := &LaneFile{Lane: "c1", Host: "h1", State: LaneFree, Prepared: &Prepared{WorkloadRev: "abc"}}
 	m.lanes["c1"] = lf
 	if m.start(context.Background(), lf, Step{Kind: StepBuild}) || m.start(context.Background(), lf, Step{Kind: StepRun}) {
 		t.Fatal("a crash-looping lane gets no new build or run")
