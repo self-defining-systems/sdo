@@ -62,9 +62,20 @@ Do not pool the lane (a pool reset would not undo the remote's history). The bas
 
 - `toy.py`: three commits to the toy app (two benign, one that fails backend readiness). Synthetic, for fast tests and
   smoke checks: accepted, accepted, held or incident in a few minutes.
-- `gitlab.py`: the real upstream GitLab chart releases 10.4.2 (base) then 10.5.0, 10.5.1, 10.5.3, 10.5.4 (digests and the
-  measured effect of each in `apps/gitlab/releases.json`), rendered through the lane's umbrella chart to one file per
-  object so each commit's diff is what the release moved: all images on the minor release, images again on the patches,
-  a label only on the last. That is the realistic upkeep a GitLab deployment faces. Built at run time from the archives.
+- `gitlab.py`: real upstream GitLab chart releases (https://gitlab.com/gitlab-org/charts/gitlab), each with digest and
+  measured effect in a release list under `apps/gitlab/`. Two lists, two series:
+  - `releases-10.5.4.json` (the default): base **10.5.4**, the release our GitLab baselines (e.g. twopass
+    `gitlab-std-v2`) were made at, then 10.5.5 (patch, 7 image references change), 10.5.7 (patch, 7), 10.6.0 (minor, 8
+    images, 17 values keys added, 1 removed) and 10.6.1 (patch, 6 images, 2 keys). 10.5.6, 10.5.9 and others exist; the
+    series skips some patches, as an operator who upgrades every few weeks would.
+  - `releases.json`: base 10.4.2, then 10.5.0, 10.5.1, 10.5.3, 10.5.4, for a baseline made at 10.4.2 (none exists yet).
 
-Both are built by `build(dest, ...)` into a scratch directory outside the repository; no history is committed.
+  Each commit's tree is the fuzzops GitLab pack rendered at that release (`helm template` of the pack's chart and
+  values, plain-manifest conversion as the hooks do it) as `k8s/render.yaml`, so a commit is the diff one chart bump
+  makes to the file the baseline's repository holds. Pod `checksum/*` annotations are left out (SDO's own
+  instrumentation changes the config they hash, so they would conflict by construction). Checked: all four commits of
+  the 10.5.4 series apply cleanly onto the `gitlab-std-v2` memory branch. Build: `python -m benchmarks.commit_series
+  ...gitlab build DEST --pack <fuzzops>/examples/gitlab --cache DIR [--list PATH]`; new lists are measured with
+  `... derive`. Built at run time from the archives (digest checked).
+
+Both are built into a scratch directory outside the repository; no history is committed.

@@ -137,6 +137,7 @@ depends_on = []
 path = "benchmarks.commit_series"
 depends_on = [
     "benchmarks.common.replay",
+    "benchmarks.fuzzops",
     "benchmarks.sregym.fastloop",
 ]
 
