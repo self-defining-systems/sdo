@@ -505,10 +505,16 @@ func PlansSummary(root Root, w io.Writer) {
 			done, fly, queued, blocked, failed = done+a.Done, fly+a.Inflight, queued+a.Queued, blocked+a.Blocked, failed+a.Failed+a.Skipped+a.Parked
 		}
 		state := "running"
-		if s.Complete {
+		switch {
+		case s.Complete:
 			state = "complete"
+		case s.Removed:
+			state = "removed"
+		case s.Paused:
+			state = "paused"
 		}
-		fmt.Fprintf(w, "plan %-24s %-8s done %d, in flight %d, queued %d, blocked %d, failed %d (lanes plan status %s)\n", n, state, done, fly, queued, blocked, failed, n)
+		fmt.Fprintf(w, "plan %-24s %-8s nodes done %d, in flight %d, queued %d, blocked %d, failed %d; items %d/%d done, %d parked, %d alarm(s) (lanes plan status %s)\n",
+			n, state, done, fly, queued, blocked, failed, s.Items.Done, s.Items.Total, s.Items.Parked, len(s.Alarms), n)
 	}
 }
 
