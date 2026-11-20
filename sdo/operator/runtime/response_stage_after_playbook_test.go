@@ -288,3 +288,19 @@ func TestUserTestJoiningDuringTheWaitHoldsRecoveryAndDispatchesTheAgent(t *testi
 	}
 }
 
+
+// When the opening alerts and a joined user test have all cleared, the whole
+// alert set is clear and the agent is not dispatched.
+func TestWholeAlertSetClearedAfterAPlaybookDispatchesNoAgent(t *testing.T) {
+	stage, state, _, _ := settlingStage(t, settlingCase{healAfter: 20 * time.Second, traffic: &settlingTraffic{}, churnUntil: time.Second, churnJoined: true})
+	agent := &recordingStage{}
+	if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, agent}); err != nil {
+		t.Fatal(err)
+	}
+	if !playbookWrote(state.PriorStages[0]) {
+		t.Fatalf("the stage must apply the playbook: %v", state.PriorStages[0])
+	}
+	if agent.dispatched {
+		t.Fatalf("the agent ran though the whole alert set cleared: %v", state.Findings)
+	}
+}
