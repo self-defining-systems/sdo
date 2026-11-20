@@ -23,6 +23,17 @@ func fakeTools(t *testing.T, dir string, tools ...string) {
 	}
 }
 
+// stubPlatformTools makes the platform tools (kubectl, docker, ip, kind) resolve for a fixture host without depending on
+// the machine the tests run on: stub programs in a temp directory, appended to the end of PATH so that a real or fake
+// tool earlier on it still wins. Fixtures that add specs to a local host call it, so the tools check passes for the
+// reason the fixture says (the stubs), not because the dev host or the CI runner happens to have the tools.
+func stubPlatformTools(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	fakeTools(t, dir, "kubectl", "docker", "ip", "kind")
+	t.Setenv("PATH", os.Getenv("PATH")+string(os.PathListSeparator)+dir)
+}
+
 func runProbe(t *testing.T, script, home string) string {
 	t.Helper()
 	cmd := exec.Command("sh", "-c", script)
