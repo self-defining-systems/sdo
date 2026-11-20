@@ -8,6 +8,8 @@ key/assignment references; only the executor resolves ConfigMap bytes into priva
 Never read Kubernetes Secret data or include credential values in argv or recordings. Environment-backed authentication headers use `HeaderEnv`; `Bearer`
 is an environment reference. Plain `Headers` carry nonsecret values only.
 
+A `Mitigate` runs while users are failing: prefer the most direct action that restores service, and check how long it takes to apply.
+
 ## Kubernetes objects and subresources
 
 Object edits in a plan write atomically per object; use strategic patches for keyed lists (JSON merge replacement is refused).
@@ -59,7 +61,7 @@ input for copy. Output and stderr are discarded; commands express observations a
 exit codes. Resolve credentials inside the container, including Secret-backed env.
 
 `EnsureExec{Observe, Ensure, Expect}` observes first, runs ensure only when the
-exit code differs, and observes again. `Expect` defaults to zero. Diagnosis uses
+exit code differs; a successful ensure is not observed again (it can cost a full application boot) `Expect` defaults to zero. Diagnosis uses
 `ReadView.Observe(ExternalOperation{Exec: &command})`. Choose an observation that
 actually distinguishes the state the repair changes; a successful process alone
 is insufficient evidence of repair.

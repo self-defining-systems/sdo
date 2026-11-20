@@ -122,10 +122,19 @@ type ExternalEffect struct {
 	Before   int32             `json:"before"`
 	After    int32             `json:"after"`
 	ExitCode int32             `json:"exit_code"`
+	// AfterObserved is false when the controller did not run Observe again after
+	// a successful Ensure, so After is the wanted code, assumed. A command can cost
+	// a full application boot; the post-apply diagnosis and the alerts, not a
+	// repeat of the command, decide whether the state holds.
+	AfterObserved bool `json:"after_observed,omitempty"`
+	// ApplyMs is how long the observe and ensure took in milliseconds, the
+	// action's cost while users fail. Replay reports the recorded value.
+	ApplyMs int64 `json:"apply_ms,omitempty"`
 }
 
 // EnsureExec runs Observe in a Pod and, unless it already exits with Expect,
-// runs Ensure and observes again. Effects are irreversible.
+// runs Ensure. A successful Ensure is not observed again: the post-apply
+// diagnosis and the alerts verify the state. Effects are irreversible.
 type EnsureExec struct {
 	Observe Command
 	Ensure  Command
@@ -136,7 +145,7 @@ type EnsureExec struct {
 func (EnsureExec) action() {}
 
 // EnsureHTTP sends Observe and, unless it already returns Expect, sends Ensure
-// and observes again. Effects are irreversible.
+// and does not observe again. Effects are irreversible.
 type EnsureHTTP struct {
 	Observe HTTPRequest
 	Ensure  HTTPRequest

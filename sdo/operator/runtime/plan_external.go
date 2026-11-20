@@ -104,6 +104,7 @@ func (e PlanExecutor) externalStep(ctx context.Context, action program.Action, d
 	if dry {
 		return r, nil
 	}
+	started := e.clock()()
 	before, err := client.RunOperation(ctx, observe)
 	if err != nil {
 		return r, fmt.Errorf("external observation unavailable")
@@ -133,9 +134,16 @@ func (e PlanExecutor) externalStep(ctx context.Context, action program.Action, d
 		return r, fmt.Errorf("external operation outcome unknown")
 	}
 	r.ActionReports[0].ExitCode = &code
-	after, err := client.RunOperation(ctx, observe)
-	if err != nil {
-		return r, fmt.Errorf("external result observation unavailable")
+	// A successful ensure is not observed again: each run can cost a full
+	// application boot while users fail, and the post-apply diagnosis and the
+	// alerts verify the state. A failed ensure is observed to record what it left.
+	after, afterObserved := expect, false
+	if code != 0 {
+		after, err = client.RunOperation(ctx, observe)
+		if err != nil {
+			return r, fmt.Errorf("external result observation unavailable")
+		}
+		afterObserved = true
 	}
 	for ref, uid := range identities {
 		pod, getErr := e.Client.Get(ctx, ref)
@@ -143,7 +151,7 @@ func (e PlanExecutor) externalStep(ctx context.Context, action program.Action, d
 			return r, fmt.Errorf("operation Pod identity changed")
 		}
 	}
-	effect := program.ExternalEffect{Observe: observe, Ensure: ensure, Before: before, After: after, ExitCode: code}
+	effect := program.ExternalEffect{Observe: observe, Ensure: ensure, Before: before, After: after, ExitCode: code, AfterObserved: afterObserved, ApplyMs: e.clock()().Sub(started).Milliseconds()}
 	r.ActionReports[0].ExternalEffect = &effect
 	if e.RecordPrimitive != nil {
 		// The controller records the measured transition; authored expected state is
