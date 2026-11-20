@@ -16,7 +16,10 @@ how often, and against which SLO.
 
 The Engine owns everything about when and how much: scheduling, arrival,
 rate and concurrency caps, timeouts, latency measurement and the random seed
-of every iteration, so a failing probe replays exactly. Generators only build
+of every iteration. Within one run an iteration replays exactly; a restarted
+prober counts from 0 again, so a per-run nonce keeps its values different from
+the last run's. Name created objects with Unique(prefix) (fixed-width token),
+never a constant or the iteration number alone. Generators only build
 requests and judge responses. The accepted memory host runs the engine; the
 controller runtime hands its observations to detectors built with NewDetector,
 which judge each scenario against a sliding-window SLO. The default SLO bounds
@@ -206,6 +209,9 @@ const StateNow = "sdo.now"
     so replaying an iteration with that time rebuilds the same requests.
     Build reads the time from here and never from a clock.
 
+const UniqueWidth = 16
+    UniqueWidth is the number of hex digits Unique appends.
+
 
 VARIABLES
 
@@ -223,10 +229,4 @@ FUNCTIONS
 func BuildHTTPRequest(ctx context.Context, baseURL string, request Request) (*http.Request, error)
     BuildHTTPRequest renders request against baseURL (scheme://host:port) with a
     canonical, sorted query string and the synthetic marker header.
-
-func CheckCatalog(ctx context.Context, catalog Catalog) []error
-    CheckCatalog validates the catalog and checks every scenario detects its
-    required and declared fault classes. Generated tests call it so a generator
-    that cannot tell a broken application from a healthy one never reaches the
-    controller.
 ```

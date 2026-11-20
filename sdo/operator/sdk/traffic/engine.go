@@ -130,6 +130,9 @@ type Engine struct {
 	client    Doer
 	baseURL   func(Target) string
 	clock     Clock
+	// nonce is this engine's run nonce, mixed into every iteration's random
+	// source so a restarted prober never replays the previous run's values.
+	nonce uint64
 
 	// setups records, per scenario, the setup steps that succeeded; engines
 	// that ShareSetup use one record.
@@ -253,6 +256,7 @@ func NewEngine(workload Workload, catalog Catalog, client Doer, baseURL func(Tar
 		scenarios[selected.ID] = scenario
 	}
 	return &Engine{
+		nonce:    newRunNonce(clock.Now()),
 		workload: workload, scenarios: scenarios, plan: workload.SamplingPlan(),
 		client: client, baseURL: baseURL, clock: clock, setups: &setupRecord{progress: map[string]setupProgress{}},
 	}, nil
@@ -310,10 +314,23 @@ func (e *Engine) IterationOf(scenario string, from uint64) (uint64, bool) {
 // raised when its scenarios' sampling floor needs more.
 func (e *Engine) Rate() float64 { return e.plan.Rate }
 
-// Rand is the random source of iteration: the same workload seed and
-// iteration always yield the same values, so a failing probe replays exactly.
+// Rand is the random source of iteration: within one engine the same
+// iteration always yields the same values, so a failing probe replays, and
+// distinct iterations yield distinct ones. The engine's run nonce is part of
+// the source, so a restarted prober (whose iterations count from 0 again)
+// draws different values than the run before it.
 func (e *Engine) Rand(iteration uint64) *rand.Rand {
-	return rand.New(rand.NewPCG(e.workload.Seed, iteration))
+	return rand.New(rand.NewPCG(e.workload.Seed^e.nonce, iteration))
+}
+
+// UseNonce fixes the run nonce, for tests that need values reproducible
+// across engines. Production engines keep the random nonce NewEngine draws.
+func (e *Engine) UseNonce(nonce uint64) { e.nonce = nonce }
+
+// newRunNonce draws a nonce from the start time and random bits; it is
+// persisted nowhere, so every engine start gets a new one.
+func newRunNonce(start time.Time) uint64 {
+	return uint64(start.UnixNano())*0x9e3779b97f4a7c15 ^ clockio.RandomBits()
 }
 
 // Plan builds, without sending, the requests of iteration assuming every

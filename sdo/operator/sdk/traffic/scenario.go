@@ -9,8 +9,11 @@
 //
 // The Engine owns everything about when and how much: scheduling, arrival,
 // rate and concurrency caps, timeouts, latency measurement and the random
-// seed of every iteration, so a failing probe replays exactly. Generators only
-// build requests and judge responses. The accepted memory host runs the
+// seed of every iteration. Within one run an iteration replays exactly; a
+// restarted prober counts from 0 again, so a per-run nonce keeps its values
+// different from the last run's. Name created objects with Unique(prefix)
+// (fixed-width token), never a constant or the iteration number alone.
+// Generators only build requests and judge responses. The accepted memory host runs the
 // engine; the controller runtime hands its observations to detectors built
 // with NewDetector, which judge each scenario against a sliding-window SLO.
 // The default SLO bounds median (p50) latency. Timeouts contribute to rate
