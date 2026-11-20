@@ -673,6 +673,14 @@ def test_a_source_branch_setting_becomes_the_remote_sdo_deploys_from(tmp_path: P
     assert plain.source_branch is None
 
 
+def test_source_branch_commands_can_name_the_small_script_image(tmp_path: Path) -> None:
+    values = hooks.source_branch_values(
+        Path("/k"), "ns1", "ns1-sdo", {"controller": "ctl:t", "script": "scr:t"}, tmp_path
+    )
+    command = SourceBranch("sdo-source", "run --image {script_image} --big {image}", "true").command("up", values)
+    assert command == "run --image scr:t --big ctl:t"
+
+
 def test_a_source_branch_cannot_be_main_and_up_must_print_its_remote(tmp_path: Path) -> None:
     root = _baseline_dir(tmp_path)
     with pytest.raises(HookError, match="main or master"):

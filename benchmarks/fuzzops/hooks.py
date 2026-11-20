@@ -351,9 +351,9 @@ class SourceBranch:
 
     ``up`` creates the remote before SDO is installed and prints one JSON line with its ``url`` and ``ref``; ``down``
     removes it at teardown. Both are shell commands of the benchmark with ``{kubeconfig}``, ``{namespace}``,
-    ``{control}``, ``{ref}``, ``{image}`` (the controller image) and ``{repository}`` (the accepted repository)
-    filled in. The hooks know nothing else of the remote: they pass its URL and branch to SDO and keep the line as
-    ``$BENCH_LANE_DIR/source-branch.json`` for the workload that pushes.
+    ``{control}``, ``{ref}``, ``{image}`` (the controller image), ``{script_image}`` (the small script-tools image)
+    and ``{repository}`` (the accepted repository) filled in. The hooks know nothing else of the remote: they pass
+    its URL and branch to SDO and keep the line as ``$BENCH_LANE_DIR/source-branch.json`` for the workload that pushes.
     """
 
     ref: str
@@ -1122,7 +1122,7 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     # (g2) the remote branch SDO deploys from, when the experiment pushes engineers' commits to one
     branch_url: tuple[str, str] | None = None
     if block.source_branch is not None:
-        values = source_branch_values(kubeconfig, namespace, baseline.control, image["controller"], lane_dir / "app")
+        values = source_branch_values(kubeconfig, namespace, baseline.control, image, lane_dir / "app")
         _run(["sh", "-c", block.source_branch.command("down", values)], "source branch down", 300)
         branch_url = source_branch_up(block.source_branch, values, lane_dir)
         out(f"source branch {branch_url[1]} at {branch_url[0]}")
@@ -1675,13 +1675,16 @@ def validate(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int
 
 
 def source_branch_values(
-    kubeconfig: Path, namespace: str, control: str, image: str, repository: Path
+    kubeconfig: Path, namespace: str, control: str, image: Mapping[str, str], repository: Path
 ) -> dict[str, str]:
+    """The placeholders of ``settings.source_branch`` commands. ``image`` is the controller image (3 GB) and
+    ``script_image`` the small script-tools image, which also carries bash and git."""
     return {
         "kubeconfig": str(kubeconfig),
         "namespace": namespace,
         "control": control,
-        "image": image,
+        "image": image.get("controller", ""),
+        "script_image": image.get("script", ""),
         "repository": str(repository),
     }
 
@@ -1692,7 +1695,7 @@ def teardown(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int
     block = _operator(env) if env.get("BENCH_OPERATOR") else None
     if block is not None and block.source_branch is not None:
         values = source_branch_values(
-            Path(env["KUBECONFIG"]), _need(env, "FUZZOPS_NAMESPACE"), control_namespace(env), "", Path(".")
+            Path(env["KUBECONFIG"]), _need(env, "FUZZOPS_NAMESPACE"), control_namespace(env), {}, Path(".")
         )
         _run(["sh", "-c", block.source_branch.command("down", values)], "source branch down", 300)
         out("source branch removed")
