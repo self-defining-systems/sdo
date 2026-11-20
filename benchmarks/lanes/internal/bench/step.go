@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -451,6 +452,11 @@ func (r *stepRunner) recoverLane(ctx context.Context, p *Prepared) bool {
 	var err error
 	for {
 		code, why, err = r.call(ctx, r.laneEnv(p), nil, VerbAppReset, "recover", "--namespace", p.Namespace, "--pack", p.AppPack)
+		if errors.Is(err, ErrUnsupported) {
+			// The workload leaves nothing to undo between runs (docs/contract.md: unsupported is skipped).
+			r.interval("recover", start, true, "unsupported by the workload")
+			return true
+		}
 		if code == lanelock.ExitInvalid && err == nil {
 			r.interval("recover", start, false, "invalid: "+why)
 			r.config("fuzzops recover cannot run on pack %s (exit %d, not retried): %s", p.AppPack, code, why)
@@ -770,6 +776,11 @@ func (r *stepRunner) recordFresh(ctx context.Context, p *Prepared) bool {
 		if code, _, err = r.call(ctx, r.laneEnv(p), io.Discard, VerbAppSnapshot, "write", "--pack", p.AppPack, "--namespace", p.Namespace, "--out", file); err == nil && code == 0 {
 			return true
 		}
+		if errors.Is(err, ErrUnsupported) {
+			// No fingerprint: a later reuse finds none and rebuilds the app copy (appMatchesFresh).
+			r.logf("app-snapshot write unsupported by the workload: no fingerprint of the fresh copy")
+			return true
+		}
 		time.Sleep(r.poll)
 	}
 	r.fail("fingerprint of the fresh app copy: exit %d %v", code, errOrEmpty(err))
@@ -905,6 +916,10 @@ func (r *stepRunner) makeCluster(ctx context.Context, p *Prepared) bool {
 	start := time.Now()
 	r.phase(PhaseImages, "")
 	code, _, err := r.call(ctx, r.laneEnv(p), nil, VerbAppUp, "images", "--pack", p.AppPack, "--cluster", s.Lane)
+	if errors.Is(err, ErrUnsupported) {
+		r.interval("images", start, true, "unsupported by the workload")
+		return true
+	}
 	r.interval("images", start, err == nil && code == 0, fmt.Sprintf("exit %d %s", code, errOrEmpty(err)))
 	if err != nil || code != 0 {
 		r.fail("app images: exit %d %s", code, errOrEmpty(err))
