@@ -64,6 +64,8 @@ type Host struct {
 	Lanes HostLanes `json:"lanes,omitempty"`
 	// Reserve is the host's lane block, applied by `lanes host reserve` through the root helper (reserve.go).
 	Reserve *HostReserve `json:"reserve,omitempty"`
+	// CrashLoop tunes the crash-loop detector (crashloop.go); the defaults suit every host.
+	CrashLoop CrashLoopConf `json:"crashloop,omitempty"`
 	// Isolation "one-way-ok" lets lanes run on the host with no active reservation; its rows are flagged.
 	Isolation string `json:"isolation,omitempty"`
 }
@@ -238,6 +240,9 @@ func (inv Inventory) Validate() error {
 			}
 		default:
 			errs = append(errs, fmt.Sprintf("host %s: provider %q: want kind or vcluster", name, h.Provider))
+		}
+		for _, e := range h.CrashLoop.validate() {
+			errs = append(errs, fmt.Sprintf("host %s: %s", name, e))
 		}
 		for _, e := range h.Lanes.validate() {
 			errs = append(errs, fmt.Sprintf("host %s: %s", name, e))

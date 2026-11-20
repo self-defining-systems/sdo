@@ -26,3 +26,30 @@ Each lane declares its memory (`lane.memory` of the spec, default 12Gi for kind-
 
 Tests: `TestAllocatorMemoryBudget`, `TestMemorySharesAddUpToTheLaneTotal`, `TestShimAddsLimitsToKindNodes`,
 `TestKindLaneUpChecksTheMemoryLimitIsApplied`.
+
+## Churn budget
+
+Every cluster create, delete or reset takes a network namespace under the kernel's global lock. `max_builds` of a host is
+the budget for all of them together, not only for builds: a build, a release (which resets the lane to its golden copy
+or deletes its cluster), an incident reset and a recover each count as one churn step. A new build, release or reset
+waits while the host runs `max_builds` of them (`lanes status` shows the count as `builds n/N`). A recover, the cleanup
+of a step that died, counts but is never held back: what a dead step left must be undone. Test:
+`TestChurnBudgetCoversReleasesAndResets`.
+
+## Crash-loop detector
+
+Pods killed at their memory limit restart again and again, and every restart creates a container and a network
+namespace. Once per tick the manager makes one bounded read per lane with a cluster (`kubectl get pods -A -o json`,
+15s, over the host's transport). A lane whose containers restarted more than `crashloop.restarts` times (default 10)
+within `crashloop.window` (default 10m) is crash-looping: it gets no new build or run (the reason is its idle reason in
+`lanes status`) and the alarm `lane-crash-looping` fires once. Nothing is killed; release, recover and reset still run.
+Restarts are summed between consecutive readings, so history before the first reading, a deleted and recreated pod and
+a pod that merely exists with old restarts do not count. A failed read is no reading: it neither marks nor clears the
+lane. The lane is released as the restarts age out of the window. Tests: `TestCrashTrackerCountsRestartsInTheWindowOnly`,
+`TestCrashLoopingLaneGetsNoNewSteps`.
+
+```yaml
+hosts:
+  spokane1:
+    crashloop: {restarts: 10, window: 10m}
+```
