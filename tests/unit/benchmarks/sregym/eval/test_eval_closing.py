@@ -339,3 +339,51 @@ def test_row_json_names_why_its_cost_is_pending_and_the_sealed_row_carries_the_c
     assert sealed["status"] == row.status
     assert row.online.usd  # the sealed row has a positive cost and so needs no reason
     assert row.cost_note is None
+
+
+def test_sealed_row_recovers_responder_cost_when_the_final_sink_is_missing(tmp_path: Path) -> None:
+    from dataclasses import replace
+    from hashlib import sha256
+
+    from benchmarks.sregym.eval.cell import Accounting, ArmResult
+    from benchmarks.sregym.eval.plan import Cell
+
+    class MissingAccountant:
+        def account(self, cell: Cell, directory: Path, result: ArmResult | None) -> Accounting:
+            return Accounting(TokenRow(), TokenRow())
+
+    clock = Clock()
+    config = make_config(tmp_path)
+    drainer = DrainingExecutor(clock, closing_status="not_drained")
+    ctx, _ = make_context(config, clock, executor=drainer)
+    ctx = replace(ctx, accountant=MissingAccountant())
+    cell = first(config, "pass1")
+    sessions = cell.directory(config) / "artifacts/sdo_runtime/sessions"
+    current = sessions / sha256(b"incident-1").hexdigest()[:32]
+    current.mkdir(parents=True)
+    for root in (current, sessions / "unrelated"):
+        projects = root / "claude/projects/example"
+        projects.mkdir(parents=True)
+        frames = [
+            {
+                "type": "assistant",
+                "timestamp": f"2026-01-01T00:00:{second:02d}Z",
+                "message": {
+                    "id": f"msg-{second}",
+                    "model": "claude-opus-5-5",
+                    "usage": {"input_tokens": 1000, "output_tokens": 100},
+                },
+            }
+            for second in (1, 3)
+        ]
+        (projects / "session.jsonl").write_text("".join(json.dumps(frame) + "\n" for frame in frames))
+    (current / "claude-turns.jsonl").write_text(
+        json.dumps({"role": "reflection", "event": "start", "recorded_at_epoch": 1767225602}) + "\n"
+    )
+
+    row = run_cell(cell, ctx, "hotel-lane")
+    assert row.status == "graded"
+    assert row.closing_status == "not_drained"
+    assert row.online.requests == 1
+    assert row.online.usd == pytest.approx(0.006)
+    assert row.cost_note is None

@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from benchmarks.sregym.analysis.accounting import recover_sdo_responder_spend
 from benchmarks.sregym.eval.closing import (
     CLOSING_FILE,
     CLOSING_SCHEMA,
@@ -312,6 +313,18 @@ def run_cell(cell: Cell, ctx: CellContext, lane_id: str) -> ResultRow:
     if drains and lane is not None and row.status == "graded":
         try:
             accounting = ctx.accountant.account(cell, directory, result)
+            if cell.arm == "sdo" and closing.incident_id and not accounting.online.usd:
+                recovered = recover_sdo_responder_spend(directory, closing.incident_id)
+                if recovered is not None:
+                    accounting = dataclasses.replace(
+                        accounting,
+                        online=TokenRow(**recovered.token_row()),
+                        detail={
+                            **accounting.detail,
+                            "online_source": "runtime-export",
+                            "online_partial": recovered.partial,
+                        },
+                    )
             gate = ctx.gate.check(cell, directory)
         except Exception as exc:
             gate = GateVerdict(gradable=False, reasons=(f"evidence gate: {type(exc).__name__}: {exc}",))

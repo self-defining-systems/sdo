@@ -20,6 +20,7 @@ turn needs no special handling. Spend is a pure function of the files, so it can
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field, replace
@@ -45,6 +46,7 @@ __all__ = [
     "epoch",
     "ledger_of",
     "normalize_model",
+    "recover_sdo_responder_spend",
     "require_price",
     "spend_of",
     "stream_ledger",
@@ -299,6 +301,31 @@ def account_sdo_cell(evidence: Path, pricing: PricingTable | None = None) -> Cel
     for directory in sorted(p for p in tasks.iterdir() if p.is_dir()) if tasks.is_dir() else []:
         lifecycle += spend_of(ledger_of(transcript_files(directory / "claude")), pricing)
     return CellAccounting(online, offline, roles, lifecycle, None, tuple(notes))
+
+
+def recover_sdo_responder_spend(directory: Path, incident_id: str) -> Spend | None:
+    """Price the incident-bound runtime export when the final sink copy was interrupted."""
+    key = hashlib.sha256(incident_id.encode()).hexdigest()[:32]
+    session = directory / "artifacts" / "sdo_runtime" / "sessions" / key
+    files = transcript_files(session / "claude")
+    if not (files.main or files.sidechains):
+        return None
+    # A resumed closing turn shares the responder's transcript. Its journal start is
+    # available in the early runtime export even when the final ledger was lost.
+    closing_starts = (
+        stamp
+        for event in json_records(session / "claude-turns.jsonl")
+        if event.get("event") == "start"
+        and event.get("role") in ("closing", "reflection")
+        and isinstance(stamp := event.get("recorded_at_epoch"), (int, float))
+    )
+    cut = min(closing_starts, default=None)
+    if cut is None:
+        checkpoint = _ledger_json(directory / "fastloop" / "incidents.online" / "000000.json")
+        if checkpoint.get("incident_id") == incident_id:
+            cut = epoch(checkpoint.get("online_ended_at"))
+    spend = spend_of(ledger_of(files), None, end=cut)
+    return replace(spend, partial=True) if spend.requests else None
 
 
 def account_vanilla_cell(directory: Path, pricing: PricingTable | None = None) -> CellAccounting:

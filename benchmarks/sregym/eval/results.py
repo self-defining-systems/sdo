@@ -36,6 +36,8 @@ def cost_note(online: TokenRow, *, resolution_path: str | None, no_page: bool, p
         return "pending: the sealed row carries the cost once the closing turn has drained"
     if online.usd is not None and online.usd > 0:
         return None
+    if online.requests or online.uncached_input or online.cache_read or online.cache_write or online.output:
+        return "cost-unavailable: responder usage was observed without priced USD"
     if resolution_path == "deterministic":
         return "playbook-applied: the automatic stage fixed it, no agent turn"
     if no_page:
