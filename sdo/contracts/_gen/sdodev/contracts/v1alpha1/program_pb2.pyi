@@ -524,7 +524,7 @@ class RecoveryWait(_message.Message):
     def __init__(self, exit_reason: _Optional[_Union[RecoveryWait.ExitReason, str]] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ...) -> None: ...
 
 class PlanApplication(_message.Message):
-    __slots__ = ("plan", "applied", "dry_run", "verification", "application_id", "program_ids", "error", "duration", "rolled_back", "rollback_error", "actions_applied", "started_at", "completed_at", "verification_completed", "verification_passed", "final_equivalence_verified", "object_effects", "action_reports", "rollout_pending", "recovery_wait", "final_verification_basis", "settlement_rejection_reason", "running_commit", "running_dirty")
+    __slots__ = ("plan", "applied", "dry_run", "verification", "application_id", "program_ids", "error", "duration", "rolled_back", "rollback_error", "actions_applied", "started_at", "completed_at", "verification_completed", "verification_passed", "final_equivalence_verified", "object_effects", "action_reports", "rollout_pending", "recovery_wait", "final_verification_basis", "settlement_rejection_reason", "running_commit", "running_dirty", "effect_confirmation")
     PLAN_FIELD_NUMBER: _ClassVar[int]
     APPLIED_FIELD_NUMBER: _ClassVar[int]
     DRY_RUN_FIELD_NUMBER: _ClassVar[int]
@@ -549,6 +549,7 @@ class PlanApplication(_message.Message):
     SETTLEMENT_REJECTION_REASON_FIELD_NUMBER: _ClassVar[int]
     RUNNING_COMMIT_FIELD_NUMBER: _ClassVar[int]
     RUNNING_DIRTY_FIELD_NUMBER: _ClassVar[int]
+    EFFECT_CONFIRMATION_FIELD_NUMBER: _ClassVar[int]
     plan: Plan
     applied: bool
     dry_run: bool
@@ -573,7 +574,30 @@ class PlanApplication(_message.Message):
     settlement_rejection_reason: SettlementRejectionReason
     running_commit: str
     running_dirty: bool
-    def __init__(self, plan: _Optional[_Union[Plan, _Mapping]] = ..., applied: _Optional[bool] = ..., dry_run: _Optional[bool] = ..., verification: _Optional[_Union[Verdict, _Mapping]] = ..., application_id: _Optional[str] = ..., program_ids: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., rolled_back: _Optional[bool] = ..., rollback_error: _Optional[str] = ..., actions_applied: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verification_completed: _Optional[bool] = ..., verification_passed: _Optional[bool] = ..., final_equivalence_verified: _Optional[bool] = ..., object_effects: _Optional[_Iterable[_Union[PlanObjectEffect, _Mapping]]] = ..., action_reports: _Optional[_Iterable[_Union[ActionReport, _Mapping]]] = ..., rollout_pending: _Optional[_Union[RolloutPending, _Mapping]] = ..., recovery_wait: _Optional[_Union[RecoveryWait, _Mapping]] = ..., final_verification_basis: _Optional[str] = ..., settlement_rejection_reason: _Optional[_Union[SettlementRejectionReason, str]] = ..., running_commit: _Optional[str] = ..., running_dirty: _Optional[bool] = ...) -> None: ...
+    effect_confirmation: EffectConfirmation
+    def __init__(self, plan: _Optional[_Union[Plan, _Mapping]] = ..., applied: _Optional[bool] = ..., dry_run: _Optional[bool] = ..., verification: _Optional[_Union[Verdict, _Mapping]] = ..., application_id: _Optional[str] = ..., program_ids: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., rolled_back: _Optional[bool] = ..., rollback_error: _Optional[str] = ..., actions_applied: _Optional[_Iterable[_Union[Action, _Mapping]]] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., verification_completed: _Optional[bool] = ..., verification_passed: _Optional[bool] = ..., final_equivalence_verified: _Optional[bool] = ..., object_effects: _Optional[_Iterable[_Union[PlanObjectEffect, _Mapping]]] = ..., action_reports: _Optional[_Iterable[_Union[ActionReport, _Mapping]]] = ..., rollout_pending: _Optional[_Union[RolloutPending, _Mapping]] = ..., recovery_wait: _Optional[_Union[RecoveryWait, _Mapping]] = ..., final_verification_basis: _Optional[str] = ..., settlement_rejection_reason: _Optional[_Union[SettlementRejectionReason, str]] = ..., running_commit: _Optional[str] = ..., running_dirty: _Optional[bool] = ..., effect_confirmation: _Optional[_Union[EffectConfirmation, _Mapping]] = ...) -> None: ...
+
+class EffectConfirmation(_message.Message):
+    __slots__ = ("reason", "mismatches", "rollout_status")
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    MISMATCHES_FIELD_NUMBER: _ClassVar[int]
+    ROLLOUT_STATUS_FIELD_NUMBER: _ClassVar[int]
+    reason: str
+    mismatches: _containers.RepeatedCompositeFieldContainer[EffectFieldMismatch]
+    rollout_status: str
+    def __init__(self, reason: _Optional[str] = ..., mismatches: _Optional[_Iterable[_Union[EffectFieldMismatch, _Mapping]]] = ..., rollout_status: _Optional[str] = ...) -> None: ...
+
+class EffectFieldMismatch(_message.Message):
+    __slots__ = ("ref", "path", "expected", "observed")
+    REF_FIELD_NUMBER: _ClassVar[int]
+    PATH_FIELD_NUMBER: _ClassVar[int]
+    EXPECTED_FIELD_NUMBER: _ClassVar[int]
+    OBSERVED_FIELD_NUMBER: _ClassVar[int]
+    ref: _common_pb2.ObjectRef
+    path: str
+    expected: str
+    observed: str
+    def __init__(self, ref: _Optional[_Union[_common_pb2.ObjectRef, _Mapping]] = ..., path: _Optional[str] = ..., expected: _Optional[str] = ..., observed: _Optional[str] = ...) -> None: ...
 
 class ProgramToolCall(_message.Message):
     __slots__ = ("command", "at", "request_json", "response_json", "error", "summary")

@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 
 	jsonpatch "github.com/evanphx/json-patch"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/planwire"
 	"sdo.dev/operator/rendered"
 	"sdo.dev/operator/sdk"
@@ -157,8 +159,23 @@ func finalPlanFieldsMatch(preview PlanApplicationResult, getFinal func(sdk.Objec
 }
 
 func finalPlanDesiredFieldsMatch(preview PlanApplicationResult, getFinal func(sdk.ObjectRef) *unstructured.Unstructured, requireChange bool) bool {
+	return explainPlanDesiredFields(preview, getFinal, requireChange).Matched
+}
+
+// planFieldsExplanation says why the exact-field check passed or failed:
+// Reason names a failure before any comparison, Mismatches the compared fields
+// that differ. Values are redacted for Secrets.
+type planFieldsExplanation struct {
+	Matched    bool
+	Reason     string
+	Mismatches []*contracts.EffectFieldMismatch
+}
+
+func explainPlanDesiredFields(preview PlanApplicationResult, getFinal func(sdk.ObjectRef) *unstructured.Unstructured, requireChange bool) planFieldsExplanation {
+	failed := func(reason string) planFieldsExplanation { return planFieldsExplanation{Reason: reason} }
+	var mismatches []*contracts.EffectFieldMismatch
 	if len(preview.PreImages) == 0 {
-		return false
+		return failed("no pre-image recorded for the written objects")
 	}
 	for _, preImage := range preview.PreImages {
 		// A created object has no pre-image: compare the final object with the
@@ -178,31 +195,31 @@ func finalPlanDesiredFieldsMatch(preview PlanApplicationResult, getFinal func(sd
 			start = preImage.Object
 		}
 		if start == nil {
-			return false
+			return failed(fmt.Sprintf("no starting object for %s", preImage.Ref.Name))
 		}
 		before, err := json.Marshal(start.Object)
 		if err != nil {
-			return false
+			return failed("pre-image not encodable: " + err.Error())
 		}
 		expected := before
 		for _, patch := range preview.Patches {
 			if patch.Ref == preImage.Ref && patch.Operation != "create" {
 				expected, err = jsonpatch.MergePatch(expected, patch.Patch)
 				if err != nil {
-					return false
+					return failed("recorded patch not mergeable: " + err.Error())
 				}
 			}
 		}
 		want := new(unstructured.Unstructured)
 		if err := json.Unmarshal(expected, &want.Object); err != nil {
-			return false
+			return failed("expected object not decodable: " + err.Error())
 		}
 		current := getFinal(preImage.Ref)
 		if current == nil || !samePlanRef(current, preImage.Ref) {
-			return false
+			return failed(fmt.Sprintf("%s/%s unreadable at settlement", preImage.Ref.Kind, preImage.Ref.Name))
 		}
 		if !preImage.Absent && preImage.Object != nil && preImage.Object.GetUID() != "" && current.GetUID() != preImage.Object.GetUID() {
-			return false
+			return failed(fmt.Sprintf("%s/%s was replaced: uid %s, now %s", preImage.Ref.Kind, preImage.Ref.Name, preImage.Object.GetUID(), current.GetUID()))
 		}
 		owner := baseline
 		if len(owner.GetManagedFields()) == 0 {
@@ -242,12 +259,66 @@ func finalPlanDesiredFieldsMatch(preview PlanApplicationResult, getFinal func(sd
 			}
 		}
 		expectedFields := planComparableFields(want, want, owner, changed)
-		if (requireChange && reflect.DeepEqual(planComparableFields(baseline, want, owner, changed), expectedFields)) ||
-			!reflect.DeepEqual(planComparableFields(current, want, owner, changed), expectedFields) {
-			return false
+		observedFields := planComparableFields(current, want, owner, changed)
+		if requireChange && reflect.DeepEqual(planComparableFields(baseline, want, owner, changed), expectedFields) {
+			return failed(fmt.Sprintf("%s/%s: the plan changed no compared field", preImage.Ref.Kind, preImage.Ref.Name))
+		}
+		if !reflect.DeepEqual(observedFields, expectedFields) {
+			mismatches = append(mismatches, planFieldMismatches(preImage.Ref, expectedFields, observedFields)...)
 		}
 	}
-	return true
+	if len(mismatches) > 0 {
+		return planFieldsExplanation{Mismatches: mismatches}
+	}
+	return planFieldsExplanation{Matched: true}
+}
+
+// planFieldMismatches lists every compared path whose observed value differs
+// from the expected one, in path order, bounded so an outcome stays small.
+func planFieldMismatches(ref sdk.ObjectRef, expected, observed map[string]any) []*contracts.EffectFieldMismatch {
+	const limit = 50
+	paths := map[string]bool{}
+	for path := range expected {
+		paths[path] = true
+	}
+	for path := range observed {
+		paths[path] = true
+	}
+	sorted := make([]string, 0, len(paths))
+	for path := range paths {
+		sorted = append(sorted, path)
+	}
+	slices.Sort(sorted)
+	secret := ref.Kind == "Secret"
+	var out []*contracts.EffectFieldMismatch
+	for _, path := range sorted {
+		want, have := expected[path], observed[path]
+		if planValuesEqual(want, have) {
+			continue
+		}
+		if len(out) == limit {
+			break
+		}
+		out = append(out, &contracts.EffectFieldMismatch{Ref: planRefProto(ref), Path: path, Expected: renderMismatchValue(path, want, secret), Observed: renderMismatchValue(path, have, secret)})
+	}
+	return out
+}
+
+func renderMismatchValue(path string, value any, secret bool) string {
+	if value == nil {
+		return "<absent>"
+	}
+	if secret && (strings.HasPrefix(path, "data.") || strings.HasPrefix(path, "stringData.") || strings.HasPrefix(path, "binaryData.")) {
+		return "<redacted sha256:" + digestJSON(value) + ">"
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "<unencodable>"
+	}
+	if len(encoded) > 200 {
+		return string(encoded[:200]) + "..."
+	}
+	return string(encoded)
 }
 
 // Project both sides onto declared deployer-owned fields and explicit writes. This

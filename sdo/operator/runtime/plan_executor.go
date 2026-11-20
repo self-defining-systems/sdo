@@ -96,6 +96,7 @@ type PlanApplicationResult struct {
 	VerificationPassed        bool
 	VerificationCompleted     bool
 	RolloutPending            *contracts.RolloutPending
+	EffectConfirmation        *contracts.EffectConfirmation
 	FinalEquivalenceVerified  *bool
 	FinalVerificationBasis    string
 	SettlementRejectionReason contracts.SettlementRejectionReason

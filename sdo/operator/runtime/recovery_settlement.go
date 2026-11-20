@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/planwire"
@@ -73,6 +74,7 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 	for i := range applications {
 		knownApplications[applications[i].ID] = true
 		applications[i].Result.SettlementRejectionReason = contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED
+		applications[i].Result.EffectConfirmation = nil
 	}
 	for _, stage := range stages {
 		for _, attempt := range stage.Mitigations {
@@ -176,7 +178,11 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 				// script) leaves no final object fields to compare; it is proved by
 				// its own success evidence and the observed transition instead.
 				nonObject := planwire.HasNonObjectEffect(app.Result.Plan.Actions)
-				exact := !nonObject && l.recoveryPlanFieldsMatch(app.Result, getFinal, func(ref sdk.ObjectRef) bool { getFinal(ref); return apierrors.IsNotFound(readErrors[ref]) })
+				var explanation planFieldsExplanation
+				if !nonObject {
+					explanation = l.explainRecoveryPlanFields(app.Result, getFinal, func(ref sdk.ObjectRef) bool { getFinal(ref); return apierrors.IsNotFound(readErrors[ref]) })
+				}
+				exact := explanation.Matched
 				healthy := false
 				targets := append(append([]string(nil), attempt.ClearedFindingFingerprints...), attempt.RemainingFindingFingerprints...)
 				verifier := scopedMitigationVerifier(executor.Verifier, app.Result.Plan, l.mitigationIncident([]selectedPlan{{programID: attempt.PlaybookId, bindings: programBindingsState(attempt.Bindings), targetFingerprints: targets}}).Findings)
@@ -219,6 +225,18 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 				case !exact && !transition:
 					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_EFFECT_NOT_CONFIRMED)
 					attempt.Result = "rollout_failed"
+					// The apply-time error (often rollout_pending) is stale here:
+					// state what settlement actually rejected and what it saw.
+					rolloutStatus := "complete"
+					if pending != nil {
+						rolloutStatus = pending.GetReason()
+					}
+					reason := explanation.Reason
+					if nonObject {
+						reason = "non-object effect has no observed transition"
+					}
+					app.Result.EffectConfirmation = &contracts.EffectConfirmation{Reason: reason, Mismatches: explanation.Mismatches, RolloutStatus: rolloutStatus}
+					app.Error = "effect_not_confirmed: " + effectNotConfirmedText(explanation, reason)
 				}
 				attempt.Error = app.Error
 				if rolloutErr == nil && (sourceErr == nil || residualEvidence) && verdict.Result == program.NoMatch && (exact || transition) && healthy {
@@ -500,6 +518,12 @@ func recoveryApplicationSucceeded(outcome *contracts.OutcomeRecord, app *contrac
 // UID-bound delete followed by a fresh direct NotFound, never a failed GET.
 // Remaining document effects use the existing field-equivalence predicate.
 func (l *ResponderLoop) recoveryPlanFieldsMatch(result PlanApplicationResult, getFinal func(sdk.ObjectRef) *unstructured.Unstructured, absent func(sdk.ObjectRef) bool) bool {
+	return l.explainRecoveryPlanFields(result, getFinal, absent).Matched
+}
+
+// explainRecoveryPlanFields is recoveryPlanFieldsMatch with the expected and
+// observed fields of every mismatch, for the outcome.
+func (l *ResponderLoop) explainRecoveryPlanFields(result PlanApplicationResult, getFinal func(sdk.ObjectRef) *unstructured.Unstructured, absent func(sdk.ObjectRef) bool) planFieldsExplanation {
 	// Source reconciliation may already be converged while its rollout is
 	// pending. Confirm its desired fields without inventing a configuration
 	// transition; the equivalent-repair path still requires a real change.
@@ -521,7 +545,7 @@ func (l *ResponderLoop) recoveryPlanFieldsMatch(result PlanApplicationResult, ge
 		}
 	}
 	if len(result.PreImages) == 0 {
-		return false
+		return planFieldsExplanation{Reason: "no pre-image recorded for the written objects"}
 	}
 	remaining := result
 	remaining.PreImages = nil
@@ -530,7 +554,7 @@ func (l *ResponderLoop) recoveryPlanFieldsMatch(result PlanApplicationResult, ge
 		for _, effect := range result.ObjectEffects {
 			if effect.Ref == image.Ref && effect.Operation == "delete" && effect.State == "applied" && effect.Confirmed && image.Object != nil && effect.UID != "" && effect.UID == string(image.Object.GetUID()) {
 				if !absent(image.Ref) {
-					return false
+					return planFieldsExplanation{Reason: fmt.Sprintf("%s/%s was deleted but is still present", image.Ref.Kind, image.Ref.Name)}
 				}
 				deleted = true
 			}
@@ -539,7 +563,10 @@ func (l *ResponderLoop) recoveryPlanFieldsMatch(result PlanApplicationResult, ge
 			remaining.PreImages = append(remaining.PreImages, image)
 		}
 	}
-	return len(remaining.PreImages) == 0 || finalPlanDesiredFieldsMatch(remaining, getFinal, false)
+	if len(remaining.PreImages) == 0 {
+		return planFieldsExplanation{Matched: true}
+	}
+	return explainPlanDesiredFields(remaining, getFinal, false)
 }
 
 // recoveryRolloutRefs retains write/conflict scope while removing only exact
@@ -707,4 +734,12 @@ func settledApplicationCoverage(request *contracts.IncidentRequest, result *cont
 		}
 	}
 	return coverage
+}
+
+func effectNotConfirmedText(explanation planFieldsExplanation, reason string) string {
+	if len(explanation.Mismatches) == 0 {
+		return reason
+	}
+	first := explanation.Mismatches[0]
+	return fmt.Sprintf("%d field(s) differ, first %s: expected %s, observed %s", len(explanation.Mismatches), first.GetPath(), first.GetExpected(), first.GetObserved())
 }

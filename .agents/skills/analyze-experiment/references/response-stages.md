@@ -37,6 +37,10 @@ or `applied_still_matching` with post-apply NO_MATCH) and that is still in progr
 touched Deployment still rolling out, or the 90 s recovery window after the write still open; the same holds after a
 controller restart, where the write is found in the restored applications); the earlier attempt keeps settlement credit. Before this
 rule, a second program restarting the same Deployment superseded the first (`SETTLEMENT_REJECTION_REASON_SUPERSEDED`).
+A plan application rejected with `SETTLEMENT_REJECTION_REASON_EFFECT_NOT_CONFIRMED` carries `effect_confirmation`: `reason`
+(a failure before any comparison, such as no pre-image or an unreadable or replaced object), `mismatches` (object, path, expected,
+observed; Secret data redacted) and `rollout_status` when settlement ran. Its `error` starts `effect_not_confirmed:` and replaces
+the apply-time error (often a stale `rollout_pending`).
 `rollout_pending_at_handoff` whose `rollout_pending` reason says `cannot progress
 without another actor` is a stall handoff, a few seconds after the write: the
 replacement Pod is unschedulable, its ReplicaSet cannot create it (non-webhook
