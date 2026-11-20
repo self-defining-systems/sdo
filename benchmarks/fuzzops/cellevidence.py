@@ -613,7 +613,9 @@ def build(run_dir: Path, run_pending: bool = False) -> CellEvidence:
     start = sink.parse_time(ev.interval[0]) if ev.interval else None
     for d in sorted(inc_root.glob("*/")) if inc_root.is_dir() else []:
         label = d.name[:12]
-        if sink.leftover(d, [], start):
+        opened = sink.incident_detected_at(d)
+        if sink.leftover(d, [], start) or (start is not None and opened is not None and opened < start):
+            # an earlier run's incident (late writes, or never closed): not this run's evidence
             ev.excluded.append(d.name)
             continue
         if not (d / "ledger.json").exists() and not (d / "seal.json").exists():

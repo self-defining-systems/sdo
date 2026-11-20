@@ -370,3 +370,16 @@ def test_cell_problems_check_each_arms_own_transcript_layout(tmp_path: Path) -> 
     assert ce.cell_problems(vanilla, "vanilla") == []
     with pytest.raises(ValueError, match="unknown arm"):
         ce.cell_problems(vanilla, "codex")
+
+
+def test_an_unclosed_incident_detected_before_the_run_is_carry_over_not_a_missing_outcome(tmp_path: Path) -> None:
+    run = make_cell(tmp_path)
+    op = run / "operator"
+    _w(op / "collect.json", {"interval": ["2026-01-01T00:00:00Z", T.format(59)], "parts": {}})
+    stale = op / "evidence/incidents" / ("6af1d744d2fa" + "0" * 20)
+    before = int(datetime(2025, 12, 31, 15, 24, 38, tzinfo=UTC).timestamp() * 1e9)
+    _w(stale / "incident.json", {"incident_id": f"hb1-{before}"})
+    _w(stale / "ledger.json", {"incident_id": f"hb1-{before}", "closure": {"detected_at": "2025-12-31T15:24:38Z"}})
+    ev = ce.build(run)
+    assert ev.excluded == [stale.name]
+    assert ev.problems == []

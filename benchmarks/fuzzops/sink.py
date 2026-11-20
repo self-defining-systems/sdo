@@ -20,7 +20,7 @@ import re
 import shutil
 import subprocess
 import zlib
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -555,13 +555,16 @@ def incident_in_interval(
         detected = detected or parse_time(record.get("detected_at"))
         acknowledged = acknowledged or parse_time(record.get("acknowledged_at"))
         times += [parse_time(record.get(k)) for k in ("detected_at", "verified_at", "acknowledged_at", "sealed_at")]
+    if detected is not None and start is not None and detected < start:
+        # Opened before this interval's inject mark: an earlier run's incident (the ready gate needs the operator idle
+        # before every inject), whatever late writes or a missing acknowledgement it has.
+        return False
     if any(_within(t, lo, hi) for t in times):
         return True
     if leftover(directory, records, start):
         return False
     if detected is not None:
-        # Open during the interval: detected before its end and not acknowledged before its start.
-        return detected <= hi and (acknowledged is None or acknowledged >= lo)
+        return detected <= hi
     newest = _newest_mtime(directory)
     return newest is None or newest >= lo
 
@@ -589,12 +592,15 @@ class CopyResult:
     incidents: list[IncidentCoverage]
     tasks: int
     index_records: int
+    #: Incidents opened before the interval began: an earlier run's, left out of this run's evidence.
+    carry_over: list[dict[str, str]] = field(default_factory=list)
 
     def summary(self) -> dict[str, Any]:
         return {
             "incidents": [c.to_json() for c in self.incidents],
             "rollouts": sum(c.rollouts for c in self.incidents),
             "missing": [c.id for c in self.incidents if c.outcome and c.agents_ran and c.rollouts == 0],
+            "carry_over": self.carry_over,
         }
 
 
@@ -626,8 +632,12 @@ def copy_interval(run_dir: Path, dest: Path, start: datetime | None, end: dateti
             in_interval[directory.name] = in_interval[parent]
         else:
             in_interval[directory.name] = incident_in_interval(directory, by_path.get(rel, []), start, end)
+    carry_over = []
     for directory in directories:
         rel = f"{INCIDENTS}/{directory.name}"
+        detected = incident_detected_at(directory)
+        if not in_interval[directory.name] and start is not None and detected is not None and detected < start:
+            carry_over.append({"id": directory.name, "detected_at": detected.strftime("%Y-%m-%dT%H:%M:%SZ")})
         if in_interval[directory.name]:
             _copy_tree(directory, dest / rel)
             copied.add(rel)
@@ -644,4 +654,4 @@ def copy_interval(run_dir: Path, dest: Path, start: datetime | None, end: dateti
     tmp = dest / (INDEX_FILE + ".tmp")
     tmp.write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in kept))
     os.replace(tmp, dest / INDEX_FILE)
-    return CopyResult(incidents, tasks, len(kept))
+    return CopyResult(incidents, tasks, len(kept), carry_over)
