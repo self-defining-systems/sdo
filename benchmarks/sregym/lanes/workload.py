@@ -244,6 +244,10 @@ def app_up(ctx: Context) -> tuple[int, dict[str, Any]]:
     env_dir = ctx.lane_env_dir()
     clusters = ctx.runner(["kind", "get", "clusters"], env=ctx.env).split()
     reused = (env_dir / "fastloop.json").is_file() and lane in clusters
+    if not reused and ctx.env.get(CLUSTER_UP_ENV) != "1":
+        # Only the host's cluster_up (cluster.sh) makes a lane: it starts the kind nodes under the lane's cgroup,
+        # cores and memory. A build that finds no lane fails, and the platform makes the lane anew.
+        raise AdapterError(f"lane {lane} has no fastloop environment or kind cluster: the host's cluster_up makes it")
     if not reused:
         prefix, worker = cluster_parts(lane)
         if lane in clusters or env_dir.exists():
@@ -515,6 +519,8 @@ class FallbackPager:
 
 
 FAULT_STATE = "lanes-fault.json"
+#: Set by cluster.sh (the host's cluster_up): only then may ``app-up up`` make the lane's cluster.
+CLUSTER_UP_ENV = "SREGYM_LANES_CLUSTER_UP"
 
 
 def write_fault_state(env_dir: Path, problem: str, state: str) -> None:

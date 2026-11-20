@@ -121,7 +121,9 @@ def test_check_pack_loads_app_json_or_answers_invalid(tmp_path):
 
 
 def test_app_up_runs_fastloop_up_for_a_new_lane_and_copies_its_kubeconfig(tmp_path):
-    env = lane_env(tmp_path, SREGYM_LANES_UP_ARGS="--lane-cpus 8", BENCH_EVIDENCE_HOST="/ev")
+    env = lane_env(
+        tmp_path, SREGYM_LANES_UP_ARGS="--lane-cpus 8", BENCH_EVIDENCE_HOST="/ev", SREGYM_LANES_CLUSTER_UP="1"
+    )
     runner = FakeRunner({"kind get clusters": "other\n"})
     seen: list[list[str]] = []
 
@@ -160,13 +162,34 @@ def test_app_up_clears_what_a_failed_up_of_the_lane_left_before_trying_again(tmp
         "app-up",
         "up",
         ["--pack", str(PACK), "--namespace", "hotel-reservation"],
-        lane_env(tmp_path),
+        lane_env(tmp_path, SREGYM_LANES_CLUSTER_UP="1"),
         runner=runner,
         long_runner=up,
     )
     assert code == 0
     deletes = [argv for argv in runner.calls if argv[:3] == ["kind", "delete", "cluster"]]
     assert deletes == [["kind", "delete", "cluster", "--name", "sgl1"]]
+
+
+def test_only_the_hosts_cluster_up_makes_a_lane(tmp_path):
+    # A build's app-up that finds no lane must not make one outside the lane's cgroup, cores and memory (a kind
+    # cluster made here would run unconfined); it fails, and the platform makes the lane through cluster_up.
+    runner = FakeRunner({"kind get clusters": "other\n"})
+
+    def never(argv, **_):
+        raise AssertionError("fastloop up must not run outside cluster_up")
+
+    code, result = call(
+        "app-up",
+        "up",
+        ["--pack", str(PACK), "--namespace", "hotel-reservation"],
+        lane_env(tmp_path),
+        runner=runner,
+        long_runner=never,
+    )
+    assert code == 1
+    assert "cluster_up makes it" in result["error"]
+    assert not any(argv[:2] == ["kind", "delete"] for argv in runner.calls)
 
 
 def test_app_up_reuses_a_lane_whose_environment_and_cluster_exist(tmp_path):
@@ -199,7 +222,13 @@ def test_app_up_refuses_a_spec_namespace_the_lane_does_not_serve(tmp_path):
 
 def test_lane_name_must_end_in_a_worker_number(tmp_path):
     runner = FakeRunner({"kind get clusters": ""})
-    code, result = call("app-up", "up", ["--pack", str(PACK)], lane_env(tmp_path, BENCH_LANE="lane"), runner=runner)
+    code, result = call(
+        "app-up",
+        "up",
+        ["--pack", str(PACK)],
+        lane_env(tmp_path, BENCH_LANE="lane", SREGYM_LANES_CLUSTER_UP="1"),
+        runner=runner,
+    )
     assert code == 1
     assert "worker number" in result["error"]
 
