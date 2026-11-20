@@ -228,10 +228,23 @@ func runPreflight(ctx context.Context, inv Inventory, specs []specFile, opt Pref
 			host := inv.Hosts[h]
 			pre := envPrefix(host)
 
-			// 9 tools resolve where the steps run
-			tout, terr := run(ctx, h, pre+toolsScript(host))
-			tok, td := judgeTools(tout, terr)
-			add(9, "tools", h, tok, "%s", td)
+			// 9 tools resolve where the steps run: in exactly the environment of a step of each workload (steptools.go)
+			workloads := map[string]bool{}
+			for _, s := range hs {
+				workloads[s.Workload] = true
+			}
+			if len(workloads) == 0 {
+				workloads[""] = true
+			}
+			for w := range workloads {
+				tout, terr := run(ctx, h, toolsProbe(host, w))
+				tok, td := judgeTools(tout, terr)
+				label := "tools"
+				if w != "" {
+					label += "[" + w + "]"
+				}
+				add(9, label, h, tok, "%s", td)
+			}
 
 			// 7 capacity
 			planned := plannedLanes(inv, h, hs)

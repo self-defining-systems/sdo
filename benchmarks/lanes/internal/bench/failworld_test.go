@@ -282,6 +282,7 @@ func (l *flab) writeInventory() {
 	for _, h := range l.hosts {
 		adoptClusters(l.t, filepath.Join(l.dir, "kube"), l.clusts[h]...)
 	}
+	stubPlatformTools(l.t)
 }
 
 // add writes and adds an experiment of the faults ids with one sequence of one run.

@@ -41,12 +41,14 @@ type Manager struct {
 
 	inv Inventory
 	// invGood: inv is an inventory that loaded; invErr: why hosts.yaml was refused since (used instead of it).
-	invGood bool
-	invErr  string
-	exps    map[string]*Experiment
-	lanes   map[string]*LaneFile
-	srcWarn map[string][]string // host -> lanes with no cluster on a host with no cluster_up (looked up once)
-	hosts   map[string]HostStatus
+	invGood  bool
+	invErr   string
+	exps     map[string]*Experiment
+	lanes    map[string]*LaneFile
+	toolAt   map[string]time.Time
+	toolWarn map[string][]string
+	srcWarn  map[string][]string // host -> lanes with no cluster on a host with no cluster_up (looked up once)
+	hosts    map[string]HostStatus
 	// gcWanted: hosts whose unneeded lane clusters are deleted this pass (gc, or below the disk floor).
 	gcWanted map[string]bool
 	// Helper runs the root helper's verbs on a host (nil: sudo -n through the host's shell or ssh); DriftEvery is how
@@ -203,6 +205,31 @@ func (m *Manager) rawOps(host string) HostOps {
 	return sshHost{name: host, h: h, fuzzops: m.inv.Checkouts.Fuzzops, health: h.Health.Thresholds()}
 }
 
+// toolWarnings are what a host's steps would not find or run with: a platform tool missing from the step environment of
+// the host's workloads (steptools.go) and a stale lane-reserve helper. Asked again after toolWarnTTL: a human fixes the
+// host's PATH or reinstalls the helper while the manager runs.
+func (m *Manager) toolWarnings(ctx context.Context, host string) []string {
+	if t, ok := m.toolAt[host]; ok && m.now().Sub(t) < toolWarnTTL {
+		return m.toolWarn[host]
+	}
+	if m.toolAt == nil {
+		m.toolAt, m.toolWarn = map[string]time.Time{}, map[string][]string{}
+	}
+	var workloads []string
+	for _, x := range m.exps {
+		if x.Spec != nil && x.Removed == nil && slices.Contains(m.inv.UsableHosts(x.Measured()), host) {
+			workloads = append(workloads, x.Measured().Workload)
+		}
+	}
+	run := hostRunner(m.inv)
+	w := m.inv.HostToolProblems(ctx, host, workloads, run)
+	if p := m.inv.HelperProblem(ctx, host, run); p != "" {
+		w = append(w, "host "+host+": "+p)
+	}
+	m.toolAt[host], m.toolWarn[host] = m.now(), w
+	return w
+}
+
 // clusterSourceWarnings are the lanes of a host with no cluster_up that have no cluster (clustersource.go), looked up
 // once per host per manager run: they change only when a human edits the host.
 func (m *Manager) clusterSourceWarnings(ctx context.Context, host string) []string {
@@ -353,6 +380,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 		}
 		reachable[name] = true
 		st.Warnings = append(append([]string(nil), st.Warnings...), m.clusterSourceWarnings(ctx, name)...)
+		st.Warnings = append(st.Warnings, m.toolWarnings(ctx, name)...)
 		m.hosts[name] = st
 		if min := m.inv.Hosts[name].MinFreeBytes(); min > 0 && pr.Free > 0 && pr.Free < min {
 			m.alarm(AlarmDiskFloor, name, fmt.Sprintf("%s free, below the floor %s: no new build starts until it is above", size(pr.Free), m.inv.Hosts[name].MinFree))

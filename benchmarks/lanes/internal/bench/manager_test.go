@@ -101,6 +101,7 @@ func newLab(t *testing.T) *lab {
 	fake := testdata("fakefuzzops")
 	hook := testdata("hook.sh")
 	adoptClusters(t, filepath.Join(dir, "kube"), "c1")
+	stubPlatformTools(t)
 	inv := `hosts:
   h1: {local: true, isolation: one-way-ok, staging: ` + dir + `/staging, max_builds: 1, max_load5: 100000, kubeconfigs: ` + dir + `/kube, evidence: ` + dir + `/evidence, clusters: [c1]}
 checkouts:
