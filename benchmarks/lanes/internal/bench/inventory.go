@@ -27,12 +27,16 @@ type Host struct {
 	SSHJump string `json:"ssh_jump,omitempty"` // ssh -J: the host is reached through this jump host
 	// Env is added to the environment of every step on the host: its cluster commands, fuzzops calls and hooks
 	// (e.g. FUZZOPS_REGISTRY_PORT when the default registry port is taken).
-	Env         map[string]string `json:"env,omitempty"`
-	Staging     string            `json:"staging"`     // host-local directory for steps and inputs
-	MaxBuilds   int               `json:"max_builds"`  // builds (app copy + prepare) at once
-	MaxLoad5    float64           `json:"max_load5"`   // no build starts at or above this 5-minute load; 0 or omitted: no load gate (hosts with reserve: only)
-	Kubeconfigs string            `json:"kubeconfigs"` // directory with one kubeconfig file per cluster, named as the cluster
-	Clusters    []string          `json:"clusters"`
+	Env map[string]string `json:"env,omitempty"`
+	// WorkloadEnv is added, over Env, to the steps of one workload only (the key is the spec's workload name, or
+	// DefaultWorkloadID ("default") for a spec that names none): a workload's own settings do not belong in the host's env, which every workload
+	// sees. Host-level work (ledger, preflight) never carries it.
+	WorkloadEnv map[string]map[string]string `json:"workload_env,omitempty"`
+	Staging     string                       `json:"staging"`     // host-local directory for steps and inputs
+	MaxBuilds   int                          `json:"max_builds"`  // builds (app copy + prepare) at once
+	MaxLoad5    float64                      `json:"max_load5"`   // no build starts at or above this 5-minute load; 0 or omitted: no load gate (hosts with reserve: only)
+	Kubeconfigs string                       `json:"kubeconfigs"` // directory with one kubeconfig file per cluster, named as the cluster
+	Clusters    []string                     `json:"clusters"`
 	// MinFree is the disk floor of the staging filesystem ("150G"): no build starts below it; gc runs first.
 	MinFree string `json:"min_free,omitempty"`
 	// MaxBuildFailures is how many builds in a row may fail on one of the host's lanes before the lane is taken
@@ -93,6 +97,29 @@ const (
 
 // LaneEvidence is the lane's evidence directory on the host.
 func (h Host) LaneEvidence(cluster string) string { return filepath.Join(h.Evidence, cluster) }
+
+// EnvFor is the host env of a step of workload: EnvList with the workload's WorkloadEnv entries on top.
+// DefaultWorkloadID is the workload_env key of a spec that names no workload.
+const DefaultWorkloadID = "default"
+
+func (h Host) EnvFor(workload string) []string {
+	if workload == "" {
+		workload = DefaultWorkloadID
+	}
+	extra := h.WorkloadEnv[workload]
+	if len(extra) == 0 {
+		return h.EnvList()
+	}
+	merged := h
+	merged.Env = map[string]string{}
+	for k, v := range h.Env {
+		merged.Env[k] = v
+	}
+	for k, v := range extra {
+		merged.Env[k] = v
+	}
+	return merged.EnvList()
+}
 
 // EnvList is Env as sorted KEY=VALUE pairs, plus the lane provider's variables (an explicit Env entry wins).
 func (h Host) EnvList() []string {
