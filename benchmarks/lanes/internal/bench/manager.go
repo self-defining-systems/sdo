@@ -70,6 +70,7 @@ type Manager struct {
 	// kernelWhy is why a host is not admitted for a kernel setting below its minimum ("" : none); warns are its warnings.
 	kernelWhy map[string]string
 	psiWhy    map[string]string
+	hostHigh  map[string]bool // host-wide memory pressure is over the threshold (alarm only)
 	// starve is each lane's starvation state (starve.go), kept with the host health state.
 	starve     map[string]*starveState
 	warns      map[string][]string

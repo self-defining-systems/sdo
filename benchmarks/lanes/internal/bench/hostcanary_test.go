@@ -46,10 +46,11 @@ func TestLocalCanaryReadsLaneSlicePressure(t *testing.T) {
 	must(t, os.MkdirAll(slice, 0o755))
 	must(t, os.WriteFile(filepath.Join(slice, "cpu.pressure"), []byte("some avg10=1.00 avg60=71.50 avg300=3.00 total=1\nfull avg10=0.00 avg60=9.00 avg300=0.00 total=0\n"), 0o644))
 	must(t, os.WriteFile(filepath.Join(slice, "memory.pressure"), []byte("some avg10=0.00 avg60=50.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=22.25 avg300=0.00 total=0\n"), 0o644))
+	must(t, os.WriteFile(filepath.Join(dir, "memory.pressure"), []byte("some avg10=0.00 avg60=30.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=44.50 avg300=0.00 total=0\n"), 0o644))
 	t.Setenv("HOST_CANARY_LANES_DIR", dir)
 	c, err := localCanary(context.Background(), 10*time.Second, nil)
 	got, ok := c.LanePSI[LaneSlice("lane-a")]
-	if err != nil || !ok || got.CPUSome != 71.5 || got.MemFull != 22.25 {
+	if err != nil || !ok || got.CPUSome != 71.5 || got.MemFull != 22.25 || c.BlockMemPSIFull != 44.5 {
 		t.Fatalf("%+v %v", c, err)
 	}
 }

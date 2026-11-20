@@ -102,18 +102,26 @@ func (m *Manager) observeKernel(name string, c *Canary) {
 	}
 }
 
-// observePSI is the memory-pressure gate: while the host's memory pressure ("full" avg60) is over health.mem_psi_full
-// it takes no new work. Memory-capped clusters thrashing (their own or another team's) are felt by every lane there.
-// There is no hysteresis: avg60 is already a minute's average.
+// observePSI measures pressure where our work runs. The memory pressure ("full" avg60) of lanes.slice, the whole lane
+// block, over health.mem_psi_full stops new work on the host. Host-wide pressure is only an alarm (host-pressure): it
+// is often inside another tenant's own memory limit and says nothing about our lanes. There is no hysteresis: avg60 is
+// already a minute's average.
 func (m *Manager) observePSI(name string, c *Canary) {
 	if m.psiWhy == nil {
-		m.psiWhy = map[string]string{}
+		m.psiWhy, m.hostHigh = map[string]string{}, map[string]bool{}
 	}
 	max := m.inv.Hosts[name].Health.Thresholds().MemPSIFull
+	high := c.MemPSIFull > max
+	if high && !m.hostHigh[name] {
+		d := fmt.Sprintf("host-wide memory pressure (PSI full avg60) is %.0f%%, over %.0f%% (an alarm only: admission follows the lane block)", c.MemPSIFull, max)
+		m.logf("ALARM host %s: %s", name, d)
+		(&AlarmLog{Root: m.Root, Logf: m.logf}).Raise(plan.Alarm{At: m.now().UTC(), Alarm: "host-pressure", Key: "host-pressure/" + name, Subject: name, Host: name, Detail: d})
+	}
+	m.hostHigh[name] = high
 	was := m.psiWhy[name]
 	why := ""
-	if c.MemPSIFull > max {
-		why = fmt.Sprintf("memory pressure (PSI full avg60) is %.0f%%, over %.0f%%", c.MemPSIFull, max)
+	if c.BlockMemPSIFull > max {
+		why = fmt.Sprintf("memory pressure of the lane block (lanes.slice PSI full avg60) is %.0f%%, over %.0f%%", c.BlockMemPSIFull, max)
 	}
 	m.psiWhy[name] = why
 	switch {
@@ -121,7 +129,7 @@ func (m *Manager) observePSI(name string, c *Canary) {
 		m.logf("ALARM host %s: %s, no new lanes or steps", name, why)
 		(&AlarmLog{Root: m.Root, Logf: m.logf}).Raise(plan.Alarm{At: m.now().UTC(), Alarm: "memory-pressure", Key: "memory-pressure/" + name, Subject: name, Host: name, Detail: why})
 	case why == "" && was != "":
-		m.logf("host %s: memory pressure is back under %.0f%%, new lanes and steps resume", name, max)
+		m.logf("host %s: lane block memory pressure is back under %.0f%%, new lanes and steps resume", name, max)
 	}
 }
 
