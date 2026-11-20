@@ -10,6 +10,7 @@
   "ready_timeout": "40m",
   "cap": "30m",
   "lanes": 1,
-  "hosts": ["chelan3"],
+  "hosts": ["spokane1"],
+  "lane": {"cpus": 12, "memory": "32Gi"},
   "keep_lanes": true
 }

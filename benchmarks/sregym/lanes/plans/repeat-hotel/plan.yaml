@@ -10,6 +10,5 @@ items:
   - {id: hotel-misconfig, vars: {problem: misconfig_app_hotel_res}}
 reps: 1
 parallel: 1
-isolation: one-way-ok
 artifacts: {memory: {path: "${run}/exec/memory", verify: exists}}
 edges: [{from: p1, to: p2, artifact: memory}]
