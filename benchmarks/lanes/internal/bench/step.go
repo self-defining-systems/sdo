@@ -184,6 +184,9 @@ type stepRunner struct {
 	live     func() (map[string]bool, error)
 	foreign  func() ([]ContainerPin, error) // nil: docker on the host
 	oom      func() (int, error)
+	// psi reads the lane's cgroup pressure (nil: the host's); iso is the run's isolation record while it is open.
+	psi func() (LanePSI, bool)
+	iso *Isolation
 }
 
 // RunStep runs the step in step.json at path to completion: the step's lock
@@ -1193,6 +1196,7 @@ func (r *stepRunner) run(ctx context.Context) {
 	if rec.Life != nil && !rec.Life.InjectAt.IsZero() {
 		at := rec.Life.InjectAt.UTC()
 		r.res.InjectAt, from = &at, at
+		r.recordPSIAtInject()
 		r.settle(ctx, p, at, ownDetected(rec))
 	}
 	if p.Hooks != "" {

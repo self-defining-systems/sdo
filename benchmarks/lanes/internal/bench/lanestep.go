@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -39,6 +40,10 @@ type Isolation struct {
 	// Mode is how the host was isolated: two-way, one-way (a block, but other work may use it) or one-way-ok (no reservation).
 	Mode     string `json:"mode,omitempty"`
 	OOMKills int    `json:"oom_kills,omitempty"`
+	// PSIInject and PSIEnd are the lane's cgroup pressure (avg60) at the inject and at the end of the window, so a
+	// starved run can be flagged afterwards (nil: not read, for example no lane slice).
+	PSIInject *LanePSI `json:"psi_inject,omitempty"`
+	PSIEnd    *LanePSI `json:"psi_end,omitempty"`
 }
 
 // StepLimits is the lane's share of its host, as the manager decided it (step.json).
@@ -360,6 +365,7 @@ func (r *stepRunner) isolate(ctx context.Context) (finish func()) {
 		r.logf("host reserved for the lanes (cpus %s)", l.CPUs)
 	}
 	base, oerr := r.laneOOMKills(ctx)
+	r.iso = iso
 	stop, done := make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(done)
@@ -387,8 +393,51 @@ func (r *stepRunner) isolate(ctx context.Context) (finish func()) {
 			iso.OOMKills = n - base
 			r.logf("lane memory: %d process(es) in the lane's nodes were killed at their memory limit during the run", iso.OOMKills)
 		}
+		if p, ok := r.lanePSI(); ok {
+			iso.PSIEnd = &p
+		}
 		r.res.Isolation = iso
 	}
+}
+
+// lanePSI reads the lane slice's pressure (avg60) on this host.
+func (r *stepRunner) lanePSI() (LanePSI, bool) {
+	if r.psi != nil {
+		return r.psi()
+	}
+	dir := "/sys/fs/cgroup/lanes.slice/" + LaneSlice(r.s.Lane)
+	cpu, e1 := readPSI(dir+"/cpu.pressure", "some")
+	mem, e2 := readPSI(dir+"/memory.pressure", "full")
+	return LanePSI{CPUSome: cpu, MemFull: mem}, e1 == nil && e2 == nil
+}
+
+// recordPSIAtInject notes the lane's pressure when the fault is injected (the end is noted when the run ends).
+func (r *stepRunner) recordPSIAtInject() {
+	if r.iso == nil {
+		return
+	}
+	if p, ok := r.lanePSI(); ok {
+		r.iso.PSIInject = &p
+	}
+}
+
+// readPSI returns the avg60 of the line starting with kind ("some" or "full") of a cgroup pressure file.
+func readPSI(path, kind string) (float64, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	for _, ln := range strings.Split(string(b), "\n") {
+		f := strings.Fields(ln)
+		if len(f) > 1 && f[0] == kind {
+			for _, kv := range f[1:] {
+				if v, ok := strings.CutPrefix(kv, "avg60="); ok {
+					return strconv.ParseFloat(v, 64)
+				}
+			}
+		}
+	}
+	return 0, fmt.Errorf("%s: no %s avg60", path, kind)
 }
 
 // laneLimits builds the manager's StepLimits for a lane on host h, or nil when the host has no lane limits.
