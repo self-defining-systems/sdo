@@ -49,12 +49,21 @@ func PlanAdd(root Root, file string, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	lock, err := plan.Add(root.PlansDir(), file, SystemClock{}, planSpecCheck(inv))
+	lock, err := plan.Add(root.PlansDir(), file, SystemClock{}, planSpecCheck(inv), plan.WithResolver(GitResolve))
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(w, "plan %s added: %d nodes, workload %s, subject %s\n", lock.Plan, lock.Nodes, lock.Pins.Workload, lock.Pins.Subject)
 	return nil
+}
+
+// GitResolve is the plan engine's ref resolver: the full commit a ref names in the git checkout at dir.
+func GitResolve(dir, ref string) (string, error) {
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}").Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse %s in %s failed (is it a git checkout with that ref?)", ref, dir)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // PlanDryRun runs every check of PlanAdd and prints the expanded plan (items, arms, edges, order), as JSON when
@@ -64,7 +73,7 @@ func PlanDryRun(root Root, file string, jsonOut bool, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	pv, err := plan.DryRun(root.PlansDir(), file, SystemClock{}, planSpecCheck(inv))
+	pv, err := plan.DryRun(root.PlansDir(), file, SystemClock{}, planSpecCheck(inv), plan.WithResolver(GitResolve))
 	if err != nil {
 		return err
 	}

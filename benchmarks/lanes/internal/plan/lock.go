@@ -57,7 +57,7 @@ func Names(plansRoot string) []string {
 // Add validates the plan file, copies it and its templates under plansRoot/<name> and writes the lock and an empty
 // state. validate, when non-nil, checks a rendered spec (the platform's own spec validation) for one node per arm.
 // A plan name is never reused.
-func Add(plansRoot, file string, clock Clock, validate func(specJSON []byte) error) (*Lock, error) {
+func Add(plansRoot, file string, clock Clock, validate func(specJSON []byte) error, opts ...Option) (*Lock, error) {
 	raw, err := os.ReadFile(file)
 	if err != nil {
 		return nil, err
@@ -71,6 +71,9 @@ func Add(plansRoot, file string, clock Clock, validate func(specJSON []byte) err
 		return nil, err
 	}
 	base := filepath.Dir(abs)
+	if err := p.resolvePins(base, optionsOf(opts)); err != nil {
+		return nil, fmt.Errorf("%s: %w", file, err)
+	}
 	items, err := p.LoadItems(base)
 	if err != nil {
 		return nil, err

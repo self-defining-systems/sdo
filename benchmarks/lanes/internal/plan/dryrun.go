@@ -35,7 +35,7 @@ type Preview struct {
 // DryRun validates a plan file exactly as Add does (parse, items, templates, every rendered spec through validate)
 // and returns the expansion, without creating anything under plansRoot: the work happens in a scratch directory that
 // is removed before it returns. A plan name already taken is refused, as Add refuses it.
-func DryRun(plansRoot, file string, clock Clock, validate func(specJSON []byte) error) (*Preview, error) {
+func DryRun(plansRoot, file string, clock Clock, validate func(specJSON []byte) error, opts ...Option) (*Preview, error) {
 	raw, err := os.ReadFile(file)
 	if err != nil {
 		return nil, err
@@ -52,7 +52,7 @@ func DryRun(plansRoot, file string, clock Clock, validate func(specJSON []byte) 
 		return nil, err
 	}
 	defer os.RemoveAll(scratch)
-	if _, err := Add(scratch, file, clock, validate); err != nil {
+	if _, err := Add(scratch, file, clock, validate, opts...); err != nil {
 		return nil, err
 	}
 	e, err := Open(Dir(scratch, p.Name), nil, clock)

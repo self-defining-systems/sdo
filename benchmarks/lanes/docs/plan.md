@@ -42,6 +42,10 @@ alarms: {factor: 2, idle_lane: 10m, arm_stall: 90m, hook: "notify-send lanes \"$
 - **Builtin operators.** `pins.subject` is optional. An operator with no hooks checkout (`operator.builtin`) has no
   revision: pin only the workload, and the engine writes no `operator.revision` (the spec check refuses a hooks operator
   without a revision, and a builtin one with it). Results then carry `subject_pinned: none`.
+- **Pins by ref.** A pin may name a ref instead of a revision: `pins: {workload: fuzzops@HEAD, subject: sdo@origin/main}`,
+  or with the checkout to ask, `sdo@HEAD:/abs/path/to/checkout`. `plan add` resolves it once with
+  `git rev-parse` (in that checkout, or in the plan file's own directory) and stores the full revision in the plan, the lock and
+  every spec, so a plan kept inside the pinned checkout does not lag one commit. Revisions (7-40 hex) work as before.
 - **Order.** Nodes are `(rep, item, arm)`, arms in dependency-then-declaration order, so every comparison's partner is
   released right after its pair, never behind a whole arm and never by name order. A node blocked on an input is passed
   over; the next ready node takes its slot, and the blocked one goes first as soon as it is ready.
