@@ -649,8 +649,11 @@ func (b *PlanBackend) RunData(_ context.Context, exp string) (plan.RunData, erro
 	return b.runDataOf(exp, rf)
 }
 
+// doneRunStatus is the status a run that ended as a result carries in its run file.
+const doneRunStatus = "done"
+
 // RunsData reads every done run of an experiment that ran several on one lane (a sequence of seeds), one element
-// per position, in order, each graded under its own operator label. An experiment with at most one done run answers
+// per position, in order, each graded under its own label. An experiment with at most one done run answers
 // the one element RunData does, so ordinary results are unchanged.
 func (b *PlanBackend) RunsData(ctx context.Context, exp string) ([]plan.RunData, error) {
 	x, err := b.Root.LoadExperiment(exp)
@@ -660,7 +663,7 @@ func (b *PlanBackend) RunsData(ctx context.Context, exp string) ([]plan.RunData,
 	latest := map[[3]int]RunFile{} // (fault index by name order, sequence, position) -> the newest attempt that is done
 	faults := map[string]int{}
 	for _, r := range sortedRuns(x) {
-		if r.Status != StatusDone {
+		if r.Status != doneRunStatus {
 			continue
 		}
 		if _, ok := faults[r.Fault]; !ok {
