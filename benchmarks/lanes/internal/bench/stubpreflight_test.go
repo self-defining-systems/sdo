@@ -63,7 +63,10 @@ func TestMemoryCheckWithoutAHooksCheckoutHereIsANote(t *testing.T) {
 	s := specFile{Spec: Spec{Name: "e1", Namespace: "app1", Operator: Operator{Hooks: "test", Revision: "ffffff0", Baseline: base}}}
 	var got []recorded
 	var wg sync.WaitGroup
-	run := func(context.Context, string, string) (string, error) { t.Fatal("nothing runs without a checkout"); return "", nil }
+	run := func(context.Context, string, string) (string, error) {
+		t.Fatal("nothing runs without a checkout")
+		return "", nil
+	}
 	sdoSubject{}.Local(context.Background(), inv, []specFile{s}, PreflightOptions{}, run, recorder(&got), &wg)
 	wg.Wait()
 	if len(got) != 1 || !got[0].ok || !strings.Contains(got[0].detail, "not checkable here") {
