@@ -307,6 +307,15 @@ func TestEksLaneUpMakesWhatAKindLaneHas(t *testing.T) {
 	if b, _ := os.ReadFile(kc + ".entry"); strings.TrimSpace(string(b)) != "54.0.0.1" {
 		t.Errorf("entry address = %q", b)
 	}
+	// every stage of the up is measured
+	for _, want := range []string{"EKS_STAGE cluster_and_nodegroup_created", "EKS_STAGE nodes_ready", "EKS_STAGE node_agent_mirror_ready", "EKS_STAGE up_total"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in\n%s", want, out)
+		}
+	}
+	if b, _ := os.ReadFile(kc + ".stages"); !strings.Contains(string(b), "up_total ") {
+		t.Errorf("stages file = %q", b)
+	}
 	// idempotent: a second up attaches and creates nothing
 	if out, err := s.run(nil, "up", "eks1", kc, ev); err != nil || strings.Count(s.log(), "eksctl create cluster") != 1 {
 		t.Fatalf("second up: %v\n%s\n%s", err, out, s.log())

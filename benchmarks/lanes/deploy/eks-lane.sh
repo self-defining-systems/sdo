@@ -51,6 +51,14 @@ account() {
 }
 registry() { echo "$(account).dkr.ecr.$REGION.amazonaws.com"; }
 
+# stage NAME: a measured stage of `up`, seconds since the up began (cumulative), on stderr and in KUBECONFIG.stages
+# (one "name seconds" line each) so the run record can carry them.
+STAGE_T0=$SECONDS
+stage() {
+  echo "EKS_STAGE $1 $((SECONDS - STAGE_T0))" >&2
+  [ -z "${STAGE_FILE:-}" ] || echo "$1 $((SECONDS - STAGE_T0))" >>"$STAGE_FILE"
+}
+
 cluster_exists() { eksctl get cluster --name "$1" --region "$REGION" >/dev/null 2>&1; }
 
 # AZ: every lane is in one zone (a volume is zonal, and a lane's claims must land next to its pods).
@@ -250,6 +258,8 @@ cmd_up() {
   trap cleanup_failed_up EXIT
   account >/dev/null
   mkdir -p "$(dirname "$kc")"
+  STAGE_FILE="$kc.stages"
+  : >"$STAGE_FILE"
   [ -z "$evidence" ] || mkdir -p "$evidence"
   if cluster_exists "$name"; then
     log "cluster $name exists: attaching"
@@ -260,6 +270,7 @@ cmd_up() {
     CREATED=1 OWNED=1
     log "creating cluster $name (${EKS_NODES:-2} x ${EKS_INSTANCE_TYPE:-m6i.xlarge})"
     eksctl create cluster -f "$CFG" --kubeconfig "$admin" >&2
+    stage cluster_and_nodegroup_created
   fi
   if [ "$CREATED" != 1 ]; then
     aws eks update-kubeconfig --name "$name" --region "$REGION" --kubeconfig "$admin" >/dev/null
@@ -267,6 +278,7 @@ cmd_up() {
   fi
   chmod 600 "$admin"
   wait_nodes "$admin" "${EKS_NODES:-2}"
+  stage nodes_ready
   network_policy_enforced "$admin" || die "the cluster does not enforce NetworkPolicy: vpc-cni needs enableNetworkPolicy=true"
   label_nodes "$admin"
   kubectl --kubeconfig "$admin" -n kube-system delete pdb coredns metrics-server --ignore-not-found >/dev/null 2>&1 || true
@@ -274,7 +286,10 @@ cmd_up() {
   storage_class "$kc"
   open_nodeports "$name"
   entry_host "$kc"
+  stage kubeconfig_storage_ports_ready
   apply_node_agent "$kc"
+  stage node_agent_mirror_ready
+  stage up_total
   echo "EKS_LANE_READY cluster=$name instance=${EKS_INSTANCE_TYPE:-m6i.xlarge} nodes=${EKS_NODES:-2}"
 }
 
@@ -287,7 +302,7 @@ cmd_down() {
   else
     log "cluster $name does not exist"
   fi
-  [ -z "$kc" ] || rm -f "$kc" "$kc.admin" "$kc.entry"
+  [ -z "$kc" ] || rm -f "$kc" "$kc.admin" "$kc.entry" "$kc.stages"
   echo "EKS_LANE_DELETED cluster=$name seconds=$((SECONDS - t0))"
 }
 
