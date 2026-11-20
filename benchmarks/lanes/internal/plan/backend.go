@@ -38,6 +38,36 @@ type Observation struct {
 	Detail  string
 	Started time.Time
 	Ended   time.Time
+	// Stage is the stage a running experiment is in and StageSince when it entered it; Stages are the durations of the
+	// stages already passed. Stage names are the backend's; a plan sets a minimum for the ones it watches.
+	Stage      string
+	StageSince time.Time
+	Stages     map[string]time.Duration
+}
+
+// LaneInfo is a lane as the alarms see it.
+type LaneInfo struct {
+	Host  string
+	Lane  string
+	Free  bool // no step, not bound to a run, ready for work
+	Since time.Time
+}
+
+// HostInfo is a host's pressure against its own budget (0 budget: not gated).
+type HostInfo struct {
+	Name     string
+	Load5    float64
+	MaxLoad5 float64
+	Free     int64 // bytes free on the staging disk
+	MinFree  int64 // bytes the host must keep free (0: none)
+	Error    string
+}
+
+// Capacity is what the alarms read of the platform: its lanes, its hosts and how many runs wait for a lane.
+type Capacity struct {
+	Lanes   []LaneInfo
+	Hosts   []HostInfo
+	Waiting int
 }
 
 // Source names what an artifact comes from: a node's experiment, or a step instance.
@@ -102,4 +132,6 @@ type Backend interface {
 	StartStep(ctx context.Context, j StepJob) error
 	// ObserveStep reads the step started in dir.
 	ObserveStep(ctx context.Context, dir string) (StepObservation, error)
+	// Capacity reads lanes, hosts and the queue for the alarms.
+	Capacity(ctx context.Context) (Capacity, error)
 }

@@ -214,6 +214,10 @@ type Plan struct {
 	Artifacts map[string]ArtifactDef `json:"artifacts,omitempty"`
 	// Isolation is written into every spec: "two-way" requires reserved hosts, "one-way-ok" accepts the rest.
 	Isolation string `json:"isolation,omitempty"`
+	// Stages is the minimum time of each stage ("pre-inject: 12m"): the runner alarms when a stage takes more than
+	// Alarms.Factor times its minimum. Alarms configures the other runner alarms.
+	Stages map[string]string `json:"stages,omitempty"`
+	Alarms *AlarmConfig      `json:"alarms,omitempty"`
 }
 
 var (
@@ -349,6 +353,7 @@ func (p *Plan) Validate() error {
 			bad("%v", err)
 		}
 	}
+	errs = append(errs, p.validateAlarms()...)
 	if len(errs) > 0 {
 		return fmt.Errorf("plan: %s", strings.Join(errs, "; "))
 	}

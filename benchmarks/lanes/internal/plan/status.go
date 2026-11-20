@@ -3,6 +3,7 @@ package plan
 import (
 	"fmt"
 	"io"
+	"sort"
 	"text/tabwriter"
 )
 
@@ -15,6 +16,7 @@ type ArmStatus struct {
 	Blocked  int    `json:"blocked"`
 	Failed   int    `json:"failed"`
 	Skipped  int    `json:"skipped"`
+	Parked   int    `json:"parked"`
 }
 
 // RunRef names a run in status output.
@@ -40,8 +42,12 @@ type Status struct {
 	Complete bool         `json:"complete"`
 	Arms     []ArmStatus  `json:"arms"`
 	Steps    []StepStatus `json:"steps,omitempty"`
-	Next     []RunRef     `json:"next,omitempty"`
-	Blocked  []RunRef     `json:"blocked,omitempty"`
+	// Parked maps each parked item to the reason it failed twice with.
+	Parked map[string]string `json:"parked,omitempty"`
+	// Alarms are the keys of the alarms standing now.
+	Alarms  []string `json:"alarms,omitempty"`
+	Next    []RunRef `json:"next,omitempty"`
+	Blocked []RunRef `json:"blocked,omitempty"`
 }
 
 const statusRuns = 5
@@ -75,6 +81,8 @@ func (e *Engine) statusOf(st *State) *Status {
 			a.Failed++
 		case NodeSkipped:
 			a.Skipped++
+		case NodeParked:
+			a.Parked++
 		case NodeWaiting:
 			if why, _ := e.blocked(st, n); why != "" {
 				a.Blocked++
@@ -92,6 +100,11 @@ func (e *Engine) statusOf(st *State) *Status {
 	for _, a := range arms {
 		out.Arms = append(out.Arms, *byArm[a])
 	}
+	out.Parked = st.Parked
+	for k := range st.Alarms.Active {
+		out.Alarms = append(out.Alarms, k)
+	}
+	sort.Strings(out.Alarms)
 	for _, s := range st.Steps {
 		out.Steps = append(out.Steps, StepStatus{ID: s.ID, Status: s.Status, Detail: s.Detail})
 	}
@@ -106,13 +119,19 @@ func (s *Status) Render(w io.Writer) {
 	}
 	fmt.Fprintf(w, "plan %s (%s): workload %s, subject %s, %d rep(s), %s, parallel %d\n", s.Plan, state, s.Pins.Workload, s.Pins.Subject, s.Reps, s.Order, s.Parallel)
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "arm\tdone\tin-flight\tqueued\tblocked\tfailed\tskipped")
+	fmt.Fprintln(tw, "arm\tdone\tin-flight\tqueued\tblocked\tfailed\tskipped\tparked")
 	for _, a := range s.Arms {
-		fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\t%d\t%d\n", a.Arm, a.Done, a.Inflight, a.Queued, a.Blocked, a.Failed, a.Skipped)
+		fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n", a.Arm, a.Done, a.Inflight, a.Queued, a.Blocked, a.Failed, a.Skipped, a.Parked)
 	}
 	_ = tw.Flush()
 	for _, st := range s.Steps {
 		fmt.Fprintf(w, "step %s: %s %s\n", st.ID, st.Status, st.Detail)
+	}
+	for _, item := range sortedKeys(s.Parked) {
+		fmt.Fprintf(w, "parked:  item %s (%s twice)\n", item, s.Parked[item])
+	}
+	for _, k := range s.Alarms {
+		fmt.Fprintf(w, "alarm:   %s\n", k)
 	}
 	for i, r := range s.Next {
 		pre := "next:    "

@@ -88,6 +88,7 @@ func (b *PlanBackend) Observe(_ context.Context, exp string) (plan.Observation, 
 			obs.Ended = rf.Ended
 		}
 	}
+	obs.Stages = runStages(x)
 	if x.Spec == nil {
 		obs.Phase, obs.Reason, obs.Detail = plan.PhaseFailed, "removed", "the experiment was removed"
 		return obs, nil
@@ -110,12 +111,94 @@ func (b *PlanBackend) Observe(_ context.Context, exp string) (plan.Observation, 
 	switch {
 	case allDone && len(x.AllSeqs()) > 0:
 		obs.Phase = plan.PhaseDone
+		return obs, nil
 	case len(x.Runs) > 0 || b.laneBound(exp):
 		obs.Phase = plan.PhaseRunning
 	default:
 		obs.Phase = plan.PhaseQueued
 	}
+	obs.Stage, obs.StageSince = b.currentStage(x)
 	return obs, nil
+}
+
+// Stages of a real run, in the order they happen: queue (added to first run started), pre-inject (run started to the
+// fault's injection: build, gate), post-inject (injection to the end: window, undo, settle). They are measured from
+// run.json of the newest run that has them.
+const (
+	StageQueue      = "queue"
+	StagePreInject  = "pre-inject"
+	StagePostInject = "post-inject"
+)
+
+func runStages(x *Experiment) map[string]time.Duration {
+	out := map[string]time.Duration{}
+	var first, newest *RunFile
+	for _, rf := range sortedRuns(x) {
+		rf := rf
+		if !rf.Started.IsZero() && (first == nil || rf.Started.Before(first.Started)) {
+			first = &rf
+		}
+		if rf.InjectAt != nil && !rf.Ended.IsZero() && (newest == nil || rf.Ended.After(newest.Ended)) {
+			newest = &rf
+		}
+	}
+	if first != nil && !x.Lock.Added.IsZero() && first.Started.After(x.Lock.Added) {
+		out[StageQueue] = first.Started.Sub(x.Lock.Added)
+	}
+	if newest != nil {
+		out[StagePreInject] = newest.InjectAt.Sub(newest.Started)
+		out[StagePostInject] = newest.Ended.Sub(*newest.InjectAt)
+	}
+	return out
+}
+
+// currentStage is the stage the experiment is in now: the phase of the step on its lane (gate, window, prepare, ...),
+// the queue before it has a lane, or the gap between its runs.
+func (b *PlanBackend) currentStage(x *Experiment) (string, time.Time) {
+	lanes, _ := b.Root.Lanes()
+	for _, l := range lanes {
+		if l.Experiment != x.Name {
+			continue
+		}
+		if l.Step != nil {
+			if l.Step.Phase != nil {
+				return l.Step.Phase.Name, l.Step.Phase.Since
+			}
+			return l.Step.Kind, l.Step.Started
+		}
+		if l.Seq != nil {
+			return "lane-bound", l.Since
+		}
+	}
+	if len(x.Runs) == 0 {
+		return StageQueue, x.Lock.Added
+	}
+	return "between-runs", time.Time{}
+}
+
+// Capacity reads the lanes, the hosts and the queue as `status` does. A lane counts as free when no experiment holds
+// it and nothing runs on it.
+func (b *PlanBackend) Capacity(_ context.Context) (plan.Capacity, error) {
+	st, err := StatusOf(b.Root, "")
+	if err != nil {
+		return plan.Capacity{}, err
+	}
+	var c plan.Capacity
+	for _, l := range st.Lanes {
+		if l.State == LaneFree && l.Step == nil && l.Seq == nil {
+			c.Lanes = append(c.Lanes, plan.LaneInfo{Host: l.Host, Lane: l.Lane, Free: true, Since: l.Since})
+		}
+	}
+	for _, h := range st.Hosts {
+		minFree, _ := ParseSize(h.MinFree)
+		c.Hosts = append(c.Hosts, plan.HostInfo{Name: h.Name, Load5: h.Load5, MaxLoad5: h.MaxLoad5, Free: h.Free, MinFree: minFree, Error: h.Error})
+	}
+	for _, e := range st.Experiments {
+		if e.Error == "" && e.State == ExpActive {
+			c.Waiting += e.Counts.Queued
+		}
+	}
+	return c, nil
 }
 
 // planReason is the failure class of an invalid run: the head of its reason, as `status` counts it.
@@ -352,12 +435,77 @@ func PlansSummary(root Root, w io.Writer) {
 		}
 		var done, fly, queued, blocked, failed int
 		for _, a := range s.Arms {
-			done, fly, queued, blocked, failed = done+a.Done, fly+a.Inflight, queued+a.Queued, blocked+a.Blocked, failed+a.Failed+a.Skipped
+			done, fly, queued, blocked, failed = done+a.Done, fly+a.Inflight, queued+a.Queued, blocked+a.Blocked, failed+a.Failed+a.Skipped+a.Parked
 		}
 		state := "running"
 		if s.Complete {
 			state = "complete"
 		}
 		fmt.Fprintf(w, "plan %-24s %-8s done %d, in flight %d, queued %d, blocked %d, failed %d (lanes plan status %s)\n", n, state, done, fly, queued, blocked, failed, n)
+	}
+}
+
+// AlarmLog is the engine's alarm sink: a line in <root>/alarms.jsonl (what `lanes status` shows) and, when the plan
+// names a hook, the hook command with the alarm in its environment so a notifier can push it.
+type AlarmLog struct {
+	Root Root
+	Hook string
+	Logf func(format string, a ...any)
+}
+
+// Raise appends the alarm and runs the hook (bounded; a failing hook is logged and never stops the engine).
+func (a *AlarmLog) Raise(al plan.Alarm) {
+	if err := appendJSONL(a.Root.path("alarms.jsonl"), al); err != nil && a.Logf != nil {
+		a.Logf("alarms.jsonl: %v", err)
+	}
+	if a.Hook == "" {
+		return
+	}
+	line, _ := json.Marshal(al)
+	ctx, cancel := context.WithTimeout(context.Background(), alarmHookTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", "-c", a.Hook)
+	cmd.Env = append(os.Environ(), "ALARM_JSON="+string(line), "ALARM_KIND="+al.Alarm, "ALARM_PLAN="+al.Plan, "ALARM_KEY="+al.Key,
+		"ALARM_SUBJECT="+al.Subject, "ALARM_DETAIL="+al.Detail, "BENCH_ROOT="+string(a.Root))
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	if out, err := cmd.CombinedOutput(); err != nil && a.Logf != nil {
+		a.Logf("alarm hook for %s: %v: %s", al.Key, err, tailLine(string(out)))
+	}
+}
+
+const alarmHookTimeout = 30 * time.Second
+
+// RecentAlarms are the alarms of alarms.jsonl raised within the last window, newest last. A damaged line is skipped.
+func RecentAlarms(root Root, window time.Duration, now time.Time) []plan.Alarm {
+	lines, _ := readJSONL[plan.Alarm](root.path("alarms.jsonl"))
+	var out []plan.Alarm
+	for _, a := range lines {
+		if a.Alarm != "" && now.Sub(a.At) <= window {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// AlarmWindow is how far back `lanes status` looks for alarms.
+const AlarmWindow = 24 * time.Hour
+
+// printAlarms writes the alarms of the last day (at most the last 10) under a heading, or nothing.
+func printAlarms(root Root, w io.Writer) {
+	as := RecentAlarms(root, AlarmWindow, time.Now())
+	if len(as) == 0 {
+		return
+	}
+	if len(as) > 10 {
+		as = as[len(as)-10:]
+	}
+	fmt.Fprintf(w, "alarms (last %s):\n", AlarmWindow)
+	for _, a := range as {
+		name := a.Plan
+		if name == "" {
+			name = a.Host
+		}
+		fmt.Fprintf(w, "  %s ago  %-13s %s %s: %s\n", time.Since(a.At).Round(time.Minute), a.Alarm, name, a.Subject, a.Detail)
 	}
 }

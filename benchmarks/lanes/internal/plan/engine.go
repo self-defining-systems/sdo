@@ -20,6 +20,8 @@ type Engine struct {
 	Clock   Clock
 	// Logf, when set, receives one line per decision.
 	Logf func(format string, a ...any)
+	// Alarms receives the alarms the engine raises (nil: they are only logged and kept in events.jsonl).
+	Alarms AlarmSink
 
 	items []Item
 }
@@ -78,6 +80,7 @@ func (e *Engine) Tick(ctx context.Context) error {
 	e.skipOrphans(st)
 	e.release(ctx, st)
 	e.skipOrphans(st) // a release that found a stale artifact failed its source
+	e.checkAlarms(ctx, st)
 	if e.allTerminal(st) {
 		st.Complete = true
 		e.event("", "complete", "%d nodes", len(st.Nodes))
@@ -112,11 +115,16 @@ func (e *Engine) observe(ctx context.Context, st *State) {
 		switch obs.Phase {
 		case PhaseDone:
 			n.Status, n.Ended = NodeDone, nonZero(obs.Ended, e.Clock.Now().UTC())
+			n.Attempts = append(n.Attempts, AttemptRecord{Attempt: n.Attempt, Exp: n.Exp, Submitted: n.Submitted, Ended: n.Ended, Stages: obs.Stages})
+			e.checkStages(st, n, obs)
 			e.event(n.ID, "done", "%s", n.Exp)
 		case PhaseFailed:
-			e.fail(n, obs.Reason, obs.Detail)
+			e.checkStages(st, n, obs)
+			e.fail(st, n, obs.Reason, obs.Detail, obs.Stages)
 		case PhaseAbsent:
-			e.fail(n, "lost", "the backend has no experiment "+n.Exp)
+			e.fail(st, n, "lost", "the backend has no experiment "+n.Exp, nil)
+		default:
+			e.watchStage(st, n, obs)
 		}
 	}
 }
@@ -128,14 +136,52 @@ func nonZero(t, def time.Time) time.Time {
 	return t.UTC()
 }
 
-// fail ends the node's current attempt with reason.
-func (e *Engine) fail(n *NodeState, reason, detail string) {
+// FailuresToPark is how many failures of one item with the same reason park it (invariant 3).
+const FailuresToPark = 2
+
+// fail ends the node's current attempt with reason and decides what follows. The first failure of an (item, reason)
+// sends the node back to waiting: it runs again as a new attempt under a new experiment name (-x<n>). The second
+// identical failure, on any node of the item, parks the item: this node fails for good and the item's other nodes
+// that have not been released are parked. Only the runner retries: the experiments run with retries 0.
+func (e *Engine) fail(st *State, n *NodeState, reason, detail string, stages map[string]time.Duration) {
 	if reason == "" {
 		reason = "failed"
 	}
-	n.Status, n.Reason, n.Ended = NodeFailed, reason, e.Clock.Now().UTC()
+	now := e.Clock.Now().UTC()
+	rec := AttemptRecord{Attempt: n.Attempt, Exp: n.Exp, Reason: reason, Detail: detail, Submitted: n.Submitted, Ended: now, Stages: stages}
+	if k := len(n.Attempts); k > 0 && n.Attempts[k-1].Attempt == n.Attempt {
+		rec.Stages = n.Attempts[k-1].Stages // the attempt had ended done; a bad artifact fails it afterwards
+		n.Attempts[k-1] = rec
+	} else {
+		n.Attempts = append(n.Attempts, rec)
+	}
+	if st.Failures == nil {
+		st.Failures = map[string]int{}
+	}
+	key := n.Item + "|" + reason
+	st.Failures[key]++
 	e.event(n.ID, "failed", "%s: %s", reason, detail)
-	e.logf("%s failed: %s: %s", n.ID, reason, detail)
+	e.logf("%s failed (attempt %d, %d of %d for item %s): %s: %s", n.ID, n.Attempt, st.Failures[key], FailuresToPark, n.Item, reason, detail)
+	_, parked := st.Parked[n.Item]
+	if st.Failures[key] < FailuresToPark && !parked {
+		n.Status, n.Exp, n.Reason, n.Artifacts, n.Submitted, n.Ended = NodeWaiting, "", reason, nil, time.Time{}, time.Time{}
+		e.event(n.ID, "retry", "attempt %d after %s", n.Attempt+1, reason)
+		return
+	}
+	n.Status, n.Reason, n.Ended = NodeFailed, reason, now
+	if parked {
+		return
+	}
+	if st.Parked == nil {
+		st.Parked = map[string]string{}
+	}
+	st.Parked[n.Item] = reason
+	e.event(n.ID, "parked", "item %s failed %d times with %s", n.Item, FailuresToPark, reason)
+	for _, o := range st.Nodes {
+		if o.Item == n.Item && o.Status == NodeWaiting {
+			o.Status, o.Reason, o.Ended = NodeParked, fmt.Sprintf("item %s parked: %s twice", n.Item, reason), now
+		}
+	}
 }
 
 // outgoing returns the (kind, mode) pairs the edges ask of arm's nodes (or a step's artifact).
@@ -199,9 +245,9 @@ func (e *Engine) verifyPending(ctx context.Context, st *State) {
 			case err != nil:
 				e.logf("%s artifact %s: %v (next pass)", n.ID, kind, err)
 			case !ok:
-				e.fail(n, "artifact:"+kind, detail)
+				e.fail(st, n, "artifact:"+kind, detail, nil)
 			}
-			if n.Status == NodeFailed {
+			if n.Status != NodeDone {
 				break
 			}
 		}
@@ -378,7 +424,7 @@ func (e *Engine) blocked(st *State, n *NodeState) (why string, final bool) {
 					return fmt.Sprintf("%s: artifact %s not verified", id, ed.Artifact), false
 				}
 			}
-		case NodeFailed, NodeSkipped:
+		case NodeFailed, NodeSkipped, NodeParked:
 			return fmt.Sprintf("%s %s", id, status), true
 		default:
 			return fmt.Sprintf("waits for %s", id), false
@@ -435,7 +481,7 @@ func (e *Engine) release(ctx context.Context, st *State) {
 		attempt := n.Attempt + 1
 		spec, name, err := e.Render(Node{ID: n.ID, Arm: n.Arm, Item: n.Item, Rep: n.Rep, Index: n.Index}, attempt, arts)
 		if err != nil {
-			e.fail(n, "spec", err.Error())
+			e.fail(st, n, "spec", err.Error(), nil)
 			continue
 		}
 		path := filepath.Join(e.Dir, "specs", name+".json")
@@ -481,7 +527,7 @@ func (e *Engine) recheck(ctx context.Context, st *State, n *NodeState) (map[stri
 		case !v.OK:
 			if u := st.node(id); u != nil {
 				u.Artifacts[ed.Artifact].Verified = false
-				e.fail(u, "artifact:"+ed.Artifact, "at release of "+n.ID+": "+v.Detail)
+				e.fail(st, u, "artifact:"+ed.Artifact, "at release of "+n.ID+": "+v.Detail, nil)
 			} else if s := st.step(id); s != nil {
 				s.Status, s.Detail, s.Ended = StepFailed, "artifact "+ed.Artifact+": "+v.Detail, e.Clock.Now().UTC()
 			}
