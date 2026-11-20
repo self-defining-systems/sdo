@@ -130,6 +130,34 @@ func (sdoSubject) Local(ctx context.Context, inv Inventory, specs []specFile, op
 				ok, d := judgeMemory(out, err, bl.Commit, opt.AllowMemoryDiag)
 				add(6, label, local, ok, "baseline %s %s", short(bl.Commit), d)
 			}
+			// The seed memory is checked the same way, at the spec's pinned SDO revision: an invalid one would
+			// crash-loop the controller on a built lane.
+			seedSeen := map[string]bool{}
+			for _, s := range specs {
+				if s.Operator.Seed == "" || s.Operator.Hooks == "" {
+					continue
+				}
+				seed := s.Operator.Seed
+				if !filepath.IsAbs(seed) {
+					seed = filepath.Join(s.dir, seed)
+				}
+				hooks := inv.HooksPath(s.Operator.Hooks, s.Operator.Revision, local)
+				key := seed + "|" + hooks
+				if seedSeen[key] {
+					continue
+				}
+				seedSeen[key] = true
+				label := "memory-seed[" + s.Name + "]"
+				r := checkMemoryDir(ctx, run, local, envPrefix(inv.Hosts[local]), hooks, seed, opt.AllowMemoryDiag)
+				switch {
+				case r.Err != nil:
+					add(6, label, local, false, "seed %s: %v", seed, r.Err)
+				case r.Ran:
+					add(6, label, local, true, "seed %s: %s", seed, r.Detail)
+				default:
+					add(6, label, local, true, "%s", r.Note)
+				}
+			}
 		}()
 	} else if anyBaseline(specs) {
 		add(6, "memory", "-", false, "needs a local host in hosts.yaml (the baselines are read there)")
