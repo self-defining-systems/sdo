@@ -46,6 +46,8 @@ type NodeState struct {
 	Attempt int    `json:"attempt"`
 	Exp     string `json:"exp,omitempty"`
 	Reason  string `json:"reason,omitempty"`
+	// SubmitFails counts the passes in a row the backend refused this node's submit.
+	SubmitFails int `json:"submit_fails,omitempty"`
 	// Submitted, Ended: when the current attempt was released and when it ended.
 	Submitted time.Time                 `json:"submitted,omitempty"`
 	Ended     time.Time                 `json:"ended,omitempty"`

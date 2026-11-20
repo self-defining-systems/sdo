@@ -33,6 +33,8 @@ type fakeBackend struct {
 	alarms   []Alarm
 	// cancelled are the experiments and step directories the engine asked to cancel.
 	cancelled []string
+	// submitErr, when set, is what Submit answers.
+	submitErr error
 }
 
 func newFake() *fakeBackend {
@@ -42,6 +44,9 @@ func newFake() *fakeBackend {
 func (f *fakeBackend) Submit(_ context.Context, j Job) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.submitErr != nil {
+		return f.submitErr
+	}
 	if _, ok := f.exps[j.Exp]; ok {
 		return ErrExists
 	}
