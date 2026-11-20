@@ -133,7 +133,7 @@ func purgePlan(root Root, name string) (done bool, err error) {
 			return false, err
 		}
 	}
-	archive, err := plan.SetArchive(dir, filepath.Join(root.PlansDir(), ".removed", name+"-"+time.Now().UTC().Format("20060102T150405Z")))
+	archive, err := plan.SetArchive(dir, filepath.Join(root.PlansDir(), ".removed", name+"-"+time.Now().UTC().Format("2006-01-02_150405")))
 	if err != nil {
 		return false, err
 	}
