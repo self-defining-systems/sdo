@@ -24,6 +24,8 @@ type Engine struct {
 	Alarms AlarmSink
 
 	items []Item
+	// releasing is false while the plan is paused or removed: nothing new starts.
+	releasing bool
 }
 
 // Open loads a plan directory and checks the stored copies against the lock.
@@ -74,11 +76,18 @@ func (e *Engine) Tick(ctx context.Context) error {
 	if st.Complete {
 		return nil
 	}
+	ctl, err := LoadControl(e.Dir)
+	if err != nil {
+		return err
+	}
 	e.observe(ctx, st)
 	e.verifyPending(ctx, st)
+	e.releasing = e.applyControl(ctx, st, ctl)
 	e.runSteps(ctx, st)
 	e.skipOrphans(st)
-	e.release(ctx, st)
+	if e.releasing {
+		e.release(ctx, st)
+	}
 	e.skipOrphans(st) // a release that found a stale artifact failed its source
 	e.recordRows(ctx, st)
 	e.checkAlarms(ctx, st)
@@ -325,6 +334,9 @@ func (e *Engine) runSteps(ctx context.Context, st *State) {
 		def := e.Plan.stepOf(s.Name)
 		switch s.Status {
 		case StepWaiting:
+			if !e.releasing {
+				continue
+			}
 			inputs, ready := e.stepInputs(st, def, s.Rep)
 			if !ready {
 				continue

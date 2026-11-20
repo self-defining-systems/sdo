@@ -72,6 +72,16 @@ func PlanDryRun(root Root, file string, jsonOut bool, w io.Writer) error {
 	return nil
 }
 
+// PlanControl applies a control request (pause, resume, remove, skip) to the plan's directory. The manager applies it
+// on its next pass; the request is on disk until then, so a restart loses nothing.
+func PlanControl(root Root, name string, f func(dir string) error) error {
+	dir := plan.Dir(root.PlansDir(), name)
+	if _, err := os.Stat(dir); err != nil {
+		return fmt.Errorf("no plan %q under %s", name, root.PlansDir())
+	}
+	return f(dir)
+}
+
 // planSpecCheck is the check of one rendered spec: the platform's own spec validation and the inventory (the pins
 // must be checked out on a usable host).
 func planSpecCheck(inv Inventory) func([]byte) error {
@@ -384,7 +394,7 @@ func (b *PlanBackend) StartStep(_ context.Context, j plan.StepJob) error {
 		return err
 	}
 	go func() { _ = cmd.Wait() }()
-	started, _ := json.Marshal(map[string]any{"at": time.Now().UTC(), "timeout_s": int(j.Timeout.Seconds())})
+	started, _ := json.Marshal(map[string]any{"at": time.Now().UTC(), "timeout_s": int(j.Timeout.Seconds()), "pid": cmd.Process.Pid})
 	return os.WriteFile(filepath.Join(j.Dir, "started.json"), started, 0o644)
 }
 
@@ -409,6 +419,33 @@ func (b *PlanBackend) ObserveStep(_ context.Context, dir string) (plan.StepObser
 		return plan.StepObservation{Phase: plan.PhaseFailed, Detail: "no exit record past the step's timeout (lost)"}, nil
 	}
 	return plan.StepObservation{Phase: plan.PhaseRunning}, nil
+}
+
+// Cancel removes the experiment: its queued runs are dropped; a run already on a lane finishes and its results stay
+// (the platform has no way to stop one mid-run).
+func (b *PlanBackend) Cancel(_ context.Context, exp string) error {
+	err := Remove(b.Root, exp, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+// CancelStep kills the step's process group (setsid made it a group of its own) and records exit 143, as a killed
+// step would.
+func (b *PlanBackend) CancelStep(_ context.Context, dir string) error {
+	var st struct {
+		PID int `json:"pid"`
+	}
+	if err := readJSON(filepath.Join(dir, "started.json"), &st); err == nil && st.PID > 1 {
+		if err := syscall.Kill(-st.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+			return err
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "exit")); err == nil {
+		return nil
+	}
+	return os.WriteFile(filepath.Join(dir, "exit"), []byte("143\n"), 0o644)
 }
 
 var _ plan.Backend = (*PlanBackend)(nil)

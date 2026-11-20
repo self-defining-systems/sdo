@@ -84,6 +84,17 @@ alarms: {factor: 2, idle_lane: 10m, arm_stall: 90m, hook: "notify-send lanes \"$
   `source-mismatch` and runs again. A grade that is still being made delays the row, not the next run; a plan is
   complete once every row is written. The real backend grades a done run through the workload's grade verb in the
   background and reads the line for the run's operator label from `results/runs.jsonl`.
+- **Pause, remove, skip.** Requests are written to `<plan dir>/control.json` under a lock (never to `state.json`), so a
+  command cannot race the manager and a restart loses nothing; the manager applies them on its next pass, idempotently.
+  `lanes plan pause NAME` releases no new node and starts no new step (runs in flight are still watched and recorded);
+  `resume` undoes it. `lanes plan remove NAME` retires the plan: waiting nodes and steps are skipped (`plan removed`),
+  runs in flight finish and keep their result rows, the plan completes when they have ended, and its directory and
+  results stay (the name is not reused). `lanes plan skip NAME ITEM` skips the item: its unreleased nodes (also those
+  that come back for a retry) are skipped, in-flight ones finish, and a skip is not a failure (no parking).
+  `unskip` stops skipping new nodes; those already skipped stay skipped. `--cancel` (`remove`, `skip`) also cancels the
+  runs in flight: the experiment is removed (its queued runs are dropped; a run already on a lane finishes, as with
+  `lanes remove`) and running steps get SIGTERM; the cancelled node is skipped with the reason. `plan status` shows
+  `paused`, `removed, draining` and the skipped items.
 - **Commands.** `lanes plan add FILE [--dry-run [--json]]` (`--dry-run` runs every check of `add` -- parse, items, groups, every item's rendered spec through the spec validator and the inventory, a taken name -- and prints the items, arms, edges, steps and the nodes in run order with their experiment names; nothing is stored under the root), `lanes plan status [NAME] [--json]` (per arm: done, in-flight, queued, blocked,
   failed, skipped; the next runs; why the first blocked ones wait). `lanes plan results NAME [--tsv] [--final] [--done] [--grade-fields a,b]` (JSON lines, or TSV with a header and a column
   per stage and per named grade field; `--final` keeps each node's last attempt, `--done` only done rows).

@@ -31,6 +31,8 @@ type fakeBackend struct {
 	capacity Capacity
 	rundata  map[string]RunData // by experiment; absent: a good run on the pinned source
 	alarms   []Alarm
+	// cancelled are the experiments and step directories the engine asked to cancel.
+	cancelled []string
 }
 
 func newFake() *fakeBackend {
@@ -238,4 +240,19 @@ func mustRead(t *testing.T, p string) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+func (f *fakeBackend) Cancel(_ context.Context, exp string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cancelled = append(f.cancelled, exp)
+	f.exps[exp] = Observation{Phase: PhaseFailed, Reason: "removed"}
+	return nil
+}
+
+func (f *fakeBackend) CancelStep(_ context.Context, dir string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cancelled = append(f.cancelled, dir)
+	return nil
 }
