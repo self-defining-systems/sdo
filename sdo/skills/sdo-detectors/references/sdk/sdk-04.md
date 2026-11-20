@@ -137,9 +137,13 @@ func (d SourceDiff) ContainerChanges() ([]ContainerChange, error)
     change.
 
 func (d SourceDiff) Field(path string) (FieldValues, error)
-    Field compares one dotted field path, such as "spec.replicas", on both
-    sides. Compare containers by name with ContainerChanges, never by list
-    position.
+    Field compares one field path, such as "spec.replicas", on both sides.
+    The path takes the same selectors as the repair actions: "[name=X]" picks
+    the one list entry with that name ("containers[name=app]"), "[N]" a list
+    index and "[key]" a map entry ("data[config.yaml]"). A selector that matches
+    nothing is an absent field; a malformed path is an error, never a silently
+    absent field. Compare containers by name with ContainerChanges, never by
+    list position.
 
 func (d SourceDiff) MissingButInSource() bool
     MissingButInSource is true while accepted source declares the object and it

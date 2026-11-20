@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -64,32 +65,120 @@ func (f FieldValues) Differs() bool {
 	return f.Declared && (!f.Live || !reflect.DeepEqual(f.Accepted, f.Observed))
 }
 
-// Field compares one dotted field path, such as "spec.replicas", on both sides.
+// Field compares one field path, such as "spec.replicas", on both sides. The path takes the same selectors
+// as the repair actions: "[name=X]" picks the one list entry with that name ("containers[name=app]"),
+// "[N]" a list index and "[key]" a map entry ("data[config.yaml]"). A selector that matches nothing is an
+// absent field; a malformed path is an error, never a silently absent field.
 // Compare containers by name with ContainerChanges, never by list position.
 func (d SourceDiff) Field(path string) (FieldValues, error) {
 	accepted, observed, err := d.Sides()
 	if err != nil {
 		return FieldValues{}, err
 	}
-	keys := strings.Split(path, ".")
+	steps, err := parseFieldSteps(path)
+	if err != nil {
+		return FieldValues{}, fmt.Errorf("field path %q: %w", path, err)
+	}
 	result := FieldValues{}
-	result.Accepted, result.Declared = lookupField(accepted, keys)
-	result.Observed, result.Live = lookupField(observed, keys)
+	result.Accepted, result.Declared = lookupField(accepted, steps)
+	result.Observed, result.Live = lookupField(observed, steps)
 	return result, nil
 }
 
-func lookupField(object map[string]any, keys []string) (any, bool) {
+type fieldStep struct {
+	key      string
+	selector string
+}
+
+func parseFieldSteps(path string) ([]fieldStep, error) {
+	var steps []fieldStep
+	depth, start := 0, 0
+	flush := func(end int) error {
+		text := path[start:end]
+		step := fieldStep{key: text}
+		if open := strings.IndexByte(text, '['); open >= 0 {
+			if open == 0 || !strings.HasSuffix(text, "]") || open+1 == len(text)-1 {
+				return errors.New("invalid selector")
+			}
+			step = fieldStep{key: text[:open], selector: text[open+1 : len(text)-1]}
+		}
+		if step.key == "" {
+			return errors.New("empty path segment")
+		}
+		steps = append(steps, step)
+		return nil
+	}
+	for i := 0; i < len(path); i++ {
+		switch path[i] {
+		case '[':
+			depth++
+		case ']':
+			depth--
+			if depth < 0 {
+				return nil, errors.New("unbalanced selector")
+			}
+		case '.':
+			if depth == 0 {
+				if err := flush(i); err != nil {
+					return nil, err
+				}
+				start = i + 1
+			}
+		}
+	}
+	if depth != 0 {
+		return nil, errors.New("unbalanced selector")
+	}
+	if err := flush(len(path)); err != nil {
+		return nil, err
+	}
+	return steps, nil
+}
+
+func lookupField(object map[string]any, steps []fieldStep) (any, bool) {
 	var value any = object
-	for _, key := range keys {
+	for _, step := range steps {
 		fields, ok := value.(map[string]any)
 		if !ok {
 			return nil, false
 		}
-		if value, ok = fields[key]; !ok {
+		if value, ok = fields[step.key]; !ok {
 			return nil, false
+		}
+		if step.selector != "" {
+			if value, ok = selectField(value, step.selector); !ok {
+				return nil, false
+			}
 		}
 	}
 	return value, object != nil
+}
+
+func selectField(value any, selector string) (any, bool) {
+	if entries, ok := value.(map[string]any); ok {
+		entry, ok := entries[selector]
+		return entry, ok
+	}
+	items, ok := value.([]any)
+	if !ok {
+		return nil, false
+	}
+	if name, named := strings.CutPrefix(selector, "name="); named {
+		var found any
+		count := 0
+		for _, item := range items {
+			if fields, ok := item.(map[string]any); ok && fields["name"] == name {
+				found = item
+				count++
+			}
+		}
+		return found, count == 1
+	}
+	index, err := strconv.Atoi(selector)
+	if err != nil || index < 0 || index >= len(items) {
+		return nil, false
+	}
+	return items[index], true
 }
 
 // ContainerKind is the pod-spec list a container belongs to.
@@ -162,7 +251,7 @@ func (d SourceDiff) ContainerChanges() ([]ContainerChange, error) {
 
 // podSpecFields finds the pod spec of a Pod, a pod-template workload or a CronJob.
 func podSpecFields(object map[string]any) map[string]any {
-	for _, path := range [][]string{{"spec", "jobTemplate", "spec", "template", "spec"}, {"spec", "template", "spec"}, {"spec"}} {
+	for _, path := range [][]fieldStep{{{key: "spec"}, {key: "jobTemplate"}, {key: "spec"}, {key: "template"}, {key: "spec"}}, {{key: "spec"}, {key: "template"}, {key: "spec"}}, {{key: "spec"}}} {
 		if value, ok := lookupField(object, path); ok {
 			if spec, ok := value.(map[string]any); ok {
 				if _, isTemplate := spec["template"]; !isTemplate {
