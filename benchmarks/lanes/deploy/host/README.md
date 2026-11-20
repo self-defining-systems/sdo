@@ -33,3 +33,10 @@ kernel and not restored at `off`. `sdo-eval-reserve status` lists the containers
 
 Lanes that were built before this existed live under `system.slice`, not `eval.slice`, and are not reserved: recreate them
 (or keep `reserve: false` for them). Docker's `--cgroup-parent` can only be chosen when a container is created.
+
+**Persistent block, slices that appear later:** `block reserve` puts every top-level slice (user, system, machine, kubepods) on the complement of the
+block. A slice that is not a systemd unit at that time (kubepods.slice is created at boot by a k3s agent) gets a persistent drop-in
+(`/etc/systemd/system/<slice>.d/50-lane-reserve.conf`) and, if its cgroup exists, a direct `cpuset.cpus` write. `gc` (every minute) re-applies the
+reservation to any slice found overlapping the block. `block status` reports `two-way yes` only when every slice's systemd property and its cgroup's
+cpus stay outside the block; an overlapping slice is named (`overlap SLICE cpuset=...`). Re-install the helper (`lanes host install-helper`) on a host
+to get this.
