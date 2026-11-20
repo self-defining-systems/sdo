@@ -123,6 +123,9 @@ type settlingCase struct {
 	// object no stage write touches and no detector re-observes: a clue that
 	// can never clear by detector evaluation.
 	unexplainedDrift bool
+	// startup is how long the api workload was observed to take to become
+	// Ready; its restart settles only that long after the write.
+	startup time.Duration
 }
 
 // settlingTraffic is the health workload's samples: one per second for scenario
@@ -137,6 +140,7 @@ type settlingWorld struct {
 	*sameWriteWorld
 	clock   *settlingClock
 	traffic *settlingTraffic
+	startup time.Duration
 	// effectAt is when the restart's effect reaches the samples.
 	effectAt time.Time
 	// saved collects the controller's tool-state checkpoints when set.
@@ -145,10 +149,16 @@ type settlingWorld struct {
 
 func (w *settlingWorld) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
 	view, err := w.sameWriteWorld.Snapshot(ctx)
-	if err != nil || w.traffic == nil {
+	if err != nil {
 		return view, err
 	}
 	snapshot := view.(sdktest.Snapshot)
+	if w.startup > 0 {
+		snapshot.ObservedStartupTimes = map[string]time.Duration{"Deployment/api": w.startup}
+	}
+	if w.traffic == nil {
+		return snapshot, nil
+	}
 	now := w.clock.Now()
 	var samples []traffic.Sample
 	for at := now.Add(-time.Minute).Truncate(time.Second); !at.After(now); at = at.Add(time.Second) {
@@ -245,7 +255,7 @@ func newSettlingWorld(tc settlingCase) *settlingWorld {
 	// The recovery bound is also a real context deadline, so the synthetic
 	// clock starts far enough ahead that only the synthetic bound can end it.
 	clock := &settlingClock{now: time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)}
-	return &settlingWorld{sameWriteWorld: inner, clock: clock, traffic: tc.traffic, effectAt: clock.Now().Add(time.Second)}
+	return &settlingWorld{sameWriteWorld: inner, clock: clock, traffic: tc.traffic, startup: tc.startup, effectAt: clock.Now().Add(time.Second)}
 }
 
 // settlingStageOn builds the stage and incident over world, as a controller
@@ -355,6 +365,11 @@ func TestRecoveryWaitSettlesWhileEffectsAndWindowsCatchUp(t *testing.T) {
 	}{
 		{"windows catch up after the rollout", settlingCase{healAfter: 40 * time.Second, stallWindow: 60 * time.Second},
 			contracts.RecoveryWait_EXIT_REASON_CLEARED, "applied_cleared", false, 40 * time.Second, 45 * time.Second},
+		// The api workload takes 100 s to become Ready after its restart: the
+		// stage gives its rollout that long on top of the 90 s floor and does not
+		// call a finding persistent before the windows and the startup passed.
+		{"slow workload startup", settlingCase{healAfter: 120 * time.Second, stallWindow: 60 * time.Second, startup: 100 * time.Second},
+			contracts.RecoveryWait_EXIT_REASON_CLEARED, "applied_cleared", false, 120 * time.Second, 130 * time.Second},
 		// The fault outlives the windows (60 s + one clearing interval after the
 		// rollout), which end before the 90 s recovery bound.
 		{"fault persists past the windows", settlingCase{stallWindow: 60 * time.Second},
