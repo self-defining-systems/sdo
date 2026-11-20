@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from benchmarks.sregym.fastloop import cli
-from benchmarks.sregym.fastloop.host_limits import NodeLimits, apply_lane_cpu, apply_node_limits
+from benchmarks.sregym.fastloop.host_limits import NodeLimits, apply_lane_cpu, apply_node_limits, preferred_cpus
 from benchmarks.sregym.fastloop.lane_cgroup import (
     CgroupMismatch,
     CpusetExhausted,
@@ -18,6 +18,7 @@ from benchmarks.sregym.fastloop.lane_cgroup import (
     install_docker_shim,
     kind_run_flags,
     place_cpus,
+    place_in_block,
     read_host_cores,
     read_node_cgroup,
     resolve_cgroup_parent,
@@ -408,3 +409,56 @@ def test_a_container_that_cannot_be_inspected_is_unverifiable(tmp_path: Path) ->
         raise subprocess.CalledProcessError(1, argv)
 
     assert read_node_cgroup("gone", run=run, root=tmp_path, proc=tmp_path) is None
+
+
+# --- preferred CPU block: a host's reserved cores are used first ----------------------------------------------------
+
+BLOCK = frozenset({4, 5, 6, 7, 12, 13, 14, 15})  # cores 4-7 and their SMT siblings
+
+
+def test_a_preferred_block_takes_free_whole_cores_inside_it_before_any_outside_core() -> None:
+    placement = place_cpus(3, CORES, [], preferred=BLOCK)
+    assert placement.cpus == frozenset({4, 12, 5})
+
+
+def test_a_preferred_block_fills_half_used_cores_before_spilling_outside() -> None:
+    held = [frozenset({4, 12, 5}), frozenset({6, 14, 7})]  # both 3-CPU nodes leave a sibling free: 13 and 15
+    assert place_in_block(2, CORES, held, BLOCK) == frozenset({13, 15})
+    assert place_cpus(2, CORES, held, preferred=BLOCK).cpus == frozenset({13, 15})
+
+
+def test_a_node_the_block_cannot_hold_spills_whole_never_split_across_the_edge() -> None:
+    held = [frozenset({4, 12, 5, 13, 6, 14})]
+    placement = place_cpus(3, CORES, held, preferred=BLOCK)
+    assert placement.cpus == frozenset({0, 8, 1})
+    assert place_in_block(3, CORES, held, BLOCK) is None
+
+
+def test_a_node_outside_the_block_moves_in_when_it_has_room(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SDO_LANE_PREFERRED_CPUS", "4-7,12-15")
+    docker = Docker("lane-worker\n", {"lane-worker": "0,8,1", "other": "9"})
+    monkeypatch.setattr(subprocess, "run", docker)
+    apply_lane_cpu("lane", "3", read=lambda _node: None)
+    assert docker.cpusets["lane-worker"] == "4-5,12"
+
+
+def test_a_node_already_inside_the_block_keeps_its_cpus(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SDO_LANE_PREFERRED_CPUS", "4-7,12-15")
+    docker = Docker("lane-worker\n", {"lane-worker": "6-7,14", "other": "4"})
+    monkeypatch.setattr(subprocess, "run", docker)
+    apply_lane_cpu("lane", "3", read=lambda _node: None)
+    assert docker.cpusets["lane-worker"] == "6-7,14"
+
+
+def test_a_node_outside_a_full_block_stays_where_it_is(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SDO_LANE_PREFERRED_CPUS", "4-7,12-15")
+    docker = Docker("lane-worker\n", {"lane-worker": "0,8,1", "other": "4-7,12-15"})
+    monkeypatch.setattr(subprocess, "run", docker)
+    apply_lane_cpu("lane", "3", read=lambda _node: None)
+    assert docker.cpusets["lane-worker"] == "0-1,8"
+
+
+def test_a_malformed_preferred_block_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SDO_LANE_PREFERRED_CPUS", "fast")
+    with pytest.raises(ValueError, match="SDO_LANE_PREFERRED_CPUS"):
+        preferred_cpus()

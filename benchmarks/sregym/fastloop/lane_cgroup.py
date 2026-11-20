@@ -284,7 +284,12 @@ class CpuPlacement:
 
 
 def place_cpus(
-    count: int, cores: Iterable[frozenset[int]], held: Iterable[frozenset[int]], *, node: str = "node"
+    count: int,
+    cores: Iterable[frozenset[int]],
+    held: Iterable[frozenset[int]],
+    *,
+    node: str = "node",
+    preferred: frozenset[int] = frozenset(),
 ) -> CpuPlacement:
     """Exactly ``count`` host CPUs for a node, so its workloads see its cap (visibility is the requirement).
 
@@ -292,9 +297,18 @@ def place_cpus(
     siblings count as held) come first, lowest core first; when those run out the least-loaded remaining CPUs
     fill the set, which may share cores with, or overlap, other experiments. Only a cap larger than the host
     raises ``CpusetExhausted``.
+
+    ``preferred`` is a host's reserved CPU block (one NUMA node, so the node's CPUs stay NUMA-local): when it
+    still has ``count`` CPUs that no other container holds, the node goes entirely inside it, free whole cores
+    first, then the free siblings of half-used cores; only when the block cannot hold the node does placement
+    spill to the whole host (never split across the block edge).
     """
     cores = sorted(cores, key=min)
     held = list(held)
+    if preferred:
+        inside = place_in_block(count, cores, held, preferred)
+        if inside is not None:
+            return CpuPlacement(node, inside, frozenset())
     every = frozenset().union(*cores)
     if count > len(every):
         raise CpusetExhausted(f"eval: {node} is capped at {count} CPUs but this host has only {len(every)}")
@@ -308,6 +322,23 @@ def place_cpus(
         chosen += rest[: count - len(chosen)]
     cpus = frozenset(chosen)
     return CpuPlacement(node, cpus, cpus & shared_cpus)
+
+
+def place_in_block(
+    count: int, cores: Iterable[frozenset[int]], held: Iterable[frozenset[int]], block: frozenset[int]
+) -> frozenset[int] | None:
+    """``count`` CPUs inside ``block`` that no container holds (whole free cores first), or None when it is full."""
+    taken = frozenset().union(*held)
+    pieces = [core & block for core in sorted(cores, key=min) if core & block]
+    whole = [cpu for piece in pieces if not piece & taken for cpu in sorted(piece)]
+    partial = [cpu for piece in pieces if piece & taken for cpu in sorted(piece - taken)]
+    chosen = (whole + partial)[:count]
+    return frozenset(chosen) if len(chosen) == count else None
+
+
+def in_block(cpus: frozenset[int], block: frozenset[int]) -> int:
+    """How many of ``cpus`` lie inside the preferred ``block``."""
+    return len(cpus & block)
 
 
 def cgroup_matches(
