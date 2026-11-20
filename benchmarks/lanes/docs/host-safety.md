@@ -90,10 +90,18 @@ Tests: `TestHostHealthStateMachine`, `TestHostHealthThresholdsComeFromTheInvento
 
 ### Memory pressure
 
-The same probe reads `/proc/pressure/memory`. While the "full" avg60 is over `health.mem_psi_full` (percent, default 40)
-the host takes no new work (reason `memory pressure (PSI full avg60) is 65%, over 40%`, alarm `memory-pressure` once per
-rise). Memory-capped clusters thrashing, ours or another team's, are felt by every lane on the host. avg60 is already a
-minute's average, so there is no hysteresis. Test: `TestMemoryPressureStopsAdmission`.
+Pressure is measured where our work runs. Host-wide memory pressure often sits inside another tenant's own memory limit
+(a cluster thrashing at its memcg cap in `system.slice`) while our lanes are fine, so it must not refuse lanes.
+
+- **Gate.** The same probe reads `lanes.slice/memory.pressure`, the whole lane block. While its "full" avg60 is over
+  `health.mem_psi_full` (percent, default 40) the host takes no new work (reason `memory pressure of the lane block
+  (lanes.slice PSI full avg60) is 65%, over 40%`, alarm `memory-pressure` once per rise). A host without `lanes.slice`
+  has no reading and no gate. Per-lane pressure is the starvation gate below.
+- **Alarm only.** Host-wide `/proc/pressure/memory` "full" avg60 over the same threshold raises `host-pressure` once per
+  rise and never gates.
+- The ip-link canary and hung tasks stay host-wide gates: they show a kernel-wide failure that hits every lane.
+
+avg60 is already a minute's average, so there is no hysteresis. Test: `TestMemoryPressureGatesOnTheLaneBlockNotTheHost`.
 
 ### Lane starvation
 
