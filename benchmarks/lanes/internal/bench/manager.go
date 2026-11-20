@@ -787,6 +787,7 @@ func (m *Manager) assign(ctx context.Context, reachable map[string]bool) {
 		names = append(names, n)
 	}
 	sort.Strings(names)
+	m.preemptWaitingBuilds(ctx, reachable)
 	// waiting: the experiments with queued sequences that took no (more) lanes this pass, and why ("": no lane
 	// fit, which explainIdle says per lane).
 	waiting := map[string]string{}
@@ -1023,14 +1024,88 @@ func (m *Manager) freeLane(name string, s Spec, reachable map[string]bool) *Lane
 			m.gcWanted[h] = m.gcWanted[h] || floor
 			continue
 		}
-		for _, l := range m.sortedLanes() {
-			// A pool lane whose operator still runs is released first (by reset), so that the next build can take it by swap.
-			if l.Host == h && l.State == LaneFree && l.Step == nil && !awaitsRelease(l) {
-				return l
-			}
+		if l := m.freeLaneOn(h, true); l != nil {
+			return l
+		}
+		if l := m.freeLaneOn(h, false); l != nil {
+			return l
 		}
 	}
 	return nil
+}
+
+// freeLaneOn is the first free lane of host h that a build may take. A pool lane whose operator still runs is
+// released first (by reset), so that the next build can take it by swap. placed: only lanes that are not known to lack
+// cores: neither Gone nor one whose build waited for cores in vain (Unplaced); those come last.
+func (m *Manager) freeLaneOn(h string, placed bool) *LaneFile {
+	for _, l := range m.sortedLanes() {
+		if l.Host == h && l.State == LaneFree && l.Step == nil && !awaitsRelease(l) && !(placed && (l.Unplaced || l.Gone)) {
+			return l
+		}
+	}
+	return nil
+}
+
+// preemptedBy is the Killed reason of a build cancelled by preemptWaitingBuilds; its end counts as no failure.
+const preemptedBy = "preempted: waiting for cores while a free lane that holds cores could take its slot"
+
+// preemptWaitingBuilds frees the pool slots held by builds that wait for cores (phase lane-wait) when a free lane
+// that already holds cores could serve the experiment: lanes that own cores are offered before builds that wait for
+// them. Without it the waiting builds fill the experiment's slots for ever and the free lanes idle. A build that is
+// placed (past lane-wait) is never touched.
+func (m *Manager) preemptWaitingBuilds(ctx context.Context, reachable map[string]bool) {
+	taken := map[string]bool{}
+	for _, l := range m.sortedLanes() {
+		st := l.Step
+		if st == nil || st.Kind != StepBuild || st.Killed != "" || st.Phase == nil || st.Phase.Name != PhaseLaneWait || l.Experiment == "" {
+			continue
+		}
+		x := m.exps[l.Experiment]
+		if x == nil || x.Spec == nil || x.Paused || x.Removed != nil {
+			continue
+		}
+		s := x.Measured()
+		held := 0
+		for _, o := range m.lanes {
+			if o.Experiment == x.Name && o.Seq != nil {
+				held++
+			}
+		}
+		if held < s.Lanes { // a slot is free: assign offers the free lane without cancelling anything
+			continue
+		}
+		var cand *LaneFile
+		for _, h := range m.buildOrder(x.Name, s) {
+			if m.buildBlock(h, s, reachable) != "" {
+				continue
+			}
+			if why, _ := m.freshBlock(h); why != "" {
+				continue
+			}
+			for _, f := range m.sortedLanes() {
+				if f.Host == h && f.State == LaneFree && f.Step == nil && !awaitsRelease(f) && !f.Gone && !f.Unplaced && !taken[f.Lane] {
+					cand = f
+					break
+				}
+			}
+			if cand != nil {
+				break
+			}
+		}
+		if cand == nil {
+			continue
+		}
+		taken[cand.Lane] = true
+		st.Killed = preemptedBy
+		m.logf("lane %s: build %s cancelled: it waits for cores and free lane %s, which holds cores, can take its slot", l.Lane, st.ID, cand.Lane)
+		if err := m.ops(l.Host).Kill(ctx, l.Lane, st.ID); err != nil {
+			m.logf("lane %s: kill %s: %v (retried next pass)", l.Lane, st.ID, err)
+			st.Killed = ""
+			taken[cand.Lane] = false
+			continue
+		}
+		l.Unplaced = true
+	}
 }
 
 // buildOrder is the order in which a build of experiment name tries the spec's usable hosts: the spec's order, except
@@ -1144,7 +1219,7 @@ func (m *Manager) died(ctx context.Context, l *LaneFile) {
 			m.endRun(x, l, dead.Run, Result{Status: StatusInvalid, Reason: reason})
 		}
 	}
-	if dead.Kind == StepBuild {
+	if dead.Kind == StepBuild && dead.Killed != preemptedBy {
 		l.BuildFailures++
 	}
 	prev := l.Prepared
@@ -1216,7 +1291,7 @@ func (m *Manager) adopt(ctx context.Context, l *LaneFile) error {
 		switch {
 		case res.LaneDown != "":
 		case res.OK:
-			l.BuildFailures, l.AutoResets = 0, 0
+			l.BuildFailures, l.AutoResets, l.Unplaced = 0, 0, false
 			l.Gone, l.Recreate = false, false
 			m.setState(l, LaneReady, "")
 			if x != nil && x.Measured().Claim != "" && freshCopy(ivs) {
@@ -1243,6 +1318,10 @@ func (m *Manager) adopt(ctx context.Context, l *LaneFile) error {
 					Result{Status: StatusInvalid, Reason: res.Reason, Started: res.Started, Ended: res.Ended})
 			}
 			m.unbind(l, "swap failed, lane restored: "+res.Reason)
+		case ref.Killed == preemptedBy:
+			// Cancelled while it waited for cores so that a free lane that holds cores takes its slot: nothing ran,
+			// so it counts as no failure; the lane is offered last (Unplaced).
+			m.unbind(l, "build cancelled: it waited for cores")
 		default:
 			l.BuildFailures++
 			if res.Fresh {
