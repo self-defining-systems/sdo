@@ -339,3 +339,17 @@ func TestClusterUpWaitsForMemoryBudget(t *testing.T) {
 		t.Fatalf("wait phase %+v", p)
 	}
 }
+
+// The run record carries the lane's pressure at the inject and at the end of the window.
+func TestRunRecordsLanePSIAtInjectAndEnd(t *testing.T) {
+	r := limitRunner(t, 2)
+	reads := []LanePSI{{CPUSome: 5, MemFull: 0}, {CPUSome: 55, MemFull: 12}}
+	r.psi = func() (LanePSI, bool) { v := reads[0]; reads = reads[1:]; return v, true }
+	finish := r.isolate(context.Background())
+	r.recordPSIAtInject()
+	finish()
+	iso := r.res.Isolation
+	if iso == nil || iso.PSIInject == nil || iso.PSIEnd == nil || iso.PSIInject.CPUSome != 5 || iso.PSIEnd.CPUSome != 55 || iso.PSIEnd.MemFull != 12 {
+		t.Fatalf("isolation %+v", iso)
+	}
+}

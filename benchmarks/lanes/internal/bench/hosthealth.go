@@ -35,6 +35,8 @@ type Canary struct {
 	RDMAShared bool `json:"rdma_shared,omitempty"`
 	// MemPSIFull is the host's memory pressure, "full" avg60 in percent (/proc/pressure/memory); 0 when not readable.
 	MemPSIFull float64 `json:"mem_psi_full,omitempty"`
+	// LanePSI is each lane slice's own pressure, by slice name (LaneSlice), read in the same call (starve.go).
+	LanePSI map[string]LanePSI `json:"lane_psi,omitempty"`
 }
 
 // HostHealthConf is a host's `health:` block of hosts.yaml; zero values mean the defaults.
@@ -45,6 +47,10 @@ type HostHealthConf struct {
 	GoodProbes   int    `json:"good_probes,omitempty"`
 	// MemPSIFull is the memory pressure ("full" avg60, percent) over which the host takes no new work (default 40).
 	MemPSIFull float64 `json:"mem_psi_full,omitempty"` // good probes in a row that make it healthy again (default 3)
+	// LaneCPUPSISome and LaneMemPSIFull are the lane-level starvation thresholds (percent, avg60; starve.go): a lane
+	// whose cgroup cpu.pressure "some" or memory.pressure "full" is over them gets no new work (defaults 60 and 20).
+	LaneCPUPSISome float64 `json:"lane_cpu_psi_some,omitempty"`
+	LaneMemPSIFull float64 `json:"lane_mem_psi_full,omitempty"`
 }
 
 // HealthThresholds are HostHealthConf with the defaults filled in.
@@ -52,11 +58,13 @@ type HealthThresholds struct {
 	ProbeTimeout, IPSlow   time.Duration
 	SlowProbes, GoodProbes int
 	MemPSIFull             float64
+	LaneCPUPSISome         float64
+	LaneMemPSIFull         float64
 }
 
 // Thresholds fills in the defaults.
 func (c HostHealthConf) Thresholds() HealthThresholds {
-	t := HealthThresholds{ProbeTimeout: 10 * time.Second, IPSlow: 2 * time.Second, SlowProbes: 2, GoodProbes: 3, MemPSIFull: 40}
+	t := HealthThresholds{ProbeTimeout: 10 * time.Second, IPSlow: 2 * time.Second, SlowProbes: 2, GoodProbes: 3, MemPSIFull: 40, LaneCPUPSISome: 60, LaneMemPSIFull: 20}
 	if d, err := time.ParseDuration(c.ProbeTimeout); err == nil && d > 0 {
 		t.ProbeTimeout = d
 	}
@@ -65,6 +73,12 @@ func (c HostHealthConf) Thresholds() HealthThresholds {
 	}
 	if c.MemPSIFull > 0 {
 		t.MemPSIFull = c.MemPSIFull
+	}
+	if c.LaneCPUPSISome > 0 {
+		t.LaneCPUPSISome = c.LaneCPUPSISome
+	}
+	if c.LaneMemPSIFull > 0 {
+		t.LaneMemPSIFull = c.LaneMemPSIFull
 	}
 	if c.SlowProbes > 0 {
 		t.SlowProbes = c.SlowProbes
@@ -84,6 +98,9 @@ func (c HostHealthConf) validate() []string {
 	}
 	if c.MemPSIFull < 0 || c.MemPSIFull > 100 {
 		errs = append(errs, "health.mem_psi_full must be a percentage")
+	}
+	if c.LaneCPUPSISome < 0 || c.LaneCPUPSISome > 100 || c.LaneMemPSIFull < 0 || c.LaneMemPSIFull > 100 {
+		errs = append(errs, "health.lane_cpu_psi_some and health.lane_mem_psi_full must be percentages")
 	}
 	if c.SlowProbes < 0 || c.GoodProbes < 0 {
 		errs = append(errs, "health.slow_probes and health.good_probes must not be negative")
@@ -155,6 +172,10 @@ const canaryBody = `for kv in $KMIN; do k=${kv%=*}; m=${kv#*=}
 done
 case $(timeout 3 rdma system show 2>/dev/null) in *"netns shared"*) [ -d /sys/module/ib_core ] && echo rdma-shared ;; esac
 [ -r "${HOST_CANARY_PSI_FILE:-/proc/pressure/memory}" ] && awk '/^full/{for(i=1;i<=NF;i++) if($i ~ /^avg60=/){sub("avg60=","",$i); print "psi-mem-full " $i}}' "${HOST_CANARY_PSI_FILE:-/proc/pressure/memory}"
+for d in ${HOST_CANARY_LANES_DIR:-/sys/fs/cgroup/lanes.slice}/lanes-*.slice; do
+  [ -r "$d/cpu.pressure" ] && [ -r "$d/memory.pressure" ] || continue
+  echo "lane-psi ${d##*/} $(timeout 3 awk '$1=="some"{for(i=2;i<=NF;i++) if($i ~ /^avg60=/){sub("avg60=","",$i); print $i}}' "$d/cpu.pressure" | head -n 1) $(timeout 3 awk '$1=="full"{for(i=2;i<=NF;i++) if($i ~ /^avg60=/){sub("avg60=","",$i); print $i}}' "$d/memory.pressure" | head -n 1)"
+done
 s=$(date +%s%N); timeout ${HOST_CANARY_IP_TIMEOUT:-8} ip -br link >/dev/null 2>&1; rc=$?; e=$(date +%s%N)
 h=-1
 f=${HOST_CANARY_HUNG_FILE:-/proc/sys/kernel/hung_task_detect_count}
@@ -208,6 +229,15 @@ func parseCanary(out []byte) (*Canary, error) {
 			c.Override[f[1]] = strings.Join(f[2:], " ")
 		case len(f) == 2 && f[0] == "psi-mem-full":
 			c.MemPSIFull, _ = strconv.ParseFloat(f[1], 64)
+		case len(f) == 4 && f[0] == "lane-psi":
+			cpu, e1 := strconv.ParseFloat(f[2], 64)
+			mem, e2 := strconv.ParseFloat(f[3], 64)
+			if e1 == nil && e2 == nil {
+				if c.LanePSI == nil {
+					c.LanePSI = map[string]LanePSI{}
+				}
+				c.LanePSI[f[1]] = LanePSI{CPUSome: cpu, MemFull: mem}
+			}
 		case len(f) == 1 && f[0] == "rdma-shared":
 			c.RDMAShared = true
 		}
@@ -264,6 +294,7 @@ func (m *Manager) observeHealth(name string, c *Canary) {
 		m.health[name] = st
 	}
 	m.observeKernel(name, c)
+	m.observeStarvation(name, c)
 	was := st.Healthy()
 	st.Observe(c, m.inv.Hosts[name].Health.Thresholds())
 	switch {
@@ -292,12 +323,16 @@ func (m *Manager) loadHealth() {
 	if m.health != nil {
 		return
 	}
-	m.health = map[string]*healthState{}
+	m.health, m.starve = map[string]*healthState{}, map[string]*starveState{}
 	var recs map[string]healthRecord
 	if readJSON(m.Root.path(healthFile), &recs) != nil {
 		return
 	}
 	for h, r := range recs {
+		if lane, ok := strings.CutPrefix(h, laneKeyPrefix); ok {
+			m.loadStarve(lane, r)
+			continue
+		}
 		m.health[h] = &healthState{reason: r.Reason, slow: r.Slow, good: r.Good, hung: r.Hung, seen: r.Seen}
 	}
 }
@@ -307,6 +342,7 @@ func (m *Manager) saveHealth() {
 	for h, st := range m.health {
 		recs[h] = healthRecord{Reason: st.reason, Slow: st.slow, Good: st.good, Hung: st.hung, Seen: st.seen}
 	}
+	m.saveStarve(recs)
 	if err := writeJSON(m.Root.path(healthFile), recs); err != nil {
 		m.logf("%s: %v", healthFile, err)
 	}

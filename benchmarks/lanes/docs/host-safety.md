@@ -95,6 +95,36 @@ the host takes no new work (reason `memory pressure (PSI full avg60) is 65%, ove
 rise). Memory-capped clusters thrashing, ours or another team's, are felt by every lane on the host. avg60 is already a
 minute's average, so there is no hysteresis. Test: `TestMemoryPressureStopsAdmission`.
 
+### Lane starvation
+
+The host-wide signals can look fine while one lane is starved: another tenant thrashes the cpus next to its cpuset, or
+the lane hits its own memory cap. Probes then get too few samples and the run is invalid without anyone knowing. The
+same probe call (no extra ssh) reads `lanes.slice/lanes-<lane>.slice/cpu.pressure` and `memory.pressure` (cgroup v2 PSI)
+of every lane slice on the host.
+
+- **Starved** when the lane's cpu "some" avg60 is over `health.lane_cpu_psi_some` (default 60 %) or its memory "full"
+  avg60 is over `health.lane_mem_psi_full` (default 20 %). The reason is `unhealthy: starved (cpu|memory: ...)`, shown as
+  the lane's idle reason. Defaults: a lane's own builds and the agent keep it busy, so cpu "some" of 30-50 % is normal
+  load; above 60 % for a whole minute, runnable tasks wait most of the time. Memory "full" means every task of the cgroup
+  was stalled on memory; a few percent is a lane near its cap, 20 % over a minute is thrashing, which is why it is
+  stricter than the host's 40 %.
+- **Effect.** The lane gets no new build or run (the same hold as a crash-looping lane). The step it runs is untouched;
+  recover, release and unhold still run. A lane with no reading (no slice yet) is left as it is.
+- **Alarm.** `lane-starved` once when the lane turns starved.
+- **Recovery** after `health.good_probes` (default 3) good ticks in a row. The state is kept with the host health state in
+  `<root>/hosthealth.json` (keys `lane:<lane>`).
+- **Run record.** `run.json` `isolation` holds `psi_inject` and `psi_end` (`cpu_some`, `mem_full`): the lane's pressure
+  when the fault was injected and when the run ended, so analysis can flag starved runs after the fact.
+
+```yaml
+hosts:
+  spokane1:
+    health: {lane_cpu_psi_some: 60, lane_mem_psi_full: 20}
+```
+
+Tests: `TestStarvedLaneGetsNoNewStepsAndRecoversAfterThreeGoodTicks`, `TestLanePSIThresholdsComeFromTheInventory`,
+`TestRunRecordsLanePSIAtInjectAndEnd`, `TestLocalCanaryReadsLaneSlicePressure`.
+
 ## 3. Kernel minimums
 
 Kind clusters need many inotify instances and memory maps. `hosts.yaml` may set `kernel_minimums` (defaults:

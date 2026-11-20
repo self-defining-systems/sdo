@@ -68,8 +68,10 @@ type Manager struct {
 	// health is each host's health gate (hosthealth.go), kept across passes.
 	health map[string]*healthState
 	// kernelWhy is why a host is not admitted for a kernel setting below its minimum ("" : none); warns are its warnings.
-	kernelWhy  map[string]string
-	psiWhy     map[string]string
+	kernelWhy map[string]string
+	psiWhy    map[string]string
+	// starve is each lane's starvation state (starve.go), kept with the host health state.
+	starve     map[string]*starveState
 	warns      map[string][]string
 	rdmaWarned map[string]bool
 
@@ -582,7 +584,7 @@ func (m *Manager) churnFull(h string) bool { return m.builds(h) >= m.inv.Hosts[h
 
 // start fills in the lane's part of a step and starts it on the lane's host.
 func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
-	if why := m.crashBlock(l.Lane); why != "" && (s.Kind == StepBuild || s.Kind == StepRun) {
+	if why := m.laneGate(l.Lane); why != "" && (s.Kind == StepBuild || s.Kind == StepRun) {
 		return false // no new work on a lane whose pods crash-loop; recover, release and unhold still run
 	}
 	h := m.inv.Hosts[l.Host]
@@ -949,7 +951,7 @@ func (m *Manager) explainIdle(waiting map[string]string, reachable map[string]bo
 // laneBlock says why the free lane l was not bound to a sequence of x this pass ("" when nothing stood in the way):
 // the checks of resettable and freeLane (a ready pool lane that claimable takes is not free).
 func (m *Manager) laneBlock(l *LaneFile, x *Experiment, s Spec, reachable map[string]bool) string {
-	if why := m.crashBlock(l.Lane); why != "" {
+	if why := m.laneGate(l.Lane); why != "" {
 		return why
 	}
 	if why := m.buildBlock(l.Host, s, reachable); why != "" {
