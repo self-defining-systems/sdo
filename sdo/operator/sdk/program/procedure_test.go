@@ -89,13 +89,18 @@ func TestProbeIdentityProcedureShape(t *testing.T) {
 		t.Fatalf("default timeout = %s", timeout)
 	}
 	for name, edit := range map[string]func(*Procedure){
-		"job form":       func(p *Procedure) { p.Component, p.Container, p.Command, p.Params, p.Job = "", "", nil, nil, "Job/users" },
-		"effect":         func(p *Procedure) { p.Effect = ProcedureRepair },
-		"password param": func(p *Procedure) { p.Params = append(p.Params, ProcedureParam{Name: "password", Type: ProcedureString, Required: true}); p.Command = append(p.Command, "{{password}}") },
-		"optional user":  func(p *Procedure) { p.Params[0].Required = false },
-		"int user":       func(p *Procedure) { p.Params[0].Type = ProcedureInt },
-		"user default":   func(p *Procedure) { p.Params[0].Default = "sdoprobe-x" },
-		"no username":    func(p *Procedure) { p.Params[0].Name = "login"; p.Command[3] = "--name={{login}}" },
+		"job form": func(p *Procedure) {
+			p.Component, p.Container, p.Command, p.Params, p.Job = "", "", nil, nil, "Job/users"
+		},
+		"effect": func(p *Procedure) { p.Effect = ProcedureRepair },
+		"password param": func(p *Procedure) {
+			p.Params = append(p.Params, ProcedureParam{Name: "password", Type: ProcedureString, Required: true})
+			p.Command = append(p.Command, "{{password}}")
+		},
+		"optional user": func(p *Procedure) { p.Params[0].Required = false },
+		"int user":      func(p *Procedure) { p.Params[0].Type = ProcedureInt },
+		"user default":  func(p *Procedure) { p.Params[0].Default = "sdoprobe-x" },
+		"no username":   func(p *Procedure) { p.Params[0].Name = "login"; p.Command[3] = "--name={{login}}" },
 	} {
 		procedure := syntheticIdentityProcedure()
 		procedure.Params = append([]ProcedureParam(nil), procedure.Params...)

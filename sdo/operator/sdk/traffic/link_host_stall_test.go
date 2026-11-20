@@ -64,11 +64,11 @@ func TestLinkFindingKeepsFaultsAStalledHostDoesNotExplain(t *testing.T) {
 		samples []LinkSample
 		want    LinkCondition
 	}{
-		"refused on a stalled host":         {refused, LinkUnreachable},
-		"a whole window of timeouts":        {stalled(linkSamples(now, repeatDuration(time.Second, LinkLossWindow), everyDial), 40), LinkUnreachable},
-		"timeout bursts on a calm host":     {stalled(linkSamples(now, repeatDuration(5*time.Millisecond, 20), timeouts(2, 3, 4, 12, 13, 14)), 5), LinkIntermittent},
-		"seconds of timeouts, calm host":    {stalled(linkSamples(now, repeatDuration(5*time.Millisecond, 20), timeouts(15, 16, 17, 18, 19)), 0), LinkUnreachable},
-		"slow link on a calm host":          {stalled(linkSamples(now, repeatDuration(287*time.Millisecond, 20), nil), 5), LinkSlow},
+		"refused on a stalled host":      {refused, LinkUnreachable},
+		"a whole window of timeouts":     {stalled(linkSamples(now, repeatDuration(time.Second, LinkLossWindow), everyDial), 40), LinkUnreachable},
+		"timeout bursts on a calm host":  {stalled(linkSamples(now, repeatDuration(5*time.Millisecond, 20), timeouts(2, 3, 4, 12, 13, 14)), 5), LinkIntermittent},
+		"seconds of timeouts, calm host": {stalled(linkSamples(now, repeatDuration(5*time.Millisecond, 20), timeouts(15, 16, 17, 18, 19)), 0), LinkUnreachable},
+		"slow link on a calm host":       {stalled(linkSamples(now, repeatDuration(287*time.Millisecond, 20), nil), 5), LinkSlow},
 	} {
 		window, observed := linkTestWindow(now, 5*time.Millisecond, test.samples)
 		finding, firing := LinkFinding(sdk.DetectorSpec{ID: "traffic-links"}, "app", window, observed)

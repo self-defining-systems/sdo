@@ -510,7 +510,7 @@ func TestNewProgramsDiagnoseTheirOwnIncident(t *testing.T){
   result,err:=sdktest.DiagnoseOnIncident(d,"testdata/own-incident")
   if err!=nil{result=sdktest.OwnIncidentResult{ProgramID:id,Outcome:sdktest.OwnIncidentUnverified,Reason:"capture unreadable: "+err.Error()}}
   results=append(results,result)
-  if result.Outcome==sdktest.OwnIncidentFailed{t.Errorf("`+OwnIncidentRule+`[%s]: %s",id,result.Reason)}
+  if result.Outcome==sdktest.OwnIncidentFailed{t.Errorf("` + OwnIncidentRule + `[%s]: %s",id,result.Reason)}
  }
 `)
 	for _, id := range ids {

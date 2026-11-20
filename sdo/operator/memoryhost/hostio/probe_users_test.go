@@ -12,10 +12,10 @@ import (
 	"time"
 	"unicode"
 
+	"golang.org/x/crypto/ssh"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"golang.org/x/crypto/ssh"
 	"k8s.io/client-go/kubernetes/fake"
 	utilexec "k8s.io/client-go/util/exec"
 	"sdo.dev/operator/sdk"

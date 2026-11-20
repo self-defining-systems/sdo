@@ -143,6 +143,7 @@ func (e *evaluation) memory(r sdk.ObjectRef, s usage.Sample, points []usage.Poin
 	e.emit("memory-saturation", r, "container="+container+" signal="+signal+" "+usage.Evidence(*s.WorkingSetBytes, s.MemoryLimit, window, nil)+fmt.Sprintf(" ratio=%g threshold=%g", ratio, memoryThreshold), false)
 	e.findings[len(e.findings)-1].Fingerprint += "/" + container
 }
+
 // Storage forecasts extrapolate a growth rate forecastHorizon ahead. Only
 // storage is forecast: unlike stored bytes and inodes, memory is reclaimable,
 // and memory reports observed pressure above 90% only. The rate is the median

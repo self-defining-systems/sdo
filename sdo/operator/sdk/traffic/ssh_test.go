@@ -113,7 +113,9 @@ func sshScenario() Scenario {
 func sshEngine(t *testing.T, scenario Scenario, client Doer, execer Execer) *Engine {
 	t.Helper()
 	engine := setupEngine(t, scenario, client)
-	engine.baseURL = func(target Target) string { return target.Scheme + "://" + target.Service + ".app:" + fmt.Sprint(target.Port) }
+	engine.baseURL = func(target Target) string {
+		return target.Scheme + "://" + target.Service + ".app:" + fmt.Sprint(target.Port)
+	}
 	engine.UsePasswords(probeKeys{"sdoprobe-writer": syntheticPublicKey})
 	if execer != nil {
 		engine.UseExec(execer)
@@ -248,8 +250,10 @@ func TestSSHRequestSafetyRules(t *testing.T) {
 
 type fixedEndpoint struct{ request Request }
 
-func (f fixedEndpoint) Build(context.Context, *rand.Rand, State) (Request, error) { return f.request, nil }
-func (f fixedEndpoint) Check(Response, State) Verdict                           { return Pass() }
+func (f fixedEndpoint) Build(context.Context, *rand.Rand, State) (Request, error) {
+	return f.request, nil
+}
+func (f fixedEndpoint) Check(Response, State) Verdict { return Pass() }
 
 func TestSSHScenarioValidation(t *testing.T) {
 	cases := map[string]func(*Scenario){
@@ -347,4 +351,3 @@ func TestTrafficSDKDoesNotImportSSH(t *testing.T) {
 		}
 	}
 }
-

@@ -22,14 +22,14 @@ import (
 // MaxConcurrent and CollectionBudget apply across every query of a cycle,
 // lookups (Keys) included.
 const (
-	MaxQueries       = 16
-	MaxTargets       = 16
-	MaxArgs          = 32
-	MaxArgBytes      = 1024
-	MaxIDBytes       = 128
-	LimitBytes       = 4 * 1024
-	MaxConcurrent    = 4
-	MinInterval      = 30 * time.Second
+	MaxQueries    = 16
+	MaxTargets    = 16
+	MaxArgs       = 32
+	MaxArgBytes   = 1024
+	MaxIDBytes    = 128
+	LimitBytes    = 4 * 1024
+	MaxConcurrent = 4
+	MinInterval   = 30 * time.Second
 	// ExecTimeout covers a kubectl-exec of a store client (psql, redis-cli) on a loaded node, which
 	// measured above 3 s; CollectionBudget leaves room for a second wave of reads (the first can use ExecTimeout).
 	ExecTimeout      = 10 * time.Second

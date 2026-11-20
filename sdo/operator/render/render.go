@@ -30,8 +30,8 @@ const (
 // deterministic and recorded: it comes from install configuration, never from
 // a live read during render.
 type Env struct {
-	Namespace   string   // application namespace (default namespace, Helm .Release.Namespace)
-	Release     string   // stable release name (Helm .Release.Name)
+	Namespace string // application namespace (default namespace, Helm .Release.Namespace)
+	Release   string // stable release name (Helm .Release.Name)
 	// KubeVersion and APIVersions describe the target cluster. Both are part
 	// of EnvDigest. Empty/nil means unknown: a renderer that needs them
 	// applies its own default (helm: v1.30.0 and the APIs that version

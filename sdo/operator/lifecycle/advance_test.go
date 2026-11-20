@@ -267,7 +267,6 @@ func newAdvWorld(t *testing.T) *advWorld {
 	}
 }
 
-
 type infrastructureFailure struct{}
 
 func (*infrastructureFailure) Error() string               { return "registry rate limited" }

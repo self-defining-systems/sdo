@@ -90,7 +90,7 @@ func TestLinkFindingReportsIntermittentLossWithoutConsecutiveFailures(t *testing
 func TestLinkFindingIgnoresOneStall(t *testing.T) {
 	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
 	for name, failed := range map[string]map[int]bool{
-		"four consecutive failures":           {8: true, 9: true, 10: true, 11: true},
+		"four consecutive failures":            {8: true, 9: true, 10: true, 11: true},
 		"six failures with one success inside": {8: true, 9: true, 11: true, 12: true, 13: true, 14: true},
 	} {
 		t.Run(name, func(t *testing.T) {

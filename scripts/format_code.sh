@@ -1,5 +1,5 @@
 #!/bin/bash
-# Format Python code using the locked ruff (default dev group).
+# Format Python and Go code using the locked ruff (default dev group).
 # `python -m ruff` fails when ruff is missing from the project environment
 # instead of falling back to a different ruff on PATH.
 
@@ -14,9 +14,11 @@ cd "$PROJECT_ROOT"
 if [ "$1" == "--check" ]; then
     echo "Checking code formatting (dry-run)..."
     uv run python -m ruff format --check .
+    bash "$SCRIPT_DIR/gofmt.sh" --check
 else
     echo "Formatting code..."
     uv run python -m ruff format .
+    bash "$SCRIPT_DIR/gofmt.sh"
 fi
 
 echo "Formatting check complete."

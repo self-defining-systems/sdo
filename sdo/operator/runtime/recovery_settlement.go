@@ -1,8 +1,8 @@
 package runtime
 
 import (
-	"errors"
 	"context"
+	"errors"
 	"log/slog"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/planwire"

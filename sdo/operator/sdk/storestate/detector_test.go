@@ -169,8 +169,8 @@ func TestDetectorUnavailableReadIsAnErrorNeverClear(t *testing.T) {
 
 func TestNewDetectorValidatesConfig(t *testing.T) {
 	for name, change := range map[string]func(*storestate.Config){
-		"no component": func(c *storestate.Config) { c.Component = "" },
-		"no id":        func(c *storestate.Config) { c.Spec.ID = "" },
+		"no component":    func(c *storestate.Config) { c.Component = "" },
+		"no id":           func(c *storestate.Config) { c.Spec.ID = "" },
 		"engine not read": func(c *storestate.Config) { c.Engine = "unknown" },
 		"no target":       func(c *storestate.Config) { c.Target = podread.Target{} },
 		"bad port":        func(c *storestate.Config) { c.Port = 70000 },

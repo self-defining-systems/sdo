@@ -47,7 +47,13 @@ def _check_go_errors_copy(tmp_path: Path, check_proto: str) -> Path:
     scripts.mkdir()
     shutil.copy(repository / "scripts/check_go_errors.sh", scripts / "check_go_errors.sh")
     (scripts / "check_proto.sh").write_text(check_proto)
-    for name in ("check_actions.sh", "gen_skill_references.sh", "gen_config_docs.sh", "gen_kube_read_clients.sh"):
+    for name in (
+        "check_actions.sh",
+        "gofmt.sh",
+        "gen_skill_references.sh",
+        "gen_config_docs.sh",
+        "gen_kube_read_clients.sh",
+    ):
         (scripts / name).write_text("#!/bin/bash\nexit 0\n")
     (scripts / "go_quality_checks.py").write_text("")
     for name in ("check_go_determinism.sh", "check_go_core.sh", "check_go_mains.sh", "check_contracts_fast.sh"):

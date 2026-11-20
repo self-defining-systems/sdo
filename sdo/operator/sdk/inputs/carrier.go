@@ -116,6 +116,7 @@ func (c Carrier) PodAdmission() (sdk.PodAdmissionResult, bool) {
 	}
 	return c.DetectionContext.PodAdmission()
 }
+
 // CompleteKinds forwards the base snapshot's completely listed kinds.
 func (c Carrier) CompleteKinds() []schema.GroupVersionKind {
 	return sdk.CompleteKinds(c.DetectionContext)

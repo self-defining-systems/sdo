@@ -31,8 +31,8 @@ func (f fakeReader) Spec() sdk.DetectorSpec {
 func (fakeReader) Detect(context.Context, sdk.DetectionContext) ([]sdk.Finding, error) {
 	return nil, nil
 }
-func (f fakeReader) AppStateReader() bool                                     { return true }
-func (f fakeReader) AppStateNoisy() []string                                  { return f.noisy }
+func (f fakeReader) AppStateReader() bool    { return true }
+func (f fakeReader) AppStateNoisy() []string { return f.noisy }
 func (f fakeReader) AppStateRead(ctx context.Context, _ sdk.DetectionContext, _ map[string]podread.Result) (carried.Values, error) {
 	return f.read(ctx)
 }

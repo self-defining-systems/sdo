@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/datacheck"
 	"sdo.dev/operator/sdk/podread"
