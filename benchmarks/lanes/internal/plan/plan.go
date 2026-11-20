@@ -37,13 +37,24 @@ const (
 
 // Pin is a checkout identity, name@revision. The revision is recorded in the lock and in every row; the engine
 // writes it into the spec of every run.
+//
+// A pin may also name a ref instead of a revision: name@HEAD, name@origin/main, or name@ref:/path/to/checkout. The
+// ref is resolved to a full revision once, when the plan is added (see WithResolver), in the checkout at /path or, with
+// none, in the directory of the plan file; the stored plan and the lock carry the revision, never the ref.
 type Pin struct {
 	Name, Rev string
+	Ref, Dir  string // unresolved: set only between parsing and the resolution at add
 }
 
 func (p Pin) String() string {
 	if p == (Pin{}) {
 		return "none"
+	}
+	if p.Ref != "" {
+		if p.Dir != "" {
+			return p.Name + "@" + p.Ref + ":" + p.Dir
+		}
+		return p.Name + "@" + p.Ref
 	}
 	return p.Name + "@" + p.Rev
 }
@@ -59,10 +70,15 @@ func (p *Pin) UnmarshalJSON(b []byte) error {
 		return fmt.Errorf("pin: want a string name@revision: %w", err)
 	}
 	name, rev, ok := strings.Cut(s, "@")
-	if !ok || name == "" || !revRE.MatchString(rev) {
-		return fmt.Errorf("pin %q: want name@revision (revision: 7-40 hex digits)", s)
+	if ok && name != "" && revRE.MatchString(rev) {
+		*p = Pin{Name: name, Rev: rev}
+		return nil
 	}
-	p.Name, p.Rev = name, rev
+	ref, dir, _ := strings.Cut(rev, ":")
+	if !ok || name == "" || !refRE.MatchString(ref) || (dir != "" && !filepath.IsAbs(dir)) {
+		return fmt.Errorf("pin %q: want name@revision (7-40 hex digits) or name@ref[:/abs/checkout]", s)
+	}
+	*p = Pin{Name: name, Ref: ref, Dir: dir}
 	return nil
 }
 
@@ -265,6 +281,7 @@ var (
 	idRE   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 	kindRE = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,23}$`)
 	revRE  = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+	refRE  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/~^-]*$`)
 )
 
 // Parse reads plan text (JSON or the YAML subset) and validates it.
@@ -641,4 +658,51 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// Resolver turns a ref into a full revision in a checkout directory (git rev-parse). The engine runs no process
+// itself: the runner supplies one.
+type Resolver func(dir, ref string) (string, error)
+
+// Option configures Add, DryRun and RenderSpecs.
+type Option func(*options)
+
+type options struct{ resolve Resolver }
+
+// WithResolver lets the plan name its pins by ref; each is resolved once, at add.
+func WithResolver(r Resolver) Option { return func(o *options) { o.resolve = r } }
+
+func optionsOf(opts []Option) options {
+	var o options
+	for _, f := range opts {
+		f(&o)
+	}
+	return o
+}
+
+var fullRevRE = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// resolvePins replaces every ref pin with the full revision it names now. base is the plan file's directory.
+func (p *Plan) resolvePins(base string, o options) error {
+	for _, pin := range []*Pin{&p.Pins.Workload, &p.Pins.Subject} {
+		if pin.Ref == "" {
+			continue
+		}
+		if o.resolve == nil {
+			return fmt.Errorf("pin %s names a ref, and no resolver is available to resolve it", pin)
+		}
+		dir := pin.Dir
+		if dir == "" {
+			dir = base
+		}
+		rev, err := o.resolve(dir, pin.Ref)
+		if err != nil {
+			return fmt.Errorf("pin %s: resolving %s in %s: %w", pin, pin.Ref, dir, err)
+		}
+		if !fullRevRE.MatchString(rev) {
+			return fmt.Errorf("pin %s: %q is not a full revision", pin, rev)
+		}
+		*pin = Pin{Name: pin.Name, Rev: rev}
+	}
+	return nil
 }
