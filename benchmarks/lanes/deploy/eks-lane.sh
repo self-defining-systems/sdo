@@ -221,6 +221,16 @@ network_policy_enforced() {
   kubectl --kubeconfig "$1" -n kube-system get daemonset aws-node -o jsonpath='{.spec.template.spec.containers[*].args}' | grep -- '--enable-network-policy=true' >/dev/null
 }
 
+# scale_up_if_needed NAME: an attached cluster whose node group was scaled down (by hand or by an idle policy) gets its nodes back.
+scale_up_if_needed() {
+  local name=$1 want=${EKS_NODES:-2} have
+  have=$(aws eks describe-nodegroup --cluster-name "$name" --nodegroup-name workers --region "$REGION" --query nodegroup.scalingConfig.desiredSize --output text)
+  if [ "$have" != "$want" ]; then
+    log "node group of $name is at $have, not $want: scaling"
+    eksctl scale nodegroup --cluster "$name" --name workers --nodes "$want" --nodes-min 0 --nodes-max "${EKS_NODE_MAX:-$((want + 1))}" --region "$REGION" >&2
+  fi
+}
+
 # cleanup_failed_up: a cluster this `up` made and could not finish is deleted, so nothing bills.
 cleanup_failed_up() {
   local rc=$?
@@ -248,7 +258,10 @@ cmd_up() {
     trap cleanup_failed_up EXIT
     eksctl create cluster -f "$CFG" --kubeconfig "$admin" >&2
   fi
-  [ "$CREATED" = 1 ] || aws eks update-kubeconfig --name "$name" --region "$REGION" --kubeconfig "$admin" >/dev/null
+  if [ "$CREATED" != 1 ]; then
+    aws eks update-kubeconfig --name "$name" --region "$REGION" --kubeconfig "$admin" >/dev/null
+    scale_up_if_needed "$name"
+  fi
   chmod 600 "$admin"
   wait_nodes "$admin" "${EKS_NODES:-2}"
   network_policy_enforced "$admin" || die "the cluster does not enforce NetworkPolicy: vpc-cni needs enableNetworkPolicy=true"

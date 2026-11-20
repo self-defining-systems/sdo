@@ -490,3 +490,19 @@ func TestEksLaneExistsDistinguishesGoneFromUnknown(t *testing.T) {
 		t.Fatalf("aws unreachable: exit %d, want 2 (not gone)", c)
 	}
 }
+
+// A cluster whose node group was scaled down (by an idle policy outside lanes) gets its nodes back when `up` attaches it.
+func TestEksLaneUpRescalesAnAttachedClusterWithNoNodes(t *testing.T) {
+	s := newEksScript(t)
+	kc := filepath.Join(t.TempDir(), "kc")
+	if out, err := s.run(nil, "up", "eks1", kc); err != nil {
+		t.Fatalf("up: %v\n%s", err, out)
+	}
+	if strings.Contains(s.log(), "scale nodegroup") {
+		t.Fatalf("a cluster at its size was scaled:\n%s", s.log())
+	}
+	must(t, os.WriteFile(filepath.Join(s.state, "desired"), []byte("0\n"), 0o644))
+	if out, err := s.run(nil, "up", "eks1", kc); err != nil || !strings.Contains(s.log(), "eksctl scale nodegroup --cluster sdo-lane-eks1 --name workers --nodes 2 --nodes-min 0 --nodes-max 3") {
+		t.Fatalf("up of a scaled-down cluster: %v\n%s\n%s", err, out, s.log())
+	}
+}

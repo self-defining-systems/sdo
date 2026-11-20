@@ -16,6 +16,7 @@ aws)
   "ecr describe-images") echo "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";;
   "eks update-kubeconfig") echo "apiVersion: v1" > "$(echo "$*" | sed 's/.*--kubeconfig //')";;
   "ec2 describe-subnets") echo us-west-2a;;
+  "eks describe-nodegroup") cat "$S/desired" 2>/dev/null || nodes_of;;
   "eks describe-cluster")
     case "$*" in
     *clusterSecurityGroupId*) echo sg-0123;;
@@ -34,6 +35,7 @@ eksctl)
     echo "apiVersion: v1" > "$kc"
     [ -z "${FAKE_EKS_FAIL_CREATE:-}" ] || { echo "eksctl: stack failed" >&2; exit 1; };;
   "delete cluster") rm -f "$S/cluster-$4";;
+  "scale nodegroup") echo "$(echo "$*" | sed 's/.*--nodes \([0-9]*\).*/\1/')" > "$S/desired";;
   esac;;
 kubectl)
   case " $* " in
