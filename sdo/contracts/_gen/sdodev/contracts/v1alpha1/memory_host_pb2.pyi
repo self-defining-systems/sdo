@@ -259,14 +259,16 @@ class DiagnoseRequest(_message.Message):
     def __init__(self, input: _Optional[_Union[MemoryProgramInput, _Mapping]] = ...) -> None: ...
 
 class DiagnoseResponse(_message.Message):
-    __slots__ = ("verdict", "error", "reads")
+    __slots__ = ("verdict", "error", "reads", "wanted_metrics")
     VERDICT_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
     READS_FIELD_NUMBER: _ClassVar[int]
+    WANTED_METRICS_FIELD_NUMBER: _ClassVar[int]
     verdict: _program_pb2.Verdict
     error: str
     reads: _containers.RepeatedCompositeFieldContainer[MemoryReadReceipt]
-    def __init__(self, verdict: _Optional[_Union[_program_pb2.Verdict, _Mapping]] = ..., error: _Optional[str] = ..., reads: _Optional[_Iterable[_Union[MemoryReadReceipt, _Mapping]]] = ...) -> None: ...
+    wanted_metrics: _containers.RepeatedCompositeFieldContainer[_struct_pb2.Struct]
+    def __init__(self, verdict: _Optional[_Union[_program_pb2.Verdict, _Mapping]] = ..., error: _Optional[str] = ..., reads: _Optional[_Iterable[_Union[MemoryReadReceipt, _Mapping]]] = ..., wanted_metrics: _Optional[_Iterable[_Union[_struct_pb2.Struct, _Mapping]]] = ...) -> None: ...
 
 class MitigateRequest(_message.Message):
     __slots__ = ("input",)
@@ -275,14 +277,16 @@ class MitigateRequest(_message.Message):
     def __init__(self, input: _Optional[_Union[MemoryProgramInput, _Mapping]] = ...) -> None: ...
 
 class MitigateResponse(_message.Message):
-    __slots__ = ("plan", "error", "reads")
+    __slots__ = ("plan", "error", "reads", "wanted_metrics")
     PLAN_FIELD_NUMBER: _ClassVar[int]
     ERROR_FIELD_NUMBER: _ClassVar[int]
     READS_FIELD_NUMBER: _ClassVar[int]
+    WANTED_METRICS_FIELD_NUMBER: _ClassVar[int]
     plan: _program_pb2.Plan
     error: str
     reads: _containers.RepeatedCompositeFieldContainer[MemoryReadReceipt]
-    def __init__(self, plan: _Optional[_Union[_program_pb2.Plan, _Mapping]] = ..., error: _Optional[str] = ..., reads: _Optional[_Iterable[_Union[MemoryReadReceipt, _Mapping]]] = ...) -> None: ...
+    wanted_metrics: _containers.RepeatedCompositeFieldContainer[_struct_pb2.Struct]
+    def __init__(self, plan: _Optional[_Union[_program_pb2.Plan, _Mapping]] = ..., error: _Optional[str] = ..., reads: _Optional[_Iterable[_Union[MemoryReadReceipt, _Mapping]]] = ..., wanted_metrics: _Optional[_Iterable[_Union[_struct_pb2.Struct, _Mapping]]] = ...) -> None: ...
 
 class TrafficRequest(_message.Message):
     __slots__ = ("operation", "workload", "scenarios", "target", "port", "pod_ip", "http_method", "http_path", "http_headers", "timeout_ns", "dial_targets", "http_fields")

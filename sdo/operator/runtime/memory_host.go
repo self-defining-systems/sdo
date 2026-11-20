@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -564,6 +565,49 @@ func recordHostReads(view program.ReadView, reads []*pb.MemoryReadReceipt) error
 	sink.RecordExternalCalls(calls)
 	return nil
 }
+
+// maxMetricRounds bounds how often a program may ask the controller for more
+// on-demand metric queries (each answer can lead to the next query).
+const maxMetricRounds = 4
+
+// answerWantedMetrics evaluates the on-demand metric queries a host program
+// asked for through the controller's own view, which holds the metrics source,
+// and adds the results to the input's observation. It reports whether any
+// query was newly answered, so the request should be sent again.
+func answerWantedMetrics(view program.ReadView, input *pb.MemoryProgramInput, wanted []*structpb.Struct) (bool, error) {
+	if len(wanted) == 0 {
+		return false, nil
+	}
+	// The observation may be shared across the cycle's programs: extend a copy.
+	observation := proto.Clone(input.Observation).(*pb.MemoryObservation)
+	if observation.Metrics == nil {
+		observation.Metrics = map[string]*structpb.Struct{}
+	}
+	added := false
+	for _, value := range wanted {
+		raw, err := value.MarshalJSON()
+		if err != nil {
+			return false, err
+		}
+		var q metrics.Query
+		if err := json.Unmarshal(raw, &q); err != nil {
+			return false, fmt.Errorf("host metric query: %w", err)
+		}
+		if _, held := observation.Metrics[q.ID]; held {
+			continue
+		}
+		answer, err := wireStruct(view.QueryMetrics(q))
+		if err != nil {
+			return false, err
+		}
+		observation.Metrics[q.ID] = answer
+		added = true
+	}
+	if added {
+		input.Observation = observation
+	}
+	return added, nil
+}
 func (p *remoteProgram) Diagnose(ctx context.Context, view program.ReadView, b program.Bindings) (program.Verdict, error) {
 	reads, err := p.reads(view, b)
 	if err != nil {
@@ -579,6 +623,14 @@ func (p *remoteProgram) Diagnose(ctx context.Context, view program.ReadView, b p
 		return program.Verdict{}, err
 	}
 	response, err := rpc.Diagnose(ctx, &pb.DiagnoseRequest{Input: input})
+	for round := 0; err == nil && response != nil && round < maxMetricRounds; round++ {
+		more, extendErr := answerWantedMetrics(view, input, response.WantedMetrics)
+		if extendErr != nil || !more {
+			err = extendErr
+			break
+		}
+		response, err = rpc.Diagnose(ctx, &pb.DiagnoseRequest{Input: input})
+	}
 	if err != nil {
 		return program.Verdict{}, fmt.Errorf("memory host diagnose: %w", err)
 	}
@@ -612,6 +664,14 @@ func (p *remoteProgram) Mitigate(ctx context.Context, view program.ReadView, b p
 		return program.Plan{}, err
 	}
 	response, err := rpc.Mitigate(ctx, &pb.MitigateRequest{Input: input})
+	for round := 0; err == nil && response != nil && round < maxMetricRounds; round++ {
+		more, extendErr := answerWantedMetrics(view, input, response.WantedMetrics)
+		if extendErr != nil || !more {
+			err = extendErr
+			break
+		}
+		response, err = rpc.Mitigate(ctx, &pb.MitigateRequest{Input: input})
+	}
 	if err != nil {
 		return program.Plan{}, fmt.Errorf("memory host mitigate: %w", err)
 	}

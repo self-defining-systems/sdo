@@ -168,12 +168,18 @@ message DiagnoseResponse {
   Verdict verdict = 1;
   string error = 2;
   repeated MemoryReadReceipt reads = 3;
+  // Metric queries (metrics.Query JSON) the program asked for that the request's
+  // observation did not hold. The host has no metrics source: the controller
+  // answers them live and sends the request again with the results.
+  repeated google.protobuf.Struct wanted_metrics = 4;
 }
 message MitigateRequest { MemoryProgramInput input = 1; }
 message MitigateResponse {
   Plan plan = 1;
   string error = 2;
   repeated MemoryReadReceipt reads = 3;
+  // As DiagnoseResponse.wanted_metrics.
+  repeated google.protobuf.Struct wanted_metrics = 4;
 }
 
 // Host-owned traffic scheduler and read-only primitives. No mutation operation
