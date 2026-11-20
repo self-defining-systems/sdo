@@ -115,6 +115,13 @@ func (g guardedOps) GC(ctx context.Context, keep []string) ([]string, error) {
 	return bounded(ctx, hostCallBound, "gc on "+g.host, func(c context.Context) ([]string, error) { return g.in.GC(c, keep) })
 }
 
+func (g guardedOps) ReconcileLedger(ctx context.Context, req LedgerReq) ([]string, error) {
+	if err := g.down(); err != nil {
+		return nil, err
+	}
+	return bounded(ctx, hostCallBound, "ledger reconcile on "+g.host, func(c context.Context) ([]string, error) { return g.in.ReconcileLedger(c, req) })
+}
+
 func (g guardedOps) Kill(ctx context.Context, lane, id string) error {
 	if err := g.down(); err != nil {
 		return err

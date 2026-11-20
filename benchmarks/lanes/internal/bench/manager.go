@@ -80,6 +80,53 @@ type Manager struct {
 	drift        map[string]string
 	foreign      map[string]string // host -> slices that hold containers pinned inside the block (live one-way)
 	driftAt      map[string]time.Time
+
+	// ledgerAt is when each host's lane ledger was last reconciled; ledgerReleased counts the entries released since
+	// the manager started (shown by `status`).
+	ledgerAt       map[string]time.Time
+	ledgerReleased map[string]int
+}
+
+// ledgerEvery is how often the manager reconciles a host's lane ledger.
+const ledgerEvery = time.Minute
+
+// reconcileLedger releases the host's ledger entries whose lane left hosts.yaml or whose cluster is gone (a ledger
+// entry is held only while its owner exists), logs each and counts them for `status`.
+func (m *Manager) reconcileLedger(ctx context.Context, host string) {
+	h := m.inv.Hosts[host]
+	if !h.Lanes.Enabled() {
+		return
+	}
+	if m.ledgerAt == nil {
+		m.ledgerAt, m.ledgerReleased = map[string]time.Time{}, map[string]int{}
+	}
+	if last, ok := m.ledgerAt[host]; ok && m.now().Sub(last) < ledgerEvery {
+		m.setLedgerCount(host)
+		return
+	}
+	m.ledgerAt[host] = m.now()
+	var lanes []string
+	for _, ln := range m.inv.Lanes() {
+		if ln.Host == host {
+			lanes = append(lanes, ln.Cluster)
+		}
+	}
+	released, err := m.ops(host).ReconcileLedger(ctx, LedgerReq{State: h.Lanes.State, Shared: h.Lanes.StateShared, Lanes: lanes, Grace: ledgerGrace})
+	if err != nil {
+		m.logf("host %s: lane ledger not reconciled: %v", host, err)
+	}
+	if len(released) > 0 {
+		m.logf("host %s: lane ledger released %d entr(ies) whose lane or cluster no longer exists: %s", host, len(released), strings.Join(released, ", "))
+		m.ledgerReleased[host] += len(released)
+	}
+	m.setLedgerCount(host)
+}
+
+func (m *Manager) setLedgerCount(host string) {
+	if st, ok := m.hosts[host]; ok {
+		st.LedgerReleased = m.ledgerReleased[host]
+		m.hosts[host] = st
+	}
 }
 
 // Serve runs the manager until ctx ends; it holds <root>/bench.lock.
@@ -148,7 +195,7 @@ func (m *Manager) rawOps(host string) HostOps {
 		if bin == "" {
 			bin, _ = os.Executable()
 		}
-		return localHost{staging: h.Staging, bin: bin, health: h.Health.Thresholds(), mins: h.KernelMins()}
+		return localHost{staging: h.Staging, bin: bin, health: h.Health.Thresholds(), mins: h.KernelMins(), env: h.EnvList()}
 	}
 	return sshHost{name: host, h: h, fuzzops: m.inv.Checkouts.Fuzzops, health: h.Health.Thresholds()}
 }
@@ -294,6 +341,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 		} else {
 			m.alarmClear(AlarmDiskFloor, name)
 		}
+		m.reconcileLedger(ctx, name)
 		for lane, state := range pr.Steps {
 			// Only this root's lanes with a step in flight count: a host shared with another bench root, or an
 			// older host binary, may report others, and a settled step may still be on disk.

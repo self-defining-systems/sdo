@@ -43,6 +43,9 @@ type fakeWorld struct {
 	cleaned []string
 	free    map[string]int64
 	release chan struct{}
+	// ledgerReqs is every ledger reconciliation asked of a host; ledgerReleased is what the fake host reports released.
+	ledgerReqs     []LedgerReq
+	ledgerReleased map[string][]string
 }
 
 func newWorld(t *testing.T) *fakeWorld {
@@ -141,6 +144,16 @@ func (o fakeOps) Stage(_ context.Context, _ Root, in Input) (string, error) {
 }
 
 func (o fakeOps) GC(context.Context, []string) ([]string, error) { return nil, o.w.gate(o.host, "GC") }
+
+func (o fakeOps) ReconcileLedger(_ context.Context, req LedgerReq) ([]string, error) {
+	if err := o.w.gate(o.host, "ReconcileLedger"); err != nil {
+		return nil, err
+	}
+	o.w.mu.Lock()
+	defer o.w.mu.Unlock()
+	o.w.ledgerReqs = append(o.w.ledgerReqs, req)
+	return o.w.ledgerReleased[o.host], nil
+}
 
 // Kill is how the manager ends a step that outlived its bound (the HostOps method of that name).
 func (o fakeOps) Kill(_ context.Context, _, id string) error {

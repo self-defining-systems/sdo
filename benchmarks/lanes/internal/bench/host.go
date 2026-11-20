@@ -34,6 +34,44 @@ type HostOps interface {
 	// GC removes from the host's staging every lane directory, step directory and staged input not in
 	// keep (paths relative to the staging directory) and returns what it removed.
 	GC(ctx context.Context, keep []string) ([]string, error)
+	// ReconcileLedger releases the host's lane-ledger entries whose lane left the inventory or whose cluster is gone
+	// (a ledger entry is held only while its owner exists) and returns the lanes released.
+	ReconcileLedger(ctx context.Context, req LedgerReq) ([]string, error)
+}
+
+// LedgerReq is what a host needs to reconcile its lane ledger: the ledger's place and the lanes that exist.
+type LedgerReq struct {
+	State  string        // the ledger directory ("": the user's default on the host)
+	Shared bool          // the directory is shared on purpose
+	Lanes  []string      // every lane of the inventory on this host
+	Grace  time.Duration // entries younger than this are kept
+}
+
+// kindClusters lists the kind clusters on this machine; env is KEY=VALUE added to the environment.
+func kindClusters(env []string) (map[string]bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), clusterCheckTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "kind", "get", "clusters")
+	cmd.Env = append(os.Environ(), env...)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	live := map[string]bool{}
+	for _, n := range strings.Fields(string(out)) {
+		live[n] = true
+	}
+	return live, nil
+}
+
+// reconcileLedger runs the reconciliation on this machine (the host's own verb and the local transport).
+func reconcileLedger(req LedgerReq, env []string, log func(string, ...any)) ([]string, error) {
+	known := map[string]bool{}
+	for _, l := range req.Lanes {
+		known[l] = true
+	}
+	a := CPUAllocator{Dir: req.State, Shared: req.Shared, Log: log, Live: func() (map[string]bool, error) { return kindClusters(env) }}
+	return a.ReconcileLanes(known, req.Grace)
 }
 
 // Step states a probe reports.
@@ -143,6 +181,7 @@ type localHost struct {
 	bin     string // fuzzops-bench (the manager's own executable)
 	health  HealthThresholds
 	mins    map[string]int64 // kernel minimums to read (kernelmin.go)
+	env     []string         // KEY=VALUE of the host's env
 }
 
 func (h localHost) Start(ctx context.Context, s Step) error {
@@ -232,6 +271,10 @@ func GCStaging(staging string, keep []string) []string {
 		}
 	}
 	return removed
+}
+
+func (h localHost) ReconcileLedger(_ context.Context, req LedgerReq) ([]string, error) {
+	return reconcileLedger(req, h.env, nil)
 }
 
 func (h localHost) GC(_ context.Context, keep []string) ([]string, error) {

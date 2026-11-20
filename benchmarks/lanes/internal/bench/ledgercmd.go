@@ -2,6 +2,7 @@ package bench
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -20,6 +21,7 @@ func LedgerCommand(args []string, out, errw io.Writer) int {
 	fs.SetOutput(errw)
 	state := fs.String("state", "", "the ledger directory (hosts.yaml lanes.state; default: the user's own, "+DefaultLedgerDir()+")")
 	shared := fs.Bool("shared", false, "trust a directory others can write (hosts.yaml lanes.state_shared); needs --state")
+	grace := fs.Duration("grace", ledgerGrace, "reconcile: entries younger than this are kept")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -67,6 +69,18 @@ func LedgerCommand(args []string, out, errw io.Writer) int {
 			return 1
 		}
 		fmt.Fprintf(out, "dropped %d lane(s): %s\n", len(dropped), strings.Join(dropped, " "))
+	case len(pos) >= 1 && pos[0] == "reconcile":
+		// Prints the lanes released as JSON (the manager reads it); the lanes named are the ones that exist.
+		released, err := reconcileLedger(LedgerReq{State: *state, Shared: *shared, Lanes: pos[1:], Grace: *grace}, nil, a.Log)
+		if err != nil {
+			fmt.Fprintln(errw, err)
+			return 1
+		}
+		if released == nil {
+			released = []string{}
+		}
+		b, _ := json.Marshal(released)
+		fmt.Fprintln(out, string(b))
 	case len(pos) == 4 && pos[0] == "adopt":
 		cpus, err := ParseCPUList(pos[2])
 		mem, err2 := ParseSize(pos[3])
@@ -80,7 +94,7 @@ func LedgerCommand(args []string, out, errw io.Writer) int {
 		}
 		fmt.Fprintf(out, "lane %s holds cpus %s, memory %s\n", pos[1], FormatCPUList(cpus), pos[3])
 	default:
-		fmt.Fprintln(errw, "usage: fuzzops-bench ledger [--state DIR] show | prune | adopt LANE CPUS MEMORY")
+		fmt.Fprintln(errw, "usage: fuzzops-bench ledger [--state DIR] show | prune | reconcile LANE... | adopt LANE CPUS MEMORY")
 		return 2
 	}
 	return 0
