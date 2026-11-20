@@ -65,6 +65,20 @@ type Result struct {
 	DurationMS             float64                     `json:"duration_ms"`
 }
 
+func ensureOperation(action program.Action) program.ExternalOperation {
+	switch a := action.(type) {
+	case program.EnsureExec:
+		return program.ExternalOperation{Exec: &a.Ensure}
+	case *program.EnsureExec:
+		return program.ExternalOperation{Exec: &a.Ensure}
+	case program.EnsureHTTP:
+		return program.ExternalOperation{HTTP: &a.Ensure}
+	case *program.EnsureHTTP:
+		return program.ExternalOperation{HTTP: &a.Ensure}
+	}
+	return program.ExternalOperation{}
+}
+
 // Check executes one closed loop. Detectors are the detectors linked to this
 // program; Matrix separately evaluates the whole detector catalog for each case.
 func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detectors []sdk.Detector, c Case) (r Result) {
@@ -207,6 +221,9 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 			switch application.Plan.Actions[a.ActionIndex].(type) {
 			case program.EnsureExec, *program.EnsureExec, program.EnsureHTTP, *program.EnsureHTTP:
 				r.Effects = append(r.Effects, "simulated:recorded-external-transition")
+				if ms, ok := client.recordedApplyMs[operationKey(ensureOperation(application.Plan.Actions[a.ActionIndex]))]; ok && ms > 0 {
+					r.Effects = append(r.Effects, fmt.Sprintf("%s%d:%d", sdktest.ApplyTimeEffectPrefix, a.ActionIndex, ms))
+				}
 			case program.RunJob, *program.RunJob:
 				r.Effects = append(r.Effects, "simulated:recorded-job-completion")
 			case program.EnsureDatabaseUser, *program.EnsureDatabaseUser:
@@ -414,12 +431,14 @@ type cluster struct {
 	operationState        map[string]int32
 	externalEffects       []program.ExternalEffect
 	effectUsed            map[int]bool
-	externalCalls         []sdktest.PrimitiveCall
-	jobCallsUsed          map[int]bool
-	apiCallsUsed          map[int]bool
-	simCreated            map[sdk.ObjectRef]*unstructured.Unstructured
-	simDeleted            map[sdk.ObjectRef]bool
-	simStatus             map[sdk.ObjectRef]map[string]any
+	// recordedApplyMs is the recorded apply time of each replayed ensure, by its operation.
+	recordedApplyMs map[string]int64
+	externalCalls   []sdktest.PrimitiveCall
+	jobCallsUsed    map[int]bool
+	apiCallsUsed    map[int]bool
+	simCreated      map[sdk.ObjectRef]*unstructured.Unstructured
+	simDeleted      map[sdk.ObjectRef]bool
+	simStatus       map[sdk.ObjectRef]map[string]any
 }
 
 func recordedPhase(c sdktest.CorpusCase, phase string) sdktest.Snapshot {

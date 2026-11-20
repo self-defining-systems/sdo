@@ -8,6 +8,11 @@ package sdktest // import "sdo.dev/operator/sdk/sdktest"
 
 CONSTANTS
 
+const ApplyTimeEffectPrefix = "recorded-apply-ms:"
+    ApplyTimeEffectPrefix starts the replay effect line
+    "recorded-apply-ms:<action>:<ms>": how long the action took when it was
+    recorded, measured while users failed.
+
 const CapturedFixedNoMatchPhase = "fixed"
     CapturedFixedNoMatchPhase identifies observed negative evidence only.
 

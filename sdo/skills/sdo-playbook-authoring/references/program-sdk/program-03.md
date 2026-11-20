@@ -124,7 +124,8 @@ type EnsureExec struct {
 	Reason  string
 }
     EnsureExec runs Observe in a Pod and, unless it already exits with Expect,
-    runs Ensure and observes again. Effects are irreversible.
+    runs Ensure. A successful Ensure is not observed again: the post-apply
+    diagnosis and the alerts verify the state. Effects are irreversible.
 
 type EnsureHTTP struct {
 	Observe HTTPRequest
@@ -133,7 +134,7 @@ type EnsureHTTP struct {
 	Reason  string
 }
     EnsureHTTP sends Observe and, unless it already returns Expect, sends Ensure
-    and observes again. Effects are irreversible.
+    and does not observe again. Effects are irreversible.
 
 type Escalate struct {
 	Reason    string
@@ -174,6 +175,14 @@ type ExternalEffect struct {
 	Before   int32             `json:"before"`
 	After    int32             `json:"after"`
 	ExitCode int32             `json:"exit_code"`
+	// AfterObserved is false when the controller did not run Observe again after
+	// a successful Ensure, so After is the wanted code, assumed. A command can cost
+	// a full application boot; the post-apply diagnosis and the alerts, not a
+	// repeat of the command, decide whether the state holds.
+	AfterObserved bool `json:"after_observed,omitempty"`
+	// ApplyMs is how long the observe and ensure took in milliseconds, the
+	// action's cost while users fail. Replay reports the recorded value.
+	ApplyMs int64 `json:"apply_ms,omitempty"`
 }
     ExternalEffect is controller-recorded transition evidence. It binds exact
     observe/ensure operations and before/after exit codes, never an expected
@@ -261,18 +270,4 @@ func (e KubernetesEffect) MarshalJSON() ([]byte, error)
     MarshalJSON publishes evidence through the shared CA observation boundary.
     Execution may retain raw images privately; recordings and durable reports
     must never export them.
-
-type KubernetesRequest struct {
-	Ref         sdk.ObjectRef
-	Method      string            `json:"method"`
-	Path        string            `json:"path"`
-	Query       map[string]string `json:"query,omitempty"`
-	ContentType string            `json:"content_type,omitempty"`
-	Body        []byte            `json:"body,omitempty"`
-	Reason      string            `json:"reason,omitempty"`
-}
-    KubernetesRequest exposes the Kubernetes HTTP API. It reaches subresources,
-    cluster resources and discovered kinds. Query carries API options. Only the
-    plan checks bound operations (SDO identities hold a cluster-wide grant,
-    so RBAC does not). Secret endpoints are never accessed.
 ```

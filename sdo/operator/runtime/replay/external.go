@@ -89,6 +89,10 @@ func (c *cluster) EnsureOperation(ctx context.Context, observe, ensure program.E
 		}
 		c.effectUsed[i] = true
 		c.operationState[operationKey(observe)] = effect.After
+		if c.recordedApplyMs == nil {
+			c.recordedApplyMs = map[string]int64{}
+		}
+		c.recordedApplyMs[operationKey(ensure)] = effect.ApplyMs
 		return effect.ExitCode, nil
 	}
 	return 0, fmt.Errorf("external observe/ensure pair has no matching recorded transition")

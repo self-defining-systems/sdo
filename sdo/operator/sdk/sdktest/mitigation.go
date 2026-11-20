@@ -24,6 +24,10 @@ const (
 	MitigationReplaySkippedUnreplayableEffect MitigationReplayStatus = "skipped_unreplayable_effect"
 )
 
+// ApplyTimeEffectPrefix starts the replay effect line "recorded-apply-ms:<action>:<ms>": how long
+// the action took when it was recorded, measured while users failed.
+const ApplyTimeEffectPrefix = "recorded-apply-ms:"
+
 // MitigationReplayResult is informational. A skipped effect proves no repair
 // and must never substitute for independently verified live trust credits.
 type MitigationReplayResult struct {

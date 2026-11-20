@@ -99,8 +99,8 @@ Full [SDK](program-sdk.md).
 
 - `type RunScript struct{Script string; Env map[string]Value; Timeout time.Duration; Reason string}`: is a first-class learnable mitigation.
 - `type Exec struct{Pod sdk.ObjectRef; Container string; Command []Value}`: executes a provenance-derived command.
-- `type EnsureExec struct{Observe Command; Ensure Command; Expect int32; Reason string}`: runs Observe in a Pod and, unless it already exits with Expect, runs Ensure and observes again.
-- `type EnsureHTTP struct{Observe HTTPRequest; Ensure HTTPRequest; Expect int32; Reason string}`: sends Observe and, unless it already returns Expect, sends Ensure and observes again.
+- `type EnsureExec struct{Observe Command; Ensure Command; Expect int32; Reason string}`: runs Observe in a Pod and, unless it already exits with Expect, runs Ensure.
+- `type EnsureHTTP struct{Observe HTTPRequest; Ensure HTTPRequest; Expect int32; Reason string}`: sends Observe and, unless it already returns Expect, sends Ensure and does not observe again.
 - `type RunJob struct{Object ApplyObject; Completion WaitFor}`: creates a named Job or Pod and waits for its actual completion.
 - `type ApplyObject struct{Ref sdk.ObjectRef; Object map[string]any; Mode string; Reason string}`: creates a missing object or merges desired fields into an existing object.
 - `type KubernetesRequest struct{Ref sdk.ObjectRef; Method string; Path string; Query map[string]string; ContentType string; Body []byte; Reason string}`: exposes the Kubernetes HTTP API.

@@ -90,6 +90,8 @@ commands:
         blocks. A playbook new in this change also shows its verdict on the incident it was written for:
         "diagnose on incident: match", "failed" (Diagnose returned NoMatch there: blocks) or "unverified"
         (the capture cannot say: does not block). At most about 1 KB.
+        Each case line also gives how long every action took when it was recorded ("action 0 apply
+        219.8s"): a Mitigate runs while users fail, so a slow one is a defect to rewrite.
   ls [--root .] [--kind goal|architecture|playbook|script|detector] [--json]
         List artifacts by logical ID.
   new playbook <id> [--root .] [--incident I]
@@ -409,7 +411,7 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 			fmt.Fprintln(stdout, "coverage_gap "+diagnosticLine(gap))
 		}
 		for _, note := range replayNotes {
-			fmt.Fprintf(stdout, "program=%s case=%s mitigation_replay=%s\n", note.ProgramID, note.CaseID, note.Status)
+			fmt.Fprintf(stdout, "program=%s case=%s mitigation_replay=%s%s\n", note.ProgramID, note.CaseID, note.Status, applyTimes(note.Effects))
 		}
 	}
 	if len(diagnostics) > 0 {
@@ -598,6 +600,30 @@ func ownIncidentLines(report *contracts.MemoryCheckReport, id string) []string {
 	return lines
 }
 
+// replayCaseLine is one captured case's replay verdict, plus how long each of its actions took when
+// it was recorded, so the author sees a Mitigate that is slow while users fail.
+func replayCaseLine(note *contracts.MitigationReplayNote) string {
+	return fmt.Sprintf("  case %s: mitigation replay %s", note.GetCaseId(), strings.ToLower(strings.TrimPrefix(note.GetStatus().String(), "STATUS_"))) + applyTimes(note.GetEffects())
+}
+
+// applyTimes renders the recorded apply time of each action as "; action N apply S.Ss".
+func applyTimes(effects []string) string {
+	line := ""
+	for _, effect := range effects {
+		rest, ok := strings.CutPrefix(effect, sdktest.ApplyTimeEffectPrefix)
+		if !ok {
+			continue
+		}
+		action, millis, ok := strings.Cut(rest, ":")
+		ms, err := strconv.ParseInt(millis, 10, 64)
+		if !ok || err != nil {
+			continue
+		}
+		line += fmt.Sprintf("; action %s apply %.1fs", action, float64(ms)/1000)
+	}
+	return line
+}
+
 // memoryTest is "memory check" read for one playbook: its replay verdicts per captured case and whether anything blocks
 // publication. It runs the same check, so it cannot disagree with the broker's, and prints at most a few short lines.
 func memoryTest(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) (int, error) {
@@ -630,7 +656,7 @@ func memoryTest(ctx context.Context, args []string, getenv func(string) string, 
 	for _, note := range checked.GetMitigationReplayNotes() {
 		if note.GetProgramId() == id {
 			replayed++
-			fmt.Fprintf(stdout, "  case %s: mitigation replay %s\n", note.GetCaseId(), strings.ToLower(strings.TrimPrefix(note.GetStatus().String(), "STATUS_")))
+			fmt.Fprintln(stdout, replayCaseLine(note))
 		}
 	}
 	if replayed == 0 {
