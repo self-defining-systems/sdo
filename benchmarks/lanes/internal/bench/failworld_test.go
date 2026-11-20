@@ -279,6 +279,9 @@ func (l *flab) writeInventory() {
 	}
 	inv := "hosts:\n" + hs.String() + "checkouts:\n  fuzzops: {0b528ac: {" + strings.Join(fz, ", ") + "}" + l.moreFz + "}\n  hooks:\n    test: {abcdef0: {" + strings.Join(hk, ", ") + "}}\nhook_command: {test: \"true\"}\n"
 	must(l.t, os.WriteFile(l.root.path("hosts.yaml"), []byte(inv), 0o644))
+	for _, h := range l.hosts {
+		adoptClusters(l.t, filepath.Join(l.dir, "kube"), l.clusts[h]...)
+	}
 }
 
 // add writes and adds an experiment of the faults ids with one sequence of one run.

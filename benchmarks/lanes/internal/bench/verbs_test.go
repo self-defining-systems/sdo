@@ -30,6 +30,7 @@ func newFixture(t *testing.T) benchFixture {
 		}
 	}
 	hook := testdata("hook.sh")
+	adoptClusters(t, filepath.Join(dir, "kube"), "c1", "c2")
 	inv := `hosts:
   h1: {local: true, isolation: one-way-ok, staging: ` + dir + `/staging, max_builds: 1, max_load5: 1000, kubeconfigs: ` + dir + `/kube, evidence: ` + dir + `/evidence, clusters: [c1, c2]}
 checkouts:

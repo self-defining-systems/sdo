@@ -45,6 +45,7 @@ type Manager struct {
 	invErr  string
 	exps    map[string]*Experiment
 	lanes   map[string]*LaneFile
+	srcWarn map[string][]string // host -> lanes with no cluster on a host with no cluster_up (looked up once)
 	hosts   map[string]HostStatus
 	// gcWanted: hosts whose unneeded lane clusters are deleted this pass (gc, or below the disk floor).
 	gcWanted map[string]bool
@@ -202,6 +203,20 @@ func (m *Manager) rawOps(host string) HostOps {
 	return sshHost{name: host, h: h, fuzzops: m.inv.Checkouts.Fuzzops, health: h.Health.Thresholds()}
 }
 
+// clusterSourceWarnings are the lanes of a host with no cluster_up that have no cluster (clustersource.go), looked up
+// once per host per manager run: they change only when a human edits the host.
+func (m *Manager) clusterSourceWarnings(ctx context.Context, host string) []string {
+	if w, ok := m.srcWarn[host]; ok {
+		return w
+	}
+	if m.srcWarn == nil {
+		m.srcWarn = map[string][]string{}
+	}
+	w := m.inv.HostClusterProblems(ctx, host, hostRunner(m.inv))
+	m.srcWarn[host] = w
+	return w
+}
+
 // stepsOn is the step of each lane of host that has one in flight, or given up as an orphan (lane -> step id).
 func (m *Manager) stepsOn(host string) map[string]string {
 	steps := map[string]string{}
@@ -337,6 +352,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 			m.logf("host %s answers again and is admitted", name)
 		}
 		reachable[name] = true
+		st.Warnings = append(append([]string(nil), st.Warnings...), m.clusterSourceWarnings(ctx, name)...)
 		m.hosts[name] = st
 		if min := m.inv.Hosts[name].MinFreeBytes(); min > 0 && pr.Free > 0 && pr.Free < min {
 			m.alarm(AlarmDiskFloor, name, fmt.Sprintf("%s free, below the floor %s: no new build starts until it is above", size(pr.Free), m.inv.Hosts[name].MinFree))

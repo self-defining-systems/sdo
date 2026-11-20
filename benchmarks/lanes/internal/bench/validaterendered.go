@@ -53,6 +53,9 @@ func ValidateRendered(ctx context.Context, inv Inventory, s Spec, c *RenderedChe
 	if len(inv.UsableHosts(s)) == 0 {
 		return fmt.Errorf("no host of %v can take this spec: %s", s.Hosts, strings.Join(inv.UnusableReasons(s), "; "))
 	}
+	if problems := inv.ClusterSourceProblems(ctx, s, addHostRunner(inv)); len(problems) > 0 {
+		return fmt.Errorf("%s", strings.Join(problems, "; "))
+	}
 	if err := checkLaneCapacity(inv, s); err != nil {
 		return err
 	}
