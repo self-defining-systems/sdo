@@ -2,6 +2,7 @@ package memoryhost
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -10,6 +11,7 @@ import (
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/planwire"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
@@ -128,7 +130,9 @@ func (s *Server) Diagnose(ctx context.Context, request *pb.DiagnoseRequest) (res
 	}
 	defer func() {
 		if response != nil {
-			response.Reads, err = EncodeReceipts(view.SnapshotCalls())
+			calls := view.SnapshotCalls()
+			response.WantedMetrics = wantedMetrics(calls)
+			response.Reads, err = EncodeReceipts(calls)
 		}
 	}()
 	verdict := program.RunDiagnose(ctx, recordingDiagnoser{Diagnoser: p, record: func(value any) { s.recordProgramPanic("diagnose", request.GetInput(), view, value) }}, view, bindings, time.Hour)
@@ -174,7 +178,9 @@ func (s *Server) Mitigate(ctx context.Context, request *pb.MitigateRequest) (res
 	}
 	defer func() {
 		if response != nil {
-			reads, encodeErr := EncodeReceipts(view.SnapshotCalls())
+			calls := view.SnapshotCalls()
+			response.WantedMetrics = wantedMetrics(calls)
+			reads, encodeErr := EncodeReceipts(calls)
 			response.Reads = reads
 			if encodeErr != nil {
 				err = encodeErr
@@ -213,4 +219,31 @@ func actionProto(action program.Action) (*pb.Action, error) { return planwire.Ac
 func (s *Server) WithReadFactory(factory func(context.Context, sdktest.Snapshot) (program.ReadView, error)) *Server {
 	s.readFactory = factory
 	return s
+}
+
+// wantedMetrics lists the on-demand metric queries a program asked for that the
+// frozen observation did not hold. The controller answers them live and sends
+// the request again.
+func wantedMetrics(calls []sdktest.PrimitiveCall) []*structpb.Struct {
+	var wanted []*structpb.Struct
+	seen := map[metrics.Query]bool{}
+	for _, call := range calls {
+		if call.Method != "QueryMetrics" {
+			continue
+		}
+		var result metrics.Result
+		if json.Unmarshal(call.Result, &result) != nil || result.Error != metrics.NotFrozenError || seen[result.Query] {
+			continue
+		}
+		seen[result.Query] = true
+		var fields map[string]any
+		raw, err := json.Marshal(result.Query)
+		if err != nil || json.Unmarshal(raw, &fields) != nil {
+			continue
+		}
+		if value, err := structpb.NewStruct(fields); err == nil {
+			wanted = append(wanted, value)
+		}
+	}
+	return wanted
 }

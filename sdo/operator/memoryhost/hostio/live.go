@@ -14,6 +14,7 @@ import (
 	"sdo.dev/operator/kubereads"
 	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 	"strconv"
@@ -82,6 +83,20 @@ type LiveReadView struct {
 
 func NewLiveReadView(ctx context.Context, snapshot sdktest.Snapshot, backends ReadBackends) *LiveReadView {
 	return &LiveReadView{ReplayReadView: &sdktest.ReplayReadView{Snapshot: snapshot}, ctx: ctx, client: backends.Client, backends: backends}
+}
+
+// QueryMetrics answers from the frozen observation. The host has no metrics
+// source: a query the observation does not hold is reported as
+// metrics.NotFrozenError, which the server returns to the controller to answer
+// live. It is never answered from the empty replay recording.
+func (v *LiveReadView) QueryMetrics(q metrics.Query) metrics.Result {
+	if err := q.Validate(); err != nil {
+		return metrics.Result{Query: q, Error: err.Error()}
+	}
+	if r, ok := v.Snapshot.Metrics[q.ID]; ok && r.Query == q {
+		return r
+	}
+	return metrics.Result{Query: q, Error: metrics.NotFrozenError}
 }
 func (v *LiveReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error) {
 	if ref.Kind != "Pod" || ref.Namespace != v.Namespace() || ref.Name == "" || since < 0 || v.client == nil {
