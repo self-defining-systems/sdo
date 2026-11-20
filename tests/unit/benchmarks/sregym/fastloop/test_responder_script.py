@@ -238,6 +238,7 @@ def test_existing_drift_scenarios_through_script_transport(tmp_path, monkeypatch
         "exhausted",
         "missing-plan",
         "mixed",
+        "external-policy",
     ],
 )
 def test_full_generated_result_and_calls(tmp_path, monkeypatch, scenario):
@@ -307,14 +308,37 @@ def test_full_generated_result_and_calls(tmp_path, monkeypatch, scenario):
     if scenario == "exhausted":
         del request.findings[:]
         monkeypatch.setattr(scripts.time, "sleep", lambda _: None)
+    if scenario == "external-policy":
+        # A fallback page: an external message, no drift events and no findings to start from.
+        del request.findings[:]
+        request.external_message = "Application: app\nNamespace: app\n\nusers report errors"
+    live = {
+        "networkpolicies": [
+            {
+                "metadata": {"name": "deny-all"},
+                "spec": {"podSelector": {"matchLabels": {"app": "api"}}, "policyTypes": ["Ingress"]},
+            }
+        ]
+        if scenario == "external-policy"
+        else [],
+        "pods": [{"metadata": {"name": "api-0", "labels": {"app": "api"}}}],
+        "services": [
+            {
+                "metadata": {"name": "api"},
+                "spec": {"selector": {"app": "api"}, "ports": [{"port": 80, "targetPort": 8080}]},
+            }
+        ],
+    }
     calls = []
     repaired = False
 
     def command(argv, **_kwargs):
         nonlocal repaired
         calls.append(argv)
-        if "patch" in argv:
+        if "patch" in argv or "delete" in argv:
             repaired = True
+        if "get" in argv and argv[argv.index("get") + 1] in live:
+            return json.dumps({"items": live[argv[argv.index("get") + 1]]})
         return ""
 
     def tool(*args):
@@ -340,8 +364,10 @@ def test_full_generated_result_and_calls(tmp_path, monkeypatch, scenario):
             repaired = True
             return {}
         if args[0] == "source":
+            if args[1].startswith("NetworkPolicy/"):
+                return {"summary": "resource is absent from accepted source"}
             if args[1].startswith("Service/"):
-                return {"source": {"spec": {"ports": [{"port": 80, "targetPort": 8080}]}}}
+                return {"source": {"spec": {"selector": {"app": "api"}, "ports": [{"port": 80, "targetPort": 8080}]}}}
             return {"source": source}
         return {"healthy": repaired or scenario in {"healthy", "stale"}, "summary": "live verification"}
 
@@ -409,6 +435,10 @@ def test_full_generated_result_and_calls(tmp_path, monkeypatch, scenario):
     assert len(actual.verification_evidence) >= 1
     if scenario == "matched":
         assert [p.playbook_id for p in actual.applied_playbooks] == ["repair"]
+    if scenario == "external-policy":
+        # Found by reading live state, as a paged responder would: the source-absent isolating policy goes.
+        assert ["kubectl", "-n", "app", "delete", "networkpolicy", "deny-all"] in calls
+        assert any("NetworkPolicy/deny-all" in change for change in actual.repair_changes)
     if scenario == "immutable-image":
         assert any("accepted@sha256:" in str(call) for call in calls)
     if scenario == "mutable-image":

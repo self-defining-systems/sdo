@@ -54,6 +54,33 @@ for event in request.drift_events:
             else f"Restored Service/{event.ref.name} from accepted source",
         }
     )
+if request.external_message:
+    # A paged incident carries no drift events: read the live NetworkPolicies, as a paged responder would, and judge
+    # each one the accepted source does not have with the same isolation evidence a drift event gets.
+    live_policies = json.loads(_command(["kubectl", "-n", request.namespace, "get", "networkpolicies", "-o", "json"]))
+    for policy in live_policies.get("items", []):
+        name = policy["metadata"]["name"]
+        if ("NetworkPolicy", name) in unsure or any(
+            ref["kind"] == "NetworkPolicy" and ref["name"] == name for repair in repairs for ref in repair["resources"]
+        ):
+            continue
+        if _tool("source", f"NetworkPolicy/{request.namespace}/{name}").get("source"):
+            continue
+        observed = DriftEvent(source="absent from accepted source")
+        observed.ref.api_version = "networking.k8s.io/v1"
+        observed.ref.kind = "NetworkPolicy"
+        observed.ref.namespace = request.namespace
+        observed.ref.name = name
+        observed.fields.add(path="spec", new=json.dumps(policy.get("spec", {})))
+        if _assess_drift(request, observed).investigation_verdict != "bug":
+            continue
+        _command(["kubectl", "-n", request.namespace, "delete", "networkpolicy", name])
+        repairs.append(
+            {
+                "resources": [json_format.MessageToDict(observed.ref, preserving_proto_field_name=True)],
+                "summary": f"Removed source-absent NetworkPolicy/{name}",
+            }
+        )
 """
 
 REPAIR = r"""
