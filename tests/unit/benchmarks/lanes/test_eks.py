@@ -60,27 +60,50 @@ def test_mirror_refuses_digests_and_unmirrored_upstreams() -> None:
     with pytest.raises(eks.EksLaneError, match="digest"):
         eks.mirror_repository(lane(), "mongo@sha256:" + "0" * 64)
     with pytest.raises(eks.EksLaneError, match="mirrors"):
-        eks.mirror_repository(lane(), "quay.io/prometheus/prometheus:v2.47.2")
+        eks.mirror_repository(lane(), "example.org/prometheus/prometheus:v2.47.2")
 
 
 def test_pinned_images_keep_only_their_name_under_the_image_prefix() -> None:
     assert eks.image_repository(lane(), "sdo-controller:eks-1") == ("sdo/sdo-controller", "eks-1")
 
 
-def test_node_agent_writes_one_mirror_per_upstream_and_is_unready_when_stale() -> None:
-    manifest = eks.node_agent_manifest(lane(upstreams=("docker.io", "quay.io")))
-    pod = manifest["spec"]["template"]["spec"]
-    script = pod["containers"][0]["command"][2]
-    assert pod["hostNetwork"] is True
-    assert pod["volumes"][0]["hostPath"]["path"] == "/etc/containerd/certs.d"
-    for upstream, server in (("docker.io", "https://registry-1.docker.io"), ("quay.io", "https://quay.io")):
-        assert f"https://{REGISTRY}/v2/sdo-mirror/{upstream}" in script
-        assert f'server = "{server}"' in script
-        assert f"mv /certs/{upstream}/hosts.toml.tmp /certs/{upstream}/hosts.toml" in script
-    assert "override_path = true" in script
-    assert "aws ecr get-login-password --region" in script
-    probe = " ".join(pod["containers"][0]["readinessProbe"]["exec"]["command"])
-    assert f"-mmin -{eks.STALE_MINUTES}" in probe
+def _agent_daemonset(script: str) -> str:
+    return json.dumps(
+        {"spec": {"template": {"spec": {"containers": [{"name": "agent", "command": ["sh", "-c", script]}]}}}}
+    )
+
+
+_PROVIDER_SCRIPT = (
+    f"for up in docker.io ghcr.io quay.io registry.k8s.io; do mirror=https://{REGISTRY}/v2/sdo-mirror/$up; done"
+)
+
+
+def test_attach_verifies_the_providers_node_agent_and_never_applies_one() -> None:
+    nodes = {"items": [_ready("n1")]}
+    pods = {"items": [_ready("a1", "n1")]}
+    run = FakeRun(
+        [
+            (("get", "daemonset"), 0, _agent_daemonset(_PROVIDER_SCRIPT), ""),
+            (("get", "nodes"), 0, json.dumps(nodes), ""),
+            (("get", "pods"), 0, json.dumps(pods), ""),
+        ]
+    )
+    assert eks.verify_node_agent("/k", lane(), run=run) == {"n1": "a1"}
+    assert not any("apply" in call for call in run.calls)
+
+
+def test_a_node_agent_that_mirrors_too_little_or_to_another_registry_is_a_named_error() -> None:
+    narrow = FakeRun(
+        [(("get", "daemonset"), 0, _agent_daemonset(_PROVIDER_SCRIPT.replace(" registry.k8s.io", "")), "")]
+    )
+    with pytest.raises(eks.EksLaneError, match=r"does not mirror \['registry.k8s.io'\]"):
+        eks.verify_node_agent("/k", lane(), run=narrow)
+    other = FakeRun([(("get", "daemonset"), 0, _agent_daemonset(_PROVIDER_SCRIPT.replace("sdo-mirror", "x")), "")])
+    with pytest.raises(eks.EksLaneError, match="another registry or prefix"):
+        eks.verify_node_agent("/k", lane(), run=other)
+    missing = FakeRun([(("get", "daemonset"), 1, "", 'daemonsets.apps "sdo-lane-node-agent" not found')])
+    with pytest.raises(eks.EksLaneError, match="not found"):
+        eks.verify_node_agent("/k", lane(), run=missing)
 
 
 def _ready(name: str, node: str = "", deleting: bool = False) -> dict[str, Any]:

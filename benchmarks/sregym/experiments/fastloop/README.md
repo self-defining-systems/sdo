@@ -573,9 +573,11 @@ uv run python -m benchmarks.sregym.fastloop up --platform eks --no-dev-mount \
   group scaled to zero and back is the same lane.
 - **Images.** `up` pushes the local controller and responder images to `<registry>/sdo/<name>` and records their
   digests (`pinned_tools`); a lane is current while ECR still holds them. The app is built from source on this host
-  and published under its declared name: a `kube-system` DaemonSet (`sdo-lane-node-agent`) keeps a containerd mirror
-  for `docker.io` on every node that tries `<registry>/v2/sdo-mirror/docker.io/...` first and falls back to Docker
-  Hub. Manifests keep their image names, so SDO sees no image drift.
+  and published under its declared name through the node agent (`sdo-lane-node-agent`, a `kube-system` DaemonSet) that the
+  lanes `eks` provider installs with the cluster (`benchmarks/lanes/deploy/eks-lane.sh up`): a containerd mirror for every
+  upstream registry that tries `<registry>/v2/sdo-mirror/<upstream>/...` first and falls back to the upstream. `up` only
+  verifies the agent and its mirror config and fails with a named error when they are missing or different; it never
+  applies them. Manifests keep their image names, so SDO sees no image drift.
 - **No mounts.** There is no dev mount: the code under test is the images' code, and `up` builds the host operator at
   `.fastloop/sdo-operator`. Accepted memory is the lane's workspace, as on kind; share it across hosts through the
   remote memory branch below, not `--parallel-root`.
