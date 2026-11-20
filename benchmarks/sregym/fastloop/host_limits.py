@@ -102,8 +102,19 @@ def _update(node: str, *flags: str) -> None:
 
 
 def host_cores() -> tuple[frozenset[int], ...]:
-    """This host's physical cores (SMT sibling sets) limited to the CPUs this process may use."""
-    return read_host_cores(Path("/sys/devices/system/cpu"), frozenset(os.sched_getaffinity(0)))
+    """This host's physical cores (SMT sibling sets) limited to the CPUs this process may use, plus the preferred block.
+
+    The block counts even when this process's own affinity (its user slice) excludes it: a host reserves it for
+    the lanes' containers, which run under their own slice, not for this process.
+    """
+    return read_host_cores(
+        Path("/sys/devices/system/cpu"), usable_cpus(frozenset(os.sched_getaffinity(0)), preferred_cpus())
+    )
+
+
+def usable_cpus(affinity: frozenset[int], block: frozenset[int]) -> frozenset[int]:
+    """CPUs lanes may be placed on: those this process may run on, plus the host's reserved block."""
+    return affinity | block
 
 
 def preferred_cpus(env: Mapping[str, str] | None = None) -> frozenset[int]:
