@@ -5,9 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
-from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -21,6 +20,9 @@ from benchmarks.sregym.adapter.cluster_resources import (
 from benchmarks.sregym.adapter.native_operator import validate_evidence_sink
 from benchmarks.sregym.fastloop import cli, evidence_sink, worker_bridge
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 REGISTRY = "000000000000.dkr.ecr.us-west-2.amazonaws.com"
 DIGEST = "sha256:" + "c" * 64
