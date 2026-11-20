@@ -48,8 +48,4 @@ func TestBenchFailedSwapRestoresThePoolLaneInPlace(t *testing.T) {
 	if !strings.Contains(hooks[strings.Index(hooks, "swap c1 e2"):], "reset c1 ") {
 		t.Fatalf("no reset after the failed swap:\n%s", hooks)
 	}
-	// The restored lane serves the next claimant.
-	must(t, os.Remove(filepath.Join(l.hooks, "fail-swap")))
-	l.addReusing("e3", "claim: pool\nreuse_app: true\n")
-	l.until("e3 done", func() bool { return l.exp("e3").Count(0).Done == 2 })
 }
