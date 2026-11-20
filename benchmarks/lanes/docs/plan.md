@@ -39,6 +39,9 @@ alarms: {factor: 2, idle_lane: 10m, arm_stall: 90m, hook: "notify-send lanes \"$
   are `${item.<var>}`, item vars win). The merged result is validated as a spec at `plan add` for every item (unknown
   fields and wrong types are refused, naming the arm and item), and an override may not set the engine-owned fields
   (`name`, `fuzzops`, `operator.revision`, `retries`, `isolation`). `items.from` entries take `group` and `spec` too.
+- **Builtin operators.** `pins.subject` is optional. An operator with no hooks checkout (`operator.builtin`) has no
+  revision: pin only the workload, and the engine writes no `operator.revision` (the spec check refuses a hooks operator
+  without a revision, and a builtin one with it). Results then carry `subject_pinned: none`.
 - **Order.** Nodes are `(rep, item, arm)`, arms in dependency-then-declaration order, so every comparison's partner is
   released right after its pair, never behind a whole arm and never by name order. A node blocked on an input is passed
   over; the next ready node takes its slot, and the blocked one goes first as soon as it is ready.
