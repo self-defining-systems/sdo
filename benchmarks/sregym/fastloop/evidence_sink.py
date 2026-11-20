@@ -27,7 +27,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.fuzzops import sink
-from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+from benchmarks.sregym.adapter import WaitKind, wait_for
 
 if TYPE_CHECKING:
     from pathlib import Path

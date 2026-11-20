@@ -15,8 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 from benchmarks.fuzzops.sink import EVIDENCE_CLAIM, claim_manifest
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 
 _DNS_LABEL = re.compile(r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$")
 _KIND_NODE = re.compile(r"^[a-z0-9][a-z0-9-]*$")

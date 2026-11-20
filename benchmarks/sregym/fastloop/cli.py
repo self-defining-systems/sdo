@@ -53,7 +53,6 @@ from benchmarks.sregym.fastloop.baseline_recovery import (
     load_application_baseline,
     save_application_baseline,
 )
-from benchmarks.lanes.eks import EksLane
 from benchmarks.sregym.fastloop.environment import DEFAULT_PROBLEM, FastloopEnvironment, Images
 from benchmarks.sregym.fastloop.evidence_sink import lane_evidence_run_id
 from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
@@ -86,6 +85,7 @@ from sdo.agents.provider import AGENT_EFFORTS
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
+    from benchmarks.lanes.eks import EksLane
     from benchmarks.sregym.adapter import ClusterOps, RuntimeConfig
     from benchmarks.sregym.fastloop.composite import CompositeSettings
     from benchmarks.sregym.fastloop.evidence_queue import EvidenceExportQueue
@@ -463,9 +463,12 @@ def attach_eks_lane(args: argparse.Namespace) -> tuple[EksLane, Images]:
         repository_tags=dict(item.split("=", 1) for item in args.ecr_tag),
     )
     prior = FastloopEnvironment.load(args.run_dir.resolve()) if (args.run_dir / "fastloop.json").is_file() else None
-    if prior is not None and prior.eks is not None:
-        if (prior.eks.server, prior.eks.cluster_uid) != (provider.lane.server, provider.lane.cluster_uid):
-            raise EksLaneError("KUBECONFIG reaches a different cluster than the one this lane was created on")
+    if (
+        prior is not None
+        and prior.eks is not None
+        and (prior.eks.server, prior.eks.cluster_uid) != (provider.lane.server, provider.lane.cluster_uid)
+    ):
+        raise EksLaneError("KUBECONFIG reaches a different cluster than the one this lane was created on")
     images = Images(controller=provider.pin(args.controller_image), responder=provider.pin(args.responder_image))
     return provider.lane, images
 
@@ -797,8 +800,7 @@ def _cluster_ops(args: argparse.Namespace, namespace: str, *, ops: ClusterOps | 
 
 
 def _runtime_config(args: argparse.Namespace, environment: FastloopEnvironment, results_dir: Path) -> RuntimeConfig:
-    from benchmarks.sregym.adapter import RuntimeConfig, control_namespace_for
-    from benchmarks.sregym.adapter.cluster_resources import evidence_claim_volume
+    from benchmarks.sregym.adapter import RuntimeConfig, control_namespace_for, evidence_claim_volume
     from benchmarks.sregym.fastloop.dev import EVIDENCE_NODE_ROOT
 
     registrations = args.agent_registrations.resolve() if args.agent_registrations else None

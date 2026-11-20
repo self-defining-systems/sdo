@@ -102,12 +102,12 @@ class RuntimeConfig:
     lane_platform: str = "kind"
 
     def __post_init__(self) -> None:
-        if self.lane_platform not in {"kind", "eks"}:
-            raise ValueError(f"lane_platform must be kind or eks, got {self.lane_platform!r}")
         if bool(self.source_branch_url) != bool(self.source_branch):
             raise ValueError("source_branch_url and source_branch must be given together")
         if self.source_branch.strip().lower() in {"main", "master"}:
             raise ValueError("the source branch must not be main or master")
+        if self.lane_platform not in {"kind", "eks"}:
+            raise ValueError(f"lane_platform must be kind or eks, got {self.lane_platform!r}")
         if type(self.external_incidents) is not bool:
             raise TypeError("external_incidents must be a boolean")
         if self.external_incidents and not self.frozen_memory:

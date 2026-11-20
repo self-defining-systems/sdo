@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from benchmarks.sregym.adapter.budgets import Deadline, DeadlineExhaustedError, SdoBounds, WaitKind, wait_for
-    from benchmarks.sregym.adapter.cluster_resources import benchmark_registry_host, kubectl
+    from benchmarks.sregym.adapter.cluster_resources import benchmark_registry_host, evidence_claim_volume, kubectl
     from benchmarks.sregym.adapter.context_preflight import run_context_preflight as run_context_preflight
     from benchmarks.sregym.adapter.deployment_source import (
         DeploymentPolicyConfig,
@@ -263,6 +263,7 @@ _EXPORTS: dict[str, str] = {
     "RuntimeConfig": "runtime",
     "DeploymentPolicyConfig": "deployment_source",
     "benchmark_registry_host": "cluster_resources",
+    "evidence_claim_volume": "cluster_resources",
     "buildkit_image": "deployment_source",
     "deployment_plan": "deployment_source",
     "plan_flag_value": "deployment_source",
@@ -279,6 +280,7 @@ _EXPORTS: dict[str, str] = {
 __all__ = [
     "DeploymentPolicyConfig",
     "benchmark_registry_host",
+    "evidence_claim_volume",
     "buildkit_image",
     "deployment_plan",
     "plan_flag_value",

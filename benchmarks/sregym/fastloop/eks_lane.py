@@ -9,13 +9,14 @@ directory, provisioned at ``up`` and again at every row start (a node group scal
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping, MutableMapping
 from typing import TYPE_CHECKING
 
 from benchmarks.lanes.eks import AGENT_LANE, NODE_LANE_ROOT, EksProvider
 from libs.agent_cli.provider_capacity import DEFAULT_OPUS_HOST_SHARE
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, MutableMapping
+
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
 OPUS_POOL = "opus-pool"

@@ -9,9 +9,9 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.lanes.eks import Ecr, EksLane, assert_lane_cluster, publish_app_image
 from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.fastloop.app_images import install_shared_builds
-from benchmarks.lanes.eks import Ecr, EksLane, assert_lane_cluster, publish_app_image
 from benchmarks.sregym.fastloop.host_limits import HostLimits, install_node_limits
 from benchmarks.sregym.fastloop.idempotent_helm import make_deploy_idempotent
 from benchmarks.sregym.repository_git import host_git_command
