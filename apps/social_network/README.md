@@ -12,6 +12,15 @@ cp -R apps/social_network/source-overlays/. /absolute/fresh-social-source/
 ```
 
 Commit both overlays before building and rendering that same source checkout.
+The overlay also replaces `src/UserService/UserHandler.h` with one change: user ids are
+masked to 53 bits. The user service mints an id as machine|millisecond|counter, and the
+nginx Lua handlers read it back from the login token with `tonumber`, a double. Above
+2^53 a double drops low bits, so users registered in one millisecond reach every
+signed-in handler as a neighbouring id (the user composes as another user, or as
+nobody, and compose fails with `ZADD: no key specified`). Mongo has no volume, so each
+pod recreate re-registers users and re-rolls the risk. `tests/unit/apps/test_social_user_ids.py`
+checks the mask. A seed already cut without the overlay keeps the 63-bit ids: cut a new
+seed commit, then redeploy and re-capture the baseline on every lane.
 The overlay also bounds every MongoDB. mongod 4.4 ignores cgroup v2 limits and
 sizes its WiredTiger cache from host RAM, so an unbounded instance grows until
 its container is killed. `mongod.tpl` sets `cacheSizeGB: 0.25` for all six
