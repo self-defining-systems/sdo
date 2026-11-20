@@ -160,3 +160,65 @@ func TestJoinedKeysRoundTripThroughTheContract(t *testing.T) {
 		t.Fatalf("alert keys = %v, want opening and joined", got)
 	}
 }
+
+// handoffCounter counts the agent hand-offs the controller prepares.
+type handoffCounter struct {
+	recordingDispatcher
+	prepared atomic.Int32
+}
+
+func (d *handoffCounter) PrepareDispatch(_ context.Context, request IncidentRequest) (IncidentRequest, error) {
+	d.prepared.Add(1)
+	return request, nil
+}
+
+// afterPlaybookJoinedController is an incident whose applied playbook wrote,
+// whose opening alert has cleared and whose joined user test still fails.
+func afterPlaybookJoinedController(t *testing.T, now time.Time, sessionID string) (*Controller, *handoffCounter) {
+	t.Helper()
+	opening := &switchedProbe{id: memory.TrafficDetectorPrefix + "opening", scenario: "ssh"}
+	hurt := &switchedProbe{id: memory.TrafficDetectorPrefix + "hurt", scenario: "clone"}
+	hurt.failing.Store(true)
+	c, _ := alertSetController(t, now, opening, hurt)
+	dispatcher := &handoffCounter{}
+	c.dispatcher = dispatcher
+	c.codePath = &CodePath{Selection: CodePathSelection{ResponseStages: []string{"deterministic", "agent"}}}
+	c.config.VerificationTimeout = time.Hour
+	c.currentIncidentResult.ResolutionPath = "deterministic"
+	c.currentIncidentResult.ResponderSessionID = sessionID
+	c.currentIncidentRequest.PriorStages = []*contracts.StageReport{{Stage: "deterministic",
+		Mitigations: []*contracts.StageMitigation{{ApplyReceipt: &contracts.PlanApplication{Applied: true}}}}}
+	return c, dispatcher
+}
+
+func stepFor(t *testing.T, c *Controller, now time.Time, count int) {
+	t.Helper()
+	for range count {
+		if err := c.Step(context.Background(), now, nil); err != nil {
+			t.Fatal(err)
+		}
+		now = now.Add(time.Second)
+	}
+}
+
+// After an applied playbook, an opening alert that cleared while a joined user
+// test keeps failing hands the incident to the agent.
+func TestJoinedTestStillFailingAfterAPlaybookHandsOffToTheAgent(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	c, dispatcher := afterPlaybookJoinedController(t, now, "")
+	stepFor(t, c, now, 8)
+	if dispatcher.prepared.Load() == 0 {
+		t.Fatalf("no agent hand-off for a joined test still failing: joined %v", c.currentIncidentRequest.JoinedKeys)
+	}
+}
+
+// The agent runs at most once per incident: with its session already on the
+// result, a joined test that still fails prepares no second hand-off.
+func TestAgentThatAlreadyRanIsNeverDispatchedAgain(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	c, dispatcher := afterPlaybookJoinedController(t, now, "synthetic-session")
+	stepFor(t, c, now, 8)
+	if got := dispatcher.prepared.Load(); got != 0 {
+		t.Fatalf("%d second hand-offs for an incident whose agent already ran", got)
+	}
+}
