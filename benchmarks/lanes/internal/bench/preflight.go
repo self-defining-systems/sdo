@@ -679,12 +679,31 @@ func agentExtraEnv(set map[string]any) []string {
 
 func (c credCheck) label() string { return strings.Join(c.Specs, ",") }
 
+// stubModel is the operator setting `model: stub` that declares a no-model agent (a scripted stand-in): it calls no
+// provider, so preflight makes no credential call for it, whatever its provider setting says.
+const stubModel = "stub"
+
+// isStubAgent reports whether the operator settings declare the no-model agent.
+func isStubAgent(set map[string]any) bool { return settingString(set, "model", "") == stubModel }
+
+// stubAgentSpecs names the specs with a hooks operator whose agent is the no-model stand-in.
+func stubAgentSpecs(specs []specFile) []string {
+	var out []string
+	for _, s := range specs {
+		if s.Operator.Hooks != "" && isStubAgent(s.Operator.Settings) {
+			out = append(out, s.Name)
+		}
+	}
+	return out
+}
+
 // credentialChecks lists the distinct (provider, model, effort, credential file, image) the specs' lanes will use.
+// A spec with a stub agent has none: no model is called.
 func credentialChecks(specs []specFile) []credCheck {
 	idx := map[string]int{}
 	var out []credCheck
 	for _, s := range specs {
-		if s.Operator.Hooks == "" {
+		if s.Operator.Hooks == "" || isStubAgent(s.Operator.Settings) {
 			continue
 		}
 		set := s.Operator.Settings

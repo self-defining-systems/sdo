@@ -60,6 +60,10 @@ func (sdoSubject) Host(ctx context.Context, inv Inventory, h string, hs []specFi
 		add(1, "credential["+c.label()+"]", h, ok, "%s %s (%s, %.0fs)", c.Provider, c.Model, d, time.Since(t0).Seconds())
 	}
 
+	if stubs := stubAgentSpecs(hs); len(stubs) > 0 {
+		add(1, "credential["+strings.Join(stubs, ",")+"]", h, true, "skipped: the agent is the no-model stub (operator model %q), no provider is called", stubModel)
+	}
+
 	// sink and proto: in each pinned hooks checkout on the host
 	seen := map[string]bool{}
 	for _, s := range hs {
@@ -117,7 +121,9 @@ func (sdoSubject) Local(ctx context.Context, inv Inventory, specs []specFile, op
 					continue
 				}
 				if hooks == "" {
-					add(6, label, local, false, "no hooks checkout on %s to build sdo-operator", local)
+					// The check builds sdo-operator from the pin's checkout; without one here it cannot run, which is
+					// no verdict on the memory: a note, not a failure.
+					add(6, label, local, true, "not checkable here: no hooks checkout of the pin on %s to build sdo-operator", local)
 					continue
 				}
 				out, err := run(ctx, local, envPrefix(inv.Hosts[local])+memoryScript(b, bl, hooks))
