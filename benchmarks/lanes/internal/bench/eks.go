@@ -473,8 +473,13 @@ func (m *Manager) eksCheck(ctx context.Context, lane, kubeconfig string) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, eksProbeBound)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "kubectl", "--kubeconfig", kubeconfig, "--context", "kind-"+lane, "--request-timeout=30s", "get", "nodes",
+	// The host's env (its PATH) decides which kubectl runs, as for every step on the host: sh resolves it, not this process.
+	cmd := exec.CommandContext(ctx, "sh", "-c", `exec kubectl "$@"`, "sh", "--kubeconfig", kubeconfig, "--context", "kind-"+lane, "--request-timeout=30s", "get", "nodes",
 		"-o", `jsonpath={range .items[*]}{.metadata.name}{"="}{range .status.conditions[?(@.type=="Ready")]}{.status}{end}{"\n"}{end}`)
+	cmd.Env = os.Environ()
+	if l := m.lanes[lane]; l != nil {
+		cmd.Env = append(cmd.Env, m.inv.Hosts[l.Host].EnvList()...)
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("EKS API not reachable: %v", err)
