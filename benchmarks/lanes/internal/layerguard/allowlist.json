@@ -1,0 +1,251 @@
+{
+  "files": {
+    "cmd/lanes/main.go": {
+      "reason": "CLI: FUZZOPS_BENCH_ROOT and the --fuzzops probe flag are what the live manager and its ssh probes use (audit B9); gains a --workload alias in a later change",
+      "terms": {
+        "fuzzops": 7
+      }
+    },
+    "internal/bench/bound.go": {
+      "reason": "comment only: names the SDO start-up it bounds (audit A3)",
+      "terms": {
+        "sdo": 3
+      }
+    },
+    "internal/bench/cluster.go": {
+      "reason": "comment only (audit A8)",
+      "terms": {
+        "operator": 1
+      }
+    },
+    "internal/bench/cpualloc.go": {
+      "reason": "ledger dir /var/tmp/fuzzops-lanes-<uid> and the `fuzzops-bench ledger adopt` hint: an on-disk path the live hosts use (audit B9)",
+      "terms": {
+        "fuzzops": 3
+      }
+    },
+    "internal/bench/discover.go": {
+      "reason": "bench-root pointer path under fuzzops/ on live hosts (audit B9)",
+      "terms": {
+        "fuzzops": 7
+      }
+    },
+    "internal/bench/hooks.go": {
+      "reason": "hook operator file shape and the reset-incidents verb (audit A7, A8, C1)",
+      "terms": {
+        "fuzzops": 1,
+        "incident": 2,
+        "operator": 5
+      }
+    },
+    "internal/bench/host.go": {
+      "reason": "probe takes workload checkouts under the old name (audit B9)",
+      "terms": {
+        "fuzzops": 7
+      }
+    },
+    "internal/bench/hostloss.go": {
+      "reason": "comment only",
+      "terms": {
+        "operator": 1
+      }
+    },
+    "internal/bench/inventory.go": {
+      "reason": "hosts.yaml keys checkouts.fuzzops and checkouts.hooks, FUZZOPS_LANE_PROVIDER env (audit B4, B7)",
+      "terms": {
+        "fuzzops": 10,
+        "operator": 2
+      }
+    },
+    "internal/bench/lanes.go": {
+      "reason": "DefaultLaneLimit names gitlab (audit B5); moves to the workload footprint verb",
+      "terms": {
+        "app-names": 4,
+        "operator": 2,
+        "sdo": 1
+      }
+    },
+    "internal/bench/lanestep.go": {
+      "reason": "FUZZOPS_LANE_* env names kept for adapters; sdo-eval-reserve helper path (audit A9, B7)",
+      "terms": {
+        "fuzzops": 4,
+        "sdo": 2
+      }
+    },
+    "internal/bench/ledgercmd.go": {
+      "reason": "CLI text of the ledger command: the fuzzops-bench name and ledger adopt hint on live hosts (audit B9)",
+      "terms": {
+        "fuzzops": 2
+      }
+    },
+    "internal/bench/manager.go": {
+      "reason": "operator block staging, FuzzopsRev, reset-incidents step (audit A6, A7, B3, B10)",
+      "terms": {
+        "fuzzops": 23,
+        "incident": 2,
+        "operator": 32,
+        "sdo": 6,
+        "sdo-config": 9
+      }
+    },
+    "internal/bench/phase.go": {
+      "reason": "comment only",
+      "terms": {
+        "fuzzops": 2,
+        "operator": 1
+      }
+    },
+    "internal/bench/pincheck.go": {
+      "reason": "asks bin/fuzzops for its revision (audit B1); moves to the identity verb",
+      "terms": {
+        "fuzzops": 9
+      }
+    },
+    "internal/bench/planbackend.go": {
+      "reason": "checkSpecMemory (audit A1), operator inputs (A6), run result Fuzzops field (B3)",
+      "terms": {
+        "fuzzops": 1,
+        "operator": 13,
+        "sdo": 5,
+        "sdo-config": 1
+      }
+    },
+    "internal/bench/preflight.go": {
+      "reason": "SDO fallback checks: credentials, sink, proto, memory, pack (audit A1, A2, B6)",
+      "terms": {
+        "app-names": 1,
+        "fuzzops": 11,
+        "incident": 1,
+        "operator": 19,
+        "sdo": 16,
+        "sdo-config": 19
+      }
+    },
+    "internal/bench/preflight_subject.go": {
+      "reason": "sdoSubject fallback for pins without the preflight verb (audit A2)",
+      "terms": {
+        "operator": 19,
+        "sdo": 14,
+        "sdo-config": 6
+      }
+    },
+    "internal/bench/reserve.go": {
+      "reason": "root helper alias path and gc unit names installed on the hosts (audit A9)",
+      "terms": {
+        "sdo": 4
+      }
+    },
+    "internal/bench/seedcheck.go": {
+      "reason": "checkMemoryDir (audit A1); moves to the check-input verb",
+      "terms": {
+        "operator": 4,
+        "sdo": 5,
+        "sdo-config": 4
+      }
+    },
+    "internal/bench/spec.go": {
+      "reason": "Spec format keys fuzzops and operator.*, StartupBound (audit A3, B4, C1, C3)",
+      "terms": {
+        "fuzzops": 21,
+        "operator": 30,
+        "sdo": 2,
+        "sdo-config": 5
+      }
+    },
+    "internal/bench/ssh.go": {
+      "reason": "FUZZOPS_BENCH_SSH env and probe flag (audit B9)",
+      "terms": {
+        "fuzzops": 7
+      }
+    },
+    "internal/bench/state.go": {
+      "reason": "persisted result and prepared formats: fuzzops, fuzzops_rev, operator_version (audit B3, A8)",
+      "terms": {
+        "fuzzops": 6,
+        "operator": 7,
+        "sdo": 3
+      }
+    },
+    "internal/bench/step.go": {
+      "reason": "step runner: fuzzops env, recover text, hook operator file, StepUnhold (audit A7, B3, B7, B8)",
+      "terms": {
+        "fuzzops": 38,
+        "incident": 16,
+        "operator": 71,
+        "sdo": 2,
+        "sdo-config": 1
+      }
+    },
+    "internal/bench/validaterendered.go": {
+      "reason": "seed-needs-baseline rule, pinned fuzzops message (audit A5, B10)",
+      "terms": {
+        "fuzzops": 2,
+        "operator": 10,
+        "sdo": 1,
+        "sdo-config": 7
+      }
+    },
+    "internal/bench/verbs.go": {
+      "reason": "baseline and seed shipping, fuzzops report, transcripts wording (audit A6, A8, B8)",
+      "terms": {
+        "fuzzops": 17,
+        "incident": 7,
+        "operator": 33,
+        "sdo": 6,
+        "sdo-config": 15
+      }
+    },
+    "internal/bench/workload.go": {
+      "reason": "built-in fuzzops workload (audit B2); moves to adapter_fuzzops_workload.go",
+      "terms": {
+        "fuzzops": 20
+      }
+    },
+    "internal/env/env.go": {
+      "reason": "FUZZOPS_* env contract kept for compatibility (audit B7)",
+      "terms": {
+        "fuzzops": 11,
+        "operator": 3
+      }
+    },
+    "internal/lanelock/lock.go": {
+      "reason": "comment only",
+      "terms": {
+        "fuzzops": 1
+      }
+    },
+    "internal/miniyaml/miniyaml.go": {
+      "reason": "comment only",
+      "terms": {
+        "fuzzops": 1
+      }
+    },
+    "internal/plan/control.go": {
+      "reason": "comment only",
+      "terms": {
+        "operator": 1
+      }
+    },
+    "internal/plan/plan.go": {
+      "reason": "plan validation message names operator (audit D2)",
+      "terms": {
+        "app-names": 1,
+        "operator": 4
+      }
+    },
+    "internal/plan/status.go": {
+      "reason": "comments only",
+      "terms": {
+        "operator": 3
+      }
+    },
+    "internal/plan/template.go": {
+      "reason": "engine renders the spec keys fuzzops and operator.* (audit B4, C1)",
+      "terms": {
+        "fuzzops": 3,
+        "operator": 5
+      }
+    }
+  },
+  "adapter_files": {}
+}
