@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"io"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,9 +40,9 @@ func TestVantageObserverAttachesAHelperThenProbesThroughIt(t *testing.T) {
 	probe := vantage.Probe{ID: "limits", Kind: vantage.TCPConnect, From: podread.Target{Image: "synthetic-store"}, To: &vantage.Peer{Host: "db", Port: 5432}, Interval: time.Minute}
 	pod := vantagePod()
 	client := fake.NewSimpleClientset(pod.DeepCopy())
-	var execContainer string
+	var execContainer atomic.Value // probes of one cycle exec concurrently
 	exec := &scriptedPodExec{answer: func(_ context.Context, _ sdk.ObjectRef, container string, stdout io.Writer) error {
-		execContainer = container
+		execContainer.Store(container)
 		_, err := io.WriteString(stdout, "dial 0 999 0 999 2000 \npsi 3.00\n")
 		return err
 	}}
@@ -73,8 +74,8 @@ func TestVantageObserverAttachesAHelperThenProbesThroughIt(t *testing.T) {
 
 	running := vantagePod(corev1.ContainerStatus{Name: "sdo-vantage-store", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}})
 	second := observer.collect(context.Background(), sdktest.Snapshot{NamespaceName: "app", PodList: []corev1.Pod{running}})["limits"]
-	if len(second.Readings) != 1 || second.Readings[0].Error != "" || execContainer != "sdo-vantage-store" {
-		t.Fatalf("second cycle = %+v (exec in %q)", second, execContainer)
+	if len(second.Readings) != 1 || second.Readings[0].Error != "" || execContainer.Load() != "sdo-vantage-store" {
+		t.Fatalf("second cycle = %+v (exec in %v)", second, execContainer.Load())
 	}
 	if dials := second.Readings[0].Dials; len(dials) != 1 || !dials[0].OK || dials[0].Duration != 2*time.Millisecond || dials[0].HostCPUStall != 3 {
 		t.Fatalf("dials = %+v", dials)
