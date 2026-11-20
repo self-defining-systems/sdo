@@ -103,6 +103,9 @@ class SeedSteps:
 
     #: Host side, controller running, the lane untouched: the seed as the controller must start on it.
     prepare: Callable[[], PreparedMemory]
+    #: Block until the app serves (every workload rolled out); raises when it does not. The controller restarts onto
+    #: the app as it is, and one that is still coming up opens an incident before any run has started.
+    wait_app: Callable[[], object]
     reset_incidents: Callable[[], object]
     retire_standby: Callable[[], object]
     stop_controller: Callable[[], object]
@@ -124,13 +127,15 @@ def apply_seed(
     steps: SeedSteps, seed: MemorySeed, out: Callable[[str], object] = print, timeline: Timeline | None = None
 ) -> dict[str, Any]:
     """Make a prepared, idle lane's accepted repository the seed's memory, prepared as an install of this build would
-    start it: prepare on the host first (the lane keeps running), then close any incident, stop the controller (it
+    start it: prepare on the host first (the lane keeps running), wait for the app to serve, then close any incident, stop the controller (it
     caches the accepted commit), import the prepared head, start it again (the same install, state and images) and
     assert the repository is that head, clean, with the operator idle. The controller is stopped and started once."""
     started = time.monotonic()
     t = timeline or Timeline(out, "seed.")
     with t.step("prepare"):
         prepared = steps.prepare()
+    with t.step("wait_app"):
+        steps.wait_app()
     with t.step("reset_incidents"):
         steps.reset_incidents()
     try:

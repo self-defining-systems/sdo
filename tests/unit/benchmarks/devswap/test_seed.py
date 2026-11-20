@@ -70,6 +70,7 @@ def seed_memory(tmp_path: Path) -> MemorySeed:
 def steps(calls: list[str], prepared: PreparedMemory, head: str | None = None, status: str = "", idle: str = "") -> Any:
     return SeedSteps(
         prepare=lambda: calls.append("prepare") or prepared,
+        wait_app=lambda: calls.append("app"),
         reset_incidents=lambda: calls.append("incidents"),
         retire_standby=lambda: calls.append("retire"),
         stop_controller=lambda: calls.append("stop"),
@@ -90,7 +91,7 @@ def test_the_seed_is_prepared_before_the_lane_is_touched_and_the_controller_rest
     calls: list[str] = []
     prepared = PreparedMemory("b" * 40, Path("prepared.bundle"))
     receipt = apply_seed(steps(calls, prepared), seed_memory, lambda _line: None)
-    assert calls == ["prepare", "incidents", "stop", "retire", "config ['agent']", "import b", "start", "standby"]
+    assert calls == ["prepare", "app", "incidents", "stop", "retire", "config ['agent']", "import b", "start", "standby"]
     assert calls.count("stop") == calls.count("start") == 1
     assert receipt["seed"] == seed_memory.commit
     assert receipt["prepared"] == "b" * 40
@@ -118,7 +119,7 @@ def test_an_import_that_fails_leaves_the_controller_running(seed_memory: MemoryS
 
     with pytest.raises(SwapError, match="restore pod failed"):
         apply_seed(SeedSteps(**{**failing.__dict__, "import_memory": broken}), seed_memory, lambda _line: None)
-    assert calls == ["prepare", "incidents", "stop", "retire", "config ['agent']", "start"]
+    assert calls == ["prepare", "app", "incidents", "stop", "retire", "config ['agent']", "start"]
 
 
 @pytest.mark.parametrize(
@@ -412,3 +413,19 @@ def test_a_migration_after_the_preparation_leaves_the_tree_a_fresh_build_makes(
     assert git(swapped, "ls-tree", "-r", "HEAD", "--", ".sdo") == git(fresh, "ls-tree", "-r", "HEAD", "--", ".sdo")
     assert git(swapped, "status", "--porcelain") == ""
     assert (swapped / ".sdo/diagnostics/generic.go").read_text() == "generated v1\n"
+
+
+def test_the_seed_waits_for_the_app_before_it_touches_the_controller(seed_memory: MemorySeed) -> None:
+    """The real lane: the seed restarted the controller while the app's web workload was still unavailable; the
+    controller then opened an incident before any run and the swap failed (505 s standby wait, then 'incident open').
+    An app that never serves stops the swap before the incident reset, the stop and the restart."""
+    calls: list[str] = []
+    lane = steps(calls, PreparedMemory("b" * 40, Path("x")))
+
+    def unavailable() -> None:
+        calls.append("app")
+        raise SwapError("deployment gitlab-webservice-default not rolled out")
+
+    with pytest.raises(SwapError, match="not rolled out"):
+        apply_seed(SeedSteps(**{**lane.__dict__, "wait_app": unavailable}), seed_memory, lambda _line: None)
+    assert calls == ["prepare", "app"]
