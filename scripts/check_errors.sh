@@ -77,6 +77,7 @@ uv run --extra test python -m pytest -q -p no:tach \
     tests/unit/benchmarks/sregym/fastloop/test_shared_git_ownership.py::test_all_benchmark_host_checkout_commands_use_the_scoped_policy \
     tests/unit/scripts/test_check_prompt_budgets.py \
     tests/unit/scripts/test_check_app_names.py \
+    tests/unit/scripts/test_check_platform_neutral.py \
     tests/unit/scripts/test_ci_quarantine.py \
     tests/unit/benchmarks/sregym/adapter/test_budgets.py::test_the_scanner_sees_each_wait_shape \
     tests/unit/benchmarks/sregym/adapter/test_budgets.py::test_seconds_literals_in_waits_only_decrease \
@@ -97,6 +98,7 @@ fi
 echo "==> shipped skill size budgets"
 uv run python scripts/check_skill_sizes.py
 uv run python scripts/check_app_names.py
+uv run python scripts/check_platform_neutral.py
 
 echo "==> whole-tree guard marks"
 python3 scripts/ci_select.py check-marks

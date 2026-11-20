@@ -25,7 +25,7 @@ var Edges = map[string]bool{
 	"benchmarks/lanes/internal/env":                          true, // Lane environment: kubectl and kind processes and the process environment
 	"benchmarks/lanes/internal/lanelock":                     true, // Lane flock and holder pid
 	"benchmarks/lanes/cmd/lanes":                             true, // The lanes command: process environment and exit codes
-	"benchmarks/lanes/deploy":                                true, // Lane deploy script tests: run shell scripts against stub docker, kind and kubectl
+	"benchmarks/lanes/deploy":                                true, // Lane deploy script tests: run shell scripts against stub cluster tools
 	"sdo/operator/memory/internal/memoryio":                  true, // Git and shell syntax subprocesses
 	"sdo/operator/install/internal/installio":                true, // Repository processes, configuration environment and timer adapter
 	"sdo/operator/runtime/internal/lifecycleio":              true, // Kubernetes driver

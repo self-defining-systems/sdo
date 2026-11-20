@@ -98,7 +98,7 @@ func (b *Breaker) Mode() string {
 var enforcingCNIs = []string{"calico", "cilium", "weave", "antrea", "kube-router", "canal"}
 
 // enforcesNetworkPolicy reports whether kube-system runs a CNI agent known to
-// enforce NetworkPolicy. A default kind cluster (kindnet) does not count.
+// enforce NetworkPolicy. A cluster whose network plugin ignores NetworkPolicy does not count.
 func enforcesNetworkPolicy(ctx context.Context, client kubernetes.Interface) (bool, string) {
 	sets, err := client.AppsV1().DaemonSets(metav1.NamespaceSystem).List(ctx, metav1.ListOptions{})
 	if err != nil {

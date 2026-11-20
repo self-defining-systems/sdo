@@ -1,7 +1,7 @@
 //go:build integration
 
 // Package envtestio starts a real kube-apiserver and etcd (controller-runtime
-// envtest) for integration tests, at the Kubernetes version the kind lanes run.
+// envtest) for integration tests, at the Kubernetes version the lanes run.
 // It is a test-only edge: it launches processes, reads the environment and
 // downloads the binaries once. Nothing outside tests may import it.
 //

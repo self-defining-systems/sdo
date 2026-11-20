@@ -1,0 +1,26 @@
+{
+  "sdo/agents/onboarding/prompts/onboarding.md": {
+    "count": 1,
+    "reason": "tool list names the local cluster runtime the onboarding agent happens to have; reword to the generic tool set"
+  },
+  "sdo/operator/contracts/settings/config.go": {
+    "count": 4,
+    "reason": "Evidence.HostPath is an opt-in node directory for evidence; remove after the PVC evidence migration (Evidence.Volume, a Kubernetes volume, becomes the single evidence path; kind lanes move to local-path PVCs)"
+  },
+  "sdo/operator/devmount/devmount.go": {
+    "count": 8,
+    "reason": "dev-only host worktree mount, enabled only by SDO_DEV_MOUNT=1 set by benchmark lane hooks; off in a normal install; candidate to move under benchmarks"
+  },
+  "sdo/operator/operatorcli/evidence_sink.go": {
+    "count": 2,
+    "reason": "builds the hostPath evidence volume for Evidence.HostPath; goes with it"
+  },
+  "sdo/operator/worker_registry/provider_capacity.go": {
+    "count": 4,
+    "reason": "opt-in per-host model-account pool (env SDO_OPUS_POOL_*) mounts a node directory; unset in a normal install; express as a claim when a platform needs it"
+  },
+  "sdo/skills/sdo-serving/SKILL.md": {
+    "count": 1,
+    "reason": "advice to reproduce a build locally where docker exists; reword to the build tool the agent has"
+  }
+}
