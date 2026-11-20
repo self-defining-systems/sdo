@@ -29,7 +29,7 @@ func (c churnOps) Start(_ context.Context, s Step) error {
 func churnManager(t *testing.T, maxBuilds int, started *[]Step) *Manager {
 	t.Helper()
 	root := Root(t.TempDir())
-	inv := "hosts:\n  h1: {local: true, staging: /tmp/s, max_builds: " + string(rune('0'+maxBuilds)) + ", max_load5: 100, kubeconfigs: /tmp/k, evidence: /tmp/e, clusters: [c1, c2, c3]}\n" +
+	inv := "hosts:\n  h1: {local: true, staging: /tmp/s, max_builds: " + string(rune('0'+maxBuilds)) + ", max_load5: 100, kubeconfigs: /tmp/k, evidence: /tmp/e, clusters: [c1, c2, c3, c4]}\n" +
 		"checkouts:\n  fuzzops: {abc: {h1: /tmp/fz}}\n"
 	if err := os.WriteFile(filepath.Join(string(root), "hosts.yaml"), []byte(inv), 0o644); err != nil {
 		t.Fatal(err)
