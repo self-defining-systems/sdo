@@ -9,6 +9,7 @@ SDO autonomously deploys and operates applications using source-grounded agents,
 - [`benchmarks/sregym/`](benchmarks/sregym/AGENTS.md) — first-party SREGym adapters, protocol clients, runners, experiments, and analysis
 - [`benchmarks/fuzzops/`](benchmarks/fuzzops/AGENTS.md) — fuzzops adapter: SDO operates a fuzzops app pack while fuzzops injects and grades
 - `benchmarks/devswap/` — benchmark-neutral compiled swap: a revision's Go operator on a prepared dev-mounted lane (fuzzops hooks and SREGym runners call it; `python -m benchmarks.devswap`)
+- [`benchmarks/lanes/`](benchmarks/lanes/AGENTS.md) — benchmark-neutral lane platform (Go module `cmd/lanes`, imported from fuzzops-bench): hosts, isolation, pools, steps and results; benchmarks plug in as workload and subject adapters
 - `third_party/sregym/` — external SREGym harness Git submodule
 - `libs/` — shared agent turn-runner library
 - `apps/` — source-deployment evaluation applications

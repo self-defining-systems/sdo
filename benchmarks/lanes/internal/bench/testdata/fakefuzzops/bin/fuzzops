@@ -1,0 +1,87 @@
+#!/bin/sh
+# A stand-in for bin/fuzzops in the bench's tests. Fault state is a marker
+# file per namespace in $FAKE_STATE; files there steer it:
+#   busy-at-gate      the operator raises an alarm right at the ready gate
+#   busy-after-inject the operator stays busy after the run (settle hits the cap)
+#   bad-pack          `pack load` fails like a pack that is not there (exit 3, the permanent-error code)
+#   stuck             recover and undo fail (the fault stays)
+#   app-bad-seconds   bad seconds the bare app shows in each check window
+#   sleep             seconds the run takes after its inject (the marker is in place meanwhile)
+S=${FAKE_STATE:?}
+verb=$1; shift
+sub=$1
+ns=""; ready=""; fault=""; maxbad=0; outfile=""; against=""
+while [ $# -gt 0 ]; do
+  case $1 in
+    --namespace) ns=$2; shift ;;
+    --ready-cmd) ready=$2; shift ;;
+    --ready-for) echo "ready-for $2" >> "$S/fuzzops.log"; shift ;;
+    --instance|--fault) fault=$2; shift ;;
+    --ledger-out) echo "{\"version\":1,\"count\":$(cat "$S/ledger-count" 2>/dev/null || echo 160)}" > "$2"; echo "ledger-out" >> "$S/fuzzops.log"; shift ;;
+    --ledger-in) echo "ledger-in $2" >> "$S/fuzzops.log"; shift ;;
+    --out) outfile=$2; shift ;;
+    --against) against=$2; shift ;;
+    --max-bad-seconds) echo "check-max-bad $2" >> "$S/fuzzops.log"; maxbad=$2; shift ;;
+  esac
+  shift
+done
+[ "$verb" = app ] && verb="app $sub"
+echo "$verb $ns $fault" >> "$S/fuzzops.log"
+case $verb in
+version) echo '{"revision":"0b528ac0123456","measure_version":12}' ;;
+app*)
+  [ "$verb" = "app up" ] && rm -f "$S/dirty" "$S/store-state"
+  if [ "$verb" = "app fingerprint" ]; then
+    # The stores' fingerprint is the content of $S/store-state ("fresh" until a run corrupts it, see corrupts).
+    cur=$(cat "$S/store-state" 2>/dev/null || echo fresh)
+    [ -n "$outfile" ] && echo "$cur" > "$outfile"
+    if [ -n "$against" ] && [ "$(cat "$against")" != "$cur" ]; then echo "the data stores differ from the reference: pg/migrations differs" >&2; exit 1; fi
+    echo "{}"
+  fi
+  exit 0 ;;
+pack)
+  [ -f "$S/bad-pack" ] && { echo "pack /pin/missing: no app.yaml or app.json" >&2; exit 3; }
+  exit 0 ;;
+check)
+  # Journeys: recorded with whether the operator was restored yet; app-unhealthy fails them until it is.
+  if [ -f "$HOOK_STATE/prepared" ]; then echo "check-with-operator $ns" >> "$S/fuzzops.log"; exit 0; fi
+  echo "check-without-operator $ns" >> "$S/fuzzops.log"
+  [ -f "$S/app-unhealthy" ] && { echo "journeys not clean" >&2; exit 1; }
+  # app-bad-seconds: bad seconds the bare app shows in every check window (--clean fails above --max-bad-seconds).
+  [ -f "$S/app-bad-seconds" ] && [ "$(cat "$S/app-bad-seconds")" -gt "$maxbad" ] && { echo "not clean: $(cat "$S/app-bad-seconds") bad seconds" >&2; exit 1; }
+  [ -f "$S/dirty" ] && { echo "journeys not clean: state left by the last run" >&2; exit 1; }
+  exit 0 ;;
+recover)
+  [ -f "$S/lane-held" ] && { echo "lane busy" >&2; exit 2; }
+  if [ -f "$S/marker-$ns" ]; then
+    [ -f "$S/stuck" ] && { echo "undo failed" >&2; exit 1; }
+    rm -f "$S/marker-$ns"; echo "undone"
+  fi ;;
+active-instance|undo-instance)
+  [ "$verb" = undo-instance ] && [ ! -f "$S/stuck" ] && rm -f "$S/marker-$ns"
+  if [ -f "$S/marker-$ns" ]; then echo "active=true"; else echo "active=false"; fi ;;
+run)
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  if [ -n "$ready" ]; then
+    [ -f "$S/busy-at-gate" ] && cp "$S/busy-at-gate" "$HOOK_STATE/busy"
+    why=$(sh -c "$ready"); rc=$?
+    rm -f "$HOOK_STATE/busy"
+    if [ $rc -ne 0 ]; then
+      echo "{\"valid\":false,\"invalid_reason\":\"not ready\",\"error\":\"not ready\",\"ready\":{\"misses\":[{\"why\":\"operator: $why\"}]}}"
+      exit 1
+    fi
+  fi
+  echo "inject $ns $fault" >> "$S/fuzzops.log"
+  echo "00:00:00 [$ns] inject $fault" >&2
+  echo "$$" > "$S/run.pid"
+  touch "$S/lane-held"   # stands in for fuzzops' lane lock (freed when the run ends or is killed)
+  touch "$S/marker-$ns"
+  [ -f "$S/corrupts" ] && echo corrupted > "$S/store-state"   # a repair left the stores different; only a fresh app copy undoes it
+  [ -f "$S/dirties" ] && touch "$S/dirty"   # a run whose undo leaves state behind, until the app is put down anew
+  [ -f "$S/sleep" ] && sleep "$(cat "$S/sleep")"
+  [ -f "$S/residue" ] && echo "validatingwebhookconfiguration.admissionregistration.k8s.io/blocker" >> "$S/cluster-objects"
+  [ -f "$S/busy-after-inject" ] && cp "$S/busy-after-inject" "$HOOK_STATE/busy"
+  rm -f "$S/marker-$ns" "$S/lane-held"
+  echo "{\"fault\":\"$fault\",\"valid\":true,\"lifecycle\":{\"inject_at\":\"$now\"}}" ;;
+esac
+exit 0

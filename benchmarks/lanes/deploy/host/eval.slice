@@ -1,0 +1,9 @@
+# /etc/systemd/system/eval.slice: the parent cgroup of every bench lane's node containers (docker --cgroup-parent=eval.slice).
+[Unit]
+Description=fuzzops bench lanes (kind node containers)
+Before=slices.target
+
+[Slice]
+CPUAccounting=yes
+MemoryAccounting=yes
+IOAccounting=yes

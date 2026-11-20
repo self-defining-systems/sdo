@@ -1,0 +1,11 @@
+#!/bin/sh
+# kind get clusters: the lab's lane clusters (c1 unless cluster_down removed it), as the lab's cluster_up and
+# cluster_down commands logged them.
+[ "$1 $2" = "get clusters" ] || exit 0
+log="$FAKE_STATE/clusters.log"
+# no-cluster: c1 does not exist until the lab's cluster_up has made it
+[ -f "$FAKE_STATE/no-cluster" ] && ! grep -q "^up c1" "$log" 2>/dev/null && exit 0
+{
+  echo "up c1"
+  [ -f "$log" ] && cat "$log"
+} | awk '$1 == "up" { have[$2] = 1 } $1 == "down" { delete have[$2] } END { for (c in have) print c }'

@@ -37,7 +37,8 @@
     "sdo/operator/integration",
     "benchmarks/sregym/protocol/native_receipt_go",
     "benchmarks/sregym/protocol/submission_go",
-    "benchmarks/sregym/fastloop/replay_go"
+    "benchmarks/sregym/fastloop/replay_go",
+    "benchmarks/lanes"
   ],
   "go_binaries": [
     "sdo/operator/cmd/sdo-operator",

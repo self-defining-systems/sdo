@@ -21,6 +21,11 @@ var Edges = map[string]bool{
 	"sdo/operator/internal/rehearsal/rehearsalio":            true, // replay rehearsal kubectl process, garbage-collector poll and harness wall clock; integration tests only
 	"sdo/operator/runtime/internal/h2testio":                 true, // In-memory HTTP/2 conformance peer configuration; tests only
 	"benchmarks/sregym/fastloop/replay_go/internal/replayio": true, // Benchmark-only replay Git subprocess adapter
+	"benchmarks/lanes/internal/bench":                        true, // Lane manager: ssh and local step processes, hook executables, clocks and lane state; benchmark infrastructure
+	"benchmarks/lanes/internal/env":                          true, // Lane environment: kubectl and kind processes and the process environment
+	"benchmarks/lanes/internal/lanelock":                     true, // Lane flock and holder pid
+	"benchmarks/lanes/cmd/lanes":                             true, // The lanes command: process environment and exit codes
+	"benchmarks/lanes/deploy":                                true, // Lane deploy script tests: run shell scripts against stub docker, kind and kubectl
 	"sdo/operator/memory/internal/memoryio":                  true, // Git and shell syntax subprocesses
 	"sdo/operator/install/internal/installio":                true, // Repository processes, configuration environment and timer adapter
 	"sdo/operator/runtime/internal/lifecycleio":              true, // Kubernetes driver

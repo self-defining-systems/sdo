@@ -2461,12 +2461,20 @@ VERBS = (
 )
 
 
+#: Verbs of the lanes subject contract (benchmarks/lanes/docs/contract.md) this hook set does not implement: it answers
+#: "unsupported" (exit 64, last stdout line {"unsupported": true}); `lanes` then runs its own checks or skips the verb.
+UNSUPPORTED_VERBS = ("preflight", "export-artifact", "verify-artifact", "reseed", "verify-start")
+
+
 #: Verbs that end a run or start a lane over: the next ``idle`` is an inject gate (``end_run``).
 RUN_BOUNDARY_VERBS = frozenset({"prepare", "swap", "reset", "snapshot", "collect", "reset-incidents", "teardown"})
 
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
+    if args and args[0] in UNSUPPORTED_VERBS:
+        print(json.dumps({"unsupported": True}), flush=True)
+        return 64
     if not args or args[0] not in (*VERBS, "baseline"):
         print(f"usage: python -m benchmarks.fuzzops.hooks {{{','.join(VERBS)},baseline}}", file=sys.stderr)
         return 2

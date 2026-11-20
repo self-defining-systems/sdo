@@ -17,6 +17,6 @@ operator_modules=()
 for gomod in "$PROJECT_ROOT"/sdo/operator/*/go.mod; do
   operator_modules+=("sdo/operator/$(basename "$(dirname "$gomod")")")
 done
-for module in sdo/operator "${operator_modules[@]}" benchmarks/sregym/fastloop/replay_go; do
+for module in sdo/operator "${operator_modules[@]}" benchmarks/sregym/fastloop/replay_go benchmarks/lanes; do
   (cd "$PROJECT_ROOT/$module" && go test -tags=integration ./...)
 done

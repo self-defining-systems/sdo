@@ -1512,3 +1512,9 @@ def test_memory_render_is_applied_only_when_it_differs_from_the_install_render(
     assert hooks.apply_memory_render(kube, "ns1", repo, install, lambda line: None) is True
     assert any("apply" in c and str(repo / "k8s" / "render.yaml") in c for c in calls)
     assert waited == ["ns1"]
+
+
+@pytest.mark.parametrize("verb", ["preflight", "export-artifact", "verify-artifact", "reseed", "verify-start"])
+def test_lanes_contract_verbs_not_implemented_answer_unsupported(verb: str, capsys: Any) -> None:
+    assert hooks.main([verb]) == 64
+    assert json.loads(capsys.readouterr().out.strip().splitlines()[-1]) == {"unsupported": True}
