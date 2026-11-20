@@ -40,6 +40,16 @@ var hookTimeouts = map[string]time.Duration{
 	"verify-artifact": 5 * time.Minute,
 	"reseed":          30 * time.Minute,
 	"verify-start":    5 * time.Minute,
+	// The workload verbs (docs/contract.md). A run is bounded by the spec's cap inside; this is the backstop for an
+	// adapter that stops answering, above what the cap and the undo (up to ten minutes) can take together.
+	VerbIdentity:    time.Minute,
+	VerbAppUp:       90 * time.Minute,
+	VerbAppSnapshot: 90 * time.Minute,
+	VerbAppReset:    35 * time.Minute,
+	VerbGate:        30 * time.Minute,
+	VerbRun:         6 * time.Hour,
+	VerbGrade:       30 * time.Minute,
+	VerbFootprint:   5 * time.Minute,
 }
 
 // SubjectVerbs are the verbs of the subject contract (docs/contract.md): the operator under test.
