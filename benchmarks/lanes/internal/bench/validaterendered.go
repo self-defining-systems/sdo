@@ -43,6 +43,9 @@ func ValidateRendered(ctx context.Context, inv Inventory, s Spec, c *RenderedChe
 	if err := checkLaneCapacity(inv, s); err != nil {
 		return err
 	}
+	if err := checkPoolCapacity(inv, s); err != nil {
+		return err
+	}
 	if s.Operator.Hooks != "" && inv.HookCommand[s.Operator.Hooks] == "" {
 		return fmt.Errorf("hosts.yaml has no hook_command for %s", s.Operator.Hooks)
 	}
