@@ -352,8 +352,8 @@ class SourceBranch:
     ``up`` creates the remote before SDO is installed and prints one JSON line with its ``url`` and ``ref``; ``down``
     removes it at teardown. Both are shell commands of the benchmark with ``{kubeconfig}``, ``{namespace}``,
     ``{control}``, ``{ref}``, ``{image}`` (the controller image), ``{script_image}`` (the small script-tools image)
-    and ``{repository}`` (the accepted repository) filled in. The hooks know nothing else of the remote: they pass its URL and branch to SDO and keep the line as
-    ``$BENCH_LANE_DIR/source-branch.json`` for the workload that pushes.
+    and ``{repository}`` (the accepted repository) filled in. The hooks know nothing else of the remote: they pass
+    its URL and branch to SDO and keep the line as ``$BENCH_LANE_DIR/source-branch.json`` for the workload that pushes.
     """
 
     ref: str
