@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from benchmarks.fuzzops import sink
 from benchmarks.fuzzops.config import operator_env
 from benchmarks.lanes.eks import EksLane
 from benchmarks.sregym.adapter.cluster_resources import (
@@ -136,6 +137,10 @@ def test_eks_benchmark_resources_reach_nodes_through_the_agent_and_carry_the_evi
             pytest.fail(f"kind/docker call on an EKS lane: {command}")
         if "apply" in command:
             applied.extend(json.loads(kwargs["input"])["items"])
+        if "nodes" in command:
+            ready = [{"type": "Ready", "status": "True"}]
+            nodes = {"items": [{"metadata": {"name": "node-a"}, "status": {"conditions": ready}}]}
+            return subprocess.CompletedProcess(command, 0, json.dumps(nodes), "")
         if "service/sdo-benchmark-registry" in command:
             return subprocess.CompletedProcess(command, 0, json.dumps({"spec": {"clusterIP": "10.0.0.7"}}), "")
         if "deployment/sdo-benchmark-registry" in command:
@@ -181,14 +186,17 @@ def test_an_evidence_volume_sink_is_its_own_sdo_variable() -> None:
 def test_only_an_eks_lane_pulls_its_sink_from_the_cluster(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     kind = eks_environment(tmp_path).model_copy(update={"platform": "kind", "eks": None})
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("a kind lane's sink is the host directory"))
-    assert evidence_sink.pull_cluster_sink(kind) is False
+    assert evidence_sink.pull_cluster_sink(kind, ["r"]) is False
 
     def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(command, 1, "", 'persistentvolumeclaims "sdo-evidence" NotFound')
 
     monkeypatch.setattr(subprocess, "run", run)
-    # The control namespace (and its claim) is gone: nothing in the cluster to lose.
-    assert evidence_sink.pull_cluster_sink(eks_environment(tmp_path)) is False
+    # The control namespace (and its claim) is gone after the run was copied out: nothing in the cluster to lose.
+    saved = tmp_path / "evidence" / "r"
+    saved.mkdir(parents=True)
+    (saved / sink.LAYOUT_FILE).write_text(json.dumps({"schema": sink.LAYOUT_SCHEMA}))
+    assert evidence_sink.pull_cluster_sink(eks_environment(tmp_path), ["r"]) is False
 
 
 def test_an_eks_lane_runs_opus_through_a_per_node_pool_named_by_its_cluster(tmp_path: Path) -> None:
@@ -224,4 +232,213 @@ def test_an_opus_row_without_a_session_pool_fails_before_it_injects() -> None:
         is None
     )
     assert cli.opus_pool_missing("claude-opus-5-5", {"SDO_OPUS_POOL_NFS_SERVER": "nfs.example"}) is None
+    assert cli.opus_pool_missing("claude-sonnet-5-5", {}) is None
+
+
+def _claim(node: str = "node-b") -> str:
+    return json.dumps(
+        {"metadata": {"name": "sdo-evidence", "annotations": {"volume.kubernetes.io/selected-node": node}}}
+    )
+
+
+def test_the_eks_evidence_claim_is_bound_on_one_node_chosen_by_the_lane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("FASTLOOP_DOCKERHUB_AUTH_FILE", raising=False)
+    applied: list[dict[str, Any]] = []
+    nodes = {
+        "items": [
+            {"metadata": {"name": n}, "status": {"conditions": [{"type": "Ready", "status": "True"}]}}
+            for n in ("node-a", "node-b")
+        ]
+    }
+
+    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if "apply" in command:
+            applied.extend(json.loads(kwargs["input"])["items"])
+        if "nodes" in command:
+            return subprocess.CompletedProcess(command, 0, json.dumps(nodes), "")
+        if "service/sdo-benchmark-registry" in command:
+            return subprocess.CompletedProcess(command, 0, json.dumps({"spec": {"clusterIP": "10.0.0.7"}}), "")
+        if "deployment/sdo-benchmark-registry" in command:
+            return subprocess.CompletedProcess(command, 0, json.dumps({"status": {"readyReplicas": 1}}), "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr("benchmarks.lanes.eks.write_node_file", lambda *a: [])
+    config = BenchmarkClusterResourcesConfig(
+        namespace="hotel-reservation",
+        control_namespace="hotel-reservation-sdo",
+        responder_image="responder@" + DIGEST,
+        credentials_secret="sdo-agent-credentials",
+        registry_push_secret="sdo-registry-push",
+        registry_insecure=True,
+        kind_cluster_name="eks-1",
+        lane_platform="eks",
+        evidence_claim=True,
+    )
+    prepare_benchmark_resources(config, relay_target_base=None, kubeconfig=tmp_path / "kc")
+    claim = next(i for i in applied if i["kind"] == "PersistentVolumeClaim" and i["metadata"]["name"] == "sdo-evidence")
+    selected = claim["metadata"]["annotations"]["volume.kubernetes.io/selected-node"]
+    assert selected == sink.volume_node(nodes, "eks-1")
+
+
+def test_the_evidence_puller_runs_on_the_claims_node_and_pulls_only_the_run_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[str]] = []
+    pods: list[dict[str, Any]] = []
+
+    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[Any]:
+        calls.append(command)
+        if "apply" in command:
+            pods.append(json.loads(kwargs["input"]))
+        if "pvc" in command:
+            return subprocess.CompletedProcess(command, 0, _claim(), "")
+        if "pods" in command and "get" in command:
+            holder = {
+                "spec": {
+                    "nodeName": "node-b",
+                    "volumes": [{"persistentVolumeClaim": {"claimName": sink.EVIDENCE_CLAIM}}],
+                },
+                "status": {"phase": "Running"},
+            }
+            return subprocess.CompletedProcess(command, 0, json.dumps({"items": [holder]}), b"")
+        return subprocess.CompletedProcess(command, 0, "", b"" if command[0] == "tar" else "")
+
+    class Tar:
+        stdout = SimpleNamespace(close=lambda: None)
+        stderr = None
+
+        def __init__(self, command: list[str], **_: Any) -> None:
+            calls.append(command)
+
+        def wait(self) -> int:
+            return 0
+
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(subprocess, "Popen", Tar)
+    assert evidence_sink.pull_cluster_sink(eks_environment(tmp_path), ["lane-r1"])
+    assert pods[0]["spec"]["nodeName"] == "node-b"
+    pulled = next(c for c in calls if "exec" in c)
+    assert pulled[-1] == "lane-r1"
+    assert "." not in pulled[pulled.index("--") + 1 :]
+
+
+def test_a_vanished_evidence_claim_with_unsaved_evidence_is_a_named_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 1, "", 'persistentvolumeclaims "sdo-evidence" NotFound')
+
+    monkeypatch.setattr(subprocess, "run", run)
+    with pytest.raises(evidence_sink.EvidenceClaimMissing, match="lane-r1"):
+        evidence_sink.pull_cluster_sink(eks_environment(tmp_path), ["lane-r1"])
+
+
+def test_node_agents_are_waited_for_before_the_pool_is_provisioned() -> None:
+    from benchmarks.lanes import eks
+
+    ready_condition = [{"type": "Ready", "status": "True"}]
+    nodes = json.dumps({"items": [{"metadata": {"name": "n1"}, "status": {"conditions": ready_condition}}]})
+    agent = {
+        "items": [
+            {"metadata": {"name": "agent-1"}, "spec": {"nodeName": "n1"}, "status": {"conditions": ready_condition}}
+        ]
+    }
+    answers = iter([{"items": []}, {"items": []}, agent])
+    now = [0.0]
+
+    def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if "nodes" in argv:
+            return subprocess.CompletedProcess(argv, 0, nodes, "")
+        if "exec" in argv:
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        return subprocess.CompletedProcess(argv, 0, json.dumps(next(answers)), "")
+
+    def sleep(seconds: float) -> None:
+        now[0] += seconds
+
+    assert eks.run_on_nodes("/k", "true", run=run, wait=60, sleep=sleep, clock=lambda: now[0]) == ["n1"]
+    assert now[0] == 10
+    answers = iter([{"items": []}] * 100)
+    with pytest.raises(eks.EksLaneError, match="not ready"):
+        eks.run_on_nodes("/k", "true", run=run, wait=0, sleep=sleep, clock=lambda: now[0])
+
+
+def test_only_an_opus_model_provisions_the_node_pool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarks.sregym.fastloop import eks_lane
+
+    provisioned: list[str] = []
+    monkeypatch.setattr(eks_lane, "provision_opus_pool", lambda env, environ=None: provisioned.append("x") or ["n1"])
+    environment = eks_environment(tmp_path)
+    assert eks_lane.ensure_opus_pool(environment, "gpt-6-luna") == []
+    assert eks_lane.ensure_opus_pool(environment, "claude-sonnet-5-5") == []
+    assert provisioned == []
+    assert eks_lane.ensure_opus_pool(environment, "claude-opus-5-5") == ["n1"]
+
+
+def test_an_ecr_error_is_not_an_answer_about_the_images() -> None:
+    from benchmarks.lanes import eks
+
+    digest = "sha256:" + "b" * 64
+    denied = eks.EksProvider(
+        LANE,
+        "/k",
+        run=lambda argv, **k: subprocess.CompletedProcess(argv, 255, "", "AccessDeniedException: token expired"),
+    )
+    with pytest.raises(eks.EksLaneError, match="token expired"):
+        denied.holds(f"{REGISTRY}/sdo/sdo-controller@{digest}")
+
+
+def test_kind_only_operations_are_refused_on_an_eks_lane(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarks.sregym.fastloop import host_limits
+    from benchmarks.sregym.fastloop.environment import KindOnlyError
+
+    environment = eks_environment(tmp_path)
+    environment.save()
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("kind call on an EKS lane"))
+    monkeypatch.setattr(subprocess, "check_output", lambda *a, **k: pytest.fail("kind call on an EKS lane"))
+    retire = argparse.Namespace(run_dir=tmp_path)
+    with pytest.raises(KindOnlyError, match="app retirement"):
+        cli._retire_app(retire)
+    reset = argparse.Namespace(run_dir=tmp_path, retarget_dev_mount=True, dev_mount=tmp_path)
+    with pytest.raises(KindOnlyError, match="dev mount"):
+        cli._reset(reset)
+    monkeypatch.setenv("SREGYM_CLUSTER_PLATFORM", "eks")
+    with pytest.raises(KindOnlyError, match="node caps"):
+        host_limits.apply_node_limits("eks-1")
+
+
+def test_up_proves_the_mirror_serves_with_one_bounded_pull(tmp_path: Path) -> None:
+    from benchmarks.sregym.fastloop import eks_lane
+
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    assert eks_lane.verify_mirror_serves(eks_environment(tmp_path), run=run) == "busybox:1.36"
+    assert [c[3] for c in calls] == ["apply", "wait", "delete"]
+    assert any(a.startswith("--timeout=") for a in calls[1])
+
+    def failing(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if "wait" in command:
+            return subprocess.CompletedProcess(command, 1, "", "timed out")
+        if "get" in command:
+            return subprocess.CompletedProcess(command, 0, "back-off pulling image", "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    with pytest.raises(eks_lane.MirrorCheckError, match="back-off pulling image"):
+        eks_lane.verify_mirror_serves(eks_environment(tmp_path), run=failing)
+
+
+def test_kind_rows_keep_opus_pool_semantics() -> None:
+    """Kind parity (a deliberate change on main: an Opus row without a pool now stops at row start, before the fault
+    is injected, instead of failing every dispatch after it). Non-Opus models and kind pool settings are unaffected."""
+    assert cli.opus_pool_missing("claude-opus-5-5", {}) is not None
+    assert cli.opus_pool_missing("claude-opus-5-5", {"SDO_OPUS_POOL_DIR": "/shared/pool"}) is None
+    assert cli.opus_pool_missing("claude-opus-5-5", {"SDO_OPUS_POOL_NFS_SERVER": "nfs"}) is None
+    assert cli.opus_pool_missing("gpt-6-luna", {}) is None
     assert cli.opus_pool_missing("claude-sonnet-5-5", {}) is None

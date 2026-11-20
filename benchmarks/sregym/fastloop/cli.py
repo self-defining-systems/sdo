@@ -53,7 +53,7 @@ from benchmarks.sregym.fastloop.baseline_recovery import (
     load_application_baseline,
     save_application_baseline,
 )
-from benchmarks.sregym.fastloop.environment import DEFAULT_PROBLEM, FastloopEnvironment, Images
+from benchmarks.sregym.fastloop.environment import DEFAULT_PROBLEM, FastloopEnvironment, Images, refuse_on_eks
 from benchmarks.sregym.fastloop.evidence_sink import lane_evidence_run_id
 from benchmarks.sregym.fastloop.fault_driver import SregymFaultDriver
 from benchmarks.sregym.fastloop.gitlab_faults import add_faults_parser
@@ -737,9 +737,9 @@ def _up(args: argparse.Namespace) -> int:
         )
     environment.save()
     if environment.eks is not None:
-        from benchmarks.sregym.fastloop.eks_lane import provision_opus_pool
+        from benchmarks.sregym.fastloop.eks_lane import verify_mirror_serves
 
-        provision_opus_pool(environment)
+        print(f"the lane's mirror serves {verify_mirror_serves(environment)}")
     if app_recreated:
         AttemptMarker(environment.run_dir).end(())
     if environment.parallel_root is not None:
@@ -1647,11 +1647,11 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
     environment.apply_operator_env(os.environ)
     if args.agent == "sdo" and (missing := opus_pool_missing(args.model, os.environ)):
         raise SystemExit(f"eval: {missing}; configure the pool before the row deploys or injects")
-    if environment.eks is not None:
-        from benchmarks.sregym.fastloop.eks_lane import provision_opus_pool
+    if environment.eks is not None and args.agent == "sdo":
+        from benchmarks.sregym.fastloop.eks_lane import ensure_opus_pool
 
         # Nodes may have been replaced since the last row (scale to zero and back).
-        provision_opus_pool(environment)
+        ensure_opus_pool(environment, args.model)
     os.environ["KUBECONFIG"] = str(environment.kubeconfig)
     results_dir.mkdir(parents=True, exist_ok=True)
     (results_dir / "fault_descriptions.json").write_text(
@@ -2237,6 +2237,8 @@ def _reset(args: argparse.Namespace) -> int:
     from benchmarks.sregym.fastloop.reset import KubectlResetCluster, RestoreChecks, reset_environment
 
     environment = FastloopEnvironment.load(args.run_dir.resolve())
+    if getattr(args, "retarget_dev_mount", False):
+        refuse_on_eks("retargeting a dev mount", environment.platform)
     if environment.shared_accepted_id:
         raise ValueError("shared accepted memory cannot use lane reset")
     if environment.seed_commit is None:
@@ -2303,6 +2305,7 @@ def _retire_app(args: argparse.Namespace) -> int:
     from benchmarks.sregym.fastloop.lane_guard import LaneGuard
 
     environment = FastloopEnvironment.load(args.run_dir.resolve())
+    refuse_on_eks("app retirement", environment.platform)
     request = RetirementRequest(
         cluster=environment.cluster,
         namespace=environment.namespace,

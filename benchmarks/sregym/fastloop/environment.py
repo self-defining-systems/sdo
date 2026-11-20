@@ -29,6 +29,17 @@ def _image_tag() -> str:
     return os.environ.get("SDO_IMAGE_TAG") or DEFAULT_IMAGE_TAG
 
 
+class KindOnlyError(ValueError):
+    """A kind-only operation was asked of an EKS lane (an EKS lane has no node containers to reach)."""
+
+
+def refuse_on_eks(operation: str, platform: str | None = None) -> None:
+    """Raise :class:`KindOnlyError` when ``platform`` (default: the worker's ``SREGYM_CLUSTER_PLATFORM``) is ``eks``."""
+
+    if (platform or os.environ.get("SREGYM_CLUSTER_PLATFORM", "kind")) == "eks":
+        raise KindOnlyError(f"{operation} needs kind node containers and is not available on an EKS lane")
+
+
 class Images(BaseModel):
     """Lane images; defaults are the names the image build script produces for the same ``SDO_IMAGE_TAG``."""
 

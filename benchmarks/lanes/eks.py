@@ -258,7 +258,12 @@ def _holds(ecr: Ecr, reference: str) -> bool:
         check=False,
         timeout=120,
     )
-    return found.returncode == 0
+    if found.returncode == 0:
+        return True
+    if "ImageNotFoundException" in found.stderr or "RepositoryNotFoundException" in found.stderr:
+        return False
+    # Credentials, throttling, network: "could not ask" is not "the images differ".
+    raise EksLaneError(f"cannot tell whether ECR holds {reference}: {found.stderr.strip()[-600:]}")
 
 
 def publish_app_image(ecr: Ecr, local: str, declared: str) -> str:
@@ -333,6 +338,29 @@ def node_agents(kubeconfig: str, *, run: Runner = subprocess.run) -> dict[str, s
     return agent_pods(pods, nodes)
 
 
+def wait_node_agents(
+    kubeconfig: str,
+    timeout: float,
+    *,
+    run: Runner = subprocess.run,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> dict[str, str]:
+    """``node -> ready agent pod`` once every Ready node has one, waiting up to ``timeout`` seconds.
+
+    A node that just joined (scale-up, replacement) is Ready before its agent pod is; a caller that acts on every
+    node must wait for the agents, never read them once."""
+
+    deadline = clock() + timeout
+    while True:
+        try:
+            return node_agents(kubeconfig, run=run)
+        except EksLaneError:
+            if clock() >= deadline:
+                raise
+            sleep(5)
+
+
 def verify_node_agent(
     kubeconfig: str,
     lane: EksLane,
@@ -366,26 +394,27 @@ def verify_node_agent(
             f"node agent {NODE_AGENT} does not mirror to {lane.registry}/{lane.mirror_prefix}: "
             "the lane's cluster-up was made for another registry or prefix"
         )
-    deadline = clock() + timeout
-    while True:
-        try:
-            return node_agents(kubeconfig, run=run)
-        except EksLaneError:
-            if clock() >= deadline:
-                raise
-            sleep(5)
+    return wait_node_agents(kubeconfig, timeout, run=run, sleep=sleep, clock=clock)
 
 
 def run_on_nodes(
-    kubeconfig: str, script: str, *, input_text: str | None = None, run: Runner = subprocess.run
+    kubeconfig: str,
+    script: str,
+    *,
+    input_text: str | None = None,
+    run: Runner = subprocess.run,
+    wait: float = 0,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
 ) -> list[str]:
     """Run ``sh -c script`` on every Ready node through its agent; returns the nodes.
 
     The script sees the node's containerd ``certs.d`` at ``/certs`` and the lane's node directory
-    (``/var/lib/sdo-lane``) at ``/lane``, as root, and nothing else of the node.
+    (``/var/lib/sdo-lane``) at ``/lane``, as root, and nothing else of the node. ``wait`` seconds are allowed for
+    every Ready node's agent to be ready (:func:`wait_node_agents`).
     """
 
-    agents = node_agents(kubeconfig, run=run)
+    agents = wait_node_agents(kubeconfig, wait, run=run, sleep=sleep, clock=clock)
     for node, pod in agents.items():
         completed = run(
             _kubectl(
@@ -501,8 +530,8 @@ class EksProvider:
     def write_node_file(self, relative: str, content: str) -> list[str]:
         return write_node_file(self._kubeconfig, relative, content, run=self._run)
 
-    def run_on_nodes(self, script: str) -> list[str]:
-        return run_on_nodes(self._kubeconfig, script, run=self._run)
+    def run_on_nodes(self, script: str, *, wait: float = 0) -> list[str]:
+        return run_on_nodes(self._kubeconfig, script, run=self._run, wait=wait)
 
     def release(self) -> None:
         """Attach-only: the cluster and its node group stay; scaling and deletion belong to the account's tooling."""

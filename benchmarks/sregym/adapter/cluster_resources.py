@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from benchmarks.fuzzops.sink import EVIDENCE_CLAIM, claim_manifest
+from benchmarks.fuzzops.sink import EVIDENCE_CLAIM, SinkError, claim_manifest, volume_node
 from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 
 _DNS_LABEL = re.compile(r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$")
@@ -326,6 +326,18 @@ def _wait_ready(
     raise RuntimeError(f"{name} did not become ready: {last_status}")
 
 
+def _claim_node(config: BenchmarkClusterResourcesConfig, kubeconfig: Path) -> str:
+    """The node the evidence claim binds on: single-attach volumes (EBS) serve the pods of one node, so the claim and
+    its puller must agree on it. A kind lane's claim is not node-local."""
+    if config.lane_platform != "eks":
+        return ""
+    nodes = _json_result(_kubectl(kubeconfig, None, "get", "nodes", "-o", "json"), "lane nodes")
+    try:
+        return volume_node(nodes, config.kind_cluster_name)
+    except SinkError as exc:
+        raise RuntimeError(str(exc)) from exc
+
+
 def evidence_claim_volume() -> str:
     """``SDO_EVIDENCE_VOLUME`` for a lane whose nodes the runner cannot mount: the control namespace's evidence claim,
     which the runner pulls over the API before it deletes the namespace (fuzzops pull mode)."""
@@ -367,7 +379,7 @@ def prepare_benchmark_resources(
     nodes = _kind_nodes(config, trusted) if config.lane_platform == "kind" else []
     resources = _registry_resources(config)
     if config.evidence_claim:
-        resources.append(claim_manifest(config.control_namespace))
+        resources.append(claim_manifest(config.control_namespace, _claim_node(config, trusted)))
     if relay_target_base is not None:
         resources.extend(_bridge_resources(config, relay_target_base))
     _kubectl(
