@@ -221,7 +221,7 @@ func TestJumpWithAThinBaselineHoldsUntilHealthyRequestsReturn(t *testing.T) {
 	for name, got := range map[string][]sdk.Finding{
 		"failing":            held([]float64{0, 0, 5, 8, 8, 8}, steady(11, 6)),
 		"quiet after":        held([]float64{0, 0, 5, 8, 8, 0, 0}, []float64{11, 11, 11, 11, 11, 1, 1}),
-		"quiet and no 404 s": held([]float64{0, 0, 5, 8, 8, 0, 0}, []float64{11, 11, 11, 11, 11, 2, 0}),
+		"few requests and no 404 s": held([]float64{0, 0, 5, 8, 8, 0, 0}, []float64{11, 11, 11, 11, 11, 2, 1}),
 	} {
 		if len(got) != 1 || got[0].RuleID != requestmetrics.RuleInsufficientBaseline || got[0].Fingerprint != "requestmetrics/errors/package-download" {
 			t.Fatalf("%s: findings = %+v", name, got)
