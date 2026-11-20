@@ -1,0 +1,5 @@
+{
+  "application": "hotel_reservation",
+  "namespace": "hotel-reservation",
+  "deploy_problem": "misconfig_app_hotel_res"
+}
