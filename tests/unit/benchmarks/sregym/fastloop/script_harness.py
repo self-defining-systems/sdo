@@ -52,15 +52,18 @@ for _name, _value in vars(responder_steps).items():
             globals()[_name].__kwdefaults__ = _value.__kwdefaults__
 
 
+FIXED_NOW = "2026-01-02T03:04:05+00:00"
+
+
 def respond(request):
-    """Execute the generated phases with injected tool boundaries."""
+    """Execute the generated phases with injected tool boundaries and a fixed clock."""
     import tempfile
 
     from benchmarks.sregym.agent_script.template import TemplateContext
 
     with tempfile.TemporaryDirectory() as temporary:
         with patch.dict(os.environ, {"SDO_TOOLS_DIR": temporary}):
-            script = responder_script(request)
+            script = responder_script(request, now=FIXED_NOW)
             context = TemplateContext(
                 json_format.MessageToDict(request, preserving_proto_field_name=True),
                 Path(request.repository_worktree or temporary),

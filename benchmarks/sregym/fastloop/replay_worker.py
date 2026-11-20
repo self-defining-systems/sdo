@@ -178,7 +178,9 @@ def _relevant(item: dict[str, Any] | None, kind: str) -> Any:
     return [(container["name"], container["image"]) for container in item["spec"]["template"]["spec"]["containers"]]
 
 
-def replay_generated_responder(store: CheckpointStore, incident: int, *, source: Path) -> dict[str, Any]:
+def replay_generated_responder(
+    store: CheckpointStore, incident: int, *, source: Path, now: str | None = None
+) -> dict[str, Any]:
     checkpoint = store.load(incident, "responder")
     checkpoint.require_captures()
     task = parse_json(checkpoint.request, AgentTask())
@@ -197,7 +199,7 @@ def replay_generated_responder(store: CheckpointStore, incident: int, *, source:
         task_path.write_text(to_canonical_json(task), encoding="utf-8")
         publisher = _Publisher()
         script_path = Path(temporary) / "script.json"
-        script_path.write_text(responder_script(typed).model_dump_json())
+        script_path.write_text(responder_script(typed, now=now).model_dump_json())
         tools = Path(temporary) / "tools"
         tools.mkdir()
 

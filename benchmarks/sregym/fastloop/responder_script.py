@@ -220,8 +220,18 @@ result = json_format.ParseDict(
 """
 
 
-def responder_script(request: IncidentRequest) -> AgentScript:
-    """Return a script bound to this typed task, with live clocks and tool reads."""
+def responder_script(request: IncidentRequest, *, now: str | None = None) -> AgentScript:
+    """Return a script bound to this typed task, with live clocks and tool reads.
+
+    ``now`` is an ISO timestamp the generated commands report instead of reading the wall clock, so two runs of the
+    same task produce the same result (replay comparisons, tests).
+    """
+
+    def source(fn: object) -> str:
+        if now is not None and fn is responder_steps._now:
+            return f"def _now() -> str:\n    return {now!r}\n\n\n"
+        return inspect.getsource(fn)  # type: ignore[arg-type]
+
     common = (responder_steps._now, responder_steps._command, responder_steps._tool)
     dependencies = (
         (*common, responder_steps._binding_args, responder_steps._matched_plans),
@@ -270,7 +280,7 @@ def responder_script(request: IncidentRequest) -> AgentScript:
         {
             "kind": "command",
             "command": shlex.join(
-                ["python3", "-c", prelude + "\n".join(inspect.getsource(fn) for fn in dependencies[index]) + phase]
+                ["python3", "-c", prelude + "\n".join(source(fn) for fn in dependencies[index]) + phase]
             ),
             "timeout": 300.0,
             "capture_json": index == 3,
