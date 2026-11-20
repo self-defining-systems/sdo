@@ -88,6 +88,12 @@ type Manager struct {
 	// the manager started (shown by `status`).
 	ledgerAt       map[string]time.Time
 	ledgerReleased map[string]int
+
+	// leaving are the lane files of lanes that left hosts.yaml on a host that is still in it, and still have a step in
+	// flight or a cluster to delete: no new work, retired when both are done (left.go). lanesRetired counts, per
+	// host, the lanes retired since the manager started (shown by `status`).
+	leaving      map[string]*LaneFile
+	lanesRetired map[string]int
 }
 
 // ledgerEvery is how often the manager reconciles a host's lane ledger.
@@ -256,6 +262,11 @@ func (m *Manager) stepsOn(host string) map[string]string {
 			steps[l.Lane] = l.Orphan.ID
 		}
 	}
+	for _, l := range m.leaving {
+		if l.Host == host && l.Step != nil {
+			steps[l.Lane] = l.Step.ID
+		}
+	}
 	return steps
 }
 
@@ -393,6 +404,9 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 			// older host binary, may report others, and a settled step may still be on disk.
 			l := m.lanes[lane]
 			if l == nil {
+				if lf := m.leaving[lane]; lf != nil && lf.Step != nil && lf.Step.ID == steps[lane] {
+					m.leftStep(ctx, lf, state, pr.Phases[lane])
+				}
 				continue
 			}
 			if l.Step == nil && l.Orphan != nil && l.Orphan.ID == steps[lane] {
@@ -417,6 +431,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 			}
 		}
 	}
+	m.settleLeft(ctx, reachable)
 	m.observeCrashLoops(ctx, reachable)
 	for _, l := range m.sortedLanes() {
 		m.unhold(ctx, l)
@@ -468,7 +483,13 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 			return err
 		}
 	}
+	for _, l := range m.leaving {
+		if err := writeJSON(m.Root.LanePath(l.Lane), l); err != nil {
+			return err
+		}
+	}
 	for name, st := range m.hosts {
+		st.LanesRetired = m.lanesRetired[name]
 		st.Builds = m.builds(name)
 		m.hosts[name] = st
 	}
@@ -573,39 +594,6 @@ func (m *Manager) load() error {
 	}
 	m.retireLeft()
 	return nil
-}
-
-// retireLeft closes the state of a lane that left hosts.yaml: bench.log gets its last transition (to retired), so
-// lane-time totals stop counting it, and its files move to lanes/retired. A lane with a step in flight waits.
-func (m *Manager) retireLeft() {
-	ents, err := os.ReadDir(m.Root.path("lanes"))
-	if err != nil {
-		return
-	}
-	for _, e := range ents {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".json") {
-			continue
-		}
-		lane := strings.TrimSuffix(name, ".json")
-		if m.lanes[lane] != nil {
-			continue
-		}
-		var lf LaneFile
-		if readJSON(m.Root.LanePath(lane), &lf) != nil || lf.Step != nil {
-			continue
-		}
-		m.logf("lane %s: %s -> %s left hosts.yaml", lane, lf.State, LaneRetired)
-		dir := m.Root.path("lanes", "retired")
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			continue
-		}
-		for _, f := range []string{name, lane + ".timeline.jsonl"} {
-			if err := os.Rename(m.Root.path("lanes", f), filepath.Join(dir, f)); err != nil && !os.IsNotExist(err) {
-				m.logf("lane %s: move %s: %v", lane, f, err)
-			}
-		}
-	}
 }
 
 // downRetryAfter is how long a lane stays down before the manager resets it (a var for tests); maxAutoResets is how

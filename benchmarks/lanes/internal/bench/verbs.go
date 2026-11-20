@@ -290,6 +290,9 @@ type HostStatus struct {
 	// LedgerReleased counts the lane-ledger entries released since the manager started because their lane left
 	// hosts.yaml or their cluster was gone.
 	LedgerReleased int `json:"ledger_released,omitempty"`
+	// LanesRetired counts the lanes that left hosts.yaml and were retired since the manager started (their state
+	// moved to lanes/retired).
+	LanesRetired int `json:"lanes_retired,omitempty"`
 }
 
 // Experiment states (Status).
@@ -505,6 +508,9 @@ func Status(root Root, only string, w io.Writer) error {
 		}
 		if h.LedgerReleased > 0 {
 			fmt.Fprintf(w, " [ledger: %d stale entries released]", h.LedgerReleased)
+		}
+		if h.LanesRetired > 0 {
+			fmt.Fprintf(w, " [%d lanes retired: left hosts.yaml]", h.LanesRetired)
 		}
 	}
 	fmt.Fprintln(w)
