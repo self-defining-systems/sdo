@@ -103,6 +103,7 @@ func count(t *testing.T) (map[string]map[string]int, []string) {
 	return got, adapters
 }
 
+//ci:whole-tree
 func TestLayerHoldsNoSubjectOrWorkloadKnowledge(t *testing.T) {
 	raw, err := os.ReadFile("allowlist.json")
 	if err != nil {
