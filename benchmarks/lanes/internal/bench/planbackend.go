@@ -227,6 +227,11 @@ func planSpecCheck(inv Inventory) func([]byte) error {
 // planNotes is where checks that could not run say so (a note is no failure).
 var planNotes io.Writer = os.Stderr
 
+// specMemoryAllow: the add-time check has no cluster, so it cannot know which telemetry sources the install will bind;
+// the controller binds them at install. An unbound source is therefore no failure here (preflight takes the same
+// substring with --allow-memory-diag).
+var specMemoryAllow = []string{"telemetry.unbound"}
+
 // checkSpecMemory runs SDO's memory check over the spec's seed and baseline memory at its pinned SDO revision, on the
 // manager's host when it has that hooks checkout. An invalid one is refused here, naming the memory and the failed
 // check, instead of crash-looping the controller on a built lane. answers caches one check per directory and checkout.
@@ -246,7 +251,7 @@ func checkSpecMemory(ctx context.Context, inv Inventory, s Spec, answers map[str
 		key := m.dir + "|" + hooks
 		r, ok := answers[key]
 		if !ok {
-			r = checkMemoryDir(ctx, memoryRunner(inv), local, envPrefix(inv.Hosts[local]), hooks, m.dir, nil)
+			r = checkMemoryDir(ctx, memoryRunner(inv), local, envPrefix(inv.Hosts[local]), hooks, m.dir, specMemoryAllow)
 			answers[key] = r
 			if r.Note != "" && planNotes != nil {
 				fmt.Fprintf(planNotes, "note: %s %s: %s\n", s.Name, m.what, r.Note)

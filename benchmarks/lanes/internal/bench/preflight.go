@@ -950,9 +950,11 @@ func readBaselineJSON(dir string) (baselineJSON, error) {
 // memoryScript clones the baseline's bundle, prints its head, builds the pinned sdo-operator and runs
 // `sdo-operator memory migrate` on the clone: what the controller does on its first memory read (upkeep to the
 // current schema), then the same accepted-memory audit as `memory check --accepted`, without replay.
+// It runs under the controller image's Go limits (GOMAXPROCS and -p of Dockerfile.runtime): validation measures the
+// child's whole process group against a 3 GiB limit, and an unlimited build on a many-core host exceeds it.
 func memoryScript(baselineDir string, b baselineJSON, hooksDir string) string {
 	opRoot := shellQuote(filepath.Join(hooksDir, "sdo", "operator"))
-	return fmt.Sprintf(`T=$(mktemp -d) || exit 2; trap 'rm -rf "$T"' EXIT; `+
+	return fmt.Sprintf(`export GOMAXPROCS=2 GOFLAGS="-p=2 -trimpath"; T=$(mktemp -d) || exit 2; trap 'rm -rf "$T"' EXIT; `+
 		`git clone -q -b %[1]s %[2]s "$T/m" || { echo "PREFLIGHT clone failed"; exit 2; }; echo "HEAD $(git -C "$T/m" rev-parse HEAD)"; `+
 		`(cd %[3]s && go build -o "$T/sdo-operator" ./cmd/sdo-operator) || { echo "PREFLIGHT go build sdo-operator failed"; exit 2; }; `+
 		`mkdir "$T/w"; SDO_OPERATOR_ROOT=%[3]s "$T/sdo-operator" memory migrate "$T/m" --worktree-root "$T/w" --replay off >"$T/out" 2>&1; rc=$?; sed 's/^/CHECK /' "$T/out"; echo "EXIT $rc"; true`,
