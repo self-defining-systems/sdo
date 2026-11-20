@@ -339,6 +339,15 @@ func HostCommand(ctx context.Context, root Root, args []string, out, errw io.Wri
 	rc := 0
 	for _, h := range hosts {
 		var err error
+		if inv.Hosts[h].IsEks() {
+			// An eks host has no cores, kernel or helper to look after (eks.go): only its status means anything.
+			if verb == "status" {
+				statusEksHost(ctx, root, inv, h, run, out)
+			} else {
+				fmt.Fprintf(out, "%s: eks host: nothing to %s (no host-safety gates); skipped\n", h, verb)
+			}
+			continue
+		}
 		switch verb {
 		case "reserve":
 			err = reserveHost(ctx, root, inv, h, helper, out)

@@ -3,6 +3,7 @@
 package bench
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -432,4 +433,35 @@ func TestBenchEksHostLaneLifecycle(t *testing.T) {
 	}
 	b, _ := json.Marshal(led)
 	t.Logf("ledger: %s", b)
+}
+
+// `lanes host status` of an eks host reports credentials and cost, and never asks the kernel or the root helper.
+func TestHostStatusOfAnEksHostReportsCredentialsAndCostNotKernelGates(t *testing.T) {
+	root := Root(t.TempDir())
+	must(t, os.WriteFile(root.path("hosts.yaml"), []byte(eksHost), 0o644))
+	must(t, os.MkdirAll(root.path("eks"), 0o755))
+	must(t, os.WriteFile(root.eksLedgerPath("e"), []byte(`{"open":{"eks1":{"since":"2026-11-20T08:00:00Z","instance_type":"m6i.xlarge","nodes":2,"vcpus":8,"usd_per_hour":0.484}},"closed_usd":1.5}`), 0o644))
+	var out, errw strings.Builder
+	helper := func(context.Context, string, ...string) (string, error) {
+		t.Fatal("an eks host asked the root helper")
+		return "", nil
+	}
+	run := func(_ context.Context, _, script string) (string, error) {
+		if strings.Contains(script, "sysctl") || strings.Contains(script, "ip ") {
+			t.Fatalf("an eks host ran a kernel probe: %s", script)
+		}
+		return "account 123456789012\n", nil
+	}
+	if rc := HostCommand(context.Background(), root, []string{"status"}, &out, &errw, helper, run); rc != 0 {
+		t.Fatalf("rc %d: %s", rc, errw.String())
+	}
+	for _, want := range []string{"e: credentials ok: account 123456789012, region us-west-2", "eks: 1/3 lanes, 8/24 vCPU, $0.48/h of $2.00/h", "lane eks1: m6i.xlarge x 2", "no cpuset, ledger, kernel or PSI gates"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("status lacks %q:\n%s", want, out.String())
+		}
+	}
+	out.Reset()
+	if rc := HostCommand(context.Background(), root, []string{"reserve", "e"}, &out, &errw, helper, run); rc != 0 || !strings.Contains(out.String(), "nothing to reserve") {
+		t.Errorf("reserve all: rc %d: %s %s", rc, out.String(), errw.String())
+	}
 }
