@@ -41,10 +41,19 @@ type Pin struct {
 	Name, Rev string
 }
 
-func (p Pin) String() string { return p.Name + "@" + p.Rev }
+func (p Pin) String() string {
+	if p == (Pin{}) {
+		return "none"
+	}
+	return p.Name + "@" + p.Rev
+}
 
 // UnmarshalJSON reads "name@rev".
 func (p *Pin) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		*p = Pin{}
+		return nil
+	}
 	var s string
 	if err := json.Unmarshal(b, &s); err != nil {
 		return fmt.Errorf("pin: want a string name@revision: %w", err)
@@ -58,9 +67,16 @@ func (p *Pin) UnmarshalJSON(b []byte) error {
 }
 
 // MarshalJSON writes "name@rev".
-func (p Pin) MarshalJSON() ([]byte, error) { return json.Marshal(p.String()) }
+func (p Pin) MarshalJSON() ([]byte, error) {
+	if p == (Pin{}) {
+		return []byte("null"), nil
+	}
+	return json.Marshal(p.String())
+}
 
-// Pins are the checkouts per role: the workload adapter and the subject adapter.
+// Pins are the checkouts per role: the workload adapter and the subject adapter. The subject pin is optional: an
+// operator with no hooks checkout (a builtin one) has no revision, so a plan of such specs pins only the workload and
+// the engine writes no operator.revision. A spec that needs a revision and gets none is refused by the spec check.
 type Pins struct {
 	Workload Pin `json:"workload"`
 	Subject  Pin `json:"subject"`
@@ -291,8 +307,8 @@ func (p *Plan) Validate() error {
 	if !nameRE.MatchString(p.Name) {
 		bad("plan %q: lowercase letters, digits and '-', at most 24", p.Name)
 	}
-	if p.Pins.Workload.Name == "" || p.Pins.Subject.Name == "" {
-		bad("pins: workload and subject are both required (name@revision)")
+	if p.Pins.Workload.Name == "" {
+		bad("pins: workload is required (name@revision); subject is required unless the operator is builtin")
 	}
 	if p.Reps < 1 {
 		bad("reps must be at least 1")

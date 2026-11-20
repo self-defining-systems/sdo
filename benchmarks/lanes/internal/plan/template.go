@@ -112,7 +112,11 @@ func (e *Engine) Render(n Node, attempt int, artifacts map[string]string) ([]byt
 		op = map[string]any{}
 		spec["operator"] = op
 	}
-	op["revision"] = e.Plan.Pins.Subject.Rev
+	if e.Plan.Pins.Subject.Rev != "" {
+		op["revision"] = e.Plan.Pins.Subject.Rev
+	} else {
+		delete(op, "revision")
+	}
 	spec["retries"] = 0
 	if e.Plan.Isolation != "" {
 		spec["isolation"] = e.Plan.Isolation
