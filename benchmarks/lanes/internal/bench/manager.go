@@ -56,6 +56,7 @@ type Manager struct {
 
 	reservations map[string]Reservation
 	drift        map[string]string
+	foreign      map[string]string // host -> slices that hold containers pinned inside the block (live one-way)
 	driftAt      map[string]time.Time
 }
 

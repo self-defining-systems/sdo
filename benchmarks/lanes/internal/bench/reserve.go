@@ -90,6 +90,8 @@ type Reservation struct {
 	Adopted bool      `json:"adopted,omitempty"`
 	TwoWay  bool      `json:"two_way"`
 	At      time.Time `json:"at"`
+	// Foreign (in memory only) names the slices that hold containers pinned inside the block: the host is one-way now.
+	Foreign string `json:"-"`
 }
 
 func (r Root) reservationPath(host string) string { return r.path("reservations", host+".json") }
@@ -120,6 +122,9 @@ type BlockStatus struct {
 	// Defects are lane slices that hold a process directly (cgroup v2 then refuses the node containers' scopes under
 	// them): "lanes-x.slice: reason".
 	Defects []string
+	// Unexcluded are the top-level slices (other than lanes.slice) whose cpus still reach into the block; Foreign are
+	// those that cannot be shrunk because they hold a container pinned inside the block ("slice: cgroup").
+	Unexcluded, Foreign []string
 }
 
 func parseBlockStatus(out string) BlockStatus {
@@ -131,6 +136,10 @@ func parseBlockStatus(out string) BlockStatus {
 			st.Block = f[1]
 		case len(f) == 2 && f[0] == "two-way":
 			st.TwoWay = f[1] == "yes"
+		case len(f) >= 2 && f[0] == "unexcluded":
+			st.Unexcluded = append(st.Unexcluded, f[1])
+		case len(f) >= 2 && f[0] == "foreign-pinned":
+			st.Foreign = append(st.Foreign, f[1])
 		case len(f) >= 3 && f[0] == "defect":
 			st.Defects = append(st.Defects, f[1]+": "+strings.Join(f[2:], " "))
 		case len(f) >= 3 && f[0] == "slice":
@@ -174,6 +183,9 @@ func isolationOf(h Host, s Spec, rs map[string]Reservation, name string, drift m
 	}
 	if r, ok := rs[name]; ok {
 		if s.Isolation == IsolationTwoWay && !r.TwoWay {
+			if r.Foreign != "" {
+				return "", "", "host " + name + " is one-way (foreign pinned inside block in " + r.Foreign + ") and the spec requires two-way"
+			}
 			return "", "", "host " + name + " is one-way (its other slices still use the block) and the spec requires two-way"
 		}
 		if r.TwoWay {
@@ -194,10 +206,19 @@ func (m *Manager) checkReservations(ctx context.Context) {
 	if err != nil {
 		m.logf("reservations: %v", err)
 	}
-	m.reservations = rs
 	if m.drift == nil {
 		m.drift, m.driftAt = map[string]string{}, map[string]time.Time{}
 	}
+	if m.foreign == nil {
+		m.foreign = map[string]string{}
+	}
+	for name, r := range rs {
+		if f := m.foreign[name]; f != "" {
+			r.TwoWay, r.Foreign = false, f
+			rs[name] = r
+		}
+	}
+	m.reservations = rs
 	helper := m.Helper
 	if helper == nil {
 		helper = HelperVia(hostRunner(m.inv))
@@ -215,7 +236,19 @@ func (m *Manager) checkReservations(ctx context.Context) {
 		if err != nil {
 			why = "the helper could not report the slices: " + clip(err.Error(), 160)
 		} else {
-			why = driftOf(r, parseBlockStatus(out))
+			st := parseBlockStatus(out)
+			rec := r // the record as written: an in-memory one-way override is not what the helper is compared with
+			if rec.Foreign != "" {
+				rec.TwoWay, rec.Foreign = true, ""
+			}
+			why = driftOf(rec, st)
+			// Only foreign-pinned slices keep the block shared: the host is one-way for now (the allocator already avoids
+			// the cores such containers are pinned to), not drifted.
+			if why == "" && rec.TwoWay && !st.TwoWay {
+				m.foreign[name] = strings.Join(st.Foreign, ", ")
+			} else {
+				delete(m.foreign, name)
+			}
 		}
 		if why != m.drift[name] {
 			if why != "" {
@@ -226,6 +259,12 @@ func (m *Manager) checkReservations(ctx context.Context) {
 			}
 		}
 		m.drift[name] = why
+		if f := m.foreign[name]; f != "" {
+			r.TwoWay, r.Foreign = false, f
+		} else if r.Foreign != "" {
+			r.TwoWay, r.Foreign = true, "" // the override is over: the record as written
+		}
+		m.reservations[name] = r
 	}
 }
 
@@ -241,7 +280,9 @@ func driftOf(r Reservation, st BlockStatus) string {
 	switch {
 	case st.Block != r.Block:
 		return fmt.Sprintf("block is %q, the record says %q", st.Block, r.Block)
-	case r.TwoWay && !st.TwoWay:
+	case r.TwoWay && !st.TwoWay && len(st.Unexcluded) > 0:
+		return "slice " + strings.Join(st.Unexcluded, ", ") + " does not exclude the block"
+	case r.TwoWay && !st.TwoWay && len(st.Foreign) == 0:
 		return "the other slices no longer exclude the block (AllowedCPUs changed)"
 	case st.Slices["lanes.slice"] != r.Block:
 		return fmt.Sprintf("lanes.slice AllowedCPUs is %q, not %q", st.Slices["lanes.slice"], r.Block)
