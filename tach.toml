@@ -14,6 +14,10 @@ path = "benchmarks.sregym.faults"
 depends_on = []
 
 [[modules]]
+path = "benchmarks.lanes"
+depends_on = []
+
+[[modules]]
 path = "libs.agent_cli"
 depends_on = []
 
