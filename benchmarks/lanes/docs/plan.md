@@ -57,8 +57,20 @@ alarms: {factor: 2, idle_lane: 10m, arm_stall: 90m, hook: "notify-send lanes \"$
   `min_free`). Liveness comes from the plan's own records and the lane and step records, never from a process table.
   Stage names are the backend's: the real one reports `queue`, `pre-inject`, `post-inject` for finished runs and, while
   running, the phase of the lane's step (`prepare`, `gate`, `window`, `undo`, `settle`, ...).
+- **Results.** One row per ended attempt (done or failed) in `<plan dir>/results.jsonl`, written once and read back
+  tolerantly: a missing or empty file is no rows, a damaged line is skipped (and counted on stderr), a repeated attempt
+  keeps the later line. A row has the workload's grade (opaque JSON; it must be an object with a boolean `valid`, else
+  the row is kept with `grade_error` and `valid: false`), the source identity (`source`: pins, the revisions the run
+  reports, the app; `ok` is false when a reported git revision contradicts its pin), the isolation mode (`two-way`,
+  `one-way`, `one-way-ok`), OOM kills, host and lane, and the stage times in seconds. A done run whose reported revision
+  contradicts its pin, or a `two-way` plan on a run that was not two-way, is not a result: it fails with
+  `source-mismatch` and runs again. A grade that is still being made delays the row, not the next run; a plan is
+  complete once every row is written. The real backend grades a done run through the workload's grade verb in the
+  background and reads the line for the run's operator label from `results/runs.jsonl`.
 - **Commands.** `lanes plan add FILE`, `lanes plan status [NAME] [--json]` (per arm: done, in-flight, queued, blocked,
-  failed, skipped; the next runs; why the first blocked ones wait). `lanes status` prints one line per plan.
+  failed, skipped; the next runs; why the first blocked ones wait). `lanes plan results NAME [--tsv] [--final] [--done] [--grade-fields a,b]` (JSON lines, or TSV with a header and a column
+  per stage and per named grade field; `--final` keeps each node's last attempt, `--done` only done rows).
+  `lanes status` prints one line per plan and the recent alarms.
 
 Replaces the hand-rolled twopass drivers: `driver.py` (chaining pass 2 after a verified pass-1 archive, the `-x<n>` rerun
-suffix), `mkspec.py`, `lanewatch.py` and `poolgate.py` (retry and park policy, stalled-lane detection) and `tick.sh`.
+suffix), `mkspec.py`, `lanewatch.py` and `poolgate.py` (retry and park policy, stalled-lane detection), `collect.py`/`mkresults.sh` (`plan results --tsv`) and `tick.sh`.

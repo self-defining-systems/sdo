@@ -80,6 +80,7 @@ func (e *Engine) Tick(ctx context.Context) error {
 	e.skipOrphans(st)
 	e.release(ctx, st)
 	e.skipOrphans(st) // a release that found a stale artifact failed its source
+	e.recordRows(ctx, st)
 	e.checkAlarms(ctx, st)
 	if e.allTerminal(st) {
 		st.Complete = true
@@ -88,10 +89,17 @@ func (e *Engine) Tick(ctx context.Context) error {
 	return writeJSONFile(stateFile(e.Dir), st)
 }
 
+// allTerminal: every node and step has ended and every ended attempt has its row (a plan is not complete while a grade
+// is still to come).
 func (e *Engine) allTerminal(st *State) bool {
 	for _, n := range st.Nodes {
 		if !terminalNode(n.Status) {
 			return false
+		}
+		for _, a := range n.Attempts {
+			if !a.Rowed && a.Exp != "" {
+				return false
+			}
 		}
 	}
 	for _, s := range st.Steps {
@@ -114,6 +122,17 @@ func (e *Engine) observe(ctx context.Context, st *State) {
 		}
 		switch obs.Phase {
 		case PhaseDone:
+			rd, err := e.Backend.RunData(ctx, n.Exp)
+			if err != nil {
+				e.logf("run data %s: %v (next pass)", n.Exp, err)
+				continue
+			}
+			if why := e.sourceMismatch(rd); why != "" {
+				// Invariant 1: a run on other source than the arm's is not a result; it runs again.
+				e.checkStages(st, n, obs)
+				e.fail(st, n, "source-mismatch", why, obs.Stages)
+				continue
+			}
 			n.Status, n.Ended = NodeDone, nonZero(obs.Ended, e.Clock.Now().UTC())
 			n.Attempts = append(n.Attempts, AttemptRecord{Attempt: n.Attempt, Exp: n.Exp, Submitted: n.Submitted, Ended: n.Ended, Stages: obs.Stages})
 			e.checkStages(st, n, obs)

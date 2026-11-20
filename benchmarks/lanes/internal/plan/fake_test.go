@@ -29,11 +29,12 @@ type fakeBackend struct {
 	steps    map[string]StepObservation
 	started  []StepJob
 	capacity Capacity
+	rundata  map[string]RunData // by experiment; absent: a good run on the pinned source
 	alarms   []Alarm
 }
 
 func newFake() *fakeBackend {
-	return &fakeBackend{exps: map[string]Observation{}, verdicts: map[string]Verdict{}, steps: map[string]StepObservation{}}
+	return &fakeBackend{rundata: map[string]RunData{}, exps: map[string]Observation{}, verdicts: map[string]Verdict{}, steps: map[string]StepObservation{}}
 }
 
 func (f *fakeBackend) Submit(_ context.Context, j Job) error {
@@ -93,6 +94,16 @@ func (f *fakeBackend) Capacity(context.Context) (Capacity, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.capacity, nil
+}
+
+func (f *fakeBackend) RunData(_ context.Context, exp string) (RunData, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if rd, ok := f.rundata[exp]; ok {
+		return rd, nil
+	}
+	return RunData{Run: "run-" + exp, Host: "h1", Lane: "c1", WorkloadObserved: "4652656aa4f8ad4c3", SubjectObserved: "9b2cadb7f0000",
+		App: "examples/x@sha256:1", Isolation: Isolation{Mode: "two-way"}, Grade: []byte(`{"valid": true, "recovered": true, "bad_s": 12}`)}, nil
 }
 
 // Raise makes the fake backend the alarm sink as well.

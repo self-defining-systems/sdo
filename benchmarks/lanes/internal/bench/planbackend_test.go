@@ -193,6 +193,18 @@ edges: [{from: one, to: two, artifact: rec}]
 	if !strings.HasPrefix(seed, want) || !strings.HasSuffix(seed, "run.json") {
 		t.Fatalf("seed = %q, want a run.json under %s", seed, want)
 	}
+	l.m.planGrading.Wait() // grading jobs write into the root: let them end before it goes
+	var rows []plan.Row
+	l.until("a row per run", func() bool {
+		rows, _, _ = plan.Results(plan.Dir(l.root.PlansDir(), "e2e"), plan.RowFilter{})
+		return len(rows) == 4
+	})
+	l.m.planGrading.Wait()
+	for _, r := range rows {
+		if r.Status != "done" || r.Run == "" || r.Source.WorkloadObserved == "" || !r.Source.OK {
+			t.Errorf("row %+v", r)
+		}
+	}
 	// Every run took longer than the 1 ms minimum the plan declared for its post-inject stage: one stage alarm per run
 	// in alarms.jsonl, and `status` shows them.
 	if got := RecentAlarms(l.root, time.Hour, time.Now()); len(got) != 4 || got[0].Alarm != plan.AlarmStage {
@@ -294,5 +306,94 @@ func TestPlanBackendCapacity(t *testing.T) {
 	}
 	if c.Waiting != 2 {
 		t.Fatalf("waiting %d, want the 2 queued runs", c.Waiting)
+	}
+}
+
+func TestPlanBackendRunDataReadsIdentityAndTheRunsGradeLine(t *testing.T) {
+	l := newPlanLab(t)
+	ctx := context.Background()
+	end := time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
+	l.experiment("e", map[string]RunFile{"r1": {Status: StatusDone, Lane: "c1", Host: "h1", OperatorLabel: "exec:e-r1", Ended: end,
+		Fuzzops:   Version{Revision: "46526567aa4f8ad4c"},
+		Isolation: &Isolation{Mode: "two-way", Reserved: true, OOMKills: 0, CPUs: "4-11", Memory: "20Gi"}}})
+	must(t, writeJSON(filepath.Join(l.root.RunDir("e", "r1"), "result.json"), Result{Prepared: &Prepared{Version: "4844e69dba6c", AppPack: "/co/examples/gitlab"}}))
+	dir := l.root.path("e", "results")
+	must(t, os.MkdirAll(dir, 0o755))
+	// A blank line (an experiment with no graded run writes one), a damaged line, someone else's grade, then ours.
+	must(t, os.WriteFile(filepath.Join(dir, "runs.jsonl"), []byte("\nnot json\n{\"operator\":\"exec:other\",\"valid\":false}\n{\"operator\":\"exec:e-r1\",\"valid\":true,\"bad_s\":4}\n"), 0o644))
+	rd, err := l.b.RunData(ctx, "e")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rd.Run != "r1" || rd.Host != "h1" || rd.WorkloadObserved != "46526567aa4f8ad4c" || rd.SubjectObserved != "4844e69dba6c" || rd.App != "/co/examples/gitlab" ||
+		rd.Isolation.Mode != "two-way" || rd.Isolation.CPUs != "4-11" || rd.Pending || !strings.Contains(string(rd.Grade), `"bad_s":4`) {
+		t.Fatalf("RunData = %+v grade %s", rd, rd.Grade)
+	}
+}
+
+func TestPlanBackendRunDataWithAnEmptyGradeFileIsAnErrorNotACrash(t *testing.T) {
+	l := newPlanLab(t)
+	ctx := context.Background()
+	l.experiment("e", map[string]RunFile{"r1": {Status: StatusDone, OperatorLabel: "exec:e-r1", Ended: time.Now()}})
+	dir := l.root.path("e", "results")
+	must(t, os.MkdirAll(dir, 0o755))
+	must(t, os.WriteFile(filepath.Join(dir, "runs.jsonl"), []byte("\n"), 0o644))
+	must(t, os.WriteFile(filepath.Join(dir, "graded"), []byte("ok"), 0o644))
+	rd, err := l.b.RunData(ctx, "e")
+	if err != nil || rd.Grade != nil || !strings.Contains(rd.GradeError, "no graded line for operator exec:e-r1") {
+		t.Fatalf("RunData = %+v %v", rd, err)
+	}
+	// Grading in progress: pending, and the marker is not started twice.
+	must(t, os.Remove(filepath.Join(dir, "graded")))
+	must(t, os.WriteFile(filepath.Join(dir, "grading"), []byte("now"), 0o644))
+	if rd, _ := l.b.RunData(ctx, "e"); !rd.Pending {
+		t.Fatalf("grading in progress should be pending: %+v", rd)
+	}
+	// A failed grade is reported, not retried for ever.
+	must(t, os.Remove(filepath.Join(dir, "grading")))
+	must(t, os.WriteFile(filepath.Join(dir, "grade.error"), []byte("fuzzops report: exit 1\nno such pack"), 0o644))
+	if rd, _ := l.b.RunData(ctx, "e"); !strings.Contains(rd.GradeError, "no such pack") {
+		t.Fatalf("RunData = %+v", rd)
+	}
+}
+
+func TestPlanBackendRunDataOfAnInvalidRunHasIdentityAndNoGrade(t *testing.T) {
+	l := newPlanLab(t)
+	l.experiment("e", map[string]RunFile{"r1": {Status: StatusInvalid, Reason: "oom", Ended: time.Now(), Fuzzops: Version{Revision: "abc1234"}}})
+	rd, err := l.b.RunData(context.Background(), "e")
+	if err != nil || rd.Run != "r1" || rd.WorkloadObserved != "abc1234" || rd.Grade != nil || rd.Pending {
+		t.Fatalf("RunData = %+v %v", rd, err)
+	}
+}
+
+func TestPlanResultsCommandOnEmptyAndPartialFiles(t *testing.T) {
+	root := Root(t.TempDir())
+	dir := plan.Dir(root.PlansDir(), "tp")
+	must(t, os.MkdirAll(dir, 0o755))
+	must(t, os.WriteFile(filepath.Join(dir, "lock.json"), []byte("{}"), 0o644))
+	var out, errs strings.Builder
+	// No results file at all: just the header.
+	must(t, PlanResults(root, "tp", ResultsOptions{TSV: true}, &out, &errs))
+	if lines := strings.Split(strings.TrimSpace(out.String()), "\n"); len(lines) != 1 || !strings.HasPrefix(lines[0], "plan\tnode") {
+		t.Fatalf("empty: %q", out.String())
+	}
+	// An empty file, then a partial one (a torn last line): no crash, rows that parse are kept, the rest counted.
+	must(t, os.WriteFile(filepath.Join(dir, "results.jsonl"), nil, 0o644))
+	out.Reset()
+	must(t, PlanResults(root, "tp", ResultsOptions{TSV: true}, &out, &errs))
+	row := `{"plan":"tp","node":"p1/a/r1","arm":"p1","item":"a","rep":1,"attempt":1,"exp":"e","status":"done","valid":true,"grade":{"valid":true,"recovered":true},"source":{"ok":true},"isolation":{"mode":"two-way"}}`
+	must(t, os.WriteFile(filepath.Join(dir, "results.jsonl"), []byte(row+"\n{\"plan\":\"tp\",\"node\":\"p1/b/r1\",\"att"), 0o644))
+	out.Reset()
+	must(t, PlanResults(root, "tp", ResultsOptions{TSV: true, GradeFields: "recovered"}, &out, &errs))
+	if !strings.Contains(out.String(), "p1/a/r1") || !strings.Contains(out.String(), "grade.recovered") || !strings.Contains(errs.String(), "skipped 1 damaged") {
+		t.Fatalf("partial: %q / %q", out.String(), errs.String())
+	}
+	out.Reset()
+	must(t, PlanResults(root, "tp", ResultsOptions{}, &out, &errs))
+	if !strings.HasPrefix(out.String(), `{"plan":"tp","node":"p1/a/r1"`) {
+		t.Fatalf("jsonl: %q", out.String())
+	}
+	if err := PlanResults(root, "nope", ResultsOptions{}, &out, &errs); err == nil {
+		t.Fatal("unknown plan accepted")
 	}
 }

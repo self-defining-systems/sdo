@@ -12,6 +12,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -47,6 +48,9 @@ type Manager struct {
 	// often a host's slices are compared with their record (default a minute). Tests set both.
 	Helper     Helper
 	DriftEvery time.Duration
+
+	// planGrading counts the background grading jobs the plans' backends started.
+	planGrading sync.WaitGroup
 
 	reservations map[string]Reservation
 	drift        map[string]string
@@ -219,7 +223,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 // which the next pass of this manager picks up. A plan that does not load is logged and left alone.
 func (m *Manager) tickPlans(ctx context.Context) {
 	for _, name := range plan.Names(m.Root.PlansDir()) {
-		e, err := plan.Open(plan.Dir(m.Root.PlansDir(), name), &PlanBackend{Root: m.Root, Inv: m.inv, Log: m.Log}, SystemClock{})
+		e, err := plan.Open(plan.Dir(m.Root.PlansDir(), name), &PlanBackend{Root: m.Root, Inv: m.inv, Log: m.Log, Grading: &m.planGrading}, SystemClock{})
 		if err != nil {
 			m.logf("plan %s: %v", name, err)
 			continue
