@@ -58,6 +58,49 @@ func TestKindHostEnvStaysAsWritten(t *testing.T) {
 	}
 }
 
+const workloadEnvHost = `hosts:
+  h:
+    local: true
+    staging: /s
+    kubeconfigs: /k
+    evidence: /e
+    max_builds: 1
+    max_load5: 10
+    clusters: [c1]
+    env: {A: host, B: host}
+    workload_env:
+      wl-one: {B: one, C: one}
+      wl-two: {D: two}
+`
+
+// A host's workload_env reaches only the steps of that workload, over the host env; a host without the section
+// (every existing hosts.yaml) is unchanged.
+func TestWorkloadEnvIsMergedOnlyIntoStepsOfThatWorkload(t *testing.T) {
+	inv, err := loadInv(t, workloadEnvHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := inv.Hosts["h"]
+	for workload, want := range map[string]string{
+		"wl-one":  "A=host B=one C=one",
+		"wl-two":  "A=host B=host D=two",
+		"other":   "A=host B=host",
+		"":        "A=host B=host",
+		"default": "A=host B=host",
+	} {
+		if got := strings.Join(h.EnvFor(workload), " "); got != want {
+			t.Errorf("EnvFor(%q) = %q, want %q", workload, got, want)
+		}
+	}
+	if got := strings.Join(h.EnvList(), " "); got != "A=host B=host" {
+		t.Errorf("EnvList (host work: ledger, preflight) = %q, must not carry a workload's env", got)
+	}
+	plain := Host{Env: map[string]string{"A": "1"}}
+	if got := strings.Join(plain.EnvFor("wl-one"), " "); got != "A=1" {
+		t.Errorf("host without workload_env: %q", got)
+	}
+}
+
 func TestVclusterHostValidation(t *testing.T) {
 	for name, tc := range map[string]struct{ from, to, want string }{
 		"no entry host":   {"    entry_host: 192.168.1.108\n", "", "needs entry_host"},

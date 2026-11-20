@@ -653,7 +653,6 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 	s.Poll = Seconds(m.Poll.Seconds())
 	s.ClusterUp, s.ClusterDown = h.ClusterCommand(h.ClusterUp, l.Lane), h.ClusterCommand(h.ClusterDown, l.Lane)
 	s.Evidence = h.LaneEvidence(l.Lane)
-	s.HostEnv = h.EnvList()
 	s.Provider = h.Provider
 	// The lane's share of the host: from the experiment the step is for (a release has none, and only gives cores back).
 	var limitSpec Spec
@@ -662,6 +661,7 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 	} else if x := m.exps[l.Experiment]; x != nil {
 		limitSpec = x.Measured()
 	}
+	s.HostEnv = h.EnvFor(limitSpec.Workload)
 	mode, block, _ := isolationOf(h, limitSpec, m.reservations, l.Host, nil)
 	s.Limits = laneLimits(h, limitSpec, block)
 	s.IsolationMode = mode

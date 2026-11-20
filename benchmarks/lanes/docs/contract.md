@@ -24,6 +24,24 @@ Both roles: **environment in, last stdout line JSON out.**
 - Each verb has a time limit (`hookTimeouts` in `internal/bench/hooks.go`); the platform kills the process group at
   the limit.
 
+### Workload settings belong to the workload, not the host
+
+A host's `env` is seen by every step on it, whatever workload runs. A workload's own settings (pack maps, helper
+paths, tuning knobs) go in the host's `workload_env` instead:
+
+```yaml
+hosts:
+  spokane1:
+    env: {FUZZOPS_REGISTRY_PORT: "5002"}          # every step on the host
+    workload_env:
+      sregym: {SREGYM_LANES_PACKS: "sgl1=apps/a sgl2=apps/b"}   # only steps of the workload "sregym"
+```
+
+The key is the workload's id: the spec's `workload` name (`default` when the spec names none). A step of that workload gets
+its entries on top of `env` (an entry of the same name wins); a step of another workload does not see them. Host-level
+work that belongs to no workload (ledger, preflight, reservations) never carries them. A host with no `workload_env`
+behaves as before.
+
 ### Unsupported verbs
 
 A verb an adapter does not implement answers **exit 64** and/or a last stdout line `{"unsupported": true}`. The
