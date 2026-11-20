@@ -1,0 +1,20 @@
+# One SREGym repeat-vs-first item that learns, model-free: social-network's Service targetPort fault. SDO opens its own
+# incident for it (a failing user test), the scripted responder restores the Service from accepted source, and the
+# scripted closing turn writes the service-targetport-mismatch playbook; p2, seeded with p1's memory, should apply it
+# in the deterministic stage with no agent turn (resolution_path deterministic).
+#
+# Before `lanes plan add`:
+# - `baseline/`: the base memory both arms start from: `python -m benchmarks.sregym.lanes.baseline REPO COMMIT baseline`
+#   from the social base the lane is onboarded with (the host env's SREGYM_LANES_SEED_social_network). Not committed.
+# - the pins: the SDO checkout that holds the adapter; a committed plan cannot name its own commit.
+plan: sgl-social-repeat
+pins: {workload: sregym@fc6ef24b, subject: sregym@fc6ef24b}
+arms:
+  - {name: p1, spec: specs/p1.json}
+  - {name: p2, spec: specs/p2.json}
+items:
+  - {id: social-targetport, vars: {problem: k8s_target_port-misconfig}}
+reps: 1
+parallel: 1
+artifacts: {memory: {path: "${run}/exec/memory", verify: exists}}
+edges: [{from: p1, to: p2, artifact: memory}]

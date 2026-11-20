@@ -1,0 +1,16 @@
+{
+  "app": "benchmarks/sregym/lanes/apps/social_network",
+  "workload": "benchmarks/sregym/lanes/run.sh workload",
+  "operator": {"hooks": "sregym", "settings": {"startup_bound": "0s"}, "baseline": "baseline", "seed": "${artifact.memory}"},
+  "namespace": "social-network",
+  "faults": {"instances": "instances.json", "ids": ["${item.problem}"]},
+  "sequences": [[1]],
+  "run": {},
+  "ready_for": "20s",
+  "ready_timeout": "40m",
+  "cap": "30m",
+  "lanes": 1,
+  "hosts": ["spokane1"],
+  "lane": {"cpus": 8, "memory": "28Gi"},
+  "keep_lanes": true
+}

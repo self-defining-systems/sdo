@@ -1,0 +1,5 @@
+{
+  "application": "social_network",
+  "namespace": "social-network",
+  "deploy_problem": "k8s_target_port-misconfig"
+}
