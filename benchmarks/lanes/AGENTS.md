@@ -71,13 +71,14 @@ hosts:
 
 | command | does |
 |---|---|
-| `lanes host install-helper HOST` | the only sudo step: installs the helper, the `lanes.slice` unit and a sudoers rule limited to the helper |
-| `lanes host reserve HOST\|all` | shrinks `user.slice`, `system.slice`, `machine.slice` and `kubepods.slice` to the complement of the block and puts `lanes.slice` on it; idempotent; prints before and after; the replaced values are saved on the host |
+| `lanes host install-helper HOST [--sudo-password-file PATH]` | the only sudo step: installs the helper, the `lanes.slice` unit and a sudoers rule limited to the helper. The script is copied to a temp file on the host and run as `sudo bash FILE` over `ssh -t`, so a human types the password once per host; `--sudo-password-file` feeds `sudo -S` from the file (no tty) for tools |
+| `lanes host reserve HOST\|all` | shrinks `user.slice`, `system.slice`, `machine.slice` and `kubepods.slice` to the complement of the block and puts `lanes.slice` on it; idempotent; prints before and after; the replaced values are saved on the host in `/var/lib/lane-reserve/block` (persistent: systemd keeps the reservation across a reboot; a record an older helper kept under `/run/sdo-eval-reserve` is moved there) |
 | `lanes host unreserve HOST [--drain]` | restores the saved values; refuses while lanes run unless `--drain` |
 | `lanes host status [HOST]` | the block, two-way or one-way, foreign containers pinned inside it, our containers outside it, drift |
-| `lanes host adopt HOST [--cpus LIST]` | records a reservation made by hand (nothing is changed) |
+| `lanes host adopt HOST [--cpus LIST] [--prev SLICE=LIST]...` | records a reservation made by hand (nothing is changed) and saves the slices' values from before it (unrestricted unless `--prev`, repeatable, `SLICE=` for unrestricted), so a later reserve or unreserve has them |
 
-The bench records the active block in `<root>/reservations/<host>.json`. Admission: every lane cpuset is a subset of the
+The bench records the active block in `<root>/reservations/<host>.json`. `max_load5` is optional (0 or omitted: no load gate, load5 is only reported) on a host with `reserve:`; a host without one still needs it above 0.
+Admission: every lane cpuset is a subset of the
 block; a host with no reservation admits no lanes unless the spec (`isolation: one-way-ok`) or the host says so, and
 those rows carry `isolation.mode: one-way-ok` (a `one-way` row ran on a block whose other slices still use it; a spec can
 require `isolation: two-way`). Every reconcile (at most once a minute per host) compares the live slices with the record;

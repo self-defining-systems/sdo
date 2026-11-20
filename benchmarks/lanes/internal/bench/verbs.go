@@ -415,7 +415,11 @@ func Status(root Root, only string, w io.Writer) error {
 	}
 	fmt.Fprint(w, "lanes ")
 	for _, h := range st.Hosts {
-		fmt.Fprintf(w, " %s %d/%d (builds %d/%d, load5 %.0f/%.0f, free %s", h.Name, h.Busy, h.Lanes, h.Builds, h.MaxBuilds, h.Load5, h.MaxLoad5, size(h.Free))
+		load := fmt.Sprintf("%.0f/%.0f", h.Load5, h.MaxLoad5)
+		if h.MaxLoad5 <= 0 {
+			load = fmt.Sprintf("%.0f, no gate", h.Load5)
+		}
+		fmt.Fprintf(w, " %s %d/%d (builds %d/%d, load5 %s, free %s", h.Name, h.Busy, h.Lanes, h.Builds, h.MaxBuilds, load, size(h.Free))
 		if h.MinFree != "" {
 			fmt.Fprintf(w, "/%s", h.MinFree)
 		}

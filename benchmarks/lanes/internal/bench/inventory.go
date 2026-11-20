@@ -30,7 +30,7 @@ type Host struct {
 	Env         map[string]string `json:"env,omitempty"`
 	Staging     string            `json:"staging"`     // host-local directory for steps and inputs
 	MaxBuilds   int               `json:"max_builds"`  // builds (app copy + prepare) at once
-	MaxLoad5    float64           `json:"max_load5"`   // no build starts at or above this 5-minute load
+	MaxLoad5    float64           `json:"max_load5"`   // no build starts at or above this 5-minute load; 0 or omitted: no load gate (hosts with reserve: only)
 	Kubeconfigs string            `json:"kubeconfigs"` // directory with one kubeconfig file per cluster, named as the cluster
 	Clusters    []string          `json:"clusters"`
 	// MinFree is the disk floor of the staging filesystem ("150G"): no build starts below it; gc runs first.
@@ -248,8 +248,12 @@ func (inv Inventory) Validate() error {
 		if (h.ClusterUp == "") != (h.ClusterDown == "") {
 			errs = append(errs, fmt.Sprintf("host %s: cluster_up and cluster_down go together", name))
 		}
-		if h.MaxBuilds < 1 || h.MaxLoad5 <= 0 {
-			errs = append(errs, fmt.Sprintf("host %s: max_builds and max_load5 must be positive", name))
+		// On a reserved host capacity is the reservation and load5 is a report, so the load gate is optional there.
+		switch {
+		case h.MaxBuilds < 1:
+			errs = append(errs, fmt.Sprintf("host %s: max_builds must be positive", name))
+		case h.MaxLoad5 < 0 || (h.MaxLoad5 == 0 && h.Reserve == nil):
+			errs = append(errs, fmt.Sprintf("host %s: max_load5 must be positive (it may be omitted or 0, meaning no load gate, only on a host with reserve:)", name))
 		}
 		if h.MaxBuildFailures < 0 {
 			errs = append(errs, fmt.Sprintf("host %s: max_build_failures must be at least 1 (omit it for the default %d)", name, DefaultMaxBuildFailures))

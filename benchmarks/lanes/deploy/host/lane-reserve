@@ -5,7 +5,7 @@
 #   sdo-eval-reserve off LANE                                                # it ended
 #   sdo-eval-reserve status | gc | repin
 #   sdo-eval-reserve block reserve --cpus LIST [--memory SIZE] [--host-reserve-cpus N] | --cores N --numa M
-#   sdo-eval-reserve block unreserve | adopt --cpus LIST | status      # the host's persistent lane block (lanes.slice)
+#   sdo-eval-reserve block unreserve | adopt --cpus LIST [--prev SLICE=LIST]... | status      # the host's persistent lane block (lanes.slice)
 #   sdo-eval-reserve lane-exec LANE [--cpus LIST] [--memory SIZE] -- CMD...   # run CMD inside the lane's cgroup
 #   sdo-eval-reserve pin CONTAINER_ID LIST    # AllowedCPUs of a lane node's scope, with systemd's encoder (deploy/lane-limits.sh)
 #
@@ -35,12 +35,13 @@ umask 022
 
 if [ "$(id -u)" = 0 ]; then
   PATH=/usr/sbin:/usr/bin:/sbin:/bin
-  CG=/sys/fs/cgroup STATE=/run/sdo-eval-reserve now=$(date +%s)
+  CG=/sys/fs/cgroup STATE=/run/sdo-eval-reserve BSTATE=/var/lib/lane-reserve now=$(date +%s)
   SYSTEMCTL=/usr/bin/systemctl DOCKER=/usr/bin/docker
   ONLINE=/sys/devices/system/cpu/online MEMINFO=/proc/meminfo SYSFS=/sys/devices/system
 else
   : "${SDO_EVAL_CGROUP_ROOT:?must run as root (SDO_EVAL_* test hooks are for tests)}"
   CG=$SDO_EVAL_CGROUP_ROOT STATE=${SDO_EVAL_STATE:?} now=${SDO_EVAL_NOW:-$(date +%s)}
+  BSTATE=${SDO_EVAL_BLOCK_STATE:-$STATE.persist}
   SYSTEMCTL=${SDO_EVAL_SYSTEMCTL:-systemctl} DOCKER=${SDO_EVAL_DOCKER:-docker}
   ONLINE=${SDO_EVAL_ONLINE:-/sys/devices/system/cpu/online} MEMINFO=${SDO_EVAL_MEMINFO:-/proc/meminfo}
   SYSFS=${SDO_EVAL_SYSFS:-/sys/devices/system}
@@ -190,8 +191,11 @@ settle() { # after the leases changed: reserve the union of the live leases, els
 
 # ---- the host's persistent lane block (lanes.slice) ----------------------------------------------------------------
 # `block reserve` shrinks the other top-level slices to the complement of the block and puts lanes.slice on the block;
-# the values it replaced are saved in $STATE/block and put back by `block unreserve`. Idempotent: a second reserve of the
-# same block changes nothing and keeps the first saved values. `block adopt` records a block somebody set by hand.
+# the values it replaced are saved in $BSTATE/block (/var/lib/lane-reserve/block: persistent, because systemd keeps the
+# reservation across a reboot and so must the values to restore; /run would lose them) and put back by `block unreserve`.
+# Idempotent: a second reserve of the same block changes nothing and keeps the first saved values. `block adopt` records a
+# block somebody set by hand, with the values the slices had before it (unrestricted, or --prev SLICE=LIST), so a later
+# reserve or unreserve always has something to restore. A block recorded under /run by an older helper is moved here.
 
 slice_exists() { [ "$("$SYSTEMCTL" show "$1" -p LoadState --value 2>/dev/null || echo not-found)" != not-found ]; }
 slice_cpus() { "$SYSTEMCTL" show "$1" -p AllowedCPUs --value 2>/dev/null | tr ' ' ',' || true; }
@@ -213,7 +217,13 @@ pick_cores() { # N NUMA -> the CPU list of the last N whole cores of NUMA node N
   printf '%s\n' "${groups[@]: -$1}" | while read -r g; do expand "$g"; done | sort -un | fmt_list
 }
 
-block_state_get() { [ -e "$STATE/block" ] && sed -n "s/^$1 //p" "$STATE/block" | head -1 || true; }
+block_state_get() { [ -e "$BSTATE/block" ] && sed -n "s/^$1 //p" "$BSTATE/block" | head -1 || true; }
+block_prevs() { [ -e "$BSTATE/block" ] && grep '^prev ' "$BSTATE/block" || true; }
+
+migrate_block_state() { # a block an older helper kept under /run (lost at reboot) moves to the persistent directory
+  if [ -e "$STATE/block" ] && [ ! -e "$BSTATE/block" ]; then mv "$STATE/block" "$BSTATE/block"; fi
+  rm -f "$STATE/block" "$STATE/block.prev"
+}
 
 block_show() { # one line per fact: what status prints and what reserve prints before and after
   local b s two=yes
@@ -239,35 +249,53 @@ block_reserve() { # LIST MEMORY_BYTES HOST_RESERVE_CPUS
   comp=$(complement "$list")
   [ "$(expand "$comp" | wc -l)" -ge "$keep" ] || die "the host reserve would be $(expand "$comp" | wc -l) CPUs, below host_reserve_cpus $keep"
   echo "before:"; block_show | sed 's/^/  /'
-  if [ ! -e "$STATE/block" ]; then
-    { echo "adopted 0"; for s in $HOST_SLICES lanes.slice; do slice_exists "$s" && echo "prev $s $(slice_cpus "$s")" || true; done; } > "$STATE/block.prev"
-  fi
+  local prevs
+  if [ -e "$BSTATE/block" ]; then prevs=$(block_prevs)
+  else prevs=$(for s in $HOST_SLICES lanes.slice; do slice_exists "$s" && echo "prev $s $(slice_cpus "$s")" || true; done); fi
   for s in $HOST_SLICES; do
     slice_exists "$s" || continue
     [ "$(slice_cpus "$s")" = "$comp" ] || "$SYSTEMCTL" set-property "$s" "AllowedCPUs=$comp"
   done
   "$SYSTEMCTL" start lanes.slice 2>/dev/null || true
   "$SYSTEMCTL" set-property lanes.slice "AllowedCPUs=$list" "MemoryMin=$mem"
-  { echo "block $list"; echo "memory $mem"; cat "$STATE/block.prev"; } > "$STATE/block"
+  { echo "block $list"; echo "memory $mem"; echo "adopted 0"; [ -z "$prevs" ] || echo "$prevs"; } > "$BSTATE/block.new"
+  mv "$BSTATE/block.new" "$BSTATE/block"
   echo "after:"; block_show | sed 's/^/  /'
 }
 
 block_unreserve() {
-  [ -e "$STATE/block" ] || die "no block is recorded on this host"
+  [ -e "$BSTATE/block" ] || die "no block is recorded on this host"
   echo "before:"; block_show | sed 's/^/  /'
   local s v
   while read -r k s v; do
     [ "$k" = prev ] || continue
     "$SYSTEMCTL" set-property "$s" "AllowedCPUs=${v:-}"
-  done < "$STATE/block"
+  done < "$BSTATE/block"
   slice_exists lanes.slice && "$SYSTEMCTL" set-property lanes.slice "AllowedCPUs=" "MemoryMin=0" || true
-  rm -f "$STATE/block" "$STATE/block.prev"
+  rm -f "$BSTATE/block"
   echo "after:"; block_show | sed 's/^/  /'
 }
 
-block_adopt() { # LIST: record what is there; changes nothing
-  check_cpus "$1"
-  { echo "block $1"; echo "memory 0"; echo "adopted 1"; } > "$STATE/block"
+block_adopt() { # LIST [SLICE=LIST...]: record what is there; changes nothing. A slice's previous value is the given one, else
+  # the one already recorded, else unrestricted (empty AllowedCPUs): what a host had before somebody reserved by hand.
+  local list=$1 s v given old
+  shift
+  check_cpus "$list"
+  for given in "$@"; do
+    s=${given%%=*}; v=${given#*=}
+    case " $HOST_SLICES " in *" $s "*) ;; *) die "block adopt: --prev SLICE=LIST, SLICE one of: $HOST_SLICES" ;; esac
+    [ -z "$v" ] || [[ $v =~ $LIST_RE ]] || die "block adopt: --prev $s=LIST is not a CPU list"
+  done
+  local prevs
+  prevs=$(for s in $HOST_SLICES; do
+    slice_exists "$s" || continue
+    v=; old=$(block_prevs | sed -n "s/^prev $s //p" | head -1)
+    [ -z "$old" ] || v=$old
+    for given in "$@"; do [ "${given%%=*}" != "$s" ] || v=${given#*=}; done
+    echo "prev $s $v"
+  done)
+  { echo "block $list"; echo "memory 0"; echo "adopted 1"; [ -z "$prevs" ] || echo "$prevs"; } > "$BSTATE/block.new"
+  mv "$BSTATE/block.new" "$BSTATE/block"
   block_show
 }
 
@@ -302,9 +330,10 @@ lane_exec() {
   exec "$@"
 }
 
-mkdir -p "$STATE"
+mkdir -p "$STATE" "$BSTATE"
 exec 9>"$STATE/lock"
 flock 9
+migrate_block_state
 
 verb=${1:-}
 case $verb in
@@ -348,7 +377,11 @@ block)
     if [ -z "$list" ]; then [ -n "$cores" ] && [ -n "$numa" ] || die "block reserve: --cpus LIST, or --cores N --numa M"; list=$(pick_cores "$cores" "$numa"); fi
     block_reserve "$list" "$mem" "$keep" ;;
   unreserve) block_unreserve ;;
-  adopt) [ "${3:-}" = --cpus ] || die "block adopt --cpus LIST"; block_adopt "${4:-}" ;;
+  adopt)
+    [ "${3:-}" = --cpus ] || die "block adopt --cpus LIST [--prev SLICE=LIST]..."
+    list=${4:-}; shift 4; prevs=()
+    while [ $# -gt 0 ]; do [ "$1" = --prev ] && [ $# -ge 2 ] || die "block adopt --cpus LIST [--prev SLICE=LIST]..."; prevs+=("$2"); shift 2; done
+    block_adopt "$list" ${prevs[@]+"${prevs[@]}"} ;;
   status) block_show ;;
   *) die "usage: block reserve|unreserve|adopt|status" ;;
   esac ;;
