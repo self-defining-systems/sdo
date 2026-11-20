@@ -34,7 +34,7 @@ from benchmarks.lanes.eks import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Mapping, MutableMapping, Sequence
 
 PROVIDER_ENV = "BENCH_LANE_PROVIDER"
 REGISTRY_ENV = "BENCH_IMAGE_REGISTRY"
@@ -62,6 +62,13 @@ def lane_provider(env: Mapping[str, str]) -> str:
     if value not in (KIND, VCLUSTER, EKS):
         raise EksHookError(f"{PROVIDER_ENV}={value!r}: want {KIND}, {VCLUSTER} or {EKS}")
     return value
+
+
+def export_entry_host(environ: MutableMapping[str, str]) -> None:
+    """The lane platform names the entry address ``BENCH_ENTRY_HOST``; fuzzops and the packs' scripts read
+    ``FUZZOPS_ENTRY_HOST``. An explicit ``FUZZOPS_ENTRY_HOST`` wins."""
+    if environ.get("BENCH_ENTRY_HOST") and not environ.get("FUZZOPS_ENTRY_HOST"):
+        environ["FUZZOPS_ENTRY_HOST"] = environ["BENCH_ENTRY_HOST"]
 
 
 def is_eks(env: Mapping[str, str]) -> bool:

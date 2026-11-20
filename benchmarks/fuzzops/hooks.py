@@ -2739,6 +2739,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args or args[0] not in (*VERBS, "baseline"):
         print(f"usage: python -m benchmarks.fuzzops.hooks {{{','.join(VERBS)},baseline}}", file=sys.stderr)
         return 2
+    eks.export_entry_host(os.environ)
     verb, env = args[0], os.environ
     try:
         if verb in RUN_BOUNDARY_VERBS:

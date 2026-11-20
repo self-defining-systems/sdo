@@ -141,9 +141,14 @@ def _call(argv: Sequence[str], env: Mapping[str, str]) -> int:
     return subprocess.run(list(argv), env=dict(env), check=False).returncode
 
 
-def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None) -> int:
+def main(
+    argv: Sequence[str] | None = None,
+    env: Mapping[str, str] | None = None,
+    call: Callable[[Sequence[str], Mapping[str, str]], int] | None = None,
+) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    environ = os.environ if env is None else env
+    environ = dict(os.environ if env is None else env)
+    eks.export_entry_host(environ)
     if not args:
         print("usage: python -m benchmarks.fuzzops.workload VERB", file=sys.stderr)
         return 2
@@ -153,7 +158,7 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
         except (eks.EksHookError, WorkloadError) as exc:
             print(exc, file=sys.stderr)
             return 1
-    return handle(args[0], environ, _call)
+    return handle(args[0], environ, call or _call)
 
 
 if __name__ == "__main__":
