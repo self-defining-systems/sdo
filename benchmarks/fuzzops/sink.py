@@ -297,9 +297,9 @@ def _used(usage: Any) -> bool:
 #: ``closingSkipReason``, ``runtime/native_broker.go`` covered-repeat shortcut and ``no_session``). Such a decision
 #: with no usage is a skipped turn: no session, no ``reflection-usage.jsonl``, a ``reflection_without_commit`` stamp a
 #: fraction of a second after the dispatch stamp.
-_TURN_SKIPPED = frozenset(
-    {"closing_turn_nothing_to_script", "escalated_no_learning", "accepted_programs_no_new_evidence", "no_session"}
-)
+_TURN_SKIPPED = frozenset({"closing_turn_nothing_to_script", "accepted_programs_no_new_evidence", "no_session"})
+#: A close class that never learns names itself: ``<class>_no_learning`` (escalated, failed, unconfirmed, ...).
+_NO_LEARNING_SUFFIX = "_no_learning"
 
 
 def _reflection_ran(decision: Any) -> bool:
@@ -307,7 +307,8 @@ def _reflection_ran(decision: Any) -> bool:
         return False
     if _used(_get(decision, "usage")):
         return True
-    if _get(decision, "no_change_reason") in _TURN_SKIPPED:
+    reason = str(_get(decision, "no_change_reason") or "")
+    if reason in _TURN_SKIPPED or reason.endswith(_NO_LEARNING_SUFFIX):
         return False
     failure = str(_get(decision, "failure_reason") or "")
     # A completed reflection dispatch with no usage and no pre-start failure may still have run a turn.
