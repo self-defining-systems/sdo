@@ -76,9 +76,20 @@ type Arm struct {
 }
 
 // Item is one thing the arms run: a problem, a fault, an instance. Vars are available to templates as ${item.<var>}.
+//
+// Group names an entry of Plan.Groups whose vars and spec overrides the item inherits. Spec is a typed override merged
+// over the arm's rendered template (see mergeSpec): any spec field, numbers, lists and nested maps included.
 type Item struct {
-	ID   string            `json:"id"`
+	ID    string            `json:"id"`
+	Vars  map[string]string `json:"vars,omitempty"`
+	Group string            `json:"group,omitempty"`
+	Spec  map[string]any    `json:"spec,omitempty"`
+}
+
+// Group is what several items share: vars (as ${item.<var>}, item vars win) and a spec override (item spec wins).
+type Group struct {
 	Vars map[string]string `json:"vars,omitempty"`
+	Spec map[string]any    `json:"spec,omitempty"`
 }
 
 // Items is the item list: written out, or read from a JSON file (`from`, and `select`: the key of the array in a
@@ -134,8 +145,18 @@ func itemsOf(list []any) ([]Item, error) {
 			it := Item{ID: id}
 			vars, _ := v["vars"].(map[string]any)
 			for k := range v {
-				if k != "id" && k != "vars" {
-					return nil, fmt.Errorf("items[%d] (%s): unknown field %q (want id, vars)", i, id, k)
+				if k != "id" && k != "vars" && k != "group" && k != "spec" {
+					return nil, fmt.Errorf("items[%d] (%s): unknown field %q (want id, vars, group, spec)", i, id, k)
+				}
+			}
+			if g, ok := v["group"]; ok {
+				if it.Group, ok = g.(string); !ok || it.Group == "" {
+					return nil, fmt.Errorf("items[%d] (%s): group is not a name", i, id)
+				}
+			}
+			if sp, ok := v["spec"]; ok {
+				if it.Spec, ok = sp.(map[string]any); !ok {
+					return nil, fmt.Errorf("items[%d] (%s): spec is not a map", i, id)
 				}
 			}
 			for k, x := range vars {
@@ -201,12 +222,14 @@ type Step struct {
 
 // Plan is plan.yaml.
 type Plan struct {
-	Name  string `json:"plan"`
-	Pins  Pins   `json:"pins"`
-	Arms  []Arm  `json:"arms"`
-	Items Items  `json:"items"`
-	Reps  int    `json:"reps,omitempty"`
-	Order string `json:"order,omitempty"`
+	Name string `json:"plan"`
+	Pins Pins   `json:"pins"`
+	Arms []Arm  `json:"arms"`
+	// Groups are shared vars and spec overrides items name with `group` (one plan, several apps).
+	Groups map[string]Group `json:"groups,omitempty"`
+	Items  Items            `json:"items"`
+	Reps   int              `json:"reps,omitempty"`
+	Order  string           `json:"order,omitempty"`
 	// Parallel bounds the experiments released and not yet ended (default 4): the manager's lanes decide how many run.
 	Parallel  int                    `json:"parallel,omitempty"`
 	Edges     []Edge                 `json:"edges,omitempty"`
@@ -297,6 +320,14 @@ func (p *Plan) Validate() error {
 			bad("arm %q: no spec template", a.Name)
 		}
 		arms[a.Name] = true
+	}
+	for name, g := range p.Groups {
+		if !idRE.MatchString(name) {
+			bad("group %q: letters, digits, '.', '_' and '-'", name)
+		}
+		if err := checkOverride(g.Spec); err != nil {
+			bad("group %q: %v", name, err)
+		}
 	}
 	steps := map[string]bool{}
 	for _, s := range p.Steps {
@@ -455,6 +486,14 @@ func (p *Plan) LoadItems(dir string) ([]Item, error) {
 	}
 	seen := map[string]bool{}
 	for _, it := range list {
+		if it.Group != "" {
+			if _, ok := p.Groups[it.Group]; !ok {
+				return nil, fmt.Errorf("item %q: group %q is not declared in groups", it.ID, it.Group)
+			}
+		}
+		if err := checkOverride(it.Spec); err != nil {
+			return nil, fmt.Errorf("item %q: %v", it.ID, err)
+		}
 		if !idRE.MatchString(it.ID) {
 			return nil, fmt.Errorf("item %q: letters, digits, '.', '_' and '-'", it.ID)
 		}

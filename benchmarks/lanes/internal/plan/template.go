@@ -25,6 +25,9 @@ func (e *Engine) vars(n Node, name string, artifacts map[string]string) map[stri
 	v := map[string]string{"plan": e.Plan.Name, "arm": n.Arm, "item": n.Item, "rep": fmt.Sprint(n.Rep), "name": name}
 	for _, it := range e.items {
 		if it.ID == n.Item {
+			for k, x := range e.Plan.Groups[it.Group].Vars {
+				v["item."+k] = x
+			}
 			for k, x := range it.Vars {
 				v["item."+k] = x
 			}
@@ -97,6 +100,11 @@ func (e *Engine) Render(n Node, attempt int, artifacts map[string]string) ([]byt
 		return nil, "", fmt.Errorf("arm %s: %w", n.Arm, err)
 	}
 	spec := out.(map[string]any)
+	if ov, err := e.override(n, e.vars(n, name, artifacts)); err != nil {
+		return nil, "", fmt.Errorf("item %s: %w", n.Item, err)
+	} else if ov != nil {
+		mergeSpec(spec, ov)
+	}
 	spec["name"] = name
 	spec["fuzzops"] = e.Plan.Pins.Workload.Rev
 	op, _ := spec["operator"].(map[string]any)
@@ -123,6 +131,65 @@ func (e *Engine) Render(n Node, attempt int, artifacts map[string]string) ([]byt
 	return b, name, err
 }
 
+// engineOwned are the spec fields the engine sets itself; an override may not name them.
+var engineOwned = []string{"name", "fuzzops", "retries", "isolation"}
+
+// checkOverride refuses an override that sets a field the engine owns.
+func checkOverride(ov map[string]any) error {
+	for _, k := range engineOwned {
+		if _, ok := ov[k]; ok {
+			return fmt.Errorf("spec override sets %q, which the plan owns", k)
+		}
+	}
+	if op, ok := ov["operator"].(map[string]any); ok {
+		if _, ok := op["revision"]; ok {
+			return fmt.Errorf("spec override sets operator.revision, which the plan owns (pins.subject)")
+		}
+	}
+	return nil
+}
+
+// override is the item's spec override: its group's, merged under its own, with the variables substituted.
+func (e *Engine) override(n Node, vars map[string]string) (map[string]any, error) {
+	for _, it := range e.items {
+		if it.ID != n.Item {
+			continue
+		}
+		merged := map[string]any{}
+		mergeSpec(merged, e.Plan.Groups[it.Group].Spec)
+		mergeSpec(merged, it.Spec)
+		if len(merged) == 0 {
+			return nil, nil
+		}
+		out, err := substitute(merged, vars)
+		if err != nil {
+			return nil, err
+		}
+		return out.(map[string]any), nil
+	}
+	return nil, nil
+}
+
+// mergeSpec merges src into dst: maps merge key by key, every other value (numbers, strings, lists) replaces, and a
+// null removes the key. src is not modified.
+func mergeSpec(dst, src map[string]any) {
+	for k, v := range src {
+		switch x := v.(type) {
+		case nil:
+			delete(dst, k)
+		case map[string]any:
+			d, ok := dst[k].(map[string]any)
+			if !ok {
+				d = map[string]any{}
+				dst[k] = d
+			}
+			mergeSpec(d, x)
+		default:
+			dst[k] = v
+		}
+	}
+}
+
 func readFileTree(path string) (map[string]any, error) {
 	var tree map[string]any
 	if err := readJSONFile(path, &tree); err != nil {
@@ -140,17 +207,22 @@ func (e *Engine) dryRender(validate func([]byte) error) error {
 		return err
 	}
 	for _, n := range nodes {
-		if seen[n.Arm] {
+		if n.Rep != 1 {
 			continue
 		}
-		seen[n.Arm] = true
-		b, _, err := e.Render(n, 1, e.placeholderArtifacts(n.Arm))
+		b, name, err := e.Render(n, 1, e.placeholderArtifacts(n.Arm))
 		if err != nil {
 			return err
 		}
+		// Every item is validated (an override can break one item's spec), but one spec per distinct content.
+		key := strings.ReplaceAll(string(b), name, "")
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		if validate != nil {
 			if err := validate(b); err != nil {
-				return fmt.Errorf("arm %s: spec: %w", n.Arm, err)
+				return fmt.Errorf("arm %s, item %s: spec: %w", n.Arm, n.Item, err)
 			}
 		}
 	}
