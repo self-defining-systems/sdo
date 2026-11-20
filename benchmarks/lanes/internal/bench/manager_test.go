@@ -121,8 +121,8 @@ hook_command: {test: "` + hook + `"}
 	}
 	head, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
 	must(t, err)
-	l.hooked = "{hooks: test, revision: " + strings.TrimSpace(string(head)) + ", baseline: base}"
-	rev := strings.TrimSuffix(strings.TrimPrefix(l.hooked, "{hooks: test, revision: "), ", baseline: base}")
+	l.hooked = "{hooks: test, revision: " + strings.TrimSpace(string(head)) + ", baseline: base, settings: {startup_bound: 0s}}"
+	rev := strings.TrimSuffix(strings.TrimPrefix(l.hooked, "{hooks: test, revision: "), ", baseline: base, settings: {startup_bound: 0s}}")
 	must(t, os.WriteFile(l.root.path("hosts.yaml"), []byte(strings.Replace(inv, "HEAD", rev, 1)), 0o644))
 	l.m = &Manager{Root: l.root, Poll: 50 * time.Millisecond, Bin: benchBin}
 	// Before the temporary directories go: let the lane's last step (a release) finish.
