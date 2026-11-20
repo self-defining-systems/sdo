@@ -122,7 +122,15 @@ type Entry struct {
 	Baseline string
 	// Presence returns every series of the metric (zero or not).
 	Presence string
+	// Background marks a service only background work enters (job workers,
+	// schedules): no user calls it. Its findings carry Metadata["background"]
+	// so the controller treats them as clues, never as failing user traffic.
+	Background bool
 }
+
+// MetaBackground is the finding metadata key set on findings of an entry only
+// background work enters.
+const MetaBackground = "background"
 
 // Operation is one user operation the detector watches.
 type Operation struct {
@@ -738,6 +746,9 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 	}
 	for k, v := range meta {
 		f.Metadata[k] = v
+	}
+	if plan.Background {
+		f.Metadata[MetaBackground] = true
 	}
 	return f, true
 }

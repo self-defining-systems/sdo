@@ -37,7 +37,8 @@ type openers struct {
 //
 //   - failing real user traffic: a request-metrics error finding of a declared
 //     operation or an undeclared route, unless shadow mode is on
-//     (detection.request_metrics_shadow), where it is a clue. A
+//     (detection.request_metrics_shadow), where it is a clue. Failing
+//     background jobs (an entry only internal operations enter) are clues. A
 //     not-instrumented note is always a clue.
 //
 // Every other finding (drift, wiring, events, saturation, links, store state,
@@ -56,6 +57,9 @@ func (c *Controller) opens(finding sdk.Finding) bool {
 // isUserTraffic is the real-traffic half of opens: the request-metrics error
 // rule, keyed by operation or route through the finding fingerprint.
 func (c *Controller) isUserTraffic(finding sdk.Finding) bool {
+	if finding.Metadata[requestmetrics.MetaBackground] == true {
+		return false // background jobs are not users: a clue
+	}
 	return c.config.RequestMetricsOpens && finding.DetectorID == memory.RequestMetricsDetectorID && finding.RuleID == requestmetrics.RuleErrors
 }
 
