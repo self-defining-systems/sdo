@@ -74,8 +74,8 @@ signs, once per manager tick and per host.
   and a dead step still gets its recover step. Nothing is killed, torn down or reset.
 - **Alarm.** `host-unhealthy` in `alarms.jsonl` (shown by `lanes status`) once when the host turns unhealthy, and a line
   in `bench.log` when it recovers. `lanes status` shows the reason on the host's line.
-- **State** is in the manager's memory. A restarted manager starts healthy with no hung-task baseline; the first bad
-  probe stops the host again.
+- **State** (reason, probe counters, hung-task baseline) is kept in `<root>/hosthealth.json`, so a restarted manager
+  neither forgets an unhealthy host nor takes hung tasks that appeared while it was down for old ones.
 
 `hosts.yaml`, all optional:
 
