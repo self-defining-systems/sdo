@@ -217,6 +217,8 @@ type flab struct {
 	hosts  []string
 	extra  map[string]string // host -> extra inventory fields
 	clusts map[string][]string
+	// moreFz adds fuzzops checkouts to hosts.yaml (", 0000000: {h1: /x}"); specExtra adds lines to every spec.
+	moreFz, specExtra string
 }
 
 var t0 = time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC)
@@ -262,7 +264,7 @@ func (l *flab) writeInventory() {
 	for _, h := range l.hosts {
 		hk = append(hk, h+": "+l.dir)
 	}
-	inv := "hosts:\n" + hs.String() + "checkouts:\n  fuzzops: {0b528ac: {" + strings.Join(fz, ", ") + "}}\n  hooks:\n    test: {abcdef0: {" + strings.Join(hk, ", ") + "}}\nhook_command: {test: \"true\"}\n"
+	inv := "hosts:\n" + hs.String() + "checkouts:\n  fuzzops: {0b528ac: {" + strings.Join(fz, ", ") + "}" + l.moreFz + "}\n  hooks:\n    test: {abcdef0: {" + strings.Join(hk, ", ") + "}}\nhook_command: {test: \"true\"}\n"
 	must(l.t, os.WriteFile(l.root.path("hosts.yaml"), []byte(inv), 0o644))
 }
 
@@ -292,7 +294,7 @@ lanes: %d
 hosts: [%s]
 retries: %d
 pause_after_wave: false
-`, name, ids, len(l.hosts)*2, strings.Join(hosts, ", "), retries)
+%s`, name, ids, len(l.hosts)*2, strings.Join(hosts, ", "), retries, l.specExtra)
 	p := filepath.Join(l.specs, name+".yaml")
 	must(l.t, os.WriteFile(p, []byte(spec), 0o644))
 	return Add(context.Background(), l.root, p, os.Stderr)
@@ -364,7 +366,11 @@ func (l *flab) buildOK(lane string) {
 	if s == nil {
 		l.t.Fatalf("no build step on %s", lane)
 	}
-	l.w.finish(s.ID, Result{OK: true, Prepared: &Prepared{Experiment: s.Experiment, Namespace: "app1", Ready: true}})
+	p := &Prepared{Experiment: s.Experiment, Namespace: "app1", Ready: true, FuzzopsRev: "0b528ac"}
+	if s.New != nil { // what the step was given, as the real step returns it
+		p.Workload, p.FuzzopsRev = s.New.Workload, s.New.FuzzopsRev
+	}
+	l.w.finish(s.ID, Result{OK: true, Prepared: p})
 }
 
 // to runs passes until the step of kind on lane exists, failing the test when it never starts.

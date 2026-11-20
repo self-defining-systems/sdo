@@ -59,7 +59,7 @@ func releases(started []Step) int {
 func TestChurnBudgetCoversReleasesAndResets(t *testing.T) {
 	var started []Step
 	m := churnManager(t, 1, &started)
-	prepared := &Prepared{Experiment: "x", Hooks: "hk"}
+	prepared := &Prepared{Experiment: "x", Hooks: "hk", FuzzopsRev: "abc"}
 	writeLane(t, m, LaneFile{Lane: "c1", Host: "h1", State: LaneBuilding, Step: &StepRef{ID: "build-1", Kind: StepBuild}})
 	writeLane(t, m, LaneFile{Lane: "c2", Host: "h1", State: LaneFree, Prepared: prepared})
 	writeLane(t, m, LaneFile{Lane: "c3", Host: "h1", State: LaneFree, Prepared: prepared})
@@ -85,7 +85,7 @@ func TestChurnBudgetCoversReleasesAndResets(t *testing.T) {
 func TestChurnBudgetOfTwoAllowsTwo(t *testing.T) {
 	var started []Step
 	m := churnManager(t, 2, &started)
-	prepared := &Prepared{Experiment: "x", Hooks: "hk"}
+	prepared := &Prepared{Experiment: "x", Hooks: "hk", FuzzopsRev: "abc"}
 	for _, l := range []string{"c1", "c2", "c3"} {
 		writeLane(t, m, LaneFile{Lane: l, Host: "h1", State: LaneFree, Prepared: prepared})
 	}
