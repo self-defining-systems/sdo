@@ -34,6 +34,8 @@ type Manager struct {
 	// RootPointer, when set, is the file Serve records the root in (PointerPath), so
 	// `fuzzops view` finds it with no flag.
 	RootPointer string
+	// Now is the manager's clock (default the wall clock); tests set a fake one.
+	Now func() time.Time
 
 	inv Inventory
 	// invGood: inv is an inventory that loaded; invErr: why hosts.yaml was refused since (used instead of it).
@@ -89,6 +91,13 @@ func (m *Manager) Serve(ctx context.Context) error {
 	}
 }
 
+func (m *Manager) now() time.Time {
+	if m.Now != nil {
+		return m.Now()
+	}
+	return time.Now()
+}
+
 func (m *Manager) logf(f string, a ...any) {
 	line := fmt.Sprintf("%s %s\n", time.Now().UTC().Format(time.RFC3339), fmt.Sprintf(f, a...))
 	if m.Log != nil {
@@ -141,7 +150,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 		}
 		sort.Strings(fz)
 		pr, err := m.ops(name).Probe(ctx, steps, fz)
-		st := HostStatus{At: time.Now().UTC(), Load5: pr.Load5, Free: pr.Free, Inflight: pr.Inflight}
+		st := HostStatus{At: m.now().UTC(), Load5: pr.Load5, Free: pr.Free, Inflight: pr.Inflight}
 		if err != nil {
 			st.Error = err.Error()
 			m.hosts[name] = st
@@ -265,7 +274,7 @@ func (m *Manager) loadInventory() error {
 		m.logf("hosts.yaml refused, the last inventory that loaded is used until it is fixed: %v", err)
 	}
 	m.invErr = err.Error()
-	return writeFile(errPath, []byte(time.Now().UTC().Format(time.RFC3339)+" "+m.invErr+"\n"))
+	return writeFile(errPath, []byte(m.now().UTC().Format(time.RFC3339)+" "+m.invErr+"\n"))
 }
 
 func (m *Manager) load() error {
@@ -286,7 +295,7 @@ func (m *Manager) load() error {
 	for _, ln := range m.inv.Lanes() {
 		// A lane the bench has not seen yet, on a host that makes its clusters: its first build makes it
 		// (kind-lane.sh up is idempotent, and refuses a cluster made without the evidence mount).
-		l := &LaneFile{Lane: ln.Cluster, Host: ln.Host, State: LaneFree, Since: time.Now().UTC()}
+		l := &LaneFile{Lane: ln.Cluster, Host: ln.Host, State: LaneFree, Since: m.now().UTC()}
 		switch err := readJSON(m.Root.LanePath(ln.Cluster), l); {
 		case errors.Is(err, os.ErrNotExist):
 			l.Gone = m.inv.Hosts[ln.Host].ClusterUp != ""
@@ -342,7 +351,7 @@ const maxAutoResets = 2
 // resetDown returns lanes that went down to use without a human: recreated (a lane-specific cause lives in its
 // cluster or its record), at most maxAutoResets times in a row; then the lane is retired and the reason logged.
 func (m *Manager) resetDown() {
-	now := time.Now().UTC()
+	now := m.now().UTC()
 	for _, l := range m.sortedLanes() {
 		if l.State != LaneDown || l.Step != nil || now.Sub(l.Since) < downRetryAfter {
 			continue
@@ -373,7 +382,7 @@ func (m *Manager) setState(l *LaneFile, state, reason string) {
 	if l.State != state || l.Reason != reason {
 		m.logf("lane %s: %s -> %s %s", l.Lane, l.State, state, reason)
 	}
-	l.State, l.Reason, l.Since = state, reason, time.Now().UTC()
+	l.State, l.Reason, l.Since = state, reason, m.now().UTC()
 }
 
 // unbind frees the lane from its sequence (its operator stays until the next build or release).
@@ -441,7 +450,7 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 		// probe decides. A step that never ran shows as dead and is followed by a recover step.
 		m.logf("lane %s: start %s: %v (the probe decides whether it runs)", l.Lane, s.ID, err)
 	}
-	l.Step = &StepRef{ID: s.ID, Kind: s.Kind, Started: time.Now().UTC(), Run: s.Run}
+	l.Step = &StepRef{ID: s.ID, Kind: s.Kind, Started: m.now().UTC(), Run: s.Run}
 	if s.Run != nil {
 		l.Step.RunID = s.Run.ID
 	}
@@ -500,7 +509,7 @@ func (m *Manager) unhold(ctx context.Context, l *LaneFile) {
 	if l.State != LaneHeld || l.Step != nil || evidenceProblems(l.HeldRun) != "" {
 		return
 	}
-	if time.Since(l.Since) < time.Minute && strings.HasPrefix(l.Reason, "unhold failed") {
+	if m.now().Sub(l.Since) < time.Minute && strings.HasPrefix(l.Reason, "unhold failed") {
 		return
 	}
 	if l.Prepared != nil && l.Prepared.Hooks != "" {
@@ -661,17 +670,17 @@ func (m *Manager) claimWaitExceeded(x *Experiment, s Spec) bool {
 	}
 	since, ok := m.claimSince[x.Name]
 	if !ok {
-		m.claimSince[x.Name] = time.Now()
+		m.claimSince[x.Name] = m.now()
 		return false
 	}
-	waited := time.Since(since)
+	waited := m.now().Sub(since)
 	if waited < s.ClaimWaitBound() {
 		return false
 	}
 	delete(m.claimSince, x.Name)
 	msg := fmt.Sprintf("claim wait exceeded: %s waited %s for a lane of pool %s (bound %s); resume it once the pool has lanes", x.Name, waited.Round(time.Second), s.Claim, s.ClaimWaitBound())
 	m.logf("%s", msg)
-	if err := writeFile(m.Root.PausedPath(x.Name), []byte("paused "+time.Now().UTC().Format(time.RFC3339)+": "+msg+"\n")); err != nil {
+	if err := writeFile(m.Root.PausedPath(x.Name), []byte("paused "+m.now().UTC().Format(time.RFC3339)+": "+msg+"\n")); err != nil {
 		m.logf("%s: pause: %v", x.Name, err)
 	}
 	x.Paused = true
@@ -701,7 +710,7 @@ func (m *Manager) explainIdle(waiting map[string]string, reachable map[string]bo
 		names = append(names, n)
 	}
 	sort.Strings(names)
-	now := time.Now().UTC()
+	now := m.now().UTC()
 	for _, l := range m.sortedLanes() {
 		if l.State != LaneFree || l.Step != nil || len(names) == 0 {
 			l.Idle, l.IdleLogged = "", time.Time{}
@@ -896,7 +905,7 @@ func (m *Manager) wave(x *Experiment) []Seq {
 	if len(next) == 0 {
 		return nil
 	}
-	waves = append(waves, Wave{Seqs: next, Started: time.Now().UTC()})
+	waves = append(waves, Wave{Seqs: next, Started: m.now().UTC()})
 	if err := writeJSON(m.Root.WavesPath(x.Name), waves); err != nil {
 		m.logf("%s: waves: %v", x.Name, err)
 		return nil
@@ -984,7 +993,7 @@ func (m *Manager) adopt(ctx context.Context, l *LaneFile) error {
 	if res.Transcripts != "" {
 		l.Transcripts = res.Transcripts
 		m.logf("lane %s: transcripts missing after teardown: %s", l.Lane, res.Transcripts)
-		_ = appendJSONL(m.Root.path("transcripts.jsonl"), map[string]any{"lane": l.Lane, "host": l.Host, "step": ref.ID, "at": time.Now().UTC(), "check": res.Transcripts})
+		_ = appendJSONL(m.Root.path("transcripts.jsonl"), map[string]any{"lane": l.Lane, "host": l.Host, "step": ref.ID, "at": m.now().UTC(), "check": res.Transcripts})
 	}
 	switch ref.Kind {
 	case StepBuild:
@@ -998,13 +1007,13 @@ func (m *Manager) adopt(ctx context.Context, l *LaneFile) error {
 				// A claimant that paid a whole build (no pool lane, or one whose cluster was gone): counted in status.
 				m.logf("lane %s: claimant %s runs on a fresh build (an app copy, not a pool lane)", l.Lane, x.Name)
 				_ = appendJSONL(m.Root.path(freshBuildsFile), map[string]any{"experiment": x.Name, "pool": x.Measured().Claim,
-					"lane": l.Lane, "host": l.Host, "step": ref.ID, "at": time.Now().UTC()})
+					"lane": l.Lane, "host": l.Host, "step": ref.ID, "at": m.now().UTC()})
 			}
 		case res.Recycle != "":
 			// Not claimable (nothing was swapped): counted and logged, not a build failure of the lane; the release
 			// returns it by reset, else rebuilds it.
 			m.logf("lane %s: pool lane recycled, not claimed: %s", l.Lane, res.Recycle)
-			_ = appendJSONL(m.Root.path("recycled.jsonl"), map[string]any{"lane": l.Lane, "host": l.Host, "pool": res.Prepared.Experiment, "at": time.Now().UTC(), "why": res.Recycle})
+			_ = appendJSONL(m.Root.path("recycled.jsonl"), map[string]any{"lane": l.Lane, "host": l.Host, "pool": res.Prepared.Experiment, "at": m.now().UTC(), "why": res.Recycle})
 			m.unbind(l, "pool lane recycled: "+res.Recycle)
 		default:
 			l.BuildFailures++
@@ -1133,7 +1142,7 @@ func (m *Manager) endRun(x *Experiment, l *LaneFile, rs *RunSpec, res Result) {
 		}
 		status, reason = StatusInvalid, "sequence broken: not ready: "+res.Reason
 	}
-	now := time.Now().UTC()
+	now := m.now().UTC()
 	rf := RunFile{ID: rs.ID, Experiment: x.Name, Fault: rs.Fault, Sequence: l.Seq.Q, Position: rs.Position, Seed: rs.Seed,
 		Attempt: l.Attempt, Status: status, Reason: reason, Lane: l.Lane, Host: l.Host, OperatorLabel: rs.Label, Fuzzops: res.Fuzzops,
 		Started: res.Started, Ended: res.Ended, InjectAt: res.InjectAt, SettleEnd: res.SettleEnd, Capped: res.Capped, Isolation: res.Isolation}
@@ -1154,7 +1163,7 @@ func (m *Manager) breakRest(x *Experiment, l *LaneFile, rs *RunSpec, why string)
 	if rs == nil || l.Seq == nil {
 		return
 	}
-	s, now := x.Measured(), time.Now().UTC()
+	s, now := x.Measured(), m.now().UTC()
 	seeds := s.Seeds(l.Seq.Q)
 	for pos := rs.Position + 1; pos <= len(seeds); pos++ {
 		m.writeRun(x, RunFile{ID: RunID(rs.Fault, l.Seq.Q, pos, l.Attempt), Experiment: x.Name, Fault: rs.Fault, Sequence: l.Seq.Q,
