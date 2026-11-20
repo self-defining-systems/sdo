@@ -7,10 +7,11 @@ spec that names this adapter behaves as a spec that names none, except on a lane
 ``app-up images`` and ``app-up up``
     The packs load their images into a kind node (``kind load docker-image``). An EKS lane has no kind node: this
     adapter puts a ``kind`` command first on the PATH of those calls (a pack's ``up`` runs its ``images`` again)
-    that publishes the images to the lane's ECR mirror under the names the manifests declare (``benchmarks.lanes.eks.publish_app_image``; nodes try the mirror
-    first and fall back to the upstream). Its ``get nodes`` lists one node, ``MIRROR_NODE``, and a ``docker`` command
-    next to it answers ``docker exec MIRROR_NODE ...`` (exit 0, no output) and passes every other call to the real
-    docker, so a pack that checks and fills nodes through ``ensure-images.sh`` publishes and finishes.
+    that publishes the images to the lane's ECR mirror under the names the manifests declare
+    (``benchmarks.lanes.eks.publish_app_image``; nodes try the mirror first and fall back to the upstream). Its
+    ``get nodes`` lists one node, ``MIRROR_NODE``, and a ``docker`` command next to it answers
+    ``docker exec MIRROR_NODE ...`` (exit 0, no output) and passes every other call to the real docker, so a pack
+    that checks and fills nodes through ``ensure-images.sh`` publishes and finishes.
 ``run``
     The same shim, and ``FUZZOPS_IMAGE_PUBLISH`` naming it: a fault that builds a patched image (fuzzops
     ``build-and-deploy-patched-image``, which says ``ImageMirror``) publishes it to the mirror instead of loading it
