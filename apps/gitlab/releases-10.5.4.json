@@ -1,0 +1,85 @@
+{
+  "chart": "gitlab",
+  "line": "10.5+",
+  "repository": "https://charts.gitlab.io",
+  "derivation": "Each release was rendered with helm template through the fuzzops GitLab pack (its umbrella chart and values-fuzzops.yaml) and compared with the release before it: distinct image references of the workloads, workload names, object count, keys of the upstream chart's values.yaml, presence of values.schema.json. Digests and dates are the chart repository index's.",
+  "releases": [
+    {
+      "version": "10.5.4",
+      "app_version": "v19.5.3",
+      "created": "2026-10-29T13:35:27.941631603Z",
+      "url": "https://gitlab-charts.s3.amazonaws.com/gitlab-10.5.4.tgz",
+      "sha256": "aabc14c99bfc5829a54ecefdc99b2c2f16257e892fddf6425929dfd69375c62c",
+      "baseline": true,
+      "note": "Series baseline: 40 rendered objects through the fuzzops GitLab pack."
+    },
+    {
+      "version": "10.5.5",
+      "app_version": "v19.5.4",
+      "created": "2026-11-10T19:12:26.742266084Z",
+      "url": "https://gitlab-charts.s3.amazonaws.com/gitlab-10.5.5.tgz",
+      "sha256": "94f803d12e24483f7a8a27cbd57eb17891ecefaf3c019de567520d860c10b3d1",
+      "changes": {
+        "images_changed": 7,
+        "values_keys_added": 0,
+        "values_keys_removed": 0,
+        "values_schema": false,
+        "workloads_added": [],
+        "workloads_removed": [],
+        "objects": 40
+      },
+      "note": "Patch release, app v19.5.3 -> v19.5.4: 7 image references change, 0 values keys added, 0 removed."
+    },
+    {
+      "version": "10.5.7",
+      "app_version": "v19.5.6",
+      "created": "2026-11-17T00:04:24.36601196Z",
+      "url": "https://gitlab-charts.s3.amazonaws.com/gitlab-10.5.7.tgz",
+      "sha256": "07c6fdc357704fcdbbd682b6e3546c78a9dcdfe0de00996bc01a426850bda069",
+      "changes": {
+        "images_changed": 7,
+        "values_keys_added": 0,
+        "values_keys_removed": 0,
+        "values_schema": false,
+        "workloads_added": [],
+        "workloads_removed": [],
+        "objects": 40
+      },
+      "note": "Patch release, app v19.5.4 -> v19.5.6: 7 image references change, 0 values keys added, 0 removed."
+    },
+    {
+      "version": "10.6.0",
+      "app_version": "v19.6.0",
+      "created": "2026-11-19T13:43:18.708741211Z",
+      "url": "https://gitlab-charts.s3.amazonaws.com/gitlab-10.6.0.tgz",
+      "sha256": "fd6eb91d0646ddc2c0dab3c3f93e070a6772f4092f51ae5b65a75d45f7285f1d",
+      "changes": {
+        "images_changed": 8,
+        "values_keys_added": 17,
+        "values_keys_removed": 1,
+        "values_schema": false,
+        "workloads_added": [],
+        "workloads_removed": [],
+        "objects": 40
+      },
+      "note": "Minor release, app v19.5.6 -> v19.6.0: 8 image references change, 17 values keys added, 1 removed."
+    },
+    {
+      "version": "10.6.1",
+      "app_version": "v19.6.1",
+      "created": "2026-11-20T06:12:58.126206112Z",
+      "url": "https://gitlab-charts.s3.amazonaws.com/gitlab-10.6.1.tgz",
+      "sha256": "aa3647b697372ee16760a2750f38b8a21a7b6c5e50e04bf838c698e94c4f2849",
+      "changes": {
+        "images_changed": 6,
+        "values_keys_added": 2,
+        "values_keys_removed": 0,
+        "values_schema": false,
+        "workloads_added": [],
+        "workloads_removed": [],
+        "objects": 40
+      },
+      "note": "Patch release, app v19.6.0 -> v19.6.1: 6 image references change, 2 values keys added, 0 removed."
+    }
+  ]
+}

@@ -134,6 +134,14 @@ path = "benchmarks.common.replay"
 depends_on = []
 
 [[modules]]
+path = "benchmarks.commit_series"
+depends_on = [
+    "benchmarks.common.replay",
+    "benchmarks.fuzzops",
+    "benchmarks.sregym.fastloop",
+]
+
+[[modules]]
 path = "benchmarks.devswap"
 depends_on = []
 

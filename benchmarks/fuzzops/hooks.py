@@ -54,6 +54,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -341,6 +342,57 @@ DEV_DIRECTORY = ".dev"
 
 # ---- operator block and lane environment ---------------------------------------------------------------------
 
+SOURCE_BRANCH_RECORD = "source-branch.json"
+
+
+@dataclass(frozen=True)
+class SourceBranch:
+    """``settings.source_branch``: SDO deploys from a remote branch that engineers (a benchmark's replayer) push to.
+
+    ``up`` creates the remote before SDO is installed and prints one JSON line with its ``url`` and ``ref``; ``down``
+    removes it at teardown. Both are shell commands of the benchmark with ``{kubeconfig}``, ``{namespace}``,
+    ``{control}``, ``{ref}``, ``{image}`` (the controller image) and ``{repository}`` (the accepted repository)
+    filled in. The hooks know nothing else of the remote: they pass its URL and branch to SDO and keep the line as
+    ``$BENCH_LANE_DIR/source-branch.json`` for the workload that pushes.
+    """
+
+    ref: str
+    up: str
+    down: str
+
+    def __post_init__(self) -> None:
+        if not self.ref or not self.up or not self.down:
+            raise ValueError("settings.source_branch needs ref, up and down")
+        if self.ref in ("main", "master"):
+            raise ValueError("settings.source_branch.ref must not be main or master")
+
+    @classmethod
+    def from_settings(cls, raw: Any) -> SourceBranch | None:
+        if raw is None:
+            return None
+        if not isinstance(raw, dict):
+            raise ValueError("settings.source_branch must be an object")
+        return cls(str(raw.get("ref") or ""), str(raw.get("up") or ""), str(raw.get("down") or ""))
+
+    def command(self, which: str, values: Mapping[str, str]) -> str:
+        quoted = {k: shlex.quote(v) for k, v in {**values, "ref": self.ref}.items()}
+        return re.sub(
+            r"\{(\w+)\}", lambda m: quoted.get(m.group(1), m.group(0)), {"up": self.up, "down": self.down}[which]
+        )
+
+
+def source_branch_up(branch: SourceBranch, values: Mapping[str, str], lane_dir: Path) -> tuple[str, str]:
+    """Run ``up``; keep its line as the lane's source-branch record; return the (url, ref) SDO is given."""
+    proc = _run(["sh", "-c", branch.command("up", values)], "source branch up", 600)
+    lines = [line for line in proc.stdout.splitlines() if line.strip()]
+    try:
+        info = json.loads(lines[-1])
+        url, ref = str(info["url"]), str(info["ref"])
+    except (IndexError, ValueError, KeyError) as exc:
+        raise HookError(f"source branch up printed no JSON line with url and ref: {proc.stdout[-200:]!r}") from exc
+    (lane_dir / SOURCE_BRANCH_RECORD).write_text(lines[-1] + "\n")
+    return url, ref
+
 
 @dataclass(frozen=True)
 class OperatorBlock:
@@ -364,6 +416,8 @@ class OperatorBlock:
     #: ``BENCH_OPERATOR.seed``: a baseline-format directory (a learned memory) that ``swap`` imports into the lane's
     #: accepted repository, on top of the pool's own baseline. Not part of what a pool claim must match.
     seed: Path | None = None
+    #: ``settings.source_branch``: the remote branch SDO deploys from and a replayer pushes to (see ``SourceBranch``).
+    source_branch: SourceBranch | None = None
 
     def __post_init__(self) -> None:
         if not self.revision:
@@ -411,6 +465,7 @@ class OperatorBlock:
                 harness_page=page.PageConfig.from_settings(settings.get("harness_page")),
                 dev_mount=bool(settings.get("dev_mount")),
                 seed=Path(str(raw["seed"])) if raw.get("seed") else None,
+                source_branch=SourceBranch.from_settings(settings.get("source_branch")),
             )
         except (TypeError, ValueError) as exc:
             raise HookError(f"BENCH_OPERATOR: {exc}") from exc
@@ -769,10 +824,12 @@ def install_existing_launch(
     evidence_env: Mapping[str, str],
     config_dir: Path,
     image: Mapping[str, str] | None = None,
+    source_branch: tuple[str, str] | None = None,
 ) -> tuple[list[str], dict[str, str]]:
     """The production ``sdo-operator install-existing`` command restoring the baseline on the lane and its
     ``SDO_*`` environment: the benchmark profile, then the baseline's and the experiment's overlays (written to
-    ``config_dir``), the settings' agent and the lane's evidence sink (``sink.install_env``)."""
+    ``config_dir``), the settings' agent and the lane's evidence sink (``sink.install_env``). ``source_branch`` is the
+    (URL, branch) of the remote SDO deploys from, when the experiment has one."""
     if not (
         evidence_env.get("SDO_EVIDENCE_HOST_PATH") or evidence_env.get("SDO_EVIDENCE_VOLUME")
     ) or not evidence_env.get("SDO_EVIDENCE_RUN_ID"):
@@ -804,6 +861,8 @@ def install_existing_launch(
         "--kubeconfig",
         str(kubeconfig),
     ]
+    if source_branch is not None:
+        args += ["--source-branch-url", source_branch[0], "--source-branch", source_branch[1]]
     files = [config.BENCH_PROFILE]
     config_dir.mkdir(parents=True, exist_ok=True)
     for name, overlay in (("baseline", baseline.config), ("experiment", block.effective_config())):
@@ -1059,6 +1118,13 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     # the memory's own render (instrumentation) is what must be running when the operator adopts the app
     if apply_memory_render(_kube(env), namespace, lane_dir / "app", reference, out):
         out("memory render applied")
+    # (g2) the remote branch SDO deploys from, when the experiment pushes engineers' commits to one
+    branch_url: tuple[str, str] | None = None
+    if block.source_branch is not None:
+        values = source_branch_values(kubeconfig, namespace, baseline.control, image["controller"], lane_dir / "app")
+        _run(["sh", "-c", block.source_branch.command("down", values)], "source branch down", 300)
+        branch_url = source_branch_up(block.source_branch, values, lane_dir)
+        out(f"source branch {branch_url[1]} at {branch_url[0]}")
     # (h) production restore: install-existing, history kept, no install-time agents
     args, launch_env = install_existing_launch(
         binary.resolve(),
@@ -1069,6 +1135,7 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
         {**evidence_env, **dev_env, **volume_env},
         lane_dir / "sdo-config",
         image,
+        branch_url,
     )
     (lane_dir / "install-existing-args.json").write_text(json.dumps(args, indent=1) + "\n")
     (lane_dir / "install-existing-env.json").write_text(json.dumps(launch_env, indent=1, sort_keys=True) + "\n")
@@ -1615,8 +1682,27 @@ def validate(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int
     return 0
 
 
+def source_branch_values(
+    kubeconfig: Path, namespace: str, control: str, image: str, repository: Path
+) -> dict[str, str]:
+    return {
+        "kubeconfig": str(kubeconfig),
+        "namespace": namespace,
+        "control": control,
+        "image": image,
+        "repository": str(repository),
+    }
+
+
 def teardown(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     remove_operator(_kube(env), control_namespace(env), out, env)
+    block = _operator(env)
+    if block.source_branch is not None:
+        values = source_branch_values(
+            Path(env["KUBECONFIG"]), _need(env, "FUZZOPS_NAMESPACE"), control_namespace(env), "", Path(".")
+        )
+        _run(["sh", "-c", block.source_branch.command("down", values)], "source branch down", 300)
+        out("source branch removed")
     return 0
 
 

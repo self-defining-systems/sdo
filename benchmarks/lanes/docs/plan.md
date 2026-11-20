@@ -119,3 +119,7 @@ alarms: {factor: 2, idle_lane: 10m, arm_stall: 90m, hook: "notify-send lanes \"$
 
 Replaces the hand-rolled twopass drivers: `driver.py` (chaining pass 2 after a verified pass-1 archive, the `-x<n>` rerun
 suffix), `mkspec.py`, `lanewatch.py` and `poolgate.py` (retry and park policy, stalled-lane detection), `collect.py`/`mkresults.sh` (`plan results --tsv`) and `tick.sh`.
+
+## Commit series
+
+The eval mode where SDO runs through a series of upstream commits is a workload scenario, not part of this platform: see [benchmarks/commit_series](../../commit_series/README.md). The platform only provides the generic pieces it uses (a multi-seed sequence is one lane run in order, and `plan results` has a row per run).
