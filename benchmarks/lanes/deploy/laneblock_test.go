@@ -187,3 +187,52 @@ func TestLaneExecRunsTheCommandInTheLaneCgroup(t *testing.T) {
 		t.Errorf("cpus outside the block: %v\n%s", err, out)
 	}
 }
+
+// A reservation made by hand and adopted has no values saved from before it: adopt records them (unrestricted, or the
+// given --prev), so reserve after adopt succeeds and unreserve puts them back.
+func TestBlockReserveAfterAdoptNeverNeedsAPrevFile(t *testing.T) {
+	b := blockSetup(t)
+	b.must("block", "adopt", "--cpus", "40-55")
+	b.must("block", "reserve", "--cpus", "40-55", "--memory", "8G")
+	b.must("block", "unreserve")
+	for _, s := range []string{"user.slice", "system.slice", "machine.slice"} {
+		if got := b.slice(s); got != "" {
+			t.Errorf("%s restored to %q, want unrestricted (adopt recorded no earlier value)", s, got)
+		}
+	}
+	b.must("block", "adopt", "--cpus", "40-55", "--prev", "machine.slice=0-3", "--prev", "user.slice=")
+	b.must("block", "reserve", "--cpus", "40-55")
+	b.must("block", "unreserve")
+	if got := b.slice("machine.slice"); got != "0-3" {
+		t.Errorf("machine.slice restored to %q, want the --prev 0-3", got)
+	}
+	if out, err := b.do("block", "adopt", "--cpus", "40-55", "--prev", "bogus.slice=1"); err == nil {
+		t.Errorf("a --prev for a slice the helper does not manage must fail: %s", out)
+	}
+}
+
+// systemd keeps AllowedCPUs across a reboot, so the values to restore live in /var/lib (persistent), not under /run.
+func TestBlockStateSurvivesAWipeOfRunAndMigratesFromIt(t *testing.T) {
+	b := blockSetup(t)
+	b.must("block", "reserve", "--cpus", "40-55")
+	if _, err := os.Stat(filepath.Join(b.state, "block")); err == nil {
+		t.Error("the block is recorded under the volatile state directory")
+	}
+	os.RemoveAll(b.state) // a reboot
+	if st := b.must("block", "status"); !strings.Contains(st, "block 40-55") {
+		t.Fatalf("the block was lost with /run:\n%s", st)
+	}
+	b.must("block", "unreserve")
+	if got := b.slice("machine.slice"); got != "0-3" {
+		t.Errorf("machine.slice not restored after the wipe: %q", got)
+	}
+	// a block an older helper recorded under /run is moved
+	os.MkdirAll(b.state, 0o755)
+	os.WriteFile(filepath.Join(b.state, "block"), []byte("block 40-55\nmemory 0\nadopted 0\nprev machine.slice 0-3\n"), 0o644)
+	if st := b.must("block", "status"); !strings.Contains(st, "block 40-55") {
+		t.Fatalf("legacy block not migrated:\n%s", st)
+	}
+	if _, err := os.Stat(filepath.Join(b.state, "block")); err == nil {
+		t.Error("the legacy file was left behind")
+	}
+}

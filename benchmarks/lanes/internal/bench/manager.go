@@ -752,7 +752,7 @@ func (m *Manager) buildBlock(h string, s Spec, reachable map[string]bool) string
 // or above, or its staging disk is below min_free (floor: garbage is collected first).
 func (m *Manager) freshBlock(h string) (why string, floor bool) {
 	hs := m.inv.Hosts[h]
-	if m.hosts[h].Load5 >= hs.MaxLoad5 {
+	if hs.MaxLoad5 > 0 && m.hosts[h].Load5 >= hs.MaxLoad5 {
 		return fmt.Sprintf("host %s load5 %.0f is at or above max_load5 %.0f", h, m.hosts[h].Load5, hs.MaxLoad5), false
 	}
 	if min := hs.MinFreeBytes(); min > 0 && m.hosts[h].Free > 0 && m.hosts[h].Free < min {

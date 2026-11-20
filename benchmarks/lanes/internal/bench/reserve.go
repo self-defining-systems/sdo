@@ -6,6 +6,7 @@ package bench
 // drifted from the record admits nothing until a human looks.
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -245,7 +247,7 @@ func driftOf(r Reservation, st BlockStatus) string {
 // HostCommand is `lanes host reserve|unreserve|status|adopt|install-helper`.
 func HostCommand(ctx context.Context, root Root, args []string, out, errw io.Writer, helper Helper, run runFn) int {
 	if len(args) == 0 {
-		fmt.Fprintln(errw, "usage: lanes host reserve HOST|all | unreserve HOST [--drain] | status [HOST] | adopt HOST [--cpus LIST] | install-helper HOST")
+		fmt.Fprintln(errw, "usage: lanes host reserve HOST|all | unreserve HOST [--drain] | status [HOST] | adopt HOST [--cpus LIST] [--prev SLICE=LIST]... | install-helper HOST [--sudo-password-file PATH]")
 		return 2
 	}
 	inv, err := LoadInventory(string(root))
@@ -258,6 +260,12 @@ func HostCommand(ctx context.Context, root Root, args []string, out, errw io.Wri
 	fs.SetOutput(errw)
 	drain := fs.Bool("drain", false, "unreserve: proceed although lanes are running")
 	cpus := fs.String("cpus", "", "adopt: the block that exists")
+	var prevs []string
+	fs.Func("prev", "adopt: SLICE=LIST, what that slice's AllowedCPUs was before the hand-made reservation (repeatable; default unrestricted)", func(v string) error {
+		prevs = append(prevs, v)
+		return nil
+	})
+	pwFile := fs.String("sudo-password-file", "", "install-helper: feed sudo -S from this file instead of asking on the terminal (for tools)")
 	var names []string
 	for len(rest) > 0 {
 		if strings.HasPrefix(rest[0], "-") {
@@ -283,11 +291,11 @@ func HostCommand(ctx context.Context, root Root, args []string, out, errw io.Wri
 		case "unreserve":
 			err = unreserveHost(ctx, root, h, *drain, helper, out)
 		case "adopt":
-			err = adoptHost(ctx, root, inv, h, *cpus, helper, out)
+			err = adoptHost(ctx, root, inv, h, *cpus, prevs, helper, out)
 		case "status":
 			err = statusHost(ctx, root, inv, h, helper, run, out)
 		case "install-helper":
-			err = installHelper(ctx, h, run, out)
+			err = installHelper(ctx, inv.Hosts[h], h, *pwFile, out, errw)
 		default:
 			fmt.Fprintf(errw, "unknown host verb %q\n", verb)
 			return 2
@@ -394,7 +402,7 @@ func unreserveHost(ctx context.Context, root Root, host string, drain bool, help
 	return nil
 }
 
-func adoptHost(ctx context.Context, root Root, inv Inventory, host, cpus string, helper Helper, out io.Writer) error {
+func adoptHost(ctx context.Context, root Root, inv Inventory, host, cpus string, prevs []string, helper Helper, out io.Writer) error {
 	if cpus == "" {
 		if r := inv.Hosts[host].Reserve; r != nil {
 			cpus = r.CPUs
@@ -403,7 +411,14 @@ func adoptHost(ctx context.Context, root Root, inv Inventory, host, cpus string,
 	if cpus == "" {
 		return errors.New("adopt needs --cpus LIST (or reserve.cpus in hosts.yaml)")
 	}
-	if o, err := helper(ctx, host, "block", "adopt", "--cpus", cpus); err != nil {
+	args := []string{"block", "adopt", "--cpus", cpus}
+	for _, p := range prevs {
+		if s, _, ok := strings.Cut(p, "="); !ok || s == "" {
+			return fmt.Errorf("--prev %q: want SLICE=LIST (LIST may be empty for unrestricted)", p)
+		}
+		args = append(args, "--prev", p)
+	}
+	if o, err := helper(ctx, host, args...); err != nil {
 		return err
 	} else {
 		fmt.Fprint(out, o)
@@ -490,7 +505,8 @@ var helperFiles = []string{"lane-reserve", "lanes.slice", "eval.slice", "sdo-eva
 // HelperSourceDir is where install-helper reads deploy/host from (a var for tests).
 var HelperSourceDir = filepath.Join("deploy", "host")
 
-// installScript is the one script that asks for sudo: it carries the files itself, so it works over ssh.
+// installScript is the one script that runs as root: it carries the files itself, so it works over ssh. It runs under
+// `sudo bash` (see installHelper), so the sudo inside it only reuses root.
 func installScript(dir, user string, read func(string) ([]byte, error)) (string, error) {
 	var b strings.Builder
 	b.WriteString("set -e\nT=$(mktemp -d); trap 'rm -rf \"$T\"' EXIT\n")
@@ -517,7 +533,10 @@ echo installed ` + HelperPath + `
 	return b.String(), nil
 }
 
-func installHelper(ctx context.Context, host string, run runFn, out io.Writer) error {
+// installHelper runs the install script as root on the host. The script is copied to a temporary file first (never the
+// remote shell's stdin), then run as `sudo bash FILE`: interactively over `ssh -t`, so a human types the password once, or
+// with a password file fed to `sudo -S` on stdin for tools. Nothing is retried; the temporary file is always removed.
+func installHelper(ctx context.Context, h Host, name, pwFile string, out, errw io.Writer) error {
 	user := os.Getenv("USER")
 	if user == "" {
 		user = "$(id -un)"
@@ -526,7 +545,69 @@ func installHelper(ctx context.Context, host string, run runFn, out io.Writer) e
 	if err != nil {
 		return err
 	}
-	o, err := run(ctx, host, script)
-	fmt.Fprint(out, o)
-	return err
+	var pw []byte
+	if pwFile != "" {
+		if pw, err = os.ReadFile(pwFile); err != nil {
+			return err
+		}
+	}
+	sh := sshHost{name: name, h: h}
+	// local: a temp file here; remote: one on the host, written by a plain non-sudo ssh whose stdin is the script.
+	var path string
+	if h.Local {
+		f, err := os.CreateTemp("", "lane-install-*.sh")
+		if err != nil {
+			return err
+		}
+		path = f.Name()
+		_, werr := f.WriteString(script)
+		if cerr := f.Close(); werr == nil {
+			werr = cerr
+		}
+		if werr != nil {
+			return werr
+		}
+	} else {
+		b, err := sh.run(ctx, []byte(script), `f=$(mktemp /tmp/lane-install.XXXXXX) && cat > "$f" && echo "$f"`)
+		if err != nil {
+			return err
+		}
+		if path = strings.TrimSpace(string(b)); path == "" {
+			return errors.New("the host returned no temporary file name")
+		}
+	}
+	defer func() {
+		if h.Local {
+			os.Remove(path)
+		} else {
+			_, _ = sh.run(context.Background(), nil, "rm -f "+shellQuote(path))
+		}
+	}()
+	sudo := "sudo bash " + shellQuote(path)
+	if pwFile != "" {
+		sudo = `sudo -S -p "" bash ` + shellQuote(path)
+	}
+	ictx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	var cmd *exec.Cmd
+	if h.Local {
+		cmd = exec.CommandContext(ictx, "sh", "-c", sudo)
+	} else {
+		f := strings.Fields(sh.sshForRsync())
+		args := append([]string{}, f[1:]...)
+		if pwFile == "" {
+			args = append(args, "-t")
+		}
+		cmd = exec.CommandContext(ictx, f[0], append(args, h.SSH, sudo)...)
+	}
+	if pwFile != "" {
+		cmd.Stdin = bytes.NewReader(pw)
+	} else {
+		cmd.Stdin = os.Stdin
+	}
+	cmd.Stdout, cmd.Stderr = out, errw
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("install on %s: %v", name, err)
+	}
+	return nil
 }

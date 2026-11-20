@@ -308,3 +308,101 @@ func TestInstallScriptOnlyInstallsTheHelperAndItsRule(t *testing.T) {
 		}
 	}
 }
+
+func inventoryWith(t *testing.T, hostBody string) error {
+	t.Helper()
+	dir := t.TempDir()
+	body := "hosts:\n  h1: {local: true, " + hostBody + "staging: " + dir + "/s, max_builds: 1, kubeconfigs: " + dir + "/k, evidence: " + dir + "/e, clusters: [c1]}\n"
+	must(t, os.WriteFile(filepath.Join(dir, "hosts.yaml"), []byte(body), 0o644))
+	_, err := LoadInventory(dir)
+	return err
+}
+
+// Invariant 10: on a reserved host capacity is the reservation and load5 is a report, so max_load5 is optional there.
+func TestMaxLoad5IsOptionalOnlyOnAReservedHost(t *testing.T) {
+	if err := inventoryWith(t, `reserve: {cpus: "8-15"}, `); err != nil {
+		t.Errorf("a reserved host without max_load5 must load: %v", err)
+	}
+	if err := inventoryWith(t, `reserve: {cpus: "8-15"}, max_load5: 0, `); err != nil {
+		t.Errorf("max_load5: 0 on a reserved host must load: %v", err)
+	}
+	if err := inventoryWith(t, ""); err == nil || !strings.Contains(err.Error(), "max_load5") {
+		t.Errorf("a host without a reservation still needs max_load5: %v", err)
+	}
+	if err := inventoryWith(t, `reserve: {cpus: "8-15"}, max_load5: -1, `); err == nil {
+		t.Error("a negative max_load5 is never valid")
+	}
+	m := &Manager{inv: Inventory{Hosts: map[string]Host{"r": {Reserve: &HostReserve{CPUs: "8-15"}}, "g": {MaxLoad5: 10}}},
+		hosts: map[string]HostStatus{"r": {Load5: 500}, "g": {Load5: 500}}}
+	if why, _ := m.freshBlock("r"); why != "" {
+		t.Errorf("load5 gates a host with no max_load5: %s", why)
+	}
+	if why, _ := m.freshBlock("g"); !strings.Contains(why, "max_load5") {
+		t.Errorf("a gated host lost its gate: %q", why)
+	}
+}
+
+func TestAdoptPassesPrevValues(t *testing.T) {
+	root, _ := hostsForReserve(t, `reserve: {cpus: "88-111"}`)
+	f := &fakeHost{block: "88-111", other: "0-87,112-255"}
+	var out, errw bytes.Buffer
+	rc := HostCommand(context.Background(), root, []string{"adopt", "h1", "--prev", "machine.slice=0-3", "--prev", "user.slice="}, &out, &errw, f.helper, nil)
+	if rc != 0 || f.calls[0] != "block adopt --cpus 88-111 --prev machine.slice=0-3 --prev user.slice=" {
+		t.Fatalf("%d %v %s", rc, f.calls, errw.String())
+	}
+	if rc := HostCommand(context.Background(), root, []string{"adopt", "h1", "--prev", "nonsense"}, &out, &errw, f.helper, nil); rc == 0 {
+		t.Error("a --prev without SLICE= must be refused")
+	}
+}
+
+// install-helper over ssh: the script must reach the host without being the remote shell's stdin, and the sudo step must
+// have a tty (ssh -t) or take its password from a file on a channel that is not the script.
+func TestInstallHelperOverSSHHasATtyAndNeverPipesTheScript(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	must(t, os.MkdirAll(bin, 0o755))
+	// fake ssh: `ssh [-t] [-o ..] HOST CMD` runs CMD locally with the fake sudo first on PATH, logging flags and stdin.
+	must(t, os.WriteFile(filepath.Join(dir, "ssh"), []byte(`#!/bin/sh
+tty=no; while [ $# -gt 2 ]; do [ "$1" = -t ] && tty=yes; shift; done
+echo "ssh tty=$tty cmd=$2" >> "$FAKE/log"
+exec sh -c "$2"
+`), 0o755))
+	must(t, os.WriteFile(filepath.Join(bin, "sudo"), []byte(`#!/bin/sh
+echo "sudo $*" >> "$FAKE/log"
+for a in "$@"; do [ "$a" = -S ] && { printf 'stdin=%s\n' "$(cat)" >> "$FAKE/log"; }; done
+for a in "$@"; do f="$a"; done; cp "$f" "$FAKE/script.sh"
+`), 0o755))
+	t.Setenv("FAKE", dir)
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	t.Setenv("FUZZOPS_BENCH_SSH", filepath.Join(dir, "ssh"))
+	old := HelperSourceDir
+	HelperSourceDir = t.TempDir()
+	t.Cleanup(func() { HelperSourceDir = old })
+	for _, f := range helperFiles {
+		must(t, os.WriteFile(filepath.Join(HelperSourceDir, f), []byte("#"+f), 0o644))
+	}
+	h := Host{SSH: "bench@remote"}
+	logOf := func() string { b, _ := os.ReadFile(filepath.Join(dir, "log")); return string(b) }
+
+	var out, errw bytes.Buffer
+	must(t, installHelper(context.Background(), h, "r", "", &out, &errw))
+	log := logOf()
+	if !strings.Contains(log, "ssh tty=yes cmd=sudo bash '/tmp/lane-install.") || !strings.Contains(log, "sudo bash /tmp/lane-install.") {
+		t.Errorf("interactive install must be `ssh -t HOST sudo bash FILE`:\n%s", log)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "script.sh")); !strings.Contains(string(b), "visudo -cf") {
+		t.Errorf("the script did not reach the host's file: %q", b)
+	}
+
+	os.Remove(filepath.Join(dir, "log"))
+	pw := filepath.Join(dir, "pw")
+	must(t, os.WriteFile(pw, []byte("hunter2\n"), 0o600))
+	must(t, installHelper(context.Background(), h, "r", pw, &out, &errw))
+	log = logOf()
+	if !strings.Contains(log, "ssh tty=no cmd=sudo -S -p") || !strings.Contains(log, "stdin=hunter2") {
+		t.Errorf("--sudo-password-file must feed sudo -S on stdin without a tty:\n%s", log)
+	}
+	if strings.Contains(log, "set -e") {
+		t.Errorf("the script itself must not travel on the sudo command's stdin:\n%s", log)
+	}
+}
