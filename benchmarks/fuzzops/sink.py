@@ -105,9 +105,33 @@ def volume_node(nodes: Mapping[str, Any], lane: str) -> str:
     return ready[zlib.crc32(lane.encode()) % len(ready)]
 
 
-def puller_manifest(control: str, name: str) -> dict[str, Any]:
-    """A throwaway pod that mounts the sink claim read-only (restricted pod security compatible)."""
-    return {
+def claim_node(kube_cmd: Callable[..., list[str]], control: str) -> str:
+    """The node of a live pod that mounts the evidence claim ("" when none does).
+
+    A block-device claim (EBS) attaches to one node at a time: a throwaway pod that lands on another node waits for a
+    detach that never comes (Multi-Attach). A node-local claim (kind) pins its pods by itself, so there it changes
+    nothing. Raises ``SinkError`` when the pods cannot be listed."""
+    listed = subprocess.run(
+        kube_cmd("-n", control, "get", "pods", "-o", "json"), capture_output=True, check=False, timeout=60
+    )
+    if listed.returncode != 0:
+        raise SinkError(f"cannot list the pods of {control}: {listed.stderr.decode()[-200:].strip()}")
+    try:
+        items = json.loads(listed.stdout or b"{}").get("items", [])
+    except ValueError:
+        return ""
+    for item in items:
+        spec = item.get("spec", {})
+        if item.get("status", {}).get("phase") in ("Succeeded", "Failed") or not spec.get("nodeName"):
+            continue
+        if any(v.get("persistentVolumeClaim", {}).get("claimName") == EVIDENCE_CLAIM for v in spec.get("volumes", [])):
+            return str(spec["nodeName"])
+    return ""
+
+
+def puller_manifest(control: str, name: str, node: str = "") -> dict[str, Any]:
+    """A throwaway pod that mounts the sink claim read-only (restricted pod security level), on ``node`` if given."""
+    pod: dict[str, Any] = {
         "apiVersion": "v1",
         "kind": "Pod",
         "metadata": {"name": name, "namespace": control},
@@ -131,11 +155,14 @@ def puller_manifest(control: str, name: str) -> dict[str, Any]:
             "volumes": [{"name": "sink", "persistentVolumeClaim": {"claimName": EVIDENCE_CLAIM, "readOnly": True}}],
         },
     }
+    if node:
+        pod["spec"]["nodeName"] = node
+    return pod
 
 
-def pusher_manifest(control: str, name: str) -> dict[str, Any]:
-    """A throwaway pod that mounts the sink claim writable (restricted pod security compatible)."""
-    manifest = puller_manifest(control, name)
+def pusher_manifest(control: str, name: str, node: str = "") -> dict[str, Any]:
+    """A throwaway pod that mounts the sink claim writable (restricted pod security level), on ``node`` if given."""
+    manifest = puller_manifest(control, name, node)
     container = manifest["spec"]["containers"][0]
     manifest["spec"]["securityContext"]["fsGroup"] = PULL_UID  # a block-device claim is root-owned until then
     container["volumeMounts"] = [{"name": "sink", "mountPath": "/sink"}]
@@ -158,7 +185,7 @@ def push_paths(
     try:
         created = subprocess.run(
             kube_cmd("apply", "-f", "-"),
-            input=json.dumps(pusher_manifest(control, name)).encode(),
+            input=json.dumps(pusher_manifest(control, name, claim_node(kube_cmd, control))).encode(),
             capture_output=True,
             check=False,
             timeout=120,
@@ -200,7 +227,7 @@ def pull_run_dir(env: Mapping[str, str], kube_cmd: Callable[..., list[str]], con
     run = _need(env, "BENCH_EVIDENCE_RUN")[0]
     dest = host_run_dir(env)
     name = f"evidence-pull-{os.getpid()}"
-    manifest = json.dumps(puller_manifest(control, name))
+    manifest = json.dumps(puller_manifest(control, name, claim_node(kube_cmd, control)))
 
     def kube(*args: str, **kw: Any) -> subprocess.CompletedProcess[bytes]:
         return subprocess.run(kube_cmd("-n", control, *args), capture_output=True, check=False, **kw)
