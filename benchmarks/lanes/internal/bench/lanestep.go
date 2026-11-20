@@ -35,6 +35,8 @@ type Isolation struct {
 	CPUs     string `json:"cpus,omitempty"`
 	Memory   string `json:"memory,omitempty"`
 	Reserved bool   `json:"reserved"`
+	// Mode is how the host was isolated: two-way, one-way (a block, but other work may use it) or one-way-ok (no reservation).
+	Mode     string `json:"mode,omitempty"`
 	OOMKills int    `json:"oom_kills,omitempty"`
 }
 
@@ -49,6 +51,8 @@ type StepLimits struct {
 	StateShared bool   `json:"state_shared,omitempty"`
 	Reserve     bool   `json:"reserve,omitempty"`    // reserve the range while a measured run is active
 	MemoryMin   string `json:"memory_min,omitempty"` // memory.min of the parent slice while reserved
+	// Block is the host's active lane block: every lane cpuset is a subset of it and every step runs in the lane's cgroup.
+	Block string `json:"block,omitempty"`
 }
 
 // hostMemTotal is the host's RAM in bytes (0: not known).
@@ -142,10 +146,16 @@ func (r *stepRunner) laneEnvLimits(ctx context.Context) (env []string, ok bool) 
 			if waited {
 				r.logf("lane cores: got %s", FormatCPUList(cpus))
 			}
-			r.logf("lane limits: cpus %s, memory %s, parent %s", FormatCPUList(cpus), l.Memory, EvalSlice)
-			r.res.Isolation = &Isolation{CPUs: FormatCPUList(cpus), Memory: l.Memory}
+			if l.Block != "" && !cpusWithin(cpus, l.Block) {
+				_ = a.Release(r.s.Lane)
+				r.config("lane cpus %s are not inside the host's lane block %s: a lane never runs outside the reservation", FormatCPUList(cpus), l.Block)
+				return nil, false
+			}
+			parent := laneParentSlice(r.s)
+			r.logf("lane limits: cpus %s, memory %s, parent %s", FormatCPUList(cpus), l.Memory, parent)
+			r.res.Isolation = &Isolation{CPUs: FormatCPUList(cpus), Memory: l.Memory, Mode: r.s.IsolationMode}
 			return []string{"FUZZOPS_LANE_CPUSET=" + FormatCPUList(cpus), "FUZZOPS_LANE_MEMORY=" + strconv.FormatInt(mem, 10),
-				"FUZZOPS_LANE_SLICE=" + EvalSlice}, true
+				"FUZZOPS_LANE_SLICE=" + parent}, true
 		case errors.Is(err, ErrNeverFits):
 			r.config("lane.cpus %d / lane.memory %s: %v (host lanes.cpus %s)", l.Cores, l.Memory, err, l.CPUs)
 			return nil, false
@@ -226,7 +236,7 @@ func (r *stepRunner) reapplyLimits(ctx context.Context) {
 	cmd := exec.CommandContext(ctx, "sh", "-c", "deploy/lane-limits.sh apply "+shellQuote(r.s.Lane))
 	cmd.Dir = r.s.Fuzzops
 	cmd.Env = append(append(os.Environ(), r.s.HostEnv...), "FUZZOPS_LANE_CPUSET="+FormatCPUList(e.CPUs),
-		"FUZZOPS_LANE_MEMORY="+strconv.FormatInt(e.Memory, 10), "FUZZOPS_LANE_SLICE="+EvalSlice)
+		"FUZZOPS_LANE_MEMORY="+strconv.FormatInt(e.Memory, 10), "FUZZOPS_LANE_SLICE="+laneParentSlice(r.s))
 	cmd.Stdout, cmd.Stderr = r.log, r.log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
@@ -360,11 +370,57 @@ func (r *stepRunner) isolate(ctx context.Context) (finish func()) {
 }
 
 // laneLimits builds the manager's StepLimits for a lane on host h, or nil when the host has no lane limits.
-func laneLimits(h Host, s Spec) *StepLimits {
-	if !h.Lanes.Enabled() || h.IsVcluster() {
+func laneLimits(h Host, s Spec, block string) *StepLimits {
+	if h.IsVcluster() || (!h.Lanes.Enabled() && block == "") {
 		return nil
 	}
 	lim := s.LaneLimit()
+	if block != "" {
+		return &StepLimits{Cores: lim.CPUs, Memory: lim.Memory, MemBudget: firstNonEmpty(h.Reserve.memory(), h.Lanes.Memory), CPUs: block, State: h.Lanes.State, StateShared: h.Lanes.StateShared, Block: block}
+	}
 	// An empty State is resolved by the step on the host, for the user that runs it (the manager may be another account).
 	return &StepLimits{Cores: lim.CPUs, Memory: lim.Memory, MemBudget: h.Lanes.Memory, CPUs: h.Lanes.CPUs, State: h.Lanes.State, StateShared: h.Lanes.StateShared, Reserve: h.Lanes.Reserve, MemoryMin: h.Lanes.MemoryMin}
+}
+
+func firstNonEmpty(v ...string) string {
+	for _, s := range v {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func (r *HostReserve) memory() string {
+	if r == nil {
+		return ""
+	}
+	return r.Memory
+}
+
+// laneParentSlice is the cgroup parent of the lane's node containers (docker --cgroup-parent through the shim): the
+// lane's own slice under lanes.slice on a reserved host, else the shared eval.slice.
+func laneParentSlice(s Step) string {
+	if s.Limits != nil && s.Limits.Block != "" {
+		return LaneSlice(s.Lane)
+	}
+	return EvalSlice
+}
+
+// cpusWithin reports whether every cpu is in the list.
+func cpusWithin(cpus []int, list string) bool {
+	set, err := ParseCPUList(list)
+	if err != nil {
+		return false
+	}
+	in := map[int]bool{}
+	for _, c := range set {
+		in[c] = true
+	}
+	for _, c := range cpus {
+		if !in[c] {
+			return false
+		}
+	}
+	return true
 }

@@ -42,6 +42,14 @@ type Manager struct {
 	hosts   map[string]HostStatus
 	// gcWanted: hosts whose unneeded lane clusters are deleted this pass (gc, or below the disk floor).
 	gcWanted map[string]bool
+	// Helper runs the root helper's verbs on a host (nil: sudo -n through the host's shell or ssh); DriftEvery is how
+	// often a host's slices are compared with their record (default a minute). Tests set both.
+	Helper     Helper
+	DriftEvery time.Duration
+
+	reservations map[string]Reservation
+	drift        map[string]string
+	driftAt      map[string]time.Time
 }
 
 // Serve runs the manager until ctx ends; it holds <root>/bench.lock.
@@ -110,6 +118,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 	if err := m.load(); err != nil {
 		return err
 	}
+	m.checkReservations(ctx)
 	m.hosts = map[string]HostStatus{}
 	reachable := map[string]bool{}
 	for name := range m.inv.Hosts {
@@ -374,7 +383,9 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 	} else if x := m.exps[l.Experiment]; x != nil {
 		limitSpec = x.Measured()
 	}
-	s.Limits = laneLimits(h, limitSpec)
+	mode, block, _ := isolationOf(h, limitSpec, m.reservations, l.Host, nil)
+	s.Limits = laneLimits(h, limitSpec, block)
+	s.IsolationMode = mode
 	if s.Cap == 0 && s.Prev != nil {
 		// A release or build tearing down another experiment's operator waits for it at most that experiment's cap.
 		if x := m.exps[s.Prev.Experiment]; x != nil {
@@ -730,6 +741,9 @@ func (m *Manager) buildBlock(h string, s Spec, reachable map[string]bool) string
 		return fmt.Sprintf("host %s is unreachable: %s", h, m.hosts[h].Error)
 	case m.builds(h) >= hs.MaxBuilds:
 		return fmt.Sprintf("host %s runs max_builds (%d) builds", h, hs.MaxBuilds)
+	}
+	if _, _, why := isolationOf(hs, s, m.reservations, h, m.drift); why != "" {
+		return why
 	}
 	return ""
 }

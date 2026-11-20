@@ -1,0 +1,11 @@
+# /etc/systemd/system/lanes.slice: the parent cgroup of every lane (lanes-<lane>.slice nest under it by name).
+# `lanes host reserve` sets its AllowedCPUs and MemoryMin from the host's `reserve:` block.
+[Unit]
+Description=lane platform lanes (the reserved block)
+Before=slices.target
+
+[Slice]
+CPUAccounting=yes
+MemoryAccounting=yes
+IOAccounting=yes
+TasksAccounting=yes

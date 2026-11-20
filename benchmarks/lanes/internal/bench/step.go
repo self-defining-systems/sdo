@@ -40,9 +40,11 @@ type Step struct {
 	Experiment string `json:"experiment,omitempty"`
 	Fuzzops    string `json:"fuzzops"`            // the pinned fuzzops checkout
 	Workload   string `json:"workload,omitempty"` // the workload adapter ("": fuzzops)
-	FuzzopsRev string `json:"fuzzops_rev,omitempty"`
-	Kubeconfig string `json:"kubeconfig"`
-	LaneDir    string `json:"lane_dir"` // BENCH_LANE_DIR: kept from one build to the next
+	// IsolationMode is how the lane is isolated on its host (two-way, one-way, one-way-ok); recorded in the row.
+	IsolationMode string `json:"isolation_mode,omitempty"`
+	FuzzopsRev    string `json:"fuzzops_rev,omitempty"`
+	Kubeconfig    string `json:"kubeconfig"`
+	LaneDir       string `json:"lane_dir"` // BENCH_LANE_DIR: kept from one build to the next
 
 	// New is the operator and app to build (build), or the ones on the lane (run).
 	New *Prepared `json:"new,omitempty"`
@@ -214,6 +216,9 @@ func RunStep(ctx context.Context, path string) error {
 		r.poll = 10 * time.Second
 	}
 	r.res = Result{Kind: s.Kind, Started: time.Now().UTC(), Prepared: s.Prev}
+	if s.IsolationMode != "" {
+		r.res.Isolation = &Isolation{Mode: s.IsolationMode}
+	}
 	// A step is cancelled only by its own deadline: the manager going away must not stop it.
 	ctx = context.WithoutCancel(ctx)
 	r.res.Fuzzops, err = r.version(ctx)

@@ -62,6 +62,10 @@ type Host struct {
 	// Lanes limits what each lane's nodes may use: disjoint whole cores out of lanes.cpus and the lane's memory,
 	// applied when the lane is built (docs/bench.md, "Lane limits").
 	Lanes HostLanes `json:"lanes,omitempty"`
+	// Reserve is the host's lane block, applied by `lanes host reserve` through the root helper (reserve.go).
+	Reserve *HostReserve `json:"reserve,omitempty"`
+	// Isolation "one-way-ok" lets lanes run on the host with no active reservation; its rows are flagged.
+	Isolation string `json:"isolation,omitempty"`
 }
 
 // Lane providers.
@@ -207,6 +211,12 @@ func (inv Inventory) Validate() error {
 			if !filepath.IsAbs(v) {
 				errs = append(errs, fmt.Sprintf("host %s: %s must be an absolute path", name, f))
 			}
+		}
+		if err := h.Reserve.validate(); err != nil {
+			errs = append(errs, fmt.Sprintf("host %s: %v", name, err))
+		}
+		if h.Isolation != "" && h.Isolation != IsolationOneWayO {
+			errs = append(errs, fmt.Sprintf("host %s: isolation %q: want one-way-ok or nothing", name, h.Isolation))
 		}
 		if _, err := ParseSize(h.MinFree); err != nil {
 			errs = append(errs, fmt.Sprintf("host %s: min_free: %v", name, err))

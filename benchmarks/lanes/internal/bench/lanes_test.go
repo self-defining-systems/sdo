@@ -90,7 +90,7 @@ func TestLaneLimitsOfAStep(t *testing.T) {
 	h := inv.Hosts["h1"]
 	var spec Spec
 	spec.App = "examples/shop"
-	got := laneLimits(h, spec)
+	got := laneLimits(h, spec, "")
 	if got == nil || got.Cores != 5 || got.Memory != "12Gi" || got.CPUs != "4-55" || !got.Reserve || got.MemoryMin != "8G" {
 		t.Fatalf("a spec without lane gets its app's default: %+v", got)
 	}
@@ -98,20 +98,20 @@ func TestLaneLimitsOfAStep(t *testing.T) {
 		t.Fatalf("no state configured: the host's step picks its user's default, not the manager (which may be another account): %+v", got)
 	}
 	spec.Lane = &LaneLimit{CPUs: 6, Memory: "14Gi"}
-	if got := laneLimits(h, spec); got.Cores != 6 || got.Memory != "14Gi" {
+	if got := laneLimits(h, spec, ""); got.Cores != 6 || got.Memory != "14Gi" {
 		t.Fatalf("the spec's lane wins: %+v", got)
 	}
 	h.Lanes.State, h.Lanes.StateShared, h.Lanes.Memory = "/srv/lanes", true, "150G"
-	if got := laneLimits(h, spec); got.State != "/srv/lanes" || !got.StateShared || got.MemBudget != "150G" {
+	if got := laneLimits(h, spec, ""); got.State != "/srv/lanes" || !got.StateShared || got.MemBudget != "150G" {
 		t.Fatalf("%+v", got)
 	}
 	h.Lanes = HostLanes{}
-	if laneLimits(h, spec) != nil {
+	if laneLimits(h, spec, "") != nil {
 		t.Fatal("a host without lanes: limits nothing")
 	}
 	h.Lanes = HostLanes{CPUs: "4-55"}
 	h.Provider, h.EntryHost, h.HostKubeconfig = ProviderVcluster, "x", "/k"
-	if laneLimits(h, spec) != nil {
+	if laneLimits(h, spec, "") != nil {
 		t.Fatal("virtual clusters are not kind nodes: nothing to limit")
 	}
 }

@@ -33,6 +33,8 @@ const usage = `usage: lanes VERB --root R ...
   step STEP.json             run one step (the manager starts it detached on the lane's host)
   ledger [--state DIR] show | prune | adopt LANE CPUS MEMORY   the host's lane ledger (cores and memory each lane holds): list it,
                              drop lanes whose cluster is gone, or register a lane that exists (run on the host)
+  host reserve HOST|all | unreserve HOST [--drain] | status [HOST] | adopt HOST [--cpus LIST] | install-helper HOST
+                             the hosts.yaml reserve: block: apply it through the root helper, undo it, show it, record an existing one
   probe --staging S [--fuzzops F,..] LANE=STEP ...   how a host's steps stand, as JSON (the manager runs it over ssh)`
 
 func main() {
@@ -65,6 +67,15 @@ func run(verb string, args []string) int {
 	defer stop()
 	if verb == "probe" {
 		return probe(args)
+	}
+	if verb == "host" {
+		inv, err := bench.LoadInventory(*root)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		run := bench.HostRunner(inv)
+		return bench.HostCommand(ctx, bench.Root(*root), args, os.Stdout, os.Stderr, bench.HelperVia(run), run)
 	}
 	if verb == "ledger" {
 		return bench.LedgerCommand(args, os.Stdout, os.Stderr)

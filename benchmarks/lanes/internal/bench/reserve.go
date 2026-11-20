@@ -1,0 +1,532 @@
+package bench
+
+// Core reservation: a host's lane block is declared in hosts.yaml (`reserve:`) and applied by commands through the root
+// helper (deploy/host/lane-reserve), never by hand. Admission uses the recorded block: every lane's cpuset is inside it,
+// a host with no reservation admits no lanes unless the spec or host says `isolation: one-way-ok`, and a host whose slices
+// drifted from the record admits nothing until a human looks.
+
+import (
+	"context"
+	"encoding/base64"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Isolation modes of a row.
+const (
+	IsolationTwoWay  = "two-way"    // the other slices were shrunk to the complement of the block: nobody else uses the lane cores
+	IsolationOneWay  = "one-way"    // the lanes stay on their block but other work may still use it
+	IsolationOneWayO = "one-way-ok" // no reservation at all; the spec or host accepted that, and its rows are flagged
+)
+
+// HelperPath is where the root helper is installed (AliasPath is the old name, kept as a link).
+const (
+	HelperPath = "/usr/local/sbin/lane-reserve"
+	AliasPath  = "/usr/local/sbin/sdo-eval-reserve"
+)
+
+// HostReserve is a host's declared lane block (hosts.yaml `reserve:`): explicit cpus, or cores of a NUMA node.
+type HostReserve struct {
+	CPUs            string `json:"cpus,omitempty"`
+	Cores           int    `json:"cores,omitempty"`
+	NUMA            *int   `json:"numa,omitempty"`
+	Memory          string `json:"memory,omitempty"`
+	HostReserveCPUs int    `json:"host_reserve_cpus,omitempty"`
+}
+
+func (r *HostReserve) validate() error {
+	if r == nil {
+		return nil
+	}
+	switch {
+	case r.CPUs != "" && (r.Cores != 0 || r.NUMA != nil):
+		return errors.New("reserve: cpus or cores with numa, not both")
+	case r.CPUs != "":
+		if _, err := ParseCPUList(r.CPUs); err != nil {
+			return fmt.Errorf("reserve.cpus: %v", err)
+		}
+	case r.Cores > 0 && r.NUMA != nil && *r.NUMA >= 0:
+	default:
+		return errors.New("reserve: cpus LIST, or cores N with numa M")
+	}
+	if _, err := ParseSize(r.Memory); err != nil {
+		return fmt.Errorf("reserve.memory: %v", err)
+	}
+	if r.HostReserveCPUs < 0 {
+		return errors.New("reserve.host_reserve_cpus must not be negative")
+	}
+	return nil
+}
+
+// args are the helper's `block reserve` arguments for the declared block.
+func (r HostReserve) args() []string {
+	var a []string
+	if r.CPUs != "" {
+		a = append(a, "--cpus", r.CPUs)
+	} else {
+		a = append(a, "--cores", strconv.Itoa(r.Cores), "--numa", strconv.Itoa(*r.NUMA))
+	}
+	if r.Memory != "" {
+		a = append(a, "--memory", r.Memory)
+	}
+	return append(a, "--host-reserve-cpus", strconv.Itoa(r.HostReserveCPUs))
+}
+
+// Reservation is what the bench recorded for a host: the block that is active (<root>/reservations/<host>.json).
+type Reservation struct {
+	Host    string    `json:"host"`
+	Block   string    `json:"block"`
+	Memory  string    `json:"memory,omitempty"`
+	Adopted bool      `json:"adopted,omitempty"`
+	TwoWay  bool      `json:"two_way"`
+	At      time.Time `json:"at"`
+}
+
+func (r Root) reservationPath(host string) string { return r.path("reservations", host+".json") }
+
+// LoadReservations reads every host's record.
+func (r Root) LoadReservations() (map[string]Reservation, error) {
+	out := map[string]Reservation{}
+	ents, err := os.ReadDir(r.path("reservations"))
+	if errors.Is(err, os.ErrNotExist) {
+		return out, nil
+	} else if err != nil {
+		return nil, err
+	}
+	for _, e := range ents {
+		var rs Reservation
+		if strings.HasSuffix(e.Name(), ".json") && readJSON(r.path("reservations", e.Name()), &rs) == nil {
+			out[rs.Host] = rs
+		}
+	}
+	return out, nil
+}
+
+// BlockStatus is what the helper reports about a host.
+type BlockStatus struct {
+	Block  string            // "" : no block
+	TwoWay bool              // the other slices are the complement of the block
+	Slices map[string]string // slice -> AllowedCPUs
+}
+
+func parseBlockStatus(out string) BlockStatus {
+	st := BlockStatus{Slices: map[string]string{}}
+	for _, l := range strings.Split(out, "\n") {
+		f := strings.Fields(l)
+		switch {
+		case len(f) == 2 && f[0] == "block" && f[1] != "-":
+			st.Block = f[1]
+		case len(f) == 2 && f[0] == "two-way":
+			st.TwoWay = f[1] == "yes"
+		case len(f) >= 3 && f[0] == "slice":
+			st.Slices[f[1]] = strings.TrimPrefix(f[2], "AllowedCPUs=")
+		}
+	}
+	return st
+}
+
+// Helper runs one verb of the root helper on a host (sudo -n on the installed path).
+type Helper func(ctx context.Context, host string, args ...string) (string, error)
+
+// HelperVia is the Helper that runs scripts through run (local or ssh).
+func HelperVia(run runFn) Helper {
+	return func(ctx context.Context, host string, args ...string) (string, error) {
+		q := make([]string, len(args))
+		for i, a := range args {
+			q[i] = shellQuote(a)
+		}
+		return run(ctx, host, "sudo -n "+HelperPath+" "+strings.Join(q, " "))
+	}
+}
+
+// LaneSlice is the systemd slice of a lane under lanes.slice (a dash would nest it, so it becomes an underscore).
+func LaneSlice(lane string) string { return "lanes-" + strings.ReplaceAll(lane, "-", "_") + ".slice" }
+
+// laneExecPrefix is what every step of a reserved host starts under: the helper puts the step's process (and so every
+// build, agent, hook and kubectl it starts) into the lane's cgroup before it runs.
+func laneExecPrefix(s Step) string {
+	if s.Limits == nil || s.Limits.Block == "" {
+		return ""
+	}
+	return "sudo -n --preserve-env " + HelperPath + " lane-exec " + shellQuote(s.Lane) + " -- "
+}
+
+// isolationOf says how a row on host h is isolated: the mode and, for a reserved host, the block; why is non-empty when
+// no lane may be admitted on it now.
+func isolationOf(h Host, s Spec, rs map[string]Reservation, name string, drift map[string]string) (mode, block, why string) {
+	if d := drift[name]; d != "" {
+		return "", "", "host " + name + " reservation drifted: " + d
+	}
+	if r, ok := rs[name]; ok {
+		if s.Isolation == IsolationTwoWay && !r.TwoWay {
+			return "", "", "host " + name + " is one-way (its other slices still use the block) and the spec requires two-way"
+		}
+		if r.TwoWay {
+			return IsolationTwoWay, r.Block, ""
+		}
+		return IsolationOneWay, r.Block, ""
+	}
+	if s.Isolation == IsolationOneWayO || h.Isolation == IsolationOneWayO {
+		return IsolationOneWayO, "", ""
+	}
+	return "", "", "host " + name + " has no active reservation (lanes host reserve or adopt) and neither the spec nor the host says isolation: one-way-ok"
+}
+
+// checkReservations rereads the records and compares each host's slices with its record (at most once a minute per host;
+// a failed read is drift too: unknown is not admitted).
+func (m *Manager) checkReservations(ctx context.Context) {
+	rs, err := m.Root.LoadReservations()
+	if err != nil {
+		m.logf("reservations: %v", err)
+	}
+	m.reservations = rs
+	if m.drift == nil {
+		m.drift, m.driftAt = map[string]string{}, map[string]time.Time{}
+	}
+	helper := m.Helper
+	if helper == nil {
+		helper = HelperVia(hostRunner(m.inv))
+	}
+	for name, r := range rs {
+		if _, ok := m.inv.Hosts[name]; !ok {
+			continue
+		}
+		if time.Since(m.driftAt[name]) < m.driftEvery() && m.driftAt[name] != (time.Time{}) {
+			continue
+		}
+		m.driftAt[name] = time.Now()
+		out, err := helper(ctx, name, "block", "status")
+		var why string
+		if err != nil {
+			why = "the helper could not report the slices: " + clip(err.Error(), 160)
+		} else {
+			why = driftOf(r, parseBlockStatus(out))
+		}
+		if why != m.drift[name] {
+			if why != "" {
+				m.logf("ALARM host %s: reservation drift, admission stopped: %s", name, why)
+				_ = appendJSONL(m.Root.path("alarms.jsonl"), map[string]any{"at": time.Now().UTC(), "host": name, "alarm": "reservation-drift", "detail": why})
+			} else {
+				m.logf("host %s: reservation matches its record again, admission resumes", name)
+			}
+		}
+		m.drift[name] = why
+	}
+}
+
+func (m *Manager) driftEvery() time.Duration {
+	if m.DriftEvery > 0 {
+		return m.DriftEvery
+	}
+	return time.Minute
+}
+
+// driftOf says how the live slices differ from the record ("" : they match).
+func driftOf(r Reservation, st BlockStatus) string {
+	switch {
+	case st.Block != r.Block:
+		return fmt.Sprintf("block is %q, the record says %q", st.Block, r.Block)
+	case r.TwoWay && !st.TwoWay:
+		return "the other slices no longer exclude the block (AllowedCPUs changed)"
+	case st.Slices["lanes.slice"] != r.Block:
+		return fmt.Sprintf("lanes.slice AllowedCPUs is %q, not %q", st.Slices["lanes.slice"], r.Block)
+	}
+	return ""
+}
+
+// HostCommand is `lanes host reserve|unreserve|status|adopt|install-helper`.
+func HostCommand(ctx context.Context, root Root, args []string, out, errw io.Writer, helper Helper, run runFn) int {
+	if len(args) == 0 {
+		fmt.Fprintln(errw, "usage: lanes host reserve HOST|all | unreserve HOST [--drain] | status [HOST] | adopt HOST [--cpus LIST] | install-helper HOST")
+		return 2
+	}
+	inv, err := LoadInventory(string(root))
+	if err != nil {
+		fmt.Fprintln(errw, err)
+		return 1
+	}
+	verb, rest := args[0], args[1:]
+	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
+	fs.SetOutput(errw)
+	drain := fs.Bool("drain", false, "unreserve: proceed although lanes are running")
+	cpus := fs.String("cpus", "", "adopt: the block that exists")
+	var names []string
+	for len(rest) > 0 {
+		if strings.HasPrefix(rest[0], "-") {
+			if err := fs.Parse(rest); err != nil {
+				return 2
+			}
+			rest = fs.Args()
+			continue
+		}
+		names, rest = append(names, rest[0]), rest[1:]
+	}
+	hosts, err := hostsNamed(inv, verb, names)
+	if err != nil {
+		fmt.Fprintln(errw, err)
+		return 2
+	}
+	rc := 0
+	for _, h := range hosts {
+		var err error
+		switch verb {
+		case "reserve":
+			err = reserveHost(ctx, root, inv, h, helper, out)
+		case "unreserve":
+			err = unreserveHost(ctx, root, h, *drain, helper, out)
+		case "adopt":
+			err = adoptHost(ctx, root, inv, h, *cpus, helper, out)
+		case "status":
+			err = statusHost(ctx, root, inv, h, helper, run, out)
+		case "install-helper":
+			err = installHelper(ctx, h, run, out)
+		default:
+			fmt.Fprintf(errw, "unknown host verb %q\n", verb)
+			return 2
+		}
+		if err != nil {
+			fmt.Fprintf(errw, "%s: %v\n", h, err)
+			rc = 1
+		}
+	}
+	return rc
+}
+
+func hostsNamed(inv Inventory, verb string, names []string) ([]string, error) {
+	var all []string
+	for n := range inv.Hosts {
+		all = append(all, n)
+	}
+	sort.Strings(all)
+	switch {
+	case len(names) == 0 && verb == "status":
+		return all, nil
+	case len(names) == 1 && names[0] == "all" && verb != "unreserve" && verb != "install-helper":
+		if verb == "reserve" {
+			var withBlock []string
+			for _, n := range all {
+				if inv.Hosts[n].Reserve != nil {
+					withBlock = append(withBlock, n)
+				}
+			}
+			return withBlock, nil
+		}
+		return all, nil
+	case len(names) == 1:
+		if _, ok := inv.Hosts[names[0]]; !ok {
+			return nil, fmt.Errorf("host %q is not in hosts.yaml", names[0])
+		}
+		return names, nil
+	}
+	return nil, fmt.Errorf("name one host (or all)")
+}
+
+func recordReservation(ctx context.Context, root Root, host string, helper Helper, adopted bool, memory string) (Reservation, error) {
+	o, err := helper(ctx, host, "block", "status")
+	if err != nil {
+		return Reservation{}, err
+	}
+	st := parseBlockStatus(o)
+	if st.Block == "" {
+		return Reservation{}, errors.New("the helper reports no block after the change")
+	}
+	r := Reservation{Host: host, Block: st.Block, Memory: memory, Adopted: adopted, TwoWay: st.TwoWay, At: time.Now().UTC()}
+	return r, writeJSON(root.reservationPath(host), r)
+}
+
+func reserveHost(ctx context.Context, root Root, inv Inventory, host string, helper Helper, out io.Writer) error {
+	rsv := inv.Hosts[host].Reserve
+	if rsv == nil {
+		return errors.New("no reserve: block in hosts.yaml")
+	}
+	o, err := helper(ctx, host, append([]string{"block", "reserve"}, rsv.args()...)...)
+	fmt.Fprint(out, host+":\n"+o)
+	if err != nil {
+		return err
+	}
+	r, err := recordReservation(ctx, root, host, helper, false, rsv.Memory)
+	if err == nil {
+		fmt.Fprintf(out, "%s: reserved %s (%s)\n", host, r.Block, modeName(r.TwoWay))
+	}
+	return err
+}
+
+func modeName(twoWay bool) string {
+	if twoWay {
+		return IsolationTwoWay
+	}
+	return IsolationOneWay
+}
+
+// busyLanes are the lanes on host that run or build something.
+func busyLanes(root Root, host string) []string {
+	lanes, _ := root.Lanes()
+	var busy []string
+	for _, l := range lanes {
+		if l.Host == host && (l.Step != nil || l.State == LaneBuilding || l.State == LaneRunning) {
+			busy = append(busy, l.Lane)
+		}
+	}
+	return busy
+}
+
+func unreserveHost(ctx context.Context, root Root, host string, drain bool, helper Helper, out io.Writer) error {
+	if busy := busyLanes(root, host); len(busy) > 0 && !drain {
+		return fmt.Errorf("lanes are running (%s); wait, or pass --drain to unreserve anyway (they keep running unreserved and the host admits nothing new)", strings.Join(busy, ", "))
+	}
+	o, err := helper(ctx, host, "block", "unreserve")
+	fmt.Fprint(out, host+":\n"+o)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(root.reservationPath(host)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	fmt.Fprintf(out, "%s: unreserved\n", host)
+	return nil
+}
+
+func adoptHost(ctx context.Context, root Root, inv Inventory, host, cpus string, helper Helper, out io.Writer) error {
+	if cpus == "" {
+		if r := inv.Hosts[host].Reserve; r != nil {
+			cpus = r.CPUs
+		}
+	}
+	if cpus == "" {
+		return errors.New("adopt needs --cpus LIST (or reserve.cpus in hosts.yaml)")
+	}
+	if o, err := helper(ctx, host, "block", "adopt", "--cpus", cpus); err != nil {
+		return err
+	} else {
+		fmt.Fprint(out, o)
+	}
+	r, err := recordReservation(ctx, root, host, helper, true, "")
+	if err == nil {
+		fmt.Fprintf(out, "%s: adopted %s (%s), nothing changed\n", host, r.Block, modeName(r.TwoWay))
+	}
+	return err
+}
+
+// containerProbe lists the host's containers as `NAME CGROUPPARENT CPUSET`.
+const containerProbe = `docker ps --format '{{.Names}}' 2>/dev/null | while read -r c; do ` +
+	`echo "$c $(docker inspect -f '{{.HostConfig.CgroupParent}}' "$c") $(docker inspect -f '{{.HostConfig.CpusetCpus}}' "$c")"; done`
+
+func statusHost(ctx context.Context, root Root, inv Inventory, host string, helper Helper, run runFn, out io.Writer) error {
+	rs, _ := root.LoadReservations()
+	r, recorded := rs[host]
+	o, herr := helper(ctx, host, "block", "status")
+	st := parseBlockStatus(o)
+	switch {
+	case herr != nil:
+		fmt.Fprintf(out, "%s: helper unavailable (%s); record: %s\n", host, clip(herr.Error(), 120), recordLine(r, recorded))
+		return nil
+	case st.Block == "":
+		fmt.Fprintf(out, "%s: no block (record: %s); one-way-ok only\n", host, recordLine(r, recorded))
+		return nil
+	}
+	fmt.Fprintf(out, "%s: block %s, %s", host, st.Block, modeName(st.TwoWay))
+	if recorded {
+		if d := driftOf(r, st); d != "" {
+			fmt.Fprintf(out, ", DRIFT: %s", d)
+		}
+	} else {
+		fmt.Fprint(out, ", no record (lanes host adopt)")
+	}
+	fmt.Fprintln(out)
+	block, _ := ParseCPUList(st.Block)
+	in := map[int]bool{}
+	for _, c := range block {
+		in[c] = true
+	}
+	cs, err := run(ctx, host, containerProbe)
+	if err != nil {
+		fmt.Fprintf(out, "  containers: probe failed: %s\n", clip(err.Error(), 120))
+		return nil
+	}
+	for _, l := range strings.Split(strings.TrimSpace(cs), "\n") {
+		f := strings.Fields(l)
+		if len(f) < 3 {
+			continue
+		}
+		set, err := ParseCPUList(f[2])
+		if err != nil || len(set) == 0 {
+			continue
+		}
+		inside := 0
+		for _, c := range set {
+			if in[c] {
+				inside++
+			}
+		}
+		ours := strings.HasPrefix(f[1], "lanes") || f[1] == EvalSlice
+		switch {
+		case ours && inside < len(set):
+			fmt.Fprintf(out, "  our container %s is pinned to %s, outside the block\n", f[0], f[2])
+		case !ours && inside > 0:
+			fmt.Fprintf(out, "  foreign container %s is pinned to %s, inside the block\n", f[0], f[2])
+		}
+	}
+	return nil
+}
+
+func recordLine(r Reservation, ok bool) string {
+	if !ok {
+		return "none"
+	}
+	return fmt.Sprintf("%s %s", r.Block, modeName(r.TwoWay))
+}
+
+// helperFiles are what install-helper puts on a host: the helper, its alias, the slice units and the sudoers rule.
+var helperFiles = []string{"lane-reserve", "lanes.slice", "eval.slice", "sdo-eval-reserve-gc.service", "sdo-eval-reserve-gc.timer"}
+
+// HelperSourceDir is where install-helper reads deploy/host from (a var for tests).
+var HelperSourceDir = filepath.Join("deploy", "host")
+
+// installScript is the one script that asks for sudo: it carries the files itself, so it works over ssh.
+func installScript(dir, user string, read func(string) ([]byte, error)) (string, error) {
+	var b strings.Builder
+	b.WriteString("set -e\nT=$(mktemp -d); trap 'rm -rf \"$T\"' EXIT\n")
+	for _, f := range helperFiles {
+		data, err := read(filepath.Join(dir, f))
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "echo %s | base64 -d > \"$T/%s\"\n", base64.StdEncoding.EncodeToString(data), f)
+	}
+	rule := "# lane-reserve: the one command the lane bench runs as root (installed by `lanes host install-helper`).\n" +
+		user + " ALL=(root) NOPASSWD:SETENV: " + HelperPath + ", " + AliasPath + "\n"
+	fmt.Fprintf(&b, "echo %s | base64 -d > \"$T/sudoers\"\n", base64.StdEncoding.EncodeToString([]byte(rule)))
+	b.WriteString(`sudo visudo -cf "$T/sudoers" >/dev/null
+sudo install -m 0755 "$T/lane-reserve" ` + HelperPath + `
+sudo ln -sf lane-reserve ` + AliasPath + `
+sudo install -m 0644 "$T/lanes.slice" "$T/eval.slice" "$T/sdo-eval-reserve-gc.service" "$T/sdo-eval-reserve-gc.timer" /etc/systemd/system/
+sudo install -m 0440 "$T/sudoers" /etc/sudoers.d/lane-reserve
+sudo systemctl daemon-reload
+sudo systemctl enable --now sdo-eval-reserve-gc.timer
+sudo systemctl start eval.slice lanes.slice
+echo installed ` + HelperPath + `
+`)
+	return b.String(), nil
+}
+
+func installHelper(ctx context.Context, host string, run runFn, out io.Writer) error {
+	user := os.Getenv("USER")
+	if user == "" {
+		user = "$(id -un)"
+	}
+	script, err := installScript(HelperSourceDir, user, os.ReadFile)
+	if err != nil {
+		return err
+	}
+	o, err := run(ctx, host, script)
+	fmt.Fprint(out, o)
+	return err
+}

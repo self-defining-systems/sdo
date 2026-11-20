@@ -61,7 +61,7 @@ func (h sshHost) Start(ctx context.Context, s Step) error {
 	}
 	p := filepath.Join(dir, "step.json")
 	_, err = h.run(ctx, b, fmt.Sprintf("mkdir -p %s && cat > %s && %s", shellQuote(dir), shellQuote(p),
-		detach(filepath.Join(s.Fuzzops, "bin", "fuzzops-bench"), p)))
+		detach(filepath.Join(s.Fuzzops, "bin", "fuzzops-bench"), p, laneExecPrefix(s))))
 	return err
 }
 

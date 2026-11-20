@@ -125,11 +125,11 @@ func NewStepID(kind string) string {
 }
 
 // detach is the shell line that starts a step so that it outlives whoever started it.
-func detach(bin, stepPath string) string {
+func detach(bin, stepPath string, prefix ...string) string {
 	dir := filepath.Dir(stepPath)
 	// setsid -f forks at once and every descriptor of the step is redirected, so the caller (an ssh session)
 	// returns while the step runs; no part of the line is left in the background holding the caller's output.
-	return fmt.Sprintf("cd %s && setsid -f %s step %s > %s 2>&1 < /dev/null", shellQuote(dir), shellQuote(bin), shellQuote(stepPath), shellQuote(filepath.Join(dir, "runner.out")))
+	return fmt.Sprintf("cd %s && setsid -f %s%s step %s > %s 2>&1 < /dev/null", shellQuote(dir), strings.Join(prefix, ""), shellQuote(bin), shellQuote(stepPath), shellQuote(filepath.Join(dir, "runner.out")))
 }
 
 // localHost runs steps on the manager's machine.
@@ -147,7 +147,7 @@ func (h localHost) Start(ctx context.Context, s Step) error {
 	if err := writeJSON(p, s); err != nil {
 		return err
 	}
-	return exec.CommandContext(ctx, "sh", "-c", detach(h.bin, p)).Run()
+	return exec.CommandContext(ctx, "sh", "-c", detach(h.bin, p, laneExecPrefix(s))).Run()
 }
 
 func (h localHost) Probe(_ context.Context, steps map[string]string, fuzzops []string) (Probe, error) {
