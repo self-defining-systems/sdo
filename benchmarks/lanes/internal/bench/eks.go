@@ -585,3 +585,38 @@ func statusEksHost(ctx context.Context, root Root, inv Inventory, host string, r
 	}
 	fmt.Fprintf(out, "%s: no cpuset, ledger, kernel or PSI gates (provider eks)\n", host)
 }
+
+// eksCleanupRetry is how long to wait before asking again to delete a Down lane's cluster.
+const eksCleanupRetry = 10 * time.Minute
+
+// eksDownOrphans are the lanes of eks hosts that are Down yet may still have a cluster (a failed or killed cluster-up):
+// nothing will build on a Down lane, so its cluster is deleted, not left to bill. Asked again every eksCleanupRetry.
+func (m *Manager) eksDownOrphans() []*LaneFile {
+	var out []*LaneFile
+	for _, l := range m.sortedLanes() {
+		h := m.inv.Hosts[l.Host]
+		if !h.IsEks() || h.ClusterDown == "" || l.State != LaneDown || l.Gone || l.Step != nil {
+			continue
+		}
+		if t, ok := m.eksCleanAt[l.Lane]; ok && m.now().Sub(t) < eksCleanupRetry {
+			continue
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
+// eksCleanDown deletes the clusters of Down eks lanes (a release that deletes the cluster).
+func (m *Manager) eksCleanDown(ctx context.Context, admit map[string]bool) {
+	for _, l := range m.eksDownOrphans() {
+		if !admit[l.Host] {
+			continue
+		}
+		if m.eksCleanAt == nil {
+			m.eksCleanAt = map[string]time.Time{}
+		}
+		m.eksCleanAt[l.Lane] = m.now()
+		m.logf("lane %s is down: deleting its cluster so it does not bill", l.Lane)
+		m.start(ctx, l, Step{Kind: StepRelease, Prev: l.Prepared, DeleteCluster: true})
+	}
+}

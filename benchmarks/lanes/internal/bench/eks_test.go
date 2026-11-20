@@ -506,3 +506,40 @@ func TestEksLaneUpRescalesAnAttachedClusterWithNoNodes(t *testing.T) {
 		t.Fatalf("up of a scaled-down cluster: %v\n%s\n%s", err, out, s.log())
 	}
 }
+
+// A Down eks lane that may still have a cluster is cleaned (deleted), once per retry interval; a lane known gone, one with
+// a step, or a lane that is not Down is not.
+func TestEksDownLaneClustersAreDeletedNotLeftToBill(t *testing.T) {
+	m := eksManager(t)
+	m.lanes["eks1"].State, m.lanes["eks1"].Gone = LaneDown, false // failed or killed cluster-up: a cluster may be there
+	m.lanes["eks2"].State, m.lanes["eks2"].Gone = LaneDown, true  // known gone
+	m.lanes["eks3"].State, m.lanes["eks3"].Gone = LaneFree, false // free lanes follow the idle timeout
+	got := m.eksDownOrphans()
+	if len(got) != 1 || got[0].Lane != "eks1" {
+		t.Fatalf("orphans = %v, want only eks1", got)
+	}
+	m.eksCleanAt = map[string]time.Time{"eks1": m.now()}
+	if got := m.eksDownOrphans(); len(got) != 0 {
+		t.Fatalf("asked again at once: %v", got)
+	}
+	m.advance(eksCleanupRetry)
+	if got := m.eksDownOrphans(); len(got) != 1 {
+		t.Fatalf("not asked again after the retry interval: %v", got)
+	}
+}
+
+// An up that attached a cluster and failed deletes it too: all-or-nothing, never a half-made lane left behind.
+func TestEksLaneUpFailureOfAnAttachedClusterDeletesIt(t *testing.T) {
+	s := newEksScript(t)
+	kc := filepath.Join(t.TempDir(), "kc")
+	if out, err := s.run(nil, "up", "eks1", kc); err != nil {
+		t.Fatalf("up: %v\n%s", err, out)
+	}
+	out, err := s.run([]string{"FAKE_NO_NETPOL=1"}, "up", "eks1", kc)
+	if err == nil {
+		t.Fatalf("attach with no network policy succeeded:\n%s", out)
+	}
+	if _, statErr := os.Stat(filepath.Join(s.state, "cluster-sdo-lane-eks1")); statErr == nil {
+		t.Errorf("the attached cluster was left:\n%s\n%s", out, s.log())
+	}
+}

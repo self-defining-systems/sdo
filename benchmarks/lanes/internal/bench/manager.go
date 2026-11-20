@@ -99,6 +99,7 @@ type Manager struct {
 	// kubectl read of an EKS lane's health (tests).
 	eks        map[string]*eksLedger
 	eksSaved   map[string]time.Time
+	eksCleanAt map[string]time.Time
 	eksHeldWhy map[string]string
 	eksWhy     map[string]string // lane -> why an EKS lane gets no new steps
 	EksCheck   func(ctx context.Context, lane, kubeconfig string) error
@@ -465,6 +466,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 	m.gcWanted = map[string]bool{}
 	gcAll := fileExists(m.Root.path("gc.request"))
 	m.assign(ctx, admit)
+	m.eksCleanDown(ctx, admit)
 	m.eksSettle()
 	for _, l := range m.sortedLanes() {
 		if !admit[l.Host] || l.Step != nil || l.State != LaneFree {
@@ -1441,6 +1443,9 @@ func (m *Manager) adopt(ctx context.Context, l *LaneFile) error {
 			l.BuildFailures++
 			if res.Fresh {
 				l.Gone, l.Recreate = false, false
+			}
+			if m.inv.Hosts[l.Host].IsEks() {
+				l.Gone = false // the cluster-up may have left (part of) a cluster: assume it exists, AWS tells (eks.go)
 			}
 			if l.BuildFailures >= m.inv.Hosts[l.Host].BuildFailureLimit() {
 				res.LaneDown = fmt.Sprintf("%d builds failed in a row: %s", l.BuildFailures, res.Reason)

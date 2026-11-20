@@ -231,10 +231,11 @@ scale_up_if_needed() {
   fi
 }
 
-# cleanup_failed_up: a cluster this `up` made and could not finish is deleted, so nothing bills.
+# cleanup_failed_up: a cluster this `up` made or attached and could not finish is deleted, so nothing bills: an up is
+# all-or-nothing, and a lane is rebuilt from nothing (about 18 minutes) rather than left half-made.
 cleanup_failed_up() {
   local rc=$?
-  if [ $rc -ne 0 ] && [ "${CREATED:-0}" = 1 ]; then
+  if [ $rc -ne 0 ] && [ "${OWNED:-0}" = 1 ]; then
     log "cluster-up failed: deleting the half-built cluster $CNAME"
     eksctl delete cluster --name "$CNAME" --region "$REGION" --wait --disable-nodegroup-eviction >&2 || log "DELETE FAILED: $CNAME may still bill"
   fi
@@ -244,18 +245,20 @@ cleanup_failed_up() {
 cmd_up() {
   local lane=${1:?lane} kc=${2:?kubeconfig} evidence=${3:-}
   local name=$PREFIX$lane admin="$kc.admin"
-  CREATED=0 CNAME=$name CFG=
+  CREATED=0 OWNED=0 CNAME=$name CFG=
+  trap 'exit 143' TERM INT # a manager stopping the step still runs the cleanup below
+  trap cleanup_failed_up EXIT
   account >/dev/null
   mkdir -p "$(dirname "$kc")"
   [ -z "$evidence" ] || mkdir -p "$evidence"
   if cluster_exists "$name"; then
     log "cluster $name exists: attaching"
+    OWNED=1
   else
     CFG=$(mktemp)
     write_config "$name" "$CFG"
-    CREATED=1
+    CREATED=1 OWNED=1
     log "creating cluster $name (${EKS_NODES:-2} x ${EKS_INSTANCE_TYPE:-m6i.xlarge})"
-    trap cleanup_failed_up EXIT
     eksctl create cluster -f "$CFG" --kubeconfig "$admin" >&2
   fi
   if [ "$CREATED" != 1 ]; then
