@@ -46,6 +46,9 @@ func ValidateRendered(ctx context.Context, inv Inventory, s Spec, c *RenderedChe
 		return fmt.Errorf("no host of %v has the pinned fuzzops %s%s in hosts.yaml checkouts", s.Hosts, s.Fuzzops,
 			map[bool]string{true: " and hooks " + s.Operator.Hooks + " " + s.Operator.Revision}[s.Operator.Hooks != ""])
 	}
+	if problems := inv.ClusterSourceProblems(ctx, s, addHostRunner(inv)); len(problems) > 0 {
+		return fmt.Errorf("%s", strings.Join(problems, "; "))
+	}
 	if err := checkLaneCapacity(inv, s); err != nil {
 		return err
 	}

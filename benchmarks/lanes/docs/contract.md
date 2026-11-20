@@ -122,6 +122,14 @@ labels is `shared: "true"`; unlabeled lanes take any spec with no selector, as b
 takes an unlabeled lane. This holds for fresh builds, pool claims and resets alike. It replaces listing order as the way to keep a
 spec off a lane prepared for another workload. `lane_labels` may only name lanes in the host's `clusters`.
 
+## Hosts that adopt clusters
+
+A kind host with no `cluster_up` never makes a cluster: its lanes must already exist, with their kubeconfig in the host's
+`kubeconfigs` directory. `add`, `plan add` and `host status` say so up front when a lane has none: `host <h> has no
+cluster_up and lane <l> has no cluster: set cluster_up (e.g. $LANES_INSTALL/deploy/kind-lane.sh up)`, instead of the step
+failing later at recover with "context kind-<lane> does not exist". Hosts that have `cluster_up`, vcluster hosts and hosts whose
+clusters exist behave as before.
+
 ## What lanes is, and is not
 
 `lanes` is an experimental resource-management and dispatch layer and nothing more.
