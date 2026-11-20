@@ -1,13 +1,14 @@
 # One SREGym repeat-vs-first item: p1 runs the problem from the lane's onboarding memory with the scripted agent
-# registrations (no model calls); p2 runs it again seeded with the memory p1's closing turn left.
+# registrations (no model calls); p2 runs it again seeded with the memory p1's closing turn left. The scripted
+# closing turn learns a playbook only for a Service targetPort or NetworkPolicy repair, hence the targetPort problem.
 # The pins are the SDO checkout that holds the adapter (workload and subject are the same checkout).
-plan: sgl-repeat-hotel
+plan: sgl-hotel-tport
 pins: {workload: sregym@69f60b3c, subject: sregym@69f60b3c}
 arms:
   - {name: p1, spec: specs/p1.json}
   - {name: p2, spec: specs/p2.json}
 items:
-  - {id: hotel-misconfig, vars: {problem: misconfig_app_hotel_res}}
+  - {id: hotel-targetport, vars: {problem: k8s_target_port_user_hotel_reservation}}
 reps: 1
 parallel: 1
 artifacts: {memory: {path: "${run}/exec/memory", verify: exists}}
