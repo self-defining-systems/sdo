@@ -154,8 +154,15 @@ func TestAnEscalatedCloseGetsCleanupOnlyAndSaysWhy(t *testing.T) {
 	if got := closingSkipReason(outcome.Escalated); got != "escalated_no_learning" {
 		t.Fatalf("reason = %q, want escalated_no_learning", got)
 	}
-	if got := closingSkipReason(outcome.Failed); got != "closing_turn_nothing_to_script" {
-		t.Fatalf("reason = %q", got)
+	for class, want := range map[string]string{
+		outcome.Failed:               "failed_no_learning",
+		outcome.ClearedWithoutAction: "cleared_without_action_no_learning",
+		outcome.Unconfirmed:          "unconfirmed_no_learning",
+		outcome.Success:              "closing_turn_nothing_to_script", // only plain restores reach this: nothing to script
+	} {
+		if got := closingSkipReason(class); got != want {
+			t.Fatalf("reason for %s = %q, want %q", class, got, want)
+		}
 	}
 	if got := closingChangesOf(IncidentClosure{}); got != nil {
 		t.Fatalf("a closure without a result has no changes, got %+v", got)

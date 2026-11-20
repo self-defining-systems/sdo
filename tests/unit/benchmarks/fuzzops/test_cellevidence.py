@@ -212,7 +212,15 @@ def test_finish_runs_analysis_only_when_every_cell_is_complete(
     assert "analysis not run" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("reason", ["closing_turn_nothing_to_script", "accepted_programs_no_new_evidence"])
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "closing_turn_nothing_to_script",
+        "accepted_programs_no_new_evidence",
+        "failed_no_learning",
+        "cleared_without_action_no_learning",
+    ],
+)
 def test_a_closing_turn_go_skipped_needs_no_usage_or_session(tmp_path: Path, reason: str) -> None:
     run = make_cell(tmp_path)
     inc = run / "operator/evidence/incidents" / INC

@@ -85,12 +85,13 @@ func closureWithRecordedActions(closure IncidentClosure, derived *contracts.Outc
 	return closure
 }
 
-// closingSkipReason names why a responder session's closing turn does not learn.
+// closingSkipReason names why a responder session's closing turn does not learn: the close class when that class
+// never learns (<class>_no_learning), and nothing to script only for a success whose changes were all plain restores.
 func closingSkipReason(classification string) string {
-	if classification == outcome.Escalated {
-		return "escalated_no_learning"
+	if classification == outcome.Success {
+		return "closing_turn_nothing_to_script"
 	}
-	return "closing_turn_nothing_to_script"
+	return classification + "_no_learning"
 }
 
 // noLearningDecision is the decision for a closing turn that does not learn. When Go already wrote files into the
