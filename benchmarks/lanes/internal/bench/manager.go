@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/self-defining-systems/sdo/benchmarks/lanes/internal/plan"
 	"io"
 	"os"
 	"path/filepath"
@@ -209,7 +210,25 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 		st.Builds = m.builds(name)
 		m.hosts[name] = st
 	}
-	return writeJSON(m.Root.path("hosts.status.json"), m.hosts)
+	err := writeJSON(m.Root.path("hosts.status.json"), m.hosts)
+	m.tickPlans(ctx)
+	return err
+}
+
+// tickPlans runs one pass of every plan under <root>/plans (internal/plan): it releases ready nodes as experiments,
+// which the next pass of this manager picks up. A plan that does not load is logged and left alone.
+func (m *Manager) tickPlans(ctx context.Context) {
+	for _, name := range plan.Names(m.Root.PlansDir()) {
+		e, err := plan.Open(plan.Dir(m.Root.PlansDir(), name), &PlanBackend{Root: m.Root, Inv: m.inv, Log: m.Log}, SystemClock{})
+		if err != nil {
+			m.logf("plan %s: %v", name, err)
+			continue
+		}
+		e.Logf = m.logf
+		if err := e.Tick(ctx); err != nil {
+			m.logf("plan %s: %v", name, err)
+		}
+	}
 }
 
 // InventoryErrorFile is <root>/inventory.error: why hosts.yaml was refused at the manager's last pass (absent when it

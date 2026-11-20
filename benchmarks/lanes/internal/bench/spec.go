@@ -178,12 +178,21 @@ func LoadSpec(path string) (Spec, error) {
 	if err != nil {
 		return Spec{}, err
 	}
-	var s Spec
-	if err := miniyaml.Decode(b, &s); err != nil {
+	s, err := ParseSpec(b)
+	if err != nil {
 		return Spec{}, fmt.Errorf("%s: %w", path, err)
 	}
+	return s, nil
+}
+
+// ParseSpec decodes and validates spec text (JSON or the YAML subset).
+func ParseSpec(b []byte) (Spec, error) {
+	var s Spec
+	if err := miniyaml.Decode(b, &s); err != nil {
+		return Spec{}, err
+	}
 	if err := s.Validate(); err != nil {
-		return Spec{}, fmt.Errorf("%s: %w", path, err)
+		return Spec{}, err
 	}
 	return s, nil
 }

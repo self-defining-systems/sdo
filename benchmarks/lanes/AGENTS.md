@@ -14,9 +14,11 @@ benchmark infrastructure: production `sdo/` never imports it, and it imports not
 | `internal/bench/` | Manager, inventory (`hosts.yaml`), specs, steps (detached, adoptable after a restart), lane state, CPU and memory ledger, preflight, results |
 | `internal/bench/workload.go` | The workload adapter seam; the built-in `fuzzops` workload and the executable adapter |
 | `internal/bench/hooks.go`, `preflight_subject.go` | The subject adapter seam: hook verbs and their limits; the subject's share of preflight |
+| `internal/plan/` | The plan engine: `plan.yaml`, nodes and their order, edges with verified artifacts, lane-free steps, lock and state on disk; talks to the platform through a `Backend` (real one: `internal/bench/planbackend.go`) |
 | `internal/{env,lanelock,miniyaml}/` | Lane environment and kubectl/kind processes, the per-lane flock, the JSON/YAML-subset decoder |
 | `deploy/` | Lane scripts (kind-lane, vcluster-lane, lane-limits, node-preload, registries, image delivery) and the root helper under `deploy/host/` |
 | `docs/contract.md` | The adapter contract: environment in, last stdout line JSON out; verbs; unsupported handling |
+| `docs/plan.md` | The `plan.yaml` schema and the plan commands |
 
 ## Adapters
 
