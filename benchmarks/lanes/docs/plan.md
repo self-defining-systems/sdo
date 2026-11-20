@@ -48,8 +48,8 @@ alarms: {factor: 2, idle_lane: 10m, arm_stall: 90m, hook: "notify-send lanes \"$
   every spec, so a plan kept inside the pinned checkout does not lag one commit. Revisions (7-40 hex) work as before.
 - **Checks at add time, and a submit that keeps failing.** `plan add` and `--dry-run` run the checks a submit makes, on
   every rendered spec: the spec itself, the inventory, the fuzzops binary on each host reports the pinned revision (#1612), `faults.instances` exists and holds every fault ID (`healthy`
-  aside), `operator.baseline` is a directory (`operator.seed` is an earlier arm's artifact and is checked when that arm
-  ends). A check that can still fail at release never loops silently: the backend's refusal is retried for
+  aside), `operator.baseline` is a directory (`operator.seed` that is an earlier arm's artifact is checked when that arm
+  ends). A seed or baseline directory that exists gets SDO's memory check at the spec's pinned SDO revision (`sdo-operator memory migrate`, the controller's startup check); an invalid one is refused at add, naming it and the failed check. With no hooks checkout of the pin on the manager's host the check is reported as a note. A check that can still fail at release never loops silently: the backend's refusal is retried for
   `SubmitPasses` (3) passes in a row, then it raises a `submit` alarm and fails the attempt with reason `submit`; the
   same failure again parks the item.
 - **Order.** Nodes are `(rep, item, arm)`, arms in dependency-then-declaration order, so every comparison's partner is

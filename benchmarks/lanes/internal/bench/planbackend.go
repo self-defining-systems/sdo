@@ -200,7 +200,8 @@ func checkSpecInputs(s Spec) error {
 // planSpecCheck is the check of one rendered spec: the platform's own spec validation and the inventory (the pins
 // must be checked out on a usable host).
 func planSpecCheck(inv Inventory) func([]byte) error {
-	pins := map[string]string{} // the pin check's answers, one per host and pin
+	pins := map[string]string{}   // the pin check's answers, one per host and pin
+	mem := map[string]memResult{} // the memory check's answers, one per directory and pinned SDO checkout
 	return func(b []byte) error {
 		s, err := ParseSpec(b)
 		if err != nil {
@@ -216,8 +217,46 @@ func planSpecCheck(inv Inventory) func([]byte) error {
 		if err := checkSpecInputs(s); err != nil {
 			return err
 		}
-		return checkPins(context.Background(), inv, s, nil, pins)
+		if err := checkPins(context.Background(), inv, s, nil, pins); err != nil {
+			return err
+		}
+		return checkSpecMemory(context.Background(), inv, s, mem)
 	}
+}
+
+// planNotes is where checks that could not run say so (a note is no failure).
+var planNotes io.Writer = os.Stderr
+
+// checkSpecMemory runs SDO's memory check over the spec's seed and baseline memory at its pinned SDO revision, on the
+// manager's host when it has that hooks checkout. An invalid one is refused here, naming the memory and the failed
+// check, instead of crash-looping the controller on a built lane. answers caches one check per directory and checkout.
+func checkSpecMemory(ctx context.Context, inv Inventory, s Spec, answers map[string]memResult) error {
+	if s.Operator.Hooks == "" {
+		return nil
+	}
+	local := inv.LocalHost()
+	hooks := ""
+	if local != "" {
+		hooks = inv.HooksPath(s.Operator.Hooks, s.Operator.Revision, local)
+	}
+	for _, m := range []struct{ what, dir string }{{"operator.baseline", s.Operator.Baseline}, {"operator.seed", s.Operator.Seed}} {
+		if m.dir == "" {
+			continue
+		}
+		key := m.dir + "|" + hooks
+		r, ok := answers[key]
+		if !ok {
+			r = checkMemoryDir(ctx, memoryRunner(inv), local, envPrefix(inv.Hosts[local]), hooks, m.dir, nil)
+			answers[key] = r
+			if r.Note != "" && planNotes != nil {
+				fmt.Fprintf(planNotes, "note: %s %s: %s\n", s.Name, m.what, r.Note)
+			}
+		}
+		if r.Err != nil {
+			return fmt.Errorf("%s %s: memory check at sdo %s failed: %w", m.what, m.dir, short(s.Operator.Revision), r.Err)
+		}
+	}
+	return nil
 }
 
 // Submit adds the experiment unless it exists.
