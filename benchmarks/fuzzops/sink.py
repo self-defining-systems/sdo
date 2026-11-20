@@ -61,8 +61,8 @@ def _need(env: Mapping[str, str], *names: str) -> list[str]:
     return values
 
 
-#: A lane without a host mount (provider vcluster) keeps its evidence on this claim of the control namespace and the
-#: hooks pull it into the host directory (``BENCH_EVIDENCE_MODE=pull``).
+#: A lane without a host mount (provider vcluster or eks) keeps its evidence on this claim of the control namespace
+#: and the hooks pull it into the host directory (``BENCH_EVIDENCE_MODE=pull``, implied by those providers).
 EVIDENCE_CLAIM = "sdo-evidence"
 EVIDENCE_CLAIM_SIZE = "5Gi"
 PULL_IMAGE = "busybox:1.36"
@@ -72,7 +72,7 @@ PULL_READY_TIMEOUT = "180s"
 
 def pull_mode(env: Mapping[str, str]) -> bool:
     """Whether the lane's evidence is pulled from the cluster instead of written to a mounted host directory."""
-    return env.get("BENCH_EVIDENCE_MODE", "") == "pull"
+    return env.get("BENCH_EVIDENCE_MODE", "") == "pull" or env.get("BENCH_LANE_PROVIDER", "") in ("vcluster", "eks")
 
 
 def claim_manifest(control: str, node: str = "") -> dict[str, Any]:

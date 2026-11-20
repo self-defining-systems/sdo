@@ -93,7 +93,7 @@ from benchmarks.devswap.seed import MemorySeed, PreparedMemory, SeedSteps, apply
 from benchmarks.devswap.swap import Phases, SwapPlan, SwapState, swap_compiled
 from benchmarks.devswap.timeline import Timeline
 from benchmarks.devswap.tree import regenerate_tree as regenerate_lane_tree
-from benchmarks.fuzzops import capture, cellevidence, config, observe, page, sink, view
+from benchmarks.fuzzops import capture, cellevidence, config, eks, observe, page, sink, view
 from benchmarks.fuzzops.install import (
     CREDENTIALS_SECRET,
     REPOSITORY_PVC,
@@ -908,6 +908,13 @@ def load_images(cluster: str, wanted: list[str], log: Callable[[str], None], reg
         log(f"loaded {image} on {','.join(workers)}")
 
 
+def kind_cluster(env: Mapping[str, str]) -> str:
+    """The lane's kind cluster; only a kind lane has one (an eks or vcluster lane answers an empty name)."""
+    if sink.pull_mode(env):
+        return env.get("FUZZOPS_KIND_CLUSTER", "")
+    return _need(env, "FUZZOPS_KIND_CLUSTER")
+
+
 def lane_registry_images(registry: Path | None, wanted: list[str], log: Callable[[str], None]) -> dict[str, str]:
     """The operator images of a lane whose nodes cannot be loaded (provider vcluster): each is pushed to the shared
     cluster's registry by the pinned fuzzops checkout's ``registry.sh`` and named as every node pulls it
@@ -1036,7 +1043,7 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
         raise HookError("the operator block's settings need a model")
     lane_dir = Path(_need(env, "BENCH_LANE_DIR")).resolve()
     kubeconfig = Path(_need(env, "KUBECONFIG")).resolve()
-    cluster = _need(env, "FUZZOPS_KIND_CLUSTER")
+    cluster = kind_cluster(env)
     revision = checkout_revision()
     if not (revision.startswith(block.revision) or block.revision.startswith(revision)):
         raise HookError(f"the hooks checkout is at {revision[:12]}, the operator block pins {block.revision}")
@@ -1059,12 +1066,19 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     registry = registry if registry is not None and registry.is_file() else None
     pulled = sink.pull_mode(env)
     volume_env: dict[str, str] = {}
-    if pulled:
+    kube = _kube(env)
+    if eks.is_eks(env):
+        if why := eks.storage_problem(
+            json.loads(_run(kube.cmd("get", "storageclass", "-o", "json"), "storageclasses").stdout)
+        ):
+            raise HookError(why)
+        refs = eks.pin_operator_images(eks.lane_from_env(env, kube.cmd), image, out)
+        image = {name: refs[tag] for name, tag in image.items()}
+    elif pulled:
         refs = lane_registry_images(registry, list(image.values()), out)
         image = {name: refs[tag] for name, tag in image.items()}
     else:
         load_images(cluster, [image["controller"], image["responder"], image["script"]], out, registry=registry)
-    kube = _kube(env)
     if (
         subprocess.run(
             kube.cmd("get", "namespace", baseline.control), capture_output=True, timeout=60, check=False
