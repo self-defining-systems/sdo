@@ -88,6 +88,12 @@ copy volumes through pods) and `swap` (the dev tree goes into the evidence claim
 needs `docker` and `aws`. Faults whose steps need node access (`NodeLevel` actions: cgroup throttling, patched-image
 builds) are not for these lanes; `python -m benchmarks.fuzzops.eks_faults` derives which from a fuzzops checkout.
 
+The workload side of an EKS lane is `workload.py`, a lanes workload command that hands every verb back to the built-in
+fuzzops workload (`WORKLOAD_BUILTIN`) and, on an eks lane, gives `app-up images` a `kind` command that publishes the
+pack's images to the ECR mirror under their declared names (no kind node to load into) and answers the `footprint` verb
+(GitLab: 8 cores, 30Gi). Spec: `workload: PYTHONPATH=<sdo checkout> uv run --project <sdo checkout> python -m benchmarks.fuzzops.workload`
+(its pinned workload checkout stays the fuzzops one).
+
 `BENCH_OPERATOR` names the baseline directory and the settings (`model`, `effort`, `provider` default `codex`,
 `image_tag` default `fz-<revision[:8]>`, `dev_mount` (default false; needs `image_tag`: the base images) runs the pods from those images with the checkout's Python sources and the host-built `sdo-operator` projected from `$BENCH_EVIDENCE_HOST/.dev` (`SDO_DEV_MOUNT`, `SDO_DEV_MOUNT_PATH`) so a revision needs no image build, `auth_file` default `~/.codex/auth.json`, and an optional `config` object: an
 operator config overlay passed after the baseline's; it may not set `agent.provider`, `agent.model`, `agent.effort`
