@@ -1,0 +1,213 @@
+"""The fuzzops workload adapter for the lane platform: the built-in workload, plus what an EKS lane needs of it.
+
+``python -m benchmarks.fuzzops.workload <verb>`` is a lanes workload command (``benchmarks/lanes/docs/contract.md``).
+Every verb the built-in fuzzops workload implements is handed back to it through ``WORKLOAD_BUILTIN``, unchanged, so a
+spec that names this adapter behaves as a spec that names none, except on a lane with ``BENCH_LANE_PROVIDER=eks``:
+
+``app-up images``
+    The packs load their images into a kind node (``kind load docker-image``). An EKS lane has no kind node: this
+    adapter puts a ``kind`` command first on the PATH of that one call that publishes the images to the lane's ECR
+    mirror under the names the manifests declare (``benchmarks.lanes.eks.publish_app_image``; nodes try the mirror
+    first and fall back to the upstream) and that has no nodes to list, so a pack that preloads through
+    ``kind get nodes`` has nothing to do.
+``footprint``
+    A GitLab app wants 8 cores and 30Gi (the size the built-in workload gives it); other apps take the default.
+
+The shim needs ``BENCH_IMAGE_REGISTRY`` (``benchmarks/fuzzops/eks.py``), ``aws`` and ``docker`` on the PATH.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from benchmarks.fuzzops import eks
+from benchmarks.lanes.eks import Ecr, EksLane, EksLaneError, mirror_repository, publish_app_image, split_reference
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping, Sequence
+
+UNSUPPORTED = 64
+REPO_ROOT = Path(__file__).resolve().parents[2]
+#: Tags that name a moving image: published every time, whatever the mirror holds.
+MOVING_TAGS = frozenset({"dev", "latest"})
+
+
+class WorkloadError(RuntimeError):
+    """A verb the adapter cannot carry out; the message is what the platform records."""
+
+
+def footprint(app: str) -> dict[str, Any] | None:
+    """The lane size the built-in workload gives the app (``None``: the platform default)."""
+    if "gitlab" in Path(app.rstrip("/")).name.lower():
+        return {"cpus": 8, "memory": "30Gi"}
+    return None
+
+
+def mirror_holds(ecr: Ecr, repository: str, tag: str, run: Callable[..., Any]) -> bool:
+    found = run(
+        [
+            "aws",
+            "ecr",
+            "describe-images",
+            "--region",
+            ecr.lane.region,
+            "--repository-name",
+            repository,
+            "--image-ids",
+            f"imageTag={tag}",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    return found.returncode == 0
+
+
+def publish_images(
+    lane: EksLane,
+    images: Sequence[str],
+    log: Callable[[str], None],
+    run: Callable[..., Any] = subprocess.run,
+) -> list[str]:
+    """Publish each image to the mirror under its declared name; returns the ones published.
+
+    An image from a registry the lane does not mirror is left to the nodes to pull. A tag other than a moving one is
+    published once: the mirror already holding it is enough."""
+    ecr = Ecr(lane, run=run)
+    published: list[str] = []
+    for image in images:
+        try:
+            repository, tag = mirror_repository(lane, image)
+        except EksLaneError as exc:
+            log(f"not mirrored ({exc}); nodes pull {image} themselves")
+            continue
+        if (
+            split_reference(image)[1] not in MOVING_TAGS
+            and "@" not in image
+            and mirror_holds(ecr, repository, tag, run)
+        ):
+            log(f"{image}: already in the mirror")
+            continue
+        if run(["docker", "image", "inspect", image], capture_output=True, text=True, check=False).returncode != 0:
+            pulled = run(["docker", "pull", "-q", image], capture_output=True, text=True, check=False)
+            if pulled.returncode != 0:
+                raise WorkloadError(f"image {image} is not on this host and cannot be pulled: {pulled.stderr[-200:]}")
+        publish_app_image(ecr, image, image)
+        log(f"{image}: published to {lane.registry}/{repository}:{tag}")
+        published.append(image)
+    return published
+
+
+def kind_shim(
+    argv: Sequence[str],
+    env: Mapping[str, str],
+    log: Callable[[str], None],
+    run: Callable[..., Any] = subprocess.run,
+) -> int:
+    """What the ``kind`` command does on an EKS lane: ``load docker-image`` publishes, ``get nodes`` lists none."""
+    words = list(argv)
+    if words[:2] == ["get", "nodes"]:
+        return 0
+    if words[:2] == ["load", "docker-image"]:
+        images = _load_images(words[2:])
+        kubectl = _kubectl(env)
+        publish_images(eks.lane_from_env(env, kubectl, run), images, log, run)
+        return 0
+    log(f"kind {' '.join(words)}: not available on an EKS lane (no kind node)")
+    return 2
+
+
+def _load_images(args: Sequence[str]) -> list[str]:
+    """The images of ``kind load docker-image [--name N] [--nodes L] IMAGE...``."""
+    images: list[str] = []
+    skip = False
+    for arg in args:
+        if skip:
+            skip = False
+        elif arg in ("--name", "-n", "--nodes"):
+            skip = True
+        elif re.match(r"^--(name|nodes)=", arg):
+            continue
+        elif not arg.startswith("-"):
+            images.append(arg)
+    return images
+
+
+def _kubectl(env: Mapping[str, str]) -> Callable[..., list[str]]:
+    def command(*args: str) -> list[str]:
+        out = ["kubectl"]
+        if env.get("KUBECONFIG"):
+            out += ["--kubeconfig", env["KUBECONFIG"]]
+        if env.get("FUZZOPS_KUBE_CONTEXT"):
+            out += ["--context", env["FUZZOPS_KUBE_CONTEXT"]]
+        return [*out, *args]
+
+    return command
+
+
+def write_shim(directory: Path) -> None:
+    """A ``kind`` executable in ``directory`` that runs this module's shim with this interpreter."""
+    path = directory / "kind"
+    path.write_text(f'#!/bin/sh\nexec "{sys.executable}" -m benchmarks.fuzzops.workload kind "$@"\n')
+    path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def handle(
+    verb: str,
+    env: Mapping[str, str],
+    call: Callable[[Sequence[str], Mapping[str, str]], int],
+) -> int:
+    """One verb. ``call`` runs a command line with an environment and answers its exit code (stdout passes through)."""
+    if verb == "footprint":
+        size = footprint(env.get("BENCH_PACK", ""))
+        if size is None:
+            print(json.dumps({"unsupported": True}))
+            return UNSUPPORTED
+        print(json.dumps(size))
+        return 0
+    builtin = json.loads(env["WORKLOAD_BUILTIN"]) if env.get("WORKLOAD_BUILTIN") else []
+    if not builtin:
+        print(json.dumps({"unsupported": True}))
+        return UNSUPPORTED
+    if verb == "app-up" and env.get("WORKLOAD_ACTION") == "images" and eks.is_eks(env):
+        with tempfile.TemporaryDirectory(prefix="fuzzops-eks-shim-") as shim:
+            write_shim(Path(shim))
+            patched = {
+                **env,
+                "PATH": f"{shim}{os.pathsep}{env.get('PATH', '')}",
+                "PYTHONPATH": f"{REPO_ROOT}{os.pathsep}{env.get('PYTHONPATH', '')}".rstrip(os.pathsep),
+            }
+            return call(builtin, patched)
+    return call(builtin, env)
+
+
+def _call(argv: Sequence[str], env: Mapping[str, str]) -> int:
+    return subprocess.run(list(argv), env=dict(env), check=False).returncode
+
+
+def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    environ = os.environ if env is None else env
+    if not args:
+        print("usage: python -m benchmarks.fuzzops.workload VERB", file=sys.stderr)
+        return 2
+    if args[0] == "kind":
+        try:
+            return kind_shim(args[1:], environ, lambda line: print(line, file=sys.stderr))
+        except (eks.EksHookError, WorkloadError) as exc:
+            print(exc, file=sys.stderr)
+            return 1
+    return handle(args[0], environ, _call)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
