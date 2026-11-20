@@ -566,6 +566,10 @@ func (m *Manager) unbind(l *LaneFile, reason string) {
 // builds is the host's churn: the steps that create, reset or delete a lane's cluster or app (a build, a release, an
 // incident reset, a recover). Each takes a network namespace under the kernel's global lock, so max_builds bounds them
 // together. A recover (the cleanup of a step that died) counts but is never held back: what a dead step left must be undone.
+//
+// A build takes its slot only once its cores are placed: while it waits for cores (phase lane-wait) it holds no slot.
+// Otherwise waiting builds fill every slot and the lanes that own the cores can never reset or release to free them.
+// Slots are only ever waited for by steps that hold no other host resource a slot holder needs.
 func (m *Manager) builds(host string) int {
 	n := 0
 	for _, l := range m.lanes {
@@ -574,6 +578,9 @@ func (m *Manager) builds(host string) int {
 		}
 		switch l.Step.Kind {
 		case StepBuild, StepRelease, StepUnhold, StepRecover:
+			if l.Step.Kind == StepBuild && l.Step.Phase != nil && l.Step.Phase.Name == PhaseLaneWait {
+				continue
+			}
 			n++
 		}
 	}
