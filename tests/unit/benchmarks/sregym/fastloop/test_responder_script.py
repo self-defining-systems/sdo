@@ -220,7 +220,7 @@ def test_existing_drift_scenarios_through_script_transport(tmp_path, monkeypatch
         cases.test_scripted_drift_assesses_scratch_pods_without_exec_utilities(monkeypatch, tmp_path, scenario)
     else:
         cases.test_scripted_policy_drift_requires_source_absence_and_total_ingress_isolation(
-            monkeypatch, "" if scenario == "policy" else scenario
+            monkeypatch, "" if scenario == "policy" else scenario, "spec"
         )
 
 

@@ -171,10 +171,13 @@ def test_scripted_drift_assesses_scratch_pods_without_exec_utilities(
         assert {item.kind for item in label.investigation_evidence} == {"source_contradiction", "violated_relation"}
 
 
+@pytest.mark.parametrize("drift_field", ["spec", "object-digest"])
 @pytest.mark.parametrize(
     "near_miss", ["", "allow_rule", "accepted_policy", "no_pod", "changed_service", "unknown_selector"]
 )
-def test_scripted_policy_drift_requires_source_absence_and_total_ingress_isolation(monkeypatch, near_miss: str) -> None:
+def test_scripted_policy_drift_requires_source_absence_and_total_ingress_isolation(
+    monkeypatch, near_miss: str, drift_field: str
+) -> None:
     import json
     from copy import deepcopy
 
@@ -207,7 +210,11 @@ def test_scripted_policy_drift_requires_source_absence_and_total_ingress_isolati
                 "source": "differs from accepted manifest"
                 if near_miss == "accepted_policy"
                 else "absent from accepted source",
-                "fields": [{"path": "spec", "new": json.dumps(spec)}],
+                # The controller now reports a source-absent object as one digest field ("object"); the assessment
+                # judges the live policy either way.
+                "fields": [{"path": "spec", "new": json.dumps(spec)}]
+                if drift_field == "spec"
+                else [{"path": "object", "new": "sha256:" + "d" * 64}],
             }
         ],
         findings=[
