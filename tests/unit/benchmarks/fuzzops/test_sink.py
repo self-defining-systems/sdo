@@ -294,6 +294,8 @@ def test_pull_run_dir_reports_a_missing_run_directory_and_still_removes_its_pod(
 def test_the_push_pod_mounts_the_claim_writable_and_fits_the_restricted_level() -> None:
     pod = sink.pusher_manifest("ns-sdo", "p")["spec"]
     assert pod["securityContext"]["runAsNonRoot"] is True
+    # a block-device claim (EBS) is root-owned until the kubelet applies the group: the controller's pod does the same
+    assert pod["securityContext"]["fsGroup"] == sink.PULL_UID
     mount = pod["containers"][0]["volumeMounts"][0]
     assert mount["mountPath"] == "/sink"
     assert not mount.get("readOnly")
