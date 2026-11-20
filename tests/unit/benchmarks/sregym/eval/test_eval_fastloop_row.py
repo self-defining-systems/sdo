@@ -800,3 +800,20 @@ def test_a_row_without_a_verdict_names_the_rows_own_error(tmp_path: Path, monkey
     runner.records[cell().id] = record(oracle=None, error="ValueError: eval: SDO rejected onboarding after 9s (x)")
     with pytest.raises(RuntimeError, match="no oracle verdict.*SDO rejected onboarding"):
         runner.grade(lane, cell())
+
+
+def test_an_invalid_injection_is_a_structured_pre_injection_cause() -> None:
+    """A lane that cannot hold the fault fails every row alike; the scheduler parks on the cause, not on prose."""
+    runner = FastloopRowRunner.__new__(FastloopRowRunner)
+    built = record(
+        infra_error="injection_invalid",
+        injection_evidence={"error": "RuntimeError: Need 2 worker nodes for this fault to be injected."},
+        oracle=None,
+    )
+    runner.records, runner.rejections = {cell("sdo").id: built}, {}
+    with pytest.raises(RuntimeError) as raised:
+        runner.grade(None, cell("sdo"))  # type: ignore[arg-type]
+    assert str(raised.value) == (
+        "eval: rejected before injection "
+        "(injection:invalid/RuntimeError:_Need_2_worker_nodes_for_this_fault_to_be_injected.)"
+    )
