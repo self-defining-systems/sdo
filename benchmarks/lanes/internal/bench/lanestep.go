@@ -91,7 +91,7 @@ func (r *stepRunner) allocator() (CPUAllocator, error) {
 	if budget == 0 {
 		budget = hostMemTotal() / 100 * 85
 	}
-	return CPUAllocator{Dir: l.State, Shared: l.StateShared, Allowed: allowed, Topo: t, MemBudget: budget, Live: r.liveLanes, Log: r.logf}, nil
+	return CPUAllocator{Dir: l.State, Shared: l.StateShared, Allowed: allowed, Topo: t, MemBudget: budget, Live: r.liveLanes, Foreign: r.foreignPins, Log: r.logf}, nil
 }
 
 // liveLanes lists the kind clusters that exist on the host (what the ledger is reconciled against).
@@ -112,6 +112,22 @@ func (r *stepRunner) liveLanes() (map[string]bool, error) {
 		live[n] = true
 	}
 	return live, nil
+}
+
+// foreignPins lists the containers on the host that are not ours and are pinned to cpus.
+func (r *stepRunner) foreignPins() ([]ContainerPin, error) {
+	if r.foreign != nil {
+		return r.foreign()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), clusterCheckTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", "-c", containerProbe)
+	cmd.Env = append(os.Environ(), r.s.HostEnv...)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	return ForeignPins(string(out)), nil
 }
 
 // laneEnvLimits takes the lane's cores and memory (waiting its turn while other lanes hold the range or the memory

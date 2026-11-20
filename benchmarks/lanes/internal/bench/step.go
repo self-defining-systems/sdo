@@ -181,6 +181,7 @@ type stepRunner struct {
 	// tests set them).
 	topology func() (Topology, error)
 	live     func() (map[string]bool, error)
+	foreign  func() ([]ContainerPin, error) // nil: docker on the host
 	oom      func() (int, error)
 }
 

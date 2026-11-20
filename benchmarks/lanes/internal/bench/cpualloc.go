@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -116,6 +117,9 @@ type CPUAllocator struct {
 	// Live lists the lanes whose cluster exists (nil: the ledger is not reconciled). An error means it is not known,
 	// and nothing is dropped.
 	Live func() (map[string]bool, error)
+	// Foreign lists the containers on the host that are not ours and are pinned to cpus (nil: none known). A core
+	// any of them is pinned to is not given out. An error means it is not known, and nothing is excluded.
+	Foreign func() ([]ContainerPin, error)
 	// Now is the clock (nil: time.Now).
 	Now func() time.Time
 }
@@ -448,13 +452,44 @@ func (a CPUAllocator) Take(lane string, cores int, mem int64) ([]int, error) {
 				taken[c] = true
 			}
 		}
+		pinned := map[int][]string{} // cpu -> foreign containers pinned to it
+		if a.Foreign != nil {
+			if fs, err := a.Foreign(); err != nil {
+				a.logf("foreign pins not known, none excluded: %v", err)
+			} else {
+				for _, f := range fs {
+					for _, c := range f.CPUs {
+						pinned[c] = append(pinned[c], f.Name)
+					}
+				}
+			}
+		}
 		var free [][]int
+		blockedBy := map[string]bool{}
 		for _, core := range usable {
-			if !taken[core[0]] {
+			if taken[core[0]] {
+				continue
+			}
+			clash := false // a core is whole or not given out: one pinned thread takes its siblings too
+			for _, t := range core {
+				for _, n := range pinned[t] {
+					clash, blockedBy[n] = true, true
+				}
+			}
+			if !clash {
 				free = append(free, core)
 			}
 		}
 		if len(free) < cores {
+			if len(blockedBy) > 0 {
+				names := make([]string, 0, len(blockedBy))
+				for n := range blockedBy {
+					names = append(names, n)
+				}
+				sort.Strings(names)
+				wait = fmt.Errorf("%d cores asked, %d free; foreign containers pinned inside the block hold the rest: %s: %w", cores, len(free), strings.Join(names, ", "), ErrNoFreeCores)
+				return nil
+			}
 			wait = fmt.Errorf("%d cores asked, %d free: %w", cores, len(free), ErrNoFreeCores)
 			return nil
 		}

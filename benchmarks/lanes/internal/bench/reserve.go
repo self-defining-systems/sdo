@@ -434,6 +434,47 @@ func adoptHost(ctx context.Context, root Root, inv Inventory, host, cpus string,
 const containerProbe = `docker ps --format '{{.Names}}' 2>/dev/null | while read -r c; do ` +
 	`echo "$c $(docker inspect -f '{{.HostConfig.CgroupParent}}' "$c") $(docker inspect -f '{{.HostConfig.CpusetCpus}}' "$c")"; done`
 
+// ContainerPin is one running container with a cpuset, as containerProbe reports it.
+type ContainerPin struct {
+	Name   string
+	Parent string // the cgroup parent
+	Set    string // the cpuset as docker prints it
+	CPUs   []int
+}
+
+// ours reports whether the container is one of our lanes or the eval slice (everything else is foreign).
+func (c ContainerPin) ours() bool {
+	return strings.HasPrefix(c.Parent, "lanes") || c.Parent == EvalSlice
+}
+
+// parseContainerProbe reads containerProbe output; containers without a cpuset pin are left out.
+func parseContainerProbe(out string) []ContainerPin {
+	var pins []ContainerPin
+	for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
+		f := strings.Fields(l)
+		if len(f) < 3 {
+			continue
+		}
+		set, err := ParseCPUList(f[2])
+		if err != nil || len(set) == 0 {
+			continue
+		}
+		pins = append(pins, ContainerPin{Name: f[0], Parent: f[1], Set: f[2], CPUs: set})
+	}
+	return pins
+}
+
+// ForeignPins lists the containers in containerProbe output that are not ours and are pinned to some cpus.
+func ForeignPins(out string) []ContainerPin {
+	var foreign []ContainerPin
+	for _, c := range parseContainerProbe(out) {
+		if !c.ours() {
+			foreign = append(foreign, c)
+		}
+	}
+	return foreign
+}
+
 func statusHost(ctx context.Context, root Root, inv Inventory, host string, helper Helper, run runFn, out io.Writer) error {
 	rs, _ := root.LoadReservations()
 	r, recorded := rs[host]
@@ -466,27 +507,18 @@ func statusHost(ctx context.Context, root Root, inv Inventory, host string, help
 		fmt.Fprintf(out, "  containers: probe failed: %s\n", clip(err.Error(), 120))
 		return nil
 	}
-	for _, l := range strings.Split(strings.TrimSpace(cs), "\n") {
-		f := strings.Fields(l)
-		if len(f) < 3 {
-			continue
-		}
-		set, err := ParseCPUList(f[2])
-		if err != nil || len(set) == 0 {
-			continue
-		}
+	for _, c := range parseContainerProbe(cs) {
 		inside := 0
-		for _, c := range set {
-			if in[c] {
+		for _, cpu := range c.CPUs {
+			if in[cpu] {
 				inside++
 			}
 		}
-		ours := strings.HasPrefix(f[1], "lanes") || f[1] == EvalSlice
 		switch {
-		case ours && inside < len(set):
-			fmt.Fprintf(out, "  our container %s is pinned to %s, outside the block\n", f[0], f[2])
-		case !ours && inside > 0:
-			fmt.Fprintf(out, "  foreign container %s is pinned to %s, inside the block\n", f[0], f[2])
+		case c.ours() && inside < len(c.CPUs):
+			fmt.Fprintf(out, "  our container %s is pinned to %s, outside the block\n", c.Name, c.Set)
+		case !c.ours() && inside > 0:
+			fmt.Fprintf(out, "  foreign container %s is pinned to %s, inside the block\n", c.Name, c.Set)
 		}
 	}
 	return nil
