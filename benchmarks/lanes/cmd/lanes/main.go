@@ -69,6 +69,12 @@ func run(verb string, args []string) int {
 		return probe(args)
 	}
 	if verb == "host" {
+		// The host verb has flags of its own (--cpus, --prev, --drain), so only --root is taken out here.
+		hostRoot, hostArgs := extractRoot(args)
+		if hostRoot != "" {
+			*root = hostRoot
+		}
+		args = hostArgs
 		inv, err := bench.LoadInventory(*root)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -172,6 +178,25 @@ func run(verb string, args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// extractRoot removes --root (also -root, --root=R) from args and returns its value ("" when absent).
+func extractRoot(args []string) (string, []string) {
+	root := ""
+	var rest []string
+	for i := 0; i < len(args); i++ {
+		a := strings.TrimPrefix(strings.TrimPrefix(args[i], "-"), "-")
+		switch {
+		case args[i] != a && a == "root" && i+1 < len(args):
+			root = args[i+1]
+			i++
+		case args[i] != a && strings.HasPrefix(a, "root="):
+			root = strings.TrimPrefix(a, "root=")
+		default:
+			rest = append(rest, args[i])
+		}
+	}
+	return root, rest
 }
 
 // parseInterleaved parses flags given before or after the positional arguments (`remove NAME --teardown`) and returns
