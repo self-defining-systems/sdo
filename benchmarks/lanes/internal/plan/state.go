@@ -14,6 +14,8 @@ const (
 	NodeDone      = "done"
 	NodeFailed    = "failed"
 	NodeSkipped   = "skipped"
+	// NodeParked: the item failed twice with the same reason; nothing more of it runs.
+	NodeParked = "parked"
 )
 
 // Step statuses.
@@ -48,6 +50,19 @@ type NodeState struct {
 	Submitted time.Time                 `json:"submitted,omitempty"`
 	Ended     time.Time                 `json:"ended,omitempty"`
 	Artifacts map[string]*ArtifactState `json:"artifacts,omitempty"`
+	// Attempts are the ended attempts, oldest first; the current one is in the fields above.
+	Attempts []AttemptRecord `json:"attempts,omitempty"`
+}
+
+// AttemptRecord is one ended attempt of a node: how it ended and how long each stage took.
+type AttemptRecord struct {
+	Attempt   int                      `json:"attempt"`
+	Exp       string                   `json:"exp"`
+	Reason    string                   `json:"reason,omitempty"` // empty: the attempt is done
+	Detail    string                   `json:"detail,omitempty"`
+	Submitted time.Time                `json:"submitted"`
+	Ended     time.Time                `json:"ended"`
+	Stages    map[string]time.Duration `json:"stages,omitempty"`
 }
 
 // StepState is the state of one step instance.
@@ -69,6 +84,10 @@ type State struct {
 	Nodes    []*NodeState `json:"nodes"`
 	Steps    []*StepState `json:"steps,omitempty"`
 	Complete bool         `json:"complete,omitempty"`
+	// Failures counts failed attempts per item and reason ("item|reason"); Parked maps a parked item to its reason.
+	Failures map[string]int    `json:"failures,omitempty"`
+	Parked   map[string]string `json:"parked,omitempty"`
+	Alarms   AlarmState        `json:"alarms,omitempty"`
 }
 
 const stateVersion = 1
@@ -115,7 +134,7 @@ func (s *State) step(id string) *StepState {
 }
 
 func terminalNode(status string) bool {
-	return status == NodeDone || status == NodeFailed || status == NodeSkipped
+	return status == NodeDone || status == NodeFailed || status == NodeSkipped || status == NodeParked
 }
 
 // event is one line of events.jsonl.

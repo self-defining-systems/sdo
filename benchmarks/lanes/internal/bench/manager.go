@@ -225,6 +225,11 @@ func (m *Manager) tickPlans(ctx context.Context) {
 			continue
 		}
 		e.Logf = m.logf
+		hook := ""
+		if e.Plan.Alarms != nil {
+			hook = e.Plan.Alarms.Hook
+		}
+		e.Alarms = &AlarmLog{Root: m.Root, Hook: hook, Logf: m.logf}
 		if err := e.Tick(ctx); err != nil {
 			m.logf("plan %s: %v", name, err)
 		}

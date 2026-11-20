@@ -21,6 +21,8 @@ isolation: two-way                     # optional; written into every spec
 artifacts: {memory: {path: "${run}/operator/learned-baseline", verify: subject}}
 edges: [{from: p1, to: p2, artifact: memory}]       # p2 of an item starts after p1 of the same item and rep verified
 steps: [{name: merge, after: [p1], per: rep, run: "merge-memories", lane: none, out: "${step_dir}/merged"}]
+stages: {pre-inject: 12m, post-inject: 25m}    # per-stage minimum; the runner alarms above factor x minimum
+alarms: {factor: 2, idle_lane: 10m, arm_stall: 90m, hook: "notify-send lanes \"$ALARM_DETAIL\""}
 ```
 
 - **Order.** Nodes are `(rep, item, arm)`, arms in dependency-then-declaration order, so every comparison's partner is
@@ -40,7 +42,23 @@ steps: [{name: merge, after: [p1], per: rep, run: "merge-memories", lane: none, 
   file's directory.
 - **Lock.** `lock.json` records the pins, the items and the hashes of the stored plan and templates; a changed copy
   refuses to run.
+- **Retries.** Only the runner retries: every spec runs with `retries: 0`. Failures are counted per (item, reason),
+  across arms and reps. The first failure reruns the node as a new attempt under a new experiment name (`-x1`, `-x2`);
+  the second identical failure parks the item: the failing node fails for good, the item's unreleased nodes are parked,
+  runs already in flight finish, and dependents are skipped. A different reason does not count toward parking. A bad
+  artifact (`artifact:<kind>`), a spec that does not render (`spec`) and a vanished experiment (`lost`) are reasons like
+  any other.
+- **Alarms.** Raised once while the condition stands, written to `<root>/alarms.jsonl`, shown by `lanes status` (the last
+  day, at most 10) and `lanes plan status`, and passed to `alarms.hook` (a shell command; `ALARM_JSON`, `ALARM_KIND`,
+  `ALARM_PLAN`, `ALARM_KEY`, `ALARM_SUBJECT`, `ALARM_DETAIL`; 30 s limit; a failing hook is logged only). Kinds:
+  `stage` (a stage took more than `factor` x its minimum, finished or still running), `idle-lane` (a free lane for
+  more than `idle_lane` while runs wait, in the platform queue or held back by the plan), `arm-stall` (an arm with
+  released or ready work and no run ended for `arm_stall`), `host-pressure` (a host over its `max_load5` or under its
+  `min_free`). Liveness comes from the plan's own records and the lane and step records, never from a process table.
+  Stage names are the backend's: the real one reports `queue`, `pre-inject`, `post-inject` for finished runs and, while
+  running, the phase of the lane's step (`prepare`, `gate`, `window`, `undo`, `settle`, ...).
 - **Commands.** `lanes plan add FILE`, `lanes plan status [NAME] [--json]` (per arm: done, in-flight, queued, blocked,
   failed, skipped; the next runs; why the first blocked ones wait). `lanes status` prints one line per plan.
 
-Replaces the hand-rolled twopass drivers: `driver.py` (chaining pass 2 after a verified pass-1 archive) and `mkspec.py`.
+Replaces the hand-rolled twopass drivers: `driver.py` (chaining pass 2 after a verified pass-1 archive, the `-x<n>` rerun
+suffix), `mkspec.py`, `lanewatch.py` and `poolgate.py` (retry and park policy, stalled-lane detection) and `tick.sh`.

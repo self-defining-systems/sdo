@@ -4,6 +4,7 @@ package bench
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -169,6 +170,8 @@ arms: [{name: one, spec: first.json}, {name: two, spec: second.json}]
 items: [{id: a, vars: {fault: "a@x"}}, {id: b, vars: {fault: "b@y"}}]
 parallel: 2
 isolation: one-way-ok
+stages: {post-inject: 1ms}
+alarms: {factor: 1}
 artifacts: {rec: {path: "${run}/run.json"}}
 edges: [{from: one, to: two, artifact: rec}]
 `), 0o644))
@@ -190,6 +193,11 @@ edges: [{from: one, to: two, artifact: rec}]
 	if !strings.HasPrefix(seed, want) || !strings.HasSuffix(seed, "run.json") {
 		t.Fatalf("seed = %q, want a run.json under %s", seed, want)
 	}
+	// Every run took longer than the 1 ms minimum the plan declared for its post-inject stage: one stage alarm per run
+	// in alarms.jsonl, and `status` shows them.
+	if got := RecentAlarms(l.root, time.Hour, time.Now()); len(got) != 4 || got[0].Alarm != plan.AlarmStage {
+		t.Fatalf("alarms %+v", got)
+	}
 	var out strings.Builder
 	must(t, PlanStatus(l.root, "", false, &out))
 	if !strings.Contains(out.String(), "complete") {
@@ -207,4 +215,84 @@ func expNameOf(t *testing.T, st *plan.State, id string) string {
 	}
 	t.Fatalf("no node %s", id)
 	return ""
+}
+
+func TestPlanBackendStagesAndCurrentStage(t *testing.T) {
+	l := newPlanLab(t)
+	ctx := context.Background()
+	added := time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC)
+	start, inject, end := added.Add(10*time.Minute), added.Add(25*time.Minute), added.Add(40*time.Minute)
+	l.experiment("ok", map[string]RunFile{"r1": {Status: StatusDone, Started: start, InjectAt: &inject, Ended: end}})
+	must(t, writeJSON(l.root.LockPath("ok"), Lock{Spec: Spec{Name: "ok", Faults: Faults{IDs: []string{"f1"}}, Sequences: [][]int{{1}}}, Added: added}))
+	obs, _ := l.b.Observe(ctx, "ok")
+	want := map[string]time.Duration{StageQueue: 10 * time.Minute, StagePreInject: 15 * time.Minute, StagePostInject: 15 * time.Minute}
+	for k, d := range want {
+		if obs.Stages[k] != d {
+			t.Errorf("stage %s = %v want %v (all %v)", k, obs.Stages[k], d, obs.Stages)
+		}
+	}
+	// A queued experiment is in the queue stage since it was added; one on a lane is in its step's phase.
+	l.experiment("q", nil)
+	must(t, writeJSON(l.root.LockPath("q"), Lock{Spec: Spec{Name: "q", Faults: Faults{IDs: []string{"f1"}}, Sequences: [][]int{{1}}}, Added: added}))
+	if obs, _ := l.b.Observe(ctx, "q"); obs.Stage != StageQueue || !obs.StageSince.Equal(added) {
+		t.Errorf("queued: %+v", obs)
+	}
+	since := added.Add(time.Hour)
+	must(t, writeJSON(l.root.LanePath("c1"), LaneFile{Lane: "c1", Host: "h1", State: LaneRunning, Experiment: "q", Seq: &Seq{Fault: "f1", Q: 1},
+		Step: &StepRef{ID: "s1", Kind: "run", Started: since, Phase: &Phase{Name: PhaseGate, Since: since}}}))
+	if obs, _ := l.b.Observe(ctx, "q"); obs.Phase != plan.PhaseRunning || obs.Stage != PhaseGate || !obs.StageSince.Equal(since) {
+		t.Errorf("on a lane: %+v", obs)
+	}
+}
+
+func TestAlarmLogWritesTheFileAndRunsTheHook(t *testing.T) {
+	root := Root(t.TempDir())
+	out := filepath.Join(t.TempDir(), "hook.out")
+	log := &AlarmLog{Root: root, Hook: `echo "$ALARM_KIND $ALARM_PLAN $ALARM_SUBJECT" > ` + out}
+	a := plan.Alarm{At: time.Now().UTC(), Plan: "tp", Alarm: plan.AlarmIdleLane, Key: "idle-lane:h1/c1", Subject: "h1/c1", Detail: "free for 20m"}
+	log.Raise(a)
+	if b, _ := os.ReadFile(out); strings.TrimSpace(string(b)) != "idle-lane tp h1/c1" {
+		t.Fatalf("hook saw %q", b)
+	}
+	// A failing hook does not stop anything; the line is still in the file.
+	(&AlarmLog{Root: root, Hook: "exit 7"}).Raise(a)
+	got := RecentAlarms(root, time.Hour, time.Now())
+	if len(got) != 2 || got[0].Key != a.Key {
+		t.Fatalf("alarms.jsonl: %+v", got)
+	}
+	var w strings.Builder
+	printAlarms(root, &w)
+	if !strings.Contains(w.String(), "idle-lane") || !strings.Contains(w.String(), "free for 20m") {
+		t.Fatalf("status alarms:\n%s", w.String())
+	}
+}
+
+func TestRecentAlarmsSkipsDamagedAndOldLines(t *testing.T) {
+	root := Root(t.TempDir())
+	now := time.Now().UTC()
+	old, _ := json.Marshal(plan.Alarm{At: now.Add(-48 * time.Hour), Alarm: "stage", Key: "old"})
+	fresh, _ := json.Marshal(plan.Alarm{At: now.Add(-time.Hour), Alarm: "stage", Key: "fresh"})
+	drift := `{"at":"` + now.Format(time.RFC3339) + `","host":"h1","alarm":"reservation-drift","detail":"x"}`
+	must(t, os.WriteFile(root.path("alarms.jsonl"), []byte(string(old)+"\n\nnot json\n"+string(fresh)+"\n"+drift+"\n{\"at\":"), 0o644))
+	got := RecentAlarms(root, 24*time.Hour, now)
+	if len(got) != 2 || got[0].Key != "fresh" || got[1].Alarm != "reservation-drift" {
+		t.Fatalf("got %+v", got)
+	}
+	var w strings.Builder
+	printAlarms(Root(t.TempDir()), &w) // no file: nothing printed
+	if w.Len() != 0 {
+		t.Fatalf("printed %q", w.String())
+	}
+}
+
+func TestPlanBackendCapacity(t *testing.T) {
+	l := newLab(t)
+	l.add("e1", "{builtin: noop}", "a@x, b@y", "[[1]]", 0)
+	c, err := (&PlanBackend{Root: l.root}).Capacity(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Waiting != 2 {
+		t.Fatalf("waiting %d, want the 2 queued runs", c.Waiting)
+	}
 }

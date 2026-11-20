@@ -28,7 +28,8 @@ type fakeBackend struct {
 	verifies []string
 	steps    map[string]StepObservation
 	started  []StepJob
-	exportOK bool
+	capacity Capacity
+	alarms   []Alarm
 }
 
 func newFake() *fakeBackend {
@@ -86,6 +87,29 @@ func (f *fakeBackend) ObserveStep(_ context.Context, dir string) (StepObservatio
 		return o, nil
 	}
 	return StepObservation{Phase: PhaseAbsent}, nil
+}
+
+func (f *fakeBackend) Capacity(context.Context) (Capacity, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.capacity, nil
+}
+
+// Raise makes the fake backend the alarm sink as well.
+func (f *fakeBackend) Raise(a Alarm) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.alarms = append(f.alarms, a)
+}
+
+func (f *fakeBackend) kinds() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for _, a := range f.alarms {
+		out = append(out, a.Alarm+" "+a.Subject)
+	}
+	return out
 }
 
 // finish ends the experiment of node (found by its job) as phase.
@@ -158,6 +182,7 @@ func (l *lab) open() *Engine {
 	if err != nil {
 		l.t.Fatal(err)
 	}
+	e.Alarms = l.fb
 	return e
 }
 
@@ -193,4 +218,13 @@ func stepIDOf(dir string) string {
 	base := filepath.Base(dir)
 	base = strings.Replace(base, "step_", "step:", 1)
 	return strings.Replace(base, "_r", "/r", 1)
+}
+
+func mustRead(t *testing.T, p string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }

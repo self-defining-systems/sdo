@@ -60,24 +60,42 @@ func TestFailedVerifyBlocksTheDependentRun(t *testing.T) {
 	l.fb.finish(exp, PhaseDone, "")
 	l.tick(e)
 
+	// The bad artifact fails the source's attempt; the dependent must not run on it, and waits for the rerun.
 	st := l.state()
-	p1 := st.node("p1/a/r1")
-	if p1.Status != NodeFailed || p1.Reason != "artifact:memory" {
-		t.Fatalf("p1/a/r1 = %s %q, want failed artifact:memory", p1.Status, p1.Reason)
-	}
-	if p2 := st.node("p2/a/r1"); p2.Status != NodeSkipped || !strings.Contains(p2.Reason, "p1/a/r1 failed") {
-		t.Fatalf("p2/a/r1 = %s %q, want skipped on its failed input", p2.Status, p2.Reason)
+	if p1 := st.node("p1/a/r1"); p1.Status == NodeDone || p1.Attempts[0].Reason != "artifact:memory" {
+		t.Fatalf("p1/a/r1 = %s %+v, want its attempt failed with artifact:memory", p1.Status, p1.Attempts)
 	}
 	for _, n := range l.fb.nodes() {
 		if n == "p2/a/r1" {
 			t.Fatal("the dependent was released on an unverified artifact")
 		}
 	}
+	// The rerun produces the same bad archive: the second identical failure parks the item, the dependent is skipped.
+	l.tick(e)
+	exp2 := l.fb.expOf("p1/a/r1")
+	if exp2 == exp {
+		t.Fatalf("rerun reused %s", exp)
+	}
+	l.fb.verdicts["memory@"+exp2] = Verdict{OK: false, Detail: "archive head 1111 is not live HEAD 2222"}
+	l.fb.finish(exp2, PhaseDone, "")
+	l.tick(e)
+	st = l.state()
+	if p1 := st.node("p1/a/r1"); p1.Status != NodeFailed || st.Parked["a"] != "artifact:memory" {
+		t.Fatalf("p1/a/r1 = %s, parked %v", p1.Status, st.Parked)
+	}
+	if p2 := st.node("p2/a/r1"); p2.Status != NodeSkipped && p2.Status != NodeParked {
+		t.Fatalf("p2/a/r1 = %s %q, want it ended without running", p2.Status, p2.Reason)
+	}
+	for _, n := range l.fb.nodes() {
+		if n == "p2/a/r1" {
+			t.Fatal("the dependent ran on a bad artifact")
+		}
+	}
 }
 
 func TestArtifactIsVerifiedAgainBeforeTheDependentStarts(t *testing.T) {
 	// The world moves between the source's end and the dependent's release (the head advances): the second verify,
-	// run at release, fails the source.
+	// run at release, fails the source, which runs again.
 	l := newLab(t)
 	e := l.add(strings.Replace(twopass, "parallel: 2", "parallel: 1", 1))
 	l.tick(e)
@@ -87,8 +105,12 @@ func TestArtifactIsVerifiedAgainBeforeTheDependentStarts(t *testing.T) {
 	l.fb.finish(l.fb.expOf("cold/a/r1"), PhaseDone, "")
 	l.fb.verdicts["memory@"+exp] = Verdict{OK: false, Detail: "head moved"}
 	l.tick(e)
-	if st := l.state(); st.node("p1/a/r1").Status != NodeFailed || st.node("p2/a/r1").Status != NodeSkipped {
+	st := l.state()
+	if st.node("p1/a/r1").Status == NodeDone || st.node("p2/a/r1").Status == NodeSubmitted {
 		t.Fatalf("p1 %s, p2 %s: a stale artifact must not chain", st.node("p1/a/r1").Status, st.node("p2/a/r1").Status)
+	}
+	if st.node("p1/a/r1").Attempts[0].Reason != "artifact:memory" {
+		t.Fatalf("attempts %+v", st.node("p1/a/r1").Attempts)
 	}
 }
 
@@ -178,23 +200,28 @@ edges: [{from: merge, to: p2, artifact: memory}]
 		t.Fatal("merge started before every pass-1 run ended")
 	}
 	l.fb.finish(l.fb.expOf("p1/b/r1"), PhaseFailed, "oom")
-	l.tick(e)
+	l.tick(e) // the first oom of item b: p1/b/r1 runs again
+	l.fb.finish(l.fb.expOf("p1/b/r1"), PhaseFailed, "oom")
+	l.tick(e) // the second parks item b
 	if len(l.fb.started) != 1 || len(l.fb.started[0].Inputs) != 1 || l.fb.started[0].Inputs[0].Node != "p1/a/r1" {
 		t.Fatalf("merge runs once over the done nodes only: %+v", l.fb.started)
 	}
 	l.tick(e)
-	if len(l.fb.nodes()) != 2 {
-		t.Fatal("p2 released while the merge runs")
+	for _, n := range l.fb.nodes() {
+		if strings.HasPrefix(n, "p2/") {
+			t.Fatal("p2 released while the merge runs")
+		}
 	}
 	l.fb.steps["step:merge"] = StepObservation{Phase: PhaseDone}
 	l.tick(e)
 	l.tick(e)
-	// p2 of both items needs only the merge: p2/b/r1 runs although p1/b/r1 failed.
-	if got := l.fb.nodes()[2:]; !reflect.DeepEqual(got, []string{"p2/a/r1", "p2/b/r1"}) {
+	// Item b is parked (two oom failures): p2/b never runs; p2/a took the merge.
+	if got := l.fb.nodes(); got[len(got)-1] != "p2/a/r1" {
 		t.Fatalf("after the merge: %v", got)
 	}
-	if st := l.state(); st.step("step:merge").Status != StepDone || st.node("p1/b/r1").Status != NodeFailed {
-		t.Fatalf("merge %s, p1/b/r1 %s", st.step("step:merge").Status, st.node("p1/b/r1").Status)
+	st := l.state()
+	if st.step("step:merge").Status != StepDone || st.node("p1/b/r1").Status != NodeFailed || st.node("p2/b/r1").Status != NodeParked {
+		t.Fatalf("merge %s, p1/b/r1 %s, p2/b/r1 %s", st.step("step:merge").Status, st.node("p1/b/r1").Status, st.node("p2/b/r1").Status)
 	}
 }
 
