@@ -32,10 +32,13 @@ type Spec struct {
 	Fuzzops string `json:"fuzzops"` // pinned fuzzops revision (prefix)
 	// Workload names the workload adapter (docs/contract.md): "" or "fuzzops" is the built-in one, anything else a
 	// command run in the pinned checkout. Not part of the identity: the spec of an existing root never sets it.
-	Workload  string   `json:"workload,omitempty"`
-	Operator  Operator `json:"operator"`
-	Namespace string   `json:"namespace"`
-	Faults    Faults   `json:"faults"`
+	Workload string   `json:"workload,omitempty"`
+	Operator Operator `json:"operator"`
+	// Described is the subject's own description (`describe`), recorded in the lock when the spec is added. It is
+	// derived, not part of the identity, and not read from a spec file.
+	Described *Described `json:"described,omitempty"`
+	Namespace string     `json:"namespace"`
+	Faults    Faults     `json:"faults"`
 	// Sequences: per fault, the seed lists run in order on one fresh lane each.
 	Sequences [][]int `json:"sequences"`
 	// Run holds extra `fuzzops run` flags, --key=value.
@@ -311,26 +314,16 @@ func parseDur(field, v string) (time.Duration, error) {
 	return d, nil
 }
 
-// DefaultStartupBound is SDO's own response.startup_bound default: how long a new install may report busy
-// ("startup baseline pending") before its start-up period ends.
-const DefaultStartupBound = 30 * time.Minute
-
 // startupMargin is the wait added past the subject's start-up bound.
 const startupMargin = 10 * time.Minute
 
-// StartupBound is the subject's declared start-up bound: operator.settings.startup_bound (a duration; the hooks
-// render it as response.startup_bound), else SDO's default. A spec with no hooks has none (0), and 0s means the
-// subject has no start-up period.
+// StartupBound is the subject's start-up bound, as it described itself (docs/contract.md, `describe`). A spec with no
+// hooks has none (0), and 0 means the subject has no start-up period.
 func (s Spec) StartupBound() time.Duration {
 	if s.Operator.Hooks == "" {
 		return 0
 	}
-	if v, ok := s.Operator.Settings["startup_bound"].(string); ok {
-		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
-			return d
-		}
-	}
-	return DefaultStartupBound
+	return s.describedOrLegacy().startup()
 }
 
 // Durations returns ready_for, the effective ready timeout and cap (the spec is valid). The ready timeout is

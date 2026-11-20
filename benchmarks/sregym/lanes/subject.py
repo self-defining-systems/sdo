@@ -8,6 +8,7 @@ planned memory commit, so the hooks own nothing on the lane:
 ``prepare``, ``swap``: the attached pack and the SDO revision (``{"pack", "operator_version", "memory"}``); the
               operator file's seed (a memory directory) is passed to the workload's ``run`` through ``BENCH_OPERATOR``.
 ``idle``      idle (the workload's run waits for SDO's closure itself).
+``describe``  no start-up period (``max_startup`` 0s), no model call of its own (the workload drives the agent).
 
 Every other verb is unsupported (exit 64).
 """
@@ -45,6 +46,8 @@ def seed_of(env: Mapping[str, str]) -> str:
 def dispatch(verb: str, env: Mapping[str, str], version: Callable[[], str] = revision) -> tuple[int, dict[str, Any]]:
     if verb in NOTHING:
         return 0, {"ok": True}
+    if verb == "describe":
+        return 0, {"max_startup": "0s", "needs_credentials": False}
     if verb in ("prepare", "swap"):
         return 0, {"pack": env.get("BENCH_PACK", ""), "operator_version": version(), "memory": seed_of(env)}
     return UNSUPPORTED, {"unsupported": True}

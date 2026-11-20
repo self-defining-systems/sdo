@@ -2332,6 +2332,38 @@ def _snapshot(env: Mapping[str, str], out: Callable[[str], None]) -> int:
     return 0
 
 
+#: SDO's own default for ``response.startup_bound``: how long a new install may report busy.
+DEFAULT_STARTUP_BOUND = "30m"
+
+
+def describe(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
+    """What the platform needs to know about SDO as a subject (``benchmarks/lanes/docs/contract.md``, ``describe``).
+
+    ``max_startup`` is the settings' ``startup_bound`` (else ``config.response.startup_bound``, else SDO's default), so
+    the platform waits as long as the install may report busy. ``needs_credentials`` is false for the no-model stub
+    agent. A seed is a learned memory in the baseline's format, so it needs the baseline.
+    """
+    path = Path(_need(env, "BENCH_OPERATOR"))
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HookError(f"BENCH_OPERATOR {path} is unreadable: {exc}") from exc
+    settings = raw.get("settings") if isinstance(raw, dict) else None
+    settings = settings if isinstance(settings, dict) else {}
+    response = (settings.get("config") or {}).get("response") or {}
+    bound = settings.get("startup_bound") or response.get("startup_bound") or DEFAULT_STARTUP_BOUND
+    out(
+        json.dumps(
+            {
+                "max_startup": str(bound),
+                "needs_credentials": settings.get("model") != "stub",
+                "inputs": {"seed": {"requires": ["baseline"]}},
+            }
+        )
+    )
+    return 0
+
+
 def transcripts(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     try:
         if sink.pull_mode(env):
@@ -2446,6 +2478,7 @@ def baseline_main(argv: list[str]) -> int:
 
 
 VERBS = (
+    "describe",
     "check",
     "prepare",
     "swap",
@@ -2487,6 +2520,7 @@ def main(argv: list[str] | None = None) -> int:
         if verb == "watch":
             return watch(env)
         verbs: dict[str, Callable[[Mapping[str, str]], int]] = {
+            "describe": describe,
             "check": check,
             "prepare": prepare,
             "swap": swap,

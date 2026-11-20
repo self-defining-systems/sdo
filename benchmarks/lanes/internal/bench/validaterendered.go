@@ -17,11 +17,12 @@ type RenderedChecks struct {
 	Log  io.Writer
 	pins map[string]string
 	mem  map[string]memResult
+	desc map[string]*Described
 }
 
 // NewRenderedChecks starts a validation session; log says what a check could not ask (nil is silent).
 func NewRenderedChecks(log io.Writer) *RenderedChecks {
-	return &RenderedChecks{Log: log, pins: map[string]string{}, mem: map[string]memResult{}}
+	return &RenderedChecks{Log: log, pins: map[string]string{}, mem: map[string]memResult{}, desc: map[string]*Described{}}
 }
 
 // ValidateRendered is the one place that decides whether a rendered spec is acceptable. `plan add` and `--dry-run` call
@@ -33,8 +34,13 @@ func ValidateRendered(ctx context.Context, inv Inventory, s Spec, c *RenderedChe
 	if err := s.Validate(); err != nil {
 		return err
 	}
-	if s.Operator.Seed != "" && s.Operator.Baseline == "" {
-		return fmt.Errorf("operator.seed needs operator.baseline")
+	described, err := c.describe(ctx, inv, s)
+	if err != nil {
+		return err
+	}
+	s.Described = described
+	if err := checkInputRules(s); err != nil {
+		return err
 	}
 	if len(inv.UsableHosts(s)) == 0 {
 		return fmt.Errorf("no host of %v has the pinned fuzzops %s%s in hosts.yaml checkouts", s.Hosts, s.Fuzzops,

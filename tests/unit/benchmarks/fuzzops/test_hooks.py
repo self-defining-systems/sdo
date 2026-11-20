@@ -1514,6 +1514,35 @@ def test_memory_render_is_applied_only_when_it_differs_from_the_install_render(
     assert waited == ["ns1"]
 
 
+def _describe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any, settings: dict[str, Any]) -> dict[str, Any]:
+    block = tmp_path / "operator.json"
+    block.write_text(json.dumps({"hooks": "sdo", "revision": "abc1234", "settings": settings}))
+    monkeypatch.setenv("BENCH_OPERATOR", str(block))
+    assert hooks.main(["describe"]) == 0
+    return json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+
+
+def test_describe_tells_lanes_what_the_platform_needs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    answer = _describe(tmp_path, monkeypatch, capsys, {"model": "opus"})
+    assert answer == {
+        "max_startup": "30m",
+        "needs_credentials": True,
+        "inputs": {"seed": {"requires": ["baseline"]}},
+    }
+
+
+def test_describe_reads_the_startup_bound_and_the_stub_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    answer = _describe(tmp_path, monkeypatch, capsys, {"model": "stub", "startup_bound": "0s"})
+    assert answer["max_startup"] == "0s"
+    assert answer["needs_credentials"] is False
+    nested = _describe(tmp_path, monkeypatch, capsys, {"config": {"response": {"startup_bound": "12m"}}})
+    assert nested["max_startup"] == "12m"
+
+
 @pytest.mark.parametrize("verb", ["preflight", "export-artifact", "verify-artifact", "reseed", "verify-start"])
 def test_lanes_contract_verbs_not_implemented_answer_unsupported(verb: str, capsys: Any) -> None:
     assert hooks.main([verb]) == 64
