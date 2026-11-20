@@ -44,10 +44,17 @@ func main() {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
 	}
+	if wantsHelp(os.Args[1:2]) {
+		printOverview(os.Stdout)
+		return
+	}
 	os.Exit(run(os.Args[1], os.Args[2:]))
 }
 
 func run(verb string, args []string) int {
+	if wantsHelp(args) && printHelp(verb, os.Stdout) {
+		return 0
+	}
 	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
 	root := fs.String("root", os.Getenv("FUZZOPS_BENCH_ROOT"), "results root (default $FUZZOPS_BENCH_ROOT)")
 	var with multi
