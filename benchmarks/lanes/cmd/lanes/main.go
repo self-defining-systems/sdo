@@ -29,7 +29,7 @@ const usage = `usage: lanes VERB --root R ...
   lane reset LANE            return a down lane to free after a human looked
   gc                         on the manager's next pass: delete the lane clusters no experiment needs and the
                              host staging nothing uses (results are never removed)
-  preflight [--spec FILE|DIR ...] [--max-load N] [--allow-memory-diag S ...]   checks before any lane is built: credentials, sink, proto,
+  preflight [--plan FILE] [--spec FILE|DIR ...] [--max-load N] [--allow-memory-diag S ...]   checks before any lane is built: credentials, sink, proto,
                              images, kind node image, memory, capacity, pack; PASS/FAIL per check per host
   step STEP.json             run one step (the manager starts it detached on the lane's host)
   ledger [--state DIR] show | prune | adopt LANE CPUS MEMORY   the host's lane ledger (cores and memory each lane holds): list it,
@@ -54,8 +54,10 @@ func run(verb string, args []string) int {
 	var specs multi
 	maxLoad := fs.Float64("max-load", 1.0, "preflight: highest accepted load5 per core")
 	var allow multi
+	planFile := ""
 	if verb == "preflight" {
 		fs.Var(&allow, "allow-memory-diag", "preflight: a memory-check diagnostic substring that does not fail the check (repeatable)")
+		fs.StringVar(&planFile, "plan", "", "preflight: a plan file whose rendered specs (pins) are checked; `plan add` needs a passing preflight of them")
 		fs.Var(&specs, "spec", "preflight: a spec file or a directory of specs (repeatable; default <root>/specs)")
 	}
 	if verb == "results" {
@@ -171,7 +173,7 @@ func run(verb string, args []string) int {
 		}
 		err = bench.Results(ctx, r, pos[0], with, os.Stderr)
 	case "preflight":
-		err = bench.Preflight(ctx, r, specs, bench.PreflightOptions{MaxLoadPerCore: *maxLoad, AllowMemoryDiag: allow}, os.Stdout)
+		err = bench.Preflight(ctx, r, specs, bench.PreflightOptions{MaxLoadPerCore: *maxLoad, AllowMemoryDiag: allow, Plan: planFile}, os.Stdout)
 	case "plan":
 		err = planVerb(r, pos, *jsonOut, *dryRun, *cancel, bench.ResultsOptions{TSV: *tsv, Final: *final, Done: *doneOnly, GradeFields: *gradeFields})
 	case "lane":

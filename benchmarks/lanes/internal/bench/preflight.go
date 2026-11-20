@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/self-defining-systems/sdo/benchmarks/lanes/internal/plan"
 	"io"
 	"os"
 	"os/exec"
@@ -36,6 +37,8 @@ type PreflightOptions struct {
 	// AllowMemoryDiag lists substrings of memory-check diagnostics that do not fail the memory check (for example a
 	// telemetry source the lane binds at install).
 	AllowMemoryDiag []string
+	// Plan is a plan file whose rendered specs are checked in addition to the specs given (`--plan`).
+	Plan string
 }
 
 // PreflightResult is one line of the report.
@@ -69,13 +72,26 @@ func Preflight(ctx context.Context, root Root, specPaths []string, opt Preflight
 	if err != nil {
 		return err
 	}
-	specs, err := loadPreflightSpecs(root, specPaths)
-	if err != nil {
-		return err
+	var specs []specFile
+	if opt.Plan == "" || len(specPaths) > 0 {
+		if specs, err = loadPreflightSpecs(root, specPaths); err != nil {
+			return err
+		}
+	}
+	if opt.Plan != "" {
+		planned, err := planSpecs(opt.Plan)
+		if err != nil {
+			return err
+		}
+		specs = append(specs, planned...)
 	}
 	ctx, cancel := context.WithTimeout(ctx, opt.Timeout)
 	defer cancel()
 	results := runPreflight(ctx, inv, specs, opt, hostRunner(inv))
+	// The report is also the record `plan add` reads: a pass or a failure per host and pin set.
+	if err := SaveStamps(root, stampsFromResults(inv, specs, results, time.Now())); err != nil {
+		return err
+	}
 	bad := 0
 	for _, r := range results {
 		fmt.Fprintln(w, r)
@@ -88,6 +104,20 @@ func Preflight(ctx context.Context, root Root, specPaths []string, opt Preflight
 	}
 	fmt.Fprintf(w, "preflight: all %d checks passed\n", len(results))
 	return nil
+}
+
+// planSpecs are the distinct specs a plan file renders to, as preflight specs (paths in them are already absolute).
+func planSpecs(file string) ([]specFile, error) {
+	var out []specFile
+	err := plan.RenderSpecs(file, SystemClock{}, func(b []byte) error {
+		s, err := ParseSpec(b)
+		if err != nil {
+			return err
+		}
+		out = append(out, specFile{s, filepath.Dir(file)})
+		return nil
+	})
+	return out, err
 }
 
 // loadPreflightSpecs reads each path (a spec file, or a directory of *.yaml/*.yml specs); none given: <root>/specs.

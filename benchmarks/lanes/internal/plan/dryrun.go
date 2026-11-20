@@ -36,6 +36,18 @@ type Preview struct {
 // and returns the expansion, without creating anything under plansRoot: the work happens in a scratch directory that
 // is removed before it returns. A plan name already taken is refused, as Add refuses it.
 func DryRun(plansRoot, file string, clock Clock, validate func(specJSON []byte) error) (*Preview, error) {
+	return dryRun(plansRoot, file, clock, validate, true)
+}
+
+// RenderSpecs hands every distinct rendered spec of the plan file to f (the specs `plan add` would validate) and
+// stores nothing. Unlike DryRun it accepts a plan name that is already added: `lanes preflight --plan` checks the
+// pins of a plan before or after it is added.
+func RenderSpecs(file string, clock Clock, f func(specJSON []byte) error) error {
+	_, err := dryRun("", file, clock, f, false)
+	return err
+}
+
+func dryRun(plansRoot, file string, clock Clock, validate func(specJSON []byte) error, refuseTaken bool) (*Preview, error) {
 	raw, err := os.ReadFile(file)
 	if err != nil {
 		return nil, err
@@ -44,7 +56,7 @@ func DryRun(plansRoot, file string, clock Clock, validate func(specJSON []byte) 
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", file, err)
 	}
-	if dir := Dir(plansRoot, p.Name); dirExists(dir) {
+	if dir := Dir(plansRoot, p.Name); refuseTaken && dirExists(dir) {
 		return nil, fmt.Errorf("plan %s exists (%s): plan names are never reused", p.Name, dir)
 	}
 	scratch, err := os.MkdirTemp("", "lanes-plan-dry-run-")

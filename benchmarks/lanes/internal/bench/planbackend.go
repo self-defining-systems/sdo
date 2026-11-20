@@ -44,7 +44,11 @@ func PlanAdd(root Root, file string, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	lock, err := plan.Add(root.PlansDir(), file, SystemClock{}, planSpecCheck(inv))
+	stamps, err := LoadStamps(root)
+	if err != nil {
+		return err
+	}
+	lock, err := plan.Add(root.PlansDir(), file, SystemClock{}, planSpecCheck(inv, stamps, time.Now()))
 	if err != nil {
 		return err
 	}
@@ -59,7 +63,11 @@ func PlanDryRun(root Root, file string, jsonOut bool, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	pv, err := plan.DryRun(root.PlansDir(), file, SystemClock{}, planSpecCheck(inv))
+	stamps, err := LoadStamps(root)
+	if err != nil {
+		return err
+	}
+	pv, err := plan.DryRun(root.PlansDir(), file, SystemClock{}, planSpecCheck(inv, stamps, time.Now()))
 	if err != nil {
 		return err
 	}
@@ -82,9 +90,9 @@ func PlanControl(root Root, name string, f func(dir string) error) error {
 	return f(dir)
 }
 
-// planSpecCheck is the check of one rendered spec: the platform's own spec validation and the inventory (the pins
-// must be checked out on a usable host).
-func planSpecCheck(inv Inventory) func([]byte) error {
+// planSpecCheck is the check of one rendered spec: the platform's own spec validation, the inventory (the pins must
+// be checked out on a usable host) and the preflight stamps (the pins must have passed preflight on one of them).
+func planSpecCheck(inv Inventory, stamps Stamps, now time.Time) func([]byte) error {
 	return func(b []byte) error {
 		s, err := ParseSpec(b)
 		if err != nil {
@@ -97,7 +105,7 @@ func planSpecCheck(inv Inventory) func([]byte) error {
 		if s.Operator.Hooks != "" && inv.HookCommand[s.Operator.Hooks] == "" {
 			return fmt.Errorf("hosts.yaml has no hook_command for %s", s.Operator.Hooks)
 		}
-		return nil
+		return checkPins(inv, stamps, s, now)
 	}
 }
 

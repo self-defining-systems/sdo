@@ -42,6 +42,12 @@ alarms: {factor: 2, idle_lane: 10m, arm_stall: 90m, hook: "notify-send lanes \"$
 - **Builtin operators.** `pins.subject` is optional. An operator with no hooks checkout (`operator.builtin`) has no
   revision: pin only the workload, and the engine writes no `operator.revision` (the spec check refuses a hooks operator
   without a revision, and a builtin one with it). Results then carry `subject_pinned: none`.
+- **Pins must have passed preflight.** `lanes preflight` records, per host and pin set (fuzzops revision, hooks name and
+  revision), whether every check of that host passed, in `<root>/preflight.json`. `plan add` (and `--dry-run`) refuses a
+  plan when any spec it renders has no passing stamp from the last 24 hours on at least one host that can run it, and
+  names the hosts and what failed or is missing. Run `lanes preflight --plan plan.yaml` first: it renders the plan's
+  specs and checks their pins (`--spec` adds specs of other files). A later failing preflight of the same host and pins
+  replaces the pass.
 - **Order.** Nodes are `(rep, item, arm)`, arms in dependency-then-declaration order, so every comparison's partner is
   released right after its pair, never behind a whole arm and never by name order. A node blocked on an input is passed
   over; the next ready node takes its slot, and the blocked one goes first as soon as it is ready.

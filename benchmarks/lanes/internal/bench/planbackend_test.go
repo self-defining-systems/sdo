@@ -152,6 +152,31 @@ func TestPlanBackendStepRunsDetachedAndIsObservedFromItsRecords(t *testing.T) {
 	}
 }
 
+// A plan whose pins have not passed preflight is refused by add and by --dry-run, and nothing is stored.
+func TestPlanAddRefusesPinsThatNeverPassedPreflight(t *testing.T) {
+	l := newLab(t)
+	rev := strings.TrimSuffix(strings.TrimPrefix(l.hooked, "{hooks: test, revision: "), ", baseline: base, settings: {startup_bound: 0s}}")
+	must(t, os.WriteFile(filepath.Join(l.specs, "t.json"), []byte(`{"app": "examples/shop", "operator": {"hooks": "test", "baseline": "base"},
+ "namespace": "app1", "faults": {"instances": "instances.json", "ids": ["${item}"]}, "sequences": [[1]], "run": {"window": "1s"},
+ "ready_for": "100ms", "ready_timeout": "`+l.ready+`", "cap": "`+l.cap+`", "lanes": 1, "hosts": ["h1"], "pause_after_wave": false}`), 0o644))
+	planFile := filepath.Join(l.specs, "plan.yaml")
+	must(t, os.WriteFile(planFile, []byte("plan: pins\npins: {workload: fuzzops@0b528ac, subject: test@"+rev+"}\narms: [{name: one, spec: t.json}]\nitems: [a]\n"), 0o644))
+	for name, f := range map[string]func() error{
+		"add":     func() error { return PlanAdd(l.root, planFile, io.Discard) },
+		"dry-run": func() error { return PlanDryRun(l.root, planFile, false, io.Discard) },
+	} {
+		err := f()
+		if err == nil || !strings.Contains(err.Error(), "preflight") {
+			t.Errorf("%s of unstamped pins: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(plan.Dir(l.root.PlansDir(), "pins")); err == nil {
+		t.Error("a refused plan was stored")
+	}
+	must(t, SaveStamps(l.root, []PreflightStamp{{Host: "h1", Fuzzops: "0b528ac", Hooks: "test", Revision: rev, At: time.Now(), OK: true}}))
+	must(t, PlanDryRun(l.root, planFile, false, io.Discard))
+}
+
 // A plan on the real manager: the first arm of each item runs through the fake fuzzops, its run record is the
 // artifact the second arm takes, and the manager's own passes drive the plan to its end.
 func TestPlanRunsOnTheManagerEndToEnd(t *testing.T) {
@@ -175,6 +200,8 @@ alarms: {factor: 1}
 artifacts: {rec: {path: "${run}/run.json"}}
 edges: [{from: one, to: two, artifact: rec}]
 `), 0o644))
+	// plan add needs a passing preflight of the pins on an admitted host.
+	must(t, SaveStamps(l.root, []PreflightStamp{{Host: "h1", Fuzzops: "0b528ac", Hooks: "test", Revision: rev, At: time.Now(), OK: true}}))
 	must(t, PlanAdd(l.root, planFile, io.Discard))
 	l.until("the plan to complete", func() bool {
 		st, err := plan.LoadState(plan.Dir(l.root.PlansDir(), "e2e"))
