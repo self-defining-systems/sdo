@@ -29,6 +29,17 @@ func (e *SourceReconcilePartialError) Error() string {
 	return fmt.Sprintf("source_reconcile_partial: %d object(s) retain source differences or unavailable observations; inspect action_reports.source_reconcile", len(e.Results))
 }
 
+// observationUnavailable reports whether any object's readback could not be
+// made, as opposed to being made and finding paths that differ from source.
+func (e *SourceReconcilePartialError) observationUnavailable() bool {
+	for _, result := range e.Results {
+		if result.ObservationError != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func isSourceReconcile(action program.Action) bool {
 	// A Secret restore is a private write: nothing reads the Secret back.
 	if planwire.IsSecretRestore(action) {

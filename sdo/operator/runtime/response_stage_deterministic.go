@@ -1143,6 +1143,9 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			exit = contracts.RecoveryWait_EXIT_REASON_DEADLINE
 			return ctx.Err()
 		}
+		// A restored workload template may leave a Pod its controller will not
+		// replace; one sample at apply time can be too early to see it.
+		loop.replaceStuckRevisionPods(observe)
 		response := ToolResponse{}
 		loop.verify(observe, nil, &response, true)
 		updateStageFindings(state, response)

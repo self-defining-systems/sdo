@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"errors"
 	"context"
 	"log/slog"
 	"sdo.dev/operator/memory"
@@ -160,6 +161,13 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 				app.Result.VerificationCompleted = true
 				app.Result.RolloutPending = pending
 				sourceErr := executor.reportSourceResiduals(ctx, request, &app.Result)
+				// A path that differs from accepted source after the restore is
+				// evidence, not a verdict: it may have differed before the fault
+				// too. The apply is judged by the program's own post-apply diagnosis
+				// and the opening alerts below; only an unfinished rollout or an
+				// unreadable object keeps the error.
+				var partialResidual *SourceReconcilePartialError
+				residualEvidence := errors.As(sourceErr, &partialResidual) && !partialResidual.observationUnavailable()
 				verdict := program.RunDiagnose(ctx, diagnoser, view, programBindingsState(attempt.Bindings), l.deadline())
 				run := ProgramRun{ProgramID: attempt.PlaybookId, ProgramRevision: attempt.ProgramRevision, Bindings: programBindingsState(attempt.Bindings), Verdict: verdict}
 				l.runs = append(l.runs, run)
@@ -181,7 +189,7 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 				// MATCH, and after the action succeeded the same bound diagnosis is
 				// NO_MATCH on fresh state while its targeted health is clear.
 				transition := false
-				if nonObject && healthy && rolloutErr == nil && sourceErr == nil && verdict.Result == program.NoMatch {
+				if nonObject && healthy && rolloutErr == nil && (sourceErr == nil || residualEvidence) && verdict.Result == program.NoMatch {
 					if wire, wireErr := app.Result.Proto(); wireErr == nil {
 						transition = nonObjectEffectsSucceeded(wire.GetPlan().GetActions(), wire.GetActionReports())
 					}
@@ -198,7 +206,7 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 						app.Result.SettlementRejectionReason = contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_ROLLOUT_PENDING
 						attempt.Result = "rollout_pending_at_handoff"
 					}
-				case sourceErr != nil:
+				case sourceErr != nil && !residualEvidence:
 					reject(contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_SOURCE_RESIDUAL)
 					app.Error = sourceErr.Error()
 					attempt.Result = "rollout_failed"
@@ -213,7 +221,7 @@ func (l *ResponderLoop) settleRecoveryApplicationsLocked(ctx context.Context, re
 					attempt.Result = "rollout_failed"
 				}
 				attempt.Error = app.Error
-				if rolloutErr == nil && sourceErr == nil && verdict.Result == program.NoMatch && (exact || transition) && healthy {
+				if rolloutErr == nil && (sourceErr == nil || residualEvidence) && verdict.Result == program.NoMatch && (exact || transition) && healthy {
 					app.Result.VerificationPassed = true
 					app.Result.FinalVerificationBasis = "recovery-settled"
 					if transition {

@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"sort"
 	"strconv"
@@ -348,4 +349,37 @@ func podStuckReason(pod corev1.Pod, now time.Time) string {
 		return "has not been Ready for " + now.Sub(since).Round(time.Second).String()
 	}
 	return ""
+}
+
+// replaceStuckRevisionPods re-checks, for every applied source restore of a
+// StatefulSet template, the Pods its controller will not replace. The check at
+// apply time is one sample: a Pod that has only just started failing is neither
+// waiting with a stuck reason nor past podNotReadyBound yet, and a StatefulSet
+// never replaces a Pod that is not Ready. Recovery waits call this on every
+// observation until the stage's bound, so such a Pod is replaced as soon as it
+// is stuck. A restore whose Pods are all current or Ready does nothing.
+func (l *ResponderLoop) replaceStuckRevisionPods(ctx context.Context) {
+	for i := range l.applicationsLog {
+		app := &l.applicationsLog[i]
+		result := app.Result
+		if !result.Applied || result.DryRun || result.RolledBack {
+			continue
+		}
+		refs := sourceRestoredStatefulSets(result.Plan, result)
+		if len(refs) == 0 {
+			continue
+		}
+		effects := len(result.ObjectEffects)
+		if err := l.Executor.replaceRevisionStuckPods(ctx, refs, &result); err != nil {
+			slog.Warn("stuck_pod_recheck_failed", "incident_id", l.Request.IncidentID, "application", app.ID, "error", err)
+		}
+		if len(result.ObjectEffects) == effects {
+			continue
+		}
+		app.Result.ObjectEffects = result.ObjectEffects
+		if live, ok := l.applications[app.ID]; ok {
+			live.ObjectEffects = result.ObjectEffects
+			l.applications[app.ID] = live
+		}
+	}
 }
