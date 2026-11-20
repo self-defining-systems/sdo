@@ -480,6 +480,11 @@ func (r *stepRunner) recoverLane(ctx context.Context, p *Prepared) bool {
 	}
 	ok := err == nil && code == 0
 	r.interval("recover", start, ok, fmt.Sprintf("exit %d %v", code, err))
+	if !ok && r.s.ClusterUp != "" && r.clusterMissing(ctx) {
+		// No cluster, so no fault in place: a build killed before its cluster was made leaves nothing to undo.
+		r.logf("recover: cluster %s does not exist, nothing to undo (fuzzops recover in %s exit %d)", r.s.Lane, p.Namespace, code)
+		return true
+	}
 	if !ok {
 		r.down("fault still active: fuzzops recover in %s exit %d %v", p.Namespace, code, errOrEmpty(err))
 	}
