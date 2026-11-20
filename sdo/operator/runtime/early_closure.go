@@ -290,7 +290,11 @@ func (d KubernetesJobDispatcher) responderJobNames(ctx context.Context, id strin
 	if err != nil {
 		return nil, fmt.Errorf("read responder termination journal: %w", err)
 	}
-	if payload := state.GetResponderToolStateJson(); len(payload) > 0 {
+	if packed := state.GetResponderToolStateJson(); len(packed) > 0 {
+		payload, err := unpackToolState(packed)
+		if err != nil {
+			return nil, fmt.Errorf("read responder termination journal: %w", err)
+		}
 		var journal responderToolState
 		if err := json.Unmarshal(payload, &journal); err != nil {
 			return nil, fmt.Errorf("decode responder termination journal: %w", err)
