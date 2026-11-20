@@ -16,6 +16,7 @@ import (
 	"sdo.dev/operator/sdk/usage"
 	"sdo.dev/operator/sdk/vantage"
 	"slices"
+	"time"
 )
 
 // Registration carries optional declarations as well as scheduling metadata.
@@ -35,6 +36,9 @@ type Registration struct {
 	// Windowed marks a detector that judges a rolling window (sdk.WindowedDetector).
 	// The window itself is derived from the declared inputs and the view.
 	Windowed bool
+	// MetricWindow is the lag a windowed metrics detector declares for itself
+	// (metrics.WindowDeclarer); zero when it declares none.
+	MetricWindow time.Duration
 	// AppStateReader marks a detector that implements appstate.Reader;
 	// AppStateNoisy are the keys (exact or glob) it declares noisy.
 	AppStateReader bool
@@ -74,6 +78,9 @@ func registration(d sdk.Detector) Registration {
 		r.Traffic = c.TrafficWorkloads()
 	}
 	_, r.Windowed = d.(sdk.WindowedDetector)
+	if c, ok := d.(metrics.WindowDeclarer); ok {
+		r.MetricWindow = c.MetricWindow()
+	}
 	if _, ok := d.(appstate.Reader); ok {
 		r.AppStateReader = true
 		if n, ok := d.(appstate.NoisyDeclarer); ok {

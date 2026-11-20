@@ -10,4 +10,12 @@ type Validator interface {
 }
     Validator is implemented by metrics detectors that can check their own
     configuration, so a mistake surfaces in tests rather than at runtime.
+
+type WindowDeclarer interface {
+	MetricWindow() time.Duration
+}
+    WindowDeclarer is implemented by metrics detectors that judge a rolling
+    window: MetricWindow is how long after a fault is gone they keep reporting
+    it. The runtime waits at least that long after a repair's last write before
+    it judges one of their findings persistent.
 ```

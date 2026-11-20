@@ -8,6 +8,7 @@ import (
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memoryhost"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/requestmetrics"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
@@ -26,6 +27,14 @@ func TestMemoryHostDetectorKeepsItsEvaluationWindow(t *testing.T) {
 		"service reachability": servicehealth.NewReachabilityDetector(spec),
 		"traffic SLO":          traffic.NewDetector(spec, "frontend"),
 		"plain":                specOnly{spec},
+		// Its error finding lingers while the rule's rolling window still holds
+		// the failed requests, so the stage must not judge it persistent before.
+		"request metrics": requestmetrics.NewDetector(requestmetrics.Config{
+			Spec: spec,
+			Entries: []requestmetrics.Entry{{Service: "web", Metric: "m", Selector: "{}", RouteLabel: "r", MethodLabel: "m", StatusLabel: "s",
+				Recent: "recent", Baseline: "baseline", Presence: "presence"}},
+			Rule: requestmetrics.DefaultRule(),
+		}),
 	}
 	for name, local := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -48,6 +57,9 @@ func TestMemoryHostDetectorKeepsItsEvaluationWindow(t *testing.T) {
 			}
 			if got, want := detectorWindow(remote.Detectors[0], view), detectorWindow(local, view); got != want {
 				t.Fatalf("window: memory host %v, compiled %v", got, want)
+			}
+			if got := detectorWindow(remote.Detectors[0], view); name == "request metrics" && got < requestmetrics.DefaultRule().Window {
+				t.Fatalf("window %v is shorter than the rule's own %v", got, requestmetrics.DefaultRule().Window)
 			}
 			if got, want := detectorClearingHorizon(remote.Detectors[0], view), detectorClearingHorizon(local, view); got != want {
 				t.Fatalf("clearing horizon: memory host %v, compiled %v", got, want)

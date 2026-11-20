@@ -273,7 +273,7 @@ func (d *windowedRemoteDetector) EvaluationWindow(view sdk.DetectionContext) tim
 	if d.Reachability {
 		window = servicehealth.ReachabilityEvaluationWindow(view)
 	}
-	return max(window, trafficConsumerWindow(d.Traffic, view))
+	return max(window, d.MetricWindow, trafficConsumerWindow(d.Traffic, view))
 }
 
 type preparedRemoteDetector struct {

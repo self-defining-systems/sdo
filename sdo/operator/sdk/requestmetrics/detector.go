@@ -228,9 +228,20 @@ func (d *detector) build() error {
 	return nil
 }
 
-func (d *detector) Spec() sdk.DetectorSpec         { return d.cfg.Spec }
-func (d *detector) MetricQueries() []metrics.Query { return append([]metrics.Query(nil), d.queries...) }
-func (d *detector) Validate() error                { return d.err }
+func (d *detector) Spec() sdk.DetectorSpec { return d.cfg.Spec }
+
+// MetricWindow is how long after a fault is gone this detector keeps reporting
+// it: the rule's rolling window still holds the failed requests, and recovery
+// needs Consecutive further steps of healthy ones. It derives from the rule,
+// never from a constant.
+func (d *detector) MetricWindow() time.Duration {
+	return d.cfg.Rule.Window + time.Duration(d.cfg.Rule.Consecutive)*d.cfg.Rule.Step
+}
+
+// EvaluationWindow implements sdk.WindowedDetector.
+func (d *detector) EvaluationWindow(sdk.DetectionContext) time.Duration { return d.MetricWindow() }
+func (d *detector) MetricQueries() []metrics.Query                      { return append([]metrics.Query(nil), d.queries...) }
+func (d *detector) Validate() error                                     { return d.err }
 
 type counts struct{ total, server, client float64 }
 

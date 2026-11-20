@@ -110,6 +110,31 @@ func StillStarting(ctx DetectionContext, pod corev1.Pod, status corev1.Container
 	return now.Sub(status.State.Running.StartedAt.Time) < StartupAllowance(ctx, pod, status.Name)
 }
 
+// ResourceStartupAllowance is the longest startup allowance observed for the
+// workloads the given resources belong to: a Pod resolves to its workload, any
+// other resource names its own workload ("Kind/name"). A finding about a
+// workload cannot clear before a replacement pod has had that long to become
+// Ready. Zero means none is known.
+func ResourceStartupAllowance(ctx DetectionContext, resources ...ObjectRef) time.Duration {
+	source, ok := ctx.(ObservedStartupSource)
+	if !ok {
+		return 0
+	}
+	var allowance time.Duration
+	for _, ref := range resources {
+		workload := ref.Kind + "/" + ref.Name
+		if ref.Kind == "Pod" {
+			for _, pod := range ctx.Pods() {
+				if pod.Namespace == ref.Namespace && pod.Name == ref.Name {
+					workload = PodWorkload(ctx, pod)
+				}
+			}
+		}
+		allowance = max(allowance, source.ObservedStartup(workload))
+	}
+	return allowance
+}
+
 // PodStarting reports whether a pod that is not yet ready is still inside its
 // startup: a running unready container within its startup allowance, or a
 // pod whose containers have not started yet within the self-heal hold of its
