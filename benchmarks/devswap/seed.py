@@ -127,8 +127,8 @@ def apply_seed(
     steps: SeedSteps, seed: MemorySeed, out: Callable[[str], object] = print, timeline: Timeline | None = None
 ) -> dict[str, Any]:
     """Make a prepared, idle lane's accepted repository the seed's memory, prepared as an install of this build would
-    start it: prepare on the host first (the lane keeps running), wait for the app to serve, then close any incident, stop the controller (it
-    caches the accepted commit), import the prepared head, start it again (the same install, state and images) and
+    start it: prepare on the host first (the lane keeps running), wait for the app to serve, close any incident,
+    stop the controller (it caches the accepted commit), import the prepared head, start it again (the same install, state and images) and
     assert the repository is that head, clean, with the operator idle. The controller is stopped and started once."""
     started = time.monotonic()
     t = timeline or Timeline(out, "seed.")

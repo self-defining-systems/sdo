@@ -91,7 +91,17 @@ def test_the_seed_is_prepared_before_the_lane_is_touched_and_the_controller_rest
     calls: list[str] = []
     prepared = PreparedMemory("b" * 40, Path("prepared.bundle"))
     receipt = apply_seed(steps(calls, prepared), seed_memory, lambda _line: None)
-    assert calls == ["prepare", "app", "incidents", "stop", "retire", "config ['agent']", "import b", "start", "standby"]
+    assert calls == [
+        "prepare",
+        "app",
+        "incidents",
+        "stop",
+        "retire",
+        "config ['agent']",
+        "import b",
+        "start",
+        "standby",
+    ]
     assert calls.count("stop") == calls.count("start") == 1
     assert receipt["seed"] == seed_memory.commit
     assert receipt["prepared"] == "b" * 40
