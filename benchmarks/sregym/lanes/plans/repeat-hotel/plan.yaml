@@ -1,9 +1,10 @@
 # One SREGym repeat-vs-first item: p1 runs the problem from the lane's onboarding memory with the scripted agent
 # registrations (no model calls); p2 runs it again seeded with the memory p1's closing turn left. The scripted
 # closing turn learns a playbook only for a Service targetPort or NetworkPolicy repair, hence the targetPort problem.
-# The pins are the SDO checkout that holds the adapter (workload and subject are the same checkout).
+# The pins are the SDO checkout that holds the adapter (workload and subject are the same checkout); set them to the
+# revision under test before `lanes plan add` (a committed plan cannot name its own commit).
 plan: sgl-hotel-tport
-pins: {workload: sregym@69f60b3c, subject: sregym@69f60b3c}
+pins: {workload: sregym@fc6ef24b, subject: sregym@fc6ef24b}
 arms:
   - {name: p1, spec: specs/p1.json}
   - {name: p2, spec: specs/p2.json}
