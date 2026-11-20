@@ -66,6 +66,9 @@ type Host struct {
 	Reserve *HostReserve `json:"reserve,omitempty"`
 	// CrashLoop tunes the crash-loop detector (crashloop.go); the defaults suit every host.
 	CrashLoop CrashLoopConf `json:"crashloop,omitempty"`
+	// KernelMinimums are kernel settings the host must have at least (added to or overriding DefaultKernelMinimums);
+	// admission reads the effective values (kernelmin.go).
+	KernelMinimums map[string]int64 `json:"kernel_minimums,omitempty"`
 	// Health tunes the host health gate (hosthealth.go); the defaults suit every host.
 	Health HostHealthConf `json:"health,omitempty"`
 	// Isolation "one-way-ok" lets lanes run on the host with no active reservation; its rows are flagged.
@@ -244,6 +247,9 @@ func (inv Inventory) Validate() error {
 			errs = append(errs, fmt.Sprintf("host %s: provider %q: want kind or vcluster", name, h.Provider))
 		}
 		for _, e := range h.CrashLoop.validate() {
+			errs = append(errs, fmt.Sprintf("host %s: %s", name, e))
+		}
+		for _, e := range h.kernelValidate() {
 			errs = append(errs, fmt.Sprintf("host %s: %s", name, e))
 		}
 		for _, e := range h.Health.validate() {

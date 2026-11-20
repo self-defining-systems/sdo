@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -25,6 +27,12 @@ type Canary struct {
 	IPMillis int64 `json:"ip_ms"`
 	// HungTasks is the kernel's count of hung-task reports so far (-1: not readable on this host).
 	HungTasks int64 `json:"hung"`
+	// Sysctl holds the effective value of each kernel setting the host has a minimum for (a setting that cannot be read
+	// is absent); Override says, for one below its minimum, where a file sets it (kernel minimums, kernelmin.go).
+	Sysctl   map[string]int64  `json:"sysctl,omitempty"`
+	Override map[string]string `json:"override,omitempty"`
+	// RDMAShared: `rdma system show` says netns shared while ib_core is loaded (a warning, never a gate).
+	RDMAShared bool `json:"rdma_shared,omitempty"`
 }
 
 // HostHealthConf is a host's `health:` block of hosts.yaml; zero values mean the defaults.
@@ -124,17 +132,39 @@ func (h *healthState) Observe(c *Canary, th HealthThresholds) {
 	}
 }
 
-// canaryScript is run on the host (sh). Every command in it is bounded; it prints one JSON line.
-// ip is the rtnl-lock canary; the hung-task count comes from the kernel, else from the log if readable. The two
-// HOST_CANARY_* variables only exist for tests.
-const canaryScript = `s=$(date +%s%N); timeout ${HOST_CANARY_IP_TIMEOUT:-8} ip -br link >/dev/null 2>&1; rc=$?; e=$(date +%s%N)
+// canaryBody is run on the host (sh). Every command in it is bounded. It prints "sysctl KEY VALUE", "override KEY
+// FILE:LINE:TEXT" and "rdma-shared" lines, and last one JSON line. ip is the rtnl-lock canary; the hung-task count comes
+// from the kernel, else from the log if readable. The HOST_CANARY_* variables only exist for tests.
+const canaryBody = `for kv in $KMIN; do k=${kv%=*}; m=${kv#*=}
+  v=$(timeout 3 sysctl -n "$k" 2>/dev/null) || continue
+  echo "sysctl $k $v"
+  if [ "$v" -lt "$m" ] 2>/dev/null; then
+    timeout 3 grep -HnE "^[[:space:]]*$k[[:space:]]*=" ${HOST_CANARY_SYSCTL_FILES:-/etc/sysctl.conf /etc/sysctl.d/*.conf /run/sysctl.d/*.conf /usr/lib/sysctl.d/*.conf} 2>/dev/null | tail -n 1 | sed "s/^/override $k /"
+  fi
+done
+case $(timeout 3 rdma system show 2>/dev/null) in *"netns shared"*) [ -d /sys/module/ib_core ] && echo rdma-shared ;; esac
+s=$(date +%s%N); timeout ${HOST_CANARY_IP_TIMEOUT:-8} ip -br link >/dev/null 2>&1; rc=$?; e=$(date +%s%N)
 h=-1
 f=${HOST_CANARY_HUNG_FILE:-/proc/sys/kernel/hung_task_detect_count}
 if [ -r "$f" ]; then h=$(cat "$f" 2>/dev/null)
 elif o=$(timeout 3 dmesg 2>/dev/null); then h=$(printf %s "$o" | grep -c 'blocked for more than'); fi
 echo "{\"rc\":$rc,\"ip_ms\":$(( (e-s)/1000000 )),\"hung\":${h:--1}}"`
 
-// parseCanary reads the script's line. An ip that timed out (rc 124 or 137) is a failed reading.
+// canaryScript is canaryBody told which kernel settings to read (keys are validated names, values numbers).
+func canaryScript(mins map[string]int64) string {
+	keys := make([]string, 0, len(mins))
+	for k := range mins {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var kv []string
+	for _, k := range keys {
+		kv = append(kv, fmt.Sprintf("%s=%d", k, mins[k]))
+	}
+	return "KMIN='" + strings.Join(kv, " ") + "'\n" + canaryBody
+}
+
+// parseCanary reads the script's output. An ip that timed out (rc 124 or 137) is a failed reading.
 func parseCanary(out []byte) (*Canary, error) {
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
 	var r struct {
@@ -149,17 +179,36 @@ func parseCanary(out []byte) (*Canary, error) {
 	if r.RC == 124 || r.RC == 137 {
 		c.Failed = "ip -br link did not answer in 8s (rtnl lock?)"
 	}
+	for _, l := range lines[:len(lines)-1] {
+		f := strings.Fields(l)
+		switch {
+		case len(f) == 3 && f[0] == "sysctl":
+			if v, err := strconv.ParseInt(f[2], 10, 64); err == nil {
+				if c.Sysctl == nil {
+					c.Sysctl = map[string]int64{}
+				}
+				c.Sysctl[f[1]] = v
+			}
+		case len(f) >= 3 && f[0] == "override":
+			if c.Override == nil {
+				c.Override = map[string]string{}
+			}
+			c.Override[f[1]] = strings.Join(f[2:], " ")
+		case len(f) == 1 && f[0] == "rdma-shared":
+			c.RDMAShared = true
+		}
+	}
 	return c, nil
 }
 
 // localCanary reads the canary on this machine, bounded by timeout.
-func localCanary(ctx context.Context, timeout time.Duration) (*Canary, error) {
+func localCanary(ctx context.Context, timeout time.Duration, mins map[string]int64) (*Canary, error) {
 	if timeout <= 0 {
 		timeout = HostHealthConf{}.Thresholds().ProbeTimeout // a localHost built without thresholds (a test, a fake)
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "sh", "-c", canaryScript)
+	cmd := exec.CommandContext(ctx, "sh", "-c", canaryScript(mins))
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = time.Second
@@ -179,6 +228,9 @@ func (m *Manager) hostBlock(h string) string {
 	if st := m.health[h]; st != nil && !st.Healthy() {
 		return fmt.Sprintf("host %s is unhealthy: %s", h, st.Reason())
 	}
+	if why := m.kernelWhy[h]; why != "" {
+		return fmt.Sprintf("host %s is not admitted: %s", h, why)
+	}
 	return ""
 }
 
@@ -195,6 +247,7 @@ func (m *Manager) observeHealth(name string, c *Canary) {
 		st = &healthState{hung: -1}
 		m.health[name] = st
 	}
+	m.observeKernel(name, c)
 	was := st.Healthy()
 	st.Observe(c, m.inv.Hosts[name].Health.Thresholds())
 	switch {

@@ -142,6 +142,7 @@ type localHost struct {
 	staging string
 	bin     string // fuzzops-bench (the manager's own executable)
 	health  HealthThresholds
+	mins    map[string]int64 // kernel minimums to read (kernelmin.go)
 }
 
 func (h localHost) Start(ctx context.Context, s Step) error {
@@ -162,7 +163,7 @@ func (h localHost) Kill(ctx context.Context, lane, id string) error {
 
 func (h localHost) Probe(ctx context.Context, steps map[string]string, fuzzops []string) (Probe, error) {
 	p := ProbeStaging(h.staging, steps, fuzzops)
-	p.Canary, _ = localCanary(ctx, h.health.ProbeTimeout)
+	p.Canary, _ = localCanary(ctx, h.health.ProbeTimeout, h.mins)
 	return p, nil
 }
 

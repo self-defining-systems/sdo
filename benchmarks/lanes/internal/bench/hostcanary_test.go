@@ -27,12 +27,12 @@ func canaryEnv(t *testing.T, hung int) (state string) {
 
 func TestLocalCanaryReadsIPTimeAndHungTasks(t *testing.T) {
 	state := canaryEnv(t, 7)
-	c, err := localCanary(context.Background(), 10*time.Second)
+	c, err := localCanary(context.Background(), 10*time.Second, nil)
 	if err != nil || c.Failed != "" || c.HungTasks != 7 || c.IPMillis > 1500 {
 		t.Fatalf("%+v %v", c, err)
 	}
 	must(t, os.WriteFile(filepath.Join(state, "ip-delay"), []byte("0.3"), 0o644))
-	c, _ = localCanary(context.Background(), 10*time.Second)
+	c, _ = localCanary(context.Background(), 10*time.Second, nil)
 	if c.IPMillis < 250 || c.Failed != "" {
 		t.Fatalf("a slow ip must show in ip_ms: %+v", c)
 	}
@@ -43,7 +43,7 @@ func TestLocalCanaryBoundsAnIPThatHangs(t *testing.T) {
 	state := canaryEnv(t, 0)
 	must(t, os.WriteFile(filepath.Join(state, "ip-hang"), nil, 0o644))
 	start := time.Now()
-	c, _ := localCanary(context.Background(), 10*time.Second)
+	c, _ := localCanary(context.Background(), 10*time.Second, nil)
 	if c.Failed == "" || !strings.Contains(c.Failed, "ip -br link") {
 		t.Fatalf("a hung ip must be a failed reading: %+v", c)
 	}

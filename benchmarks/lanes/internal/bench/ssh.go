@@ -118,7 +118,7 @@ func (h sshHost) canary(ctx context.Context) (*Canary, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	f := strings.Fields(h.sshForRsync())
-	cmd := exec.CommandContext(ctx, f[0], append(f[1:], h.h.SSH, canaryScript)...)
+	cmd := exec.CommandContext(ctx, f[0], append(f[1:], h.h.SSH, canaryScript(h.h.KernelMins()))...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	cmd.WaitDelay = time.Second

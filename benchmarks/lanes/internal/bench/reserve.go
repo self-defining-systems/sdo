@@ -408,11 +408,34 @@ func reserveHost(ctx context.Context, root Root, inv Inventory, host string, hel
 	if err != nil {
 		return err
 	}
+	if err := raiseKernel(ctx, inv, host, helper, out); err != nil {
+		return err
+	}
 	r, err := recordReservation(ctx, root, host, helper, false, rsv.Memory)
 	if err == nil {
 		fmt.Fprintf(out, "%s: reserved %s (%s)\n", host, r.Block, modeName(r.TwoWay))
 	}
 	return err
+}
+
+// raiseKernel asks the root helper to raise the host's kernel settings to their minimums (never lowering anything).
+func raiseKernel(ctx context.Context, inv Inventory, host string, helper Helper, out io.Writer) error {
+	mins := inv.Hosts[host].KernelMins()
+	keys := make([]string, 0, len(mins))
+	for k := range mins {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	args := []string{"kernel", "raise"}
+	for _, k := range keys {
+		args = append(args, fmt.Sprintf("%s=%d", k, mins[k]))
+	}
+	o, err := helper(ctx, host, args...)
+	fmt.Fprint(out, o)
+	if err != nil {
+		return fmt.Errorf("kernel minimums: %w (re-install the helper: lanes host install-helper %s)", err, host)
+	}
+	return nil
 }
 
 func modeName(twoWay bool) string {
@@ -471,6 +494,9 @@ func adoptHost(ctx context.Context, root Root, inv Inventory, host, cpus string,
 	} else {
 		fmt.Fprint(out, o)
 	}
+	if err := raiseKernel(ctx, inv, host, helper, out); err != nil {
+		return err
+	}
 	r, err := recordReservation(ctx, root, host, helper, true, "")
 	if err == nil {
 		fmt.Fprintf(out, "%s: adopted %s (%s), nothing changed\n", host, r.Block, modeName(r.TwoWay))
@@ -524,6 +550,7 @@ func ForeignPins(out string) []ContainerPin {
 }
 
 func statusHost(ctx context.Context, root Root, inv Inventory, host string, helper Helper, run runFn, out io.Writer) error {
+	kernelStatus(ctx, inv, host, run, out)
 	rs, _ := root.LoadReservations()
 	r, recorded := rs[host]
 	o, herr := helper(ctx, host, "block", "status")
@@ -693,4 +720,30 @@ func installHelper(ctx context.Context, h Host, name, pwFile string, out, errw i
 		return fmt.Errorf("install on %s: %v", name, err)
 	}
 	return nil
+}
+
+// kernelStatus prints the host's effective kernel settings against their minimums and the RDMA warning.
+func kernelStatus(ctx context.Context, inv Inventory, host string, run runFn, out io.Writer) {
+	if run == nil {
+		return
+	}
+	mins := inv.Hosts[host].KernelMins()
+	o, err := run(ctx, host, canaryScript(mins))
+	if err != nil {
+		fmt.Fprintf(out, "%s: kernel settings: probe failed: %s\n", host, clip(err.Error(), 120))
+		return
+	}
+	c, err := parseCanary([]byte(o))
+	if err != nil {
+		fmt.Fprintf(out, "%s: kernel settings: %s\n", host, clip(err.Error(), 120))
+		return
+	}
+	if why := kernelLow(c, mins); why != "" {
+		fmt.Fprintf(out, "%s: NOT ADMITTED, kernel: %s\n", host, why)
+	} else {
+		fmt.Fprintf(out, "%s: kernel settings at or above their minimums\n", host)
+	}
+	if c.RDMAShared {
+		fmt.Fprintf(out, "%s: warning: RDMA netns mode is shared with ib_core loaded (container network namespaces can stall)\n", host)
+	}
 }

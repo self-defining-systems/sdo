@@ -1,0 +1,4 @@
+#!/bin/sh
+# rdma system show: shared netns when $FAKE_STATE/rdma-shared exists.
+[ -f "$FAKE_STATE/rdma-shared" ] && echo "netns shared copy-on-fork on"
+exit 0
