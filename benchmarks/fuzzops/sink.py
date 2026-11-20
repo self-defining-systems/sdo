@@ -137,6 +137,7 @@ def pusher_manifest(control: str, name: str) -> dict[str, Any]:
     """A throwaway pod that mounts the sink claim writable (restricted pod security compatible)."""
     manifest = puller_manifest(control, name)
     container = manifest["spec"]["containers"][0]
+    manifest["spec"]["securityContext"]["fsGroup"] = PULL_UID  # a block-device claim is root-owned until then
     container["volumeMounts"] = [{"name": "sink", "mountPath": "/sink"}]
     manifest["spec"]["volumes"] = [{"name": "sink", "persistentVolumeClaim": {"claimName": EVIDENCE_CLAIM}}]
     return manifest
