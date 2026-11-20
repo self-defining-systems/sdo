@@ -90,3 +90,13 @@ func TestSSHProbeCarriesTheCanary(t *testing.T) {
 		t.Fatalf("canary %+v", p.Canary)
 	}
 }
+
+// A localHost built without thresholds (the lab tests build one) must still take a canary: a zero bound is the default,
+// not an instant timeout that would leave every such host unhealthy for good.
+func TestLocalHostWithoutThresholdsStillTakesACanary(t *testing.T) {
+	canaryEnv(t, 0)
+	p, err := localHost{staging: t.TempDir()}.Probe(context.Background(), map[string]string{}, nil)
+	if err != nil || p.Canary == nil || p.Canary.Failed != "" {
+		t.Fatalf("%+v %v", p.Canary, err)
+	}
+}

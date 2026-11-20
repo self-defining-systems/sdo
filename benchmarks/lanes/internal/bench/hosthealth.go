@@ -154,6 +154,9 @@ func parseCanary(out []byte) (*Canary, error) {
 
 // localCanary reads the canary on this machine, bounded by timeout.
 func localCanary(ctx context.Context, timeout time.Duration) (*Canary, error) {
+	if timeout <= 0 {
+		timeout = HostHealthConf{}.Thresholds().ProbeTimeout // a localHost built without thresholds (a test, a fake)
+	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sh", "-c", canaryScript)
