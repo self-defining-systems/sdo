@@ -81,6 +81,7 @@ var benchmarkFiles = []string{
 	"benchmarks/sregym/protocol/schema.py", "benchmarks/sregym/protocol/submission_guard.py",
 	"benchmarks/sregym/fastloop/__init__.py", "benchmarks/sregym/fastloop/model_recording.py",
 	"benchmarks/sregym/fastloop/file_edits.py", "benchmarks/sregym/fastloop/recording_worker.py",
+	"benchmarks/sregym/fastloop/checkpoint_limits.py", "benchmarks/sregym/repository_git.py",
 }
 
 // Apply gives every container the same read-only source and operator binary.
