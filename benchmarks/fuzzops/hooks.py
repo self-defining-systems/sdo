@@ -1953,6 +1953,7 @@ def seed_steps(
     binary, kubeconfig = _binary(env), Path(env["KUBECONFIG"]).resolve() if env.get("KUBECONFIG") else None
     return SeedSteps(
         prepare=prepared,
+        wait_app=lambda: wait_app_ready(kube, _need(env, "FUZZOPS_NAMESPACE")),
         reset_incidents=lambda: reset_incidents(binary, control, kubeconfig),
         retire_standby=lambda: retire_standby(kube, control),
         stop_controller=lambda: set_controller_suspended(kube, control, True),
