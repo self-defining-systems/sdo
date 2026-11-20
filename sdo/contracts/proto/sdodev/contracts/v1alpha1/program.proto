@@ -406,6 +406,26 @@ message PlanApplication {
   // stage, the accepted commit.
   string running_commit = 26;
   bool running_dirty = 27;
+  // Why recovery settlement could not confirm the exact effect; set only
+  // with SETTLEMENT_REJECTION_REASON_EFFECT_NOT_CONFIRMED.
+  EffectConfirmation effect_confirmation = 28;
+}
+
+// What the exact-field check expected and observed, so a rejection can be
+// diagnosed from the outcome alone. Secret values are redacted.
+message EffectConfirmation {
+  // Set when the check failed before any field comparison.
+  string reason = 1;
+  repeated EffectFieldMismatch mismatches = 2;
+  // The rollout status of the written workloads when settlement ran.
+  string rollout_status = 3;
+}
+
+message EffectFieldMismatch {
+  ObjectRef ref = 1;
+  string path = 2;
+  string expected = 3;
+  string observed = 4;
 }
 
 message ProgramToolCall {
