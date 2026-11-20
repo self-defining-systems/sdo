@@ -94,7 +94,9 @@ type ReplayReadView struct {
 	Snapshot
 	Calls []PrimitiveCall
 	used  map[int]bool
-	mu    sync.Mutex
+	// kindsRead holds the object kinds read from the snapshot; see read_kinds.go.
+	kindsRead map[string]bool
+	mu        sync.Mutex
 }
 
 // UnrecordedError names a read a replay was asked for that no recording holds.

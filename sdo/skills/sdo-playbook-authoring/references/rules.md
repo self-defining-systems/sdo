@@ -79,7 +79,7 @@ Replay results are information only.
   such programs still load but are noted for rewrite. Enforced by: `program.diff-text-match`.
 - A new playbook's Diagnose must Match the incident it was written for: the check runs it on the incident's captured
   open state. `NoMatch` there is refused; a capture that cannot decide (a read it lacks or holds an error for) is
-  recorded as unverified and never refused. `sdo-operator memory test <id>` prints the verdict first.
+  recorded as unverified and never refused. A capture withholds only ConfigMap values and objects over its budget, so a `NoMatch` is unverified only when Diagnose read such a kind; any other `NoMatch` is refused. `sdo-operator memory test <id>` prints the verdict first.
   Enforced by: `playbook.own-incident-replay`.
 
 ## Executable repair evidence
