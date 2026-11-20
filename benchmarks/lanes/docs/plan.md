@@ -25,6 +25,20 @@ stages: {pre-inject: 12m, post-inject: 25m}    # per-stage minimum; the runner a
 alarms: {factor: 2, idle_lane: 10m, arm_stall: 90m, hook: "notify-send lanes \"$ALARM_DETAIL\""}
 ```
 
+- **Groups and spec overrides.** One plan can cover several apps. `groups:` names shared `vars` and a `spec` override; an
+  item picks one with `group:` and may add `vars` and a `spec` of its own:
+  ```yaml
+  groups:
+    gitlab: {vars: {pool: tp2-pool-g}, spec: {app: examples/gitlab, namespace: fg1, lane: {cpus: 8, memory: 30Gi}, hosts: [spokane1, chelan4], claim: "${item.pool}"}}
+  items:
+    - {id: gmem, group: gitlab, vars: {a: "..."}}
+    - {id: gbig, group: gitlab, spec: {lane: {cpus: 16}}}     # merges into the group's lane map
+  ```
+  The override is merged over the arm's rendered template: maps merge key by key, every other value (numbers, lists,
+  strings) replaces, `null` removes the key. Values keep their type; strings inside get the `${...}` variables (group vars
+  are `${item.<var>}`, item vars win). The merged result is validated as a spec at `plan add` for every item (unknown
+  fields and wrong types are refused, naming the arm and item), and an override may not set the engine-owned fields
+  (`name`, `fuzzops`, `operator.revision`, `retries`, `isolation`). `items.from` entries take `group` and `spec` too.
 - **Order.** Nodes are `(rep, item, arm)`, arms in dependency-then-declaration order, so every comparison's partner is
   released right after its pair, never behind a whole arm and never by name order. A node blocked on an input is passed
   over; the next ready node takes its slot, and the blocked one goes first as soon as it is ready.
