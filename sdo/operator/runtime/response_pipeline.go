@@ -119,6 +119,7 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 		return merged, cloneStageReports(reports), err
 	}
 	state := &IncidentState{Request: request, Findings: append([]sdk.Finding(nil), request.Findings...), Coverage: cloneCoverage(request.PlaybookCoverage), AfterPlaybook: c.config.AfterPlaybook}
+	state.LiveAlertSet = func() ([]string, []sdk.Finding) { return c.liveJoined(request.IncidentID) }
 	var stages []ResponseStage
 	automaticAvailable, agentConfigured := false, false
 	for _, name := range c.codePath.Selection.ResponseStages {
@@ -427,4 +428,22 @@ func addressedFindings(attempt *contracts.StageMitigation, findings []sdk.Findin
 		return primary
 	}
 	return rest
+}
+
+// liveJoined are the user tests that joined the open incident, with their
+// findings, as the controller holds them now.
+func (c *Controller) liveJoined(incidentID string) ([]string, []sdk.Finding) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	live := c.currentIncidentRequest
+	if live == nil || live.IncidentID != incidentID || len(live.JoinedKeys) == 0 {
+		return nil, nil
+	}
+	var findings []sdk.Finding
+	for _, finding := range live.Findings {
+		if slices.Contains(live.JoinedKeys, findingKey(finding)) {
+			findings = append(findings, finding)
+		}
+	}
+	return slices.Clone(live.JoinedKeys), findings
 }

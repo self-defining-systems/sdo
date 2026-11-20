@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 
 	"sdo.dev/operator/runtime/internal/lifecycleio"
@@ -38,6 +39,10 @@ type IncidentState struct {
 	// AfterPlaybook is response.after_playbook: what follows an applied
 	// playbook that did not recover the opening alerts within the stage's bound.
 	AfterPlaybook string
+	// LiveAlertSet reads the user tests that joined the incident since the
+	// request was frozen; a stage that outlives a join judges the whole alert
+	// set, not the set it started with.
+	LiveAlertSet func() (joinedKeys []string, joined []sdk.Finding)
 	// afterWrite is set once a playbook of this stage wrote: from then on the
 	// stage observes only the incident's opening alerts.
 	afterWrite bool
@@ -201,4 +206,33 @@ func (state *IncidentState) refreshUnexplained() {
 			state.UnexplainedFindings = append(state.UnexplainedFindings, finding)
 		}
 	}
+}
+
+// syncAlertSet folds user tests that joined the incident while the stage ran
+// into the state's request and findings, so Recovered is judged on the whole
+// alert set.
+func (s *IncidentState) syncAlertSet() {
+	if s.LiveAlertSet == nil {
+		return
+	}
+	keys, joined := s.LiveAlertSet()
+	fresh := map[string]bool{}
+	for _, key := range keys {
+		if !slices.Contains(s.Request.JoinedKeys, key) {
+			s.Request.JoinedKeys = append(s.Request.JoinedKeys, key)
+			fresh[key] = true
+		}
+	}
+	sort.Strings(s.Request.JoinedKeys)
+	for _, finding := range joined {
+		fp := FindingFingerprint(finding)
+		if !slices.ContainsFunc(s.Request.Findings, func(f sdk.Finding) bool { return FindingFingerprint(f) == fp }) {
+			s.Request.Findings = append(s.Request.Findings, finding)
+		}
+		if fresh[findingKey(finding)] && finding.Status == sdk.FindingActive && !slices.ContainsFunc(s.Findings, func(f sdk.Finding) bool { return FindingFingerprint(f) == fp }) {
+			s.Findings = append(s.Findings, finding)
+		}
+	}
+	sortFindings(s.Request.Findings)
+	sortFindings(s.Findings)
 }

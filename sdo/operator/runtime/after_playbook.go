@@ -36,9 +36,8 @@ func agentMayFollowPlaybook(policy string, reports []*contracts.StageReport) boo
 // stageHandoffWarranted decides whether an unverified incident whose only
 // response was the automatic stage is handed to the agent. Before any applied
 // playbook, any firing health finding (or, at the deadline, any active health
-// detector) is work. After one, only the opening alerts are: another alert
-// never dispatches the agent by itself, and the policy decides for the
-// opening ones.
+// detector) is work. After one, only the incident's alert set is (opening alerts plus joined user
+// tests; a clue never joins), and the policy decides.
 func stageHandoffWarranted(policy string, reports []*contracts.StageReport, scope recoveryScope, findings []sdk.Finding, deadlinePassed, openingActive, healthActive bool) bool {
 	if !playbookApplied(reports) {
 		return len(findings) > 0 || (deadlinePassed && healthActive)
