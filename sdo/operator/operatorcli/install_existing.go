@@ -81,6 +81,8 @@ func ParseInstallExistingLaunchEnv(args []string, environ []string) (InstallExis
 	kubeconfig := flags.String("kubeconfig", "", "Kubernetes client and kubectl config")
 	var configFiles repeatable
 	flags.Var(&configFiles, "config", "operator configuration YAML (repeatable; later files override earlier ones; see docs/config.md)")
+	sourceBranchURL := flags.String("source-branch-url", "", "Git remote of the one branch SDO commits to and deploys from (source.branch); engineers and the benchmark replayer push to it")
+	sourceBranch := flags.String("source-branch", "", "name of that branch (never main or master)")
 	deploymentSourceFlag := flags.String("deployment-source", "", "DeploymentSource as ProtoJSON, recorded as the repository's .sdo/deployment/plan.yaml in a human commit; optional when the repository already carries a plan")
 	if err := flags.Parse(args[1:]); err != nil {
 		return InstallExistingConfig{}, err
@@ -119,6 +121,7 @@ func ParseInstallExistingLaunchEnv(args []string, environ []string) (InstallExis
 		NativeCommand: []string{"/usr/local/bin/sdo-operator"},
 		ReuseExisting: *duration == 0 && !*exitAfterClosure, WaitForCompletion: *duration > 0 || *exitAfterClosure,
 		RegistrationConfigMap: *registrationConfigMap,
+		MemoryUpstreamURL:     *sourceBranchURL, MemoryUpstreamBranch: *sourceBranch,
 	}
 	if err := applySettings(&config, resolved, controlForTelemetry); err != nil {
 		return InstallExistingConfig{}, err
