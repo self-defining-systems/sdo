@@ -124,7 +124,7 @@ func TestUnhealthyHostStopsNewWorkAndAlarms(t *testing.T) {
 	if why := block(); !strings.Contains(why, "unhealthy") {
 		t.Fatalf("no build may start on an unhealthy host: %q", why)
 	}
-	alarms := RecentAlarms(m.Root, time.Hour, time.Now())
+	alarms := RecentAlarms(m.Root, time.Hour, m.now())
 	if len(alarms) != 1 || alarms[0].Alarm != "host-unhealthy" || alarms[0].Host != "h1" {
 		t.Fatalf("one alarm for the transition, not one per probe: %+v", alarms)
 	}
