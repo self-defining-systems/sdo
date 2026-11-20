@@ -42,7 +42,9 @@ func TestStaleHelperIsReportedAsOutOfDate(t *testing.T) {
 
 func TestCurrentHelperAndUnreservedHostsReportNothing(t *testing.T) {
 	inv := reservedHost()
-	current := func(ctx context.Context, host, script string) (string, error) { return embeddedHelperSum(t) + "\n", nil }
+	current := func(ctx context.Context, host, script string) (string, error) {
+		return embeddedHelperSum(t) + "\n", nil
+	}
 	if got := inv.HelperProblem(context.Background(), "h", current); got != "" {
 		t.Fatalf("an installed helper equal to the embedded one is current, got %q", got)
 	}

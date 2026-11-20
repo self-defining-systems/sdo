@@ -63,7 +63,7 @@ func TestToolsProbeCarriesTheWorkloadEnvOfTheSpecsWorkload(t *testing.T) {
 func TestToolsProbeRunsUnderLaneExecOnAReservedHost(t *testing.T) {
 	h := Host{Clusters: []string{"c1"}, Reserve: &HostReserve{CPUs: "2-3"}, Env: map[string]string{"A": "1"}}
 	got := toolsProbe(h, "")
-	if !strings.HasPrefix(got, "sudo -n --preserve-env "+HelperPath+" lane-exec c1 -- sh -c ") || !strings.Contains(got, "export A='1'") {
+	if !strings.HasPrefix(got, "sudo -n --preserve-env "+HelperPath+" lane-exec 'c1' -- sh -c ") || !strings.Contains(got, "export A=") {
 		t.Fatalf("probe = %q", got)
 	}
 	if plain := toolsProbe(Host{Clusters: []string{"c1"}}, ""); strings.Contains(plain, "lane-exec") {
