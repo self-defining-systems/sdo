@@ -183,6 +183,8 @@ type stepRunner struct {
 	res     Result
 	poll    time.Duration
 	hookLog io.Writer
+	// note is the detail every phase carries until the step ends (shapeNote: the build rebuilds its lane).
+	note string
 	// wl is the workload adapter (nil: the one the step names; tests set it).
 	wl Workload
 	// exists answers whether the lane's cluster exists (nil: probe it; tests set it).
@@ -576,6 +578,12 @@ func (r *stepRunner) build(ctx context.Context) {
 	s, p := r.s, r.s.New
 	if !r.packLoads(ctx, p) {
 		return
+	}
+	if !s.Create && !s.Recreate && r.shapeChanged(ctx) {
+		// The lane's cores and memory are part of its identity: the cluster is made anew with the new shape, never
+		// reused (or swapped into) with the old one.
+		r.s.Recreate, r.s.Swap, r.s.ReuseApp = true, false, false
+		s = r.s
 	}
 	if !s.Create && !s.Recreate {
 		r.reapplyLimits(ctx) // a claim or a reuse: the lane's cpuset may have been undone since it was built

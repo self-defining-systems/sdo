@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -236,6 +237,42 @@ func (r *stepRunner) freeLaneCores() {
 	if err != nil {
 		r.logf("lane cores not released: %v", err)
 	}
+}
+
+// shapeChanged reports whether the ledger holds the lane with another shape (core count or memory) than this step's
+// limits ask for, as when a lane is reassigned to a pool of another lane shape. It notes it in the phase detail, which
+// status shows. A lane the ledger does not hold, or a host without lane limits, has no shape to compare.
+func (r *stepRunner) shapeChanged(ctx context.Context) bool {
+	l := r.s.Limits
+	if l == nil {
+		return false
+	}
+	mem, err := ParseSize(l.Memory)
+	if err != nil || mem <= 0 {
+		return false // laneEnvLimits reports the bad value when it takes the cores
+	}
+	a, err := r.allocator()
+	if err != nil {
+		return false
+	}
+	es, err := a.Entries()
+	e, ok := es[r.s.Lane]
+	if err != nil || !ok {
+		return false
+	}
+	held := 0
+	for _, c := range a.usable() {
+		if slices.Contains(e.CPUs, c[0]) {
+			held++
+		}
+	}
+	if held == l.Cores && e.Memory == mem {
+		return false
+	}
+	r.logf("lane shape changed: the ledger holds %d cores and %d bytes, the spec asks for %d cores and %s: rebuilding the lane", held, e.Memory, l.Cores, l.Memory)
+	r.note = shapeNote
+	r.phase(PhaseLaneWait, shapeNote)
+	return true
 }
 
 // reapplyLimits re-sets an existing lane's cpuset, memory and systemd cpuset property to what the ledger says it holds

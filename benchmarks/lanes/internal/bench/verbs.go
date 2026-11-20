@@ -518,7 +518,7 @@ func Status(root Root, only string, w io.Writer) error {
 			kind := l.Step.Kind
 			if l.Step.Phase != nil {
 				kind += ": " + l.Step.Phase.Name
-				if l.Step.Phase.Name == PhaseLaneWait && l.Step.Phase.Detail != "" {
+				if l.Step.Phase.Detail != "" && (l.Step.Phase.Name == PhaseLaneWait || l.Step.Phase.Detail == shapeNote) {
 					kind += " (" + l.Step.Phase.Detail + ")"
 				}
 			}
