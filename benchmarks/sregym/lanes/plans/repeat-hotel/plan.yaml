@@ -2,7 +2,7 @@
 # registrations (no model calls); p2 runs it again seeded with the memory p1's closing turn left.
 # The pins are the SDO checkout that holds the adapter (workload and subject are the same checkout).
 plan: sgl-repeat-hotel
-pins: {workload: sregym@6c6bf6d8, subject: sregym@6c6bf6d8}
+pins: {workload: sregym@69f60b3c, subject: sregym@69f60b3c}
 arms:
   - {name: p1, spec: specs/p1.json}
   - {name: p2, spec: specs/p2.json}
