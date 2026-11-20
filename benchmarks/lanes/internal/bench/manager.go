@@ -739,16 +739,21 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 		if prep == nil {
 			prep = l.Prepared
 		}
-		if prep == nil || prep.WorkloadRev == "" {
+		switch {
+		case prep != nil && prep.WorkloadRev != "":
+			s.Fuzzops = m.inv.FuzzopsPath(prep.WorkloadRev, l.Host)
+			if s.Fuzzops == "" {
+				m.logf("lane %s: %s refused: the lane's fuzzops %s has no checkout on %s", l.Lane, s.Kind, prep.WorkloadRev, l.Host)
+				return false
+			}
+			s.Workload, s.WorkloadRev = prep.Workload, prep.WorkloadRev
+		case s.DeleteCluster:
+			// Deleting a cluster needs no workload: a lane whose builds failed before anything was recorded must not
+			// be left billing for want of a checkout to run the delete in.
+		default:
 			m.logf("lane %s: %s refused: no recorded workload and fuzzops checkout for the lane (it was prepared before they were recorded)", l.Lane, s.Kind)
 			return false
 		}
-		s.Fuzzops = m.inv.FuzzopsPath(prep.WorkloadRev, l.Host)
-		if s.Fuzzops == "" {
-			m.logf("lane %s: %s refused: the lane's fuzzops %s has no checkout on %s", l.Lane, s.Kind, prep.WorkloadRev, l.Host)
-			return false
-		}
-		s.Workload, s.WorkloadRev = prep.Workload, prep.WorkloadRev
 	}
 	if err := m.ops(l.Host).Start(ctx, s); err != nil {
 		// It may have started all the same (an ssh that timed out after the step began): the
