@@ -7,7 +7,7 @@ above the experiments: each node of a plan is one experiment (spec) that it adds
 its inputs are verified. All state is on disk, so a restart continues where the last pass stopped.
 
 ```yaml
-plan: tp-gitlab-1                      # at most 24 characters; never reused
+plan: tp-gitlab-1                      # at most 24 characters; free again after `plan remove`
 pins: {workload: fuzzops@4652656, subject: sdo@9b2cadb7f}    # written into every spec (fuzzops, operator.revision)
 arms:                                  # declaration order is the order inside an item
   - {name: p1,   spec: specs/p1.json}  # spec template: ${plan} ${arm} ${item} ${item.<var>} ${rep} ${name} ${artifact.<kind>}
@@ -91,11 +91,15 @@ alarms: {factor: 2, idle_lane: 10m, arm_stall: 90m, hook: "notify-send lanes \"$
 - **Pause, remove, skip.** Requests are written to `<plan dir>/control.json` under a lock (never to `state.json`), so a
   command cannot race the manager and a restart loses nothing; the manager applies them on its next pass, idempotently.
   `lanes plan pause NAME` releases no new node and starts no new step (runs in flight are still watched and recorded);
-  `resume` undoes it. `lanes plan remove NAME` retires the plan: waiting nodes and steps are skipped (`plan removed`),
-  runs in flight finish and keep their result rows, the plan completes when they have ended, and its directory and
-  results stay (the name is not reused). `lanes plan skip NAME ITEM` skips the item: its unreleased nodes (also those
+  `resume` undoes it. `lanes plan remove NAME` cleans the plan up and frees its name: its experiments are removed (queued
+  runs dropped; a run already on a lane finishes), they and the plan's directory (state, results, events) move to
+  `<root>/plans/.removed/<name>-<time>/`, and the name can be added again at once, so a corrected plan replaces a wrong
+  one without stopping the manager. With no manager running the command does it itself; otherwise the manager finishes
+  it within a pass, and an experiment whose run is still on a lane moves when the run ends. `remove --keep` only
+  retires the plan (waiting nodes and steps are skipped, runs in flight finish, the plan completes; directory and name
+  stay). `lanes plan skip NAME ITEM` skips the item: its unreleased nodes (also those
   that come back for a retry) are skipped, in-flight ones finish, and a skip is not a failure (no parking).
-  `unskip` stops skipping new nodes; those already skipped stay skipped. `--cancel` (`remove`, `skip`) also cancels the
+  `unskip` stops skipping new nodes; those already skipped stay skipped. `--cancel` (`remove --keep`, `skip`) also cancels the
   runs in flight: the experiment is removed (its queued runs are dropped; a run already on a lane finishes, as with
   `lanes remove`) and running steps get SIGTERM; the cancelled node is skipped with the reason. `plan status` shows
   `paused`, `removed, draining` and the skipped items.
