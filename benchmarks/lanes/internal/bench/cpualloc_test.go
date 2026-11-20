@@ -667,3 +667,31 @@ func TestAllocatorAvoidsForeignPins(t *testing.T) {
 		t.Errorf("the three cores left should fit: %v", err)
 	}
 }
+
+// A request larger than the block minus the foreign pins can never be placed while those containers stay: it fails at
+// once (ErrNeverFits, naming them) instead of queueing to the core cap. A request our own lanes keep from fitting
+// still waits.
+func TestAllocatorRefusesWhatForeignPinsLeaveNoRoomFor(t *testing.T) {
+	a := allocFor(t, topo(8, 1), "0-7") // 8 cores, no siblings
+	a.Foreign = func() ([]ContainerPin, error) {
+		return ForeignPins("ovh4-a system.slice 0-3\novh4-b system.slice 4,5\n"), nil
+	}
+	_, err := a.Take("big", 4, 0) // 2 cores left outside the pins
+	if !errors.Is(err, ErrNeverFits) {
+		t.Fatalf("want ErrNeverFits, got %v", err)
+	}
+	for _, n := range []string{"ovh4-a", "ovh4-b"} {
+		if !strings.Contains(err.Error(), n) {
+			t.Errorf("reason does not name %s: %v", n, err)
+		}
+	}
+	if held, _ := a.Held(); len(held) != 0 {
+		t.Errorf("a refused request holds %v", held)
+	}
+	if _, err := a.Take("mine", 2, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Take("next", 2, 0); !errors.Is(err, ErrNoFreeCores) || errors.Is(err, ErrNeverFits) {
+		t.Fatalf("our own lane holds the room: want a wait, got %v", err)
+	}
+}

@@ -269,6 +269,12 @@ func (l *flab) writeInventory() {
 // add writes and adds an experiment of the faults ids with one sequence of one run.
 func (l *flab) add(name string, hosts []string, ids string, retries int) {
 	l.t.Helper()
+	must(l.t, l.addErr(name, hosts, ids, retries))
+}
+
+// addErr is add that returns the refusal.
+func (l *flab) addErr(name string, hosts []string, ids string, retries int) error {
+	l.t.Helper()
 	spec := fmt.Sprintf(`name: %s
 app: examples/shop
 fuzzops: 0b528ac
@@ -289,7 +295,7 @@ pause_after_wave: false
 `, name, ids, len(l.hosts)*2, strings.Join(hosts, ", "), retries)
 	p := filepath.Join(l.specs, name+".yaml")
 	must(l.t, os.WriteFile(p, []byte(spec), 0o644))
-	must(l.t, Add(context.Background(), l.root, p, os.Stderr))
+	return Add(context.Background(), l.root, p, os.Stderr)
 }
 
 // pass is one manager pass at the current fake time.

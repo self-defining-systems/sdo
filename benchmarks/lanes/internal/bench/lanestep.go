@@ -178,6 +178,7 @@ func (r *stepRunner) laneEnvLimits(ctx context.Context) (env []string, ok bool) 
 			return []string{"FUZZOPS_LANE_CPUSET=" + FormatCPUList(cpus), "FUZZOPS_LANE_MEMORY=" + strconv.FormatInt(mem, 10),
 				"FUZZOPS_LANE_SLICE=" + parent}, true
 		case errors.Is(err, ErrNeverFits):
+			_ = a.Dequeue(r.s.Lane)
 			r.config("lane.cpus %d / lane.memory %s: %v (host lanes.cpus %s)", l.Cores, l.Memory, err, l.CPUs)
 			return nil, false
 		case !errors.Is(err, ErrNoFreeCores):
