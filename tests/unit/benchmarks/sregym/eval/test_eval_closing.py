@@ -387,3 +387,16 @@ def test_sealed_row_recovers_responder_cost_when_the_final_sink_is_missing(tmp_p
     assert row.online.requests == 1
     assert row.online.usd == pytest.approx(0.006)
     assert row.cost_note is None
+
+
+def test_a_closing_error_that_carries_an_accepted_commit_still_records_the_first_try(tmp_path: Path) -> None:
+    row, cell, config, _, _ = run_draining(
+        tmp_path,
+        closing_status="error",
+        closing_commit="closing-head",
+        error_keeps_commit=True,
+    )
+    closing = json.loads((cell.directory(config) / "closing.json").read_text())
+    assert closing["status"] == "error"
+    assert closing["memory_commit_after"] == "closing-head"
+    assert row.memory_commit_after == "closing-head"

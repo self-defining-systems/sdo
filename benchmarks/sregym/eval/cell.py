@@ -419,9 +419,9 @@ def _seal(
             offline, source = TokenRow(), "missing"
     elif closing.offline_fallback is not None:
         offline, source = _fallback_offline(closing.offline_fallback, drained=closing.status == "drained")
-    memory_commit = closing.memory_commit_after if closing.status == "drained" else None
-    if closing.status == "not_applicable":
-        memory_commit = closing.memory_commit_after
+    # The arm reports a commit only when the closing turn finished and the broker accepted it (never for not_drained),
+    # so it stands even when the row's lane recovery failed: lane recovery and learning capture are separate.
+    memory_commit = closing.memory_commit_after
     document = {
         "schema": CLOSING_SCHEMA,
         "cell": cell.id,

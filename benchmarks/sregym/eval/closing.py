@@ -39,7 +39,8 @@ class ClosingResult:
     closing_s: float | None = None
     #: The harness fault recovery and cleanup the arm paid at the row's end; the same step for both arms.
     recovery_s: float | None = None
-    #: Head of the lane's accepted memory after the closing turn: the pass-1 delta. ``None`` unless drained.
+    #: Head of the lane's accepted memory after the closing turn: the pass-1 delta. ``None`` unless the closing turn
+    #: finished and was accepted; set on an ``error`` status too when only the lane's end-of-row recovery failed.
     memory_commit_after: str | None = None
     #: The closing outcome: the reflection's learning decision (``updated``, ``failed``, ...) or ``not_drained``.
     decision: str | None = None

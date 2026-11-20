@@ -652,17 +652,31 @@ class FastloopRowRunner:
                 decision="not_drained",
                 error=f"the row did not finish within {self.settings.drain_timeout_seconds}s of its online end",
             )
-        if code != 0 or state.get("final_missing"):
-            return ClosingResult(
-                status="error", incident_id=incident_id, error=f"fastloop row exited {code} after its online end"
-            )
-        sdo = cell.arm == "sdo"
-        head = self._head(environment.workspace) if sdo else None
-        if head and self._import_memory is not None:
-            self._import_memory(cell.app, cell.problem, environment.workspace, head)
         ledger = _ledger(record)
         decision = ledger.get("reflection_decision")
         decision = decision if isinstance(decision, dict) else {}
+        sdo = cell.arm == "sdo"
+        if code != 0 or state.get("final_missing"):
+            # A non-zero exit can be the lane's end-of-row recovery failing after the closing turn finished and the
+            # broker committed. The lane is then not reusable (status error) but its memory is still the cell's delta.
+            learned = sdo and code != 0 and record is not None and bool(decision.get("learning_decision"))
+            head = self._head(environment.workspace) if learned else None
+            if head and self._import_memory is not None:
+                self._import_memory(cell.app, cell.problem, environment.workspace, head)
+            planned = state.get("planned")
+            return ClosingResult(
+                status="error",
+                incident_id=incident_id,
+                error=f"fastloop row exited {code} after its online end",
+                memory_commit_after=head,
+                decision=decision.get("learning_decision") if head else None,
+                failure_reason=decision.get("failure_reason") if head else None,
+                learning=learning_delta(environment.workspace, planned, head) if head and planned else {},
+                recovery=_recovery(record) if head else {},
+            )
+        head = self._head(environment.workspace) if sdo else None
+        if head and self._import_memory is not None:
+            self._import_memory(cell.app, cell.problem, environment.workspace, head)
         planned = state.get("planned")
         return ClosingResult(
             status="drained",
