@@ -924,3 +924,18 @@ def test_healthy_application_is_not_recreated(tmp_path: Path, monkeypatch: pytes
     monkeypatch.setattr(cli, "recreate_application", lambda *_a, **_k: pytest.fail("recreated a healthy app"))
     cli.rehearse_with_repair(_repair_env(tmp_path), worker, tmp_path, "p", 0, cli.ApplicationRepair(), revision=None)
     assert not (tmp_path / "setup-repair.json").exists()
+
+
+def test_rejected_rehearsal_names_its_cause(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarks.sregym.fastloop import cli
+
+    class Worker:
+        def request(self, *_a, **_k):
+            rejection = {"cause": "pod_health_gate_failed", "named": ["pod grafana is not Ready"]}
+            return {"success": False, "details": {"rejection": rejection}}
+
+    monkeypatch.setattr(cli, "recreate_application", lambda *_a, **_k: None)
+    with pytest.raises(ValueError, match=r"pod_health_gate_failed: pod grafana is not Ready"):
+        cli.rehearse_with_repair(
+            _repair_env(tmp_path), Worker(), tmp_path, "p", 0, cli.ApplicationRepair(), revision=None
+        )

@@ -1078,7 +1078,9 @@ def rehearse_with_repair(
         json.dumps({"problem_id": problem_id, "verdict": rehearsal}, indent=2) + "\n"
     )
     if rehearsal.get("success") is not True:
-        raise ValueError(f"eval: no-fault rehearsal has unhealthy collateral/traffic for {problem_id}")
+        rejection = rehearsal.get("details", {}).get("rejection")
+        cause = f" ({rejection['cause']}: {'; '.join(rejection['named'])})" if rejection else ""
+        raise ValueError(f"eval: no-fault rehearsal has unhealthy collateral/traffic for {problem_id}{cause}")
 
 
 def restore_lane_identities(environment: FastloopEnvironment, results_dir: Path) -> None:
