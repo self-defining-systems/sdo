@@ -44,7 +44,38 @@ func PlanAdd(root Root, file string, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	lock, err := plan.Add(root.PlansDir(), file, SystemClock{}, func(b []byte) error {
+	lock, err := plan.Add(root.PlansDir(), file, SystemClock{}, planSpecCheck(inv))
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "plan %s added: %d nodes, workload %s, subject %s\n", lock.Plan, lock.Nodes, lock.Pins.Workload, lock.Pins.Subject)
+	return nil
+}
+
+// PlanDryRun runs every check of PlanAdd and prints the expanded plan (items, arms, edges, order), as JSON when
+// jsonOut. It creates nothing under the root.
+func PlanDryRun(root Root, file string, jsonOut bool, w io.Writer) error {
+	inv, err := LoadInventory(string(root))
+	if err != nil {
+		return err
+	}
+	pv, err := plan.DryRun(root.PlansDir(), file, SystemClock{}, planSpecCheck(inv))
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		b, _ := json.MarshalIndent(pv, "", " ")
+		_, err = fmt.Fprintln(w, string(b))
+		return err
+	}
+	pv.Render(w)
+	return nil
+}
+
+// planSpecCheck is the check of one rendered spec: the platform's own spec validation and the inventory (the pins
+// must be checked out on a usable host).
+func planSpecCheck(inv Inventory) func([]byte) error {
+	return func(b []byte) error {
 		s, err := ParseSpec(b)
 		if err != nil {
 			return err
@@ -57,12 +88,7 @@ func PlanAdd(root Root, file string, w io.Writer) error {
 			return fmt.Errorf("hosts.yaml has no hook_command for %s", s.Operator.Hooks)
 		}
 		return nil
-	})
-	if err != nil {
-		return err
 	}
-	fmt.Fprintf(w, "plan %s added: %d nodes, workload %s, subject %s\n", lock.Plan, lock.Nodes, lock.Pins.Workload, lock.Pins.Subject)
-	return nil
 }
 
 // Submit adds the experiment unless it exists.
