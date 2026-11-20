@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -78,6 +79,13 @@ func memoryScript(baselineDir string, b baselineJSON, hooksDir string) string {
 		shellQuote(b.Branch), shellQuote(filepath.Join(baselineDir, b.Bundle)), opRoot)
 }
 
+// logProgress matches log lines of INFO or DEBUG level ("2006/01/02 15:04:05 INFO msg k=v"): the validator's stage
+// progress, not diagnostics. `memory migrate` has no structured output; its verdict is the exit code plus the
+// diagnostics it prints, which are not log lines. WARN and ERROR log lines stay diagnostics.
+var logProgress = regexp.MustCompile(`^\d{4}/\d\d/\d\d \d\d:\d\d:\d\d(\.\d+)? (INFO|DEBUG) `)
+
+func isLogProgress(line string) bool { return logProgress.MatchString(line) }
+
 // judgeMemory: the bundle's head is the commit baseline.json names and the memory check printed no diagnostics.
 func judgeMemory(out string, err error, commit string, allow []string) (bool, string) {
 	if err != nil {
@@ -92,7 +100,9 @@ func judgeMemory(out string, err error, commit string, allow []string) (bool, st
 		case strings.HasPrefix(l, "HEAD "):
 			head = strings.TrimSpace(strings.TrimPrefix(l, "HEAD "))
 		case strings.HasPrefix(l, "CHECK "):
-			diag = append(diag, strings.TrimPrefix(l, "CHECK "))
+			if d := strings.TrimPrefix(l, "CHECK "); !isLogProgress(d) {
+				diag = append(diag, d)
+			}
 		case strings.HasPrefix(l, "PREFLIGHT "):
 			return false, strings.TrimPrefix(l, "PREFLIGHT ")
 		}

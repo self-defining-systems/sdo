@@ -2462,6 +2462,15 @@ class InputBaseline(NamedTuple):
 #: the telemetry sources when it installs.
 ADD_TIME_ALLOWED = ("telemetry.unbound",)
 
+#: INFO and DEBUG log lines of ``memory migrate`` ("2006/01/02 15:04:05 INFO msg k=v"): the validator's stage progress,
+#: never diagnostics. WARN and ERROR lines stay diagnostics; the verdict is the exit status plus the diagnostics.
+LOG_PROGRESS = re.compile(r"^\d{4}/\d\d/\d\d \d\d:\d\d:\d\d(\.\d+)? (INFO|DEBUG) ")
+
+
+def memory_diagnostics(output: str) -> list[str]:
+    """The diagnostics in ``memory migrate`` output: every non-blank line that is not INFO/DEBUG log progress."""
+    return [line for line in output.splitlines() if line.strip() and not LOG_PROGRESS.match(line)]
+
 
 def _load_input_baseline(path: Path) -> InputBaseline:
     baseline = Baseline.load(path)
@@ -2510,8 +2519,7 @@ def _memory_migrate(path: Path, baseline: InputBaseline) -> tuple[str, int, list
             check=False,
             env=env,
         )
-        diagnostics = [line for line in (proc.stdout + proc.stderr).splitlines() if line.strip()]
-        return head, proc.returncode, diagnostics
+        return head, proc.returncode, memory_diagnostics(proc.stdout + proc.stderr)
 
 
 def check_input(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
