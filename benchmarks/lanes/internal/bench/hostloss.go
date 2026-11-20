@@ -61,6 +61,27 @@ func (m *Manager) settleOrphan(ctx context.Context, l *LaneFile, state string) {
 	}
 }
 
+// cancelRemoved kills the in-flight step of an experiment that was removed: a build (also one waiting in lane-wait for
+// cores) serves nobody once its experiment is gone; a run is cancelled too when the removal asked for a teardown, and
+// otherwise finishes. Kill escalates TERM to KILL, and the next probe finds the step dead (died() recovers the lane).
+func (m *Manager) cancelRemoved(ctx context.Context, l *LaneFile) {
+	x := m.exps[l.Experiment]
+	if x == nil || x.Removed == nil {
+		return
+	}
+	ref := l.Step
+	if ref.Kind != StepBuild && !(ref.Kind == StepRun && x.Removed.Teardown) {
+		return
+	}
+	if ref.Killed == "" {
+		ref.Killed = "cancelled: experiment " + l.Experiment + " was removed"
+		m.logf("lane %s: step %s %s", l.Lane, ref.ID, ref.Killed)
+	}
+	if err := m.ops(l.Host).Kill(ctx, l.Lane, ref.ID); err != nil {
+		m.logf("lane %s: kill %s: %v (retried next pass)", l.Lane, ref.ID, err)
+	}
+}
+
 // enforceBound kills a step that has run past its bound. The next probe finds it dead and died() records why.
 func (m *Manager) enforceBound(ctx context.Context, l *LaneFile) {
 	ref := l.Step
