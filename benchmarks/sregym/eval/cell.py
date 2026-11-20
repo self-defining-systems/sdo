@@ -318,7 +318,7 @@ def run_cell(cell: Cell, ctx: CellContext, lane_id: str) -> ResultRow:
                 if recovered is not None:
                     accounting = dataclasses.replace(
                         accounting,
-                        online=TokenRow(**recovered.token_row()),
+                        online=TokenRow.model_validate(recovered.token_row()),
                         detail={
                             **accounting.detail,
                             "online_source": "runtime-export",
