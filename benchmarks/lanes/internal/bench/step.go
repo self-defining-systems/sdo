@@ -307,7 +307,7 @@ func (r *stepRunner) laneEnv(p *Prepared) []string {
 	if r.s.Provider == ProviderEks {
 		// The lane's entry address (a node the manager reaches on NodePorts) is known once its cluster is up.
 		if b, err := os.ReadFile(r.s.Kubeconfig + ".entry"); err == nil && strings.TrimSpace(string(b)) != "" {
-			e = append(e, "FUZZOPS_ENTRY_HOST="+strings.TrimSpace(string(b)))
+			e = append(e, "BENCH_ENTRY_HOST="+strings.TrimSpace(string(b)))
 		}
 	}
 	if p != nil {

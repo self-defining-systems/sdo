@@ -104,6 +104,11 @@ type Manager struct {
 	EksCheck   func(ctx context.Context, lane, kubeconfig string) error
 }
 
+// raiseLaneAlarm appends an alarm about one lane to alarms.jsonl (once per call: the caller raises it when the lane turns bad).
+func (m *Manager) raiseLaneAlarm(alarm string, l *LaneFile, detail string) {
+	(&AlarmLog{Root: m.Root, Logf: m.logf}).Raise(plan.Alarm{At: m.now().UTC(), Alarm: alarm, Key: alarm + "/" + l.Lane, Subject: l.Lane, Host: l.Host, Detail: detail})
+}
+
 // ledgerEvery is how often the manager reconciles a host's lane ledger.
 const ledgerEvery = time.Minute
 

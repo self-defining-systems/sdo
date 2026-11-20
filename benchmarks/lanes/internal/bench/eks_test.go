@@ -35,7 +35,7 @@ func TestEksHostDefaultsItsClusterCommandsAndEnv(t *testing.T) {
 		t.Fatalf("cluster commands %q %q", h.ClusterUp, h.ClusterDown)
 	}
 	env := strings.Join(h.EnvList(), " ")
-	for _, want := range []string{"BENCH_LANE_PROVIDER=eks", "FUZZOPS_LANE_PROVIDER=vcluster", "BENCH_EVIDENCE_MODE=pull", "EKS_REGION=us-west-2", "AWS_REGION=us-west-2",
+	for _, want := range []string{"BENCH_LANE_PROVIDER=eks", "BENCH_EVIDENCE_MODE=pull", "EKS_REGION=us-west-2", "AWS_REGION=us-west-2",
 		"BENCH_IMAGE_REGISTRY=123456789012.dkr.ecr.us-west-2.amazonaws.com"} {
 		if !strings.Contains(env, want) {
 			t.Errorf("env %q lacks %s", env, want)

@@ -129,8 +129,6 @@ func (h Host) EnvFor(workload string) []string {
 func (h Host) EnvList() []string {
 	all := map[string]string{}
 	if h.IsEks() {
-		// The fuzzops binary knows kind and vcluster only; vcluster means "no node exec", which an EKS lane is.
-		all["FUZZOPS_LANE_PROVIDER"] = ProviderVcluster
 		all["BENCH_LANE_PROVIDER"] = ProviderEks
 		all["BENCH_EVIDENCE_MODE"] = "pull"
 		if h.EKS != nil {
@@ -242,7 +240,7 @@ func LoadInventory(root string) (Inventory, error) {
 			inv.Hosts[name] = h
 		}
 		if h.IsEks() && h.ClusterUp == "" && h.ClusterDown == "" {
-			h.ClusterUp, h.ClusterDown = eksUp, eksDown
+			h.ClusterUp, h.ClusterDown = eksClusterUp, eksClusterDown
 			inv.Hosts[name] = h
 		}
 	}

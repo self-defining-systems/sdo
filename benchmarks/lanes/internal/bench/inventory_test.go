@@ -105,7 +105,7 @@ func TestVclusterHostValidation(t *testing.T) {
 	for name, tc := range map[string]struct{ from, to, want string }{
 		"no entry host":   {"    entry_host: 192.168.1.108\n", "", "needs entry_host"},
 		"no kubeconfig":   {"    host_kubeconfig: /etc/shared/kubeconfig.yaml\n", "", "needs host_kubeconfig"},
-		"unknown":         {"provider: vcluster", "provider: nomad", "want kind or vcluster"},
+		"unknown":         {"provider: vcluster", "provider: nomad", "want kind, vcluster or eks"},
 		"kind with entry": {"provider: vcluster", "provider: kind", "belong to provider vcluster"},
 	} {
 		_, err := loadInv(t, strings.Replace(vcHost, tc.from, tc.to, 1))

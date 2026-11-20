@@ -12,8 +12,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/self-defining-systems/sdo/benchmarks/lanes/internal/plan"
 )
 
 // Provider eks: every lane is its own Amazon EKS cluster, made and deleted by deploy/eks-lane.sh through eksctl and
@@ -35,8 +33,8 @@ const eksControlPlaneUSDPerHour = 0.10
 
 // Default cluster commands of an eks host (run like any host command; they name their script through $LANES_INSTALL).
 const (
-	eksUp   = "$LANES_INSTALL/deploy/eks-lane.sh up {cluster} {kubeconfig} {evidence}"
-	eksDown = "$LANES_INSTALL/deploy/eks-lane.sh down {cluster} {kubeconfig}"
+	eksClusterUp   = "$LANES_INSTALL/deploy/eks-lane.sh up {cluster} {kubeconfig} {evidence}"
+	eksClusterDown = "$LANES_INSTALL/deploy/eks-lane.sh down {cluster} {kubeconfig}"
 )
 
 // DefaultEksIdleTimeout is how long a free lane's cluster is kept after its last use when no experiment wants the host.
@@ -460,7 +458,7 @@ func (m *Manager) observeEksLanes(ctx context.Context, reachable map[string]bool
 		switch {
 		case why != "" && was == "":
 			m.logf("ALARM %s, no new steps on it", why)
-			(&AlarmLog{Root: m.Root, Logf: m.logf}).Raise(plan.Alarm{At: m.now().UTC(), Alarm: "eks-lane-unhealthy", Key: "eks-lane-unhealthy/" + l.Lane, Subject: l.Lane, Host: l.Host, Detail: why})
+			m.raiseLaneAlarm("eks-lane-unhealthy", l, why)
 		case why == "" && was != "":
 			m.logf("lane %s: API answers and a node is Ready again, new steps resume", l.Lane)
 		}

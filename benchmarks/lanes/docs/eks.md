@@ -29,6 +29,12 @@ hosts:
     clusters: [eks1, eks2, eks3, eks4]    # lane names; the clusters exist only while a lane needs them
 ```
 
+Variables a step on an eks lane sees: `BENCH_LANE_PROVIDER=eks`, `BENCH_EVIDENCE_MODE=pull`,
+`BENCH_IMAGE_REGISTRY` (the account's ECR host), `AWS_REGION`, `KUBECONFIG` (token kubeconfig, context `kind-<lane>`), and once the
+cluster is up `BENCH_ENTRY_HOST`: an address of a node the manager reaches on NodePorts (an adapter maps it to its own
+name). A host's `env:` adds whatever a workload's tooling still needs, for example the lane provider name of a binary that
+predates eks.
+
 ## Lifecycle
 
 - **Up.** The first build on a lane runs `cluster_up` (default `eks-lane.sh up`): a cluster `sdo-lane-<lane>` with the
