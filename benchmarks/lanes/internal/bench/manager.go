@@ -62,6 +62,10 @@ type Manager struct {
 	seeded  bool
 	alarmed map[string]bool
 
+	// crash is why a lane gets no new steps (its pods crash-loop, crashloop.go); crashTrack are its restart counters.
+	crash      map[string]string
+	crashTrack map[string]*crashTracker
+
 	reservations map[string]Reservation
 	drift        map[string]string
 	driftAt      map[string]time.Time
@@ -298,6 +302,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 			}
 		}
 	}
+	m.observeCrashLoops(ctx, reachable)
 	for _, l := range m.sortedLanes() {
 		m.unhold(ctx, l)
 	}
@@ -313,6 +318,9 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 	for _, l := range m.sortedLanes() {
 		if !reachable[l.Host] || l.Step != nil || l.State != LaneFree {
 			continue
+		}
+		if m.churnFull(l.Host) {
+			continue // a release or a reset waits for a free churn slot; the next pass tries again
 		}
 		del := !l.Gone && m.inv.Hosts[l.Host].ClusterDown != "" && !m.wanted(l.Host) &&
 			(gcAll || m.gcWanted[l.Host] || m.ownerDone(l))
@@ -511,18 +519,31 @@ func (m *Manager) unbind(l *LaneFile, reason string) {
 	m.setState(l, LaneFree, reason)
 }
 
+// builds is the host's churn: the steps that create, reset or delete a lane's cluster or app (a build, a release, an
+// incident reset, a recover). Each takes a network namespace under the kernel's global lock, so max_builds bounds them
+// together. A recover (the cleanup of a step that died) counts but is never held back: what a dead step left must be undone.
 func (m *Manager) builds(host string) int {
 	n := 0
 	for _, l := range m.lanes {
-		if l.Host == host && l.Step != nil && l.Step.Kind == StepBuild {
+		if l.Host != host || l.Step == nil {
+			continue
+		}
+		switch l.Step.Kind {
+		case StepBuild, StepRelease, StepUnhold, StepRecover:
 			n++
 		}
 	}
 	return n
 }
 
+// churnFull says whether host h already runs max_builds churn steps (a new release or reset waits).
+func (m *Manager) churnFull(h string) bool { return m.builds(h) >= m.inv.Hosts[h].MaxBuilds }
+
 // start fills in the lane's part of a step and starts it on the lane's host.
 func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
+	if why := m.crashBlock(l.Lane); why != "" && (s.Kind == StepBuild || s.Kind == StepRun) {
+		return false // no new work on a lane whose pods crash-loop; recover, release and unhold still run
+	}
 	h := m.inv.Hosts[l.Host]
 	s.ID = NewStepID(s.Kind)
 	s.Lane, s.Host = l.Lane, l.Host
@@ -639,6 +660,9 @@ func (m *Manager) unhold(ctx context.Context, l *LaneFile) {
 		return
 	}
 	if m.now().Sub(l.Since) < time.Minute && strings.HasPrefix(l.Reason, "unhold failed") {
+		return
+	}
+	if m.churnFull(l.Host) {
 		return
 	}
 	if l.Prepared != nil && l.Prepared.Hooks != "" {
@@ -881,6 +905,9 @@ func (m *Manager) explainIdle(waiting map[string]string, reachable map[string]bo
 // laneBlock says why the free lane l was not bound to a sequence of x this pass ("" when nothing stood in the way):
 // the checks of resettable and freeLane (a ready pool lane that claimable takes is not free).
 func (m *Manager) laneBlock(l *LaneFile, x *Experiment, s Spec, reachable map[string]bool) string {
+	if why := m.crashBlock(l.Lane); why != "" {
+		return why
+	}
 	if why := m.buildBlock(l.Host, s, reachable); why != "" {
 		return why
 	}
