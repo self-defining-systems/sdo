@@ -230,6 +230,11 @@ func runPreflight(ctx context.Context, inv Inventory, specs []specFile, opt Pref
 			host := inv.Hosts[h]
 			pre := envPrefix(host)
 
+			// 9 tools resolve where the steps run
+			tout, terr := run(ctx, h, pre+toolsScript(host))
+			tok, td := judgeTools(tout, terr)
+			add(9, "tools", h, tok, "%s", td)
+
 			// 7 capacity
 			planned := plannedLanes(inv, h, hs)
 			var out string
@@ -393,6 +398,37 @@ func judgeSharedCluster(out string, err error, planned int) (bool, string) {
 		d += "; NotReady (lanes avoid them): " + strings.Join(notReady, ",")
 	}
 	return true, d
+}
+
+// platformTools are the external programs the steps, hooks and probes run; a kind host also needs kind.
+func platformTools(h Host) []string {
+	t := []string{"kubectl", "docker", "ip"}
+	if !h.IsVcluster() {
+		t = append(t, "kind")
+	}
+	return t
+}
+
+// toolsScript prints "missing TOOL" for every platform tool that does not resolve in the environment the steps run in
+// (the caller prefixes the host's envPrefix).
+func toolsScript(h Host) string {
+	return `for t in ` + strings.Join(platformTools(h), " ") + `; do command -v "$t" >/dev/null 2>&1 || echo "missing $t"; done; true`
+}
+
+func judgeTools(out string, err error) (bool, string) {
+	if err != nil {
+		return false, fmt.Sprintf("probe failed: %v", err)
+	}
+	var missing []string
+	for _, l := range strings.Split(out, "\n") {
+		if t, ok := strings.CutPrefix(strings.TrimSpace(l), "missing "); ok {
+			missing = append(missing, t)
+		}
+	}
+	if len(missing) > 0 {
+		return false, "not found on PATH: " + strings.Join(missing, ", ")
+	}
+	return true, "all platform tools found"
 }
 
 func capacityScript(h Host) string {
