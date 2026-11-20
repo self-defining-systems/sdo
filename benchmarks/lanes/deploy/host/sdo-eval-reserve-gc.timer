@@ -1,0 +1,9 @@
+[Unit]
+Description=Expire sdo-eval-reserve leases and re-pin lane cpusets every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target

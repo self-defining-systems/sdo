@@ -30,7 +30,7 @@ export GOWORK="$workspace/go.work"
 modules=(sdo/operator/sdk sdo/operator/core sdo/operator/contracts sdo/operator/telemetry
     sdo/operator/runtime sdo/operator sdo/operator/integration
     benchmarks/sregym/protocol/native_receipt_go benchmarks/sregym/protocol/submission_go
-    benchmarks/sregym/fastloop/replay_go)
+    benchmarks/sregym/fastloop/replay_go benchmarks/lanes)
 patterns=()
 {
     echo 'go 1.26.8'

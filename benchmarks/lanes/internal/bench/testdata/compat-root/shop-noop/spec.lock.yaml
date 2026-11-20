@@ -1,0 +1,19 @@
+{
+  "spec": {
+    "name": "shop-noop",
+    "app": "examples/shop",
+    "fuzzops": "0b528ac",
+    "operator": {"builtin": "noop"},
+    "namespace": "shop",
+    "faults": {"instances": "instances.json", "ids": ["a@x", "b@y"]},
+    "sequences": [[1, 2]],
+    "run": {"window": "330s"},
+    "ready_for": "30s",
+    "ready_timeout": "10m",
+    "cap": "20m",
+    "lanes": 2,
+    "hosts": ["h1", "h2"],
+    "retries": 1
+  },
+  "added": "2026-11-01T00:00:00Z"
+}

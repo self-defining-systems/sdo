@@ -187,6 +187,27 @@ def test_production_sdo_does_not_import_benchmark_code() -> None:
     assert not violations, f"{len(violations)} production-to-benchmark import(s) found:\n" + "\n".join(violations)
 
 
+def test_lanes_platform_and_production_go_do_not_depend_on_each_other() -> None:
+    """benchmarks/lanes is a standalone Go module: production Go never imports it, and it imports nothing of SDO."""
+    lanes_path = "github.com/self-defining-systems/sdo/benchmarks/lanes"
+    violations: list[str] = []
+    sdo_files = [p for p in (_REPO_ROOT / "sdo").rglob("*") if p.suffix == ".go" or p.name in {"go.mod", "go.work"}]
+    violations.extend(
+        f"{p.relative_to(_REPO_ROOT)}: production SDO cannot depend on benchmarks/lanes"
+        for p in sdo_files
+        if lanes_path in p.read_text(errors="ignore")
+    )
+    violations.extend(
+        f"{p.relative_to(_REPO_ROOT)}: the lane platform stays neutral and cannot import SDO modules"
+        for p in (_REPO_ROOT / "benchmarks" / "lanes").rglob("*.go")
+        if '"sdo.dev/' in p.read_text(errors="ignore")
+    )
+    go_mod = (_REPO_ROOT / "benchmarks" / "lanes" / "go.mod").read_text()
+    if "sdo.dev/" in go_mod:
+        violations.append("benchmarks/lanes/go.mod: requires an SDO module")
+    assert not violations, "\n".join(violations)
+
+
 def _wall_clock_sleeps(source: str) -> list[tuple[str, int]]:
     """Find real time/asyncio sleeps, resolving module and function aliases."""
     tree = ast.parse(source)

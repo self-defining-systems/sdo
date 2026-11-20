@@ -1,0 +1,31 @@
+# Synthetic root in the layout of a fuzzops-bench root (docs/contract.md, "Compatibility").
+hosts:
+  h1:
+    local: true
+    staging: /var/tmp/compat/staging
+    max_builds: 1
+    max_load5: 64
+    min_free: 100G
+    env:
+      KIND_NODE_IMAGE: "kindest/node:v1.35.0"
+    kubeconfigs: /var/tmp/compat/kube
+    evidence: /var/tmp/compat/evidence
+    clusters: [c1, c2]
+    cluster_up: "deploy/kind-lane.sh up {cluster} {kubeconfig} {evidence}"
+    cluster_down: "deploy/kind-lane.sh down {cluster}"
+  h2:
+    ssh: h2.example
+    staging: /var/tmp/compat/staging
+    max_builds: 1
+    max_load5: 32
+    kubeconfigs: /var/tmp/compat/kube
+    evidence: /var/tmp/compat/evidence
+    clusters: [c3]
+    cluster_up: "deploy/kind-lane.sh up {cluster} {kubeconfig} {evidence}"
+    cluster_down: "deploy/kind-lane.sh down {cluster}"
+checkouts:
+  fuzzops:
+    0b528ac: {h1: /var/tmp/compat/fuzzops, h2: /var/tmp/compat/fuzzops}
+  hooks:
+    test: {abc1234: {h1: /var/tmp/compat/hooks}}
+hook_command: {test: "./hook.sh"}

@@ -104,3 +104,7 @@ exp_config/*/*.log
 
 # XV1 local validation logs
 .xv1-logs/
+
+# lane platform build output
+benchmarks/lanes/bin/
+!benchmarks/lanes/internal/env/

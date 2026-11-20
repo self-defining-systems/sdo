@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# `docker` for `kind create cluster` on a host with lane limits: kind starts each node with a plain `docker run`
+# and offers no way to choose its cgroup parent, cpuset or memory, so kind-lane.sh puts this directory first in PATH
+# for that one command. When FUZZOPS_LANE_CPUSET or FUZZOPS_LANE_MEMORY is set, a `docker run` of a kind node (it
+# carries the label io.x-k8s.kind.cluster) gets --cgroup-parent=$FUZZOPS_LANE_SLICE and the flags that
+# lane-limits.sh gives that node; everything else is passed through untouched.
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+real=${FUZZOPS_REAL_DOCKER:-}
+if [ -z "$real" ]; then
+  IFS=: read -ra dirs <<<"$PATH"
+  for d in "${dirs[@]}"; do
+    [ -x "$d/docker" ] && [ "$(cd "$d" && pwd)" != "$here" ] && { real=$d/docker; break; }
+  done
+fi
+[ -n "$real" ] || { echo "lane-docker-shim: no docker in PATH" >&2; exit 127; }
+if [ "${1:-}" = run ] && [ -n "${FUZZOPS_LANE_CPUSET:-}${FUZZOPS_LANE_MEMORY:-}" ]; then
+  node= kind=
+  args=("$@")
+  for i in "${!args[@]}"; do
+    case "${args[$i]}" in
+    --name) node=${args[$((i + 1))]:-} ;;
+    --name=*) node=${args[$i]#--name=} ;;
+    io.x-k8s.kind.cluster=*) kind=1 ;;
+    esac
+  done
+  if [ -n "$kind" ] && [ -n "$node" ]; then
+    read -ra extra <<<"$("$here/../lane-limits.sh" flags "$node")"
+    [ -z "${FUZZOPS_LANE_SLICE:-}" ] || extra=("--cgroup-parent=$FUZZOPS_LANE_SLICE" "${extra[@]}")
+    exec "$real" run "${extra[@]}" "${@:2}"
+  fi
+fi
+exec "$real" "$@"
