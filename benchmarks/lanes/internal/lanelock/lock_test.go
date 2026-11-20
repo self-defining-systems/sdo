@@ -3,7 +3,9 @@
 package lanelock
 
 import (
+	"bufio"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"testing"
@@ -42,28 +44,48 @@ func TestTakeIsExclusivePerLane(t *testing.T) {
 	again()
 }
 
+// The holder is this test binary re-run as a helper: one process that takes
+// the lane, says so on stdout and waits to be killed. (flock(1) is not used:
+// it forks the command, so killing it can leave a child holding the lock, and
+// polling for the lock is a race against a loaded machine.)
+const holderEnv = "LANELOCK_TEST_HOLDER_DIR"
+
+var heldForever func()
+
+func TestMain(m *testing.M) {
+	if dir := os.Getenv(holderEnv); dir != "" {
+		if _, err := Take(env.Env{KindCluster: "c", Namespace: "ns", StateDir: dir}, "holder"); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println("held")
+		select {}
+	}
+	os.Exit(m.Run())
+}
+
 // A holder that dies frees the lane (flock is released with the process).
 func TestLockOfAKilledHolderIsFree(t *testing.T) {
-	if _, err := exec.LookPath("flock"); err != nil {
-		t.Skip("no flock(1)")
-	}
 	dir := t.TempDir()
 	e := env.Env{KindCluster: "c", Namespace: "ns", StateDir: dir}
-	if err := os.MkdirAll(dir+"/locks", 0o755); err != nil {
+	cmd := exec.Command(os.Args[0])
+	cmd.Env = append(os.Environ(), holderEnv+"="+dir)
+	out, err := cmd.StdoutPipe()
+	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("flock", "-o", Path(e), "sleep", "30")
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 200 && !Held(e); i++ {
-		exec.Command("sleep", "0.01").Run()
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	if line, err := bufio.NewReader(out).ReadString('\n'); err != nil || line != "held\n" {
+		t.Fatalf("holder did not report holding the lock: %q, %v", line, err)
 	}
 	if !Held(e) {
-		t.Fatal("child never held the lock")
+		t.Fatal("lane not held while the holder lives")
 	}
 	_ = cmd.Process.Kill()
-	_ = cmd.Wait()
+	_ = cmd.Wait() // returns once the process has exited, so the kernel has dropped its locks
 	release, err := Take(e, "run")
 	if err != nil {
 		t.Fatalf("after the holder died: %v", err)
