@@ -11,6 +11,7 @@ import (
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
 	"sdo.dev/operator/operatorcli/internal/processio"
+	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
 	"sdo.dev/operator/telemetry"
 )
@@ -110,7 +111,7 @@ func prepareInstallTree(ctx context.Context, repo string, derived broker.Telemet
 	if out, err := processio.Git(ctx, "-C", repo, "status", "--porcelain", "--", ".sdo"); err != nil {
 		return "", err
 	} else if strings.TrimSpace(out) != "" {
-		message := "sdo: prepare the generic detectors\n\nSDO-Actor: human\nSDO-Phase: initial\nSDO-Origin: install-existing"
+		message := memory.InstallCommitMessage("sdo: prepare the generic detectors")
 		if err := git("commit", "-q", "-m", message); err != nil {
 			return "", err
 		}

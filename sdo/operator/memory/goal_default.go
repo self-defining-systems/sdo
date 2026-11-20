@@ -25,7 +25,7 @@ func EnsureGoal(ctx context.Context, repository, application string) (bool, erro
 	if _, err := gitOutput(ctx, repository, "add", "--force", "--", layout.GoalFile); err != nil {
 		return false, err
 	}
-	message := "sdo: supply the standard goal\n\nSDO-Actor: human\nSDO-Phase: initial\nSDO-Origin: install-existing"
+	message := InstallCommitMessage("sdo: supply the standard goal")
 	if _, err := gitOutput(ctx, repository, "commit", "-m", message, "--", layout.GoalFile); err != nil {
 		return false, err
 	}

@@ -144,6 +144,24 @@ def test_lineage_admits_a_controller_outcome_commit_and_reports_it(tmp_path):
         setup_lineage(repository, seed)
 
 
+def test_lineage_admits_sdo_install_commits_and_rejects_an_unstamped_commit(tmp_path):
+    """The installer stamps its own commits with SDO-Validation; an engineer's commit without it still fails."""
+    from benchmarks.sregym.adapter.eval_guards import setup_lineage
+
+    repository = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    _commit(repository, "seed", [])
+    seed = subprocess.run(
+        ["git", "-C", str(repository), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    install = ["SDO-Actor: human", "SDO-Phase: initial", "SDO-Origin: install-existing", "SDO-Validation: passed"]
+    _commit(repository, "sdo: prepare the generic detectors", install)
+    assert len(setup_lineage(repository, seed)["commits"]) == 1
+    _commit(repository, "engineer", ["SDO-Actor: human", "SDO-Phase: initial", "SDO-Origin: install-existing"])
+    with pytest.raises(ValueError, match="unvalidated setup commit"):
+        setup_lineage(repository, seed)
+
+
 def test_stabilization_observes_until_deadline_then_fails_without_injecting():
     from benchmarks.sregym.adapter.eval_guards import StabilizationError, wait_for_proof
 
