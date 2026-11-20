@@ -1,6 +1,7 @@
 package bench
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -31,6 +33,8 @@ type PlanBackend struct {
 	Root Root
 	Inv  Inventory
 	Log  io.Writer
+	// Grading, when set, counts the background grading jobs so a caller can wait for them.
+	Grading *sync.WaitGroup
 }
 
 // PlanAdd adds a plan from a plan file: its templates are rendered once per arm and each result is validated as a spec
@@ -146,8 +150,8 @@ func runStages(x *Experiment) map[string]time.Duration {
 		out[StageQueue] = first.Started.Sub(x.Lock.Added)
 	}
 	if newest != nil {
-		out[StagePreInject] = newest.InjectAt.Sub(newest.Started)
-		out[StagePostInject] = newest.Ended.Sub(*newest.InjectAt)
+		out[StagePreInject] = max(newest.InjectAt.Sub(newest.Started), 0)
+		out[StagePostInject] = max(newest.Ended.Sub(*newest.InjectAt), 0)
 	}
 	return out
 }
@@ -445,6 +449,119 @@ func PlansSummary(root Root, w io.Writer) {
 	}
 }
 
+// gradingStale is how long a grading marker counts as alive: a manager that restarted mid-grade grades again after it.
+const gradingStale = 20 * time.Minute
+
+// RunData reads the newest run of the experiment (a done one when there is one). The grade is the workload's:
+// the line of results/runs.jsonl for the run's operator label, produced by the workload's grade verb (`Results`),
+// which RunData starts in the background the first time a done run has none and reports as Pending until it is there.
+// Empty and blank lines in runs.jsonl are not a grade.
+func (b *PlanBackend) RunData(_ context.Context, exp string) (plan.RunData, error) {
+	x, err := b.Root.LoadExperiment(exp)
+	if err != nil {
+		return plan.RunData{}, err
+	}
+	var rf *RunFile
+	for _, r := range sortedRuns(x) {
+		r := r
+		better := rf == nil || (r.Status == StatusDone && rf.Status != StatusDone) || (r.Status == rf.Status && r.Ended.After(rf.Ended))
+		if better {
+			rf = &r
+		}
+	}
+	if rf == nil {
+		return plan.RunData{}, nil
+	}
+	rd := plan.RunData{Run: rf.ID, Host: rf.Host, Lane: rf.Lane, WorkloadObserved: rf.Fuzzops.Revision}
+	if iso := rf.Isolation; iso != nil {
+		rd.Isolation = plan.Isolation{Mode: iso.Mode, OOMKills: iso.OOMKills, Reserved: iso.Reserved, CPUs: iso.CPUs, Memory: iso.Memory}
+	}
+	var res Result
+	if readJSON(filepath.Join(b.Root.RunDir(exp, rf.ID), "result.json"), &res) == nil && res.Prepared != nil {
+		rd.SubjectObserved, rd.App = res.Prepared.Version, res.Prepared.AppPack
+	}
+	if rf.Status != StatusDone {
+		return rd, nil
+	}
+	if g, ok := b.gradeLine(exp, rf.OperatorLabel); ok {
+		rd.Grade = g
+		return rd, nil
+	}
+	dir := b.Root.path(exp, "results")
+	if msg, err := os.ReadFile(filepath.Join(dir, "grade.error")); err == nil {
+		rd.GradeError = "grading failed: " + tailLine(string(msg))
+		return rd, nil
+	}
+	marker := filepath.Join(dir, "grading")
+	if fi, err := os.Stat(marker); err == nil && time.Since(fi.ModTime()) < gradingStale {
+		rd.Pending = true
+		return rd, nil
+	}
+	if _, err := os.Stat(filepath.Join(dir, "runs.jsonl")); err == nil && b.graded(dir) {
+		rd.GradeError = "no graded line for operator " + rf.OperatorLabel
+		return rd, nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return rd, err
+	}
+	if err := os.WriteFile(marker, []byte(time.Now().UTC().Format(time.RFC3339)), 0o644); err != nil {
+		return rd, err
+	}
+	if b.Grading != nil {
+		b.Grading.Add(1)
+	}
+	go func() {
+		if b.Grading != nil {
+			defer b.Grading.Done()
+		}
+		b.grade(exp, dir, marker)
+	}()
+	rd.Pending = true
+	return rd, nil
+}
+
+// graded: grading ran to its end for this experiment (the marker is gone and no error was left).
+func (b *PlanBackend) graded(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, "graded"))
+	return err == nil
+}
+
+func (b *PlanBackend) grade(exp, dir, marker string) {
+	ctx, cancel := context.WithTimeout(context.Background(), gradingStale)
+	defer cancel()
+	err := Results(ctx, b.Root, exp, nil, io.Discard)
+	if err != nil {
+		_ = os.WriteFile(filepath.Join(dir, "grade.error"), []byte(err.Error()), 0o644)
+	} else {
+		_ = os.WriteFile(filepath.Join(dir, "graded"), []byte("ok"), 0o644)
+	}
+	_ = os.Remove(marker)
+}
+
+// gradeLine finds the line of results/runs.jsonl for an operator label. Blank and damaged lines are skipped.
+func (b *PlanBackend) gradeLine(exp, label string) (json.RawMessage, bool) {
+	f, err := os.Open(b.Root.path(exp, "results", "runs.jsonl"))
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 256<<20)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			continue
+		}
+		var head struct {
+			Operator string `json:"operator"`
+		}
+		if json.Unmarshal([]byte(line), &head) == nil && head.Operator == label {
+			return json.RawMessage(line), true
+		}
+	}
+	return nil, false
+}
+
 // AlarmLog is the engine's alarm sink: a line in <root>/alarms.jsonl (what `lanes status` shows) and, when the plan
 // names a hook, the hook command with the alarm in its environment so a notifier can push it.
 type AlarmLog struct {
@@ -508,4 +625,42 @@ func printAlarms(root Root, w io.Writer) {
 		}
 		fmt.Fprintf(w, "  %s ago  %-13s %s %s: %s\n", time.Since(a.At).Round(time.Minute), a.Alarm, name, a.Subject, a.Detail)
 	}
+}
+
+// ResultsOptions are the flags of `lanes plan results`.
+type ResultsOptions struct {
+	TSV, Final, Done bool
+	GradeFields      string
+}
+
+// PlanResults prints a plan's rows: JSON lines, or TSV with a header. A plan with no rows yet (or a damaged results
+// file) prints just the header or nothing, and says so on errw; it never fails for it.
+func PlanResults(root Root, name string, o ResultsOptions, w, errw io.Writer) error {
+	dir := plan.Dir(root.PlansDir(), name)
+	if _, err := os.Stat(filepath.Join(dir, "lock.json")); err != nil {
+		return fmt.Errorf("no plan %s", name)
+	}
+	rows, skipped, err := plan.Results(dir, plan.RowFilter{Final: o.Final, Done: o.Done})
+	if err != nil {
+		return err
+	}
+	if skipped > 0 {
+		fmt.Fprintf(errw, "plan %s: skipped %d damaged line(s) of results.jsonl\n", name, skipped)
+	}
+	if o.TSV {
+		var fields []string
+		for _, f := range strings.Split(o.GradeFields, ",") {
+			if f = strings.TrimSpace(f); f != "" {
+				fields = append(fields, f)
+			}
+		}
+		return plan.TSV(w, rows, fields)
+	}
+	enc := json.NewEncoder(w)
+	for _, r := range rows {
+		if err := enc.Encode(r); err != nil {
+			return err
+		}
+	}
+	return nil
 }

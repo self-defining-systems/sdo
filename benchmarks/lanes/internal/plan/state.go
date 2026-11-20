@@ -63,6 +63,8 @@ type AttemptRecord struct {
 	Submitted time.Time                `json:"submitted"`
 	Ended     time.Time                `json:"ended"`
 	Stages    map[string]time.Duration `json:"stages,omitempty"`
+	// Rowed: the attempt's row is in results.jsonl.
+	Rowed bool `json:"rowed,omitempty"`
 }
 
 // StepState is the state of one step instance.

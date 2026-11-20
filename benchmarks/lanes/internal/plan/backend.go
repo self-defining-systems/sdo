@@ -45,6 +45,34 @@ type Observation struct {
 	Stages     map[string]time.Duration
 }
 
+// Isolation is what a run was measured under.
+type Isolation struct {
+	Mode     string `json:"mode,omitempty"` // two-way, one-way, one-way-ok; "" when the host has no reservation record
+	OOMKills int    `json:"oom_kills,omitempty"`
+	Reserved bool   `json:"reserved,omitempty"`
+	CPUs     string `json:"cpus,omitempty"`
+	Memory   string `json:"memory,omitempty"`
+}
+
+// RunData is what the backend knows of the newest run of an experiment, for the results row. Identity (Run, the
+// observed revisions, Isolation) is there as soon as the run ended; the grade may take longer (Pending).
+type RunData struct {
+	Run  string
+	Host string
+	Lane string
+	// WorkloadObserved and SubjectObserved are the revisions the run reports having used (empty: not reported); App
+	// is the application source identity (pack and image digests or commits, as the adapters name them).
+	WorkloadObserved string
+	SubjectObserved  string
+	App              string
+	Isolation        Isolation
+	// Grade is the workload's grade of the run: opaque JSON, an object with at least a boolean "valid". Nil with
+	// GradeError empty and Pending false: the run was not graded (a failed run).
+	Grade      []byte
+	GradeError string
+	Pending    bool
+}
+
 // LaneInfo is a lane as the alarms see it.
 type LaneInfo struct {
 	Host  string
@@ -132,6 +160,8 @@ type Backend interface {
 	StartStep(ctx context.Context, j StepJob) error
 	// ObserveStep reads the step started in dir.
 	ObserveStep(ctx context.Context, dir string) (StepObservation, error)
+	// RunData reads the newest run of an experiment for its results row.
+	RunData(ctx context.Context, exp string) (RunData, error)
 	// Capacity reads lanes, hosts and the queue for the alarms.
 	Capacity(ctx context.Context) (Capacity, error)
 }

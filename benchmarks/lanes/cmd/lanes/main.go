@@ -35,7 +35,7 @@ const usage = `usage: lanes VERB --root R ...
                              drop lanes whose cluster is gone, or register a lane that exists (run on the host)
   host reserve HOST|all | unreserve HOST [--drain] | status [HOST] | adopt HOST [--cpus LIST] | install-helper HOST
                              the hosts.yaml reserve: block: apply it through the root helper, undo it, show it, record an existing one
-  plan add FILE | status [NAME] [--json]   the plan engine: arms x items x reps with verified-artifact edges (docs/plan.md)
+  plan add FILE | status [NAME] [--json] | results NAME [--tsv] [--final] [--done] [--grade-fields a,b]   the plan engine: arms x items x reps with verified-artifact edges (docs/plan.md)
   probe --staging S [--fuzzops F,..] LANE=STEP ...   how a host's steps stand, as JSON (the manager runs it over ssh)`
 
 func main() {
@@ -61,6 +61,10 @@ func run(verb string, args []string) int {
 		fs.Var(&with, "with", "a baseline experiment whose noop runs grade this one (repeatable)")
 	}
 	jsonOut := fs.Bool("json", false, "plan status: print JSON")
+	tsv := fs.Bool("tsv", false, "plan results: tab-separated rows with a header (default: JSON lines)")
+	final := fs.Bool("final", false, "plan results: only the last attempt of each node")
+	doneOnly := fs.Bool("done", false, "plan results: only done rows")
+	gradeFields := fs.String("grade-fields", "", "plan results --tsv: top-level fields of the grade to add as columns (comma-separated)")
 	teardown := false
 	if verb == "remove" {
 		fs.BoolVar(&teardown, "teardown", false, "remove: delete the lanes' clusters even when the spec keeps its lanes")
@@ -166,7 +170,7 @@ func run(verb string, args []string) int {
 	case "preflight":
 		err = bench.Preflight(ctx, r, specs, bench.PreflightOptions{MaxLoadPerCore: *maxLoad, AllowMemoryDiag: allow}, os.Stdout)
 	case "plan":
-		err = planVerb(r, pos, *jsonOut)
+		err = planVerb(r, pos, *jsonOut, bench.ResultsOptions{TSV: *tsv, Final: *final, Done: *doneOnly, GradeFields: *gradeFields})
 	case "lane":
 		if len(pos) != 2 || pos[0] != "reset" {
 			fmt.Fprintln(os.Stderr, usage)
@@ -253,8 +257,8 @@ func probe(args []string) int {
 	return 0
 }
 
-// planVerb is `lanes plan add FILE | status [NAME]`.
-func planVerb(r bench.Root, pos []string, jsonOut bool) error {
+// planVerb is `lanes plan add FILE | status [NAME] | results NAME`.
+func planVerb(r bench.Root, pos []string, jsonOut bool, ro bench.ResultsOptions) error {
 	if len(pos) == 0 {
 		return fmt.Errorf("plan: want add FILE | status [NAME]")
 	}
@@ -272,6 +276,11 @@ func planVerb(r bench.Root, pos []string, jsonOut bool) error {
 			return fmt.Errorf("plan status: want [NAME]")
 		}
 		return bench.PlanStatus(r, name, jsonOut, os.Stdout)
+	case "results":
+		if len(pos) != 2 {
+			return fmt.Errorf("plan results: want NAME")
+		}
+		return bench.PlanResults(r, pos[1], ro, os.Stdout, os.Stderr)
 	}
-	return fmt.Errorf("plan: unknown subcommand %q (want add, status)", pos[0])
+	return fmt.Errorf("plan: unknown subcommand %q (want add, status, results)", pos[0])
 }
