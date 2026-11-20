@@ -91,15 +91,9 @@ type HookResult struct {
 // OK reports exit 0.
 func (r HookResult) OK() bool { return r.Exit == 0 }
 
-// Why is a one-line reason for a failed call: the last line it wrote (stdout or stderr), where a failing
-// command says what went wrong.
+// Why is a one-line reason for a failed call: its exit code and the end of what it wrote (stdout and stderr).
 func (r HookResult) Why(verb string) string {
-	last := ""
-	for _, l := range strings.Split(strings.TrimSpace(r.Output), "\n") {
-		if l = strings.TrimSpace(l); l != "" {
-			last = l
-		}
-	}
+	last := oneLine(tailText(r.Output)) // the end of the output, where a failing command says what went wrong
 	switch {
 	case r.Err != "":
 		return fmt.Sprintf("%s: %s", verb, r.Err)

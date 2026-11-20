@@ -139,10 +139,10 @@ func TestParseSizeAndClusterCommand(t *testing.T) {
 	}
 }
 
-// A failed hook is reported by the last line it wrote, not its first progress line.
-func TestHookWhyIsTheLastLine(t *testing.T) {
+// A failed hook is reported by the end of what it wrote (the last line last), with its exit code.
+func TestHookWhyEndsWithTheLastLine(t *testing.T) {
 	r := HookResult{Exit: 1, First: "render identical", Output: "render identical\nnamespace created\nerror: reset not acknowledged\n"}
-	if got := r.Why("prepare"); got != "prepare exit 1: error: reset not acknowledged" {
+	if got := r.Why("prepare"); got != "prepare exit 1: render identical | namespace created | error: reset not acknowledged" {
 		t.Fatal(got)
 	}
 }

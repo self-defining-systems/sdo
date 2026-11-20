@@ -4,6 +4,7 @@
 #   busy-at-gate      the operator raises an alarm right at the ready gate
 #   busy-after-inject the operator stays busy after the run (settle hits the cap)
 #   bad-pack          `pack load` fails like a pack that is not there (exit 3, the permanent-error code)
+#   app-up-fails      `app up` writes 50 lines to stderr and exits 1
 #   stuck             recover and undo fail (the fault stays)
 #   app-bad-seconds   bad seconds the bare app shows in each check window
 #   sleep             seconds the run takes after its inject (the marker is in place meanwhile)
@@ -31,6 +32,7 @@ case $verb in
 version) echo '{"revision":"0b528ac0123456","measure_version":12}' ;;
 app*)
   [ "$verb" = "app up" ] && rm -f "$S/dirty" "$S/store-state"
+  if [ "$verb" = "app up" ] && [ -f "$S/app-up-fails" ]; then i=1; while [ $i -le 50 ]; do echo "app up line $i" >&2; i=$((i+1)); done; exit 1; fi
   if [ "$verb" = "app fingerprint" ]; then
     # The stores' fingerprint is the content of $S/store-state ("fresh" until a run corrupts it, see corrupts).
     cur=$(cat "$S/store-state" 2>/dev/null || echo fresh)

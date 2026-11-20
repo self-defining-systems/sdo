@@ -154,6 +154,11 @@ type Result struct {
 	EvidenceIncomplete string `json:"evidence_incomplete,omitempty"`
 	// Transcripts is a failed transcripts check after a teardown ("" when complete or not checked).
 	Transcripts string `json:"transcripts,omitempty"`
+	// Exit, Tail and Log describe the command that failed the step: its exit code, the last lines it wrote (at most
+	// tailMaxLines lines, tailMaxBytes bytes) and the log file with the whole output. Reason carries the same.
+	Exit int    `json:"exit,omitempty"`
+	Tail string `json:"tail,omitempty"`
+	Log  string `json:"log,omitempty"`
 }
 
 // StatusNotReady is a run step whose gate never passed: nothing was injected.
@@ -344,18 +349,74 @@ func (r *stepRunner) workload() Workload {
 	return NewWorkload(r.s.Workload, r.s.Fuzzops)
 }
 
-// tailWriter keeps the last 512 bytes written to it, trimmed to whole lines' text: the reason a command gave.
+// Failure detail caps: a failed command's reason carries its exit code and the end of its output, bounded.
+const (
+	tailMaxLines = 40
+	tailMaxBytes = 4096
+)
+
+// tailWriter keeps the end of what is written to it (at most tailMaxLines lines and tailMaxBytes bytes): the reason a
+// command gave.
 type tailWriter struct{ b []byte }
 
 func (t *tailWriter) Write(p []byte) (int, error) {
 	t.b = append(t.b, p...)
-	if len(t.b) > 512 {
-		t.b = t.b[len(t.b)-512:]
+	if len(t.b) > 4*tailMaxBytes {
+		t.b = t.b[len(t.b)-4*tailMaxBytes:]
 	}
 	return len(p), nil
 }
 
-func (t *tailWriter) String() string { return strings.TrimSpace(string(t.b)) }
+func (t *tailWriter) String() string { return tailText(string(t.b)) }
+
+// tailText is the last tailMaxLines non-empty lines of s, at most tailMaxBytes bytes (cut at a line start when it can).
+func tailText(s string) string {
+	var lines []string
+	for _, l := range strings.Split(s, "\n") {
+		if l = strings.TrimRight(l, " \t\r"); strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) > tailMaxLines {
+		lines = lines[len(lines)-tailMaxLines:]
+	}
+	out := strings.Join(lines, "\n")
+	if len(out) > tailMaxBytes {
+		out = out[len(out)-tailMaxBytes:]
+		if i := strings.IndexByte(out, '\n'); i >= 0 && i < len(out)-1 {
+			out = out[i+1:]
+		}
+	}
+	return out
+}
+
+// oneLine joins a tail's lines for a one-line reason.
+func oneLine(tail string) string { return strings.ReplaceAll(strings.TrimSpace(tail), "\n", " | ") }
+
+// failText is "exit N", the error when there is one, and the end of the command's output.
+func failText(code int, tail string, err error) string {
+	out := fmt.Sprintf("exit %d", code)
+	if err != nil {
+		out += " " + err.Error()
+	}
+	if t := oneLine(tail); t != "" {
+		out += ": " + t
+	}
+	return out
+}
+
+// failCall fails the step for a workload call that exited non-zero: the reason, the step result (Exit, Tail, Log) and
+// so the lane status and plan status carry the exit code and the end of the output.
+func (r *stepRunner) failCall(what string, code int, tail string, err error) {
+	r.res.Exit, r.res.Tail, r.res.Log = code, tail, filepath.Join(r.dir, "runner.log")
+	r.fail("%s: %s", what, failText(code, tail, err))
+}
+
+// failHook is failCall for a hook verb.
+func (r *stepRunner) failHook(res HookResult, verb string) {
+	r.res.Exit, r.res.Tail, r.res.Log = res.Exit, tailText(res.Output), filepath.Join(r.dir, "hooks.log")
+	r.fail("%s", res.Why(verb))
+}
 
 func (r *stepRunner) version(ctx context.Context) (Version, error) {
 	var out bytes.Buffer
@@ -385,6 +446,7 @@ func (r *stepRunner) teardown(ctx context.Context, p *Prepared) bool {
 		return false
 	}
 	if res := r.callHook(ctx, p, "teardown"); !res.OK() {
+		r.res.Exit, r.res.Tail, r.res.Log = res.Exit, tailText(res.Output), filepath.Join(r.dir, "hooks.log")
 		r.down("teardown of %s (%s): %s", p.Hooks, p.Experiment, res.Why("teardown"))
 		return false
 	}
@@ -480,14 +542,15 @@ func (r *stepRunner) recoverLane(ctx context.Context, p *Prepared) bool {
 		time.Sleep(r.poll)
 	}
 	ok := err == nil && code == 0
-	r.interval("recover", start, ok, fmt.Sprintf("exit %d %v", code, err))
+	r.interval("recover", start, ok, failText(code, why, err))
 	if !ok && r.s.ClusterUp != "" && r.clusterMissing(ctx) {
 		// No cluster, so no fault in place: a build killed before its cluster was made leaves nothing to undo.
 		r.logf("recover: cluster %s does not exist, nothing to undo (fuzzops recover in %s exit %d)", r.s.Lane, p.Namespace, code)
 		return true
 	}
 	if !ok {
-		r.down("fault still active: fuzzops recover in %s exit %d %v", p.Namespace, code, errOrEmpty(err))
+		r.res.Exit, r.res.Tail, r.res.Log = code, why, filepath.Join(r.dir, "runner.log")
+		r.down("fault still active: fuzzops recover in %s %s", p.Namespace, failText(code, why, err))
 	}
 	return ok
 }
@@ -588,7 +651,7 @@ func (r *stepRunner) build(ctx context.Context) {
 		_ = os.MkdirAll(out, 0o755)
 		res := r.callHook(ctx, &pre, "prepare", "BENCH_OUT="+out)
 		if !res.OK() {
-			r.fail("%s", res.Why("prepare"))
+			r.failHook(res, "prepare")
 			return
 		}
 		po, err := parsePrepare(res.Last)
@@ -735,7 +798,7 @@ func (r *stepRunner) swapInto(ctx context.Context) {
 	res := r.callHook(ctx, &pre, "swap", "BENCH_OUT="+out)
 	if !res.OK() {
 		r.interval("swap", start, false, res.Why("swap"))
-		r.fail("%s", res.Why("swap"))
+		r.failHook(res, "swap")
 		return
 	}
 	po, err := parsePrepare(res.Last)
@@ -778,16 +841,16 @@ func (r *stepRunner) freshApp(ctx context.Context) bool {
 	start := time.Now()
 	r.phase(PhaseApp, "")
 	if q := s.Prev; q != nil && (q.Namespace != p.Namespace || q.AppPack != p.AppPack) {
-		if code, _, err := r.call(ctx, r.laneEnv(q), nil, VerbAppUp, "down", "--pack", q.AppPack, "--namespace", q.Namespace); err != nil || code != 0 {
-			r.interval("app", start, false, "down of the last app copy")
-			r.fail("app down %s: exit %d %v", q.Namespace, code, errOrEmpty(err))
+		if code, why, err := r.call(ctx, r.laneEnv(q), nil, VerbAppUp, "down", "--pack", q.AppPack, "--namespace", q.Namespace); err != nil || code != 0 {
+			r.interval("app", start, false, "down of the last app copy: "+failText(code, why, err))
+			r.failCall("app down "+q.Namespace, code, why, err)
 			return false
 		}
 	}
 	for _, verb := range []string{"down", "up"} {
-		if code, _, err := r.call(ctx, env, nil, VerbAppUp, verb, "--pack", p.AppPack, "--namespace", p.Namespace); err != nil || code != 0 {
-			r.interval("app", start, false, "app "+verb)
-			r.fail("app %s: exit %d %v", verb, code, errOrEmpty(err))
+		if code, why, err := r.call(ctx, env, nil, VerbAppUp, verb, "--pack", p.AppPack, "--namespace", p.Namespace); err != nil || code != 0 {
+			r.interval("app", start, false, "app "+verb+": "+failText(code, why, err))
+			r.failCall("app "+verb, code, why, err)
 			return false
 		}
 	}
@@ -814,9 +877,10 @@ func (r *stepRunner) recordFresh(ctx context.Context, p *Prepared) bool {
 	file := r.freshFingerprintFile()
 	_ = os.Remove(file)
 	var code int
+	var why string
 	var err error
 	for try := 0; try < 3; try++ {
-		if code, _, err = r.call(ctx, r.laneEnv(p), io.Discard, VerbAppSnapshot, "write", "--pack", p.AppPack, "--namespace", p.Namespace, "--out", file); err == nil && code == 0 {
+		if code, why, err = r.call(ctx, r.laneEnv(p), io.Discard, VerbAppSnapshot, "write", "--pack", p.AppPack, "--namespace", p.Namespace, "--out", file); err == nil && code == 0 {
 			return true
 		}
 		if errors.Is(err, ErrUnsupported) {
@@ -826,7 +890,7 @@ func (r *stepRunner) recordFresh(ctx context.Context, p *Prepared) bool {
 		}
 		time.Sleep(r.poll)
 	}
-	r.fail("fingerprint of the fresh app copy: exit %d %v", code, errOrEmpty(err))
+	r.failCall("fingerprint of the fresh app copy", code, why, err)
 	return false
 }
 
@@ -837,9 +901,9 @@ func (r *stepRunner) appMatchesFresh(ctx context.Context, p *Prepared) string {
 	if _, err := os.Stat(file); err != nil {
 		return "no fingerprint of a fresh copy on this lane"
 	}
-	code, _, err := r.call(ctx, r.laneEnv(p), io.Discard, VerbAppSnapshot, "verify", "--pack", p.AppPack, "--namespace", p.Namespace, "--against", file)
+	code, why, err := r.call(ctx, r.laneEnv(p), io.Discard, VerbAppSnapshot, "verify", "--pack", p.AppPack, "--namespace", p.Namespace, "--against", file)
 	if err != nil || code != 0 {
-		return fmt.Sprintf("fingerprint check exit %d %s (see the runner log)", code, errOrEmpty(err))
+		return fmt.Sprintf("fingerprint check %s (see the runner log)", failText(code, why, err))
 	}
 	return ""
 }
@@ -853,20 +917,21 @@ func (r *stepRunner) appHealthy(ctx context.Context, p *Prepared, final bool) bo
 	start := time.Now()
 	r.phase(PhaseAppHealth, "")
 	for try := 1; ; try++ {
-		code, _, err := r.call(ctx, r.laneEnv(p), nil, VerbGate, "check", "--pack", p.AppPack, "--namespace", p.Namespace,
+		code, why, err := r.call(ctx, r.laneEnv(p), nil, VerbGate, "check", "--pack", p.AppPack, "--namespace", p.Namespace,
 			"--duration", r.s.ReadyFor.D().String(), "--clean", "--max-bad-seconds", fmt.Sprint(r.s.buildBad()))
 		if err == nil && code == 0 {
 			r.interval("app-health", start, true, fmt.Sprintf("clean on try %d", try))
 			return true
 		}
-		r.logf("app check (no operator) try %d: exit %d %s", try, code, errOrEmpty(err))
+		r.logf("app check (no operator) try %d: %s", try, failText(code, why, err))
 		if r.clusterVanished(ctx, "the app to be healthy") {
 			return false
 		}
 		if time.Since(start)+r.s.ReadyFor.D() > r.s.ReadyTimeout.D() {
-			r.interval("app-health", start, false, fmt.Sprintf("exit %d %s", code, errOrEmpty(err)))
+			r.interval("app-health", start, false, failText(code, why, err))
 			if final {
-				r.fail("app not clean for %s within %s before the operator was restored", r.s.ReadyFor.D(), r.s.ReadyTimeout.D())
+				r.res.Exit, r.res.Tail, r.res.Log = code, why, filepath.Join(r.dir, "runner.log")
+				r.fail("app not clean for %s within %s before the operator was restored: %s", r.s.ReadyFor.D(), r.s.ReadyTimeout.D(), failText(code, why, err))
 			} else {
 				r.logf("reused app copy not clean: rebuilding it")
 			}
@@ -925,14 +990,25 @@ func (r *stepRunner) shell(ctx context.Context, kind, cmdline string, env []stri
 	cmd.Dir = r.s.Fuzzops
 	cmd.Env = append(append(os.Environ(), r.s.HostEnv...), env...)
 	cmd.Env = append(cmd.Env, "LANES_INSTALL="+r.platform(), "BENCH_WORKLOAD_DIR="+r.s.Fuzzops)
-	cmd.Stdout, cmd.Stderr = r.log, r.log
+	var tail tailWriter
+	w := io.MultiWriter(r.log, &tail)
+	cmd.Stdout, cmd.Stderr = w, w
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	r.logf("%s: %s", kind, cmdline)
 	err := cmd.Run()
-	r.interval(kind, start, err == nil, errOrEmpty(err))
+	code := 0
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		code = ee.ExitCode()
+	} else if err != nil {
+		code = -1
+	}
 	if err != nil {
-		r.fail("%s: %v", kind, err)
+		r.interval(kind, start, false, failText(code, tail.String(), err))
+		r.failCall(kind, code, tail.String(), err)
+	} else {
+		r.interval(kind, start, true, "")
 	}
 	return err == nil
 }
@@ -976,14 +1052,14 @@ func (r *stepRunner) makeCluster(ctx context.Context, p *Prepared) bool {
 	}
 	start := time.Now()
 	r.phase(PhaseImages, "")
-	code, _, err := r.call(ctx, r.laneEnv(p), nil, VerbAppUp, "images", "--pack", p.AppPack, "--cluster", s.Lane)
+	code, why, err := r.call(ctx, r.laneEnv(p), nil, VerbAppUp, "images", "--pack", p.AppPack, "--cluster", s.Lane)
 	if errors.Is(err, ErrUnsupported) {
 		r.interval("images", start, true, "unsupported by the workload")
 		return true
 	}
-	r.interval("images", start, err == nil && code == 0, fmt.Sprintf("exit %d %s", code, errOrEmpty(err)))
+	r.interval("images", start, err == nil && code == 0, failText(code, why, err))
 	if err != nil || code != 0 {
-		r.fail("app images: exit %d %s", code, errOrEmpty(err))
+		r.failCall("app images", code, why, err)
 		return false
 	}
 	return true
@@ -1110,15 +1186,16 @@ func (r *stepRunner) waitOperatorIdle(ctx context.Context, p *Prepared, start ti
 func (r *stepRunner) checkOnce(ctx context.Context, p *Prepared) ([]string, bool) {
 	type out struct {
 		code int
+		why  string
 		err  error
 	}
 	done := make(chan out, 1)
 	go func() {
-		code, _, err := r.call(ctx, r.laneEnv(p), nil, VerbGate, "check", "--pack", p.Pack, "--namespace", p.Namespace,
+		code, why, err := r.call(ctx, r.laneEnv(p), nil, VerbGate, "check", "--pack", p.Pack, "--namespace", p.Namespace,
 			"--duration", r.s.ReadyFor.D().String(), "--clean", "--max-bad-seconds", fmt.Sprint(r.s.buildBad()),
 			"--ledger-out", filepath.Join(r.s.LaneDir, ledgerFile),
 			"--min-confirmed", fmt.Sprint(ledgerMin+ledgerMargin), "--max-duration", (3 * r.s.ReadyFor.D()).String())
-		done <- out{code, err}
+		done <- out{code, why, err}
 	}()
 	var reasons []string
 	alarm := false
@@ -1149,7 +1226,7 @@ func (r *stepRunner) checkOnce(ctx context.Context, p *Prepared) ([]string, bool
 	}
 	busy()
 	if o.err != nil || o.code != 0 {
-		reasons = append(reasons, fmt.Sprintf("journeys not clean (fuzzops check exit %d %s)", o.code, errOrEmpty(o.err)))
+		reasons = append(reasons, fmt.Sprintf("journeys not clean (fuzzops check %s)", failText(o.code, o.why, o.err)))
 	}
 	if len(reasons) > 0 {
 		// Wait a poll before the next try: a check that failed at once would otherwise spin.
@@ -1225,7 +1302,7 @@ func (r *stepRunner) run(ctx context.Context) {
 	r.phase(PhaseGate, "")
 	plain := r.log
 	r.log = io.MultiWriter(plain, &phaseWriter{r: r, last: PhaseGate})
-	code, _, err := r.call(ctx, env, f, VerbRun, "run", args...)
+	code, why, err := r.call(ctx, env, f, VerbRun, "run", args...)
 	r.log = plain
 	f.Close()
 	var rec record
@@ -1233,7 +1310,8 @@ func (r *stepRunner) run(ctx context.Context) {
 	switch {
 	case err != nil || (code != 0 && code != 1) || rerr != nil:
 		r.res.Status = StatusInvalid
-		r.fail("lane lost: fuzzops run exit %d %s %s", code, errOrEmpty(err), errOrEmpty(rerr))
+		r.res.Exit, r.res.Tail, r.res.Log = code, why, filepath.Join(r.dir, "runner.log")
+		r.fail("lane lost: fuzzops run %s %s", failText(code, why, err), errOrEmpty(rerr))
 	case rec.InvalidReason == "not ready":
 		r.res.Status = StatusNotReady
 		g := &Gate{Run: rs.ID, Lane: s.Lane, Host: s.Host, Where: "gate", At: time.Now().UTC()}
@@ -1539,7 +1617,7 @@ func (r *stepRunner) unhold(ctx context.Context) {
 		return
 	}
 	if res := r.callHook(ctx, p, "reset-incidents", "BENCH_OUT="+r.dir); !res.OK() {
-		r.fail("reset-incidents: %s", res.Why("reset-incidents"))
+		r.failHook(res, "reset-incidents")
 		return
 	}
 	r.res.OK = true
