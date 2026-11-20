@@ -68,7 +68,7 @@ def test_launch_variables_name_only_what_the_launch_sets() -> None:
     [
         ({"mode": "paused"}, "mode must be one of"),
         ({"evidence_host_path": "relative"}, "absolute node path"),
-        ({"evidence_run_id": "run-1"}, "requires an evidence host path"),
+        ({"evidence_run_id": "run-1"}, "requires an evidence sink"),
     ],
 )
 def test_launch_variables_refuse_a_malformed_value(values: dict[str, str], message: str) -> None:

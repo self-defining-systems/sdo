@@ -459,7 +459,6 @@ def attach_eks_lane(args: argparse.Namespace) -> tuple[EksLane, Images]:
     provider = EksProvider.attach(
         str(Path(os.environ["KUBECONFIG"]).resolve()),
         registry=args.ecr_registry,
-        upstreams=tuple(args.mirror_upstream or ("docker.io",)),
         repository_tags=dict(item.split("=", 1) for item in args.ecr_tag),
     )
     prior = FastloopEnvironment.load(args.run_dir.resolve()) if (args.run_dir / "fastloop.json").is_file() else None
@@ -2500,12 +2499,6 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--ecr-registry", help="eks: ECR registry host <account>.dkr.ecr.<region>.amazonaws.com")
     up.add_argument(
         "--ecr-tag", action="append", default=[], help="eks: KEY=VALUE tag on every ECR repository the lane creates"
-    )
-    up.add_argument(
-        "--mirror-upstream",
-        action="append",
-        choices=("docker.io", "ghcr.io", "quay.io", "registry.k8s.io"),
-        help="eks: upstream registries the node mirror serves from ECR (default docker.io)",
     )
     up.add_argument(
         "--cpu-limit",
