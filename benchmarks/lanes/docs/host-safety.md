@@ -48,6 +48,12 @@ a pod that merely exists with old restarts do not count. A failed read is no rea
 lane. The lane is released as the restarts age out of the window. Tests: `TestCrashTrackerCountsRestartsInTheWindowOnly`,
 `TestCrashLoopingLaneGetsNoNewSteps`.
 
+```yaml
+hosts:
+  spokane1:
+    crashloop: {restarts: 10, window: 10m}
+```
+
 ## 2. Host health gate
 
 Creating or destroying a container takes a network namespace under the kernel's global rtnl lock. When the lock jams,
@@ -70,14 +76,6 @@ signs, once per manager tick and per host.
   in `bench.log` when it recovers. `lanes status` shows the reason on the host's line.
 - **State** is in the manager's memory. A restarted manager starts healthy with no hung-task baseline; the first bad
   probe stops the host again.
-
-`hosts.yaml`, all optional:
-
-```yaml
-hosts:
-  spokane1:
-    crashloop: {restarts: 10, window: 10m}
-```
 
 `hosts.yaml`, all optional:
 
