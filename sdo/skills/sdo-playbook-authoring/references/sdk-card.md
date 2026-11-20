@@ -38,7 +38,7 @@ Full [SDK](program-sdk.md).
 - `func (d SourceDiff) PresentButNotInSource() bool`: is true while the object exists live but not in accepted source.
 - `func (d SourceDiff) ContainerChanges() ([]ContainerChange, error)`: compares a workload's or Pod's containers with accepted source by kind and name: an added init container is never an app image change.
 - `type ContainerChange struct{Kind ContainerKind; Name string; Added bool; Removed bool; Fields []string}`: is one pod-template container that differs from accepted source, matched by kind and name.
-- `func (d SourceDiff) Field(path string) (FieldValues, error)`: compares one dotted field path, such as "spec.replicas", on both sides.
+- `func (d SourceDiff) Field(path string) (FieldValues, error)`: compares one field path, such as "spec.replicas", on both sides.
 - `func (f FieldValues) Differs() bool`: is true only for a field accepted source declares whose live value differs or is gone.
 - `type SetField struct{Ref sdk.ObjectRef; Path string; Value Value; Reason string; DocumentFormat string; DocumentPath []string}`: writes one schema-checked field or ConfigMap JSON/YAML entry.
 - `func ValidateSetField(f SetField) error`: checks a dotted vocabulary path or a JSON pointer on a named nonsecret object.
