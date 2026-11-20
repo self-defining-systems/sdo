@@ -44,20 +44,74 @@ func ContainerStartupAllowance(pod corev1.Pod, name string) time.Duration {
 	return 0
 }
 
-// StillStarting reports whether a running container is inside its own
-// declared startup allowance at the observation time: it started less than
-// its allowance ago. A container with no declared allowance, an unknown start
-// or an unknown observation time is never still starting.
+// ObservedStartupSource is implemented by detection contexts that carry how
+// long each workload's pods took to become Ready on their recent healthy
+// starts, as an allowance (a high percentile plus a margin, from the
+// controller). Snapshot capture records it, so replay judges a starting pod
+// exactly as the controller did.
+type ObservedStartupSource interface {
+	// ObservedStartup is the workload's ("Kind/name", see PodWorkload)
+	// observed startup allowance; zero when none was observed.
+	ObservedStartup(workload string) time.Duration
+	// ObservedStartups lists every workload's allowance, for snapshot capture
+	// and the memory-host wire.
+	ObservedStartups() map[string]time.Duration
+}
+
+// PodWorkload names the workload a pod belongs to as "Kind/name": its
+// controlling owner, or, for a ReplicaSet, the Deployment that owns that.
+// A pod without a controlling owner is its own workload ("Pod/name").
+func PodWorkload(ctx DetectionContext, pod corev1.Pod) string {
+	for _, owner := range pod.OwnerReferences {
+		if owner.Controller == nil || !*owner.Controller {
+			continue
+		}
+		if owner.Kind == "ReplicaSet" {
+			for _, rs := range ctx.ReplicaSets() {
+				if rs.Namespace != pod.Namespace || rs.Name != owner.Name {
+					continue
+				}
+				for _, rsOwner := range rs.OwnerReferences {
+					if rsOwner.Controller != nil && *rsOwner.Controller && rsOwner.Kind == "Deployment" {
+						return "Deployment/" + rsOwner.Name
+					}
+				}
+			}
+		}
+		return owner.Kind + "/" + owner.Name
+	}
+	return "Pod/" + pod.Name
+}
+
+// StartupAllowance is how long a pod's containers may take to become ready
+// before the pod has outlived Kubernetes' own self-healing: the larger of what
+// the container declares (ContainerStartupAllowance) and what the pod's
+// workload was observed to need on its recent healthy starts. Zero means
+// neither is known.
+func StartupAllowance(ctx DetectionContext, pod corev1.Pod, name string) time.Duration {
+	allowance := ContainerStartupAllowance(pod, name)
+	if source, ok := ctx.(ObservedStartupSource); ok {
+		if observed := source.ObservedStartup(PodWorkload(ctx, pod)); observed > allowance {
+			allowance = observed
+		}
+	}
+	return allowance
+}
+
+// StillStarting reports whether a running container is inside its startup
+// allowance (StartupAllowance) at the observation time: it started less than
+// its allowance ago. A container with no declared or observed allowance, an
+// unknown start or an unknown observation time is never still starting.
 func StillStarting(ctx DetectionContext, pod corev1.Pod, status corev1.ContainerStatus) bool {
 	now := ObservationTime(ctx)
 	if status.State.Running == nil || status.State.Running.StartedAt.IsZero() || now.IsZero() {
 		return false
 	}
-	return now.Sub(status.State.Running.StartedAt.Time) < ContainerStartupAllowance(pod, status.Name)
+	return now.Sub(status.State.Running.StartedAt.Time) < StartupAllowance(ctx, pod, status.Name)
 }
 
 // PodStarting reports whether a pod that is not yet ready is still inside its
-// startup: a running unready container within its declared allowance, or a
+// startup: a running unready container within its startup allowance, or a
 // pod whose containers have not started yet within the self-heal hold of its
 // creation (image pull, scheduling, init containers).
 func PodStarting(ctx DetectionContext, pod corev1.Pod) bool {

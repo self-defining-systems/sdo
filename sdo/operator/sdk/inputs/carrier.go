@@ -29,6 +29,7 @@ import (
 type Sources interface {
 	sdk.ObservationClock
 	sdk.SelfHealPolicy
+	sdk.ObservedStartupSource
 	sdk.HeldAlertSource
 	traffic.Source
 	traffic.WindowSet
@@ -59,6 +60,7 @@ type Carrier struct {
 	sdk.DetectionContext
 	clock        sdk.ObservationClock
 	selfHeal     sdk.SelfHealPolicy
+	startups     sdk.ObservedStartupSource
 	held         sdk.HeldAlertSource
 	traffic      traffic.Source
 	reachability servicehealth.ReachabilitySource
@@ -87,6 +89,7 @@ func New(base sdk.DetectionContext) Carrier {
 	c := Carrier{DetectionContext: base}
 	c.clock, _ = base.(sdk.ObservationClock)
 	c.selfHeal, _ = base.(sdk.SelfHealPolicy)
+	c.startups, _ = base.(sdk.ObservedStartupSource)
 	c.held, _ = base.(sdk.HeldAlertSource)
 	c.traffic, _ = base.(traffic.Source)
 	c.reachability, _ = base.(servicehealth.ReachabilitySource)
@@ -136,6 +139,24 @@ func (c Carrier) SelfHealHold() time.Duration {
 	}
 	return c.selfHeal.SelfHealHold()
 }
+
+// ObservedStartup is the carried observed startup allowance of a workload;
+// zero when the base has none.
+func (c Carrier) ObservedStartup(workload string) time.Duration {
+	if c.startups == nil {
+		return 0
+	}
+	return c.startups.ObservedStartup(workload)
+}
+
+// ObservedStartups lists every carried observed startup allowance.
+func (c Carrier) ObservedStartups() map[string]time.Duration {
+	if c.startups == nil {
+		return nil
+	}
+	return c.startups.ObservedStartups()
+}
+
 func (c Carrier) WithTraffic(source traffic.Source) Carrier { c.traffic = source; return c }
 func (c Carrier) TrafficWindow(id string) (traffic.Window, bool) {
 	if c.traffic == nil {

@@ -78,7 +78,7 @@ class MirrorResponse(_message.Message):
     def __init__(self, sequence: _Optional[int] = ...) -> None: ...
 
 class MemoryObservation(_message.Message):
-    __slots__ = ("observed_at", "traffic", "reachability", "metrics", "alerts", "usage", "logs", "scoped", "pod_admission", "pod_reads", "vantage", "self_heal_hold", "app_state", "held_keys", "complete_kinds")
+    __slots__ = ("observed_at", "traffic", "reachability", "metrics", "alerts", "usage", "logs", "scoped", "pod_admission", "pod_reads", "vantage", "self_heal_hold", "observed_startup", "app_state", "held_keys", "complete_kinds")
     class TrafficEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -114,6 +114,13 @@ class MemoryObservation(_message.Message):
         key: str
         value: _struct_pb2.Struct
         def __init__(self, key: _Optional[str] = ..., value: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ...) -> None: ...
+    class ObservedStartupEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: _duration_pb2.Duration
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ...) -> None: ...
     class AppStateEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -133,6 +140,7 @@ class MemoryObservation(_message.Message):
     POD_READS_FIELD_NUMBER: _ClassVar[int]
     VANTAGE_FIELD_NUMBER: _ClassVar[int]
     SELF_HEAL_HOLD_FIELD_NUMBER: _ClassVar[int]
+    OBSERVED_STARTUP_FIELD_NUMBER: _ClassVar[int]
     APP_STATE_FIELD_NUMBER: _ClassVar[int]
     HELD_KEYS_FIELD_NUMBER: _ClassVar[int]
     COMPLETE_KINDS_FIELD_NUMBER: _ClassVar[int]
@@ -148,10 +156,11 @@ class MemoryObservation(_message.Message):
     pod_reads: _containers.MessageMap[str, _struct_pb2.Struct]
     vantage: _containers.MessageMap[str, _struct_pb2.Struct]
     self_heal_hold: _duration_pb2.Duration
+    observed_startup: _containers.MessageMap[str, _duration_pb2.Duration]
     app_state: _containers.MessageMap[str, _struct_pb2.Struct]
     held_keys: _containers.RepeatedScalarFieldContainer[str]
     complete_kinds: _containers.RepeatedScalarFieldContainer[str]
-    def __init__(self, observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., traffic: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., reachability: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., metrics: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., alerts: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., usage: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., logs: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., scoped: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., pod_admission: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., pod_reads: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., vantage: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., self_heal_hold: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., app_state: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., held_keys: _Optional[_Iterable[str]] = ..., complete_kinds: _Optional[_Iterable[str]] = ...) -> None: ...
+    def __init__(self, observed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., traffic: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., reachability: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., metrics: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., alerts: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., usage: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., logs: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., scoped: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., pod_admission: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., pod_reads: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., vantage: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., self_heal_hold: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., observed_startup: _Optional[_Mapping[str, _duration_pb2.Duration]] = ..., app_state: _Optional[_Mapping[str, _struct_pb2.Struct]] = ..., held_keys: _Optional[_Iterable[str]] = ..., complete_kinds: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class ReadStateRequest(_message.Message):
     __slots__ = ("reader_id", "observed_at", "pod_reads")

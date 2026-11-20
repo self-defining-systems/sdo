@@ -275,6 +275,20 @@ func (v *View) ObservedAt() (r0 p13.Time) {
 	}
 	return
 }
+func (v *View) ObservedStartup(a0 string) (r0 p13.Duration) {
+	err := v.call("ObservedStartup", []any{a0}, []any{&r0})
+	if err != nil {
+		panic(err)
+	}
+	return
+}
+func (v *View) ObservedStartups() (r0 map[string]p13.Duration) {
+	err := v.call("ObservedStartups", []any{}, []any{&r0})
+	if err != nil {
+		panic(err)
+	}
+	return
+}
 func (v *View) PersistentVolumeClaims() (r0 []p6.PersistentVolumeClaim) {
 	err := v.call("PersistentVolumeClaims", []any{}, []any{&r0})
 	if err != nil {

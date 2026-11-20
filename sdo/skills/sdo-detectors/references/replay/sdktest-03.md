@@ -54,6 +54,9 @@ type Snapshot struct {
 	// SelfHealHoldTime is the controller's self-heal hold at capture; nil
 	// replays with sdk.DefaultSelfHealHold.
 	SelfHealHoldTime *time.Duration `json:"selfHealHold,omitempty"`
+	// ObservedStartupTimes are the controller's observed startup allowances
+	// by workload ("Kind/name") at capture (sdk.ObservedStartupSource).
+	ObservedStartupTimes map[string]time.Duration `json:"observedStartup,omitempty"`
 	// HeldKeys are the alert keys of the incident open at capture
 	// (sdk.HeldAlertSource); nil replays with none held.
 	HeldKeys []string `json:"heldKeys,omitempty"`
@@ -175,6 +178,12 @@ func (s Snapshot) Observe(o program.ExternalOperation) (int32, error)
 func (s Snapshot) ObservedAt() time.Time
     ObservedAt implements sdk.ObservationClock; it is zero when unrecorded.
 
+func (s Snapshot) ObservedStartup(workload string) time.Duration
+    ObservedStartup implements sdk.ObservedStartupSource.
+
+func (s Snapshot) ObservedStartups() map[string]time.Duration
+    ObservedStartups implements sdk.ObservedStartupSource.
+
 func (s Snapshot) ObservedView() (sdk.DetectionContext, func() error)
     ObservedView binds detector reads to this snapshot's recorded evidence.
 
@@ -218,15 +227,4 @@ func (s Snapshot) ServiceAccounts() []corev1.ServiceAccount
 func (s Snapshot) ServiceReachability() (servicehealth.ReachabilityWindow, bool)
 
 func (s Snapshot) Services() []corev1.Service
-
-func (s Snapshot) StatefulSets() []appsv1.StatefulSet
-
-func (s Snapshot) TrafficWindow(workload string) (traffic.Window, bool)
-    TrafficWindow implements traffic.Source.
-
-func (s Snapshot) TrafficWindows() map[string]traffic.Window
-    TrafficWindows implements traffic.WindowSet: the recorded windows.
-
-func (s *Snapshot) UnmarshalJSON(data []byte) error
-    UnmarshalJSON reads both the version 1 form and the objects-only form.
 ```

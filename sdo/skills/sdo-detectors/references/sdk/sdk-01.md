@@ -204,9 +204,14 @@ func ObservationTime(ctx DetectionContext) time.Time
 
 func PodStarting(ctx DetectionContext, pod corev1.Pod) bool
     PodStarting reports whether a pod that is not yet ready is still inside
-    its startup: a running unready container within its declared allowance,
+    its startup: a running unready container within its startup allowance,
     or a pod whose containers have not started yet within the self-heal hold of
     its creation (image pull, scheduling, init containers).
+
+func PodWorkload(ctx DetectionContext, pod corev1.Pod) string
+    PodWorkload names the workload a pod belongs to as "Kind/name": its
+    controlling owner, or, for a ReplicaSet, the Deployment that owns that.
+    A pod without a controlling owner is its own workload ("Pod/name").
 
 func Predicted(finding Finding) bool
     Predicted reports whether the finding is a forecast (MetadataPredicted).
@@ -222,8 +227,4 @@ func ProjectForeignDeployment(o appsv1.Deployment) appsv1.Deployment
 
 func ProjectForeignEndpoints(o corev1.Endpoints) corev1.Endpoints
 func ProjectForeignService(o corev1.Service) corev1.Service
-func ProjectMutatingWebhook(o admissionv1.MutatingWebhookConfiguration) admissionv1.MutatingWebhookConfiguration
-func ProjectObservationObject(object *unstructured.Unstructured) (*unstructured.Unstructured, error)
-    ProjectObservationObject uses exactly the SDK projection for source and
-    drift.
 ```

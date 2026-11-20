@@ -275,6 +275,9 @@ type DetectionSnapshot struct {
 	// SelfHealHoldTime is the controller's self-heal hold; zero means
 	// sdk.DefaultSelfHealHold.
 	SelfHealHoldTime time.Duration
+	// ObservedStartupTimes are the observed startup allowances by workload
+	// ("Kind/name"), stamped on every snapshot (sdk.ObservedStartupSource).
+	ObservedStartupTimes map[string]time.Duration
 }
 
 func (s DetectionSnapshot) StatefulSets() []appsv1.StatefulSet {
@@ -319,6 +322,16 @@ func (s DetectionSnapshot) ObservedAt() time.Time {
 // SelfHealHold implements sdk.SelfHealPolicy.
 func (s DetectionSnapshot) SelfHealHold() time.Duration {
 	return s.SelfHealHoldTime
+}
+
+// ObservedStartup implements sdk.ObservedStartupSource.
+func (s DetectionSnapshot) ObservedStartup(workload string) time.Duration {
+	return s.ObservedStartupTimes[workload]
+}
+
+// ObservedStartups implements sdk.ObservedStartupSource.
+func (s DetectionSnapshot) ObservedStartups() map[string]time.Duration {
+	return s.ObservedStartupTimes
 }
 
 func (s DetectionSnapshot) TrafficWindow(workload string) (traffic.Window, bool) {

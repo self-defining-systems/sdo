@@ -537,6 +537,16 @@ func observe(snapshot *sdktest.Snapshot, o *pb.MemoryObservation) error {
 		hold := o.SelfHealHold.AsDuration()
 		snapshot.SelfHealHoldTime = &hold
 	}
+	snapshot.ObservedStartupTimes = nil
+	for workload, allowance := range o.ObservedStartup {
+		if err := allowance.CheckValid(); err != nil {
+			return err
+		}
+		if snapshot.ObservedStartupTimes == nil {
+			snapshot.ObservedStartupTimes = map[string]time.Duration{}
+		}
+		snapshot.ObservedStartupTimes[workload] = allowance.AsDuration()
+	}
 	// Use the SDK's existing capture decoder: wire and replay share input semantics.
 	var err error
 	snapshot.Reachability, err = decode[servicehealth.ReachabilityWindow](o.Reachability)
