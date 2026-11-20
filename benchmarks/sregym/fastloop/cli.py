@@ -1157,6 +1157,7 @@ def _setup_application(
                 results_dir,
                 allow_reuse=args.agent == "sdo" and environment.app != "toy",
                 revision=revision,
+                external=args.agent != "sdo" and environment.app != "toy",
             )
     if environment.app != "toy":
         _write_ran_source(environment, results_dir, revision)
@@ -1223,8 +1224,13 @@ def deploy_with_setup_proof(
     allow_reuse: bool = True,
     redeploy: bool = False,
     revision: str | None = None,
+    external: bool = False,
 ) -> dict[str, Any]:
     """Reuse the application deploy while it matches its last passing admission; per-injection admission still runs.
+
+    An ``external`` (non-SDO) row has no admission receipt; it reuses the app only when the previous row on the
+    lane ended clean and the deployed source is ``revision`` (``external_reuse``), after which the usual
+    pre-injection health gate still runs. The decision and its reasons are the row's ``setup-proof.json``.
 
     The row-start wipe has removed SDO's install, so the decision binds only what the deploy establishes. A deploy
     that actually deployed (the app was unhealthy) captures the baseline and stamps it with ``revision``; a skipped
@@ -1234,12 +1240,20 @@ def deploy_with_setup_proof(
 
     if allow_reuse:
         decision = check_application_reuse(environment)
+    elif external:
+        from benchmarks.sregym.fastloop.external_reuse import external_reuse_decision
+
+        decision = external_reuse_decision(
+            environment.run_dir, results_dir.name, lambda: _deployed_source_change(environment, revision)
+        ).to_json()
     else:
         decision = {"reused": False, "receipt": None, "changed": ["setup_reuse_requires_sdo_admission"]}
     results_dir.mkdir(parents=True, exist_ok=True)
     (results_dir / "setup-proof.json").write_text(json.dumps(decision, indent=2) + "\n")
     if decision["reused"]:
         logger.info("Setup proof reused %s; injection admission remains required", decision["receipt"])
+        if external:
+            worker.request("clean_start", problem_id=environment.deploy_problem, timeout=wait_for(WaitKind.ROLLOUT))
     else:
         logger.info("Full setup required: %s", ", ".join(decision["changed"]))
         reply = worker.request(
