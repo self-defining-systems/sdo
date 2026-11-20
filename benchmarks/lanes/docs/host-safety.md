@@ -87,3 +87,29 @@ hosts:
 
 Tests: `TestHostHealthStateMachine`, `TestHostHealthThresholdsComeFromTheInventory`,
 `TestUnhealthyHostStopsNewWorkAndAlarms`, and with fake `ip`/ssh `TestLocalCanary*`, `TestSSHProbe*`.
+
+### Memory pressure
+
+The same probe reads `/proc/pressure/memory`. While the "full" avg60 is over `health.mem_psi_full` (percent, default 40)
+the host takes no new work (reason `memory pressure (PSI full avg60) is 65%, over 40%`, alarm `memory-pressure` once per
+rise). Memory-capped clusters thrashing, ours or another team's, are felt by every lane on the host. avg60 is already a
+minute's average, so there is no hysteresis. Test: `TestMemoryPressureStopsAdmission`.
+
+## 3. Kernel minimums
+
+Kind clusters need many inotify instances and memory maps. `hosts.yaml` may set `kernel_minimums` (defaults:
+`fs.inotify.max_user_instances` 8192, `fs.inotify.max_user_watches` 1048576, `vm.max_map_count` 262144; a host adds or
+overrides keys).
+
+- `lanes host adopt|reserve` asks the root helper (`kernel raise KEY=MIN...`) to write `/etc/sysctl.d/99-zz-lanes.conf`
+  and apply it. Values are only raised: a live value above its minimum is not touched, and the file keeps the highest
+  value it has held.
+- Admission reads the **effective** values (`sysctl -n`) in the per-tick probe. A later file can win (`/etc/sysctl.conf`
+  is applied last), so below a minimum the host is not admitted and the reason names the setting and the file and line
+  that sets it. `lanes host status` prints the same. The alarm `kernel-setting-low` fires when a value is found low,
+  also when it drops while lanes run. Nothing is changed automatically after that.
+- A shared RDMA network namespace (`rdma system show` says `netns shared`) with `ib_core` loaded is a host warning in
+  `lanes status` and `lanes host status`. It is never a gate and never changed automatically.
+
+Tests: `TestKernelRaiseOnlyRaises`, `TestHostAdoptAndReserveRaiseTheKernelMinimums`,
+`TestKernelSettingBelowMinimumStopsAdmissionAndAlarms`, `TestLocalCanaryReadsKernelSettingsAndSaysWhereTheyAreSet`.

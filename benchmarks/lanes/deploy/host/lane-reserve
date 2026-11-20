@@ -46,12 +46,50 @@ else
   ONLINE=${SDO_EVAL_ONLINE:-/sys/devices/system/cpu/online} MEMINFO=${SDO_EVAL_MEMINFO:-/proc/meminfo}
   SYSFS=${SDO_EVAL_SYSFS:-/sys/devices/system} DROPIN=${SDO_EVAL_DROPIN_DIR:-$STATE.dropin}
 fi
+if [ "$(id -u)" = 0 ]; then SYSCTL=/usr/sbin/sysctl SYSCTL_D=/etc/sysctl.d
+else SYSCTL=${SDO_EVAL_SYSCTL:-sysctl} SYSCTL_D=${SDO_EVAL_SYSCTL_D:-$STATE.sysctl.d}; fi   # test hooks: SDO_EVAL_SYSCTL, SDO_EVAL_SYSCTL_D
 LANES_SLICE=$CG/lanes.slice
 STEP_LEAF=step   # the leaf cgroup under a lane slice that every lane-exec step runs in (a lane slice holds no process itself)
 HOST_SLICES="user.slice system.slice machine.slice kubepods.slice"
 SLICE=$CG/eval.slice
 
 die() { echo "sdo-eval-reserve: $*" >&2; exit 1; }
+
+# kernel raise KEY=MIN...: make sure each setting is at least MIN, now and after a reboot, and never lower anything. Only a
+# few keys are accepted (this is a root policy point). The file is $SYSCTL_D/99-zz-lanes.conf; it keeps the highest value
+# it has held. A later file (/etc/sysctl.conf is applied last) can still win, which is why admission reads the effective
+# values and says where they are overridden.
+KERNEL_KEYS=" fs.inotify.max_user_instances fs.inotify.max_user_watches vm.max_map_count "
+kernel_raise() {
+  local kv k v cur old file=$SYSCTL_D/99-zz-lanes.conf target tmp pat
+  [ $# -gt 0 ] || die "kernel raise KEY=MIN..."
+  for kv in "$@"; do
+    k=${kv%%=*}; v=${kv#*=}
+    case $KERNEL_KEYS in *" $k "*) ;; *) die "kernel raise: $k is not one of:$KERNEL_KEYS" ;; esac
+    [[ $v =~ ^[0-9]{1,15}$ ]] || die "kernel raise: $k=$v is not a number"
+  done
+  mkdir -p "$SYSCTL_D"
+  touch "$file"
+  for kv in "$@"; do
+    k=${kv%%=*}; v=${kv#*=}
+    pat="^[[:space:]]*${k//./[.]}[[:space:]]*="
+    old=$(grep -E "$pat" "$file" | tail -1 | sed 's/.*=[[:space:]]*//; s/[^0-9].*//' || true)
+    target=$v
+    if [ -n "$old" ] && [ "$old" -gt "$target" ]; then target=$old; fi
+    tmp=$(mktemp "$file.XXXXXX")
+    grep -vE "$pat" "$file" > "$tmp" || true
+    echo "$k = $target" >> "$tmp"
+    mv "$tmp" "$file"
+    chmod 644 "$file"
+    cur=$("$SYSCTL" -n "$k" 2>/dev/null || echo 0)
+    if [ "${cur:-0}" -lt "$target" ]; then
+      "$SYSCTL" -w "$k=$target" >/dev/null
+      echo "raised $k from ${cur:-0} to $target"
+    else
+      echo "ok $k is $cur (minimum $v)"
+    fi
+  done
+}
 
 LANE_RE='^[a-z0-9][a-z0-9.-]{0,62}$'
 LIST_RE='^[0-9]{1,5}(-[0-9]{1,5})?(,[0-9]{1,5}(-[0-9]{1,5})?)*$'
@@ -477,6 +515,9 @@ block)
   status) block_show ;;
   *) die "usage: block reserve|unreserve|adopt|status" ;;
   esac ;;
+kernel)
+  [ "${2:-}" = raise ] || die "usage: kernel raise KEY=MIN..."
+  shift 2; kernel_raise "$@" ;;
 lane-exec) shift; lane_exec "$@" ;;
 gc | repin) settle; block_reapply ;;
 pin) pin "${2:-}" "${3:-}" ;;

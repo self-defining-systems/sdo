@@ -67,6 +67,11 @@ type Manager struct {
 	crashTrack map[string]*crashTracker
 	// health is each host's health gate (hosthealth.go), kept across passes.
 	health map[string]*healthState
+	// kernelWhy is why a host is not admitted for a kernel setting below its minimum ("" : none); warns are its warnings.
+	kernelWhy  map[string]string
+	psiWhy     map[string]string
+	warns      map[string][]string
+	rdmaWarned map[string]bool
 
 	reservations map[string]Reservation
 	drift        map[string]string
@@ -140,7 +145,7 @@ func (m *Manager) rawOps(host string) HostOps {
 		if bin == "" {
 			bin, _ = os.Executable()
 		}
-		return localHost{staging: h.Staging, bin: bin, health: h.Health.Thresholds()}
+		return localHost{staging: h.Staging, bin: bin, health: h.Health.Thresholds(), mins: h.KernelMins()}
 	}
 	return sshHost{name: host, h: h, fuzzops: m.inv.Checkouts.Fuzzops, health: h.Health.Thresholds()}
 }
@@ -261,9 +266,10 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 		if pr.Canary != nil {
 			m.observeHealth(name, pr.Canary)
 		}
-		if m.hostBlock(name) != "" {
-			st.Unhealthy = m.health[name].Reason()
+		if why := m.hostBlock(name); why != "" {
+			st.Unhealthy = strings.TrimPrefix(why, "host "+name+" is ")
 		}
+		st.Warnings = m.warns[name]
 		if err != nil {
 			since := m.markDown(name)
 			st.Error, st.DownSince = err.Error(), since

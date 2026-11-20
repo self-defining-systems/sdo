@@ -1,0 +1,5 @@
+#!/bin/sh
+# sysctl -n KEY: the value in $FAKE_STATE/sysctl.KEY, else a generous one (a lab host meets every kernel minimum).
+[ "$1" = -n ] || exit 0
+f="$FAKE_STATE/sysctl.$2"
+if [ -f "$f" ]; then cat "$f"; else echo 100000000; fi

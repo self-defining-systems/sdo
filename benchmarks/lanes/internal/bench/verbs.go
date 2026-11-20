@@ -230,8 +230,10 @@ type HostStatus struct {
 	Error     string    `json:"error,omitempty"`
 	DownSince time.Time `json:"down_since,omitempty"`
 	// Unhealthy is why the host gets no new lanes or steps (the health gate, hosthealth.go); "" when it may.
-	Unhealthy string   `json:"unhealthy,omitempty"`
-	Inflight  []string `json:"inflight,omitempty"` // in-flight markers on the host's lanes
+	Unhealthy string `json:"unhealthy,omitempty"`
+	// Warnings are findings that stop nothing (a shared RDMA netns).
+	Warnings []string `json:"warnings,omitempty"`
+	Inflight []string `json:"inflight,omitempty"` // in-flight markers on the host's lanes
 }
 
 // Experiment states (Status).
@@ -440,7 +442,10 @@ func Status(root Root, only string, w io.Writer) error {
 			fmt.Fprintf(w, " [%s]", h.Error)
 		}
 		if h.Unhealthy != "" {
-			fmt.Fprintf(w, " [UNHEALTHY, no new work: %s]", h.Unhealthy)
+			fmt.Fprintf(w, " [NO NEW WORK, %s]", h.Unhealthy)
+		}
+		for _, wn := range h.Warnings {
+			fmt.Fprintf(w, " [warning: %s]", wn)
 		}
 	}
 	fmt.Fprintln(w)
