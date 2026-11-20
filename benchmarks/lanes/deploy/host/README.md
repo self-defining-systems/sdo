@@ -40,3 +40,10 @@ block. A slice that is not a systemd unit at that time (kubepods.slice is create
 reservation to any slice found overlapping the block. `block status` reports `two-way yes` only when every slice's systemd property and its cgroup's
 cpus stay outside the block; an overlapping slice is named (`overlap SLICE cpuset=...`). Re-install the helper (`lanes host install-helper`) on a host
 to get this.
+
+**The rule is dynamic:** every top-level `*.slice` cgroup except `lanes.slice` must keep off the block. The set is read from the cgroup tree at each check
+(other teams' tools create slices such as `sdo.slice` or `eval.slice`), and `gc` applies the reservation to a new sibling. A slice that is a deliberate root
+partition is skipped. A slice that holds a container pinned (explicit `cpuset.cpus`) inside the block is **never shrunk**, as that would change the
+container's effective cpuset: `block status` says `foreign-pinned SLICE CGROUP`, the host stays one-way (admission goes on, the allocator avoids those
+cores, a spec that requires two-way is refused with the slice named), and it is not drift. Any other slice that does not exclude the block is reported
+as `unexcluded SLICE ...` and is drift: admission stops and names it.
