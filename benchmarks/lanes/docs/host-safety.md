@@ -53,3 +53,37 @@ hosts:
   spokane1:
     crashloop: {restarts: 10, window: 10m}
 ```
+
+## 2. Host health gate
+
+Creating or destroying a container takes a network namespace under the kernel's global rtnl lock. When the lock jams,
+dockerd, kubelet, containerd and sshd hang with it and the host is lost until a reboot. The gate watches the earliest
+signs, once per manager tick and per host.
+
+- **Signal.** One bounded probe over the host's existing transport (ssh, or a local `sh`): the time of `ip -br link`
+  (it takes the same lock; `timeout 8`) and the kernel's hung-task count (`/proc/sys/kernel/hung_task_detect_count`,
+  else the number of "blocked for more than" lines in `dmesg`; unreadable means no signal, not unhealthy). The whole
+  probe is bounded by `health.probe_timeout` (default 10s). Over ssh the probe goes first, and a host that fails it
+  is asked nothing else, so a jammed host costs one probe timeout.
+- **Unhealthy** when the health probe fails or times out (a host that does not answer at all is the manager's separate
+  "unreachable" state, with its own recovery), when `ip -br link` takes longer than `health.ip_slow` (default 2s) in
+  `health.slow_probes` probes in a row (default 2), or when the hung-task count rises.
+- **Healthy again** after `health.good_probes` (default 3) consecutive good probes. A slow or bad probe restarts the count.
+- **Effect.** The host takes no new lanes or steps: no build, run or release is started on it, and every lane waiting
+  for it says why (`host h is unhealthy: ...`). Steps already running are left alone, finished steps are still adopted
+  and a dead step still gets its recover step. Nothing is killed, torn down or reset.
+- **Alarm.** `host-unhealthy` in `alarms.jsonl` (shown by `lanes status`) once when the host turns unhealthy, and a line
+  in `bench.log` when it recovers. `lanes status` shows the reason on the host's line.
+- **State** is in the manager's memory. A restarted manager starts healthy with no hung-task baseline; the first bad
+  probe stops the host again.
+
+`hosts.yaml`, all optional:
+
+```yaml
+hosts:
+  spokane1:
+    health: {probe_timeout: 10s, ip_slow: 2s, slow_probes: 2, good_probes: 3}
+```
+
+Tests: `TestHostHealthStateMachine`, `TestHostHealthThresholdsComeFromTheInventory`,
+`TestUnhealthyHostStopsNewWorkAndAlarms`, and with fake `ip`/ssh `TestLocalCanary*`, `TestSSHProbe*`.

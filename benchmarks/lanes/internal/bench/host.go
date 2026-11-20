@@ -51,6 +51,8 @@ type Probe struct {
 	Inflight []string          `json:"inflight,omitempty"`
 	// Phases is what each running step is doing (phase.json); a host binary from before phases reports none.
 	Phases map[string]*Phase `json:"phases,omitempty"`
+	// Canary is the host health reading (hosthealth.go); nil when the transport takes none.
+	Canary *Canary `json:"canary,omitempty"`
 }
 
 // startGrace is how long a step that does not hold its lock yet counts as starting, not dead (a var for tests).
@@ -139,6 +141,7 @@ func detach(bin, stepPath string, prefix ...string) string {
 type localHost struct {
 	staging string
 	bin     string // fuzzops-bench (the manager's own executable)
+	health  HealthThresholds
 }
 
 func (h localHost) Start(ctx context.Context, s Step) error {
@@ -157,8 +160,10 @@ func (h localHost) Kill(ctx context.Context, lane, id string) error {
 	return exec.CommandContext(ctx, "sh", "-c", killScript(filepath.Join(h.staging, lane, id, "step.json"), 5)).Run()
 }
 
-func (h localHost) Probe(_ context.Context, steps map[string]string, fuzzops []string) (Probe, error) {
-	return ProbeStaging(h.staging, steps, fuzzops), nil
+func (h localHost) Probe(ctx context.Context, steps map[string]string, fuzzops []string) (Probe, error) {
+	p := ProbeStaging(h.staging, steps, fuzzops)
+	p.Canary, _ = localCanary(ctx, h.health.ProbeTimeout)
+	return p, nil
 }
 
 func (h localHost) Fetch(_ context.Context, lane, id, dest string) error {
