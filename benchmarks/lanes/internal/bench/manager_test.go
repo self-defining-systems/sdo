@@ -363,6 +363,9 @@ func TestBenchFailedCleanupDoesNotUndoAnAdoptedStep(t *testing.T) {
 // A run whose operator is still busy at the cap is invalid "capped", breaks
 // its sequence, and the lane is not reused busy.
 func TestBenchCapEndsTheSequenceAndRebuilds(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real detached steps take several seconds: nightly tier")
+	}
 	l := newLab(t)
 	l.set("busy-after-inject", "busy: reflection queued") // never clears: the cap is spent whatever the host's speed
 	l.cap = "2s"
@@ -493,6 +496,9 @@ func TestBenchBuiltinAfterHookedTearsTheOperatorDown(t *testing.T) {
 // A killed step whose fuzzops run lives on: recover waits for that run (it
 // holds the lane and undoes its own fault), then the lane goes on.
 func TestBenchOrphanedRunIsWaitedFor(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real detached steps take several seconds: nightly tier")
+	}
 	l := newLab(t)
 	l.set("sleep", "3")
 	l.add("e1", l.hooked, "a@x", "[[1]]", 1)
@@ -737,6 +743,9 @@ func TestBenchTeardownChecksTranscripts(t *testing.T) {
 
 // A lane in its run window says so: the step's phase reaches the lane file.
 func TestBenchLaneShowsItsStepPhase(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real detached steps take several seconds: nightly tier")
+	}
 	l := newLab(t)
 	l.set("sleep", "3")
 	l.add("e1", l.hooked, "a@x", "[[1]]", 0)
@@ -1176,6 +1185,9 @@ func TestBenchResetLaneNeedsAReadyOperatorToBeSwappedInto(t *testing.T) {
 // A run whose collect hook says the evidence is incomplete holds its lane (no release, no teardown, no next run)
 // until the manifest lists no problems.
 func TestBenchIncompleteEvidenceHoldsTheLane(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real detached steps take several seconds: nightly tier")
+	}
 	l := newLab(t)
 	must(t, os.WriteFile(filepath.Join(l.hooks, "incomplete-evidence"), nil, 0o644))
 	l.add("e1", l.hooked, "a@x", "[[1]]", 0)
@@ -1348,6 +1360,9 @@ func TestBenchBuildFailuresBeforeALaneGoesDownAreTheHosts(t *testing.T) {
 // remove honors keep_lanes: the lane returns free with its app copy and its cluster stays for a later reuse_app build
 // or claim; --teardown deletes it as for an experiment that does not keep its lanes.
 func TestBenchRemoveKeepsTheLanesOfAKeepLanesExperiment(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real detached steps take several seconds: nightly tier")
+	}
 	for _, teardown := range []bool{false, true} {
 		t.Run(fmt.Sprintf("teardown=%v", teardown), func(t *testing.T) {
 			l := newLab(t)

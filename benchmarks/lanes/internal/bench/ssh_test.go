@@ -16,6 +16,9 @@ import (
 // content, results come home by rsync and are checked against the step's
 // manifest. ssh here is a stand-in that runs the command locally.
 func TestBenchRemoteHost(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real detached steps take several seconds: nightly tier")
+	}
 	if _, err := exec.LookPath("rsync"); err != nil {
 		t.Skip("no rsync")
 	}
