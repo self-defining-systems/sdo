@@ -23,6 +23,7 @@ from benchmarks.sregym.fastloop.lane_cgroup import (
     default_shim_dir,
     describe_mode,
     format_cpu_list,
+    in_block,
     parse_cpu_list,
     place_cpus,
     read_host_cores,
@@ -105,6 +106,19 @@ def host_cores() -> tuple[frozenset[int], ...]:
     return read_host_cores(Path("/sys/devices/system/cpu"), frozenset(os.sched_getaffinity(0)))
 
 
+def preferred_cpus(env: Mapping[str, str] | None = None) -> frozenset[int]:
+    """``SDO_LANE_PREFERRED_CPUS``: this host's reserved CPU block (a CPU list such as ``88-111,200-223``).
+
+    Lane nodes are pinned inside it while it has free CPUs and spill to the rest of the host only when it is
+    full. Unset: no preference. Keep it inside one NUMA node so a lane's CPUs stay local.
+    """
+    text = (os.environ if env is None else env).get("SDO_LANE_PREFERRED_CPUS", "").strip()
+    try:
+        return parse_cpu_list(text)
+    except ValueError as exc:
+        raise ValueError(f"SDO_LANE_PREFERRED_CPUS {text!r} is not a CPU list such as 0-7,16-23") from exc
+
+
 def _running_cpusets() -> dict[str, frozenset[int]]:
     """Every running container's ``--cpuset-cpus`` by name (empty: not pinned)."""
     ids = subprocess.run(
@@ -151,10 +165,12 @@ def _pin_and_update(
     The size is the fix: in-pod runtimes (JVM, Go) size themselves from the CPUs they see. Placement is best
     effort (``place_cpus``): free whole cores first, else the least-loaded CPUs, which may share cores with other
     experiments; that overlap is logged and returned for the lane's receipt, never refused. A node already
-    pinned to the right size on CPUs no one else holds keeps them.
+    pinned to the right size on CPUs no one else holds keeps them unless the preferred block
+    (``SDO_LANE_PREFERRED_CPUS``) can now hold it and it is not already inside.
     """
     count = visible_cpu_count(float(cpus))
     cores = host_cores()
+    block = preferred_cpus()
     placements = []
     with _cpuset_lock():
         pinned = _running_cpusets()
@@ -162,12 +178,17 @@ def _pin_and_update(
         for node in nodes:
             current = pinned.get(node, frozenset())
             taken = frozenset().union(*held)
-            if len(current) == count and not current & taken:
+            fresh = place_cpus(count, cores, held, node=node, preferred=block)
+            if (
+                len(current) == count
+                and not current & taken
+                and in_block(current, block) >= in_block(fresh.cpus, block)
+            ):
                 placement = CpuPlacement(
                     node, current, frozenset(cpu for cpu in current for core in cores if cpu in core and core & taken)
                 )
             else:
-                placement = place_cpus(count, cores, held, node=node)
+                placement = fresh
             if placement.shared:
                 logger.warning(
                     "lane cpuset: %s pinned to %s shares cores with other containers' cpusets on %s (not enough "
