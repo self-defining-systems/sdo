@@ -129,7 +129,7 @@ hook_command: {test: "` + hook + `"}
 	// Before the temporary directories go: let the lane's last step (a release) finish.
 	t.Cleanup(func() {
 		for end := giveUp(t); time.Now().Before(end); time.Sleep(50 * time.Millisecond) {
-			if lf := l.lane(); lf.Step == nil && (lf.State == LaneFree || lf.State == LaneDown || lf.State == LaneRetired) && (lf.Prepared == nil || lf.Prepared.Hooks == "" || lf.State == LaneDown || lf.State == LaneRetired) {
+			if lf := l.lane(); lf.Step == nil && (lf.State == LaneFree || lf.State == LaneDown || lf.State == LaneRetired) && (lf.Prepared == nil || lf.Prepared.Hooks == "" || lf.Prepared.Reset || lf.State == LaneDown || lf.State == LaneRetired) {
 				return
 			} else if l.held(lf) { // a pool lane stays ready for good: nothing is left to wait for
 				return

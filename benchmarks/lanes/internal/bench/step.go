@@ -127,6 +127,9 @@ type Result struct {
 	// Recycle, when set, says a held lane was not claimable (for example an incident open on it): nothing was
 	// swapped, the lane is recycled and the failure does not count against it.
 	Recycle string `json:"recycle,omitempty"`
+	// Restored, when set, says a swap failed and the lane was returned to its golden copy in place (Prepared is the
+	// reset, ready operator): the failure is the claimant's, not the lane's, and counts nothing against the lane.
+	Restored bool `json:"restored,omitempty"`
 	// Isolation is what a run was measured under (lane limits, host reservation, OOM kills); nil on a host without them.
 	Isolation *Isolation `json:"isolation,omitempty"`
 	// Gate is the failed ready gate or build check, when there was one.
@@ -661,6 +664,39 @@ func (r *stepRunner) gateSpan(p *Prepared) time.Duration {
 // experiment's sources reach it by the hooks' swap (which asserts the lane is still the baseline's), then the
 // build's own check decides as for any build.
 func (r *stepRunner) swapIn(ctx context.Context) {
+	r.swapInto(ctx)
+	if !r.res.OK && r.res.LaneDown == "" && r.res.Config == "" && r.res.Recycle == "" && r.res.Prepared != nil {
+		r.restoreAfterFailedSwap(ctx)
+	}
+}
+
+// restoreAfterFailedSwap returns the lane to its golden copy in place after a swap failed past the point where the
+// claimant's sources reached it: the hooks' reset (app, accepted repository, controller), then the same fresh-app
+// check a snapshot is taken under. The claim keeps its failure reason; the lane goes back to the pool ready, with no
+// teardown and no new cluster. If the restore itself fails, the result stays as it was and the release path deals
+// with the lane (a reset again, else a teardown).
+func (r *stepRunner) restoreAfterFailedSwap(ctx context.Context) {
+	cur := *r.res.Prepared
+	prev := r.s.Prev
+	if !cur.Golden || prev == nil {
+		return
+	}
+	reason := r.res.Reason
+	if !r.resetLane(ctx, &cur) {
+		return
+	}
+	if why := r.appMatchesFresh(ctx, &cur); why != "" {
+		r.logf("pool lane not restored after a failed swap: %s", why)
+		return
+	}
+	kept := *prev
+	kept.Reset, kept.Ready, kept.Golden = true, true, true
+	r.res.Prepared, r.res.Restored = &kept, true
+	r.res.Reason = reason
+	r.logf("pool lane restored to its golden copy after a failed swap: %s", reason)
+}
+
+func (r *stepRunner) swapInto(ctx context.Context) {
 	s, p := r.s, r.s.New
 	prev := s.Prev
 	if prev == nil || !prev.Ready || prev.Hooks == "" || p.Hooks != prev.Hooks {

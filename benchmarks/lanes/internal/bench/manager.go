@@ -1223,6 +1223,18 @@ func (m *Manager) adopt(ctx context.Context, l *LaneFile) error {
 			m.logf("lane %s: pool lane recycled, not claimed: %s", l.Lane, res.Recycle)
 			_ = appendJSONL(m.Root.path("recycled.jsonl"), map[string]any{"lane": l.Lane, "host": l.Host, "pool": res.Prepared.Experiment, "at": m.now().UTC(), "why": res.Recycle})
 			m.unbind(l, "pool lane recycled: "+res.Recycle)
+		case res.Restored:
+			// A swap failed and the lane is back at its golden copy: the failure is the claimant's. The claim ends
+			// invalid with the swap's reason (the plan retries once and parks on a second identical failure), and the
+			// lane, counted for nothing, returns to the pool.
+			m.logf("lane %s: swap failed, lane restored in place: %s", l.Lane, res.Reason)
+			if x != nil && l.Seq != nil {
+				sp := x.Measured()
+				m.endRun(x, l, &RunSpec{ID: RunID(l.Seq.Fault, l.Seq.Q, 1, l.Attempt), Fault: l.Seq.Fault, Position: 1,
+					Seed: sp.Seeds(l.Seq.Q)[0], Label: sp.OperatorLabel(1)},
+					Result{Status: StatusInvalid, Reason: res.Reason, Started: res.Started, Ended: res.Ended})
+			}
+			m.unbind(l, "swap failed, lane restored: "+res.Reason)
 		default:
 			l.BuildFailures++
 			if res.Fresh {
