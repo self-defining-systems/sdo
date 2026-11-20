@@ -352,6 +352,14 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 // which the next pass of this manager picks up. A plan that does not load is logged and left alone.
 func (m *Manager) tickPlans(ctx context.Context) {
 	for _, name := range plan.Names(m.Root.PlansDir()) {
+		if ctl, err := plan.LoadControl(plan.Dir(m.Root.PlansDir(), name)); err == nil && ctl.Purge {
+			if done, err := purgePlan(m.Root, name); err != nil {
+				m.logf("plan %s: removal: %v", name, err)
+			} else if done {
+				m.logf("plan %s removed; its name is free", name)
+			}
+			continue
+		}
 		e, err := plan.Open(plan.Dir(m.Root.PlansDir(), name), &PlanBackend{Root: m.Root, Inv: m.inv, Log: m.Log, Grading: &m.planGrading}, SystemClock{})
 		if err != nil {
 			m.logf("plan %s: %v", name, err)

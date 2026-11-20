@@ -17,8 +17,12 @@ type Control struct {
 	Paused bool `json:"paused,omitempty"`
 	// Removed retires the plan: nothing more is released, waiting nodes and steps are skipped, runs in flight finish
 	// (or are cancelled with Cancel). The plan directory and its results stay; the name is never reused.
-	Removed   bool               `json:"removed,omitempty"`
-	Cancel    bool               `json:"cancel,omitempty"`
+	Removed bool `json:"removed,omitempty"`
+	Cancel  bool `json:"cancel,omitempty"`
+	// Purge, set by `plan remove`, asks the runner to clean the plan up: cancel its experiments, move them and the plan's
+	// directory to Archive and free the name. Archive is chosen on the first pass and kept, so a restart finishes it.
+	Purge     bool               `json:"purge,omitempty"`
+	Archive   string             `json:"archive,omitempty"`
 	RemovedAt time.Time          `json:"removed_at,omitempty"`
 	Skipped   map[string]SkipRec `json:"skipped,omitempty"`
 }
@@ -77,6 +81,28 @@ func PausePlan(dir string) error {
 // ResumePlan undoes PausePlan.
 func ResumePlan(dir string) error {
 	return updateControl(dir, func(c *Control) error { c.Paused = false; return nil })
+}
+
+// PurgePlan is `plan remove`: the plan is retired (RemovePlan with cancel) and marked for cleanup, which the runner
+// carries out (PlanRemove in internal/bench) and which frees the plan's name.
+func PurgePlan(dir string) error {
+	return updateControl(dir, func(c *Control) error {
+		c.Removed, c.Paused, c.Cancel, c.Purge = true, false, true, true
+		return nil
+	})
+}
+
+// SetArchive records where a purge moves the plan, once; it returns the recorded path.
+func SetArchive(dir, path string) (string, error) {
+	var got string
+	err := updateControl(dir, func(c *Control) error {
+		if c.Archive == "" {
+			c.Archive = path
+		}
+		got = c.Archive
+		return nil
+	})
+	return got, err
 }
 
 // RemovePlan retires the plan (see Control.Removed). With cancel, the experiments in flight are cancelled and running

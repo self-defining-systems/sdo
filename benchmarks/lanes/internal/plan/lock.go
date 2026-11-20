@@ -155,3 +155,25 @@ func readJSONFile(path string, v any) error {
 }
 
 func readJSONFileBytes(b []byte, v any) error { return json.Unmarshal(b, v) }
+
+// AllExperiments lists every experiment name the plan in dir has released or may have released: each node's attempts,
+// including the next one (a submit whose state write was lost).
+func AllExperiments(dir string) []string {
+	st, err := LoadState(dir)
+	var lock Lock
+	if err != nil || readJSONFile(lockFile(dir), &lock) != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, n := range st.Nodes {
+		for a := 1; a <= n.Attempt+1; a++ {
+			name := ExpName(lock.Plan, n.ID, a)
+			if !seen[name] {
+				seen[name] = true
+				out = append(out, name)
+			}
+		}
+	}
+	return out
+}

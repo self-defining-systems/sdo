@@ -86,6 +86,90 @@ func PlanDryRun(root Root, file string, jsonOut bool, w io.Writer) error {
 	return nil
 }
 
+// PlanRemove is `lanes plan remove`: it marks the plan for cleanup and, when no manager runs, does the cleanup itself.
+// Cleanup cancels the plan's experiments (queued runs are dropped; a run on a lane finishes), moves them and the plan's
+// directory under <root>/plans/.removed/<name>-<time>/ (results and state stay there) and so frees the plan's name. A
+// run still on a lane delays the move of its experiment until it ends; the manager carries on every pass.
+func PlanRemove(root Root, name string, keep bool, w io.Writer) error {
+	dir := plan.Dir(root.PlansDir(), name)
+	if _, err := os.Stat(dir); err != nil {
+		return fmt.Errorf("no plan %q under %s", name, root.PlansDir())
+	}
+	if keep {
+		return plan.RemovePlan(dir, false)
+	}
+	if err := plan.PurgePlan(dir); err != nil {
+		return err
+	}
+	lf, err := os.OpenFile(root.path("bench.lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return err
+	}
+	defer lf.Close()
+	if syscall.Flock(int(lf.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
+		fmt.Fprintf(w, "plan %s marked for removal; the manager cleans it up on its next pass\n", name)
+		return nil
+	}
+	done, err := purgePlan(root, name)
+	if err != nil {
+		return err
+	}
+	if !done {
+		fmt.Fprintf(w, "plan %s: experiments still run on lanes; the next manager pass finishes the removal when they end\n", name)
+		return nil
+	}
+	fmt.Fprintf(w, "plan %s removed; its name is free\n", name)
+	return nil
+}
+
+// purgePlan advances the cleanup of a plan marked for removal; done when the plan directory has moved to the archive.
+// It is idempotent: a restart repeats whatever the last pass did not finish.
+func purgePlan(root Root, name string) (done bool, err error) {
+	dir := plan.Dir(root.PlansDir(), name)
+	b := &PlanBackend{Root: root}
+	exps := plan.AllExperiments(dir)
+	for _, exp := range exps {
+		if err := b.Cancel(context.Background(), exp); err != nil {
+			return false, err
+		}
+	}
+	archive, err := plan.SetArchive(dir, filepath.Join(root.PlansDir(), ".removed", name+"-"+time.Now().UTC().Format("2006-01-02_150405")))
+	if err != nil {
+		return false, err
+	}
+	if err := os.MkdirAll(filepath.Join(archive, "experiments"), 0o755); err != nil {
+		return false, err
+	}
+	pending := false
+	for _, exp := range exps {
+		src := root.path(exp)
+		if _, err := os.Stat(src); err != nil {
+			continue
+		}
+		if b.laneBound(exp) {
+			pending = true
+			continue
+		}
+		if err := os.Rename(src, filepath.Join(archive, "experiments", exp)); err != nil {
+			return false, err
+		}
+	}
+	if pending {
+		return false, nil
+	}
+	// The plan directory moves last, into the archive directory itself: its files sit beside experiments/.
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return false, err
+	}
+	for _, e := range ents {
+		if err := os.Rename(filepath.Join(dir, e.Name()), filepath.Join(archive, e.Name())); err != nil {
+			return false, err
+		}
+	}
+	return true, os.Remove(dir)
+}
+
 // PlanControl applies a control request (pause, resume, remove, skip) to the plan's directory. The manager applies it
 // on its next pass; the request is on disk until then, so a restart loses nothing.
 func PlanControl(root Root, name string, f func(dir string) error) error {
