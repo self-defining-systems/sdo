@@ -46,6 +46,12 @@ alarms: {factor: 2, idle_lane: 10m, arm_stall: 90m, hook: "notify-send lanes \"$
   or with the checkout to ask, `sdo@HEAD:/abs/path/to/checkout`. `plan add` resolves it once with
   `git rev-parse` (in that checkout, or in the plan file's own directory) and stores the full revision in the plan, the lock and
   every spec, so a plan kept inside the pinned checkout does not lag one commit. Revisions (7-40 hex) work as before.
+- **Checks at add time, and a submit that keeps failing.** `plan add` and `--dry-run` run the checks a submit makes, on
+  every rendered spec: the spec itself, the inventory, the fuzzops binary on each host reports the pinned revision (#1612), `faults.instances` exists and holds every fault ID (`healthy`
+  aside), `operator.baseline` is a directory (`operator.seed` is an earlier arm's artifact and is checked when that arm
+  ends). A check that can still fail at release never loops silently: the backend's refusal is retried for
+  `SubmitPasses` (3) passes in a row, then it raises a `submit` alarm and fails the attempt with reason `submit`; the
+  same failure again parks the item.
 - **Order.** Nodes are `(rep, item, arm)`, arms in dependency-then-declaration order, so every comparison's partner is
   released right after its pair, never behind a whole arm and never by name order. A node blocked on an input is passed
   over; the next ready node takes its slot, and the blocked one goes first as soon as it is ready.
@@ -71,7 +77,7 @@ alarms: {factor: 2, idle_lane: 10m, arm_stall: 90m, hook: "notify-send lanes \"$
   any other.
 - **Alarms.** Raised once while the condition stands, written to `<root>/alarms.jsonl`, shown by `lanes status` (the last
   day, at most 10) and `lanes plan status`, and passed to `alarms.hook` (a shell command; `ALARM_JSON`, `ALARM_KIND`,
-  `ALARM_PLAN`, `ALARM_KEY`, `ALARM_SUBJECT`, `ALARM_DETAIL`; 30 s limit; a failing hook is logged only). Kinds:
+  `ALARM_PLAN`, `ALARM_KEY`, `ALARM_SUBJECT`, `ALARM_DETAIL`; 30 s limit; a failing hook is logged only). Kinds: `submit` (the backend refused a release for 3 passes in a row),
   `stage` (a stage took more than `factor` x its minimum, finished or still running), `idle-lane` (a free lane for
   more than `idle_lane` while runs wait, in the platform queue or held back by the plan), `arm-stall` (an arm with
   released or ready work and no run ended for `arm_stall`), `host-pressure` (a host over its `max_load5` or under its

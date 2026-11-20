@@ -12,6 +12,7 @@ const (
 	AlarmIdleLane     = "idle-lane"     // a free lane while work waits
 	AlarmArmStall     = "arm-stall"     // an arm with work made no progress
 	AlarmHostPressure = "host-pressure" // a host over its load or disk budget
+	AlarmSubmit       = "submit"        // the backend refused a node's submit for SubmitPasses passes in a row
 )
 
 // AlarmConfig tunes the runner alarms. Zero values take the defaults.
@@ -50,6 +51,9 @@ type AlarmState struct {
 	// Progress is, per arm, when a node of it last ended or the arm first had work.
 	Progress map[string]time.Time `json:"progress,omitempty"`
 }
+
+// SubmitPasses is how many passes in a row a refused submit is retried before it is an alarm and a failed attempt.
+const SubmitPasses = 3
 
 const (
 	defaultFactor   = 2.0

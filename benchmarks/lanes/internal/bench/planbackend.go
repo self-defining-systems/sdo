@@ -96,6 +96,23 @@ func PlanControl(root Root, name string, f func(dir string) error) error {
 	return f(dir)
 }
 
+// checkSpecInputs runs the checks `lanes add` and a submit make on the files a spec names, so a plan never finds them
+// broken at release: the instances file exists and holds every fault ID, the baseline directory exists. (operator.seed
+// is an artifact of an earlier arm and cannot be checked before it exists.)
+func checkSpecInputs(s Spec) error {
+	if s.Faults.Instances != "" {
+		if err := checkIDs(s.Faults.Instances, s.Faults.IDs); err != nil {
+			return fmt.Errorf("faults.instances %s: %w", s.Faults.Instances, err)
+		}
+	}
+	if b := s.Operator.Baseline; b != "" {
+		if st, err := os.Stat(b); err != nil || !st.IsDir() {
+			return fmt.Errorf("operator.baseline %s: not a directory", b)
+		}
+	}
+	return nil
+}
+
 // planSpecCheck is the check of one rendered spec: the platform's own spec validation and the inventory (the pins
 // must be checked out on a usable host).
 func planSpecCheck(inv Inventory) func([]byte) error {
@@ -111,6 +128,9 @@ func planSpecCheck(inv Inventory) func([]byte) error {
 		}
 		if s.Operator.Hooks != "" && inv.HookCommand[s.Operator.Hooks] == "" {
 			return fmt.Errorf("hosts.yaml has no hook_command for %s", s.Operator.Hooks)
+		}
+		if err := checkSpecInputs(s); err != nil {
+			return err
 		}
 		return checkPins(context.Background(), inv, s, nil, pins)
 	}

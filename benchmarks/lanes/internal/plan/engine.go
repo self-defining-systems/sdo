@@ -525,9 +525,19 @@ func (e *Engine) release(ctx context.Context, st *State) {
 		}
 		err = e.Backend.Submit(ctx, Job{Plan: e.Plan.Name, Node: n.ID, Exp: name, SpecPath: path})
 		if err != nil && !errors.Is(err, ErrExists) {
-			e.logf("submit %s: %v (next pass)", name, err)
+			// A submit that fails is retried, but not forever: after SubmitPasses passes in a row the failure is an
+			// alarm and a failed attempt, and the same failure again parks the item.
+			n.SubmitFails++
+			e.logf("submit %s: %v (pass %d of %d)", name, err, n.SubmitFails, SubmitPasses)
+			if n.SubmitFails >= SubmitPasses {
+				n.SubmitFails = 0
+				e.raise(st, Alarm{Alarm: AlarmSubmit, Key: AlarmSubmit + ":" + n.ID, Subject: n.ID,
+					Detail: fmt.Sprintf("submit failed %d passes in a row: %v", SubmitPasses, err)})
+				e.fail(st, n, "submit", err.Error(), nil)
+			}
 			continue
 		}
+		n.SubmitFails = 0
 		n.Status, n.Attempt, n.Exp, n.Reason, n.Submitted = NodeSubmitted, attempt, name, "", e.Clock.Now().UTC()
 		inflight++
 		e.event(n.ID, "submitted", "%s", name)
