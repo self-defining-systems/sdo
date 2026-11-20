@@ -34,7 +34,7 @@ set -euo pipefail
 umask 022
 
 if [ "$(id -u)" = 0 ]; then
-  PATH=/usr/sbin:/usr/bin:/sbin:/bin
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
   CG=/sys/fs/cgroup STATE=/run/sdo-eval-reserve BSTATE=/var/lib/lane-reserve now=$(date +%s)
   SYSTEMCTL=/usr/bin/systemctl DOCKER=/usr/bin/docker
   ONLINE=/sys/devices/system/cpu/online MEMINFO=/proc/meminfo SYSFS=/sys/devices/system DROPIN=/etc/systemd/system
