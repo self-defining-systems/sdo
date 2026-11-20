@@ -162,7 +162,7 @@ const DefaultHealthMinDuration = 9 * time.Second
     Synthetic-traffic windows are re-evaluated on every probe poll
     (sdo/operator/runtime.DefaultTrafficPollInterval, 500ms), so an
     evaluation-count-only policy reaches its firing threshold in about 0.5s.
-    A kind worker's data plane can stall for about 3s after a pod-network change
+    A worker node's data plane can stall for about 3s after a pod-network change
     (roughly 1 in 6-10 such changes), producing real prober timeouts that would
     otherwise dispatch a responder for nothing. Real faults in this suite are
     detected in 3-5s. Nine seconds clears the observed stalls with headroom

@@ -70,7 +70,7 @@ type ClusterImages interface {
 }
 
 // Source pins tag references. A tag the cluster's nodes already hold
-// (preloaded with kind load, a mirror, an earlier pull) is pinned to the digest
+// (preloaded onto the nodes, a mirror, an earlier pull) is pinned to the digest
 // those nodes report, so the Pod runs what is on the node and the kubelet needs
 // no pull. Otherwise it asks the registry the reference names, anonymously,
 // with a HEAD request (Docker Hub does not count it as a pull) and a GET only
