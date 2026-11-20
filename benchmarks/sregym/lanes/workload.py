@@ -17,8 +17,9 @@ Verbs:
 ``app-reset``     ``recover``: nothing to undo (``fastloop run`` recovers and cleans up its own fault).
 ``gate``          ``check``: every pod of the app namespace is Ready.
 ``run``           ``run``: one ``fastloop run`` of the problem (``--instance``) with the subject's agent registrations,
-                  from the planned memory commit: the seed of the operator file when there is one (a memory
-                  directory a plan edge exported), else the lane's onboarding commit. The record (last line) has
+                  from the planned memory commit: the operator file's seed (a memory directory a plan edge exported,
+                  which must descend from its baseline), else its baseline, else the lane's onboarding commit.
+                  The record (last line) has
                   ``operator``, ``valid``, ``lifecycle.inject_at`` and the SREGym summary; the accepted memory after the
                   run is exported to ``$FUZZOPS_EXEC_OUT/memory`` (``memory.bundle`` and ``memory.json``).
                   ``active``/``undo``: the last run's verdict: clear only when it never injected or fastloop
@@ -351,13 +352,25 @@ class MemorySeed:
         return cls(directory, commit)
 
 
-def operator_seed(env: Mapping[str, str]) -> Path | None:
-    """The seed directory of the operator file (``BENCH_OPERATOR``), staged on this host by the platform."""
+def operator_input(env: Mapping[str, str], key: str) -> Path | None:
+    """A directory of the operator file (``BENCH_OPERATOR``: ``baseline`` or ``seed``), staged on this host."""
     path = env.get("BENCH_OPERATOR")
     if not path:
         return None
-    seed = json.loads(Path(path).read_text(encoding="utf-8")).get("seed")
-    return Path(seed) if seed else None
+    value = json.loads(Path(path).read_text(encoding="utf-8")).get(key)
+    return Path(value) if value else None
+
+
+def operator_seed(env: Mapping[str, str]) -> Path | None:
+    return operator_input(env, "seed")
+
+
+def _is_ancestor(ctx: Context, workspace: Path, ancestor: str, commit: str) -> bool:
+    try:
+        _git(ctx, workspace, "merge-base", "--is-ancestor", ancestor, commit)
+    except AdapterError:
+        return False
+    return True
 
 
 def _git(ctx: Context, workspace: Path, *args: str) -> str:
@@ -547,12 +560,20 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
     environment = json.loads((env_dir / "fastloop.json").read_text(encoding="utf-8"))
     workspace = Path(environment["workspace"])
     seed_dir = operator_seed(ctx.env)
+    baseline_dir = operator_input(ctx.env, "baseline")
+    planned = environment.get("seed_commit") or ""
+    if baseline_dir is not None:
+        # The base memory every arm of the item starts from (the platform requires one beside a seed): a run with no
+        # seed starts from it, and a seed must be memory learned on top of it.
+        baseline = MemorySeed.load(baseline_dir)
+        _git(ctx, workspace, "fetch", "--no-tags", str((baseline.directory / BUNDLE).resolve()), baseline.commit)
+        planned = baseline.commit
     if seed_dir is not None:
         seed = MemorySeed.load(seed_dir)
         _git(ctx, workspace, "fetch", "--no-tags", str((seed.directory / BUNDLE).resolve()), seed.commit)
+        if baseline_dir is not None and not _is_ancestor(ctx, workspace, planned, seed.commit):
+            raise AdapterError(f"memory seed {seed.commit} was not learned on the baseline {planned}")
         planned = seed.commit
-    else:
-        planned = environment.get("seed_commit") or ""
     exec_out = Path(ctx.env.get("FUZZOPS_EXEC_OUT") or env_dir / "exec")
     exec_out.mkdir(parents=True, exist_ok=True)
     run_id = re.sub(

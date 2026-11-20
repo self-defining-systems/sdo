@@ -463,6 +463,66 @@ def test_a_seeded_run_starts_from_the_seed_commit_fetched_from_its_bundle(tmp_pa
     assert record["memory"]["seeded"] is True
 
 
+def baseline_lane(tmp_path: Path) -> tuple[Path, Path, str, str]:
+    """A lane whose accepted repository has a base and a later onboarding commit; a baseline made at the base."""
+    from benchmarks.sregym.lanes import baseline
+
+    repo, base = accepted_repo(tmp_path)
+    (repo / "later").write_text("onboarding moved on\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "later")
+    later = git(repo, "rev-parse", "HEAD")
+    write_environment(tmp_path, repo, seed_commit=later)
+    baseline.make(repo, base, tmp_path / "baseline")
+    return repo, tmp_path / "baseline", base, later
+
+
+def planned_of(tmp_path: Path, operator: dict) -> tuple[int, dict, list[str]]:
+    seen: list[list[str]] = []
+    env_dir = tmp_path / "env" / "sgl1"
+
+    def fast(argv, *, env=None, cwd=None, tick=None):
+        seen.append(list(argv))
+        run_id = list(argv)[list(argv).index("--run-id") + 1]
+        (env_dir / "results" / run_id).mkdir(parents=True, exist_ok=True)
+        (env_dir / "results" / run_id / "incidents.jsonl").write_text(json.dumps(incident(run_id)) + "\n")
+        return ""
+
+    path = tmp_path / "operator.json"
+    path.write_text(json.dumps(operator))
+    env = lane_env(tmp_path, FUZZOPS_EXEC_OUT=str(tmp_path / "x"), BENCH_OPERATOR=str(path))
+    code, record = call(
+        "run", "run", RUN_ARGS, env, runner=workload.run_process, long_runner=fast, page_cluster=FakePageCluster(True)
+    )
+    return code, record, (seen[0] if seen else [])
+
+
+def test_a_run_with_a_baseline_and_no_seed_starts_from_the_baseline(tmp_path):
+    _, base_dir, base, later = baseline_lane(tmp_path)
+    code, record, argv = planned_of(tmp_path, {"baseline": str(base_dir)})
+    assert code == 0, record
+    assert argv[argv.index("--planned-commit") + 1] == base  # not the lane's own onboarding commit
+
+
+def test_a_seed_must_be_learned_on_the_baseline(tmp_path):
+    from benchmarks.sregym.lanes import baseline
+
+    repo, base_dir, base, later = baseline_lane(tmp_path)
+    git(repo, "checkout", "-q", "--orphan", "other")
+    (repo / "unrelated").write_text("x\n")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "unrelated")
+    baseline.make(repo, "HEAD", tmp_path / "foreign-seed")
+    code, record, argv = planned_of(tmp_path, {"baseline": str(base_dir), "seed": str(tmp_path / "foreign-seed")})
+    assert code == 1
+    assert "not learned on the baseline" in record["error"]
+    assert argv == []  # refused before fastloop runs
+    baseline.make(repo, later, tmp_path / "seed")  # later descends from base
+    code, record, argv = planned_of(tmp_path, {"baseline": str(base_dir), "seed": str(tmp_path / "seed")})
+    assert code == 0, record
+    assert argv[argv.index("--planned-commit") + 1] == later
+
+
 def test_a_bad_seed_fails_the_run_before_fastloop(tmp_path):
     repo, base = accepted_repo(tmp_path)
     write_environment(tmp_path, repo, seed_commit=base)

@@ -1,15 +1,21 @@
-# One SREGym repeat-vs-first item: p1 runs the problem from the lane's onboarding memory with the scripted agent
-# registrations (no model calls); p2 runs it again seeded with the memory p1's closing turn left. The scripted
-# closing turn learns a playbook only for a Service targetPort or NetworkPolicy repair, hence the targetPort problem.
-# The pins are the SDO checkout that holds the adapter (workload and subject are the same checkout); set them to the
-# revision under test before `lanes plan add` (a committed plan cannot name its own commit).
-plan: sgl-hotel-tport
+# One SREGym repeat-vs-first item, model-free: p1 runs the problem from the base memory with the scripted agent
+# registrations; p2 runs it again seeded with the memory p1's closing turn left. SDO opens no incident of its own for
+# network_policy_block on hotel, so the adapter pages it like the eval runner (fallback page); the scripted responder
+# removes the isolating policy and the scripted closing turn learns a NetworkPolicy playbook.
+#
+# Before `lanes plan add`:
+# - `baseline/`: the base memory both arms start from (lanes requires operator.baseline beside operator.seed, and the
+#   adapter checks p1's memory descends from it): `python -m benchmarks.sregym.lanes.baseline REPO COMMIT baseline`
+#   from the hotel base the lane is onboarded with (for example the campaign base at 136fe037dfc2). Not committed.
+# - the pins: the SDO checkout that holds the adapter (workload and subject are the same checkout); a committed plan
+#   cannot name its own commit.
+plan: sgl-netpol-repeat
 pins: {workload: sregym@fc6ef24b, subject: sregym@fc6ef24b}
 arms:
   - {name: p1, spec: specs/p1.json}
   - {name: p2, spec: specs/p2.json}
 items:
-  - {id: hotel-targetport, vars: {problem: k8s_target_port_user_hotel_reservation}}
+  - {id: hotel-netpol, vars: {problem: network_policy_block}}
 reps: 1
 parallel: 1
 artifacts: {memory: {path: "${run}/exec/memory", verify: exists}}
