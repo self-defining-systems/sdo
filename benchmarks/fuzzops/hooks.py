@@ -1688,8 +1688,9 @@ def source_branch_values(
 
 def teardown(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     remove_operator(_kube(env), control_namespace(env), out, env)
-    block = _operator(env)
-    if block.source_branch is not None:
+    # The platform also tears down a previous operator with no experiment block (BENCH_OPERATOR unset): no remote.
+    block = _operator(env) if env.get("BENCH_OPERATOR") else None
+    if block is not None and block.source_branch is not None:
         values = source_branch_values(
             Path(env["KUBECONFIG"]), _need(env, "FUZZOPS_NAMESPACE"), control_namespace(env), "", Path(".")
         )

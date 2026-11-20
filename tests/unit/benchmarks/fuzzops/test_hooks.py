@@ -733,6 +733,22 @@ def test_prepare_fails_before_any_work_without_the_evidence_sink(
     assert calls == []
 
 
+def test_teardown_without_an_operator_block_still_removes_the_operator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The platform tears down a lane's previous operator without an experiment's block (BENCH_OPERATOR unset)."""
+    calls: list[list[str]] = []
+
+    def run(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(hooks.subprocess, "run", run)
+    env = {"FUZZOPS_NAMESPACE": "ns1", "FUZZOPS_KUBE_CONTEXT": "kind-c", "KUBECONFIG": "/k"}
+    assert hooks.teardown(env, out=lambda _: None) == 0
+    assert any("delete" in c and "ns1-sdo" in c for c in calls)
+
+
 def test_teardown_deletes_the_control_namespace_and_its_cluster_grant(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
