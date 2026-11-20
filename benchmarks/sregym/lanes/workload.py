@@ -10,7 +10,9 @@ The app pack is a directory with ``app.json`` (``AppPack``). The lane's fastloop
 Verbs:
 
 ``identity``      the workload id, the checkout's revision and whether tracked files are modified.
-``app-up``        ``check-pack``: the pack loads; ``up``: ``fastloop up`` unless the lane's environment and cluster
+``app-up``        (``BENCH_LANE_PROVIDER=eks``: the provider owns the cluster; ``up`` reuses the lane when its environment's
+                  recorded cluster passes the provider's fence, else ``fastloop up --platform eks``; never kind.)
+                  ``check-pack``: the pack loads; ``up``: ``fastloop up`` unless the lane's environment and cluster
                   are already there, then the lane kubeconfig; ``down``, ``images``: nothing (fastloop's row-start
                   reset restores the app, ``up`` delivers images).
 ``app-snapshot``  ``write``/``verify``: the namespace's workloads and their images (a fingerprint of the deploy).
@@ -198,6 +200,8 @@ class Context:
     root: Path = REPO_ROOT
     python: str = sys.executable
     now: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
+    #: Whether the lane's recorded EKS cluster is the one KUBECONFIG reaches (``eks_fence``); a seam for tests.
+    eks_fence: Callable[[Context, Path], bool] = field(default=lambda ctx, env_dir: eks_fence(ctx, env_dir))
     #: The fallback page's view of the lane (``eval.page.PageCluster``); None: the lane's controller over kubectl.
     page_cluster: Any = None
 
@@ -226,6 +230,30 @@ def identity(ctx: Context) -> tuple[int, dict[str, Any]]:
     return 0, {"workload": "sregym", "revision": revision, "modified": bool(dirty)}
 
 
+def eks_up_args(ctx: Context) -> tuple[str, ...]:
+    """The ``fastloop up`` flags of an EKS lane: attach to the provider's cluster and push images to its registry.
+
+    ``BENCH_IMAGE_TAGS`` (``k=v,...``) tags the repositories the lane creates."""
+    args = ["--platform", "eks", "--no-dev-mount", "--ecr-registry", ctx.need("BENCH_IMAGE_REGISTRY")]
+    for tag in filter(None, (item.strip() for item in ctx.env.get("BENCH_IMAGE_TAGS", "").split(","))):
+        args += ["--ecr-tag", tag]
+    return tuple(args)
+
+
+def eks_fence(ctx: Context, env_dir: Path) -> bool:
+    """Whether the lane's recorded EKS cluster is the one KUBECONFIG reaches (the provider's fence)."""
+    from benchmarks.lanes.eks import EksLane, EksLaneError, assert_lane_cluster
+
+    recorded = json.loads((env_dir / "fastloop.json").read_text(encoding="utf-8")).get("eks")
+    if not recorded:
+        return False
+    try:
+        assert_lane_cluster(ctx.need("KUBECONFIG"), EksLane.model_validate(recorded))
+    except EksLaneError:
+        return False
+    return True
+
+
 def app_up(ctx: Context) -> tuple[int, dict[str, Any]]:
     if ctx.action == "check-pack":
         try:
@@ -242,15 +270,27 @@ def app_up(ctx: Context) -> tuple[int, dict[str, Any]]:
     pack = ctx.pack()
     lane = ctx.need("BENCH_LANE")
     env_dir = ctx.lane_env_dir()
-    clusters = ctx.runner(["kind", "get", "clusters"], env=ctx.env).split()
-    reused = (env_dir / "fastloop.json").is_file() and lane in clusters
-    if not reused and ctx.env.get(CLUSTER_UP_ENV) != "1":
-        # Only the host's cluster_up (cluster.sh) makes a lane: it starts the kind nodes under the lane's cgroup,
-        # cores and memory. A build that finds no lane fails, and the platform makes the lane anew.
-        raise AdapterError(f"lane {lane} has no fastloop environment or kind cluster: the host's cluster_up makes it")
+    eks = ctx.env.get("BENCH_LANE_PROVIDER") == "eks"
+    clusters: list[str] = []
+    if eks:
+        # An EKS lane's cluster is the provider's (it exists before any step runs): no kind, no cluster.sh.
+        reused = (env_dir / "fastloop.json").is_file() and ctx.eks_fence(ctx, env_dir)
+    else:
+        clusters = ctx.runner(["kind", "get", "clusters"], env=ctx.env).split()
+        reused = (env_dir / "fastloop.json").is_file() and lane in clusters
+        if not reused and ctx.env.get(CLUSTER_UP_ENV) != "1":
+            # Only the host's cluster_up (cluster.sh) makes a lane: it starts the kind nodes under the lane's cgroup,
+            # cores and memory. A build that finds no lane fails, and the platform makes the lane anew.
+            raise AdapterError(
+                f"lane {lane} has no fastloop environment or kind cluster: the host's cluster_up makes it"
+            )
     if not reused:
         prefix, worker = cluster_parts(lane)
-        if lane in clusters or env_dir.exists():
+        if eks:
+            if env_dir.exists():
+                # An environment of another cluster or a failed `up`: this lane's own directory, nothing else.
+                shutil.rmtree(env_dir, ignore_errors=True)
+        elif lane in clusters or env_dir.exists():
             # What a failed `up` of this lane left (fastloop refuses an existing cluster name for a new environment):
             # the lane's own cluster and environment, nothing else.
             ctx.runner(["kind", "delete", "cluster", "--name", lane], env=ctx.env)
@@ -268,6 +308,7 @@ def app_up(ctx: Context) -> tuple[int, dict[str, Any]]:
             prefix,
             "--worker-id",
             str(worker),
+            *(eks_up_args(ctx) if eks else ()),
             *pack.up_args,
             *shlex.split(ctx.env.get("SREGYM_LANES_UP_ARGS", "")),
         ]
@@ -276,6 +317,8 @@ def app_up(ctx: Context) -> tuple[int, dict[str, Any]]:
             # serves lanes of several apps.
             command += ["--seed", seed]
         if evidence := ctx.env.get("BENCH_EVIDENCE_HOST"):
+            # Where the evidence lands on this host; fastloop decides how it gets there (a node mount on kind, a pull
+            # of the controller's claim on EKS, BENCH_EVIDENCE_MODE=pull).
             command += ["--evidence-root", evidence]
         ctx.long_runner(command, env=ctx.env, cwd=ctx.root)
     environment = json.loads((env_dir / "fastloop.json").read_text(encoding="utf-8"))

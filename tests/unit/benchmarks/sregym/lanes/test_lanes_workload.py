@@ -785,3 +785,81 @@ def test_the_run_uses_the_eval_runners_row_flags(tmp_path):
     for flag in ("--healthy-baseline", "--inject-before-resume", "--require-fault-tracking", "--require-full-cleanup"):
         assert flag in seen[0]
     assert seen[0][seen[0].index("--detection-timeout") + 1] == "300"
+
+
+def eks_env(tmp_path: Path, **extra: str) -> dict[str, str]:
+    return lane_env(
+        tmp_path,
+        BENCH_LANE_PROVIDER="eks",
+        BENCH_IMAGE_REGISTRY="123456789012.dkr.ecr.us-west-2.amazonaws.com",
+        BENCH_EVIDENCE_MODE="pull",
+        BENCH_EVIDENCE_HOST="/ev",
+        BENCH_ENTRY_HOST="203.0.113.7",
+        BENCH_IMAGE_TAGS="Project=sdo,Owner=lanes",
+        **extra,
+    )
+
+
+def test_eks_app_up_attaches_through_fastloop_and_never_calls_kind(tmp_path):
+    # The provider owns the cluster: no kind, no cluster_up; fastloop attaches and pushes images to the registry.
+    seen: list[list[str]] = []
+
+    def up(argv, *, env=None, cwd=None, tick=None):
+        seen.append(list(argv))
+        write_environment(tmp_path, tmp_path / "ws")
+        return ""
+
+    runner = FakeRunner()
+    code, result = call(
+        "app-up",
+        "up",
+        ["--pack", str(PACK), "--namespace", "hotel-reservation"],
+        eks_env(tmp_path, SREGYM_LANES_UP_ARGS="--controller-image c:1"),
+        runner=runner,
+        long_runner=up,
+    )
+    assert (code, result["reused"]) == (0, False)
+    assert runner.calls == []
+    (argv,) = seen
+    assert argv[argv.index("--platform") + 1] == "eks"
+    assert "--no-dev-mount" in argv
+    assert argv[argv.index("--ecr-registry") + 1] == "123456789012.dkr.ecr.us-west-2.amazonaws.com"
+    assert [argv[i + 1] for i, a in enumerate(argv) if a == "--ecr-tag"] == ["Project=sdo", "Owner=lanes"]
+    assert argv[argv.index("--evidence-root") + 1] == "/ev"
+    assert "--controller-image" in argv
+    assert "--mirror-upstream" not in argv
+
+
+def test_eks_app_up_reuses_a_lane_whose_fence_passes_and_rebuilds_one_whose_fence_fails(tmp_path):
+    write_environment(tmp_path, tmp_path / "ws")
+    ups: list[list[str]] = []
+
+    def up(argv, **_):
+        ups.append(list(argv))
+        write_environment(tmp_path, tmp_path / "ws")
+        return ""
+
+    args = ["--pack", str(PACK), "--namespace", "hotel-reservation"]
+    code, result = call(
+        "app-up", "up", args, eks_env(tmp_path), runner=FakeRunner(), long_runner=up, eks_fence=lambda ctx, d: True
+    )
+    assert (code, result["reused"], ups) == (0, True, [])
+    code, result = call(
+        "app-up", "up", args, eks_env(tmp_path), runner=FakeRunner(), long_runner=up, eks_fence=lambda ctx, d: False
+    )
+    assert (code, result["reused"], len(ups)) == (0, False, 1)
+
+
+def test_eks_fence_compares_the_recorded_cluster_with_the_kubeconfigs(tmp_path, monkeypatch):
+    from benchmarks.lanes import eks as provider
+
+    env_dir = write_environment(tmp_path, tmp_path / "ws")
+    ctx = workload.Context("app-up", "up", {}, eks_env(tmp_path))
+    assert workload.eks_fence(ctx, env_dir) is False  # a kind environment records no EKS cluster
+    lane = {"registry": "123456789012.dkr.ecr.us-west-2.amazonaws.com", "server": "https://a", "cluster_uid": "u1"}
+    doc = json.loads((env_dir / "fastloop.json").read_text())
+    (env_dir / "fastloop.json").write_text(json.dumps({**doc, "eks": lane}))
+    monkeypatch.setattr(provider, "cluster_identity", lambda kubeconfig, run=None: ("https://a", "u1"))
+    assert workload.eks_fence(ctx, env_dir) is True
+    monkeypatch.setattr(provider, "cluster_identity", lambda kubeconfig, run=None: ("https://a", "other"))
+    assert workload.eks_fence(ctx, env_dir) is False
