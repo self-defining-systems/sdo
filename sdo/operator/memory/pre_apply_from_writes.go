@@ -82,15 +82,22 @@ func CapturePreApplyFromWrites(repositoryMount, incidentID string, through time.
 			metadata, _ := m["metadata"].(map[string]any)
 			return asString(m["kind"]) == k.kind && asString(m["apiVersion"]) == k.apiVersion && asString(metadata["name"]) == k.name && asString(metadata["namespace"]) == k.namespace
 		}
+		// The recording keeps a metadata-only projection (redacted strings, derived fields such as
+		// clusterIPPresent), not a decodable object, so only its numbers and booleans are laid over the
+		// detection snapshot's own object. An object the snapshot does not hold is not added.
 		replace := func(field string) {
 			list, _ := snapshot[field].([]any)
-			for i, item := range list {
+			for _, item := range list {
 				if same(item) {
-					list[i] = object
+					base, _ := item.(map[string]any)
+					for _, name := range []string{"spec", "status"} {
+						if projected, ok := object[name]; ok {
+							base[name] = overlayScalars(base[name], projected)
+						}
+					}
 					return
 				}
 			}
-			snapshot[field] = append(list, object)
 		}
 		replace("objects")
 		if section, ok := typedSections[k.kind]; ok {
@@ -107,6 +114,42 @@ func CapturePreApplyFromWrites(repositoryMount, incidentID string, through time.
 		return err
 	}
 	return writeCapturedFile(target, data)
+}
+
+// overlayScalars returns base with the numbers and booleans of projected laid over the same paths. Strings,
+// keys base lacks and list entries past base's length are left alone.
+func overlayScalars(base, projected any) any {
+	switch p := projected.(type) {
+	case float64:
+		if _, same := base.(float64); same {
+			return p
+		}
+	case bool:
+		if _, same := base.(bool); same {
+			return p
+		}
+	case map[string]any:
+		b, ok := base.(map[string]any)
+		if !ok {
+			return base
+		}
+		for key, value := range p {
+			if existing, present := b[key]; present {
+				b[key] = overlayScalars(existing, value)
+			}
+		}
+		return b
+	case []any:
+		b, ok := base.([]any)
+		if !ok {
+			return base
+		}
+		for i := 0; i < len(b) && i < len(p); i++ {
+			b[i] = overlayScalars(b[i], p[i])
+		}
+		return b
+	}
+	return base
 }
 
 func asString(value any) string {
