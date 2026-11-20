@@ -321,6 +321,8 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     monkeypatch.setattr(scripts.time, "sleep", lambda _seconds: None)
     monkeypatch.setenv("SDO_CAPTURED_CORPUS_DIR", str(controller.capture))
 
+    # The run waives the evidence sink, so the evidence gate (by contract) refuses to grade every row and the run
+    # exits 1; the oracle verdicts and the rest of the row are still recorded and asserted below.
     assert (
         cli.main(
             [
@@ -342,7 +344,7 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
                 "2",
             ]
         )
-        == 0
+        == 1
     )
 
     helper_proof = json.loads((tmp_path / "results/hermetic/admission/hotel-script-profile.json").read_text())
@@ -353,6 +355,7 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     with (tmp_path / "results/hermetic/incidents.csv").open(newline="") as handle:
         rows = list(csv.DictReader(handle))
     assert len(records) == len(rows) == 2
+    assert all("evidence sink was waived" in (row.evidence_incomplete or "") for row in records)
     assert all(
         row.oracle and row.oracle.success and row.recovery_oracle and row.recovery_oracle.success for row in records
     )
