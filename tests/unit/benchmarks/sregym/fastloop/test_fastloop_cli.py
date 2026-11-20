@@ -854,3 +854,73 @@ def test_gitlab_lane_defaults_to_a_node_sized_for_gitlab() -> None:
     explicit = build_parser().parse_args(["up", "--run-dir", "x", "--app", "gitlab", "--cpu-limit", "5"])
     resolve_node_limits(explicit)
     assert (explicit.cpu_limit, explicit.memory_limit) == ("5", "20g")
+
+
+class _ProbeWorker:
+    """Fails the traffic probe until the application is recreated (when it can recover)."""
+
+    def __init__(self, healthy_after_recreate: bool) -> None:
+        self.recreated = False
+        self.healthy_after_recreate = healthy_after_recreate
+
+    def request(self, op: str, **_kwargs: object) -> dict[str, object]:
+        assert op == "rehearse_oracles"
+        ok = self.recreated and self.healthy_after_recreate
+        return {"success": ok, "details": {"traffic_ok": ok}}
+
+
+def _repair_env(tmp_path: Path) -> FastloopEnvironment:
+    return FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="c",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="hotel-reservation",
+        application="Hotel Reservation",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path,
+        private_tmp=None,
+    )
+
+
+def test_failing_traffic_probe_recreates_application_and_records_repair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from benchmarks.sregym.fastloop import cli
+
+    worker = _ProbeWorker(healthy_after_recreate=True)
+    reasons: list[str] = []
+
+    def recreate(_env, w, reason, *_args, **_kwargs):
+        reasons.append(reason.trigger.value)
+        w.recreated = True
+
+    monkeypatch.setattr(cli, "recreate_application", recreate)
+    repair = cli.ApplicationRepair()
+    for index in range(2):
+        cli.rehearse_with_repair(_repair_env(tmp_path), worker, tmp_path, f"p{index}", index, repair, revision=None)
+    assert reasons == ["traffic_probe_failed"]
+    record = json.loads((tmp_path / "setup-repair.json").read_text())
+    assert (record["recreated"], record["healthy_after"], record["problem_id"]) == (True, True, "p0")
+    assert json.loads((tmp_path / "oracle-rehearsals" / "000.json").read_text())["verdict"]["success"] is True
+
+
+def test_still_failing_after_recreate_rejects_row(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarks.sregym.fastloop import cli
+
+    worker = _ProbeWorker(healthy_after_recreate=False)
+    monkeypatch.setattr(cli, "recreate_application", lambda _e, w, *_a, **_k: setattr(w, "recreated", True))
+    with pytest.raises(ValueError, match="no-fault rehearsal has unhealthy"):
+        cli.rehearse_with_repair(
+            _repair_env(tmp_path), worker, tmp_path, "p", 0, cli.ApplicationRepair(), revision=None
+        )
+    assert json.loads((tmp_path / "setup-repair.json").read_text())["healthy_after"] is False
+
+
+def test_healthy_application_is_not_recreated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from benchmarks.sregym.fastloop import cli
+
+    worker = _ProbeWorker(healthy_after_recreate=True)
+    worker.recreated = True
+    monkeypatch.setattr(cli, "recreate_application", lambda *_a, **_k: pytest.fail("recreated a healthy app"))
+    cli.rehearse_with_repair(_repair_env(tmp_path), worker, tmp_path, "p", 0, cli.ApplicationRepair(), revision=None)
+    assert not (tmp_path / "setup-repair.json").exists()

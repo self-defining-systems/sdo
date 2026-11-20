@@ -1018,6 +1018,69 @@ def recreate_application(
     return deployed
 
 
+class ApplicationRepair:
+    """Whether this row already recreated its application because the traffic probe failed (once per row)."""
+
+    def __init__(self) -> None:
+        self.done = False
+
+
+def rehearse_with_repair(
+    environment: FastloopEnvironment,
+    worker: SregymWorker,
+    results_dir: Path,
+    problem_id: str,
+    index: int,
+    repair: ApplicationRepair,
+    *,
+    revision: str | None,
+) -> None:
+    """Run the no-fault rehearsal; a failing traffic probe recreates the application once, then re-checks.
+
+    The rehearsal is the setup health gate: pods Ready does not prove the app serves traffic, and a warm
+    lane can carry a broken app from the previous row. Every arm gets the same rule, and
+    ``setup-repair.json`` records what was repaired. Only an app that still fails after the recreate rejects the row.
+    """
+    from benchmarks.sregym.fastloop.wipe import Tier1Receipt, Tier2Reason, Tier2Trigger
+
+    def rehearse() -> dict[str, Any]:
+        return worker.request("rehearse_oracles", problem_id=problem_id, timeout=wait_for(WaitKind.LONG_OPERATION))
+
+    rehearsal = rehearse()
+    if rehearsal.get("success") is not True and not repair.done:
+        repair.done = True
+        failed = rehearsal
+        reason = Tier2Reason(
+            Tier2Trigger.TRAFFIC_PROBE_FAILED, f"the application failed the traffic probe before {problem_id}"
+        )
+        logger.warning("Tier-2 recreate of the application: %s (%s)", reason.trigger.value, reason.detail)
+        recreate_application(
+            environment, worker, reason, Tier1Receipt(0.0, (), False, ()), results_dir, revision=revision
+        )
+        rehearsal = rehearse()
+        (results_dir / "setup-repair.json").write_text(
+            json.dumps(
+                {
+                    "trigger": reason.trigger.value,
+                    "problem_id": problem_id,
+                    "failed_probe": failed,
+                    "recreated": True,
+                    "healthy_after": rehearsal.get("success") is True,
+                },
+                indent=2,
+                default=str,
+            )
+            + "\n"
+        )
+    rehearsal_dir = results_dir / "oracle-rehearsals"
+    rehearsal_dir.mkdir(exist_ok=True)
+    (rehearsal_dir / f"{index:03d}.json").write_text(
+        json.dumps({"problem_id": problem_id, "verdict": rehearsal}, indent=2) + "\n"
+    )
+    if rehearsal.get("success") is not True:
+        raise ValueError(f"eval: no-fault rehearsal has unhealthy collateral/traffic for {problem_id}")
+
+
 def restore_lane_identities(environment: FastloopEnvironment, results_dir: Path) -> None:
     """Row start, after the SDO namespace wipe: the app holds only identities its gateway can carry.
 
@@ -1505,18 +1568,18 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
         if tier1 is not None:
             restore_lane_identities(environment, results_dir)
         if environment.app != "toy":
+            repair = ApplicationRepair()
             rehearsal_problems = dict.fromkeys(problem for ids in incidents for problem in ids)
             for rehearsal_index, problem_id in enumerate(rehearsal_problems):
-                rehearsal = worker.request(
-                    "rehearse_oracles", problem_id=problem_id, timeout=wait_for(WaitKind.LONG_OPERATION)
+                rehearse_with_repair(
+                    environment,
+                    worker,
+                    results_dir,
+                    problem_id,
+                    rehearsal_index,
+                    repair,
+                    revision=_application_revision(args, environment),
                 )
-                rehearsal_dir = results_dir / "oracle-rehearsals"
-                rehearsal_dir.mkdir(exist_ok=True)
-                (rehearsal_dir / f"{rehearsal_index:03d}.json").write_text(
-                    json.dumps({"problem_id": problem_id, "verdict": rehearsal}, indent=2) + "\n"
-                )
-                if rehearsal.get("success") is not True:
-                    raise ValueError(f"eval: no-fault rehearsal has unhealthy collateral/traffic for {problem_id}")
         deployed = time.monotonic()
         described = deployed
         baseline = load_application_baseline(environment.baseline_path, environment.namespace)
