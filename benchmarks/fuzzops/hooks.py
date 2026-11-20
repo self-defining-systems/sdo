@@ -1072,7 +1072,10 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
             json.loads(_run(kube.cmd("get", "storageclass", "-o", "json"), "storageclasses").stdout)
         ):
             raise HookError(why)
-        refs = eks.pin_operator_images(eks.lane_from_env(env, kube.cmd), image, out)
+        lane = eks.lane_from_env(env, kube.cmd)
+        refs = eks.pin_operator_images(lane, image, out)
+        # the evidence pods pull this from docker.io otherwise (anonymous pulls are limited per address)
+        eks.publish_images(lane, [sink.PULL_IMAGE], out)
         image = {name: refs[tag] for name, tag in image.items()}
     elif pulled:
         refs = lane_registry_images(registry, list(image.values()), out)

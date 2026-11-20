@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from benchmarks.fuzzops import workload
+from benchmarks.fuzzops import eks, workload
 from benchmarks.lanes.eks import EksLane
 
 if TYPE_CHECKING:
@@ -51,16 +51,16 @@ def test_a_lane_that_is_not_eks_gets_the_built_in_command_unchanged(provider: st
     assert calls.env == [env]
 
 
-def test_on_eks_only_the_images_step_gets_a_kind_shim() -> None:
+def test_on_eks_only_images_and_run_get_a_kind_shim() -> None:
     calls = Calls()
     workload.handle("app-up", _env("eks"), calls)
     assert calls.argv == [BUILTIN]
     assert calls.shim_seen
     other = Calls()
-    for verb, action in (("app-up", "up"), ("gate", "check"), ("run", "run")):
+    for verb, action in (("app-up", "up"), ("gate", "check")):
         env = _env("eks", action)
         workload.handle(verb, env, other)
-    assert other.env == [_env("eks", "up"), _env("eks", "check"), _env("eks", "run")]
+    assert other.env == [_env("eks", "up"), _env("eks", "check")]
 
 
 def test_a_verb_the_built_in_workload_lacks_is_unsupported(capsys: pytest.CaptureFixture[str]) -> None:
@@ -114,28 +114,28 @@ def _lane() -> EksLane:
 
 def test_a_local_build_is_published_under_its_declared_name_every_time() -> None:
     fake = Fake(in_mirror=("sdo-mirror/docker.io/fuzzops/hotel:dev",), local=("fuzzops/hotel:dev",))
-    published = workload.publish_images(_lane(), ["fuzzops/hotel:dev"], lambda _: None, fake)
+    published = eks.publish_images(_lane(), ["fuzzops/hotel:dev"], lambda _: None, fake)
     assert published == ["fuzzops/hotel:dev"]
     assert fake.pushed() == ["sdo-mirror/docker.io/fuzzops/hotel:dev"]
 
 
 def test_a_pinned_upstream_image_already_in_the_mirror_is_not_pushed_again() -> None:
     fake = Fake(in_mirror=("sdo-mirror/docker.io/library/mongo:4.4.6",), local=("mongo:4.4.6", "memcached:1.6.7"))
-    published = workload.publish_images(_lane(), ["mongo:4.4.6", "memcached:1.6.7"], lambda _: None, fake)
+    published = eks.publish_images(_lane(), ["mongo:4.4.6", "memcached:1.6.7"], lambda _: None, fake)
     assert published == ["memcached:1.6.7"]
 
 
 def test_an_image_from_a_registry_the_lane_does_not_mirror_is_left_to_the_nodes() -> None:
     fake = Fake()
     lines: list[str] = []
-    assert workload.publish_images(_lane(), ["registry.gitlab.com/x/y:1"], lines.append, fake) == []
+    assert eks.publish_images(_lane(), ["registry.gitlab.com/x/y:1"], lines.append, fake) == []
     assert fake.pushed() == []
     assert "nodes pull" in lines[0]
 
 
 def test_an_image_not_on_the_host_is_pulled_before_it_is_published() -> None:
     fake = Fake()
-    workload.publish_images(_lane(), ["jaegertracing/all-in-one:1.62.0"], lambda _: None, fake)
+    eks.publish_images(_lane(), ["jaegertracing/all-in-one:1.62.0"], lambda _: None, fake)
     assert ["docker", "pull", "-q", "jaegertracing/all-in-one:1.62.0"] in fake.calls
     assert fake.pushed() == ["sdo-mirror/docker.io/jaegertracing/all-in-one:1.62.0"]
 
@@ -157,3 +157,20 @@ def test_the_shim_runs_this_module_with_the_interpreter(tmp_path: Path) -> None:
     text = (tmp_path / "kind").read_text()
     assert "-m benchmarks.fuzzops.workload kind" in text
     assert os.access(tmp_path / "kind", os.X_OK)
+
+
+def test_on_eks_the_run_verb_gets_an_image_publisher_next_to_the_shim() -> None:
+    seen: list[Mapping[str, str]] = []
+
+    def call(_argv: Sequence[str], env: Mapping[str, str]) -> int:
+        seen.append(env)
+        return 0
+
+    env = {**_env("eks", "run"), "WORKLOAD_BUILTIN": json.dumps(["/fz/bin/fuzzops", "run"])}
+    workload.handle("run", env, call)
+    publish = seen[0]["FUZZOPS_IMAGE_PUBLISH"]
+    assert publish.endswith("/kind load docker-image")
+    assert seen[0]["PATH"].split(os.pathsep)[0] == publish.removesuffix("/kind load docker-image")
+    kind = {**_env("kind", "run"), "WORKLOAD_BUILTIN": env["WORKLOAD_BUILTIN"]}
+    workload.handle("run", kind, call)
+    assert "FUZZOPS_IMAGE_PUBLISH" not in seen[1]

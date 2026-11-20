@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 SCHEMA = "fuzzops.eks-faults/v1"
 _SPEC_NAME = re.compile(r'\bName:\s*"([a-z0-9-]+)"')
 _NODE_LEVEL = re.compile(r"\bNodeLevel:\s*true\b")
+_IMAGE_MIRROR = re.compile(r"\bImageMirror:\s*true\b")
 _ACTION_REF = re.compile(r"^\s*(?:-\s*)?action:\s*([a-z0-9-]+)\s*$", re.MULTILINE)
 #: Why a known node-level action rules a fault out (an action not listed gets the generic reason).
 REASONS = {
@@ -59,7 +60,9 @@ class Verdict:
 
 
 def node_level_actions(fuzzops: Path) -> set[str]:
-    """The names of the actions whose ``Spec`` says ``NodeLevel: true``."""
+    """The names of the actions whose ``Spec`` says ``NodeLevel: true``, except those that also say
+    ``ImageMirror: true`` (their only node access is delivering a built image, which an EKS lane does through its
+    registry mirror; a fuzzops revision before that field lists them)."""
     found: set[str] = set()
     sources = sorted((fuzzops / "internal" / "actions").glob("*/*.go"))
     if not sources:
@@ -68,7 +71,7 @@ def node_level_actions(fuzzops: Path) -> set[str]:
         if source.name.endswith("_test.go"):
             continue
         text = source.read_text()
-        if _NODE_LEVEL.search(text):
+        if _NODE_LEVEL.search(text) and not _IMAGE_MIRROR.search(text):
             found.update(_SPEC_NAME.findall(text)[:1])
     return found
 
