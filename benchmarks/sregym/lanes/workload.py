@@ -39,6 +39,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
@@ -64,6 +65,19 @@ class Runner(Protocol):
         ...
 
 
+class LongRunner(Protocol):
+    def __call__(
+        self,
+        argv: Sequence[str],
+        *,
+        env: Mapping[str, str] | None = None,
+        cwd: Path | None = None,
+        tick: Callable[[], None] | None = None,
+    ) -> str:
+        """Run a long command to completion, calling ``tick`` every few seconds; raise ``AdapterError`` on failure."""
+        ...
+
+
 def run_process(argv: Sequence[str], *, env: Mapping[str, str] | None = None, cwd: Path | None = None) -> str:
     """The real runner: stderr passes through to the platform's log."""
     result = subprocess.run(
@@ -74,13 +88,28 @@ def run_process(argv: Sequence[str], *, env: Mapping[str, str] | None = None, cw
     return result.stdout
 
 
-def run_logged(argv: Sequence[str], *, env: Mapping[str, str] | None = None, cwd: Path | None = None) -> str:
-    """A long command whose stdout is progress: both streams go to the platform's log (stderr)."""
-    result = subprocess.run(
-        list(argv), env=dict(env) if env is not None else None, cwd=cwd, stdout=sys.stderr, check=False
-    )
-    if result.returncode:
-        raise AdapterError(f"{shlex.join(argv)[:300]}: exit {result.returncode}")
+TICK_SECONDS = 5.0
+
+
+def run_logged(
+    argv: Sequence[str],
+    *,
+    env: Mapping[str, str] | None = None,
+    cwd: Path | None = None,
+    tick: Callable[[], None] | None = None,
+) -> str:
+    """A long command whose stdout is progress: both streams go to the platform's log (stderr). ``tick`` is called
+    every few seconds while it runs (the fallback page watches the run from there)."""
+    process = subprocess.Popen(list(argv), env=dict(env) if env is not None else None, cwd=cwd, stdout=sys.stderr)
+    while True:
+        try:
+            code = process.wait(timeout=TICK_SECONDS)
+            break
+        except subprocess.TimeoutExpired:
+            if tick is not None:
+                tick()
+    if code:
+        raise AdapterError(f"{shlex.join(argv)[:300]}: exit {code}")
     return ""
 
 
@@ -163,10 +192,12 @@ class Context:
     args: dict[str, str]
     env: Mapping[str, str]
     runner: Runner = run_process
-    long_runner: Runner = run_logged
+    long_runner: LongRunner = run_logged
     root: Path = REPO_ROOT
     python: str = sys.executable
     now: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
+    #: The fallback page's view of the lane (``eval.page.PageCluster``); None: the lane's controller over kubectl.
+    page_cluster: Any = None
 
     def need(self, name: str) -> str:
         value = self.env.get(name, "")
@@ -395,6 +426,80 @@ def export_memory(ctx: Context, workspace: Path, out: Path, base: str) -> dict[s
     return meta
 
 
+#: The eval runner's defaults (``EvalConfig.fallback_page_seconds``, ``detection_timeout_seconds``), which the
+#: campaign's SDO arm runs with.
+FALLBACK_PAGE_SECONDS = 120.0
+DETECTION_TIMEOUT = 300
+
+
+class KubectlLaneCluster:
+    """``eval.page.PageCluster`` over the lane's own kubeconfig (``lane.info``)."""
+
+    def own_incident(self, lane: Any, known: frozenset[str]) -> bool:
+        from benchmarks.sregym.adapter import control_namespace_for, read_runtime_state
+        from benchmarks.sregym.eval.page import has_own_incident
+
+        control = control_namespace_for(lane.info["namespace"])
+        return has_own_incident(read_runtime_state(control, kubeconfig=Path(lane.info["kubeconfig"])), known)
+
+    def send(self, lane: Any, incident_id: str, message: str) -> None:
+        from benchmarks.sregym.adapter import apply_external_incident, control_namespace_for
+
+        namespace = lane.info["namespace"]
+        apply_external_incident(
+            control_namespace_for(namespace), namespace, incident_id, message, kubeconfig=Path(lane.info["kubeconfig"])
+        )
+
+
+@dataclass
+class FallbackPager:
+    """The eval runner's fallback page for one run (``eval.page.FallbackPageHook``, as ``fastloop_row`` drives it): once
+    fastloop's injection marker exists and ``seconds`` have passed with no incident of SDO's own, SDO is paged through
+    the external-incident inbox with the vanilla arm's incident text. ``out`` (page.json) records the decision; a failed
+    page is recorded and tried again at the next tick."""
+
+    results: Path
+    out: Path
+    lane: Any
+    run_id: str
+    seconds: float
+    cluster: Any
+    now: Callable[[], float]
+    source: str | None = None
+    hook: Any = None
+
+    def __post_init__(self) -> None:
+        from benchmarks.sregym.eval.page import FallbackPageHook
+
+        self.hook = FallbackPageHook(self.seconds, self.cluster or KubectlLaneCluster(), self.now)
+
+    def tick(self) -> None:
+        if self.source is not None:
+            return
+        from benchmarks.sregym.fastloop.injection_marker import read_injection_marker
+
+        marker = read_injection_marker(self.results)
+        if marker is None:
+            return
+        cell = SimpleNamespace(arm="sdo", id=self.run_id)
+        try:
+            paged_at = self.hook.page(self.lane, cell, marker.started_at, marker.known_incident_ids)
+        except Exception as exc:  # recorded, retried at the next tick, never stops the run
+            self._write({"injected_at": marker.started_at, "error": f"{type(exc).__name__}: {exc}"})
+            return
+        own_at = self.hook.own_incident_at(cell)
+        if paged_at is not None:
+            self.source = "fallback"
+            self._write({"injected_at": marker.started_at, "paged_at": paged_at, "source": "fallback"})
+        elif own_at is not None:
+            self.source = "own"
+            self._write({"injected_at": marker.started_at, "decided_at": own_at, "source": "own"})
+
+    def _write(self, document: dict[str, Any]) -> None:
+        self.out.parent.mkdir(parents=True, exist_ok=True)
+        self.out.write_text(json.dumps(document) + "\n", encoding="utf-8")
+
+
 FAULT_STATE = "lanes-fault.json"
 
 
@@ -472,8 +577,12 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
         str(ctx.root / SCRIPTED_REGISTRATIONS),
         "--stream",
         str(stream),
+        # The eval runner's SDO row flags (benchmarks/sregym/eval/fastloop_row.py row_command).
+        "--detection-timeout",
+        str(DETECTION_TIMEOUT),
         "--healthy-baseline",
-        "--no-checkpoints",
+        "--inject-before-resume",
+        "--require-fault-tracking",
         "--require-full-cleanup",
         "--continue-on-error",
         "--timeout",
@@ -483,13 +592,30 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
     if planned:
         command += ["--planned-commit", planned]
     failure = ""
+    results = env_dir / "results" / run_id
+    pager = FallbackPager(
+        results=results,
+        out=exec_out / "page.json",
+        lane=SimpleNamespace(
+            id=ctx.need("BENCH_LANE"),
+            info={
+                "namespace": environment["namespace"],
+                "application": environment.get("application", ""),
+                "description": environment.get("description", ""),
+                "kubeconfig": environment["kubeconfig"],
+            },
+        ),
+        run_id=run_id,
+        seconds=float(ctx.env.get("SREGYM_LANES_FALLBACK_PAGE_SECONDS", str(FALLBACK_PAGE_SECONDS))),
+        cluster=ctx.page_cluster,
+        now=lambda: ctx.now().timestamp(),
+    )
     # Until the run's record says otherwise, its fault may be in place (a run killed mid-way leaves it).
     write_fault_state(env_dir, problem, "unknown")
     try:
-        ctx.long_runner(command, env=ctx.env, cwd=ctx.root)
+        ctx.long_runner(command, env=ctx.env, cwd=ctx.root, tick=pager.tick)
     except AdapterError as error:
         failure = str(error)
-    results = env_dir / "results" / run_id
     if results.is_dir():
         # The run's evidence travels with the run (the lane's environment is rebuilt with the lane).
         shutil.copytree(results, exec_out / "fastloop-results", dirs_exist_ok=True)
@@ -502,6 +628,7 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
             "error": failure or "fastloop run wrote no record",
         }
     summary = summarize(incident)
+    summary["page_source"] = pager.source
     record["sregym"] = summary
     record["memory"] = export_memory(ctx, workspace, exec_out / MEMORY_DIR, planned)
     record["memory"]["seeded"] = seed_dir is not None
@@ -527,6 +654,7 @@ def grade_line(record: Mapping[str, Any]) -> dict[str, Any]:
         "success": bool(summary.get("success")),
         "ttm_seconds": summary.get("time_to_fix_seconds"),
         "resolution_path": summary.get("resolution_path"),
+        "page_source": summary.get("page_source"),
         "warm_path": summary.get("warm_path"),
         "seeded": bool(memory.get("seeded")),
         "memory_before": summary.get("memory_before_commit"),

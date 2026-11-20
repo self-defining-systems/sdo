@@ -24,7 +24,7 @@ class FakeRunner:
         self.fail = fail
         self.calls: list[list[str]] = []
 
-    def __call__(self, argv, *, env=None, cwd=None) -> str:
+    def __call__(self, argv, *, env=None, cwd=None, tick=None) -> str:
         argv = list(argv)
         self.calls.append(argv)
         text = " ".join(argv)
@@ -125,7 +125,7 @@ def test_app_up_runs_fastloop_up_for_a_new_lane_and_copies_its_kubeconfig(tmp_pa
     runner = FakeRunner({"kind get clusters": "other\n"})
     seen: list[list[str]] = []
 
-    def up(argv, *, env=None, cwd=None):
+    def up(argv, *, env=None, cwd=None, tick=None):
         seen.append(list(argv))
         write_environment(tmp_path, tmp_path / "ws")
         return ""
@@ -151,7 +151,7 @@ def test_app_up_clears_what_a_failed_up_of_the_lane_left_before_trying_again(tmp
     (partial / "application_workspace").mkdir(parents=True)
     runner = FakeRunner({"kind get clusters": "sgl1\nother\n"})
 
-    def up(argv, *, env=None, cwd=None):
+    def up(argv, *, env=None, cwd=None, tick=None):
         assert not (partial / "application_workspace").exists()
         write_environment(tmp_path, tmp_path / "ws")
         return ""
@@ -358,7 +358,7 @@ def fake_fastloop_run(tmp_path: Path, env_dir: Path, repo: Path):
     """A fastloop run that writes a playbook into the accepted repository and one incident record."""
     calls: list[list[str]] = []
 
-    def run(argv, *, env=None, cwd=None):
+    def run(argv, *, env=None, cwd=None, tick=None):
         argv = list(argv)
         calls.append(argv)
         run_id = argv[argv.index("--run-id") + 1]
@@ -445,7 +445,7 @@ def test_a_seeded_run_starts_from_the_seed_commit_fetched_from_its_bundle(tmp_pa
     operator.write_text(json.dumps({"hooks": "sregym", "seed": str(exec_out / "memory")}))
     seen: list[list[str]] = []
 
-    def run2(argv, *, env=None, cwd=None):
+    def run2(argv, *, env=None, cwd=None, tick=None):
         seen.append(list(argv))
         assert git(second, "cat-file", "-t", learned) == "commit"  # fetched before the run
         run_id = argv[argv.index("--run-id") + 1]
@@ -575,3 +575,100 @@ def test_subject_shim_prepares_with_the_pack_and_passes_the_seed(tmp_path):
     )
     assert subject.dispatch("idle", env)[0] == 0
     assert subject.dispatch("verify-artifact", env) == (64, {"unsupported": True})
+
+
+class FakePageCluster:
+    def __init__(self, own: bool) -> None:
+        self.own = own
+        self.sent: list[tuple[str, str, str]] = []
+
+    def own_incident(self, lane, known):
+        return self.own
+
+    def send(self, lane, incident_id, message):
+        self.sent.append((lane.info["namespace"], incident_id, message))
+
+
+def paged_run(tmp_path: Path, cluster: FakePageCluster, ticks_at: list[float]) -> tuple[dict, Path]:
+    """A run that injects at t=1000 and ticks at the given clock times, with the page cluster faked."""
+    from benchmarks.sregym.fastloop.injection_marker import write_injection_marker
+
+    repo, base = accepted_repo(tmp_path)
+    env_dir = write_environment(tmp_path, repo, seed_commit=base)
+    clock = [0.0]
+
+    def fast(argv, *, env=None, cwd=None, tick=None):
+        assert tick is not None
+        argv = list(argv)
+        run_id = argv[argv.index("--run-id") + 1]
+        results = env_dir / "results" / run_id
+        results.mkdir(parents=True)
+        tick()  # before injection: nothing to decide
+        write_injection_marker(results, datetime.fromtimestamp(1000, UTC), frozenset({"old"}))
+        for at in ticks_at:
+            clock[0] = at
+            tick()
+        row = {**incident(run_id), "full_cleanup_verified": True}
+        (results / "incidents.jsonl").write_text(json.dumps(row) + "\n")
+        return ""
+
+    exec_out = tmp_path / "exec"
+    env = lane_env(tmp_path, FUZZOPS_EXEC_OUT=str(exec_out), BENCH_RUN="r1")
+    code, record = dispatch(
+        "run",
+        {**env, "WORKLOAD_ACTION": "run", "WORKLOAD_ARGS": json.dumps(RUN_ARGS)},
+        runner=workload.run_process,
+        long_runner=fast,
+        page_cluster=cluster,
+        now=lambda: datetime.fromtimestamp(clock[0], UTC),
+    )
+    assert code == 0, record
+    return record, exec_out
+
+
+def test_with_no_incident_of_its_own_sdo_is_paged_once_after_the_fallback_delay(tmp_path):
+    cluster = FakePageCluster(own=False)
+    record, exec_out = paged_run(tmp_path, cluster, [1000 + 60, 1000 + 120, 1000 + 180])
+    assert len(cluster.sent) == 1  # once, not before 120 s, never again
+    namespace, _, message = cluster.sent[0]
+    assert namespace == "hotel-reservation"
+    assert "Namespace: hotel-reservation" in message
+    assert record["sregym"]["page_source"] == "fallback"
+    page = json.loads((exec_out / "page.json").read_text())
+    assert page["source"] == "fallback"
+    assert page["injected_at"] == 1000
+    assert workload.grade_line(record)["page_source"] == "fallback"
+
+
+def test_an_incident_of_its_own_means_no_page(tmp_path):
+    cluster = FakePageCluster(own=True)
+    record, exec_out = paged_run(tmp_path, cluster, [1000 + 130])
+    assert cluster.sent == []
+    assert record["sregym"]["page_source"] == "own"
+    assert json.loads((exec_out / "page.json").read_text())["source"] == "own"
+
+
+def test_no_decision_before_the_fallback_delay(tmp_path):
+    cluster = FakePageCluster(own=False)
+    record, exec_out = paged_run(tmp_path, cluster, [1000 + 30])
+    assert cluster.sent == []
+    assert record["sregym"]["page_source"] is None
+    assert not (exec_out / "page.json").exists()
+
+
+def test_the_run_uses_the_eval_runners_row_flags(tmp_path):
+    seen: list[list[str]] = []
+    repo, base = accepted_repo(tmp_path)
+    env_dir = write_environment(tmp_path, repo, seed_commit=base)
+
+    def fast(argv, *, env=None, cwd=None, tick=None):
+        seen.append(list(argv))
+        run_id = list(argv)[list(argv).index("--run-id") + 1]
+        (env_dir / "results" / run_id).mkdir(parents=True)
+        return ""
+
+    env = lane_env(tmp_path, FUZZOPS_EXEC_OUT=str(tmp_path / "x"))
+    call("run", "run", RUN_ARGS, env, runner=workload.run_process, long_runner=fast, page_cluster=FakePageCluster(True))
+    for flag in ("--healthy-baseline", "--inject-before-resume", "--require-fault-tracking", "--require-full-cleanup"):
+        assert flag in seen[0]
+    assert seen[0][seen[0].index("--detection-timeout") + 1] == "300"
