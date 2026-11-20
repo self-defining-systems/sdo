@@ -25,6 +25,11 @@ func Add(ctx context.Context, root Root, specFile string, log io.Writer) error {
 	if err != nil {
 		return err
 	}
+	release, err := lockAdds(root)
+	if err != nil {
+		return err
+	}
+	defer release()
 	inv, err := LoadInventory(string(root))
 	if err != nil {
 		return err
