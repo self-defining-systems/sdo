@@ -74,6 +74,20 @@ on. Everything that reads evidence still reads the host copy only.
 `sdo-evidence` claim under `.dev` (`sink.push_paths`, a throwaway pod) and the pods mount it by subPath
 (`SDO_DEV_MOUNT_CLAIM`); `swap` empties the source directories in place and pushes again, so running pods see the change.
 
+### Lanes on EKS (`BENCH_LANE_PROVIDER=eks`)
+
+An EKS lane is reached only through its API, so it takes the pulled-evidence path above (`sink.pull_mode` is true for
+provider `eks` as for `vcluster`) and `eks.py` adds the rest. The lane platform sets `BENCH_LANE_PROVIDER=eks`,
+`BENCH_IMAGE_REGISTRY` (the account's ECR host; optional `BENCH_IMAGE_PREFIX`, `BENCH_IMAGE_MIRROR_PREFIX`,
+`BENCH_IMAGE_TAGS=k=v,...`) and `FUZZOPS_ENTRY_HOST` (a node address the host reaches). `prepare` then
+needs no `FUZZOPS_KIND_CLUSTER`, refuses a cluster whose default StorageClass does not wait for the first consumer
+(`eks.storage_problem`; an EBS volume must be created where its pod runs), pushes `sdo-{controller,responder,script-tools}`
+to ECR through `benchmarks/lanes/eks.py` (`Ecr`, `pin_image`) and installs them by digest. Everything else is the
+kubectl path every lane uses: `idle`, `watch`, `collect`, `teardown`, the golden copy (`fuzzops app snapshot|reset`
+copy volumes through pods) and `swap` (the dev tree goes into the evidence claim). The host builds the images, so it
+needs `docker` and `aws`. Faults whose steps need node access (`NodeLevel` actions: cgroup throttling, patched-image
+builds) are not for these lanes; `python -m benchmarks.fuzzops.eks_faults` derives which from a fuzzops checkout.
+
 `BENCH_OPERATOR` names the baseline directory and the settings (`model`, `effort`, `provider` default `codex`,
 `image_tag` default `fz-<revision[:8]>`, `dev_mount` (default false; needs `image_tag`: the base images) runs the pods from those images with the checkout's Python sources and the host-built `sdo-operator` projected from `$BENCH_EVIDENCE_HOST/.dev` (`SDO_DEV_MOUNT`, `SDO_DEV_MOUNT_PATH`) so a revision needs no image build, `auth_file` default `~/.codex/auth.json`, and an optional `config` object: an
 operator config overlay passed after the baseline's; it may not set `agent.provider`, `agent.model`, `agent.effort`
