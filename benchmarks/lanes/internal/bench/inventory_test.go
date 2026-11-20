@@ -38,8 +38,8 @@ func TestVclusterHostDefaultsItsClusterCommandsAndEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := inv.Hosts["h"]
-	if !h.IsVcluster() || !strings.HasPrefix(h.ClusterCommand(h.ClusterUp, "vc1"), "deploy/vcluster-lane.sh up 'vc1' '/k/vc1'") ||
-		!strings.HasPrefix(h.ClusterCommand(h.ClusterDown, "vc1"), "deploy/vcluster-lane.sh down 'vc1'") {
+	if !h.IsVcluster() || !strings.HasPrefix(h.ClusterCommand(h.ClusterUp, "vc1"), "$LANES_INSTALL/deploy/vcluster-lane.sh up 'vc1' '/k/vc1'") ||
+		!strings.HasPrefix(h.ClusterCommand(h.ClusterDown, "vc1"), "$LANES_INSTALL/deploy/vcluster-lane.sh down 'vc1'") {
 		t.Fatalf("cluster commands %q %q", h.ClusterUp, h.ClusterDown)
 	}
 	env := strings.Join(h.EnvList(), " ")

@@ -123,3 +123,26 @@ func TestLaneResetClearsPrepared(t *testing.T) {
 		t.Errorf("state=%s prepared=%+v", got.State, got.Prepared)
 	}
 }
+
+// A host's cluster_up is a workload/operator command: it runs in the pinned workload checkout, so a checkout-relative
+// script is found, and it learns where the lanes install and the checkout are.
+func TestHostClusterUpRunsInTheWorkloadCheckout(t *testing.T) {
+	r := newRunner(t, presentCluster)
+	r.s.Fuzzops = t.TempDir()
+	r.s.Platform = t.TempDir()
+	if err := os.MkdirAll(filepath.Join(r.s.Fuzzops, "wl", "lanes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "env")
+	script := "#!/bin/sh\nprintf '%s|%s|%s' \"$1\" \"$LANES_INSTALL\" \"$BENCH_WORKLOAD_DIR\" > " + out + "\n"
+	if err := os.WriteFile(filepath.Join(r.s.Fuzzops, "wl", "lanes", "cluster.sh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !r.shell(context.Background(), "cluster-up", "wl/lanes/cluster.sh up", nil) {
+		t.Fatal("a checkout-relative host command did not run")
+	}
+	b, _ := os.ReadFile(out)
+	if want := "up|" + r.s.Platform + "|" + r.s.Fuzzops; string(b) != want {
+		t.Fatalf("got %q, want %q", b, want)
+	}
+}
