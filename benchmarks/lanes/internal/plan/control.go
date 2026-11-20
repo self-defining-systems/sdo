@@ -25,8 +25,7 @@ type Control struct {
 
 // SkipRec is a skipped item: its nodes that are not released are skipped; those in flight finish, or are cancelled.
 type SkipRec struct {
-	At     time.Time `json:"at"`
-	Cancel bool      `json:"cancel,omitempty"`
+	Cancel bool `json:"cancel,omitempty"`
 }
 
 func controlFile(dir string) string { return filepath.Join(dir, "control.json") }
@@ -84,9 +83,6 @@ func ResumePlan(dir string) error {
 // steps are stopped; without, they finish.
 func RemovePlan(dir string, cancel bool) error {
 	return updateControl(dir, func(c *Control) error {
-		if !c.Removed {
-			c.RemovedAt = time.Now().UTC()
-		}
 		c.Removed, c.Paused = true, false
 		c.Cancel = c.Cancel || cancel
 		return nil
@@ -108,9 +104,6 @@ func SkipItem(dir, item string, cancel bool) error {
 			c.Skipped = map[string]SkipRec{}
 		}
 		prev := c.Skipped[item]
-		if prev.At.IsZero() {
-			prev.At = time.Now().UTC()
-		}
 		prev.Cancel = prev.Cancel || cancel
 		c.Skipped[item] = prev
 		return nil
