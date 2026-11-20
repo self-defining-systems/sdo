@@ -63,6 +63,22 @@ func TestInstallExistingParsesTheSourceAndForwardsNoFlag(t *testing.T) {
 	}
 }
 
+// install-existing names the branch SDO commits to and deploys from, as host and operate do, so engineers' pushes to
+// that remote reach a lane installed from existing memory.
+func TestInstallExistingTakesTheSourceBranchRemote(t *testing.T) {
+	config, err := ParseInstallExistingLaunch(existingLaunchArgs("--source-branch-url", "git://up.invalid/app.git", "--source-branch", "sdo-source"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := config.Install.MemoryUpstreamURL + " " + config.Install.MemoryUpstreamBranch; got != "git://up.invalid/app.git sdo-source" {
+		t.Fatalf("source branch = %q", got)
+	}
+	plain, err := ParseInstallExistingLaunch(existingLaunchArgs())
+	if err != nil || plain.Install.MemoryUpstreamURL != "" {
+		t.Fatalf("no flag: %v %q", err, plain.Install.MemoryUpstreamURL)
+	}
+}
+
 func TestControllerLaunchRejectsTheRetiredSourceFlags(t *testing.T) {
 	if _, err := ParseControllerLaunch(controllerLaunchArgs()); err != nil {
 		t.Fatalf("launch without a source flag: %v", err)
