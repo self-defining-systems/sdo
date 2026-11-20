@@ -20,7 +20,7 @@
 #    context named kind-NAME because workloads derive the context from the lane name. The admin kubeconfig stays at
 #    KUBECONFIG.admin (0600).
 #  - the node agent (deploy/eks/node-agent.yaml): a containerd registry mirror to ECR for EKS_MIRROR_UPSTREAMS (default
-#    "docker.io ghcr.io") so app images keep their declared names (CC1, CC9), and the node-write seam (CC4).
+#    "docker.io ghcr.io quay.io registry.k8s.io") so app images keep their declared names (CC1, CC9), and the node-write seam (CC4).
 #  - on any failure after the cluster was created the half-built cluster is deleted, so nothing bills.
 #  - one availability zone (EKS_AZ, default <region>a); gp3 (EBS CSI) as the default StorageClass with
 #    WaitForFirstConsumer; the node-port range open to EKS_NODEPORT_CIDR (default this machine's address); the address
@@ -40,7 +40,7 @@ export AWS_REGION=$REGION AWS_DEFAULT_REGION=$REGION
 PREFIX=${EKS_NAME_PREFIX:-sdo-lane-}
 MIRROR_PREFIX=${EKS_MIRROR_PREFIX:-sdo-mirror}
 IMAGE_PREFIX=${EKS_IMAGE_PREFIX:-sdo}
-UPSTREAMS=${EKS_MIRROR_UPSTREAMS:-docker.io ghcr.io}
+UPSTREAMS=${EKS_MIRROR_UPSTREAMS:-docker.io ghcr.io quay.io registry.k8s.io}
 
 account() {
   local a
