@@ -51,7 +51,7 @@ func TestEnsureGoalSuppliesTheStandardGoalOnce(t *testing.T) {
 	if err != nil || !added {
 		t.Fatalf("EnsureGoal = %v, %v", added, err)
 	}
-	if msg := testutil.Git(t, repo, "log", "-1", "--format=%B"); !strings.Contains(msg, "SDO-Actor: human") {
+	if msg := testutil.Git(t, repo, "log", "-1", "--format=%B"); !strings.Contains(msg, "SDO-Actor: human") || !strings.Contains(msg, "SDO-Validation: passed") {
 		t.Fatalf("goal commit %q", msg)
 	}
 	if _, err := AcceptedHealthRevision(ctx, repo, nil); err != nil {

@@ -46,7 +46,7 @@ func RecordDeploymentSource(ctx context.Context, repository string, source *cont
 	if _, err := gitOutput(ctx, repository, "add", "--force", "--", layout.DeploymentPlanFile); err != nil {
 		return nil, err
 	}
-	message := "sdo: record the deployment plan\n\nSDO-Actor: human\nSDO-Phase: initial\nSDO-Origin: install-existing"
+	message := InstallCommitMessage("sdo: record the deployment plan")
 	if _, err := gitOutput(ctx, repository, "commit", "-m", message, "--", layout.DeploymentPlanFile); err != nil {
 		return nil, err
 	}
