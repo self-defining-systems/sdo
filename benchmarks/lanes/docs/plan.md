@@ -108,7 +108,14 @@ alarms: {factor: 2, idle_lane: 10m, arm_stall: 90m, hook: "notify-send lanes \"$
   `unskip` stops skipping new nodes; those already skipped stay skipped. `--cancel` (`remove --keep`, `skip`) also cancels the
   runs in flight: the experiment is removed (its queued runs are dropped; a run already on a lane finishes, as with
   `lanes remove`) and running steps get SIGTERM; the cancelled node is skipped with the reason. `plan status` shows
-  `paused`, `removed, draining` and the skipped items.
+  `paused`, `removed, draining` and the skipped items. `lanes plan retry NAME ITEM|NODE` (or `NAME --all-parked`) un-parks
+  after the cause is fixed: it clears the item's park and failure counts (a fresh first failure reruns again, a second
+  parks again) and requeues its parked and failed nodes, and the nodes skipped because an input never came, with the
+  same inputs: artifact edges are re-resolved and re-verified at release. The attempt number keeps growing, so
+  experiment names (`-x<n>`) and result rows stay unique. It refuses a node that is done or in flight, and an item
+  with nothing parked or failed. Like the other commands it writes only `control.json` (a request with an id); the
+  engine applies it once, logs it in `state.json` (`retried`: when, and what the park was) and reopens a finished
+  plan, so a manager restart loses nothing. `plan status` shows `retried: <node> retried at <t> (was parked: <reason>)`.
 - **Commands.** `lanes plan add FILE [--dry-run [--json]]` (`--dry-run` runs every check of `add` -- parse, items, groups, every item's rendered spec through the spec validator and the inventory, a taken name -- and prints the items, arms, edges, steps and the nodes in run order with their experiment names; nothing is stored under the root), `lanes plan status [NAME] [--json]` (per plan: the state -- running, paused, removed, complete -- and an
   `items:` line that puts every item in one state: done, in flight, queued, blocked, parked, skipped or failed; per arm:
   done, in-flight, queued, blocked, failed, skipped, parked nodes; every parked, failed and skipped item with its reason;

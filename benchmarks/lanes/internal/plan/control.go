@@ -25,6 +25,8 @@ type Control struct {
 	Archive   string             `json:"archive,omitempty"`
 	RemovedAt time.Time          `json:"removed_at,omitempty"`
 	Skipped   map[string]SkipRec `json:"skipped,omitempty"`
+	// Retries are the `plan retry` requests; the engine applies each once (State.RetriesApplied).
+	Retries []RetryReq `json:"retries,omitempty"`
 }
 
 // SkipRec is a skipped item: its nodes that are not released are skipped; those in flight finish, or are cancelled.

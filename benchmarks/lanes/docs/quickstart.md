@@ -108,6 +108,7 @@ lanes plan pause demo-1              # release nothing new; runs in flight finis
 lanes plan resume demo-1
 lanes plan skip demo-1 b             # skip an item's unreleased nodes (add --cancel to stop its runs too)
 lanes plan unskip demo-1 b
+lanes plan retry demo-1 b            # un-park an item (or one node id) after fixing the cause; --all-parked for every one
 lanes plan remove demo-1             # clean up and free the name; add --keep to only retire it
 ```
 
@@ -144,8 +145,10 @@ No alarm kills or resets anything; it stops new work on the host or lane.
 Parked items. A node that fails twice with the same reason parks its item: nothing more of it is released and its
 dependents are skipped. `lanes plan status` lists each parked item and its reason. Reasons are the failure kind:
 `submit`, `spec` (the template did not render), `artifact:<kind>` (a verify failed), `source-mismatch` (a run's revision
-contradicts its pin), `lost` (the experiment vanished) or a run failure. Fix the cause, then `plan remove` and add the
-corrected plan (the name is free at once); finished results stay in `plans/.removed/`.
+contradicts its pin), `lost` (the experiment vanished) or a run failure. Fix the cause, then `lanes plan retry NAME ITEM`
+(or `NAME --all-parked`): the park is cleared and the nodes run again with their artifact inputs re-resolved; `plan status`
+shows `retried at <t> (was parked: <reason>)`. A cause in the plan itself needs `plan remove` and a corrected plan (the
+name is free at once); finished results stay in `plans/.removed/`.
 
 Where things are, under the root:
 

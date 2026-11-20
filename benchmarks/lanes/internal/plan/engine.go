@@ -73,12 +73,16 @@ func (e *Engine) Tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if st.Complete {
-		return nil
-	}
 	ctl, err := LoadControl(e.Dir)
 	if err != nil {
 		return err
+	}
+	retried := e.applyRetries(st, ctl) // before the Complete check: a retry reopens a finished plan
+	if st.Complete {
+		if retried {
+			return writeJSONFile(stateFile(e.Dir), st)
+		}
+		return nil
 	}
 	e.observe(ctx, st)
 	e.verifyPending(ctx, st)
