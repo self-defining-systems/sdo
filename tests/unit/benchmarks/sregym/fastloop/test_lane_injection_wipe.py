@@ -170,5 +170,7 @@ def test_fresh_up_deploy_is_a_known_clean_lane_so_the_first_row_keeps_the_app(tm
     kubeconfig = tmp_path / "worker_0.kubeconfig"
     state = LaneInjectionState(kubeconfig, "hotel")
     assert state.reason() is not None  # a lane nobody recorded is unknown and would be recreated
-    _record_fresh_deploy(SimpleNamespace(kubeconfig=kubeconfig, namespace="hotel"))
+    _record_fresh_deploy(
+        SimpleNamespace(kubeconfig=kubeconfig, namespace="hotel", baseline_path=tmp_path / "b.json"), None
+    )
     assert state.reason() is None

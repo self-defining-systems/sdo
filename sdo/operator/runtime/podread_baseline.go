@@ -31,14 +31,18 @@ import (
 // application varies, not only the moment the reference was taken; readings
 // of a stretch that ended unhealthy never enter it.
 //
-// The holder is in-memory controller state, never written to operational
-// memory or persisted elsewhere: a restarted controller starts empty, its
-// Go-installed store readers report their stores as coverage gaps instead of
-// judging them, and the reference is captured again once health has settled
-// for Settle after the restart. Persisting it would add a store whose
-// readings could outlive the deployment they describe; re-capturing after a
-// settle needs no new state and has the same guard against absorbing a fault
-// as the first capture.
+// Promoted store-state baselines (and their history) survive a controller
+// restart when State is set (StoreBaselineState): each promotion writes them
+// to per-cluster controller state below the repository mount, bound to the
+// accepted source inputs, and a restarted controller adopts each one on its
+// first reading of the same store, so a RestoreStoreItem keeps its reference
+// and the controller does not re-wait a settle after every restart, upgrade or
+// reschedule. A record is reused only for the same store state it was taken
+// from: the same accepted source inputs, query declaration and store Pods
+// (names and UIDs); anything else is discarded and the store is baselined
+// again by a settled healthy stretch. Other pod reads, which may read
+// arbitrary application files, stay in memory only, as does the restore text
+// (StorePayloads), which an adopted baseline captures again from the store.
 type PodReadBaseline struct {
 	mu      sync.RWMutex
 	results map[string]podread.Result
@@ -54,6 +58,12 @@ type PodReadBaseline struct {
 	// Payloads, when set, captures the restore text of each promoted
 	// store-state reading (StorePayloads).
 	Payloads *StorePayloads
+	// State, when set, persists the promoted store-state baselines
+	// (StoreBaselineState, loaded by Restore).
+	State *StoreBaselineState
+	// restored holds persisted store baselines awaiting their first current
+	// reading (adoptRestored).
+	restored map[string]restoredStore
 }
 
 // NewPodReadBaseline returns an empty holder whose promotions settle for
@@ -136,6 +146,12 @@ func (b *PodReadBaseline) promote(results map[string]podread.Result, stretch map
 	}
 	b.mu.Unlock()
 	b.Payloads.promoted(promoted)
+	for id := range promoted {
+		if _, _, ok := storestate.ParseQueryID(id); ok {
+			b.persist()
+			break
+		}
+	}
 }
 
 // withSamples appends each result's complete readings to samples, skipping a
@@ -176,11 +192,13 @@ func spreadHistory(readings []podread.Reading, perPod int) []podread.Reading {
 }
 
 // attach sets each result's Baseline to the promoted readings of the same
-// query declaration.
+// query declaration, after deciding any restored store baseline the results
+// read (adoptRestored).
 func (b *PodReadBaseline) attach(results map[string]podread.Result) {
 	if b == nil {
 		return
 	}
+	b.adoptRestored(results)
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	for id, result := range results {

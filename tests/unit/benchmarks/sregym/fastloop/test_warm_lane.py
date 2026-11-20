@@ -232,6 +232,9 @@ def test_changed_runtime_settings_cannot_claim_controller_reuse(tmp_path: Path, 
     )
     state.save(env.state_path)
     LaneInjectionState(env.kubeconfig, env.namespace).recreated()
+    from benchmarks.sregym.fastloop import warm_environment
+
+    monkeypatch.setattr(warm_environment, "planned_application_unchanged", lambda *_args: None)
     ops = SimpleNamespace(
         controller_pod=lambda _: SimpleNamespace(name="controller", uid="controller-1"),
         runtime_state=lambda _: {"version": "sdo.controller/v1"},

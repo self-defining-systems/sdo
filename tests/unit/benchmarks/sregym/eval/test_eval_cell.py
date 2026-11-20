@@ -125,9 +125,10 @@ def test_settle_gives_up_at_its_cap_and_reports_no_healthy_time(tmp_path: Path) 
     assert row.time_to_mitigate_s is None
 
 
-def test_vanilla_cells_resolve_no_snapshot(tmp_path: Path) -> None:
+def test_vanilla_cells_resolve_the_base_snapshot(tmp_path: Path) -> None:
+    """Source-equal baseline: a vanilla cell runs the application source of the SDO base snapshot."""
     clock = Clock()
     config = make_config(tmp_path)
     ctx, backend = make_context(config, clock)
     run_cell(first(config, "vanilla"), ctx, "hotel-lane")
-    assert backend.snapshots == [None]
+    assert backend.snapshots == ["commit-base"]

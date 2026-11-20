@@ -30,6 +30,21 @@ class TokenRow(BaseModel):
     usd: float | None = None
 
 
+def cost_note(online: TokenRow, *, resolution_path: str | None, no_page: bool, pending: bool = False) -> str | None:
+    """Why a row's online cost is not a positive number; ``None`` when it is one. A cost is never silently empty."""
+    if pending:
+        return "pending: the sealed row carries the cost once the closing turn has drained"
+    if online.usd is not None and online.usd > 0:
+        return None
+    if resolution_path == "deterministic":
+        return "playbook-applied: the automatic stage fixed it, no agent turn"
+    if no_page:
+        return "no-page: SDO opened no incident, so no agent turn"
+    if online.usd is None:
+        return "cost-unavailable: accounting returned no USD for a paged row"
+    return "no-agent-usage: accounting found no responder requests"
+
+
 class ResultRow(BaseModel):
     model_config = ConfigDict(extra="forbid")
     schema_: str = ROW_SCHEMA
@@ -40,6 +55,9 @@ class ResultRow(BaseModel):
     arm: str
     snapshot: str | None = None
     snapshot_commit: str | None = None
+    #: Identity of the application source the row ran (tree outside SDO memory plus ``.sdo/deployment``),
+    #: verified against the live app at row setup. Rows with equal identities ran the same application.
+    app_source: str | None = None
     lane: str | None = None
     status: CellStatus
     #: Why a cell is not gradable (missing transcripts, evidence gate) or errored.
@@ -69,6 +87,8 @@ class ResultRow(BaseModel):
     overhead_seconds: float | None = None
     online: TokenRow = TokenRow()
     offline: TokenRow = TokenRow()
+    #: The reason the online cost is not positive (``cost_note``); ``None`` when the row paid for agent requests.
+    cost_note: str | None = None
     harm: str | None = None
     memory_commit_after: str | None = None
     # The row is the online part, claim to its end (outcome committed and graded); everything after it drains on the

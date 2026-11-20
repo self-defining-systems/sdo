@@ -97,6 +97,7 @@ var operatorOwned = map[string]string{
 	"runtime/routing_capture.go":                       reasonLedger,
 	"runtime/store_backups.go":                         "controller-owned backup state under .sdo-runtime/backups on the repository volume, keyed by incident digest; never a checkout and never published",
 	"runtime/source_inventory_report.go":               reasonLedger,
+	"runtime/store_baseline_state.go":                  "controller-owned promoted store-baseline state below the lane-private repository volume, never a checkout and never published",
 	"safefs/safefs.go":                                 reasonSafefs,
 	"shellpath/kubernetes.go":                          reasonScratch,
 	"shellpath/repository.go":                          reasonScratch,

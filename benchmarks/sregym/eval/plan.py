@@ -120,7 +120,7 @@ class Cell(BaseModel):
     problem: str
     arm: Arm
     pass_: PlanPass
-    #: Memory snapshot the cell runs on (``base``, ``merged``, ``own:<problem>``); ``None`` for vanilla.
+    #: Memory snapshot the cell runs on (``base``, ``merged``, ``own:<problem>``); vanilla runs ``base``.
     snapshot: str | None
     #: Position in the app's recorded random order.
     order: int = Field(ge=0)
@@ -186,9 +186,10 @@ def build_plan(config: EvalConfig) -> Plan:
                 continue
             for index, problem in enumerate(shuffled):
                 snapshot = {
-                    "vanilla": None,
-                    #: Stock Claude Code on the onboarded source (the lane runs the snapshot's source, no SDO).
-                    "vanilla-eq": BASE,
+                    # Source-equal baseline: vanilla runs the SDO base's application source, so it is
+                    # source-equal to pass1 only. pass2/pass2-own plan later commits that may carry source
+                    # repairs; compare their rows with vanilla by ``app_source``, not by arm.
+                    "vanilla": BASE,
                     "pass1": BASE,
                     "pass2": MERGED,
                     "pass2-own": own_snapshot(problem),

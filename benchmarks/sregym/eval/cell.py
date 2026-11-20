@@ -24,7 +24,7 @@ from benchmarks.sregym.eval.closing import (
     offline_tokens_from_evidence,
 )
 from benchmarks.sregym.eval.health import Prober, ProbeResult, ProbeSample, assess_health
-from benchmarks.sregym.eval.results import ResultRow, TokenRow, write_manifest
+from benchmarks.sregym.eval.results import ResultRow, TokenRow, cost_note, write_manifest
 from benchmarks.sregym.eval.timings import PhaseTimings
 
 if TYPE_CHECKING:
@@ -76,6 +76,8 @@ class ArmResult:
     phase_seconds: Mapping[str, float] = field(default_factory=dict)
     #: Head of the lane's accepted memory after the cell (SDO arm); the first-try delta is taken from it.
     memory_commit_after: str | None = None
+    #: Identity of the application source the row verified it ran (both arms); ``None`` when unverified.
+    app_source: str | None = None
     error: str | None = None
 
 
@@ -443,6 +445,7 @@ def _seal(
             "recovery_s": _round(closing.recovery_s),
             "closing_status": closing.status,
             "closing_decision": closing.decision,
+            "cost_note": cost_note(row.online, resolution_path=row.resolution_path, no_page=row.no_page),
         }
     )
     if closing.status == "error" and final.status != "error":
@@ -519,6 +522,7 @@ def _finish(
         arm=cell.arm,
         snapshot=cell.snapshot,
         snapshot_commit=snapshot_commit,
+        app_source=result.app_source if result else None,
         lane=lane.id if lane else None,
         status=status,
         reason=reason,
@@ -544,6 +548,12 @@ def _finish(
         overhead_seconds=timing_document["overhead_seconds"],
         online=accounting.online,
         offline=TokenRow() if closing_pending else accounting.offline,
+        cost_note=cost_note(
+            accounting.online,
+            resolution_path=result.resolution_path if result else None,
+            no_page=t_page is None,
+            pending=closing_pending,
+        ),
         harm=verdict.harm if verdict else None,
         memory_commit_after=None if closing_pending else (result.memory_commit_after if result else None),
         row_wall_s=_round(row_wall_s),

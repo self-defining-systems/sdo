@@ -338,6 +338,8 @@ class Tier2Trigger(StrEnum):
     CURRENT_ROW_DATA_FAULTS = "current_row_data_faults"
     LANE_LAST_INJECTION_DATA_FAULTS = "lane_last_injection_data_faults"
     LANE_INJECTION_UNKNOWN = "lane_injection_unknown"
+    ACCEPTED_SOURCE_CHANGED = "accepted_source_changed"
+    DEPLOYED_APPLICATION_CHANGED = "deployed_application_changed"
     RESTORE_INVARIANT = "restore_invariant"
     PODS_UNHEALTHY = "pods_unhealthy"
 
@@ -529,6 +531,7 @@ def tier2_reason(
     *,
     lane_state: LaneInjectionState | None = None,
     current_data_faults: Sequence[str] = (),
+    source_change: Callable[[], Tier2Reason | None] | None = None,
 ) -> Tier2Reason | None:
     """Why the application must be recreated, or ``None`` when the warm app stays.
 
@@ -555,7 +558,8 @@ def tier2_reason(
     stuck = unhealthy_pods()
     if stuck:
         return Tier2Reason(Tier2Trigger.PODS_UNHEALTHY, "pods unhealthy after the restore: " + ", ".join(stuck))
-    return None
+    # Last, on a settled app: whether it is still the deploy of the row's application source.
+    return source_change() if source_change is not None else None
 
 
 @dataclass(frozen=True)

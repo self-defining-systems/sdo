@@ -18,10 +18,12 @@ const storePayloadTimeout = 20 * time.Second
 // StorePayloads holds the restore text of each store Pod, captured when the
 // pod-read baseline promotes that Pod's healthy store-state reading: the full
 // validator and index text a RestoreStoreItem puts back, which the value-free
-// read keeps only as a digest. Like the baseline it is in-memory controller
-// state with the same lifetime, never written to operational memory or
-// evidence; it never holds a credential. Each entry carries the fact value it
-// describes, so a restore uses it only while it matches the baseline.
+// read keeps only as a digest. It is in-memory controller state, never
+// written to operational memory, evidence or the persisted store baselines
+// (StoreBaselineState); a baseline a restarted controller adopts captures it
+// again from the live store. It never holds a credential. Each entry carries
+// the fact value it describes, so a restore uses it only while it matches the
+// baseline.
 type StorePayloads struct {
 	// Run executes one command in a Pod identified by uid.
 	Run func(ctx context.Context, uid string, command program.Command, stdout io.Writer) (int32, error)

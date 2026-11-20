@@ -107,8 +107,12 @@ class AcceptedSource:
     manifest_paths: tuple[str, ...] = DEFAULT_MANIFEST_PATHS
     # ProtoJSON DeploymentSource; ``None`` means the raw renderer over ``manifest_paths``.
     renderer_source: dict[str, Any] | None = None
+    # A revision fixed by the caller (a row's application revision); ``None`` means the checked-out head.
+    pinned_revision: str | None = None
 
     def __post_init__(self) -> None:
+        if self.pinned_revision is not None and not _REVISION.match(self.pinned_revision):
+            raise ValueError(f"invalid pinned accepted revision {self.pinned_revision!r}")
         if not self.namespace:
             raise ValueError("accepted source requires the application namespace")
         if not self.manifest_paths:
@@ -132,6 +136,7 @@ class AcceptedSource:
             environment.namespace,
             manifest_paths_for_environment(environment),
             deployment_source_for_environment(environment),
+            getattr(environment, "app_revision", None),
         )
 
     def _git(self, *args: str) -> str:
@@ -146,6 +151,8 @@ class AcceptedSource:
 
     @cached_property
     def revision(self) -> str:
+        if self.pinned_revision is not None:
+            return self._git("rev-parse", "--verify", f"{self.pinned_revision}^{{commit}}").strip()
         value = self._git("rev-parse", "HEAD").strip()
         if not _REVISION.match(value):
             raise ValueError(f"accepted workspace has no commit: {self.workspace}")
