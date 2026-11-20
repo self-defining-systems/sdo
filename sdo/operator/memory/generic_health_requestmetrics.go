@@ -48,8 +48,14 @@ func plannedRequestMetrics(root string) (requestmetrics.Config, bool) {
 	rule := requestmetrics.DefaultRule()
 	cfg := requestmetrics.Config{Rule: rule}
 	used := map[string]bool{}
+	// exposed marks a service some operation enters as a user call; a service
+	// only background work enters (internal entries) is judged as background.
+	exposed := map[string]bool{}
 	for _, op := range parsed.Operations {
 		used[op.Entry.Service] = true
+		if !parsed.Internal(op) {
+			exposed[op.Entry.Service] = true
+		}
 	}
 	var services []string
 	for s := range used {
@@ -70,7 +76,7 @@ func plannedRequestMetrics(root string) (requestmetrics.Config, bool) {
 			RouteLabel: e.Labels.Route, MethodLabel: e.Labels.Method, StatusLabel: e.Labels.Status,
 			Recent:   e.IncreaseByOperation("30s", ""),
 			Baseline: e.IncreaseByOperation(requestMetricsBaselineWindow, requestMetricsBaselineOffset),
-			Presence: e.SeriesByOperation(),
+			Presence: e.SeriesByOperation(), Background: !exposed[s],
 		})
 	}
 	for _, op := range parsed.Operations {
@@ -113,8 +119,8 @@ func prepareRequestMetricsDetector(root string, enabled bool) error {
 func requestMetricsSource(cfg requestmetrics.Config) string {
 	var entries, operations strings.Builder
 	for _, e := range cfg.Entries {
-		fmt.Fprintf(&entries, "\t\t{Service: %q, Metric: %q, Selector: %q, RouteLabel: %q, MethodLabel: %q, StatusLabel: %q, ServerErrors: %q,\n\t\t\tRecent: %q, Baseline: %q, Presence: %q},\n",
-			e.Service, e.Metric, e.Selector, e.RouteLabel, e.MethodLabel, e.StatusLabel, e.ServerErrors, e.Recent, e.Baseline, e.Presence)
+		fmt.Fprintf(&entries, "\t\t{Service: %q, Metric: %q, Selector: %q, RouteLabel: %q, MethodLabel: %q, StatusLabel: %q, ServerErrors: %q,\n\t\t\tRecent: %q, Baseline: %q, Presence: %q, Background: %t},\n",
+			e.Service, e.Metric, e.Selector, e.RouteLabel, e.MethodLabel, e.StatusLabel, e.ServerErrors, e.Recent, e.Baseline, e.Presence, e.Background)
 	}
 	for _, o := range cfg.Operations {
 		fmt.Fprintf(&operations, "\t\t{ID: %q, Service: %q, Route: %q, Method: %q, Unmeasurable: %q},\n", o.ID, o.Service, o.Route, o.Method, o.Unmeasurable)
