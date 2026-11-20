@@ -1,0 +1,5 @@
+#!/bin/sh
+# ip -br link: answers at once; ip-delay holds the answer that many seconds, ip-hang never answers (a jammed rtnl lock).
+[ -f "$FAKE_STATE/ip-hang" ] && exec sleep 60
+[ -f "$FAKE_STATE/ip-delay" ] && sleep "$(cat "$FAKE_STATE/ip-delay")"
+echo "lo UNKNOWN 127.0.0.1/8"

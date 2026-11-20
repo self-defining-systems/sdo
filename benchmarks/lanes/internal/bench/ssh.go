@@ -21,6 +21,7 @@ type sshHost struct {
 	name    string
 	h       Host
 	fuzzops map[string]map[string]string
+	health  HealthThresholds
 }
 
 // sshCommand is the ssh program ($FUZZOPS_BENCH_SSH, default ssh); rsync uses it too.
@@ -74,6 +75,12 @@ func (h sshHost) Probe(ctx context.Context, steps map[string]string, fuzzops []s
 	if len(fuzzops) == 0 {
 		return Probe{}, fmt.Errorf("no fuzzops checkout on %s", h.name)
 	}
+	// The canary goes first, with its own short bound: a host whose kernel is jammed must not hold the manager for the
+	// two minutes an ordinary call may take, and nothing else is asked of it.
+	canary, cerr := h.canary(ctx)
+	if cerr != nil {
+		return Probe{Canary: canary}, cerr
+	}
 	args := []string{shellQuote(filepath.Join(fuzzops[0], "bin", "fuzzops-bench")), "probe", "--staging", shellQuote(h.h.Staging),
 		"--fuzzops", shellQuote(strings.Join(fuzzops, ","))}
 	var lanes []string
@@ -92,6 +99,7 @@ func (h sshHost) Probe(ctx context.Context, steps map[string]string, fuzzops []s
 	if err := json.Unmarshal(out, &p); err != nil {
 		return Probe{}, fmt.Errorf("probe on %s: %v: %q", h.name, err, out)
 	}
+	p.Canary = canary
 	if p.Free <= 0 {
 		// The probe ran the first pin's binary, which may predate free_bytes; the disk floor must not depend on it.
 		if free, err := h.freeBytes(ctx); err == nil {
@@ -99,6 +107,30 @@ func (h sshHost) Probe(ctx context.Context, steps map[string]string, fuzzops []s
 		}
 	}
 	return p, nil
+}
+
+// canary takes the host health reading over ssh, bounded by the host's probe timeout.
+func (h sshHost) canary(ctx context.Context) (*Canary, error) {
+	timeout := h.health.ProbeTimeout
+	if timeout <= 0 {
+		timeout = HostHealthConf{}.Thresholds().ProbeTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	f := strings.Fields(h.sshForRsync())
+	cmd := exec.CommandContext(ctx, f[0], append(f[1:], h.h.SSH, canaryScript)...)
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	cmd.WaitDelay = time.Second
+	if err := cmd.Run(); err != nil {
+		return &Canary{Failed: fmt.Sprintf("health probe on %s failed or timed out after %s: %v", h.name, timeout, err), HungTasks: -1},
+			fmt.Errorf("ssh %s: %v: %s", h.h.SSH, err, strings.TrimSpace(errb.String()))
+	}
+	c, err := parseCanary(out.Bytes())
+	if err != nil {
+		return &Canary{Failed: err.Error(), HungTasks: -1}, err
+	}
+	return c, nil
 }
 
 // freeBytes is the free space of the staging filesystem, read with df so that no pinned binary is involved.

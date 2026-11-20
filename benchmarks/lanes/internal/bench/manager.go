@@ -65,6 +65,8 @@ type Manager struct {
 	// crash is why a lane gets no new steps (its pods crash-loop, crashloop.go); crashTrack are its restart counters.
 	crash      map[string]string
 	crashTrack map[string]*crashTracker
+	// health is each host's health gate (hosthealth.go), kept across passes.
+	health map[string]*healthState
 
 	reservations map[string]Reservation
 	drift        map[string]string
@@ -138,9 +140,9 @@ func (m *Manager) rawOps(host string) HostOps {
 		if bin == "" {
 			bin, _ = os.Executable()
 		}
-		return localHost{staging: h.Staging, bin: bin}
+		return localHost{staging: h.Staging, bin: bin, health: h.Health.Thresholds()}
 	}
-	return sshHost{name: host, h: h, fuzzops: m.inv.Checkouts.Fuzzops}
+	return sshHost{name: host, h: h, fuzzops: m.inv.Checkouts.Fuzzops, health: h.Health.Thresholds()}
 }
 
 // stepsOn is the step of each lane of host that has one in flight, or given up as an orphan (lane -> step id).
@@ -254,6 +256,15 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 			}
 		}
 		st := HostStatus{At: m.now().UTC(), Load5: pr.Load5, Free: pr.Free, Inflight: pr.Inflight}
+		switch {
+		case pr.Canary != nil:
+			m.observeHealth(name, pr.Canary)
+		case err != nil:
+			m.observeHealth(name, &Canary{Failed: err.Error(), HungTasks: -1})
+		}
+		if m.hostBlock(name) != "" {
+			st.Unhealthy = m.health[name].Reason()
+		}
 		if err != nil {
 			since := m.markDown(name)
 			st.Error, st.DownSince = err.Error(), since
@@ -307,17 +318,23 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 	for _, l := range m.sortedLanes() {
 		m.unhold(ctx, l)
 	}
+	// admit: the hosts that may take new work (reachable and healthy). An unhealthy host keeps what it runs; its
+	// finished steps are still adopted and its dead ones recovered, but nothing new starts on it.
+	admit := map[string]bool{}
+	for name := range reachable {
+		admit[name] = m.admitted(name)
+	}
 	for _, l := range m.sortedLanes() {
-		if reachable[l.Host] && l.Step == nil && l.State == LaneReady {
+		if admit[l.Host] && l.Step == nil && l.State == LaneReady {
 			m.continueSeq(ctx, l)
 		}
 	}
 	m.resetDown()
 	m.gcWanted = map[string]bool{}
 	gcAll := fileExists(m.Root.path("gc.request"))
-	m.assign(ctx, reachable)
+	m.assign(ctx, admit)
 	for _, l := range m.sortedLanes() {
-		if !reachable[l.Host] || l.Step != nil || l.State != LaneFree {
+		if !admit[l.Host] || l.Step != nil || l.State != LaneFree {
 			continue
 		}
 		if m.churnFull(l.Host) {
@@ -937,6 +954,8 @@ func (m *Manager) buildBlock(h string, s Spec, reachable map[string]bool) string
 	switch {
 	case !slices.Contains(s.Hosts, h):
 		return fmt.Sprintf("host %s is not in the spec's hosts", h)
+	case m.hostBlock(h) != "":
+		return m.hostBlock(h)
 	case !slices.Contains(m.inv.UsableHosts(s), h):
 		return fmt.Sprintf("host %s has no checkout of the spec's pinned fuzzops or hooks", h)
 	case !reachable[h]:
