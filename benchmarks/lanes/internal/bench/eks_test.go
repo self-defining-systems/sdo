@@ -5,6 +5,7 @@ package bench
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -550,5 +551,54 @@ func TestEksLaneUpFailureOfAnAttachedClusterDeletesIt(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(s.state, "cluster-sdo-lane-eks1")); statErr == nil {
 		t.Errorf("the attached cluster was left:\n%s\n%s", out, s.log())
+	}
+}
+
+// A host's max_builds bounds a kind host's churn; an eks host builds every lane it has at once.
+func TestEksBuildLimitIsTheLaneCapNotMaxBuilds(t *testing.T) {
+	m := eksManager(t)
+	h := m.inv.Hosts["e"]
+	if h.MaxBuilds != 2 || h.BuildLimit() != 3 {
+		t.Fatalf("max_builds %d, build limit %d, want 2 and the lane cap 3", h.MaxBuilds, h.BuildLimit())
+	}
+	if (Host{MaxBuilds: 2, Clusters: []string{"a", "b", "c"}}).BuildLimit() != 2 {
+		t.Fatal("a kind host's build limit is its max_builds")
+	}
+}
+
+// A plan with several items starts every lane's cluster-up at once, not one after the other: the cold up (about 20 minutes
+// on AWS) is paid once per batch.
+func TestBenchEksLanesAreMadeInParallel(t *testing.T) {
+	l := newLab(t)
+	inv, err := os.ReadFile(l.root.path("hosts.yaml"))
+	must(t, err)
+	s := strings.Replace(string(inv), "clusters: [c1]}", `clusters: [c1, c2], provider: eks, eks: {region: us-west-2, account: "123456789012", budget_per_hour: 3, vcpu_quota: 32, idle_timeout: 1s}}`, 1)
+	must(t, os.WriteFile(l.root.path("hosts.yaml"), []byte(s), 0o644))
+	t.Setenv("PATH", testdata("fakeeks")+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKE_EKS_CREATE_SECONDS", "2")
+	t.Setenv("HOST_CANARY_PROCSYS", "/nonexistent")
+	l.add("p1", l.hooked, "a@x", "[[1]]", 0)
+	l.add("p2", l.hooked, "a@x", "[[1]]", 0)
+	l.until("both runs done", func() bool { return l.exp("p1").Count(0).Done == 1 && l.exp("p2").Count(0).Done == 1 })
+	times := l.read("eks-times.log")
+	var starts, ends []float64
+	for _, ln := range strings.Split(strings.TrimSpace(times), "\n") {
+		f := strings.Fields(ln)
+		if len(f) != 3 {
+			continue
+		}
+		var v float64
+		fmt.Sscan(f[2], &v)
+		if f[0] == "create-start" {
+			starts = append(starts, v)
+		} else {
+			ends = append(ends, v)
+		}
+	}
+	if len(starts) != 2 || len(ends) != 2 {
+		t.Fatalf("want 2 clusters made, got:\n%s", times)
+	}
+	if max(starts[0], starts[1]) >= min(ends[0], ends[1]) {
+		t.Fatalf("the second cluster-up began after the first ended (serial):\n%s", times)
 	}
 }

@@ -105,6 +105,19 @@ func (e *HostEKS) Registry() string {
 	return e.Account + ".dkr.ecr." + e.Region + ".amazonaws.com"
 }
 
+// BuildLimit is how many builds (and releases, resets) may run on the host at once. A kind host shares one kernel's
+// network-namespace lock, so max_builds bounds its churn; each eks lane is its own cluster and its builds wait on AWS,
+// not on this machine, so a plan's lanes are made in parallel, bounded by max_lanes, the vCPU quota and the budget.
+func (h Host) BuildLimit() int {
+	if h.IsEks() {
+		if h.EKS.MaxLanes > 0 {
+			return h.EKS.MaxLanes
+		}
+		return max(len(h.Clusters), 1)
+	}
+	return h.MaxBuilds
+}
+
 // Idle is the idle timeout (default DefaultEksIdleTimeout).
 func (e *HostEKS) Idle() time.Duration {
 	d, err := time.ParseDuration(e.IdleTimeout)
