@@ -31,6 +31,9 @@ eksctl)
   "get cluster") [ -e "$S/cluster-$4" ] || exit 1;;
   "create cluster")
     cfg=$4; n=$(name_of "$cfg"); kc=$6
+    echo "create-start $n $(date +%s.%N)" >> "$S/eks-times.log"
+    [ -z "${FAKE_EKS_CREATE_SECONDS:-}" ] || sleep "$FAKE_EKS_CREATE_SECONDS"
+    echo "create-end $n $(date +%s.%N)" >> "$S/eks-times.log"
     cp "$cfg" "$S/cfg-$n"; touch "$S/cluster-$n"
     echo "apiVersion: v1" > "$kc"
     [ -z "${FAKE_EKS_FAIL_CREATE:-}" ] || { echo "eksctl: stack failed" >&2; exit 1; };;
@@ -49,6 +52,7 @@ kubectl)
   *" get daemonset aws-node"*) [ -n "${FAKE_NO_NETPOL:-}" ] || echo "[--enable-network-policy=true]";;
   *" get namespace kube-system"*) echo 0b1c-uid;;
   *" get pods -l app.kubernetes.io/name=sdo-lane-node-agent"*) echo "agent-1 agent-2";;
+  *"create configmap sdo-lane-prepull"*) printf 'kind: ConfigMap\nname: sdo-lane-prepull\n%s\n' "$*" ;;
   *" apply -f -"*) cat >> "$S/applied.yaml";;
   esac;;
 docker) :;;

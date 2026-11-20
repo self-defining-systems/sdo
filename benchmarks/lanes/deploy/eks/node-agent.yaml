@@ -37,26 +37,53 @@ spec:
             - -c
             - |
               set -u
+              # prepull: pull every image of the lane's list (ConfigMap sdo-lane-prepull, key images, one reference per
+              # line; `eks-lane.sh prepull` writes it) into the node's containerd through the mirror, once per node, so the
+              # first row does not pay the pulls. A node that joins later pulls the same list as soon as its agent starts.
+              prepull() {
+                [ -s /prepull/images ] && [ -x /usr/bin/ctr ] || return 0
+                while read -r ref; do
+                  [ -n "$ref" ] || continue
+                  grep -qxF "$ref" /lane/prepulled 2>/dev/null && continue
+                  user=""
+                  case $ref in
+                    *.dkr.ecr.*.amazonaws.com/*) user="--user AWS:$(aws ecr get-login-password --region "@REGION@")";;
+                  esac
+                  t0=$(date +%s)
+                  if ctr -n k8s.io images pull --hosts-dir /certs $user "$ref" > /lane/prepull.log 2>&1; then
+                    echo "$ref" >> /lane/prepulled
+                    echo "prepulled $ref in $(( $(date +%s) - t0 )) s"
+                  else
+                    echo "prepull of $ref failed: $(tail -c 200 /lane/prepull.log)" >&2
+                  fi
+                done < /prepull/images
+              }
+              refreshed=0
               while true; do
-                if token=$(aws ecr get-login-password --region "@REGION@"); then
-                  auth=$(printf 'AWS:%s' "$token" | base64 | tr -d '\n')
-                  for up in @UPSTREAMS@; do
-                    case $up in
-                      docker.io) server=https://registry-1.docker.io;;
-                      *) server=https://$up;;
-                    esac
-                    mirror=https://@ECR@/v2/@PREFIX@/$up
-                    mkdir -p /certs/$up
-                    printf 'server = "%s"\n\n[host."%s"]\n  capabilities = ["pull", "resolve"]\n  override_path = true\n  [host."%s".header]\n    Authorization = "Basic %s"\n' \
-                      "$server" "$mirror" "$mirror" "$auth" > /certs/$up/hosts.toml.tmp
-                    mv /certs/$up/hosts.toml.tmp /certs/$up/hosts.toml
-                  done
-                  date +%s > /certs/.sdo-mirror-refreshed
-                  sleep 21600
-                else
-                  echo 'ECR token refresh failed; retrying' >&2
-                  sleep 30
+                if [ $(( $(date +%s) - refreshed )) -ge 21600 ]; then
+                  if token=$(aws ecr get-login-password --region "@REGION@"); then
+                    auth=$(printf 'AWS:%s' "$token" | base64 | tr -d '\n')
+                    for up in @UPSTREAMS@; do
+                      case $up in
+                        docker.io) server=https://registry-1.docker.io;;
+                        *) server=https://$up;;
+                      esac
+                      mirror=https://@ECR@/v2/@PREFIX@/$up
+                      mkdir -p /certs/$up
+                      printf 'server = "%s"\n\n[host."%s"]\n  capabilities = ["pull", "resolve"]\n  override_path = true\n  [host."%s".header]\n    Authorization = "Basic %s"\n' \
+                        "$server" "$mirror" "$mirror" "$auth" > /certs/$up/hosts.toml.tmp
+                      mv /certs/$up/hosts.toml.tmp /certs/$up/hosts.toml
+                    done
+                    date +%s > /certs/.sdo-mirror-refreshed
+                    refreshed=$(date +%s)
+                  else
+                    echo 'ECR token refresh failed; retrying' >&2
+                    sleep 30
+                    continue
+                  fi
                 fi
+                prepull
+                sleep 20
               done
           readinessProbe:
             exec:
@@ -65,8 +92,17 @@ spec:
           volumeMounts:
             - {name: certs, mountPath: /certs}
             - {name: lane, mountPath: /lane}
+            - {name: prepull, mountPath: /prepull}
+            - {name: containerd-sock, mountPath: /run/containerd}
+            - {name: ctr, mountPath: /usr/bin/ctr, readOnly: true}
       volumes:
         - name: certs
           hostPath: {path: /etc/containerd/certs.d, type: DirectoryOrCreate}
         - name: lane
           hostPath: {path: /var/lib/sdo-lane, type: DirectoryOrCreate}
+        - name: prepull
+          configMap: {name: sdo-lane-prepull, optional: true}
+        - name: containerd-sock
+          hostPath: {path: /run/containerd, type: Directory}
+        - name: ctr
+          hostPath: {path: /usr/bin/ctr, type: File}

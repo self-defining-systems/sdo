@@ -423,7 +423,7 @@ func StatusOf(root Root, only string) (BenchStatus, error) {
 		}
 	}
 	for name, h := range inv.Hosts {
-		hv := HostView{Name: name, HostStatus: hs[name], Lanes: len(h.Clusters), Busy: busy[name], MaxBuilds: h.MaxBuilds,
+		hv := HostView{Name: name, HostStatus: hs[name], Lanes: len(h.Clusters), Busy: busy[name], MaxBuilds: h.BuildLimit(),
 			MaxLoad5: h.MaxLoad5, MinFree: h.MinFree}
 		st.Hosts = append(st.Hosts, hv)
 		st.Inflight = append(st.Inflight, hs[name].Inflight...)

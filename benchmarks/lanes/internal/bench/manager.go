@@ -691,7 +691,7 @@ func (m *Manager) builds(host string) int {
 }
 
 // churnFull says whether host h already runs max_builds churn steps (a new release or reset waits).
-func (m *Manager) churnFull(h string) bool { return m.builds(h) >= m.inv.Hosts[h].MaxBuilds }
+func (m *Manager) churnFull(h string) bool { return m.builds(h) >= m.inv.Hosts[h].BuildLimit() }
 
 // start fills in the lane's part of a step and starts it on the lane's host.
 func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
@@ -1106,8 +1106,8 @@ func (m *Manager) buildBlock(h string, s Spec, reachable map[string]bool) string
 		return fmt.Sprintf("host %s has no checkout of the spec's pinned fuzzops or hooks", h)
 	case !reachable[h]:
 		return fmt.Sprintf("host %s is unreachable: %s", h, m.hosts[h].Error)
-	case m.builds(h) >= hs.MaxBuilds:
-		return fmt.Sprintf("host %s runs max_builds (%d) builds", h, hs.MaxBuilds)
+	case m.builds(h) >= hs.BuildLimit():
+		return fmt.Sprintf("host %s runs max_builds (%d) builds", h, hs.BuildLimit())
 	}
 	if _, _, why := isolationOf(hs, s, m.reservations, h, m.drift); why != "" {
 		return why
