@@ -102,7 +102,10 @@ def test_parse_args_takes_both_flag_forms_and_bare_flags():
 
 def test_identity_reports_the_checkout_revision_and_modified_state(tmp_path):
     runner = FakeRunner({"rev-parse HEAD": "abc123\n", "status --porcelain": " M x.py\n"})
-    assert call("identity", "", [], {}, runner=runner) == (0, {"workload": "sregym", "revision": "abc123", "modified": True})
+    assert call("identity", "", [], {}, runner=runner) == (
+        0,
+        {"workload": "sregym", "revision": "abc123", "modified": True},
+    )
 
 
 def test_footprint_and_unknown_actions_are_unsupported(tmp_path):
