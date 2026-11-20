@@ -190,13 +190,19 @@ def running_lane_caps(
     if not listed:
         return {}
     template = '{{index .Config.Labels "' + KIND_CLUSTER_LABEL + '"}} {{.Name}} {{.HostConfig.Memory}}'
-    rows = run(
+    inspected = run(
         ["docker", "inspect", "--format", template, *listed],
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
         timeout=timeout,
-    ).stdout.splitlines()
+    )
+    # A container that exited between `ps` and `inspect` (other users' containers come and go) is no longer running:
+    # docker prints the others and names it "No such object". Any other failure is still an error.
+    errors = [line for line in inspected.stderr.splitlines() if line.strip()]
+    if inspected.returncode and (not errors or not all("No such object" in line for line in errors)):
+        raise subprocess.CalledProcessError(inspected.returncode, inspected.args, inspected.stdout, inspected.stderr)
+    rows = inspected.stdout.splitlines()
     caps: dict[str, int] = {}
     for row in rows:
         fields = row.split()

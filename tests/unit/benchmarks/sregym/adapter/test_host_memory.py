@@ -167,3 +167,25 @@ def test_running_lane_caps_sums_node_caps_of_our_prefix_only() -> None:
     # An uncapped node of ours counts as the default node cap, never as zero; foreign clusters are ignored.
     assert caps == {"c5-evl-hotel10": 32 * Gi, "c5-evl-hotel40": 16 * Gi}
     assert all(argv[1] in {"ps", "inspect"} for argv in seen), "read-only docker queries only"
+
+
+def _docker(rows: str, inspect_code: int, inspect_err: str):
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        code, out, err = (0, "ID1\nGONE\n", "") if argv[1] == "ps" else (inspect_code, rows, inspect_err)
+        if kwargs.get("check") and code:
+            raise subprocess.CalledProcessError(code, argv, out, err)
+        return subprocess.CompletedProcess(argv, code, out, err)
+
+    return run
+
+
+def test_a_container_that_exits_between_ps_and_inspect_is_skipped() -> None:
+    # Other users' containers come and go: docker inspect exits 1 for the vanished one and prints the others.
+    run = _docker("c5-a /c5-a-worker 1073741824", 1, "Error: No such object: GONE\n")
+    assert running_lane_caps("c5-", default_node_bytes=16 * Gi, run=run) == {"c5-a": Gi}
+
+
+def test_any_other_inspect_failure_still_fails() -> None:
+    run = _docker("", 1, "Cannot connect to the Docker daemon\n")
+    with pytest.raises(subprocess.CalledProcessError):
+        running_lane_caps("c5-", default_node_bytes=16 * Gi, run=run)
