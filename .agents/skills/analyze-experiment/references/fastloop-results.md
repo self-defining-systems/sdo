@@ -205,6 +205,7 @@ Post-incident `oracle.details.oracles[i]` retains the raw baseline under
 `status=oracle_invalid`, and gives no boolean repair
 verdict (`success=null`, `fault_i_verdict=null`). `faults_total` and `faults_fixed`
 count only valid oracles; `oracle_invalid` reports the excluded count separately.
+The rehearsal first requires sustained pod health (every container Ready and no restart growth over at least a minute); a failed gate, or a red pod-health oracle (`MitigationOracle`, `AssignNonExistentNodeMitigationOracle`) at no-fault time, rejects the row before injection with `details.rejection {cause, named}` and is never cached or turned into `oracle_invalid`.
 Collateral and traffic failures still fail the aggregate. Plain excluded faults
 fall back to fresh independent application health and traffic. Recovery always
 regrades current state while preserving the initial exclusion set. The composite analysis
