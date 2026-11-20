@@ -3,6 +3,7 @@ package bench
 import (
 	"context"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"os/exec"
@@ -551,4 +552,31 @@ func judgeEksAccount(out string, err error, e *HostEKS) (bool, string) {
 		return false, fmt.Sprintf("credentials belong to account %s, the host is configured for %s", account, e.Account)
 	}
 	return true, fmt.Sprintf("account %s, region %s, up to %d vCPUs and $%.2f/h", account, e.Region, e.VCPUQuota, e.BudgetPerHour)
+}
+
+// statusEksHost is `lanes host status` of an eks host: whether the credentials work and what the clusters cost so far.
+func statusEksHost(ctx context.Context, root Root, inv Inventory, host string, run runFn, out io.Writer) {
+	h := inv.Hosts[host]
+	if run != nil {
+		o, err := run(ctx, host, eksAccountScript())
+		ok, detail := judgeEksAccount(o, err, h.EKS)
+		state := "credentials ok"
+		if !ok {
+			state = "NOT ADMITTED, credentials"
+		}
+		fmt.Fprintf(out, "%s: %s: %s\n", host, state, detail)
+	}
+	l := &eksLedger{Open: map[string]eksOpen{}}
+	_ = readJSON(root.eksLedgerPath(host), l)
+	max := h.EKS.MaxLanes
+	if max == 0 {
+		max = len(h.Clusters)
+	}
+	st := EksStatus{Lanes: len(l.Open), MaxLanes: max, VCPUs: l.vcpus(), VCPUQuota: h.EKS.VCPUQuota, USDPerHour: round4(l.hourly()),
+		BudgetPerHr: h.EKS.BudgetPerHour, SpendUSD: l.spend(time.Now()), BudgetTotal: h.EKS.BudgetTotal}
+	fmt.Fprintf(out, "%s: %s\n", host, st)
+	for lane, o := range l.Open {
+		fmt.Fprintf(out, "%s: lane %s: %s x %d since %s\n", host, lane, o.InstanceType, o.Nodes, o.Since.Format(time.RFC3339))
+	}
+	fmt.Fprintf(out, "%s: no cpuset, ledger, kernel or PSI gates (provider eks)\n", host)
 }
