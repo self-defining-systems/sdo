@@ -6,6 +6,7 @@ verb=$1
 st=${HOOK_STATE:-/nonexistent}
 if [ -f "$st/fail-$verb" ]; then cat "$st/fail-$verb"; exit 1; fi
 case $verb in
+  describe) [ -f "$st/describe" ] && cat "$st/describe" || exit 64 ;;
   check) grep -q '"baseline"' "$BENCH_OPERATOR" || { echo "no baseline"; exit 1; } ;;
   prepare) [ -d "$st" ] && echo "$BENCH_REGISTRY" > "$st/registry"; [ -d "$st" ] && touch "$st/prepared"; [ -d "$st" ] && echo "$FUZZOPS_REGISTRY_PORT" > "$st/regport"; [ -d "$st" ] && echo "$BENCH_LANE_PROVIDER $FUZZOPS_LANE_PROVIDER $BENCH_EVIDENCE_MODE $FUZZOPS_ENTRY_HOST $VCLUSTER_HOST_KUBECONFIG" > "$st/provider"; echo "preparing"; echo "{\"pack\": \"$BENCH_PACK\", \"operator_version\": \"test\", \"memory\": \"m1\"}" ;;
   swap) [ -f "$st/prepared" ] || { echo "no prepared operator"; exit 1; }; echo "{\"pack\": \"$BENCH_PACK\", \"operator_version\": \"swapped\", \"memory\": \"m1\"}" ;;

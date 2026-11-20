@@ -52,9 +52,15 @@ func Add(ctx context.Context, root Root, specFile string, log io.Writer) error {
 			*p = resolve(*p)
 		}
 	}
-	if err := ValidateRendered(ctx, inv, rs, NewRenderedChecks(log)); err != nil {
+	checks := NewRenderedChecks(log)
+	if err := ValidateRendered(ctx, inv, rs, checks); err != nil {
 		return err
 	}
+	described, err := checks.describe(ctx, inv, s)
+	if err != nil {
+		return err
+	}
+	s.Described = described
 	lock := Lock{Spec: s, Added: time.Now().UTC()}
 	if s.Faults.Instances != "" {
 		in, err := Store(string(root), resolve(s.Faults.Instances))

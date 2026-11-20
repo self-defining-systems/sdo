@@ -670,6 +670,11 @@ def test_main_prints_the_result_as_the_last_stdout_line(capsys, monkeypatch):
     assert json.loads(capsys.readouterr().out.strip().splitlines()[-1]) == {"unsupported": True}
 
 
+def test_subject_shim_describes_itself_to_the_platform():
+    # the workload installs and drives SDO: no start-up period for the hooks to wait out, no model call of its own
+    assert subject.dispatch("describe", {}) == (0, {"max_startup": "0s", "needs_credentials": False})
+
+
 def test_subject_shim_prepares_with_the_pack_and_passes_the_seed(tmp_path):
     operator = tmp_path / "operator.json"
     operator.write_text(json.dumps({"seed": "/staged/seed"}))

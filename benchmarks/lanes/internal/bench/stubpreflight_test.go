@@ -43,7 +43,7 @@ func TestStubAgentSkipsTheCredentialCall(t *testing.T) {
 	runs := 0
 	run := func(context.Context, string, string) (string, error) { runs++; return "", nil }
 	inv := Inventory{Hosts: map[string]Host{"h1": {}}}
-	sdoSubject{}.Host(context.Background(), inv, "h1", specs[:1], "", run, recorder(&got))
+	legacySubject{}.Host(context.Background(), inv, "h1", specs[:1], "", run, recorder(&got))
 	if runs != 0 {
 		t.Fatalf("the stub spec ran %d host commands (a provider call)", runs)
 	}
@@ -67,7 +67,7 @@ func TestMemoryCheckWithoutAHooksCheckoutHereIsANote(t *testing.T) {
 		t.Fatal("nothing runs without a checkout")
 		return "", nil
 	}
-	sdoSubject{}.Local(context.Background(), inv, []specFile{s}, PreflightOptions{}, run, recorder(&got), &wg)
+	legacySubject{}.Local(context.Background(), inv, []specFile{s}, PreflightOptions{}, run, recorder(&got), &wg)
 	wg.Wait()
 	if len(got) != 1 || !got[0].ok || !strings.Contains(got[0].detail, "not checkable here") {
 		t.Fatalf("results %+v, want one passing note", got)

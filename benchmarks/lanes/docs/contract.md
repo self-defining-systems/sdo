@@ -40,10 +40,11 @@ contract, unchanged (semantics in fuzzops `docs/bench.md`, "Hook contract").
 | verb | status |
 |---|---|
 | `check`, `prepare`, `swap`, `idle`, `watch`, `collect`, `snapshot`, `reset`, `teardown`, `transcripts` | implemented by the platform's callers (plus the optional `reset-incidents`) |
+| `describe` | called at `plan add` and `add` once per hooks checkout and operator settings, on the manager's host, with `BENCH_OPERATOR` (hooks, revision, settings). Answer: `{"max_startup":"30m","needs_credentials":true,"inputs":{"seed":{"requires":["baseline"]}}}`. `max_startup` is how long a fresh install may report busy (`0s` or absent: none); `needs_credentials` says whether preflight should check a model credential; `inputs` are rules on the spec's named inputs (`requires` lists inputs that must also be set). Lanes stores the answer in the experiment's lock (`described`) and reads it instead of the operator settings. **Unsupported (a pin that predates the verb) falls back to the built-in SDO answer, and lanes logs `pre-contract pin` once per checkout** |
 | `preflight` | called by `lanes preflight` once per hooks checkout per host. Answer: `{"checks":[{"check":"name","ok":true,"detail":"..."}]}`. **Unsupported falls back to the SDO operator's built-in checks** (credential call, sink, proto binding, baseline memory, `sdo-*` images), which is what preflight has always run. In that fallback a spec whose operator settings say `model: stub` (a no-model stand-in agent) gets no credential call (a passing note says it was skipped), and the baseline memory check on a host with no hooks checkout of the pin reports "not checkable here" as a passing note, not a failure |
 | `export-artifact`, `verify-artifact`, `reseed`, `verify-start` | defined, **not called yet**; every adapter answers unsupported |
 
-The build check waits `max(ready_timeout, startup_bound + 10m)` for `idle`: a subject reports busy through its own start-up period, and a lane is never failed for a wait shorter than it. `startup_bound` is `operator.settings.startup_bound` (default 30m, SDO response.startup_bound default; `0s` means no start-up period); the hooks must render the same value into the subject config.
+The build check waits `max(ready_timeout, max_startup + 10m)` for `idle`: a subject reports busy through its own start-up period, and a lane is never failed for a wait shorter than it. `max_startup` is the subject's `describe` answer (for a pin without `describe`: SDO's `operator.settings.startup_bound`, default 30m).
 
 ## Workload verbs
 

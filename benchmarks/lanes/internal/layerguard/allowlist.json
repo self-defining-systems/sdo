@@ -1,9 +1,21 @@
 {
   "files": {
+    "cmd/lanes/help.go": {
+      "reason": "help text of the FUZZOPS_BENCH_ROOT default and the --fuzzops probe flag (audit B9)",
+      "terms": {
+        "fuzzops": 3
+      }
+    },
     "cmd/lanes/main.go": {
       "reason": "CLI: FUZZOPS_BENCH_ROOT and the --fuzzops probe flag are what the live manager and its ssh probes use (audit B9); gains a --workload alias in a later change",
       "terms": {
         "fuzzops": 7
+      }
+    },
+    "cmd/lanes/manager.go": {
+      "reason": "the systemd unit passes FUZZOPS_* env and reads FUZZOPS_BENCH_ROOT, the live names (audit B7, B9)",
+      "terms": {
+        "fuzzops": 3
       }
     },
     "internal/bench/bound.go": {
@@ -19,9 +31,17 @@
       }
     },
     "internal/bench/cpualloc.go": {
-      "reason": "ledger dir /var/tmp/fuzzops-lanes-<uid> and the `fuzzops-bench ledger adopt` hint: an on-disk path the live hosts use (audit B9)",
+      "reason": "ledger dir /var/tmp/fuzzops-lanes-\u003cuid\u003e and the `fuzzops-bench ledger adopt` hint: an on-disk path the live hosts use (audit B9)",
       "terms": {
         "fuzzops": 3
+      }
+    },
+    "internal/bench/describe.go": {
+      "reason": "reads the spec keys operator.{hooks,revision,settings,baseline,seed} and sets FUZZOPS_NAMESPACE for the hook call: spec-format and env compat names (audit C1, B7)",
+      "terms": {
+        "fuzzops": 1,
+        "operator": 18,
+        "sdo-config": 3
       }
     },
     "internal/bench/discover.go": {
@@ -114,19 +134,17 @@
       "reason": "SDO fallback checks: credentials, sink, proto, memory, pack (audit A1, A2, B6)",
       "terms": {
         "app-names": 1,
-        "fuzzops": 11,
-        "incident": 1,
-        "operator": 19,
-        "sdo": 16,
-        "sdo-config": 19
+        "fuzzops": 10,
+        "operator": 10,
+        "sdo": 9,
+        "sdo-config": 12
       }
     },
     "internal/bench/preflight_subject.go": {
       "reason": "sdoSubject fallback for pins without the preflight verb (audit A2)",
       "terms": {
-        "operator": 19,
-        "sdo": 14,
-        "sdo-config": 6
+        "operator": 4,
+        "sdo": 2
       }
     },
     "internal/bench/reserve.go": {
@@ -147,9 +165,8 @@
       "reason": "Spec format keys fuzzops and operator.*, StartupBound (audit A3, B4, C1, C3)",
       "terms": {
         "fuzzops": 21,
-        "operator": 30,
-        "sdo": 2,
-        "sdo-config": 5
+        "operator": 28,
+        "sdo-config": 1
       }
     },
     "internal/bench/ssh.go": {
@@ -180,9 +197,9 @@
       "reason": "seed-needs-baseline rule, pinned fuzzops message (audit A5, B10)",
       "terms": {
         "fuzzops": 2,
-        "operator": 10,
+        "operator": 8,
         "sdo": 1,
-        "sdo-config": 7
+        "sdo-config": 5
       }
     },
     "internal/bench/verbs.go": {
@@ -245,19 +262,9 @@
         "fuzzops": 3,
         "operator": 5
       }
-    },
-    "cmd/lanes/help.go": {
-      "reason": "help text of the FUZZOPS_BENCH_ROOT default and the --fuzzops probe flag (audit B9)",
-      "terms": {
-        "fuzzops": 3
-      }
-    },
-    "cmd/lanes/manager.go": {
-      "reason": "the systemd unit passes FUZZOPS_* env and reads FUZZOPS_BENCH_ROOT, the live names (audit B7, B9)",
-      "terms": {
-        "fuzzops": 3
-      }
     }
   },
-  "adapter_files": {}
+  "adapter_files": {
+    "internal/bench/adapter_sdo_subject.go": "built-in SDO subject for hooks checkouts that predate `preflight` and `describe`: images, credential call, sink, proto, baseline memory check, legacy describe. Delete when every pin answers both verbs"
+  }
 }

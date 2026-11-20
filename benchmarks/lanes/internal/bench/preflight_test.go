@@ -184,7 +184,7 @@ func TestCredentialCheckUsesTheAgentsExtraEnv(t *testing.T) {
 
 func TestRequiredImagesDefaultTag(t *testing.T) {
 	h := Host{Env: map[string]string{"KIND_NODE_IMAGE": "kindest/node:v1"}}
-	got := requiredImages(h, []specFile{{Spec: Spec{Operator: Operator{Hooks: "sdo", Revision: "1da0aac6f00"}}}}, sdoSubject{})
+	got := requiredImages(h, []specFile{{Spec: Spec{Operator: Operator{Hooks: "sdo", Revision: "1da0aac6f00"}}}}, legacySubject{})
 	want := "kindest/node:v1 sdo-controller:fz-1da0aac6 sdo-responder:fz-1da0aac6 sdo-script-tools:fz-1da0aac6"
 	if strings.Join(got, " ") != want {
 		t.Fatal(got)
