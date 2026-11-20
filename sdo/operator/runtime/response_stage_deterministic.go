@@ -955,6 +955,11 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 		budget := DefaultMitigationRolloutTimeout
 		if stage.WaitBound > 0 {
 			budget = stage.WaitBound
+		} else {
+			// A write's settle is its workload's rollout, which takes as long as
+			// the workload was observed to need to become Ready; the fixed
+			// bound is the floor, never the whole allowance.
+			budget += writtenWorkloadsStartup(ctx, loop, report)
 		}
 		if stage.Budget > 0 {
 			budget = min(budget, stage.Budget)
@@ -1172,6 +1177,26 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			return err
 		}
 	}
+}
+
+// writtenWorkloadsStartup is the longest observed startup of the workloads the
+// stage's writes touched: how long their rollouts may legitimately take to
+// settle. Zero when none is known or the view cannot be read.
+func writtenWorkloadsStartup(ctx context.Context, loop *ResponderLoop, report *contracts.StageReport) time.Duration {
+	var refs []sdk.ObjectRef
+	for _, attempt := range report.GetMitigations() {
+		for _, ref := range attempt.GetTouchedObjects() {
+			refs = append(refs, sdk.ObjectRef{APIVersion: ref.GetApiVersion(), Kind: ref.GetKind(), Namespace: ref.GetNamespace(), Name: ref.GetName()})
+		}
+	}
+	if len(refs) == 0 {
+		return 0
+	}
+	view, err := loop.snapshotView(ctx)
+	if err != nil {
+		return 0
+	}
+	return sdk.ResourceStartupAllowance(view, refs...)
 }
 
 // splitStageFindings separates the findings a recovery wait can judge from
