@@ -526,9 +526,20 @@ def _startup_holding(state: dict[str, Any]) -> bool:
     return not any(startup.get(key) for key in ended)
 
 
+#: ``dispatch_state`` values of a responder that was asked for or is working (``COMPLETED`` belongs to the closure).
+RESPONDER_ACTIVE_DISPATCH = frozenset(
+    {
+        "DISPATCH_STATE_WORKSPACE_PENDING",
+        "DISPATCH_STATE_WORKSPACE_RUNNING",
+        "DISPATCH_STATE_PENDING",
+        "DISPATCH_STATE_RUNNING",
+    }
+)
+
+
 def idle_reason(state: dict[str, Any] | None) -> str:
     """Why SDO is not idle ("" when it is): an open incident, a closure in progress (not one that failed for good),
-    reflection still queued, or a new install SDO has not yet seen healthy."""
+    a responder dispatch under way, reflection still queued, or a new install SDO has not yet seen healthy."""
     if state is None:
         return "no controller state yet"
     if state.get("incident_open") or state.get("incidentOpen"):
@@ -537,6 +548,9 @@ def idle_reason(state: dict[str, Any] | None) -> str:
     # A permanently failed closure stays in the state as evidence and does not block the next incident.
     if (state.get("pending_closure") or state.get("pendingClosure")) and not failed:
         return "closure pending"
+    dispatch = str(state.get("dispatch_state") or state.get("dispatchState") or "")
+    if dispatch in RESPONDER_ACTIVE_DISPATCH:
+        return f"responder dispatch {dispatch.removeprefix('DISPATCH_STATE_').lower()}"
     if state.get("queued_reflection_incident_ids") or state.get("queuedReflectionIncidentIds"):
         return "reflection queued"
     if state.get("queued_reflections_unknown") or state.get("queuedReflectionsUnknown"):
@@ -560,22 +574,9 @@ def _incident_id(state: dict[str, Any]) -> str:
     return str(request.get("incident_id") or request.get("incidentId") or "")
 
 
+#: Set by the bench's settle to the time the operator detected the cell's own fault. Idle never tells one incident
+#: from another: collect and the lane's release follow the settle, and an incident still open then has no outcome yet.
 OWN_DETECTED_ENV = "BENCH_OWN_DETECTED_AT"
-
-
-def other_incident(state: dict[str, Any] | None, env: Mapping[str, str]) -> tuple[str, dict[str, Any]] | None:
-    """An open incident that is not the cell's own, with the state as if it were closed. The harness sets
-    ``BENCH_OWN_DETECTED_AT`` to the time the operator said it detected the injected fault, which is the
-    ``detected_at`` of the incident that fault opened; any other open incident is not waited for."""
-    own = _parse_time(env.get(OWN_DETECTED_ENV))
-    if own is None or state is None or idle_reason(state) != "incident open":
-        return None
-    request = state.get("incident_request") or state.get("incidentRequest") or {}
-    detected = _parse_time(request.get("detected_at") or request.get("detectedAt"))
-    if detected is None or abs((detected - own).total_seconds()) < 1.0:
-        return None
-    rest = {k: v for k, v in state.items() if k not in ("incident_open", "incidentOpen")}
-    return _incident_id(state), rest
 
 
 def idle_verdict(
@@ -1406,15 +1407,6 @@ def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     except (subprocess.SubprocessError, json.JSONDecodeError, OSError) as exc:
         out(f"error: controller read failed: {exc}")
         return 1
-    other = other_incident(state, env)
-    if other is not None:
-        incident, rest = other
-        why = idle_verdict(rest, updated, ready, datetime.now(UTC), baselines=False)
-        if why:
-            out(why)
-            return 1
-        out(f"ignored: incident open {incident}")
-        return 0
     # No log yet: baselines are judged by the second verdict, after the log read an otherwise idle controller earns.
     why = idle_verdict(state, updated, ready, datetime.now(UTC), baselines=False)
     # Store baselines gate only the inject: after it, settle and the window end need idle twice in a row, which a
@@ -2061,7 +2053,7 @@ def reset_lane(env: Mapping[str, str], steps: ResetSteps, out: Callable[[str], N
     # An earlier swap or reset that failed after stopping the controller leaves its Job suspended: nothing would
     # acknowledge the incident reset below, and the lane would be torn down for it.
     steps.resume_controller()
-    steps.reset_incidents()
+    settle_before_reset(steps, out)
     steps.retire_standby()
     started_again = False
     try:
@@ -2090,6 +2082,27 @@ def reset_lane(env: Mapping[str, str], steps: ResetSteps, out: Callable[[str], N
     receipt["reset_s"] = receipt.pop("swap_s")
     receipt["app"] = app
     return receipt
+
+
+#: How often the reset ends the open incident and waits for the controller's closing work before it gives up.
+SETTLE_BEFORE_RESET_ATTEMPTS = 3
+
+
+def settle_before_reset(steps: ResetSteps, out: Callable[[str], None] = _print) -> None:
+    """End an open incident and let work already begun finish (a closure, its outcome commit, the reflection), with
+    the controller still running. A closure that completes normally is not ended by the incident reset; stopping the
+    controller under it and moving the accepted repository back strands it (``closure pending`` after the restart,
+    for good). The outcome such a closure commits is the run's expected move of the repository; the reset restores
+    the prepared head after it. An incident another cause opens meanwhile is ended by the next attempt. Raises
+    ``HookError`` before anything was stopped or restored when the controller never gets quiet."""
+    why = ""
+    for attempt in range(1, SETTLE_BEFORE_RESET_ATTEMPTS + 1):
+        steps.reset_incidents()
+        why = steps.controller_idle()
+        if not why:
+            return
+        out(f"the operator is not idle before the reset ({attempt} of {SETTLE_BEFORE_RESET_ATTEMPTS}): {why}")
+    raise HookError(f"the operator is not idle before the reset: {why}")
 
 
 RESET_ATTEMPTS = 2
