@@ -81,9 +81,6 @@ func (h sshHost) Kill(ctx context.Context, lane, id string) error {
 }
 
 func (h sshHost) Probe(ctx context.Context, steps map[string]string, fuzzops []string) (Probe, error) {
-	if len(fuzzops) == 0 {
-		return Probe{}, fmt.Errorf("no fuzzops checkout on %s", h.name)
-	}
 	// The canary goes first, with its own short bound: a host whose kernel is jammed must not hold the manager for the
 	// two minutes an ordinary call may take, and nothing else is asked of it.
 	canary, cerr := h.canary(ctx)
@@ -94,8 +91,10 @@ func (h sshHost) Probe(ctx context.Context, steps map[string]string, fuzzops []s
 	if err != nil {
 		return Probe{}, err
 	}
-	args := []string{shellQuote(filepath.Join(platform, "bin", "lanes")), "probe", "--staging", shellQuote(h.h.Staging),
-		"--fuzzops", shellQuote(strings.Join(fuzzops, ","))}
+	args := []string{shellQuote(filepath.Join(platform, "bin", "lanes")), "probe", "--staging", shellQuote(h.h.Staging)}
+	if len(fuzzops) > 0 { // a host with no workload checkout has no in-flight markers to list
+		args = append(args, "--fuzzops", shellQuote(strings.Join(fuzzops, ",")))
+	}
 	var lanes []string
 	for l := range steps {
 		lanes = append(lanes, l)

@@ -9,8 +9,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -29,9 +27,6 @@ const (
 	VerbGrade       = "grade"
 	VerbFootprint   = "footprint"
 )
-
-// WorkloadFuzzops is the name of the built-in workload (and the default).
-const WorkloadFuzzops = "fuzzops"
 
 // WorkloadVerbs are the verbs of the workload contract.
 var WorkloadVerbs = []string{VerbIdentity, VerbAppUp, VerbAppSnapshot, VerbAppReset, VerbGate, VerbRun, VerbGrade, VerbFootprint}
@@ -59,78 +54,40 @@ type Workload interface {
 	Grade(ctx context.Context, dir string, log io.Writer) error
 }
 
-// NewWorkload is the workload a spec names: "" or "fuzzops" is the built-in one; anything else is a command run
-// with `sh -c` in the pinned checkout dir.
+// builtinWorkload is a workload adapter that lanes carries, for specs written before the contract existed.
+type builtinWorkload struct {
+	New func(dir string) Workload
+	// Identity is the shell command that prints the identity JSON ({"revision","modified"}) of the checkout at dir.
+	Identity func(dir string) string
+}
+
+// builtinWorkloads are the built-in adapters by the workload name a spec may carry (adapter_*.go registers them).
+var builtinWorkloads = map[string]builtinWorkload{}
+
+// NewWorkload is the workload a spec names: a built-in one by its name, else a command run with `sh -c` in the
+// pinned checkout dir.
 func NewWorkload(name, dir string) Workload {
-	if name == "" || name == WorkloadFuzzops {
-		return fuzzopsWorkload{dir: dir}
+	if b, ok := builtinWorkloads[name]; ok {
+		return b.New(dir)
 	}
 	return execWorkload{dir: dir, command: name}
 }
 
-// fuzzopsWorkload runs bin/fuzzops of the pinned checkout.
-type fuzzopsWorkload struct{ dir string }
-
-// fuzzopsArgv is the bin/fuzzops command line of a call: the verb's operation, then its options.
-func fuzzopsArgv(c WorkloadCall) ([]string, error) {
-	var op []string
-	switch c.Verb + "/" + c.Action {
-	case VerbIdentity + "/":
-		op = []string{"version"}
-	case VerbAppUp + "/up":
-		op = []string{"app", "up"}
-	case VerbAppUp + "/down":
-		op = []string{"app", "down"}
-	case VerbAppUp + "/images":
-		op = []string{"app", "images"}
-	case VerbAppUp + "/check-pack":
-		op = []string{"pack", "load"}
-	case VerbAppSnapshot + "/write", VerbAppSnapshot + "/verify":
-		op = []string{"app", "fingerprint"}
-	case VerbAppReset + "/recover":
-		op = []string{"recover"}
-	case VerbGate + "/check":
-		op = []string{"check"}
-	case VerbRun + "/run":
-		op = []string{"run"}
-	case VerbRun + "/active":
-		op = []string{"active-instance"}
-	case VerbRun + "/undo":
-		op = []string{"undo-instance"}
-	case VerbGrade + "/report":
-		op = []string{"report"}
-	default:
-		return nil, fmt.Errorf("%w: %s %s", ErrUnsupported, c.Verb, c.Action)
+// IdentityCommand is the shell command that asks the workload `name`, checked out at dir, for its identity: the
+// `identity` verb of the contract (a built-in adapter may answer it its own way).
+func IdentityCommand(name, dir string) string {
+	if b, ok := builtinWorkloads[name]; ok {
+		return b.Identity(dir)
 	}
-	return append(op, c.Args...), nil
+	return "cd " + shellQuote(dir) + " && WORKLOAD_VERB=" + VerbIdentity + " WORKLOAD_ACTION= WORKLOAD_ARGS='[]' sh -c " + shellQuote(name+" "+VerbIdentity)
 }
 
-// activeRE is how `fuzzops active-instance` and `undo-instance` say whether the fault is active.
-var activeRE = regexp.MustCompile(`active=(true|false)`)
-
-func (w fuzzopsWorkload) Call(ctx context.Context, c WorkloadCall) (int, string, error) {
-	argv, err := fuzzopsArgv(c)
-	if err != nil {
-		return -1, "", err
+// WorkloadName is the name the spec's workload goes by: the name it carries, or the default built-in adapter's.
+func (s Spec) WorkloadName() string {
+	if s.Workload == "" {
+		return defaultWorkload
 	}
-	if c.Verb == VerbRun && (c.Action == "active" || c.Action == "undo") && c.Stdout != nil {
-		// The contract's answer is {"active": bool}; fuzzops prints active=<bool>, which goes to the log.
-		var text bytes.Buffer
-		final := c.Stdout
-		c.Stdout = io.MultiWriter(&text, c.Log)
-		code, tail, err := runAdapter(ctx, w.dir, exec.CommandContext(ctx, filepath.Join(w.dir, "bin", "fuzzops"), argv...), c, "fuzzops "+strings.Join(argv, " "))
-		if m := activeRE.FindStringSubmatch(text.String()); m != nil {
-			fmt.Fprintf(final, "{\"active\":%s}\n", m[1])
-		}
-		return code, tail, err
-	}
-	return runAdapter(ctx, w.dir, exec.CommandContext(ctx, filepath.Join(w.dir, "bin", "fuzzops"), argv...), c, "fuzzops "+strings.Join(argv, " "))
-}
-
-func (w fuzzopsWorkload) Grade(ctx context.Context, dir string, log io.Writer) error {
-	cmd := exec.CommandContext(ctx, filepath.Join(w.dir, "bin", "fuzzops"), "report", dir)
-	cmd.Dir, cmd.Stdout, cmd.Stderr = w.dir, log, log
-	return cmd.Run()
+	return s.Workload
 }
 
 // runAdapter runs one adapter process the way every workload call has always run: its own process group, SIGTERM

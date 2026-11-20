@@ -44,6 +44,7 @@ type RunFile struct {
 
 // Version is what `fuzzops version` prints.
 type Version struct {
+	Workload       string `json:"workload,omitempty"` // the workload's own id, when it says (identity verb)
 	Revision       string `json:"revision"`
 	Modified       bool   `json:"modified,omitempty"`
 	MeasureVersion int    `json:"measure_version"`
@@ -132,13 +133,13 @@ type Prepared struct {
 	Operator   string `json:"operator,omitempty"` // the BENCH_OPERATOR file on the host
 	Namespace  string `json:"namespace"`
 	AppPack    string `json:"app_pack"` // the fuzzops pack (absolute, on the host)
-	// Workload and FuzzopsRev are the workload adapter and the pinned fuzzops checkout (revision) the lane was prepared
+	// Workload and WorkloadRev are the workload adapter and the pinned workload checkout (revision) the lane was prepared
 	// with. Steps without an experiment (release, recover, unhold) take both from here: a lane is never handled by
-	// a guess among the host's checkouts. FuzzopsRev empty: nothing recorded.
-	Workload   string `json:"workload,omitempty"`
-	FuzzopsRev string `json:"fuzzops_rev,omitempty"`
-	Pack       string `json:"pack,omitempty"`  // the attached pack prepare returned
-	Ready      bool   `json:"ready,omitempty"` // the build finished and passed its check
+	// a guess among the host's checkouts. WorkloadRev empty: nothing recorded.
+	Workload    string `json:"workload,omitempty"`
+	WorkloadRev string `json:"workload_rev,omitempty"`
+	Pack        string `json:"pack,omitempty"`  // the attached pack prepare returned
+	Ready       bool   `json:"ready,omitempty"` // the build finished and passed its check
 	// CheckedAt is when the build check passed: a run within gateFreshness of it needs only a short ready gate.
 	CheckedAt time.Time `json:"checked_at,omitempty"`
 	Fault     string    `json:"fault,omitempty"` // the fault of the sequence this build was made for

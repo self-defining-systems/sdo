@@ -100,6 +100,40 @@ func TestProbeReportsFreeDiskWhenThePinnedBinaryDoesNot(t *testing.T) {
 	}
 }
 
+// A reachable host that has no workload checkout for any pin cannot take items of those pins, but it is not
+// unreachable: its probe answers (load, disk, steps) and raises no host alarm.
+func TestProbeOfAHostWithoutAWorkloadCheckoutIsNotAnError(t *testing.T) {
+	dir := t.TempDir()
+	fakeSSH := filepath.Join(dir, "ssh")
+	must(t, os.WriteFile(fakeSSH, []byte("#!/bin/sh\nshift\nexec sh -c \"$*\"\n"), 0o755))
+	t.Setenv("FUZZOPS_BENCH_SSH", fakeSSH)
+	useFakeLanes(t, "#!/bin/sh\necho '{\"load5\":2,\"steps\":{}}'\n")
+	h := sshHost{name: "h", h: Host{SSH: "fakehost", Staging: filepath.Join(dir, "staging")}}
+	p, err := h.Probe(context.Background(), map[string]string{}, nil)
+	if err != nil {
+		t.Fatalf("a host with no workload checkout is reachable, got an error: %v", err)
+	}
+	if p.Load5 != 2 {
+		t.Fatalf("load5 %v, want the probe's 2", p.Load5)
+	}
+}
+
+// A spec whose pin a host has no checkout of is refused there per pin, in words that name the pin and the cause.
+func TestUnusableHostsNameThePinAndTheMissingCheckout(t *testing.T) {
+	inv, err := loadInv(t, `hosts:
+  a: {local: true, staging: /s, kubeconfigs: /k, evidence: /e, max_builds: 1, max_load5: 10, clusters: [c1]}
+  b: {local: false, ssh: b, staging: /s, kubeconfigs: /k, evidence: /e, max_builds: 1, max_load5: 10, clusters: [c2]}
+checkouts:
+  fuzzops: {0b528ac: {a: /fz}}
+`)
+	must(t, err)
+	s := Spec{Fuzzops: "0b528ac", Hosts: []string{"a", "b"}}
+	got := inv.UnusableReasons(s)
+	if len(got) != 1 || got[0] != "b: not usable for fuzzops@0b528ac: no checkout" {
+		t.Fatalf("reasons = %q", got)
+	}
+}
+
 // A host behind a jump host: every ssh and rsync of the host goes through it.
 func TestSSHJumpIsUsedForCommandsAndRsync(t *testing.T) {
 	dir := t.TempDir()

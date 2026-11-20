@@ -9,7 +9,7 @@ The app pack is a directory with ``app.json`` (``AppPack``). The lane's fastloop
 
 Verbs:
 
-``identity``      the checkout's revision and whether tracked files are modified.
+``identity``      the workload id, the checkout's revision and whether tracked files are modified.
 ``app-up``        ``check-pack``: the pack loads; ``up``: ``fastloop up`` unless the lane's environment and cluster
                   are already there, then the lane kubeconfig; ``down``, ``images``: nothing (fastloop's row-start
                   reset restores the app, ``up`` delivers images).
@@ -223,7 +223,7 @@ class Context:
 def identity(ctx: Context) -> tuple[int, dict[str, Any]]:
     revision = ctx.runner(["git", "-C", str(ctx.root), "rev-parse", "HEAD"]).strip()
     dirty = ctx.runner(["git", "-C", str(ctx.root), "status", "--porcelain", "--untracked-files=no"]).strip()
-    return 0, {"revision": revision, "modified": bool(dirty)}
+    return 0, {"workload": "sregym", "revision": revision, "modified": bool(dirty)}
 
 
 def app_up(ctx: Context) -> tuple[int, dict[str, Any]]:

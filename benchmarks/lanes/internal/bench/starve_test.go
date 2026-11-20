@@ -43,7 +43,7 @@ func TestStarvedLaneGetsNoNewStepsAndRecoversAfterThreeGoodTicks(t *testing.T) {
 	if m.hostBlock("h1") != "" {
 		t.Fatalf("the host stays admitted: %q", m.hostBlock("h1"))
 	}
-	lf := &LaneFile{Lane: "c1", Host: "h1", State: LaneFree, Prepared: &Prepared{FuzzopsRev: "abc"}}
+	lf := &LaneFile{Lane: "c1", Host: "h1", State: LaneFree, Prepared: &Prepared{WorkloadRev: "abc"}}
 	m.lanes["c1"] = lf
 	if m.start(context.Background(), lf, Step{Kind: StepBuild}) || m.start(context.Background(), lf, Step{Kind: StepRun}) {
 		t.Fatal("a starved lane gets no new build or run")

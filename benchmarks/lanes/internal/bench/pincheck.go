@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -18,9 +17,9 @@ func pinMismatch(v Version, rev string) string {
 	case rev == "":
 		return ""
 	case v.Modified:
-		return fmt.Sprintf("fuzzops binary was built from a modified checkout (%s): runs must be measured by the pinned revision", v.Revision)
+		return fmt.Sprintf("workload was built from a modified checkout (%s): runs must be measured by the pinned revision", v.Revision)
 	case !strings.HasPrefix(v.Revision, rev):
-		return fmt.Sprintf("fuzzops binary is %s, not the pinned %s (rebuild bin/fuzzops)", v.Revision, rev)
+		return fmt.Sprintf("workload is at %s, not the pinned %s (rebuild or update its checkout)", v.Revision, rev)
 	}
 	return ""
 }
@@ -35,9 +34,6 @@ const addPinTimeout = 30 * time.Second
 // revision, before a lane is spent on it. A host that cannot be asked is skipped (said on log); a spec none of
 // whose hosts can be asked is refused. cache remembers answers per host and pin within one add.
 func checkPins(ctx context.Context, inv Inventory, s Spec, log io.Writer, cache map[string]string) error {
-	if s.Workload != "" && s.Workload != WorkloadFuzzops {
-		return nil // an adapter's identity verb is its own to check
-	}
 	run := addHostRunner(inv)
 	asked := 0
 	hosts := inv.UsableHosts(s)
@@ -47,7 +43,7 @@ func checkPins(ctx context.Context, inv Inventory, s Spec, log io.Writer, cache 
 		why, seen := cache[key]
 		if !seen {
 			c, cancel := context.WithTimeout(ctx, addPinTimeout)
-			out, err := run(c, h, shellQuote(filepath.Join(fz, "bin", "fuzzops"))+" version")
+			out, err := run(c, h, IdentityCommand(s.Workload, fz))
 			cancel()
 			var v Version
 			switch {
@@ -71,8 +67,9 @@ func checkPins(ctx context.Context, inv Inventory, s Spec, log io.Writer, cache 
 			asked++
 		}
 	}
-	if len(hosts) > 0 && asked == 0 {
-		return fmt.Errorf("no host of %v could be asked which fuzzops revision its binary is", hosts)
+	_, builtin := builtinWorkloads[s.Workload] // an adapter executable that cannot be asked here is checked by its build step
+	if len(hosts) > 0 && asked == 0 && builtin {
+		return fmt.Errorf("no host of %v could be asked which workload revision its checkout is", hosts)
 	}
 	return nil
 }

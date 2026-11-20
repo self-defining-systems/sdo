@@ -379,9 +379,9 @@ func (l *flab) buildOK(lane string) {
 	if s == nil {
 		l.t.Fatalf("no build step on %s", lane)
 	}
-	p := &Prepared{Experiment: s.Experiment, Namespace: "app1", Ready: true, FuzzopsRev: "0b528ac"}
+	p := &Prepared{Experiment: s.Experiment, Namespace: "app1", Ready: true, WorkloadRev: "0b528ac"}
 	if s.New != nil { // what the step was given, as the real step returns it
-		p.Workload, p.FuzzopsRev = s.New.Workload, s.New.FuzzopsRev
+		p.Workload, p.WorkloadRev = s.New.Workload, s.New.WorkloadRev
 	}
 	l.w.finish(s.ID, Result{OK: true, Prepared: p})
 }

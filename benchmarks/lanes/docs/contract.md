@@ -69,7 +69,7 @@ The build check waits `max(ready_timeout, max_startup + 10m)` for `idle`: a subj
 
 | verb | operations (`WORKLOAD_ACTION`) | built-in `fuzzops` workload runs |
 |---|---|---|
-| `identity` | none | `bin/fuzzops version` (JSON: revision, modified); the step fails if it is not the pinned revision |
+| `identity` | none | `bin/fuzzops version` (JSON: `workload` id when it says one, `revision`, `modified`); the pin check at `add` / `plan add` (on each usable host, through the workload's own identity command) and every step fail if it is not the pinned revision or was built from a modified checkout. The revision is stored in lane and step files as `workload_rev` (files written before read `fuzzops_rev`, and the old key is still written for a rollback) |
 | `app-up` | `check-pack`, `up`, `down`, `images` | `pack load`, `app up`, `app down`, `app images` |
 | `app-snapshot` | `write`, `verify` | `app fingerprint --out F`, `app fingerprint --against F` |
 | `app-reset` | `recover` | `recover` (undo a fault a dead run left; exit 2 busy, 3 invalid input) |
@@ -83,6 +83,10 @@ same command lines, environment, process-group and SIGTERM handling as before th
 specs behave identically (`TestFuzzopsWorkloadKeepsEveryCommandLine` and the fake-fuzzops end-to-end tests). Any
 other `workload` value is a command run as an adapter executable; `grade` receives `WORKLOAD_RESULTS=DIR`. A
 workload's `run` result is its last stdout line.
+
+A host without a checkout of the workload at a spec's pin cannot take that spec's items. That is a fact about the pin, not
+about the host: the host is reachable and its probe answers, so it raises no host alarm. `add` and `plan add` say it
+per host, as `<host>: not usable for <workload>@<rev>: no checkout`.
 
 The workload name is not part of an experiment's identity yet (a pool claim does not compare it); plan the
 identity change with the plan engine.

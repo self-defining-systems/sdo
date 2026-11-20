@@ -374,6 +374,27 @@ func lookupRev(m map[string]map[string]string, rev string) map[string]string {
 	return nil
 }
 
+// UnusableReasons says, per host of the spec that cannot take its items, why: the host is not in the inventory, has no
+// checkout of the workload at the pin, or none of the subject's hooks at the pin. Such a host is reachable and healthy;
+// it is only not usable for this pin, so it is never a host alarm.
+func (inv Inventory) UnusableReasons(s Spec) []string {
+	var out []string
+	pin := s.WorkloadName() + "@" + s.Fuzzops
+	for _, h := range s.Hosts {
+		if _, known := inv.Hosts[h]; !known {
+			out = append(out, h+": not in hosts.yaml")
+			continue
+		}
+		switch {
+		case inv.FuzzopsPath(s.Fuzzops, h) == "":
+			out = append(out, h+": not usable for "+pin+": no checkout")
+		case s.Operator.Hooks != "" && inv.HooksPath(s.Operator.Hooks, s.Operator.Revision, h) == "":
+			out = append(out, h+": not usable for hooks "+s.Operator.Hooks+"@"+s.Operator.Revision+": no checkout")
+		}
+	}
+	return out
+}
+
 // UsableHosts are the spec's hosts, in its order, that have the pins it needs.
 func (inv Inventory) UsableHosts(s Spec) []string {
 	var out []string

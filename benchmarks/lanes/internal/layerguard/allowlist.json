@@ -81,8 +81,8 @@
     "internal/bench/inventory.go": {
       "reason": "hosts.yaml keys checkouts.fuzzops and checkouts.hooks, FUZZOPS_LANE_PROVIDER env (audit B4, B7)",
       "terms": {
-        "fuzzops": 10,
-        "operator": 2
+        "fuzzops": 12,
+        "operator": 4
       }
     },
     "internal/bench/lanes.go": {
@@ -109,7 +109,7 @@
     "internal/bench/manager.go": {
       "reason": "operator block staging, FuzzopsRev, reset-incidents step (audit A6, A7, B3, B10)",
       "terms": {
-        "fuzzops": 23,
+        "fuzzops": 19,
         "incident": 2,
         "operator": 32,
         "sdo": 6,
@@ -126,7 +126,7 @@
     "internal/bench/pincheck.go": {
       "reason": "asks bin/fuzzops for its revision (audit B1); moves to the identity verb",
       "terms": {
-        "fuzzops": 9
+        "fuzzops": 4
       }
     },
     "internal/bench/planbackend.go": {
@@ -171,13 +171,13 @@
     "internal/bench/ssh.go": {
       "reason": "FUZZOPS_BENCH_SSH env and probe flag (audit B9)",
       "terms": {
-        "fuzzops": 7
+        "fuzzops": 6
       }
     },
     "internal/bench/state.go": {
       "reason": "persisted result and prepared formats: fuzzops, fuzzops_rev, operator_version (audit B3, A8)",
       "terms": {
-        "fuzzops": 6,
+        "fuzzops": 3,
         "operator": 7,
         "sdo": 3
       }
@@ -185,7 +185,7 @@
     "internal/bench/step.go": {
       "reason": "step runner: fuzzops env, recover text, hook operator file, StepUnhold (audit A7, B3, B7, B8)",
       "terms": {
-        "fuzzops": 38,
+        "fuzzops": 37,
         "incident": 16,
         "operator": 71,
         "sdo": 2,
@@ -195,8 +195,8 @@
     "internal/bench/validaterendered.go": {
       "reason": "seed-needs-baseline rule, pinned fuzzops message (audit A5, B10)",
       "terms": {
-        "fuzzops": 2,
-        "operator": 8,
+        "fuzzops": 1,
+        "operator": 7,
         "sdo": 1,
         "sdo-config": 5
       }
@@ -214,7 +214,7 @@
     "internal/bench/workload.go": {
       "reason": "built-in fuzzops workload (audit B2); moves to adapter_fuzzops_workload.go",
       "terms": {
-        "fuzzops": 20
+        "fuzzops": 3
       }
     },
     "internal/env/env.go": {
@@ -264,6 +264,8 @@
     }
   },
   "adapter_files": {
+    "internal/bench/adapter_fuzzops_workload.go": "the built-in fuzzops workload: the default adapter for specs that name none (bin/fuzzops verbs, identity command). Delete when every spec names its workload adapter",
+    "internal/bench/adapter_legacy_workloadrev.go": "reads the pre-rename lane/step key fuzzops_rev and still writes it for a rollback. Delete when no build that reads only it can run",
     "internal/bench/adapter_sdo_memory.go": "built-in SDO memory check (sdo-operator memory migrate) for hooks checkouts that predate `check-input`. Delete when every pin answers it",
     "internal/bench/adapter_sdo_subject.go": "built-in SDO subject for hooks checkouts that predate `preflight` and `describe`: images, credential call, sink, proto, baseline memory check, legacy describe. Delete when every pin answers both verbs"
   }
