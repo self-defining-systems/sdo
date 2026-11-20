@@ -191,7 +191,8 @@ def inspect_listed(
         ["docker", "inspect", "--format", template, *ids], capture_output=True, text=True, check=False, timeout=timeout
     )
     errors = [line for line in inspected.stderr.splitlines() if line.strip()]
-    if inspected.returncode and (not errors or not all("No such object" in line for line in errors)):
+    gone = ("no such object", "no such container")  # docker 27+ prints "error: no such object: ID"
+    if inspected.returncode and (not errors or not all(any(g in line.lower() for g in gone) for line in errors)):
         raise subprocess.CalledProcessError(inspected.returncode, inspected.args, inspected.stdout, inspected.stderr)
     return inspected.stdout.splitlines()
 
