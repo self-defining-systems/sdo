@@ -10,7 +10,7 @@ benchmark infrastructure: production `sdo/` never imports it, and it imports not
 
 | Path | Responsibility |
 |---|---|
-| `cmd/lanes/` | The command: `serve`, `add`, `status`, `preflight`, `results`, `lane`, `host`, `ledger` and the rest of the fuzzops-bench verbs, unchanged |
+| `cmd/lanes/` | The command: `manager` (the manager as a systemd --user unit), `serve`, `add`, `status`, `preflight`, `results`, `lane`, `host`, `ledger` and the rest of the fuzzops-bench verbs, unchanged |
 | `internal/bench/` | Manager, inventory (`hosts.yaml`), specs, steps (detached, adoptable after a restart), lane state, CPU and memory ledger, preflight, results |
 | `internal/bench/workload.go` | The workload adapter seam; the built-in `fuzzops` workload and the executable adapter |
 | `internal/bench/hooks.go`, `preflight_subject.go` | The subject adapter seam: hook verbs and their limits; the subject's share of preflight |

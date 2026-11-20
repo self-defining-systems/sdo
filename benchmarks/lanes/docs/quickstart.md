@@ -12,8 +12,15 @@ results. It knows no benchmark; a benchmark plugs in as an adapter.
 ```bash
 cd benchmarks/lanes && go build -o bin/lanes ./cmd/lanes
 export FUZZOPS_BENCH_ROOT=/data/bench-root       # the results root: hosts.yaml, specs, plans, logs
-bin/lanes serve                                  # start the manager (run it under systemd-run --user or tmux)
+bin/lanes manager start                          # start the manager as a systemd --user unit (restarts on failure)
+bin/lanes manager status                         # unit state, binary path and revision, root
+bin/lanes manager logs                           # follow the manager log (bench.log)
 ```
+
+`lanes manager` runs `lanes serve` under a unit named from the root, so you never type `systemctl`. It checks that the
+user has linger on (units die at logout without it) and prints the fix when not. It refuses to start while another
+manager holds `<root>/bench.lock` and names that holder. `lanes serve` still runs the manager in the foreground, for
+debugging. Every verb prints its own usage with `lanes VERB --help`.
 
 ## 2. Set up a host once
 
@@ -105,11 +112,12 @@ lanes plan remove demo-1             # clean up and free the name; add --keep to
 ```
 
 Restarting the manager is safe at any time: runs live in detached steps and all state is on disk, so a restarted
-`lanes serve` picks up where the last pass stopped.
+manager picks up where the last pass stopped. `stop` leaves the steps running on the hosts.
 
 ```bash
-# stop the manager (Ctrl-C, or stop its systemd unit), then start it again
-lanes serve
+lanes manager restart     # stop, then start again with the binary now on disk (use after rebuilding bin/lanes)
+lanes manager stop        # stop the manager only; steps keep running
+lanes manager start
 ```
 
 ## 5. When something is wrong
@@ -142,7 +150,7 @@ corrected plan (the name is free at once); finished results stay in `plans/.remo
 Where things are, under the root:
 
 ```bash
-tail -f bench.log                          # the manager's log
+lanes manager logs                         # the manager's log (bench.log)
 cat alarms.jsonl                           # every alarm
 ls plans/demo-1                            # state.json, results.jsonl, events, control.json
 lanes status                               # experiments, lanes, hosts, last day of alarms

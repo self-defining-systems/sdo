@@ -10,7 +10,7 @@ import (
 // allVerbs is every verb run dispatches. Add a verb here when main.go gains one.
 var allVerbs = []string{
 	"serve", "add", "remove", "pause", "resume", "status", "results", "lane", "gc", "preflight",
-	"step", "ledger", "host", "plan", "probe", "gc-staging",
+	"step", "ledger", "host", "plan", "probe", "gc-staging", "manager", "version",
 }
 
 // captureOut runs f and returns its result and what it wrote to stdout and stderr.

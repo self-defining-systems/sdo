@@ -23,6 +23,17 @@ var helpTable = map[string]verbHelp{
 		usage: "serve --root R",
 		flags: rootFlag,
 	},
+	"manager": {
+		desc:  "run the manager as a systemd --user unit named from the root (restarts on failure); stopping it leaves steps running",
+		usage: "manager start|stop|restart|status|logs --root R [--no-follow] [-n N]",
+		flags: rootFlag +
+			"  --no-follow   logs: print the last lines and exit (default: keep following bench.log)\n" +
+			"  -n N          logs: how many lines to start with (default 50)\n",
+	},
+	"version": {
+		desc:  "print the revision this binary was built from",
+		usage: "version",
+	},
 	"add": {
 		desc:  "validate a spec file and add it as an experiment",
 		usage: "add FILE --root R",
