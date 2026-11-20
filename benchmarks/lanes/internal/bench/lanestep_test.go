@@ -17,6 +17,7 @@ func limitRunner(t *testing.T, cores int) *stepRunner {
 	r := newRunner(t, presentCluster)
 	r.topology = func() (Topology, error) { return topo(8, 1), nil }
 	r.live = func() (map[string]bool, error) { return nil, errors.New("not known") }
+	r.foreign = func() ([]ContainerPin, error) { return nil, nil }
 	r.oom = func() (int, error) { return 0, nil }
 	r.s.Limits = &StepLimits{Cores: cores, Memory: "2Gi", CPUs: "2-7", State: filepath.Join(t.TempDir(), "state")}
 	r.s.New = &Prepared{Experiment: "x"}

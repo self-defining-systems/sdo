@@ -34,9 +34,17 @@ func TestBenchRemoteHost(t *testing.T) {
 	must(t, exec.Command("cp", benchBin, filepath.Join(remote, "bin", "fuzzops-bench")).Run())
 	inv, err := os.ReadFile(l.root.path("hosts.yaml"))
 	must(t, err)
-	s := strings.Replace(string(inv), "h1: {local: true, staging: "+dir+"/staging", "h1: {ssh: fakehost, staging: "+dir+"/remote-staging", 1)
+	// Each edit must apply: a lab inventory that gains a field must not turn this into a silent local run.
+	edit := func(s, old, new string) string {
+		if !strings.Contains(s, old) {
+			t.Fatalf("lab inventory has no %q:\n%s", old, s)
+		}
+		return strings.Replace(s, old, new, 1)
+	}
+	s := edit(string(inv), "local: true,", "ssh: fakehost,")
+	s = edit(s, "staging: "+dir+"/staging", "staging: "+dir+"/remote-staging")
 	fake := testdata("fakefuzzops")
-	s = strings.Replace(s, "{h1: "+fake+"}", "{h1: "+remote+"}", 1)
+	s = edit(s, "{h1: "+fake+"}", "{h1: "+remote+"}")
 	must(t, os.WriteFile(l.root.path("hosts.yaml"), []byte(s), 0o644))
 	l.add("e1", l.hooked, "a@x", "[[1, 2]]", 0)
 	l.until("both runs done", func() bool { return l.exp("e1").Count(0).Done == 2 })

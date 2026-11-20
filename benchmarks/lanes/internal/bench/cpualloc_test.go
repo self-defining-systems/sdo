@@ -629,3 +629,41 @@ func withOwner(t *testing.T, f func(os.FileInfo) int) {
 	fileOwner = f
 	t.Cleanup(func() { fileOwner = old })
 }
+
+// Containers other runners pinned inside the block (their kind nodes) are not ours to share cores with: a lane is
+// given the cores the ledger and those pins leave, a core whole, and waits, naming them, when too few remain.
+func TestAllocatorAvoidsForeignPins(t *testing.T) {
+	a := allocFor(t, topo(8, 2), "0-7,8-15") // 8 cores, cpu c and c+8 are siblings
+	// docker ps/inspect output as containerProbe prints it: NAME CGROUPPARENT CPUSET.
+	probe := "sdm-worker docker 2,3\novh4-node system.slice 12\nlane1-node lanes.slice 0-1\nunpinned docker \n"
+	a.Foreign = func() ([]ContainerPin, error) { return ForeignPins(probe), nil }
+	got, err := a.Take("a", 2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Cores 2 and 3 (sdm-worker) and core 4 (cpu 12, a sibling of 4) are out; the lane's own node is not foreign.
+	for _, c := range got {
+		if c%8 == 2 || c%8 == 3 || c%8 == 4 {
+			t.Errorf("lane got cpu %d, pinned by a foreign container: %v", c, got)
+		}
+	}
+	if len(got) != 4 {
+		t.Errorf("two cores of two threads expected, got %v", got)
+	}
+	// Five cores remain minus the two just taken: three. Four do not fit and the reason names both containers.
+	_, err = a.Take("b", 4, 0)
+	if !errors.Is(err, ErrNoFreeCores) {
+		t.Fatalf("want a wait, got %v", err)
+	}
+	for _, name := range []string{"sdm-worker", "ovh4-node"} {
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("idle reason does not name %s: %v", name, err)
+		}
+	}
+	if strings.Contains(err.Error(), "lane1-node") {
+		t.Errorf("our own container is named as foreign: %v", err)
+	}
+	if _, err := a.Take("b", 3, 0); err != nil {
+		t.Errorf("the three cores left should fit: %v", err)
+	}
+}
