@@ -484,7 +484,7 @@ def test_respond_replay_uses_captured_kubernetes_objects(
 
     from benchmarks.sregym.fastloop.replay_worker import replay_generated_responder
 
-    print(json.dumps(replay_generated_responder(CheckpointStore(run_dir), 0, source=source)))
+    print(json.dumps(replay_generated_responder(CheckpointStore(run_dir), 0, source=source, now=scripts.FIXED_NOW)))
     output = json.loads(capsys.readouterr().out)
     assert output["identical"] is True, "\n".join(output["difference"])
     from benchmarks.sregym.fastloop.replay_worker import replay_script_worker
