@@ -1,0 +1,493 @@
+package plan
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+// Engine executes one plan. All of its state is on disk (state.json, events.jsonl): Tick can be called from a fresh
+// process at any point and continues where the last one stopped.
+type Engine struct {
+	Dir     string
+	Plan    *Plan
+	Lock    Lock
+	Backend Backend
+	Clock   Clock
+	// Logf, when set, receives one line per decision.
+	Logf func(format string, a ...any)
+
+	items []Item
+}
+
+// Open loads a plan directory and checks the stored copies against the lock.
+func Open(dir string, b Backend, c Clock) (*Engine, error) {
+	e := &Engine{Dir: dir, Backend: b, Clock: c}
+	if err := readJSONFile(lockFile(dir), &e.Lock); err != nil {
+		return nil, fmt.Errorf("plan %s: %w", dir, err)
+	}
+	pb, err := os.ReadFile(planFile(dir))
+	if err != nil {
+		return nil, err
+	}
+	if sha(pb) != e.Lock.PlanSHA {
+		return nil, fmt.Errorf("plan %s: plan.json differs from the lock (plans are not edited: add a new plan)", e.Lock.Plan)
+	}
+	var p Plan
+	if err := readJSONFileBytes(pb, &p); err != nil {
+		return nil, err
+	}
+	p.defaults()
+	e.Plan = &p
+	e.items = p.Items.List
+	for arm, want := range e.Lock.Templates {
+		tb, err := os.ReadFile(templateFile(dir, arm))
+		if err != nil {
+			return nil, err
+		}
+		if sha(tb) != want {
+			return nil, fmt.Errorf("plan %s: template of arm %s differs from the lock", e.Lock.Plan, arm)
+		}
+	}
+	return e, nil
+}
+
+func (e *Engine) logf(f string, a ...any) {
+	if e.Logf != nil {
+		e.Logf("plan %s: "+f, append([]any{e.Plan.Name}, a...)...)
+	}
+}
+
+// Tick is one pass: observe what was released, verify artifacts, run steps, release what is ready. It returns an
+// error only when the state cannot be read or written; a backend that fails leaves the work for the next pass.
+func (e *Engine) Tick(ctx context.Context) error {
+	st, err := LoadState(e.Dir)
+	if err != nil {
+		return err
+	}
+	if st.Complete {
+		return nil
+	}
+	e.observe(ctx, st)
+	e.verifyPending(ctx, st)
+	e.runSteps(ctx, st)
+	e.skipOrphans(st)
+	e.release(ctx, st)
+	e.skipOrphans(st) // a release that found a stale artifact failed its source
+	if e.allTerminal(st) {
+		st.Complete = true
+		e.event("", "complete", "%d nodes", len(st.Nodes))
+	}
+	return writeJSONFile(stateFile(e.Dir), st)
+}
+
+func (e *Engine) allTerminal(st *State) bool {
+	for _, n := range st.Nodes {
+		if !terminalNode(n.Status) {
+			return false
+		}
+	}
+	for _, s := range st.Steps {
+		if s.Status != StepDone && s.Status != StepFailed && s.Status != StepSkipped {
+			return false
+		}
+	}
+	return true
+}
+
+func (e *Engine) observe(ctx context.Context, st *State) {
+	for _, n := range st.Nodes {
+		if n.Status != NodeSubmitted {
+			continue
+		}
+		obs, err := e.Backend.Observe(ctx, n.Exp)
+		if err != nil {
+			e.logf("observe %s: %v (next pass)", n.Exp, err)
+			continue
+		}
+		switch obs.Phase {
+		case PhaseDone:
+			n.Status, n.Ended = NodeDone, nonZero(obs.Ended, e.Clock.Now().UTC())
+			e.event(n.ID, "done", "%s", n.Exp)
+		case PhaseFailed:
+			e.fail(n, obs.Reason, obs.Detail)
+		case PhaseAbsent:
+			e.fail(n, "lost", "the backend has no experiment "+n.Exp)
+		}
+	}
+}
+
+func nonZero(t, def time.Time) time.Time {
+	if t.IsZero() {
+		return def
+	}
+	return t.UTC()
+}
+
+// fail ends the node's current attempt with reason.
+func (e *Engine) fail(n *NodeState, reason, detail string) {
+	if reason == "" {
+		reason = "failed"
+	}
+	n.Status, n.Reason, n.Ended = NodeFailed, reason, e.Clock.Now().UTC()
+	e.event(n.ID, "failed", "%s: %s", reason, detail)
+	e.logf("%s failed: %s: %s", n.ID, reason, detail)
+}
+
+// outgoing returns the (kind, mode) pairs the edges ask of arm's nodes (or a step's artifact).
+func (e *Engine) outgoing(from string) map[string][]string {
+	out := map[string][]string{}
+	for _, ed := range e.Plan.Edges {
+		if ed.From != from || ed.Artifact == "" {
+			continue
+		}
+		mode := e.mode(ed)
+		have := false
+		for _, m := range out[ed.Artifact] {
+			have = have || m == mode
+		}
+		if !have {
+			out[ed.Artifact] = append(out[ed.Artifact], mode)
+		}
+	}
+	return out
+}
+
+func (e *Engine) mode(ed Edge) string {
+	if ed.Verify != "" {
+		return ed.Verify
+	}
+	if d, ok := e.Plan.Artifacts[ed.Artifact]; ok && d.Verify != "" {
+		return d.Verify
+	}
+	return VerifyExists
+}
+
+func (e *Engine) pathTemplate(from, kind string) string {
+	if e.Plan.isStep(from) {
+		return e.Plan.stepOf(from).Out
+	}
+	return e.Plan.Artifacts[kind].Path
+}
+
+func (e *Engine) nodeSource(n *NodeState) Source { return Source{ID: n.ID, Exp: n.Exp} }
+
+func (e *Engine) stepDir(id string) string {
+	return filepath.Join(e.Dir, "steps", strings.NewReplacer("/", "_", ":", "_").Replace(id))
+}
+
+// verifyPending exports and verifies every artifact the edges take from done nodes and done steps. A failed verify
+// fails the source (the artifact is bad: the node must run again, and no dependent may start on it).
+func (e *Engine) verifyPending(ctx context.Context, st *State) {
+	for _, n := range st.Nodes {
+		if n.Status != NodeDone {
+			continue
+		}
+		if n.Artifacts == nil {
+			n.Artifacts = map[string]*ArtifactState{}
+		}
+		for kind, modes := range e.outgoing(n.Arm) {
+			if a := n.Artifacts[kind]; a != nil && a.Verified {
+				continue
+			}
+			ok, detail, err := e.exportVerify(ctx, e.nodeSource(n), n.Artifacts, kind, e.pathTemplate(n.Arm, kind), modes)
+			switch {
+			case err != nil:
+				e.logf("%s artifact %s: %v (next pass)", n.ID, kind, err)
+			case !ok:
+				e.fail(n, "artifact:"+kind, detail)
+			}
+			if n.Status == NodeFailed {
+				break
+			}
+		}
+	}
+	for _, s := range st.Steps {
+		if s.Status != StepDone {
+			continue
+		}
+		if s.Artifacts == nil {
+			s.Artifacts = map[string]*ArtifactState{}
+		}
+		for kind, modes := range e.outgoing(s.Name) {
+			if a := s.Artifacts[kind]; a != nil && a.Verified {
+				continue
+			}
+			src := Source{ID: s.ID, Step: true, Dir: e.stepDir(s.ID)}
+			ok, detail, err := e.exportVerify(ctx, src, s.Artifacts, kind, e.pathTemplate(s.Name, kind), modes)
+			switch {
+			case err != nil:
+				e.logf("%s artifact %s: %v (next pass)", s.ID, kind, err)
+			case !ok:
+				s.Status, s.Detail, s.Ended = StepFailed, "artifact "+kind+": "+detail, e.Clock.Now().UTC()
+				e.event(s.ID, "failed", "%s", s.Detail)
+			}
+			if s.Status == StepFailed {
+				break
+			}
+		}
+	}
+}
+
+// exportVerify exports kind and runs every mode. err: an infrastructure failure, nothing recorded as a verdict.
+func (e *Engine) exportVerify(ctx context.Context, src Source, held map[string]*ArtifactState, kind, tmpl string, modes []string) (bool, string, error) {
+	a, err := e.Backend.Export(ctx, src, kind, tmpl)
+	if err != nil {
+		return false, "", err
+	}
+	for _, m := range modes {
+		v, err := e.Backend.Verify(ctx, src, a, m)
+		if err != nil {
+			return false, "", err
+		}
+		if !v.OK {
+			held[kind] = &ArtifactState{Path: a.Path, Detail: m + ": " + v.Detail, At: e.Clock.Now().UTC()}
+			return false, m + ": " + v.Detail, nil
+		}
+	}
+	held[kind] = &ArtifactState{Path: a.Path, Verified: true, At: e.Clock.Now().UTC()}
+	e.event(src.ID, "artifact", "%s verified at %s", kind, a.Path)
+	return true, "", nil
+}
+
+// runSteps starts the lane-free steps whose inputs ended and polls the running ones.
+func (e *Engine) runSteps(ctx context.Context, st *State) {
+	for _, s := range st.Steps {
+		def := e.Plan.stepOf(s.Name)
+		switch s.Status {
+		case StepWaiting:
+			inputs, ready := e.stepInputs(st, def, s.Rep)
+			if !ready {
+				continue
+			}
+			if len(inputs) == 0 {
+				s.Status, s.Detail, s.Ended = StepSkipped, "no input node is done", e.Clock.Now().UTC()
+				e.event(s.ID, "skipped", "%s", s.Detail)
+				continue
+			}
+			timeout := 30 * time.Minute
+			if def.Timeout != "" {
+				timeout, _ = time.ParseDuration(def.Timeout)
+			}
+			err := e.Backend.StartStep(ctx, StepJob{Plan: e.Plan.Name, ID: s.ID, Name: s.Name, Run: def.Run, Dir: e.stepDir(s.ID),
+				Timeout: timeout, Inputs: inputs})
+			if err != nil {
+				e.logf("start %s: %v (next pass)", s.ID, err)
+				continue
+			}
+			s.Status, s.Started = StepRunning, e.Clock.Now().UTC()
+			e.event(s.ID, "step-start", "%d inputs", len(inputs))
+		case StepRunning:
+			obs, err := e.Backend.ObserveStep(ctx, e.stepDir(s.ID))
+			if err != nil {
+				e.logf("observe %s: %v (next pass)", s.ID, err)
+				continue
+			}
+			switch obs.Phase {
+			case PhaseDone:
+				s.Status, s.Ended = StepDone, e.Clock.Now().UTC()
+				e.event(s.ID, "step-done", "-")
+			case PhaseFailed:
+				s.Status, s.Detail, s.Ended = StepFailed, obs.Detail, e.Clock.Now().UTC()
+				e.event(s.ID, "failed", "%s", obs.Detail)
+			case PhaseAbsent:
+				s.Status = StepWaiting // the start never reached the backend
+			}
+		}
+	}
+}
+
+// stepInputs are the done nodes of the step's After arms (that rep's, for a per-rep step); ready: every such node
+// has ended, one way or the other. A failed or skipped input does not stop the step: it runs over what is done.
+func (e *Engine) stepInputs(st *State, def Step, rep int) ([]StepInput, bool) {
+	var in []StepInput
+	for _, n := range st.Nodes {
+		if !contains(def.After, n.Arm) || (rep != 0 && n.Rep != rep) {
+			continue
+		}
+		if !terminalNode(n.Status) {
+			return nil, false
+		}
+		if n.Status != NodeDone {
+			continue
+		}
+		si := StepInput{Node: n.ID, Arm: n.Arm, Item: n.Item, Rep: n.Rep, Exp: n.Exp, Artifacts: map[string]string{}}
+		for k, a := range n.Artifacts {
+			if a.Verified {
+				si.Artifacts[k] = a.Path
+			}
+		}
+		in = append(in, si)
+	}
+	return in, true
+}
+
+func contains(l []string, s string) bool {
+	for _, x := range l {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// incoming are the edges into arm.
+func (e *Engine) incoming(arm string) []Edge {
+	var out []Edge
+	for _, ed := range e.Plan.Edges {
+		if ed.To == arm {
+			out = append(out, ed)
+		}
+	}
+	return out
+}
+
+// upstream finds what edge ed takes n's input from: a node (the same item and rep) or a step instance.
+func (e *Engine) upstream(st *State, n *NodeState, ed Edge) (status, id string, arts map[string]*ArtifactState) {
+	if e.Plan.isStep(ed.From) {
+		rep := 0
+		if e.Plan.stepOf(ed.From).Per == "rep" {
+			rep = n.Rep
+		}
+		s := st.step(StepID(ed.From, rep))
+		if s == nil {
+			return StepFailed, StepID(ed.From, rep), nil
+		}
+		return s.Status, s.ID, s.Artifacts
+	}
+	u := st.node(NodeID(ed.From, n.Item, n.Rep))
+	if u == nil {
+		return NodeFailed, NodeID(ed.From, n.Item, n.Rep), nil
+	}
+	return u.Status, u.ID, u.Artifacts
+}
+
+// blocked says why a waiting node cannot be released yet ("" when it can), and whether the wait is final (an input
+// failed or was skipped, so it never will).
+func (e *Engine) blocked(st *State, n *NodeState) (why string, final bool) {
+	for _, ed := range e.incoming(n.Arm) {
+		status, id, arts := e.upstream(st, n, ed)
+		switch status {
+		case NodeDone:
+			if ed.Artifact != "" {
+				if a := arts[ed.Artifact]; a == nil || !a.Verified {
+					return fmt.Sprintf("%s: artifact %s not verified", id, ed.Artifact), false
+				}
+			}
+		case NodeFailed, NodeSkipped:
+			return fmt.Sprintf("%s %s", id, status), true
+		default:
+			return fmt.Sprintf("waits for %s", id), false
+		}
+	}
+	return "", false
+}
+
+// skipOrphans ends the waiting nodes whose inputs ended without delivering.
+func (e *Engine) skipOrphans(st *State) {
+	for changed := true; changed; {
+		changed = false
+		for _, n := range st.Nodes {
+			if n.Status != NodeWaiting {
+				continue
+			}
+			if why, final := e.blocked(st, n); final {
+				n.Status, n.Reason, n.Ended = NodeSkipped, "upstream: "+why, e.Clock.Now().UTC()
+				e.event(n.ID, "skipped", "%s", n.Reason)
+				changed = true
+			}
+		}
+	}
+}
+
+// Inflight counts the experiments released and not yet ended.
+func (s *State) Inflight() int {
+	k := 0
+	for _, n := range s.Nodes {
+		if n.Status == NodeSubmitted {
+			k++
+		}
+	}
+	return k
+}
+
+// release submits the ready nodes in plan order, up to Parallel in flight.
+func (e *Engine) release(ctx context.Context, st *State) {
+	inflight := st.Inflight()
+	for _, n := range st.Nodes {
+		if inflight >= e.Plan.Parallel {
+			return
+		}
+		if n.Status != NodeWaiting {
+			continue
+		}
+		if why, _ := e.blocked(st, n); why != "" {
+			continue
+		}
+		arts, ok := e.recheck(ctx, st, n)
+		if !ok {
+			continue
+		}
+		attempt := n.Attempt + 1
+		spec, name, err := e.Render(Node{ID: n.ID, Arm: n.Arm, Item: n.Item, Rep: n.Rep, Index: n.Index}, attempt, arts)
+		if err != nil {
+			e.fail(n, "spec", err.Error())
+			continue
+		}
+		path := filepath.Join(e.Dir, "specs", name+".json")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err == nil {
+			err = os.WriteFile(path, spec, 0o644)
+		}
+		if err != nil {
+			e.logf("write spec %s: %v", name, err)
+			continue
+		}
+		err = e.Backend.Submit(ctx, Job{Plan: e.Plan.Name, Node: n.ID, Exp: name, SpecPath: path})
+		if err != nil && !errors.Is(err, ErrExists) {
+			e.logf("submit %s: %v (next pass)", name, err)
+			continue
+		}
+		n.Status, n.Attempt, n.Exp, n.Reason, n.Submitted = NodeSubmitted, attempt, name, "", e.Clock.Now().UTC()
+		inflight++
+		e.event(n.ID, "submitted", "%s", name)
+	}
+}
+
+// recheck verifies, just before a node is released, the artifacts of its incoming edges once more: the world may
+// have moved since the source ended (a head that advanced, a file that went). A bad one fails the source.
+func (e *Engine) recheck(ctx context.Context, st *State, n *NodeState) (map[string]string, bool) {
+	arts := map[string]string{}
+	for _, ed := range e.incoming(n.Arm) {
+		if ed.Artifact == "" {
+			continue
+		}
+		_, id, held := e.upstream(st, n, ed)
+		a := held[ed.Artifact]
+		var src Source
+		if e.Plan.isStep(ed.From) {
+			src = Source{ID: id, Step: true, Dir: e.stepDir(id)}
+		} else {
+			src = e.nodeSource(st.node(id))
+		}
+		v, err := e.Backend.Verify(ctx, src, Artifact{Kind: ed.Artifact, Path: a.Path}, e.mode(ed))
+		switch {
+		case err != nil:
+			e.logf("recheck %s for %s: %v (next pass)", ed.Artifact, n.ID, err)
+			return nil, false
+		case !v.OK:
+			if u := st.node(id); u != nil {
+				u.Artifacts[ed.Artifact].Verified = false
+				e.fail(u, "artifact:"+ed.Artifact, "at release of "+n.ID+": "+v.Detail)
+			} else if s := st.step(id); s != nil {
+				s.Status, s.Detail, s.Ended = StepFailed, "artifact "+ed.Artifact+": "+v.Detail, e.Clock.Now().UTC()
+			}
+			return nil, false
+		}
+		arts[ed.Artifact] = a.Path
+	}
+	return arts, true
+}

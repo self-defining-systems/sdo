@@ -371,6 +371,7 @@ func Status(root Root, only string, w io.Writer) error {
 	if err != nil {
 		return err
 	}
+	defer PlansSummary(root, w)
 	if st.Inventory != "" {
 		fmt.Fprintf(w, "hosts.yaml REFUSED (the manager uses the last inventory that loaded): %s\n", st.Inventory)
 	}

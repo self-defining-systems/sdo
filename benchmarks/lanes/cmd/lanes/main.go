@@ -35,6 +35,7 @@ const usage = `usage: lanes VERB --root R ...
                              drop lanes whose cluster is gone, or register a lane that exists (run on the host)
   host reserve HOST|all | unreserve HOST [--drain] | status [HOST] | adopt HOST [--cpus LIST] | install-helper HOST
                              the hosts.yaml reserve: block: apply it through the root helper, undo it, show it, record an existing one
+  plan add FILE | status [NAME] [--json]   the plan engine: arms x items x reps with verified-artifact edges (docs/plan.md)
   probe --staging S [--fuzzops F,..] LANE=STEP ...   how a host's steps stand, as JSON (the manager runs it over ssh)`
 
 func main() {
@@ -59,6 +60,7 @@ func run(verb string, args []string) int {
 	if verb == "results" {
 		fs.Var(&with, "with", "a baseline experiment whose noop runs grade this one (repeatable)")
 	}
+	jsonOut := fs.Bool("json", false, "plan status: print JSON")
 	teardown := false
 	if verb == "remove" {
 		fs.BoolVar(&teardown, "teardown", false, "remove: delete the lanes' clusters even when the spec keeps its lanes")
@@ -163,6 +165,8 @@ func run(verb string, args []string) int {
 		err = bench.Results(ctx, r, pos[0], with, os.Stderr)
 	case "preflight":
 		err = bench.Preflight(ctx, r, specs, bench.PreflightOptions{MaxLoadPerCore: *maxLoad, AllowMemoryDiag: allow}, os.Stdout)
+	case "plan":
+		err = planVerb(r, pos, *jsonOut)
 	case "lane":
 		if len(pos) != 2 || pos[0] != "reset" {
 			fmt.Fprintln(os.Stderr, usage)
@@ -247,4 +251,27 @@ func probe(args []string) int {
 	b, _ := json.Marshal(bench.ProbeStaging(*staging, steps, dirs))
 	fmt.Println(string(b))
 	return 0
+}
+
+// planVerb is `lanes plan add FILE | status [NAME]`.
+func planVerb(r bench.Root, pos []string, jsonOut bool) error {
+	if len(pos) == 0 {
+		return fmt.Errorf("plan: want add FILE | status [NAME]")
+	}
+	switch pos[0] {
+	case "add":
+		if len(pos) != 2 {
+			return fmt.Errorf("plan add: want FILE")
+		}
+		return bench.PlanAdd(r, pos[1], os.Stdout)
+	case "status":
+		name := ""
+		if len(pos) == 2 {
+			name = pos[1]
+		} else if len(pos) > 2 {
+			return fmt.Errorf("plan status: want [NAME]")
+		}
+		return bench.PlanStatus(r, name, jsonOut, os.Stdout)
+	}
+	return fmt.Errorf("plan: unknown subcommand %q (want add, status)", pos[0])
 }

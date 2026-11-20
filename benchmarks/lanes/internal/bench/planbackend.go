@@ -1,0 +1,363 @@
+package bench
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/self-defining-systems/sdo/benchmarks/lanes/internal/plan"
+)
+
+// PlansDir is <root>/plans: one directory per plan (internal/plan).
+func (r Root) PlansDir() string { return r.path("plans") }
+
+// SystemClock is the wall clock the runner gives the plan engine.
+type SystemClock struct{}
+
+// Now is the current time.
+func (SystemClock) Now() time.Time { return time.Now() }
+
+// PlanBackend runs a plan's nodes as experiments of this root: a node is one experiment (spec) added to the manager,
+// and the plan reads the experiment's run files back. It holds no state of its own.
+type PlanBackend struct {
+	Root Root
+	Inv  Inventory
+	Log  io.Writer
+}
+
+// PlanAdd adds a plan from a plan file: its templates are rendered once per arm and each result is validated as a spec
+// and against the inventory (the pins must be checked out on a usable host).
+func PlanAdd(root Root, file string, w io.Writer) error {
+	inv, err := LoadInventory(string(root))
+	if err != nil {
+		return err
+	}
+	lock, err := plan.Add(root.PlansDir(), file, SystemClock{}, func(b []byte) error {
+		s, err := ParseSpec(b)
+		if err != nil {
+			return err
+		}
+		if len(inv.UsableHosts(s)) == 0 {
+			return fmt.Errorf("no host of %v has the pinned fuzzops %s%s in hosts.yaml checkouts", s.Hosts, s.Fuzzops,
+				map[bool]string{true: " and hooks " + s.Operator.Hooks + " " + s.Operator.Revision}[s.Operator.Hooks != ""])
+		}
+		if s.Operator.Hooks != "" && inv.HookCommand[s.Operator.Hooks] == "" {
+			return fmt.Errorf("hosts.yaml has no hook_command for %s", s.Operator.Hooks)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "plan %s added: %d nodes, workload %s, subject %s\n", lock.Plan, lock.Nodes, lock.Pins.Workload, lock.Pins.Subject)
+	return nil
+}
+
+// Submit adds the experiment unless it exists.
+func (b *PlanBackend) Submit(ctx context.Context, j plan.Job) error {
+	if _, err := os.Stat(b.Root.LockPath(j.Exp)); err == nil {
+		return plan.ErrExists
+	}
+	return Add(ctx, b.Root, j.SpecPath, b.Log)
+}
+
+// Observe maps the experiment's sequences to a phase: failed when a sequence ended invalid or was dropped (the reason
+// is the head of the invalid run's reason), done when every sequence is done.
+func (b *PlanBackend) Observe(_ context.Context, exp string) (plan.Observation, error) {
+	x, err := b.Root.LoadExperiment(exp)
+	if errors.Is(err, os.ErrNotExist) {
+		return plan.Observation{Phase: plan.PhaseAbsent}, nil
+	}
+	if err != nil {
+		return plan.Observation{}, err
+	}
+	var obs plan.Observation
+	for _, rf := range x.Runs {
+		if obs.Started.IsZero() || (!rf.Started.IsZero() && rf.Started.Before(obs.Started)) {
+			obs.Started = rf.Started
+		}
+		if rf.Ended.After(obs.Ended) {
+			obs.Ended = rf.Ended
+		}
+	}
+	if x.Spec == nil {
+		obs.Phase, obs.Reason, obs.Detail = plan.PhaseFailed, "removed", "the experiment was removed"
+		return obs, nil
+	}
+	allDone := true
+	for _, q := range x.AllSeqs() {
+		p := x.Progress(q)
+		switch p.State {
+		case SeqDone:
+		case SeqInvalid:
+			obs.Phase, obs.Reason, obs.Detail = plan.PhaseFailed, planReason(p.Reason), p.Reason
+			return obs, nil
+		case SeqDropped:
+			obs.Phase, obs.Reason, obs.Detail = plan.PhaseFailed, "dropped", "a sequence was dropped"
+			return obs, nil
+		default:
+			allDone = false
+		}
+	}
+	switch {
+	case allDone && len(x.AllSeqs()) > 0:
+		obs.Phase = plan.PhaseDone
+	case len(x.Runs) > 0 || b.laneBound(exp):
+		obs.Phase = plan.PhaseRunning
+	default:
+		obs.Phase = plan.PhaseQueued
+	}
+	return obs, nil
+}
+
+// planReason is the failure class of an invalid run: the head of its reason, as `status` counts it.
+func planReason(r string) string {
+	c := strings.ToLower(strings.ReplaceAll(reasonClass(r), " ", "-"))
+	if c == "" {
+		return "invalid"
+	}
+	return c
+}
+
+func (b *PlanBackend) laneBound(exp string) bool {
+	lanes, _ := b.Root.Lanes()
+	for _, l := range lanes {
+		if l.Experiment == exp && (l.Seq != nil || l.Step != nil) {
+			return true
+		}
+	}
+	return false
+}
+
+// newestDone is the run directory of the experiment's newest done run.
+func (b *PlanBackend) newestDone(exp string) (string, error) {
+	x, err := b.Root.LoadExperiment(exp)
+	if err != nil {
+		return "", err
+	}
+	var best *RunFile
+	for _, rf := range sortedRuns(x) {
+		rf := rf
+		if rf.Status == StatusDone && (best == nil || rf.Ended.After(best.Ended)) {
+			best = &rf
+		}
+	}
+	if best == nil {
+		return "", fmt.Errorf("experiment %s has no done run", exp)
+	}
+	return b.Root.RunDir(exp, best.ID), nil
+}
+
+// Export resolves the path template: ${run} the newest done run of the node, ${exp_dir} its experiment directory,
+// ${step_dir} a step's directory.
+func (b *PlanBackend) Export(_ context.Context, src plan.Source, kind, tmpl string) (plan.Artifact, error) {
+	path := tmpl
+	if strings.Contains(path, "${run}") {
+		run, err := b.newestDone(src.Exp)
+		if err != nil {
+			return plan.Artifact{}, err
+		}
+		path = strings.ReplaceAll(path, "${run}", run)
+	}
+	path = strings.ReplaceAll(strings.ReplaceAll(path, "${exp_dir}", b.Root.path(src.Exp)), "${step_dir}", src.Dir)
+	if strings.Contains(path, "${") {
+		return plan.Artifact{}, fmt.Errorf("artifact %s: unresolved variable in %q", kind, path)
+	}
+	return plan.Artifact{Kind: kind, Path: path}, nil
+}
+
+// Verify: exists (the path exists and a directory is not empty), cmd:<shell> (exit 0), or subject (the subject's
+// verify-artifact verb; unsupported falls back to exists).
+func (b *PlanBackend) Verify(ctx context.Context, src plan.Source, a plan.Artifact, mode string) (plan.Verdict, error) {
+	exists := func() plan.Verdict {
+		fi, err := os.Stat(a.Path)
+		switch {
+		case err != nil:
+			return plan.Verdict{Detail: err.Error()}
+		case fi.IsDir():
+			if ents, _ := os.ReadDir(a.Path); len(ents) == 0 {
+				return plan.Verdict{Detail: a.Path + " is an empty directory"}
+			}
+		case fi.Size() == 0:
+			return plan.Verdict{Detail: a.Path + " is empty"}
+		}
+		return plan.Verdict{OK: true}
+	}
+	env := []string{"ARTIFACT_PATH=" + a.Path, "ARTIFACT_KIND=" + a.Kind, "BENCH_EXPERIMENT=" + src.Exp, "BENCH_ROOT=" + string(b.Root)}
+	switch {
+	case mode == plan.VerifyExists:
+		return exists(), nil
+	case strings.HasPrefix(mode, plan.VerifyCmd):
+		return runVerifyCmd(ctx, strings.TrimPrefix(mode, plan.VerifyCmd), "", env), nil
+	case mode == plan.VerifySubject:
+		if src.Exp == "" {
+			return exists(), nil
+		}
+		x, err := b.Root.LoadExperiment(src.Exp)
+		if err != nil {
+			return plan.Verdict{}, err
+		}
+		s := x.Lock.Spec
+		host := b.Inv.LocalHost()
+		dir, cmd := b.Inv.HooksPath(s.Operator.Hooks, s.Operator.Revision, host), b.Inv.HookCommand[s.Operator.Hooks]
+		if s.Operator.Hooks == "" || dir == "" || cmd == "" {
+			return exists(), nil
+		}
+		if run, err := b.newestDone(src.Exp); err == nil {
+			env = append(env, "BENCH_RUN_DIR="+run)
+		}
+		res := Hook{Dir: dir, Command: cmd}.Run(ctx, "verify-artifact", env, nil)
+		switch {
+		case res.Unsupported():
+			return exists(), nil
+		case res.Exit == -1:
+			return plan.Verdict{}, errors.New(res.Why("verify-artifact"))
+		case !res.OK():
+			return plan.Verdict{Detail: res.Why("verify-artifact")}, nil
+		}
+		return plan.Verdict{OK: true}, nil
+	}
+	return plan.Verdict{}, fmt.Errorf("verify mode %q", mode)
+}
+
+func runVerifyCmd(ctx context.Context, command, dir string, env []string) plan.Verdict {
+	ctx, cancel := context.WithTimeout(ctx, hookTimeouts["verify-artifact"])
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), env...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return plan.Verdict{OK: true}
+	}
+	return plan.Verdict{Detail: fmt.Sprintf("%v: %s", err, tailLine(string(out)))}
+}
+
+func tailLine(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	return strings.TrimSpace(lines[len(lines)-1])
+}
+
+// StartStep starts the step detached (its own session): it runs `timeout` around the command and writes its exit
+// status to <dir>/exit, so a restart of the runner adopts a step that is still running or has finished.
+func (b *PlanBackend) StartStep(_ context.Context, j plan.StepJob) error {
+	if err := os.MkdirAll(j.Dir, 0o755); err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(j.Dir, "started.json")); err == nil {
+		return nil // already started (a restart between the start and the state write)
+	}
+	in, _ := json.Marshal(j.Inputs)
+	inFile := filepath.Join(j.Dir, "inputs.json")
+	if err := os.WriteFile(inFile, in, 0o644); err != nil {
+		return err
+	}
+	script := fmt.Sprintf("timeout %d sh -c %s > out.log 2>&1; echo $? > exit.tmp; mv exit.tmp exit", int(j.Timeout.Seconds()), shellQuote(j.Run))
+	cmd := exec.Command("setsid", "sh", "-c", script)
+	cmd.Dir = j.Dir
+	cmd.Env = append(os.Environ(), "STEP_DIR="+j.Dir, "PLAN_DIR="+filepath.Dir(filepath.Dir(j.Dir)), "LANES_INPUTS="+string(in), "LANES_INPUTS_FILE="+inFile,
+		"LANES_ROOT="+string(b.Root), "LANES_PLAN="+j.Plan)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() { _ = cmd.Wait() }()
+	started, _ := json.Marshal(map[string]any{"at": time.Now().UTC(), "timeout_s": int(j.Timeout.Seconds())})
+	return os.WriteFile(filepath.Join(j.Dir, "started.json"), started, 0o644)
+}
+
+// ObserveStep reads the step's records. A step with no exit file past its timeout (and a grace minute) is lost: the
+// host went away under it. No process table is read.
+func (b *PlanBackend) ObserveStep(_ context.Context, dir string) (plan.StepObservation, error) {
+	if exit, err := os.ReadFile(filepath.Join(dir, "exit")); err == nil {
+		out, _ := os.ReadFile(filepath.Join(dir, "out.log"))
+		if strings.TrimSpace(string(exit)) == "0" {
+			return plan.StepObservation{Phase: plan.PhaseDone}, nil
+		}
+		return plan.StepObservation{Phase: plan.PhaseFailed, Detail: fmt.Sprintf("exit %s: %s", strings.TrimSpace(string(exit)), tailLine(string(out)))}, nil
+	}
+	var st struct {
+		At       time.Time `json:"at"`
+		TimeoutS int       `json:"timeout_s"`
+	}
+	if err := readJSON(filepath.Join(dir, "started.json"), &st); err != nil {
+		return plan.StepObservation{Phase: plan.PhaseAbsent}, nil
+	}
+	if time.Since(st.At) > time.Duration(st.TimeoutS)*time.Second+time.Minute {
+		return plan.StepObservation{Phase: plan.PhaseFailed, Detail: "no exit record past the step's timeout (lost)"}, nil
+	}
+	return plan.StepObservation{Phase: plan.PhaseRunning}, nil
+}
+
+var _ plan.Backend = (*PlanBackend)(nil)
+
+// OpenPlan opens a plan for reading (status, results); it asks no backend.
+func OpenPlan(root Root, name string) (*plan.Engine, error) {
+	return plan.Open(plan.Dir(root.PlansDir(), name), &PlanBackend{Root: root}, SystemClock{})
+}
+
+// PlanStatus prints the status of plan name, or of every plan when name is empty; asJSON prints one JSON document.
+func PlanStatus(root Root, name string, asJSON bool, w io.Writer) error {
+	names := plan.Names(root.PlansDir())
+	if name != "" {
+		names = []string{name}
+	}
+	if len(names) == 0 {
+		fmt.Fprintln(w, "no plans")
+		return nil
+	}
+	var all []*plan.Status
+	for _, n := range names {
+		e, err := OpenPlan(root, n)
+		if err != nil {
+			return err
+		}
+		s, err := e.Status()
+		if err != nil {
+			return err
+		}
+		all = append(all, s)
+		if !asJSON {
+			s.Render(w)
+		}
+	}
+	if asJSON {
+		b, _ := json.MarshalIndent(all, "", " ")
+		fmt.Fprintln(w, string(b))
+	}
+	return nil
+}
+
+// PlansSummary is the plan lines of `lanes status`: one line per plan that is not complete.
+func PlansSummary(root Root, w io.Writer) {
+	for _, n := range plan.Names(root.PlansDir()) {
+		e, err := OpenPlan(root, n)
+		if err != nil {
+			fmt.Fprintf(w, "plan %s: %v\n", n, err)
+			continue
+		}
+		s, err := e.Status()
+		if err != nil {
+			fmt.Fprintf(w, "plan %s: %v\n", n, err)
+			continue
+		}
+		var done, fly, queued, blocked, failed int
+		for _, a := range s.Arms {
+			done, fly, queued, blocked, failed = done+a.Done, fly+a.Inflight, queued+a.Queued, blocked+a.Blocked, failed+a.Failed+a.Skipped
+		}
+		state := "running"
+		if s.Complete {
+			state = "complete"
+		}
+		fmt.Fprintf(w, "plan %-24s %-8s done %d, in flight %d, queued %d, blocked %d, failed %d (lanes plan status %s)\n", n, state, done, fly, queued, blocked, failed, n)
+	}
+}
