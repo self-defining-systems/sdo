@@ -25,7 +25,9 @@ func TestConfirmedAcceptsIdleSpacedHealthySamples(t *testing.T) {
 		ServiceList: []corev1.Service{{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "app"}, Spec: corev1.ServiceSpec{ClusterIP: "10.0.0.1", Selector: map[string]string{"app": "test"}, Ports: []corev1.ServicePort{{Port: 8080}}}}},
 		PodList:     []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "app", Namespace: "app", Labels: map[string]string{"app": "test"}}, Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue, LastTransitionTime: metav1.NewTime(ready)}}}}}}
 	d := servicehealth.NewReachabilityDetector(sdk.DetectorSpec{ID: "reachability"})
-	confirmed, ok := d.(interface{ Confirmed(sdk.DetectionContext) bool })
+	confirmed, ok := d.(interface {
+		Confirmed(sdk.DetectionContext) bool
+	})
 	if !ok {
 		t.Fatal("detector lacks Confirmed")
 	}

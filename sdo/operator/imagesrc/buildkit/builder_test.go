@@ -36,7 +36,7 @@ func proposalCheckout(t *testing.T) (root, checkout string) {
 
 func testBackend(root string, client *fake.Clientset, timeout time.Duration) Builder {
 	return Builder{
-		Client:     client, Namespace: "sdo-control", RepositoryPVC: "repo", CheckoutRoot: root,
+		Client: client, Namespace: "sdo-control", RepositoryPVC: "repo", CheckoutRoot: root,
 		BuildKitImage:  "reg.example/buildkit@" + synthDigest,
 		RegistrySecret: "push", AllowedRegistryHost: "reg.example", ServiceAccount: "builder",
 		PollInterval: time.Millisecond, Timeout: timeout, JobSuffix: func() string { return "t" },

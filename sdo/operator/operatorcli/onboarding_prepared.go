@@ -9,10 +9,10 @@ import (
 	"strings"
 
 	"sdo.dev/operator/broker"
-	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
-	"sdo.dev/operator/operatorcli/internal/processio"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/validate"
+	"sdo.dev/operator/operatorcli/catalog/telemetrysources"
+	"sdo.dev/operator/operatorcli/internal/processio"
 	"sdo.dev/operator/telemetry"
 )
 

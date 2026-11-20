@@ -144,25 +144,25 @@ func (k KnownBroken) validate() error {
 
 // Workload is a validated workload profile. Use ParseWorkloadJSON.
 type Workload struct {
-	APIVersion       string             `json:"apiVersion"`
-	Kind             string             `json:"kind"`
-	Name             string             `json:"name"`
-	Description      string             `json:"description,omitempty"`
-	Purpose          Purpose            `json:"purpose"`
-	Arrival          Arrival            `json:"arrival,omitempty"`
-	RatePerSecond    float64            `json:"ratePerSecond,omitempty"`
-	Duration         Duration           `json:"duration,omitempty"`
-	Timeout          Duration           `json:"timeout,omitempty"`
-	IterationTimeout Duration           `json:"iterationTimeout,omitempty"`
-	Seed             uint64             `json:"seed,omitempty"`
+	APIVersion       string   `json:"apiVersion"`
+	Kind             string   `json:"kind"`
+	Name             string   `json:"name"`
+	Description      string   `json:"description,omitempty"`
+	Purpose          Purpose  `json:"purpose"`
+	Arrival          Arrival  `json:"arrival,omitempty"`
+	RatePerSecond    float64  `json:"ratePerSecond,omitempty"`
+	Duration         Duration `json:"duration,omitempty"`
+	Timeout          Duration `json:"timeout,omitempty"`
+	IterationTimeout Duration `json:"iterationTimeout,omitempty"`
+	Seed             uint64   `json:"seed,omitempty"`
 	// SampleInterval is how often a health probe samples each scenario at
 	// least. Unset it is MinSampleInterval (10 s); set it within
 	// [MinSampleInterval, MaxSampleInterval] to lower probe load for many or
 	// expensive scenarios. Detection takes about minSamples intervals, so
 	// slo.maxAge defaults to cover them and must not be set shorter.
-	SampleInterval Duration `json:"sampleInterval,omitempty"`
-	SLO              SLO                `json:"slo,omitempty"`
-	Scenarios        []WorkloadScenario `json:"scenarios,omitempty"`
+	SampleInterval Duration           `json:"sampleInterval,omitempty"`
+	SLO            SLO                `json:"slo,omitempty"`
+	Scenarios      []WorkloadScenario `json:"scenarios,omitempty"`
 	// Links, Interval and Failures configure a link-probe workload: the
 	// dependency edges to dial afresh, how often, and how many consecutive
 	// failed dials report an edge.

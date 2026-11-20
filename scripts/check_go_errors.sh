@@ -35,6 +35,9 @@ case "${1:-}" in
     --skip-go-tests) run_parity=0; quality_mode=(--defer-prepared) ;;
     *) echo "unknown Go check mode: $1" >&2; exit 2 ;;
 esac
+echo "==> gofmt (all Go modules)"
+bash "$SCRIPT_DIR/gofmt.sh" --check
+
 echo "==> generated skill references"
 bash "$SCRIPT_DIR/gen_skill_references.sh" --check
 python3 "$SCRIPT_DIR/go_quality_checks.py" --group layout "${quality_mode[@]}"

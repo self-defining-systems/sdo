@@ -288,7 +288,6 @@ func TestUserTestJoiningDuringTheWaitHoldsRecoveryAndDispatchesTheAgent(t *testi
 	}
 }
 
-
 // When the opening alerts and a joined user test have all cleared, the whole
 // alert set is clear and the agent is not dispatched.
 func TestWholeAlertSetClearedAfterAPlaybookDispatchesNoAgent(t *testing.T) {

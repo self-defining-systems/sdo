@@ -18,16 +18,16 @@ const DefaultDiagnosisDeadline = 10 * time.Second
 
 // ProgramRun is one diagnosis for a concrete finding or hint binding.
 type ProgramRun struct {
-	CanMitigate        *bool            `json:"can_mitigate,omitempty"`
-	FindingFingerprint string           `json:"finding_fingerprint,omitempty"`
-	BindingSource      string           `json:"binding_source,omitempty"`
+	CanMitigate        *bool  `json:"can_mitigate,omitempty"`
+	FindingFingerprint string `json:"finding_fingerprint,omitempty"`
+	BindingSource      string `json:"binding_source,omitempty"`
 	// Retrieval is how the playbook came to be tried (Retrieval* below).
-	Retrieval string `json:"retrieval,omitempty"`
-	ProgramID          string           `json:"program_id"`
-	Bindings           program.Bindings `json:"bindings"`
-	Verdict            program.Verdict  `json:"verdict"`
-	Duration           time.Duration    `json:"duration"`
-	ProgramRevision    string           `json:"program_revision,omitempty"`
+	Retrieval       string           `json:"retrieval,omitempty"`
+	ProgramID       string           `json:"program_id"`
+	Bindings        program.Bindings `json:"bindings"`
+	Verdict         program.Verdict  `json:"verdict"`
+	Duration        time.Duration    `json:"duration"`
+	ProgramRevision string           `json:"program_revision,omitempty"`
 	// MitigateCommand is the command that applies this playbook with these
 	// bindings; set on a matching diagnosis that has a fix.
 	MitigateCommand string `json:"mitigate_command,omitempty"`

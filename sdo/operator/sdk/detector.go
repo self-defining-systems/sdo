@@ -62,7 +62,7 @@ type DetectorSpec struct {
 type DetectorClass string
 
 const (
-	DetectorClassHealth   DetectorClass = "health"
+	DetectorClassHealth  DetectorClass = "health"
 	DetectorClassLearned DetectorClass = "learned"
 )
 

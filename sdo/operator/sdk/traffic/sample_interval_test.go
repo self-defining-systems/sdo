@@ -86,7 +86,11 @@ func TestSampleIntervalValidation(t *testing.T) {
 		"below the minimum": func(w Workload) Workload { w.SampleInterval = Duration(5 * time.Second); return w },
 		"above the maximum": func(w Workload) Workload { w.SampleInterval = Duration(MaxSampleInterval + time.Second); return w },
 		"maxAge too short":  func(w Workload) Workload { w.SLO.MaxAge = Duration(40 * time.Second); return w },
-		"not a probe":       func(w Workload) Workload { w.Purpose = PurposeVerifyBurst; w.Duration = Duration(5 * time.Second); return w },
+		"not a probe": func(w Workload) Workload {
+			w.Purpose = PurposeVerifyBurst
+			w.Duration = Duration(5 * time.Second)
+			return w
+		},
 	}
 	for name, mutate := range cases {
 		if err := mutate(good).Validate(); err == nil {

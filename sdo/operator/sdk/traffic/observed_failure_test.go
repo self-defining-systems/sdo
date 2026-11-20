@@ -38,7 +38,7 @@ func TestBodyMismatchReportsTheObservedTitleAndStatus(t *testing.T) {
 // Anything secret-looking in the observed response is redacted before it can
 // reach an agent.
 func TestObservedExcerptRedactsSecrets(t *testing.T) {
-	page := []byte(`<html><title>Sign in · Example</title><body>`+`<input name="authenticity_token" value="AbCdEf0123456789AbCdEf0123456789AbCdEf==">` +
+	page := []byte(`<html><title>Sign in · Example</title><body>` + `<input name="authenticity_token" value="AbCdEf0123456789AbCdEf0123456789AbCdEf==">` +
 		`<p>password: hunter2hunter2 Bearer abcdefghijklmnop0123456789</p></body></html>`)
 	got := GET("/", nil).Contains("Missing phrase").Check(Response{Status: http.StatusOK, Body: page}, State{})
 	if !strings.Contains(got.Reason, "[redacted]") {

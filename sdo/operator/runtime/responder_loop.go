@@ -298,15 +298,15 @@ type ResponderLoop struct {
 	stageNotes          []StageNote
 	timing              toolTiming
 	// trace times the phases of the Handle call in progress (nil outside one).
-	trace *phaseTrace
-	preApplyCaptured    bool
-	saveToolState       func(context.Context, []byte) error
-	operationMu         sync.RWMutex
-	mu                  sync.Mutex
-	sessionID           string
-	plans               map[string]selectedPlan
-	applications        map[string]PlanApplicationResult
-	applicationsLog     []RecordedPlanApplication
+	trace            *phaseTrace
+	preApplyCaptured bool
+	saveToolState    func(context.Context, []byte) error
+	operationMu      sync.RWMutex
+	mu               sync.Mutex
+	sessionID        string
+	plans            map[string]selectedPlan
+	applications     map[string]PlanApplicationResult
+	applicationsLog  []RecordedPlanApplication
 	// Restored application evidence has no live plan or rollback handles.
 	archivedApplications []RecordedPlanApplication
 	completedRepairs     []continuationRepair

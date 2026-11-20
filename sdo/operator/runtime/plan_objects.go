@@ -64,6 +64,7 @@ func objectActionOperation(action program.Action) string {
 	}
 	return ""
 }
+
 // absentRestoreReason is the reason a ReconcileFromSource of an absent object runs as a create.
 const absentRestoreReason = "restore from accepted source: the object is absent, so it is created as source declares it"
 

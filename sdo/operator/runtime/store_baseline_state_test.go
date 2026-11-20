@@ -18,7 +18,9 @@ import (
 
 var restartKV = storestate.QueryID(storestate.EngineRedis, "kv")
 
-func restartQuery() podread.Query { return podread.Query{ID: restartKV, Args: []string{"redis-cli", "info"}} }
+func restartQuery() podread.Query {
+	return podread.Query{ID: restartKV, Args: []string{"redis-cli", "info"}}
+}
 
 func restartResult(query podread.Query, uid, stdout string) podread.Result {
 	return podread.Result{Query: query, Readings: []podread.Reading{{Namespace: "app", Pod: "kv-0", UID: uid, Container: "redis", Stdout: stdout, ObservedAt: time.Unix(1000, 0).UTC()}}}
@@ -59,7 +61,7 @@ func TestPromotedStoreBaselinesSurviveAControllerRestart(t *testing.T) {
 	before := NewPodReadBaseline(DefaultStateSettle)
 	before.State = &StoreBaselineState{Path: path, SourceInputs: fixedInputs(&inputs)}
 	before.Promote(map[string]podread.Result{
-		restartKV:     restartResult(restartQuery(), "uid-kv", syntheticRedis),
+		restartKV:       restartResult(restartQuery(), "uid-kv", syntheticRedis),
 		"designer-read": {Query: designer, Readings: []podread.Reading{{Namespace: "app", Pod: "web-0", UID: "uid-web", Stdout: "secret-ish"}}},
 	})
 	if data, err := os.ReadFile(path); err != nil || strings.Contains(string(data), "secret-ish") {
@@ -92,8 +94,8 @@ func TestARestoredStoreBaselineIsNotReusedForAnotherStoreState(t *testing.T) {
 		inputs  string
 		current podread.Result
 	}{
-		"accepted source changed": {inputs: "source-inputs-2", current: restartResult(restartQuery(), "uid-kv", syntheticRedis)},
-		"store Pod replaced":      {inputs: "source-inputs-1", current: restartResult(restartQuery(), "uid-kv-new", syntheticRedis)},
+		"accepted source changed":    {inputs: "source-inputs-2", current: restartResult(restartQuery(), "uid-kv", syntheticRedis)},
+		"store Pod replaced":         {inputs: "source-inputs-1", current: restartResult(restartQuery(), "uid-kv-new", syntheticRedis)},
 		"store Pod identity unknown": {inputs: "source-inputs-1", current: restartResult(restartQuery(), "", syntheticRedis)},
 		"query declaration changed":  {inputs: "source-inputs-1", current: restartResult(changedQuery, "uid-kv", syntheticRedis)},
 	} {

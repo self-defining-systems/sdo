@@ -31,12 +31,12 @@ type LaunchConfig struct {
 	// ProbeIdentitySeed is the file holding SDO's probe-identity seed (see
 	// ProbeIdentitySeedPath); empty provisions no probe users.
 	ProbeIdentitySeed string
-	Binary                  string
-	Commit                  string
-	Digest                  string
-	SocketDirectory         string
-	MemoryBytes             uint64
-	Output                  io.Writer
+	Binary            string
+	Commit            string
+	Digest            string
+	SocketDirectory   string
+	MemoryBytes       uint64
+	Output            io.Writer
 }
 
 // Process is independent of the controller's context: candidate preparation

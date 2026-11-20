@@ -10,8 +10,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/localize"
-	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/sdktest"
+	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 )
 

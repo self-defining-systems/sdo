@@ -1,6 +1,7 @@
 # Repository tooling map
 
-- `format_code.sh`: Python formatting (use `--check` in CI).
+- `format_code.sh`: Python (ruff) and Go (`gofmt.sh`) formatting (use `--check` in CI).
+- `gofmt.sh`: gofmt over every tracked Go file in every module; `--check` fails on offenders (run by `check_go_errors.sh`).
 - `check_errors.sh`: static gate: Ruff, Tach, Python ownership/import contracts,
   types, proto drift, Go core purity, Go nondeterminism, production and benchmark compilation.
 - `check_go_core.sh`, `go_pure_packages.txt`, `.golangci.yml`: declared pure Go

@@ -122,7 +122,9 @@ func TestSourceRestoreWithPreExistingResidualIsNotAFailedApply(t *testing.T) {
 	request := IncidentRequest{IncidentID: "synthetic-residual", Namespace: "app", SourceCommit: "synthetic-accepted", Findings: findings, RepairPolicy: "recorded-actions"}
 	executor := PlanExecutor{Client: TypedPlanClient{Client: world.client}, Source: world, Rollouts: world, Verifier: PlanHealthVerifier{Detectors: []sdk.Detector{detector}, Provider: world}}
 	loop = NewResponderLoop(request, registry, world, []sdk.Detector{detector}, executor, 5)
-	loop.ReadView = func(v sdk.DetectionContext) program.ReadView { return &sdktest.ReplayReadView{Snapshot: v.(sdktest.Snapshot)} }
+	loop.ReadView = func(v sdk.DetectionContext) program.ReadView {
+		return &sdktest.ReplayReadView{Snapshot: v.(sdktest.Snapshot)}
+	}
 	loop.saveToolState = func(context.Context, []byte) error { return nil }
 	state := &IncidentState{Request: request, Findings: findings}
 

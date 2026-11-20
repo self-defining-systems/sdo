@@ -1,8 +1,8 @@
 package storestate_test
 
 import (
-	"fmt"
 	"context"
+	"fmt"
 	"math/rand"
 	"regexp"
 	"strings"

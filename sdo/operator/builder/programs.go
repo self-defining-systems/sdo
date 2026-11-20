@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"sdo.dev/operator/builder/internal/buildio"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 	programvalidation "sdo.dev/operator/memory/validate/program"
+	"slices"
 	"strconv"
 	"strings"
 )
