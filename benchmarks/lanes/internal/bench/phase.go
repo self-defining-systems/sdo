@@ -37,8 +37,14 @@ const (
 
 const phaseFile = "phase.json"
 
+// shapeNote is the detail of every phase of a build that rebuilds its lane for a new shape (status shows it).
+const shapeNote = "shape changed: rebuilding"
+
 // phase records that the step entered a phase (best effort).
 func (r *stepRunner) phase(name, detail string) {
+	if detail == "" {
+		detail = r.note
+	}
 	_ = writeJSON(filepath.Join(r.dir, phaseFile), Phase{Name: name, Since: time.Now().UTC(), Detail: detail})
 }
 
