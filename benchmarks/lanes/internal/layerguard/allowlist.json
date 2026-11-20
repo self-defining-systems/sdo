@@ -70,6 +70,14 @@
         "operator": 1
       }
     },
+    "internal/bench/input_check.go": {
+      "reason": "reads the spec keys operator.{hooks,revision,settings,baseline,seed} and sets FUZZOPS_NAMESPACE for the hook call: spec-format and env compat names (audit C1, B7)",
+      "terms": {
+        "fuzzops": 1,
+        "operator": 12,
+        "sdo-config": 1
+      }
+    },
     "internal/bench/inventory.go": {
       "reason": "hosts.yaml keys checkouts.fuzzops and checkouts.hooks, FUZZOPS_LANE_PROVIDER env (audit B4, B7)",
       "terms": {
@@ -125,9 +133,8 @@
       "reason": "checkSpecMemory (audit A1), operator inputs (A6), run result Fuzzops field (B3)",
       "terms": {
         "fuzzops": 1,
-        "operator": 13,
-        "sdo": 5,
-        "sdo-config": 1
+        "operator": 9,
+        "sdo": 3
       }
     },
     "internal/bench/preflight.go": {
@@ -135,30 +142,22 @@
       "terms": {
         "app-names": 1,
         "fuzzops": 10,
-        "operator": 10,
-        "sdo": 9,
-        "sdo-config": 12
+        "operator": 5,
+        "sdo": 4,
+        "sdo-config": 2
       }
     },
     "internal/bench/preflight_subject.go": {
       "reason": "sdoSubject fallback for pins without the preflight verb (audit A2)",
       "terms": {
-        "operator": 4,
-        "sdo": 2
+        "operator": 7,
+        "sdo": 1
       }
     },
     "internal/bench/reserve.go": {
       "reason": "root helper alias path and gc unit names installed on the hosts (audit A9)",
       "terms": {
         "sdo": 4
-      }
-    },
-    "internal/bench/seedcheck.go": {
-      "reason": "checkMemoryDir (audit A1); moves to the check-input verb",
-      "terms": {
-        "operator": 4,
-        "sdo": 5,
-        "sdo-config": 4
       }
     },
     "internal/bench/spec.go": {
@@ -265,6 +264,7 @@
     }
   },
   "adapter_files": {
+    "internal/bench/adapter_sdo_memory.go": "built-in SDO memory check (sdo-operator memory migrate) for hooks checkouts that predate `check-input`. Delete when every pin answers it",
     "internal/bench/adapter_sdo_subject.go": "built-in SDO subject for hooks checkouts that predate `preflight` and `describe`: images, credential call, sink, proto, baseline memory check, legacy describe. Delete when every pin answers both verbs"
   }
 }

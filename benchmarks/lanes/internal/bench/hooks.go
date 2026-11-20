@@ -36,6 +36,7 @@ var hookTimeouts = map[string]time.Duration{
 	"transcripts": 2 * time.Minute,
 	// The verbs the contract adds (docs/contract.md); no step calls them yet except preflight.
 	"describe":        time.Minute,
+	"check-input":     30 * time.Minute,
 	"preflight":       10 * time.Minute,
 	"export-artifact": 10 * time.Minute,
 	"verify-artifact": 5 * time.Minute,
@@ -55,7 +56,7 @@ var hookTimeouts = map[string]time.Duration{
 
 // SubjectVerbs are the verbs of the subject contract (docs/contract.md): the operator under test.
 var SubjectVerbs = []string{"check", "prepare", "swap", "idle", "watch", "collect", "snapshot", "reset", "teardown", "transcripts",
-	"describe", "preflight", "export-artifact", "verify-artifact", "reseed", "verify-start"}
+	"describe", "check-input", "preflight", "export-artifact", "verify-artifact", "reseed", "verify-start"}
 
 // Unsupported reports that the hook does not implement the verb: exit 64, a last stdout line {"unsupported":true},
 // or (hooks that predate the contract's newer verbs) a usage error, exit 2 with nothing on stdout.

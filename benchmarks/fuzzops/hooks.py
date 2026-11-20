@@ -62,7 +62,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import yaml
 
@@ -2364,6 +2364,105 @@ def describe(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int
     return 0
 
 
+class InputBaseline(NamedTuple):
+    """What ``check-input`` needs of a baseline-format directory's ``baseline.json``."""
+
+    namespace: str
+    commit: str
+    branch: str
+
+
+#: Diagnostics of ``memory migrate`` that are no failure at add time: no cluster is known yet, and the controller binds
+#: the telemetry sources when it installs.
+ADD_TIME_ALLOWED = ("telemetry.unbound",)
+
+
+def _load_input_baseline(path: Path) -> InputBaseline:
+    baseline = Baseline.load(path)
+    return InputBaseline(baseline.namespace, baseline.commit, baseline.branch)
+
+
+def _input_problem(kind: str, path: Path, namespace: str) -> str:
+    """Why this input cannot be used on a lane of ``namespace`` ("" when it can)."""
+    baseline = Baseline.load(path)
+    if kind == "baseline":
+        return baseline_problem(baseline, namespace)
+    return bundle_problem(baseline.path(baseline.bundle), baseline.branch, baseline.commit)
+
+
+def _memory_migrate(path: Path, baseline: InputBaseline) -> tuple[str, int, list[str]]:
+    """Clone the input's bundle, build ``sdo-operator`` from this checkout and run ``memory migrate`` (the startup
+    upkeep and the accepted-memory audit the controller runs on its first read) over the clone, under the limits the
+    controller image sets. Returns the clone's head, the exit status and the diagnostics."""
+    manifest = Baseline.load(path)
+    root = Path(__file__).resolve().parents[2]
+    with tempfile.TemporaryDirectory(prefix="check-input-") as tmp:
+        work = Path(tmp)
+        _run(
+            ["git", "clone", "-q", "-b", baseline.branch, str(manifest.path(manifest.bundle)), str(work / "m")],
+            "git clone",
+            300,
+        )
+        head = _run(["git", "-C", str(work / "m"), "rev-parse", "HEAD"], "git rev-parse").stdout.strip()
+        build_operator(root, work / "sdo-operator")
+        (work / "w").mkdir()
+        env = {**os.environ, "SDO_OPERATOR_ROOT": str(root / "sdo" / "operator"), "GOMAXPROCS": "2"}
+        proc = subprocess.run(
+            [
+                str(work / "sdo-operator"),
+                "memory",
+                "migrate",
+                str(work / "m"),
+                "--worktree-root",
+                str(work / "w"),
+                "--replay",
+                "off",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=900,
+            check=False,
+            env=env,
+        )
+        diagnostics = [line for line in (proc.stdout + proc.stderr).splitlines() if line.strip()]
+        return head, proc.returncode, diagnostics
+
+
+def check_input(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
+    """``check-input``: can SDO use this input? ``BENCH_INPUT_KIND`` is ``baseline`` or ``seed``, ``BENCH_INPUT_PATH``
+    the baseline-format directory. Answers ``{"ok", "detail", "note"}``. A directory with no ``baseline.json`` is a seed
+    an earlier arm will produce: a note. Otherwise the bundle's head must be the commit ``baseline.json`` names, and
+    ``memory migrate`` must print no diagnostic except the allowed ones (``BENCH_INPUT_ALLOW`` and, at add time, the
+    unbound telemetry sources)."""
+    kind, path = _need(env, "BENCH_INPUT_KIND"), Path(_need(env, "BENCH_INPUT_PATH"))
+    allow = [a for a in env.get("BENCH_INPUT_ALLOW", "").split(",") if a]
+    if env.get("BENCH_INPUT_PHASE", "add") == "add":
+        allow += ADD_TIME_ALLOWED
+    if not (path / BASELINE_FILE).is_file():
+        out(json.dumps({"ok": True, "note": f"{path} is not a memory bundle yet (no {BASELINE_FILE}): not checked"}))
+        return 0
+    try:
+        baseline = _load_input_baseline(path)
+        if problem := _input_problem(kind, path, env.get("FUZZOPS_NAMESPACE", baseline.namespace)):
+            out(json.dumps({"ok": False, "detail": problem}))
+            return 0
+        head, status, diagnostics = _memory_migrate(path, baseline)
+    except (HookError, OSError, subprocess.SubprocessError) as exc:
+        out(json.dumps({"ok": False, "detail": " ".join(str(exc).split())[:300]}))
+        return 0
+    if head != baseline.commit:
+        out(json.dumps({"ok": False, "detail": f"bundle head {head[:12]}, baseline.json says {baseline.commit[:12]}"}))
+        return 0
+    left = [d for d in diagnostics if not any(a in d for a in allow)] if status else []
+    if status and (left or not diagnostics):
+        detail = f"memory migrate+check exit {status}: {' | '.join(left)[:200]}"
+        out(json.dumps({"ok": False, "detail": detail}))
+        return 0
+    suffix = f" ({len(diagnostics)} allowed diagnostics)" if diagnostics and status else ""
+    out(json.dumps({"ok": True, "detail": f"bundle head matches baseline.json; memory check clean{suffix}"}))
+    return 0
+
+
 def transcripts(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     try:
         if sink.pull_mode(env):
@@ -2479,6 +2578,7 @@ def baseline_main(argv: list[str]) -> int:
 
 VERBS = (
     "describe",
+    "check-input",
     "check",
     "prepare",
     "swap",
@@ -2521,6 +2621,7 @@ def main(argv: list[str] | None = None) -> int:
             return watch(env)
         verbs: dict[str, Callable[[Mapping[str, str]], int]] = {
             "describe": describe,
+            "check-input": check_input,
             "check": check,
             "prepare": prepare,
             "swap": swap,

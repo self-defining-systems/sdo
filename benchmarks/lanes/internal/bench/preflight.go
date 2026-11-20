@@ -3,7 +3,6 @@ package bench
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -186,7 +185,7 @@ func envPrefix(h Host) string {
 
 // runPreflight runs all checks, hosts in parallel, and returns the results sorted by check then host.
 func runPreflight(ctx context.Context, inv Inventory, specs []specFile, opt PreflightOptions, run runFn) []PreflightResult {
-	subj := subjectChecks(hookSubject{})
+	subj := subjectChecks(newHookSubject())
 	var mu sync.Mutex
 	var results []PreflightResult
 	add := func(order int, check, host string, ok bool, f string, a ...any) {
@@ -740,83 +739,4 @@ func comparePack(out, rev string) (bool, string) {
 		return false, "pack differs from commit " + rev + ": " + strings.Join(diff, ", ")
 	}
 	return true, fmt.Sprintf("%d files identical to commit %s (checkout HEAD %s)", len(committed), rev, short(head))
-}
-
-// ---- 6 memory -----------------------------------------------------------------------------------------------------
-
-type baselineJSON struct {
-	Namespace string `json:"namespace"`
-	Bundle    string `json:"bundle"`
-	Branch    string `json:"branch"`
-	Commit    string `json:"commit"`
-}
-
-func readBaselineJSON(dir string) (baselineJSON, error) {
-	var b baselineJSON
-	raw, err := os.ReadFile(filepath.Join(dir, "baseline.json"))
-	if err != nil {
-		return b, err
-	}
-	if err := json.Unmarshal(raw, &b); err != nil {
-		return b, fmt.Errorf("%s/baseline.json: %v", dir, err)
-	}
-	if b.Bundle == "" || b.Branch == "" || b.Commit == "" {
-		return b, fmt.Errorf("%s/baseline.json: bundle, branch and commit are required", dir)
-	}
-	return b, nil
-}
-
-// memoryScript clones the baseline's bundle, prints its head, builds the pinned sdo-operator and runs
-// `sdo-operator memory migrate` on the clone: what the controller does on its first memory read (upkeep to the
-// current schema), then the same accepted-memory audit as `memory check --accepted`, without replay.
-// It runs under the controller image's Go limits (GOMAXPROCS and -p of Dockerfile.runtime): validation measures the
-// child's whole process group against a 3 GiB limit, and an unlimited build on a many-core host exceeds it.
-func memoryScript(baselineDir string, b baselineJSON, hooksDir string) string {
-	opRoot := shellQuote(filepath.Join(hooksDir, "sdo", "operator"))
-	return fmt.Sprintf(`export GOMAXPROCS=2 GOFLAGS="-p=2 -trimpath"; T=$(mktemp -d) || exit 2; trap 'rm -rf "$T"' EXIT; `+
-		`git clone -q -b %[1]s %[2]s "$T/m" || { echo "PREFLIGHT clone failed"; exit 2; }; echo "HEAD $(git -C "$T/m" rev-parse HEAD)"; `+
-		`(cd %[3]s && go build -o "$T/sdo-operator" ./cmd/sdo-operator) || { echo "PREFLIGHT go build sdo-operator failed"; exit 2; }; `+
-		`mkdir "$T/w"; SDO_OPERATOR_ROOT=%[3]s "$T/sdo-operator" memory migrate "$T/m" --worktree-root "$T/w" --replay off >"$T/out" 2>&1; rc=$?; sed 's/^/CHECK /' "$T/out"; echo "EXIT $rc"; true`,
-		shellQuote(b.Branch), shellQuote(filepath.Join(baselineDir, b.Bundle)), opRoot)
-}
-
-// judgeMemory: the bundle's head is the commit baseline.json names and the memory check printed no diagnostics.
-func judgeMemory(out string, err error, commit string, allow []string) (bool, string) {
-	if err != nil {
-		return false, "probe failed: " + tail(err.Error()+" "+out, 200)
-	}
-	head, exit := "", "?"
-	var diag []string
-	for _, l := range strings.Split(out, "\n") {
-		switch {
-		case strings.HasPrefix(l, "EXIT "):
-			exit = strings.TrimSpace(strings.TrimPrefix(l, "EXIT "))
-		case strings.HasPrefix(l, "HEAD "):
-			head = strings.TrimSpace(strings.TrimPrefix(l, "HEAD "))
-		case strings.HasPrefix(l, "CHECK "):
-			diag = append(diag, strings.TrimPrefix(l, "CHECK "))
-		case strings.HasPrefix(l, "PREFLIGHT "):
-			return false, strings.TrimPrefix(l, "PREFLIGHT ")
-		}
-	}
-	if head != commit {
-		return false, fmt.Sprintf("bundle head %s, baseline.json says %s", short(head), short(commit))
-	}
-	var left []string
-	for _, d := range diag {
-		allowed := false
-		for _, a := range allow {
-			allowed = allowed || strings.Contains(d, a)
-		}
-		if !allowed {
-			left = append(left, d)
-		}
-	}
-	if exit != "0" && (len(left) > 0 || len(diag) == 0) {
-		return false, "memory migrate+check exit " + exit + ": " + clip(strings.Join(left, " | "), 200)
-	}
-	if len(diag) > 0 {
-		return true, fmt.Sprintf("bundle head matches baseline.json; memory check clean (%d allowed diagnostics)", len(diag))
-	}
-	return true, "bundle head matches baseline.json; memory check clean"
 }
