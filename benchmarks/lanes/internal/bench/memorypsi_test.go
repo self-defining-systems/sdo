@@ -28,7 +28,7 @@ func TestMemoryPressureStopsAdmission(t *testing.T) {
 	}
 	pass()
 	n := 0
-	for _, a := range RecentAlarms(m.Root, time.Hour, time.Now()) {
+	for _, a := range RecentAlarms(m.Root, time.Hour, m.now()) {
 		if a.Alarm == "memory-pressure" {
 			n++
 		}

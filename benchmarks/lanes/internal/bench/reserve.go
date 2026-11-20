@@ -735,7 +735,7 @@ func kernelStatus(ctx context.Context, inv Inventory, host string, run runFn, ou
 	}
 	c, err := parseCanary([]byte(o))
 	if err != nil {
-		fmt.Fprintf(out, "%s: kernel settings: %s\n", host, clip(err.Error(), 120))
+		fmt.Fprintf(out, "%s: kernel settings: the probe's answer could not be read\n", host)
 		return
 	}
 	if why := kernelLow(c, mins); why != "" {
