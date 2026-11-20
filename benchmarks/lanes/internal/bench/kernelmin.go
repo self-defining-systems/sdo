@@ -77,6 +77,7 @@ func (m *Manager) observeKernel(name string, c *Canary) {
 	if m.kernelWhy == nil {
 		m.kernelWhy, m.warns = map[string]string{}, map[string][]string{}
 	}
+	m.observePSI(name, c)
 	was := m.kernelWhy[name]
 	why := kernelLow(c, m.inv.Hosts[name].KernelMins())
 	m.kernelWhy[name] = why
@@ -98,5 +99,28 @@ func (m *Manager) observeKernel(name string, c *Canary) {
 			m.rdmaWarned[name] = true
 			m.logf("WARNING host %s: %s", name, w)
 		}
+	}
+}
+
+// observePSI is the memory-pressure gate: while the host's memory pressure ("full" avg60) is over health.mem_psi_full
+// it takes no new work. Memory-capped clusters thrashing (their own or another team's) are felt by every lane there.
+// There is no hysteresis: avg60 is already a minute's average.
+func (m *Manager) observePSI(name string, c *Canary) {
+	if m.psiWhy == nil {
+		m.psiWhy = map[string]string{}
+	}
+	max := m.inv.Hosts[name].Health.Thresholds().MemPSIFull
+	was := m.psiWhy[name]
+	why := ""
+	if c.MemPSIFull > max {
+		why = fmt.Sprintf("memory pressure (PSI full avg60) is %.0f%%, over %.0f%%", c.MemPSIFull, max)
+	}
+	m.psiWhy[name] = why
+	switch {
+	case why != "" && was == "":
+		m.logf("ALARM host %s: %s, no new lanes or steps", name, why)
+		(&AlarmLog{Root: m.Root, Logf: m.logf}).Raise(plan.Alarm{At: m.now().UTC(), Alarm: "memory-pressure", Key: "memory-pressure/" + name, Subject: name, Host: name, Detail: why})
+	case why == "" && was != "":
+		m.logf("host %s: memory pressure is back under %.0f%%, new lanes and steps resume", name, max)
 	}
 }

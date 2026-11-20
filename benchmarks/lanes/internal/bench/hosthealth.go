@@ -33,6 +33,8 @@ type Canary struct {
 	Override map[string]string `json:"override,omitempty"`
 	// RDMAShared: `rdma system show` says netns shared while ib_core is loaded (a warning, never a gate).
 	RDMAShared bool `json:"rdma_shared,omitempty"`
+	// MemPSIFull is the host's memory pressure, "full" avg60 in percent (/proc/pressure/memory); 0 when not readable.
+	MemPSIFull float64 `json:"mem_psi_full,omitempty"`
 }
 
 // HostHealthConf is a host's `health:` block of hosts.yaml; zero values mean the defaults.
@@ -40,23 +42,29 @@ type HostHealthConf struct {
 	ProbeTimeout string `json:"probe_timeout,omitempty"` // bound of the whole probe (default 10s)
 	IPSlow       string `json:"ip_slow,omitempty"`       // `ip -br link` slower than this is slow (default 2s)
 	SlowProbes   int    `json:"slow_probes,omitempty"`   // slow probes in a row that make the host unhealthy (default 2)
-	GoodProbes   int    `json:"good_probes,omitempty"`   // good probes in a row that make it healthy again (default 3)
+	GoodProbes   int    `json:"good_probes,omitempty"`
+	// MemPSIFull is the memory pressure ("full" avg60, percent) over which the host takes no new work (default 40).
+	MemPSIFull float64 `json:"mem_psi_full,omitempty"` // good probes in a row that make it healthy again (default 3)
 }
 
 // HealthThresholds are HostHealthConf with the defaults filled in.
 type HealthThresholds struct {
 	ProbeTimeout, IPSlow   time.Duration
 	SlowProbes, GoodProbes int
+	MemPSIFull             float64
 }
 
 // Thresholds fills in the defaults.
 func (c HostHealthConf) Thresholds() HealthThresholds {
-	t := HealthThresholds{ProbeTimeout: 10 * time.Second, IPSlow: 2 * time.Second, SlowProbes: 2, GoodProbes: 3}
+	t := HealthThresholds{ProbeTimeout: 10 * time.Second, IPSlow: 2 * time.Second, SlowProbes: 2, GoodProbes: 3, MemPSIFull: 40}
 	if d, err := time.ParseDuration(c.ProbeTimeout); err == nil && d > 0 {
 		t.ProbeTimeout = d
 	}
 	if d, err := time.ParseDuration(c.IPSlow); err == nil && d > 0 {
 		t.IPSlow = d
+	}
+	if c.MemPSIFull > 0 {
+		t.MemPSIFull = c.MemPSIFull
 	}
 	if c.SlowProbes > 0 {
 		t.SlowProbes = c.SlowProbes
@@ -73,6 +81,9 @@ func (c HostHealthConf) validate() []string {
 		if d, err := time.ParseDuration(v); v != "" && (err != nil || d <= 0) {
 			errs = append(errs, fmt.Sprintf("health.%s %q: a positive duration such as 2s", f, v))
 		}
+	}
+	if c.MemPSIFull < 0 || c.MemPSIFull > 100 {
+		errs = append(errs, "health.mem_psi_full must be a percentage")
 	}
 	if c.SlowProbes < 0 || c.GoodProbes < 0 {
 		errs = append(errs, "health.slow_probes and health.good_probes must not be negative")
@@ -143,6 +154,7 @@ const canaryBody = `for kv in $KMIN; do k=${kv%=*}; m=${kv#*=}
   fi
 done
 case $(timeout 3 rdma system show 2>/dev/null) in *"netns shared"*) [ -d /sys/module/ib_core ] && echo rdma-shared ;; esac
+[ -r "${HOST_CANARY_PSI_FILE:-/proc/pressure/memory}" ] && awk '/^full/{for(i=1;i<=NF;i++) if($i ~ /^avg60=/){sub("avg60=","",$i); print "psi-mem-full " $i}}' "${HOST_CANARY_PSI_FILE:-/proc/pressure/memory}"
 s=$(date +%s%N); timeout ${HOST_CANARY_IP_TIMEOUT:-8} ip -br link >/dev/null 2>&1; rc=$?; e=$(date +%s%N)
 h=-1
 f=${HOST_CANARY_HUNG_FILE:-/proc/sys/kernel/hung_task_detect_count}
@@ -194,6 +206,8 @@ func parseCanary(out []byte) (*Canary, error) {
 				c.Override = map[string]string{}
 			}
 			c.Override[f[1]] = strings.Join(f[2:], " ")
+		case len(f) == 2 && f[0] == "psi-mem-full":
+			c.MemPSIFull, _ = strconv.ParseFloat(f[1], 64)
 		case len(f) == 1 && f[0] == "rdma-shared":
 			c.RDMAShared = true
 		}
@@ -227,6 +241,9 @@ func localCanary(ctx context.Context, timeout time.Duration, mins map[string]int
 func (m *Manager) hostBlock(h string) string {
 	if st := m.health[h]; st != nil && !st.Healthy() {
 		return fmt.Sprintf("host %s is unhealthy: %s", h, st.Reason())
+	}
+	if why := m.psiWhy[h]; why != "" {
+		return fmt.Sprintf("host %s is not admitted: %s", h, why)
 	}
 	if why := m.kernelWhy[h]; why != "" {
 		return fmt.Sprintf("host %s is not admitted: %s", h, why)

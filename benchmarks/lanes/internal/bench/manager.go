@@ -69,6 +69,7 @@ type Manager struct {
 	health map[string]*healthState
 	// kernelWhy is why a host is not admitted for a kernel setting below its minimum ("" : none); warns are its warnings.
 	kernelWhy  map[string]string
+	psiWhy     map[string]string
 	warns      map[string][]string
 	rdmaWarned map[string]bool
 
