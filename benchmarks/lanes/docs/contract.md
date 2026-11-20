@@ -29,7 +29,8 @@ Both roles: **environment in, last stdout line JSON out.**
 A verb an adapter does not implement answers **exit 64** and/or a last stdout line `{"unsupported": true}`. The
 platform then treats the verb as absent (skips it, or runs its own default); it is never a failure. For
 compatibility, a subject hook that exits 2 with no stdout (a usage error from an adapter that predates the verb)
-counts as unsupported too.
+counts as unsupported too. A build skips an unsupported `app-up images`, `app-snapshot write` (no fingerprint: a
+later reuse of the app copy rebuilds it) and `app-reset recover` (nothing to undo).
 
 ## Subject verbs
 
