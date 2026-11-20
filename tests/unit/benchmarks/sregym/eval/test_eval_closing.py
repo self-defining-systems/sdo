@@ -339,3 +339,16 @@ def test_row_json_names_why_its_cost_is_pending_and_the_sealed_row_carries_the_c
     assert sealed["status"] == row.status
     assert row.online.usd  # the sealed row has a positive cost and so needs no reason
     assert row.cost_note is None
+
+
+def test_a_closing_error_that_carries_an_accepted_commit_still_records_the_first_try(tmp_path: Path) -> None:
+    row, cell, config, _, _ = run_draining(
+        tmp_path,
+        closing_status="error",
+        closing_commit="closing-head",
+        error_keeps_commit=True,
+    )
+    closing = json.loads((cell.directory(config) / "closing.json").read_text())
+    assert closing["status"] == "error"
+    assert closing["memory_commit_after"] == "closing-head"
+    assert row.memory_commit_after == "closing-head"
