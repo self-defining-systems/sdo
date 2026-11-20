@@ -69,3 +69,9 @@ without per-attempt no-model proof, the whole role remains missing.
 
 `benchmarks/sregym/analysis/accounting.py` accounts an SDO cell and a vanilla Claude Code cell the same way: tokens split into uncached input, cache read, cache write and output; the request count (unique assistant message IDs over the main session and every sub-agent sidechain); and USD priced per request from the agentshim price table (an unpriced model makes the total unknown, never zero; a Vertex `@version` model alias is its family). SDO's online side is the responder's requests up to the incident's `reflection_dispatch` time plus its investigators; offline is the closing and cleanup turns; lifecycle agents (designer, deployer, judge, onboarding) are one-time per app and kept apart. The vanilla arm is all online. A stream's `result.usage` covers only the last turn and no sub-agent, `num_turns` is conversation turns, and `total_cost_usd` includes sub-agent and CLI-side auxiliary requests the transcript lacks, so the CLI's cost is only a cross-check column (`mismatch` beyond 10% or $0.02). A vanilla cell's own `CLAUDE_CONFIG_DIR` is `<cell>/session-dir`; `claude --resume` appends to the same session file. `cells.Usage` and fastloop `TokenCounts` keep the cache split and the request count (`model_requests`; 0 on older rows).
 
+
+A sealed eval row whose accountant could not price the responder can use the early
+runtime export for its closing incident ID. This fallback records
+`online_source: runtime-export` and `online_partial: true` in `accounting.json`.
+The reflection journal start (or the matching online checkpoint) cuts off closing
+requests. The fallback leaves the grading evidence gate in force.
