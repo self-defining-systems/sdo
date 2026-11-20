@@ -107,3 +107,4 @@ exp_config/*/*.log
 
 # lane platform build output
 benchmarks/lanes/bin/
+!benchmarks/lanes/internal/env/
