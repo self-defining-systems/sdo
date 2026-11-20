@@ -174,3 +174,14 @@ def test_on_eks_the_run_verb_gets_an_image_publisher_next_to_the_shim() -> None:
     kind = {**_env("kind", "run"), "WORKLOAD_BUILTIN": env["WORKLOAD_BUILTIN"]}
     workload.handle("run", kind, call)
     assert "FUZZOPS_IMAGE_PUBLISH" not in seen[1]
+
+
+def test_the_builtin_workload_gets_the_entry_host_under_the_name_fuzzops_reads() -> None:
+    seen: list[Mapping[str, str]] = []
+
+    def call(_argv: Sequence[str], env: Mapping[str, str]) -> int:
+        seen.append(env)
+        return 0
+
+    assert workload.main(["gate"], {**_env("eks", "check"), "BENCH_ENTRY_HOST": "203.0.113.7"}, call) == 0
+    assert seen[0]["FUZZOPS_ENTRY_HOST"] == "203.0.113.7"

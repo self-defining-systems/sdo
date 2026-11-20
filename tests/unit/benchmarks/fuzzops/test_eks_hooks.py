@@ -142,3 +142,21 @@ def test_the_default_storage_class_must_wait_for_the_first_consumer() -> None:
         {"items": [_storage_class("x", default=False, binding="Immediate")]}
     )
     assert "no default StorageClass" in eks.storage_problem({})
+
+
+# ---- the entry address ---------------------------------------------------------------------------------------
+
+
+def test_the_lane_platforms_entry_host_becomes_the_one_fuzzops_reads() -> None:
+    env = {"BENCH_ENTRY_HOST": "203.0.113.7"}
+    eks.export_entry_host(env)
+    assert env["FUZZOPS_ENTRY_HOST"] == "203.0.113.7"
+
+
+def test_an_entry_host_set_for_fuzzops_wins_and_no_entry_host_changes_nothing() -> None:
+    env = {"BENCH_ENTRY_HOST": "203.0.113.7", "FUZZOPS_ENTRY_HOST": "10.0.0.1"}
+    eks.export_entry_host(env)
+    assert env["FUZZOPS_ENTRY_HOST"] == "10.0.0.1"
+    empty: dict[str, str] = {}
+    eks.export_entry_host(empty)
+    assert empty == {}

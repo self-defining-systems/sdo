@@ -79,7 +79,7 @@ on. Everything that reads evidence still reads the host copy only.
 An EKS lane is reached only through its API, so it takes the pulled-evidence path above (`sink.pull_mode` is true for
 provider `eks` as for `vcluster`) and `eks.py` adds the rest. The lane platform sets `BENCH_LANE_PROVIDER=eks`,
 `BENCH_IMAGE_REGISTRY` (the account's ECR host; optional `BENCH_IMAGE_PREFIX`, `BENCH_IMAGE_MIRROR_PREFIX`,
-`BENCH_IMAGE_TAGS=k=v,...`) and `FUZZOPS_ENTRY_HOST` (a node address the host reaches). `prepare` then
+`BENCH_IMAGE_TAGS=k=v,...`) and `BENCH_ENTRY_HOST` (a node address the host reaches; the hooks and the workload adapter export it as `FUZZOPS_ENTRY_HOST`, which wins when set). `prepare` then
 needs no `FUZZOPS_KIND_CLUSTER`, refuses a cluster whose default StorageClass does not wait for the first consumer
 (`eks.storage_problem`; an EBS volume must be created where its pod runs), pushes `sdo-{controller,responder,script-tools}`
 to ECR through `benchmarks/lanes/eks.py` (`Ecr`, `pin_image`) and installs them by digest. Everything else is the
