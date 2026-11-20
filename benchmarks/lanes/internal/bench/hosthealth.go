@@ -176,6 +176,7 @@ func localCanary(ctx context.Context, timeout time.Duration) (*Canary, error) {
 
 // hostBlock says why host h takes no new lanes or steps because of its health ("" when it may).
 func (m *Manager) hostBlock(h string) string {
+	m.loadHealth()
 	if st := m.health[h]; st != nil && !st.Healthy() {
 		return fmt.Sprintf("host %s is unhealthy: %s", h, st.Reason())
 	}
@@ -187,9 +188,7 @@ func (m *Manager) admitted(h string) bool { return m.hostBlock(h) == "" }
 
 // observeHealth feeds one probe to host name's gate and alarms once when it turns unhealthy.
 func (m *Manager) observeHealth(name string, c *Canary) {
-	if m.health == nil {
-		m.health = map[string]*healthState{}
-	}
+	m.loadHealth()
 	st := m.health[name]
 	if st == nil {
 		st = &healthState{hung: -1}
@@ -203,5 +202,42 @@ func (m *Manager) observeHealth(name string, c *Canary) {
 		(&AlarmLog{Root: m.Root, Logf: m.logf}).Raise(plan.Alarm{At: m.now().UTC(), Alarm: "host-unhealthy", Key: "host-unhealthy/" + name, Subject: name, Host: name, Detail: st.Reason()})
 	case !was && st.Healthy():
 		m.logf("host %s: healthy again, new lanes and steps resume", name)
+	}
+	m.saveHealth()
+}
+
+// The gate's state is kept in <root>/hosthealth.json so a restarted manager neither forgets an unhealthy host nor takes
+// hung tasks that appeared while it was down for old ones. A file that cannot be read is no state (the gate starts clean).
+const healthFile = "hosthealth.json"
+
+type healthRecord struct {
+	Reason string `json:"reason,omitempty"`
+	Slow   int    `json:"slow,omitempty"`
+	Good   int    `json:"good,omitempty"`
+	Hung   int64  `json:"hung"`
+	Seen   bool   `json:"seen,omitempty"`
+}
+
+func (m *Manager) loadHealth() {
+	if m.health != nil {
+		return
+	}
+	m.health = map[string]*healthState{}
+	var recs map[string]healthRecord
+	if readJSON(m.Root.path(healthFile), &recs) != nil {
+		return
+	}
+	for h, r := range recs {
+		m.health[h] = &healthState{reason: r.Reason, slow: r.Slow, good: r.Good, hung: r.Hung, seen: r.Seen}
+	}
+}
+
+func (m *Manager) saveHealth() {
+	recs := map[string]healthRecord{}
+	for h, st := range m.health {
+		recs[h] = healthRecord{Reason: st.reason, Slow: st.slow, Good: st.good, Hung: st.hung, Seen: st.seen}
+	}
+	if err := writeJSON(m.Root.path(healthFile), recs); err != nil {
+		m.logf("%s: %v", healthFile, err)
 	}
 }
