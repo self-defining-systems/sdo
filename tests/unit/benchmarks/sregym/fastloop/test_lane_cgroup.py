@@ -9,7 +9,13 @@ from typing import TYPE_CHECKING
 import pytest
 
 from benchmarks.sregym.fastloop import cli
-from benchmarks.sregym.fastloop.host_limits import NodeLimits, apply_lane_cpu, apply_node_limits, preferred_cpus
+from benchmarks.sregym.fastloop.host_limits import (
+    NodeLimits,
+    apply_lane_cpu,
+    apply_node_limits,
+    preferred_cpus,
+    usable_cpus,
+)
 from benchmarks.sregym.fastloop.lane_cgroup import (
     CgroupMismatch,
     CpusetExhausted,
@@ -462,3 +468,10 @@ def test_a_malformed_preferred_block_is_refused(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv("SDO_LANE_PREFERRED_CPUS", "fast")
     with pytest.raises(ValueError, match="SDO_LANE_PREFERRED_CPUS"):
         preferred_cpus()
+
+
+def test_the_preferred_block_is_visible_even_when_the_runner_is_pinned_away_from_it() -> None:
+    """A runner confined to a user slice that excludes the reserved block must still place lanes inside it."""
+    assert usable_cpus(frozenset({0, 1}), frozenset({2, 3})) == frozenset({0, 1, 2, 3})
+    cores = tuple(frozenset({cpu}) for cpu in sorted(usable_cpus(frozenset({0, 1}), frozenset({2, 3}))))
+    assert place_cpus(2, cores, [], preferred=frozenset({2, 3})).cpus == frozenset({2, 3})
