@@ -432,6 +432,12 @@ def test_full_generated_result_and_calls(tmp_path, monkeypatch, scenario):
     assert actual.incident_id == request.incident_id
     assert not actual.repair_actions  # the scripted kubectl calls are receipted by the recording, not the result
     assert bool(actual.repair_changes) == (scenario not in {"matched", "healthy", "stale", "unsure", "exhausted"})
+    # Each change is also reported as an agent change (what, where, when): with the agent recording off it is all
+    # SDO knows of the scripted kubectl writes, and an outcome with none is classified cleared_without_action.
+    assert [change.summary for change in actual.agent_changes] == list(actual.repair_changes)
+    for change in actual.agent_changes:
+        assert change.target.startswith(("Service/app/", "Deployment/app/", "NetworkPolicy/app/"))
+        assert change.at.seconds > 0
     assert len(actual.verification_evidence) >= 1
     if scenario == "matched":
         assert [p.playbook_id for p in actual.applied_playbooks] == ["repair"]
