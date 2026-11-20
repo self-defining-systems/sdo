@@ -913,16 +913,18 @@ func (r *stepRunner) platform() string {
 	return dir
 }
 
-// shell runs a host command (cluster_up, cluster_down) in the lanes install, so a relative deploy/... script is the
-// platform's, whatever the workload checkout holds.
+// shell runs a host-configured command (cluster_up, cluster_down) as the workload/operator command it is: in the pinned
+// workload checkout, with LANES_INSTALL (the platform install) and BENCH_WORKLOAD_DIR (the checkout) in its environment.
+// The platform's own default commands name their scripts through $LANES_INSTALL, so none depends on the directory.
 func (r *stepRunner) shell(ctx context.Context, kind, cmdline string, env []string) bool {
 	start := time.Now()
 	r.phase(kind, "")
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sh", "-c", cmdline)
-	cmd.Dir = r.platform()
+	cmd.Dir = r.s.Fuzzops
 	cmd.Env = append(append(os.Environ(), r.s.HostEnv...), env...)
+	cmd.Env = append(cmd.Env, "LANES_INSTALL="+r.platform(), "BENCH_WORKLOAD_DIR="+r.s.Fuzzops)
 	cmd.Stdout, cmd.Stderr = r.log, r.log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }

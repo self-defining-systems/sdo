@@ -116,6 +116,8 @@ func TestPlatformCodeNeverComesFromTheWorkloadCheckout(t *testing.T) {
 	files, _ := filepath.Glob("*.go")
 	sort.Strings(files)
 	fset := token.NewFileSet()
+	// The one command that runs in the checkout on purpose: a host-configured cluster command (workload/operator code).
+	allowDir := map[string]bool{"step.go:shell": true}
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
 			continue
@@ -123,6 +125,14 @@ func TestPlatformCodeNeverComesFromTheWorkloadCheckout(t *testing.T) {
 		af, err := parser.ParseFile(fset, f, nil, 0)
 		if err != nil {
 			t.Fatal(err)
+		}
+		allowed := func(pos token.Pos) bool {
+			for _, d := range af.Decls {
+				if fd, ok := d.(*ast.FuncDecl); ok && allowDir[f+":"+fd.Name.Name] && fd.Pos() <= pos && pos <= fd.End() {
+					return true
+				}
+			}
+			return false
 		}
 		ast.Inspect(af, func(n ast.Node) bool {
 			switch x := n.(type) {
@@ -149,7 +159,7 @@ func TestPlatformCodeNeverComesFromTheWorkloadCheckout(t *testing.T) {
 					if !ok || sel.Sel.Name != "Dir" || i >= len(x.Rhs) {
 						continue
 					}
-					if rs, ok := x.Rhs[i].(*ast.SelectorExpr); ok && rs.Sel.Name == "Fuzzops" {
+					if rs, ok := x.Rhs[i].(*ast.SelectorExpr); ok && rs.Sel.Name == "Fuzzops" && !allowed(x.Pos()) {
 						t.Errorf("%s: a command runs in the workload checkout (%s.Dir = ...Fuzzops): platform commands run in the lanes install", fset.Position(x.Pos()), "cmd")
 					}
 				}

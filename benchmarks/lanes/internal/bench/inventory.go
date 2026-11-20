@@ -40,7 +40,8 @@ type Host struct {
 	// minutes of a lane on a host that may be contended, so the default is low.
 	MaxBuildFailures int `json:"max_build_failures,omitempty"`
 	// ClusterUp and ClusterDown create and delete one lane's cluster ({cluster} and {kubeconfig} are
-	// replaced; run in the host's lanes install, where deploy/ is the platform's, e.g. "deploy/kind-lane.sh up {cluster} {kubeconfig}").
+	// replaced; run in the pinned workload checkout with $LANES_INSTALL and $BENCH_WORKLOAD_DIR set, e.g.
+	// "$LANES_INSTALL/deploy/kind-lane.sh up {cluster} {kubeconfig}" or a script of the workload).
 	// Without them the bench never recreates or deletes a cluster.
 	ClusterUp   string `json:"cluster_up,omitempty"`
 	ClusterDown string `json:"cluster_down,omitempty"`
@@ -84,10 +85,10 @@ const (
 // IsVcluster reports whether the host's lanes are virtual clusters on a shared cluster.
 func (h Host) IsVcluster() bool { return h.Provider == ProviderVcluster }
 
-// Default cluster commands of a vcluster host (run in the host's lanes install).
+// Default cluster commands of a vcluster host (run like any host command; they name their script through $LANES_INSTALL).
 const (
-	vclusterUp   = "deploy/vcluster-lane.sh up {cluster} {kubeconfig} {evidence}"
-	vclusterDown = "deploy/vcluster-lane.sh down {cluster} {kubeconfig}"
+	vclusterUp   = "$LANES_INSTALL/deploy/vcluster-lane.sh up {cluster} {kubeconfig} {evidence}"
+	vclusterDown = "$LANES_INSTALL/deploy/vcluster-lane.sh down {cluster} {kubeconfig}"
 )
 
 // LaneEvidence is the lane's evidence directory on the host.

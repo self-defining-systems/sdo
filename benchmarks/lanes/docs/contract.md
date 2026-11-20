@@ -79,6 +79,7 @@ Stubbed (unsupported everywhere, not called): `footprint`, `export-artifact`, `v
 The platform's own code, the `deploy/` scripts (lane limits, registry, kind and vcluster lanes, docker shim) and the step
 binary, is embedded in the `lanes` binary and installed on each host on first use at `<staging>/lanes-<rev>/` (`deploy/`
 and `bin/lanes`; `<rev>` is a hash of the lanes executable; temp directory, then rename; staging gc keeps it). Every
-platform script and step-binary path resolves there, and `cluster_up`/`cluster_down` run in that directory (so
-`deploy/kind-lane.sh ...` is the platform's). The pinned workload checkout is used only for workload verbs and the
+platform script and step-binary path resolves there. Host-configured commands (`cluster_up`, `cluster_down`) are workload/operator
+commands: they run in the pinned workload checkout with `LANES_INSTALL` (the install) and `BENCH_WORKLOAD_DIR` (the checkout)
+set, and the platform defaults name `$LANES_INSTALL/deploy/...`. The pinned workload checkout is used only for workload verbs and the
 workload's own files; `TestPlatformCodeNeverComesFromTheWorkloadCheckout` fails on a platform path joined to a checkout.
