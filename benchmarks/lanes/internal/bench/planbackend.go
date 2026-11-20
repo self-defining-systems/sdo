@@ -661,22 +661,29 @@ func PlansSummary(root Root, w io.Writer) {
 			fmt.Fprintf(w, "plan %s: %v\n", n, err)
 			continue
 		}
-		var done, fly, queued, blocked, failed int
-		for _, a := range s.Arms {
-			done, fly, queued, blocked, failed = done+a.Done, fly+a.Inflight, queued+a.Queued, blocked+a.Blocked, failed+a.Failed+a.Skipped+a.Parked
-		}
-		state := "running"
-		switch {
-		case s.Complete:
-			state = "complete"
-		case s.Removed:
-			state = "removed"
-		case s.Paused:
-			state = "paused"
-		}
-		fmt.Fprintf(w, "plan %-24s %-8s nodes done %d, in flight %d, queued %d, blocked %d, failed %d; items %d/%d done, %d parked, %d alarm(s) (lanes plan status %s)\n",
-			n, state, done, fly, queued, blocked, failed, s.Items.Done, s.Items.Total, s.Items.Parked, len(s.Alarms), n)
+		fmt.Fprintln(w, planSummaryLine(n, s))
 	}
+}
+
+// planSummaryLine is one plan's line of `lanes status`. Failed, skipped and parked nodes are counted apart, as
+// `lanes plan status` shows them: a node the operator skipped did not fail.
+func planSummaryLine(n string, s *plan.Status) string {
+	var done, fly, queued, blocked, failed, skipped, parked int
+	for _, a := range s.Arms {
+		done, fly, queued, blocked = done+a.Done, fly+a.Inflight, queued+a.Queued, blocked+a.Blocked
+		failed, skipped, parked = failed+a.Failed, skipped+a.Skipped, parked+a.Parked
+	}
+	state := "running"
+	switch {
+	case s.Complete:
+		state = "complete"
+	case s.Removed:
+		state = "removed"
+	case s.Paused:
+		state = "paused"
+	}
+	return fmt.Sprintf("plan %-24s %-8s nodes done %d, in flight %d, queued %d, blocked %d, failed %d, skipped %d, parked %d; items %d/%d done, %d parked, %d alarm(s) (lanes plan status %s)",
+		n, state, done, fly, queued, blocked, failed, skipped, parked, s.Items.Done, s.Items.Total, s.Items.Parked, len(s.Alarms), n)
 }
 
 // gradingStale is how long a grading marker counts as alive: a manager that restarted mid-grade grades again after it.
