@@ -174,7 +174,13 @@ def _assess_drift(request: IncidentRequest, event: DriftEvent) -> DriftEvent:
 
 def _assess_policy_drift(request: IncidentRequest, event: DriftEvent, label: DriftEvent) -> DriftEvent:
     """Recognize complete ingress isolation; abstain from partial-rule reasoning."""
-    if event.source != "absent from accepted source" or len(event.fields) != 1 or event.fields[0].path != "spec":
+    # The controller reports a source-absent object either as its spec or as one digest field ("object"); the
+    # assessment below judges the live policy, and a reported spec must be that live spec.
+    if (
+        event.source != "absent from accepted source"
+        or len(event.fields) != 1
+        or event.fields[0].path not in {"spec", "object"}
+    ):
         return label
     try:
 
@@ -185,7 +191,7 @@ def _assess_policy_drift(request: IncidentRequest, event: DriftEvent, label: Dri
         policy = next(item for item in policies if item["metadata"]["name"] == event.ref.name)
         spec = policy["spec"]
         if (
-            spec != json.loads(event.fields[0].new)
+            (event.fields[0].path == "spec" and spec != json.loads(event.fields[0].new))
             or spec.get("ingress")
             or "Ingress" not in spec.get("policyTypes", ["Ingress"])
         ):
