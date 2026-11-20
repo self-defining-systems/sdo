@@ -381,6 +381,53 @@ func (a CPUAllocator) reconcile(st *ledger, keep string) {
 	}
 }
 
+// ledgerGrace is how long an entry is believed after it was made when nothing shows its lane exists: a cluster is
+// being created, or a lane was just added to hosts.yaml (the manager's tick reconciles with it).
+const ledgerGrace = 2 * time.Minute
+
+// ReconcileLanes releases the entries whose owner is gone and returns the lanes released. An entry is held only
+// while its lane is in known (the inventory) and, once its cluster has been made, while the cluster exists (live).
+// Entries younger than grace are kept, so a cluster that is still being created is not reaped; an entry whose
+// cluster is not yet made (a build in progress) is kept for pendingGrace. When the clusters cannot be listed, only
+// the lanes missing from known are released.
+func (a CPUAllocator) ReconcileLanes(known map[string]bool, grace time.Duration) ([]string, error) {
+	var released []string
+	err := a.locked(func(st *ledger) error {
+		var live map[string]bool
+		if a.Live != nil {
+			l, err := a.Live()
+			if err != nil {
+				a.logf("lane ledger: clusters not known, only lanes outside the inventory are released: %v", err)
+			} else {
+				live = l
+			}
+		}
+		now := a.now()
+		for lane, e := range st.Lanes {
+			age := now.Sub(e.Since)
+			switch {
+			case !known[lane]:
+				if age <= grace {
+					continue
+				}
+			case live != nil && !live[lane]:
+				if age <= grace || (!e.Created && age <= pendingGrace) {
+					continue
+				}
+			default:
+				continue
+			}
+			delete(st.Lanes, lane)
+			st.dequeue(lane)
+			released = append(released, lane)
+			a.logf("lane ledger: released %s (cpus %s, held since %s): its lane or cluster no longer exists", lane, FormatCPUList(e.CPUs), e.Since.Format(time.RFC3339))
+		}
+		sort.Strings(released)
+		return nil
+	})
+	return released, err
+}
+
 func (st *ledger) dequeue(lane string) {
 	var q []queueEntry
 	for _, e := range st.Queue {

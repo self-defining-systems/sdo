@@ -220,6 +220,37 @@ func (h sshHost) Stage(ctx context.Context, root Root, in Input) (string, error)
 	return filepath.Join(h.h.Staging, "inputs", rel), nil
 }
 
+func (h sshHost) ReconcileLedger(ctx context.Context, req LedgerReq) ([]string, error) {
+	platform, err := h.InstallPlatform(ctx)
+	if err != nil {
+		return nil, err
+	}
+	args := []string{"env"}
+	for _, e := range h.h.EnvList() {
+		args = append(args, shellQuote(e))
+	}
+	args = append(args, shellQuote(filepath.Join(platform, "bin", "lanes")), "ledger")
+	if req.State != "" {
+		args = append(args, "--state", shellQuote(req.State))
+	}
+	if req.Shared {
+		args = append(args, "--shared")
+	}
+	args = append(args, "--grace", req.Grace.String(), "reconcile")
+	for _, l := range req.Lanes {
+		args = append(args, shellQuote(l))
+	}
+	out, err := h.run(ctx, nil, strings.Join(args, " "))
+	if err != nil {
+		return nil, err
+	}
+	var released []string
+	if err := json.Unmarshal(out, &released); err != nil {
+		return nil, fmt.Errorf("ledger reconcile on %s: %v: %q", h.name, err, out)
+	}
+	return released, nil
+}
+
 func (h sshHost) GC(ctx context.Context, keep []string) ([]string, error) {
 	platform, err := h.InstallPlatform(ctx)
 	if err != nil {
