@@ -1007,6 +1007,7 @@ def test_collect_copies_the_interval_from_the_host_sink(tmp_path: Path, monkeypa
         "incidents": [{"id": "inc-a", "outcome": True, "agents_ran": True, "rollouts": 1}],
         "rollouts": 1,
         "missing": [],
+        "carry_over": [],
     }
     assert json.loads((out / "collect.json").read_text())["parts"]["evidence"].startswith("ok")
     assert json.loads((out / "collect.json").read_text())["parts"]["view"].startswith("ok")

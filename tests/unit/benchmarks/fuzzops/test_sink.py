@@ -168,7 +168,7 @@ def test_copy_interval_takes_incidents_detected_in_or_open_during_the_interval(t
     run = _run(tmp_path)
     old = datetime(2026, 11, 11, tzinfo=UTC)
     inside = _incident(run, "1" * 32, _ledger("inside", "2026-11-12T10:05:00Z"), rollouts=1)
-    spanning = _incident(run, "2" * 32, _ledger("spanning", "2026-11-12T09:00:00Z"), rollouts=1)
+    spanning = _incident(run, "2" * 32, _ledger("spanning", "2026-11-12T09:00:00Z"), rollouts=1)  # carry-over
     before = _incident(run, "3" * 32, _ledger("before", "2026-11-12T09:00:00Z", "2026-11-12T09:30:00Z"), 1)
     after = _incident(run, "4" * 32, _ledger("after", "2026-11-12T11:00:00Z"), rollouts=1)
     missing = _incident(run, "5" * 32, _ledger("missing", "2026-11-12T10:10:00Z"))
@@ -194,14 +194,14 @@ def test_copy_interval_takes_incidents_detected_in_or_open_during_the_interval(t
     dest = tmp_path / "out" / "evidence"
     result = sink.copy_interval(run, dest, T0, T1)
     copied = sorted(p.name[:1] for p in (dest / "incidents").iterdir())
-    assert copied == ["1", "2", "5", "7"]
+    assert copied == ["1", "5", "7"]
     assert (dest / "lifecycle" / "judge-1" / "result.json").is_file()
     assert not (dest / "lifecycle" / "judge-0").exists()
     assert (dest / "layout.json").is_file()
     kept = [json.loads(line)["id"] for line in (dest / "index.jsonl").read_text().splitlines()]
     assert kept == ["inside", "judge-1"]
     summary = result.summary()
-    assert summary["rollouts"] == 3
+    assert summary["rollouts"] == 2
     assert summary["missing"] == ["missing"]
     by_id = {i["id"]: i for i in summary["incidents"]}
     assert by_id["inside"] == {"id": "inside", "outcome": True, "agents_ran": True, "rollouts": 1}
@@ -472,3 +472,21 @@ def test_an_investigator_directory_is_copied_when_its_parent_is_in_the_interval_
     dest = tmp_path / "out"
     sink.copy_interval(run, dest, T0, T1)
     assert {p.name for p in (dest / "incidents").iterdir()} == {parent_dir.name, inv.name}
+
+
+def test_an_unacknowledged_incident_of_an_earlier_run_is_carry_over_not_this_runs_evidence(tmp_path: Path) -> None:
+    """Shape of a real lane: a run's incident detected 15:24:38Z never got an outcome or acknowledgement; a later run's
+    interval (18:22:28Z-18:32:58Z) must not copy it, and the copy names it as carry-over."""
+    run = _run(tmp_path)
+    stale_id = "hb1-1795188278204298438"
+    stale = _incident(run, "6af1d744d2fa" + "0" * 20, _ledger(stale_id, "2026-11-20T15:24:38.204298438Z"), rollouts=1)
+    _identity(stale, stale_id)
+    own = _incident(run, "a7d6bb9e6e9b" + "0" * 20, _ledger("hb1-own", "2026-11-20T18:25:00Z"), rollouts=1)
+    for d in (stale, own):
+        _age(d, datetime(2026, 11, 20, 18, 30, tzinfo=UTC))
+    start = datetime(2026, 11, 20, 18, 22, 28, tzinfo=UTC)
+    end = datetime(2026, 11, 20, 18, 32, 58, tzinfo=UTC)
+    dest = tmp_path / "out"
+    result = sink.copy_interval(run, dest, start, end)
+    assert [p.name[:12] for p in (dest / "incidents").iterdir()] == ["a7d6bb9e6e9b"]
+    assert result.summary()["carry_over"] == [{"id": stale.name, "detected_at": "2026-11-20T15:24:38Z"}]
