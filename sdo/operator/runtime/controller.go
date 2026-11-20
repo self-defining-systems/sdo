@@ -102,6 +102,10 @@ type ControllerConfig struct {
 	// settle window as healthy before it has, so the period still waits for
 	// observed traffic although the controller serves meanwhile. Nil: settled.
 	StartupWarmupSettled func() bool
+	// StartupObservations is the store the snapshot source learns workload
+	// start times into; the controller persists and restores it with its
+	// state. Nil keeps none.
+	StartupObservations *StartupObservations
 }
 
 type dispatchCompletion struct {
@@ -2336,6 +2340,8 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 		DriftEvents: driftEventsContract(c.driftEvents), OwnershipAdoption: adoptionContract(c.ownershipAdoption),
 		BusyUntil: optionalBusyUntil(c.busyUntilLocked(c.clock())),
 		Startup:   c.startup.contract(),
+
+		StartupObservations: c.config.StartupObservations.contract(),
 	}
 	if c.currentIncidentRequest != nil {
 		message.IncidentRequest, err = incidentRequestContract(*c.currentIncidentRequest)
@@ -2440,6 +2446,7 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	if c.startup != nil {
 		c.startup = restoredStartupPeriod(state.GetStartup())
 	}
+	c.config.StartupObservations.restore(state.GetStartupObservations())
 	return nil
 }
 

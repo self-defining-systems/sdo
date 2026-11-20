@@ -170,3 +170,57 @@ func TestUnreadyPodPastItsStartupAllowanceIsReported(t *testing.T) {
 		t.Fatalf("findings = %v, want one not-ready finding", got)
 	}
 }
+
+// bootingNoProbe is an api Pod that declares no probe and has been running and
+// unready for `age`, as after a node drain recreated it.
+func bootingNoProbe(name string, age time.Duration) corev1.Pod {
+	pod := slowStarting(name, age)
+	pod.Spec.Containers = []corev1.Container{{Name: "api"}}
+	return pod
+}
+
+func detectObserved(t *testing.T, hold time.Duration, observedStartup time.Duration, deployments []appsv1.Deployment, pods ...corev1.Pod) []sdk.Finding {
+	t.Helper()
+	at := observed
+	snapshot := sdktest.Snapshot{
+		NamespaceName: "app", ObservedAtTime: &at, SelfHealHoldTime: &hold,
+		ObservedStartupTimes: map[string]time.Duration{"Deployment/api": observedStartup},
+		DeploymentList:       deployments, ReplicaSetList: []appsv1.ReplicaSet{apiReplicaSet()}, PodList: pods,
+	}
+	findings, err := NewDetector(sdk.DetectorSpec{ID: "workload-health"}).Detect(context.Background(), snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return findings
+}
+
+// A workload with no probe that was seen taking about two minutes to become
+// ready is starting, not failing, a minute and a half after its pods were
+// recreated, although the self-heal hold passed.
+func TestSlowBootingWorkloadWithoutProbeOpensNothingWithinItsObservedStartup(t *testing.T) {
+	got := detectObserved(t, 30*time.Second, 135*time.Second, []appsv1.Deployment{api(1, 0)}, bootingNoProbe("api-a", 90*time.Second))
+	if len(got) != 0 {
+		t.Fatalf("a pod 90 s into an observed 135 s startup was reported: %v", rules(got))
+	}
+	if got := detect(t, ptr(30*time.Second), []appsv1.Deployment{api(1, 0)}, bootingNoProbe("api-a", 90*time.Second)); len(got) != 1 {
+		t.Fatalf("without an observation the pod must be reported after the hold, got %v", rules(got))
+	}
+}
+
+// The same workload stuck past its observed startup opens.
+func TestWorkloadStuckPastItsObservedStartupIsReported(t *testing.T) {
+	got := rules(detectObserved(t, 30*time.Second, 135*time.Second, []appsv1.Deployment{api(1, 0)}, bootingNoProbe("api-a", 200*time.Second)))
+	if len(got) != 1 || got[0] != RuleNotReady+" Deployment/api" {
+		t.Fatalf("findings = %v, want one not-ready finding", got)
+	}
+}
+
+// A give-up signal is never masked by the observed startup.
+func TestCrashLoopIsReportedDespiteAnObservedStartup(t *testing.T) {
+	got := rules(detectObserved(t, 30*time.Second, 15*time.Minute, []appsv1.Deployment{api(1, 0)}, crashing("api-a", time.Minute)))
+	if len(got) != 1 || got[0] != RuleCrashLooping+" Deployment/api" {
+		t.Fatalf("findings = %v, want crash-looping at once", got)
+	}
+}
+
+func ptr[T any](v T) *T { return &v }

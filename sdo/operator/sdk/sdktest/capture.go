@@ -88,6 +88,11 @@ func CaptureSnapshot(view sdk.DetectionContext, namespace string, refs ...sdk.Ob
 		hold := policy.SelfHealHold()
 		s.SelfHealHoldTime = &hold
 	}
+	if source, ok := view.(sdk.ObservedStartupSource); ok {
+		if times := source.ObservedStartups(); len(times) > 0 {
+			s.ObservedStartupTimes = times
+		}
+	}
 	if scoped, ok := view.(sdk.ScopedObservationSource); ok {
 		snapshot, scopedRefs, err := CaptureScoped(scoped)
 		if err != nil {

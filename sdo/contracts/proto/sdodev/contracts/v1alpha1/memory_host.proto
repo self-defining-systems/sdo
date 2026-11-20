@@ -91,6 +91,9 @@ message MemoryObservation {
   // The controller's self-heal hold (sdk.SelfHealPolicy). Absent means the
   // SDK default.
   google.protobuf.Duration self_heal_hold = 14;
+  // Observed time-to-ready of each workload ("Kind/name") from its recent
+  // healthy starts (sdk.ObservedStartupSource). Absent means none observed.
+  map<string, google.protobuf.Duration> observed_startup = 18;
   // Frozen app-state reader results by reader ID (carried.Result): the ring of
   // recent snapshots, the last-healthy snapshot and the healthy history.
   map<string, google.protobuf.Struct> app_state = 15;

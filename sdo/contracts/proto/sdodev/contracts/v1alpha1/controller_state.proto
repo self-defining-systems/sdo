@@ -3,6 +3,7 @@ syntax = "proto3";
 package sdodev.contracts.v1alpha1;
 
 import "buf/validate/validate.proto";
+import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 import "sdodev/contracts/v1alpha1/memory_diagnostic.proto";
 import "sdodev/contracts/v1alpha1/messages.proto";
@@ -235,8 +236,21 @@ message ControllerState {
   // responder by this count, never by dispatch_error, which stays set while a
   // later retry runs.
   int32 dispatch_failure_attempts = 52;
+  // Recent healthy start-to-Ready times per workload, so a restart keeps what
+  // the install has learned about how long its workloads take to start.
+  repeated StartupObservation startup_observations = 53;
   reserved 32, 33, 34, 45;
   reserved "drift_investigation", "drift_admission", "program_sweep_cursors", "verification_deadline_at";
+}
+
+// StartupObservation is one workload's recent healthy starts: the time from a
+// container starting to its pod becoming Ready, oldest first, bounded.
+message StartupObservation {
+  // "Kind/name" of the pod's owning workload.
+  string workload = 1;
+  repeated google.protobuf.Duration ready_after = 2;
+  // The latest Ready transition already sampled, so a pod is counted once.
+  google.protobuf.Timestamp last_ready_at = 3;
 }
 
 // StartupPeriod records whether a new install has been seen healthy: one

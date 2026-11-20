@@ -73,6 +73,9 @@ type Snapshot struct {
 	// SelfHealHoldTime is the controller's self-heal hold at capture; nil
 	// replays with sdk.DefaultSelfHealHold.
 	SelfHealHoldTime *time.Duration `json:"selfHealHold,omitempty"`
+	// ObservedStartupTimes are the controller's observed startup allowances
+	// by workload ("Kind/name") at capture (sdk.ObservedStartupSource).
+	ObservedStartupTimes map[string]time.Duration `json:"observedStartup,omitempty"`
 	// HeldKeys are the alert keys of the incident open at capture
 	// (sdk.HeldAlertSource); nil replays with none held.
 	HeldKeys []string `json:"heldKeys,omitempty"`
@@ -117,6 +120,14 @@ func (s Snapshot) SelfHealHold() time.Duration {
 		return 0
 	}
 	return *s.SelfHealHoldTime
+}
+
+// ObservedStartups implements sdk.ObservedStartupSource.
+func (s Snapshot) ObservedStartups() map[string]time.Duration { return s.ObservedStartupTimes }
+
+// ObservedStartup implements sdk.ObservedStartupSource.
+func (s Snapshot) ObservedStartup(workload string) time.Duration {
+	return s.ObservedStartupTimes[workload]
 }
 
 func (s Snapshot) StatefulSets() []appsv1.StatefulSet {

@@ -527,10 +527,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err = scope.Within(ceiling); err != nil {
 		return err
 	}
+	startupObservations := NewStartupObservations()
 	kubernetesCache, err := NewKubernetesCache(KubernetesCacheConfig{
 		AcceptedScope: func(ctx context.Context) (sdk.ObservationScope, string, error) {
 			return acceptedScope(ctx, resolvedRoot)
-		}, GenericCapture: genericCapture, Scope: scope, Ceiling: ceiling, Generation: scopeCommit, Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true, SelfHealHold: time.Duration(policy.Detection.SelfHealHold), Clock: clock.Now, TimerClock: clock, ResyncPeriod: options.InformerResync,
+		}, GenericCapture: genericCapture, Scope: scope, Ceiling: ceiling, Generation: scopeCommit, Namespace: *namespace, Client: bootstrapProvider.Client, StateConfigMapName: stateConfigMapName, TrackDrift: true, SelfHealHold: time.Duration(policy.Detection.SelfHealHold), StartupObservations: startupObservations, Clock: clock.Now, TimerClock: clock, ResyncPeriod: options.InformerResync,
 	}, detectors)
 	if err != nil {
 		return fmt.Errorf("create Kubernetes informer cache: %w", err)
@@ -848,7 +849,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if options.NativeBroker != nil {
 		corpusSessionRoot = options.NativeBroker.SessionRoot
 	}
-	controller, err = NewController(ControllerConfig{Telemetry: telemetryContext,
+	controller, err = NewController(ControllerConfig{Telemetry: telemetryContext, StartupObservations: startupObservations,
 		CodePath: selectedPathConfig, CodePathRegistry: codePathRegistry,
 		Application: *application, Namespace: *namespace,
 		SourceCommit: resolvedSourceCommit, DeployedCommit: resolvedDeployedCommit,

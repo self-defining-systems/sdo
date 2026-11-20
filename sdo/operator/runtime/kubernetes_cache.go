@@ -55,6 +55,10 @@ type KubernetesCacheConfig struct {
 	// SelfHealHold is carried on every snapshot (sdk.SelfHealPolicy); zero
 	// leaves the SDK default.
 	SelfHealHold time.Duration
+	// StartupObservations, when set, learns each workload's healthy
+	// start-to-Ready time from the snapshot's Pods and stamps it on every
+	// snapshot (sdk.ObservedStartupSource).
+	StartupObservations *StartupObservations
 }
 
 type ObjectChange struct {
@@ -539,6 +543,10 @@ func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, e
 		}
 	}
 	c.informerMu.RUnlock()
+	if c.config.StartupObservations != nil {
+		c.config.StartupObservations.Observe(snapshot.PodList, workloadName(snapshot))
+		snapshot.ObservedStartupTimes = c.config.StartupObservations.Allowances()
+	}
 	return snapshot, nil
 }
 

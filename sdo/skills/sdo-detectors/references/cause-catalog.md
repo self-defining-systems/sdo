@@ -29,7 +29,9 @@ scenarios, workloads and links.
 - `service-endpoints`: Services that expect endpoints and have none ready.
 - `workload-health`: failed, Unknown, stuck Pending or unschedulable pods; crash-looping, image-pull,
   config-error, OOMKilled, errored, waiting, restarting or unready containers; stuck init containers; Deployments
-  below desired availability or past their progress deadline.
+  below desired availability or past their progress deadline. A running unready container is starting, not failing,
+  inside the larger of its declared probe timing and the time the same workload took to become Ready on its recent
+  healthy starts (`sdk.StartupAllowance`); a give-up signal (crash loop, image pull) is never masked by it.
 - `service-reachability`: Service ports that refuse connections while their pods are Ready.
 - `traffic-health` and `traffic-links`: generated from the workloads you author.
 - `metrics-alerts`: firing alerts of alert-capable sources in the application namespace, when a bound telemetry source serves alerts.

@@ -396,6 +396,12 @@ func (r *RemoteMemory) buildObservation(view sdk.DetectionContext) (*pb.MemoryOb
 	if hold := source.SelfHealHold(); hold > 0 {
 		out.SelfHealHold = durationpb.New(hold)
 	}
+	if startups := source.ObservedStartups(); len(startups) > 0 {
+		out.ObservedStartup = make(map[string]*durationpb.Duration, len(startups))
+		for workload, allowance := range startups {
+			out.ObservedStartup[workload] = durationpb.New(allowance)
+		}
+	}
 	out.HeldKeys = source.HeldAlertKeys()
 	for _, kind := range sdk.CompleteKinds(source) {
 		out.CompleteKinds = append(out.CompleteKinds, kind.GroupVersion().String()+"/"+kind.Kind)
