@@ -3,6 +3,7 @@
 package bench
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -145,23 +146,50 @@ func TestSpecLaneBlock(t *testing.T) {
 	}
 }
 
-// A spec without lane: still loads and gets its app's default.
-func TestSpecWithoutLaneGetsAppDefault(t *testing.T) {
+// A spec without lane: still loads and gets the workload's footprint for its app, else the platform default.
+func TestSpecWithoutLaneGetsTheWorkloadsFootprintOrTheDefault(t *testing.T) {
 	s, err := LoadSpec(writeSpec(t, t.TempDir(), exampleSpec))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := s.LaneLimit(); got != DefaultLaneLimit("examples/shop") || got.CPUs < 4 || got.Memory == "" {
+	if got := s.LaneLimit(); got != DefaultLaneLimit() || got.CPUs < 4 || got.Memory == "" {
 		t.Fatalf("%+v", got)
 	}
-	// A GitLab lane with an operator beside it was OOM-killed at 20Gi: its default holds at least 30Gi.
-	if g := DefaultLaneLimit("examples/gitlab"); g.CPUs != 8 {
-		t.Fatalf("gitlab default %+v", g)
+	// The built-in workload knows its big app: a lane with an operator beside it was OOM-killed at 20Gi.
+	big := Spec{App: "examples/gitlab-big"}
+	if g := big.LaneLimit(); g.CPUs != 8 {
+		t.Fatalf("big app default %+v", g)
 	} else if n, err := ParseSize(g.Memory); err != nil || n < 30<<30 {
-		t.Fatalf("gitlab default memory %s (%v): below the 30Gi a GitLab lane with an operator needs", g.Memory, err)
+		t.Fatalf("big app default memory %s (%v): below the 30Gi a lane with an operator needs", g.Memory, err)
 	}
-	if g := DefaultLaneLimit("examples/gitlab-big"); g != DefaultLaneLimit("examples/gitlab") {
-		t.Fatalf("pack directory names with the app in them: %+v", g)
+	// Lanes itself reads no app names: an adapter executable's lane is the default unless it answers `footprint`.
+	other := Spec{App: "examples/gitlab-big", Workload: "./adapter-x"}
+	if g := other.LaneLimit(); g != DefaultLaneLimit() {
+		t.Fatalf("an app name must not size a lane outside the built-in workload: %+v", g)
+	}
+	other.Lane = &LaneLimit{CPUs: 3, Memory: "7Gi"}
+	if g := other.LaneLimit(); g.CPUs != 3 {
+		t.Fatalf("the spec's own lane wins: %+v", g)
+	}
+}
+
+// An adapter executable that implements `footprint` sizes its lanes: lanes asks at add and records the answer.
+func TestFootprintVerbSizesTheLanesOfAnAdapterWorkload(t *testing.T) {
+	f := newFixture(t)
+	inv, err := LoadInventory(string(f.root))
+	must(t, err)
+	adapter := filepath.Join(f.fuzzops, "adapter.sh")
+	must(t, os.WriteFile(adapter, []byte("#!/bin/sh\ncase $WORKLOAD_VERB in footprint) echo '{\"cpus\":3,\"memory\":\"7Gi\"}' ;; *) exit 64 ;; esac\n"), 0o755))
+	s := Spec{Name: "e", App: "examples/shop", Fuzzops: "0b528ac", Hosts: []string{"h1"}, Workload: "./adapter.sh"}
+	got, err := NewRenderedChecks(nil).footprint(context.Background(), inv, s)
+	must(t, err)
+	if got == nil || got.CPUs != 3 || got.Memory != "7Gi" {
+		t.Fatalf("footprint = %+v", got)
+	}
+	other := s
+	other.Workload = "./nothing.sh" // answers nothing, exit 127
+	if got, err := NewRenderedChecks(nil).footprint(context.Background(), inv, other); err != nil || got != nil {
+		t.Fatalf("a workload with no footprint verb sizes nothing: %+v %v", got, err)
 	}
 }
 

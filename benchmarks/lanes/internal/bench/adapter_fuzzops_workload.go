@@ -16,6 +16,17 @@ import (
 	"strings"
 )
 
+// fuzzopsFootprint is the lane size of the apps that need more than the default. A GitLab lane is busy on about 8 cores
+// during a rollout and holds 11-13 GiB of anonymous memory in a quiet window, but with an operator beside it and its
+// build's page cache it needs more: at 20Gi (two workers of 8.5 GiB) a GitLab run with an attached operator had 6
+// processes OOM-killed inside its nodes, so a GitLab lane gets 30Gi (workers of 12.75 GiB).
+func fuzzopsFootprint(app string) *LaneLimit {
+	if strings.Contains(strings.ToLower(filepath.Base(strings.TrimRight(app, "/"))), "gitlab") {
+		return &LaneLimit{CPUs: 8, Memory: "30Gi"}
+	}
+	return nil
+}
+
 // WorkloadFuzzops is the name of the built-in workload (and the default).
 const WorkloadFuzzops = "fuzzops"
 
@@ -23,8 +34,9 @@ const defaultWorkload = WorkloadFuzzops
 
 func init() {
 	reg := builtinWorkload{
-		New:      func(dir string) Workload { return fuzzopsWorkload{dir: dir} },
-		Identity: func(dir string) string { return shellQuote(filepath.Join(dir, "bin", "fuzzops")) + " version" },
+		New:       func(dir string) Workload { return fuzzopsWorkload{dir: dir} },
+		Identity:  func(dir string) string { return shellQuote(filepath.Join(dir, "bin", "fuzzops")) + " version" },
+		Footprint: fuzzopsFootprint,
 	}
 	builtinWorkloads[""] = reg
 	builtinWorkloads[WorkloadFuzzops] = reg

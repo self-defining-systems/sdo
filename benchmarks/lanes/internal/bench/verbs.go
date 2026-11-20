@@ -61,6 +61,13 @@ func Add(ctx context.Context, root Root, specFile string, log io.Writer) error {
 		return err
 	}
 	s.Described = described
+	fp, err := checks.footprint(ctx, inv, s)
+	if err != nil {
+		return err
+	}
+	if fp != nil {
+		s.Lane = fp
+	}
 	lock := Lock{Spec: s, Added: time.Now().UTC()}
 	if s.Faults.Instances != "" {
 		in, err := Store(string(root), resolve(s.Faults.Instances))
