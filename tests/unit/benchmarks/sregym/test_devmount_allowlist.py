@@ -11,7 +11,7 @@ GO = ROOT / "sdo/operator/devmount/devmount.go"
 
 
 def _allowlist() -> set[str]:
-    block = re.search(r"var benchmarkFiles = \[\]string\{(.*?)\n\}", GO.read_text(encoding="utf-8"), re.S)
+    block = re.search(r"var benchmarkFiles = \[\]string\{(.*?)\n\}", GO.read_text(encoding="utf-8"), re.DOTALL)
     assert block is not None
     return set(re.findall(r'"(benchmarks/[^"]+\.py)"', block.group(1)))
 
