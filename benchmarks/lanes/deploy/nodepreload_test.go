@@ -25,7 +25,7 @@ echo "docker $*" >> "$STUB_LOG"
 case "$1 $2" in
   "image inspect") exit 0 ;;
   "network inspect") exit 1 ;;
-  "inspect -f") case "$3" in *bench-evidence*) printf '%s' "$STUB_MOUNT" ;; *CgroupParent*) printf '%s\n' "$STUB_CGROUP_PARENT" ;; *) echo "$STUB_BASE sha256:id" ;; esac; exit 0 ;;
+  "inspect -f") case "$3" in *bench-evidence*) printf '%s' "$STUB_MOUNT" ;; *CgroupParent*) printf '%s\n' "$STUB_CGROUP_PARENT" ;; *HostConfig.Memory*) printf '%s\n' "${STUB_NODE_MEMORY-4294967296}" ;; *) echo "$STUB_BASE sha256:id" ;; esac; exit 0 ;;
   "images --format") echo "$STUB_BASE"; exit 0 ;;
 esac
 case "$1" in
