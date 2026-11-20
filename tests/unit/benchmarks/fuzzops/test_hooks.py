@@ -1585,6 +1585,75 @@ def test_describe_reads_the_startup_bound_and_the_stub_agent(
     assert nested["max_startup"] == "12m"
 
 
+def _check_input(
+    capsys: Any, monkeypatch: pytest.MonkeyPatch, kind: str, path: Path, phase: str = "add", **extra: str
+) -> dict[str, Any]:
+    monkeypatch.setenv("BENCH_INPUT_KIND", kind)
+    monkeypatch.setenv("BENCH_INPUT_PATH", str(path))
+    monkeypatch.setenv("BENCH_INPUT_PHASE", phase)
+    monkeypatch.setenv("FUZZOPS_NAMESPACE", "app1")
+    for key, value in extra.items():
+        monkeypatch.setenv(key, value)
+    assert hooks.main(["check-input"]) == 0
+    return json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+
+
+def test_check_input_notes_a_directory_that_is_no_memory_bundle_yet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    answer = _check_input(capsys, monkeypatch, "seed", tmp_path / "later")
+    assert answer["ok"] is True
+    assert "not a memory bundle yet" in answer["note"]
+
+
+def test_check_input_judges_the_memory_check_like_the_platform_used_to(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    (tmp_path / "baseline.json").write_text("{}")
+    commit = "a" * 40
+    monkeypatch.setattr(hooks, "_load_input_baseline", lambda path: hooks.InputBaseline("app1", commit, "main"))
+    monkeypatch.setattr(hooks, "_input_problem", lambda kind, path, namespace: "")
+    runs: list[str] = []
+
+    def migrate(path: Path, baseline_input: Any) -> tuple[str, int, list[str]]:
+        runs.append(str(path))
+        return commit, 1, ["telemetry.unbound[metrics-alerts]: not bound"]
+
+    monkeypatch.setattr(hooks, "_memory_migrate", migrate)
+    # add time: no cluster is known yet, so an unbound telemetry source is no failure
+    answer = _check_input(capsys, monkeypatch, "baseline", tmp_path)
+    assert answer["ok"] is True
+    assert "1 allowed" in answer["detail"]
+    # preflight does not allow it unless asked to
+    refused = _check_input(capsys, monkeypatch, "baseline", tmp_path, phase="preflight")
+    assert refused["ok"] is False
+    assert "telemetry.unbound" in refused["detail"]
+    allowed = _check_input(
+        capsys, monkeypatch, "baseline", tmp_path, phase="preflight", BENCH_INPUT_ALLOW="telemetry.unbound"
+    )
+    assert allowed["ok"] is True
+    # a bundle whose head is not the commit baseline.json names is refused
+    monkeypatch.setattr(hooks, "_memory_migrate", lambda path, b: ("b" * 40, 0, []))
+    wrong = _check_input(capsys, monkeypatch, "baseline", tmp_path)
+    assert wrong["ok"] is False
+    assert "baseline.json says" in wrong["detail"]
+
+
+def test_check_input_refuses_a_baseline_for_another_namespace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    (tmp_path / "baseline.json").write_text("{}")
+    monkeypatch.setattr(hooks, "_load_input_baseline", lambda path: hooks.InputBaseline("other", "a" * 40, "main"))
+    monkeypatch.setattr(
+        hooks,
+        "_input_problem",
+        lambda kind, path, namespace: "baseline namespace other differs from FUZZOPS_NAMESPACE app1",
+    )
+    answer = _check_input(capsys, monkeypatch, "baseline", tmp_path)
+    assert answer["ok"] is False
+    assert "namespace" in answer["detail"]
+
+
 @pytest.mark.parametrize("verb", ["preflight", "export-artifact", "verify-artifact", "reseed", "verify-start"])
 def test_lanes_contract_verbs_not_implemented_answer_unsupported(verb: str, capsys: Any) -> None:
     assert hooks.main([verb]) == 64

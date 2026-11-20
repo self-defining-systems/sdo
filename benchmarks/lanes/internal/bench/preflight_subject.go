@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -26,16 +27,44 @@ type subjectChecks interface {
 	Local(ctx context.Context, inv Inventory, specs []specFile, opt PreflightOptions, run runFn, add addFn, wg *sync.WaitGroup)
 }
 
-// hookSubject asks each pinned hooks checkout's `preflight` verb first and falls back to sdoSubject for the
-// checkouts that do not implement it.
-type hookSubject struct{}
+// hookSubject asks each pinned hooks checkout's `preflight` verb first and falls back to legacySubject for the
+// checkouts that do not implement it. A subject that answers `preflight` owns every check of its specs; the platform
+// runs none for them. For the others the subject's `check-input` checks the baseline and seed, and only a pin without
+// that verb gets the built-in memory check.
+type hookSubject struct{ probes *sync.Map }
+
+func newHookSubject() hookSubject { return hookSubject{probes: &sync.Map{}} }
+
+type probeEntry struct {
+	once      sync.Once
+	checks    []subjectCheck
+	supported bool
+	err       error
+}
+
+// probe asks one checkout's `preflight` verb on host, once per host and checkout.
+func (hs hookSubject) probe(ctx context.Context, run runFn, host, dir, cmd, pre string) ([]subjectCheck, bool, error) {
+	ask := func(e *probeEntry) {
+		out, err := run(ctx, host, pre+hookPreflightScript(dir, cmd))
+		e.checks, e.supported, e.err = parseHookPreflight(out, err)
+	}
+	if hs.probes == nil {
+		var e probeEntry
+		ask(&e)
+		return e.checks, e.supported, e.err
+	}
+	v, _ := hs.probes.LoadOrStore(host+"|"+dir, &probeEntry{})
+	e := v.(*probeEntry)
+	e.once.Do(func() { ask(e) })
+	return e.checks, e.supported, e.err
+}
 
 func (hookSubject) Images(specs []specFile) []string { return legacySubject{}.Images(specs) }
 
-func (hookSubject) Host(ctx context.Context, inv Inventory, h string, hs []specFile, pre string, run runFn, add addFn) {
+func (hs hookSubject) Host(ctx context.Context, inv Inventory, h string, onHost []specFile, pre string, run runFn, add addFn) {
 	var rest []specFile
 	seen := map[string]bool{}
-	for _, s := range hs {
+	for _, s := range onHost {
 		dir := inv.HooksPath(s.Operator.Hooks, s.Operator.Revision, h)
 		cmd := inv.HookCommand[s.Operator.Hooks]
 		if s.Operator.Hooks == "" || dir == "" || cmd == "" {
@@ -46,8 +75,7 @@ func (hookSubject) Host(ctx context.Context, inv Inventory, h string, hs []specF
 			continue
 		}
 		seen[dir] = true
-		out, err := run(ctx, h, pre+hookPreflightScript(dir, cmd))
-		checks, supported, perr := parseHookPreflight(out, err)
+		checks, supported, perr := hs.probe(ctx, run, h, dir, cmd, pre)
 		if !supported {
 			rest = append(rest, s)
 			continue
@@ -65,8 +93,63 @@ func (hookSubject) Host(ctx context.Context, inv Inventory, h string, hs []specF
 	}
 }
 
-func (hookSubject) Local(ctx context.Context, inv Inventory, specs []specFile, opt PreflightOptions, run runFn, add addFn, wg *sync.WaitGroup) {
-	legacySubject{}.Local(ctx, inv, specs, opt, run, add, wg)
+// Local checks the spec inputs the manager's own host holds (the baselines and seeds).
+func (hs hookSubject) Local(ctx context.Context, inv Inventory, specs []specFile, opt PreflightOptions, run runFn, add addFn, wg *sync.WaitGroup) {
+	local := inv.LocalHost()
+	var rest []specFile
+	seen := map[string]bool{}
+	for _, s := range specs {
+		dir, cmd := "", inv.HookCommand[s.Operator.Hooks]
+		if local != "" {
+			dir = inv.HooksPath(s.Operator.Hooks, s.Operator.Revision, local)
+		}
+		if s.Operator.Hooks == "" || dir == "" || cmd == "" {
+			rest = append(rest, s)
+			continue
+		}
+		if _, supported, _ := hs.probe(ctx, run, local, dir, cmd, envPrefix(inv.Hosts[local])); supported {
+			continue // the subject answered preflight: its checks are its own
+		}
+		for _, in := range s.inputPaths() {
+			key := dir + "|" + in.Kind + "|" + in.Path
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			wg.Add(1)
+			go func(s specFile, kind, path string) {
+				defer wg.Done()
+				res, supported, err := hookCheckInput(ctx, inv, s.Spec, kind, path, "preflight", opt.AllowMemoryDiag, os.Stderr)
+				label := "input[" + kind + ":" + s.Name + "]"
+				switch {
+				case err != nil:
+					add(6, label, local, false, "%s %s: %v", kind, path, err)
+				case !supported:
+					legacySubject{}.Local(ctx, inv, []specFile{s}, opt, run, add, wg)
+				case res.Err != nil:
+					add(6, label, local, false, "%s %s: %v", kind, path, res.Err)
+				case res.Ran:
+					add(6, label, local, true, "%s %s: %s", kind, path, res.Detail)
+				default:
+					add(6, label, local, true, "%s", res.Note)
+				}
+			}(s, in.Kind, in.Path)
+		}
+	}
+	if len(rest) > 0 {
+		legacySubject{}.Local(ctx, inv, rest, opt, run, add, wg)
+	}
+}
+
+// inputPaths are the spec's baseline and seed, relative paths resolved against the spec file.
+func (s specFile) inputPaths() []struct{ Kind, Path string } {
+	in := subjectInputs(s.Spec)
+	for i := range in {
+		if !filepath.IsAbs(in[i].Path) {
+			in[i].Path = filepath.Join(s.dir, in[i].Path)
+		}
+	}
+	return in
 }
 
 // subjectCheck is one entry of a subject preflight answer: {"checks":[{"check":"...","ok":true,"detail":"..."}]}.

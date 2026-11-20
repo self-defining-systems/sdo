@@ -16,13 +16,13 @@ import (
 type RenderedChecks struct {
 	Log  io.Writer
 	pins map[string]string
-	mem  map[string]memResult
+	mem  map[string]inputResult
 	desc map[string]*Described
 }
 
 // NewRenderedChecks starts a validation session; log says what a check could not ask (nil is silent).
 func NewRenderedChecks(log io.Writer) *RenderedChecks {
-	return &RenderedChecks{Log: log, pins: map[string]string{}, mem: map[string]memResult{}, desc: map[string]*Described{}}
+	return &RenderedChecks{Log: log, pins: map[string]string{}, mem: map[string]inputResult{}, desc: map[string]*Described{}}
 }
 
 // ValidateRendered is the one place that decides whether a rendered spec is acceptable. `plan add` and `--dry-run` call
@@ -68,7 +68,7 @@ func ValidateRendered(ctx context.Context, inv Inventory, s Spec, c *RenderedChe
 			}
 		}
 	}
-	return checkSpecMemory(ctx, inv, s, c.mem)
+	return checkSpecSubjectInputs(ctx, inv, s, c)
 }
 
 func isPlaceholder(p string) bool { return strings.HasPrefix(p, plan.PlaceholderPrefix) }
