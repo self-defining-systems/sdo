@@ -5,6 +5,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -31,7 +32,7 @@ func TerminationContext(ctx context.Context) (context.Context, context.CancelFun
 
 // Termination is TerminationContext plus an escalation: the first SIGTERM or
 // SIGINT ends the context (a graceful stop), a second one closes force (stop
-// now). stop releases the signal handling.
+// now). stop releases the signal handling and is safe to call more than once.
 func Termination(ctx context.Context) (context.Context, <-chan struct{}, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(ctx)
 	signals := make(chan os.Signal, 2)
@@ -53,9 +54,12 @@ func Termination(ctx context.Context) (context.Context, <-chan struct{}, context
 			}
 		}
 	}()
+	var once sync.Once
 	return ctx, force, func() {
-		signal.Stop(signals)
-		close(done)
+		once.Do(func() {
+			signal.Stop(signals)
+			close(done)
+		})
 		cancel()
 	}
 }
