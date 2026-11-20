@@ -10,10 +10,9 @@ import (
 // RetryReq is one `plan retry` request in control.json: a node id or an item (Target), or every parked item (All).
 // ID makes the application idempotent: the engine records the ids it applied in the state.
 type RetryReq struct {
-	ID     string    `json:"id"`
-	Target string    `json:"target,omitempty"`
-	All    bool      `json:"all,omitempty"`
-	At     time.Time `json:"at"`
+	ID     string `json:"id"`
+	Target string `json:"target,omitempty"`
+	All    bool   `json:"all,omitempty"`
 }
 
 // RetryRec is the state's log of one retried node: when, and what its park was.
@@ -85,8 +84,8 @@ func RetryPlan(dir, target string, all bool) error {
 		if c.Removed {
 			return fmt.Errorf("the plan is removed")
 		}
-		now := time.Now().UTC()
-		c.Retries = append(c.Retries, RetryReq{ID: fmt.Sprintf("%d", now.UnixNano()), Target: target, All: all, At: now})
+		// The control file only grows, under its lock, so the next number is a unique id; the engine stamps the time.
+		c.Retries = append(c.Retries, RetryReq{ID: fmt.Sprint(len(c.Retries) + 1), Target: target, All: all})
 		return nil
 	})
 }
