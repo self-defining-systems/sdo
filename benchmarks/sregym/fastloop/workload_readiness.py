@@ -147,3 +147,65 @@ def await_identity(read: Callable[[], dict[str, Any]]) -> dict[str, Any]:
             time.sleep(min(wait_for(WaitKind.SAMPLE), budget.left()))
             if budget.left() <= 0:
                 raise WorkloadNotReadyError(f"{exc}; restore readiness deadline exhausted; no injection") from exc
+
+
+def pod_health_problems(pods: list[dict[str, Any]], restarts: dict[tuple[str, str], int]) -> list[str]:
+    """One sample of pod-level health: phase, every container Ready, no waiting reason, no restart growth.
+
+    ``restarts`` holds the first count seen per (pod uid, container) and is updated in place; a later
+    sample above it is a restart during the window, which a Ready instant between backoffs would hide.
+    """
+    problems = []
+    for pod in pods:
+        metadata, status = pod["metadata"], pod.get("status", {})
+        if metadata.get("deletionTimestamp") or status.get("phase") == "Succeeded":
+            continue
+        name = metadata.get("name", metadata.get("uid"))
+        if status.get("phase") != "Running":
+            problems.append(f"pod {name} is {status.get('phase')}")
+            continue
+        for container in status.get("containerStatuses", []):
+            label = f"pod {name} container {container.get('name')}"
+            first = restarts.setdefault((metadata["uid"], container["name"]), container.get("restartCount", 0))
+            if container.get("restartCount", 0) > first:
+                problems.append(f"{label} restarted ({first} -> {container['restartCount']})")
+            waiting = container.get("state", {}).get("waiting", {}).get("reason")
+            if waiting:
+                problems.append(f"{label} is waiting: {waiting}")
+            elif container.get("ready") is not True:
+                problems.append(f"{label} is not Ready")
+    return problems
+
+
+def sustained_pod_health(
+    kubeconfig: Path,
+    namespace: str,
+    *,
+    window_seconds: float | None = None,
+    poll_seconds: float | None = None,
+    read_pods: Callable[[], list[dict[str, Any]]] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> list[str]:
+    """Sample pods across at least ``window_seconds`` (default one minute); return what failed, empty when clean.
+
+    A crash-looping container is Ready for short windows between backoffs, so one sample proves nothing:
+    every sample must show every container Ready, and no restart count may grow over the window.
+    """
+    window = wait_for(WaitKind.MINUTE) if window_seconds is None else window_seconds
+    poll = wait_for(WaitKind.POLL) if poll_seconds is None else poll_seconds
+
+    def read() -> list[dict[str, Any]]:
+        listing = kubectl(["get", "pods", "-o", "json"], namespace=namespace, kubeconfig=kubeconfig)
+        return json.loads(listing.stdout)["items"]
+
+    read_pods = read_pods or read
+    restarts: dict[tuple[str, str], int] = {}
+    end = clock() + window
+    while True:
+        problems = pod_health_problems(read_pods(), restarts)
+        if problems:
+            return problems
+        if clock() >= end:
+            return []
+        sleep(poll)

@@ -124,6 +124,8 @@ def main() -> int:
         if not hasattr(self, "_rehearse_oracles") and os.environ.get("FASTLOOP_ORACLE_BASELINES"):
             assert worker.__file__ is not None
 
+            from benchmarks.sregym.fastloop.workload_readiness import sustained_pod_health
+
             def confirm_healthy(problem: Any) -> dict[str, Any]:
                 from benchmarks.sregym.fastloop.seed_recovery import verify_baseline_traffic
                 from benchmarks.sregym.fastloop.workload_readiness import await_workload_identity
@@ -152,6 +154,7 @@ def main() -> int:
                     ).strip(),
                 ),
                 confirm_healthy=confirm_healthy,
+                pod_health_gate=lambda problem: sustained_pod_health(Path(os.environ["KUBECONFIG"]), problem.namespace),
             )
         op = request.get("op")
         if op == "rehearse_oracles":

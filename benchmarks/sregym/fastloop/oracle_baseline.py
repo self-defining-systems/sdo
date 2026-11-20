@@ -109,8 +109,41 @@ class OracleBaselines:
         return result
 
 
+#: Oracles that read pod health at one instant. Red on the healthy application, they measure the app, not repair.
+POD_HEALTH_ORACLES = frozenset({"MitigationOracle", "AssignNonExistentNodeMitigationOracle"})
+
+
+def red_pod_health_oracles(oracle: Any, grade: dict[str, Any]) -> list[str]:
+    """Names of pod-health oracles that failed in ``grade`` (compound members by key, or the single oracle)."""
+    if oracle is None:
+        return []
+    members = getattr(oracle, "oracles", None)
+    details = grade.get("details", {})
+    if isinstance(members, dict):
+        by_name = {part.get("name"): part for part in details.get("oracles", [])}
+        return [
+            name
+            for name, member in members.items()
+            if type(member).__name__ in POD_HEALTH_ORACLES and by_name.get(name, {}).get("success") is not True
+        ]
+    if type(oracle).__name__ in POD_HEALTH_ORACLES and grade.get("success") is not True:
+        return [type(oracle).__name__]
+    return []
+
+
+def _rejected(cause: str, named: list[str], *, raw: dict[str, Any] | None = None) -> dict[str, Any]:
+    details: dict[str, Any] = {"collateral_ok": False, "rejection": {"cause": cause, "named": named}}
+    if raw is not None:
+        details["raw_verdict"] = raw
+    return {"kind": "health-check", "success": False, "details": details}
+
+
 def install_oracle_baselines(
-    worker: Any, baselines: OracleBaselines, *, confirm_healthy: Callable[[Any], bool | dict[str, Any]] | None = None
+    worker: Any,
+    baselines: OracleBaselines,
+    *,
+    confirm_healthy: Callable[[Any], bool | dict[str, Any]] | None = None,
+    pod_health_gate: Callable[[Any], list[str]] | None = None,
 ) -> Callable[..., dict[str, Any]]:
     """Bind factory identities and the real worker's grading consumer to one cache."""
     factory, grade = worker._problem_factory, worker._grade
@@ -144,7 +177,17 @@ def install_oracle_baselines(
                         return {**health, "details": {**health.get("details", {}), "collateral_ok": False}}
                 elif not health:
                     return {"kind": "health-check", "success": False, "details": {"collateral_ok": False}}
-            return grade(problem)
+            if pod_health_gate is not None:
+                problems = pod_health_gate(problem)
+                if problems:
+                    return _rejected("pod_health_gate_failed", problems)
+            result = grade(problem)
+            red = red_pod_health_oracles(getattr(problem, "mitigation_oracle", None), result)
+            if red:
+                # A pod-health oracle red on the healthy app is an unhealthy app, not an invalid oracle:
+                # reject the row before injection and keep the verdict out of the cache.
+                return _rejected("pod_health_oracle_red", red, raw=result)
+            return result
 
         return baselines.rehearse(problem_id, evaluate, fresh=fresh)
 
