@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
@@ -148,6 +149,10 @@ func (r *stepRunner) laneEnvLimits(ctx context.Context) (env []string, ok bool) 
 		r.fail("lane cpus: %v", err)
 		return nil, false
 	}
+	// A TERM from the manager (the experiment was removed) ends the wait and leaves the queue; without it the step
+	// would sit in lane-wait until coreWait.
+	ctx, stopTerm := signal.NotifyContext(ctx, syscall.SIGTERM)
+	defer stopTerm()
 	deadline := time.Now().Add(coreWait)
 	waited := false
 	giveUp := func(f string, args ...any) ([]string, bool) {
@@ -190,7 +195,7 @@ func (r *stepRunner) laneEnvLimits(ctx context.Context) (env []string, ok bool) 
 		r.phase(PhaseLaneWait, err.Error())
 		select {
 		case <-ctx.Done():
-			return giveUp("lane cores: %v", ctx.Err())
+			return giveUp("lane cores: wait cancelled: %v", context.Cause(ctx))
 		case <-time.After(max(r.poll, time.Millisecond)):
 		}
 	}

@@ -309,6 +309,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 				m.died(ctx, l)
 			case StepRunning:
 				l.Step.Phase = pr.Phases[lane]
+				m.cancelRemoved(ctx, l)
 				m.enforceBound(ctx, l)
 			}
 		}
