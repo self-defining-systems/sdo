@@ -137,8 +137,10 @@ func (m *Manager) Serve(ctx context.Context) error {
 	}
 	defer f.Close()
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		return errors.New("another manager holds " + f.Name())
+		_, holder := ManagerHolder(m.Root)
+		return errors.New("another manager holds " + f.Name() + " (" + holder + ")")
 	}
+	writeHolder(f)
 	if m.Tick == 0 {
 		m.Tick = 10 * time.Second
 	}

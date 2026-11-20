@@ -19,7 +19,8 @@ import (
 )
 
 const usage = `usage: lanes VERB --root R ...
-  serve                      run the manager (reconciles every 10 s; steps run on without it)
+  manager start|stop|restart|status|logs   the manager as a systemd --user unit (use this, not serve, for real runs)
+  serve                      run the manager in the foreground (reconciles every 10 s; steps run on without it)
   add FILE                   validate a spec and add it as an experiment
   remove NAME [--teardown]   drop its queued runs; runs in flight finish; results stay; its lanes return free with
                              their app copy (keep_lanes: clusters kept); --teardown deletes them like an experiment without keep_lanes
@@ -84,6 +85,14 @@ func run(verb string, args []string) int {
 	defer stop()
 	if verb == "probe" {
 		return probe(args)
+	}
+	if verb == "version" {
+		fmt.Println(revision())
+		return 0
+	}
+	if verb == "manager" {
+		exe, _ := os.Executable()
+		return managerCommand(args, os.Environ(), exe, os.Stdout, os.Stderr, execRunner)
 	}
 	if verb == "host" {
 		// The host verb has flags of its own (--cpus, --prev, --drain), so only --root is taken out here.
