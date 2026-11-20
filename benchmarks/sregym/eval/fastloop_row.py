@@ -219,6 +219,13 @@ def _epoch(value: datetime | None) -> float | None:
     return None if value is None else value.timestamp()
 
 
+def injection_cause(record: IncidentRecord) -> str:
+    """The structured cause of an invalid injection: SREGym's own refusal text, whitespace-normalized."""
+    lines = str(record.injection_evidence.get("error") or "").strip().splitlines()
+    reason = re.sub(r"\s+", "_", lines[0].strip()) if lines else "no_evidence"
+    return f"injection:invalid/{reason[:120]}"
+
+
 def map_record(
     record: IncidentRecord, cell: Cell, memory_head: str | None, fallback_page_at: float | None = None
 ) -> ArmResult:
@@ -423,6 +430,10 @@ class FastloopRowRunner:
         if cause is not None and (record is None or record.oracle is None):
             # The scheduler parks on this reason: the structured cause, never prose with durations in it.
             raise RuntimeError(f"eval: rejected before injection ({cause})")
+        if record is not None and record.oracle is None and record.infra_error == "injection_invalid":
+            # SREGym refused to install the fault (a lane that cannot hold it): the same lane or problem fails
+            # the same way every time, so the scheduler parks it on the structured cause, not on "no verdict".
+            raise RuntimeError(f"eval: rejected before injection ({injection_cause(record)})")
         if record is None or record.oracle is None:
             # The caller sees only this error; name the row's own failure (onboarding rejection, setup, recovery).
             cause = f": {record.error}" if record is not None and record.error else ""
