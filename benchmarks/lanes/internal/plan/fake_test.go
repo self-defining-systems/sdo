@@ -29,7 +29,8 @@ type fakeBackend struct {
 	steps    map[string]StepObservation
 	started  []StepJob
 	capacity Capacity
-	rundata  map[string]RunData // by experiment; absent: a good run on the pinned source
+	rundata  map[string]RunData   // by experiment; absent: a good run on the pinned source
+	runs     map[string][]RunData // by experiment: every run of a multi-run experiment, in order
 	alarms   []Alarm
 	// cancelled are the experiments and step directories the engine asked to cancel.
 	cancelled []string
@@ -38,7 +39,7 @@ type fakeBackend struct {
 }
 
 func newFake() *fakeBackend {
-	return &fakeBackend{rundata: map[string]RunData{}, exps: map[string]Observation{}, verdicts: map[string]Verdict{}, steps: map[string]StepObservation{}}
+	return &fakeBackend{rundata: map[string]RunData{}, runs: map[string][]RunData{}, exps: map[string]Observation{}, verdicts: map[string]Verdict{}, steps: map[string]StepObservation{}}
 }
 
 func (f *fakeBackend) Submit(_ context.Context, j Job) error {
@@ -111,6 +112,18 @@ func (f *fakeBackend) RunData(_ context.Context, exp string) (RunData, error) {
 	}
 	return RunData{Run: "run-" + exp, Host: "h1", Lane: "c1", WorkloadObserved: "4652656aa4f8ad4c3", SubjectObserved: "9b2cadb7f0000",
 		App: "examples/x@sha256:1", Isolation: Isolation{Mode: "two-way"}, Grade: []byte(`{"valid": true, "recovered": true, "bad_s": 12}`)}, nil
+}
+
+// RunsData answers the runs a test set for the experiment, else the one run RunData describes.
+func (f *fakeBackend) RunsData(ctx context.Context, exp string) ([]RunData, error) {
+	f.mu.Lock()
+	runs, ok := f.runs[exp]
+	f.mu.Unlock()
+	if ok {
+		return runs, nil
+	}
+	rd, err := f.RunData(ctx, exp)
+	return []RunData{rd}, err
 }
 
 // Raise makes the fake backend the alarm sink as well.

@@ -88,6 +88,15 @@ A host without a checkout of the workload at a spec's pin cannot take that spec'
 about the host: the host is reachable and its probe answers, so it raises no host alarm. `add` and `plan add` say it
 per host, as `<host>: not usable for <workload>@<rev>: no checkout`.
 
+An adapter that wraps the built-in workload (handles the verbs it adds, delegates the rest) finds the command line the
+built-in one would run for the call in `WORKLOAD_BUILTIN` (a JSON array: the program, then its arguments); it is absent for a call
+the built-in workload does not implement. The adapter then needs no copy of the verb-to-command table.
+
+An experiment whose `sequences` list several seeds runs them in order on one lane, with no reset between them, and each
+run is graded under its own operator label (`exec:<hooks>-<name>-r<position>`). `plan results` has one row per run for
+such an experiment (`position`, 1-based; the TSV gets a `position` column only when a row has one); a one-run experiment
+is one row, as ever.
+
 The workload name is not part of an experiment's identity yet (a pool claim does not compare it); plan the
 identity change with the plan engine.
 

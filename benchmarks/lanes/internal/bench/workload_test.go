@@ -5,6 +5,7 @@ package bench
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -65,6 +66,24 @@ func TestExecWorkloadEnvInLastLineOut(t *testing.T) {
 	}
 	if got, want := strings.TrimSpace(out.String()), `{"verb":"gate","action":"check","args":["--a","b c"],"x":"1"}`; got != want {
 		t.Fatalf("got %s, want %s", got, want)
+	}
+}
+
+// An adapter that wraps the built-in workload is told the command line the built-in one would run, for the calls it
+// maps; a call it does not map carries no such variable.
+func TestExecWorkloadIsToldTheBuiltinCommandLine(t *testing.T) {
+	w := adapter(t, `echo "{\"builtin\":${WORKLOAD_BUILTIN:-null}}"`)
+	var out bytes.Buffer
+	if _, _, err := w.Call(context.Background(), WorkloadCall{Verb: VerbRun, Action: "run", Args: []string{"--seed", "3"}, Stdout: &out, Log: &bytes.Buffer{}}); err != nil {
+		t.Fatal(err)
+	}
+	var got struct{ Builtin []string }
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil || len(got.Builtin) != 4 || !strings.HasSuffix(got.Builtin[0], "/bin/fuzzops") || strings.Join(got.Builtin[1:], " ") != "run --seed 3" {
+		t.Fatalf("builtin %v (%v)", got.Builtin, err)
+	}
+	out.Reset()
+	if _, _, err := w.Call(context.Background(), WorkloadCall{Verb: VerbFootprint, Stdout: &out, Log: &bytes.Buffer{}}); err != nil || strings.TrimSpace(out.String()) != `{"builtin":null}` {
+		t.Fatalf("unmapped call: %q %v", out.String(), err)
 	}
 }
 

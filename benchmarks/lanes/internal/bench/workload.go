@@ -61,7 +61,14 @@ type builtinWorkload struct {
 	Identity func(dir string) string
 	// Footprint is the lane size the adapter wants for the app at path (nil: none, the platform default).
 	Footprint func(app string) *LaneLimit
+	// CommandLine is the whole command line the adapter would run for a call (nil: it has none), so an adapter
+	// executable that wraps this one can hand calls it does not handle back (WORKLOAD_BUILTIN).
+	CommandLine func(dir string, c WorkloadCall) ([]string, error)
 }
+
+// BuiltinEnv is the environment variable that carries, to an adapter executable, the command line (a JSON array) the
+// default built-in workload would run for the call. It is absent for a call that workload does not implement.
+const BuiltinEnv = "WORKLOAD_BUILTIN"
 
 // builtinWorkloads are the built-in adapters by the workload name a spec may carry (adapter_*.go registers them).
 var builtinWorkloads = map[string]builtinWorkload{}
@@ -173,6 +180,12 @@ const UnsupportedExit = 64
 
 func (w execWorkload) Call(ctx context.Context, c WorkloadCall) (int, string, error) {
 	c.Env = WorkloadEnv(c)
+	if b, ok := builtinWorkloads[""]; ok && b.CommandLine != nil {
+		if line, err := b.CommandLine(w.dir, c); err == nil {
+			encoded, _ := json.Marshal(line)
+			c.Env = append(c.Env, BuiltinEnv+"="+string(encoded))
+		}
+	}
 	var out bytes.Buffer
 	final := c.Stdout
 	c.Stdout = &out
