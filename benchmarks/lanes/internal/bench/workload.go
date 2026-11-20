@@ -137,6 +137,15 @@ func (w fuzzopsWorkload) Grade(ctx context.Context, dir string, log io.Writer) e
 // on cancel (a cancelled run still undoes its fault, which gets up to ten minutes), stdout to c.Stdout and stderr
 // to the log with its tail kept as the reason of a failure.
 func runAdapter(ctx context.Context, dir string, cmd *exec.Cmd, c WorkloadCall, what string) (int, string, error) {
+	// Each verb has a limit (hookTimeouts): past it the adapter's process group is killed and the reason says so.
+	limit := hookTimeouts[c.Verb]
+	parent := ctx
+	if limit > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, limit)
+		defer cancel()
+		cmd = exec.CommandContext(ctx, cmd.Path, cmd.Args[1:]...)
+	}
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), c.Env...)
 	out := c.Stdout
@@ -146,10 +155,18 @@ func runAdapter(ctx context.Context, dir string, cmd *exec.Cmd, c WorkloadCall, 
 	var tail tailWriter
 	cmd.Stdout, cmd.Stderr = out, io.MultiWriter(c.Log, &tail)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
+	cmd.Cancel = func() error {
+		if parent.Err() == nil { // our own limit: no undo to wait for
+			return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+	}
 	cmd.WaitDelay = 10 * time.Minute
 	fmt.Fprintf(c.Log, "%s %s\n", time.Now().UTC().Format("15:04:05"), what)
 	err := cmd.Run()
+	if limit > 0 && parent.Err() == nil && ctx.Err() == context.DeadlineExceeded {
+		return -1, tail.String(), fmt.Errorf("workload verb %s exceeded its limit %s and was killed", c.Verb, limit)
+	}
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
 		return ee.ExitCode(), tail.String(), nil
