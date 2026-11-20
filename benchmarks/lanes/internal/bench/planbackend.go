@@ -349,6 +349,9 @@ func (b *PlanBackend) Capacity(_ context.Context) (plan.Capacity, error) {
 		}
 	}
 	for _, h := range st.Hosts {
+		if h.Lanes == 0 {
+			continue // no lanes listed (drained or kept for later): nothing of ours runs there, so its pressure is no alarm
+		}
 		minFree, _ := ParseSize(h.MinFree)
 		c.Hosts = append(c.Hosts, plan.HostInfo{Name: h.Name, Load5: h.Load5, MaxLoad5: h.MaxLoad5, Free: h.Free, MinFree: minFree, Error: h.Error})
 	}
