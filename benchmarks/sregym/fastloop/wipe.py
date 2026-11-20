@@ -342,6 +342,7 @@ class Tier2Trigger(StrEnum):
     DEPLOYED_APPLICATION_CHANGED = "deployed_application_changed"
     RESTORE_INVARIANT = "restore_invariant"
     PODS_UNHEALTHY = "pods_unhealthy"
+    TRAFFIC_PROBE_FAILED = "traffic_probe_failed"
 
 
 @dataclass(frozen=True)
