@@ -202,18 +202,15 @@ func readFileTree(path string) (map[string]any, error) {
 	return tree, nil
 }
 
-// dryRender renders the first node of every arm with placeholder artifacts and hands the result to validate: a typo in
-// a template fails `plan add`, not the first release.
+// dryRender renders every node with placeholder artifacts and hands the result to validate (one per distinct content):
+// a typo in a template fails `plan add`, not the first release.
 func (e *Engine) dryRender(validate func([]byte) error) error {
 	seen := map[string]bool{}
 	nodes, err := e.Plan.Expand(e.items)
 	if err != nil {
 		return err
 	}
-	for _, n := range nodes {
-		if n.Rep != 1 {
-			continue
-		}
+	for _, n := range nodes { // every node of every arm: a rep or an item can differ in what its template renders
 		b, name, err := e.Render(n, 1, e.placeholderArtifacts(n.Arm))
 		if err != nil {
 			return err
@@ -233,11 +230,16 @@ func (e *Engine) dryRender(validate func([]byte) error) error {
 	return nil
 }
 
+// PlaceholderPrefix starts the stand-in path an artifact edge's field gets at add time: a path of the right kind (an
+// absolute one) whose file does not exist yet, so a rule on field combinations still fires and a rule about the
+// file's content cannot.
+const PlaceholderPrefix = "/plan-artifact/"
+
 func (e *Engine) placeholderArtifacts(arm string) map[string]string {
 	m := map[string]string{}
 	for _, ed := range e.Plan.Edges {
 		if ed.To == arm && ed.Artifact != "" {
-			m[ed.Artifact] = "/plan-artifact/" + ed.Artifact
+			m[ed.Artifact] = PlaceholderPrefix + ed.Artifact
 		}
 	}
 	return m

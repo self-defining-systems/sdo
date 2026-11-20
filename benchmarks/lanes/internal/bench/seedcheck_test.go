@@ -21,7 +21,7 @@ func seedSpec(t *testing.T, l *flab, hooksRev string) (spec []byte, seed string)
 	y := fmt.Sprintf(`name: s1
 app: examples/shop
 fuzzops: 0b528ac
-operator: {hooks: test, revision: %s, seed: %s}
+operator: {hooks: test, revision: %s, baseline: %s, seed: %s}
 namespace: app1
 faults:
   instances: %s
@@ -33,7 +33,7 @@ ready_timeout: 1s
 cap: 10m
 lanes: 2
 hosts: [h1]
-`, hooksRev, seed, filepath.Join(l.specs, "instances.json"))
+`, hooksRev, t.TempDir(), seed, filepath.Join(l.specs, "instances.json"))
 	p := filepath.Join(l.specs, "s1.yaml")
 	must(t, os.WriteFile(p, []byte(y), 0o644))
 	s, err := LoadSpec(p)

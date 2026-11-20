@@ -15,9 +15,8 @@ import (
 	"time"
 )
 
-// Add validates a spec file and adds it: schema, fault IDs against the
-// instances file, pins against hosts.yaml, the hooks' own check of the
-// baseline, and an unused name. Its inputs are stored by content and its
+// Add validates a spec file and adds it: ValidateRendered (the rules `plan add` runs on every rendered spec), the
+// hooks' own check of the stored inputs, and an unused name. Its inputs are stored by content and its
 // identity frozen in spec.lock.yaml; then the spec is copied into specs/.
 // Relative paths in the spec are read from the spec file's directory.
 func Add(ctx context.Context, root Root, specFile string, log io.Writer) error {
@@ -39,19 +38,6 @@ func Add(ctx context.Context, root Root, specFile string, log io.Writer) error {
 			return fmt.Errorf("%s exists: experiment names are never reused", p)
 		}
 	}
-	if len(inv.UsableHosts(s)) == 0 {
-		return fmt.Errorf("no host of %v has the pinned fuzzops %s%s in hosts.yaml checkouts", s.Hosts, s.Fuzzops,
-			map[bool]string{true: " and hooks " + s.Operator.Hooks + " " + s.Operator.Revision}[s.Operator.Hooks != ""])
-	}
-	if err := checkLaneCapacity(inv, s); err != nil {
-		return fmt.Errorf("%s: %w", s.Name, err)
-	}
-	if s.Operator.Hooks != "" && inv.HookCommand[s.Operator.Hooks] == "" {
-		return fmt.Errorf("hosts.yaml has no hook_command for %s", s.Operator.Hooks)
-	}
-	if err := checkPins(ctx, inv, s, log, map[string]string{}); err != nil {
-		return fmt.Errorf("%s: %w", s.Name, err)
-	}
 	base := filepath.Dir(specFile)
 	resolve := func(p string) string {
 		if filepath.IsAbs(p) {
@@ -59,14 +45,21 @@ func Add(ctx context.Context, root Root, specFile string, log io.Writer) error {
 		}
 		return filepath.Join(base, p)
 	}
+	// The rules on the spec are ValidateRendered's, the ones `plan add` runs on every rendered spec too.
+	rs := s
+	for _, p := range []*string{&rs.Faults.Instances, &rs.Operator.Baseline, &rs.Operator.Seed} {
+		if *p != "" {
+			*p = resolve(*p)
+		}
+	}
+	if err := ValidateRendered(ctx, inv, rs, NewRenderedChecks(log)); err != nil {
+		return err
+	}
 	lock := Lock{Spec: s, Added: time.Now().UTC()}
 	if s.Faults.Instances != "" {
 		in, err := Store(string(root), resolve(s.Faults.Instances))
 		if err != nil {
 			return fmt.Errorf("faults.instances: %w", err)
-		}
-		if err := checkIDs(root.path(in.Path), s.Faults.IDs); err != nil {
-			return err
 		}
 		lock.Instances = &in
 	}
@@ -78,26 +71,17 @@ func Add(ctx context.Context, root Root, specFile string, log io.Writer) error {
 		lock.Baseline = &in
 	}
 	if s.Operator.Seed != "" {
-		if s.Operator.Baseline == "" {
-			return fmt.Errorf("operator.seed needs operator.baseline")
-		}
 		in, err := Store(string(root), resolve(s.Operator.Seed))
 		if err != nil {
 			return fmt.Errorf("operator.seed: %w", err)
 		}
 		lock.Seed = &in
 	}
-	if local := inv.LocalHost(); local != "" {
-		if fz := inv.FuzzopsPath(s.Fuzzops, local); fz != "" {
-			if st, err := os.Stat(filepath.Join(fz, s.App)); err != nil || !st.IsDir() {
-				return fmt.Errorf("app %s: not a pack directory in %s", s.App, fz)
-			}
-		}
-		if s.Operator.Hooks != "" {
-			if dir := inv.HooksPath(s.Operator.Hooks, s.Operator.Revision, local); dir != "" {
-				if err := hookCheck(ctx, root, inv, s, lock, dir, log); err != nil {
-					return err
-				}
+	// The hooks' own check runs on the stored inputs, the seed's content included: only a submit has them.
+	if local := inv.LocalHost(); local != "" && s.Operator.Hooks != "" {
+		if dir := inv.HooksPath(s.Operator.Hooks, s.Operator.Revision, local); dir != "" {
+			if err := hookCheck(ctx, root, inv, s, lock, dir, log); err != nil {
+				return err
 			}
 		}
 	}
