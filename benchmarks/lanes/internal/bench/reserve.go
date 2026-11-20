@@ -28,6 +28,7 @@ import (
 const (
 	IsolationTwoWay  = "two-way"    // the other slices were shrunk to the complement of the block: nobody else uses the lane cores
 	IsolationOneWay  = "one-way"    // the lanes stay on their block but other work may still use it
+	IsolationEks     = "eks"        // a lane that is its own EKS cluster: no host is shared
 	IsolationOneWayO = "one-way-ok" // no reservation at all; the spec or host accepted that, and its rows are flagged
 )
 
@@ -180,6 +181,9 @@ func laneExecPrefix(s Step) string {
 // isolationOf says how a row on host h is isolated: the mode and, for a reserved host, the block; why is non-empty when
 // no lane may be admitted on it now.
 func isolationOf(h Host, s Spec, rs map[string]Reservation, name string, drift map[string]string) (mode, block, why string) {
+	if h.IsEks() {
+		return IsolationEks, "", "" // every lane is its own cluster on its own nodes: nothing to reserve (eks.go)
+	}
 	if d := drift[name]; d != "" {
 		return "", "", "host " + name + " reservation drifted: " + d
 	}

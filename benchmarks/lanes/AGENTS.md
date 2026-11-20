@@ -1,7 +1,7 @@
 # lanes
 
 The benchmark-neutral lane platform: a Go module (`github.com/self-defining-systems/sdo/benchmarks/lanes`, binary
-`cmd/lanes`) that runs experiment specs on isolated lanes (kind on a host, vcluster, kind in a VM) and records results.
+`cmd/lanes`) that runs experiment specs on isolated lanes (kind on a host, vcluster, kind in a VM, EKS) and records results.
 It was imported from fuzzops-bench (see [README.md](README.md) for the source commit and what is compatible). It is
 benchmark infrastructure: production `sdo/` never imports it, and it imports nothing of SDO (a test in
 `tests/unit/test_architecture.py` enforces both).
@@ -20,6 +20,7 @@ benchmark infrastructure: production `sdo/` never imports it, and it imports not
 | `deploy/` | Lane scripts (kind-lane, vcluster-lane, lane-limits, node-preload, registries, image delivery) and the root helper under `deploy/host/` |
 | `docs/contract.md` | The adapter contract: environment in, last stdout line JSON out; verbs; unsupported handling |
 | `docs/plan.md` | The `plan.yaml` schema and the plan commands |
+| `docs/eks.md` | Provider `eks`: a lane is an EKS cluster; sizing from the footprint, quota and budget admission, cost ledger, ECR image delivery, and the host-safety gates it skips |
 
 ## Adapters
 

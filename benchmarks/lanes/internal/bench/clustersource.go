@@ -19,7 +19,7 @@ const clusterSourceTimeout = 30 * time.Second
 // a host that cannot be asked says nothing (reachability has its own alarm).
 func (inv Inventory) hostClusterProblems(ctx context.Context, host string, accepts func(lane string) bool, run runFn) []string {
 	h := inv.Hosts[host]
-	if h.ClusterUp != "" || h.IsVcluster() || len(h.Clusters) == 0 {
+	if h.ClusterUp != "" || h.IsVcluster() || h.IsEks() || len(h.Clusters) == 0 {
 		return nil
 	}
 	var out []string

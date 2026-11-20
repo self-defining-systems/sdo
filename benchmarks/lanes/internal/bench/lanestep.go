@@ -479,7 +479,7 @@ func readPSI(path, kind string) (float64, error) {
 
 // laneLimits builds the manager's StepLimits for a lane on host h, or nil when the host has no lane limits.
 func laneLimits(h Host, s Spec, block string) *StepLimits {
-	if h.IsVcluster() || (!h.Lanes.Enabled() && block == "") {
+	if h.IsVcluster() || h.IsEks() || (!h.Lanes.Enabled() && block == "") {
 		return nil
 	}
 	lim := s.LaneLimit()

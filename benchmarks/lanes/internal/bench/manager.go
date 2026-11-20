@@ -94,6 +94,14 @@ type Manager struct {
 	// host, the lanes retired since the manager started (shown by `status`).
 	leaving      map[string]*LaneFile
 	lanesRetired map[string]int
+
+	// eks is each eks host's cluster ledger (eks.go), eksSaved when it was last written; EksCheck, when set, stands in for the
+	// kubectl read of an EKS lane's health (tests).
+	eks        map[string]*eksLedger
+	eksSaved   map[string]time.Time
+	eksHeldWhy map[string]string
+	eksWhy     map[string]string // lane -> why an EKS lane gets no new steps
+	EksCheck   func(ctx context.Context, lane, kubeconfig string) error
 }
 
 // ledgerEvery is how often the manager reconciles a host's lane ledger.
@@ -206,7 +214,7 @@ func (m *Manager) rawOps(host string) HostOps {
 		if bin == "" {
 			bin, _ = os.Executable()
 		}
-		return localHost{staging: h.Staging, bin: bin, health: h.Health.Thresholds(), mins: h.KernelMins(), env: h.EnvList()}
+		return localHost{staging: h.Staging, bin: bin, health: h.Health.Thresholds(), mins: h.KernelMins(), env: h.EnvList(), noCanary: h.IsEks()}
 	}
 	return sshHost{name: host, h: h, fuzzops: m.inv.Checkouts.Fuzzops, health: h.Health.Thresholds()}
 }
@@ -433,6 +441,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 	}
 	m.settleLeft(ctx, reachable)
 	m.observeCrashLoops(ctx, reachable)
+	m.observeEksLanes(ctx, reachable)
 	for _, l := range m.sortedLanes() {
 		m.unhold(ctx, l)
 	}
@@ -451,6 +460,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 	m.gcWanted = map[string]bool{}
 	gcAll := fileExists(m.Root.path("gc.request"))
 	m.assign(ctx, admit)
+	m.eksSettle()
 	for _, l := range m.sortedLanes() {
 		if !admit[l.Host] || l.Step != nil || l.State != LaneFree {
 			continue
@@ -459,7 +469,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 			continue // a release or a reset waits for a free churn slot; the next pass tries again
 		}
 		del := !l.Gone && m.inv.Hosts[l.Host].ClusterDown != "" && !m.wanted(l.Host) &&
-			(gcAll || m.gcWanted[l.Host] || m.ownerDone(l))
+			(gcAll || m.gcWanted[l.Host] || m.ownerDone(l)) && (!m.inv.Hosts[l.Host].IsEks() || gcAll || m.eksIdle(l))
 		switch {
 		case del:
 			m.start(ctx, l, Step{Kind: StepRelease, Prev: l.Prepared, DeleteCluster: true})
@@ -490,6 +500,10 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 	}
 	for name, st := range m.hosts {
 		st.LanesRetired = m.lanesRetired[name]
+		if m.inv.Hosts[name].IsEks() {
+			es := m.eksStatus(name)
+			st.EKS = &es
+		}
 		st.Builds = m.builds(name)
 		m.hosts[name] = st
 	}
@@ -694,6 +708,14 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 		limitSpec = x.Measured()
 	}
 	s.HostEnv = h.EnvFor(limitSpec.Workload)
+	if h.IsEks() {
+		p, err := h.EKS.PlanLane(limitSpec.LaneLimit())
+		if err != nil {
+			m.logf("lane %s: %s refused: %v", l.Lane, s.Kind, err)
+			return false
+		}
+		s.HostEnv = append(s.HostEnv, eksEnv(h, p)...)
+	}
 	mode, block, _ := isolationOf(h, limitSpec, m.reservations, l.Host, nil)
 	s.Limits = laneLimits(h, limitSpec, block)
 	s.IsolationMode = mode
@@ -731,6 +753,9 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 		l.Step.RunID = s.Run.ID
 	}
 	m.logf("lane %s: started %s", l.Lane, s.ID)
+	if h.IsEks() {
+		m.eksSettle() // a cluster being made counts against the budget at once, not at the next pass
+	}
 	return true
 }
 
@@ -1087,7 +1112,7 @@ func (m *Manager) buildBlock(h string, s Spec, reachable map[string]bool) string
 // or above, or its staging disk is below min_free (floor: garbage is collected first).
 func (m *Manager) freshBlock(h string) (why string, floor bool) {
 	hs := m.inv.Hosts[h]
-	if hs.MaxLoad5 > 0 && m.hosts[h].Load5 >= hs.MaxLoad5 {
+	if hs.MaxLoad5 > 0 && !hs.IsEks() && m.hosts[h].Load5 >= hs.MaxLoad5 { // an eks lane's nodes are not on this machine
 		return fmt.Sprintf("host %s load5 %.0f is at or above max_load5 %.0f", h, m.hosts[h].Load5, hs.MaxLoad5), false
 	}
 	if min := hs.MinFreeBytes(); min > 0 && m.hosts[h].Free > 0 && m.hosts[h].Free < min {
@@ -1124,7 +1149,7 @@ func (m *Manager) freeLane(name string, s Spec, reachable map[string]bool) *Lane
 // cores: neither Gone nor one whose build waited for cores in vain (Unplaced); those come last.
 func (m *Manager) freeLaneOn(h string, placed bool, s Spec) *LaneFile {
 	for _, l := range m.sortedLanes() {
-		if l.Host == h && m.inv.LaneAccepts(h, l.Lane, s) && l.State == LaneFree && l.Step == nil && !awaitsRelease(l) && !(placed && (l.Unplaced || l.Gone)) {
+		if l.Host == h && m.inv.LaneAccepts(h, l.Lane, s) && l.State == LaneFree && l.Step == nil && !awaitsRelease(l) && !(placed && (l.Unplaced || l.Gone)) && m.eksLaneAdmitted(l, s) {
 			return l
 		}
 	}

@@ -304,6 +304,12 @@ func (r *stepRunner) laneEnv(p *Prepared) []string {
 		"BENCH_LANE=" + r.s.Lane, "BENCH_HOST=" + r.s.Host, "BENCH_LANE_DIR=" + r.s.LaneDir, "BENCH_FRESH_FINGERPRINT=" + r.freshFingerprintFile(),
 		"BENCH_EVIDENCE_HOST=" + r.s.Evidence, "BENCH_EVIDENCE_NODE=" + EvidenceNode}
 	e = append(e, r.s.HostEnv...)
+	if r.s.Provider == ProviderEks {
+		// The lane's entry address (a node the manager reaches on NodePorts) is known once its cluster is up.
+		if b, err := os.ReadFile(r.s.Kubeconfig + ".entry"); err == nil && strings.TrimSpace(string(b)) != "" {
+			e = append(e, "FUZZOPS_ENTRY_HOST="+strings.TrimSpace(string(b)))
+		}
+	}
 	if p != nil {
 		if p.EvidenceRun != "" {
 			e = append(e, "BENCH_EVIDENCE_RUN="+p.EvidenceRun)
@@ -311,7 +317,11 @@ func (r *stepRunner) laneEnv(p *Prepared) []string {
 		e = append(e, "BENCH_EXPERIMENT="+p.Experiment, "FUZZOPS_NAMESPACE="+p.Namespace, "BENCH_PACK="+p.AppPack)
 		// The lanes install's host registry script (deploy/registry.sh): `push IMAGE...` puts an image where
 		// every lane cluster of the host pulls it from.
-		e = append(e, "BENCH_REGISTRY="+filepath.Join(r.platform(), "deploy", "registry.sh"))
+		registry := "registry.sh"
+		if r.s.Provider == ProviderEks {
+			registry = "eks-lane.sh" // `push IMAGE...` goes to ECR and the nodes' mirror
+		}
+		e = append(e, "BENCH_REGISTRY="+filepath.Join(r.platform(), "deploy", registry))
 		if p.Operator != "" {
 			e = append(e, "BENCH_OPERATOR="+p.Operator)
 		}

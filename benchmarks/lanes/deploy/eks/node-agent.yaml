@@ -1,0 +1,72 @@
+# The node agent of an EKS lane: a kube-system DaemonSet that keeps every node's containerd registry mirror current
+# (an ECR token from the node's instance role, refreshed before it expires) and is where node-level writes go
+# (`eks-lane.sh nodes`, the EKS analog of `docker exec <kind node>`). @ECR@, @REGION@, @PREFIX@ and @UPSTREAMS@
+# (space-separated registries) are replaced by deploy/eks-lane.sh. Applications keep their declared image names: the
+# mirror tries ECR first and falls back to the upstream.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: sdo-lane-node-agent
+  namespace: kube-system
+  labels: {app.kubernetes.io/name: sdo-lane-node-agent}
+spec:
+  selector:
+    matchLabels: {app.kubernetes.io/name: sdo-lane-node-agent}
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 100%}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: sdo-lane-node-agent}
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      priorityClassName: system-node-critical
+      tolerations: [{operator: Exists}]
+      terminationGracePeriodSeconds: 1
+      containers:
+        - name: agent
+          image: public.ecr.aws/aws-cli/aws-cli:2.22.35
+          imagePullPolicy: IfNotPresent
+          securityContext: {runAsUser: 0}
+          resources:
+            requests: {cpu: 5m, memory: 32Mi}
+            limits: {memory: 256Mi}
+          command:
+            - sh
+            - -c
+            - |
+              set -u
+              while true; do
+                if token=$(aws ecr get-login-password --region "@REGION@"); then
+                  auth=$(printf 'AWS:%s' "$token" | base64 | tr -d '\n')
+                  for up in @UPSTREAMS@; do
+                    case $up in
+                      docker.io) server=https://registry-1.docker.io;;
+                      *) server=https://$up;;
+                    esac
+                    mirror=https://@ECR@/v2/@PREFIX@/$up
+                    mkdir -p /certs/$up
+                    printf 'server = "%s"\n\n[host."%s"]\n  capabilities = ["pull", "resolve"]\n  override_path = true\n  [host."%s".header]\n    Authorization = "Basic %s"\n' \
+                      "$server" "$mirror" "$mirror" "$auth" > /certs/$up/hosts.toml.tmp
+                    mv /certs/$up/hosts.toml.tmp /certs/$up/hosts.toml
+                  done
+                  date +%s > /certs/.sdo-mirror-refreshed
+                  sleep 21600
+                else
+                  echo 'ECR token refresh failed; retrying' >&2
+                  sleep 30
+                fi
+              done
+          readinessProbe:
+            exec:
+              command: [sh, -c, "find /certs/.sdo-mirror-refreshed -mmin -480 | grep -q ."]
+            periodSeconds: 10
+          volumeMounts:
+            - {name: certs, mountPath: /certs}
+            - {name: lane, mountPath: /lane}
+      volumes:
+        - name: certs
+          hostPath: {path: /etc/containerd/certs.d, type: DirectoryOrCreate}
+        - name: lane
+          hostPath: {path: /var/lib/sdo-lane, type: DirectoryOrCreate}
