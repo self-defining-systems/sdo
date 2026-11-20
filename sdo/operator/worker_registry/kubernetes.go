@@ -1,6 +1,7 @@
 package worker_registry
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -234,9 +235,8 @@ func (e KubernetesExecutor) execute(ctx context.Context, task *contracts.AgentTa
 		return nil, fmt.Errorf("encode agent task: %w", err)
 	}
 	if e.TaskPayload != "" {
-		prepared := new(contracts.AgentTask)
-		if err := wire.UnmarshalDurable([]byte(e.TaskPayload), prepared); err != nil || !proto.Equal(prepared, task) {
-			return nil, errors.New("prepared agent task differs from validated task")
+		if err := VerifyPreparedTask(e.TaskPayload, task); err != nil {
+			return nil, err
 		}
 		payload = []byte(e.TaskPayload)
 	}
@@ -454,7 +454,7 @@ func (e KubernetesExecutor) ensureRequest(ctx context.Context, name, payload str
 		return fmt.Errorf("get existing agent request ConfigMap: %w", err)
 	}
 	prior, next := new(contracts.AgentTask), new(contracts.AgentTask)
-	if wire.UnmarshalDurable([]byte(existing.Data[TaskDataKey]), prior) != nil || wire.UnmarshalDurable([]byte(payload), next) != nil || !proto.Equal(prior, next) {
+	if wire.UnmarshalDurable([]byte(existing.Data[TaskDataKey]), prior) != nil || wire.UnmarshalDurable([]byte(payload), next) != nil || !SameTask(prior, next) {
 		return &RequestPayloadConflictError{ConfigMap: name}
 	}
 	return nil
@@ -754,4 +754,27 @@ func workerIdentityEnvironment() []corev1.EnvVar {
 		}})
 	}
 	return result
+}
+
+// SameTask reports whether two tasks are the same message. They compare in
+// canonical wire form: proto.Equal on an Any compares serialized bytes, and
+// those differ between equal messages whenever a map or Struct inside was
+// encoded in another key order.
+func SameTask(a, b *contracts.AgentTask) bool {
+	left, err := wire.Canonical(a)
+	if err != nil {
+		return false
+	}
+	right, err := wire.Canonical(b)
+	return err == nil && bytes.Equal(left, right)
+}
+
+// VerifyPreparedTask checks that a task prepared earlier is the task about to
+// be dispatched.
+func VerifyPreparedTask(prepared string, task *contracts.AgentTask) error {
+	decoded := new(contracts.AgentTask)
+	if err := wire.UnmarshalDurable([]byte(prepared), decoded); err != nil || !SameTask(decoded, task) {
+		return errors.New("prepared agent task differs from validated task")
+	}
+	return nil
 }
