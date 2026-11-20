@@ -70,6 +70,20 @@ def prepare_baseline(obj: dict[str, Any]) -> None:
             container["ports"] = [p for p in container["ports"] if p["containerPort"] != 9600]
 
 
+def keep_grafana_sidecar_rbac(application: list[dict[str, Any]], infrastructure: list[dict[str, Any]]) -> None:
+    """Give grafana's sidecars their configmap/secret read access in the namespaced manifest.
+
+    The chart grants it through a ClusterRole that is routed to infrastructure/,
+    which harness deploys of kubernetes/ never apply; the chart's namespaced
+    Role is empty. The sidecars only read namespaced resources, so a Role keeps
+    the app healthy as deployed from kubernetes/ alone.
+    """
+    role = next(o for o in application if o["kind"] == "Role" and o["metadata"]["name"] == "grafana")
+    if not role.get("rules"):
+        cluster = next(o for o in infrastructure if o["kind"] == "ClusterRole" and o["metadata"]["name"] == "grafana-clusterrole")
+        role["rules"] = cluster["rules"]
+
+
 def main() -> None:
     root = Path(__file__).resolve().parent
     pins = json.loads((root / "pins.json").read_text())
@@ -105,6 +119,7 @@ def main() -> None:
         else:
             obj["metadata"]["namespace"] = "astronomy-shop"
             application.append(obj)
+    keep_grafana_sidecar_rbac(application, infrastructure)
     for directory, objects in (("kubernetes", application), ("infrastructure", infrastructure)):
         target = root / directory / "astronomy-shop.yaml"
         target.parent.mkdir(exist_ok=True)

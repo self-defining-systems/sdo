@@ -99,7 +99,8 @@ kubectl -n astronomy-shop port-forward service/frontend-proxy 8080:8080
 For SDO, select only `apps/astronomy_shop/kubernetes` as the manifest path, or
 `kubernetes` when preparing a standalone source checkout. Cluster roles and
 bindings are installed separately from `infrastructure/`. They retain the chart's
-collector discovery permissions. No SREGym code or metadata is needed at runtime.
+collector discovery permissions. Grafana's sidecar access to configmaps and secrets
+lives in the namespaced `Role grafana`, so `kubernetes/` alone is a healthy app. No SREGym code or metadata is needed at runtime.
 The versioned image tags match SREGym; SDO must record independently observed
 container digests during deployment to publish a complete rendered lock.
 

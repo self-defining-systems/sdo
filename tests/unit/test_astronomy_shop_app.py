@@ -229,3 +229,41 @@ def test_app_collector_does_not_replicate_the_node_mount_tree() -> None:
     assert "otlp" in metrics["receivers"]
     values = yaml.safe_load((APP / "values.yaml").read_text())
     assert values["opentelemetry-collector"]["presets"]["hostMetrics"]["enabled"] is False
+
+
+def test_grafana_sidecars_have_rbac_in_the_namespaced_manifest() -> None:
+    """Harness deploys apply kubernetes/ only; grafana's sidecars must not depend on infrastructure/."""
+    objects = list(yaml.safe_load_all((APP / "kubernetes" / "astronomy-shop.yaml").read_text()))
+    role = next(o for o in objects if o["kind"] == "Role" and o["metadata"]["name"] == "grafana")
+    granted = {
+        (r, v) for rule in role["rules"] if "" in rule["apiGroups"] for r in rule["resources"] for v in rule["verbs"]
+    }
+    assert {(r, v) for r in ("configmaps", "secrets") for v in ("get", "watch", "list")} <= granted
+
+
+def test_astronomy_renderer_keeps_grafana_rbac_namespaced(tmp_path, monkeypatch) -> None:
+    spec = importlib.util.spec_from_file_location("astronomy_render_rbac", APP / "render.py")
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    pins = json.loads((APP / "pins.json").read_text())
+    (tmp_path / "pins.json").write_text(json.dumps(pins))
+    monkeypatch.setattr(module, "__file__", str(tmp_path / "render.py"))
+    rules = [{"apiGroups": [""], "resources": ["configmaps", "secrets"], "verbs": ["get", "watch", "list"]}]
+    rendered = yaml.safe_dump_all(
+        [
+            {"kind": "ClusterRole", "metadata": {"name": "grafana-clusterrole"}, "rules": rules},
+            {"kind": "Role", "metadata": {"name": "grafana"}, "rules": []},
+        ]
+    )
+
+    def command(argv, **kwargs):
+        if argv[0] == "git":
+            return pins["demo_commit"] if argv[2].endswith("upstream") else pins["chart_commit"]
+        return pins["helm_version"] if argv[1] == "version" else rendered
+
+    monkeypatch.setattr(module.subprocess, "check_output", command)
+    module.main()
+    output = list(yaml.safe_load_all((tmp_path / "kubernetes/astronomy-shop.yaml").read_text()))
+    assert next(o for o in output if o["kind"] == "Role")["rules"] == rules
