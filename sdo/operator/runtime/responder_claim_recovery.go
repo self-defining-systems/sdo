@@ -83,7 +83,7 @@ func (d KubernetesJobDispatcher) beforeFirstResponderClaim(ctx context.Context, 
 	if response.Error != "" {
 		return nil, fmt.Errorf("observe saved recovery before responder claim: %s", response.Error)
 	}
-	// A claim follows an applied write: only the opening alerts decide whether a
+	// A claim follows an applied write: only the alert set (opening alerts plus joined user tests) decides whether a
 	// worker is still needed.
 	scope := newRecoveryScope(alertKeys(&state.Request))
 	state.Findings = holdingFindings(scope, state.Findings)

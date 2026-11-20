@@ -985,6 +985,8 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 	// When this wait first saw each open finding; a finding on a component no
 	// stage write touched hands off once it outlasts its clearing horizon.
 	for {
+		state.syncAlertSet()
+		scope = newRecoveryScope(alertKeys(&state.Request))
 		pending := false
 		applied := false
 		var settling []*contracts.StageMitigation

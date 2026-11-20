@@ -130,9 +130,10 @@ func TestAfterPlaybookDispatchRequiresAnAppliedPlaybook(t *testing.T) {
 }
 
 // An unverified stage-only incident is handed to the agent by findings. After an
-// applied playbook only the opening alerts count, and the policy decides; with no
-// applied playbook any active health finding counts, as before.
-func TestStageHandoffAfterAPlaybookConsidersOnlyOpeningAlerts(t *testing.T) {
+// applied playbook only the incident's alert set counts (opening alerts plus
+// joined user tests), and the policy decides; with no applied playbook any
+// active health finding counts, as before.
+func TestStageHandoffAfterAPlaybookConsidersTheWholeAlertSet(t *testing.T) {
 	applied := []*contracts.StageReport{{Stage: "deterministic", Mitigations: []*contracts.StageMitigation{{ApplyReceipt: &contracts.PlanApplication{Applied: true}}}}}
 	none := []*contracts.StageReport{{Stage: "deterministic"}}
 	opening := sdk.Finding{DetectorID: "traffic-probe", RuleID: "r", Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{Kind: "Deployment", Name: "api"}}
@@ -156,6 +157,25 @@ func TestStageHandoffAfterAPlaybookConsidersOnlyOpeningAlerts(t *testing.T) {
 		if got := stageHandoffWarranted(tc.policy, tc.prior, scope, tc.findings, tc.deadline, tc.openingUp, tc.healthUp); got != tc.want {
 			t.Errorf("%s: warranted = %v, want %v", name, got, tc.want)
 		}
+	}
+}
+
+// A joined user test is part of the alert set: with the opening alert cleared it
+// still warrants the hand-off under the agent policy, and escalate still holds
+// the agent back.
+func TestStageHandoffAfterAPlaybookDispatchesForAJoinedAlert(t *testing.T) {
+	applied := []*contracts.StageReport{{Stage: "deterministic", Mitigations: []*contracts.StageMitigation{{ApplyReceipt: &contracts.PlanApplication{Applied: true}}}}}
+	opening := sdk.Finding{DetectorID: "traffic-probe", RuleID: "r", Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{Kind: "Deployment", Name: "api"}}
+	joined := sdk.Finding{DetectorID: "traffic-probe", RuleID: "r2", Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{Kind: "Deployment", Name: "web"}}
+	scope := newRecoveryScope([]string{FindingStateKey(opening.DetectorID, FindingFingerprint(opening)), FindingStateKey(joined.DetectorID, FindingFingerprint(joined))})
+	if !stageHandoffWarranted(settings.AfterPlaybookAgent, applied, scope, []sdk.Finding{joined}, false, true, true) {
+		t.Error("a failing joined alert must warrant the hand-off")
+	}
+	if stageHandoffWarranted(settings.AfterPlaybookEscalate, applied, scope, []sdk.Finding{joined}, true, true, true) {
+		t.Error("escalate must dispatch no agent")
+	}
+	if stageHandoffWarranted(settings.AfterPlaybookAgent, applied, scope, nil, false, false, true) {
+		t.Error("a cleared alert set must warrant no hand-off")
 	}
 }
 
@@ -216,3 +236,55 @@ func TestAfterPlaybookWaitSurvivesControllerRestart(t *testing.T) {
 		t.Fatalf("resumed wait exit = %s dispatched = %v, want CLEARED without the agent", got, agent.dispatched)
 	}
 }
+
+// Recovered is judged on the whole alert set: when the opening alerts clear but
+// a joined user test keeps failing past the stage's bound, the agent is
+// dispatched once, and is handed the joined alert.
+func TestJoinedAlertStillFailingAfterOpeningClearsDispatchesTheAgent(t *testing.T) {
+	stage, state, _, _ := settlingStage(t, settlingCase{healAfter: 20 * time.Second, traffic: &settlingTraffic{}, churnUntil: 10 * time.Minute, churnJoined: true})
+	agent := &recordingStage{}
+	if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, agent}); err != nil {
+		t.Fatal(err)
+	}
+	if !playbookWrote(state.PriorStages[0]) {
+		t.Fatalf("the stage must apply the playbook: %v", state.PriorStages[0])
+	}
+	if !agent.dispatched {
+		t.Fatal("the joined alert is still failing and nobody acted")
+	}
+	handed := false
+	for _, finding := range state.Findings {
+		handed = handed || finding.DetectorID == "workload-health"
+	}
+	if !handed {
+		t.Fatalf("the agent must be handed the joined alert: %v", state.Findings)
+	}
+}
+
+// midStageJoin makes the churn alert join the incident's alert set once the
+// clock passes at, as the controller's join does while a stage runs.
+func midStageJoin(state *IncidentState, clock *settlingClock, at time.Time) {
+	state.LiveAlertSet = func() ([]string, []sdk.Finding) {
+		if clock.Now().Before(at) {
+			return nil, nil
+		}
+		joined, _ := churnDetector{clock: clock, from: at, until: at.Add(time.Hour)}.Detect(context.Background(), nil)
+		return []string{findingKey(joined[0])}, joined
+	}
+}
+
+// A user test that joins while the stage waits is part of the alert set the
+// stage answers for: its opening alerts clear, the joined test keeps failing, and
+// the stage hands the agent the joined alert instead of reporting Recovered.
+func TestUserTestJoiningDuringTheWaitHoldsRecoveryAndDispatchesTheAgent(t *testing.T) {
+	stage, state, clock, _ := settlingStage(t, settlingCase{healAfter: 20 * time.Second, traffic: &settlingTraffic{}, churnFrom: 5 * time.Second, churnUntil: 10 * time.Minute})
+	midStageJoin(state, clock, clock.Now().Add(5*time.Second))
+	agent := &recordingStage{}
+	if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, agent}); err != nil {
+		t.Fatal(err)
+	}
+	if !agent.dispatched {
+		t.Fatalf("the joined alert never cleared and nobody acted: %v", state.PriorStages[0].GetRecoveryWait())
+	}
+}
+

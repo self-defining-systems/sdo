@@ -1948,7 +1948,7 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 					}
 				}
 				if playbookApplied(request.PriorStages) {
-					// After an applied playbook the agent receives the opening alerts only.
+					// After an applied playbook the agent receives the alert set (opening alerts plus joined user tests).
 					request.Findings = holdingFindings(c.recoveryScopeLocked(), request.Findings)
 				}
 				c.mu.Unlock()

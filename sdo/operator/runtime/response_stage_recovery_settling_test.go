@@ -116,6 +116,9 @@ type settlingCase struct {
 	// start; zero churnUntil adds none. The incident's accepted map then
 	// names web and api as separate components.
 	churnFrom, churnUntil time.Duration
+	// churnJoined makes the churn alert a user test that joined the incident's
+	// alert set instead of a clue.
+	churnJoined bool
 	// unexplainedDrift adds an event-sourced drift.unexplained finding on an
 	// object no stage write touches and no detector re-observes: a clue that
 	// can never clear by detector evaluation.
@@ -305,8 +308,11 @@ func settlingStageOn(t *testing.T, tc settlingCase, world *settlingWorld) (*Dete
 	if tc.churnUntil > 0 {
 		// The churn detector's alert is a clue, never an opening alert.
 		for _, finding := range findings {
-			if finding.DetectorID != "workload-health" {
+			switch {
+			case finding.DetectorID != "workload-health":
 				request.OpeningKeys = append(request.OpeningKeys, findingKey(finding))
+			case tc.churnJoined:
+				request.JoinedKeys = append(request.JoinedKeys, findingKey(finding))
 			}
 		}
 	}
