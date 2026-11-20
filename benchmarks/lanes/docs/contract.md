@@ -54,7 +54,7 @@ The build check waits `max(ready_timeout, startup_bound + 10m)` for `idle`: a su
 | `app-snapshot` | `write`, `verify` | `app fingerprint --out F`, `app fingerprint --against F` |
 | `app-reset` | `recover` | `recover` (undo a fault a dead run left; exit 2 busy, 3 invalid input) |
 | `gate` | `check` | `check` (journeys clean for a span) |
-| `run` | `run`, `active`, `undo` | `run` (record JSON on stdout), `active-instance`, `undo-instance` |
+| `run` | `run`, `active`, `undo` (answer `{"active": bool}`: whether the fault is still active) | `run` (record JSON on stdout), `active-instance`, `undo-instance` (their `active=<bool>` text is turned into the answer) |
 | `grade` | `report` | `report DIR` (`DIR/runs.jsonl` in, `report.md`, `grades.json` out) |
 | `footprint` | none | **unsupported**: lane size stays the spec's `lane` limit or the default |
 

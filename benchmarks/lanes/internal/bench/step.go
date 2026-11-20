@@ -1291,8 +1291,6 @@ func (r *stepRunner) settle(ctx context.Context, p *Prepared, injectAt, own time
 	r.interval("settle", start, !r.res.Capped, r.res.Reason)
 }
 
-var activeRE = regexp.MustCompile(`active=(true|false)`)
-
 // safety: `fuzzops recover`, then the fault must not be active; one undo is
 // tried, else the lane goes down with the fault named.
 func (r *stepRunner) safety(ctx context.Context, p *Prepared, rs *RunSpec) {
@@ -1315,14 +1313,16 @@ func (r *stepRunner) safety(ctx context.Context, p *Prepared, rs *RunSpec) {
 	active := func(verb string) (bool, error) {
 		var out bytes.Buffer
 		code, _, err := r.call(ctx, env, &out, VerbRun, verb, "--file", rs.Instances, "--id", rs.Fault, "--pack", p.AppPack, "--namespace", p.Namespace)
-		m := activeRE.FindStringSubmatch(out.String())
+		var answer struct {
+			Active *bool `json:"active"`
+		}
 		switch {
 		case err != nil:
 			return true, err
-		case code != 0 || m == nil:
+		case code != 0 || json.Unmarshal([]byte(lastNonEmpty(out.Bytes())), &answer) != nil || answer.Active == nil:
 			return true, fmt.Errorf("%s exit %d: %s", verb, code, strings.TrimSpace(out.String()))
 		}
-		return m[1] == "true", nil
+		return *answer.Active, nil
 	}
 	on, err := active("active")
 	if on || err != nil {
