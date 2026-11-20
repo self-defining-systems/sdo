@@ -240,9 +240,11 @@ slice_exists() { [ "$("$SYSTEMCTL" show "$1" -p LoadState --value 2>/dev/null ||
 slice_cpus() { "$SYSTEMCTL" show "$1" -p AllowedCPUs --value 2>/dev/null | tr ' ' ',' || true; }
 
 slice_cgroup_cpus() { # SLICE -> the cpus its cgroup may use now ("" : no cgroup, or unrestricted and unreadable)
-  local d=$CG/$1 f
+  local d=$CG/$1 f v
   for f in cpuset.cpus.effective cpuset.cpus; do
-    if [ -s "$d/$f" ]; then tr -d '\n' < "$d/$f"; return; fi
+    # read it: cgroup files report size 0 whatever they hold, so a size test ([ -s ]) would see them as empty
+    v=$(tr -d '\n' < "$d/$f" 2>/dev/null || true)
+    if [ -n "$v" ]; then printf '%s' "$v"; return; fi
   done
 }
 slice_overlaps() { # SLICE BLOCK: the slice's cgroup exists and may use a cpu of BLOCK (or says nothing: inherits everything)
