@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from benchmarks.sregym.adapter import WaitKind, parse_memory_size, wait_for
+from benchmarks.sregym.adapter import WaitKind, inspect_listed, parse_memory_size, wait_for
 from benchmarks.sregym.fastloop.lane_cgroup import (
     DEFAULT_LANE_CPUS,
     CpuPlacement,
@@ -137,13 +137,7 @@ def _running_cpusets() -> dict[str, frozenset[int]]:
     ).stdout.split()
     if not ids:
         return {}
-    rows = subprocess.run(
-        ["docker", "inspect", "--format", "{{.Name}}|{{.HostConfig.CpusetCpus}}", *ids],
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=wait_for(WaitKind.CLUSTER_OP),
-    ).stdout.splitlines()
+    rows = inspect_listed("{{.Name}}|{{.HostConfig.CpusetCpus}}", ids, timeout=wait_for(WaitKind.CLUSTER_OP))
     held = {}
     for row in rows:
         name, separator, cpuset = row.partition("|")
