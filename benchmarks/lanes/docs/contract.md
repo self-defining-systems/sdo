@@ -73,3 +73,12 @@ Implemented here: the calling convention, unsupported handling, the whole worklo
 `bin/fuzzops` call is a verb call), subject `preflight` with fallback, time limits for all subject verbs.
 Stubbed (unsupported everywhere, not called): `footprint`, `export-artifact`, `verify-artifact`, `reseed`,
 `verify-start`.
+
+## Platform code is not the workload's
+
+The platform's own code, the `deploy/` scripts (lane limits, registry, kind and vcluster lanes, docker shim) and the step
+binary, is embedded in the `lanes` binary and installed on each host on first use at `<staging>/lanes-<rev>/` (`deploy/`
+and `bin/lanes`; `<rev>` is a hash of the lanes executable; temp directory, then rename; staging gc keeps it). Every
+platform script and step-binary path resolves there, and `cluster_up`/`cluster_down` run in that directory (so
+`deploy/kind-lane.sh ...` is the platform's). The pinned workload checkout is used only for workload verbs and the
+workload's own files; `TestPlatformCodeNeverComesFromTheWorkloadCheckout` fails on a platform path joined to a checkout.

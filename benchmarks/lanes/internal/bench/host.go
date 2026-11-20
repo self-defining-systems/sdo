@@ -150,6 +150,11 @@ func (h localHost) Start(ctx context.Context, s Step) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
+	platform, err := InstallPlatformScripts(h.staging)
+	if err != nil {
+		return err
+	}
+	s.Platform = platform
 	p := filepath.Join(dir, "step.json")
 	if err := writeJSON(p, s); err != nil {
 		return err
@@ -209,7 +214,7 @@ func GCStaging(staging string, keep []string) []string {
 	var removed []string
 	lanes, _ := os.ReadDir(staging)
 	for _, l := range lanes {
-		if !l.IsDir() {
+		if !l.IsDir() || isPlatformEntry(l.Name()) {
 			continue
 		}
 		ents, _ := os.ReadDir(filepath.Join(staging, l.Name()))

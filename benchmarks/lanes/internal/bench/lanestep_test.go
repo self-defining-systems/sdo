@@ -3,6 +3,7 @@
 package bench
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -295,12 +296,12 @@ func TestReapplyLimitsUsesTheLedger(t *testing.T) {
 	if _, err := a.Take("lane-a", 3, 3<<30); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(r.s.Fuzzops, "deploy"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(r.platform(), "deploy"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	out := filepath.Join(t.TempDir(), "applied")
 	script := "#!/bin/sh\necho \"$@|$FUZZOPS_LANE_CPUSET|$FUZZOPS_LANE_MEMORY|$FUZZOPS_LANE_SLICE\" > " + out + "\n"
-	if err := os.WriteFile(filepath.Join(r.s.Fuzzops, "deploy", "lane-limits.sh"), []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(r.platform(), "deploy", "lane-limits.sh"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	r.reapplyLimits(context.Background())
@@ -351,5 +352,29 @@ func TestRunRecordsLanePSIAtInjectAndEnd(t *testing.T) {
 	iso := r.res.Isolation
 	if iso == nil || iso.PSIInject == nil || iso.PSIEnd == nil || iso.PSIInject.CPUSome != 5 || iso.PSIEnd.CPUSome != 55 || iso.PSIEnd.MemFull != 12 {
 		t.Fatalf("isolation %+v", iso)
+	}
+}
+
+// Platform scripts come from the lanes install, never from the workload checkout: a reused lane re-applies its limits
+// although the pinned workload checkout has no deploy/ at all (an SDO checkout, an SREGym checkout).
+func TestReapplyLimitsDoesNotNeedTheWorkloadCheckoutToCarryDeploy(t *testing.T) {
+	r := limitRunner(t, 3)
+	var log bytes.Buffer
+	r.log = &log
+	a, _ := r.allocator()
+	if _, err := a.Take("lane-a", 3, 3<<30); err != nil {
+		t.Fatal(err)
+	}
+	stubs := t.TempDir() // a `kind` that lists no nodes: the real script runs, with nothing to update
+	if err := os.WriteFile(filepath.Join(stubs, "kind"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", stubs+":"+os.Getenv("PATH"))
+	if _, err := os.Stat(filepath.Join(r.s.Fuzzops, "deploy")); err == nil {
+		t.Fatal("fixture: the workload checkout must not carry deploy/")
+	}
+	r.reapplyLimits(context.Background())
+	if strings.Contains(log.String(), "not re-applied") || !strings.Contains(log.String(), "limits applied") {
+		t.Fatalf("limits not applied from the lanes install: %q", log.String())
 	}
 }

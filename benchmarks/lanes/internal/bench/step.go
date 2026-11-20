@@ -39,7 +39,8 @@ type Step struct {
 	Lane       string `json:"lane"`
 	Host       string `json:"host"`
 	Experiment string `json:"experiment,omitempty"`
-	Fuzzops    string `json:"fuzzops"`            // the pinned fuzzops checkout
+	Fuzzops    string `json:"fuzzops"`            // the pinned workload checkout (workload verbs and the workload's own files only)
+	Platform   string `json:"platform,omitempty"` // the host's lanes install (<staging>/lanes-<rev>): deploy/ scripts and the step binary
 	Workload   string `json:"workload,omitempty"` // the workload adapter ("": fuzzops)
 	// IsolationMode is how the lane is isolated on its host (two-way, one-way, one-way-ok); recorded in the row.
 	IsolationMode string `json:"isolation_mode,omitempty"`
@@ -301,9 +302,9 @@ func (r *stepRunner) laneEnv(p *Prepared) []string {
 			e = append(e, "BENCH_EVIDENCE_RUN="+p.EvidenceRun)
 		}
 		e = append(e, "BENCH_EXPERIMENT="+p.Experiment, "FUZZOPS_NAMESPACE="+p.Namespace, "BENCH_PACK="+p.AppPack)
-		// The pinned checkout's host registry script (deploy/registry.sh): `push IMAGE...` puts an image where
+		// The lanes install's host registry script (deploy/registry.sh): `push IMAGE...` puts an image where
 		// every lane cluster of the host pulls it from.
-		e = append(e, "BENCH_REGISTRY="+filepath.Join(r.s.Fuzzops, "deploy", "registry.sh"))
+		e = append(e, "BENCH_REGISTRY="+filepath.Join(r.platform(), "deploy", "registry.sh"))
 		if p.Operator != "" {
 			e = append(e, "BENCH_OPERATOR="+p.Operator)
 		}
@@ -897,14 +898,30 @@ func (r *stepRunner) proveSink(ctx context.Context, p *Prepared) bool {
 	return false
 }
 
-// shell runs a host command (cluster_up, cluster_down) in the pinned fuzzops checkout.
+// platform is the lanes install on this host, where every platform script is run from. A step the manager started
+// carries it; one built without it (a test) installs the scripts under its own directory.
+func (r *stepRunner) platform() string {
+	if r.s.Platform != "" {
+		return r.s.Platform
+	}
+	dir, err := InstallPlatformScripts(filepath.Join(r.dir, "platform"))
+	if err != nil {
+		r.logf("lanes platform install: %v", err)
+		return filepath.Join(r.dir, "no-platform")
+	}
+	r.s.Platform = dir
+	return dir
+}
+
+// shell runs a host command (cluster_up, cluster_down) in the lanes install, so a relative deploy/... script is the
+// platform's, whatever the workload checkout holds.
 func (r *stepRunner) shell(ctx context.Context, kind, cmdline string, env []string) bool {
 	start := time.Now()
 	r.phase(kind, "")
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sh", "-c", cmdline)
-	cmd.Dir = r.s.Fuzzops
+	cmd.Dir = r.platform()
 	cmd.Env = append(append(os.Environ(), r.s.HostEnv...), env...)
 	cmd.Stdout, cmd.Stderr = r.log, r.log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

@@ -31,7 +31,7 @@ func TestBenchRemoteHost(t *testing.T) {
 	src := testdata("fakefuzzops")
 	remote := filepath.Join(dir, "remote-fuzzops")
 	must(t, exec.Command("cp", "-r", src, remote).Run())
-	must(t, exec.Command("cp", benchBin, filepath.Join(remote, "bin", "fuzzops-bench")).Run())
+	useLanesExecutable(t, benchBin) // the remote step binary is the lanes install's, shipped from this executable
 	inv, err := os.ReadFile(l.root.path("hosts.yaml"))
 	must(t, err)
 	// Each edit must apply: a lab inventory that gains a field must not turn this into a silent local run.
@@ -88,8 +88,7 @@ func TestProbeReportsFreeDiskWhenThePinnedBinaryDoesNot(t *testing.T) {
 	must(t, os.WriteFile(fakeSSH, []byte("#!/bin/sh\nshift\nexec sh -c \"$*\"\n"), 0o755))
 	t.Setenv("FUZZOPS_BENCH_SSH", fakeSSH)
 	pin := filepath.Join(dir, "old-pin")
-	must(t, os.MkdirAll(filepath.Join(pin, "bin"), 0o755))
-	must(t, os.WriteFile(filepath.Join(pin, "bin", "fuzzops-bench"), []byte("#!/bin/sh\necho '{\"load5\":3,\"steps\":{}}'\n"), 0o755))
+	useFakeLanes(t, "#!/bin/sh\necho '{\"load5\":3,\"steps\":{}}'\n")
 	h := sshHost{name: "h", h: Host{SSH: "fakehost", Staging: filepath.Join(dir, "staging")}}
 	p, err := h.Probe(context.Background(), map[string]string{}, []string{pin})
 	must(t, err)

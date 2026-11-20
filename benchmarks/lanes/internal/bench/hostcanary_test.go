@@ -96,8 +96,7 @@ func TestSSHProbeCarriesTheCanary(t *testing.T) {
 	must(t, os.WriteFile(fakeSSH, []byte("#!/bin/sh\nshift\nexec sh -c \"$*\"\n"), 0o755))
 	t.Setenv("FUZZOPS_BENCH_SSH", fakeSSH)
 	pin := filepath.Join(dir, "pin")
-	must(t, os.MkdirAll(filepath.Join(pin, "bin"), 0o755))
-	must(t, os.WriteFile(filepath.Join(pin, "bin", "fuzzops-bench"), []byte("#!/bin/sh\necho '{\"load5\":1,\"free_bytes\":9,\"steps\":{}}'\n"), 0o755))
+	useFakeLanes(t, "#!/bin/sh\necho '{\"load5\":1,\"free_bytes\":9,\"steps\":{}}'\n")
 	h := sshHost{name: "h", h: Host{SSH: "fakehost", Staging: filepath.Join(dir, "st")}}
 	p, err := h.Probe(context.Background(), map[string]string{}, []string{pin})
 	must(t, err)

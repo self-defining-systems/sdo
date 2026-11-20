@@ -41,7 +41,11 @@ func (h sshHost) sshForRsync() string {
 }
 
 func (h sshHost) run(ctx context.Context, stdin []byte, script string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	return h.runFor(ctx, 2*time.Minute, stdin, script)
+}
+
+func (h sshHost) runFor(ctx context.Context, limit time.Duration, stdin []byte, script string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 	f := strings.Fields(h.sshForRsync())
 	cmd := exec.CommandContext(ctx, f[0], append(f[1:], h.h.SSH, script)...)
@@ -55,6 +59,11 @@ func (h sshHost) run(ctx context.Context, stdin []byte, script string) ([]byte, 
 }
 
 func (h sshHost) Start(ctx context.Context, s Step) error {
+	platform, err := h.InstallPlatform(ctx)
+	if err != nil {
+		return err
+	}
+	s.Platform = platform
 	dir := filepath.Join(h.h.Staging, s.Lane, s.ID)
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
@@ -62,7 +71,7 @@ func (h sshHost) Start(ctx context.Context, s Step) error {
 	}
 	p := filepath.Join(dir, "step.json")
 	_, err = h.run(ctx, b, fmt.Sprintf("mkdir -p %s && cat > %s && %s", shellQuote(dir), shellQuote(p),
-		detach(filepath.Join(s.Fuzzops, "bin", "fuzzops-bench"), p, laneExecPrefix(s))))
+		detach(filepath.Join(platform, "bin", "lanes"), p, laneExecPrefix(s))))
 	return err
 }
 
@@ -81,7 +90,11 @@ func (h sshHost) Probe(ctx context.Context, steps map[string]string, fuzzops []s
 	if cerr != nil {
 		return Probe{Canary: canary}, cerr
 	}
-	args := []string{shellQuote(filepath.Join(fuzzops[0], "bin", "fuzzops-bench")), "probe", "--staging", shellQuote(h.h.Staging),
+	platform, err := h.InstallPlatform(ctx)
+	if err != nil {
+		return Probe{}, err
+	}
+	args := []string{shellQuote(filepath.Join(platform, "bin", "lanes")), "probe", "--staging", shellQuote(h.h.Staging),
 		"--fuzzops", shellQuote(strings.Join(fuzzops, ","))}
 	var lanes []string
 	for l := range steps {
@@ -208,16 +221,11 @@ func (h sshHost) Stage(ctx context.Context, root Root, in Input) (string, error)
 }
 
 func (h sshHost) GC(ctx context.Context, keep []string) ([]string, error) {
-	var fz string
-	for _, byHost := range h.fuzzops {
-		if p := byHost[h.name]; p != "" {
-			fz = p
-		}
+	platform, err := h.InstallPlatform(ctx)
+	if err != nil {
+		return nil, err
 	}
-	if fz == "" {
-		return nil, fmt.Errorf("no fuzzops checkout on %s", h.name)
-	}
-	args := []string{shellQuote(filepath.Join(fz, "bin", "fuzzops-bench")), "gc-staging", "--staging", shellQuote(h.h.Staging)}
+	args := []string{shellQuote(filepath.Join(platform, "bin", "lanes")), "gc-staging", "--staging", shellQuote(h.h.Staging)}
 	for _, k := range keep {
 		args = append(args, shellQuote(k))
 	}
