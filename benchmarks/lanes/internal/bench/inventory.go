@@ -40,7 +40,7 @@ type Host struct {
 	// minutes of a lane on a host that may be contended, so the default is low.
 	MaxBuildFailures int `json:"max_build_failures,omitempty"`
 	// ClusterUp and ClusterDown create and delete one lane's cluster ({cluster} and {kubeconfig} are
-	// replaced; run in the pinned fuzzops checkout, e.g. "deploy/kind-lane.sh up {cluster} {kubeconfig}").
+	// replaced; run in the host's lanes install, where deploy/ is the platform's, e.g. "deploy/kind-lane.sh up {cluster} {kubeconfig}").
 	// Without them the bench never recreates or deletes a cluster.
 	ClusterUp   string `json:"cluster_up,omitempty"`
 	ClusterDown string `json:"cluster_down,omitempty"`
@@ -84,7 +84,7 @@ const (
 // IsVcluster reports whether the host's lanes are virtual clusters on a shared cluster.
 func (h Host) IsVcluster() bool { return h.Provider == ProviderVcluster }
 
-// Default cluster commands of a vcluster host (run in the pinned fuzzops checkout).
+// Default cluster commands of a vcluster host (run in the host's lanes install).
 const (
 	vclusterUp   = "deploy/vcluster-lane.sh up {cluster} {kubeconfig} {evidence}"
 	vclusterDown = "deploy/vcluster-lane.sh down {cluster} {kubeconfig}"

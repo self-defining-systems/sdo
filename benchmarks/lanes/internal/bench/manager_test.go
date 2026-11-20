@@ -277,9 +277,11 @@ func TestBenchHooksKnowTheHostRegistryScript(t *testing.T) {
 	l.add("e1", l.hooked, "a@x", "[[1]]", 0)
 	l.until("run done", func() bool { return l.exp("e1").Count(0).Done == 1 })
 	l.until("lane released", idle(l))
-	fake := testdata("fakefuzzops")
 	b, err := os.ReadFile(filepath.Join(l.hooks, "registry"))
-	if err != nil || strings.TrimSpace(string(b)) != filepath.Join(fake, "deploy", "registry.sh") {
+	// The lanes install's script, never the workload checkout's.
+	got := strings.TrimSpace(string(b))
+	if err != nil || !strings.Contains(got, string(filepath.Separator)+platformPrefix) || !strings.HasSuffix(got, filepath.Join("deploy", "registry.sh")) ||
+		strings.HasPrefix(got, testdata("fakefuzzops")) {
 		t.Fatalf("BENCH_REGISTRY = %q (%v)", b, err)
 	}
 	l.noFault()

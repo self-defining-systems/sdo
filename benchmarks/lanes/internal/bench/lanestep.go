@@ -261,7 +261,7 @@ func (r *stepRunner) reapplyLimits(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "sh", "-c", "deploy/lane-limits.sh apply "+shellQuote(r.s.Lane))
-	cmd.Dir = r.s.Fuzzops
+	cmd.Dir = r.platform()
 	cmd.Env = append(append(os.Environ(), r.s.HostEnv...), "FUZZOPS_LANE_CPUSET="+FormatCPUList(e.CPUs),
 		"FUZZOPS_LANE_MEMORY="+strconv.FormatInt(e.Memory, 10), "FUZZOPS_LANE_SLICE="+laneParentSlice(r.s))
 	cmd.Stdout, cmd.Stderr = r.log, r.log

@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/self-defining-systems/sdo/benchmarks/lanes/deploy"
 )
 
 // Isolation modes of a row.
@@ -612,8 +614,9 @@ func recordLine(r Reservation, ok bool) string {
 // helperFiles are what install-helper puts on a host: the helper, its alias, the slice units and the sudoers rule.
 var helperFiles = []string{"lane-reserve", "lanes.slice", "eval.slice", "sdo-eval-reserve-gc.service", "sdo-eval-reserve-gc.timer"}
 
-// HelperSourceDir is where install-helper reads deploy/host from (a var for tests).
-var HelperSourceDir = filepath.Join("deploy", "host")
+// HelperSourceDir is a directory install-helper reads the helper files from instead of the ones embedded in the binary
+// (a var for tests).
+var HelperSourceDir = ""
 
 // installScript is the one script that runs as root: it carries the files itself, so it works over ssh. It runs under
 // `sudo bash` (see installHelper), so the sudo inside it only reuses root.
@@ -651,7 +654,11 @@ func installHelper(ctx context.Context, h Host, name, pwFile string, out, errw i
 	if user == "" {
 		user = "$(id -un)"
 	}
-	script, err := installScript(HelperSourceDir, user, os.ReadFile)
+	src, read := HelperSourceDir, os.ReadFile
+	if src == "" {
+		src, read = "host", deploy.Files.ReadFile
+	}
+	script, err := installScript(src, user, read)
 	if err != nil {
 		return err
 	}
