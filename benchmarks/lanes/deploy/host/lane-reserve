@@ -47,6 +47,7 @@ else
   SYSFS=${SDO_EVAL_SYSFS:-/sys/devices/system} DROPIN=${SDO_EVAL_DROPIN_DIR:-$STATE.dropin}
 fi
 LANES_SLICE=$CG/lanes.slice
+STEP_LEAF=step   # the leaf cgroup under a lane slice that every lane-exec step runs in (a lane slice holds no process itself)
 HOST_SLICES="user.slice system.slice machine.slice kubepods.slice"
 SLICE=$CG/eval.slice
 
@@ -285,6 +286,18 @@ block_show() { # one line per fact: what status prints and what reserve prints b
     slice_exists "$s" || continue
     echo "slice $s AllowedCPUs=$(slice_cpus "$s")"
   done
+  lane_slice_defects
+}
+
+# A lane slice with a process directly in its cgroup.procs is a defect: cgroup v2 refuses controller-enabled children
+# (the node containers' scopes) under it, so kind cannot create nodes. One line per slice.
+lane_slice_defects() {
+  local d n
+  for d in "$LANES_SLICE"/lanes-*.slice; do
+    [ -f "$d/cgroup.procs" ] || continue
+    n=$(grep -c . "$d/cgroup.procs" || true)
+    [ "${n:-0}" -eq 0 ] || echo "defect $(basename "$d") $n process(es) directly in cgroup.procs (steps must run in $STEP_LEAF/)"
+  done
 }
 
 block_reserve() { # LIST MEMORY_BYTES HOST_RESERVE_CPUS
@@ -364,7 +377,11 @@ lane_exec() {
   [ ! -e "$LANES_SLICE/cgroup.subtree_control" ] || echo "+cpuset +memory" > "$LANES_SLICE/cgroup.subtree_control" 2>/dev/null || true
   [ -z "$cpus" ] || echo "$cpus" > "$cg/cpuset.cpus"
   [ -z "$mem" ] || echo "$mem" > "$cg/memory.max"
-  echo $$ > "$cg/cgroup.procs"
+  # cgroup v2 no-internal-processes: a lane slice that holds a process directly cannot have controller-enabled children,
+  # and the node containers' scopes (docker --cgroup-parent=<lane slice>) are exactly that. So the step lives in a leaf
+  # below the lane slice; the slice keeps the limits (the leaf and the node scopes share its cap) and holds no process.
+  mkdir -p "$cg/$STEP_LEAF"
+  echo $$ > "$cg/$STEP_LEAF/cgroup.procs"
   exec 9>&-   # the helper's lock is not the command's
   if [ "$(id -u)" = 0 ] && [ -n "${SUDO_UID:-}" ]; then
     exec setpriv --reuid="$SUDO_UID" --regid="${SUDO_GID:-$SUDO_UID}" --init-groups "$@"
