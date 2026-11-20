@@ -92,6 +92,9 @@ type State struct {
 	Failures map[string]int    `json:"failures,omitempty"`
 	Parked   map[string]string `json:"parked,omitempty"`
 	Alarms   AlarmState        `json:"alarms,omitempty"`
+	// Retried logs the nodes `plan retry` requeued; RetriesApplied are the ids of the requests already applied.
+	Retried        map[string]RetryRec `json:"retried,omitempty"`
+	RetriesApplied []string            `json:"retries_applied,omitempty"`
 }
 
 const stateVersion = 1

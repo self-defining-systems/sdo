@@ -85,6 +85,8 @@ type Status struct {
 	Steps   []StepStatus `json:"steps,omitempty"`
 	// Parked maps each parked item to the reason it failed twice with.
 	Parked map[string]string `json:"parked,omitempty"`
+	// Retried maps each node `plan retry` requeued to when and what its park was.
+	Retried map[string]RetryRec `json:"retried,omitempty"`
 	// Items counts the items by state, ItemRows lists them in plan order; NextItems are the items of the next runs.
 	Items     ItemCounts `json:"items"`
 	ItemRows  []ItemRow  `json:"item_rows,omitempty"`
@@ -152,6 +154,7 @@ func (e *Engine) statusOf(st *State) *Status {
 		out.Arms = append(out.Arms, *byArm[a])
 	}
 	out.Parked = st.Parked
+	out.Retried = st.Retried
 	for k, at := range st.Alarms.Active {
 		out.Alarms = append(out.Alarms, k)
 		if out.AlarmSince == nil {
@@ -276,6 +279,10 @@ func (s *Status) Render(w io.Writer) {
 		case ItemSkipped:
 			fmt.Fprintf(w, "skipped: item %s (%s)\n", r.Item, r.Reason)
 		}
+	}
+	for _, id := range sortedKeys(s.Retried) {
+		r := s.Retried[id]
+		fmt.Fprintf(w, "retried: %s retried at %s (was parked: %s)\n", id, r.At.UTC().Format("2006-01-02 15:04Z"), r.WasParked)
 	}
 	for _, k := range s.Alarms {
 		fmt.Fprintf(w, "alarm:   %s (since %s)\n", k, s.AlarmSince[k].UTC().Format("15:04Z"))
