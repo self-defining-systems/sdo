@@ -47,10 +47,7 @@ func TestBuildKeepsALaneWhoseShapeIsUnchanged(t *testing.T) {
 	if _, err := a.Take("lane-a", 3, 2<<30); err != nil {
 		t.Fatal(err)
 	}
-	out := filepath.Join(t.TempDir(), "env")
-	r.s.ClusterUp, r.s.ClusterDown = printEnv+out, "false"
-	r.build(context.Background())
-	if _, err := os.Stat(out); err == nil {
+	if r.shapeChanged(context.Background()) {
 		t.Fatal("an unchanged lane was rebuilt")
 	}
 }
