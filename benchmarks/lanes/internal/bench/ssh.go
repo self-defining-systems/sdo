@@ -65,6 +65,11 @@ func (h sshHost) Start(ctx context.Context, s Step) error {
 	return err
 }
 
+func (h sshHost) Kill(ctx context.Context, lane, id string) error {
+	_, err := h.run(ctx, nil, killScript(filepath.Join(h.h.Staging, lane, id, "step.json"), 5))
+	return err
+}
+
 func (h sshHost) Probe(ctx context.Context, steps map[string]string, fuzzops []string) (Probe, error) {
 	if len(fuzzops) == 0 {
 		return Probe{}, fmt.Errorf("no fuzzops checkout on %s", h.name)

@@ -35,7 +35,8 @@ type Manager struct {
 	// `fuzzops view` finds it with no flag.
 	RootPointer string
 	// Now is the manager's clock (default the wall clock); tests set a fake one.
-	Now           func() time.Time
+	Now func() time.Time
+	// HostPreflight, when set, must pass for a host that was unreachable before it takes work again.
 	HostPreflight func(ctx context.Context, host string) error
 
 	inv Inventory
@@ -54,6 +55,12 @@ type Manager struct {
 
 	// planGrading counts the background grading jobs the plans' backends started.
 	planGrading sync.WaitGroup
+
+	// down: hosts that stopped answering and since when; alarmed: the alarms standing (raised once each).
+	down    map[string]time.Time
+	downMu  sync.Mutex
+	seeded  bool
+	alarmed map[string]bool
 
 	reservations map[string]Reservation
 	drift        map[string]string
@@ -110,7 +117,13 @@ func (m *Manager) logf(f string, a ...any) {
 	}
 }
 
+// ops reaches host through the manager's bounds (guardedOps): no call waits longer than its bound, and none waits at
+// all on a host marked unreachable.
 func (m *Manager) ops(host string) HostOps {
+	return guardedOps{in: m.rawOps(host), m: m, host: host}
+}
+
+func (m *Manager) rawOps(host string) HostOps {
 	h := m.inv.Hosts[host]
 	if m.Ops != nil {
 		return m.Ops(host, h)
@@ -125,6 +138,88 @@ func (m *Manager) ops(host string) HostOps {
 	return sshHost{name: host, h: h, fuzzops: m.inv.Checkouts.Fuzzops}
 }
 
+// stepsOn is the step of each lane of host that has one in flight, or given up as an orphan (lane -> step id).
+func (m *Manager) stepsOn(host string) map[string]string {
+	steps := map[string]string{}
+	for _, l := range m.lanes {
+		switch {
+		case l.Host != host:
+		case l.Step != nil:
+			steps[l.Lane] = l.Step.ID
+		case l.Orphan != nil:
+			steps[l.Lane] = l.Orphan.ID
+		}
+	}
+	return steps
+}
+
+type hostProbe struct {
+	pr  Probe
+	err error
+}
+
+// probeAll probes every host at once. Each probe ends within its bound (guardedOps), so a wedged host delays the
+// pass by at most that and the others are never queued behind it.
+func (m *Manager) probeAll(ctx context.Context) map[string]hostProbe {
+	out := map[string]hostProbe{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for name := range m.inv.Hosts {
+		steps := m.stepsOn(name)
+		var fz []string
+		for _, byHost := range m.inv.Checkouts.Fuzzops {
+			if p := byHost[name]; p != "" {
+				fz = append(fz, p)
+			}
+		}
+		sort.Strings(fz)
+		ops := m.ops(name)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			pr, err := ops.Probe(ctx, steps, fz)
+			mu.Lock()
+			out[name] = hostProbe{pr, err}
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	return out
+}
+
+// seedDown restores, after a restart, which hosts were unreachable and since when.
+func (m *Manager) seedDown() {
+	if m.seeded {
+		return
+	}
+	m.seeded = true
+	var prev map[string]HostStatus
+	_ = readJSON(m.Root.path("hosts.status.json"), &prev)
+	m.downMu.Lock()
+	defer m.downMu.Unlock()
+	for name, st := range prev {
+		if st.Error != "" && !st.DownSince.IsZero() {
+			if m.down == nil {
+				m.down = map[string]time.Time{}
+			}
+			m.down[name] = st.DownSince
+		}
+	}
+}
+
+// markDown records that host did not answer and returns since when it has not.
+func (m *Manager) markDown(host string) time.Time {
+	m.downMu.Lock()
+	defer m.downMu.Unlock()
+	if m.down == nil {
+		m.down = map[string]time.Time{}
+	}
+	if _, ok := m.down[host]; !ok {
+		m.down[host] = m.now().UTC()
+	}
+	return m.down[host]
+}
+
 // Reconcile is one pass: adopt, then continue sequences, then bind lanes, then release idle operators.
 func (m *Manager) Reconcile(ctx context.Context) error {
 	if err := m.loadInventory(); err != nil {
@@ -133,37 +228,60 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 	if err := m.load(); err != nil {
 		return err
 	}
+	m.seedDown()
 	m.checkReservations(ctx)
 	m.hosts = map[string]HostStatus{}
 	reachable := map[string]bool{}
+	probes := m.probeAll(ctx)
+	var names []string
 	for name := range m.inv.Hosts {
-		steps := map[string]string{}
-		for _, l := range m.lanes {
-			if l.Host == name && l.Step != nil {
-				steps[l.Lane] = l.Step.ID
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		pr, err := probes[name].pr, probes[name].err
+		steps := m.stepsOn(name)
+		if err == nil && m.isDown(name) && m.HostPreflight != nil {
+			// A host that was unreachable takes work again only once its preflight passes.
+			_, perr := bounded(ctx, hostCallBound, "preflight of "+name, func(c context.Context) (struct{}, error) { return none(m.HostPreflight(c, name)) })
+			if perr != nil {
+				err = fmt.Errorf("preflight failed, not admitted: %v", perr)
 			}
 		}
-		var fz []string
-		for _, byHost := range m.inv.Checkouts.Fuzzops {
-			if p := byHost[name]; p != "" {
-				fz = append(fz, p)
-			}
-		}
-		sort.Strings(fz)
-		pr, err := m.ops(name).Probe(ctx, steps, fz)
 		st := HostStatus{At: m.now().UTC(), Load5: pr.Load5, Free: pr.Free, Inflight: pr.Inflight}
 		if err != nil {
-			st.Error = err.Error()
+			since := m.markDown(name)
+			st.Error, st.DownSince = err.Error(), since
 			m.hosts[name] = st
+			m.hostLost(name, since, err)
 			continue
+		}
+		if m.isDown(name) {
+			m.downMu.Lock()
+			delete(m.down, name)
+			m.downMu.Unlock()
+			m.alarmClear(AlarmHostUnreachable, name)
+			m.logf("host %s answers again and is admitted", name)
 		}
 		reachable[name] = true
 		m.hosts[name] = st
+		if min := m.inv.Hosts[name].MinFreeBytes(); min > 0 && pr.Free > 0 && pr.Free < min {
+			m.alarm(AlarmDiskFloor, name, fmt.Sprintf("%s free, below the floor %s: no new build starts until it is above", size(pr.Free), m.inv.Hosts[name].MinFree))
+		} else {
+			m.alarmClear(AlarmDiskFloor, name)
+		}
 		for lane, state := range pr.Steps {
 			// Only this root's lanes with a step in flight count: a host shared with another bench root, or an
 			// older host binary, may report others, and a settled step may still be on disk.
 			l := m.lanes[lane]
-			if l == nil || l.Step == nil || l.Step.ID != steps[lane] {
+			if l == nil {
+				continue
+			}
+			if l.Step == nil && l.Orphan != nil && l.Orphan.ID == steps[lane] {
+				m.settleOrphan(ctx, l, state)
+				continue
+			}
+			if l.Step == nil || l.Step.ID != steps[lane] {
 				continue
 			}
 			switch state {
@@ -176,6 +294,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 				m.died(ctx, l)
 			case StepRunning:
 				l.Step.Phase = pr.Phases[lane]
+				m.enforceBound(ctx, l)
 			}
 		}
 	}
@@ -451,12 +570,22 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 		// probe decides. A step that never ran shows as dead and is followed by a recover step.
 		m.logf("lane %s: start %s: %v (the probe decides whether it runs)", l.Lane, s.ID, err)
 	}
-	l.Step = &StepRef{ID: s.ID, Kind: s.Kind, Started: m.now().UTC(), Run: s.Run}
+	l.Step = &StepRef{ID: s.ID, Kind: s.Kind, Started: m.now().UTC(), Run: s.Run, Bound: Seconds(stepBound(s.Kind, limitSpec).Seconds())}
 	if s.Run != nil {
 		l.Step.RunID = s.Run.ID
 	}
 	m.logf("lane %s: started %s", l.Lane, s.ID)
 	return true
+}
+
+// preparedFor is the operator and app a build of x puts on l (before it has run).
+func (m *Manager) preparedFor(l *LaneFile, x *Experiment) *Prepared {
+	s := x.Measured()
+	p := &Prepared{Experiment: x.Name, Namespace: s.Namespace, AppPack: filepath.Join(m.inv.FuzzopsPath(s.Fuzzops, l.Host), s.App)}
+	if o := s.Operator; o.Hooks != "" {
+		p.Hooks, p.HooksPath, p.Command = o.Hooks, m.inv.HooksPath(o.Hooks, o.Revision, l.Host), m.inv.HookCommand[o.Hooks]
+	}
+	return p
 }
 
 // expStep is the experiment part of a build or run step.
@@ -475,9 +604,8 @@ func (m *Manager) expStep(ctx context.Context, l *LaneFile, x *Experiment, kind 
 		st.BuildBad = &b
 	}
 	if kind == StepBuild {
-		p := &Prepared{Experiment: x.Name, Namespace: s.Namespace, AppPack: filepath.Join(fz, s.App)}
+		p := m.preparedFor(l, x)
 		if o := s.Operator; o.Hooks != "" {
-			p.Hooks, p.HooksPath, p.Command = o.Hooks, m.inv.HooksPath(o.Hooks, o.Revision, l.Host), m.inv.HookCommand[o.Hooks]
 			op := &HookOperator{Hooks: o.Hooks, Revision: o.Revision, Settings: o.Settings}
 			if x.Lock.Baseline != nil {
 				path, err := m.ops(l.Host).Stage(ctx, m.Root, *x.Lock.Baseline)
@@ -918,7 +1046,7 @@ func (m *Manager) wave(x *Experiment) []Seq {
 // died handles a step that was killed: a recover step undoes what it may have left.
 func (m *Manager) died(ctx context.Context, l *LaneFile) {
 	dead := l.Step
-	m.logf("lane %s: step %s died", l.Lane, dead.ID)
+	m.logf("lane %s: step %s died %s", l.Lane, dead.ID, dead.Killed)
 	l.Step = nil
 	if dead.Kind == StepRecover {
 		m.setState(l, LaneDown, "recover step died")
@@ -926,7 +1054,11 @@ func (m *Manager) died(ctx context.Context, l *LaneFile) {
 	}
 	if dead.Kind == StepRun && l.Experiment != "" && l.Seq != nil {
 		if x := m.exps[l.Experiment]; x != nil {
-			m.endRun(x, l, dead.Run, Result{Status: StatusInvalid, Reason: "lane lost: step died"})
+			reason := "lane lost: step died"
+			if dead.Killed != "" {
+				reason = "lane lost: step " + dead.Killed
+			}
+			m.endRun(x, l, dead.Run, Result{Status: StatusInvalid, Reason: reason})
 		}
 	}
 	if dead.Kind == StepBuild {
