@@ -1639,6 +1639,22 @@ def test_check_input_judges_the_memory_check_like_the_platform_used_to(
     assert "baseline.json says" in wrong["detail"]
 
 
+def test_memory_diagnostics_skip_validator_progress_lines() -> None:
+    """A memory with learned Go code prints INFO stage progress before its diagnostics (LB19); real output of a learned
+    bundle (shared with the lanes fallback test), run through the platform's CHECK prefix."""
+    fixture = (
+        Path(__file__).resolve().parents[4] / "benchmarks/lanes/internal/bench/testdata/memory-migrate-learned.out"
+    )
+    output = "\n".join(line.removeprefix("CHECK ") for line in fixture.read_text().splitlines()[1:-1])
+    diagnostics = hooks.memory_diagnostics(output)
+    assert diagnostics
+    assert all("telemetry.unbound" in d for d in diagnostics)
+    assert hooks.memory_diagnostics("2026/11/20 17:35:01 ERROR vet failed\n") == [
+        "2026/11/20 17:35:01 ERROR vet failed"
+    ]
+    assert hooks.memory_diagnostics('2026/11/20 17:34:51 INFO memory_check_stage_started stage="x"\n') == []
+
+
 def test_check_input_refuses_a_baseline_for_another_namespace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:

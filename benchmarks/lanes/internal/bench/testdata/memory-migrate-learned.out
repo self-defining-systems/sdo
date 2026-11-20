@@ -1,0 +1,19 @@
+HEAD 39a17a7595c1eeddf580b3ed89cdd6682ce01bb1
+CHECK 2026/11/20 17:34:51 INFO memory_check_stage_started stage="mod tidy"
+CHECK 2026/11/20 17:34:51 INFO memory_check_stage_finished stage="mod tidy" duration=280.361937ms
+CHECK 2026/11/20 17:34:51 INFO memory_check_stage_started stage="build -trimpath -ldflags=-s -w -buildvcs=false ./..."
+CHECK 2026/11/20 17:34:57 INFO memory_check_stage_finished stage="build -trimpath -ldflags=-s -w -buildvcs=false ./..." duration=5.38099116s
+CHECK 2026/11/20 17:34:57 INFO memory_check_stage_started stage="vet -trimpath ./..."
+CHECK 2026/11/20 17:34:57 INFO memory_check_stage_finished stage="vet -trimpath ./..." duration=721.867319ms
+CHECK 2026/11/20 17:34:57 INFO memory_check_stage_started stage="test -trimpath ./detectors/... ./traffic/..."
+CHECK 2026/11/20 17:34:59 INFO memory_check_stage_finished stage="test -trimpath ./detectors/... ./traffic/..." duration=1.484937959s
+CHECK 2026/11/20 17:34:59 INFO memory_check_stage_started stage="test -trimpath -json -timeout=30s -skip ^TestLearnedDetectorsStayQuietOnHealthyBaseline$ ./generated"
+CHECK 2026/11/20 17:35:01 INFO memory_check_stage_finished stage="test -trimpath -json -timeout=30s -skip ^TestLearnedDetectorsStayQuietOnHealthyBaseline$ ./generated" duration=2.098327451s
+CHECK .sdo/diagnostics: telemetry.unbound: telemetry.unbound[metrics-alerts]: reads alerts but no bound source serves alerts (every detector query names a bound source (or none, when a default source of its kind exists); bind the source in .sdo/diagnostics/telemetry
+CHECK .sdo/diagnostics: telemetry.unbound: telemetry.unbound[request-metrics]: query "reqmetrics-gitlab-sidekiq-recent": telemetry query of kind "metrics" names no source and none serves it; bound: none (every detector query names a bound source (or none, when a def
+CHECK .sdo/diagnostics: telemetry.unbound: telemetry.unbound[request-metrics]: query "reqmetrics-gitlab-sidekiq-baseline": telemetry query of kind "metrics" names no source and none serves it; bound: none (every detector query names a bound source (or none, when a d
+CHECK .sdo/diagnostics: telemetry.unbound: telemetry.unbound[request-metrics]: query "reqmetrics-gitlab-sidekiq-presence": telemetry query of kind "metrics" names no source and none serves it; bound: none (every detector query names a bound source (or none, when a d
+CHECK .sdo/diagnostics: telemetry.unbound: telemetry.unbound[request-metrics]: query "reqmetrics-gitlab-webservice-default-recent": telemetry query of kind "metrics" names no source and none serves it; bound: none (every detector query names a bound source (or none,
+CHECK .sdo/diagnostics: telemetry.unbound: telemetry.unbound[request-metrics]: query "reqmetrics-gitlab-webservice-default-baseline": telemetry query of kind "metrics" names no source and none serves it; bound: none (every detector query names a bound source (or non
+CHECK .sdo/diagnostics: telemetry.unbound: telemetry.unbound[request-metrics]: query "reqmetrics-gitlab-webservice-default-presence": telemetry query of kind "metrics" names no source and none serves it; bound: none (every detector query names a bound source (or non
+EXIT 1
