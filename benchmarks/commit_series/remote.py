@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -35,7 +36,18 @@ def main(argv: list[str]) -> int:
         return 0
     if not args.image or not args.repository:
         parser.error("up needs --image and --repository")
-    head = serve_upstream(args.kubeconfig, args.repository, layout, args.image)
+    try:
+        head = serve_upstream(args.kubeconfig, args.repository, layout, args.image)
+    except subprocess.CalledProcessError as exc:
+        # A server that never rolled out: say why (image pull, scheduling) instead of only the exit status.
+        shown = subprocess.run(
+            ["kubectl", "--kubeconfig", str(args.kubeconfig), "-n", layout.namespace, "describe", "pods"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        print(f"{exc}\n{shown.stdout[-3000:]}{shown.stderr[-500:]}", file=sys.stderr)
+        return 1
     info = {"url": layout.cluster_url, "ref": layout.ref, "namespace": args.namespace, "seeded": head}
     if args.control:
         info["control"] = args.control
