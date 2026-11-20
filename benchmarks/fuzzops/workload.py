@@ -4,10 +4,10 @@
 Every verb the built-in fuzzops workload implements is handed back to it through ``WORKLOAD_BUILTIN``, unchanged, so a
 spec that names this adapter behaves as a spec that names none, except on a lane with ``BENCH_LANE_PROVIDER=eks``:
 
-``app-up images``
+``app-up images`` and ``app-up up``
     The packs load their images into a kind node (``kind load docker-image``). An EKS lane has no kind node: this
-    adapter puts a ``kind`` command first on the PATH of that one call that publishes the images to the lane's ECR
-    mirror under the names the manifests declare (``benchmarks.lanes.eks.publish_app_image``; nodes try the mirror
+    adapter puts a ``kind`` command first on the PATH of those calls (a pack's ``up`` runs its ``images`` again)
+    that publishes the images to the lane's ECR mirror under the names the manifests declare (``benchmarks.lanes.eks.publish_app_image``; nodes try the mirror
     first and fall back to the upstream). Its ``get nodes`` lists one node, ``MIRROR_NODE``, and a ``docker`` command
     next to it answers ``docker exec MIRROR_NODE ...`` (exit 0, no output) and passes every other call to the real
     docker, so a pack that checks and fills nodes through ``ensure-images.sh`` publishes and finishes.
@@ -39,6 +39,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
 UNSUPPORTED = 64
+#: The ``app-up`` operations that load app images: a pack's ``up`` runs its ``images`` step again.
+IMAGE_ACTIONS = ("images", "up")
 #: The one "node" an EKS lane's ``kind get nodes`` lists. A pack that preloads images through ``ensure-images.sh``
 #: needs a node to ``docker exec ... crictl`` into; the registry mirror holds the images on an EKS lane, so the docker
 #: shim answers for this name only and passes every other docker call to the real docker.
@@ -143,7 +145,7 @@ def handle(
     if not builtin:
         print(json.dumps({"unsupported": True}))
         return UNSUPPORTED
-    if eks.is_eks(env) and (verb == "run" or (verb == "app-up" and env.get("WORKLOAD_ACTION") == "images")):
+    if eks.is_eks(env) and (verb == "run" or (verb == "app-up" and env.get("WORKLOAD_ACTION") in IMAGE_ACTIONS)):
         with tempfile.TemporaryDirectory(prefix="fuzzops-eks-shim-") as shim:
             write_shim(Path(shim))
             patched = {

@@ -51,16 +51,17 @@ def test_a_lane_that_is_not_eks_gets_the_built_in_command_unchanged(provider: st
     assert calls.env == [env]
 
 
-def test_on_eks_only_images_and_run_get_a_kind_shim() -> None:
-    calls = Calls()
-    workload.handle("app-up", _env("eks"), calls)
-    assert calls.argv == [BUILTIN]
-    assert calls.shim_seen
+def test_on_eks_only_images_up_and_run_get_a_kind_shim() -> None:
+    for action in ("images", "up"):  # a pack's up runs its images step again
+        calls = Calls()
+        workload.handle("app-up", _env("eks", action), calls)
+        assert calls.argv == [BUILTIN]
+        assert calls.shim_seen
     other = Calls()
-    for verb, action in (("app-up", "up"), ("gate", "check")):
+    for verb, action in (("app-up", "down"), ("gate", "check")):
         env = _env("eks", action)
         workload.handle(verb, env, other)
-    assert other.env == [_env("eks", "up"), _env("eks", "check")]
+    assert other.env == [_env("eks", "down"), _env("eks", "check")]
 
 
 def test_a_verb_the_built_in_workload_lacks_is_unsupported(capsys: pytest.CaptureFixture[str]) -> None:
