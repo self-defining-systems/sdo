@@ -32,6 +32,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -211,6 +212,11 @@ def app_up(ctx: Context) -> tuple[int, dict[str, Any]]:
     reused = (env_dir / "fastloop.json").is_file() and lane in clusters
     if not reused:
         prefix, worker = cluster_parts(lane)
+        if lane in clusters or env_dir.exists():
+            # What a failed `up` of this lane left (fastloop refuses an existing cluster name for a new environment):
+            # the lane's own cluster and environment, nothing else.
+            ctx.runner(["kind", "delete", "cluster", "--name", lane], env=ctx.env)
+            shutil.rmtree(env_dir, ignore_errors=True)
         command = [
             ctx.python,
             "-m",

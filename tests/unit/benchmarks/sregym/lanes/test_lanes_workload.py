@@ -144,6 +144,31 @@ def test_app_up_runs_fastloop_up_for_a_new_lane_and_copies_its_kubeconfig(tmp_pa
     assert (tmp_path / "kube" / "sgl1").read_text() == "apiVersion: v1\n"
 
 
+def test_app_up_clears_what_a_failed_up_of_the_lane_left_before_trying_again(tmp_path):
+    # A failed `up` left the lane's kind cluster and a half-made environment (no fastloop.json): fastloop refuses an
+    # existing cluster name for a new environment, so the lane's own leftovers go first, and only the lane's.
+    partial = tmp_path / "env" / "sgl1"
+    (partial / "application_workspace").mkdir(parents=True)
+    runner = FakeRunner({"kind get clusters": "sgl1\nother\n"})
+
+    def up(argv, *, env=None, cwd=None):
+        assert not (partial / "application_workspace").exists()
+        write_environment(tmp_path, tmp_path / "ws")
+        return ""
+
+    code, _ = call(
+        "app-up",
+        "up",
+        ["--pack", str(PACK), "--namespace", "hotel-reservation"],
+        lane_env(tmp_path),
+        runner=runner,
+        long_runner=up,
+    )
+    assert code == 0
+    deletes = [argv for argv in runner.calls if argv[:3] == ["kind", "delete", "cluster"]]
+    assert deletes == [["kind", "delete", "cluster", "--name", "sgl1"]]
+
+
 def test_app_up_reuses_a_lane_whose_environment_and_cluster_exist(tmp_path):
     write_environment(tmp_path, tmp_path / "ws")
     runner = FakeRunner({"kind get clusters": "sgl1\n"})
