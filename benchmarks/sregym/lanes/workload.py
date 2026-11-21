@@ -10,8 +10,9 @@ The app pack is a directory with ``app.json`` (``AppPack``). The lane's fastloop
 Verbs:
 
 ``identity``      the workload id, the checkout's revision and whether tracked files are modified.
-``app-up``        (``BENCH_LANE_PROVIDER=eks``: the provider owns the cluster; ``up`` reuses the lane when its environment's
-                  recorded cluster passes the provider's fence, else ``fastloop up --platform eks``; never kind.)
+``app-up``        (``BENCH_LANE_PROVIDER=eks``: the provider owns the cluster; ``up`` reuses the lane when its
+                  environment's recorded cluster passes the provider's fence, else ``fastloop up --platform eks``;
+                  never kind.)
                   ``check-pack``: the pack loads; ``up``: ``fastloop up`` unless the lane's environment and cluster
                   are already there, then the lane kubeconfig; ``down``, ``images``: nothing (fastloop's row-start
                   reset restores the app, ``up`` delivers images).
