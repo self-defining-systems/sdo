@@ -15,10 +15,16 @@ aws)
   "ecr create-repository") touch "$S/repo-$(echo "$*" | sed 's/.*--repository-name \([^ ]*\).*/\1/' | tr '/' '_')";;
   "ecr describe-images") echo "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";;
   "eks update-kubeconfig") echo "apiVersion: v1" > "$(echo "$*" | sed 's/.*--kubeconfig //')";;
-  "ec2 describe-subnets") echo us-west-2a;;
-  "eks describe-nodegroup") cat "$S/desired" 2>/dev/null || nodes_of;;
+  "ec2 describe-subnets") case "$*" in *--filters*) echo subnet-0a;; *) echo us-west-2a;; esac;;
+  "eks describe-nodegroup")
+    case "$*" in
+    *nodeRole*) echo arn:aws:iam::123456789012:role/eksctl-node-role;;
+    *) cat "$S/desired" 2>/dev/null || nodes_of;;
+    esac;;
+  "ec2 create-tags") :;;
   "eks describe-cluster")
     case "$*" in
+    *resourcesVpcConfig.vpcId*) echo vpc-0123;;
     *clusterSecurityGroupId*) echo sg-0123;;
     *) n=$(echo "$*" | sed 's/.*--name \([^ ]*\).*/\1/'); [ -n "${FAKE_AWS_DOWN:-}" ] && { echo "Could not connect to the endpoint URL" >&2; exit 255; }
        [ -e "$S/cluster-$n" ] || { echo "An error occurred (ResourceNotFoundException) when calling the DescribeCluster operation: No cluster found for name: $n." >&2; exit 254; }
@@ -40,7 +46,43 @@ eksctl)
   "delete cluster") rm -f "$S/cluster-$4";;
   "scale nodegroup") echo "$(echo "$*" | sed 's/.*--nodes \([0-9]*\).*/\1/')" > "$S/desired";;
   esac;;
+helm) :;;
+vcluster)
+  # vcluster create NAME -n NS --values FILE ...; connect NAME ... --server S --kube-config-context-name CTX; delete NAME
+  case "$1" in
+  create) [ -z "${FAKE_VCLUSTER_FAIL:-}" ] || { echo "vcluster: create failed" >&2; exit 1; }
+    touch "$S/ns-$2"; v=$(echo "$*" | sed 's/.*--values \([^ ]*\).*/\1/'); cp "$v" "$S/values-$2";;
+  connect)
+    srv=$(echo "$*" | sed 's/.*--server \([^ ]*\).*/\1/'); ctx=$(echo "$*" | sed 's/.*--kube-config-context-name \([^ ]*\).*/\1/')
+    printf 'apiVersion: v1\nkind: Config\nclusters:\n- name: %s\n  cluster: {server: %s}\ncontexts:\n- name: %s\n  context: {cluster: %s}\ncurrent-context: %s\n' "$2" "$srv" "$ctx" "$2" "$ctx";;
+  delete) rm -f "$S/ns-$2";;
+  esac;;
 kubectl)
+  # the host cluster of lanes that are vclusters: namespaces, Karpenter NodePools, the nodes they make
+  case " $* " in
+  *" get namespace "*" -o name"*) ns=$(echo "$*" | sed 's/.* get namespace \([^ ]*\).*/\1/')
+    [ -e "$S/ns-$ns" ] || { [ -n "${FAKE_KUBE_DOWN:-}" ] && { echo "Unable to connect to the server" >&2; exit 1; }; echo "Error from server (NotFound): namespaces \"$ns\" not found" >&2; exit 1; }
+    echo "namespace/$ns"; exit 0;;
+  *" get statefulset "*) ns=$(echo "$*" | sed 's/.* get statefulset \([^ ]*\).*/\1/'); [ -e "$S/ns-$ns" ] || exit 1; exit 0;;
+  *" get svc "*nodePort*) echo 31234; exit 0;;
+  *" get nodes -l sdo-role=system --no-headers"*) [ "$(cat "$S/desired" 2>/dev/null || echo 1)" = 0 ] || echo "ip-system Ready <none> 1m v1.34"; exit 0;;
+  *" get nodes -l sdo-lane="*--no-headers*) lane=$(echo "$*" | head -1 | sed 's/.*sdo-lane=\([^ ]*\).*/\1/')
+    n=$(cat "$S/lane-nodes-$lane" 2>/dev/null || echo 0); i=1; while [ "$i" -le "$n" ]; do echo "ip-$lane-$i Ready <none> 1m v1.34"; i=$((i+1)); done; exit 0;;
+  *" get nodes -l sdo-lane="*jsonpath*{.metadata.name}*) lane=$(echo "$*" | head -1 | sed 's/.*sdo-lane=\([^ ]*\).*/\1/')
+    n=$(cat "$S/lane-nodes-$lane" 2>/dev/null || echo 0); i=1; while [ "$i" -le "$n" ]; do echo "ip-$lane-$i"; i=$((i+1)); done; exit 0;;
+  *" get nodepool "*) ls "$S" | grep '^nodepool-' | sed 's/^nodepool-/lane-/'; exit 0;;
+  *" delete nodepool "*) np=$(echo "$*" | sed 's/.* delete nodepool \([^ ]*\).*/\1/'); rm -f "$S/nodepool-${np#lane-}" "$S/lane-nodes-${np#lane-}"; exit 0;;
+  *" get configmap sdo-lane-prepull "*) cat "$S/prepull-images" 2>/dev/null; exit 0;;
+  *"create configmap sdo-lane-prepull --from-file="*) f=$(echo "$*" | sed 's/.*--from-file=images=\([^ ]*\).*/\1/'); cp "$f" "$S/prepull-images"
+    printf 'kind: ConfigMap\nname: sdo-lane-prepull\n'; cat "$f"; exit 0;;
+  *" apply -f - "*)
+    y=$(cat); printf '%s\n' "$y" >> "$S/applied.yaml"
+    # Karpenter: a NodePool named lane-X plus the capacity deployment of replicas N brings N nodes
+    for np in $(printf '%s\n' "$y" | sed -n 's/^metadata: {name: lane-\([^,}]*\),.*/\1/p'); do
+      touch "$S/nodepool-$np"; n=$(printf '%s\n' "$y" | sed -n 's/^  replicas: //p' | head -1); echo "${n:-0}" > "$S/lane-nodes-$np"
+    done
+    exit 0;;
+  esac
   case " $* " in
   *" get nodes --no-headers"*) n=$(nodes_of); i=1; while [ "$i" -le "$n" ]; do echo "ip-10-0-0-$i Ready <none> 1m v1.34"; i=$((i+1)); done;;
   *" get nodes -o jsonpath={range .items[*]}{.metadata.name}{\"=\"}"*) echo "ip-10-0-0-1=True";;
