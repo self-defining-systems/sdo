@@ -134,6 +134,8 @@ scale_system() { # N
   local want=$1
   [ "$(system_nodes)" = "$want" ] && return 0
   log "system node group of $HOST to $want"
+  # a PodDisruptionBudget of the add-ons holds the last node in Terminating:Wait (a drain that cannot evict)
+  if [ "$want" = 0 ]; then hk -n kube-system delete pdb coredns metrics-server --ignore-not-found >/dev/null 2>&1 || true; fi
   eksctl scale nodegroup --cluster "$HOST" --name system --nodes "$want" --nodes-min 0 --nodes-max 2 --region "$REGION" >&2
 }
 
