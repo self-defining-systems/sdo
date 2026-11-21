@@ -721,7 +721,7 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 			m.logf("lane %s: %s refused: %v", l.Lane, s.Kind, err)
 			return false
 		}
-		s.HostEnv = append(s.HostEnv, eksEnv(h, p)...)
+		s.HostEnv = append(s.HostEnv, eksEnv(h, p, m.Root.path("eks"))...)
 		if h.EKS.virtualLane(l.Lane) {
 			s.Virtual = true
 			if s.DeleteCluster && m.eksLastLane(l.Host, l.Lane) {

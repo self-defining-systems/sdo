@@ -2,6 +2,7 @@ package bench
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -62,7 +63,7 @@ type HostEKS struct {
 	// IdleTimeout keeps a free lane's cluster this long when no experiment wants the host ("10m"); a plan between two
 	// problems does not delete it. `lanes gc` deletes at once.
 	IdleTimeout string `json:"idle_timeout,omitempty"`
-	// Subnets/VPC of the clusters, passed to the platform script; empty: eksctl makes a VPC.
+	// Subnets/VPC of the clusters, passed to the platform script; used by vcluster lanes (eks-vcluster.sh); a cluster lane uses the shared stack.
 	VPC     string   `json:"vpc,omitempty"`
 	Subnets []string `json:"subnets,omitempty"`
 	// Lanes says what a lane is: "cluster" (default) is an EKS cluster of its own; "vcluster" is a virtual cluster on the
@@ -466,11 +467,12 @@ func (m *Manager) eksIdle(l *LaneFile) bool {
 	return h.IsEks() && m.now().Sub(l.Since) >= h.EKS.Idle()
 }
 
-// eksEnv are the cluster-up variables of a lane: its size, from the workload's footprint, and the account.
-func eksEnv(h Host, p EksPlan) []string {
+// eksEnv are the cluster-up variables of a lane: its size, from the workload's footprint, the account, and the directory
+// where the host's shared network ids are recorded (stateDir).
+func eksEnv(h Host, p EksPlan, stateDir string) []string {
 	e := h.EKS
 	env := []string{"EKS_REGION=" + e.Region, "EKS_INSTANCE_TYPE=" + p.InstanceType, "EKS_NODES=" + strconv.Itoa(p.Nodes),
-		"EKS_NODE_MAX=" + strconv.Itoa(p.Nodes+1)}
+		"EKS_NODE_MAX=" + strconv.Itoa(p.Nodes+1), "EKS_STATE_DIR=" + stateDir}
 	if e.virtual() && p.Nodes > 0 {
 		env = append(env, "EKS_NODE_VCPUS="+strconv.Itoa(p.VCPUs/p.Nodes))
 	}
@@ -481,6 +483,42 @@ func eksEnv(h Host, p EksPlan) []string {
 		env = append(env, "EKS_VPC="+e.VPC, "EKS_SUBNETS="+strings.Join(e.Subnets, ","))
 	}
 	return env
+}
+
+func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// eksSharedScript runs a shared-resource verb (host-setup, host-teardown) of the platform script on an eks host.
+func eksSharedScript(h Host, root Root, platform, verb string) string {
+	env := []string{"EKS_REGION=" + h.EKS.Region, "EKS_STATE_DIR=" + root.path("eks")}
+	if h.EKS.Account != "" {
+		env = append(env, "EKS_ACCOUNT="+h.EKS.Account)
+	}
+	var b strings.Builder
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		fmt.Fprintf(&b, "export %s=%s; ", k, shQuote(v))
+	}
+	fmt.Fprintf(&b, "bash %s %s", shQuote(platform+"/deploy/eks-lane.sh"), verb)
+	return b.String()
+}
+
+// eksSharedHost is `lanes host adopt|teardown` of an eks host: the account's shared network and roles that every lane of the
+// host reuses are made (idempotently) or removed (refused while a lane cluster exists).
+func eksSharedHost(ctx context.Context, root Root, h Host, host, verb string, run runFn, out io.Writer) error {
+	if run == nil {
+		return errors.New("no host runner")
+	}
+	dir, err := InstallPlatformScripts(h.Staging)
+	if err != nil {
+		return fmt.Errorf("install the platform scripts: %w", err)
+	}
+	script := "host-setup"
+	if verb == "teardown" {
+		script = "host-teardown"
+	}
+	o, err := run(ctx, host, eksSharedScript(h, root, dir, script))
+	fmt.Fprint(out, host+":\n"+o)
+	return err
 }
 
 // eksProbeBound bounds one lane health read.

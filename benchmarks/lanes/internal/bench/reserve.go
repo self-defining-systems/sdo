@@ -301,7 +301,7 @@ func driftOf(r Reservation, st BlockStatus) string {
 // HostCommand is `lanes host reserve|unreserve|status|adopt|install-helper`.
 func HostCommand(ctx context.Context, root Root, args []string, out, errw io.Writer, helper Helper, run runFn) int {
 	if len(args) == 0 {
-		fmt.Fprintln(errw, "usage: lanes host reserve HOST|all | unreserve HOST [--drain] | status [HOST] | adopt HOST [--cpus LIST] [--prev SLICE=LIST]... | install-helper HOST [--sudo-password-file PATH]")
+		fmt.Fprintln(errw, "usage: lanes host reserve HOST|all | unreserve HOST [--drain] | status [HOST] | adopt HOST [--cpus LIST] [--prev SLICE=LIST]... | teardown HOST (eks) | install-helper HOST [--sudo-password-file PATH]")
 		return 2
 	}
 	inv, err := LoadInventory(string(root))
@@ -341,14 +341,24 @@ func HostCommand(ctx context.Context, root Root, args []string, out, errw io.Wri
 		var err error
 		if inv.Hosts[h].IsEks() {
 			// An eks host has no cores, kernel or helper to look after (eks.go): only its status means anything.
-			if verb == "status" {
+			switch verb {
+			case "status":
 				statusEksHost(ctx, root, inv, h, run, out)
-			} else if verb == "adopt" && inv.Hosts[h].IsEksVirtual() {
-				if err := adoptEksHost(ctx, root, inv, h, run, out); err != nil {
-					fmt.Fprintln(errw, err)
-					rc = 1
+			case "adopt", "teardown":
+				switch {
+				case verb == "adopt" && inv.Hosts[h].IsEksVirtual():
+					if err := adoptEksHost(ctx, root, inv, h, run, out); err != nil {
+						fmt.Fprintln(errw, err)
+						rc = 1
+					}
+				default:
+					// adopt makes the host's shared network and roles (idempotent); teardown removes them.
+					if err := eksSharedHost(ctx, root, inv.Hosts[h], h, verb, run, out); err != nil {
+						fmt.Fprintf(errw, "%s: %v\n", h, err)
+						rc = 1
+					}
 				}
-			} else {
+			default:
 				fmt.Fprintf(out, "%s: eks host: nothing to %s (no host-safety gates); skipped\n", h, verb)
 			}
 			continue
@@ -385,7 +395,7 @@ func hostsNamed(inv Inventory, verb string, names []string) ([]string, error) {
 	switch {
 	case len(names) == 0 && verb == "status":
 		return all, nil
-	case len(names) == 1 && names[0] == "all" && verb != "unreserve" && verb != "install-helper":
+	case len(names) == 1 && names[0] == "all" && verb != "unreserve" && verb != "install-helper" && verb != "teardown":
 		if verb == "reserve" {
 			var withBlock []string
 			for _, n := range all {

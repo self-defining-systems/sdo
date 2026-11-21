@@ -93,7 +93,7 @@ var helpTable = map[string]verbHelp{
 	},
 	"host": {
 		desc:  "the hosts.yaml reserve: block: apply it through the root helper, undo it, show it, record an existing one",
-		usage: "host reserve HOST|all | unreserve HOST [--drain] | status [HOST] | adopt HOST [--cpus LIST] [--prev SLICE=LIST]... | install-helper HOST [--sudo-password-file PATH] --root R",
+		usage: "host reserve HOST|all | unreserve HOST [--drain] | status [HOST] | adopt HOST [--cpus LIST] [--prev SLICE=LIST]... | teardown HOST (eks) | install-helper HOST [--sudo-password-file PATH] --root R",
 		flags: rootFlag +
 			"  --drain                    unreserve: proceed although lanes are running\n" +
 			"  --cpus LIST                adopt: the block that exists\n" +

@@ -5,7 +5,12 @@ tool=$1; shift
 S=${FAKE_STATE:?}
 echo "$tool $*" >> "$S/eks.log"
 name_of() { sed -n 's/^  name: //p' "$1" | head -1; }
-nodes_of() { c=$(ls "$S"/cfg-* 2>/dev/null | head -1); n=$(sed -n 's/.*desiredCapacity: //p' "$c"); echo "${n:-2}"; }
+val() { k=$1; shift; while [ $# -gt 0 ]; do [ "$1" = "$k" ] && { echo "$2"; return; }; shift; done; }
+nodes_of() {
+  g=$(ls "$S"/ng-* 2>/dev/null | head -1)
+  if [ -n "$g" ]; then n=$(sed -n 's/.*desiredSize=\([0-9]*\).*/\1/p' "$g"); else c=$(ls "$S"/cfg-* 2>/dev/null | head -1); n=$(sed -n 's/.*desiredCapacity: //p' "$c"); fi
+  echo "${n:-2}"
+}
 case $tool in
 aws)
   case "$1 $2" in
@@ -31,6 +36,38 @@ aws)
        echo ACTIVE;;
     esac;;
   "ec2 authorize-security-group-ingress") :;;
+  "cloudformation describe-stacks")
+    st=$(val --stack-name "$@"); [ -e "$S/stack-$st" ] || { echo "An error occurred (ValidationError) when calling the DescribeStacks operation: Stack with id $st does not exist" >&2; exit 254; }
+    case "$*" in
+    *StackStatus*) cat "$S/stack-$st";;
+    *Outputs*) printf 'VpcId\tvpc-0aaa\nSubnetA\tsubnet-0a\nSubnetB\tsubnet-0b\nClusterRoleArn\tarn:aws:iam::123456789012:role/shared-cluster\nNodeRoleArn\tarn:aws:iam::123456789012:role/shared-node\nNodeLaunchTemplateId\tlt-0abc\nNodeLaunchTemplateVersion\t1\n';;
+    esac;;
+  "cloudformation create-stack")
+    st=$(val --stack-name "$@")
+    echo CREATE_IN_PROGRESS > "$S/tmp-$$"
+    ln "$S/tmp-$$" "$S/stack-$st" 2>/dev/null || { rm -f "$S/tmp-$$"; echo "An error occurred (AlreadyExistsException) when calling the CreateStack operation: Stack [$st] already exists" >&2; exit 254; }
+    rm -f "$S/tmp-$$"; echo "$*" >> "$S/stack-args";;
+  "cloudformation wait")
+    st=$(val --stack-name "$@"); case "$*" in
+    *delete-complete*) :;;
+    *) [ -z "${FAKE_STACK_SECONDS:-}" ] || sleep "$FAKE_STACK_SECONDS"; echo CREATE_COMPLETE > "$S/stack-$st";; esac;;
+  "cloudformation delete-stack") st=$(val --stack-name "$@"); rm -rf "$S/stack-$st";;
+  "eks list-clusters") for c in "$S"/cluster-*; do [ -e "$c" ] && echo "${c##*/cluster-}"; done;;
+  "eks create-cluster")
+    n=$(val --name "$@"); echo "$*" > "$S/clargs-$n"
+    echo "create-start $n $(date +%s.%N)" >> "$S/eks-times.log"
+    [ -z "${FAKE_EKS_CREATE_SECONDS:-}" ] || sleep "$FAKE_EKS_CREATE_SECONDS"
+    echo "create-end $n $(date +%s.%N)" >> "$S/eks-times.log"
+    touch "$S/cluster-$n"
+    [ -z "${FAKE_EKS_FAIL_CREATE:-}" ] || { echo "create-cluster failed" >&2; exit 1; };;
+  "eks wait") :;;
+  "eks create-nodegroup") n=$(val --cluster-name "$@"); echo "$*" > "$S/ng-$n";;
+  "eks create-addon") echo "$*" >> "$S/addons";;
+  "eks describe-addon") echo ACTIVE;;
+  "eks list-nodegroups") n=$(val --cluster-name "$@"); [ -e "$S/ng-$n" ] && echo workers;;
+  "eks delete-nodegroup") rm -f "$S/ng-$(val --cluster-name "$@")";;
+  "eks delete-cluster") rm -f "$S/cluster-$(val --name "$@")";;
+  "eks update-nodegroup-config") echo "$(val --scaling-config "$@" | sed 's/.*desiredSize=\([0-9]*\).*/\1/')" > "$S/desired";;
   esac;;
 eksctl)
   case "$1 $2" in
@@ -40,10 +77,10 @@ eksctl)
     echo "create-start $n $(date +%s.%N)" >> "$S/eks-times.log"
     [ -z "${FAKE_EKS_CREATE_SECONDS:-}" ] || sleep "$FAKE_EKS_CREATE_SECONDS"
     echo "create-end $n $(date +%s.%N)" >> "$S/eks-times.log"
-    cp "$cfg" "$S/cfg-$n"; touch "$S/cluster-$n"
+    cp "$cfg" "$S/cfg-$n"; touch "$S/cluster-$n" "$S/stack-eksctl-$n-cluster"; echo CREATE_COMPLETE > "$S/stack-eksctl-$n-cluster"
     echo "apiVersion: v1" > "$kc"
     [ -z "${FAKE_EKS_FAIL_CREATE:-}" ] || { echo "eksctl: stack failed" >&2; exit 1; };;
-  "delete cluster") rm -f "$S/cluster-$4";;
+  "delete cluster") rm -f "$S/cluster-$4" "$S/stack-eksctl-$4-cluster";;
   "scale nodegroup") echo "$(echo "$*" | sed 's/.*--nodes \([0-9]*\).*/\1/')" > "$S/desired";;
   esac;;
 helm) :;;

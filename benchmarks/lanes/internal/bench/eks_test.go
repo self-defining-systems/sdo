@@ -254,10 +254,27 @@ func TestEksLaneUpMakesWhatAKindLaneHas(t *testing.T) {
 	if err != nil || !strings.Contains(out, "EKS_LANE_READY cluster=sdo-lane-eks1 instance=m6i.xlarge nodes=2") {
 		t.Fatalf("up: %v\n%s", err, out)
 	}
-	cfg := s.file("cfg-sdo-lane-eks1")
-	for _, want := range []string{`enableNetworkPolicy":"true"`, "instanceType: m6i.xlarge", "desiredCapacity: 2", "supportType: STANDARD", "{name: metrics-server}", "name: sdo-lane-eks1"} {
-		if !strings.Contains(cfg, want) {
-			t.Errorf("the cluster config lacks %q:\n%s", want, cfg)
+	// the lane makes only a control plane and a node group on the host's shared network and roles: no eksctl, no per-lane VPC
+	if strings.Contains(s.log(), "eksctl create") {
+		t.Errorf("the lane was made with eksctl:\n%s", s.log())
+	}
+	cl, ng, addons := s.file("clargs-sdo-lane-eks1"), s.file("ng-sdo-lane-eks1"), s.file("addons")
+	for _, want := range []string{"--role-arn arn:aws:iam::123456789012:role/shared-cluster", "subnetIds=subnet-0a,subnet-0b", "supportType=STANDARD", "authenticationMode=API_AND_CONFIG_MAP", "sdo-lane=sdo-lane-eks1"} {
+		if !strings.Contains(cl, want) {
+			t.Errorf("create-cluster lacks %q:\n%s", want, cl)
+		}
+	}
+	for _, want := range []string{"--subnets subnet-0a", "--node-role arn:aws:iam::123456789012:role/shared-node", "--instance-types m6i.xlarge", "desiredSize=2", "maxSize=3", "minSize=0", "--ami-type AL2023_x86_64_STANDARD", "id=lt-0abc"} {
+		if !strings.Contains(ng, want) {
+			t.Errorf("create-nodegroup lacks %q:\n%s", want, ng)
+		}
+	}
+	if strings.Contains(ng, "subnet-0b") {
+		t.Errorf("the node group spans more than the lane's one zone:\n%s", ng)
+	}
+	for _, want := range []string{"enableNetworkPolicy", "--addon-name coredns", "--addon-name kube-proxy", "--addon-name eks-pod-identity-agent", "--addon-name metrics-server", "--addon-name aws-ebs-csi-driver", "--addon-name vpc-cni"} {
+		if !strings.Contains(addons, want) {
+			t.Errorf("add-ons lack %q:\n%s", want, addons)
 		}
 	}
 	log := s.log()
@@ -291,12 +308,6 @@ func TestEksLaneUpMakesWhatAKindLaneHas(t *testing.T) {
 	if strings.Contains(applied, "@ECR@") || strings.Contains(applied, "@REGION@") {
 		t.Error("node agent placeholders left in the manifest")
 	}
-	// the lane's requirements: one zone, gp3 default class that binds at placement, node ports open to the manager, an entry address
-	for _, want := range []string{"availabilityZones: [us-west-2a]", "{name: aws-ebs-csi-driver}", "AmazonEBSCSIDriverPolicy"} {
-		if !strings.Contains(cfg, want) {
-			t.Errorf("the cluster config lacks %q", want)
-		}
-	}
 	for _, want := range []string{"volumeBindingMode: WaitForFirstConsumer", "provisioner: ebs.csi.aws.com", "is-default-class: \"false\""} {
 		if !strings.Contains(applied, want) {
 			t.Errorf("the gp3 class lacks %q", want)
@@ -313,7 +324,7 @@ func TestEksLaneUpMakesWhatAKindLaneHas(t *testing.T) {
 		t.Errorf("entry address = %q", b)
 	}
 	// every stage of the up is measured
-	for _, want := range []string{"EKS_STAGE cluster_and_nodegroup_created", "EKS_STAGE nodes_ready", "EKS_STAGE node_agent_mirror_ready", "EKS_STAGE up_total"} {
+	for _, want := range []string{"EKS_STAGE shared_ready", "EKS_STAGE control_plane_active", "EKS_STAGE nodegroup_active", "EKS_STAGE addons_running", "EKS_STAGE cluster_and_nodegroup_created", "EKS_STAGE nodes_ready", "EKS_STAGE node_agent_mirror_ready", "EKS_STAGE up_total"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("no %q in\n%s", want, out)
 		}
@@ -322,7 +333,7 @@ func TestEksLaneUpMakesWhatAKindLaneHas(t *testing.T) {
 		t.Errorf("stages file = %q", b)
 	}
 	// idempotent: a second up attaches and creates nothing
-	if out, err := s.run(nil, "up", "eks1", kc, ev); err != nil || strings.Count(s.log(), "eksctl create cluster") != 1 {
+	if out, err := s.run(nil, "up", "eks1", kc, ev); err != nil || strings.Count(s.log(), "eks create-cluster") != 1 || strings.Count(s.log(), "cloudformation create-stack") != 1 {
 		t.Fatalf("second up: %v\n%s\n%s", err, out, s.log())
 	}
 }
@@ -347,7 +358,7 @@ func TestEksLaneUpFailureDeletesTheHalfBuiltCluster(t *testing.T) {
 		if err == nil {
 			t.Fatalf("%s: up succeeded:\n%s", name, out)
 		}
-		if _, statErr := os.Stat(filepath.Join(s.state, "cluster-sdo-lane-eks1")); statErr == nil || !strings.Contains(s.log(), "eksctl delete cluster --name sdo-lane-eks1") {
+		if _, statErr := os.Stat(filepath.Join(s.state, "cluster-sdo-lane-eks1")); statErr == nil || !strings.Contains(s.log(), "eks delete-cluster --name sdo-lane-eks1") {
 			t.Errorf("%s: the cluster was not deleted:\n%s\n%s", name, out, s.log())
 		}
 	}
@@ -356,7 +367,7 @@ func TestEksLaneUpFailureDeletesTheHalfBuiltCluster(t *testing.T) {
 func TestEksLaneUpRefusesAnotherAccountBeforeCreatingAnything(t *testing.T) {
 	s := newEksScript(t)
 	out, err := s.run([]string{"EKS_ACCOUNT=999999999999"}, "up", "eks1", filepath.Join(t.TempDir(), "kc"))
-	if err == nil || !strings.Contains(out, "credentials belong to account 123456789012, expected 999999999999") || strings.Contains(s.log(), "eksctl") {
+	if err == nil || !strings.Contains(out, "credentials belong to account 123456789012, expected 999999999999") || strings.Contains(s.log(), "create-") {
 		t.Fatalf("up: %v\n%s\n%s", err, out, s.log())
 	}
 }
@@ -430,14 +441,14 @@ func TestBenchEksHostLaneLifecycle(t *testing.T) {
 		t.Fatalf("host status = %+v", st.Hosts)
 	}
 	log := l.readPath(filepath.Join(l.state, "eks.log"))
-	if !strings.Contains(log, "eksctl create cluster") || !strings.Contains(log, "instanceType") && !strings.Contains(l.readPath(filepath.Join(l.state, "cfg-sdo-lane-c1")), "instanceType: m6i.xlarge") {
+	if !strings.Contains(log, "eks create-cluster --name sdo-lane-c1") || !strings.Contains(l.readPath(filepath.Join(l.state, "ng-sdo-lane-c1")), "--instance-types m6i.xlarge") {
 		t.Fatalf("no cluster made sized for the footprint:\n%s", log)
 	}
 	l.until("cluster deleted and its cost recorded", func() bool {
 		var led eksLedger
 		return readJSON(l.root.eksLedgerPath("h1"), &led) == nil && len(led.Closed) == 1 && len(led.Open) == 0
 	})
-	if !strings.Contains(l.readPath(filepath.Join(l.state, "eks.log")), "eksctl delete cluster --name sdo-lane-c1") {
+	if !strings.Contains(l.readPath(filepath.Join(l.state, "eks.log")), "eks delete-cluster --name sdo-lane-c1") {
 		t.Fatal("the cluster was not deleted at the end")
 	}
 	var led eksLedger
@@ -512,11 +523,11 @@ func TestEksLaneUpRescalesAnAttachedClusterWithNoNodes(t *testing.T) {
 	if out, err := s.run(nil, "up", "eks1", kc); err != nil {
 		t.Fatalf("up: %v\n%s", err, out)
 	}
-	if strings.Contains(s.log(), "scale nodegroup") {
+	if strings.Contains(s.log(), "update-nodegroup-config") {
 		t.Fatalf("a cluster at its size was scaled:\n%s", s.log())
 	}
 	must(t, os.WriteFile(filepath.Join(s.state, "desired"), []byte("0\n"), 0o644))
-	if out, err := s.run(nil, "up", "eks1", kc); err != nil || !strings.Contains(s.log(), "eksctl scale nodegroup --cluster sdo-lane-eks1 --name workers --nodes 2 --nodes-min 0 --nodes-max 3") {
+	if out, err := s.run(nil, "up", "eks1", kc); err != nil || !strings.Contains(s.log(), "--scaling-config minSize=0,maxSize=3,desiredSize=2") {
 		t.Fatalf("up of a scaled-down cluster: %v\n%s\n%s", err, out, s.log())
 	}
 }
@@ -675,5 +686,158 @@ func TestEksLanesAreNotRecreatedAfterAFailure(t *testing.T) {
 	}
 	if (Host{}).RecreatesAfterFailure("c") {
 		t.Fatal("a host that cannot make clusters recreates one")
+	}
+}
+
+// The VPC, subnets, roles and node launch template are made once per account and region (host-setup), idempotently, and
+// recorded: the second call, and every lane's up, reuses them.
+func TestEksHostSetupMakesTheSharedNetworkOnceAndRecordsIt(t *testing.T) {
+	s := newEksScript(t)
+	st := filepath.Join(t.TempDir(), "eks-state")
+	out, err := s.run([]string{"EKS_STATE_DIR=" + st}, "host-setup")
+	if err != nil || !strings.Contains(out, "EKS_SHARED vpc=vpc-0aaa subnets=subnet-0a,subnet-0b cluster_role=arn:aws:iam::123456789012:role/shared-cluster node_role=arn:aws:iam::123456789012:role/shared-node") {
+		t.Fatalf("host-setup: %v\n%s", err, out)
+	}
+	if b, _ := os.ReadFile(filepath.Join(st, "shared-us-west-2.env")); !strings.Contains(string(b), "EKS_SHARED_VPC=vpc-0aaa") {
+		t.Errorf("the shared ids were not recorded in the host's eks state: %q", b)
+	}
+	if args := s.file("stack-args"); !strings.Contains(args, "CAPABILITY_IAM") || !strings.Contains(args, "Project") {
+		t.Errorf("create-stack args = %q", args)
+	}
+	if out, err := s.run([]string{"EKS_STATE_DIR=" + st}, "host-setup"); err != nil || strings.Count(s.log(), "cloudformation create-stack") != 1 {
+		t.Fatalf("second host-setup: %v\n%s\n%s", err, out, s.log())
+	}
+}
+
+// Two lanes starting together on a host that has no shared network yet make it once and both wait for it.
+func TestEksConcurrentFirstUpsShareOneSetup(t *testing.T) {
+	s := newEksScript(t)
+	s.env = append(s.env, "FAKE_STACK_SECONDS=1")
+	done := make(chan error, 2)
+	for _, lane := range []string{"eks1", "eks2"} {
+		go func() {
+			_, err := s.run(nil, "up", lane, filepath.Join(t.TempDir(), "kc"))
+			done <- err
+		}()
+	}
+	for range 2 {
+		if err := <-done; err != nil {
+			t.Fatalf("up: %v\n%s", err, s.log())
+		}
+	}
+	if n := strings.Count(s.file("stack-args"), "\n"); n != 1 {
+		t.Errorf("%d shared stacks created, want 1", n)
+	}
+}
+
+// Deleting a lane removes its node group and control plane only; the shared network and roles stay for the next lane.
+func TestEksLaneDownKeepsTheSharedResources(t *testing.T) {
+	s := newEksScript(t)
+	kc := filepath.Join(t.TempDir(), "eks1")
+	if out, err := s.run(nil, "up", "eks1", kc); err != nil {
+		t.Fatalf("up: %v\n%s", err, out)
+	}
+	if out, err := s.run(nil, "down", "eks1", kc); err != nil {
+		t.Fatalf("down: %v\n%s", err, out)
+	}
+	log := s.log()
+	if !strings.Contains(log, "eks delete-nodegroup --cluster-name sdo-lane-eks1 --nodegroup-name workers") || !strings.Contains(log, "eks delete-cluster --name sdo-lane-eks1") {
+		t.Errorf("the lane's node group and control plane were not deleted:\n%s", log)
+	}
+	if strings.Contains(log, "delete-stack") {
+		t.Errorf("a lane delete removed the shared stack:\n%s", log)
+	}
+	if strings.Index(log, "eks delete-nodegroup") > strings.Index(log, "eks delete-cluster") {
+		t.Errorf("the control plane was deleted before its node group")
+	}
+}
+
+// A cluster made by the earlier path (eksctl, its own CloudFormation stacks) is still deleted with eksctl, which owns them.
+func TestEksLaneDownOfAnEksctlMadeClusterUsesEksctl(t *testing.T) {
+	s := newEksScript(t)
+	cfg := filepath.Join(t.TempDir(), "cfg")
+	must(t, os.WriteFile(cfg, []byte("metadata:\n  name: sdo-lane-eks1\n"), 0o644))
+	fake := exec.Command(filepath.Join(testdata("fakeeks"), "eksctl"), "create", "cluster", "-f", cfg, "--kubeconfig", filepath.Join(t.TempDir(), "k"))
+	fake.Env = append(os.Environ(), "FAKE_STATE="+s.state)
+	if out, err := fake.CombinedOutput(); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	if out, err := s.run(nil, "down", "eks1"); err != nil || !strings.Contains(s.log(), "eksctl delete cluster --name sdo-lane-eks1") || strings.Contains(s.log(), "eks delete-cluster") {
+		t.Fatalf("down: %v\n%s\n%s", err, out, s.log())
+	}
+}
+
+// host-teardown removes the shared stack, and refuses while a lane cluster still uses it.
+func TestEksHostTeardownRemovesTheSharedStackOnlyWhenNoLaneIsLeft(t *testing.T) {
+	s := newEksScript(t)
+	if out, err := s.run(nil, "up", "eks1", filepath.Join(t.TempDir(), "kc")); err != nil {
+		t.Fatalf("up: %v\n%s", err, out)
+	}
+	out, err := s.run(nil, "host-teardown")
+	if err == nil || !strings.Contains(out, "sdo-lane-eks1") || strings.Contains(s.log(), "delete-stack") {
+		t.Fatalf("teardown with a lane up: %v\n%s", err, out)
+	}
+	if out, err := s.run(nil, "down", "eks1"); err != nil {
+		t.Fatalf("down: %v\n%s", err, out)
+	}
+	if out, err := s.run(nil, "host-teardown"); err != nil || !strings.Contains(s.log(), "cloudformation delete-stack --stack-name sdo-lanes-shared") {
+		t.Fatalf("teardown: %v\n%s\n%s", err, out, s.log())
+	}
+	if out, err := s.run(nil, "host-teardown"); err != nil || strings.Count(s.log(), "delete-stack") != 1 {
+		t.Fatalf("second teardown: %v\n%s", err, out)
+	}
+}
+
+// `lanes host adopt` of an eks host sets up its shared network; `lanes host teardown` removes it.
+func TestHostAdoptOfAnEksHostRunsHostSetup(t *testing.T) {
+	root := Root(t.TempDir())
+	must(t, os.WriteFile(root.path("hosts.yaml"), []byte(strings.Replace(eksHost, "staging: /s", "staging: "+t.TempDir(), 1)), 0o644))
+	var scripts []string
+	run := func(_ context.Context, _, script string) (string, error) {
+		scripts = append(scripts, script)
+		return "EKS_SHARED vpc=vpc-1\n", nil
+	}
+	helper := func(context.Context, string, ...string) (string, error) {
+		t.Fatal("an eks host asked the root helper")
+		return "", nil
+	}
+	var out, errw strings.Builder
+	if rc := HostCommand(context.Background(), root, []string{"adopt", "e"}, &out, &errw, helper, run); rc != 0 {
+		t.Fatalf("adopt rc %d: %s", rc, errw.String())
+	}
+	if len(scripts) != 1 || !strings.Contains(scripts[0], "eks-lane.sh' host-setup") || !strings.Contains(scripts[0], "EKS_REGION='us-west-2'") || !strings.Contains(out.String(), "EKS_SHARED") {
+		t.Fatalf("scripts %q out %q", scripts, out.String())
+	}
+	if rc := HostCommand(context.Background(), root, []string{"teardown", "e"}, &out, &errw, helper, run); rc != 0 || len(scripts) != 2 || !strings.Contains(scripts[1], "eks-lane.sh' host-teardown") {
+		t.Fatalf("teardown rc %d scripts %q: %s", rc, scripts, errw.String())
+	}
+}
+
+// The shared node launch template carries what a node needs that eksctl used to set per lane: a gp3 root volume and an
+// instance metadata hop limit of 2 (without it the EBS CSI controller pods cannot reach the node credentials and the add-on
+// never becomes healthy).
+func TestEksSharedStackTemplateSetsNodeVolumeAndMetadataHops(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join(pkgDir, "..", "..", "deploy", "eks", "shared.yaml"))
+	must(t, err)
+	for _, want := range []string{"HttpPutResponseHopLimit: 2", "VolumeType: gp3", "AmazonEKSClusterPolicy", "AmazonEBSCSIDriverPolicy", "NodeLaunchTemplateVersion"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("shared.yaml lacks %q", want)
+		}
+	}
+}
+
+// An up is ready when the add-on pods run; it does not wait for the add-on API status, which lags them by minutes.
+func TestEksLaneUpWaitsForAddonPodsNotAddonStatus(t *testing.T) {
+	s := newEksScript(t)
+	if out, err := s.run(nil, "up", "eks1", filepath.Join(t.TempDir(), "kc")); err != nil {
+		t.Fatalf("up: %v\n%s", err, out)
+	}
+	for _, d := range []string{"coredns", "metrics-server", "ebs-csi-controller"} {
+		if !strings.Contains(s.log(), "rollout status deployment/"+d) {
+			t.Errorf("no wait for deployment %s:\n%s", d, s.log())
+		}
+	}
+	if strings.Contains(s.log(), "eks describe-addon --cluster-name sdo-lane-eks1 --addon-name coredns") {
+		t.Error("up polls the coredns add-on status")
 	}
 }
