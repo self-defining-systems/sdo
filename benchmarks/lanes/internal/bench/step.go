@@ -239,7 +239,11 @@ func RunStep(ctx context.Context, path string) error {
 	}
 	// A step is cancelled only by its own deadline: the manager going away must not stop it.
 	ctx = context.WithoutCancel(ctx)
-	r.res.Fuzzops, err = r.version(ctx)
+	// Deleting a lane's cluster needs no workload: a lane that never got a build has no checkout to ask.
+	noWorkload := s.Kind == StepRelease && s.Fuzzops == "" && s.DeleteCluster
+	if !noWorkload {
+		r.res.Fuzzops, err = r.version(ctx)
+	}
 	switch {
 	case err != nil:
 		r.fail("fuzzops version: %v", err)
