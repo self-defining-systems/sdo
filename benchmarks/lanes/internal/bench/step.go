@@ -246,7 +246,7 @@ func RunStep(ctx context.Context, path string) error {
 	}
 	switch {
 	case err != nil:
-		r.fail("fuzzops version: %v", err)
+		r.fail("workload identity: %v", err)
 	case pinMismatch(r.res.Fuzzops, s.WorkloadRev) != "":
 		r.fail("%s", pinMismatch(r.res.Fuzzops, s.WorkloadRev))
 	default:
