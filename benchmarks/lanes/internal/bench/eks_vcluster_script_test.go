@@ -101,7 +101,7 @@ func TestEksVclusterLaneUpOnAWarmHostMakesNoCluster(t *testing.T) {
 		}
 	}
 	vals := s.file("values-vc1")
-	for _, want := range []string{`enforceTolerations: ["sdo-lane=vc1:NoSchedule"]`, "enabled: true\n      selector:\n        labels: {sdo-lane: \"vc1\"}", "storageClasses:\n      enabled: true",
+	for _, want := range []string{`enforceTolerations: ["sdo-lane=vc1:NoSchedule"]`, "enabled: true\n      selector:\n        labels: {sdo-lane: \"vc1\"}", "storageClasses:\n      enabled: true", "networkPolicies:\n      enabled: true",
 		"nodeSelector: {sdo-role: system}", "resourceQuota:\n    enabled: false", "type: NodePort", "extraSANs: [54.0.0.1]"} {
 		if !strings.Contains(vals, want) {
 			t.Errorf("vcluster values lack %q:\n%s", want, vals)
