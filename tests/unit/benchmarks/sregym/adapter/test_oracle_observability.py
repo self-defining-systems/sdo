@@ -71,3 +71,51 @@ def test_a_failed_command_reports_its_stderr(tmp_path: Path):
         prepare_oracle_observability(
             kubeconfig=tmp_path / "kube", sregym_dir=_harness(tmp_path), cluster="lane", run=run
         )
+
+
+def _recording_run(calls: list):
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs.get("input")))
+        return subprocess.CompletedProcess(argv, 0, "{}", "")
+
+    return run
+
+
+def test_a_remote_lane_has_no_kind_nodes_to_cap_check(tmp_path: Path):
+    calls: list = []
+    prepare_oracle_observability(
+        kubeconfig=tmp_path / "kube",
+        sregym_dir=_harness(tmp_path),
+        cluster="lane",
+        run=_recording_run(calls),
+        remote=True,
+    )
+    assert not any(argv[0] in ("kind", "docker") for argv, _ in calls)
+    assert any("openebs-operator.yaml" in str(argv) for argv, _ in calls)
+
+
+def test_managed_storage_installs_no_openebs_and_uses_the_default_class(tmp_path: Path):
+    harness = _harness(tmp_path)
+    (harness / "sregym/observer/prometheus").mkdir(parents=True)
+    (harness / "sregym/observer/prometheus/prometheus-pvc.yml").write_text(
+        "kind: PersistentVolumeClaim\nspec:\n  storageClassName: openebs-hostpath\n"
+    )
+    calls: list = []
+    applied: list[str] = []
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        if "-f" in argv and "prometheus-pvc" not in str(argv) and argv[-1] != "-":
+            path = Path(argv[argv.index("-f") + 1])
+            if path.suffix == ".yml" and path.exists():
+                applied.append(path.read_text())
+        return subprocess.CompletedProcess(argv, 0, "{}", "")
+
+    prepare_oracle_observability(
+        kubeconfig=tmp_path / "kube", sregym_dir=harness, cluster="lane", run=run, remote=True, managed_storage=True
+    )
+    assert not any("openebs" in str(c) for c in calls)
+    helm = next(c for c in calls if c[0] == "helm")
+    assert "server.persistentVolume.storageClass=null" in helm
+    assert applied
+    assert "storageClassName" not in applied[0]
