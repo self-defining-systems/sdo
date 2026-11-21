@@ -28,6 +28,7 @@ from typing import IO, Any
 from benchmarks.commit_series.scenario import Bounds, SeriesOps, run_commit
 from benchmarks.common.replay.replay import ReplayError, ReplayRecord, replay, run_git
 from benchmarks.common.replay.series import Series
+from benchmarks.fuzzops import workload as fuzzops_workload
 from benchmarks.sregym.fastloop.toy_live import KubectlScenarioOps
 from benchmarks.sregym.fastloop.toy_upstream import UpstreamLayout, forwarded_remote
 
@@ -118,9 +119,12 @@ def _git(args: Any, cwd: Any = None, stdin: Any = None, env: Any = None) -> subp
 
 
 def inject_fault(
-    builtin: list[str], flags: dict[str, str], entry: Entry, fault: str, stdout: IO[str]
+    builtin: list[str], flags: dict[str, str], entry: Entry, fault: str, stdout: IO[str], env: dict[str, str]
 ) -> dict[str, Any]:
-    """Run the wrapped workload's ``run`` for ``fault`` (its own instances file); returns its record."""
+    """Run the wrapped workload's ``run`` for ``fault`` (its own instances file); returns its record.
+
+    The wrapped workload is fuzzops' python workload (``benchmarks.fuzzops.workload``), which adds a lane provider's
+    environment to the bare fuzzops binary in ``builtin``; the fault goes through it like any other call."""
     if entry.fault_instances is None:
         raise AdapterError(
             f"the series puts fault {fault!r} after a commit but the instances file has no fault_instances"
@@ -131,7 +135,13 @@ def inject_fault(
             command[command.index(name) + 1] = value
         else:
             command += [name, value]
-    done = subprocess.run(command, capture_output=True, text=True, check=False)
+    done = subprocess.run(
+        [sys.executable, "-m", "benchmarks.fuzzops.workload", "run"],
+        env={**env, "WORKLOAD_BUILTIN": json.dumps(command)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
     sys.stderr.write(done.stderr)
     lines = [line for line in done.stdout.splitlines() if line.strip()]
     if not lines:
@@ -149,7 +159,7 @@ def run(env: dict[str, str], stdout: IO[str], *, ops: SeriesOps | None = None) -
         else None
     )
     if entry is None:
-        return delegate(builtin)
+        return delegate("run", env)
     lane_dir = Path(env["BENCH_LANE_DIR"])
     index = int(flags["seed"])
     ops = ops or LaneOps(lane_dir, Path(env["KUBECONFIG"]), entry.series)
@@ -159,7 +169,7 @@ def run(env: dict[str, str], stdout: IO[str], *, ops: SeriesOps | None = None) -
         ops.sleep(ahead)
     record = run_commit(ops, entry.series, index, entry.bounds, flags.get("operator", ""))
     if fault := entry.series.faults.get(index):
-        injected = inject_fault(builtin, flags, entry, fault, stdout)
+        injected = inject_fault(builtin, flags, entry, fault, stdout, env)
         record["fault"] = injected
         record["valid"] = bool(record["valid"] and injected.get("valid", False))
         if "lifecycle" in injected:
@@ -168,12 +178,13 @@ def run(env: dict[str, str], stdout: IO[str], *, ops: SeriesOps | None = None) -
     return 0
 
 
-def delegate(builtin: list[str]) -> int:
-    """The call is not a series run: the wrapped workload answers it unchanged."""
-    if not builtin:
+def delegate(verb: str, env: dict[str, str]) -> int:
+    """The call is not a series run: the wrapped workload (fuzzops' python workload, then the fuzzops binary named by
+    ``WORKLOAD_BUILTIN``) answers it unchanged."""
+    if not env.get("WORKLOAD_BUILTIN"):
         print(json.dumps({"unsupported": True}))
         return 64
-    return subprocess.run(builtin, check=False).returncode
+    return fuzzops_workload.main([verb], env)
 
 
 def main(argv: list[str], env: dict[str, str] | None = None, stdout: IO[str] | None = None) -> int:
@@ -187,7 +198,7 @@ def main(argv: list[str], env: dict[str, str] | None = None, stdout: IO[str] | N
         return 0
     if verb == "grade":
         return grade(env, out)
-    return delegate(json.loads(env["WORKLOAD_BUILTIN"]) if env.get("WORKLOAD_BUILTIN") else [])
+    return delegate(verb, env)
 
 
 def _is_series(env: dict[str, str]) -> bool:
@@ -202,7 +213,7 @@ def grade(env: dict[str, str], stdout: IO[str]) -> int:
     directory = Path(env.get("WORKLOAD_RESULTS") or json.loads(env.get("WORKLOAD_ARGS", "[]"))[0])
     lines = [json.loads(x) for x in (directory / "runs.jsonl").read_text().splitlines() if x.strip()]
     if not lines or not all("series" in rec for rec in lines):
-        return delegate(json.loads(env["WORKLOAD_BUILTIN"]) if env.get("WORKLOAD_BUILTIN") else [])
+        return delegate("grade", env)
     rows = ["| series | # | commit | outcome | deploy s | incident | agent tasks |", "|---|---|---|---|---|---|---|"]
     ordered = sorted(lines, key=lambda r: (r["series"], r["index"]))
     rows.extend(
