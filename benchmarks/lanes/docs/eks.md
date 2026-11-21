@@ -41,6 +41,9 @@ predates eks.
   add-ons a kind lane has (vpc-cni with the NetworkPolicy agent, coredns, kube-proxy, metrics-server, pod identity), one
   managed node group, a service-account-token kubeconfig whose context is `kind-<lane>`, and the node agent (a
   containerd registry mirror to ECR plus the node-write seam). A failed up deletes its half-built cluster.
+- **Storage.** The default StorageClass is `local-path` (node-local, binds when a pod is placed), as on a kind lane:
+  SDO mounts the same ReadWriteOnce claims from several pods and relies on the claim to place them on its node, which an
+  EBS volume (it attaches to one node and places nothing) does not do. `gp3` is installed but not the default.
 - **Size.** From the workload's `footprint` verb (or the spec's `lane:`): two nodes of the cheapest instance type that
   holds half of it (one node under 4 cores), never under `min_node_vcpus`. Passed to the script as `EKS_INSTANCE_TYPE`,
   `EKS_NODES`.
