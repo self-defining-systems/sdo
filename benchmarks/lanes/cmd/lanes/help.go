@@ -65,8 +65,8 @@ var helpTable = map[string]verbHelp{
 		flags: rootFlag + "  --with EXP   a baseline experiment whose noop runs grade this one (repeatable)\n",
 	},
 	"lane": {
-		desc:  "lane maintenance; `lane reset LANE` returns a down lane to free after a human looked",
-		usage: "lane reset LANE --root R",
+		desc:  "lane maintenance; `lane reset LANE` returns a down lane to free after a human looked; `lane release LANE` deletes a free lane's cluster on the next manager pass",
+		usage: "lane reset|release LANE --root R",
 		flags: rootFlag,
 	},
 	"gc": {

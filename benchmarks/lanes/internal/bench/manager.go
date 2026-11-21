@@ -475,10 +475,15 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 		if m.churnFull(l.Host) {
 			continue // a release or a reset waits for a free churn slot; the next pass tries again
 		}
-		del := !l.Gone && m.inv.Hosts[l.Host].ClusterDown != "" && !m.wanted(l.Host) &&
+		forced := !l.Gone && m.inv.Hosts[l.Host].ClusterDown != "" && m.releaseRequested(l)
+		del := forced || !l.Gone && m.inv.Hosts[l.Host].ClusterDown != "" && !m.wantedBy(l) &&
 			(gcAll || m.gcWanted[l.Host] || m.ownerDone(l)) && (!m.inv.Hosts[l.Host].IsEks() || gcAll || m.eksIdle(l))
 		switch {
 		case del:
+			if forced {
+				m.consumeRelease(l)
+				m.logf("lane %s: released by request (lane release)", l.Lane)
+			}
 			m.start(ctx, l, Step{Kind: StepRelease, Prev: l.Prepared, DeleteCluster: true})
 		case l.Prepared != nil && l.Prepared.Hooks != "" && !l.Prepared.Reset:
 			// A lane already returned to its golden copy has nothing left to release; releasing it again only
@@ -1610,17 +1615,16 @@ func (m *Manager) breakRest(x *Experiment, l *LaneFile, rs *RunSpec, why string)
 	}
 }
 
-// wanted reports whether some experiment could build on host now (it has sequences left to run).
-func (m *Manager) wanted(host string) bool {
+// wantedBy reports whether some experiment that has sequences left to run could be placed on lane now: its host is
+// usable for the experiment and the lane's labels satisfy its selector. Another lane of the same host that the
+// experiment cannot use does not count, so it is released (not kept for work that will never land on it).
+func (m *Manager) wantedBy(l *LaneFile) bool {
 	for _, x := range m.exps {
 		if x.Spec == nil || x.Paused {
 			continue
 		}
-		on := false
-		for _, h := range m.inv.UsableHosts(x.Measured()) {
-			on = on || h == host
-		}
-		if !on {
+		s := x.Measured()
+		if !slices.Contains(m.inv.UsableHosts(s), l.Host) || !m.inv.LaneAccepts(l.Host, l.Lane, s) {
 			continue
 		}
 		for _, q := range x.AllSeqs() {

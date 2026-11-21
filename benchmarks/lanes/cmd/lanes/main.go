@@ -193,11 +193,15 @@ func run(verb string, args []string) int {
 	case "plan":
 		err = planVerb(r, pos, *jsonOut, *dryRun, *cancel, *keep, *allParked, bench.ResultsOptions{TSV: *tsv, Final: *final, Done: *doneOnly, GradeFields: *gradeFields})
 	case "lane":
-		if len(pos) != 2 || pos[0] != "reset" {
+		if len(pos) != 2 || (pos[0] != "reset" && pos[0] != "release") {
 			fmt.Fprintln(os.Stderr, usage)
 			return 2
 		}
-		err = bench.LaneReset(r, pos[1])
+		if pos[0] == "release" {
+			err = bench.LaneRelease(r, pos[1])
+		} else {
+			err = bench.LaneReset(r, pos[1])
+		}
 	default:
 		fmt.Fprintln(os.Stderr, usage)
 		return 2
