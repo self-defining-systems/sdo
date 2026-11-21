@@ -41,6 +41,12 @@ HOST_LOAD = "host-load.json"
 INCOMPLETE = "evidence incomplete"
 #: Observability captures that must be present once the receipt says the stack answered.
 CAPTURES = ("prometheus", "jaeger", "applogs")
+#: The model name an operator is configured with when its agents are scripted stand-ins (no model, no cost, no
+#: transcript). The controller records the model it ran in ``agent-resolved.jsonl`` and in every usage record; an
+#: incident whose declared models are all this one is a stub incident (see :func:`declared_stub`).
+STUB_MODEL = "stub"
+#: Per incident files whose records name the model an agent ran.
+_MODEL_RECORDS = ("agent-resolved.jsonl", "claude-turns.jsonl", "reflection-usage.jsonl")
 _AGENT_ID = re.compile(r'agentId["\\: ]+(a[0-9a-f]{15,16})')
 
 
@@ -195,6 +201,8 @@ class Timeline:
     responder_cost_usd: float | None = None
     resolution_path: str | None = None
     closure_phase_timestamps: dict[str, str] = field(default_factory=dict)
+    #: The incident's agents declared themselves stand-ins (:func:`declared_stub`).
+    stub: bool = False
 
 
 @dataclass
@@ -211,6 +219,8 @@ class Session:
     cost_usd: float | None = None
     started_at: str | None = None
     ended_at: str | None = None
+    #: The agent declared itself a stand-in (model ``stub``): no cost and no session file are required of it.
+    stub: bool = False
 
 
 @dataclass
@@ -233,6 +243,9 @@ class CellEvidence:
     #: Incident directories with no ledger and no seal: incidents still open when collect ran (not the cell's own, which
     #: the settle waits for). Their session files are checked; their ledger does not exist yet.
     open_incidents: list[str] = field(default_factory=list)
+    #: True when any incident of the cell ran declared stand-in agents: a stub row, valid but not a measurement of a
+    #: model. Real-agent incidents of the same cell keep the strict checks.
+    stub: bool = False
 
     def to_json(self) -> dict[str, Any]:
         return asdict(self)
@@ -256,6 +269,7 @@ class CellEvidence:
             waived=list(raw.get("waived", [])),
             excluded=list(raw.get("excluded", [])),
             open_incidents=list(raw.get("open_incidents", [])),
+            stub=bool(raw.get("stub", False)),
         )
 
     @property
@@ -384,6 +398,21 @@ def _jsonl(path: Path) -> list[dict[str, Any]]:
     return out
 
 
+def declared_stub(incident_dir: Path) -> bool:
+    """Whether every agent of this incident declared the stand-in model (:data:`STUB_MODEL`).
+
+    The declaration is the model the controller recorded for the agents it started. No declaration, or any other
+    model among them, is a real agent: it keeps every cost and session requirement.
+    """
+    models = {
+        str(rec["model"])
+        for name in _MODEL_RECORDS
+        for rec in _jsonl(incident_dir / name)
+        if isinstance(rec.get("model"), str) and rec["model"]
+    }
+    return models == {STUB_MODEL}
+
+
 def _sessions(run: Path, incident_dir: Path) -> tuple[list[Session], list[Problem]]:
     """The agent sessions of one evidence directory and the files each must have.
 
@@ -394,7 +423,9 @@ def _sessions(run: Path, incident_dir: Path) -> tuple[list[Session], list[Proble
     sessions: dict[str, Session] = {}
     problems: list[Problem] = []
     label = incident_dir.name[:12]
+    stub = declared_stub(incident_dir)
     files = {p.stem: p for p in incident_dir.glob("claude/projects/*/*.jsonl")}
+    rollouts = sink.rollout_files(incident_dir)  # a Codex session's transcript: rollout-<timestamp>-<session id>.jsonl
     started_roles: list[str] = []
     for rec in _jsonl(incident_dir / "claude-turns.jsonl"):
         sid, role = str(rec.get("session_id") or ""), str(rec.get("role") or "agent")
@@ -415,9 +446,13 @@ def _sessions(run: Path, incident_dir: Path) -> tuple[list[Session], list[Proble
     for sid in files:
         sessions.setdefault(sid, Session(incident=label, role="agent", session_id=sid, path=None))
     for sid, s in sessions.items():
-        main = files.get(sid)
+        s.stub = stub
+        main = files.get(sid) or next((p for p in rollouts if p.stem.endswith(f"-{sid}")), None)
         if main is None:
-            problems.append(Problem(f"session {sid[:8]}", "missing", f"{label}: {s.role} session file not collected"))
+            if not stub:  # a declared stand-in writes no session file
+                problems.append(
+                    Problem(f"session {sid[:8]}", "missing", f"{label}: {s.role} session file not collected")
+                )
             continue
         s.path = str(main.relative_to(run))
         bad = jsonl_problem(main)
@@ -440,7 +475,7 @@ def _sessions(run: Path, incident_dir: Path) -> tuple[list[Session], list[Proble
             for p in sorted(subdir.glob("agent-*.jsonl"))
             if str(p.relative_to(run)) not in s.subagents
         )
-    if started_roles and not sessions and not any(incident_dir.rglob("rollout-*.jsonl")):
+    if started_roles and not sessions and not stub and not any(incident_dir.rglob("rollout-*.jsonl")):
         problems.append(
             Problem("session files", "missing", f"{label}: {len(started_roles)} session(s) started, none collected")
         )
@@ -643,6 +678,8 @@ def build(run_dir: Path, run_pending: bool = False) -> CellEvidence:
         ledger_by_dir[d.name] = ledger
         reflection_usage = _jsonl(d / "reflection-usage.jsonl")
         tl = _timeline(incident_id, ledger, outcome, reflection_usage)
+        tl.stub = declared_stub(d)
+        ev.stub = ev.stub or tl.stub
         ev.timelines.append(tl)
         ran = sink.agents_ran(ledger) if ledger else False
         for field_name in ("detected_at", "closure_start_at", "closed_at"):
@@ -652,12 +689,12 @@ def build(run_dir: Path, run_pending: bool = False) -> CellEvidence:
             for field_name in ("dispatched_at", "verified_at", "health_cleared_at"):
                 if getattr(tl, field_name) is None and tl.outcome in (None, "success"):
                     problems.append(Problem(f"timeline {label}", "incomplete", f"no {field_name}"))
-            if tl.resolution_path == "responder" and tl.responder_cost_usd is None:
+            if tl.resolution_path == "responder" and tl.responder_cost_usd is None and not tl.stub:
                 problems.append(Problem(f"responder usage {label}", "incomplete", "no total_cost_usd"))
         if ledger and sink.closing_turn_ran(ledger):
             if tl.closing_turn_end_at is None:
                 problems.append(Problem(f"closing turn {label}", "incomplete", "no end time"))
-            if tl.closing_turn_cost_usd is None:
+            if tl.closing_turn_cost_usd is None and not tl.stub:
                 problems.append(Problem(f"closing turn {label}", "incomplete", "no cost"))
         if outcome.get("applied_playbooks") and tl.playbook_applied_at is None:
             problems.append(Problem(f"playbook {label}", "incomplete", "applied but no apply timestamp"))
@@ -668,7 +705,7 @@ def build(run_dir: Path, run_pending: bool = False) -> CellEvidence:
         sessions, session_problems = _sessions(run, d)
         ev.agents.extend(sessions)
         problems += session_problems
-        if ran and not sessions and not any(d.rglob("rollout-*.jsonl")):
+        if ran and not sessions and not tl.stub and not any(d.rglob("rollout-*.jsonl")):
             problems.append(Problem(f"sessions {label}", "missing", "an agent ran; no session files"))
     # lifecycle tasks (onboarding, designer, deployer): same session rules
     life_root = op / "evidence" / "lifecycle"
