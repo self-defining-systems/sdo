@@ -30,7 +30,7 @@ from benchmarks.fuzzops import sink
 from benchmarks.sregym.adapter import WaitKind, wait_for
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
@@ -151,6 +151,21 @@ def _merge_run_level(source: Path, destination: Path) -> None:
             shutil.copy2(entry, destination / entry.name)
 
 
+def _namespace_exists(kube: Callable[..., list[str]], namespace: str) -> bool:
+    found = subprocess.run(
+        kube("get", "namespace", namespace, "-o", "name"),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=wait_for(WaitKind.MINUTE),
+    )
+    if found.returncode == 0:
+        return True
+    if "NotFound" in found.stderr:
+        return False
+    raise EvidenceSinkError(f"cannot read namespace {namespace}: {found.stderr.strip()[-300:]}")
+
+
 def pull_cluster_sink(environment: FastloopEnvironment, run_ids: Sequence[str]) -> bool:
     """An EKS lane's sink is a claim in the control namespace: copy the ``run_ids`` run directories out of it into the
     host evidence root (other runs of the claim are not pulled).
@@ -180,6 +195,10 @@ def pull_cluster_sink(environment: FastloopEnvironment, run_ids: Sequence[str]) 
     )
     if claim.returncode != 0:
         if "NotFound" in claim.stderr:
+            if not _namespace_exists(kube, control):
+                # SDO was never installed on this lane (the first row of a fresh lane wipes before it installs):
+                # there was no claim, so there is no evidence to lose.
+                return False
             unsaved = [run for run in run_ids if sink.layout_problem(root / run)]
             if unsaved:
                 raise EvidenceClaimMissing(
