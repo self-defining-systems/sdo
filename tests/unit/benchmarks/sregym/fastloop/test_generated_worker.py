@@ -29,15 +29,15 @@ ROOT = Path(__file__).resolve().parents[5]
 SEED_SOURCES = [FIXTURES.parent / "scripted_seed"]
 
 
-def test_matched_program_runs_use_the_real_tool_binding_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_matched_programs_are_applied_with_sdo_mitigate_and_every_binding_kind(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, ...]] = []
 
     def tool(*args: str) -> dict[str, str]:
         calls.append(args)
-        return {"plan_id": "plan-1"}
+        return {"application_id": "app-1"}
 
     monkeypatch.setattr(scripts, "_tool", tool)
-    plans, programs = scripts._matched_plans(
+    programs = scripts._mitigate_matched(
         {
             "program_runs": [
                 {
@@ -47,12 +47,46 @@ def test_matched_program_runs_use_the_real_tool_binding_shape(monkeypatch: pytes
                     },
                     "verdict": {"result": "Match"},
                 },
+                {
+                    "program_id": "scalar-and-object",
+                    "bindings": {
+                        "objects": {"deploy": {"kind": "Deployment", "namespace": "hotel", "name": "reservation"}},
+                        "values": {"timeout_s": 30, "mode": "strict", "ports": [80, 81]},
+                    },
+                    "verdict": {"result": "Match"},
+                },
                 {"program_id": "other", "bindings": {}, "verdict": {"result": "NoMatch"}},
             ]
         }
     )
-    assert (plans, programs) == (["plan-1"], ["service-targetport-mismatch"])
-    assert calls == [("plan", "service-targetport-mismatch", "--bind", "service=Service/hotel/front")]
+    assert programs == ["service-targetport-mismatch", "scalar-and-object"]
+    assert calls == [
+        ("mitigate", "service-targetport-mismatch", "--bind", "service=Service/hotel/front"),
+        (
+            "mitigate",
+            "scalar-and-object",
+            *("--bind", "deploy=Deployment/hotel/reservation"),
+            *("--bind", "mode=strict"),
+            *("--bind", "ports=[80,81]"),
+            *("--bind", "timeout_s=30"),
+        ),
+    ]
+
+
+def test_scripted_responder_calls_only_sdo_subcommands_the_production_cli_has() -> None:
+    import re
+
+    from sdo.agents.responder import tools_cli
+
+    parser = tools_cli._parser()
+    subcommands = next(action.choices for action in parser._actions if getattr(action, "choices", None))
+    from benchmarks.sregym.fastloop import responder_script, responder_steps
+
+    used = set()
+    for module in (responder_steps, responder_script):
+        used |= set(re.findall(r'_tool\("([a-z]+)"', Path(module.__file__).read_text()))
+    assert used
+    assert used <= set(subcommands), sorted(used - set(subcommands))
 
 
 @pytest.mark.parametrize("seed_source", SEED_SOURCES)

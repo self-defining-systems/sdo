@@ -79,7 +79,14 @@ def respond(request):
                     scope.update(
                         {
                             name: globals()[name]
-                            for name in ("_tool", "_command", "_patch_from_source", "_assess_drift", "_matched_plans")
+                            for name in (
+                                "_tool",
+                                "_command",
+                                "_patch_from_source",
+                                "_assess_drift",
+                                "_mitigate_matched",
+                                "_bind_args",
+                            )
                         }
                     )
                     exec(marker + tail, scope)
