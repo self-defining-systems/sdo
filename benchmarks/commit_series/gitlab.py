@@ -42,15 +42,18 @@ RENDER_FILE = "k8s/render.yaml"
 NEXT_PATH = RELEASES_PATH.with_name("releases-10.5.4.json")
 
 
-def plain_render(helm_output: str) -> str:
+def plain_render(helm_output: str, *, migrations: bool = False) -> str:
     """The pack's SDO repository file for a render: plain documents without helm hooks, as ``yaml.safe_dump_all``.
+
+    ``migrations`` keeps the Jobs that are not helm hooks (the chart's schema migration). The base render has none, as
+    the pack's baseline holds none; a release needs its own, or its pods wait in an init container for the schema.
 
     Pod ``checksum/*`` annotations are left out. They hash the rendered config, which SDO's own instrumentation has
     changed in the lane's file, so every chart bump would conflict on them there; an engineer would resolve that by
     hand and the replayer cannot."""
     docs = [
         doc
-        for doc in plain_docs(helm_output)
+        for doc in plain_docs(helm_output, jobs=migrations)
         if "helm.sh/hook" not in ((doc.get("metadata") or {}).get("annotations") or {})
     ]
     for doc in docs:
@@ -60,7 +63,7 @@ def plain_render(helm_output: str) -> str:
     return yaml.safe_dump_all(docs, sort_keys=False)
 
 
-def render_release(release: Release, archive: Path, pack: Path) -> dict[str, str]:
+def render_release(release: Release, archive: Path, pack: Path, *, migrations: bool = False) -> dict[str, str]:
     """The release rendered through the fuzzops GitLab pack at ``pack`` (its ``chart/`` and ``values-fuzzops.yaml``)."""
     with tempfile.TemporaryDirectory(prefix="gitlab-series-") as scratch:
         build = Path(scratch) / "chart"
@@ -77,7 +80,7 @@ def render_release(release: Release, archive: Path, pack: Path) -> dict[str, str
             text=True,
             check=True,
         )
-    return {RENDER_FILE: plain_render(done.stdout)}
+    return {RENDER_FILE: plain_render(done.stdout, migrations=migrations)}
 
 
 def fetch(release: Release, cache: Path) -> Path:
@@ -110,7 +113,7 @@ def build(
     *,
     releases_path: Path = NEXT_PATH,
     limit: int | None = None,
-    render: Callable[[Release, Path, Path], dict[str, str]] = render_release,
+    render: Callable[..., dict[str, str]] = render_release,
     fetch_archive: Callable[[Release, Path], Path] = fetch,
 ) -> Path:
     """Create ``dest`` (the history) with the base release's tree and one commit per later release; write the spec.
@@ -129,7 +132,7 @@ def build(
     base_sha = _git(repo, "rev-parse", "HEAD")
     commits = []
     for release in later:
-        _write_tree(repo, render(release, fetch_archive(release, cache), pack))
+        _write_tree(repo, render(release, fetch_archive(release, cache), pack, migrations=True))
         _git(repo, "add", "-A")
         _git(
             repo,
