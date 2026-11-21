@@ -571,7 +571,7 @@ def build(run_dir: Path, run_pending: bool = False) -> CellEvidence:
     _check_json(add("run.json", "run.json", required=not run_pending), run, problems)
     rec_item = add("record.json", "record.json")
     _check_json(rec_item, run, problems)
-    if isinstance(record, dict):
+    if isinstance(record, dict) and "series" not in record:  # a commit-series record is the adapter's, not a run's
         for k in ("window", "tail", "timing", "interference"):
             if not isinstance(record.get(k), dict):
                 problems.append(Problem("record.json", "incomplete", f"no {k}"))  # noqa: PERF401
