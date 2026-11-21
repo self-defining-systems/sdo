@@ -203,8 +203,9 @@ def test_holds_checks_the_pinned_digest_in_the_lanes_registry_only() -> None:
 
 
 def test_a_virtual_lane_attaches_without_reading_the_hosts_kube_system() -> None:
-    """A vcluster lane has no aws-node or node agent in its own kube-system: they are the host cluster's, which the lanes
-    provider owns. Attach fences the cluster and trusts that; node scripts are a named error there."""
+    """A vcluster lane has no aws-node or node agent in its own kube-system: they are the host cluster's.
+
+    Attach fences the cluster and trusts the lanes provider for both; node scripts are a named error there."""
     run = FakeRun(
         [
             (("config", "view"), 0, "https://1.2.3.4:30000", ""),
