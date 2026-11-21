@@ -19,6 +19,7 @@ import subprocess
 from typing import TYPE_CHECKING
 
 from benchmarks.lanes.eks import AGENT_LANE, NODE_LANE_ROOT, EksProvider
+from benchmarks.sregym.adapter import WaitKind, wait_for
 from libs.agent_cli.provider_capacity import DEFAULT_OPUS_HOST_SHARE
 
 if TYPE_CHECKING:
@@ -28,7 +29,6 @@ if TYPE_CHECKING:
 
 OPUS_POOL = "opus-pool"
 #: Seconds a new node may take to run its agent before the pool is provisioned on it.
-NODE_AGENT_WAIT = 300
 MIRROR_CHECK_TIMEOUT = "120s"
 #: The uid SDO's controller and workers run as; the pool's files must be writable for its flocks.
 WORKER_UID = 65532
@@ -67,7 +67,7 @@ def provision_opus_pool(environment: FastloopEnvironment, environ: Mapping[str, 
 
     assert environment.eks is not None
     provider = EksProvider(environment.eks, str(environment.kubeconfig))
-    return provider.run_on_nodes(opus_pool_script(opus_capacity(environ)), wait=NODE_AGENT_WAIT)
+    return provider.run_on_nodes(opus_pool_script(opus_capacity(environ)), wait=wait_for(WaitKind.ROLLOUT))
 
 
 def ensure_opus_pool(
@@ -121,7 +121,12 @@ def verify_mirror_serves(
     }
     try:
         created = run(
-            [*kube, "apply", "-f", "-"], input=json.dumps(pod), capture_output=True, text=True, check=False, timeout=120
+            [*kube, "apply", "-f", "-"],
+            input=json.dumps(pod),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
         )
         if created.returncode != 0:
             raise MirrorCheckError(f"mirror check pod: {created.stderr.strip()[-300:]}")
@@ -136,7 +141,7 @@ def verify_mirror_serves(
             capture_output=True,
             text=True,
             check=False,
-            timeout=240,
+            timeout=2 * wait_for(WaitKind.SLOW_COMMAND),
         )
         if done.returncode != 0:
             why = run(
@@ -144,7 +149,7 @@ def verify_mirror_serves(
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=60,
+                timeout=wait_for(WaitKind.MINUTE),
             )
             raise MirrorCheckError(
                 f"a node could not pull {sink.PULL_IMAGE} through the lane's mirror: "
@@ -156,7 +161,7 @@ def verify_mirror_serves(
             capture_output=True,
             text=True,
             check=False,
-            timeout=120,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
         )
     return sink.PULL_IMAGE
 
