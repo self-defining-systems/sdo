@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -27,8 +29,19 @@ def prepare_oracle_observability(
     sregym_dir: Path,
     cluster: str,
     run: Run = subprocess.run,
+    remote: bool | None = None,
+    managed_storage: bool | None = None,
 ) -> float:
-    """Return the lane's total CPU cap after installing and checking stock telemetry."""
+    """Return the lane's total CPU cap after installing and checking stock telemetry.
+
+    A ``remote`` lane (EKS) has no kind nodes to cap-check (0.0 is returned). ``managed_storage`` (a virtual lane,
+    whose StorageClasses are its host's) installs no OpenEBS and lets the claim use the default class. Unset, both
+    follow the worker environment (``SREGYM_CLUSTER_PLATFORM``, ``SREGYM_MANAGED_STORAGE``)."""
+
+    if remote is None:
+        remote = os.environ.get("SREGYM_CLUSTER_PLATFORM", "kind") != "kind"
+    if managed_storage is None:
+        managed_storage = os.environ.get("SREGYM_MANAGED_STORAGE", "") == "1"
 
     observer = sregym_dir / "sregym/observer"
     if not observer.is_dir():
@@ -42,21 +55,33 @@ def prepare_oracle_observability(
         except subprocess.CalledProcessError as exc:
             raise RuntimeError(f"{' '.join(argv)} exited {exc.returncode}: {exc.stderr}") from exc
 
-    nodes = command(["kind", "get", "nodes", "--name", cluster]).split()
-    caps = command(["docker", "inspect", "--format", "{{.HostConfig.NanoCpus}}", *nodes]).split()
-    if not nodes or len(caps) != len(nodes) or any(int(cap) <= 0 for cap in caps):
-        raise ValueError("Oracle observability requires every lane node to be Docker CPU capped")
-    cores = sum(int(cap) for cap in caps) / 1e9
+    cores = 0.0
+    if not remote:
+        nodes = command(["kind", "get", "nodes", "--name", cluster]).split()
+        caps = command(["docker", "inspect", "--format", "{{.HostConfig.NanoCpus}}", *nodes]).split()
+        if not nodes or len(caps) != len(nodes) or any(int(cap) <= 0 for cap in caps):
+            raise ValueError("Oracle observability requires every lane node to be Docker CPU capped")
+        cores = sum(int(cap) for cap in caps) / 1e9
     kube = ["kubectl", "--kubeconfig", str(kubeconfig)]
-    command(
-        [*kube, "apply", "--server-side", "-f", str(Path(__file__).parent / "infrastructure/openebs-operator.yaml")]
-    )
-    command([*kube, "-n", "openebs", "rollout", "status", "deployment/openebs-localpv-provisioner", "--timeout=300s"])
+    if not managed_storage:
+        command(
+            [*kube, "apply", "--server-side", "-f", str(Path(__file__).parent / "infrastructure/openebs-operator.yaml")]
+        )
+        command(
+            [*kube, "-n", "openebs", "rollout", "status", "deployment/openebs-localpv-provisioner", "--timeout=300s"]
+        )
     command(
         [*kube, "apply", "-f", "-"],
         input=json.dumps({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "observe"}}),
     )
-    command([*kube, "-n", "observe", "apply", "-f", str(observer / "prometheus/prometheus-pvc.yml")])
+    claim = observer / "prometheus/prometheus-pvc.yml"
+    if managed_storage:
+        claim = _default_class_claim(claim)
+    try:
+        command([*kube, "-n", "observe", "apply", "-f", str(claim)])
+    finally:
+        if managed_storage:
+            claim.unlink(missing_ok=True)
     command(
         [
             "helm",
@@ -71,6 +96,7 @@ def prepare_oracle_observability(
             "--wait",
             "--timeout",
             "5m",
+            *(["--set", "server.persistentVolume.storageClass=null"] if managed_storage else []),
         ]
     )
     command([*kube, "apply", "-f", str(observer / "jaeger/jaeger.yaml")])
@@ -121,3 +147,14 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def _default_class_claim(claim: Path) -> Path:
+    """A copy of the claim manifest without ``storageClassName``, so the cluster's default class serves it."""
+    import yaml
+
+    manifest = yaml.safe_load(claim.read_text(encoding="utf-8"))
+    manifest.get("spec", {}).pop("storageClassName", None)
+    with tempfile.NamedTemporaryFile("w", suffix=".yml", delete=False, encoding="utf-8") as handle:
+        yaml.safe_dump(manifest, handle)
+    return Path(handle.name)
