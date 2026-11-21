@@ -434,6 +434,8 @@ def eks_worker_environment(args: argparse.Namespace, *, workspace: Path, lane: E
     """The SREGym worker environment of an EKS lane: attach only, build the app from source, publish by mirror."""
 
     return {
+        # A virtual lane's StorageClasses are its host's: SREGym installs no OpenEBS there.
+        **({"SREGYM_MANAGED_STORAGE": "1"} if lane.virtual else {}),
         "SREGYM_KIND_CLUSTER_PREFIX": args.cluster_prefix,
         "SREGYM_KIND_CLUSTER_NAME": f"{args.cluster_prefix}{args.worker_id}",
         "SREGYM_CLUSTER_PLATFORM": "eks",
