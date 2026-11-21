@@ -211,3 +211,37 @@ def test_the_builtin_workload_gets_the_entry_host_under_the_name_fuzzops_reads()
 
     assert workload.main(["gate"], {**_env("eks", "check"), "BENCH_ENTRY_HOST": "203.0.113.7"}, call) == 0
     assert seen[0]["FUZZOPS_ENTRY_HOST"] == "203.0.113.7"
+
+
+@pytest.mark.parametrize("action", ["active", "undo"])
+@pytest.mark.parametrize("provider", ["", "eks"])
+def test_the_fault_state_text_becomes_the_platforms_active_answer(
+    action: str, provider: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    seen: list[Sequence[str]] = []
+
+    def capture(argv: Sequence[str], _env: Mapping[str, str]) -> tuple[int, str]:
+        seen.append(argv)
+        return 0, f"{action} f@x in hb1: active=true\n"
+
+    env = {**_env(provider, action), "WORKLOAD_BUILTIN": json.dumps(["/fz/bin/fuzzops", "active-instance"])}
+    assert workload.handle("run", env, Calls(), capture) == 0
+    out = capsys.readouterr()
+    assert json.loads(out.out) == {"active": True}
+    assert "active=true" in out.err
+    assert seen == [["/fz/bin/fuzzops", "active-instance"]]
+
+
+def test_a_fault_state_command_that_says_nothing_prints_no_answer_and_keeps_its_exit_code(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    env = {**_env("", "active"), "WORKLOAD_BUILTIN": json.dumps(["/fz/bin/fuzzops", "active-instance"])}
+    assert workload.handle("run", env, Calls(), lambda _a, _e: (3, "boom\n")) == 3
+    assert capsys.readouterr().out == ""
+
+
+def test_the_run_verb_itself_still_streams_its_record_through() -> None:
+    calls = Calls()
+    env = {**_env("", "run"), "WORKLOAD_BUILTIN": json.dumps(["/fz/bin/fuzzops", "run"])}
+    assert workload.handle("run", env, calls, lambda _a, _e: (_ for _ in ()).throw(AssertionError("captured"))) == 0
+    assert calls.argv == [["/fz/bin/fuzzops", "run"]]

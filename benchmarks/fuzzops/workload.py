@@ -16,6 +16,10 @@ spec that names this adapter behaves as a spec that names none, except on a lane
     The same shim, and ``FUZZOPS_IMAGE_PUBLISH`` naming it: a fault that builds a patched image (fuzzops
     ``build-and-deploy-patched-image``, which says ``ImageMirror``) publishes it to the mirror instead of loading it
     into a node, so such a fault is not excluded on EKS (``eks_faults`` reads the same field).
+``run active`` and ``run undo``
+    The lane platform wants ``{"active": bool}``; the built-in fuzzops command prints ``active=<bool>`` (the platform
+    turns that into the answer only for its own built-in workload), so this adapter does the same: the command's text
+    goes to stderr (the log) and the answer to stdout.
 ``footprint``
     A GitLab app wants 8 cores and 30Gi (the size the built-in workload gives it); other apps take the default.
 
@@ -42,6 +46,8 @@ if TYPE_CHECKING:
 UNSUPPORTED = 64
 #: The ``app-up`` operations that load app images: a pack's ``up`` runs its ``images`` step again.
 IMAGE_ACTIONS = ("images", "up")
+#: The ``run`` operations whose answer is ``{"active": bool}``.
+ANSWER_ACTIONS = ("active", "undo")
 #: The one "node" an EKS lane's ``kind get nodes`` lists. A pack that preloads images through ``ensure-images.sh``
 #: needs a node to ``docker exec ... crictl`` into; the registry mirror holds the images on an EKS lane, so the docker
 #: shim answers for this name only and passes every other docker call to the real docker.
@@ -129,12 +135,24 @@ def write_shim(directory: Path) -> None:
         path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
+ACTIVE_RE = re.compile(r"active=(true|false)")
+
+
+def active_answer(text: str) -> str | None:
+    """The lane platform's ``{"active": bool}`` for the text ``fuzzops active-instance`` / ``undo-instance`` print."""
+    found = ACTIVE_RE.search(text)
+    return None if found is None else json.dumps({"active": found.group(1) == "true"})
+
+
 def handle(
     verb: str,
     env: Mapping[str, str],
     call: Callable[[Sequence[str], Mapping[str, str]], int],
+    capture: Callable[[Sequence[str], Mapping[str, str]], tuple[int, str]] | None = None,
 ) -> int:
-    """One verb. ``call`` runs a command line with an environment and answers its exit code (stdout passes through)."""
+    """One verb. ``call`` runs a command line with an environment and answers its exit code (stdout passes through);
+    ``capture`` runs one and answers its exit code and output (for the verbs whose text becomes an answer)."""
+    capture = capture or _capture
     if verb == "footprint":
         size = footprint(env.get("BENCH_PACK", ""))
         if size is None:
@@ -156,8 +174,29 @@ def handle(
                 # a fault that builds an image (fuzzops build-and-deploy-patched-image) publishes it through this
                 "FUZZOPS_IMAGE_PUBLISH": f"{shim}/kind load docker-image",
             }
-            return call(builtin, patched)
-    return call(builtin, env)
+            return _run(verb, builtin, patched, call, capture)
+    return _run(verb, builtin, env, call, capture)
+
+
+def _run(
+    verb: str,
+    builtin: Sequence[str],
+    env: Mapping[str, str],
+    call: Callable[[Sequence[str], Mapping[str, str]], int],
+    capture: Callable[[Sequence[str], Mapping[str, str]], tuple[int, str]],
+) -> int:
+    if verb != "run" or env.get("WORKLOAD_ACTION") not in ANSWER_ACTIONS:
+        return call(builtin, env)
+    code, text = capture(builtin, env)
+    print(text, end="", file=sys.stderr)
+    if (answer := active_answer(text)) is not None:
+        print(answer)
+    return code
+
+
+def _capture(argv: Sequence[str], env: Mapping[str, str]) -> tuple[int, str]:
+    done = subprocess.run(list(argv), env=dict(env), capture_output=True, text=True, check=False)
+    return done.returncode, done.stdout + done.stderr
 
 
 def _call(argv: Sequence[str], env: Mapping[str, str]) -> int:
