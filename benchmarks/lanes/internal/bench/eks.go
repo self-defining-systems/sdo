@@ -118,6 +118,12 @@ func (h Host) BuildLimit() int {
 	return h.MaxBuilds
 }
 
+// RecreatesAfterFailure says whether a failed build or gate sends the lane to a new cluster (delete, then create) as a last
+// resort: a kind host can make one in a minute or two. An eks cluster takes about twenty minutes to make, so a failure is
+// retried in place and, when it repeats, the lane goes Down and its cluster is deleted (eks.go): the cost of a retry is
+// a reset in place, not a cluster.
+func (h Host) RecreatesAfterFailure() bool { return h.ClusterUp != "" && !h.IsEks() }
+
 // Idle is the idle timeout (default DefaultEksIdleTimeout).
 func (e *HostEKS) Idle() time.Duration {
 	d, err := time.ParseDuration(e.IdleTimeout)
