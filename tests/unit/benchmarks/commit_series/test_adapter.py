@@ -110,3 +110,14 @@ def test_a_fault_after_a_commit_runs_through_the_fuzzops_workload_too(tmp_path: 
     record = adapter.inject_fault(builtin, {}, entry, "fault-x", io.StringIO(), env)
     assert record == {"valid": True}
     assert marker.read_text().strip() == "10.1.2.3"
+
+
+def test_the_safety_check_after_a_series_run_answers_inactive_for_the_lane_platforms_flags(tmp_path: Path) -> None:
+    """The platform asks `run active` and `run undo` with `--file/--id`, not the run's `--instance-file/--instance`;
+    a series has no fault to undo, and passing the call on made the lane go down with `fault still active`."""
+    args = ["--file", str(instances(tmp_path)), "--id", "demo", "--pack", "/p", "--namespace", "fg1"]
+    for action in ("active", "undo"):
+        out = io.StringIO()
+        code = adapter.main(["run"], {"WORKLOAD_ACTION": action, "WORKLOAD_ARGS": json.dumps(args)}, out)
+        assert code == 0
+        assert json.loads(out.getvalue()) == {"active": False}
