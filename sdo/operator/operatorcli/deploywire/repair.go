@@ -40,7 +40,7 @@ func RepairDeployer(identity Identity, launch *contracts.ControllerConfig, opera
 		return lifecycle.RepairDeployer{}, err
 	}
 	return lifecycle.RepairDeployer{Broker: repository, Readiness: deployer, Verifier: verifier,
-		Maintenance: Maintenance{Client: client, Namespace: ControlNamespace(launch), Now: processio.Now}}, nil
+		Maintenance: Maintenance{Client: client, Namespace: ControlNamespace(launch), Now: processio.Now}, Now: processio.Now}, nil
 }
 
 // The controller's broker is the repair's broker.
