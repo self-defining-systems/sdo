@@ -400,8 +400,13 @@ def prepare_benchmark_resources(
     if not isinstance(cluster_ip, str):
         raise RuntimeError("benchmark registry Service has no ClusterIP")
     if config.lane_platform == "eks":
-        from benchmarks.lanes.eks import write_node_file
+        from benchmarks.lanes.eks import EksLane, write_node_file
 
+        recorded = os.environ.get("FASTLOOP_EKS_LANE", "")
+        if recorded and EksLane.model_validate_json(recorded).virtual:
+            # A virtual lane's nodes are the host cluster's: its node agent is not in this cluster, so no node file can
+            # be written from here (images pulled from this registry are not supported on such a lane).
+            return
         write_node_file(str(trusted), f"{config.registry_host}/hosts.toml", registry_hosts(config, cluster_ip))
     else:
         _configure_kind_nodes(config, nodes, cluster_ip)

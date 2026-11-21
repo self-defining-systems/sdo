@@ -496,3 +496,41 @@ def test_settling_asks_the_claim_only_for_rows_that_injected(tmp_path: Path, mon
 
     write_injection_marker(injected, datetime.now(UTC), frozenset())
     assert "evidence claim" in evidence_sink.settle_lane_evidence(environment)[0]
+
+
+def test_a_virtual_lane_writes_no_node_files_through_a_node_agent_it_cannot_reach(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        out = ""
+        if "nodes" in command:
+            out = json.dumps(
+                {
+                    "items": [
+                        {"metadata": {"name": "n"}, "status": {"conditions": [{"type": "Ready", "status": "True"}]}}
+                    ]
+                }
+            )
+        if "service/sdo-benchmark-registry" in command:
+            out = json.dumps({"spec": {"clusterIP": "10.0.0.7"}})
+        if "deployment/sdo-benchmark-registry" in command:
+            out = json.dumps({"status": {"readyReplicas": 1}})
+        return subprocess.CompletedProcess(command, 0, out, "")
+
+    written: list[str] = []
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr("benchmarks.lanes.eks.write_node_file", lambda *a: written.append(a[1]) or [])
+    monkeypatch.setenv("FASTLOOP_EKS_LANE", LANE.model_copy(update={"virtual": True}).model_dump_json())
+    config = BenchmarkClusterResourcesConfig(
+        namespace="hotel-reservation",
+        control_namespace="hotel-reservation-sdo",
+        responder_image="responder@" + DIGEST,
+        credentials_secret="sdo-agent-credentials",
+        registry_push_secret="sdo-registry-push",
+        registry_insecure=True,
+        kind_cluster_name="vc-1",
+        lane_platform="eks",
+        evidence_claim=True,
+    )
+    prepare_benchmark_resources(config, relay_target_base=None, kubeconfig=tmp_path / "kc")
+    assert written == []
