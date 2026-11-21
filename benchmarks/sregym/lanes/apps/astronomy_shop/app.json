@@ -1,0 +1,5 @@
+{
+  "application": "astronomy_shop",
+  "namespace": "astronomy-shop",
+  "deploy_problem": "wrong_service_selector_astronomy_shop"
+}
