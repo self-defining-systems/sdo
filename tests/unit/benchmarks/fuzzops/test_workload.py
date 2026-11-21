@@ -167,6 +167,9 @@ def test_the_docker_shim_answers_for_the_mirror_node_and_passes_everything_else_
 
     mirror = run("exec", workload.MIRROR_NODE, "crictl", "pull", "img:1")
     assert (mirror.returncode, mirror.stdout) == (0, "")
+    # a node with no files: load-images.sh must not take the mirror for a kind lane with a host registry
+    marker = run("exec", workload.MIRROR_NODE, "test", "-f", "/etc/containerd/certs.d/_default/hosts.toml")
+    assert marker.returncode == 1
     other = run("image", "inspect", "img:1")
     assert (other.returncode, other.stdout) == (0, "real image inspect img:1\n")
     node = run("exec", "some-kind-node", "crictl", "ps")
