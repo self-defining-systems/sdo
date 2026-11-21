@@ -221,16 +221,20 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 			_ = c.closureRecheckWaitExpired(effect.Identity, recheck.Bound)
 		}
 		if len(effect.Closure.FinalDetectorStates) > 0 && effect.Closure.ClosureStabilityWindow > 0 && (recheck.Verdict == closureRecheckConfirmed || recheck.SourceOnly) {
+			// One instant decides the proof, whether its window is running and
+			// the deadline: a window this pass restarted starts at now, so it is
+			// not running and cannot hold the closure past the deadline.
 			c.mu.Lock()
+			now := c.clock()
 			clear := c.recoveryTrackersClear(effect.Closure.Request)
-			stable := clear && c.recoveryProofForEpochLocked(c.clock(), recheck.States, true, effect.Closure.VerifiedAt.Add(-effect.Closure.ClosureStabilityWindow))
+			stable := clear && c.recoveryProofForEpochLocked(now, recheck.States, true, effect.Closure.VerifiedAt.Add(-effect.Closure.ClosureStabilityWindow))
 			if !clear {
 				c.closureStableSince = time.Time{}
 			}
-			windowRunning := clear && c.recoveryWindowRunningLocked(c.clock())
+			windowRunning := clear && c.recoveryWindowRunningLocked(now)
 			c.mu.Unlock()
 			if !stable {
-				if !windowRunning && !c.clock().Before(c.closureVerificationDeadline(effect.Closure)) {
+				if !windowRunning && !now.Before(c.closureVerificationDeadline(effect.Closure)) {
 					if effect.Freeze {
 						cancel()
 						return c.resumeClosureVerification(ctx, effect)

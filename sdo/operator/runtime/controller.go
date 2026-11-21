@@ -669,16 +669,15 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	detectors := c.scheduler.SelectEvents(now, events)
 	probes := c.dueGateProbes(now, detectors)
 	var objectChanges []ObjectChange
-	// freshObjectChanges counts the changes the cluster delivered this step;
-	// a deferred retry is the same observation again, not a new write.
-	freshObjectChanges := 0
+	// An object change is not a write SDO knows about (an HPA refreshing its
+	// status, a Pod becoming ready): it never restarts the stability window.
+	// Recovered counts from SDO's own writes and the responder's observed
+	// mutations; a change that breaks health shows as a firing detector.
 	if c.drift != nil {
 		if c.drift.Events != nil {
 			objectChanges = c.drift.Events.TakeObjectChanges()
 		}
-		freshObjectChanges = len(objectChanges)
 		objectChanges = c.dueDriftRetries(now, objectChanges)
-
 	}
 	if len(detectors) == 0 && len(probes) == 0 && len(objectChanges) == 0 && !c.adoptionNeeded && !c.hasRetainedDrift() {
 		c.forgetGate()
@@ -893,9 +892,6 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	c.probeGate(ctx, now, snapshot, probes)
 	c.forgetGate()
 	c.settleGateProbes(now)
-	if freshObjectChanges > 0 {
-		c.resetEarlyStability()
-	}
 	if len(detectors) > 0 {
 		sort.Slice(sampleFindings, func(left int, right int) bool {
 			return sampleFindings[left].Fingerprint < sampleFindings[right].Fingerprint

@@ -118,16 +118,13 @@ func TestDriftPermanentClassificationErrorIsNotRetried(t *testing.T) {
 	}
 }
 
-// A deferred retry is the same observation again, not a new write: it must
-// not restart the recovery stability window, or an incident whose alerts
-// cleared never closes while a classification keeps failing. A fresh change
-// still restarts it.
-func TestDeferredDriftRetryDoesNotRestartRecoveryStability(t *testing.T) {
+// An object change is not a write SDO knows about, and neither is its
+// deferred retry: neither restarts the recovery stability window, or an
+// incident whose alerts cleared never closes while the cluster keeps changing
+// or a classification keeps failing.
+func TestObjectChangesAndDriftRetriesDoNotRestartRecoveryStability(t *testing.T) {
 	w := newDriftRetryWorld(t, errors.New("accepted source is unavailable"))
 	queue := w.c.drift.Events.(*requeueingChanges)
-	fresh := func() {
-		queue.pending = append(queue.pending, objectChange(t, driftService(8080), driftService(9999), "v1", "Service"))
-	}
 	stable := w.start.Add(time.Second)
 	armed := func() {
 		w.c.mu.Lock()
@@ -141,8 +138,8 @@ func TestDeferredDriftRetryDoesNotRestartRecoveryStability(t *testing.T) {
 	}
 	armed()
 	w.stepAt(t, 2*time.Second)
-	if since, lost := window(); !since.IsZero() || !lost {
-		t.Fatalf("a fresh change must restart the window: since=%s lost=%v", since, lost)
+	if since, lost := window(); !since.Equal(stable) || lost {
+		t.Fatalf("an object change restarted the window: since=%s lost=%v", since, lost)
 	}
 	queue.pending = nil
 	for _, elapsed := range []time.Duration{4 * time.Second, 8 * time.Second, 16 * time.Second, 32 * time.Second} {
@@ -155,11 +152,5 @@ func TestDeferredDriftRetryDoesNotRestartRecoveryStability(t *testing.T) {
 		if since, lost := window(); !since.Equal(stable) || lost {
 			t.Fatalf("t+%s: a deferred retry restarted the window: since=%s lost=%v", elapsed, since, lost)
 		}
-	}
-	fresh()
-	armed()
-	w.stepAt(t, 33*time.Second)
-	if since, lost := window(); !since.IsZero() || !lost {
-		t.Fatalf("a new change to the object must restart the window: since=%s lost=%v", since, lost)
 	}
 }
