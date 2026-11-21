@@ -1042,7 +1042,22 @@ def check(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     return 0
 
 
+class PhaseTimer:
+    """Prints how long each phase of a hook took (``prepare phase: <name> <s>s (total <s>s)``), so the hook log of a
+    slow prepare shows which phase it was in without file timestamps."""
+
+    def __init__(self, out: Callable[[str], None], clock: Callable[[], float] = time.monotonic) -> None:
+        self._out, self._clock = out, clock
+        self._began = self._last = clock()
+
+    def mark(self, name: str) -> None:
+        now = self._clock()
+        self._out(f"prepare phase: {name} {now - self._last:.0f}s (total {now - self._began:.0f}s)")
+        self._last = now
+
+
 def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
+    timer = PhaseTimer(out)
     try:
         evidence_env = sink.install_env(env)
     except sink.SinkError as exc:
@@ -1067,12 +1082,14 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     if why := render_difference(pack_docs(source), reference):
         raise HookError(why)
     out("render identical to the baseline's")
+    timer.mark("live render checked")
     # (c) the attached pack the runs use
     shutil.rmtree(lane_dir / "pack", ignore_errors=True)
     attached = write_attached_pack(source, lane_dir / "pack").resolve()
     # (d) the operator binary of the pinned checkout
     binary = build_operator(Path.cwd(), lane_dir / "bin" / "sdo-operator")
     dev_env = dev_mount_env(env, block, binary, out)
+    timer.mark("operator binary built")
     # (e) the operator images on the workers
     image = block.images()
     registry = Path(env["BENCH_REGISTRY"]) if env.get("BENCH_REGISTRY") else None
@@ -1124,6 +1141,7 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     if not cfg.auth_file.is_file():
         raise HookError(f"agent credentials file {cfg.auth_file} is missing")
     provision_namespaces(cfg)
+    timer.mark("operator images placed, namespaces made")
     if pulled:
         # no node holds the app's images by tag: they are pulled from their registries, nothing to declare
         nodes = json.loads(_run(kube.cmd("get", "nodes", "-o", "json"), "nodes", 120).stdout)
@@ -1149,6 +1167,7 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     # the memory's own render (instrumentation) is what must be running when the operator adopts the app
     if apply_memory_render(_kube(env), namespace, lane_dir / "app", reference, out):
         out("memory render applied")
+    timer.mark("evidence claim, dev tree, baseline memory")
     # (g2) the remote branch SDO deploys from, when the experiment pushes engineers' commits to one
     branch_url: tuple[str, str] | None = None
     if block.source_branch is not None:
@@ -1187,6 +1206,7 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
             "install-existing.log",
         ):
             shutil.copy2(lane_dir / name, bench_out / name)
+    timer.mark("install-existing")
     if rc != 0:
         tail = (lane_dir / "install-existing.log").read_text()[-300:].strip().replace("\n", " ")
         raise HookError(f"install-existing exited {rc}: {tail}")
@@ -1196,8 +1216,16 @@ def prepare(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
         run_seed(source, env)
         out("app reseeded")
     # install-existing returns before the controller runs: the reset waits for its start-up to end, then for the ack.
-    reset = reset_when_started(kube, binary.resolve(), baseline.control, kubeconfig)
+    timer.mark("app rollouts and seed")
+    reset = reset_when_started(
+        kube,
+        binary.resolve(),
+        baseline.control,
+        kubeconfig,
+        on_started=lambda: timer.mark("controller started"),
+    )
     out(f"incidents reset: generation {reset.get('generation')}")
+    timer.mark("incidents reset")
     (lane_dir / PREPARED_RECORD).write_text(
         json.dumps(
             {
@@ -1370,10 +1398,13 @@ def reset_when_started(
     patience: float = RESET_PATIENCE_S,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
+    on_started: Callable[[], None] = lambda: None,
 ) -> dict[str, Any]:
     """``reset_when_running`` once the controller has finished starting: asking earlier only burns a 2-minute
-    acknowledgement wait per request, and a controller that needs longer than the retries last fails the lane."""
+    acknowledgement wait per request, and a controller that needs longer than the retries last fails the lane.
+    ``on_started`` is called when the start-up has ended, before the reset is asked for."""
     wait_controller_started(kube, control, start_patience, sleep, clock)
+    on_started()
     return reset_when_running(binary, control, kubeconfig, patience, sleep, clock)
 
 
