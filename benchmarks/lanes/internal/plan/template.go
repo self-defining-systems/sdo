@@ -106,14 +106,15 @@ func (e *Engine) Render(n Node, attempt int, artifacts map[string]string) ([]byt
 		mergeSpec(spec, ov)
 	}
 	spec["name"] = name
-	spec["fuzzops"] = e.Plan.Pins.Workload.Rev
+	pins := e.pinsOf(n.Pins)
+	spec["fuzzops"] = pins.Workload.Rev
 	op, _ := spec["operator"].(map[string]any)
 	if op == nil {
 		op = map[string]any{}
 		spec["operator"] = op
 	}
-	if e.Plan.Pins.Subject.Rev != "" {
-		op["revision"] = e.Plan.Pins.Subject.Rev
+	if pins.Subject.Rev != "" {
+		op["revision"] = pins.Subject.Rev
 	} else {
 		delete(op, "revision")
 	}

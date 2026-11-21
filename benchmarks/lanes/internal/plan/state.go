@@ -54,6 +54,13 @@ type NodeState struct {
 	Artifacts map[string]*ArtifactState `json:"artifacts,omitempty"`
 	// Attempts are the ended attempts, oldest first; the current one is in the fields above.
 	Attempts []AttemptRecord `json:"attempts,omitempty"`
+	// Pins, when set, replace the plan's pins for this node: `plan retry --repin` set them. Nil: the plan's pins.
+	Pins *Pins `json:"pins,omitempty"`
+}
+
+// node is the plan node n stands for, with the pins it runs with.
+func (n *NodeState) node() Node {
+	return Node{ID: n.ID, Arm: n.Arm, Item: n.Item, Rep: n.Rep, Index: n.Index, Pins: n.Pins}
 }
 
 // AttemptRecord is one ended attempt of a node: how it ended and how long each stage took.
@@ -67,6 +74,9 @@ type AttemptRecord struct {
 	Stages    map[string]time.Duration `json:"stages,omitempty"`
 	// Rowed: the attempt's row is in results.jsonl.
 	Rowed bool `json:"rowed,omitempty"`
+	// Pins, when set, are the pins the attempt ran with (kept when a `plan retry --repin` changes the node's pins
+	// before the attempt's row is written). Nil: the node's.
+	Pins *Pins `json:"pins,omitempty"`
 }
 
 // StepState is the state of one step instance.
@@ -95,6 +105,19 @@ type State struct {
 	// Retried logs the nodes `plan retry` requeued; RetriesApplied are the ids of the requests already applied.
 	Retried        map[string]RetryRec `json:"retried,omitempty"`
 	RetriesApplied []string            `json:"retries_applied,omitempty"`
+	// PinChanges logs every pin a `plan retry --repin` changed, and for which nodes.
+	PinChanges []PinChange `json:"pin_changes,omitempty"`
+}
+
+// PinChange is one re-pin: the role (subject or workload), the pin before and after, the retry request, and the
+// nodes that now run with the new pin. Nodes not listed keep their pin.
+type PinChange struct {
+	At    time.Time `json:"at"`
+	Retry string    `json:"retry"`
+	Role  string    `json:"role"`
+	From  string    `json:"from"`
+	To    string    `json:"to"`
+	Nodes []string  `json:"nodes"`
 }
 
 const stateVersion = 1

@@ -120,6 +120,12 @@ alarms: {factor: 2, idle_lane: 10m, arm_stall: 90m, hook: "notify-send lanes \"$
   with nothing parked or failed. Like the other commands it writes only `control.json` (a request with an id); the
   engine applies it once, logs it in `state.json` (`retried`: when, and what the park was) and reopens a finished
   plan, so a manager restart loses nothing. `plan status` shows `retried: <node> retried at <t> (was parked: <reason>)`.
+  Pins are locked in the plan, so a subject or workload fix needs `--repin subject=<rev|ref>` (and `workload=`; repeatable,
+  `ref:/abs/checkout` names the checkout to resolve in): the value is resolved to a full revision now, every requeued node
+  is rendered with it and checked like `plan add` checks a spec (`ValidateRendered`), and a refusal stores nothing. The engine
+  gives only the retried nodes the new pin (`pins` on the node; `pin_changes` in `state.json` log role, old and new pin,
+  request and nodes). Done nodes and rows already written keep their old pin, and a run on other source than its node's
+  pin is still a source mismatch.
 - **Commands.** `lanes plan add FILE [--dry-run [--json]]` (`--dry-run` runs every check of `add` -- parse, items, groups, every item's rendered spec through the spec validator and the inventory, a taken name -- and prints the items, arms, edges, steps and the nodes in run order with their experiment names; nothing is stored under the root), `lanes plan status [NAME] [--json]` (per plan: the state -- running, paused, removed, complete -- and an
   `items:` line that puts every item in one state: done, in flight, queued, blocked, parked, skipped or failed; per arm:
   done, in-flight, queued, blocked, failed, skipped, parked nodes; every parked, failed and skipped item with its reason;

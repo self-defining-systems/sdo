@@ -32,7 +32,7 @@ func PendingSpecs(dir string) ([][]byte, error) {
 				arts[ed.Artifact] = ""
 			}
 		}
-		spec, _, err := e.Render(Node{ID: n.ID, Arm: n.Arm, Item: n.Item, Rep: n.Rep, Index: n.Index}, n.Attempt+1, arts)
+		spec, _, err := e.Render(n.node(), n.Attempt+1, arts)
 		if err != nil {
 			continue
 		}

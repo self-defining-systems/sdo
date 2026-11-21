@@ -37,7 +37,7 @@ const usage = `usage: lanes VERB --root R ...
                              drop lanes whose cluster is gone, or register a lane that exists (run on the host)
   host reserve HOST|all | unreserve HOST [--drain] | status [HOST] | adopt HOST [--cpus LIST] | install-helper HOST
                              the hosts.yaml reserve: block: apply it through the root helper, undo it, show it, record an existing one
-  plan add FILE [--dry-run [--json]] | pause|resume|remove [--keep] NAME | skip [--cancel] NAME ITEM | unskip NAME ITEM | retry NAME ITEM|NODE|--all-parked | status [NAME] [--json] | results NAME [--tsv] [--final] [--done] [--grade-fields a,b]   the plan engine: arms x items x reps with verified-artifact edges (docs/plan.md)
+  plan add FILE [--dry-run [--json]] | pause|resume|remove [--keep] NAME | skip [--cancel] NAME ITEM | unskip NAME ITEM | retry NAME ITEM|NODE|--all-parked [--repin ROLE=REV]... | status [NAME] [--json] | results NAME [--tsv] [--final] [--done] [--grade-fields a,b]   the plan engine: arms x items x reps with verified-artifact edges (docs/plan.md)
   probe --staging S [--fuzzops F,..] LANE=STEP ...   how a host's steps stand, as JSON (the manager runs it over ssh)`
 
 func main() {
@@ -72,6 +72,8 @@ func run(verb string, args []string) int {
 	jsonOut := fs.Bool("json", false, "plan status, plan add --dry-run: print JSON")
 	cancel := fs.Bool("cancel", false, "plan remove, plan skip: also cancel the runs in flight (their queued runs are dropped; a run on a lane finishes)")
 	keep := fs.Bool("keep", false, "plan remove: only retire the plan (no new work; runs in flight finish); its experiments and name stay")
+	var repin multi
+	fs.Var(&repin, "repin", "plan retry: move the retried nodes to a new pin, role=revision (role subject or workload; repeatable)")
 	allParked := fs.Bool("all-parked", false, "plan retry: retry every parked item of the plan")
 	dryRun := fs.Bool("dry-run", false, "plan add: validate fully and print the expanded plan; store nothing")
 	tsv := fs.Bool("tsv", false, "plan results: tab-separated rows with a header (default: JSON lines)")
@@ -191,7 +193,7 @@ func run(verb string, args []string) int {
 	case "preflight":
 		err = bench.Preflight(ctx, r, specs, bench.PreflightOptions{MaxLoadPerCore: *maxLoad, AllowMemoryDiag: allow}, os.Stdout)
 	case "plan":
-		err = planVerb(r, pos, *jsonOut, *dryRun, *cancel, *keep, *allParked, bench.ResultsOptions{TSV: *tsv, Final: *final, Done: *doneOnly, GradeFields: *gradeFields})
+		err = planVerb(r, pos, *jsonOut, *dryRun, *cancel, *keep, *allParked, []string(repin), bench.ResultsOptions{TSV: *tsv, Final: *final, Done: *doneOnly, GradeFields: *gradeFields})
 	case "lane":
 		if len(pos) != 2 || pos[0] != "reset" {
 			fmt.Fprintln(os.Stderr, usage)
@@ -279,7 +281,7 @@ func probe(args []string) int {
 }
 
 // planVerb is `lanes plan add FILE | status [NAME] | results NAME`.
-func planVerb(r bench.Root, pos []string, jsonOut, dryRun, cancel, keep, allParked bool, ro bench.ResultsOptions) error {
+func planVerb(r bench.Root, pos []string, jsonOut, dryRun, cancel, keep, allParked bool, repin []string, ro bench.ResultsOptions) error {
 	if len(pos) == 0 {
 		return fmt.Errorf("plan: want add FILE | pause|resume|remove NAME | skip NAME ITEM | retry NAME ITEM|NODE | status [NAME] | results NAME")
 	}
@@ -337,7 +339,7 @@ func planVerb(r bench.Root, pos []string, jsonOut, dryRun, cancel, keep, allPark
 		if !allParked {
 			target = pos[2]
 		}
-		return bench.PlanControl(r, pos[1], func(d string) error { return plan.RetryPlan(d, target, allParked) })
+		return bench.PlanRetry(r, pos[1], target, allParked, repin)
 	case "skip":
 		if len(pos) != 3 {
 			return fmt.Errorf("plan skip: want NAME ITEM")
