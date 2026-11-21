@@ -116,11 +116,11 @@ func (h HeadDeployer) Deploy(ctx context.Context, cfg RepairConfig) (HeadResult,
 }
 
 func (h HeadDeployer) deploy(ctx context.Context, cfg RepairConfig, commit string) (HeadResult, error) {
-	accepted, found, err := h.Broker.AcceptedSourceEvidence(ctx)
+	accepted, _, err := h.Broker.AcceptedSourceEvidence(ctx)
 	if err != nil && !errors.Is(err, planfile.ErrAbsent) {
 		return HeadResult{}, fmt.Errorf("accepted deployment evidence: %w", err)
 	}
-	if err != nil || !found || accepted.Plan.GetSource() == nil {
+	if err != nil || accepted.Plan.GetSource() == nil {
 		return HeadResult{Outcome: HeadCurrent, Commit: commit, Detail: ErrNoAcceptedPlan.Error()}, nil
 	}
 	path, release, err := h.Broker.HeadCheckout(ctx, commit)

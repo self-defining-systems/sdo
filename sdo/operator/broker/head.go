@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"sdo.dev/operator/rendered"
 )
@@ -35,8 +36,17 @@ func (b *Broker) HeadToDeploy(ctx context.Context) (change HeadChange, needed bo
 			return err
 		}
 		recorded, found, err := b.acceptedEvidenceLocked(ctx)
-		if err != nil || !found {
+		if err != nil {
 			return err
+		}
+		if !found {
+			// A seeded install (install-existing) adopted what runs and
+			// recorded no deployment. The source it adopted is SDO's own newest
+			// commit; an engineer's push that changes the effective source
+			// after it is a head to deploy like any other.
+			if recorded, found, err = b.seedBaselineLocked(ctx); err != nil || !found {
+				return err
+			}
 		}
 		head, err := gitText(ctx, b.target, "rev-parse", "HEAD")
 		if err != nil {
@@ -125,4 +135,33 @@ func (b *Broker) RecordHeadDeployment(ctx context.Context, commit string, eviden
 // a recorded head deployment.
 func (b *Broker) headDeployed(ctx context.Context, commit string) (bool, error) {
 	return b.deployedBy(ctx, headDeploymentID(commit), commit)
+}
+
+// seedBaselineLocked is the reference of an install with no recorded deployment:
+// the effective source of the newest commit SDO wrote or installed (one that
+// carries an SDO-Actor trailer; someone else's commit never does). found is
+// false when the history holds none.
+func (b *Broker) seedBaselineLocked(ctx context.Context) (SourceEvidence, bool, error) {
+	out, err := runGit(ctx, b.target, "log", "--first-parent", "--format=%H%x1f%(trailers:key=SDO-Actor,valueonly)%x1e", "HEAD")
+	if err != nil {
+		return SourceEvidence{}, false, err
+	}
+	for _, record := range strings.Split(string(out), "\x1e") {
+		fields := strings.Split(strings.TrimSpace(record), "\x1f")
+		if len(fields) != 2 || strings.TrimSpace(fields[1]) == "" || !validGitID(strings.TrimSpace(fields[0])) {
+			continue
+		}
+		commit := strings.TrimSpace(fields[0])
+		tree, err := gitText(ctx, b.target, "rev-parse", commit+"^{tree}")
+		if err != nil {
+			return SourceEvidence{}, false, err
+		}
+		effective, err := rendered.Effective(ctx, rendered.ObjectStore{Dir: b.target}, rendered.BaseTree(tree))
+		if err != nil {
+			return SourceEvidence{}, false, fmt.Errorf("compute the effective tree of %s: %w", commit, err)
+		}
+		defer effective.Close()
+		return SourceEvidence{AcceptedCommit: commit, EffectiveTree: effective.ID, PatchesDigest: effective.PatchesDigest}, true, nil
+	}
+	return SourceEvidence{}, false, nil
 }
