@@ -470,3 +470,29 @@ def test_a_lane_whose_sdo_was_never_installed_has_no_claim_to_lose(
 
     monkeypatch.setattr(subprocess, "run", run)
     assert not evidence_sink.pull_cluster_sink(eks_environment(tmp_path), ["lane-r1"])
+
+
+def test_settling_asks_the_claim_only_for_rows_that_injected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A row that never injected has no incident evidence in the sink: after the wipe recreated the control namespace
+    (its claim comes with the next SDO install), the missing claim is not lost evidence."""
+    from benchmarks.sregym.fastloop.injection_marker import write_injection_marker
+
+    environment = eks_environment(tmp_path)
+    (tmp_path / "results" / "never-injected").mkdir(parents=True)
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        if "namespace" in command:
+            return subprocess.CompletedProcess(command, 0, "namespace/x", "")
+        return subprocess.CompletedProcess(command, 1, "", 'persistentvolumeclaims "sdo-evidence" NotFound')
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert evidence_sink.settle_lane_evidence(environment) == []
+    assert not calls  # nothing to pull
+    injected = tmp_path / "results" / "injected"
+    injected.mkdir()
+    from datetime import UTC, datetime
+
+    write_injection_marker(injected, datetime.now(UTC), frozenset())
+    assert "evidence claim" in evidence_sink.settle_lane_evidence(environment)[0]
