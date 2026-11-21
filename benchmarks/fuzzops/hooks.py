@@ -677,6 +677,19 @@ class Kube(Kubectl):
         raw = (cm.get("data") or {}).get(STATE_KEY)
         return (json.loads(raw) if raw else None), updated
 
+    def operator_gone(self, control: str) -> str:
+        """Why the operator is gone ("" when it is there or kubectl could not tell): its control namespace or its
+        controller Job answers NotFound. Any other failure (a busy API) is not an absence."""
+        probes = (
+            ("namespace", self.cmd("get", "namespace", control)),
+            ("controller", self.cmd("-n", control, "get", "job", CONTROLLER_JOB)),
+        )
+        for kind, cmd in probes:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False)
+            if proc.returncode != 0 and "NotFound" in proc.stderr:
+                return f"the {kind} of {control} no longer exists"
+        return ""
+
     def state(self, control: str) -> dict[str, Any] | None:
         return self.state_configmap(control)[0]
 
@@ -1418,6 +1431,11 @@ def end_run(env: Mapping[str, str]) -> None:
 def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     control = control_namespace(env)
     kube = _kube(env)
+    # Nothing to wait for: the bench's teardown stops waiting on "gone:" (it exits 1 so an older bench never reads it
+    # as idle).
+    if gone := kube.operator_gone(control):
+        out(f"gone: operator already gone ({gone})")
+        return 1
     try:
         ready = kube.controller_ready(control)
         state, updated = kube.state_configmap(control)
@@ -1707,7 +1725,10 @@ def source_branch_values(
 
 
 def teardown(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
-    remove_operator(_kube(env), control_namespace(env), out, env)
+    kube = _kube(env)
+    if gone := kube.operator_gone(control_namespace(env)):
+        out(f"operator already gone ({gone}); removing what is left")
+    remove_operator(kube, control_namespace(env), out, env)
     # The platform also tears down a previous operator with no experiment block (BENCH_OPERATOR unset): no remote.
     block = _operator(env) if env.get("BENCH_OPERATOR") else None
     if block is not None and block.source_branch is not None:
