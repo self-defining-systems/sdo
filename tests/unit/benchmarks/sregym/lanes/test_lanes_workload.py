@@ -863,3 +863,14 @@ def test_eks_fence_compares_the_recorded_cluster_with_the_kubeconfigs(tmp_path, 
     assert workload.eks_fence(ctx, env_dir) is True
     monkeypatch.setattr(provider, "cluster_identity", lambda kubeconfig, run=None: ("https://a", "other"))
     assert workload.eks_fence(ctx, env_dir) is False
+
+
+def test_every_app_pack_loads_and_names_a_namespace_fastloop_retires() -> None:
+    from benchmarks.sregym.fastloop.app_retirement import APPLICATION_NAMESPACES
+
+    packs = sorted((PACK.parent).iterdir())
+    assert {p.name for p in packs} == {"astronomy_shop", "hotel_reservation", "social_network"}
+    for pack in packs:
+        loaded = workload.AppPack.load(pack)
+        assert loaded.namespace in APPLICATION_NAMESPACES
+        assert loaded.application == pack.name
