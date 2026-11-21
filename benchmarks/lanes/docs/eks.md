@@ -63,7 +63,7 @@ predates eks.
   clusters for ever. This holds for cluster and vcluster lanes alike. Nothing bills overnight unless a manager is
   stopped with lanes up: `lanes status` shows the running estimate, `lanes gc` and the manager clean up. `lanes lane release LANE` deletes one free lane's cluster on the next pass whatever waits for it.
 - **Release, and why it does not overlap the next row.** A release asks the subject's idle, tears the operator down (its
-  evidence sink makes a last pass), checks the transcripts, and returns the app to its golden copy: measured on the real-agent
+  evidence sink makes a last pass), and checks the transcripts: measured on the real-agent
   batch it is 13 to 14 s of idle, 15 to 18 s of teardown and 1 s of transcripts (about 35 s) when nothing else holds it. The
   closing turn is not part of it: the run's settle already waits until the cell's own incident is closed and its closing work
   done, so by the release the agent has stopped. (The 10 to 18 minute releases of that batch were an idle gate waiting for a
