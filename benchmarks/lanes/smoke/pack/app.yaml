@@ -1,0 +1,13 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: tiny}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: tiny}}
+  template:
+    metadata: {labels: {app: tiny}}
+    spec:
+      containers:
+      - name: pause
+        image: registry.k8s.io/pause:3.10
+        imagePullPolicy: IfNotPresent
