@@ -195,13 +195,17 @@ def test_on_eks_the_run_verb_gets_an_image_publisher_next_to_the_shim() -> None:
         seen.append(env)
         return 0
 
+    def capture(_argv: Sequence[str], env: Mapping[str, str], live_stderr: bool = False) -> tuple[int, str, str]:
+        seen.append(env)
+        return 0, "{}", ""
+
     env = {**_env("eks", "run"), "WORKLOAD_BUILTIN": json.dumps(["/fz/bin/fuzzops", "run"])}
-    workload.handle("run", env, call)
+    workload.handle("run", env, call, capture)
     publish = seen[0]["FUZZOPS_IMAGE_PUBLISH"]
     assert publish.endswith("/kind load docker-image")
     assert seen[0]["PATH"].split(os.pathsep)[0] == publish.removesuffix("/kind load docker-image")
     kind = {**_env("kind", "run"), "WORKLOAD_BUILTIN": env["WORKLOAD_BUILTIN"]}
-    workload.handle("run", kind, call)
+    workload.handle("run", kind, call, capture)
     assert "FUZZOPS_IMAGE_PUBLISH" not in seen[1]
 
 
@@ -223,9 +227,9 @@ def test_the_fault_state_text_becomes_the_platforms_active_answer(
 ) -> None:
     seen: list[Sequence[str]] = []
 
-    def capture(argv: Sequence[str], _env: Mapping[str, str]) -> tuple[int, str]:
+    def capture(argv: Sequence[str], _env: Mapping[str, str], live_stderr: bool = False) -> tuple[int, str, str]:
         seen.append(argv)
-        return 0, f"{action} f@x in hb1: active=true\n"
+        return 0, f"{action} f@x in hb1: active=true\n", ""
 
     env = {**_env(provider, action), "WORKLOAD_BUILTIN": json.dumps(["/fz/bin/fuzzops", "active-instance"])}
     assert workload.handle("run", env, Calls(), capture) == 0
@@ -239,12 +243,26 @@ def test_a_fault_state_command_that_says_nothing_prints_no_answer_and_keeps_its_
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     env = {**_env("", "active"), "WORKLOAD_BUILTIN": json.dumps(["/fz/bin/fuzzops", "active-instance"])}
-    assert workload.handle("run", env, Calls(), lambda _a, _e: (3, "boom\n")) == 3
+    assert workload.handle("run", env, Calls(), lambda _a, _e, live_stderr=False: (3, "boom\n", "")) == 3
     assert capsys.readouterr().out == ""
 
 
-def test_the_run_verb_itself_still_streams_its_record_through() -> None:
-    calls = Calls()
+@pytest.mark.parametrize("provider", ["", "eks"])
+def test_the_run_record_is_printed_as_the_one_line_the_platform_reads(
+    provider: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    record = json.dumps({"fault": "f", "ready": {"misses": [{"why": "x"}]}, "window": 150}, indent=2)
+    env = {**_env(provider, "run"), "WORKLOAD_BUILTIN": json.dumps(["/fz/bin/fuzzops", "run"])}
+    assert (
+        workload.handle("run", env, Calls(), lambda _a, _e, live_stderr=False: (1, record + "\n", "[hb1] done\n")) == 1
+    )
+    out = capsys.readouterr()
+    assert out.out.count("\n") == 1
+    assert json.loads(out.out.splitlines()[-1])["window"] == 150
+    assert "[hb1] done" in out.err
+
+
+def test_a_run_output_that_is_not_json_is_passed_on_as_it_is(capsys: pytest.CaptureFixture[str]) -> None:
     env = {**_env("", "run"), "WORKLOAD_BUILTIN": json.dumps(["/fz/bin/fuzzops", "run"])}
-    assert workload.handle("run", env, calls, lambda _a, _e: (_ for _ in ()).throw(AssertionError("captured"))) == 0
-    assert calls.argv == [["/fz/bin/fuzzops", "run"]]
+    assert workload.handle("run", env, Calls(), lambda _a, _e, live_stderr=False: (2, "usage: fuzzops run\n", "")) == 2
+    assert capsys.readouterr().out == "usage: fuzzops run\n"
