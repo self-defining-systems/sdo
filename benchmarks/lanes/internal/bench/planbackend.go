@@ -181,6 +181,24 @@ func PlanControl(root Root, name string, f func(dir string) error) error {
 	return f(dir)
 }
 
+// PlanRetry is `lanes plan retry`: the request is written for the manager like any control request. With repin
+// (role=ref, role subject or workload) the new pins are resolved in their checkouts and every requeued node is
+// checked as `plan add` checks a spec (ValidateRendered against the inventory) before the request is stored.
+func PlanRetry(root Root, name, target string, all bool, repin []string) error {
+	dir := plan.Dir(root.PlansDir(), name)
+	if _, err := os.Stat(dir); err != nil {
+		return fmt.Errorf("no plan %q under %s", name, root.PlansDir())
+	}
+	if len(repin) == 0 {
+		return plan.RetryPlan(dir, target, all)
+	}
+	inv, err := LoadInventory(string(root))
+	if err != nil {
+		return err
+	}
+	return plan.RetryPlanRepin(dir, target, all, repin, planSpecCheck(inv), plan.WithResolver(GitResolve))
+}
+
 // planSpecCheck is the check of one rendered spec: ParseSpec, then ValidateRendered, the rules a submit makes too.
 func planSpecCheck(inv Inventory) func([]byte) error {
 	checks := NewRenderedChecks(nil)

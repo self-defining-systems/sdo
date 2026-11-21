@@ -60,6 +60,14 @@ func Open(dir string, b Backend, c Clock) (*Engine, error) {
 	return e, nil
 }
 
+// pinsOf is the pins a node runs with: its own when a retry re-pinned it, else the plan's.
+func (e *Engine) pinsOf(p *Pins) Pins {
+	if p != nil {
+		return *p
+	}
+	return e.Plan.Pins
+}
+
 func (e *Engine) logf(f string, a ...any) {
 	if e.Logf != nil {
 		e.Logf("plan %s: "+f, append([]any{e.Plan.Name}, a...)...)
@@ -140,7 +148,7 @@ func (e *Engine) observe(ctx context.Context, st *State) {
 				e.logf("run data %s: %v (next pass)", n.Exp, err)
 				continue
 			}
-			if why := e.sourceMismatch(rd); why != "" {
+			if why := e.sourceMismatch(e.pinsOf(n.Pins), rd); why != "" {
 				// Invariant 1: a run on other source than the arm's is not a result; it runs again.
 				e.checkStages(st, n, obs)
 				e.fail(st, n, "source-mismatch", why, obs.Stages)
@@ -514,7 +522,7 @@ func (e *Engine) release(ctx context.Context, st *State) {
 			continue
 		}
 		attempt := n.Attempt + 1
-		spec, name, err := e.Render(Node{ID: n.ID, Arm: n.Arm, Item: n.Item, Rep: n.Rep, Index: n.Index}, attempt, arts)
+		spec, name, err := e.Render(n.node(), attempt, arts)
 		if err != nil {
 			e.fail(st, n, "spec", err.Error(), nil)
 			continue

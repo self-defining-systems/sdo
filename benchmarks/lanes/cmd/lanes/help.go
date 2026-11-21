@@ -102,12 +102,13 @@ var helpTable = map[string]verbHelp{
 	},
 	"plan": {
 		desc:  "the plan engine: arms x items x reps with verified-artifact edges (docs/plan.md)",
-		usage: "plan add FILE [--dry-run [--json]] | pause|resume|remove [--keep] NAME | skip [--cancel] NAME ITEM | unskip NAME ITEM | retry NAME ITEM|NODE|--all-parked | status [NAME] [--json] | results NAME [--tsv] [--final] [--done] [--grade-fields a,b] --root R",
+		usage: "plan add FILE [--dry-run [--json]] | pause|resume|remove [--keep] NAME | skip [--cancel] NAME ITEM | unskip NAME ITEM | retry NAME ITEM|NODE|--all-parked [--repin ROLE=REV]... | status [NAME] [--json] | results NAME [--tsv] [--final] [--done] [--grade-fields a,b] --root R",
 		flags: rootFlag +
 			"  --dry-run        add: validate fully and print the expanded plan; store nothing\n" +
 			"  --json           status, add --dry-run: print JSON\n" +
 			"  --keep           remove: only retire the plan; its experiments and name stay\n" +
 			"  --all-parked     retry: retry every parked item of the plan\n" +
+			"  --repin ROLE=REV retry: run the retried nodes on a new subject or workload pin (a ref or revision, resolved now and validated like plan add; done nodes keep theirs)\n" +
 			"  --cancel         remove, skip: also cancel the runs in flight\n" +
 			"  --tsv            results: tab-separated rows with a header (default JSON lines)\n" +
 			"  --final          results: only the last attempt of each node\n" +

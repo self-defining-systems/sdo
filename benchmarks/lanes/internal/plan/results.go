@@ -65,10 +65,10 @@ const gradeWait = 30 * time.Minute
 // sourceMismatch says which observed revision contradicts its pin ("" when none does). Revisions match by prefix
 // either way (a short pin against a long revision). An observed value that is not a git revision (an adapter that
 // names its version in words) is recorded in the row and cannot be compared.
-func (e *Engine) sourceMismatch(rd RunData) string {
+func (e *Engine) sourceMismatch(pins Pins, rd RunData) string {
 	for _, c := range []struct{ role, pin, got string }{
-		{"workload", e.Plan.Pins.Workload.Rev, rd.WorkloadObserved},
-		{"subject", e.Plan.Pins.Subject.Rev, rd.SubjectObserved},
+		{"workload", pins.Workload.Rev, rd.WorkloadObserved},
+		{"subject", pins.Subject.Rev, rd.SubjectObserved},
 	} {
 		if revRE.MatchString(c.got) && !strings.HasPrefix(c.got, c.pin) && !strings.HasPrefix(c.pin, c.got) {
 			return fmt.Sprintf("%s ran %s, the plan pins %s", c.role, c.got, c.pin)
@@ -125,10 +125,14 @@ func (e *Engine) recordRows(ctx context.Context, st *State) {
 }
 
 func (e *Engine) row(n *NodeState, a *AttemptRecord, rd RunData, rdErr error) Row {
+	pins := e.pinsOf(n.Pins)
+	if a.Pins != nil {
+		pins = *a.Pins
+	}
 	r := Row{Plan: e.Plan.Name, Node: n.ID, Arm: n.Arm, Item: n.Item, Rep: n.Rep, Attempt: a.Attempt, Exp: a.Exp, Run: rd.Run, Position: rd.Position,
 		Status: "done", Reason: a.Reason, Host: rd.Host, Lane: rd.Lane, Isolation: rd.Isolation, Submitted: a.Submitted, Ended: a.Ended,
-		Source: SourceID{WorkloadPinned: e.Plan.Pins.Workload.String(), WorkloadObserved: rd.WorkloadObserved,
-			SubjectPinned: e.Plan.Pins.Subject.String(), SubjectObserved: rd.SubjectObserved, App: rd.App, OK: e.sourceMismatch(rd) == ""}}
+		Source: SourceID{WorkloadPinned: pins.Workload.String(), WorkloadObserved: rd.WorkloadObserved,
+			SubjectPinned: pins.Subject.String(), SubjectObserved: rd.SubjectObserved, App: rd.App, OK: e.sourceMismatch(pins, rd) == ""}}
 	if a.Reason != "" {
 		r.Status = "failed"
 	}

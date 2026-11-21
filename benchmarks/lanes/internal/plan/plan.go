@@ -552,6 +552,8 @@ type Node struct {
 	Item  string
 	Rep   int
 	Index int // position in the plan's order
+	// Pins, when set, are the pins this node runs with instead of the plan's (a `plan retry --repin`).
+	Pins *Pins
 }
 
 // NodeID is the id of the node of arm on item in rep.
