@@ -727,12 +727,12 @@ class Kube(Kubectl):
 # ---- render --------------------------------------------------------------------------------------------------
 
 
-def plain_docs(text: str) -> list[dict[str, Any]]:
+def plain_docs(text: str, *, jobs: bool = False) -> list[dict[str, Any]]:
     """The objects of a rendered manifest stream as a plain pack holds them: no Jobs (hooks and one-shot
-    migrations), no empty documents, no ``metadata.namespace``."""
+    migrations; ``jobs`` keeps them), no empty documents, no ``metadata.namespace``."""
     docs = []
     for doc in yaml.safe_load_all(text):
-        if not isinstance(doc, dict) or doc.get("kind") in (None, "Job"):
+        if not isinstance(doc, dict) or doc.get("kind") in ((None,) if jobs else (None, "Job")):
             continue
         (doc.get("metadata") or {}).pop("namespace", None)
         docs.append(doc)

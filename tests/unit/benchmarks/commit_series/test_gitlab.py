@@ -21,7 +21,7 @@ def vcs(path: Path, *args: str) -> str:
     return subprocess.run([*base, *args], check=True, capture_output=True, text=True).stdout.strip()
 
 
-def fake_render(release: Release, _archive: Path, _pack: Path) -> dict[str, str]:
+def fake_render(release: Release, _archive: Path, _pack: Path, *, migrations: bool = False) -> dict[str, str]:
     """A synthetic render: the web image moves with each app version, the chart label with every release."""
     body = (
         f"kind: Deployment\nmetadata:\n  name: web\nspec:\n  image: {release.app_version}\n---\n"
@@ -89,3 +89,18 @@ def test_the_series_has_one_commit_per_release_after_the_base_and_replays_in_ord
     head = vcs(remote, "show", f"sdo-source:{gitlab.RENDER_FILE}")
     assert releases[-1].app_version in head
     assert f"chart: {releases[-1].version}" in head
+
+
+def test_a_release_carries_the_migration_job_its_upgrade_needs_and_the_base_does_not() -> None:
+    """The fuzzops pack's baseline holds no Jobs (its up script ran the base's migrations), but a release's pods wait
+    in their init container for the new schema: without the (non-hook) migration Job the deploy never rolls out."""
+    rendered = (
+        "kind: Service\nmetadata:\n  name: a\n  namespace: fg1\n---\n"
+        "kind: Job\nmetadata:\n  name: migrations-1\n  namespace: fg1\n---\n"
+        "kind: Job\nmetadata:\n  name: hooked\n  annotations:\n    helm.sh/hook: pre-install\n"
+    )
+    assert "migrations-1" not in gitlab.plain_render(rendered)
+    upgrade = gitlab.plain_render(rendered, migrations=True)
+    assert "migrations-1" in upgrade
+    assert "hooked" not in upgrade
+    assert "namespace" not in upgrade
