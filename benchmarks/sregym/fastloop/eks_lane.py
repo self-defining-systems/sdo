@@ -25,6 +25,7 @@ from libs.agent_cli.provider_capacity import DEFAULT_OPUS_HOST_SHARE
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, MutableMapping
 
+    from benchmarks.lanes.eks import EksLane
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
 OPUS_POOL = "opus-pool"
@@ -164,6 +165,18 @@ def verify_mirror_serves(
             timeout=wait_for(WaitKind.SLOW_COMMAND),
         )
     return sink.PULL_IMAGE
+
+
+def apply_lane_env(lane: EksLane, environ: MutableMapping[str, str]) -> None:
+    """The lane facts a row or ``up`` process reads (native resources, the oracle observability helper): the same ones
+    the SREGym worker gets from ``eks_worker_environment``."""
+
+    environ["FASTLOOP_EKS_LANE"] = lane.model_dump_json()
+    environ["SREGYM_CLUSTER_PLATFORM"] = "eks"
+    if lane.virtual:
+        environ["SREGYM_MANAGED_STORAGE"] = "1"
+    else:
+        environ.pop("SREGYM_MANAGED_STORAGE", None)
 
 
 def apply_opus_pool_env(environment: FastloopEnvironment, environ: MutableMapping[str, str]) -> None:

@@ -542,6 +542,9 @@ def _up(args: argparse.Namespace) -> int:
         from benchmarks.sregym.fastloop.dev import build_host_operator
 
         eks_lane, images = attach_eks_lane(args)
+        from benchmarks.sregym.fastloop.eks_lane import apply_lane_env
+
+        apply_lane_env(eks_lane, os.environ)
         host_operator = build_host_operator(REPO_ROOT)
     if args.dev_mount is not None:
         from benchmarks.sregym.fastloop.dev import prepare_dev_mount
