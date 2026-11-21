@@ -236,7 +236,6 @@ def test_existing_drift_scenarios_through_script_transport(tmp_path, monkeypatch
         "stale",
         "unsure",
         "exhausted",
-        "missing-plan",
         "mixed",
         "external-policy",
     ],
@@ -345,7 +344,11 @@ def test_full_generated_result_and_calls(tmp_path, monkeypatch, scenario):
         nonlocal repaired
         calls.append(["sdo", *args])
         if args[0] == "diagnose":
-            run = {"program_id": "repair", "verdict": {"result": "Match"}, "bindings": {"z": ref, "a": ref}}
+            run = {
+                "program_id": "repair",
+                "verdict": {"result": "Match"},
+                "bindings": {"objects": {"z": ref, "a": ref}},
+            }
             return (
                 {
                     "program_runs": [
@@ -355,12 +358,10 @@ def test_full_generated_result_and_calls(tmp_path, monkeypatch, scenario):
                         {"program_id": "", "verdict": {"result": "Match"}},
                     ]
                 }
-                if scenario in {"matched", "missing-plan"}
+                if scenario == "matched"
                 else {}
             )
-        if args[0] == "plan":
-            return {} if scenario == "missing-plan" else {"plan_id": "plan-1"}
-        if args[0] == "apply":
+        if args[0] == "mitigate":
             repaired = True
             return {}
         if args[0] == "source":

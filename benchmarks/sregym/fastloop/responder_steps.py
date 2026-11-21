@@ -87,18 +87,26 @@ def _patch_from_source(request: IncidentRequest, ref: dict[str, str]) -> None:
         )
 
 
-def _binding_args(bindings: dict[str, Any]) -> list[str]:
+def _bind_args(bindings: dict[str, Any]) -> list[str]:
+    """``--bind NAME=VALUE`` for each parameter, as the Go mitigate command renders them."""
+    nested = "objects" in bindings or "values" in bindings
+    objects = bindings.get("objects", {}) if nested else bindings
+    values = bindings.get("values", {}) if nested else {}
     args: list[str] = []
-    if bindings.get("values"):
-        raise ValueError("scripted plan CLI does not support scalar value bindings")
-    objects = bindings.get("objects", {}) if "objects" in bindings or "values" in bindings else bindings
-    for name, ref in sorted(objects.items()):
-        args.extend(["--bind", f"{name}={ref['kind']}/{ref['namespace']}/{ref['name']}"])
+    for name in sorted({*objects, *values}):
+        if name in objects:
+            ref = objects[name]
+            text = "/".join(part for part in (ref["kind"], ref.get("namespace", ""), ref["name"]) if part)
+        elif isinstance(values[name], str):
+            text = values[name]
+        else:
+            text = json.dumps(values[name], separators=(",", ":"))
+        args.extend(["--bind", f"{name}={text}"])
     return args
 
 
-def _matched_plans(diagnosis: dict[str, Any]) -> tuple[list[str], list[str]]:
-    plan_ids: list[str] = []
+def _mitigate_matched(diagnosis: dict[str, Any]) -> list[str]:
+    """Apply each matched playbook with ``sdo mitigate``; returns the program ids applied."""
     programs: list[str] = []
     seen: set[tuple[str, str]] = set()
     for run in diagnosis.get("program_runs", []):
@@ -110,11 +118,9 @@ def _matched_plans(diagnosis: dict[str, Any]) -> tuple[list[str], list[str]]:
         if not program_id or not isinstance(bindings, dict) or key in seen:
             continue
         seen.add(key)
-        planned = _tool("plan", program_id, *_binding_args(bindings))
-        if planned.get("plan_id"):
-            plan_ids.append(planned["plan_id"])
-            programs.append(program_id)
-    return plan_ids, programs
+        _tool("mitigate", program_id, *_bind_args(bindings))
+        programs.append(program_id)
+    return programs
 
 
 def _assess_drift(request: IncidentRequest, event: DriftEvent) -> DriftEvent:

@@ -21,9 +21,7 @@ from sdo.contracts import AgentTask, IncidentRequest
 PLAN = r"""
 started = _now()
 diagnosis = _tool("diagnose")
-plan_ids, programs = _matched_plans(diagnosis)
-if plan_ids:
-    _tool("apply", *plan_ids)
+programs = _mitigate_matched(diagnosis)
 """
 
 DRIFT = r"""
@@ -187,7 +185,7 @@ result = json_format.ParseDict(
         "schema_version": "sdo.dev/v1alpha1",
         "incident_id": request.incident_id,
         "status": "completed" if work_completed else "failed",
-        "confirmed_root_causes": causes if repairs or plan_ids else [],
+        "confirmed_root_causes": causes if repairs or programs else [],
         "drift_events": [json_format.MessageToDict(label, preserving_proto_field_name=True) for label in labels],
         "applied_playbooks": [{"playbook_id": program_id} for program_id in programs],
         "repair_actions": [],  # the recording of the agent's own API calls is the receipt
@@ -234,7 +232,7 @@ def responder_script(request: IncidentRequest, *, now: str | None = None) -> Age
 
     common = (responder_steps._now, responder_steps._command, responder_steps._tool)
     dependencies = (
-        (*common, responder_steps._binding_args, responder_steps._matched_plans),
+        (*common, responder_steps._bind_args, responder_steps._mitigate_matched),
         (
             *common,
             responder_steps._patch_from_source,
@@ -261,7 +259,7 @@ def responder_script(request: IncidentRequest, *, now: str | None = None) -> Age
     save = "\nstate_path.write_text(json.dumps(state))\n"
     load = "state = json.loads(state_path.read_text())\n"
     phases = [
-        PLAN + "\nstate = dict(started=started, plan_ids=plan_ids, programs=programs)" + save,
+        PLAN + "\nstate = dict(started=started, programs=programs)" + save,
         load + DRIFT + "\nstate.update(repairs=repairs, labels=[json_format.MessageToDict(x, "
         "preserving_proto_field_name=True) for x in labels], unsure=list(unsure))" + save,
         load
@@ -269,8 +267,8 @@ def responder_script(request: IncidentRequest, *, now: str | None = None) -> Age
         + REPAIR
         + "\nstate.update(repairs=repairs, first=first)"
         + save,
-        load + "started, plan_ids, programs, repairs, first, unsure = (state[k] for k in ('started', "
-        "'plan_ids', 'programs', 'repairs', 'first', 'unsure'))\nlabels = "
+        load + "started, programs, repairs, first, unsure = (state[k] for k in ('started', "
+        "'programs', 'repairs', 'first', 'unsure'))\nlabels = "
         "[json_format.ParseDict(x, DriftEvent()) for x in state['labels']]\n"
         + VERIFY
         + "\nstate_path.unlink()\nprint(json_format.MessageToJson(result, "
