@@ -13,7 +13,8 @@ coverage note ("request metrics not applicable to operation ...") that the opera
 
 A raised error finding does not clear because a route got few requests: it stays until a later 30 s window has at least 5
 requests and none failed (the detector looks back 5 minutes), and says "Insufficient recent traffic to confirm recovery"
-meanwhile; incident recovery waits on the same finding, so a low-volume route cannot read as recovered. A route with
+meanwhile; incident recovery waits on the same finding. A held finding on a route that stays sparse also clears once
+the whole 5 minute lookback has requests and not one failed, so it cannot hold an incident open for ever. A route with
 no requests at all in the newest 30 s window is not failing: the finding clears (the incident's probe scenarios vouch
 for the route). Each error finding
 also carries up to 3 recent failing requests (method, path with record ids, status, time) read from the entry service's pod
