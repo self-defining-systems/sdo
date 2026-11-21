@@ -1674,3 +1674,20 @@ def test_check_input_refuses_a_baseline_for_another_namespace(
 def test_lanes_contract_verbs_not_implemented_answer_unsupported(verb: str, capsys: Any) -> None:
     assert hooks.main([verb]) == 64
     assert json.loads(capsys.readouterr().out.strip().splitlines()[-1]) == {"unsupported": True}
+
+
+def test_phase_timer_prints_the_seconds_each_prepare_phase_took() -> None:
+    now = [100.0]
+    lines: list[str] = []
+    timer = hooks.PhaseTimer(lines.append, clock=lambda: now[0])
+    now[0] = 112.4
+    timer.mark("images pinned")
+    now[0] = 112.9
+    timer.mark("namespaces")
+    now[0] = 400.0
+    timer.mark("controller started")
+    assert lines == [
+        "prepare phase: images pinned 12s (total 12s)",
+        "prepare phase: namespaces 0s (total 13s)",
+        "prepare phase: controller started 287s (total 300s)",
+    ]
