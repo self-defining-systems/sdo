@@ -534,3 +534,17 @@ def test_a_virtual_lane_writes_no_node_files_through_a_node_agent_it_cannot_reac
     )
     prepare_benchmark_resources(config, relay_target_base=None, kubeconfig=tmp_path / "kc")
     assert written == []
+
+
+def test_the_run_process_knows_its_lane_is_virtual_like_the_worker_does(tmp_path: Path) -> None:
+    """Native resources and the oracle observability helper run in the row process, not the worker: they read the lane
+    record and the storage mode from the same environment the worker gets."""
+    virtual = eks_environment(tmp_path, eks=LANE.model_copy(update={"virtual": True}))
+    environ: dict[str, str] = {}
+    virtual.apply_operator_env(environ)
+    assert EksLane.model_validate_json(environ["FASTLOOP_EKS_LANE"]).virtual
+    assert environ["SREGYM_CLUSTER_PLATFORM"] == "eks"
+    assert environ["SREGYM_MANAGED_STORAGE"] == "1"
+    cluster_lane: dict[str, str] = {"SREGYM_MANAGED_STORAGE": "1"}
+    eks_environment(tmp_path).apply_operator_env(cluster_lane)
+    assert "SREGYM_MANAGED_STORAGE" not in cluster_lane

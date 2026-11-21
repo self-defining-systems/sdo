@@ -152,8 +152,9 @@ class FastloopEnvironment(BaseModel):
         elif self.host_operator is not None:
             environ["SDO_OPERATOR_BIN"] = str(self.host_operator)
         if self.eks is not None:
-            from benchmarks.sregym.fastloop.eks_lane import apply_opus_pool_env
+            from benchmarks.sregym.fastloop.eks_lane import apply_lane_env, apply_opus_pool_env
 
+            apply_lane_env(self.eks, environ)
             apply_opus_pool_env(self, environ)
         if self.controller_dev_mount:
             environ["SDO_DEV_MOUNT"] = "1"
