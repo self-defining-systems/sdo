@@ -24,8 +24,8 @@
 #  - the node agent (deploy/eks/node-agent.yaml): a containerd registry mirror to ECR for EKS_MIRROR_UPSTREAMS (default
 #    "docker.io ghcr.io quay.io registry.k8s.io") so app images keep their declared names (CC1, CC9), and the node-write seam (CC4).
 #  - on any failure after the cluster was created the half-built cluster is deleted, so nothing bills.
-#  - one availability zone (EKS_AZ, default <region>a); gp3 (EBS CSI) as the default StorageClass with
-#    WaitForFirstConsumer; the node-port range open to EKS_NODEPORT_CIDR (default this machine's address); the address
+#  - one availability zone (EKS_AZ, default <region>a); local-path (node-local, WaitForFirstConsumer) as the
+#    default StorageClass, gp3 (EBS CSI) available; the node-port range open to EKS_NODEPORT_CIDR (default this machine's address); the address
 #    of a node in KUBECONFIG.entry (the app's NodePort entry; steps see it as FUZZOPS_ENTRY_HOST).
 # Settings: EKS_REGION (required), EKS_INSTANCE_TYPE (m6i.xlarge), EKS_NODES (2), EKS_NODE_MAX (EKS_NODES+1), EKS_ACCOUNT
 # (checked against the credentials), EKS_VPC and EKS_SUBNETS (comma-separated subnet ids; unset: eksctl makes a VPC),
@@ -181,8 +181,10 @@ YAML
   mv "$out.tmp" "$out"
 }
 
-# storage_class: gp3 through the EBS CSI driver is the default class and binds when a pod is placed (WaitForFirstConsumer),
-# so a claim is made in the zone of the node that uses it.
+# storage_class: local-path (node-local, binds when a pod is placed) is the default class, as on a kind lane. SDO mounts the
+# same ReadWriteOnce claims from several pods (controller, workers, standbys) and relies on the claim to put them on its
+# node; an EBS volume attaches to one node and does not place its pods, so a pod on the other node waits forever
+# (Multi-Attach). gp3 stays available (not the default) for a workload that wants a durable volume.
 storage_class() {
   local kc=$1
   kubectl --kubeconfig "$kc" annotate storageclass gp2 storageclass.kubernetes.io/is-default-class=false --overwrite >/dev/null 2>&1 || true
@@ -191,13 +193,16 @@ apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
   name: gp3
-  annotations: {storageclass.kubernetes.io/is-default-class: "true"}
+  annotations: {storageclass.kubernetes.io/is-default-class: "false"}
 provisioner: ebs.csi.aws.com
 parameters: {type: gp3}
 volumeBindingMode: WaitForFirstConsumer
 reclaimPolicy: Delete
 allowVolumeExpansion: true
 YAML
+  kubectl --kubeconfig "$kc" apply -f "$here/eks/local-path-storage.yaml" >/dev/null
+  kubectl --kubeconfig "$kc" -n local-path-storage rollout status deployment/local-path-provisioner --timeout=180s >/dev/null ||
+    die "the local-path provisioner is not ready"
 }
 
 # open_nodeports NAME: the manager reaches the app's NodePorts on the nodes: the cluster security group (which managed

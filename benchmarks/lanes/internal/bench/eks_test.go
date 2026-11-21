@@ -297,10 +297,14 @@ func TestEksLaneUpMakesWhatAKindLaneHas(t *testing.T) {
 			t.Errorf("the cluster config lacks %q", want)
 		}
 	}
-	for _, want := range []string{"volumeBindingMode: WaitForFirstConsumer", "storageclass.kubernetes.io/is-default-class: \"true\"", "provisioner: ebs.csi.aws.com"} {
+	for _, want := range []string{"volumeBindingMode: WaitForFirstConsumer", "provisioner: ebs.csi.aws.com", "is-default-class: \"false\""} {
 		if !strings.Contains(applied, want) {
-			t.Errorf("the storage class lacks %q", want)
+			t.Errorf("the gp3 class lacks %q", want)
 		}
+	}
+	// the default class is node-local: SDO's pods share ReadWriteOnce claims and the claim must place them
+	if !strings.Contains(log, "apply -f") || !strings.Contains(log, "local-path-storage.yaml") || !strings.Contains(log, "rollout status deployment/local-path-provisioner") {
+		t.Errorf("the local-path default class was not installed:\n%s", log)
 	}
 	if !strings.Contains(log, "ec2 authorize-security-group-ingress --group-id sg-0123 --protocol tcp --port 30000-32767 --cidr 203.0.113.7/32") {
 		t.Errorf("node ports not opened:\n%s", log)
