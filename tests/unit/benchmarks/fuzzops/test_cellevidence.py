@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import shutil
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -383,3 +384,59 @@ def test_an_unclosed_incident_detected_before_the_run_is_carry_over_not_a_missin
     ev = ce.build(run)
     assert ev.excluded == [stale.name]
     assert ev.problems == []
+
+
+def _declare(inc: Path, *models: str) -> None:
+    """The resolved-agent records the controller writes: one per role, naming the model it ran."""
+    roles = ("responder", "reflection")
+    rows = [{"role": role, "model": model, "provider": "codex"} for role, model in zip(roles, models, strict=False)]
+    _w(inc / "agent-resolved.jsonl", "".join(json.dumps(r) + "\n" for r in rows))
+
+
+def _without_cost_and_session(run: Path) -> Path:
+    """What a scripted stand-in leaves: no cost on the responder or closing turn, no Claude session file."""
+    inc = run / "operator/evidence/incidents" / INC
+    ledger = json.loads((inc / "ledger.json").read_text())
+    ledger["outcome_document"]["usage"] = {}
+    _w(inc / "ledger.json", ledger)
+    _w(
+        inc / "reflection-usage.jsonl",
+        json.dumps({"session_id": SID, "cost_usd": None, "duration_seconds": 1.0}) + "\n",
+    )
+    (inc / "claude-turns.jsonl").unlink()
+    shutil.rmtree(inc / "claude")
+    return inc
+
+
+def test_a_declared_stub_agent_needs_no_cost_or_session_and_the_manifest_says_stub(tmp_path: Path) -> None:
+    run = make_cell(tmp_path)
+    _declare(_without_cost_and_session(run), "stub", "stub")
+    ev = ce.write_manifest(run)
+    assert ev.problems == [], ev.problems
+    assert ev.stub is True
+    loaded = ce.load(run)
+    assert loaded.stub is True
+    assert loaded.timelines[0].stub is True
+    assert loaded.agents
+    assert all(a.stub for a in loaded.agents)
+
+
+def test_an_undeclared_agent_without_cost_or_session_still_fails(tmp_path: Path) -> None:
+    run = make_cell(tmp_path)
+    inc = _without_cost_and_session(run)
+    for models in ((), ("gpt-real", "gpt-real"), ("stub", "gpt-real")):  # none declared, real, mixed: strict
+        _declare(inc, *models)
+        ev = ce.build(run)
+        assert ev.stub is False
+        assert any("responder usage" in p and "no total_cost_usd" in p for p in ev.problems), (models, ev.problems)
+        assert any("session 11111111 missing" in p for p in ev.problems), (models, ev.problems)
+
+
+def test_a_codex_session_is_found_by_its_rollout_file(tmp_path: Path) -> None:
+    run = make_cell(tmp_path)
+    inc = run / "operator/evidence/incidents" / INC
+    shutil.rmtree(inc / "claude")
+    _w(inc / f"codex/sessions/2026/01/01/rollout-2026-01-01T00-00-00-{SID}.jsonl", '{"type": "session_meta"}\n')
+    ev = ce.build(run)
+    assert not any("session" in p for p in ev.problems), ev.problems
+    assert ev.agents[0].path is not None
