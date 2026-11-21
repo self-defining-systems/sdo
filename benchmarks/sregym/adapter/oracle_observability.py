@@ -96,7 +96,12 @@ def prepare_oracle_observability(
             "--wait",
             "--timeout",
             "5m",
-            *(["--set", "server.persistentVolume.storageClass=null"] if managed_storage else []),
+            # Lanes of one host cluster share its NodePort range; the chart's fixed 32000 allows one lane.
+            *(
+                ["--set", "server.persistentVolume.storageClass=null", "--set", "server.service.nodePort=null"]
+                if managed_storage
+                else []
+            ),
         ]
     )
     command([*kube, "apply", "-f", str(observer / "jaeger/jaeger.yaml")])

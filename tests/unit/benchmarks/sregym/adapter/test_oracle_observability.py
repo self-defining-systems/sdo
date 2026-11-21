@@ -117,5 +117,6 @@ def test_managed_storage_installs_no_openebs_and_uses_the_default_class(tmp_path
     assert not any("openebs" in str(c) for c in calls)
     helm = next(c for c in calls if c[0] == "helm")
     assert "server.persistentVolume.storageClass=null" in helm
+    assert "server.service.nodePort=null" in helm
     assert applied
     assert "storageClassName" not in applied[0]
