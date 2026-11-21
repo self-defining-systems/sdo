@@ -201,11 +201,16 @@ def main(argv: list[str], env: dict[str, str] | None = None, stdout: IO[str] | N
     return delegate(verb, env)
 
 
+def _series_entry(flags: dict[str, str]) -> Entry | None:
+    """The series a call names. A run names it with ``--instance-file/--instance``; the platform's ``active`` and
+    ``undo`` checks after a run use ``--file/--id``."""
+    file = flags.get("instance-file") or flags.get("file")
+    instance = flags.get("instance") or flags.get("id")
+    return Entry.find(Path(file), instance) if file and instance else None
+
+
 def _is_series(env: dict[str, str]) -> bool:
-    flags = parse_flags(json.loads(env.get("WORKLOAD_ARGS", "[]")))
-    return bool(
-        "instance-file" in flags and "instance" in flags and Entry.find(Path(flags["instance-file"]), flags["instance"])
-    )
+    return _series_entry(parse_flags(json.loads(env.get("WORKLOAD_ARGS", "[]")))) is not None
 
 
 def grade(env: dict[str, str], stdout: IO[str]) -> int:
