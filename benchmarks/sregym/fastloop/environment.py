@@ -144,8 +144,10 @@ class FastloopEnvironment(BaseModel):
 
         return self.dev_mount is not None and not self.pinned_tools
 
-    def apply_operator_env(self, environ: MutableMapping[str, str]) -> None:
-        """Point the host operator CLI at the lane's binary and its controller at the right sources."""
+    def apply_operator_env(self, environ: MutableMapping[str, str], *, model: str | None = None) -> None:
+        """Point the host operator CLI at the lane's binary and its controller at the right sources.
+
+        On an EKS lane the controller mounts the node's Opus pool only for a row whose ``model`` is an Opus model."""
 
         if self.dev_mount is not None:
             environ["SDO_OPERATOR_BIN"] = str(self.dev_mount / ".fastloop/sdo-operator")
@@ -155,7 +157,7 @@ class FastloopEnvironment(BaseModel):
             from benchmarks.sregym.fastloop.eks_lane import apply_lane_env, apply_opus_pool_env
 
             apply_lane_env(self.eks, environ)
-            apply_opus_pool_env(self, environ)
+            apply_opus_pool_env(self, environ, model=model)
         if self.controller_dev_mount:
             environ["SDO_DEV_MOUNT"] = "1"
         else:

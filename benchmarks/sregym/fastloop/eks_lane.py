@@ -179,9 +179,25 @@ def apply_lane_env(lane: EksLane, environ: MutableMapping[str, str]) -> None:
         environ.pop("SREGYM_MANAGED_STORAGE", None)
 
 
-def apply_opus_pool_env(environment: FastloopEnvironment, environ: MutableMapping[str, str]) -> None:
-    """Point SDO at the node pool: one host share per node, named by the lane's cluster."""
+def apply_opus_pool_env(
+    environment: FastloopEnvironment, environ: MutableMapping[str, str], *, model: str | None = None
+) -> None:
+    """Point SDO at the node pool (one host share per node, named by the lane's cluster) for an Opus row; any other
+    row gets none, since its nodes have no pool directory to mount."""
 
+    pool_names = (
+        "SDO_OPUS_POOL_MODE",
+        "SDO_OPUS_POOL_HOST_ID",
+        "SDO_OPUS_POOL_HOST_PATH",
+        "SDO_OPUS_MAX_SESSIONS",
+        "SDO_OPUS_POOL_NFS_SERVER",
+        "SDO_OPUS_POOL_NFS_PATH",
+        "SDO_OPUS_POOL_DIR",
+    )
+    if model is None or "opus" not in model.lower():
+        for name in pool_names:
+            environ.pop(name, None)
+        return
     environ["SDO_OPUS_POOL_MODE"] = "per_host"
     environ["SDO_OPUS_POOL_HOST_ID"] = environment.cluster
     environ["SDO_OPUS_POOL_HOST_PATH"] = f"{NODE_LANE_ROOT}/{OPUS_POOL}"

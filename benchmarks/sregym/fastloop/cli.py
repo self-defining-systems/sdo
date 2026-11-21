@@ -1651,7 +1651,7 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
             environment.run_dir,
         )
         prepare_dev_mount(*mount_args, environment.parallel_root, evidence_root=environment.evidence_root)
-    environment.apply_operator_env(os.environ)
+    environment.apply_operator_env(os.environ, model=args.model)
     if args.agent == "sdo" and (missing := opus_pool_missing(args.model, os.environ)):
         raise SystemExit(f"eval: {missing}; configure the pool before the row deploys or injects")
     if environment.eks is not None and args.agent == "sdo":
