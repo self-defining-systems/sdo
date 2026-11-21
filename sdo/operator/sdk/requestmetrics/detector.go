@@ -74,7 +74,8 @@ type Rule struct {
 	ThinMinFailed float64
 	// Lookback is how far back the steps reach (at least Window). A raised
 	// error finding stays until a step after it confirms recovery, so a
-	// stretch with few requests never clears it; a window with none does.
+	// stretch with few requests does not clear it at once; a window with none
+	// does, and so does a whole lookback with requests and no failure.
 	Lookback time.Duration
 	// MinHealthy is the fewest requests, all healthy, that confirm recovery in
 	// one window; zero means MinFailed.
@@ -589,6 +590,26 @@ func (r Rule) confirmsRecovery(c counts, healthyClient float64) bool {
 	return c.total >= r.minHealthy() && c.server == 0 && c.client-healthyClient*c.total < 1
 }
 
+// lookbackFailureFree reports that the steps cover the whole lookback, carry
+// requests, and not one of them failed. A route with too few requests per
+// window never reaches confirmsRecovery's volume and never goes quiet; without
+// this a finding held by an incident would outlive its fault for as long as
+// the route lives.
+func (r Rule) lookbackFailureFree(steps map[time.Time]counts, times []time.Time) bool {
+	if len(times) < int(r.lookback()/r.Step) {
+		return false
+	}
+	requests := 0.0
+	for _, t := range times {
+		c := steps[t]
+		if c.server != 0 || c.client != 0 {
+			return false
+		}
+		requests += c.total
+	}
+	return requests > 0
+}
+
 // quietNewest reports that the newest evaluation window saw no requests at
 // all: no failure is left to observe, so a raised finding has nothing to
 // stand on. The probe scenarios, not the absent traffic, vouch for the route.
@@ -672,6 +693,9 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 			if r.confirmsRecovery(steps[t], 0) {
 				return sdk.Finding{}, false
 			}
+		}
+		if r.lookbackFailureFree(steps, times) {
+			return sdk.Finding{}, false
 		}
 		best, raisedAt, onset = &verdict{class: ClassServer}, len(times)-1, recent.ObservedAt
 		heldUnconfirmed = " The incident this finding holds is open and no recent step had enough requests with none failed, so recovery is not confirmed."

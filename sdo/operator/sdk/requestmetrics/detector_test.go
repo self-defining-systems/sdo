@@ -271,8 +271,8 @@ func TestPersistentFaultStaysRaisedWhileItsIncidentIsOpen(t *testing.T) {
 	if len(got) != 1 || got[0].RuleID != requestmetrics.RuleErrors || got[0].Fingerprint != "requestmetrics/errors/package-download" {
 		t.Fatalf("held fault dropped: %+v", got)
 	}
-	// Quiet traffic does not confirm recovery.
-	quiet := []metrics.Series{series(pkgRoute, "200", steady(1, 60)...), series(webRoute, "200", steady(40, 60)...)}
+	// Quiet traffic with a failure still in the lookback does not confirm recovery.
+	quiet := []metrics.Series{series(pkgRoute, "200", steady(1, 60)...), series(pkgRoute, "500", append(steady(0, 50), steady(1, 10)...)...), series(webRoute, "200", steady(40, 60)...)}
 	held = snapshot(quiet, pollutedBaseline(), presence())
 	held.HeldKeys = []string{pkgErrorsKey}
 	if got := detect(t, held); len(got) != 1 {
