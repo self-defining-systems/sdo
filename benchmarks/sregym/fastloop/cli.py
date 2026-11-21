@@ -460,6 +460,8 @@ def attach_eks_lane(args: argparse.Namespace) -> tuple[EksLane, Images]:
         str(Path(os.environ["KUBECONFIG"]).resolve()),
         registry=args.ecr_registry,
         repository_tags=dict(item.split("=", 1) for item in args.ecr_tag),
+        # The lanes platform sets this on a vcluster lane (kube-system and the nodes are the host cluster's).
+        virtual=os.environ.get("BENCH_LANE_VIRTUAL") == "1",
     )
     prior = FastloopEnvironment.load(args.run_dir.resolve()) if (args.run_dir / "fastloop.json").is_file() else None
     if (
