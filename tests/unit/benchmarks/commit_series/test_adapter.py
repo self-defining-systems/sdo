@@ -82,3 +82,31 @@ def test_grade_writes_a_table_of_commits_for_series_records(tmp_path: Path) -> N
     report = (tmp_path / "report.md").read_text().splitlines()
     assert report[2].startswith("| demo | 1 |")
     assert "held" in report[3]
+
+
+def test_a_delegated_verb_goes_through_the_fuzzops_workload_so_a_lane_provider_gets_its_environment(
+    tmp_path: Path,
+) -> None:
+    """The wrapped workload is fuzzops' python workload, not the bare fuzzops binary: on an EKS lane it names the
+    entry address and puts the docker/kind shims on the path, which the pack's scripts need."""
+    marker = tmp_path / "entry"
+    builtin = json.dumps(["sh", "-c", f'echo "$FUZZOPS_ENTRY_HOST" > {marker}'])
+    code = adapter.main(
+        ["app-up"],
+        {"WORKLOAD_ACTION": "up", "WORKLOAD_ARGS": "[]", "WORKLOAD_BUILTIN": builtin, "BENCH_ENTRY_HOST": "10.1.2.3"},
+    )
+    assert code == 0
+    assert marker.read_text().strip() == "10.1.2.3"
+
+
+def test_a_fault_after_a_commit_runs_through_the_fuzzops_workload_too(tmp_path: Path) -> None:
+    marker = tmp_path / "entry"
+    path = instances(tmp_path)
+    path.write_text(json.dumps({**json.loads(path.read_text()), "fault_instances": "faults.json"}))
+    entry = adapter.Entry.find(path, "demo")
+    assert entry is not None
+    builtin = ["sh", "-c", f'echo "$FUZZOPS_ENTRY_HOST" > {marker}; echo \'{{"valid": true}}\'', "wrapped"]
+    env = {"WORKLOAD_ACTION": "run", "BENCH_ENTRY_HOST": "10.1.2.3", "WORKLOAD_BUILTIN": json.dumps(builtin)}
+    record = adapter.inject_fault(builtin, {}, entry, "fault-x", io.StringIO(), env)
+    assert record == {"valid": True}
+    assert marker.read_text().strip() == "10.1.2.3"
