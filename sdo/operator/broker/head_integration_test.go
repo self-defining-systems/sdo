@@ -5,6 +5,8 @@ package broker
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -182,5 +184,35 @@ func TestAConflictingSourceChangeIsKeptOnTheSideBranch(t *testing.T) {
 	}
 	if got := gitOut(t, remote, "show", "refs/heads/sdo-source:app.txt"); !strings.Contains(got, "three by an engineer") {
 		t.Fatal("the source branch was touched")
+	}
+}
+
+// A seeded install records no deployment (install-existing adopts what runs).
+// An engineer's commit that changes source is still a head to deploy, measured
+// against SDO's own newest commit; SDO's own commits on top of the seed, and
+// the seed itself, need nothing.
+func TestASeededInstallDeploysAnEngineersPush(t *testing.T) {
+	ctx := context.Background()
+	w := newPatchWorld(t, false)
+	if err := os.RemoveAll(filepath.Join(w.broker.workspaceRoot, "source-evidence")); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := w.broker.AcceptedSourceEvidence(ctx); err != nil || found {
+		t.Fatalf("the world must be seeded (no recorded deployment): found=%v err=%v", found, err)
+	}
+	if _, needed, err := w.broker.HeadToDeploy(ctx); err != nil || needed {
+		t.Fatalf("a seeded install's own head needs nothing: needed=%v err=%v", needed, err)
+	}
+	writeFiles(t, w.accepted, map[string]string{"app.txt": "one\ntwo\nthree by an engineer\n"})
+	testutil.Git(t, w.accepted, "add", ".")
+	testutil.Git(t, w.accepted, "commit", "-qm", "an engineer changes the app")
+	head := w.head(t)
+	change, needed, err := w.broker.HeadToDeploy(ctx)
+	if err != nil || !needed || change.Commit != head {
+		t.Fatalf("HeadToDeploy = %+v %v %v, want the engineer's head %s", change, needed, err, head)
+	}
+	plan, found, err := w.broker.AcceptedSourceEvidence(ctx)
+	if err != nil || found || plan.Plan.GetSource() == nil {
+		t.Fatalf("the deployer needs the accepted plan of an unrecorded install: found=%v plan=%v err=%v", found, plan.Plan, err)
 	}
 }
