@@ -440,3 +440,12 @@ def test_a_codex_session_is_found_by_its_rollout_file(tmp_path: Path) -> None:
     ev = ce.build(run)
     assert not any("session" in p for p in ev.problems), ev.problems
     assert ev.agents[0].path is not None
+
+
+def test_a_commit_series_record_is_not_missing_the_fuzzops_run_fields(tmp_path: Path) -> None:
+    """A series position's record is the commit's outcome (the adapter's), not a fuzzops run: it has no window,
+    tail, timing or interference, and demanding them held the lane after every series run."""
+    run = make_cell(tmp_path)
+    _w(run / "record.json", {"series": "s", "index": 1, "outcome": "accepted", "valid": True})
+    ev = ce.write_manifest(run)
+    assert not [p for p in ev.problems if p.startswith("record.json")], ev.problems
