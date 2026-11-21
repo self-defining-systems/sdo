@@ -12,18 +12,18 @@ import (
 )
 
 // RenderedChecks holds the answers one validation session remembers: the pin check's per host and pin, the memory
-// check's per directory and pinned SDO checkout.
+// check's per directory and pinned SDO checkout. A session is safe for concurrent use and answers each probe once.
 type RenderedChecks struct {
 	Log  io.Writer
-	pins map[string]string
-	mem  map[string]inputResult
-	desc map[string]*Described
-	foot map[string]*LaneLimit
+	pins *memoMap[string]
+	mem  *memoMap[inputResult]
+	desc *memoMap[*Described]
+	foot *memoMap[*LaneLimit]
 }
 
 // NewRenderedChecks starts a validation session; log says what a check could not ask (nil is silent).
 func NewRenderedChecks(log io.Writer) *RenderedChecks {
-	return &RenderedChecks{Log: log, pins: map[string]string{}, mem: map[string]inputResult{}, desc: map[string]*Described{}, foot: map[string]*LaneLimit{}}
+	return &RenderedChecks{Log: log, pins: newMemoMap[string](), mem: newMemoMap[inputResult](), desc: newMemoMap[*Described](), foot: newMemoMap[*LaneLimit]()}
 }
 
 // ValidateRendered is the one place that decides whether a rendered spec is acceptable. `plan add` and `--dry-run` call

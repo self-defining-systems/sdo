@@ -51,7 +51,11 @@ alarms: {factor: 2, idle_lane: 10m, arm_stall: 90m, hook: "notify-send lanes \"$
   aside), `operator.baseline` is a directory (`operator.seed` that is an earlier arm's artifact is checked when that arm
   ends). A seed or baseline directory that exists gets SDO's memory check at the spec's pinned SDO revision (`sdo-operator memory migrate`, the controller's startup check); an invalid one is refused at add, naming it and the failed check. With no hooks checkout of the pin on the manager's host the check is reported as a note. A check that can still fail at release never loops silently: the backend's refusal is retried for
   `SubmitPasses` (3) passes in a row, then it raises a `submit` alarm and fails the attempt with reason `submit`; the
-  same failure again parks the item.
+  same failure again parks the item. The checks of one session answer each probe once (the hooks checkout's describe and
+  footprint, each host's pin, the input checks): the distinct specs of an add are checked together (at most 4 at a time, the
+  hosts of a pin check at most 4 at a time), and the manager shares one session across the nodes it releases in a pass, so
+  the first pass after `plan add` pays each probe once, not once per node. `plan add` also wakes a running manager
+  (`<root>/wake`) so it does not wait out its tick.
 - **Order.** Nodes are `(rep, item, arm)`, arms in dependency-then-declaration order, so every comparison's partner is
   released right after its pair, never behind a whole arm and never by name order. A node blocked on an input is passed
   over; the next ready node takes its slot, and the blocked one goes first as soon as it is ready.

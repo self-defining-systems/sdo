@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -30,32 +31,46 @@ var addHostRunner = HostRunner
 // addPinTimeout bounds the pin check on one host.
 const addPinTimeout = 30 * time.Second
 
+// maxAddProbes bounds the hosts a pin check asks at once.
+const maxAddProbes = 4
+
 // checkPins refuses a spec whose built-in fuzzops workload binary on any usable host does not report the pinned
 // revision, before a lane is spent on it. A host that cannot be asked is skipped (said on log); a spec none of
-// whose hosts can be asked is refused. cache remembers answers per host and pin within one add.
-func checkPins(ctx context.Context, inv Inventory, s Spec, log io.Writer, cache map[string]string) error {
+// whose hosts can be asked is refused. cache remembers answers per host and pin within one session; the hosts are asked
+// together (at most maxAddProbes at a time), each bounded by addPinTimeout.
+func checkPins(ctx context.Context, inv Inventory, s Spec, log io.Writer, cache *memoMap[string]) error {
 	run := addHostRunner(inv)
-	asked := 0
 	hosts := inv.UsableHosts(s)
-	for _, h := range hosts {
+	whys := make([]string, len(hosts))
+	sem := make(chan struct{}, maxAddProbes)
+	var wg sync.WaitGroup
+	for i, h := range hosts {
 		fz := inv.FuzzopsPath(s.Fuzzops, h)
 		key := h + "|" + fz + "|" + s.Fuzzops
-		why, seen := cache[key]
-		if !seen {
-			c, cancel := context.WithTimeout(ctx, addPinTimeout)
-			out, err := run(c, h, IdentityCommand(s.Workload, fz))
-			cancel()
-			var v Version
-			switch {
-			case err != nil:
-				why = "?" + err.Error()
-			case json.Unmarshal([]byte(lastNonEmpty([]byte(out))), &v) != nil:
-				why = "?unreadable version: " + clip(out, 100)
-			default:
-				why = pinMismatch(v, s.Fuzzops)
-			}
-			cache[key] = why
-		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			whys[i], _ = cache.do(key, func() (string, error) {
+				c, cancel := context.WithTimeout(ctx, addPinTimeout)
+				out, err := run(c, h, IdentityCommand(s.Workload, fz))
+				cancel()
+				var v Version
+				switch {
+				case err != nil:
+					return "?" + err.Error(), nil
+				case json.Unmarshal([]byte(lastNonEmpty([]byte(out))), &v) != nil:
+					return "?unreadable version: " + clip(out, 100), nil
+				}
+				return pinMismatch(v, s.Fuzzops), nil
+			})
+		}()
+	}
+	wg.Wait()
+	asked := 0
+	for i, h := range hosts {
+		why := whys[i]
 		switch {
 		case strings.HasPrefix(why, "?"):
 			if log != nil {

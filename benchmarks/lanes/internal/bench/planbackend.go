@@ -36,6 +36,9 @@ type PlanBackend struct {
 	Log  io.Writer
 	// Grading, when set, counts the background grading jobs so a caller can wait for them.
 	Grading *sync.WaitGroup
+	// Checks, when set, is the validation session every Submit shares: the hooks checkout and the hosts are asked once
+	// for all the nodes released in a pass.
+	Checks *RenderedChecks
 }
 
 // PlanAdd adds a plan from a plan file: its templates are rendered once per arm and each result is validated as a spec
@@ -54,6 +57,7 @@ func PlanAdd(root Root, file string, w io.Writer) error {
 	if err != nil {
 		return err
 	}
+	_ = Wake(root) // a running manager releases the new plan now, not at its next tick
 	fmt.Fprintf(w, "plan %s added: %d nodes, workload %s, subject %s\n", lock.Plan, lock.Nodes, lock.Pins.Workload, lock.Pins.Subject)
 	return nil
 }
@@ -218,6 +222,9 @@ var planNotes io.Writer = os.Stderr
 func (b *PlanBackend) Submit(ctx context.Context, j plan.Job) error {
 	if _, err := os.Stat(b.Root.LockPath(j.Exp)); err == nil {
 		return plan.ErrExists
+	}
+	if b.Checks != nil {
+		return Add(ctx, b.Root, j.SpecPath, b.Log, WithChecks(b.Checks))
 	}
 	return Add(ctx, b.Root, j.SpecPath, b.Log)
 }

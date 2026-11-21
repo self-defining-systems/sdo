@@ -177,11 +177,41 @@ func (m *Manager) Serve(ctx context.Context) error {
 		if err := m.Reconcile(ctx); err != nil {
 			m.logf("reconcile: %v", err)
 		}
-		select {
-		case <-ctx.Done():
+		if !m.waitTick(ctx) {
 			m.logf("manager stopped (steps run on)")
 			return nil
-		case <-time.After(m.Tick):
+		}
+	}
+}
+
+// wakePollEvery is how often the manager looks for a wake request while it waits for its next pass.
+const wakePollEvery = 500 * time.Millisecond
+
+// wakePath is the request `plan add` leaves so the manager does not wait out its tick before it releases the new plan.
+func (r Root) wakePath() string { return r.path("wake") }
+
+// Wake asks a running manager for a pass now.
+func Wake(root Root) error {
+	return writeFile(root.wakePath(), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"))
+}
+
+// waitTick waits for the next pass: the tick, or a wake request, whichever comes first. False when ctx ended.
+func (m *Manager) waitTick(ctx context.Context) bool {
+	deadline := time.NewTimer(m.Tick)
+	defer deadline.Stop()
+	poll := time.NewTicker(wakePollEvery)
+	defer poll.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-deadline.C:
+			return true
+		case <-poll.C:
+			if fileExists(m.Root.wakePath()) {
+				_ = os.Remove(m.Root.wakePath())
+				return true
+			}
 		}
 	}
 }
@@ -527,6 +557,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 // tickPlans runs one pass of every plan under <root>/plans (internal/plan): it releases ready nodes as experiments,
 // which the next pass of this manager picks up. A plan that does not load is logged and left alone.
 func (m *Manager) tickPlans(ctx context.Context) {
+	checks := NewRenderedChecks(m.Log) // one session per pass: the nodes released in it share their probes
 	for _, name := range plan.Names(m.Root.PlansDir()) {
 		if ctl, err := plan.LoadControl(plan.Dir(m.Root.PlansDir(), name)); err == nil && ctl.Purge {
 			if done, err := purgePlan(m.Root, name); err != nil {
@@ -536,7 +567,7 @@ func (m *Manager) tickPlans(ctx context.Context) {
 			}
 			continue
 		}
-		e, err := plan.Open(plan.Dir(m.Root.PlansDir(), name), &PlanBackend{Root: m.Root, Inv: m.inv, Log: m.Log, Grading: &m.planGrading}, SystemClock{})
+		e, err := plan.Open(plan.Dir(m.Root.PlansDir(), name), &PlanBackend{Root: m.Root, Inv: m.inv, Log: m.Log, Grading: &m.planGrading, Checks: checks}, SystemClock{})
 		if err != nil {
 			m.logf("plan %s: %v", name, err)
 			continue

@@ -27,9 +27,10 @@ func (c *RenderedChecks) footprint(ctx context.Context, inv Inventory, s Spec) (
 		return nil, nil
 	}
 	key := s.Workload + "|" + dir + "|" + s.App
-	if l, ok := c.foot[key]; ok {
-		return l, nil
-	}
+	return c.foot.do(key, func() (*LaneLimit, error) { return footprintOf(ctx, s, dir) })
+}
+
+func footprintOf(ctx context.Context, s Spec, dir string) (*LaneLimit, error) {
 	var out bytes.Buffer
 	env := []string{"BENCH_PACK=" + filepath.Join(dir, s.App), "BENCH_EXPERIMENT=" + s.Name}
 	code, _, err := NewWorkload(s.Workload, dir).Call(ctx, WorkloadCall{Verb: VerbFootprint, Env: env, Stdout: &out, Log: &bytes.Buffer{}})
@@ -44,6 +45,5 @@ func (c *RenderedChecks) footprint(ctx context.Context, inv Inventory, s Spec) (
 		}
 		l = &got
 	}
-	c.foot[key] = l
 	return l, nil
 }

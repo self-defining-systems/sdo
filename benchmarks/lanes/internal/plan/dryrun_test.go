@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -15,15 +16,15 @@ func TestDryRunExpandsAndValidatesWithoutTouchingState(t *testing.T) {
 	file := l.write("plan.yaml", twopass)
 	plans := filepath.Join(l.root, "plans")
 
-	var validated int
-	pv, err := DryRun(plans, file, l.clock, func([]byte) error { validated++; return nil })
+	var validated atomic.Int32
+	pv, err := DryRun(plans, file, l.clock, func([]byte) error { validated.Add(1); return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(plans); !os.IsNotExist(err) {
 		t.Fatalf("dry run touched the plans root: %v", err)
 	}
-	if validated == 0 {
+	if validated.Load() == 0 {
 		t.Error("dry run did not validate any spec")
 	}
 	if pv.Plan != "tp" || len(pv.Nodes) != 12 || !reflect.DeepEqual(pv.Items, []string{"a", "b"}) {
