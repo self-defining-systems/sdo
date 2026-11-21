@@ -333,6 +333,10 @@ BASELINE_MISSING_RECORD = "no-baseline.json"
 #: How long the pre-inject gate waits for promoted store baselines before injecting without them.
 BASELINE_WAIT_MAX_S = 600.0
 BASELINE_BLIND = "blind: no promoted baseline yet for "
+#: Set by the bench when it asks ``idle`` before deleting the operator (the release's teardown): store baselines only
+#: matter to an inject, so that call does not wait for them.
+IDLE_FOR_ENV = "BENCH_IDLE_FOR"
+IDLE_FOR_TEARDOWN = "teardown"
 #: Written by ``watch`` (fuzzops starts it right after the inject) with the run it observes; removed at every run or
 #: lane boundary (``collect`` and the lane verbs). While it stands, ``idle`` answers for settle or the window end, and
 #: store baselines (which only an inject needs) are not waited for.
@@ -1476,8 +1480,9 @@ def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     # No log yet: baselines are judged by the second verdict, after the log read an otherwise idle controller earns.
     why = idle_verdict(state, updated, ready, datetime.now(UTC), baselines=False)
     # Store baselines gate only the inject: after it, settle and the window end need idle twice in a row, which a
-    # store whose baseline the fault reset (it re-promotes only later) would never give.
-    if not why and not after_inject(env):
+    # store whose baseline the fault reset (it re-promotes only later) would never give. A teardown's idle needs them
+    # no more: the operator is about to be deleted.
+    if not why and not after_inject(env) and env.get(IDLE_FOR_ENV) != IDLE_FOR_TEARDOWN:
         # Only an otherwise idle controller is worth the full log read the baselines need.
         try:
             log = controller_log(kube, control)

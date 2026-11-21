@@ -554,6 +554,19 @@ def test_an_expired_store_baseline_wait_answers_idle_on_every_poll_until_the_run
     assert lines[-1].startswith(hooks.BASELINE_BLIND)
 
 
+def test_a_teardowns_idle_never_waits_for_a_store_baseline(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The release asks idle before it deletes the operator, after ``collect`` ended the run, so the call looks like
+    a pre-inject gate; the bench says it is for a teardown and an unpromoted store baseline no longer holds it
+    (a gitlab release waited 10 to 18 minutes for a baseline nothing would use)."""
+    gate = _unpromoted_store_lane(monkeypatch, tmp_path)
+    lines: list[str] = []
+    assert hooks.idle(gate, out=lines.append) == 1
+    assert lines[-1].startswith(hooks.BASELINE_BLIND)
+    teardown = {**gate, hooks.IDLE_FOR_ENV: hooks.IDLE_FOR_TEARDOWN}
+    assert hooks.idle(teardown, out=lines.append) == 0, lines
+    assert lines[-1] == "idle"
+
+
 @pytest.mark.parametrize(
     "settle_env",
     [
