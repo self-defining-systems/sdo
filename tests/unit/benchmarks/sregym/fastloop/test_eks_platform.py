@@ -442,3 +442,14 @@ def test_kind_rows_keep_opus_pool_semantics() -> None:
     assert cli.opus_pool_missing("claude-opus-5-5", {"SDO_OPUS_POOL_NFS_SERVER": "nfs"}) is None
     assert cli.opus_pool_missing("gpt-6-luna", {}) is None
     assert cli.opus_pool_missing("claude-sonnet-5-5", {}) is None
+
+
+def test_a_virtual_lane_uses_the_platforms_storage_and_a_cluster_lane_keeps_openebs(tmp_path: Path) -> None:
+    args = argparse.Namespace(
+        cluster_prefix="vc", worker_id=1, run_dir=tmp_path, host_lock_dir=tmp_path / "locks", host_redeploys=2
+    )
+    virtual = cli.eks_worker_environment(
+        args, workspace=tmp_path / "ws", lane=LANE.model_copy(update={"virtual": True})
+    )
+    assert virtual["SREGYM_MANAGED_STORAGE"] == "1"
+    assert "SREGYM_MANAGED_STORAGE" not in cli.eks_worker_environment(args, workspace=tmp_path / "ws", lane=LANE)
