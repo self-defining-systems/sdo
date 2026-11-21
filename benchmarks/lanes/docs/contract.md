@@ -34,10 +34,10 @@ hosts:
   spokane1:
     env: {FUZZOPS_REGISTRY_PORT: "5002"}          # every step on the host
     workload_env:
-      sregym: {SREGYM_LANES_PACKS: "sgl1=apps/a sgl2=apps/b"}   # only steps of the workload "sregym"
+      "benchmarks/sregym/lanes/run.sh workload": {SREGYM_LANES_PACKS: "sgl1=apps/a sgl2=apps/b"}   # only steps of this workload
 ```
 
-The key is the workload's id: the spec's `workload` name (`default` when the spec names none). A step of that workload gets
+The key is the workload's id: the spec's `workload` string exactly as written (an adapter command is the whole command line; `default` when the spec names none). A key named after the adapter instead matches nothing, and `preflight` fails the host (`workload-env`). A step of that workload gets
 its entries on top of `env` (an entry of the same name wins); a step of another workload does not see them. Host-level
 work that belongs to no workload (ledger, preflight, reservations) never carries them. A host with no `workload_env`
 behaves as before.
