@@ -897,7 +897,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		return &ExternalIncident{ID: alert.Id, Namespace: alert.Namespace, Message: alert.Message}, nil
 	}
 	if options.NativeBroker != nil {
-		if err := controller.SetIncidentBroker(*options.NativeBroker); err != nil {
+		if err := attachNativeBroker(controller, options.NativeBroker); err != nil {
 			return err
 		}
 	} else if jobDispatch {
@@ -2426,4 +2426,10 @@ func (e *lockedEncoder) Encode(v any) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.enc.Encode(v)
+}
+
+// attachNativeBroker gives the controller the Go incident broker. The pointer matters: SetIncidentBroker wires the
+// source gate and the branch head poller only for a *NativeIncidentBroker.
+func attachNativeBroker(c *Controller, native *NativeIncidentBroker) error {
+	return c.SetIncidentBroker(*native)
 }
