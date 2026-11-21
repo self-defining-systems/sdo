@@ -1154,7 +1154,7 @@ func (r *stepRunner) check(ctx context.Context, p *Prepared) bool {
 		reasons, alarmed := r.checkOnce(ctx, p)
 		alarm = alarm || alarmed
 		if len(reasons) == 0 {
-			r.logf("build check phases: operator idle after %s, clean journeys span %s", idleAfter, time.Since(spanStart).Round(time.Second))
+			r.logf("build check phases: hooks idle after %s, clean journeys span %s", idleAfter, time.Since(spanStart).Round(time.Second))
 			r.interval("check", start, true, fmt.Sprintf("clean on try %d", try))
 			if alarm {
 				r.res.Gate = &Gate{Lane: r.s.Lane, Host: r.s.Host, Where: "build", At: time.Now().UTC(), Reasons: all, Alarm: true}
