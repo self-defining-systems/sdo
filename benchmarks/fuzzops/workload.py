@@ -20,6 +20,10 @@ spec that names this adapter behaves as a spec that names none, except on a lane
     The lane platform wants ``{"active": bool}``; the built-in fuzzops command prints ``active=<bool>`` (the platform
     turns that into the answer only for its own built-in workload), so this adapter does the same: the command's text
     goes to stderr (the log) and the answer to stdout.
+``run run``
+    A workload's ``run`` result is the last line of its stdout; the built-in fuzzops command prints the record as
+    indented JSON (the platform reads the whole of stdout only for its own built-in workload). This adapter prints the
+    record as one line.
 ``footprint``
     A GitLab app wants 8 cores and 30Gi (the size the built-in workload gives it); other apps take the default.
 
@@ -148,10 +152,12 @@ def handle(
     verb: str,
     env: Mapping[str, str],
     call: Callable[[Sequence[str], Mapping[str, str]], int],
-    capture: Callable[[Sequence[str], Mapping[str, str]], tuple[int, str]] | None = None,
+    capture: Callable[..., tuple[int, str, str]] | None = None,
 ) -> int:
-    """One verb. ``call`` runs a command line with an environment and answers its exit code (stdout passes through);
-    ``capture`` runs one and answers its exit code and output (for the verbs whose text becomes an answer)."""
+    """One verb. ``call`` runs a command line with an environment and answers its exit code (stdout passes through).
+
+    ``capture`` runs one and answers its exit code, stdout and stderr, for the verbs whose output the adapter reshapes;
+    with ``live_stderr`` the stderr is not captured but streams to the log (the third item is empty)."""
     capture = capture or _capture
     if verb == "footprint":
         size = footprint(env.get("BENCH_PACK", ""))
@@ -183,20 +189,34 @@ def _run(
     builtin: Sequence[str],
     env: Mapping[str, str],
     call: Callable[[Sequence[str], Mapping[str, str]], int],
-    capture: Callable[[Sequence[str], Mapping[str, str]], tuple[int, str]],
+    capture: Callable[..., tuple[int, str, str]],
 ) -> int:
-    if verb != "run" or env.get("WORKLOAD_ACTION") not in ANSWER_ACTIONS:
+    action = env.get("WORKLOAD_ACTION")
+    if verb != "run" or action not in (*ANSWER_ACTIONS, "run"):
         return call(builtin, env)
-    code, text = capture(builtin, env)
-    print(text, end="", file=sys.stderr)
-    if (answer := active_answer(text)) is not None:
+    code, out, err = capture(builtin, env, live_stderr=action == "run")
+    print(err, end="", file=sys.stderr)
+    if action == "run":
+        print(one_line(out), end="")
+        return code
+    print(out, end="", file=sys.stderr)
+    if (answer := active_answer(out + err)) is not None:
         print(answer)
     return code
 
 
-def _capture(argv: Sequence[str], env: Mapping[str, str]) -> tuple[int, str]:
-    done = subprocess.run(list(argv), env=dict(env), capture_output=True, text=True, check=False)
-    return done.returncode, done.stdout + done.stderr
+def one_line(record: str) -> str:
+    """The run record as one line (``record`` unchanged when it is not JSON, so the platform sees what ran)."""
+    try:
+        return json.dumps(json.loads(record), separators=(",", ":")) + "\n"
+    except ValueError:
+        return record
+
+
+def _capture(argv: Sequence[str], env: Mapping[str, str], live_stderr: bool = False) -> tuple[int, str, str]:
+    stderr = None if live_stderr else subprocess.PIPE
+    done = subprocess.run(list(argv), env=dict(env), stdout=subprocess.PIPE, stderr=stderr, text=True, check=False)
+    return done.returncode, done.stdout, done.stderr or ""
 
 
 def _call(argv: Sequence[str], env: Mapping[str, str]) -> int:
