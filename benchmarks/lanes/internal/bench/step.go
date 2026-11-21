@@ -480,6 +480,14 @@ func (r *stepRunner) teardown(ctx context.Context, p *Prepared) bool {
 	return true
 }
 
+// BenchIdleForEnv tells the idle hook why it is asked when that is not a gate before an inject: IdleForTeardown says
+// what it answers for is about to be deleted, so the hook asks only whether work has stopped, not for what an inject
+// needs. Unset is the pre-inject gate and the build check, as before.
+const (
+	BenchIdleForEnv = "BENCH_IDLE_FOR"
+	IdleForTeardown = "teardown"
+)
+
 // waitIdle polls the operator's idle until it is idle twice in a row, at most for the cap.
 func (r *stepRunner) waitIdle(ctx context.Context, p *Prepared) bool {
 	start := time.Now()
@@ -489,7 +497,7 @@ func (r *stepRunner) waitIdle(ctx context.Context, p *Prepared) bool {
 	}
 	calm, why := 0, ""
 	for calm < 2 && time.Since(start) < limit {
-		if res := r.callHook(ctx, p, "idle"); res.OK() {
+		if res := r.callHook(ctx, p, "idle", BenchIdleForEnv+"="+IdleForTeardown); res.OK() {
 			calm++
 		} else {
 			calm, why = 0, res.First

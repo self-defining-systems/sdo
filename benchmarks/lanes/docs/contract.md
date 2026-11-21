@@ -65,6 +65,8 @@ contract, unchanged (semantics in fuzzops `docs/bench.md`, "Hook contract").
 
 The build check waits `max(ready_timeout, max_startup + 10m)` for `idle`: a subject reports busy through its own start-up period, and a lane is never failed for a wait shorter than it. `max_startup` is the subject's `describe` answer (for a pin without `describe`: SDO's `operator.settings.startup_bound`, default 30m).
 
+The `idle` before a teardown (a release, a rebuild that removes the operator) is called with `BENCH_IDLE_FOR=teardown`: the operator is about to be deleted, so the subject answers only whether its agent has stopped writing and not what an inject would need (for example a settled baseline); unset, `idle` is the gate before an inject or the build check. Settle passes `BENCH_OWN_DETECTED_AT`.
+
 ## Workload verbs
 
 | verb | operations (`WORKLOAD_ACTION`) | built-in `fuzzops` workload runs |
