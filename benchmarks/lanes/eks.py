@@ -71,6 +71,9 @@ class EksLane(BaseModel):
     upstreams: tuple[str, ...] = ("docker.io", "ghcr.io", "quay.io", "registry.k8s.io")
     #: Tags every ECR repository fastloop creates carries (account bookkeeping, for example ``Project``).
     repository_tags: dict[str, str] = Field(default_factory=dict)
+    #: A vcluster lane: its ``kube-system`` and nodes are the host cluster's, so NetworkPolicy enforcement and the node
+    #: agent are the lanes provider's to guarantee and cannot be read or run from inside the lane.
+    virtual: bool = False
 
     @field_validator("registry")
     @classmethod
@@ -507,8 +510,9 @@ class EksProvider:
 
         server, uid = cluster_identity(kubeconfig, run=run)
         lane = EksLane(registry=registry, server=server, cluster_uid=uid, **settings)
-        require_network_policy(kubeconfig, run=run)
-        verify_node_agent(kubeconfig, lane, run=run)
+        if not lane.virtual:
+            require_network_policy(kubeconfig, run=run)
+            verify_node_agent(kubeconfig, lane, run=run)
         return cls(lane, kubeconfig, run=run)
 
     def kubeconfig(self) -> str:
@@ -531,6 +535,8 @@ class EksProvider:
         return write_node_file(self._kubeconfig, relative, content, run=self._run)
 
     def run_on_nodes(self, script: str, *, wait: float = 0) -> list[str]:
+        if self.lane.virtual:
+            raise EksLaneError("a virtual (vcluster) lane has no node agent in its cluster: it cannot run node scripts")
         return run_on_nodes(self._kubeconfig, script, run=self._run, wait=wait)
 
     def release(self) -> None:
