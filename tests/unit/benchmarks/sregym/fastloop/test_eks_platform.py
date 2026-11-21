@@ -201,7 +201,7 @@ def test_only_an_eks_lane_pulls_its_sink_from_the_cluster(tmp_path: Path, monkey
 
 def test_an_eks_lane_runs_opus_through_a_per_node_pool_named_by_its_cluster(tmp_path: Path) -> None:
     environ = {"SDO_OPUS_POOL_HOST_PATH": "/opt/sdo-evidence/opus-pool", "SDO_OPUS_POOL_DIR": "/x"}
-    eks_environment(tmp_path).apply_operator_env(environ)
+    eks_environment(tmp_path).apply_operator_env(environ, model="claude-opus-5-5")
     assert environ["SDO_OPUS_POOL_MODE"] == "per_host"
     assert environ["SDO_OPUS_POOL_HOST_ID"] == "eks-lane-1"
     assert environ["SDO_OPUS_POOL_HOST_PATH"] == "/var/lib/sdo-lane/opus-pool"
@@ -548,3 +548,13 @@ def test_the_run_process_knows_its_lane_is_virtual_like_the_worker_does(tmp_path
     cluster_lane: dict[str, str] = {"SREGYM_MANAGED_STORAGE": "1"}
     eks_environment(tmp_path).apply_operator_env(cluster_lane)
     assert "SREGYM_MANAGED_STORAGE" not in cluster_lane
+
+
+def test_a_row_of_another_model_gets_no_opus_pool_mount(tmp_path: Path) -> None:
+    """The controller mounts the pool path from the node when it is configured; only an Opus row provisions it."""
+    environ = {"SDO_OPUS_POOL_MODE": "per_host", "SDO_OPUS_POOL_HOST_PATH": "/stale"}
+    eks_environment(tmp_path).apply_operator_env(environ, model="claude-sonnet-5-5")
+    assert not [key for key in environ if key.startswith("SDO_OPUS_POOL_") or key == "SDO_OPUS_MAX_SESSIONS"]
+    unmodelled: dict[str, str] = {}
+    eks_environment(tmp_path).apply_operator_env(unmodelled)
+    assert "SDO_OPUS_POOL_MODE" not in unmodelled
