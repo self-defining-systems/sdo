@@ -81,6 +81,8 @@ type Step struct {
 	Create        bool     `json:"create,omitempty"`
 	Recreate      bool     `json:"recreate,omitempty"`
 	DeleteCluster bool     `json:"delete_cluster,omitempty"`
+	// Virtual: the host is an eks host whose lanes are vclusters (eks_vcluster.go).
+	Virtual bool `json:"virtual,omitempty"`
 	// Evidence is the lane's evidence directory on the host, mounted on every node at EvidenceNode.
 	Evidence string `json:"evidence,omitempty"`
 	// Provider is the host's lane provider ("" or "kind", "vcluster").
@@ -305,6 +307,9 @@ func (r *stepRunner) laneEnv(p *Prepared) []string {
 		"BENCH_EVIDENCE_HOST=" + r.s.Evidence, "BENCH_EVIDENCE_NODE=" + EvidenceNode}
 	e = append(e, r.s.HostEnv...)
 	if r.s.Provider == ProviderEks {
+		if r.s.Virtual {
+			e = append(e, "BENCH_LANE_VIRTUAL=1") // kube-system and the nodes are the host cluster's, not the lane's
+		}
 		// The lane's entry address (a node the manager reaches on NodePorts) is known once its cluster is up.
 		if b, err := os.ReadFile(r.s.Kubeconfig + ".entry"); err == nil && strings.TrimSpace(string(b)) != "" {
 			e = append(e, "BENCH_ENTRY_HOST="+strings.TrimSpace(string(b)))

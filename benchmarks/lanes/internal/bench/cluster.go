@@ -26,7 +26,11 @@ func (r *stepRunner) clusterExists(ctx context.Context) (bool, error) {
 	env := append(append(os.Environ(), r.s.HostEnv...), "KUBECONFIG="+r.s.Kubeconfig)
 	if r.s.Provider == ProviderEks {
 		// AWS knows whether the cluster exists; a kubeconfig that does not match says nothing about it.
-		cmd := exec.CommandContext(ctx, "bash", filepath.Join(r.platform(), "deploy", "eks-lane.sh"), "exists", r.s.Lane)
+		script := "eks-lane.sh"
+		if r.s.Virtual {
+			script = "eks-vcluster.sh" // the lane is a namespace of the host cluster
+		}
+		cmd := exec.CommandContext(ctx, "bash", filepath.Join(r.platform(), "deploy", script), "exists", r.s.Lane)
 		cmd.Env = env
 		err := cmd.Run()
 		var ee *exec.ExitError

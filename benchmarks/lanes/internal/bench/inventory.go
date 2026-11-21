@@ -135,6 +135,13 @@ func (h Host) EnvList() []string {
 			all["EKS_REGION"] = h.EKS.Region
 			all["AWS_REGION"] = h.EKS.Region
 			all["BENCH_IMAGE_REGISTRY"] = h.EKS.Registry()
+			if h.EKS.virtual() {
+				all["EKS_HOST_CLUSTER"] = h.EKS.HostCluster
+				all["EKS_HOST_KUBECONFIG"] = h.hostKubeconfig()
+				if h.EKS.SystemInstance != "" {
+					all["EKS_SYSTEM_INSTANCE"] = h.EKS.SystemInstance
+				}
+			}
 		}
 	}
 	if h.IsVcluster() {
@@ -207,6 +214,9 @@ func (h Host) ClusterCommand(tmpl, cluster string) string {
 	if tmpl == "" {
 		return ""
 	}
+	if h.IsEks() && h.EKS.virtual() && !h.EKS.virtualLane(cluster) {
+		tmpl = strings.Replace(tmpl, "/eks-vcluster.sh ", "/eks-lane.sh ", 1) // a full-cluster lane of a vcluster host
+	}
 	r := strings.NewReplacer("{cluster}", shellQuote(cluster), "{kubeconfig}", shellQuote(filepath.Join(h.Kubeconfigs, cluster)),
 		"{evidence}", shellQuote(h.LaneEvidence(cluster)))
 	return r.Replace(tmpl)
@@ -241,6 +251,24 @@ func LoadInventory(root string) (Inventory, error) {
 		}
 		if h.IsEks() && h.ClusterUp == "" && h.ClusterDown == "" {
 			h.ClusterUp, h.ClusterDown = eksClusterUp, eksClusterDown
+			if h.EKS.virtual() {
+				h.ClusterUp, h.ClusterDown = eksVclusterUp, eksVclusterDown
+			}
+			inv.Hosts[name] = h
+		}
+		if h.IsEks() && h.EKS != nil {
+			// a lane says what it has: a real kube-system and node access, or the host's virtual ones (eks_vcluster.go)
+			if h.EKS.virtual() && h.EKS.HostCluster == "" {
+				h.EKS.HostCluster = "lanes-host-" + name
+			}
+			for _, c := range h.Clusters {
+				if _, ok := h.LaneLabels[c]; !ok {
+					if h.LaneLabels == nil {
+						h.LaneLabels = map[string]map[string]string{}
+					}
+					h.LaneLabels[c] = eksLabels(h.EKS, c)
+				}
+			}
 			inv.Hosts[name] = h
 		}
 	}

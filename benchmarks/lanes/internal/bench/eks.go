@@ -65,6 +65,16 @@ type HostEKS struct {
 	// Subnets/VPC of the clusters, passed to the platform script; empty: eksctl makes a VPC.
 	VPC     string   `json:"vpc,omitempty"`
 	Subnets []string `json:"subnets,omitempty"`
+	// Lanes says what a lane is: "cluster" (default) is an EKS cluster of its own; "vcluster" is a virtual cluster on the
+	// host's one long-lived EKS cluster (HostCluster), with nodes of its own that Karpenter makes (eks_vcluster.go).
+	Lanes string `json:"lanes,omitempty"`
+	// HostCluster is the long-lived cluster of lanes: vcluster (default lanes-host-<host>), made once by `lanes host adopt`.
+	HostCluster string `json:"host_cluster,omitempty"`
+	// SystemInstance is the node of the host cluster that holds Karpenter and the lanes' control planes (default m6i.xlarge).
+	SystemInstance string `json:"system_instance,omitempty"`
+	// FullLanes are the lanes of a vcluster host that are clusters of their own (a real kube-system and real nodes), for
+	// the plans that need them (the fault matrices): they are labeled node-access=real and taken by a spec with that selector.
+	FullLanes []string `json:"full_lanes,omitempty"`
 }
 
 // eksFamily is the price and memory shape of an instance family (general purpose, compute, memory optimised).
@@ -122,12 +132,17 @@ func (h Host) BuildLimit() int {
 // resort: a kind host can make one in a minute or two. An eks cluster takes about twenty minutes to make, so a failure is
 // retried in place and, when it repeats, the lane goes Down and its cluster is deleted (eks.go): the cost of a retry is
 // a reset in place, not a cluster.
-func (h Host) RecreatesAfterFailure() bool { return h.ClusterUp != "" && !h.IsEks() }
+func (h Host) RecreatesAfterFailure(lane string) bool {
+	return h.ClusterUp != "" && (!h.IsEks() || h.EKS.virtualLane(lane))
+}
 
-// Idle is the idle timeout (default DefaultEksIdleTimeout).
+// Idle is the idle timeout (default DefaultEksIdleTimeout; a virtual lane is made in seconds, so DefaultVirtualIdleTimeout).
 func (e *HostEKS) Idle() time.Duration {
 	d, err := time.ParseDuration(e.IdleTimeout)
 	if err != nil || d <= 0 {
+		if e.virtual() {
+			return DefaultVirtualIdleTimeout
+		}
 		return DefaultEksIdleTimeout
 	}
 	return d
@@ -166,6 +181,7 @@ func (e *HostEKS) validate(h Host) []string {
 			errs = append(errs, fmt.Sprintf("eks.idle_timeout %q: want a duration such as 10m", e.IdleTimeout))
 		}
 	}
+	errs = append(errs, e.validateLanes()...)
 	if len(e.Subnets) > 0 && e.VPC == "" {
 		errs = append(errs, "eks.subnets needs eks.vpc")
 	}
@@ -201,12 +217,21 @@ type EksPlan struct {
 	Nodes        int     `json:"nodes"`
 	VCPUs        int     `json:"vcpus"` // all nodes together
 	USDPerHour   float64 `json:"usd_per_hour"`
+	// Virtual: the lane is a vcluster of the host cluster (no control plane of its own; eks_vcluster.go).
+	Virtual bool `json:"virtual,omitempty"`
 }
 
 // PlanLane sizes a lane's cluster from the workload's footprint: two nodes of the cheapest instance type that holds
 // half of it (one node when it asks for fewer than 4 cores), as a kind lane has two nodes. The control plane is in
 // USDPerHour.
-func (e *HostEKS) PlanLane(l LaneLimit) (EksPlan, error) {
+func (e *HostEKS) PlanLane(l LaneLimit) (EksPlan, error) { return e.planLane(l, e.virtual()) }
+
+// PlanLaneFor is PlanLane for the named lane of a host (a full-cluster lane of a vcluster host has a control plane of its own).
+func (e *HostEKS) PlanLaneFor(lane string, l LaneLimit) (EksPlan, error) {
+	return e.planLane(l, e.virtualLane(lane))
+}
+
+func (e *HostEKS) planLane(l LaneLimit, virtual bool) (EksPlan, error) {
 	mem, err := ParseSize(l.Memory)
 	if err != nil || mem <= 0 || l.CPUs < 1 {
 		return EksPlan{}, fmt.Errorf("lane footprint %d cores, memory %q is not a size", l.CPUs, l.Memory)
@@ -225,9 +250,12 @@ func (e *HostEKS) PlanLane(l LaneLimit) (EksPlan, error) {
 			if sz.VCPUs < max(needCPU, e.minNodeVCPUs()) || float64(sz.VCPUs)*f.GiBPerVCPU < needMem {
 				continue
 			}
-			cost := float64(nodes)*float64(sz.VCPUs)*f.USDPerVCPUHour + eksControlPlaneUSDPerHour
+			cost := float64(nodes) * float64(sz.VCPUs) * f.USDPerVCPUHour
+			if !virtual {
+				cost += eksControlPlaneUSDPerHour // a virtual lane shares the host cluster's control plane
+			}
 			if best.InstanceType == "" || cost < best.USDPerHour {
-				best = EksPlan{InstanceType: fam + "." + sz.Name, Nodes: nodes, VCPUs: nodes * sz.VCPUs, USDPerHour: round4(cost)}
+				best = EksPlan{InstanceType: fam + "." + sz.Name, Nodes: nodes, VCPUs: nodes * sz.VCPUs, USDPerHour: round4(cost), Virtual: virtual}
 			}
 			break // the smallest size of this family that fits
 		}
@@ -246,6 +274,11 @@ type eksLedger struct {
 	// ClosedUSD is the estimated cost of the lanes deleted so far.
 	ClosedUSD float64   `json:"closed_usd"`
 	Closed    []eksSpan `json:"closed,omitempty"`
+	// Lanes: vcluster. HostSince is when the host cluster began to bill (its control plane); SystemUSD is what its system
+	// node cost while lanes existed; Settled is the last pass that added to it.
+	HostSince time.Time `json:"host_since,omitempty"`
+	SystemUSD float64   `json:"system_usd,omitempty"`
+	Settled   time.Time `json:"settled,omitempty"`
 }
 
 type eksOpen struct {
@@ -296,7 +329,10 @@ func (l *eksLedger) hourly() (usd float64) {
 
 // spend is the estimated cost so far: finished lanes plus the running ones up to now.
 func (l *eksLedger) spend(now time.Time) float64 {
-	usd := l.ClosedUSD
+	usd := l.ClosedUSD + l.SystemUSD
+	if !l.HostSince.IsZero() {
+		usd += eksControlPlaneUSDPerHour * now.Sub(l.HostSince).Hours()
+	}
 	for _, o := range l.Open {
 		usd += o.USDPerHour * now.Sub(o.Since).Hours()
 	}
@@ -313,10 +349,15 @@ type EksStatus struct {
 	BudgetPerHr float64 `json:"budget_per_hour"`
 	SpendUSD    float64 `json:"spend_usd"`
 	BudgetTotal float64 `json:"budget_total,omitempty"`
+	// Virtual: lanes are vclusters; USDPerHour and VCPUs then include the host cluster (its control plane, and its system node while lanes exist).
+	Virtual bool `json:"virtual,omitempty"`
 }
 
 func (e EksStatus) String() string {
 	s := fmt.Sprintf("eks: %d/%d lanes, %d/%d vCPU, $%.2f/h of $%.2f/h, spent ~$%.2f", e.Lanes, e.MaxLanes, e.VCPUs, e.VCPUQuota, e.USDPerHour, e.BudgetPerHr, e.SpendUSD)
+	if e.Virtual {
+		s = strings.Replace(s, "eks: ", "eks (vcluster lanes, host included): ", 1)
+	}
 	if e.BudgetTotal > 0 {
 		s += fmt.Sprintf(" of $%.2f", e.BudgetTotal)
 	}
@@ -330,8 +371,8 @@ func (m *Manager) eksStatus(host string) EksStatus {
 	if max == 0 {
 		max = len(h.Clusters)
 	}
-	return EksStatus{Lanes: len(l.Open), MaxLanes: max, VCPUs: l.vcpus(), VCPUQuota: h.EKS.VCPUQuota, USDPerHour: round4(l.hourly()),
-		BudgetPerHr: h.EKS.BudgetPerHour, SpendUSD: l.spend(m.now()), BudgetTotal: h.EKS.BudgetTotal}
+	return EksStatus{Lanes: len(l.Open), MaxLanes: max, VCPUs: l.vcpus() + l.hostVCPUs(h.EKS, false), VCPUQuota: h.EKS.VCPUQuota, USDPerHour: round4(l.hourly() + l.hostHourly(h.EKS, false)),
+		BudgetPerHr: h.EKS.BudgetPerHour, SpendUSD: l.spend(m.now()), BudgetTotal: h.EKS.BudgetTotal, Virtual: h.EKS.virtual()}
 }
 
 // eksAdmit says why a cluster of plan may not be made on host now ("" when it may): too many lanes, the vCPU quota, the
@@ -340,13 +381,18 @@ func (m *Manager) eksAdmit(host string, p EksPlan) string {
 	h := m.inv.Hosts[host]
 	l := m.eksLedger(host)
 	st := m.eksStatus(host)
+	if p.Virtual && l.HostSince.IsZero() {
+		return fmt.Sprintf("host %s: its host cluster %s is not adopted: run `lanes host adopt %s`", host, h.EKS.hostCluster(host), host)
+	}
+	// A virtual lane is on top of the host cluster: its control plane and the system node it runs lanes from.
+	hostVCPUs, hostUSD := l.hostVCPUs(h.EKS, p.Virtual), l.hostHourly(h.EKS, p.Virtual)
 	switch {
 	case st.Lanes >= st.MaxLanes:
 		return fmt.Sprintf("host %s runs max_lanes (%d) EKS clusters", host, st.MaxLanes)
-	case l.vcpus()+p.VCPUs > h.EKS.VCPUQuota:
-		return fmt.Sprintf("host %s: a lane of %d vCPUs does not fit the vCPU quota (%d of %d in use)", host, p.VCPUs, l.vcpus(), h.EKS.VCPUQuota)
-	case l.hourly()+p.USDPerHour > h.EKS.BudgetPerHour+1e-9:
-		return fmt.Sprintf("host %s: a lane at $%.2f/h does not fit the budget ($%.2f/h of $%.2f/h in use)", host, p.USDPerHour, l.hourly(), h.EKS.BudgetPerHour)
+	case l.vcpus()+hostVCPUs+p.VCPUs > h.EKS.VCPUQuota:
+		return fmt.Sprintf("host %s: a lane of %d vCPUs does not fit the vCPU quota (%d of %d in use)", host, p.VCPUs, l.vcpus()+hostVCPUs, h.EKS.VCPUQuota)
+	case l.hourly()+hostUSD+p.USDPerHour > h.EKS.BudgetPerHour+1e-9:
+		return fmt.Sprintf("host %s: a lane at $%.2f/h does not fit the budget ($%.2f/h of $%.2f/h in use)", host, p.USDPerHour, l.hourly()+hostUSD, h.EKS.BudgetPerHour)
 	case h.EKS.BudgetTotal > 0 && l.spend(m.now())+p.USDPerHour > h.EKS.BudgetTotal:
 		return fmt.Sprintf("host %s: spent ~$%.2f of the total budget $%.2f", host, l.spend(m.now()), h.EKS.BudgetTotal)
 	}
@@ -354,8 +400,8 @@ func (m *Manager) eksAdmit(host string, p EksPlan) string {
 }
 
 // eksPlanFor is the cluster the lane gets for the experiment it is bound to (the default footprint when it has none).
-func (m *Manager) eksPlanFor(host string, s Spec) (EksPlan, error) {
-	return m.inv.Hosts[host].EKS.PlanLane(s.LaneLimit())
+func (m *Manager) eksPlanFor(host, lane string, s Spec) (EksPlan, error) {
+	return m.inv.Hosts[host].EKS.PlanLaneFor(lane, s.LaneLimit())
 }
 
 // eksExists is whether lane l has a cluster, or a build is making it.
@@ -371,7 +417,7 @@ func (m *Manager) eksSettle() {
 			continue
 		}
 		l := m.eksLedger(name)
-		changed := false
+		changed := m.eksHostSettle(name, h, l)
 		for _, lf := range m.sortedLanes() {
 			if lf.Host != name {
 				continue
@@ -383,9 +429,9 @@ func (m *Manager) eksSettle() {
 				if x := m.exps[lf.Experiment]; x != nil {
 					spec = x.Measured()
 				}
-				p, err := m.eksPlanFor(name, spec)
+				p, err := m.eksPlanFor(name, lf.Lane, spec)
 				if err != nil {
-					p, _ = h.EKS.PlanLane(DefaultLaneLimit())
+					p, _ = h.EKS.PlanLaneFor(lf.Lane, DefaultLaneLimit())
 				}
 				l.Open[lf.Lane] = eksOpen{Since: m.now().UTC(), EksPlan: p}
 				changed = true
@@ -425,6 +471,9 @@ func eksEnv(h Host, p EksPlan) []string {
 	e := h.EKS
 	env := []string{"EKS_REGION=" + e.Region, "EKS_INSTANCE_TYPE=" + p.InstanceType, "EKS_NODES=" + strconv.Itoa(p.Nodes),
 		"EKS_NODE_MAX=" + strconv.Itoa(p.Nodes+1)}
+	if e.virtual() && p.Nodes > 0 {
+		env = append(env, "EKS_NODE_VCPUS="+strconv.Itoa(p.VCPUs/p.Nodes))
+	}
 	if e.Account != "" {
 		env = append(env, "EKS_ACCOUNT="+e.Account)
 	}
@@ -531,7 +580,7 @@ func (m *Manager) eksLaneAdmitted(l *LaneFile, s Spec) bool {
 	if !h.IsEks() || !l.Gone {
 		return true
 	}
-	p, err := h.EKS.PlanLane(s.LaneLimit())
+	p, err := h.EKS.PlanLaneFor(l.Lane, s.LaneLimit())
 	if err != nil {
 		return false
 	}

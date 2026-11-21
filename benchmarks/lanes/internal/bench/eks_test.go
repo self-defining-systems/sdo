@@ -667,13 +667,13 @@ func TestEksDownLaneWithNothingPreparedStillGetsItsClusterDeleted(t *testing.T) 
 // A failed build or gate on an eks lane is retried in place; a new cluster (about 20 minutes) is not the first resort.
 func TestEksLanesAreNotRecreatedAfterAFailure(t *testing.T) {
 	m := eksManager(t)
-	if m.inv.Hosts["e"].RecreatesAfterFailure() {
+	if m.inv.Hosts["e"].RecreatesAfterFailure("eks1") {
 		t.Fatal("an eks host recreates its cluster after a failed build")
 	}
-	if !(Host{ClusterUp: "up"}).RecreatesAfterFailure() {
+	if !(Host{ClusterUp: "up"}).RecreatesAfterFailure("c") {
 		t.Fatal("a kind host with cluster_up no longer recreates after a failure")
 	}
-	if (Host{}).RecreatesAfterFailure() {
+	if (Host{}).RecreatesAfterFailure("c") {
 		t.Fatal("a host that cannot make clusters recreates one")
 	}
 }

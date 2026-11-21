@@ -639,7 +639,7 @@ func (m *Manager) resetDown() {
 		reason := fmt.Sprintf("auto-reset %d/%d after: %s", l.AutoResets, maxAutoResets, l.Reason)
 		l.Experiment, l.Seq, l.BuildFailures, l.GateFailures = "", nil, 0, 0
 		l.Prepared = nil
-		l.Recreate = m.inv.Hosts[l.Host].RecreatesAfterFailure()
+		l.Recreate = m.inv.Hosts[l.Host].RecreatesAfterFailure(l.Lane)
 		m.setState(l, LaneFree, reason)
 	}
 }
@@ -716,12 +716,18 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 	}
 	s.HostEnv = h.EnvFor(limitSpec.Workload)
 	if h.IsEks() {
-		p, err := h.EKS.PlanLane(limitSpec.LaneLimit())
+		p, err := h.EKS.PlanLaneFor(l.Lane, limitSpec.LaneLimit())
 		if err != nil {
 			m.logf("lane %s: %s refused: %v", l.Lane, s.Kind, err)
 			return false
 		}
 		s.HostEnv = append(s.HostEnv, eksEnv(h, p)...)
+		if h.EKS.virtualLane(l.Lane) {
+			s.Virtual = true
+			if s.DeleteCluster && m.eksLastLane(l.Host, l.Lane) {
+				s.HostEnv = append(s.HostEnv, "EKS_HOST_LAST=1") // the host's nodes go with its last lane
+			}
+		}
 	}
 	mode, block, _ := isolationOf(h, limitSpec, m.reservations, l.Host, nil)
 	s.Limits = laneLimits(h, limitSpec, block)
@@ -1458,7 +1464,7 @@ func (m *Manager) adopt(ctx context.Context, l *LaneFile) error {
 				// An in-place reset that failed is tried next on a new cluster (when the host can make one); a
 				// build refused for its spec (res.Config) did nothing to the cluster, which stays as it is.
 				if res.Config == "" {
-					l.Recreate = !res.Fresh && m.inv.Hosts[l.Host].RecreatesAfterFailure()
+					l.Recreate = !res.Fresh && m.inv.Hosts[l.Host].RecreatesAfterFailure(l.Lane)
 				}
 				m.unbind(l, "build failed: "+res.Reason)
 			}
@@ -1474,7 +1480,7 @@ func (m *Manager) adopt(ctx context.Context, l *LaneFile) error {
 			switch {
 			case l.GateFailures < 2:
 				m.unbind(l, "not ready: rebuilt")
-			case !l.GateRecreated && m.inv.Hosts[l.Host].RecreatesAfterFailure():
+			case !l.GateRecreated && m.inv.Hosts[l.Host].RecreatesAfterFailure(l.Lane):
 				// Twice on a reused cluster: once more on a new one (once, until a run is done).
 				l.GateFailures, l.Recreate, l.GateRecreated = 0, true, true
 				m.unbind(l, "not ready twice: the cluster is made anew")
