@@ -488,6 +488,12 @@ func (r *stepRunner) waitIdle(ctx context.Context, p *Prepared) bool {
 			calm++
 		} else {
 			calm, why = 0, res.First
+			if strings.HasPrefix(why, "gone:") {
+				// The subject says it is already gone: there is nothing to wait for, and the teardown goes on.
+				r.logf("idle: %s", why)
+				r.interval("idle", start, true, why)
+				return true
+			}
 			if r.clusterVanished(ctx, "the operator to be idle") {
 				return false
 			}

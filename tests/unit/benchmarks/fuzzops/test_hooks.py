@@ -444,10 +444,11 @@ def test_idle_reads_the_pod_the_state_configmap_and_the_controller_log_once_each
     env = {"FUZZOPS_NAMESPACE": "ns1", "FUZZOPS_KUBE_CONTEXT": "kind-c", "KUBECONFIG": "/k"}
     lines: list[str] = []
     assert hooks.idle(env, out=lines.append) == 0, lines
-    assert len(calls) == 3
+    # the namespace and controller Job probes, then the pod, the state ConfigMap and the log
+    assert len(calls) == 5
     assert sum("logs" in c for c in calls) == 1
     assert any("--show-managed-fields" in c for c in calls)
-    assert all(c[c.index("-n") + 1] == "ns1-sdo" for c in calls)
+    assert all(c[c.index("-n") + 1] == "ns1-sdo" for c in calls if "-n" in c)
 
 
 def test_idle_is_idle_once_the_log_shows_every_store_in_the_state_history_promoted(
@@ -776,8 +777,9 @@ def test_teardown_deletes_the_control_namespace_and_its_cluster_grant(
     }
     assert hooks.teardown(env, out=lambda _: None) == 0
     deletes = [c[c.index("delete") + 1 :] for c in calls if "delete" in c]
-    assert calls[0][calls[0].index("delete") + 1 :][:2] == ["namespace", "ns1-sdo"]
-    assert "--wait=true" in calls[0]
+    first = next(c for c in calls if "delete" in c)
+    assert first[first.index("delete") + 1 :][:2] == ["namespace", "ns1-sdo"]
+    assert "--wait=true" in first
     assert ["clusterrolebinding", "sdo-admin-ns1-sdo"] in [d[:2] for d in deletes]
     assert ["clusterrole", "sdo-admin-ns1-sdo"] in [d[:2] for d in deletes]
     assert all("--ignore-not-found" in c for c in calls if "delete" in c)

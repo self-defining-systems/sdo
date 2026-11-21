@@ -143,3 +143,36 @@ def test_a_controller_that_never_finishes_its_closure_is_not_stopped(tmp_path: P
     assert "stop" not in events
     assert "repo" not in events
     assert "app" not in events
+
+
+def _gone(missing: str) -> Any:
+    """kubectl on a cluster where ``missing`` ("namespace" or "job") is not there; everything else answers."""
+
+    def run(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        if "get" in cmd and missing in cmd:
+            return subprocess.CompletedProcess(cmd, 1, "", f'Error from server (NotFound): {missing} "x" not found')
+        return subprocess.CompletedProcess(cmd, 0, "{}", "")
+
+    return run
+
+
+@pytest.mark.parametrize("missing", ["namespace", "job"])
+def test_idle_of_a_vanished_operator_says_gone_at_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, missing: str
+) -> None:
+    """A teardown waits for idle first; a deleted control namespace (or controller) never turns idle, so the wait ran
+    to its 45 min cap. The verb names the absence so the bench stops waiting."""
+    monkeypatch.setattr(hooks.subprocess, "run", _gone(missing))
+    lines: list[str] = []
+    assert hooks.idle(_env(tmp_path), out=lines.append) == 1
+    assert len(lines) == 1, lines
+    assert lines[0].startswith("gone: operator already gone"), lines
+
+
+def test_teardown_of_a_vanished_operator_records_it_and_proceeds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(hooks.subprocess, "run", _gone("namespace"))
+    lines: list[str] = []
+    assert hooks.teardown(_env(tmp_path), out=lines.append) == 0
+    assert any("operator already gone" in line for line in lines), lines

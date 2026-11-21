@@ -89,6 +89,25 @@ func TestWaitIdleStopsWhenTheClusterVanishes(t *testing.T) {
 	}
 }
 
+// A hook that says the subject is already gone ("gone: ...") ends the wait at once, with nothing left to wait for.
+func TestWaitIdleStopsWhenTheSubjectIsAlreadyGone(t *testing.T) {
+	dir := t.TempDir()
+	hook := filepath.Join(dir, "hook.sh")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho 'gone: already gone'\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := newRunner(t, presentCluster)
+	r.s.Cap = Seconds(600)
+	p := &Prepared{Hooks: "t", HooksPath: dir, Command: hook, Ready: true}
+	start := time.Now()
+	if !r.waitIdle(context.Background(), p) {
+		t.Error("waitIdle must go on to the teardown")
+	}
+	if time.Since(start) > 30*time.Second || r.res.LaneDown != "" {
+		t.Errorf("took %s, down=%q", time.Since(start), r.res.LaneDown)
+	}
+}
+
 // A host that does not make its clusters is not probed.
 func TestHostWithoutClusterUpIsNotProbed(t *testing.T) {
 	r := newRunner(t, func(context.Context) (bool, error) { t.Error("probed"); return false, nil })
