@@ -2428,8 +2428,8 @@ func (e *lockedEncoder) Encode(v any) error {
 	return e.enc.Encode(v)
 }
 
-// attachNativeBroker gives the controller the Go incident broker. The pointer matters: SetIncidentBroker wires the
+// attachNativeBroker gives the controller the Go incident broker. SetIncidentBroker wires the
 // source gate and the branch head poller only for a *NativeIncidentBroker.
 func attachNativeBroker(c *Controller, native *NativeIncidentBroker) error {
-	return c.SetIncidentBroker(*native)
+	return c.SetIncidentBroker(native)
 }
