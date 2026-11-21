@@ -236,6 +236,12 @@ func runPreflight(ctx context.Context, inv Inventory, specs []specFile, opt Pref
 			if len(workloads) == 0 {
 				workloads[""] = true
 			}
+			var names []string
+			for w := range workloads {
+				names = append(names, w)
+			}
+			wok, wd := judgeWorkloadEnv(host, names)
+			add(9, "workload-env", h, wok, "%s", wd)
 			for w := range workloads {
 				tout, terr := run(ctx, h, toolsProbe(host, w))
 				tok, td := judgeTools(tout, terr)
