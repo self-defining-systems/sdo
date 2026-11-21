@@ -54,13 +54,14 @@ predates eks.
 - **Size.** From the workload's `footprint` verb (or the spec's `lane:`): two nodes of the cheapest instance type that
   holds half of it (one node under 4 cores), never under `min_node_vcpus`. Passed to the script as `EKS_INSTANCE_TYPE`,
   `EKS_NODES`.
-- **Keep.** A lane's cluster stays between problems of a batch. It is deleted when no experiment can build on the host and
+- **Keep.** A lane's cluster stays between problems of a batch. It is deleted when no experiment can be placed on that lane
+  (its host is usable and its labels satisfy the selector; work for another lane of the host does not keep it) and
   the lane has been free for `idle_timeout`, or at once by `lanes gc`. A plan node that is only waiting (queued, blocked on
   an edge such as p1 -> p2, or back for a retry) and could use the lane (its host and selector match) keeps it past
   `idle_timeout`, so a slow p1 retry does not cost p2 a new 19 minute cluster. `max_idle_with_waiting` (default 60m) is the
   ceiling: past it the lane is deleted and the alarm `idle-ceiling` is raised, so a plan stalled for ever does not hold
   clusters for ever. This holds for cluster and vcluster lanes alike. Nothing bills overnight unless a manager is
-  stopped with lanes up: `lanes status` shows the running estimate, `lanes gc` and the manager clean up.
+  stopped with lanes up: `lanes status` shows the running estimate, `lanes gc` and the manager clean up. `lanes lane release LANE` deletes one free lane's cluster on the next pass whatever waits for it.
 - **Down.** `cluster_down` (default `eks-lane.sh down`) deletes the lane's node group and cluster and the kubeconfig, never
   the shared stack. A cluster an earlier version made with eksctl is deleted with eksctl.
 - **Images.** `$BENCH_REGISTRY push IMAGE...` (`eks-lane.sh push`) publishes a local image under its declared name to

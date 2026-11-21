@@ -274,6 +274,35 @@ func LaneReset(root Root, lane string) error {
 	return writeJSON(root.LanePath(lane), lf)
 }
 
+// releasePath is the request `lane release` leaves for the manager.
+func (r Root) releasePath(lane string) string { return r.path("release-requests", lane) }
+
+// LaneRelease asks the manager to release a free lane now: its cluster is deleted on the next pass whatever waits for
+// the lane and however long it has been free (a lane is otherwise kept for idle_timeout and for waiting work). It
+// refuses a lane that is not free; a request the manager finds the lane busy for is dropped, never kept for later.
+func LaneRelease(root Root, lane string) error {
+	var lf LaneFile
+	if err := readJSON(root.LanePath(lane), &lf); err != nil {
+		return err
+	}
+	if lf.State != LaneFree || lf.Step != nil {
+		return fmt.Errorf("lane %s is %s, not free", lane, lf.State)
+	}
+	if lf.Gone {
+		return fmt.Errorf("lane %s has no cluster to release", lane)
+	}
+	if err := os.MkdirAll(filepath.Dir(root.releasePath(lane)), 0o755); err != nil {
+		return err
+	}
+	return writeFile(root.releasePath(lane), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"))
+}
+
+// releaseRequested says whether `lane release` asked for lane l.
+func (m *Manager) releaseRequested(l *LaneFile) bool { return fileExists(m.Root.releasePath(l.Lane)) }
+
+// consumeRelease removes the request once the manager acts on it.
+func (m *Manager) consumeRelease(l *LaneFile) { _ = os.Remove(m.Root.releasePath(l.Lane)) }
+
 // HostStatus is what the manager last saw on a host (<root>/hosts.status.json).
 type HostStatus struct {
 	At        time.Time `json:"at"`
