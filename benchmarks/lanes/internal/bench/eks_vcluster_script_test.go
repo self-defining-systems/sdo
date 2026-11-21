@@ -191,6 +191,10 @@ func TestEksVclusterLaneDownReleasesTheNodesAndKeepsTheHostUnlessItWasTheLastLan
 	if strings.Contains(s.log(), "eksctl delete cluster") {
 		t.Error("the host cluster was deleted")
 	}
+	// the add-ons' PodDisruptionBudgets would hold the last node in a drain that cannot evict
+	if i, j := strings.Index(s.log(), "delete pdb coredns metrics-server"), strings.Index(s.log(), "--name system --nodes 0"); i < 0 || j < i {
+		t.Errorf("the budgets were not removed before scaling to zero:\n%s", s.log())
+	}
 	// the next lane brings the system node back
 	if out, err := s.run(nil, "up", "vc3", filepath.Join(filepath.Dir(kc), "vc3")); err != nil || !strings.Contains(s.log(), "scale nodegroup --cluster lanes-host-v --name system --nodes 1") {
 		t.Fatalf("up after zero: %v\n%s\n%s", err, out, s.log())
