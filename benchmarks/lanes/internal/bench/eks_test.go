@@ -324,7 +324,7 @@ func TestEksLaneUpMakesWhatAKindLaneHas(t *testing.T) {
 		t.Errorf("entry address = %q", b)
 	}
 	// every stage of the up is measured
-	for _, want := range []string{"EKS_STAGE shared_ready", "EKS_STAGE control_plane_active", "EKS_STAGE cluster_and_nodegroup_created", "EKS_STAGE nodes_ready", "EKS_STAGE node_agent_mirror_ready", "EKS_STAGE up_total"} {
+	for _, want := range []string{"EKS_STAGE shared_ready", "EKS_STAGE control_plane_active", "EKS_STAGE nodegroup_active", "EKS_STAGE addons_running", "EKS_STAGE cluster_and_nodegroup_created", "EKS_STAGE nodes_ready", "EKS_STAGE node_agent_mirror_ready", "EKS_STAGE up_total"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("no %q in\n%s", want, out)
 		}
@@ -810,5 +810,34 @@ func TestHostAdoptOfAnEksHostRunsHostSetup(t *testing.T) {
 	}
 	if rc := HostCommand(context.Background(), root, []string{"teardown", "e"}, &out, &errw, helper, run); rc != 0 || len(scripts) != 2 || !strings.Contains(scripts[1], "eks-lane.sh' host-teardown") {
 		t.Fatalf("teardown rc %d scripts %q: %s", rc, scripts, errw.String())
+	}
+}
+
+// The shared node launch template carries what a node needs that eksctl used to set per lane: a gp3 root volume and an
+// instance metadata hop limit of 2 (without it the EBS CSI controller pods cannot reach the node credentials and the add-on
+// never becomes healthy).
+func TestEksSharedStackTemplateSetsNodeVolumeAndMetadataHops(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join(pkgDir, "..", "..", "deploy", "eks", "shared.yaml"))
+	must(t, err)
+	for _, want := range []string{"HttpPutResponseHopLimit: 2", "VolumeType: gp3", "AmazonEKSClusterPolicy", "AmazonEBSCSIDriverPolicy", "NodeLaunchTemplateVersion"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("shared.yaml lacks %q", want)
+		}
+	}
+}
+
+// An up is ready when the add-on pods run; it does not wait for the add-on API status, which lags them by minutes.
+func TestEksLaneUpWaitsForAddonPodsNotAddonStatus(t *testing.T) {
+	s := newEksScript(t)
+	if out, err := s.run(nil, "up", "eks1", filepath.Join(t.TempDir(), "kc")); err != nil {
+		t.Fatalf("up: %v\n%s", err, out)
+	}
+	for _, d := range []string{"coredns", "metrics-server", "ebs-csi-controller"} {
+		if !strings.Contains(s.log(), "rollout status deployment/"+d) {
+			t.Errorf("no wait for deployment %s:\n%s", d, s.log())
+		}
+	}
+	if strings.Contains(s.log(), "eks describe-addon --cluster-name sdo-lane-eks1 --addon-name coredns") {
+		t.Error("up polls the coredns add-on status")
 	}
 }

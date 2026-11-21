@@ -22,7 +22,8 @@
 # What `up` makes (the cross-cutting items of an EKS lane; each was a failure or a finding of the first lane):
 #  - cluster NAME_PREFIX+NAME (default sdo-lane-NAME), STANDARD support, add-ons = what a kind lane has: vpc-cni with the
 #    NetworkPolicy agent enabled (CC3), coredns, kube-proxy, metrics-server, pod identity, EBS CSI. Nothing else: SDO admission
-#    rejects foreign namespaces. The add-ons are created while the nodes boot, not after.
+#    rejects foreign namespaces. The add-ons are created while the nodes boot, and `up` waits for their pods, not for the
+#    add-on API status, which lags them by minutes.
 #  - a managed node group of EKS_NODES x EKS_INSTANCE_TYPE, scalable 0..EKS_NODE_MAX, labels: the first node is the
 #    infra node (node-role.kubernetes.io/control-plane), every other node, or the only one, is a worker
 #    (node-role.kubernetes.io/worker, CC5).
@@ -120,10 +121,11 @@ load_shared() {
       ClusterRoleArn) SH_CLUSTER_ROLE=$v ;;
       NodeRoleArn) SH_NODE_ROLE=$v ;;
       NodeLaunchTemplateId) SH_NODE_TEMPLATE=$v ;;
+      NodeLaunchTemplateVersion) SH_NODE_TEMPLATE_VERSION=$v ;;
     esac
   done <<<"$out"
   [ -n "${SH_VPC:-}" ] && [ -n "${SH_SUBNET_A:-}" ] && [ -n "${SH_SUBNET_B:-}" ] && [ -n "${SH_CLUSTER_ROLE:-}" ] && [ -n "${SH_NODE_ROLE:-}" ] &&
-    [ -n "${SH_NODE_TEMPLATE:-}" ] || die "the outputs of $SHARED_STACK are incomplete"
+    [ -n "${SH_NODE_TEMPLATE:-}" ] && [ -n "${SH_NODE_TEMPLATE_VERSION:-}" ] || die "the outputs of $SHARED_STACK are incomplete"
   case $AZ in
     "${REGION}a") SH_SUBNET=$SH_SUBNET_A ;;
     "${REGION}b") SH_SUBNET=$SH_SUBNET_B ;;
@@ -172,7 +174,7 @@ create_lane_cluster() {
   aws eks create-nodegroup --cluster-name "$name" --nodegroup-name workers --region "$REGION" --subnets "$SH_SUBNET" \
     --node-role "$SH_NODE_ROLE" --instance-types "${EKS_INSTANCE_TYPE:-m6i.xlarge}" --ami-type AL2023_x86_64_STANDARD \
     --scaling-config "minSize=0,maxSize=${EKS_NODE_MAX:-$((${EKS_NODES:-2} + 1))},desiredSize=${EKS_NODES:-2}" \
-    --launch-template "id=$SH_NODE_TEMPLATE,version=1" --tags "Project=$TAG_PROJECT,sdo-lane=$name" >/dev/null
+    --launch-template "id=$SH_NODE_TEMPLATE,version=$SH_NODE_TEMPLATE_VERSION" --tags "Project=$TAG_PROJECT,sdo-lane=$name" >/dev/null
   for a in $ADDONS; do
     if [ "$a" = vpc-cni ]; then
       aws eks create-addon --cluster-name "$name" --region "$REGION" --addon-name vpc-cni --resolve-conflicts OVERWRITE \
@@ -183,13 +185,16 @@ create_lane_cluster() {
   done
   open_nodeports "$name"
   aws eks wait nodegroup-active --cluster-name "$name" --nodegroup-name workers --region "$REGION"
-  wait_addons "$name"
+  stage nodegroup_active
+  wait_addons "$name" vpc-cni # the NetworkPolicy check below needs it; the other add-ons settle while the rest of up runs
+  stage vpc_cni_active
 }
 
-# wait_addons NAME: every add-on is ACTIVE (DEGRADED is waited out: its pods run once the nodes join; a failed one is an error).
+# wait_addons NAME [ADDON...]: the add-ons (default all) are ACTIVE (DEGRADED is waited out: its pods run once the nodes join; a failed one is an error).
 wait_addons() {
   local name=$1 a st end=$((SECONDS + 600))
-  for a in $ADDONS; do
+  shift
+  for a in ${*:-$ADDONS}; do
     while :; do
       st=$(aws eks describe-addon --cluster-name "$name" --addon-name "$a" --region "$REGION" --query addon.status --output text)
       case $st in
@@ -199,6 +204,15 @@ wait_addons() {
       [ $SECONDS -lt $end ] || die "add-on $a of $name is $st after 10 minutes"
       sleep 5
     done
+  done
+}
+
+# addons_running KUBECONFIG: the add-on workloads run. The add-on API status (ACTIVE) lags the pods by minutes (measured: 7 min
+# after everything runs), so the lane waits for the workloads, not for the status.
+addons_running() {
+  local kc=$1 d
+  for d in coredns metrics-server ebs-csi-controller; do
+    kubectl --kubeconfig "$kc" -n kube-system rollout status "deployment/$d" --timeout=300s >/dev/null || die "add-on deployment $d is not running"
   done
 }
 
@@ -394,6 +408,8 @@ cmd_up() {
   stage kubeconfig_storage_ports_ready
   apply_node_agent "$kc"
   stage node_agent_mirror_ready
+  addons_running "$admin"
+  stage addons_running
   stage up_total
   echo "EKS_LANE_READY cluster=$name instance=${EKS_INSTANCE_TYPE:-m6i.xlarge} nodes=${EKS_NODES:-2}"
 }

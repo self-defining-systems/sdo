@@ -40,7 +40,7 @@ aws)
     st=$(val --stack-name "$@"); [ -e "$S/stack-$st" ] || { echo "An error occurred (ValidationError) when calling the DescribeStacks operation: Stack with id $st does not exist" >&2; exit 254; }
     case "$*" in
     *StackStatus*) cat "$S/stack-$st";;
-    *Outputs*) printf 'VpcId\tvpc-0aaa\nSubnetA\tsubnet-0a\nSubnetB\tsubnet-0b\nClusterRoleArn\tarn:aws:iam::123456789012:role/shared-cluster\nNodeRoleArn\tarn:aws:iam::123456789012:role/shared-node\nNodeLaunchTemplateId\tlt-0abc\n';;
+    *Outputs*) printf 'VpcId\tvpc-0aaa\nSubnetA\tsubnet-0a\nSubnetB\tsubnet-0b\nClusterRoleArn\tarn:aws:iam::123456789012:role/shared-cluster\nNodeRoleArn\tarn:aws:iam::123456789012:role/shared-node\nNodeLaunchTemplateId\tlt-0abc\nNodeLaunchTemplateVersion\t1\n';;
     esac;;
   "cloudformation create-stack")
     st=$(val --stack-name "$@")
