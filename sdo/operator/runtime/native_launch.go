@@ -82,6 +82,9 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 	if err != nil {
 		return nil, nil, fmt.Errorf("native repository broker: %w", err)
 	}
+	if err := applyMemoryUpstream(repository, config); err != nil {
+		return nil, nil, fmt.Errorf("native repository broker: %w", err)
+	}
 	if memoryCodePath == "go" {
 		repository.RepairVerified = reflectionRepairVerified
 	}
@@ -292,5 +295,9 @@ func immutableValidationImage(image string) bool {
 
 // applyMemoryUpstream makes the accepted repository replicate the remote branch the controller was launched with.
 func applyMemoryUpstream(repository *broker.Broker, config *contracts.ControllerConfig) error {
-	return nil
+	upstream := config.GetMemoryUpstream()
+	if upstream.GetUrl() == "" {
+		return nil
+	}
+	return repository.SetUpstream(broker.Upstream{URL: upstream.GetUrl(), Branch: upstream.GetBranch(), Env: broker.SSHEnv(upstream.GetSshDir())})
 }

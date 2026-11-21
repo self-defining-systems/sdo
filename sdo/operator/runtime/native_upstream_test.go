@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/broker"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/telemetry"
 )
 
