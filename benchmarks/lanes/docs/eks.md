@@ -80,3 +80,58 @@ budget (`max_builds`) still apply. Capacity is what the account allows: lanes, v
 `internal/bench/eks_test.go` runs the script against fake `aws`, `eksctl`, `kubectl` and `docker`
 (`internal/bench/testdata/fakeeks`) and a whole lane lifecycle through the manager with a fake clock for the ledger. No
 test reaches AWS.
+
+## Lanes as virtual clusters (`eks.lanes: vcluster`)
+
+A cluster per lane takes about twenty minutes to make and bills a control plane for as long as it exists. With
+`lanes: vcluster` a host keeps **one long-lived EKS host cluster** and each lane is a **vcluster** on it, made in seconds,
+with nodes of its own that Karpenter provides.
+
+```yaml
+hosts:
+  aws-west:
+    local: true
+    provider: eks
+    eks:
+      region: us-west-2
+      account: "123456789012"
+      lanes: vcluster              # a lane is a vcluster on the host cluster
+      host_cluster: lanes-host-west  # default lanes-host-<host>
+      system_instance: m6i.xlarge  # the node that runs Karpenter and the lanes' control planes (default)
+      full_lanes: [full1]          # lanes that stay clusters of their own (see "Capabilities")
+      budget_per_hour: 6.0
+      vcpu_quota: 64
+    clusters: [vc1, vc2, vc3, full1]
+```
+
+- **Host cluster.** `lanes host adopt HOST` makes it once (`eks-vcluster.sh host-up`: eksctl, a managed node group `system`
+  that is tainted `sdo-role=system` and scales 0..2, Karpenter, an EC2NodeClass, local-path storage, the node agent and ECR
+  mirror, the NodePort range opened to the manager) or attaches the one that exists, and records the date it began to bill.
+  The node agent and the mirror run once on the host cluster and serve every lane. Adopting again changes nothing.
+- **A lane** (`eks-vcluster.sh up`): a Karpenter NodePool `lane-<lane>` of the lane's nodes (sized from the workload's
+  `footprint` like a cluster lane: two nodes of the cheapest type that holds half of it), labeled and tainted
+  `sdo-lane=<lane>` and capped at the footprint. Low-priority pause pods ask for the nodes the moment the lane is made, so
+  they are ready by the time its API is. A vcluster in namespace `<lane>` syncs only the lane's nodes, adds the lane's
+  toleration to every pod it syncs, sees the host's `local-path` StorageClass and exposes its API as a NodePort of the
+  host (kubeconfig context `kind-<lane>`, as everywhere). The lane's nodes are its own: no other lane's pods run on them.
+- **Delete** (`down`): the vcluster, its namespace and the NodePool go; Karpenter terminates the nodes (the step waits for
+  that, at most `EKS_DOWN_WAIT`, 240 s, so the cost line ends where the nodes end). The last lane of the host also scales the
+  `system` group to 0: only the control plane ($0.10/h) bills until the next lane brings a system node back.
+- **Admission and spend** are as for cluster lanes (`max_lanes`, `vcpu_quota`, `budget_per_hour`, `budget_total`), with the
+  host cluster added: its control plane from the adopt date, and its system node (4 vCPUs, $0.192/h for the default) while
+  a vcluster lane exists. A vcluster lane costs its nodes only. A lane is held until the host is adopted. `lanes status`
+  prints `eks (vcluster lanes, host included): ...`. A free vcluster lane is kept 3 minutes (it is remade in seconds); a
+  failed build or gate recreates the lane, which is cheap.
+- **Capabilities.** A vcluster has no real `kube-system` and no node access: those are the host cluster's. Lanes are
+  therefore labeled `kube-system=virtual, node-access=virtual, shared=true`, and the lanes in `full_lanes` (and every lane of
+  a `lanes: cluster` host) `kube-system=real, node-access=real, shared=true`. A spec with no selector takes either kind. The
+  fault matrices (the fuzzops eks fault matrix, the SREGym eks-compat list: kubelet, CoreDNS, `kube-proxy`, node faults)
+  carry `selector: {node-access: real}`; only a full-cluster lane takes them, and `lanes add` refuses them, naming the
+  labels every lane has, when the host has none. The labels are the generic lane labels (`lane_labels`); lanes does not
+  know what they mean.
+- **Steps** see `BENCH_LANE_VIRTUAL=1` on a vcluster lane, so an adapter that reads nodes or `kube-system` knows they are
+  the host's. `BENCH_ENTRY_HOST` is an address of one of the lane's own nodes. `$BENCH_REGISTRY push` works as for a
+  cluster lane; the pre-pull list is the host's, so every node of the host pulls it.
+- **Scripts and tests.** `deploy/eks-vcluster.sh` (`host-up`, `host-scale`, `host-down`, `up`, `down`, `exists`, `prepull`,
+  `nodes`) and `internal/bench/eks_vcluster_test.go`, which run it against fake aws, eksctl, kubectl, helm and vcluster
+  with a fake clock for the ledger. Each `up` records stage seconds in `<kubeconfig>.stages`.

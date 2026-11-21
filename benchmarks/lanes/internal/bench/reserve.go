@@ -343,6 +343,11 @@ func HostCommand(ctx context.Context, root Root, args []string, out, errw io.Wri
 			// An eks host has no cores, kernel or helper to look after (eks.go): only its status means anything.
 			if verb == "status" {
 				statusEksHost(ctx, root, inv, h, run, out)
+			} else if verb == "adopt" && inv.Hosts[h].IsEksVirtual() {
+				if err := adoptEksHost(ctx, root, inv, h, run, out); err != nil {
+					fmt.Fprintln(errw, err)
+					rc = 1
+				}
 			} else {
 				fmt.Fprintf(out, "%s: eks host: nothing to %s (no host-safety gates); skipped\n", h, verb)
 			}
