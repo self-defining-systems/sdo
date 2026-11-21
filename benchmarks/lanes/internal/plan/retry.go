@@ -77,9 +77,10 @@ func RetryPlan(dir, target string, all bool) error {
 	return RetryPlanRepin(dir, target, all, nil, nil)
 }
 
-type wallClock struct{}
+// zeroClock is the clock of an engine that only renders (the repin check): rendering reads no time.
+type zeroClock struct{}
 
-func (wallClock) Now() time.Time { return time.Now() }
+func (zeroClock) Now() time.Time { return time.Time{} }
 
 // RetryPlanRepin is RetryPlan that also moves the retried nodes to new pins. Each repin is role=ref (role subject or
 // workload; ref a revision or a ref, optionally ref:/abs/checkout, resolved to a full revision now through the
@@ -183,7 +184,7 @@ func withRepin(pins Pins, repin map[string]Pin) Pins {
 
 // validateRepin renders every node the retry would requeue with its new pins and runs validate on each distinct spec.
 func validateRepin(dir string, st *State, items []string, repin map[string]Pin, validate func([]byte) error) error {
-	e, err := Open(dir, nil, wallClock{})
+	e, err := Open(dir, nil, zeroClock{})
 	if err != nil {
 		return err
 	}
