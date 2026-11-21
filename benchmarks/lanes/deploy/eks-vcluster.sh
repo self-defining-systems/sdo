@@ -342,6 +342,8 @@ sync:
   toHost:
     pods:
       enforceTolerations: ["sdo-lane=$lane:NoSchedule"]
+    networkPolicies:
+      enabled: true   # enforced by the host's policy agent; a workload that blocks traffic with a policy needs it
   fromHost:
     nodes:
       enabled: true
