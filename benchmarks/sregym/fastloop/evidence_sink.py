@@ -326,6 +326,18 @@ def _copied_since_last_write(source: Path, results_dir: Path) -> bool:
     return not stamps or datetime.fromtimestamp(max(stamps), UTC) <= copied_at
 
 
+def _may_hold_evidence(environment: FastloopEnvironment, results_dir: Path) -> bool:
+    """Whether the lane's sink can hold evidence of this row: it injected, or a host copy was started. A row that never
+    injected opened no incident, so no agent wrote to the claim (which also may not exist yet on a fresh lane)."""
+    from benchmarks.sregym.fastloop.injection_marker import read_injection_marker
+
+    assert environment.evidence_root is not None
+    return (
+        read_injection_marker(results_dir) is not None
+        or (environment.evidence_root / lane_evidence_run_id(environment, results_dir)).exists()
+    )
+
+
 def settle_lane_evidence(environment: FastloopEnvironment) -> list[str]:
     """Copy every results directory's sink run directory out of the lane's sink before the lane is deleted.
 
@@ -343,7 +355,7 @@ def settle_lane_evidence(environment: FastloopEnvironment) -> list[str]:
             [
                 lane_evidence_run_id(environment, p)
                 for p in (sorted(results_root.iterdir()) if results_root.is_dir() else [])
-                if p.is_dir() and not (p / WAIVER_FILENAME).exists()
+                if p.is_dir() and not (p / WAIVER_FILENAME).exists() and _may_hold_evidence(environment, p)
             ],
         )
     except EvidenceSinkError as exc:
