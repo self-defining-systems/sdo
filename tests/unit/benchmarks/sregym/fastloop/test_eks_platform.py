@@ -329,6 +329,8 @@ def test_a_vanished_evidence_claim_with_unsaved_evidence_is_a_named_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if "namespace" in command:
+            return subprocess.CompletedProcess(command, 0, "name", "")
         return subprocess.CompletedProcess(command, 1, "", 'persistentvolumeclaims "sdo-evidence" NotFound')
 
     monkeypatch.setattr(subprocess, "run", run)
@@ -453,3 +455,18 @@ def test_a_virtual_lane_uses_the_platforms_storage_and_a_cluster_lane_keeps_open
     )
     assert virtual["SREGYM_MANAGED_STORAGE"] == "1"
     assert "SREGYM_MANAGED_STORAGE" not in cli.eks_worker_environment(args, workspace=tmp_path / "ws", lane=LANE)
+
+
+def test_a_lane_whose_sdo_was_never_installed_has_no_claim_to_lose(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first row of a fresh lane wipes before it installs SDO: the control namespace and its claim do not exist yet,
+    and the (not yet started) run directories have no evidence to save."""
+
+    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            command, 1, "", 'namespaces "sdo-ns" NotFound, persistentvolumeclaims NotFound'
+        )
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert not evidence_sink.pull_cluster_sink(eks_environment(tmp_path), ["lane-r1"])
