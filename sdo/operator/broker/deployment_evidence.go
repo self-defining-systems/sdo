@@ -42,10 +42,15 @@ func (b *Broker) AcceptedSourceEvidence(ctx context.Context) (AcceptedSource, bo
 	err := b.locked(func() error {
 		var err error
 		value, found, err = b.acceptedEvidenceLocked(ctx)
-		if err != nil || !found {
+		if err != nil {
 			return err
 		}
 		plan, err = planAtTree(ctx, b.target, "HEAD^{tree}", b.PlanCatalogs)
+		if !found && err != nil {
+			// A seeded install has no evidence, but the head deployer still
+			// needs the plan the accepted tree carries; none is not an error.
+			plan, err = nil, nil
+		}
 		return err
 	})
 	return AcceptedSource{Evidence: value, Plan: plan}, found, err

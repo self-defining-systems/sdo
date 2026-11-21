@@ -58,13 +58,6 @@ The spec for the experiment (`workload` is the adapter; the subject's `settings.
 Do not pool the lane (a pool reset would not undo the remote's history). The baseline must be SDO's memory for the app
 **as of the series base commit**: the first push is a diff against the base.
 
-SDO deploys a pushed commit only against a deployment it recorded itself for the commit before it (the broker's
-`HeadToDeploy`; the record lives in the evidence store, not in the memory bundle). An `install-existing` of a memory
-baseline is a seeded install and records none: the head poller then does nothing, silently, and the adapter reports the
-run invalid (`SDO has no recorded deployment`) instead of waiting out the verdict bound. A series therefore needs the
-subject installed by SDO's deployer (`host --deployment-plan`, which an agent-made memory needs a real detection
-designer for), not a baseline restore.
-
 ## Series
 
 - `toy.py`: three commits to the toy app (two benign, one that fails backend readiness). Synthetic, for fast tests and

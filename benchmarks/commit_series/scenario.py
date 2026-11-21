@@ -78,16 +78,6 @@ def run_commit(ops: SeriesOps, series: Series, index: int, bounds: Bounds, label
         "commit": series.commits[index - 1],
         "valid": True,
     }
-    if ops.operability() is None:
-        # SDO deploys a branch head only against the deployment it recorded for the commit before it. A seeded
-        # install (install-existing of a memory baseline) records none, publishes no operability report, and the
-        # push would wait out the verdict bound unseen.
-        return {
-            **record,
-            "valid": False,
-            "invalid_reason": "SDO has no recorded deployment (a seeded install): it cannot deploy a pushed commit. "
-            "Install the series' base through SDO's deployer (host), not install-existing.",
-        }
     known = {c.sha for c in ops.accepted_commits()}
     before = ops.snapshot()
     started = ops.clock()

@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from benchmarks.commit_series.scenario import Bounds, run_commit
 from benchmarks.common.replay.replay import ReplayRecord
 from benchmarks.common.replay.series import Series
-from benchmarks.sregym.fastloop.toy_operability import OperabilityRead
 from benchmarks.sregym.fastloop.toy_scenarios import AcceptedCommit, HoldRecord, Snapshot
 
 SERIES = Series(
@@ -35,7 +34,6 @@ class Lane:
     tasks: int = 0
     pushed: str = ""
     incident_closes_at: float = 1e9
-    deployed: bool = True
 
     def clock(self) -> float:
         return self.t
@@ -72,10 +70,8 @@ class Lane:
     def incident_open(self) -> bool:
         return self.incident
 
-    def operability(self) -> OperabilityRead | None:
-        if not self.deployed:
-            return None
-        return OperabilityRead("base", "complete", "sha256:x", (), "base", "complete", {})
+    def operability(self) -> None:
+        return None
 
     def agent_task_count(self) -> int:
         return self.tasks
@@ -125,14 +121,3 @@ def test_a_commit_that_does_not_apply_is_a_conflict_result_not_a_failure() -> No
     assert got["conflict_paths"] == ["app.txt"]
     assert got["valid"] is True
     assert got["lifecycle"]["inject_at"].endswith("Z")  # type: ignore[index]
-
-
-def test_a_seeded_install_with_no_recorded_deployment_cannot_run_a_series() -> None:
-    """SDO deploys a branch head only when it recorded the deployment of the commit before it. A seeded install
-    (install-existing) has none, so the push would wait out the whole verdict bound for nothing: the run is invalid,
-    names the cause and pushes nothing."""
-    lane = Lane("accepted", deployed=False)
-    got = run_commit(lane, SERIES, 1, BOUNDS, "exec:sdo-demo-r1")  # type: ignore[arg-type]
-    assert got["valid"] is False
-    assert "recorded deployment" in str(got["invalid_reason"])
-    assert lane.pushed == ""
