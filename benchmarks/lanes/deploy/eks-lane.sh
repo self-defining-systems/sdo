@@ -9,12 +9,20 @@
 #   eks-lane.sh prepull KUBECONFIG IMAGE...         # the node agent pre-pulls these on every node, now and on node join
 #   eks-lane.sh nodes KUBECONFIG SCRIPT             # run sh -c SCRIPT as root on every node (certs.d at /certs, /var/lib/sdo-lane at /lane)
 #   eks-lane.sh exists NAME                         # exit 0 the cluster exists, 1 it does not, 2 cannot tell
+#   eks-lane.sh host-setup                          # make the account's shared network and roles (once per account and region, idempotent)
+#   eks-lane.sh host-teardown                       # remove them (refused while a lane cluster exists)
 #   eks-lane.sh fence KUBECONFIG                    # print "<api server> <kube-system uid>" the kubeconfig reaches
+#
+# The VPC, two public subnets, the cluster and node IAM roles and the node launch template (gp3 root volume) are not made per
+# lane: `host-setup` makes them once as the CloudFormation stack EKS_SHARED_STACK (default sdo-lanes-shared), `up` makes it
+# first when it is missing, and records the ids in EKS_STATE_DIR/shared-<region>.env when that is set. A lane then makes
+# only its control plane and its node group (direct aws eks calls), and `down` deletes only those; `host-teardown` removes
+# the shared stack. A cluster an earlier version made with eksctl is still attached and deleted with eksctl.
 #
 # What `up` makes (the cross-cutting items of an EKS lane; each was a failure or a finding of the first lane):
 #  - cluster NAME_PREFIX+NAME (default sdo-lane-NAME), STANDARD support, add-ons = what a kind lane has: vpc-cni with the
-#    NetworkPolicy agent enabled (CC3), coredns, kube-proxy, metrics-server, pod identity. Nothing else: SDO admission
-#    rejects foreign namespaces.
+#    NetworkPolicy agent enabled (CC3), coredns, kube-proxy, metrics-server, pod identity, EBS CSI. Nothing else: SDO admission
+#    rejects foreign namespaces. The add-ons are created while the nodes boot, not after.
 #  - a managed node group of EKS_NODES x EKS_INSTANCE_TYPE, scalable 0..EKS_NODE_MAX, labels: the first node is the
 #    infra node (node-role.kubernetes.io/control-plane), every other node, or the only one, is a worker
 #    (node-role.kubernetes.io/worker, CC5).
@@ -28,7 +36,7 @@
 #    default StorageClass, gp3 (EBS CSI) available; the node-port range open to EKS_NODEPORT_CIDR (default this machine's address); the address
 #    of a node in KUBECONFIG.entry (the app's NodePort entry; steps see it as FUZZOPS_ENTRY_HOST).
 # Settings: EKS_REGION (required), EKS_INSTANCE_TYPE (m6i.xlarge), EKS_NODES (2), EKS_NODE_MAX (EKS_NODES+1), EKS_ACCOUNT
-# (checked against the credentials), EKS_VPC and EKS_SUBNETS (comma-separated subnet ids; unset: eksctl makes a VPC),
+# (checked against the credentials), EKS_SHARED_STACK (sdo-lanes-shared), EKS_STATE_DIR (where host-setup records the ids),
 # EKS_VERSION (1.34), EKS_NAME_PREFIX (sdo-lane-), EKS_TAG_PROJECT (sdo-lanes), EKS_MIRROR_PREFIX (sdo-mirror),
 # EKS_IMAGE_PREFIX (sdo), EKS_MIRROR_UPSTREAMS.
 set -euo pipefail
@@ -60,65 +68,157 @@ stage() {
   [ -z "${STAGE_FILE:-}" ] || echo "$1 $((SECONDS - STAGE_T0))" >>"$STAGE_FILE"
 }
 
-cluster_exists() { eksctl get cluster --name "$1" --region "$REGION" >/dev/null 2>&1; }
+cluster_exists() { aws eks describe-cluster --name "$1" --region "$REGION" >/dev/null 2>&1; }
+
+SHARED_STACK=${EKS_SHARED_STACK:-sdo-lanes-shared}
+TAG_PROJECT=${EKS_TAG_PROJECT:-sdo-lanes}
 
 # AZ: every lane is in one zone (a volume is zonal, and a lane's claims must land next to its pods).
 AZ=${EKS_AZ:-${REGION}a}
 
-write_config() {
-  local name=$1 f=$2
-  {
-    cat <<YAML
-apiVersion: eksctl.io/v1alpha5
-kind: ClusterConfig
-metadata:
-  name: $name
-  region: $REGION
-  version: "${EKS_VERSION:-1.34}"
-  tags: {Project: ${EKS_TAG_PROJECT:-sdo-lanes}, sdo-lane: $name}
-upgradePolicy: {supportType: STANDARD}
-YAML
-    if [ -n "${EKS_VPC:-}" ]; then
-      echo "vpc:"
-      echo "  id: $EKS_VPC"
-      echo "  subnets:"
-      echo "    public:"
-      local s az
-      for s in $(echo "${EKS_SUBNETS:-}" | tr ',' ' '); do
-        az=$(aws ec2 describe-subnets --subnet-ids "$s" --query 'Subnets[0].AvailabilityZone' --output text)
-        echo "      $az: {id: $s}"
-      done
-      echo "  clusterEndpoints: {publicAccess: true, privateAccess: true}"
+stack_status() {
+  aws cloudformation describe-stacks --stack-name "$SHARED_STACK" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || true
+}
+
+shared_wait() {
+  aws cloudformation wait stack-create-complete --stack-name "$SHARED_STACK" >&2 ||
+    die "the shared stack $SHARED_STACK did not complete (see its CloudFormation events); host-teardown removes it"
+}
+
+# ensure_shared: the shared stack exists and is complete (made here when missing; a concurrent up that lost the race waits for it).
+ensure_shared() {
+  local st err
+  st=$(stack_status)
+  case $st in
+    CREATE_COMPLETE | UPDATE_COMPLETE) ;;
+    CREATE_IN_PROGRESS) shared_wait ;;
+    "")
+      log "making the shared network and roles ($SHARED_STACK)"
+      if err=$(aws cloudformation create-stack --stack-name "$SHARED_STACK" --template-body "file://$here/eks/shared.yaml" \
+        --capabilities CAPABILITY_IAM --tags "Key=Project,Value=$TAG_PROJECT" 2>&1 >/dev/null); then
+        shared_wait
+      else
+        st=$(stack_status)
+        case $st in CREATE_IN_PROGRESS | CREATE_COMPLETE) shared_wait ;; *) die "creating $SHARED_STACK: ${err: -300}" ;; esac
+      fi
+      ;;
+    *) die "the shared stack $SHARED_STACK is $st: run host-teardown, then host-setup" ;;
+  esac
+  load_shared
+}
+
+# load_shared: SH_* from the stack outputs, and the one subnet of this lane's zone.
+load_shared() {
+  local out k v
+  out=$(aws cloudformation describe-stacks --stack-name "$SHARED_STACK" --query 'Stacks[0].Outputs[].[OutputKey,OutputValue]' --output text) ||
+    die "cannot read the outputs of $SHARED_STACK"
+  while IFS=$'\t' read -r k v; do
+    case $k in
+      VpcId) SH_VPC=$v ;;
+      SubnetA) SH_SUBNET_A=$v ;;
+      SubnetB) SH_SUBNET_B=$v ;;
+      ClusterRoleArn) SH_CLUSTER_ROLE=$v ;;
+      NodeRoleArn) SH_NODE_ROLE=$v ;;
+      NodeLaunchTemplateId) SH_NODE_TEMPLATE=$v ;;
+    esac
+  done <<<"$out"
+  [ -n "${SH_VPC:-}" ] && [ -n "${SH_SUBNET_A:-}" ] && [ -n "${SH_SUBNET_B:-}" ] && [ -n "${SH_CLUSTER_ROLE:-}" ] && [ -n "${SH_NODE_ROLE:-}" ] &&
+    [ -n "${SH_NODE_TEMPLATE:-}" ] || die "the outputs of $SHARED_STACK are incomplete"
+  case $AZ in
+    "${REGION}a") SH_SUBNET=$SH_SUBNET_A ;;
+    "${REGION}b") SH_SUBNET=$SH_SUBNET_B ;;
+    *) die "EKS_AZ $AZ: the shared network has subnets in ${REGION}a and ${REGION}b" ;;
+  esac
+  if [ -n "${EKS_STATE_DIR:-}" ]; then
+    mkdir -p "$EKS_STATE_DIR"
+    printf 'EKS_SHARED_STACK=%s\nEKS_SHARED_VPC=%s\nEKS_SHARED_SUBNETS=%s,%s\nEKS_SHARED_CLUSTER_ROLE=%s\nEKS_SHARED_NODE_ROLE=%s\nEKS_SHARED_NODE_TEMPLATE=%s\n' \
+      "$SHARED_STACK" "$SH_VPC" "$SH_SUBNET_A" "$SH_SUBNET_B" "$SH_CLUSTER_ROLE" "$SH_NODE_ROLE" "$SH_NODE_TEMPLATE" >"$EKS_STATE_DIR/shared-$REGION.env"
+  fi
+}
+
+cmd_host_setup() {
+  account >/dev/null
+  ensure_shared
+  echo "EKS_SHARED vpc=$SH_VPC subnets=$SH_SUBNET_A,$SH_SUBNET_B cluster_role=$SH_CLUSTER_ROLE node_role=$SH_NODE_ROLE"
+}
+
+cmd_host_teardown() {
+  account >/dev/null
+  local lanes st
+  lanes=$(aws eks list-clusters --region "$REGION" --query clusters --output text | tr '\t' '\n' | grep "^$PREFIX" || true)
+  [ -z "$lanes" ] || die "lane clusters still exist, delete them first: $(echo $lanes)"
+  st=$(stack_status)
+  if [ -z "$st" ]; then
+    log "no shared stack $SHARED_STACK"
+  else
+    aws cloudformation delete-stack --stack-name "$SHARED_STACK"
+    aws cloudformation wait stack-delete-complete --stack-name "$SHARED_STACK" >&2 || die "deleting $SHARED_STACK did not complete"
+  fi
+  [ -z "${EKS_STATE_DIR:-}" ] || rm -f "$EKS_STATE_DIR/shared-$REGION.env"
+  echo "EKS_SHARED_REMOVED stack=$SHARED_STACK"
+}
+
+# create_lane_cluster NAME: the control plane, then the node group and the add-ons together (the add-ons need nodes only to
+# become active, not to be created), on the shared network and roles.
+ADDONS="vpc-cni coredns kube-proxy eks-pod-identity-agent metrics-server aws-ebs-csi-driver"
+create_lane_cluster() {
+  local name=$1 a
+  aws eks create-cluster --name "$name" --region "$REGION" --kubernetes-version "${EKS_VERSION:-1.34}" --role-arn "$SH_CLUSTER_ROLE" \
+    --resources-vpc-config "subnetIds=$SH_SUBNET_A,$SH_SUBNET_B,endpointPublicAccess=true,endpointPrivateAccess=false" \
+    --access-config authenticationMode=API_AND_CONFIG_MAP,bootstrapClusterCreatorAdminPermissions=true \
+    --upgrade-policy supportType=STANDARD --tags "Project=$TAG_PROJECT,sdo-lane=$name" >/dev/null
+  aws eks wait cluster-active --name "$name" --region "$REGION"
+  stage control_plane_active
+  aws eks create-nodegroup --cluster-name "$name" --nodegroup-name workers --region "$REGION" --subnets "$SH_SUBNET" \
+    --node-role "$SH_NODE_ROLE" --instance-types "${EKS_INSTANCE_TYPE:-m6i.xlarge}" --ami-type AL2023_x86_64_STANDARD \
+    --scaling-config "minSize=0,maxSize=${EKS_NODE_MAX:-$((${EKS_NODES:-2} + 1))},desiredSize=${EKS_NODES:-2}" \
+    --launch-template "id=$SH_NODE_TEMPLATE,version=1" --tags "Project=$TAG_PROJECT,sdo-lane=$name" >/dev/null
+  for a in $ADDONS; do
+    if [ "$a" = vpc-cni ]; then
+      aws eks create-addon --cluster-name "$name" --region "$REGION" --addon-name vpc-cni --resolve-conflicts OVERWRITE \
+        --configuration-values '{"enableNetworkPolicy":"true"}' >/dev/null
+    else
+      aws eks create-addon --cluster-name "$name" --region "$REGION" --addon-name "$a" --resolve-conflicts OVERWRITE >/dev/null
     fi
-    cat <<YAML
-accessConfig: {authenticationMode: API_AND_CONFIG_MAP, bootstrapClusterCreatorAdminPermissions: true}
-addons:
-  - {name: vpc-cni, configurationValues: '{"enableNetworkPolicy":"true"}', resolveConflicts: overwrite}
-  - {name: coredns}
-  - {name: kube-proxy}
-  - {name: eks-pod-identity-agent}
-  - {name: metrics-server}
-  - {name: aws-ebs-csi-driver}
-managedNodeGroups:
-  - name: workers
-    instanceType: ${EKS_INSTANCE_TYPE:-m6i.xlarge}
-    desiredCapacity: ${EKS_NODES:-2}
-    availabilityZones: [$AZ]
-    minSize: 0
-    maxSize: ${EKS_NODE_MAX:-$((${EKS_NODES:-2} + 1))}
-    volumeSize: 100
-    volumeType: gp3
-    privateNetworking: false
-    tags: {Project: ${EKS_TAG_PROJECT:-sdo-lanes}, sdo-lane: $name}
-    iam:
-      attachPolicyARNs:
-        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
-        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
-        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
-        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-        - arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy
-YAML
-  } >"$f"
+  done
+  open_nodeports "$name"
+  aws eks wait nodegroup-active --cluster-name "$name" --nodegroup-name workers --region "$REGION"
+  wait_addons "$name"
+}
+
+# wait_addons NAME: every add-on is ACTIVE (DEGRADED is waited out: its pods run once the nodes join; a failed one is an error).
+wait_addons() {
+  local name=$1 a st end=$((SECONDS + 600))
+  for a in $ADDONS; do
+    while :; do
+      st=$(aws eks describe-addon --cluster-name "$name" --addon-name "$a" --region "$REGION" --query addon.status --output text)
+      case $st in
+        ACTIVE) break ;;
+        CREATE_FAILED) die "add-on $a of $name is $st" ;; # DEGRADED is normal until its pods run on the new nodes
+      esac
+      [ $SECONDS -lt $end ] || die "add-on $a of $name is $st after 10 minutes"
+      sleep 5
+    done
+  done
+}
+
+# delete_cluster NAME: a lane's node group and control plane only; the shared network and roles stay. A cluster eksctl made
+# (its own CloudFormation stack) is deleted by eksctl, which owns its stacks.
+delete_cluster() {
+  local name=$1 g groups
+  if aws cloudformation describe-stacks --stack-name "eksctl-$name-cluster" >/dev/null 2>&1; then
+    eksctl delete cluster --name "$name" --region "$REGION" --wait --disable-nodegroup-eviction >&2
+    return
+  fi
+  groups=$(aws eks list-nodegroups --cluster-name "$name" --region "$REGION" --query nodegroups --output text | tr '\t' ' ')
+  for g in $groups; do
+    aws eks wait nodegroup-active --cluster-name "$name" --nodegroup-name "$g" --region "$REGION" >/dev/null 2>&1 || true # one still being made cannot be deleted
+    aws eks delete-nodegroup --cluster-name "$name" --nodegroup-name "$g" --region "$REGION" >/dev/null
+  done
+  for g in $groups; do aws eks wait nodegroup-deleted --cluster-name "$name" --nodegroup-name "$g" --region "$REGION"; done
+  aws eks wait cluster-active --name "$name" --region "$REGION" >/dev/null 2>&1 || true
+  aws eks delete-cluster --name "$name" --region "$REGION" >/dev/null
+  aws eks wait cluster-deleted --name "$name" --region "$REGION"
 }
 
 # label_nodes: the first node is the infra node, the rest (or the only one) are workers (CC5).
@@ -241,7 +341,9 @@ scale_up_if_needed() {
   have=$(aws eks describe-nodegroup --cluster-name "$name" --nodegroup-name workers --region "$REGION" --query nodegroup.scalingConfig.desiredSize --output text)
   if [ "$have" != "$want" ]; then
     log "node group of $name is at $have, not $want: scaling"
-    eksctl scale nodegroup --cluster "$name" --name workers --nodes "$want" --nodes-min 0 --nodes-max "${EKS_NODE_MAX:-$((want + 1))}" --region "$REGION" >&2
+    aws eks update-nodegroup-config --cluster-name "$name" --nodegroup-name workers --region "$REGION" \
+      --scaling-config "minSize=0,maxSize=${EKS_NODE_MAX:-$((want + 1))},desiredSize=$want" >/dev/null
+    aws eks wait nodegroup-active --cluster-name "$name" --nodegroup-name workers --region "$REGION"
   fi
 }
 
@@ -251,15 +353,14 @@ cleanup_failed_up() {
   local rc=$?
   if [ $rc -ne 0 ] && [ "${OWNED:-0}" = 1 ]; then
     log "cluster-up failed: deleting the half-built cluster $CNAME"
-    eksctl delete cluster --name "$CNAME" --region "$REGION" --wait --disable-nodegroup-eviction >&2 || log "DELETE FAILED: $CNAME may still bill"
+    delete_cluster "$CNAME" >&2 || log "DELETE FAILED: $CNAME may still bill"
   fi
-  [ -z "${CFG:-}" ] || rm -f "$CFG"
 }
 
 cmd_up() {
   local lane=${1:?lane} kc=${2:?kubeconfig} evidence=${3:-}
   local name=$PREFIX$lane admin="$kc.admin"
-  CREATED=0 OWNED=0 CNAME=$name CFG=
+  CREATED=0 OWNED=0 CNAME=$name
   trap 'exit 143' TERM INT # a manager stopping the step still runs the cleanup below
   trap cleanup_failed_up EXIT
   account >/dev/null
@@ -271,17 +372,15 @@ cmd_up() {
     log "cluster $name exists: attaching"
     OWNED=1
   else
-    CFG=$(mktemp)
-    write_config "$name" "$CFG"
+    ensure_shared
+    stage shared_ready
     CREATED=1 OWNED=1
     log "creating cluster $name (${EKS_NODES:-2} x ${EKS_INSTANCE_TYPE:-m6i.xlarge})"
-    eksctl create cluster -f "$CFG" --kubeconfig "$admin" >&2
+    create_lane_cluster "$name"
     stage cluster_and_nodegroup_created
   fi
-  if [ "$CREATED" != 1 ]; then
-    aws eks update-kubeconfig --name "$name" --region "$REGION" --kubeconfig "$admin" >/dev/null
-    scale_up_if_needed "$name"
-  fi
+  aws eks update-kubeconfig --name "$name" --region "$REGION" --kubeconfig "$admin" >/dev/null
+  [ "$CREATED" = 1 ] || scale_up_if_needed "$name"
   chmod 600 "$admin"
   wait_nodes "$admin" "${EKS_NODES:-2}"
   stage nodes_ready
@@ -290,7 +389,7 @@ cmd_up() {
   kubectl --kubeconfig "$admin" -n kube-system delete pdb coredns metrics-server --ignore-not-found >/dev/null 2>&1 || true
   token_kubeconfig "$admin" "$kc" "$name" "$lane"
   storage_class "$kc"
-  open_nodeports "$name"
+  [ "$CREATED" = 1 ] || open_nodeports "$name"
   entry_host "$kc"
   stage kubeconfig_storage_ports_ready
   apply_node_agent "$kc"
@@ -304,7 +403,7 @@ cmd_down() {
   local name=$PREFIX$lane t0=$SECONDS
   if cluster_exists "$name"; then
     [ -z "$kc" ] || [ ! -f "$kc.admin" ] || kubectl --kubeconfig "$kc.admin" delete pvc --all-namespaces --all --wait=false >/dev/null 2>&1 || true
-    eksctl delete cluster --name "$name" --region "$REGION" --wait --disable-nodegroup-eviction >&2
+    delete_cluster "$name" >&2
   else
     log "cluster $name does not exist"
   fi
@@ -419,5 +518,7 @@ case $verb in
   prepull) cmd_prepull "$@";;
   fence) cmd_fence "$@";;
   exists) cmd_exists "$@";;
-  *) echo "usage: $0 up|down|push|pin|nodes|fence ..." >&2; exit 2;;
+  host-setup) cmd_host_setup;;
+  host-teardown) cmd_host_teardown;;
+  *) echo "usage: $0 up|down|push|pin|prepull|nodes|exists|fence|host-setup|host-teardown ..." >&2; exit 2;;
 esac

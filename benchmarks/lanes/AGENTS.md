@@ -80,6 +80,7 @@ hosts:
 | `lanes host unreserve HOST [--drain]` | restores the saved values; refuses while lanes run unless `--drain` |
 | `lanes host status [HOST]` | the block, two-way or one-way, foreign containers pinned inside it, our containers outside it, drift |
 | `lanes host adopt HOST [--cpus LIST] [--prev SLICE=LIST]...` | records a reservation made by hand (nothing is changed) and saves the slices' values from before it (unrestricted unless `--prev`, repeatable, `SLICE=` for unrestricted), so a later reserve or unreserve has them |
+| `lanes host adopt HOST` / `lanes host teardown HOST` of an eks host | `adopt` makes the account's shared network, roles and node launch template for the region (`eks-lane.sh host-setup`, idempotent); `teardown` removes them once no lane cluster is left |
 
 The bench records the active block in `<root>/reservations/<host>.json`. `max_load5` is optional (0 or omitted: no load gate, load5 is only reported) on a host with `reserve:`; a host without one still needs it above 0.
 Admission: every lane cpuset is a subset of the

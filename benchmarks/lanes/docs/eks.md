@@ -20,8 +20,6 @@ hosts:
       instance_families: [m6i]      # cheapest family that fits wins; known: m5 m6i m7i c5 c6i c7i r5 r6i r7i
       min_node_vcpus: 4             # pod density: a 2 vCPU node holds too few pods
       idle_timeout: 10m             # a free lane's cluster is kept this long when no experiment wants the host
-      vpc: vpc-...                  # optional; unset, eksctl makes a VPC
-      subnets: [subnet-..., subnet-...]
     staging: /mnt/data/lanes/staging
     kubeconfigs: /mnt/data/lanes/kube
     evidence: /mnt/data/lanes/evidence    # evidence is pulled here, not mounted on nodes
@@ -37,10 +35,18 @@ predates eks.
 
 ## Lifecycle
 
-- **Up.** The first build on a lane runs `cluster_up` (default `eks-lane.sh up`): a cluster `sdo-lane-<lane>` with the
-  add-ons a kind lane has (vpc-cni with the NetworkPolicy agent, coredns, kube-proxy, metrics-server, pod identity), one
-  managed node group, a service-account-token kubeconfig whose context is `kind-<lane>`, and the node agent (a
-  containerd registry mirror to ECR plus the node-write seam). A failed up deletes its half-built cluster.
+- **Host setup (once).** The VPC, two public subnets (`<region>a`, `<region>b`), the cluster and node IAM roles and the node
+  launch template (100 GiB gp3 root volume) are not made per lane. `lanes host adopt HOST` runs `eks-lane.sh host-setup`,
+  which makes them as the CloudFormation stack `sdo-lanes-shared` (idempotent; a first `up` does it when it is missing, and
+  concurrent first ups share one creation). The ids are recorded in `<root>/eks/shared-<region>.env`. `lanes host teardown
+  HOST` (`host-teardown`) removes the stack; it refuses while a lane cluster exists. The stack costs nothing while idle.
+- **Up.** The first build on a lane runs `cluster_up` (default `eks-lane.sh up`): a cluster `sdo-lane-<lane>` on the shared
+  network and roles, made with direct `aws eks` calls: the control plane, then the managed node group (one zone) and the
+  add-ons together (vpc-cni with the NetworkPolicy agent, coredns, kube-proxy, metrics-server, pod identity, EBS CSI), a
+  service-account-token kubeconfig whose context is `kind-<lane>`, and the node agent (a containerd registry mirror to ECR
+  plus the node-write seam). A failed up deletes its half-built cluster. `up` prints `EKS_STAGE` lines
+  (`shared_ready`, `control_plane_active`, `cluster_and_nodegroup_created`, `nodes_ready`, ...) and writes them to
+  `<kubeconfig>.stages`.
 - **Storage.** The default StorageClass is `local-path` (node-local, binds when a pod is placed), as on a kind lane:
   SDO mounts the same ReadWriteOnce claims from several pods and relies on the claim to place them on its node, which an
   EBS volume (it attaches to one node and places nothing) does not do. `gp3` is installed but not the default.
@@ -50,7 +56,8 @@ predates eks.
 - **Keep.** A lane's cluster stays between problems of a batch. It is deleted when no experiment can build on the host and
   the lane has been free for `idle_timeout`, or at once by `lanes gc`. Nothing bills overnight unless a manager is
   stopped with lanes up: `lanes status` shows the running estimate, `lanes gc` and the manager clean up.
-- **Down.** `cluster_down` (default `eks-lane.sh down`) deletes the cluster and the kubeconfig.
+- **Down.** `cluster_down` (default `eks-lane.sh down`) deletes the lane's node group and cluster and the kubeconfig, never
+  the shared stack. A cluster an earlier version made with eksctl is deleted with eksctl.
 - **Images.** `$BENCH_REGISTRY push IMAGE...` (`eks-lane.sh push`) publishes a local image under its declared name to
   ECR (`sdo-mirror/<upstream>/<path>:<tag>`); nodes resolve the declared name through the mirror and fall back to the
   upstream. `eks-lane.sh pin IMAGE` pushes an immutable image and prints its `@sha256` reference.
@@ -77,7 +84,7 @@ budget (`max_builds`) still apply. Capacity is what the account allows: lanes, v
 
 ## Tests
 
-`internal/bench/eks_test.go` runs the script against fake `aws`, `eksctl`, `kubectl` and `docker`
+`internal/bench/eks_test.go` runs the script against fake `aws` (including CloudFormation and `aws eks`), `eksctl`, `kubectl` and `docker`
 (`internal/bench/testdata/fakeeks`) and a whole lane lifecycle through the manager with a fake clock for the ledger. No
 test reaches AWS.
 
