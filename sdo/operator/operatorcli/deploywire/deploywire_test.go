@@ -179,3 +179,15 @@ func TestRepairDeployerCarriesTheInstallPolicy(t *testing.T) {
 		t.Fatalf("repair deployer policy = %v", deployer.Policy)
 	}
 }
+
+// A maintenance pause needs a clock for its expiry: a repair deployer without one fails every deploy with
+// "source repair with a maintenance window needs a clock" (branch heads and source repairs alike).
+func TestRepairDeployerStampsItsMaintenancePauseWithAClock(t *testing.T) {
+	repair, err := RepairDeployer(fullIdentity(), launch(), "/opt/sdo/sdo/operator", fake.NewSimpleClientset(), &broker.Broker{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repair.Maintenance == nil || repair.Now == nil {
+		t.Fatalf("maintenance = %v, clock set = %v: the deployer cannot pause the controller", repair.Maintenance, repair.Now != nil)
+	}
+}
