@@ -180,6 +180,19 @@ func TestEksVclusterAdmissionAndSpendIncludeTheHostCluster(t *testing.T) {
 	}
 }
 
+// `lanes host status` reads the same ledger and adds the host cluster, as the manager's status line does.
+func TestEksVclusterHostStatusIncludesTheHostCluster(t *testing.T) {
+	m := vcManager(t)
+	must(t, os.MkdirAll(filepath.Dir(m.Root.eksHostRecordPath("v")), 0o755))
+	must(t, writeJSON(m.Root.eksHostRecordPath("v"), eksHostRecord{Cluster: "lanes-host-v", Since: time.Now().Add(-time.Hour)}))
+	must(t, writeJSON(m.Root.eksLedgerPath("v"), eksLedger{Open: map[string]eksOpen{"vc1": {Since: time.Now().Add(-time.Hour), EksPlan: EksPlan{InstanceType: "m6i.xlarge", Nodes: 2, VCPUs: 8, USDPerHour: 0.384, Virtual: true}}}}))
+	var out bytes.Buffer
+	statusEksHost(context.Background(), m.Root, m.inv, "v", nil, &out)
+	if !strings.Contains(out.String(), "eks (vcluster lanes, host included): 1/4 lanes, 12/40 vCPU, $0.68/h of $3.00/h") {
+		t.Errorf("host status:\n%s", out.String())
+	}
+}
+
 func TestEksVclusterLastLaneAsksTheHostToScaleToZero(t *testing.T) {
 	m := vcManager(t)
 	l := m.eksLedger("v")

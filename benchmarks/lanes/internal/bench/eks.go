@@ -645,8 +645,15 @@ func statusEksHost(ctx context.Context, root Root, inv Inventory, host string, r
 	if max == 0 {
 		max = len(h.Clusters)
 	}
-	st := EksStatus{Lanes: len(l.Open), MaxLanes: max, VCPUs: l.vcpus(), VCPUQuota: h.EKS.VCPUQuota, USDPerHour: round4(l.hourly()),
-		BudgetPerHr: h.EKS.BudgetPerHour, SpendUSD: l.spend(time.Now()), BudgetTotal: h.EKS.BudgetTotal}
+	if h.EKS.virtual() && l.HostSince.IsZero() {
+		var rec eksHostRecord
+		if readJSON(root.eksHostRecordPath(host), &rec) == nil {
+			l.HostSince = rec.Since
+		}
+	}
+	st := EksStatus{Lanes: len(l.Open), MaxLanes: max, VCPUs: l.vcpus() + l.hostVCPUs(h.EKS, false), VCPUQuota: h.EKS.VCPUQuota,
+		USDPerHour: round4(l.hourly() + l.hostHourly(h.EKS, false)), BudgetPerHr: h.EKS.BudgetPerHour, SpendUSD: l.spend(time.Now()),
+		BudgetTotal: h.EKS.BudgetTotal, Virtual: h.EKS.virtual()}
 	fmt.Fprintf(out, "%s: %s\n", host, st)
 	for lane, o := range l.Open {
 		fmt.Fprintf(out, "%s: lane %s: %s x %d since %s\n", host, lane, o.InstanceType, o.Nodes, o.Since.Format(time.RFC3339))
