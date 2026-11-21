@@ -92,15 +92,7 @@ func (c *RenderedChecks) describe(ctx context.Context, inv Inventory, s Spec) (*
 	}
 	set, _ := json.Marshal(s.Operator.Settings)
 	key := dir + "|" + string(set)
-	if d, ok := c.desc[key]; ok {
-		return d, nil
-	}
-	d, err := describeHook(ctx, Hook{Dir: dir, Command: cmd}, s, c.Log)
-	if err != nil {
-		return nil, err
-	}
-	c.desc[key] = d
-	return d, nil
+	return c.desc.do(key, func() (*Described, error) { return describeHook(ctx, Hook{Dir: dir, Command: cmd}, s, c.Log) })
 }
 
 func describeHook(ctx context.Context, h Hook, s Spec, log io.Writer) (*Described, error) {

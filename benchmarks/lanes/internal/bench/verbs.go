@@ -15,11 +15,18 @@ import (
 	"time"
 )
 
+// AddOption changes how Add validates.
+type AddOption func(**RenderedChecks)
+
+// WithChecks makes Add use a validation session that already holds answers (the manager shares one across the
+// submits of a pass, so the hooks checkout and the hosts are asked once, not once per node).
+func WithChecks(c *RenderedChecks) AddOption { return func(p **RenderedChecks) { *p = c } }
+
 // Add validates a spec file and adds it: ValidateRendered (the rules `plan add` runs on every rendered spec), the
 // hooks' own check of the stored inputs, and an unused name. Its inputs are stored by content and its
 // identity frozen in spec.lock.yaml; then the spec is copied into specs/.
 // Relative paths in the spec are read from the spec file's directory.
-func Add(ctx context.Context, root Root, specFile string, log io.Writer) error {
+func Add(ctx context.Context, root Root, specFile string, log io.Writer, opts ...AddOption) error {
 	s, err := LoadSpec(specFile)
 	if err != nil {
 		return err
@@ -53,6 +60,9 @@ func Add(ctx context.Context, root Root, specFile string, log io.Writer) error {
 		}
 	}
 	checks := NewRenderedChecks(log)
+	for _, o := range opts {
+		o(&checks)
+	}
 	if err := ValidateRendered(ctx, inv, rs, checks); err != nil {
 		return err
 	}

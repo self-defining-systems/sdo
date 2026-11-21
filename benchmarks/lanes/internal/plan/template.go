@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/self-defining-systems/sdo/benchmarks/lanes/internal/miniyaml"
 )
@@ -210,6 +211,11 @@ func (e *Engine) dryRender(validate func([]byte) error) error {
 	if err != nil {
 		return err
 	}
+	type job struct {
+		node Node
+		spec []byte
+	}
+	var jobs []job
 	for _, n := range nodes { // every node of every arm: a rep or an item can differ in what its template renders
 		b, name, err := e.Render(n, 1, e.placeholderArtifacts(n.Arm))
 		if err != nil {
@@ -221,14 +227,36 @@ func (e *Engine) dryRender(validate func([]byte) error) error {
 			continue
 		}
 		seen[key] = true
-		if validate != nil {
-			if err := validate(b); err != nil {
-				return fmt.Errorf("arm %s, item %s: spec: %w", n.Arm, n.Item, err)
-			}
+		jobs = append(jobs, job{n, b})
+	}
+	if validate == nil {
+		return nil
+	}
+	// The specs are checked together (validate asks hosts and checkouts, which is slow one spec after another); the
+	// first refusal in node order is the one reported.
+	errs := make([]error, len(jobs))
+	sem := make(chan struct{}, validateParallel)
+	var wg sync.WaitGroup
+	for i, j := range jobs {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			errs[i] = validate(j.spec)
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			return fmt.Errorf("arm %s, item %s: spec: %w", jobs[i].node.Arm, jobs[i].node.Item, err)
 		}
 	}
 	return nil
 }
+
+// validateParallel bounds the specs checked at once at add; the validate function must be safe for concurrent use.
+const validateParallel = 4
 
 // PlaceholderPrefix starts the stand-in path an artifact edge's field gets at add time: a path of the right kind (an
 // absolute one) whose file does not exist yet, so a rule on field combinations still fires and a rule about the

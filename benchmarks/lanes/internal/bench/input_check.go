@@ -86,21 +86,21 @@ func checkSpecSubjectInputs(ctx context.Context, inv Inventory, s Spec, c *Rende
 	}
 	for _, in := range subjectInputs(s) {
 		key := s.Operator.Hooks + "@" + s.Operator.Revision + "|" + in.Kind + "|" + in.Path
-		r, ok := c.mem[key]
-		if !ok {
-			var supported bool
-			var err error
-			r, supported, err = hookCheckInput(ctx, inv, s, in.Kind, in.Path, "add", nil, c.Log)
+		r, err := c.mem.do(key, func() (inputResult, error) {
+			r, supported, err := hookCheckInput(ctx, inv, s, in.Kind, in.Path, "add", nil, c.Log)
 			if err != nil {
-				return err
+				return inputResult{}, err
 			}
 			if !supported {
 				r = legacyCheckSpecInput(ctx, inv, s, "operator."+in.Kind, in.Path)
 			}
-			c.mem[key] = r
 			if r.Note != "" && c.Log != nil {
 				fmt.Fprintf(c.Log, "note: %s operator.%s: %s\n", s.Name, in.Kind, r.Note)
 			}
+			return r, nil
+		})
+		if err != nil {
+			return err
 		}
 		if r.Err != nil {
 			return fmt.Errorf("operator.%s %s: input check at %s failed: %w", in.Kind, in.Path, short(s.Operator.Revision), r.Err)
