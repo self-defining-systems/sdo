@@ -115,8 +115,12 @@ def _kubectl(env: Mapping[str, str]) -> Callable[..., list[str]]:
 
 
 _DOCKER_SHIM = """#!/bin/sh
-# the mirror node holds what `kind load` published: exec into it succeeds and prints nothing
-if [ "$1" = exec ] && [ "$2" = %(node)s ]; then exit 0; fi
+# the mirror node holds what `kind load` published: exec into it succeeds and prints nothing, except that it has
+# no files: `test` fails, so deploy/load-images.sh does not take it for a kind lane with a host registry
+if [ "$1" = exec ] && [ "$2" = %(node)s ]; then
+  case " $* " in *" test "*) exit 1 ;; esac
+  exit 0
+fi
 here=$(cd "$(dirname "$0")" && pwd)
 PATH=$(printf %%s "$PATH" | tr ':' '\\n' | grep -vxF "$here" | paste -sd: -)
 exec docker "$@"
