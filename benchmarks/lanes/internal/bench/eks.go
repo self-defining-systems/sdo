@@ -9,11 +9,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/self-defining-systems/sdo/benchmarks/lanes/internal/plan"
 )
 
 // Provider eks: every lane is its own Amazon EKS cluster, made and deleted by deploy/eks-lane.sh through eksctl and
@@ -42,6 +45,10 @@ const (
 // DefaultEksIdleTimeout is how long a free lane's cluster is kept after its last use when no experiment wants the host.
 const DefaultEksIdleTimeout = 10 * time.Minute
 
+// DefaultMaxIdleWithWaiting is the longest a free lane's cluster is kept for work that is only waiting (a plan node
+// blocked on an edge or retrying) before it is deleted anyway, with an alarm.
+const DefaultMaxIdleWithWaiting = 60 * time.Minute
+
 // HostEKS is the `eks:` block of a host with provider eks.
 type HostEKS struct {
 	Region string `json:"region"`
@@ -63,6 +70,10 @@ type HostEKS struct {
 	// IdleTimeout keeps a free lane's cluster this long when no experiment wants the host ("10m"); a plan between two
 	// problems does not delete it. `lanes gc` deletes at once.
 	IdleTimeout string `json:"idle_timeout,omitempty"`
+	// MaxIdleWithWaiting is the hard ceiling on a free lane kept for waiting work ("60m"): idle_timeout does not delete a
+	// lane while a plan has nodes (queued, blocked on an edge, retrying) that the lane can serve, but a plan stalled for
+	// ever must not hold clusters for ever. At the ceiling the lane is deleted and the alarm idle-ceiling is raised.
+	MaxIdleWithWaiting string `json:"max_idle_with_waiting,omitempty"`
 	// Subnets/VPC of the clusters, passed to the platform script; used by vcluster lanes (eks-vcluster.sh); a cluster lane uses the shared stack.
 	VPC     string   `json:"vpc,omitempty"`
 	Subnets []string `json:"subnets,omitempty"`
@@ -149,6 +160,15 @@ func (e *HostEKS) Idle() time.Duration {
 	return d
 }
 
+// MaxIdleWaiting is the ceiling of a lane kept for waiting work (default DefaultMaxIdleWithWaiting); never below Idle.
+func (e *HostEKS) MaxIdleWaiting() time.Duration {
+	d, err := time.ParseDuration(e.MaxIdleWithWaiting)
+	if err != nil || d <= 0 {
+		d = DefaultMaxIdleWithWaiting
+	}
+	return max(d, e.Idle())
+}
+
 func (e *HostEKS) validate(h Host) []string {
 	var errs []string
 	if e == nil {
@@ -180,6 +200,11 @@ func (e *HostEKS) validate(h Host) []string {
 	if e.IdleTimeout != "" {
 		if d, err := time.ParseDuration(e.IdleTimeout); err != nil || d <= 0 {
 			errs = append(errs, fmt.Sprintf("eks.idle_timeout %q: want a duration such as 10m", e.IdleTimeout))
+		}
+	}
+	if e.MaxIdleWithWaiting != "" {
+		if d, err := time.ParseDuration(e.MaxIdleWithWaiting); err != nil || d <= 0 {
+			errs = append(errs, fmt.Sprintf("eks.max_idle_with_waiting %q: want a duration such as 60m", e.MaxIdleWithWaiting))
 		}
 	}
 	errs = append(errs, e.validateLanes()...)
@@ -461,10 +486,49 @@ func (m *Manager) eksSettle() {
 	}
 }
 
-// eksIdle says whether a free lane's cluster has been unused for the host's idle timeout.
+// eksIdle says whether a free lane's cluster may be deleted for being unused: it has been free for the host's idle
+// timeout and no plan has waiting work the lane could serve. Waiting work (a node queued, blocked on an edge or
+// retrying) keeps the lane until the ceiling max_idle_with_waiting, where it is deleted with the alarm idle-ceiling.
 func (m *Manager) eksIdle(l *LaneFile) bool {
 	h := m.inv.Hosts[l.Host]
-	return h.IsEks() && m.now().Sub(l.Since) >= h.EKS.Idle()
+	if !h.IsEks() {
+		return false
+	}
+	free := m.now().Sub(l.Since)
+	if free < h.EKS.Idle() {
+		return false
+	}
+	if n := m.planWaitingFor(l); n > 0 {
+		if free < h.EKS.MaxIdleWaiting() {
+			return false
+		}
+		m.alarm("idle-ceiling", l.Host+"/"+l.Lane, fmt.Sprintf("lane free for %s with %d plan node(s) still waiting for it; deleting its cluster (max_idle_with_waiting %s)",
+			free.Round(time.Minute), n, h.EKS.MaxIdleWaiting()))
+	}
+	return true
+}
+
+// planWaitingFor counts the waiting nodes of the plans (queued, blocked on an edge, retrying) whose spec the lane can
+// serve: its host is usable for the spec and its labels match the spec's selector. A lane that exists serves any such
+// node whatever its footprint (a lane's cluster is sized when it is made).
+func (m *Manager) planWaitingFor(l *LaneFile) int {
+	n := 0
+	for _, name := range plan.Names(m.Root.PlansDir()) {
+		specs, err := plan.PendingSpecs(plan.Dir(m.Root.PlansDir(), name))
+		if err != nil {
+			continue
+		}
+		for _, b := range specs {
+			s, err := ParseSpec(b)
+			if err != nil {
+				continue
+			}
+			if slices.Contains(m.inv.UsableHosts(s), l.Host) && m.inv.LaneAccepts(l.Host, l.Lane, s) {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // eksEnv are the cluster-up variables of a lane: its size, from the workload's footprint, the account, and the directory
