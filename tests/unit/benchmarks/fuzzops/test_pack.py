@@ -140,7 +140,7 @@ def test_host_launch_names_the_evidence_sink_only_when_configured(tmp_path: Path
     assert "SDO_EVIDENCE_HOST_PATH" not in _install_config(tmp_path).host_env()
     env = _install_config(tmp_path, evidence_sink_host_path="/opt/sdo-evidence", evidence_run_id="row-1").host_env()
     assert (env["SDO_EVIDENCE_HOST_PATH"], env["SDO_EVIDENCE_RUN_ID"]) == ("/opt/sdo-evidence", "row-1")
-    with pytest.raises(ValueError, match="requires an evidence host path"):
+    with pytest.raises(ValueError, match="requires an evidence sink"):
         _install_config(tmp_path, evidence_run_id="row-1")
 
 

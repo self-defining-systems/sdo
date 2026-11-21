@@ -21,13 +21,16 @@ import json
 import os
 import re
 import shutil
+import subprocess
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.fuzzops import sink
+from benchmarks.sregym.adapter import WaitKind, wait_for
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
@@ -40,6 +43,10 @@ COPY_DIRNAME = "evidence"
 
 class EvidenceSinkError(RuntimeError):
     """The lane has no usable evidence sink, or a copy of it is not verified."""
+
+
+class EvidenceClaimMissing(EvidenceSinkError):
+    """The lane's evidence claim is gone while a run's evidence has no verified host copy."""
 
 
 def lane_evidence_run_id(environment: FastloopEnvironment, results_dir: Path) -> str:
@@ -144,7 +151,112 @@ def _merge_run_level(source: Path, destination: Path) -> None:
             shutil.copy2(entry, destination / entry.name)
 
 
-def copy_out_run(environment: FastloopEnvironment, results_dir: Path) -> SinkCopy:
+def pull_cluster_sink(environment: FastloopEnvironment, run_ids: Sequence[str]) -> bool:
+    """An EKS lane's sink is a claim in the control namespace: copy the ``run_ids`` run directories out of it into the
+    host evidence root (other runs of the claim are not pulled).
+
+    The puller pod is pinned to the node the claim is bound on (single-attach volumes serve one node). Returns whether
+    a claim was there to pull. A claim that is gone while a run has no verified host copy is lost evidence and raises
+    :class:`EvidenceClaimMissing`. Safe to repeat (the sink only appends). A kind lane's sink is already the host
+    directory, so nothing happens.
+    """
+
+    if environment.platform != "eks" or environment.evidence_root is None or not run_ids:
+        return False
+    from benchmarks.sregym.adapter import control_namespace_for
+
+    control = control_namespace_for(environment.namespace)
+    root = environment.evidence_root
+
+    def kube(*args: str) -> list[str]:
+        return ["kubectl", "--kubeconfig", str(environment.kubeconfig), *args]
+
+    claim = subprocess.run(
+        kube("-n", control, "get", "pvc", sink.EVIDENCE_CLAIM, "-o", "json"),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=wait_for(WaitKind.MINUTE),
+    )
+    if claim.returncode != 0:
+        if "NotFound" in claim.stderr:
+            unsaved = [run for run in run_ids if sink.layout_problem(root / run)]
+            if unsaved:
+                raise EvidenceClaimMissing(
+                    f"the lane's evidence claim {sink.EVIDENCE_CLAIM} is gone and {unsaved} have no verified host copy"
+                )
+            return False
+        raise EvidenceSinkError(f"cannot read the lane's evidence claim: {claim.stderr.strip()[-300:]}")
+    try:
+        node = sink.claim_node(kube, control)
+    except sink.SinkError as exc:
+        raise EvidenceSinkError(str(exc)) from exc
+    name = f"evidence-pull-{os.getpid()}"
+    try:
+        created = subprocess.run(
+            kube("apply", "-f", "-"),
+            input=json.dumps(sink.puller_manifest(control, name, node)),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
+        )
+        if created.returncode != 0:
+            raise EvidenceSinkError(f"evidence pull pod: {created.stderr.strip()[-300:]}")
+        ready = subprocess.run(
+            kube("-n", control, "wait", f"pod/{name}", "--for=condition=Ready", f"--timeout={sink.PULL_READY_TIMEOUT}"),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2 * wait_for(WaitKind.SLOW_COMMAND),
+        )
+        if ready.returncode != 0:
+            raise EvidenceSinkError(
+                f"evidence pull pod not ready on {node or 'any node'}: {ready.stderr.strip()[-300:]}"
+            )
+        root.mkdir(parents=True, exist_ok=True)
+        # Only the requested run directories that the claim holds (an absent one has nothing to pull).
+        listing = (
+            'cd /sink && for d in "$@"; do [ -d "$d" ] && echo "$d"; done > /tmp/pull.list; tar -cf - -T /tmp/pull.list'
+        )
+        tar = subprocess.Popen(
+            kube("-n", control, "exec", name, "-c", "pull", "--", "sh", "-c", listing, "sh", *run_ids),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        extract = subprocess.run(
+            ["tar", "-C", str(root), "-xf", "-"],
+            stdin=tar.stdout,
+            capture_output=True,
+            check=False,
+            timeout=3 * wait_for(WaitKind.ROLLOUT),
+        )
+        assert tar.stdout is not None
+        tar.stdout.close()
+        error = (tar.stderr.read() if tar.stderr else b"").decode()[-300:].strip()
+        if tar.wait() != 0 or extract.returncode != 0:
+            raise EvidenceSinkError(f"evidence pull: {error or extract.stderr.decode()[-300:].strip()}")
+    finally:
+        subprocess.run(
+            kube(
+                "-n",
+                control,
+                "delete",
+                "pod",
+                name,
+                "--ignore-not-found",
+                "--wait=false",
+                "--grace-period=0",
+                "--force",
+            ),
+            capture_output=True,
+            check=False,
+            timeout=wait_for(WaitKind.SLOW_COMMAND),
+        )
+    return True
+
+
+def copy_out_run(environment: FastloopEnvironment, results_dir: Path, *, pull: bool = True) -> SinkCopy:
     """Copy this results directory's sink run directory into ``results_dir/evidence`` and verify it.
 
     Raises :class:`EvidenceSinkError` when the lane has no sink, the sink run directory is missing or not an
@@ -154,6 +266,8 @@ def copy_out_run(environment: FastloopEnvironment, results_dir: Path) -> SinkCop
     if environment.evidence_root is None:
         raise EvidenceSinkError("the lane has no evidence sink (created without --evidence-root)")
     run_id = lane_evidence_run_id(environment, results_dir)
+    if pull:
+        pull_cluster_sink(environment, [run_id])
     source = environment.evidence_root / run_id
     if why := sink.layout_problem(source):
         raise EvidenceSinkError(f"no sink run directory for {run_id}: {why}")
@@ -204,6 +318,17 @@ def settle_lane_evidence(environment: FastloopEnvironment) -> list[str]:
     if environment.evidence_root is None:
         return []
     results_root = environment.run_dir / "results"
+    try:
+        pull_cluster_sink(
+            environment,
+            [
+                lane_evidence_run_id(environment, p)
+                for p in (sorted(results_root.iterdir()) if results_root.is_dir() else [])
+                if p.is_dir() and not (p / WAIVER_FILENAME).exists()
+            ],
+        )
+    except EvidenceSinkError as exc:
+        return [f"pulling the lane's evidence claim: {exc}"]
     failures: list[str] = []
     for results_dir in sorted(p for p in results_root.iterdir() if p.is_dir()) if results_root.is_dir() else []:
         source = environment.evidence_root / lane_evidence_run_id(environment, results_dir)
@@ -212,7 +337,7 @@ def settle_lane_evidence(environment: FastloopEnvironment) -> list[str]:
         if _copied_since_last_write(source, results_dir):
             continue
         try:
-            copy_out_run(environment, results_dir)
+            copy_out_run(environment, results_dir, pull=False)
         except EvidenceSinkError as exc:
             failures.append(f"{results_dir.name}: {exc}")
     return failures

@@ -85,6 +85,9 @@ class NodeLimits:
 
 
 def _lane_nodes(cluster: str) -> list[str]:
+    from benchmarks.sregym.fastloop.environment import refuse_on_eks
+
+    refuse_on_eks("node caps")
     nodes = subprocess.run(
         ["kind", "get", "nodes", "--name", cluster],
         check=True,

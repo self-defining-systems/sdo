@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from benchmarks.fuzzops.sink import EVIDENCE_CLAIM, SinkError, claim_manifest, volume_node
 from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 
 _DNS_LABEL = re.compile(r"^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$")
@@ -47,8 +48,14 @@ class BenchmarkClusterResourcesConfig:
     registry_push_secret: str
     registry_insecure: bool
     kind_cluster_name: str
+    #: ``kind``: nodes are local containers; ``eks``: nodes are reached only through the lane's node agent.
+    lane_platform: str = "kind"
+    #: Create the evidence sink claim (``SDO_EVIDENCE_VOLUME``) with the control namespace (EKS lanes).
+    evidence_claim: bool = False
 
     def __post_init__(self) -> None:
+        if self.lane_platform not in {"kind", "eks"}:
+            raise ValueError(f"lane_platform must be kind or eks, got {self.lane_platform!r}")
         for label, value in (
             ("namespace", self.namespace),
             ("control_namespace", self.control_namespace),
@@ -319,12 +326,37 @@ def _wait_ready(
     raise RuntimeError(f"{name} did not become ready: {last_status}")
 
 
-def _configure_kind_nodes(config: BenchmarkClusterResourcesConfig, nodes: list[str], cluster_ip: str) -> None:
+def _claim_node(config: BenchmarkClusterResourcesConfig, kubeconfig: Path) -> str:
+    """The node the evidence claim binds on: single-attach volumes (EBS) serve the pods of one node, so the claim and
+    its puller must agree on it. A kind lane's claim is not node-local."""
+    if config.lane_platform != "eks":
+        return ""
+    nodes = _json_result(_kubectl(kubeconfig, None, "get", "nodes", "-o", "json"), "lane nodes")
+    try:
+        return volume_node(nodes, config.kind_cluster_name)
+    except SinkError as exc:
+        raise RuntimeError(str(exc)) from exc
+
+
+def evidence_claim_volume() -> str:
+    """``SDO_EVIDENCE_VOLUME`` for a lane whose nodes the runner cannot mount: the control namespace's evidence claim,
+    which the runner pulls over the API before it deletes the namespace (fuzzops pull mode)."""
+    return json.dumps({"persistentVolumeClaim": {"claimName": EVIDENCE_CLAIM}}, separators=(",", ":"))
+
+
+def registry_hosts(config: BenchmarkClusterResourcesConfig, cluster_ip: str) -> str:
+    """containerd's ``hosts.toml`` that sends pulls of the lane registry's name to its ClusterIP (nodes cannot
+    resolve cluster DNS)."""
     if not re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", cluster_ip):
         raise RuntimeError("registry Service lacks a valid IPv4 ClusterIP")
     host = config.registry_host
+    return f'server = "http://{host}"\n[host."http://{cluster_ip}:5000"]\n  capabilities = ["pull", "resolve"]\n'
+
+
+def _configure_kind_nodes(config: BenchmarkClusterResourcesConfig, nodes: list[str], cluster_ip: str) -> None:
+    hosts = registry_hosts(config, cluster_ip)
+    host = config.registry_host
     file_path = f"/etc/containerd/certs.d/{host}/hosts.toml"
-    hosts = f'server = "http://{host}"\n[host."http://{cluster_ip}:5000"]\n  capabilities = ["pull", "resolve"]\n'
     for node in nodes:
         runtime_config = _run(["docker", "exec", node, "containerd", "config", "dump"])
         if "/etc/containerd/certs.d" not in runtime_config:
@@ -344,8 +376,10 @@ def prepare_benchmark_resources(
     """Provision transport in the selected disposable kind lane, then wire node pulls."""
 
     trusted = _trusted_kubeconfig(kubeconfig)
-    nodes = _kind_nodes(config, trusted)
+    nodes = _kind_nodes(config, trusted) if config.lane_platform == "kind" else []
     resources = _registry_resources(config)
+    if config.evidence_claim:
+        resources.append(claim_manifest(config.control_namespace, _claim_node(config, trusted)))
     if relay_target_base is not None:
         resources.extend(_bridge_resources(config, relay_target_base))
     _kubectl(
@@ -365,7 +399,12 @@ def prepare_benchmark_resources(
     cluster_ip = spec.get("clusterIP") if isinstance(spec, dict) else None
     if not isinstance(cluster_ip, str):
         raise RuntimeError("benchmark registry Service has no ClusterIP")
-    _configure_kind_nodes(config, nodes, cluster_ip)
+    if config.lane_platform == "eks":
+        from benchmarks.lanes.eks import write_node_file
+
+        write_node_file(str(trusted), f"{config.registry_host}/hosts.toml", registry_hosts(config, cluster_ip))
+    else:
+        _configure_kind_nodes(config, nodes, cluster_ip)
 
 
 def wait_submission_bridge(control_namespace: str, kubeconfig: Path | None = None) -> None:

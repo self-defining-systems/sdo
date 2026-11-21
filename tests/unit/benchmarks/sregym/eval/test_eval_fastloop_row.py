@@ -98,8 +98,9 @@ def settings(tmp_path: Path, **overrides: Any) -> RowSettings:
     return RowSettings(**{**values, **overrides})
 
 
-def environment(tmp_path: Path) -> Any:
+def environment(tmp_path: Path, platform: str = "kind") -> Any:
     return SimpleNamespace(
+        platform=platform,
         run_dir=tmp_path / "lane-h1",
         cluster="c",
         kubeconfig=tmp_path / "kc",
@@ -768,6 +769,19 @@ def test_a_claim_records_each_nodes_cpuset_and_its_shared_cores(
     runner = FastloopRowRunner(settings(tmp_path), "small", apply_cpu=lambda *a, **kw: [placement])
     lane = runner.claim(cell("vanilla", "vanilla"), "h1", None)
     assert json.loads(lane.info["cpu_placement"]) == [{"node": "c-worker", "cpuset": "4-6", "shared": "6"}]
+
+
+def test_an_eks_lane_claim_caps_no_node_containers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        "benchmarks.sregym.eval.fastloop_row.FastloopEnvironment.load", lambda directory: environment(tmp_path, "eks")
+    )
+    monkeypatch.setattr("benchmarks.sregym.eval.fastloop_row.subprocess.run", lambda command, **kw: None)
+
+    def apply_cpu(cluster: str, lane_cpus: str, *, parent: str | None = None) -> None:
+        raise AssertionError("an EKS lane has no node containers to cap")
+
+    runner = FastloopRowRunner(settings(tmp_path), "small", apply_cpu=apply_cpu)
+    assert runner.claim(cell("vanilla", "vanilla"), "h1", None).info["cluster"] == "c"
 
 
 def test_row_settings_default_to_six_cpus_per_lane_and_an_auto_parent(tmp_path: Path) -> None:

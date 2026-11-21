@@ -5,7 +5,8 @@ images into them. An EKS lane has no node access from the host, so every node-le
 
 * **Images.** Immutable images (for SDO: its controller and workers) are pushed to ECR
   (``<registry>/<image_prefix>/<name>``) and installed by digest.
-  Application images keep the names the source declares: a node agent (a ``kube-system`` DaemonSet) writes a
+  Application images keep the names the source declares: the node agent the lane provider installs (a
+  ``kube-system`` DaemonSet, ``benchmarks/lanes/deploy/eks-lane.sh``; this module only verifies it) writes a
   containerd registry mirror for each upstream (``/etc/containerd/certs.d/<upstream>/hosts.toml``) that tries
   ``<registry>/v2/<mirror_prefix>/<upstream>`` first with an ECR token from the node's instance role, and falls back
   to the upstream. A source-built image is published under its declared name by pushing it to that path.
@@ -15,8 +16,9 @@ images into them. An EKS lane has no node access from the host, so every node-le
   not part of the fence: a node group scaled to zero and back has new nodes in the same cluster.
 
 This module is the EKS lane *provider* (``benchmarks.lanes.provider.LaneProvider``): it knows Kubernetes, ECR and
-containerd, and nothing about SREGym or SDO; workload adapters (fastloop) call it. Cluster creation, node groups
-and the AWS account are outside it: the provider attaches to a cluster that exists.
+containerd, and nothing about SREGym or SDO; workload adapters (fastloop) call it. Cluster creation, node groups,
+the node agent and the mirror configuration belong to the lanes ``eks`` provider (``deploy/eks-lane.sh``); this
+module attaches to a cluster that exists and verifies them.
 """
 
 from __future__ import annotations
@@ -39,11 +41,6 @@ AGENT_CERTS = "/certs"
 #: A node directory the lane's workloads own (pools, caches); the agent mounts it at ``AGENT_LANE``.
 NODE_LANE_ROOT = "/var/lib/sdo-lane"
 AGENT_LANE = "/lane"
-#: An AWS CLI image on ECR Public (anonymous pulls, no Docker Hub limit); pinned by tag.
-NODE_AGENT_IMAGE = "public.ecr.aws/aws-cli/aws-cli:2.22.35"
-#: ECR tokens last 12 h; the agent refreshes every 6 h and is unready once its header is 8 h old.
-REFRESH_SECONDS = 6 * 3600
-STALE_MINUTES = 8 * 60
 #: The upstream registries containerd resolves for a bare name, and the servers it falls back to.
 UPSTREAM_SERVERS = {
     "docker.io": "https://registry-1.docker.io",
@@ -71,7 +68,7 @@ class EksLane(BaseModel):
     cluster_uid: str
     mirror_prefix: str = "sdo-mirror"
     image_prefix: str = "sdo"
-    upstreams: tuple[str, ...] = ("docker.io",)
+    upstreams: tuple[str, ...] = ("docker.io", "ghcr.io", "quay.io", "registry.k8s.io")
     #: Tags every ECR repository fastloop creates carries (account bookkeeping, for example ``Project``).
     repository_tags: dict[str, str] = Field(default_factory=dict)
 
@@ -261,7 +258,12 @@ def _holds(ecr: Ecr, reference: str) -> bool:
         check=False,
         timeout=120,
     )
-    return found.returncode == 0
+    if found.returncode == 0:
+        return True
+    if "ImageNotFoundException" in found.stderr or "RepositoryNotFoundException" in found.stderr:
+        return False
+    # Credentials, throttling, network: "could not ask" is not "the images differ".
+    raise EksLaneError(f"cannot tell whether ECR holds {reference}: {found.stderr.strip()[-600:]}")
 
 
 def publish_app_image(ecr: Ecr, local: str, declared: str) -> str:
@@ -277,103 +279,6 @@ def pin_image(ecr: Ecr, local: str) -> str:
     repository, tag = image_repository(ecr.lane, local)
     digest = ecr.push(local, repository, tag)
     return f"{ecr.lane.registry}/{repository}@{digest}"
-
-
-def _hosts_script(lane: EksLane) -> str:
-    """The node agent's loop: refresh the mirror header of every upstream, atomically, every few hours."""
-
-    writes = []
-    for upstream in lane.upstreams:
-        mirror = f"https://{lane.registry}/v2/{lane.mirror_prefix}/{upstream}"
-        directory = f"{AGENT_CERTS}/{upstream}"
-        body = (
-            f'server = "{UPSTREAM_SERVERS[upstream]}"\\n\\n'
-            f'[host."{mirror}"]\\n'
-            '  capabilities = ["pull", "resolve"]\\n'
-            "  override_path = true\\n"
-            f'  [host."{mirror}".header]\\n'
-            '    Authorization = "Basic %s"\\n'
-        )
-        writes.append(
-            f"mkdir -p {directory} && printf '{body}' \"$auth\" > {directory}/hosts.toml.tmp"
-            f" && mv {directory}/hosts.toml.tmp {directory}/hosts.toml"
-        )
-    return "\n".join(
-        [
-            "set -u",
-            "while true; do",
-            f'  if token=$(aws ecr get-login-password --region "{lane.region}"); then',
-            "    auth=$(printf 'AWS:%s' \"$token\" | base64 | tr -d '\\n')",
-            *(f"    {line}" for line in writes),
-            f"    date +%s > {AGENT_CERTS}/.sdo-mirror-refreshed",
-            f"    sleep {REFRESH_SECONDS}",
-            "  else",
-            "    echo 'ECR token refresh failed; retrying' >&2",
-            "    sleep 30",
-            "  fi",
-            "done",
-        ]
-    )
-
-
-def node_agent_manifest(lane: EksLane) -> dict[str, Any]:
-    """The ``kube-system`` DaemonSet that keeps every node's registry mirror current and executes node writes."""
-
-    labels = {"app.kubernetes.io/name": NODE_AGENT}
-    return {
-        "apiVersion": "apps/v1",
-        "kind": "DaemonSet",
-        "metadata": {"name": NODE_AGENT, "namespace": NODE_AGENT_NAMESPACE, "labels": labels},
-        "spec": {
-            "selector": {"matchLabels": labels},
-            "updateStrategy": {"type": "RollingUpdate", "rollingUpdate": {"maxUnavailable": "100%"}},
-            "template": {
-                "metadata": {"labels": labels},
-                "spec": {
-                    # The instance role's ECR token is reachable from the host network without an extra hop.
-                    "hostNetwork": True,
-                    "dnsPolicy": "ClusterFirstWithHostNet",
-                    "priorityClassName": "system-node-critical",
-                    "tolerations": [{"operator": "Exists"}],
-                    "terminationGracePeriodSeconds": 1,
-                    "containers": [
-                        {
-                            "name": "agent",
-                            "image": NODE_AGENT_IMAGE,
-                            "imagePullPolicy": "IfNotPresent",
-                            "command": ["sh", "-c", _hosts_script(lane)],
-                            "securityContext": {"runAsUser": 0},
-                            "resources": {
-                                "requests": {"cpu": "5m", "memory": "32Mi"},
-                                "limits": {"memory": "256Mi"},
-                            },
-                            "readinessProbe": {
-                                "exec": {
-                                    "command": [
-                                        "sh",
-                                        "-c",
-                                        f"find {AGENT_CERTS}/.sdo-mirror-refreshed -mmin -{STALE_MINUTES} | grep -q .",
-                                    ]
-                                },
-                                "periodSeconds": 10,
-                            },
-                            "volumeMounts": [
-                                {"name": "certs", "mountPath": AGENT_CERTS},
-                                {"name": "lane", "mountPath": AGENT_LANE},
-                            ],
-                        }
-                    ],
-                    "volumes": [
-                        {
-                            "name": "certs",
-                            "hostPath": {"path": "/etc/containerd/certs.d", "type": "DirectoryOrCreate"},
-                        },
-                        {"name": "lane", "hostPath": {"path": NODE_LANE_ROOT, "type": "DirectoryOrCreate"}},
-                    ],
-                },
-            },
-        },
-    }
 
 
 def _kubectl(kubeconfig: str, *args: str) -> list[str]:
@@ -433,27 +338,19 @@ def node_agents(kubeconfig: str, *, run: Runner = subprocess.run) -> dict[str, s
     return agent_pods(pods, nodes)
 
 
-def ensure_node_agent(
+def wait_node_agents(
     kubeconfig: str,
-    lane: EksLane,
+    timeout: float,
     *,
     run: Runner = subprocess.run,
-    timeout: float = 300,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
 ) -> dict[str, str]:
-    """Apply the node agent and wait until it is ready on every Ready node; idempotent."""
+    """``node -> ready agent pod`` once every Ready node has one, waiting up to ``timeout`` seconds.
 
-    applied = run(
-        _kubectl(kubeconfig, "apply", "-f", "-"),
-        input=json.dumps(node_agent_manifest(lane)),
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=120,
-    )
-    if applied.returncode != 0:
-        raise EksLaneError(f"node agent apply: {applied.stderr.strip()[-600:]}")
+    A node that just joined (scale-up, replacement) is Ready before its agent pod is; a caller that acts on every
+    node must wait for the agents, never read them once."""
+
     deadline = clock() + timeout
     while True:
         try:
@@ -464,16 +361,60 @@ def ensure_node_agent(
             sleep(5)
 
 
+def verify_node_agent(
+    kubeconfig: str,
+    lane: EksLane,
+    *,
+    run: Runner = subprocess.run,
+    timeout: float = 300,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> dict[str, str]:
+    """Check the node agent the lane provider installed (``deploy/eks-lane.sh up``); never applies or changes it.
+
+    The agent must mirror every upstream of ``lane`` to ``<registry>/<mirror_prefix>`` and be ready on every Ready
+    node (waited for up to ``timeout``). A missing or different agent is a named error: fix the lane's cluster-up,
+    not the adapter.
+    """
+
+    daemonset = _json(
+        run, _kubectl(kubeconfig, "-n", NODE_AGENT_NAMESPACE, "get", "daemonset", NODE_AGENT, "-o", "json")
+    )
+    containers = daemonset["spec"]["template"]["spec"].get("containers") or [{}]
+    script = " ".join(containers[0].get("command") or [])
+    served = re.search(r"for up in ([^;]+); do", script)
+    missing = sorted(set(lane.upstreams) - set(served.group(1).split() if served else ()))
+    if missing:
+        raise EksLaneError(
+            f"node agent {NODE_AGENT} does not mirror {missing}: the lane provider installs the mirror "
+            "(set the upstreams in the lane's cluster-up, not in the adapter)"
+        )
+    if f"https://{lane.registry}/v2/{lane.mirror_prefix}/$up" not in script:
+        raise EksLaneError(
+            f"node agent {NODE_AGENT} does not mirror to {lane.registry}/{lane.mirror_prefix}: "
+            "the lane's cluster-up was made for another registry or prefix"
+        )
+    return wait_node_agents(kubeconfig, timeout, run=run, sleep=sleep, clock=clock)
+
+
 def run_on_nodes(
-    kubeconfig: str, script: str, *, input_text: str | None = None, run: Runner = subprocess.run
+    kubeconfig: str,
+    script: str,
+    *,
+    input_text: str | None = None,
+    run: Runner = subprocess.run,
+    wait: float = 0,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
 ) -> list[str]:
     """Run ``sh -c script`` on every Ready node through its agent; returns the nodes.
 
     The script sees the node's containerd ``certs.d`` at ``/certs`` and the lane's node directory
-    (``/var/lib/sdo-lane``) at ``/lane``, as root, and nothing else of the node.
+    (``/var/lib/sdo-lane``) at ``/lane``, as root, and nothing else of the node. ``wait`` seconds are allowed for
+    every Ready node's agent to be ready (:func:`wait_node_agents`).
     """
 
-    agents = node_agents(kubeconfig, run=run)
+    agents = wait_node_agents(kubeconfig, wait, run=run, sleep=sleep, clock=clock)
     for node, pod in agents.items():
         completed = run(
             _kubectl(
@@ -562,12 +503,12 @@ class EksProvider:
 
     @classmethod
     def attach(cls, kubeconfig: str, *, registry: str, run: Runner = subprocess.run, **settings: Any) -> EksProvider:
-        """Fence the cluster ``kubeconfig`` reaches, require NetworkPolicy and start the node agent."""
+        """Fence the cluster ``kubeconfig`` reaches, require NetworkPolicy and verify the provider's node agent."""
 
         server, uid = cluster_identity(kubeconfig, run=run)
         lane = EksLane(registry=registry, server=server, cluster_uid=uid, **settings)
         require_network_policy(kubeconfig, run=run)
-        ensure_node_agent(kubeconfig, lane, run=run)
+        verify_node_agent(kubeconfig, lane, run=run)
         return cls(lane, kubeconfig, run=run)
 
     def kubeconfig(self) -> str:
@@ -589,8 +530,8 @@ class EksProvider:
     def write_node_file(self, relative: str, content: str) -> list[str]:
         return write_node_file(self._kubeconfig, relative, content, run=self._run)
 
-    def run_on_nodes(self, script: str) -> list[str]:
-        return run_on_nodes(self._kubeconfig, script, run=self._run)
+    def run_on_nodes(self, script: str, *, wait: float = 0) -> list[str]:
+        return run_on_nodes(self._kubeconfig, script, run=self._run, wait=wait)
 
     def release(self) -> None:
         """Attach-only: the cluster and its node group stay; scaling and deletion belong to the account's tooling."""
