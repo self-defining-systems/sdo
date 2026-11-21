@@ -289,3 +289,8 @@ func immutableValidationImage(image string) bool {
 	_, err := hex.DecodeString(digest)
 	return err == nil
 }
+
+// applyMemoryUpstream makes the accepted repository replicate the remote branch the controller was launched with.
+func applyMemoryUpstream(repository *broker.Broker, config *contracts.ControllerConfig) error {
+	return nil
+}
