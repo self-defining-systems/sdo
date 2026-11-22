@@ -19,8 +19,9 @@ Verbs:
 ``app-snapshot``  ``write``/``verify``: the namespace's workloads and their images (a fingerprint of the deploy).
 ``app-reset``     ``recover``: nothing to undo (``fastloop run`` recovers and cleans up its own fault).
 ``gate``          ``check``: every pod of the app namespace is Ready.
-``run``           ``run``: one ``fastloop run`` of the problem (``--instance``) with the subject's agent registrations,
-                  from the planned memory commit: the operator file's seed (a memory directory a plan edge exported,
+``run``           ``run``: one ``fastloop run`` of the problem (``--instance``) with the spec's agent (the scripted
+                  registrations, or a real SDO agent when ``operator.settings`` names a model: ``agent.py``), from
+                  the planned memory commit: the operator file's seed (a memory directory a plan edge exported,
                   which must descend from its baseline), else its baseline, else the lane's onboarding commit.
                   The record (last line) has
                   ``operator``, ``valid``, ``lifecycle.inject_at`` and the SREGym summary; the accepted memory after the
@@ -50,6 +51,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Protocol
 
 from benchmarks.sregym.adapter import CURRENT_WAIT_ENV
+from benchmarks.sregym.lanes.agent import settings_for
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -393,6 +395,8 @@ def app_up(ctx: Context) -> tuple[int, dict[str, Any]]:
             *(eks_up_args(ctx) if eks else ()),
             *pack.up_args,
             *shlex.split(ctx.env.get("SREGYM_LANES_UP_ARGS", "")),
+            # A real agent's operator images (settings.responder_image/controller_image) override the host's.
+            *(agent.up_flags() if (agent := settings_for(ctx.env)) else ()),
         ]
         if seed := ctx.env.get(f"SREGYM_LANES_SEED_{pack.application}"):
             # The host's onboarded memory for this application (a git repository), per application: one host
@@ -522,6 +526,28 @@ def stream_settings(problem: str) -> dict[str, Any]:
     }
 
 
+def token_usd(counts: Mapping[str, Any] | None, provider: str | None, model: str | None) -> float | None:
+    """The USD of one recorded token usage at agentshim's price for the row's model: ``0.0`` when no model was called,
+    ``None`` (unknown, never zero) when the usage cannot be priced."""
+    from agentshim import TokenUsage, cost_usd, default_pricing, price_for
+
+    counts = counts or {}
+    if not any(counts.get(name) for name in ("input_tokens", "output_tokens", "model_requests")):
+        return 0.0
+    entry = price_for(provider or "", model, default_pricing()) if provider and model else None
+    if entry is None:
+        return None
+    usage = TokenUsage(
+        input_tokens=int(counts.get("input_tokens") or 0),
+        output_tokens=int(counts.get("output_tokens") or 0),
+        cache_read_input_tokens=int(counts.get("cached_input_tokens") or 0),
+        cache_write_input_tokens=int(counts.get("cache_write_input_tokens") or 0),
+        cache_write_1h_input_tokens=int(counts.get("cache_write_1h_input_tokens") or 0),
+        reasoning_output_tokens=int(counts.get("reasoning_output_tokens") or 0),
+    )
+    return round(cost_usd(usage, entry), 6)
+
+
 def summarize(record: Mapping[str, Any]) -> dict[str, Any]:
     """The SREGym part of a run record, from a fastloop incident record."""
     injection = record.get("injection") or {}
@@ -531,6 +557,8 @@ def summarize(record: Mapping[str, Any]) -> dict[str, Any]:
         "problem_id",
         "detected_at",
         "dispatched_at",
+        "responder_started_at",
+        "responder_finished_at",
         "mitigation_applied_at",
         "resolved_at",
         "time_to_fix_seconds",
@@ -539,6 +567,10 @@ def summarize(record: Mapping[str, Any]) -> dict[str, Any]:
         "sdo_outcome_classification",
         "warm_path",
         "match_reasons",
+        "reflection_started_at",
+        "reflection_finished_at",
+        "reflection_attempts",
+        "reflection_skipped_reason",
         "memory_before_commit",
         "memory_after_commit",
         "full_cleanup_verified",
@@ -547,11 +579,22 @@ def summarize(record: Mapping[str, Any]) -> dict[str, Any]:
         "error",
         "incident_id",
         "evidence_incomplete",
+        "provider",
+        "model",
+        "reasoning_effort",
     )
     out = {key: record.get(key) for key in keys}
     out["injected_at"] = injection.get("started_at")
     out["oracle_kind"] = oracle.get("kind")
     out["success"] = bool(oracle.get("success"))
+    # The responder's and the closing turn's own usage, from the row's accounting (the responder session's tokens
+    # and the reflection turns'), priced at the row's model: what the final report's cost columns read.
+    provider, model = record.get("provider"), record.get("model")
+    for role in ("responder", "reflection"):
+        counts = record.get(f"{role}_tokens") or {}
+        out[f"{role}_tokens"] = counts
+        out[f"{role}_requests"] = int(counts.get("model_requests") or 0)
+        out[f"{role}_usd"] = token_usd(counts, provider, model)
     return out
 
 
@@ -614,6 +657,8 @@ class FallbackPager:
     cluster: Any
     now: Callable[[], float]
     source: str | None = None
+    #: The instant SDO was paged (epoch seconds), when the fallback page is the clock.
+    paged_at: float | None = None
     hook: Any = None
 
     def __post_init__(self) -> None:
@@ -638,6 +683,7 @@ class FallbackPager:
         own_at = self.hook.own_incident_at(cell)
         if paged_at is not None:
             self.source = "fallback"
+            self.paged_at = paged_at
             self._write({"injected_at": marker.started_at, "paged_at": paged_at, "source": "fallback"})
         elif own_at is not None:
             self.source = "own"
@@ -668,6 +714,20 @@ def fault_active(env_dir: Path, problem: str) -> bool:
     except (OSError, json.JSONDecodeError):
         return True
     return not (verdict.get("state") == "clear" and verdict.get("problem") == problem)
+
+
+def without_flag(args: Sequence[str], flag: str) -> list[str]:
+    """``args`` with every ``--flag VALUE`` / ``--flag=VALUE`` of ``flag`` removed."""
+    out: list[str] = []
+    skip = False
+    for item in args:
+        if skip:
+            skip = False
+        elif item == flag:
+            skip = True
+        elif not item.startswith(f"{flag}="):
+            out.append(item)
+    return out
 
 
 def run(ctx: Context) -> tuple[int, dict[str, Any]]:
@@ -722,6 +782,23 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
     )
     stream = exec_out / "stream.json"
     stream.write_text(json.dumps(stream_settings(problem), indent=1) + "\n", encoding="utf-8")
+    real = settings_for(ctx.env)
+    host_args = shlex.split(ctx.env.get("SREGYM_LANES_RUN_ARGS", ""))
+    run_env: Mapping[str, str] = ctx.env
+    if real is None:
+        # The scripted agent (model-free): the scripted registrations; the host's run flags (its placeholder
+        # credentials hook) apply as they are.
+        agent_flags = ["--agent-registrations", str(ctx.root / SCRIPTED_REGISTRATIONS)]
+    else:
+        if not real.auth_file.is_file():
+            raise AdapterError(f"agent credential file {real.auth_file} (operator.settings.auth_file) is missing")
+        if mismatch := real.image_mismatch(environment.get("images") or {}):
+            raise AdapterError(f"{mismatch}: rebuild the lane for this spec")
+        # A real agent: SDO's own responder and closing turn, the spec's config overlay, and the credentials hook that
+        # puts the credential file into the lane's Secret. The host's placeholder hook must not replace it.
+        host_args = without_flag(host_args, "--credentials-hook")
+        agent_flags = real.run_flags(exec_out / "operator-config.yaml")
+        run_env = {**ctx.env, **real.hook_env()}
     command = [
         ctx.python,
         "-m",
@@ -733,8 +810,7 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
         run_id,
         "--agent",
         "sdo",
-        "--agent-registrations",
-        str(ctx.root / SCRIPTED_REGISTRATIONS),
+        *agent_flags,
         "--stream",
         str(stream),
         # The eval runner's SDO row flags (benchmarks/sregym/eval/fastloop_row.py row_command).
@@ -747,7 +823,7 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
         "--continue-on-error",
         "--timeout",
         ctx.env.get("SREGYM_LANES_RUN_TIMEOUT", str(DEFAULT_RUN_TIMEOUT)),
-        *shlex.split(ctx.env.get("SREGYM_LANES_RUN_ARGS", "")),
+        *host_args,
     ]
     if planned:
         command += ["--planned-commit", planned]
@@ -781,7 +857,7 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
     deadline_failure = ""
     try:
         ctx.long_runner(
-            command, env={**ctx.env, CURRENT_WAIT_ENV: str(current_wait)}, cwd=ctx.root, tick=pager.tick, **limits
+            command, env={**run_env, CURRENT_WAIT_ENV: str(current_wait)}, cwd=ctx.root, tick=pager.tick, **limits
         )
     except RowDeadlineError as error:
         failure = deadline_failure = str(error)
@@ -803,6 +879,11 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
         }
     summary = summarize(incident)
     summary["page_source"] = pager.source
+    summary["paged_at"] = (
+        datetime.fromtimestamp(pager.paged_at, UTC).isoformat().replace("+00:00", "Z")
+        if pager.paged_at is not None
+        else None
+    )
     record["sregym"] = summary
     record["memory"] = export_memory(ctx, workspace, exec_out / MEMORY_DIR, planned)
     record["memory"]["seeded"] = seed_dir is not None
@@ -827,10 +908,38 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
     return (0 if record["valid"] else 1), record
 
 
+def _seconds_between(start: str | None, end: str | None) -> float | None:
+    if not start or not end:
+        return None
+    return (datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds()
+
+
+def page_to_healthy_seconds(summary: Mapping[str, Any]) -> float | None:
+    """From the page to recovery, with the eval runner's clock: SDO's own detection (``own``), or the instant the
+    harness paged it (``fallback``); ``None`` when SDO was never paged or never recovered."""
+    source = summary.get("page_source")
+    start = summary.get("detected_at") if source == "own" else summary.get("paged_at") if source == "fallback" else None
+    return _seconds_between(start, summary.get("resolved_at"))
+
+
+def agent_dispatched(summary: Mapping[str, Any]) -> bool:
+    """Whether the agent ran. ``dispatched_at`` and ``responder_started_at`` are the incident's dispatch, a learned
+    playbook's automatic stage (``resolution_path`` deterministic) included: the agent ran when it made model requests,
+    else when the incident went to a responder."""
+    if summary.get("responder_requests"):
+        return True
+    return summary.get("resolution_path") != "deterministic" and bool(summary.get("responder_started_at"))
+
+
 def grade_line(record: Mapping[str, Any]) -> dict[str, Any]:
-    """One run's grade: the platform reads ``operator`` and the boolean ``valid``; the rest are columns."""
+    """One run's grade: the platform reads ``operator`` and the boolean ``valid``; the rest are columns.
+
+    The columns carry what a report per problem needs: whether a learned playbook was applied
+    (``resolution_path``, ``warm_path``, ``match_reasons``), whether the agent was dispatched, the page-to-healthy time
+    with the page's source, the responder's cost, and whether the closing turn finished (and learned)."""
     summary = record.get("sregym") or {}
     memory = record.get("memory") or {}
+    learned = len(memory.get("playbook_files_changed") or [])
     return {
         "operator": record.get("operator", ""),
         "valid": bool(record.get("valid")),
@@ -840,10 +949,23 @@ def grade_line(record: Mapping[str, Any]) -> dict[str, Any]:
         "resolution_path": summary.get("resolution_path"),
         "page_source": summary.get("page_source"),
         "warm_path": summary.get("warm_path"),
+        "match_reasons": summary.get("match_reasons") or [],
+        "agent_dispatched": agent_dispatched(summary),
+        "dispatched_at": summary.get("dispatched_at"),
+        "injected_at": summary.get("injected_at"),
+        "detected_at": summary.get("detected_at"),
+        "paged_at": summary.get("paged_at"),
+        "resolved_at": summary.get("resolved_at"),
+        "page_to_healthy_seconds": page_to_healthy_seconds(summary),
+        "responder_usd": summary.get("responder_usd"),
+        "responder_requests": summary.get("responder_requests"),
+        "reflection_usd": summary.get("reflection_usd"),
+        "closing_finished": bool(summary.get("reflection_finished_at") or summary.get("reflection_skipped_reason")),
         "seeded": bool(memory.get("seeded")),
         "memory_before": summary.get("memory_before_commit"),
         "memory_after": memory.get("commit"),
-        "playbooks_learned": len(memory.get("playbook_files_changed") or []),
+        "playbooks_learned": learned,
+        "learned": learned > 0,
         "invalid_reason": record.get("invalid_reason", ""),
     }
 
