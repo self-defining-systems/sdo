@@ -2509,7 +2509,8 @@ OBSERVABILITY_ROLLOUT_WAIT_S = 240
 def restart_observability(kube: Kubectl, control: str) -> None:
     """Replace the control namespace's Prometheus and Jaeger pods so their emptyDir data (TSDB, WAL, traces) is
     gone. Reset puts the app back to the golden copy; the observability stack kept every earlier run, and on a
-    reused lane Prometheus (1 Gi) was OOM-killed and crash-looped on WAL replay. A lane without them is left as it is."""
+    reused lane Prometheus (1 Gi) was OOM-killed and crash-looped on WAL replay. A lane without them is left
+    as it is."""
     for name in OBSERVABILITY_DEPLOYMENTS:
         found = subprocess.run(
             kube.cmd("-n", control, "get", "deployment", name, "-o", "name"),
