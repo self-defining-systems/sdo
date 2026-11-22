@@ -12,6 +12,8 @@ from tests.unit.benchmarks.commit_series.test_commit_outcomes import Lane
 if TYPE_CHECKING:
     from pathlib import Path
 
+    import pytest
+
 SPEC = {
     "name": "demo",
     "description": "three synthetic commits",
@@ -130,3 +132,49 @@ def test_a_position_tells_settle_it_waited_for_its_own_incident(tmp_path: Path) 
     adapter.run(env(tmp_path, 1), out, ops=Lane("incident"))  # type: ignore[arg-type]
     assert json.loads(out.getvalue().splitlines()[-1])["incident_opened"] is True
     assert (tmp_path / "settle-work-only.json").is_file()
+
+
+class OwnedOps(Lane):
+    """A lane the adapter would build for itself: it also answers the start checks."""
+
+    def __init__(self, problems: list[str]) -> None:
+        super().__init__("accepted")
+        self.problems = problems
+        self.checked = 0
+
+    def start_problems(self, env: dict[str, str], lane_dir: Path) -> list[str]:
+        self.checked += 1
+        return self.problems
+
+
+def test_the_first_position_proves_the_lane_equals_a_fresh_install_and_later_ones_do_not(tmp_path: Path) -> None:
+    lane = OwnedOps([])
+    out = io.StringIO()
+    adapter.run(env(tmp_path, 1), out, ops=lane)  # type: ignore[arg-type]
+    adapter.run(env(tmp_path, 2), out, ops=lane)  # type: ignore[arg-type]
+    assert lane.checked == 0  # an injected lane is the test's own; see below for the one the adapter builds
+
+
+def test_a_lane_that_is_not_at_the_series_start_is_an_invalid_run_not_a_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lane = OwnedOps(["Deployment/web runs web:v2, the base release has web:v1"])
+    monkeypatch.setattr(adapter, "LaneOps", lambda *a, **k: lane)
+    out = io.StringIO()
+    assert adapter.run({**env(tmp_path, 1), "KUBECONFIG": "/k"}, out) == 0
+    record = json.loads(out.getvalue().splitlines()[-1])
+    assert record["valid"] is False
+    assert "not at the series start" in record["invalid_reason"]
+    assert "web:v2" in record["invalid_reason"]
+    assert lane.pushed == "", "nothing was pushed to a lane that is not at the start"
+    out = io.StringIO()
+    adapter.run({**env(tmp_path, 2), "KUBECONFIG": "/k"}, out)
+    assert lane.checked == 1  # position 2 does not ask: the series is under way
+
+
+def test_position_one_starts_the_series_clock_again(tmp_path: Path) -> None:
+    """A lane reset in place runs the series again: its schedule counts from the new first position."""
+    adapter.wall_start(tmp_path, "demo", 100.0)
+    assert adapter.wall_start(tmp_path, "demo", 500.0) == 100.0  # a later position
+    assert adapter.wall_start(tmp_path, "demo", 900.0, first=True) == 900.0
+    assert adapter.wall_start(tmp_path, "demo", 950.0) == 900.0

@@ -362,11 +362,15 @@ class SourceBranch:
     ``{control}``, ``{ref}``, ``{image}`` (the controller image), ``{script_image}`` (the small script-tools image)
     and ``{repository}`` (the accepted repository) filled in. The hooks know nothing else of the remote: they pass
     its URL and branch to SDO and keep the line as ``$BENCH_LANE_DIR/source-branch.json`` for the workload that pushes.
+    ``rewind`` (optional, with ``{head}`` too) puts the branch back at a commit the server already holds: a lane reset
+    runs it with the prepared head, since the pushes of a run are history that must not survive into the next. A
+    lane whose branch has no ``rewind`` cannot be reset (it is rebuilt).
     """
 
     ref: str
     up: str
     down: str
+    rewind: str = ""
 
     def __post_init__(self) -> None:
         if not self.ref or not self.up or not self.down:
@@ -380,12 +384,19 @@ class SourceBranch:
             return None
         if not isinstance(raw, dict):
             raise ValueError("settings.source_branch must be an object")
-        return cls(str(raw.get("ref") or ""), str(raw.get("up") or ""), str(raw.get("down") or ""))
+        return cls(
+            str(raw.get("ref") or ""),
+            str(raw.get("up") or ""),
+            str(raw.get("down") or ""),
+            str(raw.get("rewind") or ""),
+        )
 
     def command(self, which: str, values: Mapping[str, str]) -> str:
         quoted = {k: shlex.quote(v) for k, v in {**values, "ref": self.ref}.items()}
         return re.sub(
-            r"\{(\w+)\}", lambda m: quoted.get(m.group(1), m.group(0)), {"up": self.up, "down": self.down}[which]
+            r"\{(\w+)\}",
+            lambda m: quoted.get(m.group(1), m.group(0)),
+            {"up": self.up, "down": self.down, "rewind": self.rewind}[which],
         )
 
 
@@ -1522,6 +1533,72 @@ def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     return 0
 
 
+def _workload_images(docs: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """``Kind/name`` -> the sorted image references (init containers too) of each controller of ``docs``."""
+    out: dict[str, list[str]] = {}
+    for doc in docs:
+        if doc.get("kind") not in ("Deployment", "StatefulSet", "DaemonSet"):
+            continue
+        spec = ((doc.get("spec") or {}).get("template") or {}).get("spec") or {}
+        out[f"{doc['kind']}/{doc['metadata']['name']}"] = sorted(
+            str(c.get("image", "")) for c in [*spec.get("initContainers", []), *spec.get("containers", [])]
+        )
+    return out
+
+
+def start_problems(
+    prepared: Mapping[str, str] | None,
+    current: Mapping[str, str],
+    not_quiet: str,
+    wanted_images: Mapping[str, list[str]],
+    live_images: Mapping[str, list[str]],
+) -> list[str]:
+    """Why a lane is not what a fresh install is when a run starts ("" list: it is). The memory's accepted repository
+    is the prepared one (``wipe_problems``), no incident is open and no closure or reflection is pending
+    (``not_quiet`` is the idle verdict's reason), and every workload runs the images of the release the memory was made
+    for."""
+    problems = [] if prepared is None else wipe_problems(prepared, current)
+    if prepared is None:
+        problems.append("the lane has no recorded prepared state")
+    if not_quiet:
+        problems.append(f"the operator is not quiet: {not_quiet}")
+    for name, images_wanted in sorted(wanted_images.items()):
+        if name not in live_images:
+            problems.append(f"{name} is not running")
+        elif live_images[name] != images_wanted:
+            problems.append(
+                f"{name} runs {', '.join(live_images[name])}, the base release has {', '.join(images_wanted)}"
+            )
+    return problems
+
+
+def verify_start(env: Mapping[str, str]) -> list[str]:
+    """The checks of ``start_problems`` against the live lane: the proof that a lane reset in place (or just built)
+    starts a run from the state a fresh install has. The base release is the memory's own render in the lane directory
+    (``app/k8s/render.yaml``), which is what ``prepare`` applied to the app."""
+    lane_dir = Path(_need(env, "BENCH_LANE_DIR")).resolve()
+    kube, control = _kube(env), control_namespace(env)
+    record = json.loads((lane_dir / PREPARED_RECORD).read_text())
+    state, updated = kube.state_configmap(control)
+    quiet = idle_verdict(state, updated, kube.controller_ready(control), datetime.now(UTC), baselines=False)
+    live = json.loads(
+        _run(
+            kube.cmd("-n", _need(env, "FUZZOPS_NAMESPACE"), "get", "deployments,statefulsets,daemonsets", "-o", "json"),
+            "workloads",
+            120,
+        ).stdout
+    )["items"]
+    render = lane_dir / "app" / "k8s" / "render.yaml"
+    wanted = _workload_images(plain_docs(render.read_text())) if render.is_file() else {}
+    return start_problems(record.get("state"), repository_state(kube, control), quiet, wanted, _workload_images(live))
+
+
+def verify_start_verb(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
+    problems = verify_start(env)
+    out(json.dumps({"ok": not problems, "problems": problems}))
+    return 1 if problems else 0
+
+
 def baseline_wait_expired(env: Mapping[str, str], why: str, now: datetime | None = None) -> bool:
     """Whether the pre-inject gate has waited ``BASELINE_WAIT_MAX_S`` for store baselines. The first hold is
     recorded in the lane directory; once the bound passes, the missing stores are noted (``no-baseline.json``, also in
@@ -2123,13 +2200,15 @@ class ResetSteps:
     wait_standby: Callable[[], object]
     repository_state: Callable[[], Mapping[str, str]]
     controller_idle: Callable[[], str]
+    #: Puts the branch SDO deploys from back at the prepared head (a no-op for a lane with no source branch).
+    rewind_source: Callable[[str], object] = lambda head: None
 
     @classmethod
     def unused(cls) -> ResetSteps:
         def refuse(*_: object) -> Any:
             raise AssertionError("step must not run")
 
-        return cls(*([refuse] * 10))
+        return cls(*([refuse] * 11))
 
 
 def reset_lane(env: Mapping[str, str], steps: ResetSteps, out: Callable[[str], None] = _print) -> dict[str, Any]:
@@ -2159,6 +2238,7 @@ def reset_lane(env: Mapping[str, str], steps: ResetSteps, out: Callable[[str], N
         steps.stop_controller()
         out("controller stopped")
         steps.restore_repository(prepared["head"])
+        steps.rewind_source(prepared["head"])
         app = steps.app_reset()
         out(f"app reset: {json.dumps(app)}")
         steps.start_controller()
@@ -2410,6 +2490,32 @@ def reset_steps(
         wait_standby=lambda: wait_standby(kube, control, SWAP_STANDBY_WAIT_S),
         repository_state=lambda: repository_state(kube, control),
         controller_idle=lambda: wait_idle(kube, control, RESET_IDLE_WAIT_S),
+        rewind_source=lambda head: rewind_source_branch(env, kube, control, head),
+    )
+
+
+#: The control-namespace ConfigMap SDO keeps its one refused branch head in (``sdo/operator/runtime/head_poll.go``).
+HEAD_HOLD_CONFIGMAP = "sdo-head-hold"
+
+
+def rewind_source_branch(env: Mapping[str, str], kube: Kube, control: str, head: str) -> None:
+    """A reset of a lane with a source branch: the branch goes back to ``head`` (what the accepted repository was
+    restored to, which the server holds: SDO published it before the lane was prepared) and SDO's record of a refused
+    head goes, so the next run starts from the history a fresh install has."""
+    block = _operator(env) if env.get("BENCH_OPERATOR") else None
+    if block is None or block.source_branch is None:
+        return
+    if not block.source_branch.rewind:
+        raise HookError("settings.source_branch has no rewind command: the branch cannot be reset, rebuild the lane")
+    lane_dir = Path(_need(env, "BENCH_LANE_DIR")).resolve()
+    values = source_branch_values(
+        Path(_need(env, "KUBECONFIG")), _need(env, "FUZZOPS_NAMESPACE"), control, block.images(), lane_dir / "app"
+    )
+    _run(["sh", "-c", block.source_branch.command("rewind", {**values, "head": head})], "source branch rewind", 300)
+    _run(
+        kube.cmd("-n", control, "delete", "configmap", HEAD_HOLD_CONFIGMAP, "--ignore-not-found"),
+        "delete the head hold",
+        60,
     )
 
 
@@ -2795,6 +2901,7 @@ VERBS = (
     "collect",
     "validate",
     "reset-incidents",
+    "verify-start",
     "teardown",
     "transcripts",
 )
@@ -2802,7 +2909,7 @@ VERBS = (
 
 #: Verbs of the lanes subject contract (benchmarks/lanes/docs/contract.md) this hook set does not implement: it answers
 #: "unsupported" (exit 64, last stdout line {"unsupported": true}); `lanes` then runs its own checks or skips the verb.
-UNSUPPORTED_VERBS = ("preflight", "export-artifact", "verify-artifact", "reseed", "verify-start")
+UNSUPPORTED_VERBS = ("preflight", "export-artifact", "verify-artifact", "reseed")
 
 
 #: Verbs that end a run or start a lane over: the next ``idle`` is an inject gate (``end_run``).
@@ -2838,6 +2945,7 @@ def main(argv: list[str] | None = None) -> int:
             "collect": collect,
             "validate": validate,
             "reset-incidents": reset_incidents_verb,
+            "verify-start": verify_start_verb,
             "teardown": teardown,
             "transcripts": transcripts,
         }
