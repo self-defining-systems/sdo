@@ -41,6 +41,10 @@ STATE_CONFIGMAP = "sdo-controller-state"
 CONTROLLER_SELECTOR = "job-name=sdo-controller-run"
 
 
+class ControllerRelaunching(RuntimeError):
+    """The controller pod is between two launches: a read of it may be retried later."""
+
+
 class KubectlScenarioOps:
     """The lane as ``ScenarioOps`` sees it: cluster reads through kubectl, pushes through a port-forward."""
 
@@ -82,14 +86,36 @@ class KubectlScenarioOps:
                 if pod.get("status", {}).get("phase") == "Running" and not pod["metadata"].get("deletionTimestamp"):
                     return str(pod["metadata"]["name"])
             if self.clock() >= deadline:
-                raise RuntimeError("no running controller pod")
+                raise ControllerRelaunching("no running controller pod")
             self.sleep(wait_for(WaitKind.POLL))
 
     def _accepted(self, *git_args: str) -> str:
-        pod = self._ready_controller()
-        return self._kubectl(
-            self.control, "exec", pod, "-c", "controller", "--", "git", "-C", CONTROLLER_REPOSITORY, *git_args
-        ).stdout
+        """A git read in the controller's checkout. The controller rebuilds itself after a head deploy, so the pod
+        listed Running a moment ago may be gone when the exec reaches it: a failed exec is retried against the pod
+        that runs now, until the relaunch bound passes."""
+        deadline = self.clock() + wait_for(WaitKind.MINUTE, 2)
+        while True:
+            pod = self._ready_controller()
+            result = self._kubectl(
+                self.control,
+                "exec",
+                pod,
+                "-c",
+                "controller",
+                "--",
+                "git",
+                "-C",
+                CONTROLLER_REPOSITORY,
+                *git_args,
+                check=False,
+            )
+            if result.returncode == 0:
+                return result.stdout
+            if self.clock() >= deadline:
+                raise ControllerRelaunching(
+                    f"no running controller pod: exec into {pod} failed: {result.stderr.strip()}"
+                )
+            self.sleep(wait_for(WaitKind.POLL))
 
     def accepted_commits(self) -> list[AcceptedCommit]:
         return parse_accepted_log(self._accepted(*ACCEPTED_LOG_ARGS))

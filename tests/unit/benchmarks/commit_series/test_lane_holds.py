@@ -15,6 +15,7 @@ import pytest
 
 from benchmarks.commit_series.adapter import LaneOps
 from benchmarks.common.replay.series import Series
+from benchmarks.sregym.fastloop.toy_live import ControllerRelaunching
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -131,7 +132,7 @@ def test_a_controller_that_is_relaunching_does_not_end_the_wait(tmp_path: Path) 
     ops = lane(tmp_path)
     ops._kubectl = Cluster({}, set())  # type: ignore[method-assign]
     ops.pushed = []  # type: ignore[attr-defined]
-    answers = iter(["", RuntimeError("no running controller pod")])
+    answers = iter(["", ControllerRelaunching("no running controller pod")])
 
     def accepted(*args: str) -> str:
         answer = next(answers)
@@ -156,3 +157,38 @@ def test_a_lane_still_starting_gets_time_before_the_series_is_refused(tmp_path: 
     ops._start_problems = lambda env, lane_dir: ["still busy"]  # type: ignore[method-assign]
     ops.clock = iter([0.0, 100.0, 400.0]).__next__  # type: ignore[method-assign]
     assert ops.start_problems({}, tmp_path, patience=300.0) == ["still busy"]
+
+
+class RelaunchingCluster:
+    """A control namespace whose controller pod is replaced between the pod list and the ``exec`` (an in-process
+    rebuild after a head deploy): the old pod is listed Running, its exec fails, the new pod answers."""
+
+    def __init__(self, exec_answers: list[subprocess.CompletedProcess[str]], pods: list[list[str]]) -> None:
+        self.exec_answers, self.pod_lists, self.execs = list(exec_answers), list(pods), []
+
+    def __call__(self, namespace: str, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        if args[:2] == ("get", "pods"):
+            names = self.pod_lists.pop(0) if len(self.pod_lists) > 1 else self.pod_lists[0]
+            items = [{"metadata": {"name": n}, "status": {"phase": "Running"}} for n in names]
+            return subprocess.CompletedProcess(args, 0, json.dumps({"items": items}), "")
+        if args[0] == "exec":
+            self.execs.append(args[1])
+            answer = self.exec_answers.pop(0)
+            if check and answer.returncode != 0:
+                raise subprocess.CalledProcessError(answer.returncode, args, answer.stdout, answer.stderr)
+            return answer
+        raise AssertionError(f"unexpected kubectl call {args}")
+
+
+def test_an_exec_into_a_controller_that_was_replaced_is_retried_on_the_new_pod(tmp_path: Path) -> None:
+    """The kind rehearsal's position 3 died here: the controller rebuilt itself while the adapter read the accepted
+    log, so ``kubectl exec`` into the pod it had just listed failed and the whole run ended ``lane lost``. A read
+    that races a relaunch is retried against the pod that is running now."""
+    ops = lane(tmp_path)
+    gone = subprocess.CompletedProcess([], 1, "", 'Error from server (NotFound): pods "old" not found')
+    ok = subprocess.CompletedProcess([], 0, "", "")
+    cluster = RelaunchingCluster([gone, ok], [["old"], ["new"]])
+    ops._kubectl = cluster  # type: ignore[method-assign]
+    ops.sleep = lambda seconds: None  # type: ignore[method-assign]
+    assert ops._accepted("log") == ""
+    assert cluster.execs == ["old", "new"]
