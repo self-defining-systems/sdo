@@ -59,7 +59,7 @@ lane_nodepool() {
   have=$(hk get nodes -l "sdo-lane=$lane" --no-headers 2>/dev/null | grep -c . || true)
   need=$((NODES - have))
   if [ "$need" -gt 0 ]; then
-    free=$(hk get nodes -l '!sdo-lane,!sdo-role,!node-role.kubernetes.io/control-plane' -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | head -n "$need")
+    free=$(hk get nodes -l '!sdo-lane,!sdo-role,!node-role.kubernetes.io/control-plane' -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | awk -v n="$need" 'NR <= n')
     [ "$(echo "$free" | grep -c .)" -ge "$need" ] || die "host $HOST has too few free worker nodes for lane $lane ($need needed): raise EKS_LOCAL_WORKERS"
     for n in $free; do
       hk label node "$n" "sdo-lane=$lane" --overwrite >/dev/null

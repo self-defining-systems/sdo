@@ -614,7 +614,7 @@ const eksProbeBound = 45 * time.Second
 
 // observeEksLanes reads each existing EKS lane's cluster: the API must answer and a node be Ready. A lane that fails
 // gets no new work (the reason is its idle reason, alarm eks-lane-unhealthy once); nothing is deleted. A failed read of
-// a lane that is mid-build is no reading (its cluster is being made).
+// a lane that is mid-build is no reading (its cluster is being made), and a lane with no kubeconfig has no cluster to read.
 func (m *Manager) observeEksLanes(ctx context.Context, reachable map[string]bool) {
 	if m.eksWhy == nil {
 		m.eksWhy = map[string]string{}
@@ -629,6 +629,12 @@ func (m *Manager) observeEksLanes(ctx context.Context, reachable map[string]bool
 			continue
 		}
 		lane, kc := l.Lane, filepath.Join(h.Kubeconfigs, l.Lane)
+		if _, err := os.Stat(kc); errors.Is(err, os.ErrNotExist) {
+			// No kubeconfig, no cluster (a cluster-up that failed removes what it made): nothing to read, and the lane's
+			// next build makes it. A read of it would fail for ever and gate the very build that fixes it.
+			delete(m.eksWhy, lane)
+			continue
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

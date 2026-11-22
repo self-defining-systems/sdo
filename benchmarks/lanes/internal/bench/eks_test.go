@@ -841,3 +841,24 @@ func TestEksLaneUpWaitsForAddonPodsNotAddonStatus(t *testing.T) {
 		t.Error("up polls the coredns add-on status")
 	}
 }
+
+// A lane whose cluster does not exist (its cluster-up failed and removed what it made, or it was never made) has no API to
+// read: it is not unhealthy, and the next build makes it. Judging it unhealthy blocked that build for ever (the lane got "no
+// new steps", so nothing ever made the cluster the check needs).
+func TestEksLaneWithoutAKubeconfigIsNotUnhealthyForItsMissingCluster(t *testing.T) {
+	m := eksManager(t)
+	m.EksCheck = func(ctx context.Context, lane, kubeconfig string) error { return fmt.Errorf("EKS API not reachable") }
+	h := m.inv.Hosts["e"]
+	h.Kubeconfigs = t.TempDir()
+	m.inv.Hosts["e"] = h
+	m.lanes["eks1"].Gone = false // a free lane the manager believes has a cluster, after a failed build removed it
+	m.lanes["eks2"].Gone = false // a lane whose cluster exists: its kubeconfig is there
+	must(t, os.WriteFile(filepath.Join(h.Kubeconfigs, "eks2"), []byte("x"), 0o600))
+	m.observeEksLanes(context.Background(), map[string]bool{"e": true})
+	if why := m.laneGate("eks1"); why != "" {
+		t.Errorf("a lane with no cluster is gated as unhealthy, so its build can never start: %q", why)
+	}
+	if why := m.laneGate("eks2"); !strings.Contains(why, "unhealthy") {
+		t.Errorf("a lane whose cluster exists and does not answer must stay gated: %q", why)
+	}
+}
