@@ -595,6 +595,11 @@ class SeededControllerNotReadyError(NativeOperatorError, HarnessInfrastructureEr
     infra_error = "controller_not_ready"
 
 
+# The Go installer's wording (install.PodUnschedulableError) for a Pod the scheduler has refused for want of a node
+# resource past its bound; waiting longer cannot make room.
+UNSCHEDULABLE_WORDING = "cannot be scheduled: the scheduler has refused it for lack of a node resource"
+
+
 def _wait_for_installed_controller(
     install: NativeInstallConfig, *, timeout_seconds: float = wait_for(WaitKind.ROLLOUT)
 ) -> None:
@@ -610,6 +615,8 @@ def _wait_for_installed_controller(
         try:
             inspect_existing(install)
         except NativeOperatorError as exc:
+            if UNSCHEDULABLE_WORDING in str(exc):
+                raise SeededControllerNotReadyError(f"seeded controller can never be ready: {exc}") from exc
             if time.monotonic() >= deadline:
                 raise SeededControllerNotReadyError(
                     f"seeded controller not ready within {timeout_seconds:g}s: {exc}"

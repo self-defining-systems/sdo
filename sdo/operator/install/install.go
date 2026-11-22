@@ -43,8 +43,10 @@ type Installer struct {
 	Extension             Extension
 	PollInterval          time.Duration
 	SyncTimeout           time.Duration
-	Now                   func() time.Time
-	Wait                  func(context.Context, time.Duration) error
+	// UnschedulableBound is how long a Pod the scheduler refuses for want of a resource is waited on; zero is one minute.
+	UnschedulableBound time.Duration
+	Now                func() time.Time
+	Wait               func(context.Context, time.Duration) error
 }
 
 type Result struct {
@@ -517,6 +519,9 @@ func (i Installer) waitPodReady(ctx context.Context, namespace, name string) err
 			}
 			if pod.Status.Phase == corev1.PodFailed {
 				return fmt.Errorf("%s Pod failed", name)
+			}
+			if refused := i.resourceRefusal(pod); refused != nil {
+				return refused
 			}
 		} else if !apierrors.IsNotFound(err) {
 			return err
