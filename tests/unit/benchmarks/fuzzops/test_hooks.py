@@ -1633,8 +1633,11 @@ def test_memory_render_is_applied_only_when_it_differs_from_the_install_render(
 ) -> None:
     calls: list[list[str]] = []
 
+    applied: list[str] = []
+
     def fake_run(args: list[str], what: str, timeout: float = 600, **kwargs: Any) -> subprocess.CompletedProcess[str]:
         calls.append(args)
+        applied.append(kwargs.get("input", ""))
         return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
 
     monkeypatch.setattr(hooks, "_run", fake_run)
@@ -1648,10 +1651,15 @@ def test_memory_render_is_applied_only_when_it_differs_from_the_install_render(
     assert hooks.apply_memory_render(kube, "ns1", repo, install, lambda line: None) is False
     assert calls == []
     assert waited == []
-    instrumented = [{"kind": "ConfigMap", "metadata": {"name": "nginx"}, "data": {"a": "2"}}]
+    instrumented = [
+        {"kind": "ConfigMap", "metadata": {"name": "nginx"}, "data": {"a": "2"}},
+        {"kind": "Job", "metadata": {"name": "migrations-1db9599"}},
+    ]
     (repo / "k8s" / "render.yaml").write_text(yaml.safe_dump_all(instrumented))
     assert hooks.apply_memory_render(kube, "ns1", repo, install, lambda line: None) is True
-    assert any("apply" in c and str(repo / "k8s" / "render.yaml") in c for c in calls)
+    assert any("apply" in c for c in calls)
+    # the Job of a series memory is not applied: one already in the namespace is immutable, and the deployer runs it
+    assert [d["kind"] for d in yaml.safe_load_all(applied[-1])] == ["ConfigMap"]
     assert waited == ["ns1"]
 
 

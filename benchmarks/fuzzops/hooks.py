@@ -1308,10 +1308,13 @@ def apply_memory_render(
     if not render_difference(docs, reference):
         return False
     log(f"applying the memory's render ({render_difference(docs, reference)})")
+    # The Jobs of the render are the deployer's to run (a memory made for a series of releases carries the release's
+    # migration Job): adoption applies what runs, and a Job already in the namespace is immutable.
     _run(
-        kube.cmd("-n", namespace, "apply", "--server-side", "--force-conflicts", "-f", str(path)),
+        kube.cmd("-n", namespace, "apply", "--server-side", "--force-conflicts", "-f", "-"),
         "apply the memory's render",
         600,
+        input=yaml.safe_dump_all(docs, sort_keys=False),
     )
     wait_rollouts(kube, namespace)
     return True
