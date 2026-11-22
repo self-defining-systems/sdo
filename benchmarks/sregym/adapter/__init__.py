@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from benchmarks.sregym.adapter.budgets import Deadline, DeadlineExhaustedError, SdoBounds, WaitKind, wait_for
-    from benchmarks.sregym.adapter.wait_progress import CURRENT_WAIT_ENV as CURRENT_WAIT_ENV
     from benchmarks.sregym.adapter.cluster_resources import benchmark_registry_host, evidence_claim_volume, kubectl
     from benchmarks.sregym.adapter.context_preflight import run_context_preflight as run_context_preflight
     from benchmarks.sregym.adapter.deployment_source import (
@@ -147,6 +146,7 @@ if TYPE_CHECKING:
         install_persistent_controller,
         native_install_config,
     )
+    from benchmarks.sregym.adapter.wait_progress import CURRENT_WAIT_ENV as CURRENT_WAIT_ENV
 
 _EXPORTS: dict[str, str] = {
     "FaultReversion": "fault_reversion",
