@@ -379,7 +379,12 @@ def prepare_benchmark_resources(
     nodes = _kind_nodes(config, trusted) if config.lane_platform == "kind" else []
     resources = _registry_resources(config)
     if config.evidence_claim:
-        resources.append(claim_manifest(config.control_namespace, _claim_node(config, trusted)))
+        volume_node_name = _claim_node(config, trusted)
+        resources.append(claim_manifest(config.control_namespace, volume_node_name))
+        if volume_node_name:
+            # The installer binds the control namespace's other node-local claims (repository, registry) to the same
+            # node (SDO_VOLUME_NODE): the controller mounts all of them and a lane has more than one node.
+            os.environ["SDO_VOLUME_NODE"] = volume_node_name
     if relay_target_base is not None:
         resources.extend(_bridge_resources(config, relay_target_base))
     _kubectl(

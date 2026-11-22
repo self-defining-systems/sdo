@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -244,6 +245,7 @@ def _claim(node: str = "node-b") -> str:
 def test_the_eks_evidence_claim_is_bound_on_one_node_chosen_by_the_lane(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("SDO_VOLUME_NODE", "stale")  # restored at teardown
     monkeypatch.delenv("FASTLOOP_DOCKERHUB_AUTH_FILE", raising=False)
     applied: list[dict[str, Any]] = []
     nodes = {
@@ -281,6 +283,9 @@ def test_the_eks_evidence_claim_is_bound_on_one_node_chosen_by_the_lane(
     claim = next(i for i in applied if i["kind"] == "PersistentVolumeClaim" and i["metadata"]["name"] == "sdo-evidence")
     selected = claim["metadata"]["annotations"]["volume.kubernetes.io/selected-node"]
     assert selected == sink.volume_node(nodes, "eks-1")
+    # Node-local claims of the control namespace (repository, registry) are bound where the evidence claim is: the
+    # controller mounts all of them, and a lane has more than one node.
+    assert os.environ["SDO_VOLUME_NODE"] == selected
 
 
 def test_the_evidence_puller_runs_on_the_claims_node_and_pulls_only_the_run_directory(
