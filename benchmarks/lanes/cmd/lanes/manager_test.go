@@ -74,7 +74,7 @@ func TestManagerStartCreatesTheUnit(t *testing.T) {
 			sr = c
 		}
 	}
-	for _, want := range []string{"--user", "--unit=" + strings.TrimSuffix(managerUnit(root), ".service"), "Restart=on-failure", "--setenv=PATH=/bin", "--setenv=FUZZOPS_X=1", "-- /opt/lanes serve --root " + root} {
+	for _, want := range []string{"--user", "--unit=" + strings.TrimSuffix(managerUnit(root), ".service"), "Restart=on-failure", "KillMode=process", "--setenv=PATH=/bin", "--setenv=FUZZOPS_X=1", "-- /opt/lanes serve --root " + root} {
 		if !strings.Contains(sr, want) {
 			t.Errorf("systemd-run %q lacks %q", sr, want)
 		}
