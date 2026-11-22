@@ -16,6 +16,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
+from benchmarks.sregym.fastloop.resident_start import ResidentStartMismatch
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
     from pathlib import Path
@@ -76,6 +78,9 @@ class WarmReceipt:
     baseline_not_before: str | None
     phase_seconds: dict[str, float]
     fallback_reason: str | None = None
+    #: What differed from a fresh install, when that is why the lane was not reused: this package's own text, never an
+    #: external error's.
+    violations: tuple[str, ...] = ()
 
 
 def prepare_lane(
@@ -133,7 +138,8 @@ def prepare_lane(
         except Exception:
             _publish(evidence, WarmReceipt(False, None, None, timings, reason + ";full_reset_failed"))
             raise WarmLaneError(f"eval: warm preparation failed ({reason}); full reset failed") from None
-        receipt = WarmReceipt(False, None, None, timings, reason)
+        violations = tuple(exc.violations) if isinstance(exc, ResidentStartMismatch) else ()
+        receipt = WarmReceipt(False, None, None, timings, reason, violations)
     else:
         receipt = WarmReceipt(True, identity, boundary.isoformat(), timings)
     _publish(evidence, receipt)

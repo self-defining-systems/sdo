@@ -10,7 +10,11 @@ prove, confirmation and (on fallback) full reset. Ordinary injection admission
 remains required after preparation; this receipt is not injection/closure proof.
 
 A failed preparation records boundary and exception type without raw command
-errors. `reused: false` with a fallback reason means full reset was selected;
+errors. When the lane was not reused because it differs from a fresh install
+(`fallback_reason` `prove:ResidentStartMismatch`), `violations` lists every item that
+differed (planned memory, carried-over incident or closure state, stale history,
+startup period, onboarding, session ConfigMaps, configuration digest); it is empty
+for every other fallback. `reused: false` with a fallback reason means full reset was selected;
 `full_reset_failed` or `prior_incident_open` prevents proceeding. Missing receipts
 on legacy rows say nothing about whether a controller was retained. Do not infer
 sub-30-second overhead from reuse alone; measure row-start to injection-ready.

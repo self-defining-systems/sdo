@@ -346,3 +346,37 @@ def test_a_warm_run_delivers_its_sealed_evidence_before_returning_only_when_aske
         ["run", "--run-dir", str(tmp_path), "--agent", "sdo", "--warm-lane", "--deliver-evidence-before-exit"]
     )
     assert parsed.deliver_evidence_before_exit is True
+
+
+def test_a_fallback_keeps_the_violations_a_fresh_install_comparison_named(tmp_path: Path) -> None:
+    """The receipt keeps what differed (our own strings, never an external error's text): reports count the cause."""
+    import json
+
+    from benchmarks.sregym.fastloop.resident_start import ResidentStartMismatch
+
+    class Mismatch(Lane):
+        def prove(self, not_before: datetime, revision: str) -> dict[str, Any]:
+            raise ResidentStartMismatch(
+                ["startup period was not begun and established in this row", "dispatch state x"]
+            )
+
+    lane = Mismatch()
+    receipt = prepare_lane(lane, tmp_path / "warm.json", now=lambda: NOW)
+    assert not receipt.reused
+    assert receipt.fallback_reason == "prove:ResidentStartMismatch"
+    assert receipt.violations == (
+        "startup period was not begun and established in this row",
+        "dispatch state x",
+    )
+    assert json.loads((tmp_path / "warm.json").read_text())["violations"] == list(receipt.violations)
+
+
+def test_other_errors_never_put_their_text_in_the_receipt(tmp_path: Path) -> None:
+    import json
+
+    lane = Lane()
+    lane.failed_at = "prove"
+    receipt = prepare_lane(lane, tmp_path / "warm.json", now=lambda: NOW)
+    assert receipt.violations == ()
+    assert "synthetic failure" not in (tmp_path / "warm.json").read_text()
+    assert json.loads((tmp_path / "warm.json").read_text())["violations"] == []
