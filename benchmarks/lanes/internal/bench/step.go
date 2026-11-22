@@ -1220,7 +1220,7 @@ func (r *stepRunner) residue(ctx context.Context, p *Prepared) ([]string, error)
 	if len(extra) == 0 {
 		return nil, nil
 	}
-	// A workload that installs its own operator at every row start and removes it at the next one (its reset) leaves
+	// A workload that installs its own services at every row start and removes them at the next one (its reset) leaves
 	// those objects at the end of every row: it names them (`app-reset owned`), and a fault's object is none of them.
 	owned, err := r.workloadOwned(ctx, p)
 	if err != nil {
