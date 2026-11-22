@@ -30,7 +30,7 @@ from benchmarks.common.replay.replay import ReplayError, ReplayRecord, replay, r
 from benchmarks.common.replay.series import Series
 from benchmarks.fuzzops import workload as fuzzops_workload
 from benchmarks.fuzzops.hooks import SETTLE_WORK_ONLY_RECORD, verify_start
-from benchmarks.sregym.fastloop.toy_live import KubectlScenarioOps
+from benchmarks.sregym.fastloop.toy_live import ControllerRelaunching, KubectlScenarioOps
 from benchmarks.sregym.fastloop.toy_scenarios import AcceptedCommit, HoldRecord
 from benchmarks.sregym.fastloop.toy_upstream import BASE_PATH, REPOSITORY, SERVICE, UpstreamLayout, forwarded_remote
 
@@ -130,9 +130,7 @@ class LaneOps(KubectlScenarioOps):
         A read while the controller relaunches (it restarts after a deploy) keeps the last answer."""
         try:
             commits = super().accepted_commits()
-        except RuntimeError as exc:
-            if "no running controller pod" not in str(exc):
-                raise
+        except ControllerRelaunching:
             return self._last_accepted
         notice = self.head_deployment()
         if notice is not None:
