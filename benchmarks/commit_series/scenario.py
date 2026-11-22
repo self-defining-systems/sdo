@@ -8,7 +8,7 @@ tested without a cluster.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -41,11 +41,20 @@ class Bounds:
     steady: float = 60.0
     resolution: float = 900.0
     poll: float = 5.0
+    #: The quiet window after a position that another one follows. The next push's own verdict and its
+    #: ``blocked_by_open_incident`` catch what opens later; only the last position waits out ``steady``.
+    steady_between: float = 5.0
 
     def __post_init__(self) -> None:
-        for name in ("verdict", "steady", "resolution", "poll"):
+        for name in ("verdict", "steady", "resolution", "poll", "steady_between"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
+
+    def at(self, index: int, total: int) -> Bounds:
+        """The bounds of position ``index`` of ``total``: the quiet window is the full one at the end of the series."""
+        if index >= total:
+            return self
+        return replace(self, steady=min(self.steady, self.steady_between))
 
     @property
     def timings(self) -> ScenarioTimings:

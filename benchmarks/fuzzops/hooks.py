@@ -1768,13 +1768,15 @@ def collect(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     part("host-load", lambda: capture.write_host_load(dest, _now))
 
     def observability() -> str:
+        plan = capture.capture_plan(Path(_need(env, "BENCH_LANE_DIR")), start=env.get("BENCH_INTERVAL_START", ""))
         receipt = capture.capture_all(
             kube.cmd,
             control,
             _need(env, "FUZZOPS_NAMESPACE"),
             dest,
-            env.get("BENCH_INTERVAL_START", ""),
+            plan.start,
             env.get("BENCH_INTERVAL_END", ""),
+            defer=plan.defer,
         )
         bad = sorted(k for k in cellevidence.CAPTURES if receipt.get(k, {}).get("status") == "error")
         if bad:
