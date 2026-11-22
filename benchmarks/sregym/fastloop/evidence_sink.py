@@ -24,6 +24,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.fuzzops import sink
@@ -31,7 +32,6 @@ from benchmarks.sregym.adapter import WaitKind, wait_for
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
-    from pathlib import Path
 
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
 
@@ -121,7 +121,11 @@ def _verify_and_sync(source: Path, destination: Path) -> tuple[int, int]:
             size = target.stat().st_size
         except OSError as exc:
             raise EvidenceSinkError(f"{target} was not copied: {exc}") from exc
-        if size > path.stat().st_size or (size < path.stat().st_size and not _grew(path, target)):
+        if path.relative_to(source) == Path(sink.INDEX_FILE):
+            # The copy rewrites the index (the copied units' records, serialised by Python), so its size is not the
+            # sink's (the Go writer's compact lines are shorter): the records are what must agree.
+            _verify_index(path, target)
+        elif size > path.stat().st_size or (size < path.stat().st_size and not _grew(path, target)):
             raise EvidenceSinkError(f"{target} differs from the sink file ({size} bytes)")
         _fsync(target)
         directories.add(target.parent)
@@ -130,6 +134,23 @@ def _verify_and_sync(source: Path, destination: Path) -> tuple[int, int]:
     for directory in directories:
         _fsync(directory)
     return files, total
+
+
+def _verify_index(source: Path, target: Path) -> None:
+    """Every record of the copied ``index.jsonl`` is a record of the sink's (the copy keeps the records of the units
+    it copied, in its own serialisation)."""
+
+    def records(path: Path) -> list[dict[str, Any]]:
+        return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+    try:
+        held = records(source)
+        copied = records(target)
+    except (OSError, ValueError) as exc:
+        raise EvidenceSinkError(f"{target} is not a readable index: {exc}") from exc
+    missing = [record.get("path") for record in copied if record not in held]
+    if missing:
+        raise EvidenceSinkError(f"{target} holds records the sink file does not: {missing[:3]}")
 
 
 def _grew(source: Path, target: Path) -> bool:
