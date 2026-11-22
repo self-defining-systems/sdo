@@ -23,8 +23,8 @@ module attaches to a cluster that exists and verifies them.
 
 from __future__ import annotations
 
-import json
 import fcntl
+import json
 import os
 import re
 import shlex
