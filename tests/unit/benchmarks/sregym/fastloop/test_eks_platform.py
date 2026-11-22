@@ -676,8 +676,32 @@ def test_provisioning_the_opus_pool_on_a_virtual_lane_is_refused_before_any_node
 
 def test_a_virtual_lane_runs_opus_through_an_nfs_pool_and_mounts_no_node_path(tmp_path: Path) -> None:
     environment = virtual_environment(tmp_path)
-    environ = {"SDO_OPUS_POOL_NFS_SERVER": "10.0.0.5", "SDO_OPUS_POOL_NFS_PATH": "/pool", "SDO_OPUS_POOL_HOST_PATH": "/x"}
+    environ = {
+        "SDO_OPUS_POOL_NFS_SERVER": "10.0.0.5",
+        "SDO_OPUS_POOL_NFS_PATH": "/pool",
+        "SDO_OPUS_POOL_HOST_PATH": "/x",
+    }
     environment.apply_operator_env(environ, model="claude-opus-5-5")
     assert environ["SDO_OPUS_POOL_NFS_SERVER"] == "10.0.0.5"
     assert not {"SDO_OPUS_POOL_HOST_PATH", "SDO_OPUS_POOL_MODE"} & set(environ)
     assert eks_lane.ensure_opus_pool(environment, "claude-opus-5-5", environ) == []
+
+
+def test_every_app_image_push_of_an_eks_lane_is_recorded_with_its_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The declared name is one tag shared by the host's lanes: the row must be able to say which bytes it pushed."""
+    monkeypatch.setattr(worker_bridge, "publish_app_image", lambda ecr, local, declared: DIGEST)
+    record = tmp_path / "lane" / "published_app_images.jsonl"
+    source_deploy = SimpleNamespace()
+    worker_bridge.install_eks_delivery(SimpleNamespace(), source_deploy, ecr=object(), record_path=record)  # type: ignore[arg-type]
+    source_deploy._declare_image(
+        cluster_name="eks-1", built_ref="yinfangchen/hotelreservation:sregym-src-abc", declared_tag="latest"
+    )
+    assert [json.loads(line) for line in record.read_text().splitlines()] == [
+        {
+            "declared": "yinfangchen/hotelreservation:latest",
+            "built": "yinfangchen/hotelreservation:sregym-src-abc",
+            "digest": DIGEST,
+        }
+    ]

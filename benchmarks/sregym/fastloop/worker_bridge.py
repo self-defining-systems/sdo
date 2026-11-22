@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import subprocess
 import sys
@@ -11,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from benchmarks.lanes.eks import Ecr, EksLane, assert_lane_cluster, publish_app_image
 from benchmarks.sregym.adapter import WaitKind, wait_for
-from benchmarks.sregym.fastloop.app_images import install_shared_builds
+from benchmarks.sregym.fastloop.app_images import install_build_lock, install_shared_builds
 from benchmarks.sregym.fastloop.host_limits import HostLimits, install_node_limits
 from benchmarks.sregym.fastloop.idempotent_helm import make_deploy_idempotent
 from benchmarks.sregym.repository_git import host_git_command
@@ -45,11 +46,15 @@ def attach_existing_cluster(worker_infra: Any) -> dict[str, str]:
     return {"cluster": cluster, "kubeconfig": kubeconfig}
 
 
-def install_eks_delivery(worker_infra: Any, source_deploy: Any, ecr: Ecr) -> None:
+def install_eks_delivery(worker_infra: Any, source_deploy: Any, ecr: Ecr, *, record_path: Path | None = None) -> None:
     """An EKS lane's app images: SREGym builds from source on this host, and the image is published under the name
     its manifests declare by a push to the lane's node mirror. Nothing is loaded into nodes, so the kind loaders fail
     loudly if anything still calls them. Every EKS lane of this host shares the local build cache, so the kind lanes'
-    shared host registry is not used."""
+    shared host registry is not used.
+
+    Every push is recorded in ``record_path`` (one JSON line: declared name, built image, digest). The declared name is
+    one mutable tag shared by every lane of the application on the host cluster, so a row's report can show which
+    bytes it deployed and whether another lane of the host pushed different ones under the same name."""
 
     def no_kind(*_args: object, **_kwargs: object) -> Any:
         raise RuntimeError("an EKS lane cannot load images into kind nodes")
@@ -67,6 +72,13 @@ def install_eks_delivery(worker_infra: Any, source_deploy: Any, ecr: Ecr) -> Non
         repository = built_ref.rpartition(":")[0]
         digest = publish_app_image(ecr, built_ref, f"{repository}:{declared_tag}")
         print(f"app image {repository}:{declared_tag} published to the node mirror as {digest}", file=sys.stderr)
+        if record_path is not None:
+            record_path.parent.mkdir(parents=True, exist_ok=True)
+            with record_path.open("a", encoding="utf-8") as handle:
+                handle.write(
+                    json.dumps({"declared": f"{repository}:{declared_tag}", "built": built_ref, "digest": digest})
+                    + "\n"
+                )
 
     source_deploy._kind_load_image = published_by_declaration
     source_deploy._declare_image = declare
@@ -285,7 +297,15 @@ def main() -> int:
 
     source_deploy: Any = importlib.import_module("sregym.service.source_deploy")
     if eks_lane is not None:
-        install_eks_delivery(worker_infra, source_deploy, Ecr(eks_lane))
+        delivery = os.environ.get("FASTLOOP_DELIVERY_RECORD")
+        install_eks_delivery(
+            worker_infra,
+            source_deploy,
+            Ecr(eks_lane),
+            record_path=Path(delivery).parent / "published_app_images.jsonl" if delivery else None,
+        )
+        # No shared registry on EKS (nodes pull from ECR), but one build per identity on this host still holds.
+        install_build_lock(source_deploy, lock_dir=HostLimits.from_env().directory)
     else:
         worker_infra.ensure_kind_images = deliver
         worker_infra.ensure_kind_platform_images = deliver_platform
