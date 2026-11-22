@@ -30,9 +30,12 @@ from benchmarks.common.replay.replay import ReplayError, ReplayRecord, replay, r
 from benchmarks.common.replay.series import Series
 from benchmarks.fuzzops import workload as fuzzops_workload
 from benchmarks.sregym.fastloop.toy_live import KubectlScenarioOps
-from benchmarks.sregym.fastloop.toy_upstream import UpstreamLayout, forwarded_remote
+from benchmarks.sregym.fastloop.toy_scenarios import HoldRecord
+from benchmarks.sregym.fastloop.toy_upstream import BASE_PATH, REPOSITORY, SERVICE, UpstreamLayout, forwarded_remote
 
 SOURCE_BRANCH_FILE = "source-branch.json"
+#: The control-namespace ConfigMap SDO keeps its one refused branch head in (``sdo/operator/runtime/head_poll.go``).
+HEAD_HOLD_CONFIGMAP = "sdo-head-hold"
 _GIT_ENV = {"GIT_TERMINAL_PROMPT": "0", "GIT_ALLOW_PROTOCOL": "file:git"}
 
 
@@ -101,9 +104,38 @@ class LaneOps(KubectlScenarioOps):
         self.control = info.get("control", self.control)
         self.series = series
         self.kubeconfig = kubeconfig
+        self.pushed: list[str] = []  # the commits this run pushed: a hold is matched to them
 
     def now(self) -> float:
         return time.time()
+
+    def holds(self) -> list[HoldRecord]:
+        """SDO's hold on a head that carries a commit this run pushed, as that commit's hold.
+
+        SDO publishes its own commit on the branch before it judges a push (a health refresh), so the held head is
+        that commit and the pushed one is its ancestor; the follower's ``sdo-upstream-holds`` no longer exists."""
+        result = self._kubectl(self.control, "get", "configmap", HEAD_HOLD_CONFIGMAP, "-o", "json", check=False)
+        if result.returncode != 0:
+            if "NotFound" in result.stderr:
+                return []
+            raise RuntimeError(f"reading {HEAD_HOLD_CONFIGMAP} failed: {result.stderr.strip()}")
+        record = json.loads(json.loads(result.stdout)["data"]["hold"])
+        reason = f"{record['reason']}: {record['detail']}"
+        return [HoldRecord(sha, reason) for sha in self.pushed if self._is_ancestor(sha, record["commit"])]
+
+    def _is_ancestor(self, ancestor: str, commit: str) -> bool:
+        """Whether ``commit`` on the branch server carries ``ancestor`` (or is it)."""
+        done = self._kubectl(
+            self.layout.namespace,
+            *("exec", f"deploy/{SERVICE}", "--", "git", f"--git-dir={BASE_PATH}/{REPOSITORY}"),
+            *("merge-base", "--is-ancestor", ancestor, commit),
+            check=False,
+        )
+        if done.returncode in (0, 1):
+            return done.returncode == 0
+        if done.returncode == 128 and "not a valid" in done.stderr.lower():
+            return False  # the held head is not on the server: no push of ours is under it
+        raise RuntimeError(f"asking the branch server about {commit[:12]} failed: {done.stderr.strip()}")
 
     def push_commit(self, index: int) -> ReplayRecord:
         with forwarded_remote(self.kubeconfig, self.layout) as remote:
@@ -111,6 +143,8 @@ class LaneOps(KubectlScenarioOps):
             result = replay(config, git=_git)
         if not result.records:
             raise ReplayError(f"commit {index} of {self.series.name} produced no record")
+        if result.records[0].pushed_sha:
+            self.pushed.append(result.records[0].pushed_sha)
         return result.records[0]
 
 
