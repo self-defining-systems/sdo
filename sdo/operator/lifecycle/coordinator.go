@@ -42,6 +42,9 @@ type ProposalBroker interface {
 	AcceptedCommit(context.Context, string, broker.Phase) (broker.Receipt, bool, error)
 	// AcceptedSourceEvidence is the deployment of the accepted HEAD.
 	AcceptedSourceEvidence(context.Context) (broker.AcceptedSource, bool, error)
+	// HeadUndeployed reports a head whose effective source no recorded
+	// deployment has applied: a push the head deployer has yet to deploy.
+	HeadUndeployed(context.Context) (bool, error)
 	ChangedPaths(context.Context, string, broker.Phase) ([]string, error)
 	// ScratchFeedback is the patch.uncaptured correction text for a checkout
 	// whose app-file edits no patch reproduces, or "" when consistent.

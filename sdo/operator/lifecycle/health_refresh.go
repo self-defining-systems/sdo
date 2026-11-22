@@ -137,6 +137,19 @@ func (c Coordinator) acceptedDeployment(ctx context.Context, cfg Config) (Deploy
 	if c.Readiness == nil || c.Verifier == nil {
 		return DeploymentReceipt{}, &MissingDependencyError{Operation: "health refresh of a deployed application", Missing: missingNames(map[string]bool{"Readiness": c.Readiness == nil, "Verifier": c.Verifier == nil})}
 	}
+	// A push that landed after the recorded deployment is a head to deploy:
+	// its tree is not what the recorded receipt describes, so judging it
+	// against that receipt (O2.resources) fails and, at controller start,
+	// keeps the controller, and with it the head deployer, from ever running.
+	// The candidate is published unverified, as for a seeded install; the head
+	// deployment verifies the push.
+	undeployed, err := c.Broker.HeadUndeployed(ctx)
+	if err != nil {
+		return DeploymentReceipt{}, fmt.Errorf("accepted head against its deployment: %w", err)
+	}
+	if undeployed {
+		return DeploymentReceipt{Source: cfg.DeploymentSource, Environment: cfg.RenderEnvironment}, nil
+	}
 	// Verified at the commit the evidence is recorded at: the accepted head
 	// also carries the memory commits that followed the deployment.
 	commit := accepted.Evidence.AcceptedCommit
