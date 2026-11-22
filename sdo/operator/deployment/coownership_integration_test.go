@@ -43,11 +43,14 @@ func coowned(annotations, volume string) []byte {
 // An object an install created (helm, kubectl) is co-owned with the deployer
 // for every field the deployer applied with the same value, and a server-side
 // apply that stops sending a co-owned field leaves it in place: a head that
-// swaps a volume's type (the GitLab chart's emptyDir to projected secrets)
+// swaps a volume's type (a chart's emptyDir swapped for projected secrets)
 // then fails admission with "may not specify more than 1 volume type" and SDO
 // holds the head. The deployer owns what it applies alone, so removing a field
 // works; what only the install owns stays the install's and does not roll.
 func TestAHeadDeployMayRemoveAFieldTheInstallCoOwned(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts a real API server (over the PR-tier slow-test budget); runs in the nightly tier")
+	}
 	env := envtestio.Start(t)
 	env.CreateNamespace(t, "app")
 	backend := CommandBackend{Run: func(ctx context.Context, name string, args []string, input []byte) ([]byte, error) {
@@ -60,14 +63,14 @@ func TestAHeadDeployMayRemoveAFieldTheInstallCoOwned(t *testing.T) {
 
 	// The install: helm created the object (an Update by manager "helm").
 	var installed appsv1.Deployment
-	if err := yaml.Unmarshal(coowned(`"meta.helm.sh/release-name": gitlab`, "emptyDir: {}"), &installed); err != nil {
+	if err := yaml.Unmarshal(coowned(`"meta.helm.sh/release-name": release`, "emptyDir: {}"), &installed); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.AppsV1().Deployments("app").Create(ctx, &installed, metav1.CreateOptions{FieldManager: "helm"}); err != nil {
 		t.Fatal(err)
 	}
 	// SDO's first deploys re-apply the same source: the deployer co-owns what it sends.
-	if err := backend.Apply(ctx, coowned(`"meta.helm.sh/release-name": gitlab`, "emptyDir: {}")); err != nil {
+	if err := backend.Apply(ctx, coowned(`"meta.helm.sh/release-name": release`, "emptyDir: {}")); err != nil {
 		t.Fatal(err)
 	}
 	before, err := client.AppsV1().Deployments("app").Get(ctx, "web", metav1.GetOptions{})
@@ -75,8 +78,8 @@ func TestAHeadDeployMayRemoveAFieldTheInstallCoOwned(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A head deploy that swaps the volume's type, as GitLab chart 10.6.0 does.
-	next := coowned(`"meta.helm.sh/release-name": gitlab`, "projected: {sources: [{secret: {name: web-secrets}}]}")
+	// A head deploy that swaps the volume's type, as a chart's minor release does.
+	next := coowned(`"meta.helm.sh/release-name": release`, "projected: {sources: [{secret: {name: web-secrets}}]}")
 	if err := backend.Apply(ctx, next); err != nil {
 		t.Fatalf("a head deploy that removes a co-owned field was refused: %v", err)
 	}
@@ -88,7 +91,7 @@ func TestAHeadDeployMayRemoveAFieldTheInstallCoOwned(t *testing.T) {
 	if volume.Projected == nil || volume.EmptyDir != nil {
 		t.Fatalf("volume = %+v, want the projected source alone", volume)
 	}
-	if after.Annotations["meta.helm.sh/release-name"] != "gitlab" {
+	if after.Annotations["meta.helm.sh/release-name"] != "release" {
 		t.Fatalf("annotations = %v: a field only the install owns was removed", after.Annotations)
 	}
 	if after.Generation != before.Generation+1 {
