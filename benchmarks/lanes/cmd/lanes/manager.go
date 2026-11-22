@@ -128,7 +128,10 @@ func (m *mgr) start() int {
 	_, _ = m.systemctl("reset-failed", m.unit)
 	args := []string{"--user", "--unit=" + strings.TrimSuffix(m.unit, ".service"),
 		"--description=lanes manager for " + m.root,
-		"--property=Restart=on-failure", "--property=RestartSec=10"}
+		"--property=Restart=on-failure", "--property=RestartSec=10",
+		// Steps run detached (setsid) but inside the unit's cgroup: the default KillMode stops them with the manager, so a
+		// restart (a new binary) killed every cluster-up in flight, against "stop leaves the steps running".
+		"--property=KillMode=process"}
 	args = append(args, passedEnv(m.environ)...)
 	args = append(args, "--", m.exe, "serve", "--root", m.root)
 	if o, err := m.run("systemd-run", args...); err != nil {
