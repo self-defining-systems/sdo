@@ -121,3 +121,12 @@ def test_the_safety_check_after_a_series_run_answers_inactive_for_the_lane_platf
         code = adapter.main(["run"], {"WORKLOAD_ACTION": action, "WORKLOAD_ARGS": json.dumps(args)}, out)
         assert code == 0
         assert json.loads(out.getvalue()) == {"active": False}
+
+
+def test_a_position_tells_settle_it_waited_for_its_own_incident(tmp_path: Path) -> None:
+    """The record is printed after the position's own bounded incident wait: settle then waits only for work in flight
+    (the subject hook's ``idle`` reads this file; the run boundary removes it)."""
+    out = io.StringIO()
+    adapter.run(env(tmp_path, 1), out, ops=Lane("incident"))  # type: ignore[arg-type]
+    assert json.loads(out.getvalue().splitlines()[-1])["incident_opened"] is True
+    assert (tmp_path / "settle-work-only.json").is_file()
