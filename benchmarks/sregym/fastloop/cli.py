@@ -779,7 +779,7 @@ def _up(args: argparse.Namespace) -> int:
 
         save_inventory(
             inventory_path(environment.kubeconfig),
-            cluster_scoped(KubectlLaneCluster(environment.kubeconfig).list_objects()),
+            cluster_scoped(KubectlLaneCluster(environment.kubeconfig, environment.host_owned_kinds).list_objects()),
         )
     environment.save()
     if environment.eks is not None:
@@ -1057,7 +1057,7 @@ def _wipe_sdo_and_harness(args: argparse.Namespace, environment: FastloopEnviron
         raise ValueError("eval: the row-start wipe needs --planned-commit or a seed commit captured by fastloop up")
     receipt = wipe_environment(
         environment,
-        KubectlLaneCluster(environment.kubeconfig),
+        KubectlLaneCluster(environment.kubeconfig, environment.host_owned_kinds),
         applications=application_namespaces(environment.baseline_path, environment.kubeconfig, environment.namespace),
         provision_credentials=credentials_hook(args.credentials_hook.resolve(), environment.kubeconfig),
         planned_commit=planned,
@@ -1158,7 +1158,7 @@ def recreate_application(
     run_tier2(
         reason,
         tier1,
-        cluster=KubectlLaneCluster(environment.kubeconfig),
+        cluster=KubectlLaneCluster(environment.kubeconfig, environment.host_owned_kinds),
         namespaces=application_namespaces(environment.baseline_path, environment.kubeconfig, environment.namespace)
         if environment.baseline_path.is_file()
         else (environment.namespace,),
@@ -1288,7 +1288,7 @@ def _setup_application(
             run_tier2(
                 None,
                 tier1,
-                cluster=KubectlLaneCluster(environment.kubeconfig),
+                cluster=KubectlLaneCluster(environment.kubeconfig, environment.host_owned_kinds),
                 namespaces=(),
                 deploy=lambda: None,
                 timeout_seconds=wait_for(WaitKind.ROLLOUT),

@@ -154,7 +154,7 @@ class WarmEnvironment:
         if inventory is None:
             raise ValueError("warm lane has no installed cluster inventory")
         leftovers = harness_leftovers(
-            KubectlLaneCluster(env.kubeconfig).list_objects(),
+            KubectlLaneCluster(env.kubeconfig, env.host_owned_kinds).list_objects(),
             inventory,
             keep_namespaces=allowed_namespaces({env.namespace}),
             control_namespace="",

@@ -144,6 +144,14 @@ class FastloopEnvironment(BaseModel):
 
         return self.dev_mount is not None and not self.pinned_tools
 
+    @property
+    def host_owned_kinds(self) -> tuple[str, ...]:
+        """Cluster-scoped kinds the lane's host owns (a virtual lane's synced classes); wipe leaves them alone."""
+
+        from benchmarks.sregym.fastloop.wipe import HOST_OWNED_KINDS
+
+        return HOST_OWNED_KINDS if self.eks is not None and self.eks.virtual else ()
+
     def apply_operator_env(self, environ: MutableMapping[str, str], *, model: str | None = None) -> None:
         """Point the host operator CLI at the lane's binary and its controller at the right sources.
 

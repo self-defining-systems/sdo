@@ -54,6 +54,9 @@ CLUSTER_KINDS: tuple[str, ...] = (
     "namespace",
 )
 NAMESPACE_KIND = "namespace"
+#: Kinds a virtual (vcluster) lane receives from its host cluster, read-only: an addition on the host after the lane's
+#: ``up`` is not harness leftover, and the delete of a synced object is refused, so no row of the lane could ever pass.
+HOST_OWNED_KINDS: tuple[str, ...] = ("ingressclass", "storageclass")
 # What a fault's foreign helper can be: a bare pod or any workload that would recreate one.
 HELPER_KINDS = "cronjob,job,deployment,statefulset,daemonset,replicaset,pod"
 INVENTORY_SUFFIX = ".lane-inventory.json"
@@ -669,17 +672,19 @@ def finalizer_holders(listing: dict[str, Any]) -> tuple[str, ...]:
 
 
 class KubectlLaneCluster:
-    def __init__(self, kubeconfig: Path) -> None:
+    def __init__(self, kubeconfig: Path, host_owned: Collection[str] = ()) -> None:
         if not isinstance(kubeconfig, Path) or not kubeconfig.is_absolute():
             raise ValueError("eval: lane wipe requires an absolute kubeconfig path")
         self._kubeconfig = kubeconfig
+        #: The cluster-scoped kinds listed. Kinds the lane's host owns are never listed, so never baselined and never deleted (``HOST_OWNED_KINDS``).
+        self.listed_kinds = tuple(kind for kind in CLUSTER_KINDS if kind not in host_owned)
         self._namespaced_kinds: str | None = None
 
     def list_objects(self) -> frozenset[str]:
         from benchmarks.sregym.adapter import kubectl
 
         output = kubectl(
-            ["get", ",".join(CLUSTER_KINDS), "-o", "name"], namespace=None, kubeconfig=self._kubeconfig
+            ["get", ",".join(self.listed_kinds), "-o", "name"], namespace=None, kubeconfig=self._kubeconfig
         ).stdout
         return frozenset(line.strip() for line in output.splitlines() if line.strip())
 
