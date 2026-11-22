@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -309,6 +310,14 @@ func (r *stepRunner) laneEnv(p *Prepared) []string {
 		"KUBE_CONTEXT=kind-" + r.s.Lane, "FUZZOPS_KUBE_CONTEXT=kind-" + r.s.Lane,
 		"BENCH_LANE=" + r.s.Lane, "BENCH_HOST=" + r.s.Host, "BENCH_LANE_DIR=" + r.s.LaneDir, "BENCH_FRESH_FINGERPRINT=" + r.freshFingerprintFile(),
 		"BENCH_EVIDENCE_HOST=" + r.s.Evidence, "BENCH_EVIDENCE_NODE=" + EvidenceNode}
+	// The spec's bounds, for a workload that bounds its own waits: a run that outlives ready_timeout + cap (plus its
+	// own close-out margin) is the adapter's to kill, whatever wait it is stuck in (docs/contract.md).
+	if r.s.Cap > 0 {
+		e = append(e, "BENCH_CAP_SECONDS="+strconv.FormatInt(int64(r.s.Cap.D().Seconds()), 10))
+	}
+	if r.s.ReadyTimeout > 0 {
+		e = append(e, "BENCH_READY_TIMEOUT_SECONDS="+strconv.FormatInt(int64(r.s.ReadyTimeout.D().Seconds()), 10))
+	}
 	e = append(e, r.s.HostEnv...)
 	if r.s.Provider == ProviderEks {
 		if r.s.Virtual {

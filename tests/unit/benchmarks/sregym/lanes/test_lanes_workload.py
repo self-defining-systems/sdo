@@ -900,3 +900,45 @@ def test_every_app_pack_loads_and_names_a_namespace_fastloop_retires() -> None:
         loaded = workload.AppPack.load(pack)
         assert loaded.namespace in APPLICATION_NAMESPACES
         assert loaded.application == pack.name
+
+
+def test_run_gives_the_runner_a_row_deadline_from_the_spec_cap(tmp_path):
+    """The lanes step hands the spec's cap and ready_timeout to the adapter: past them plus a closeout margin the run
+    is killed, whichever wait it is stuck in."""
+    repo, base = accepted_repo(tmp_path)
+    env_dir = write_environment(tmp_path, repo, seed_commit=base)
+    fast, _ = fake_fastloop_run(tmp_path, env_dir, repo)
+    seen: dict = {}
+
+    def runner(argv, *, env=None, cwd=None, tick=None, **limits):
+        seen.update(limits)
+        seen["wait_file"] = env.get("SDO_CURRENT_WAIT_FILE")
+        return fast(argv, env=env, cwd=cwd, tick=tick)
+
+    env = lane_env(
+        tmp_path,
+        FUZZOPS_EXEC_OUT=str(tmp_path / "x"),
+        BENCH_CAP_SECONDS="1800",
+        BENCH_READY_TIMEOUT_SECONDS="2400",
+    )
+    code, _ = call("run", "run", RUN_ARGS, env, runner=workload.run_process, long_runner=runner)
+    assert code == 0
+    assert seen["deadline_seconds"] == 1800 + 2400 + workload.ROW_CLOSEOUT_SECONDS
+    assert seen["wait_file"] == str(tmp_path / "x" / "current-wait.json")
+
+
+def test_a_run_past_its_row_deadline_ends_invalid_with_the_named_wait(tmp_path):
+    repo, base = accepted_repo(tmp_path)
+    env_dir = write_environment(tmp_path, repo, seed_commit=base)
+
+    def stuck(argv, **_):
+        raise workload.RowDeadlineError("row deadline 4200s exceeded while waiting for: outcome commit of incident i-7")
+
+    env = lane_env(tmp_path, FUZZOPS_EXEC_OUT=str(tmp_path / "x"), BENCH_CAP_SECONDS="1800")
+    code, record = call("run", "run", RUN_ARGS, env, runner=workload.run_process, long_runner=stuck)
+    assert code == 1
+    assert record["valid"] is False
+    assert record["invalid_reason"] == "row deadline exceeded"
+    assert "outcome commit of incident i-7" in record["error"]
+    # The fault may still be in place: the lane's verdict stays unknown (active) so the platform recovers it.
+    assert workload.fault_active(env_dir, PROBLEM) is True
