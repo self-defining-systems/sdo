@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from benchmarks.sregym.adapter import kustomize_source
 from benchmarks.sregym.fastloop import cli, deployed_application
 from benchmarks.sregym.fastloop.baseline_recovery import (
     ApplicationBaseline,
@@ -108,6 +109,7 @@ def lane(tmp_path: Path) -> SimpleNamespace:
         namespace=NAMESPACE,
         workspace=workspace,
         app="hotel",
+        problem_application="hotel-reservation",
         baseline_path=baseline,
         shared_accepted_id=None,
         run_dir=tmp_path,
@@ -147,6 +149,53 @@ def test_memory_commits_keep_and_deployment_artifact_commits_recreate(lane, clus
     assert deployed_application_change(lane, learned) is None
     overlay = _commit(lane.workspace, {".sdo/deployment/plan.yaml": "telemetry overlay\n"})
     assert deployed_application_change(lane, overlay).trigger is Tier2Trigger.ACCEPTED_SOURCE_CHANGED
+
+
+SEED_PLAN = {
+    "source": {
+        "rendererId": "raw",
+        "config": {"@type": "t/RawRenderConfig", "paths": [".sdo/deployment/manifests/app.yaml"]},
+    },
+    "images": [{"image": "registry/app:v1", "sourceId": "buildkit"}],
+    "expectedWorkloadIds": ["Deployment/app/web"],
+}
+
+
+def _plan(source: dict[str, Any] | None = None, **fields: Any) -> str:
+    return json.dumps({**SEED_PLAN, **({"source": source} if source else {}), **fields})
+
+
+# What the harness deploys from, as the install records it (camelCase, as the Go side writes the plan).
+_harness = kustomize_source("kubernetes")
+HARNESS_SOURCE = {"rendererId": _harness["renderer_id"], "config": _harness["config"]}
+
+
+def test_the_plan_an_install_records_for_the_source_the_app_was_deployed_from_keeps_the_app(lane, cluster) -> None:
+    """A seeded memory's authored plan is replaced by the install with one naming the harness's own source.
+
+    The lane's app was deployed from that source, so the recorded plan describes it: only the plan's pointer
+    moved, which is what every learned (seeded) row's accepted commit carries after the first install.
+    """
+    _commit(lane.workspace, {".sdo/deployment/plan.yaml": _plan(), ".sdo/deployment/manifests/app.yaml": "authored\n"})
+    deploy(lane, cluster)
+    learned = _commit(
+        lane.workspace, {".sdo/deployment/plan.yaml": _plan(HARNESS_SOURCE), ".sdo/playbooks/p/diagnose.go": "x\n"}
+    )
+    assert deployed_application_change(lane, learned) is None
+
+
+def test_a_plan_naming_another_source_or_changing_more_than_the_source_recreates(lane, cluster) -> None:
+    _commit(lane.workspace, {".sdo/deployment/plan.yaml": _plan(), ".sdo/deployment/manifests/app.yaml": "authored\n"})
+    deploy(lane, cluster)
+    other = {"rendererId": "kustomize", "config": {**HARNESS_SOURCE["config"], "path": "elsewhere"}}
+    for files in (
+        {".sdo/deployment/plan.yaml": _plan(other)},
+        {".sdo/deployment/plan.yaml": _plan(HARNESS_SOURCE, images=[{"image": "registry/app:v2"}])},
+        {".sdo/deployment/plan.yaml": _plan(HARNESS_SOURCE), ".sdo/deployment/manifests/app.yaml": "edited\n"},
+        {".sdo/deployment/plan.yaml": _plan(HARNESS_SOURCE), ".sdo/deployment/patches/0001.patch": "patch\n"},
+    ):
+        row = _commit(lane.workspace, files)
+        assert deployed_application_change(lane, row).trigger is Tier2Trigger.ACCEPTED_SOURCE_CHANGED, files
 
 
 def test_a_row_that_changed_the_app_hands_the_next_row_a_recreate(lane, cluster) -> None:
