@@ -219,9 +219,10 @@ def run(env: dict[str, str], stdout: IO[str], *, ops: SeriesOps | None = None) -
         return delegate("run", env)
     lane_dir = Path(env["BENCH_LANE_DIR"])
     index = int(flags["seed"])
-    owned = ops is None
-    ops = ops or LaneOps(lane_dir, Path(env["KUBECONFIG"]), entry.series)
-    if owned and index == 1 and (problems := ops.start_problems(env, lane_dir)):
+    lane = LaneOps(lane_dir, Path(env["KUBECONFIG"]), entry.series) if ops is None else None
+    ops = ops or lane
+    assert ops is not None
+    if lane is not None and index == 1 and (problems := lane.start_problems(env, lane_dir)):
         return invalid(stdout, entry, index, "the lane is not at the series start: " + "; ".join(problems))
     start = wall_start(lane_dir, entry.series.name, ops.now(), first=index == 1)
     ahead = start + entry.series.offset(index) - ops.now()
