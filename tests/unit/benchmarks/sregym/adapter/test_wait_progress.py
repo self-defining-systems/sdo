@@ -7,6 +7,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -103,7 +104,7 @@ def test_the_adapter_kills_a_run_at_its_row_deadline_and_names_the_wait(
             break
         if stat.rsplit(")", 1)[1].split()[0] == "Z":
             break
-        time.sleep(0.05)
+        threading.Event().wait(0.05)
     else:
         os.kill(pid, signal.SIGKILL)
         pytest.fail("the run's child outlived the row deadline")

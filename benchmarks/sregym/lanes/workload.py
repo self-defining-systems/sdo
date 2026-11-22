@@ -49,7 +49,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Protocol
 
-from benchmarks.sregym.adapter.wait_progress import CURRENT_WAIT_ENV
+from benchmarks.sregym.adapter import CURRENT_WAIT_ENV
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
