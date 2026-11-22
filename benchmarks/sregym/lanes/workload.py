@@ -418,6 +418,13 @@ def app_up(ctx: Context) -> tuple[int, dict[str, Any]]:
             raise AdapterError(
                 f"lane {lane} has no fastloop environment or kind cluster: the host's cluster_up makes it"
             )
+    if reused and agent is not None:
+        # `up` does not run again on a reused lane: its controller and responder stay the images it was built with. A
+        # spec naming others fails this build, which the platform answers by making the cluster anew.
+        asked = env_dir / REQUESTED_IMAGES_FILE
+        built = json.loads(asked.read_text(encoding="utf-8")) if asked.is_file() else {}
+        if mismatch := agent.image_mismatch(built):
+            raise AdapterError(f"{mismatch}: the lane's cluster must be made anew")
     if not reused:
         prefix, worker = cluster_parts(lane)
         if eks:
@@ -835,8 +842,12 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
             "invalid_reason": "unsupported",
             "error": "an SREGym run needs --instance PROBLEM",
         }
-    real = settings_for(ctx.env)  # a model this lane cannot run is refused here, before anything of the row starts
     env_dir = ctx.lane_env_dir()
+    # Nothing is injected until fastloop runs: a row refused before that (a lane built for another spec, a missing
+    # credential file, an unreadable seed) leaves the lane clean, and an unknown verdict would be taken for an active
+    # fault and take the lane Down for a human reset. The verdict turns unknown just before fastloop starts.
+    write_fault_state(env_dir, problem, "clear")
+    real = settings_for(ctx.env)  # a model this lane cannot run is refused here, before anything of the row starts
     environment = json.loads((env_dir / "fastloop.json").read_text(encoding="utf-8"))
     workspace = Path(environment["workspace"])
     seed_dir = operator_seed(ctx.env)

@@ -14,6 +14,7 @@ from benchmarks.sregym.lanes import agent, subject, workload
 from benchmarks.sregym.lanes.workload import AdapterError
 from tests.unit.benchmarks.sregym.lanes.test_lanes_workload import (
     PACK,
+    PROBLEM,
     RUN_ARGS,
     FakePageCluster,
     FakeRunner,
@@ -225,6 +226,32 @@ def test_a_lane_built_with_another_responder_image_is_refused_before_fastloop(tm
     assert "sdo-sregym-responder:plain" in result["error"]
 
 
+def test_a_row_refused_before_fastloop_starts_leaves_no_fault_active(tmp_path, monkeypatch):
+    """A row that fails before its injection (a refused lane image, a missing credential file) put nothing in the lane:
+    the platform's `run active` after it must answer clear. An unknown verdict is active and takes the lane Down, so a
+    lane built for another spec (a lane rebuild) became a human `lane reset` for a fault that was never injected."""
+    monkeypatch.setenv("HOME", str(tmp_path / "nohome"))
+    repo, base = accepted_repo(tmp_path)
+    env_dir = write_environment(tmp_path, repo, seed_commit=base)
+    document = json.loads((env_dir / "fastloop.json").read_text())
+    document["images"] = {"controller": "c:1", "responder": "sdo-sregym-responder:scripted"}
+    (env_dir / "fastloop.json").write_text(json.dumps(document))
+    refused = {
+        "another image": {**real_settings(tmp_path), "responder_image": "sdo-sregym-responder:plain"},
+        "no credential file": {**real_settings(tmp_path), "auth_file": str(tmp_path / "missing.json")},
+    }
+
+    def never(argv, **_):
+        raise AssertionError("fastloop run must not start")
+
+    for settings in refused.values():
+        env = lane_env(tmp_path, BENCH_OPERATOR=str(operator_file(tmp_path, settings)))
+        code, _ = call("run", "run", RUN_ARGS, env, runner=workload.run_process, long_runner=never)
+        assert code == 1
+        _, answer = call("run", "active", ["--id", PROBLEM], env, runner=workload.run_process)
+        assert answer["active"] is False
+
+
 def test_app_up_gives_a_real_agents_images_to_fastloop_up(tmp_path):
     seen: list[list[str]] = []
 
@@ -276,6 +303,35 @@ def test_app_up_records_the_images_the_lane_was_asked_to_run(tmp_path):
     assert code == 0, result
     asked = json.loads((tmp_path / "env" / "sgl1" / "requested-images.json").read_text())
     assert asked == {"controller": "c:host", "responder": "r:plain"}  # the last of each flag, as fastloop takes it
+
+
+def test_app_up_refuses_a_reused_lane_built_with_other_images_so_the_cluster_is_made_anew(tmp_path):
+    """A kept lane is reused by the next experiment, and `up` does not run again on it: its controller and responder
+    stay the ones it was built with. A spec naming other images (a re-pin) must fail the BUILD, which the platform
+    answers by making the cluster anew; found at the first row instead, the lane went down for a human reset."""
+    repo, base = accepted_repo(tmp_path)
+    env_dir = write_environment(tmp_path, repo, seed_commit=base)
+    (env_dir / "requested-images.json").write_text(json.dumps({"controller": "c:old", "responder": "r:old"}))
+    settings = {**real_settings(tmp_path), "controller_image": "c:new", "responder_image": "r:new"}
+
+    def never(argv, **_):
+        raise AssertionError("a reused lane is not brought up again")
+
+    env = lane_env(tmp_path, BENCH_OPERATOR=str(operator_file(tmp_path, settings)))
+    args = ["--pack", str(PACK), "--namespace", "hotel-reservation"]
+    code, result = call(
+        "app-up", "up", args, env, runner=FakeRunner({"kind get clusters": "sgl1\n"}), long_runner=never
+    )
+    assert code == 1
+    assert "c:old" in result["error"]
+    assert "c:new" in result["error"]
+    same = {**real_settings(tmp_path), "controller_image": "c:old", "responder_image": "r:old"}
+    env = lane_env(tmp_path, BENCH_OPERATOR=str(operator_file(tmp_path, same)))
+    code, result = call(
+        "app-up", "up", args, env, runner=FakeRunner({"kind get clusters": "sgl1\n"}), long_runner=never
+    )
+    assert code == 0, result
+    assert result["reused"] is True
 
 
 def test_an_eks_lane_built_from_the_spec_images_is_not_refused_for_its_digest_references(tmp_path):

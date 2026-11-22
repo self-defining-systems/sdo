@@ -433,6 +433,28 @@ func TestBenchKilledStepIsRecovered(t *testing.T) {
 	l.noFault()
 }
 
+// A build the manager cancelled (its experiment was removed with --cancel) dies inside `app up`, which is not
+// re-entrant: it leaves the application half installed on the cluster this very build made, and an `up` on that
+// install fails for ever (a second failed build takes the lane down for a human reset). The next build makes the
+// cluster anew, as after any other failed build on a reused one.
+func TestBenchCancelledBuildLeavesTheLaneToBeRecreated(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real detached steps take several seconds: nightly tier")
+	}
+	l := newLab(t)
+	l.withClusters("1K")
+	l.set("app-up-sleep", "30")
+	l.addReusing("e1", "keep_lanes: true\n")
+	l.until("app up running", func() bool {
+		return l.lane().State == LaneBuilding && strings.Contains(l.read("fuzzops.log"), "app up")
+	})
+	must(t, RemoveCancel(l.root, "e1"))
+	l.until("lane free", func() bool { lf := l.lane(); return lf.Step == nil && lf.State == LaneFree })
+	if lf := l.lane(); !lf.Recreate {
+		t.Fatalf("the next build reuses the cluster of a build that was killed mid-install: %+v\n%s", lf, l.readRoot("bench.log"))
+	}
+}
+
 // A fault the safety check cannot undo takes the lane down and keeps it out.
 func TestBenchStuckFaultTakesTheLaneDown(t *testing.T) {
 	l := newLab(t)
