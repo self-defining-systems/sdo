@@ -146,3 +146,39 @@ func TestARefusedHeadIsHeldAndNotAppliedAgain(t *testing.T) {
 		t.Fatalf("second = %+v, err = %v, events %q: a held head must not be applied again", second, err, w.events)
 	}
 }
+
+// deployedNotices is memoryHolds that also keeps the notice of every head deployed.
+type deployedNotices struct {
+	*memoryHolds
+	deployed []broker.HeadChange
+}
+
+func (d *deployedNotices) Deployed(_ context.Context, change broker.HeadChange, _ lifecycle.HeadResult) error {
+	d.deployed = append(d.deployed, change)
+	return nil
+}
+
+// A head SDO deployed adds no commit and no trailer to history (it is someone else's commit), so whoever pushed it
+// (a benchmark's replayer, an engineer's tooling) learns it was deployed from the notice the holds keep beside a
+// refusal: told once per deployed head, never for a held one.
+func TestADeployedHeadIsNoticedAndAHeldOneIsNot(t *testing.T) {
+	w := newHeadWorld(t, true)
+	notices := &deployedNotices{memoryHolds: &memoryHolds{held: map[string]string{}}}
+	w.holds = notices.memoryHolds
+	deployer := w.deployer()
+	deployer.Holds = notices
+	if result, err := deployer.Deploy(context.Background(), repairConfig); err != nil || result.Outcome != lifecycle.HeadDeployed {
+		t.Fatalf("result = %+v, err = %v", result, err)
+	}
+	if len(notices.deployed) != 1 || notices.deployed[0].Commit != advCandidate {
+		t.Fatalf("notices %+v: want one, for the deployed head", notices.deployed)
+	}
+	refused := newHeadWorld(t, true)
+	refused.applyErrs = []error{errors.New("deployment never became ready")}
+	held := &deployedNotices{memoryHolds: &memoryHolds{held: map[string]string{}}}
+	deployer = refused.deployer()
+	deployer.Holds = held
+	if result, _ := deployer.Deploy(context.Background(), repairConfig); result.Outcome != lifecycle.HeadHeld || len(held.deployed) != 0 {
+		t.Fatalf("a held head must not be noticed as deployed: %+v %+v", result, held.deployed)
+	}
+}
