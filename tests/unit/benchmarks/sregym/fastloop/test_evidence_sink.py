@@ -136,6 +136,32 @@ def test_settle_copies_unchanged_runs_once_and_reports_a_failed_copy(tmp_path: P
     assert failures[0].startswith("r1: ")
 
 
+def test_a_sink_index_the_controller_reseals_after_the_copy_is_not_a_failed_copy(tmp_path: Path) -> None:
+    """The controller seals an incident's index entry after the row's own copy; its serialization (compact, struct
+    order) is shorter than the copy's canonical one (sorted keys, spaced). The same records are a verified copy."""
+    lane = _lane(tmp_path, sink_root=tmp_path / "sink")
+    results = lane.run_dir / "results" / "r1"
+    results.mkdir(parents=True)
+    run = _sink_run(lane, results)
+    name = "a" * 32
+    entry = {
+        "schema": "sdo.evidence-index/v1",
+        "kind": "incident",
+        "id": "i",
+        "path": f"incidents/{name}",
+        "outcome": "x",
+    }
+    (run / "index.jsonl").write_text(json.dumps(entry, separators=(",", ":")) + "\n")
+    assert evidence_sink.settle_lane_evidence(lane) == []
+    sealed = {**entry, "sealed_at": "2026-11-22T04:32:47Z", "sha256": "0" * 64}
+    (run / "index.jsonl").write_text(json.dumps(sealed, separators=(",", ":")) + "\n")
+    future = (run / "index.jsonl").stat().st_mtime + 60
+    os.utime(run / "index.jsonl", (future, future))
+    assert evidence_sink.settle_lane_evidence(lane) == []
+    copied = [json.loads(line) for line in (results / "evidence" / "index.jsonl").read_text().splitlines()]
+    assert copied == [sealed]
+
+
 def test_a_lane_without_a_sink_has_nothing_to_settle(tmp_path: Path) -> None:
     assert evidence_sink.settle_lane_evidence(_lane(tmp_path, sink_root=None)) == []
 
