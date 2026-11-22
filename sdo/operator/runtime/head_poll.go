@@ -25,6 +25,10 @@ const DefaultHeadPollInterval = 30 * time.Second
 // applied again on every poll, and survives a controller restart.
 const headHoldConfigMap = "sdo-head-hold"
 
+// headDeploymentConfigMap is the notice of the newest head SDO deployed (commit, effective source, verdict): a
+// deployment adds no commit to history, so this is what a pusher reads to learn its push was deployed.
+const headDeploymentConfigMap = "sdo-head-deployment"
+
 // HeadPoller is what the controller needs to deploy a branch head: the
 // deployer, and the interval between looks.
 type HeadPoller struct {
@@ -120,7 +124,66 @@ type ConfigMapHeadHolds struct {
 	Now       func() time.Time
 }
 
-var _ lifecycle.HeadHolds = ConfigMapHeadHolds{}
+var (
+	_ lifecycle.HeadHolds       = ConfigMapHeadHolds{}
+	_ lifecycle.HeadDeployments = ConfigMapHeadHolds{}
+)
+
+// HeadDeploymentNotice is the stored notice of a deployed head.
+type HeadDeploymentNotice struct {
+	Commit        string `json:"commit"`
+	EffectiveTree string `json:"effective_tree"`
+	PatchesDigest string `json:"patches_digest"`
+	Verdict       string `json:"verdict"`
+	At            string `json:"at"`
+}
+
+// Deployed replaces the notice of the newest deployed head and ends a hold on the same effective source (the refusal
+// is over); a hold on another source stays.
+func (h ConfigMapHeadHolds) Deployed(ctx context.Context, change broker.HeadChange, result lifecycle.HeadResult) error {
+	at := ""
+	if h.Now != nil {
+		at = h.Now().UTC().Format(time.RFC3339)
+	}
+	data, err := json.Marshal(HeadDeploymentNotice{Commit: change.Commit, EffectiveTree: change.EffectiveTree, PatchesDigest: change.PatchesDigest, Verdict: string(result.Verdict.Outcome), At: at})
+	if err != nil {
+		return err
+	}
+	configMaps := h.Client.CoreV1().ConfigMaps(h.Namespace)
+	configMap, err := configMaps.Get(ctx, headDeploymentConfigMap, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		_, err = configMaps.Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: headDeploymentConfigMap, Namespace: h.Namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo"}}, Data: map[string]string{"deployment": string(data)}}, metav1.CreateOptions{})
+	} else if err == nil {
+		configMap.Data = map[string]string{"deployment": string(data)}
+		_, err = configMaps.Update(ctx, configMap, metav1.UpdateOptions{})
+	}
+	if err != nil {
+		return fmt.Errorf("record head deployment notice: %w", err)
+	}
+	if _, held, err := h.Held(ctx, change); err != nil || !held {
+		return err
+	}
+	if err := configMaps.Delete(ctx, headHoldConfigMap, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("end head hold: %w", err)
+	}
+	return nil
+}
+
+// Deployment reads the notice of the newest deployed head (nil when none).
+func (h ConfigMapHeadHolds) Deployment(ctx context.Context) (*HeadDeploymentNotice, error) {
+	configMap, err := h.Client.CoreV1().ConfigMaps(h.Namespace).Get(ctx, headDeploymentConfigMap, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read head deployment notice: %w", err)
+	}
+	var notice HeadDeploymentNotice
+	if err := json.Unmarshal([]byte(configMap.Data["deployment"]), &notice); err != nil {
+		return nil, fmt.Errorf("decode head deployment notice: %w", err)
+	}
+	return &notice, nil
+}
 
 func (h ConfigMapHeadHolds) load(ctx context.Context) (*headHoldRecord, error) {
 	configMap, err := h.Client.CoreV1().ConfigMaps(h.Namespace).Get(ctx, headHoldConfigMap, metav1.GetOptions{})
