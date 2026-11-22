@@ -128,7 +128,7 @@ type Result struct {
 	// does not parse): it names the pack and why. It is not a failure of the lane: the lane is not recreated and
 	// the failure does not count against it.
 	Config string `json:"config,omitempty"`
-	// TeardownFailed, when set, says a release that deletes the cluster could not tear the operator down first (the
+	// TeardownFailed, when set, says a release that deletes the cluster could not tear the lane's app down first (the
 	// cluster was deleted all the same): the reason, for the record.
 	TeardownFailed string `json:"teardown_failed,omitempty"`
 	// Recycle, when set, says a held lane was not claimable (for example an incident open on it): nothing was
@@ -1572,7 +1572,7 @@ func (r *stepRunner) release(ctx context.Context) {
 		return
 	}
 	if r.s.DeleteCluster {
-		// The cluster is deleted whether or not the operator's teardown worked: a broken cluster (its API or nodes
+		// The cluster is deleted whether or not the teardown hook worked: a broken cluster (its API or nodes
 		// failing) is the one that most needs deleting, and a release that stopped at a failed teardown left it billing
 		// with the lane Down and, after two resets, Retired and forgotten. What the teardown could not do is recorded.
 		if !r.teardown(ctx, r.s.Prev) {
