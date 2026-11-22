@@ -2,11 +2,16 @@
 
 Opt-in private-lane `fastloop run --warm-lane` writes
 `results/<run-id>/warm-transaction.json` (`sdo.warm-lane/v1`). `reused` means
-changed-resource reset, accepted-revision equality and fresh admission all passed
-without replacing the controller or standby. `identity` contains controller and
-standby Pod UIDs plus the full accepted Git revision. `baseline_not_before` is the
-post-reset/adoption boundary. `phase_seconds` splits inspect, pause, reset, adopt,
-prove, confirmation and (on fallback) full reset. Ordinary injection admission
+changed-resource reset, the in-place reseed, accepted-revision equality and fresh
+admission all passed on the lane's own install (no namespace deletion, no new volume).
+`identity` contains controller and standby Pod UIDs plus the full accepted Git revision. `baseline_not_before` is the
+post-reset/adoption boundary. `phase_seconds` splits inspect, pause, reset (application), pre-reseed identity, reseed,
+reidentify, adopt, prove, confirmation and (on fallback) full reset; `warm/reseed-phases.json` splits the reseed into
+settle_evidence, read_head, stop_controller, retire_control_state, fresh_observability, install_controller, wait_started,
+record_controller and await_observability. The controller and standby identities in `identity` are those of the
+controller the reseed installed (the process is replaced by design); `reused` means that new process proved equal to a
+fresh install on the planned memory. A fallback at `reseed:<phase>:<error type>` means the controller may have been
+stopped and the full reset (which deletes the control namespace) followed. Ordinary injection admission
 remains required after preparation; this receipt is not injection/closure proof.
 
 A failed preparation records boundary and exception type without raw command
@@ -68,3 +73,8 @@ false` is a fallback to the fresh install and `reason` is fastloop's `<phase>:<e
 when fastloop left none). The grade has `reseed` = `reseeded | fallback | fresh` and `reseed_reason`: count them to see how
 many rows skipped the reinstall. `--deliver-evidence-before-exit` makes `fastloop run` finish delivering the sealed evidence
 into `results/` before it returns (the workload copies results out at that moment).
+
+`<lane run dir>/fresh-onboarding/<commit>.json` and `latest.json` are written by a FRESH install's admission after its
+onboarding: `{accepted_commit, objects: [apiVersion/kind/namespace/name, ...]}`. A reseeded controller's onboarding must be
+for the planned commit and name the same objects as the reference for that commit (else `latest.json`); timestamps, UIDs and
+digests are install-bound and never compared. No reference (a lane whose first row has not run fresh yet) is a fallback.

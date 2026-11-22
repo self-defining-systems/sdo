@@ -48,6 +48,32 @@ def test_a_state_equal_to_a_fresh_install_at_injection_may_start_the_row():
     assert resident_start_violations(start()) == []
 
 
+def test_onboarding_is_a_fresh_installs_when_it_is_for_the_planned_commit_and_names_the_same_objects():
+    """A reseeded controller onboards on the planned memory; the reference was recorded on another commit (the base)."""
+    reference = {
+        "acceptedCommit": "b" * 40,
+        "objects": [{"apiVersion": "apps/v1", "kind": "Deployment", "namespace": "app", "name": "web"}],
+    }
+    state = fresh_state()
+    state["namespace_onboarding"] = {
+        "accepted_commit": PLANNED,
+        "established_at": AFTER,
+        "objects": [{"api_version": "apps/v1", "kind": "Deployment", "namespace": "app", "name": "web"}],
+        "environment_objects": [{"digest": "sha256:" + "0" * 64}],
+    }
+    assert resident_start_violations(start(state=state, onboarding_reference=reference)) == []
+    state["namespace_onboarding"]["objects"].append(
+        {"api_version": "v1", "kind": "Service", "namespace": "app", "name": "x"}
+    )
+    assert any(
+        "onboarding" in row for row in resident_start_violations(start(state=state, onboarding_reference=reference))
+    )
+    state["namespace_onboarding"] = {**state["namespace_onboarding"], "accepted_commit": "c" * 40}
+    assert any(
+        "onboarding" in row for row in resident_start_violations(start(state=state, onboarding_reference=reference))
+    )
+
+
 def mutated(path, value):
     state = fresh_state()
     state[path] = value

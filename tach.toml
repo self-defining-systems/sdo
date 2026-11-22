@@ -77,6 +77,7 @@ depends_on = [
 path = "benchmarks.sregym.fastloop"
 depends_on = [
     "benchmarks.common.replay",
+    "benchmarks.devswap",
     "benchmarks.fuzzops",
     "benchmarks.lanes",
     "benchmarks.sregym.repository_git",

@@ -106,13 +106,25 @@ through the host's image-delivery path above.
 
 ### Opt-in persistent row preparation
 
-`run --warm-lane` tries to retain the application, controller and standby responder
-on a private non-toy SDO lane. It requires a recorded live controller, a live
-standby, known injection history without data effects, terminal prior reflection,
-and the installed cluster inventory. It pauses intake, synchronizes the accepted
-repository back to the host, reconciles changed application resources, and proves
-fresh baseline health against that exact revision. The usual injection admission
-still runs. Default runs retain the existing full-reset policy. Both run modes
+`run --warm-lane` keeps a private non-toy SDO lane's install (control namespace, repository
+volume, credentials, RBAC, transport, observability) and swaps its state for a fresh
+install's at the row's `--planned-commit`. It requires a recorded live controller of the
+same install identity (images, agent and settings, but not the row's evidence run or
+config overlay path), a live standby, known injection history without data effects,
+terminal prior reflection, and the installed cluster inventory. It pauses intake, puts
+the host copy of the accepted repository at the planned commit (no planned commit: it
+syncs back what the lane holds), reconciles changed application resources from that
+source, then reseeds (`reseed.py`): the earlier row's evidence is delivered, the
+controller Job and standby are deleted, every control-state record and session
+ConfigMap is retired, Prometheus and Jaeger restart for fresh stores, and Go
+`install-existing` installs the controller again from the row's configuration (a new
+Job with this row's evidence run, the volume seeded from the host copy). The controller
+process is replaced by design; the transaction then proves fresh baseline health against
+the planned revision and that the starting state equals a fresh install's
+(`resident_start.py`: memory, no incident carry-over, startup and onboarding begun in
+this transaction, no session ConfigMaps, install identity). The usual injection
+admission still runs. `results/<run-id>/warm/reseed-phases.json` has the seconds of each
+reseed phase. Default runs retain the existing full-reset policy. Both run modes
 take the same host/lane lock, so a concurrent full-reset caller cannot invalidate
 a warm transaction. A competing caller stops before any lane mutation.
 

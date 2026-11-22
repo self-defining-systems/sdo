@@ -313,7 +313,22 @@ class LaneAdmission:
             log = f"controller log unavailable: {exc}\n"
         (self.directory / name).write_text(log)
 
-    def await_onboarding(self, control: str) -> dict[str, Any]:
+    def _record_fresh_onboarding(self, record: dict[str, Any]) -> None:
+        """Keep what a FRESH install's onboarding named, for a later resident install to be compared with.
+
+        Only the commit and the objects: timestamps, UIDs and digests belong to one install. ``latest.json`` is the
+        reference for a planned commit no fresh install ran on (memory does not enter the objects an onboarding names).
+        """
+        from benchmarks.sregym.fastloop.resident_start import onboarding_commit, onboarding_objects
+
+        commit = onboarding_commit(record)
+        reference = {"accepted_commit": commit, "objects": sorted(onboarding_objects(record))}
+        directory = self.environment.run_dir / "fresh-onboarding"
+        directory.mkdir(parents=True, exist_ok=True)
+        for name in (f"{commit}.json", "latest.json"):
+            (directory / name).write_text(json.dumps(reference, indent=2) + "\n")
+
+    def await_onboarding(self, control: str, *, reference: bool = False) -> dict[str, Any]:
         """Wait, on a separate recorded budget, until the lane's SDO onboarding has finished.
 
         A fresh seed runs install-existing and the first health refresh after
@@ -385,6 +400,8 @@ class LaneAdmission:
                 f"(completed record: {bool(record)}, pending record: {evidence['pending']}, "
                 f"last error: {error}); no injection"
             )
+        if reference:
+            self._record_fresh_onboarding(record)
         if self.progress:
             self.progress("onboarding", accepted_commit=evidence["accepted_commit"], evidence=str(destination))
         return evidence
@@ -471,7 +488,7 @@ class LaneAdmission:
         # Onboarding has its own budget: the stabilization clock below must never
         # contain install-existing or the first health refresh of a fresh seed.
         self._run_pre_onboarding_hook()
-        onboarding = self.await_onboarding(control) if self.code_path == "go" else {}
+        onboarding = self.await_onboarding(control, reference=fresh) if self.code_path == "go" else {}
         # A previous row's closure and reflection have their own budget too: a
         # repeat starts only on the memory that reflection accepted.
         self.await_prior_closure(control)
