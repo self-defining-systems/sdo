@@ -192,6 +192,29 @@ func (c Coordinator) awaitVerdict(ctx context.Context, cfg Config, evaluate func
 	}
 }
 
+// awaitClear re-evaluates a source fault once per pending interval, up to the
+// pending bound, and returns the first verdict that is not a source fault (clear
+// or pending). A fault that outlasts the window is returned as the last verdict
+// gave it.
+func (c Coordinator) awaitClear(ctx context.Context, cfg Config, fault HealthVerdict, evaluate func() (HealthVerdict, error)) (HealthVerdict, error) {
+	evaluations := orDefault(cfg.PendingEvaluations, defaultPendingEvaluations)
+	interval := orDefault(cfg.PendingInterval, defaultPendingInterval)
+	verdict := fault
+	for evaluation := 1; evaluation < evaluations; evaluation++ {
+		if err := c.wait(ctx, interval); err != nil {
+			return HealthVerdict{}, err
+		}
+		var err error
+		if verdict, err = c.awaitVerdict(ctx, cfg, evaluate); err != nil {
+			return verdict, err
+		}
+		if verdict.Outcome != VerificationSourceFault {
+			return verdict, nil
+		}
+	}
+	return verdict, nil
+}
+
 // ProvidedPlanError ends a lifecycle whose human-provided deployment plan
 // failed admission, deployment or verification. No agent is dispatched to
 // repair a plan the human supplied, so the failure is for the human.

@@ -164,9 +164,19 @@ func (h HeadDeployer) deploy(ctx context.Context, cfg RepairConfig, commit strin
 	if !completeDeploymentReceipt(receipt) || !rendered.SameDeploymentSource(receipt.Source, accepted.Plan.GetSource()) {
 		return held(HoldRollout, "deployment returned incomplete evidence or another source"), nil
 	}
-	verdict, err := steps.awaitVerdict(ctx, bounds, func() (HealthVerdict, error) {
+	evaluate := func() (HealthVerdict, error) {
 		return h.Deployer.Verifier.VerifyCandidate(ctx, path, commit, cfg.Namespace, cfg.HealthObjective, receipt)
-	})
+	}
+	verdict, err := steps.awaitVerdict(ctx, bounds, evaluate)
+	if err == nil && verdict.Outcome == VerificationSourceFault {
+		// A rollout disturbs its application for a while (workers restart and
+		// retry what failed meanwhile), so detectors that fire right after it
+		// are not yet the release's fault: the same release was accepted in one
+		// run and held in the next, by whether the one evaluation fell in that
+		// minute. The pending window is waited out for the fault to clear; only
+		// one still there when it ends holds the head, with that last verdict.
+		verdict, err = steps.awaitClear(ctx, bounds, verdict, evaluate)
+	}
 	if err != nil {
 		var pending *PendingVerificationError
 		if errors.As(err, &pending) {
