@@ -275,7 +275,21 @@ func (r *applyRun) apply(ctx context.Context, set rendered.DesiredSet, operation
 			autoscaled.AddObjects(object.Ref.Namespace, object.Object)
 		}
 	}
-	for _, phase := range set.For(operation) {
+	phases := set.For(operation)
+	// The last phase that applies a workload the candidate keeps running (a later ephemeral phase, a smoke Job
+	// after the Deployments, is not what the rollout waits for).
+	last := -1
+	for i, phase := range phases {
+		if phase.Ephemeral {
+			continue
+		}
+		for _, object := range phase.Objects {
+			if object.Workload {
+				last = i
+			}
+		}
+	}
+	for index, phase := range phases {
 		if len(phase.Objects) == 0 {
 			continue
 		}
@@ -330,6 +344,13 @@ func (r *applyRun) apply(ctx context.Context, set rendered.DesiredSet, operation
 		if err := r.afterApply(ctx); err != nil {
 			return err
 		}
+		if index == last {
+			// Everything the candidate changes is applied: its images are known, and the rollout the next
+			// step waits for is the time a verifier can use (lifecycle.SessionVerifier).
+			if hook := lifecycle.AppliedHookFrom(ctx); hook != nil {
+				hook(r.appliedPins())
+			}
+		}
 		if phase.Gate == render.GateReady {
 			for _, record := range gated {
 				if err := r.observe(ctx, record); err != nil {
@@ -339,6 +360,22 @@ func (r *applyRun) apply(ctx context.Context, set rendered.DesiredSet, operation
 		}
 	}
 	return nil
+}
+
+// appliedPins are the images the applied workloads run, as the receipt will list them once they are observed.
+func (r *applyRun) appliedPins() rendered.ReceiptPins {
+	ids := make([]string, 0, len(r.order))
+	for _, id := range r.order {
+		if !r.workloads[id].ephemeral {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	pins := rendered.ReceiptPins{EffectiveTree: r.effective.ID, BaseTree: r.base}
+	for _, id := range ids {
+		pins.Images = append(pins.Images, r.workloads[id].named...)
+	}
+	return pins
 }
 
 func (r *applyRun) observe(ctx context.Context, record *workloadRecord) error {

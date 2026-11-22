@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -699,5 +700,29 @@ func TestObserveTellsTheBackendWhichEarlierJobsAreUnfinished(t *testing.T) {
 	}
 	if got := cluster.jobsInFlight["Job/demo/migrate"]; len(got) != 0 {
 		t.Fatalf("a Job is never its own dependency: %v", got)
+	}
+}
+
+// A verifier can use the rollout's time (lifecycle.SessionVerifier): the deployer says when everything the
+// candidate keeps running is applied, before it waits for readiness, and not after a later ephemeral phase.
+func TestTheAppliedHookFiresAfterTheLastWorkloadPhaseBeforeItsRollout(t *testing.T) {
+	fixture := depFixtures(t)[3]
+	root := depCommit(t, fixture.files)
+	cluster := &clusterFake{}
+	deployer, _ := depDeployer(t, root, cluster)
+	ctx := lifecycle.WithAppliedHook(context.Background(), func(pins rendered.ReceiptPins) {
+		cluster.events = append(cluster.events, "applied hook "+strconv.Itoa(len(pins.Images))+" images")
+	})
+	if _, err := deployer.ApplyAndVerify(ctx, root, depPlan(t, fixture.source(t), "Deployment/demo/web")); err != nil {
+		t.Fatal(err)
+	}
+	var seen []string
+	for _, event := range cluster.events {
+		if strings.HasPrefix(event, "applied hook") || strings.HasPrefix(event, "apply ConfigMap/main-cm") || event == "observe Deployment/demo/web" || strings.HasPrefix(event, "apply Job/smoke") {
+			seen = append(seen, event)
+		}
+	}
+	if len(seen) != 4 || seen[0] != "apply ConfigMap/main-cm,Deployment/web" || !strings.HasPrefix(seen[1], "applied hook") || seen[2] != "observe Deployment/demo/web" || seen[3] != "apply Job/smoke" {
+		t.Fatalf("events:\n%s\nwant the hook between the workload phase's apply and its observation, before the ephemeral smoke phase", strings.Join(cluster.events, "\n"))
 	}
 }

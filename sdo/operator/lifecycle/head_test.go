@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"sdo.dev/operator/broker"
+	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/lifecycle"
+	"sdo.dev/operator/rendered"
 )
 
 // headWorld is the advance fake world with a branch head someone else pushed.
@@ -216,5 +218,61 @@ func TestAHeadWhoseDetectorsKeepFiringIsHeld(t *testing.T) {
 	}
 	if verifies < 2 {
 		t.Fatalf("verified %d time(s) in events %q, want the window re-evaluated before holding", verifies, w.events)
+	}
+}
+
+// sessionWorld is a head world whose verifier can begin before the rollout: its session records the order of
+// the deployment's own steps and answers the verdict from what it observed, never through VerifyCandidate.
+type sessionWorld struct {
+	*headWorld
+	pins    []rendered.ReceiptPins
+	readyAt []time.Time
+}
+
+func (w *sessionWorld) BeginCandidate(_ context.Context, root, commit, namespace, objective string) (lifecycle.CandidateSession, error) {
+	w.log("begin %s", commit[:4])
+	return &fakeSession{world: w}, nil
+}
+
+func (w *sessionWorld) ApplyAndVerify(ctx context.Context, checkout string, plan *contracts.DeploymentPlan) (lifecycle.DeploymentReceipt, error) {
+	receipt, err := w.headWorld.ApplyAndVerify(ctx, checkout, plan)
+	if hook := lifecycle.AppliedHookFrom(ctx); hook != nil {
+		hook(rendered.ReceiptPins{EffectiveTree: advEffective, BaseTree: advTree})
+	}
+	return receipt, err
+}
+
+type fakeSession struct{ world *sessionWorld }
+
+func (s *fakeSession) Applied(_ context.Context, pins rendered.ReceiptPins) error {
+	s.world.log("applied")
+	s.world.pins = append(s.world.pins, pins)
+	return nil
+}
+
+func (s *fakeSession) Verdict(_ context.Context, _ lifecycle.DeploymentReceipt, readyAt time.Time) (lifecycle.HealthVerdict, error) {
+	s.world.log("session verdict")
+	s.world.readyAt = append(s.world.readyAt, readyAt)
+	return lifecycle.HealthVerdict{Outcome: lifecycle.VerificationClear}, nil
+}
+
+func (s *fakeSession) Close() { s.world.log("session closed") }
+
+// The verdict's preparation overlaps the rollout: the session begins before the apply, is told when the
+// last phase is applied, and gives the verdict, so VerifyCandidate (a cold evaluation after the rollout) is
+// never called.
+func TestAHeadVerifierThatCanBeginBeforeTheRolloutDoes(t *testing.T) {
+	w := &sessionWorld{headWorld: newHeadWorld(t, true)}
+	deployer := lifecycle.HeadDeployer{Broker: w, Deployer: lifecycle.RepairDeployer{Readiness: w, Verifier: w, Wait: func(context.Context, time.Duration) error { return nil }, Now: func() time.Time { return time.Unix(1, 0) }}}
+	result, err := deployer.Deploy(context.Background(), repairConfig)
+	if err != nil || result.Outcome != lifecycle.HeadDeployed {
+		t.Fatalf("result = %+v, err = %v", result, err)
+	}
+	want := []string{"head", "checkout 4444", "begin 4444", "apply", "applied", "session verdict", "record 4444", "session closed", "release"}
+	if !slices.Equal(w.events, want) {
+		t.Fatalf("events\n got %q\nwant %q", w.events, want)
+	}
+	if len(w.pins) != 1 || len(w.readyAt) != 1 {
+		t.Fatalf("pins %v, readyAt %v: want one of each", w.pins, w.readyAt)
 	}
 }
