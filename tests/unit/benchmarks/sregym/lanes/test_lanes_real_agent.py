@@ -254,6 +254,54 @@ def test_app_up_gives_a_real_agents_images_to_fastloop_up(tmp_path):
     assert images[-1] == "sdo-sregym-responder:plain"  # fastloop takes the last
 
 
+def test_app_up_records_the_images_the_lane_was_asked_to_run(tmp_path):
+    def up(argv, *, env=None, cwd=None, tick=None):
+        write_environment(tmp_path, tmp_path / "ws")
+        return ""
+
+    env = lane_env(
+        tmp_path,
+        BENCH_OPERATOR=str(operator_file(tmp_path, {**real_settings(tmp_path), "responder_image": "r:plain"})),
+        SREGYM_LANES_CLUSTER_UP="1",
+        SREGYM_LANES_UP_ARGS="--controller-image c:host --responder-image r:host",
+    )
+    code, result = call(
+        "app-up",
+        "up",
+        ["--pack", str(PACK), "--namespace", "hotel-reservation"],
+        env,
+        runner=FakeRunner({"kind get clusters": "other\n"}),
+        long_runner=up,
+    )
+    assert code == 0, result
+    asked = json.loads((tmp_path / "env" / "sgl1" / "requested-images.json").read_text())
+    assert asked == {"controller": "c:host", "responder": "r:plain"}  # the last of each flag, as fastloop takes it
+
+
+def test_an_eks_lane_built_from_the_spec_images_is_not_refused_for_its_digest_references(tmp_path):
+    """`fastloop.json` of an EKS lane holds the pushed ECR digest references, not the tags the spec names."""
+    repo, base = accepted_repo(tmp_path)
+    env_dir = write_environment(tmp_path, repo, seed_commit=base)
+    document = json.loads((env_dir / "fastloop.json").read_text())
+    document["images"] = {
+        "controller": "123456789012.dkr.ecr.us-west-2.amazonaws.com/sdo/sdo-controller@sha256:" + "a" * 64,
+        "responder": "123456789012.dkr.ecr.us-west-2.amazonaws.com/sdo/sdo-sregym-responder@sha256:" + "b" * 64,
+    }
+    (env_dir / "fastloop.json").write_text(json.dumps(document))
+    (env_dir / "requested-images.json").write_text(json.dumps({"controller": "c:plain", "responder": "r:plain"}))
+    settings = {**real_settings(tmp_path), "controller_image": "c:plain", "responder_image": "r:plain"}
+    started: list[list[str]] = []
+
+    def stop(argv, **_):
+        started.append(list(argv))
+        raise workload.AdapterError("stop here")
+
+    env = lane_env(tmp_path, BENCH_OPERATOR=str(operator_file(tmp_path, settings)))
+    code, result = call("run", "run", RUN_ARGS, env, runner=workload.run_process, long_runner=stop)
+    assert started, result  # fastloop run was reached: the image check passed
+    assert "image" not in result.get("error", "")
+
+
 def opus_operator(tmp_path: Path) -> Path:
     return operator_file(tmp_path, {**real_settings(tmp_path), "model": "claude-opus-5-5"})
 

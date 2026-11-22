@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 from sdo.agents.provider import AGENT_EFFORTS
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
 PROVIDERS = ("claude", "codex")
 STUB_MODEL = "stub"
@@ -134,6 +134,21 @@ class AgentSettings:
     def summary(self) -> dict[str, str]:
         """The non-secret part, for the subject's prepare/swap answer."""
         return {"provider": self.provider, "model": self.model, "effort": self.effort}
+
+
+#: Written next to ``fastloop.json`` by ``app-up up``: the images the lane was asked to run (what ``up`` was given).
+#: ``fastloop.json`` keeps what ``up`` delivered: an EKS lane's images are ECR digest refs, not the tags asked for.
+REQUESTED_IMAGES_FILE = "requested-images.json"
+
+
+def requested_images(command: Sequence[str]) -> dict[str, str]:
+    """The operator images a ``fastloop up`` command line names (the last of each flag wins, as in fastloop)."""
+    found: dict[str, str] = {}
+    for flag, role in (("--controller-image", "controller"), ("--responder-image", "responder")):
+        values = [command[i + 1] for i, word in enumerate(command[:-1]) if word == flag]
+        if values:
+            found[role] = values[-1]
+    return found
 
 
 def settings_for(env: Mapping[str, str]) -> AgentSettings | None:
