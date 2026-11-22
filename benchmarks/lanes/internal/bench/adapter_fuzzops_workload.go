@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -108,8 +109,9 @@ func (w fuzzopsWorkload) Call(ctx context.Context, c WorkloadCall) (int, string,
 	return runAdapter(ctx, w.dir, exec.CommandContext(ctx, filepath.Join(w.dir, "bin", "fuzzops"), argv...), c, "fuzzops "+strings.Join(argv, " "))
 }
 
-func (w fuzzopsWorkload) Grade(ctx context.Context, dir string, log io.Writer) error {
+func (w fuzzopsWorkload) Grade(ctx context.Context, dir string, env []string, log io.Writer) error {
 	cmd := exec.CommandContext(ctx, filepath.Join(w.dir, "bin", "fuzzops"), "report", dir)
 	cmd.Dir, cmd.Stdout, cmd.Stderr = w.dir, log, log
+	cmd.Env = append(os.Environ(), env...)
 	return cmd.Run()
 }

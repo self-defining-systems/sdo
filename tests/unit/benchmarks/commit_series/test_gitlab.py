@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from typing import TYPE_CHECKING
+
+import yaml
 
 from benchmarks.commit_series import gitlab
 from benchmarks.common.replay.replay import replay
@@ -104,3 +107,72 @@ def test_a_release_carries_the_migration_job_its_upgrade_needs_and_the_base_does
     assert "migrations-1" in upgrade
     assert "hooked" not in upgrade
     assert "namespace" not in upgrade
+
+
+def _bundle_baseline(root: Path, render: str, plan: str) -> Path:
+    """A synthetic baseline directory: a memory repository (render and plan) bundled on branch ``mem``."""
+    memory = root / "memory-src"
+    (memory / "k8s").mkdir(parents=True)
+    (memory / ".sdo" / "deployment").mkdir(parents=True)
+    (memory / "k8s" / "render.yaml").write_text(render)
+    (memory / ".sdo" / "deployment" / "plan.yaml").write_text(plan)
+    vcs(memory, "init", "-q", "-b", "mem")
+    vcs(memory, "add", "-A")
+    vcs(memory, "commit", "-q", "-m", "memory")
+    out = root / "baseline"
+    out.mkdir()
+    vcs(memory, "bundle", "create", str(out / "memory.bundle"), "mem")
+    (out / "baseline.json").write_text(
+        json.dumps({"bundle": "memory.bundle", "branch": "mem", "commit": vcs(memory, "rev-parse", "HEAD")})
+    )
+    return out
+
+
+def test_stable_job_ids_star_a_generated_suffix_and_keep_a_plain_name() -> None:
+    assert gitlab.stable_job_id("gitlab-migrations-147f0eb") == "Job/fg1/gitlab-migrations-*"
+    assert gitlab.stable_job_id("gitlab-objectstore-buckets") == "Job/fg1/gitlab-objectstore-buckets"
+    assert gitlab.stable_job_id("db-migrate") == "Job/fg1/db-migrate"  # a word with no digit is no hash
+
+
+def test_a_series_baseline_carries_the_base_jobs_and_names_every_job_of_the_series(tmp_path: Path) -> None:
+    web = "kind: Deployment\nmetadata:\n  name: web\nspec:\n  image: v1\n"
+    job = "kind: Job\nmetadata:\n  name: db-migrations-1a2b3c4\nspec:\n  image: v1\n"
+    tail = "kind: Service\nmetadata:\n  name: web\n"
+    repo = tmp_path / "upstream"
+    repo.mkdir()
+    vcs(repo, "init", "-q", "-b", "trunk")
+
+    def commit(render: str, message: str) -> str:
+        (repo / "k8s").mkdir(exist_ok=True)
+        (repo / "k8s" / "render.yaml").write_text(render)
+        vcs(repo, "add", "-A")
+        vcs(repo, "commit", "-q", "-m", message)
+        return vcs(repo, "rev-parse", "HEAD")
+
+    base = commit("---\n".join([web, job, tail]), "base")
+    release = commit("---\n".join([web.replace("v1", "v2"), job.replace("1a2b3c4", "5d6e7f8"), tail]), "release")
+    series = tmp_path / "series.json"
+    series.write_text(json.dumps({"upstream": {"repo": str(repo), "base": base, "commits": [release]}}))
+    # the baseline's render is the pack's: the same objects, and no Job
+    source = _bundle_baseline(
+        tmp_path,
+        "---\n".join([web, tail + "  annotations:\n    note: instrumented\n"]),
+        json.dumps({"expectedWorkloadIds": ["Deployment/fg1/web"]}),
+    )
+
+    head = gitlab.derive_baseline(source, tmp_path / "derived", series)
+
+    derived = json.loads((tmp_path / "derived" / "baseline.json").read_text())
+    assert derived["commit"] == head
+    clone = tmp_path / "clone"
+    vcs(tmp_path, "clone", "-q", "-b", "mem", str(tmp_path / "derived" / "memory.bundle"), str(clone))
+    assert vcs(clone, "rev-parse", "HEAD") == head
+    kinds = [d["kind"] for d in yaml.safe_load_all((clone / "k8s" / "render.yaml").read_text())]
+    assert kinds == ["Deployment", "Job", "Service"]  # the Job sits where it does in the release's render
+    assert "note: instrumented" in (clone / "k8s" / "render.yaml").read_text()  # what the memory had is kept
+    plan = json.loads((clone / ".sdo" / "deployment" / "plan.yaml").read_text())
+    assert plan["expectedWorkloadIds"] == ["Deployment/fg1/web", "Job/fg1/db-migrations-*"]
+    # the release applies onto the derived memory as an engineer's diff does
+    vcs(clone, "checkout", "-q", "-b", "replay")
+    vcs(clone, "fetch", "-q", str(repo), release)
+    vcs(clone, "cherry-pick", release)

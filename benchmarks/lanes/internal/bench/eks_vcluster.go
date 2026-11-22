@@ -214,16 +214,6 @@ func uniq(in []string) []string {
 	return out
 }
 
-// eksLastLane says whether lane is the only lane of host that has a cluster now: deleting it lets the host's nodes go.
-func (m *Manager) eksLastLane(host, lane string) bool {
-	for name, o := range m.eksLedger(host).Open {
-		if name != lane && o.Virtual {
-			return false
-		}
-	}
-	return true
-}
-
 // adoptEksHost is `lanes host adopt HOST` for an eks host with vcluster lanes: it makes the host cluster once (or attaches
 // the one that exists, scaling its system nodes up) and records when it began to bill.
 func adoptEksHost(ctx context.Context, root Root, inv Inventory, host string, run runFn, out io.Writer) error {
@@ -236,7 +226,7 @@ func adoptEksHost(ctx context.Context, root Root, inv Inventory, host string, ru
 	if err != nil {
 		return err
 	}
-	env := append(h.EnvList(), "LANES_INSTALL="+dir)
+	env := append(append(h.EnvList(), eksAccountEnv(h.EKS)...), "LANES_INSTALL="+dir)
 	var pre strings.Builder
 	for _, kv := range env {
 		k, v, _ := strings.Cut(kv, "=")

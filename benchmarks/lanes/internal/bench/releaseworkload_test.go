@@ -68,3 +68,35 @@ func TestLoadBackfillsThePreparedFromItsExperimentsSpec(t *testing.T) {
 		t.Fatalf("prepared %+v", p)
 	}
 }
+
+// A lane prepared with a checkout the inventory no longer pins (the pins moved on while the lane sat free) still has
+// its cluster deleted: a delete needs no workload, and refusing it every pass left the lane's nodes billing for hours
+// with one log line every 15 seconds. Any other step on it is still refused, naming the checkout.
+func TestClusterDeleteOfALaneWhoseCheckoutLeftTheInventoryIsStarted(t *testing.T) {
+	l := newFlab(t, "h1=c1")
+	l.add("e1", []string{"h1"}, "a@x", 0)
+	l.runningStep("c1", StepBuild)
+	l.buildOK("c1")
+	l.pass()
+	lane := l.m.lanes["c1"]
+	if lane.Prepared == nil {
+		t.Fatalf("lane has no prepared operator: %+v", lane)
+	}
+	lane.Prepared.WorkloadRev = "deadbee"
+	var logs strings.Builder
+	l.m.Log = &logs
+	lane.Step = nil
+	if l.m.start(context.Background(), lane, Step{Kind: StepRelease, Prev: lane.Prepared}) {
+		t.Fatal("a teardown that needs the missing checkout started")
+	}
+	if !strings.Contains(logs.String(), "deadbee") {
+		t.Fatalf("the refusal does not name the checkout: %q", logs.String())
+	}
+	lane.Step = nil
+	if !l.m.start(context.Background(), lane, Step{Kind: StepRelease, Prev: lane.Prepared, DeleteCluster: true}) {
+		t.Fatalf("the cluster delete was refused: %q", logs.String())
+	}
+	if s := l.w.last("c1", StepRelease); s == nil || s.Fuzzops != "" || !s.DeleteCluster {
+		t.Fatalf("delete started with %+v, want no checkout", s)
+	}
+}

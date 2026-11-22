@@ -55,7 +55,13 @@ The spec for the experiment (`workload` is the adapter; the subject's `settings.
 ```
 
 `instances.json`: `{"ids": ["toy-series"], "series": {"toy-series": {"spec": "series.json", "verdict_s": 600, "steady_s": 60}}}`.
-Do not pool the lane (a pool reset would not undo the remote's history). The baseline must be SDO's memory for the app
+A lane may be pooled (`hold` + `keep_lanes`, claimed by the series; the reset between attempts costs minutes, not a rebuild)
+when `settings.source_branch` also has a `rewind` command (`... commit_series remote rewind --kubeconfig {kubeconfig}
+--namespace {namespace} --ref {ref} --head {head}`): the reset puts the branch back at the prepared head and drops SDO's
+refused head, the golden copy returns the app to the base release. Position 1 then proves the lane equals a fresh install
+(`verify_start`, plus the branch's head and SDO's hold) and runs nothing on a lane that does not; the series clock restarts
+at position 1. The baseline must also name the series' Jobs: `python -m benchmarks.commit_series.gitlab baseline SRC DEST
+--series series.json` derives it (a head push cannot amend the deployment plan). The baseline must be SDO's memory for the app
 **as of the series base commit**: the first push is a diff against the base.
 
 ## Series

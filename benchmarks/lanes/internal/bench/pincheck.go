@@ -54,7 +54,7 @@ func checkPins(ctx context.Context, inv Inventory, s Spec, log io.Writer, cache 
 			defer func() { <-sem }()
 			whys[i], _ = cache.do(key, func() (string, error) {
 				c, cancel := context.WithTimeout(ctx, addPinTimeout)
-				out, err := run(c, h, IdentityCommand(s.Workload, fz))
+				out, err := run(c, h, IdentityCommand(s.Workload, fz, inv.Hosts[h].EnvFor(s.Workload)))
 				cancel()
 				var v Version
 				switch {

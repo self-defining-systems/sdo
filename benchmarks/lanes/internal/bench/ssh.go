@@ -76,7 +76,7 @@ func (h sshHost) Start(ctx context.Context, s Step) error {
 }
 
 func (h sshHost) Kill(ctx context.Context, lane, id string) error {
-	_, err := h.run(ctx, nil, killScript(filepath.Join(h.h.Staging, lane, id, "step.json"), 5))
+	_, err := h.run(ctx, nil, killScript(filepath.Join(h.h.Staging, lane, id, "step.json"), stepKillGrace))
 	return err
 }
 

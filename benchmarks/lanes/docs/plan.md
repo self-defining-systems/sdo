@@ -114,8 +114,10 @@ alarms: {factor: 2, idle_lane: 10m, arm_stall: 90m, hook: "notify-send lanes \"$
   stay). `lanes plan skip NAME ITEM` skips the item: its unreleased nodes (also those
   that come back for a retry) are skipped, in-flight ones finish, and a skip is not a failure (no parking).
   `unskip` stops skipping new nodes; those already skipped stay skipped. `--cancel` (`remove --keep`, `skip`) also cancels the
-  runs in flight: the experiment is removed (its queued runs are dropped; a run already on a lane finishes, as with
-  `lanes remove`) and running steps get SIGTERM; the cancelled node is skipped with the reason. `plan status` shows
+  runs in flight: the experiment is removed (its queued runs are dropped), the manager kills a run already on a lane
+  (TERM, then KILL to everything the step started; the lane's cluster stays when the spec keeps lanes, and the lane
+  is recovered like one whose step died) and running plan steps get SIGTERM; the cancelled node is skipped with the
+  reason. Without `--cancel` a run in flight finishes, as with `lanes remove`. `plan status` shows
   `paused`, `removed, draining` and the skipped items. `lanes plan retry NAME ITEM|NODE` (or `NAME --all-parked`) un-parks
   after the cause is fixed: it clears the item's park and failure counts (a fresh first failure reruns again, a second
   parks again) and requeues its parked and failed nodes, and the nodes skipped because an input never came, with the

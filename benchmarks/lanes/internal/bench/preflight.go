@@ -427,7 +427,13 @@ func platformTools(h Host) []string {
 		return []string{"kubectl", "docker", "kind", "helm", "vcluster"} // a local kind host cluster: no AWS
 	}
 	if h.IsEks() {
-		return []string{"kubectl", "docker", "aws", "eksctl"} // no kernel to probe and no kind
+		t := []string{"kubectl", "docker", "aws", "eksctl"} // no kernel to probe and no kind
+		if h.IsEksVirtual() {
+			// vcluster lanes: host-up installs with helm, up/down run the vcluster CLI, the host lock is a flock, the
+			// NodePort rule asks checkip with curl: a host without them fails its first `up` half-made
+			t = append(t, "helm", "vcluster", "flock", "curl")
+		}
+		return t
 	}
 	t := []string{"kubectl", "docker", "ip"}
 	if !h.IsVcluster() {

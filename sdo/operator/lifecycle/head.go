@@ -30,6 +30,13 @@ type HeadHolds interface {
 	Hold(ctx context.Context, change broker.HeadChange, reason HoldReason, detail string) error
 }
 
+// HeadDeployments is what the holds may also do: keep a notice of every head that was deployed. A deployment adds no
+// commit and no trailer to history (the head is someone else's commit), so whoever pushed it learns that SDO deployed
+// it, and which verdict the verifier gave, from this notice.
+type HeadDeployments interface {
+	Deployed(ctx context.Context, change broker.HeadChange, result HeadResult) error
+}
+
 // HeadOutcome is what Deploy did about the branch head.
 type HeadOutcome string
 
@@ -110,6 +117,11 @@ func (h HeadDeployer) Deploy(ctx context.Context, cfg RepairConfig) (HeadResult,
 	if out.Outcome == HeadHeld && h.Holds != nil {
 		if err := h.Holds.Hold(ctx, change, out.Hold, out.Detail); err != nil {
 			return HeadResult{}, fmt.Errorf("record head hold: %w", err)
+		}
+	}
+	if notices, ok := h.Holds.(HeadDeployments); ok && out.Outcome == HeadDeployed {
+		if err := notices.Deployed(ctx, change, out); err != nil {
+			return HeadResult{}, fmt.Errorf("record head deployment notice: %w", err)
 		}
 	}
 	return out, nil

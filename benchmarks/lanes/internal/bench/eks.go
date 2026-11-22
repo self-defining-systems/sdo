@@ -468,7 +468,12 @@ func (m *Manager) eksSettle() {
 		}
 		l := m.eksLedger(name)
 		changed := m.eksHostSettle(name, h, l)
-		for _, lf := range m.sortedLanes() {
+		// Lanes that left hosts.yaml are still lanes of the ledger until their cluster is gone.
+		lanes := m.sortedLanes()
+		for _, lf := range m.leaving {
+			lanes = append(lanes, lf)
+		}
+		for _, lf := range lanes {
 			if lf.Host != name {
 				continue
 			}
@@ -493,6 +498,24 @@ func (m *Manager) eksSettle() {
 				m.logf("eks %s: lane %s deleted; %s x %d for %s cost ~$%.2f (host total ~$%.2f)", name, lf.Lane, o.InstanceType, o.Nodes, m.now().Sub(o.Since).Round(time.Second), usd, l.spend(m.now()))
 				changed = true
 			}
+		}
+		// A lane retired after its cluster was deleted (it left hosts.yaml and its release ended in the same pass) never
+		// reaches the loop above: its entry closes here, or it would count against max_lanes, the quota and the budget
+		// for ever. One retired with its cluster left stays open, and billing.
+		for lane, o := range l.Open {
+			if m.lanes[lane] != nil || m.leaving[lane] != nil {
+				continue
+			}
+			var rf LaneFile
+			if readJSON(m.Root.path("lanes", "retired", lane+".json"), &rf) != nil || rf.Host != name || !rf.Gone {
+				continue
+			}
+			usd := round4(o.USDPerHour * m.now().Sub(o.Since).Hours())
+			l.Closed = append(l.Closed, eksSpan{Lane: lane, InstanceType: o.InstanceType, Nodes: o.Nodes, Since: o.Since, Until: m.now().UTC(), USD: usd})
+			l.ClosedUSD = round4(l.ClosedUSD + usd)
+			delete(l.Open, lane)
+			m.logf("eks %s: retired lane %s deleted; cost ~$%.2f", name, lane, usd)
+			changed = true
 		}
 		if changed || m.eksSaved[name].IsZero() || m.now().Sub(m.eksSaved[name]) > time.Minute {
 			if m.eksSaved == nil {
@@ -564,6 +587,13 @@ func eksEnv(h Host, p EksPlan, stateDir string) []string {
 	if e.virtual() && p.Nodes > 0 {
 		env = append(env, "EKS_NODE_VCPUS="+strconv.Itoa(p.VCPUs/p.Nodes))
 	}
+	return append(env, eksAccountEnv(e)...)
+}
+
+// eksAccountEnv is the account and network of the host: every process that touches the host cluster gets them (lane
+// steps and `host adopt` alike), or it acts in whatever account the shell's credentials belong to.
+func eksAccountEnv(e *HostEKS) []string {
+	var env []string
 	if e.Account != "" {
 		env = append(env, "EKS_ACCOUNT="+e.Account)
 	}
@@ -806,7 +836,9 @@ func (m *Manager) eksOrphanLanes() []*LaneFile {
 	var out []*LaneFile
 	for _, l := range m.sortedLanes() {
 		h := m.inv.Hosts[l.Host]
-		if !h.IsEks() || h.ClusterDown == "" || l.State != LaneDown || l.Gone || l.Step != nil {
+		// A retired lane (two automatic resets, then forgotten) whose cluster is not shown deleted bills on: it is asked
+		// again like a Down one.
+		if !h.IsEks() || h.ClusterDown == "" || (l.State != LaneDown && l.State != LaneRetired) || l.Gone || l.Step != nil {
 			continue
 		}
 		if t, ok := m.eksCleanAt[l.Lane]; ok && m.now().Sub(t) < eksCleanupRetry {

@@ -214,16 +214,18 @@ def upstream_commit(commits: list[AcceptedCommit], pushed: str) -> AcceptedCommi
 
 
 def wait_verdict(
-    ops: ScenarioOps, timings: ScenarioTimings, pushed: str
+    ops: ScenarioOps, timings: ScenarioTimings, pushed: str, *, incident_ends: bool = True
 ) -> tuple[str, AcceptedCommit | None, HoldRecord | None]:
-    """Poll until the push is accepted, held, or an incident is open; "" when none happens in time."""
+    """Poll until the push is accepted, held, or an incident is open; "" when none happens in time.
+
+    ``incident_ends`` False when an incident was already open at the push: it is not the push's verdict."""
     deadline = ops.clock() + timings.verdict
     while True:
         if commit := upstream_commit(ops.accepted_commits(), pushed):
             return "accepted", commit, None
         if hold := next((h for h in ops.holds() if h.revision == pushed), None):
             return "held", None, hold
-        if ops.incident_open():
+        if incident_ends and ops.incident_open():
             return "incident", None, None
         if ops.clock() >= deadline:
             return "", None, None

@@ -130,16 +130,22 @@ func (g guardedOps) Kill(ctx context.Context, lane, id string) error {
 	return err
 }
 
-// killScript ends the step whose step.json is at stepPath: its process group gets TERM, and KILL when it is still
-// there after grace seconds. It finds the step by its command line (`... step <stepPath>`), so it needs nothing from
-// the pinned binary. The bracket keeps pgrep from matching this shell.
+// stepKillGrace is how many seconds the manager gives a killed step's processes, after TERM, to undo what they were
+// doing before the rest are killed.
+const stepKillGrace = 20
+
+// killScript ends the step whose step.json is at stepPath and everything it started: TERM to its whole session
+// (the step is a session of its own, from `setsid`; the workload adapter runs in a process group of its own inside
+// it, so a signal to the step's group alone never reaches the adapter and leaves its run going on the lane), and KILL
+// to what is still in the session after grace seconds. It finds the step by its command line (`... step <stepPath>`),
+// so it needs nothing from the pinned binary. The bracket keeps pgrep from matching this shell.
 func killScript(stepPath string, grace int) string {
 	n := len(stepPath) - 1
 	pat := stepPath[:n] + "[" + stepPath[n:] + "]"
 	return fmt.Sprintf(`pid=$(pgrep -f -- %s | head -n 1); [ -n "$pid" ] || exit 0; `+
-		`kill -TERM -- -$pid 2>/dev/null || kill -TERM $pid 2>/dev/null; i=0; `+
-		`while [ $i -lt %d ] && kill -0 $pid 2>/dev/null; do sleep 1; i=$((i+1)); done; `+
-		`if kill -0 $pid 2>/dev/null; then kill -KILL -- -$pid 2>/dev/null || kill -KILL $pid 2>/dev/null; fi; true`,
+		`pkill -TERM -s $pid 2>/dev/null; kill -TERM -- -$pid 2>/dev/null; i=0; `+
+		`while [ $i -lt %d ] && pgrep -s $pid >/dev/null 2>&1; do sleep 1; i=$((i+1)); done; `+
+		`if pgrep -s $pid >/dev/null 2>&1; then pkill -KILL -s $pid 2>/dev/null; kill -KILL -- -$pid 2>/dev/null; fi; true`,
 		shellQuote(pat), grace)
 }
 
@@ -184,6 +190,11 @@ func stepBound(kind string, s Spec) time.Duration {
 		return cap + 2*rt + 45*time.Minute
 	case StepBuild:
 		return 4*time.Hour + rt
+	case StepRelease:
+		// The teardown's idle wait lasts at most the cap and the cluster delete (45 minutes at most) follows it: a
+		// bound at the cap would kill a release that is only waiting as long as it may, and the lane's nodes would
+		// bill for want of its cluster delete.
+		return max(2*time.Hour, cap+time.Hour)
 	}
 	return 2 * time.Hour
 }

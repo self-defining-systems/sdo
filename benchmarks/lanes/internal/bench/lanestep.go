@@ -304,6 +304,7 @@ func (r *stepRunner) reapplyLimits(ctx context.Context) {
 	cmd.Stdout, cmd.Stderr = r.log, r.log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = shellWaitDelay
 	if err := cmd.Run(); err != nil {
 		r.logf("lane limits not re-applied: %v", err)
 	}

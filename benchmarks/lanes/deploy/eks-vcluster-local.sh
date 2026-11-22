@@ -28,7 +28,17 @@ KIND_NET=kind
 
 account() { echo local-kind; }
 
-host_exists() { kind get clusters 2>/dev/null | grep -qx "$HOST"; }
+# host_state: 0 the host cluster exists, 1 it does not (kind lists it or not; a kind that cannot list says it cannot tell).
+host_state() {
+  local out
+  out=$(kind get clusters 2>&1) || { log "cannot tell whether host cluster $HOST exists: ${out: -200}"; return 2; }
+  if printf '%s\n' "$out" | grep -qx "$HOST"; then return 0; fi
+  return 1
+}
+host_exists() { host_state; }
+
+# a lane's nodes are workers of the host cluster: released synchronously (release_lane_nodes), no node pool to wait for
+lane_pool_absent() { return 0; }
 
 refresh_host_kubeconfig() {
   mkdir -p "$(dirname "$HK")"

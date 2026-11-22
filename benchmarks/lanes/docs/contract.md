@@ -17,12 +17,19 @@ Both roles: **environment in, last stdout line JSON out.**
   `BENCH_EXPERIMENT`, `KUBECONFIG`, `FUZZOPS_NAMESPACE`, `BENCH_PACK`, `BENCH_LANE_DIR`, `BENCH_OUT`, the evidence
   variables and the host's own `env`; the `FUZZOPS_*` names are kept for compatibility). A workload call adds
   `WORKLOAD_VERB`, `WORKLOAD_ACTION` and `WORKLOAD_ARGS` (a JSON array of the operation's options).
+- A run step also carries the spec's bounds, `BENCH_CAP_SECONDS` (inject to idle) and `BENCH_READY_TIMEOUT_SECONDS`
+  (the gate). The workload's `run` verb is bounded by them from inside: a run that outlives ready_timeout + cap + its
+  own close-out margin is the adapter's to end, killing its whole process tree and answering invalid with a named
+  reason; lanes' own limit on the verb (`hookTimeouts`) is only the backstop for an adapter that stopped answering.
+- A cancelled or killed step ends its adapter too: the manager signals the step's whole session (TERM, then KILL
+  after a grace), and a workload verb cancelled by its caller gets TERM to its process group and KILL to what is left
+  after `adapterTermGrace`.
 - The result is the **last non-empty line of stdout**, a JSON value. Earlier lines are progress and go to the log.
   stderr is the log; its last bytes are the reason of a failure.
 - Exit 0 is success. Any other exit is a failure of that verb. Retrying is the platform's job: an adapter never
   retries internally.
-- Each verb has a time limit (`hookTimeouts` in `internal/bench/hooks.go`); the platform kills the process group at
-  the limit.
+- Each verb has a time limit (`hookTimeouts` in `internal/bench/hooks.go`; `run active` and `run undo` are bounded at
+  20 minutes, not the run's six hours); the platform kills the process group at the limit.
 
 ### Workload settings belong to the workload, not the host
 
@@ -41,6 +48,10 @@ The key is the workload's id: the spec's `workload` string exactly as written (a
 its entries on top of `env` (an entry of the same name wins); a step of another workload does not see them. Host-level
 work that belongs to no workload (ledger, preflight, reservations) never carries them. A host with no `workload_env`
 behaves as before.
+
+"A step of that workload" is every process the platform starts for the workload: the verbs of build, run, release,
+recover and unhold steps, and the footprint, grade and identity calls made outside a step. A step takes its workload
+from its experiment, or, for a release, recover or unhold whose plan may be gone, from what the lane was prepared with.
 
 ### Unsupported verbs
 
@@ -61,7 +72,8 @@ contract, unchanged (semantics in fuzzops `docs/bench.md`, "Hook contract").
 | `describe` | called at `plan add` and `add` once per hooks checkout and operator settings, on the manager's host, with `BENCH_OPERATOR` (hooks, revision, settings). Answer: `{"max_startup":"30m","needs_credentials":true,"inputs":{"seed":{"requires":["baseline"]}}}`. `max_startup` is how long a fresh install may report busy (`0s` or absent: none); `needs_credentials` says whether preflight should check a model credential; `inputs` are rules on the spec's named inputs (`requires` lists inputs that must also be set). Lanes stores the answer in the experiment's lock (`described`) and reads it instead of the operator settings. **Unsupported (a pin that predates the verb) falls back to the built-in SDO answer, and lanes logs `pre-contract pin` once per checkout** |
 | `check-input` | called at `add` / `plan add` and in `lanes preflight` for each of a spec's inputs (`operator.baseline`, `operator.seed`) that is set and no placeholder, on the manager's host. Environment: `BENCH_INPUT_KIND` (`baseline` or `seed`), `BENCH_INPUT_PATH`, `BENCH_INPUT_PHASE` (`add`: no cluster is known yet; `preflight`), `BENCH_INPUT_ALLOW` (comma-separated diagnostics a human asked to allow) and `BENCH_OPERATOR`. Answer: `{"ok":true,"detail":"...","note":"..."}`; `ok:false` refuses the spec with `detail`; `note` says why nothing was checked (not a failure). Lanes runs no check of its own on an input. **Unsupported falls back to the built-in SDO memory check (`memory migrate`) with a `pre-contract pin` log once** |
 | `preflight` | called by `lanes preflight` once per hooks checkout per host. Answer: `{"checks":[{"check":"name","ok":true,"detail":"..."}]}`. **Unsupported falls back to the SDO operator's built-in checks** (credential call, sink, proto binding, baseline memory, `sdo-*` images), which is what preflight has always run. A subject that answers `preflight` owns all the checks of its specs: the platform runs none of its own for them, inputs included. In that fallback a spec whose operator settings say `model: stub` (a no-model stand-in agent) gets no credential call (a passing note says it was skipped), and the baseline memory check on a host with no hooks checkout of the pin reports "not checkable here" as a passing note, not a failure |
-| `export-artifact`, `verify-artifact`, `reseed`, `verify-start` | defined, **not called yet**; every adapter answers unsupported |
+| `export-artifact`, `verify-artifact`, `reseed` | defined, **not called yet**; every adapter answers unsupported |
+| `verify-start` | defined, **not called by lanes yet**. The SDO hooks implement it as the proof that a lane (built or reset in place) equals a fresh install: accepted memory at its prepared commit, no open incident or pending closure, every workload on the base release's images. Answer `{"ok":bool,"problems":[...]}`, exit 1 with problems. The commit-series adapter calls it at position 1 and adds the branch's checks |
 
 The build check waits `max(ready_timeout, max_startup + 10m)` for `idle`: a subject reports busy through its own start-up period, and a lane is never failed for a wait shorter than it. `max_startup` is the subject's `describe` answer (for a pin without `describe`: SDO's `operator.settings.startup_bound`, default 30m).
 

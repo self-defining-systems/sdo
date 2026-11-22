@@ -146,6 +146,7 @@ if TYPE_CHECKING:
         install_persistent_controller,
         native_install_config,
     )
+    from benchmarks.sregym.adapter.wait_progress import CURRENT_WAIT_ENV as CURRENT_WAIT_ENV
 
 _EXPORTS: dict[str, str] = {
     "FaultReversion": "fault_reversion",
@@ -166,6 +167,7 @@ _EXPORTS: dict[str, str] = {
     "allocated_paths": "kubernetes_content",
     "declared_manifest": "kubernetes_content",
     "replace_allocated": "kubernetes_content",
+    "CURRENT_WAIT_ENV": "wait_progress",
     "Deadline": "budgets",
     "DeadlineExhaustedError": "budgets",
     "HostMemoryPolicy": "host_memory",

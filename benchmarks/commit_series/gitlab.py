@@ -10,8 +10,11 @@ Why it is realistic: this is what an operator of a GitLab deployment actually ha
 that move the CNG images, a minor release that moves every image and adds values. Nothing is invented. Each commit's
 tree is the fuzzops GitLab pack's release rendered as the pack's SDO repository holds it (``helm template`` of its
 umbrella chart with that upstream release and the pack's values, then the same plain-manifest conversion the hooks make
-of the live release: no Jobs, hooks or namespaces), written as ``k8s/render.yaml``. A commit therefore replays as the
-diff that one chart bump makes to that file.
+of the live release: no hooks or namespaces, and the Jobs that are not hooks), written as ``k8s/render.yaml``. A commit
+therefore replays as the diff that one chart bump makes to that file.
+
+The Jobs are workloads of SDO's deployment plan, and a head push has no route to amend the plan, so the baseline a
+series runs on must already name them: ``baseline`` derives it from an existing baseline (``derive_baseline``).
 
 The series is built at run time from cached or downloaded archives (digest checked); nothing is committed.
 """
@@ -45,8 +48,8 @@ NEXT_PATH = RELEASES_PATH.with_name("releases-10.5.4.json")
 def plain_render(helm_output: str, *, migrations: bool = False) -> str:
     """The pack's SDO repository file for a render: plain documents without helm hooks, as ``yaml.safe_dump_all``.
 
-    ``migrations`` keeps the Jobs that are not helm hooks (the chart's schema migration). The base render has none, as
-    the pack's baseline holds none; a release needs its own, or its pods wait in an init container for the schema.
+    ``migrations`` keeps the Jobs that are not helm hooks (the chart's schema migration): a release needs its own, or
+    its pods wait in an init container for the schema. A series keeps them in every commit, the base too.
 
     Pod ``checksum/*`` annotations are left out. They hash the rendered config, which SDO's own instrumentation has
     changed in the lane's file, so every chart bump would conflict on them there; an engineer would resolve that by
@@ -126,7 +129,7 @@ def build(
     repo = dest / "upstream"
     repo.mkdir(parents=True)
     _git(repo, "init", "-q", "-b", "trunk")
-    _write_tree(repo, render(base, fetch_archive(base, cache), pack))
+    _write_tree(repo, render(base, fetch_archive(base, cache), pack, migrations=True))
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", f"chore(deps): gitlab chart {base.version} (app {base.app_version}), the base")
     base_sha = _git(repo, "rev-parse", "HEAD")
@@ -151,11 +154,84 @@ def build(
         "source": f"https://gitlab.com/gitlab-org/charts/gitlab releases; digests in apps/gitlab/{releases_path.name}",
         "upstream": {"repo": str(repo), "base": base_sha, "commits": commits},
         "mode": "diff",
-        "on_conflict": "stop",
+        # a commit that does not apply is skipped and recorded, so one run shows every position that fails
+        "on_conflict": "skip",
     }
     path = dest / "series.json"
     path.write_text(json.dumps(spec, indent=1) + "\n")
     return path
+
+
+# ---- the baseline a series runs on ---------------------------------------------------------------------------------
+
+_GENERATED = re.compile(r"^[a-z0-9]{5,10}$")  # the grammar of a plan's `*` (sdo/operator/rendered/workloads.go)
+MEMORY_COMMIT_MESSAGE = (
+    "sdo(series-base): the series' Jobs are workloads of the deployment plan\n\n"
+    "The base release's migration and bucket Jobs are in the render, and the plan names every Job a release of the\n"
+    "series carries (a generated name as Job/<namespace>/<prefix>-*).\n\n"
+    "SDO-Incident: commit-series-baseline\nSDO-Actor: health_judge\nSDO-Phase: initial\nSDO-Validation: passed\n"
+)
+
+
+def stable_job_id(name: str, namespace: str = NAMESPACE) -> str:
+    """The plan identity of a Job: a generated name suffix (five to ten lowercase alphanumerics with a digit) is `*`."""
+    prefix, _, token = name.rpartition("-")
+    if prefix and _GENERATED.match(token) and any(c.isdigit() for c in token):
+        return f"Job/{namespace}/{prefix}-*"
+    return f"Job/{namespace}/{name}"
+
+
+def _jobs(render: str) -> list[str]:
+    return [d["metadata"]["name"] for d in yaml.safe_load_all(render) if isinstance(d, dict) and d.get("kind") == "Job"]
+
+
+def series_job_ids(repo: Path, revisions: list[str]) -> list[str]:
+    """Every Job any of ``revisions`` renders, as plan workload IDs (sorted, once each)."""
+    ids = {stable_job_id(name) for rev in revisions for name in _jobs(_git(repo, "show", f"{rev}:{RENDER_FILE}"))}
+    return sorted(ids)
+
+
+def derive_baseline(source: Path, dest: Path, series: Path) -> str:
+    """A copy of the baseline ``source`` for the series ``series`` (its ``series.json``) in ``dest``: the memory's
+    render gains the base release's Jobs (merged in where they sit in the base render) and its deployment plan names
+    every Job the series carries. Returns the new memory commit. The series' commits then apply onto it as they did
+    onto the source."""
+    spec = json.loads(series.read_text())["upstream"]
+    repo = Path(spec["repo"])
+    base_text = _git(repo, "show", f"{spec['base']}:{RENDER_FILE}") + "\n"
+    jobless = yaml.safe_dump_all(
+        [d for d in yaml.safe_load_all(base_text) if isinstance(d, dict) and d.get("kind") != "Job"], sort_keys=False
+    )
+    shutil.copytree(source, dest, ignore=shutil.ignore_patterns("memory.bundle"))
+    baseline = json.loads((dest / "baseline.json").read_text())
+    with tempfile.TemporaryDirectory(prefix="series-baseline-") as scratch:
+        work, files = Path(scratch) / "memory", Path(scratch)
+        subprocess.run(
+            ["git", "clone", "-q", "-b", baseline["branch"], str(source / baseline["bundle"]), str(work)], check=True
+        )
+        (files / "base").write_text(jobless)
+        (files / "other").write_text(base_text)
+        merged = subprocess.run(
+            ["git", "merge-file", "-p", str(work / RENDER_FILE), str(files / "base"), str(files / "other")],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if merged.returncode != 0:
+            raise ValueError(f"the base release's Jobs do not merge into the baseline's render ({merged.returncode})")
+        (work / RENDER_FILE).write_text(merged.stdout)
+        plan_path = work / ".sdo" / "deployment" / "plan.yaml"
+        plan = json.loads(plan_path.read_text())
+        plan["expectedWorkloadIds"] += [
+            i for i in series_job_ids(repo, [spec["base"], *spec["commits"]]) if i not in plan["expectedWorkloadIds"]
+        ]
+        plan_path.write_text(json.dumps(plan, separators=(",", ":")))
+        _git(work, "commit", "-q", "-a", "-m", MEMORY_COMMIT_MESSAGE)
+        head = _git(work, "rev-parse", "HEAD")
+        _git(work, "bundle", "create", str(dest / baseline["bundle"]), baseline["branch"])
+    baseline["commit"] = head
+    (dest / "baseline.json").write_text(json.dumps(baseline, indent=2) + "\n")
+    return head
 
 
 # ---- measuring a release list -------------------------------------------------------------------------------------
@@ -292,7 +368,14 @@ def main(argv: list[str] | None = None) -> int:
     make.add_argument("--cache", type=Path, required=True)
     make.add_argument("--list", type=Path, default=NEXT_PATH)
     make.add_argument("--limit", type=int)
+    derived = sub.add_parser("baseline", help="derive the baseline a series runs on from an existing baseline")
+    derived.add_argument("source", type=Path)
+    derived.add_argument("dest", type=Path)
+    derived.add_argument("--series", type=Path, required=True, help="the series.json `build` wrote")
     args = parser.parse_args(argv)
+    if args.command == "baseline":
+        print(derive_baseline(args.source, args.dest, args.series))
+        return 0
     if args.command == "derive":
         document = derive_list(args.index, args.versions, args.base, args.pack, args.cache)
         args.out.write_text(json.dumps(document, indent=2) + "\n")

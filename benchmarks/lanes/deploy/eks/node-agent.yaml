@@ -50,7 +50,7 @@ spec:
                     *.dkr.ecr.*.amazonaws.com/*) user="--user AWS:$(aws ecr get-login-password --region "@REGION@")";;
                   esac
                   t0=$(date +%s)
-                  if ctr -n k8s.io images pull --hosts-dir /certs $user "$ref" > /lane/prepull.log 2>&1; then
+                  if timeout 600 ctr -n k8s.io images pull --hosts-dir /certs $user "$ref" > /lane/prepull.log 2>&1; then
                     echo "$ref" >> /lane/prepulled
                     echo "prepulled $ref in $(( $(date +%s) - t0 )) s"
                   else
