@@ -28,6 +28,8 @@ type Manager struct {
 	Poll       time.Duration // idle polls inside steps (default 10 s)
 	Log        io.Writer
 	claimSince map[string]time.Time // when each claimant began waiting for a pool lane
+	// stepWoken are the steps whose finish already ended a wait for the next pass (waitTick).
+	stepWoken map[string]bool
 	// Ops returns how to reach host (default: local steps with Bin, or ssh).
 	Ops func(name string, h Host) HostOps
 	Bin string // fuzzops-bench for local steps (default: this executable)
@@ -195,12 +197,14 @@ func Wake(root Root) error {
 	return writeFile(root.wakePath(), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"))
 }
 
-// waitTick waits for the next pass: the tick, or a wake request, whichever comes first. False when ctx ended.
+// waitTick waits for the next pass: the tick, a wake request, or a step on this machine that finished, whichever comes
+// first. False when ctx ended.
 func (m *Manager) waitTick(ctx context.Context) bool {
 	deadline := time.NewTimer(m.Tick)
 	defer deadline.Stop()
 	poll := time.NewTicker(wakePollEvery)
 	defer poll.Stop()
+	finishing := m.localStepManifests()
 	for {
 		select {
 		case <-ctx.Done():
@@ -212,8 +216,44 @@ func (m *Manager) waitTick(ctx context.Context) bool {
 				_ = os.Remove(m.Root.wakePath())
 				return true
 			}
+			if m.stepFinished(finishing) {
+				return true
+			}
 		}
 	}
+}
+
+// localStepManifests are the manifests (the file that says a step finished, ProbeStaging) of the steps in flight on
+// hosts the manager runs on, by step ID: it reads them from disk, so a step ends its own wait for the next pass. A
+// step on a host reached over ssh is seen by that pass's probe only. Each step wakes the manager once: a finished step
+// a pass did not adopt (it is retried on the next one) must not make the waits after it return at once.
+func (m *Manager) localStepManifests() map[string]string {
+	manifests := map[string]string{}
+	for name, h := range m.inv.Hosts {
+		if !h.Local {
+			continue
+		}
+		for lane, id := range m.stepsOn(name) {
+			if !m.stepWoken[id] {
+				manifests[id] = filepath.Join(h.Staging, lane, id, "manifest.json")
+			}
+		}
+	}
+	return manifests
+}
+
+// stepFinished says whether one of the manifests exists, and remembers that step as having woken the manager.
+func (m *Manager) stepFinished(manifests map[string]string) bool {
+	for id, path := range manifests {
+		if fileExists(path) {
+			if m.stepWoken == nil {
+				m.stepWoken = map[string]bool{}
+			}
+			m.stepWoken[id] = true
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) now() time.Time {
