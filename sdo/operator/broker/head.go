@@ -2,8 +2,11 @@ package broker
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"sdo.dev/operator/rendered"
@@ -26,10 +29,10 @@ type HeadChange struct {
 }
 
 // HeadToDeploy reports the accepted head when its effective source differs
-// from the newest recorded deployment, after syncing the memory remote. It is
-// false for an install with no recorded deployment (a seeded one), whose
-// source nothing SDO owns can deploy. A memory-only head changes no effective
-// tree and needs no deployment.
+// from the newest recorded deployment, after syncing the memory remote; an
+// install with no recorded deployment (a seeded one) is measured against the
+// source it adopted (seedBaselineLocked). A memory-only head changes no
+// effective tree and needs no deployment.
 func (b *Broker) HeadToDeploy(ctx context.Context) (change HeadChange, needed bool, err error) {
 	err = b.locked(func() error {
 		if err := b.syncUpstream(ctx); err != nil {
@@ -96,8 +99,9 @@ func (b *Broker) HeadCheckout(ctx context.Context, commit string) (path string, 
 }
 
 // RecordHeadDeployment records that the trusted deployer applied and the
-// independent verifier cleared commit, an accepted commit the broker did not
-// write. The evidence must be of exactly that commit's tree and effective
+// independent verifier cleared commit, an accepted head whose source no
+// recorded deployment covers (someone else's commit, or SDO's own on top of
+// one). The evidence must be of exactly that commit's tree and effective
 // tree; it becomes the newest deployment, so image pins and drift follow it.
 func (b *Broker) RecordHeadDeployment(ctx context.Context, commit string, evidence SourceEvidence) error {
 	if err := validateSourceEvidence(evidence); err != nil {
@@ -131,37 +135,90 @@ func (b *Broker) RecordHeadDeployment(ctx context.Context, commit string, eviden
 	})
 }
 
-// headDeployed reports whether commit, a commit the broker did not write, is
-// a recorded head deployment.
+// headDeployed reports whether commit, a branch head the head deployer applied
+// (someone else's commit, or SDO's own on top of one), is a recorded head
+// deployment.
 func (b *Broker) headDeployed(ctx context.Context, commit string) (bool, error) {
 	return b.deployedBy(ctx, headDeploymentID(commit), commit)
 }
 
+// seedAnchorFile, in the broker workspace, holds the commit a seeded install
+// adopted: the newest commit SDO wrote or installed when the head was first
+// measured. It is written once and survives controller restarts.
+const seedAnchorFile = "seed-adoption.json"
+
 // seedBaselineLocked is the reference of an install with no recorded deployment:
-// the effective source of the newest commit SDO wrote or installed (one that
-// carries an SDO-Actor trailer; someone else's commit never does). found is
-// false when the history holds none.
+// the effective source of the commit it adopted, carried forward over SDO's own
+// later commits (one that carries an SDO-Actor trailer; someone else's commit
+// never does) up to the first commit someone else wrote. A broker commit
+// published on top of an engineer's undeployed push carries that push's
+// source, so it is never the reference; with no such push the reference is
+// SDO's newest commit. found is false when the history holds no SDO commit.
 func (b *Broker) seedBaselineLocked(ctx context.Context) (SourceEvidence, bool, error) {
-	out, err := runGit(ctx, b.target, "log", "--first-parent", "--format=%H%x1f%(trailers:key=SDO-Actor,valueonly)%x1e", "HEAD")
+	anchor, err := b.seedAnchorLocked(ctx)
+	if err != nil || anchor == "" {
+		return SourceEvidence{}, false, err
+	}
+	out, err := runGit(ctx, b.target, "log", "--first-parent", "--reverse", "--format=%H%x1f%(trailers:key=SDO-Actor,valueonly)%x1e", anchor+"..HEAD")
 	if err != nil {
 		return SourceEvidence{}, false, err
+	}
+	reference := anchor
+	for _, record := range strings.Split(string(out), "\x1e") {
+		fields := strings.Split(strings.TrimSpace(record), "\x1f")
+		if len(fields) != 2 || !validGitID(strings.TrimSpace(fields[0])) {
+			continue
+		}
+		if strings.TrimSpace(fields[1]) == "" {
+			break
+		}
+		reference = strings.TrimSpace(fields[0])
+	}
+	tree, err := gitText(ctx, b.target, "rev-parse", reference+"^{tree}")
+	if err != nil {
+		return SourceEvidence{}, false, err
+	}
+	effective, err := rendered.Effective(ctx, rendered.ObjectStore{Dir: b.target}, rendered.BaseTree(tree))
+	if err != nil {
+		return SourceEvidence{}, false, fmt.Errorf("compute the effective tree of %s: %w", reference, err)
+	}
+	defer effective.Close()
+	return SourceEvidence{AcceptedCommit: reference, EffectiveTree: effective.ID, PatchesDigest: effective.PatchesDigest}, true, nil
+}
+
+// seedAnchorLocked is the commit a seeded install adopted: the recorded one
+// while it is still in the accepted history, else SDO's newest commit, which it
+// records. "" when the history holds no SDO commit.
+func (b *Broker) seedAnchorLocked(ctx context.Context) (string, error) {
+	path := filepath.Join(b.workspaceRoot, seedAnchorFile)
+	var recorded struct {
+		Commit string `json:"commit"`
+	}
+	data, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		if json.Unmarshal(data, &recorded) == nil && validGitID(recorded.Commit) {
+			if _, err := runGit(ctx, b.target, "merge-base", "--is-ancestor", recorded.Commit, "HEAD"); err == nil {
+				return recorded.Commit, nil
+			}
+		}
+	case !errors.Is(err, os.ErrNotExist):
+		return "", err
+	}
+	out, err := runGit(ctx, b.target, "log", "--first-parent", "--format=%H%x1f%(trailers:key=SDO-Actor,valueonly)%x1e", "HEAD")
+	if err != nil {
+		return "", err
 	}
 	for _, record := range strings.Split(string(out), "\x1e") {
 		fields := strings.Split(strings.TrimSpace(record), "\x1f")
 		if len(fields) != 2 || strings.TrimSpace(fields[1]) == "" || !validGitID(strings.TrimSpace(fields[0])) {
 			continue
 		}
-		commit := strings.TrimSpace(fields[0])
-		tree, err := gitText(ctx, b.target, "rev-parse", commit+"^{tree}")
-		if err != nil {
-			return SourceEvidence{}, false, err
+		recorded.Commit = strings.TrimSpace(fields[0])
+		if data, err = json.Marshal(recorded); err != nil {
+			return "", err
 		}
-		effective, err := rendered.Effective(ctx, rendered.ObjectStore{Dir: b.target}, rendered.BaseTree(tree))
-		if err != nil {
-			return SourceEvidence{}, false, fmt.Errorf("compute the effective tree of %s: %w", commit, err)
-		}
-		defer effective.Close()
-		return SourceEvidence{AcceptedCommit: commit, EffectiveTree: effective.ID, PatchesDigest: effective.PatchesDigest}, true, nil
+		return recorded.Commit, writeDurable(path, data)
 	}
-	return SourceEvidence{}, false, nil
+	return "", nil
 }

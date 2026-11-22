@@ -125,6 +125,17 @@ func (b *Broker) newestDeployment(ctx context.Context) (commit, incidentID strin
 				return fields[0], incident, true, nil
 			}
 		}
+		// SDO's own commit on top of an engineer's push carries the push's
+		// source: the head deployer deploys and records it like a foreign head.
+		if commit := strings.TrimSpace(fields[0]); validGitID(commit) {
+			deployed, err := b.headDeployed(ctx, commit)
+			if err != nil {
+				return "", "", false, err
+			}
+			if deployed {
+				return commit, headDeploymentID(commit), true, nil
+			}
+		}
 	}
 	return "", "", false, nil
 }
