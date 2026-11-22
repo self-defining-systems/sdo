@@ -2205,6 +2205,8 @@ class ResetSteps:
     controller_idle: Callable[[], str]
     #: Puts the branch SDO deploys from back at the prepared head (a no-op for a lane with no source branch).
     rewind_source: Callable[[str], object] = lambda head: None
+    #: Replaces the control namespace's Prometheus and Jaeger (their emptyDir data goes with the pods).
+    fresh_observability: Callable[[], object] = lambda: None
 
     @classmethod
     def unused(cls) -> ResetSteps:
@@ -2244,6 +2246,7 @@ def reset_lane(env: Mapping[str, str], steps: ResetSteps, out: Callable[[str], N
         steps.rewind_source(prepared["head"])
         app = steps.app_reset()
         out(f"app reset: {json.dumps(app)}")
+        steps.fresh_observability()
         steps.start_controller()
         started_again = True
     finally:
@@ -2494,7 +2497,36 @@ def reset_steps(
         repository_state=lambda: repository_state(kube, control),
         controller_idle=lambda: wait_idle(kube, control, RESET_IDLE_WAIT_S),
         rewind_source=lambda head: rewind_source_branch(env, kube, control, head),
+        fresh_observability=lambda: restart_observability(kube, control),
     )
+
+
+#: The control namespace's observability Deployments: their data lives in emptyDir volumes.
+OBSERVABILITY_DEPLOYMENTS = ("sdo-prometheus", "sdo-jaeger")
+OBSERVABILITY_ROLLOUT_WAIT_S = 240
+
+
+def restart_observability(kube: Kubectl, control: str) -> None:
+    """Replace the control namespace's Prometheus and Jaeger pods so their emptyDir data (TSDB, WAL, traces) is
+    gone. Reset puts the app back to the golden copy; the observability stack kept every earlier run, and on a
+    reused lane Prometheus (1 Gi) was OOM-killed and crash-looped on WAL replay. A lane without them is left as it is."""
+    for name in OBSERVABILITY_DEPLOYMENTS:
+        found = subprocess.run(
+            kube.cmd("-n", control, "get", "deployment", name, "-o", "name"),
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+        if found.returncode != 0:
+            continue
+        run(kube.cmd("-n", control, "rollout", "restart", f"deployment/{name}"), f"restart {name}", 60)
+        run(
+            kube.cmd(
+                "-n", control, "rollout", "status", f"deployment/{name}", f"--timeout={OBSERVABILITY_ROLLOUT_WAIT_S}s"
+            ),
+            f"wait for {name}",
+            OBSERVABILITY_ROLLOUT_WAIT_S + 30,
+        )
 
 
 #: The control-namespace ConfigMap SDO keeps its one refused branch head in (``sdo/operator/runtime/head_poll.go``).
