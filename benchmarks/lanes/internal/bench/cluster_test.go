@@ -165,3 +165,38 @@ func TestHostClusterUpRunsInTheWorkloadCheckout(t *testing.T) {
 		t.Fatalf("got %q, want %q", b, want)
 	}
 }
+
+// A release that deletes the cluster deletes it when the operator's teardown fails: the broken cluster (API or nodes
+// failing) is the one that most needs deleting, and a release that stopped there left it billing.
+func TestClusterDeletingReleaseDeletesTheClusterWhenTheTeardownFails(t *testing.T) {
+	r := newRunner(t, presentCluster)
+	marker := filepath.Join(t.TempDir(), "down")
+	r.s.ClusterDown, r.s.DeleteCluster = "touch "+marker, true
+	prev := &Prepared{Experiment: "x", Hooks: "h", HooksPath: t.TempDir(), Command: "false"} // the teardown hook exits 1
+	r.s.Prev, r.res.Prepared = prev, prev
+	r.release(context.Background())
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("cluster-down did not run after a failed teardown (ok=%v reason=%q down=%q)", r.res.OK, r.res.Reason, r.res.LaneDown)
+	}
+	if !r.res.OK || !r.res.Gone || r.res.LaneDown != "" || !strings.Contains(r.res.TeardownFailed, "teardown") {
+		t.Errorf("ok=%v gone=%v down=%q teardown_failed=%q", r.res.OK, r.res.Gone, r.res.LaneDown, r.res.TeardownFailed)
+	}
+}
+
+// A host command killed at its limit whose descendant still holds the output open does not hold the step past it.
+func TestShellDoesNotWaitForADescendantThatHoldsTheOutput(t *testing.T) {
+	old := shellWaitDelay
+	shellWaitDelay = 200 * time.Millisecond
+	defer func() { shellWaitDelay = old }()
+	r := newRunner(t, presentCluster)
+	r.s.Fuzzops = t.TempDir()
+	r.s.Platform = t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	// setsid: the child leaves the process group the step kills, and keeps stdout open
+	r.shell(ctx, "cluster-down", "setsid sleep 30 & sleep 30", nil)
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("shell waited %s for a descendant outside its group", took)
+	}
+}

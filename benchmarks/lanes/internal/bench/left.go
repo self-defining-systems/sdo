@@ -51,7 +51,13 @@ func (m *Manager) retireLeft() {
 // leftHasCluster says whether a release step should delete the cluster of a lane that left: it was built, its host
 // can delete clusters, and the deletion has neither been done nor failed too often.
 func (m *Manager) leftHasCluster(lf *LaneFile) bool {
-	return lf.Prepared != nil && !lf.Gone && lf.BuildFailures < leftReleaseTries && m.inv.Hosts[lf.Host].ClusterDown != ""
+	h := m.inv.Hosts[lf.Host]
+	if h.IsEks() {
+		// An eks lane whose build failed after its cluster was made has none recorded as prepared and a cluster all the
+		// same: the delete is idempotent and needs no workload, so any lane not shown gone gets it.
+		return !lf.Gone && lf.BuildFailures < leftReleaseTries && h.ClusterDown != ""
+	}
+	return lf.Prepared != nil && !lf.Gone && lf.BuildFailures < leftReleaseTries && h.ClusterDown != ""
 }
 
 // retire closes a lane that left hosts.yaml: bench.log gets its last transition (to retired), its files move to

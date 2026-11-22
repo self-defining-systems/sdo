@@ -28,8 +28,8 @@ Both roles: **environment in, last stdout line JSON out.**
   stderr is the log; its last bytes are the reason of a failure.
 - Exit 0 is success. Any other exit is a failure of that verb. Retrying is the platform's job: an adapter never
   retries internally.
-- Each verb has a time limit (`hookTimeouts` in `internal/bench/hooks.go`); the platform kills the process group at
-  the limit.
+- Each verb has a time limit (`hookTimeouts` in `internal/bench/hooks.go`; `run active` and `run undo` are bounded at
+  20 minutes, not the run's six hours); the platform kills the process group at the limit.
 
 ### Workload settings belong to the workload, not the host
 

@@ -403,7 +403,7 @@ func TestEksLanePushPublishesUnderTheDeclaredName(t *testing.T) {
 	log := s.log()
 	for _, want := range []string{
 		"docker tag busybox:1.36 123456789012.dkr.ecr.us-west-2.amazonaws.com/sdo-mirror/docker.io/library/busybox:1.36",
-		"docker push --quiet 123456789012.dkr.ecr.us-west-2.amazonaws.com/sdo-mirror/docker.io/yinfangchen/hotelreservation:latest",
+		"docker push 123456789012.dkr.ecr.us-west-2.amazonaws.com/sdo-mirror/docker.io/yinfangchen/hotelreservation:latest",
 		"sdo-mirror/ghcr.io/open-telemetry/demo:2.2.0-frontend",
 		"sdo-mirror/docker.io/library/kube-proxy:latest",
 		"docker login --username AWS --password-stdin 123456789012.dkr.ecr.us-west-2.amazonaws.com",

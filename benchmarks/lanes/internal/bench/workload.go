@@ -120,7 +120,7 @@ var adapterTermGrace = 10 * time.Minute
 
 func runAdapter(ctx context.Context, dir string, cmd *exec.Cmd, c WorkloadCall, what string) (int, string, error) {
 	// Each verb has a limit (hookTimeouts): past it the adapter's process group is killed and the reason says so.
-	limit := hookTimeouts[c.Verb]
+	limit := workloadLimit(c.Verb, c.Action)
 	parent := ctx
 	if limit > 0 {
 		var cancel context.CancelFunc
@@ -228,4 +228,16 @@ func (w execWorkload) Grade(ctx context.Context, dir string, env []string, log i
 		err = fmt.Errorf("grade exit %d: %s", code, tail)
 	}
 	return err
+}
+
+// undoLimit bounds `run active` and `run undo`: a fault check and an undo (which gets up to ten minutes) are not a run, and
+// a stuck one must not hold the lane for the run's six hours.
+const undoLimit = 20 * time.Minute
+
+// workloadLimit is the time limit of one workload call: the verb's, except the two operations of `run` that are not a run.
+func workloadLimit(verb, action string) time.Duration {
+	if verb == VerbRun && (action == "active" || action == "undo") {
+		return undoLimit
+	}
+	return hookTimeouts[verb]
 }

@@ -3,6 +3,7 @@
 package bench
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -95,7 +96,7 @@ func TestEksVclusterLaneUpOnAWarmHostMakesNoCluster(t *testing.T) {
 	}
 	applied := s.file("applied.yaml")
 	for _, want := range []string{"metadata: {name: lane-vc1,", "taints: [{key: sdo-lane, value: \"vc1\", effect: NoSchedule}]", "values: [m6i.xlarge]", `limits: {cpu: "8"}`,
-		"consolidationPolicy: WhenEmpty", "replicas: 2", "priorityClassName: sdo-lane-capacity"} {
+		"consolidationPolicy: WhenEmpty", `budgets: [{nodes: "0", reasons: [Drifted]}]`, "replicas: 2", "priorityClassName: sdo-lane-capacity"} {
 		if !strings.Contains(applied, want) {
 			t.Errorf("lane manifests lack %q", want)
 		}
@@ -115,6 +116,9 @@ func TestEksVclusterLaneUpOnAWarmHostMakesNoCluster(t *testing.T) {
 		t.Errorf("entry = %q", e)
 	}
 	log := s.log()
+	if !strings.Contains(log, "get pods -l app.kubernetes.io/name=sdo-lane-node-agent") {
+		t.Errorf("up did not wait for the node agent of the lane's nodes:\n%s", log)
+	}
 	for _, want := range []string{"label node ip-vc1-1 node-role.kubernetes.io/control-plane=", "label node ip-vc1-2 node-role.kubernetes.io/worker=", "delete deployment capacity-vc1"} {
 		if !strings.Contains(log, want) {
 			t.Errorf("no %q in\n%s", want, log)
@@ -243,5 +247,97 @@ func TestEksVclusterPrepullMergesIntoTheHostsList(t *testing.T) {
 		if strings.Count(got, want) != 1 {
 			t.Errorf("list lacks exactly one %q:\n%s", want, got)
 		}
+	}
+}
+
+// A lane that cannot be shown gone is not gone: `down` answers success only after the host says NotFound, never from a
+// call that failed (an expired credential, a throttled or unreachable API counted as "nothing to delete" and the lane's
+// nodes billed on with the ledger closed).
+func TestEksVclusterDownFailsClosedWhenTheHostCannotBeRead(t *testing.T) {
+	for _, down := range []string{"FAKE_EKS_DOWN=1", "FAKE_KUBE_DOWN=1", "FAKE_AWS_ACCOUNT=999999999999"} {
+		s := newVcScript(t)
+		s.hostUp(t)
+		kc := filepath.Join(t.TempDir(), "kube", "vc1")
+		if out, err := s.run(nil, "up", "vc1", kc); err != nil {
+			t.Fatalf("up: %v\n%s", err, out)
+		}
+		s.env = append(s.env, "EKS_ACCOUNT=123456789012")
+		out, err := s.run([]string{down}, "down", "vc1", kc)
+		if err == nil || strings.Contains(out, "EKS_LANE_DELETED") {
+			t.Errorf("%s: down reported success:\n%s", down, out)
+		}
+		if _, err := os.Stat(kc); err != nil {
+			t.Errorf("%s: down removed the kubeconfig of a lane it did not delete", down)
+		}
+		if _, err := os.Stat(filepath.Join(s.state, "nodepool-vc1")); err != nil {
+			t.Errorf("%s: the fake lane is gone, so the test proves nothing", down)
+		}
+	}
+	// the host cluster itself being gone is a fact, not a failure: nothing is left to bill
+	s := newVcScript(t)
+	s.hostUp(t)
+	must(t, os.Remove(filepath.Join(s.state, "cluster-"+s.host)))
+	if out, err := s.run(nil, "down", "vc1", filepath.Join(t.TempDir(), "vc1")); err != nil || !strings.Contains(out, "EKS_LANE_DELETED") {
+		t.Errorf("down of a lane whose host cluster is gone: %v\n%s", err, out)
+	}
+}
+
+// A lane is a namespace, a NodePool and its capacity pods: `exists` says gone only when all are.
+func TestEksVclusterExistsCountsTheNodePoolOfALaneWithNoNamespace(t *testing.T) {
+	s := newVcScript(t)
+	s.hostUp(t)
+	must(t, os.WriteFile(filepath.Join(s.state, "nodepool-vc7"), nil, 0o644)) // a build killed after the NodePool, before `vcluster create`
+	if out, err := s.run(nil, "exists", "vc7"); err != nil {
+		t.Errorf("a lane with a NodePool and no namespace is gone: %v\n%s", err, out)
+	}
+	// and `down` deletes it
+	if out, err := s.run(nil, "down", "vc7", filepath.Join(t.TempDir(), "vc7")); err != nil {
+		t.Fatalf("down: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(s.state, "nodepool-vc7")); err == nil {
+		t.Error("down left the NodePool")
+	}
+	if out, err := s.run(nil, "exists", "vc7"); err == nil {
+		t.Errorf("deleted, yet it exists: %s", out)
+	}
+}
+
+// Releases that run at the same time each see the others' lanes: the host's nodes go when the host has no lane left,
+// counted on the host under its lock, not from a ledger read when the step started.
+func TestEksVclusterSimultaneousLastDownsScaleTheHostToZeroOnce(t *testing.T) {
+	s := newVcScript(t)
+	s.hostUp(t)
+	dir := filepath.Join(t.TempDir(), "kube")
+	for _, lane := range []string{"vc1", "vc2"} {
+		if out, err := s.run(nil, "up", lane, filepath.Join(dir, lane)); err != nil {
+			t.Fatalf("up %s: %v\n%s", lane, err, out)
+		}
+	}
+	errs := make(chan error, 2)
+	for _, lane := range []string{"vc1", "vc2"} {
+		go func() {
+			out, err := s.run([]string{"EKS_HOST_LAST=1"}, "down", lane, filepath.Join(dir, lane))
+			if err != nil {
+				err = fmt.Errorf("%s: %v\n%s", lane, err, out)
+			}
+			errs <- err
+		}()
+	}
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := strings.Count(s.log(), "--name system --nodes 0"); n != 1 {
+		t.Errorf("the system node group was scaled to zero %d times with no lane left:\n%s", n, s.log())
+	}
+}
+
+// Parallel lanes write the host kubeconfig one after another; a reader never sees a half-written file.
+func TestEksVclusterHostKubeconfigIsReplacedAtomically(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join(pkgDir, "..", "..", "deploy", "eks-vcluster.sh"))
+	must(t, err)
+	if strings.Contains(string(b), `--kubeconfig "$HK" >/dev/null 2>&1 || true`) {
+		t.Error("`aws eks update-kubeconfig --kubeconfig $HK` rewrites the shared host kubeconfig in place")
 	}
 }
