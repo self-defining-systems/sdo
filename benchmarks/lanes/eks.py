@@ -33,8 +33,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-ECR_HOST = re.compile(r"^(?P<account>[0-9]{12})\.dkr\.ecr\.(?P<region>[a-z0-9-]+)\.amazonaws\.com$")
-#: The registry of a local kind host cluster (lanes ``eks.local_kind``): a plain-HTTP registry on this machine that every
+#: The registry of a local kind host cluster (lanes ``eks.local_kind``): a plain-HTTP registry on this machine that
+#: every node resolves, in place of ECR. No AWS call is made for it.
 #: node resolves, in place of ECR. No AWS call is made for it.
 LOCAL_REGISTRY = re.compile(r"^localhost:[0-9]{2,5}$")
 NODE_AGENT = "sdo-lane-node-agent"
@@ -314,7 +314,8 @@ def _local_holds(ecr: Ecr, registry: str, repository: str, digest: str) -> bool:
             "-I",
             "-H",
             "Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, "
-            "application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json",
+            "application/vnd.docker.distribution.manifest.v2+json, "
+            "application/vnd.docker.distribution.manifest.list.v2+json",
             f"http://{registry}/v2/{repository}/manifests/{digest}",
         ],
         capture_output=True,

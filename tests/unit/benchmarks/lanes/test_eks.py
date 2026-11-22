@@ -224,7 +224,8 @@ LOCAL = "localhost:5611"
 
 def test_a_local_kind_hosts_registry_is_accepted_and_has_no_aws_region() -> None:
     local = lane(registry=LOCAL)
-    assert local.local_registry and not lane().local_registry
+    assert local.local_registry
+    assert not lane().local_registry
     with pytest.raises(eks.EksLaneError, match="no AWS region"):
         _ = local.region
 
