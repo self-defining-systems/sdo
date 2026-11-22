@@ -1777,7 +1777,7 @@ def test_check_input_refuses_a_baseline_for_another_namespace(
     assert "namespace" in answer["detail"]
 
 
-@pytest.mark.parametrize("verb", ["preflight", "export-artifact", "verify-artifact", "reseed", "verify-start"])
+@pytest.mark.parametrize("verb", ["preflight", "export-artifact", "verify-artifact", "reseed"])
 def test_lanes_contract_verbs_not_implemented_answer_unsupported(verb: str, capsys: Any) -> None:
     assert hooks.main([verb]) == 64
     assert json.loads(capsys.readouterr().out.strip().splitlines()[-1]) == {"unsupported": True}
@@ -1798,3 +1798,103 @@ def test_phase_timer_prints_the_seconds_each_prepare_phase_took() -> None:
         "prepare phase: namespaces 0s (total 13s)",
         "prepare phase: controller started 287s (total 300s)",
     ]
+
+
+# ---- a lane with a source branch: reset rewinds it, verify-start proves the start ------------------------------------
+
+
+def _branch_block(tmp_path: Path, **extra: str) -> dict[str, str]:
+    block = tmp_path / "operator.json"
+    branch = {
+        "ref": "sdo-source",
+        "up": "up {namespace}",
+        "down": "down {namespace}",
+        "rewind": "rewind {namespace} {ref} {head} {script_image}",
+        **extra,
+    }
+    block.write_text(
+        json.dumps(
+            {
+                "hooks": "sdo",
+                "revision": "abc1234",
+                "baseline": "/b",
+                "settings": {"image_tag": "t1", "source_branch": branch},
+            }
+        )
+    )
+    lane = tmp_path / "lane"
+    lane.mkdir(exist_ok=True)
+    return {
+        "BENCH_OPERATOR": str(block),
+        "BENCH_LANE_DIR": str(lane),
+        "KUBECONFIG": "/k",
+        "FUZZOPS_NAMESPACE": "fg1",
+        "FUZZOPS_KUBE_CONTEXT": "kind-c",
+    }
+
+
+def test_a_reset_rewinds_the_source_branch_to_the_head_and_drops_sdos_refused_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[str]] = []
+
+    def run(args: list[str], what: str, timeout: float = 600, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(hooks, "_run", run)
+    env = _branch_block(tmp_path)
+    hooks.rewind_source_branch(env, Kube("kind-c", "/k"), "fg1-sdo", "9d992b3")
+    assert calls[0][:2] == ["sh", "-c"]
+    assert calls[0][2] == "rewind fg1 sdo-source 9d992b3 sdo-script-tools:t1"
+    assert calls[1][-4:] == ["delete", "configmap", "sdo-head-hold", "--ignore-not-found"]
+
+
+def test_a_lane_with_no_source_branch_has_nothing_to_rewind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(hooks, "_run", lambda *a, **k: pytest.fail("nothing to run"))
+    block = tmp_path / "operator.json"
+    block.write_text(
+        json.dumps({"hooks": "sdo", "revision": "abc1234", "baseline": "/b", "settings": {"image_tag": "t1"}})
+    )
+    env = {"BENCH_OPERATOR": str(block), "BENCH_LANE_DIR": str(tmp_path)}
+    hooks.rewind_source_branch(env, Kube("kind-c", "/k"), "fg1-sdo", "9d992b3")
+
+
+def test_a_branch_that_cannot_be_rewound_makes_the_lane_one_to_rebuild(tmp_path: Path) -> None:
+    env = _branch_block(tmp_path, rewind="")
+    with pytest.raises(HookError, match="no rewind command"):
+        hooks.rewind_source_branch(env, Kube("kind-c", "/k"), "fg1-sdo", "9d992b3")
+
+
+PREPARED = {"head": "h" * 40, "status": "", "outcomes": ""}
+BASE_IMAGES = {"Deployment/web": ["web:v1"], "StatefulSet/db": ["db:v1", "init:v1"]}
+
+
+def test_a_lane_that_equals_a_fresh_install_has_no_start_problems() -> None:
+    assert hooks.start_problems(PREPARED, PREPARED, "", BASE_IMAGES, BASE_IMAGES) == []
+
+
+def test_a_lane_left_on_a_later_release_with_an_open_incident_and_moved_memory_is_not_a_fresh_install() -> None:
+    moved = {"head": "x" * 40, "status": "", "outcomes": "o1.json"}
+    live = {"Deployment/web": ["web:v2"], "StatefulSet/db": ["db:v1", "init:v1"]}
+    problems = hooks.start_problems(PREPARED, moved, "alarm: incident open fg1-1", BASE_IMAGES, live)
+    assert any("accepted head" in p for p in problems)
+    assert any("outcomes changed" in p for p in problems)
+    assert any("incident open fg1-1" in p for p in problems)
+    assert any("Deployment/web runs web:v2, the base release has web:v1" in p for p in problems)
+
+
+def test_a_missing_workload_and_a_missing_prepared_state_are_start_problems() -> None:
+    assert hooks.start_problems(None, PREPARED, "", {"Deployment/web": ["web:v1"]}, {}) == [
+        "the lane has no recorded prepared state",
+        "Deployment/web is not running",
+    ]
+
+
+def test_verify_start_is_a_hook_verb_that_fails_with_its_problems(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
+    monkeypatch.setattr(hooks, "verify_start", lambda env: ["the operator is not quiet: busy: closure pending"])
+    assert hooks.verify_start_verb({}) == 1
+    answer = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+    assert answer == {"ok": False, "problems": ["the operator is not quiet: busy: closure pending"]}
+    monkeypatch.setattr(hooks, "verify_start", lambda env: [])
+    assert hooks.verify_start_verb({}) == 0

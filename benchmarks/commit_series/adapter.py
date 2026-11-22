@@ -29,7 +29,7 @@ from benchmarks.commit_series.scenario import Bounds, SeriesOps, run_commit
 from benchmarks.common.replay.replay import ReplayError, ReplayRecord, replay, run_git
 from benchmarks.common.replay.series import Series
 from benchmarks.fuzzops import workload as fuzzops_workload
-from benchmarks.fuzzops.hooks import SETTLE_WORK_ONLY_RECORD
+from benchmarks.fuzzops.hooks import SETTLE_WORK_ONLY_RECORD, verify_start
 from benchmarks.sregym.fastloop.toy_live import KubectlScenarioOps
 from benchmarks.sregym.fastloop.toy_scenarios import HoldRecord
 from benchmarks.sregym.fastloop.toy_upstream import BASE_PATH, REPOSITORY, SERVICE, UpstreamLayout, forwarded_remote
@@ -81,10 +81,11 @@ class Entry:
         return cls(series, Bounds(**options), base / faults if faults else None)
 
 
-def wall_start(lane_dir: Path, name: str, now: float) -> float:
-    """When position 1 of the series ran; later positions are scheduled from it."""
+def wall_start(lane_dir: Path, name: str, now: float, *, first: bool = False) -> float:
+    """When position 1 of the series ran; later positions are scheduled from it. Position 1 starts the clock again: a
+    lane reset in place runs the series again, and its schedule must not count from the earlier run."""
     path = lane_dir / f"series-{name}.json"
-    if path.is_file():
+    if path.is_file() and not first:
         return float(json.loads(path.read_text())["started"])
     path.write_text(json.dumps({"started": now}))
     return now
@@ -123,6 +124,27 @@ class LaneOps(KubectlScenarioOps):
         record = json.loads(json.loads(result.stdout)["data"]["hold"])
         reason = f"{record['reason']}: {record['detail']}"
         return [HoldRecord(sha, reason) for sha in self.pushed if self._is_ancestor(sha, record["commit"])]
+
+    def start_problems(self, env: dict[str, str], lane_dir: Path) -> list[str]:
+        """Why the lane is not what a fresh install is at the start of the series: the subject's checks (accepted
+        memory at its prepared commit, nothing open or pending in SDO, the base release running; ``verify_start``) and
+        the branch's: its head is the prepared head and SDO holds no refused head."""
+        problems = verify_start(env)
+        prepared = json.loads((lane_dir / "prepared.json").read_text()).get("state", {}).get("head", "")
+        head = self._kubectl(
+            self.layout.namespace,
+            *("exec", f"deploy/{SERVICE}", "--", "git", f"--git-dir={BASE_PATH}/{REPOSITORY}"),
+            *("rev-parse", f"refs/heads/{self.layout.ref}"),
+            check=False,
+        )
+        if head.returncode != 0:
+            problems.append(f"the branch server does not answer for {self.layout.ref}: {head.stderr.strip()}")
+        elif prepared and head.stdout.strip() != prepared:
+            problems.append(f"the branch is at {head.stdout.strip()[:12]}, not the prepared head {prepared[:12]}")
+        held = self._kubectl(self.control, "get", "configmap", HEAD_HOLD_CONFIGMAP, "-o", "name", check=False)
+        if held.returncode == 0:
+            problems.append("SDO still holds a refused head from an earlier run")
+        return problems
 
     def _is_ancestor(self, ancestor: str, commit: str) -> bool:
         """Whether ``commit`` on the branch server carries ``ancestor`` (or is it)."""
@@ -197,8 +219,12 @@ def run(env: dict[str, str], stdout: IO[str], *, ops: SeriesOps | None = None) -
         return delegate("run", env)
     lane_dir = Path(env["BENCH_LANE_DIR"])
     index = int(flags["seed"])
-    ops = ops or LaneOps(lane_dir, Path(env["KUBECONFIG"]), entry.series)
-    start = wall_start(lane_dir, entry.series.name, ops.now())
+    lane = LaneOps(lane_dir, Path(env["KUBECONFIG"]), entry.series) if ops is None else None
+    ops = ops or lane
+    assert ops is not None
+    if lane is not None and index == 1 and (problems := lane.start_problems(env, lane_dir)):
+        return invalid(stdout, entry, index, "the lane is not at the series start: " + "; ".join(problems))
+    start = wall_start(lane_dir, entry.series.name, ops.now(), first=index == 1)
     ahead = start + entry.series.offset(index) - ops.now()
     if ahead > 0:
         ops.sleep(ahead)
@@ -211,6 +237,13 @@ def run(env: dict[str, str], stdout: IO[str], *, ops: SeriesOps | None = None) -
         record["valid"] = bool(record["valid"] and injected.get("valid", False))
         if "lifecycle" in injected:
             record["lifecycle"] = injected["lifecycle"]
+    stdout.write(json.dumps(record, sort_keys=True) + "\n")
+    return 0
+
+
+def invalid(stdout: IO[str], entry: Entry, index: int, reason: str) -> int:
+    """The position cannot be run: an infrastructure problem, not a result (it breaks the rest of the sequence)."""
+    record = {"series": entry.series.name, "index": index, "valid": False, "invalid_reason": reason}
     stdout.write(json.dumps(record, sort_keys=True) + "\n")
     return 0
 

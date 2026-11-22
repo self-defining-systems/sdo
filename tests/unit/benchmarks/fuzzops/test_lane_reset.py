@@ -652,3 +652,24 @@ def test_main_keeps_the_kept_copy_json_as_the_last_stdout_line_of_a_failed_snaps
     captured = capsys.readouterr()
     assert json.loads(captured.out.strip().splitlines()[-1])["golden"] == "kept"
     assert "not idle after the snapshot" in captured.err
+
+
+def test_reset_puts_the_source_branch_back_after_the_repository_and_before_the_app(tmp_path: Path) -> None:
+    """The pushes of a run are history the next run must not inherit: the branch goes back to the prepared head while
+    the controller is stopped."""
+    rec = Recorder()
+    steps = _recording_steps(rec, rewind_source=lambda head: rec(f"branch {head[:1]}"))
+    hooks.reset_lane(lane(tmp_path), steps)
+    assert rec.calls == ["resume", "incidents", "retire", "stop", "repo", "branch h", "app", "start", "standby"]
+
+
+def test_a_branch_that_cannot_be_rewound_fails_the_reset_and_the_controller_runs_again(tmp_path: Path) -> None:
+    rec = Recorder()
+
+    def refuse(head: str) -> None:
+        raise HookError("no rewind command")
+
+    steps = _recording_steps(rec, rewind_source=refuse)
+    with pytest.raises(HookError, match="no rewind command"):
+        hooks.reset_lane(lane(tmp_path), steps)
+    assert rec.calls[-1] == "start"
