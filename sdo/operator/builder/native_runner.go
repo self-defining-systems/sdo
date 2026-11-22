@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"sdo.dev/operator/contracts/wire"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/toolchain"
 )
 
 // ControllerStopGrace is how long a stopping controller child has to shut down
@@ -78,6 +79,11 @@ func runPass(ctx context.Context, config RunConfig) (string, error) {
 	if config.ResolveDiagnostics == nil {
 		return "", errors.New("accepted diagnostics resolver is required")
 	}
+	// The responder toolchain copy is independent of the memory being built:
+	// it runs beside the resolve and the launch build, and the controller
+	// launches only after it finished.
+	seeded := seedToolchainBeside(ctx, config.Controller, toolchain.Seed)
+	defer seeded()
 	projected, err := config.ResolveDiagnostics(ctx, config.Build.ApplicationRoot)
 	if err != nil {
 		return "", err
@@ -88,6 +94,7 @@ func runPass(ctx context.Context, config RunConfig) (string, error) {
 		return projectedRevision, err
 	}
 	defer workspace.Close()
+	seeded()
 
 	provenance, err := buildProvenance(projected, binary)
 	if err != nil {
