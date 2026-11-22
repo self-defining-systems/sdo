@@ -116,6 +116,9 @@ still runs. Default runs retain the existing full-reset policy. Both run modes
 take the same host/lane lock, so a concurrent full-reset caller cannot invalidate
 a warm transaction. A competing caller stops before any lane mutation.
 
+`--deliver-evidence-before-exit` makes a warm run finish delivering its sealed evidence into the results before it returns,
+for a caller that copies the results out when `run` exits (the lanes workload); without it delivery stays queued.
+
 An uncertain warm transaction falls back to the ordinary row-start reset; an open
 prior incident stops preparation without deleting its owner. Each attempt writes
 `results/<run-id>/warm-transaction.json` with phase timings and a typed fallback

@@ -1473,7 +1473,10 @@ def _run(args: argparse.Namespace) -> int:
         try:
             return _run_owned(args, evidence_queue=queue)
         finally:
-            queue.close(drain=False, timeout=wait_for(WaitKind.OPERATION))
+            # A caller that reads the row's results the moment this returns asks for the delivery to finish first.
+            queue.close(
+                drain=bool(getattr(args, "deliver_evidence_before_exit", False)), timeout=wait_for(WaitKind.OPERATION)
+            )
 
 
 DEFAULT_CLAUDE_MODEL = "claude-sonnet-5-5"
@@ -2716,6 +2719,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--warm-lane",
         action="store_true",
         help="try persistent lane preparation; fall back to the full row reset on uncertainty",
+    )
+    run.add_argument(
+        "--deliver-evidence-before-exit",
+        action="store_true",
+        help="with --warm-lane: finish delivering the sealed evidence into the results before returning, for a caller "
+        "that copies the results out when this exits (default: delivery stays queued for the lane's next row)",
     )
     run.add_argument("--no-checkpoints", action="store_true", help="skip optional offline replay checkpoint export")
     run.add_argument(

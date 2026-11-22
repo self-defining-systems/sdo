@@ -29,12 +29,17 @@ Verbs:
                   ``active``/``undo``: the last run's verdict: clear only when it never injected, or with no
                   recovery error fastloop verified the full cleanup or the oracle saw the fault mitigated; in flight,
                   killed or unknown is active.
+                  On a host with ``SREGYM_LANES_RESEED=1`` a row on a lane whose last row left an SDO install of the
+                  same identity (``lane-install.json``: application, namespace, images, agent and configuration) runs
+                  ``fastloop run --warm-lane``; the record's ``reseed`` says whether the lane was reseeded, fell back
+                  to the fresh install (and why) or did not try (and why).
 ``grade``         ``report``: ``$WORKLOAD_RESULTS/runs.jsonl`` (the run records) rewritten as one grade per run.
 ``footprint``     unsupported.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -817,6 +822,104 @@ def without_flag(args: Sequence[str], flag: str) -> list[str]:
     return out
 
 
+#: Written next to ``fastloop.json`` once a row has run on the lane: what the SDO install on it was made with.
+LANE_INSTALL_FILE = "lane-install.json"
+#: The host's switch for running rows on an installed lane through fastloop's warm transaction (reseed) instead of
+#: the row-start wipe and reinstall; while the transaction is proven on a host this is the orchestrator's to set.
+RESEED_ENV = "SREGYM_LANES_RESEED"
+#: ``fastloop run --warm-lane`` writes it into the row's results: whether the lane was reused, else why not.
+WARM_RECEIPT = "warm-transaction.json"
+
+
+def install_identity(environment: Mapping[str, Any], built: Mapping[str, str], real: Any) -> dict[str, Any]:
+    """What a row needs the lane's SDO install to be: the application, the images, the agent and its configuration.
+
+    The controller's own settings are checked by fastloop against the installed controller
+    (``WarmEnvironment.inspect``); this is the workload's cheap early decision, and what names the reason a row did
+    not try."""
+    images = {role: built.get(role, "") for role in ("controller", "responder")}
+    agent: dict[str, str] | None = None
+    if real is not None:
+        images.update(
+            {
+                role: wanted
+                for role, wanted in (("controller", real.controller_image), ("responder", real.responder_image))
+                if wanted
+            }
+        )
+        agent = {
+            "provider": real.provider,
+            "model": real.model,
+            "effort": real.effort,
+            "config_digest": hashlib.sha256(json.dumps(real.config, sort_keys=True).encode()).hexdigest(),
+        }
+    return {
+        "application": str(environment.get("application", "")),
+        "namespace": str(environment.get("namespace", "")),
+        "images": images,
+        "agent": agent,
+    }
+
+
+def _flatten(prefix: str, value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return {
+            key: item
+            for name, part in value.items()
+            for key, item in _flatten(f"{prefix}.{name}" if prefix else name, part).items()
+        }
+    return {prefix: value}
+
+
+def reseed_decision(ctx: Context, env_dir: Path, identity: Mapping[str, Any]) -> str:
+    """Why this row does not try the warm transaction ("" when it does)."""
+    if ctx.env.get(RESEED_ENV) != "1":
+        return f"reseed is not enabled for this host ({RESEED_ENV})"
+    try:
+        recorded = json.loads((env_dir / LANE_INSTALL_FILE).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return "no earlier install on this lane"
+    except (OSError, ValueError):
+        return f"{LANE_INSTALL_FILE} is unreadable"
+    had, wants = _flatten("", recorded), _flatten("", dict(identity))
+    differ = sorted(name for name in {*had, *wants} if had.get(name) != wants.get(name))
+    return "install identity differs: " + ", ".join(differ) if differ else ""
+
+
+def keep_install_identity(env_dir: Path, identity: Mapping[str, Any], *, installed: bool) -> None:
+    """Record what the lane's install is after a row that ran on it; a row that left no record leaves it unknown."""
+    path = env_dir / LANE_INSTALL_FILE
+    if installed:
+        path.write_text(json.dumps(identity, indent=1) + "\n", encoding="utf-8")
+    else:
+        path.unlink(missing_ok=True)
+
+
+def reseed_record(results: Path, *, attempted: bool, reason: str) -> dict[str, Any]:
+    """The row's ``reseed`` field: tried or not, reused or fell back, and why (from fastloop's receipt)."""
+    record: dict[str, Any] = {
+        "attempted": attempted,
+        "reused": False,
+        "reason": reason,
+        "violations": [],
+        "phase_seconds": {},
+    }
+    if not attempted:
+        return record
+    try:
+        receipt = json.loads((results / WARM_RECEIPT).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {**record, "reason": "no warm-transaction receipt"}
+    reused = receipt.get("reused") is True
+    return {
+        **record,
+        "reused": reused,
+        "reason": "" if reused else str(receipt.get("fallback_reason") or "unknown"),
+        "violations": [str(item) for item in receipt.get("violations") or []],
+        "phase_seconds": dict(receipt.get("phase_seconds") or {}),
+    }
+
+
 def run(ctx: Context) -> tuple[int, dict[str, Any]]:
     if ctx.action in ("active", "undo"):
         # The adapter cannot undo a fault itself: both answer from the last run's verdict, and an unknown one is
@@ -876,6 +979,8 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
     stream.write_text(json.dumps(stream_settings(problem), indent=1) + "\n", encoding="utf-8")
     host_args = shlex.split(ctx.env.get("SREGYM_LANES_RUN_ARGS", ""))
     run_env: Mapping[str, str] = ctx.env
+    asked = env_dir / REQUESTED_IMAGES_FILE
+    built = json.loads(asked.read_text(encoding="utf-8")) if asked.is_file() else environment.get("images") or {}
     if real is None:
         # The scripted agent (model-free): the scripted registrations; the host's run flags (its placeholder
         # credentials hook) apply as they are.
@@ -883,8 +988,6 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
     else:
         if not real.auth_file.is_file():
             raise AdapterError(f"agent credential file {real.auth_file} (operator.settings.auth_file) is missing")
-        asked = env_dir / REQUESTED_IMAGES_FILE
-        built = json.loads(asked.read_text(encoding="utf-8")) if asked.is_file() else environment.get("images") or {}
         if mismatch := real.image_mismatch(built):
             raise AdapterError(f"{mismatch}: rebuild the lane for this spec")
         # A real agent: SDO's own responder and closing turn, the spec's config overlay, and the credentials hook that
@@ -920,6 +1023,13 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
     ]
     if planned:
         command += ["--planned-commit", planned]
+    identity = install_identity(environment, built, real)
+    not_reseeded = reseed_decision(ctx, env_dir, identity)
+    if not not_reseeded:
+        # The lane holds an install of this row's identity: fastloop reseeds it (or falls back to the wipe and
+        # reinstall, and says why). The workload copies the results out when fastloop returns, so the evidence is
+        # delivered first.
+        command += ["--warm-lane", "--deliver-evidence-before-exit"]
     if (cap := ctx.cap_seconds()) is not None:
         # An incident still open at the spec's cap never closes: the row ends there, named, with its evidence.
         command += ["--closure-bound", str(cap)]
@@ -962,10 +1072,12 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
     if results.is_dir():
         # The run's evidence travels with the run (the lane's environment is rebuilt with the lane).
         shutil.copytree(results, exec_out / "fastloop-results", dirs_exist_ok=True)
+    incident = None if deadline_failure else _last_record(results)
+    keep_install_identity(env_dir, identity, installed=incident is not None)
+    record["reseed"] = reseed_record(results, attempted=not not_reseeded, reason=not_reseeded)
     if deadline_failure:
         # The fault may still be in place: its verdict stays unknown (active), so the platform recovers the lane.
         return 1, {**record, "valid": False, "invalid_reason": "row deadline exceeded", "error": deadline_failure}
-    incident = _last_record(results)
     if incident is None:
         return 1, {
             **record,
@@ -1035,6 +1147,7 @@ def grade_line(record: Mapping[str, Any]) -> dict[str, Any]:
     with the page's source, the responder's cost, and whether the closing turn finished (and learned)."""
     summary = record.get("sregym") or {}
     memory = record.get("memory") or {}
+    reseed = record.get("reseed") or {}
     learned = len(memory.get("playbook_files_changed") or [])
     return {
         "operator": record.get("operator", ""),
@@ -1063,6 +1176,10 @@ def grade_line(record: Mapping[str, Any]) -> dict[str, Any]:
         "playbooks_learned": learned,
         "learned": learned > 0,
         "invalid_reason": record.get("invalid_reason", ""),
+        # How the row started: `reseeded` (installed lane, warm transaction), `fallback` (tried, fell back to a fresh
+        # install) or `fresh` (did not try); the reason is the boundary that fell back or why it did not try.
+        "reseed": "fresh" if not reseed.get("attempted") else "reseeded" if reseed.get("reused") else "fallback",
+        "reseed_reason": reseed.get("reason", ""),
     }
 
 

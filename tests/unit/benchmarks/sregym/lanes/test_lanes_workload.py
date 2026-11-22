@@ -63,6 +63,7 @@ def write_environment(tmp_path: Path, workspace: Path, seed_commit: str = "") ->
     (env_dir / "fastloop.json").write_text(
         json.dumps(
             {
+                "application": "hotel_reservation",
                 "namespace": "hotel-reservation",
                 "kubeconfig": str(kube),
                 "workspace": str(workspace),
