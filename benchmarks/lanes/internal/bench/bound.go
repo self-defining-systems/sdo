@@ -184,6 +184,11 @@ func stepBound(kind string, s Spec) time.Duration {
 		return cap + 2*rt + 45*time.Minute
 	case StepBuild:
 		return 4*time.Hour + rt
+	case StepRelease:
+		// The teardown's idle wait lasts at most the cap and the cluster delete (45 minutes at most) follows it: a
+		// bound at the cap would kill a release that is only waiting as long as it may, and the lane's nodes would
+		// bill for want of its cluster delete.
+		return max(2*time.Hour, cap+time.Hour)
 	}
 	return 2 * time.Hour
 }

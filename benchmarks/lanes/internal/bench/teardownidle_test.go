@@ -41,3 +41,28 @@ esac
 		t.Fatalf("idle calls were made for %q, want teardown twice", got)
 	}
 }
+
+// A teardown's idle wait says what it waits for while it waits: a release that sat two hours in this gate left
+// nothing in its log to name the reason (the step directory was all there was, and the next release replaced it).
+func TestTeardownIdleLogsWhatItWaitsForAndWhenItGivesUp(t *testing.T) {
+	dir := t.TempDir()
+	hook := filepath.Join(dir, "hook.sh")
+	must(t, os.WriteFile(hook, []byte("#!/bin/sh\necho 'alarm: incident open fg1-1'\nexit 1\n"), 0o755))
+	p := &Prepared{Hooks: "t", HooksPath: dir, Command: hook, Ready: true}
+	var log strings.Builder
+	r := &stepRunner{dir: t.TempDir(), poll: 5 * time.Millisecond, hookLog: io.Discard, log: &log}
+	r.s.Cap = Seconds(0.2)
+	old := idleProgressEvery
+	idleProgressEvery = 20 * time.Millisecond
+	defer func() { idleProgressEvery = old }()
+	if !r.waitIdle(context.Background(), p) {
+		t.Fatal("a capped idle wait must go on to the teardown")
+	}
+	got := log.String()
+	if strings.Count(got, "idle: still waiting") < 2 || !strings.Contains(got, "alarm: incident open fg1-1") {
+		t.Errorf("no progress naming the reason: %q", got)
+	}
+	if !strings.Contains(got, "idle: gave up") {
+		t.Errorf("giving up at the cap is not logged: %q", got)
+	}
+}

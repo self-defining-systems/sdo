@@ -500,6 +500,7 @@ func (r *stepRunner) waitIdle(ctx context.Context, p *Prepared) bool {
 		limit = 30 * time.Minute
 	}
 	calm, why := 0, ""
+	progress := start
 	for calm < 2 && time.Since(start) < limit {
 		if res := r.callHook(ctx, p, "idle", BenchIdleForEnv+"="+IdleForTeardown); res.OK() {
 			calm++
@@ -515,13 +516,23 @@ func (r *stepRunner) waitIdle(ctx context.Context, p *Prepared) bool {
 				return false
 			}
 		}
+		if calm < 2 && time.Since(progress) >= idleProgressEvery {
+			progress = time.Now()
+			r.logf("idle: still waiting after %s of at most %s: %s", time.Since(start).Round(time.Second), limit, why)
+		}
 		if calm < 2 {
 			time.Sleep(r.poll)
 		}
 	}
+	if calm < 2 {
+		r.logf("idle: gave up after %s (the cap): %s; the teardown goes on", time.Since(start).Round(time.Second), why)
+	}
 	r.interval("idle", start, calm >= 2, why)
 	return true
 }
+
+// idleProgressEvery is how often a teardown's idle wait says what it still waits for.
+var idleProgressEvery = 5 * time.Minute
 
 // packLoads is the build's pre-flight: the pinned fuzzops loads the spec's pack before anything is made or torn
 // down, so a pack that is not there (the spec's app is a path inside the pinned checkout) or does not parse fails
