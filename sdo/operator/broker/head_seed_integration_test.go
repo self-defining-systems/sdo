@@ -37,7 +37,7 @@ func seededWorld(t *testing.T) *patchWorld {
 // A seeded install's reference is the source it adopted, not SDO's newest
 // commit: a broker memory commit published on top of an engineer's push before
 // it was deployed (a health refresh racing the push) carries the push's source
-// and must not make it look deployed (GitLab commit series on EKS: 10.5.5 was
+// and must not make it look deployed (a live commit series: a chart release was
 // pushed, a health refresh landed on it 33 s later, and SDO never deployed it).
 // Once deployed and recorded, that head needs nothing more.
 func TestASeededInstallDeploysAPushEvenUnderSDOsOwnLaterCommit(t *testing.T) {
