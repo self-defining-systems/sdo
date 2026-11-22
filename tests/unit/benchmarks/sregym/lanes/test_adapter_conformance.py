@@ -96,6 +96,7 @@ def contract_values(root: Path) -> dict[str, str]:
             # The host's workload_env, keyed by the spec's workload string (docs/contract.md).
             "SREGYM_LANES_ENV": str(root / "env"),
             "BENCH_OPERATOR": str(root / "operator.json"),
+            "BENCH_OPERATOR_BLOCK": "1",
         }
     )
     return values
@@ -269,7 +270,15 @@ CASES: tuple[Case, ...] = (
         "app-up",
         "up",
         needs=LANE | KUBE | {"BENCH_IMAGE_REGISTRY"},
-        optional=frozenset({"BENCH_LANE_PROVIDER", "BENCH_EVIDENCE_HOST", "BENCH_OPERATOR", "BENCH_LANE_VIRTUAL"}),
+        optional=frozenset(
+            {
+                "BENCH_LANE_PROVIDER",
+                "BENCH_EVIDENCE_HOST",
+                "BENCH_OPERATOR",
+                "BENCH_OPERATOR_BLOCK",
+                "BENCH_LANE_VIRTUAL",
+            }
+        ),
         args=lambda root: ["--pack", str(PACK), "--namespace", NAMESPACE],
         seams=lambda lane, env: {
             "runner": FakeRunner(),
@@ -282,7 +291,15 @@ CASES: tuple[Case, ...] = (
         "up",
         variant="real-agent",
         needs=LANE | KUBE | {"BENCH_IMAGE_REGISTRY"},
-        optional=frozenset({"BENCH_LANE_PROVIDER", "BENCH_EVIDENCE_HOST", "BENCH_OPERATOR", "BENCH_LANE_VIRTUAL"}),
+        optional=frozenset(
+            {
+                "BENCH_LANE_PROVIDER",
+                "BENCH_EVIDENCE_HOST",
+                "BENCH_OPERATOR",
+                "BENCH_OPERATOR_BLOCK",
+                "BENCH_LANE_VIRTUAL",
+            }
+        ),
         args=lambda root: ["--pack", str(PACK), "--namespace", NAMESPACE],
         prepare=real_agent,
         seams=lambda lane, env: {
@@ -305,6 +322,7 @@ CASES: tuple[Case, ...] = (
         optional=frozenset(
             {
                 "BENCH_OPERATOR",
+                "BENCH_OPERATOR_BLOCK",
                 "BENCH_LANE_VIRTUAL",
                 "BENCH_EXPERIMENT",
                 "BENCH_RUN",
@@ -324,6 +342,7 @@ CASES: tuple[Case, ...] = (
         optional=frozenset(
             {
                 "BENCH_OPERATOR",
+                "BENCH_OPERATOR_BLOCK",
                 "BENCH_LANE_VIRTUAL",
                 "BENCH_EXPERIMENT",
                 "BENCH_RUN",
@@ -657,3 +676,43 @@ def test_a_cancel_of_the_adapter_ends_the_whole_process_tree(tmp_path):
             os.killpg(adapter.pid, signal.SIGKILL)
         if child and alive(child):
             os.kill(child, signal.SIGKILL)
+
+
+# ----- the operator file reaches `app-up up`: a real agent's images come from it -----
+
+
+def up_case() -> Case:
+    return next(case for case in CASES if case.id == "app-up/up/real-agent")
+
+
+def with_images(lane: FakeLane, env: dict[str, str]) -> None:
+    real_agent(lane, env)
+    path = Path(env["BENCH_OPERATOR"])
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["settings"].update({"controller_image": "sdo-controller:real", "responder_image": "sdo-responder:plain"})
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+
+def test_a_real_agent_operator_file_gives_app_up_the_agents_images(tmp_path):
+    case = replace(up_case(), prepare=with_images)
+    code, result, _, calls = run_case(case, tmp_path)
+    assert code == 0, result
+    up = next(argv for argv in calls if "up" in argv and "--controller-image" in argv)
+    assert up[up.index("--controller-image") + 1] == "sdo-controller:real"
+    assert up[up.index("--responder-image") + 1] == "sdo-responder:plain"
+
+
+def test_a_spec_with_an_operator_block_but_no_operator_file_is_a_named_error_not_the_host_defaults(tmp_path):
+    case = up_case()
+    code, result, _, calls = run_case(case, tmp_path, without="BENCH_OPERATOR")
+    assert code == 1, result
+    assert "real agent spec but BENCH_OPERATOR not set" in result["error"], result
+    assert not calls, f"app-up up ran {calls[0][:3]} with the host's default images before it noticed"
+
+
+def test_an_operator_file_that_cannot_be_read_is_a_named_error(tmp_path):
+    code, result, _, calls = run_case(up_case(), tmp_path, extra={"BENCH_OPERATOR": str(tmp_path / "gone.json")})
+    assert code == 1, result
+    assert "BENCH_OPERATOR" in result["error"], result
+    assert "gone.json" in result["error"], result
+    assert not calls
