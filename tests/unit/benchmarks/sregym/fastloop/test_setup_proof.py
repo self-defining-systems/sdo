@@ -325,6 +325,35 @@ def test_unknown_image_digest_never_grants_reuse():
         proof.image_identity([{"metadata": {"name": "node"}, "status": {"images": []}}], {"controller": "mutable:tag"})
 
 
+DIGEST_REFERENCE = "registry.example/sdo/sdo-controller@sha256:" + "a" * 64
+
+
+@pytest.mark.parametrize(
+    "node_images",
+    [
+        [],  # a virtual lane's synced node reports no image inventory
+        [{"names": ["registry.example/other@sha256:" + "b" * 64]}],  # the kubelet's capped list omits it
+    ],
+)
+def test_pinned_digest_reference_is_its_own_identity_whatever_the_node_inventory_reports(node_images):
+    """A digest reference names its content: the node's image list adds nothing and may be absent or truncated."""
+    nodes = [{"metadata": {"name": "node-a"}, "status": {"images": node_images}}]
+
+    identity = proof.image_identity(nodes, {"controller": DIGEST_REFERENCE})
+
+    assert identity == {"controller": {"node-a": [DIGEST_REFERENCE]}}
+
+
+def test_pinned_digest_identity_does_not_move_with_the_node_inventory():
+    listed = [{"names": [DIGEST_REFERENCE, "registry.example/sdo/sdo-controller:tag"]}]
+    with_inventory = [{"metadata": {"name": "n"}, "status": {"images": listed}}]
+    without = [{"metadata": {"name": "n"}, "status": {}}]
+
+    assert proof.image_identity(with_inventory, {"controller": DIGEST_REFERENCE}) == proof.image_identity(
+        without, {"controller": DIGEST_REFERENCE}
+    )
+
+
 def test_missing_evidence_runs_normal_deployment(tmp_path, fingerprint, monkeypatch):
     from types import SimpleNamespace
 

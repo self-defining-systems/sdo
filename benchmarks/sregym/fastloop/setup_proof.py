@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import Deadline, WaitKind, wait_for
 from benchmarks.sregym.fastloop.accepted_source import manifest_paths_for_environment
+from benchmarks.sregym.fastloop.pinned_tools import immutable_image
 from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
@@ -105,6 +106,13 @@ def object_identities(objects: list[dict[str, Any]]) -> dict[str, str]:
 
 
 def image_identity(nodes: list[dict[str, Any]], references: dict[str, str]) -> dict[str, Any]:
+    """Per role and node, the digests of the image the lane runs.
+
+    A digest reference (``name@sha256:...``, what a pinned lane runs) names its content, so it is its own identity:
+    a node's image inventory adds nothing to it and is not always there (a virtual lane's synced nodes, the kubelet's
+    capped image list). A tag has no content identity until the node reports the digest it resolved to.
+    """
+
     def normalized(name: str) -> str:
         return name.removeprefix("docker.io/").removeprefix("library/")
 
@@ -112,6 +120,9 @@ def image_identity(nodes: list[dict[str, Any]], references: dict[str, str]) -> d
     for role, reference in references.items():
         images[role] = {}
         for node in nodes:
+            if immutable_image(reference):
+                images[role][node["metadata"]["name"]] = [reference]
+                continue
             matches = [
                 image
                 for image in node.get("status", {}).get("images", [])
@@ -157,10 +168,10 @@ def _runtime(environment: FastloopEnvironment, execute: _Reader) -> _Runtime:
     revision = execute(
         host_git_command(root, "describe", "--always", "--abbrev=40", "--dirty", "--match=__eval_no_tag__")
     )
-    if revision.endswith("-dirty"):
-        raise ValueError("eval: setup reuse requires committed code")
-    if execute(host_git_command(root, "status", "--porcelain", "--untracked-files=normal")):
-        raise ValueError("eval: setup reuse requires committed code")
+    changed = execute(host_git_command(root, "status", "--porcelain", "--untracked-files=normal"))
+    if revision.endswith("-dirty") or changed:
+        shown = ", ".join(line.split(maxsplit=1)[-1] for line in changed.splitlines()[:5]) or "tracked files"
+        raise ValueError(f"eval: setup reuse requires committed code ({root}: {shown})")
     accepted = execute(host_git_command(environment.workspace, "rev-parse", "HEAD"))
     if execute(host_git_command(environment.workspace, "status", "--porcelain", "--untracked-files=all")):
         raise ValueError("eval: accepted workspace has uncommitted changes")
@@ -504,9 +515,25 @@ def application_reuse_decision(directory: Path, fingerprint: ApplicationFingerpr
             raise ValueError("receipt does not prove a no-fault setup")
         expected = ApplicationFingerprint(**document["fingerprint"])
         changed = sorted(key for key, value in asdict(fingerprint).items() if getattr(expected, key) != value)
-        return {"reused": not changed, "receipt": str(path), "changed": changed}
+        decision: dict[str, Any] = {"reused": not changed, "receipt": str(path), "changed": changed}
+        if differing := _differing_entries(expected, fingerprint, changed):
+            decision["differing"] = differing
+        return decision
     except (OSError, ValueError, KeyError, TypeError) as exc:
         return {"reused": False, "receipt": None, "changed": [f"passing_receipt_unavailable: {exc}"]}
+
+
+def _differing_entries(
+    expected: ApplicationFingerprint, current: ApplicationFingerprint, changed: list[str]
+) -> dict[str, list[str]]:
+    """Per changed mapping field, the entries that were added, removed or edited (bounded)."""
+    result: dict[str, list[str]] = {}
+    for name in changed:
+        before, after = getattr(expected, name), getattr(current, name)
+        if isinstance(before, dict) and isinstance(after, dict):
+            keys = sorted(key for key in before.keys() | after.keys() if before.get(key) != after.get(key))
+            result[name] = keys[:20]
+    return result
 
 
 def check_application_reuse(environment: FastloopEnvironment) -> dict[str, Any]:
