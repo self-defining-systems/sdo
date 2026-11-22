@@ -23,6 +23,7 @@ func (c Coordinator) RefreshHealth(ctx context.Context, cfg Config, revision mem
 	if !revision.NeedsRefresh {
 		return broker.Receipt{Commit: revision.Commit}, nil
 	}
+	cfg.SteadyState = true
 	// The candidate is judged against the accepted objective, which the
 	// revision carries; a caller's Config need not repeat it.
 	if strings.TrimSpace(cfg.HealthObjective) == "" {

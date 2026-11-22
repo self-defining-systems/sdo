@@ -15,7 +15,7 @@ func TestClearVerdictRecordsCoverageNotesWithoutHoldingAcceptance(t *testing.T) 
 		Outcome: VerificationClear, Summary: "accepted health detectors report clear",
 		CoverageNotes: []DetectorState{{DetectorID: "store-state-kv", Status: "clear", Reason: "store kv (redis) not observed until it is read healthy once: Pod kv-0: sh: redis-cli: not found"}},
 	}
-	checks := verdictChecks(verdict)
+	checks := verdictChecks(verdict, true)
 	var note *operability.Check
 	for i := range checks {
 		if strings.HasPrefix(checks[i].ID, "O3.") {
@@ -41,7 +41,7 @@ func TestClearVerdictRecordsCoverageNotesWithoutHoldingAcceptance(t *testing.T) 
 	}
 	// A pending or failing verdict carries its notes too.
 	verdict.Outcome = VerificationPending
-	if !hasCheck(verdictChecks(verdict), "O3.detector-coverage") {
+	if !hasCheck(verdictChecks(verdict, true), "O3.detector-coverage") {
 		t.Fatal("a pending verdict dropped its coverage notes")
 	}
 }
@@ -64,7 +64,7 @@ func TestRequestMetricsNotApplicableOperationsPassO4WithANote(t *testing.T) {
 		Outcome: VerificationClear, Summary: "accepted health detectors report clear",
 		CoverageNotes: []DetectorState{{DetectorID: "request-metrics", Status: "clear", Reason: "request metrics not applicable to operation reserve: no entries record for service frontend"}},
 	}
-	checks := verdictChecks(verdict)
+	checks := verdictChecks(verdict, true)
 	var o4, o3 *operability.Check
 	for i := range checks {
 		switch checks[i].ID {
