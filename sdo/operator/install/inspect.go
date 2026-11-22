@@ -66,15 +66,19 @@ func (i Installer) InspectExisting(ctx context.Context, cfg InspectConfig) (Exis
 		return ExistingController{}, fmt.Errorf("list controller Pods: %w", err)
 	}
 	var podUID string
-	for _, pod := range pods.Items {
-		if pod.Status.Phase != corev1.PodRunning || !podReady(pod.Status.Conditions) {
-			continue
-		}
+	var notReady []string
+	for index, pod := range pods.Items {
 		owned := false
 		for _, owner := range pod.OwnerReferences {
 			if owner.Kind == "Job" && owner.Name == ControllerJobName && owner.UID == job.UID {
 				owned = true
 			}
+		}
+		if owned && (pod.Status.Phase != corev1.PodRunning || !podReady(pod.Status.Conditions)) {
+			notReady = append(notReady, "Pod "+pod.Name+i.podEvidence(ctx, cfg.ControlNamespace, pod.Name, &pods.Items[index]))
+		}
+		if pod.Status.Phase != corev1.PodRunning || !podReady(pod.Status.Conditions) {
+			continue
 		}
 		if owned {
 			if podUID != "" || pod.UID == "" {
@@ -84,7 +88,13 @@ func (i Installer) InspectExisting(ctx context.Context, cfg InspectConfig) (Exis
 		}
 	}
 	if podUID == "" {
-		return ExistingController{}, errors.New("existing controller has no ready owned Pod")
+		// The Pods that exist say why they are not ready (unschedulable, image still pulling): a caller that waits for the
+		// controller reports that instead of a bare "no ready owned Pod" at its deadline.
+		reason := "existing controller has no ready owned Pod"
+		if len(notReady) > 0 {
+			reason += ": " + strings.Join(notReady, "; ")
+		}
+		return ExistingController{}, errors.New(reason)
 	}
 	if err := i.restoreApplicationGrantsWithSettings(ctx, cfg, job.Spec.Template.Annotations[PermissiveResponderAnnotation]); err != nil {
 		return ExistingController{}, err

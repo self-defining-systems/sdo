@@ -137,6 +137,9 @@ hosts:
   they are ready by the time its API is. A vcluster in namespace `<lane>` syncs only the lane's nodes, adds the lane's
   toleration to every pod it syncs, sees the host's `local-path` StorageClass and exposes its API as a NodePort of the
   host (kubeconfig context `kind-<lane>`, as everywhere). The lane's nodes are its own: no other lane's pods run on them.
+  The vcluster's LimitRange gives a pod without one a CPU and memory request only: the chart's default `ephemeral-storage`
+  request (3Gi per container) is removed, because the host scheduler counts requests, not use, and a 32-container app would
+  fill a node's 89 GiB allocatable with a nearly empty disk.
 - **Delete** (`down`): the vcluster, its namespace and the NodePool go; Karpenter terminates the nodes (the step waits for
   that, at most `EKS_DOWN_WAIT`, 240 s, so the cost line ends where the nodes end). The last lane of the host also scales the
   `system` group to 0: only the control plane ($0.10/h) bills until the next lane brings a system node back.
