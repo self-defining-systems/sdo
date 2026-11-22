@@ -41,6 +41,7 @@ Each rule ends with the principled fix, so the class cannot recur.
 - **Stop a plan's work with `lanes plan remove NAME`, never `lanes remove EXPERIMENT`.** Removing an experiment counts as a failed attempt, so the plan queues an `-x1` retry and starts a fresh lane build. `plan remove` deletes the plan's experiment directories, records included: copy any record you need first, or pass `--keep`.
 - **Set the run cap from the run's own minimum, not a generous default.** Settle and the release's idle wait are bounded by the cap. An incident nothing will close (escalated, stub agent) cost one cap in settle and up to another in the release (2 h each at `cap: 120m`).
 - **Count failures per problem, not per lane, and park on the second identical one.** A problem that fails the same way on every lane is requeued forever when only lane failures are counted (one failed 17 times at 30 minutes each).
+- **A step that has no experiment must still get its workload's env.** A lane's recover step ran after its plan was cancelled, the manager took the workload from the (gone) experiment, and the undo failed `SREGYM_LANES_ENV is not set`: the lane was reset, then went down and its cluster was deleted. Fix: a step's env follows the workload resolved for the step (from the lane's prepared state when there is no experiment); every workload call goes through one constructor, and a test enumerates the step kinds and verbs.
 
 ## Reference timings seen
 

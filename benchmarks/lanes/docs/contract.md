@@ -42,6 +42,10 @@ its entries on top of `env` (an entry of the same name wins); a step of another 
 work that belongs to no workload (ledger, preflight, reservations) never carries them. A host with no `workload_env`
 behaves as before.
 
+"A step of that workload" is every process the platform starts for the workload: the verbs of build, run, release,
+recover and unhold steps, and the footprint, grade and identity calls made outside a step. A step takes its workload
+from its experiment, or, for a release, recover or unhold whose plan may be gone, from what the lane was prepared with.
+
 ### Unsupported verbs
 
 A verb an adapter does not implement answers **exit 64** and/or a last stdout line `{"unsupported": true}`. The
