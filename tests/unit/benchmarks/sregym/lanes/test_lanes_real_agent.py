@@ -299,7 +299,8 @@ def test_an_opus_row_on_a_virtual_lane_is_refused_by_name_before_fastloop_run(tm
 def test_an_opus_row_on_a_node_lane_and_any_other_model_on_a_virtual_lane_are_not_refused(tmp_path):
     opus = agent.AgentSettings.from_operator(opus_operator(tmp_path))
     sonnet = agent.AgentSettings.from_operator(operator_file(tmp_path, real_settings(tmp_path)))
-    assert opus is not None and sonnet is not None
+    assert opus is not None
+    assert sonnet is not None
     assert opus.lane_refusal(virtual=False) == ""
     assert sonnet.lane_refusal(virtual=True) == ""
     assert opus.lane_refusal(virtual=True)

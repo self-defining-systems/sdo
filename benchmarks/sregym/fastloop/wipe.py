@@ -676,7 +676,8 @@ class KubectlLaneCluster:
         if not isinstance(kubeconfig, Path) or not kubeconfig.is_absolute():
             raise ValueError("eval: lane wipe requires an absolute kubeconfig path")
         self._kubeconfig = kubeconfig
-        #: The cluster-scoped kinds listed. Kinds the lane's host owns are never listed, so never baselined and never deleted (``HOST_OWNED_KINDS``).
+        #: The cluster-scoped kinds listed: the lane's host-owned kinds (``HOST_OWNED_KINDS``) are never listed, so
+        #: never baselined and never deleted.
         self.listed_kinds = tuple(kind for kind in CLUSTER_KINDS if kind not in host_owned)
         self._namespaced_kinds: str | None = None
 
