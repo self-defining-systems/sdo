@@ -19,10 +19,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 from typing import TYPE_CHECKING, Any
 
-from benchmarks.sregym.adapter import kubectl
+from benchmarks.sregym.adapter import WaitKind, kubectl, wait_for
 from benchmarks.sregym.fastloop.wipe import Tier2Reason, Tier2Trigger, WipeError
 from benchmarks.sregym.repository_git import host_git_command
 
@@ -41,8 +42,14 @@ RESTART_ANNOTATION = "kubectl.kubernetes.io/restartedAt"
 _UNKNOWN = (OSError, ValueError, LookupError, TypeError, AttributeError, RuntimeError, subprocess.SubprocessError)
 
 
-def application_source_identity(workspace: Path, revision: str) -> str:
-    """Content identity of what a revision deploys: its tree outside SDO memory, plus ``.sdo/deployment``."""
+_PLAN = ".sdo/deployment/plan.yaml"
+
+
+def application_source_identity(workspace: Path, revision: str, *, ignore_plan: bool = False) -> str:
+    """Content identity of what a revision deploys: its tree outside SDO memory, plus ``.sdo/deployment``.
+
+    ``ignore_plan`` leaves the plan file out of the deployment entries (see ``_plan_only_names_the_deployed_source``).
+    """
     entries = []
     for argv in (["ls-tree", revision], ["ls-tree", revision, "--", _DEPLOYED_MEMORY]):
         completed = subprocess.run(host_git_command(workspace, *argv), capture_output=True, text=True, check=False)
@@ -53,7 +60,74 @@ def application_source_identity(workspace: Path, revision: str) -> str:
             for line in completed.stdout.splitlines()
             if line.partition("\t")[2] == _DEPLOYED_MEMORY or line.partition("\t")[2] not in _UNDEPLOYED_TOP_LEVEL
         )
+    if ignore_plan:
+        entries = _entries_without_plan(workspace, revision, entries)
     return hashlib.sha256("\n".join(sorted(set(entries))).encode()).hexdigest()
+
+
+def _entries_without_plan(workspace: Path, revision: str, entries: list[str]) -> list[str]:
+    """``.sdo/deployment`` is one tree entry; replace it by its entries other than the plan file."""
+    kept = [line for line in entries if line.partition("\t")[2] != _DEPLOYED_MEMORY]
+    completed = subprocess.run(
+        host_git_command(workspace, "ls-tree", "-r", revision, "--", _DEPLOYED_MEMORY),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=wait_for(WaitKind.COMMAND),
+    )
+    if completed.returncode:
+        raise WipeError(f"eval: cannot read {revision} in {workspace}: {completed.stderr.strip()}")
+    return kept + [line for line in completed.stdout.splitlines() if line.partition("\t")[2] != _PLAN]
+
+
+def _canonical_keys(value: Any) -> Any:
+    """The plan's ProtoJSON spells keys camelCase, the harness's source snake_case: compare in one spelling."""
+    if isinstance(value, dict):
+        return {re.sub(r"(?<!^)(?=[A-Z])", "_", str(key)).lower(): _canonical_keys(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_canonical_keys(item) for item in value]
+    return value
+
+
+def _plan_at(workspace: Path, revision: str) -> dict[str, Any] | None:
+    completed = subprocess.run(
+        host_git_command(workspace, "show", f"{revision}:{_PLAN}"),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=wait_for(WaitKind.COMMAND),
+    )
+    if completed.returncode:
+        return None
+    try:
+        plan = json.loads(completed.stdout)
+    except ValueError:
+        return None
+    return plan if isinstance(plan, dict) else None
+
+
+def _plan_only_names_the_deployed_source(environment: Any, deployed: str, revision: str) -> bool:
+    """Whether the two revisions differ in ``.sdo/deployment`` only by a plan that names the source the app came from.
+
+    The harness deploys the application from its own source (``deployment_source_for_environment``) whatever the
+    plan says, and an install replaces a seeded memory's authored plan with one that records exactly that source.
+    A plan that names it, and equals the deployed revision's plan in everything else (images, expected workloads),
+    describes the live app: moving its pointer changes nothing the harness deployed. Any other change to the plan or
+    to the files beside it is a change to what is deployed.
+    """
+    from benchmarks.sregym.fastloop.accepted_source import deployment_source_for_environment
+
+    workspace = environment.workspace
+    if application_source_identity(workspace, deployed, ignore_plan=True) != application_source_identity(
+        workspace, revision, ignore_plan=True
+    ):
+        return False
+    before, after = _plan_at(workspace, deployed), _plan_at(workspace, revision)
+    if before is None or after is None:
+        return False
+    harness = _canonical_keys(deployment_source_for_environment(environment))
+    rest = lambda plan: _canonical_keys({key: value for key, value in plan.items() if key != "source"})  # noqa: E731
+    return _canonical_keys(after.get("source")) == harness and rest(before) == rest(after)
 
 
 def workspace_revision(workspace: Path) -> str | None:
@@ -181,7 +255,9 @@ def deployed_application_change(environment: Any, revision: str) -> Tier2Reason 
         return Tier2Reason(
             Tier2Trigger.ACCEPTED_SOURCE_CHANGED, "no deploy stamp vouches for the lane's application baseline"
         )
-    if recorded != planned:
+    if recorded != planned and not _plan_only_names_the_deployed_source(
+        environment, str(stamp.get("revision", "")), revision
+    ):
         return Tier2Reason(
             Tier2Trigger.ACCEPTED_SOURCE_CHANGED,
             f"the application is the deploy of {stamp.get('revision', '?')[:12]}; the row runs {revision[:12]}",
