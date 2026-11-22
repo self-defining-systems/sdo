@@ -750,21 +750,6 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 	} else if x := m.exps[l.Experiment]; x != nil {
 		limitSpec = x.Measured()
 	}
-	s.HostEnv = h.EnvFor(limitSpec.Workload)
-	if h.IsEks() {
-		p, err := h.EKS.PlanLaneFor(l.Lane, limitSpec.LaneLimit())
-		if err != nil {
-			m.logf("lane %s: %s refused: %v", l.Lane, s.Kind, err)
-			return false
-		}
-		s.HostEnv = append(s.HostEnv, eksEnv(h, p, m.Root.path("eks"))...)
-		if h.EKS.virtualLane(l.Lane) {
-			s.Virtual = true
-			if s.DeleteCluster && m.eksLastLane(l.Host, l.Lane) {
-				s.HostEnv = append(s.HostEnv, "EKS_HOST_LAST=1") // the host's nodes go with its last lane
-			}
-		}
-	}
 	mode, block, _ := isolationOf(h, limitSpec, m.reservations, l.Host, nil)
 	s.Limits = laneLimits(h, limitSpec, block)
 	s.IsolationMode = mode
@@ -795,6 +780,23 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 		default:
 			m.logf("lane %s: %s refused: no recorded workload and fuzzops checkout for the lane (it was prepared before they were recorded)", l.Lane, s.Kind)
 			return false
+		}
+	}
+	// The step's env is its workload's, and the workload is known only now: a release, recover or unhold has no
+	// experiment (its plan may be gone) and takes it from what the lane was prepared with.
+	s.HostEnv = h.EnvFor(s.Workload)
+	if h.IsEks() {
+		p, err := h.EKS.PlanLaneFor(l.Lane, limitSpec.LaneLimit())
+		if err != nil {
+			m.logf("lane %s: %s refused: %v", l.Lane, s.Kind, err)
+			return false
+		}
+		s.HostEnv = append(s.HostEnv, eksEnv(h, p, m.Root.path("eks"))...)
+		if h.EKS.virtualLane(l.Lane) {
+			s.Virtual = true
+			if s.DeleteCluster && m.eksLastLane(l.Host, l.Lane) {
+				s.HostEnv = append(s.HostEnv, "EKS_HOST_LAST=1") // the host's nodes go with its last lane
+			}
 		}
 	}
 	if err := m.ops(l.Host).Start(ctx, s); err != nil {

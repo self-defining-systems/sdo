@@ -51,7 +51,8 @@ type Workload interface {
 	// on stderr. A verb the adapter does not implement returns ErrUnsupported.
 	Call(ctx context.Context, c WorkloadCall) (code int, tail string, err error)
 	// Grade turns the runs under dir into results (fuzzops: `report DIR`).
-	Grade(ctx context.Context, dir string, log io.Writer) error
+	// env is the call's environment, like WorkloadCall.Env.
+	Grade(ctx context.Context, dir string, env []string, log io.Writer) error
 }
 
 // builtinWorkload is a workload adapter that lanes carries, for specs written before the contract existed.
@@ -84,11 +85,22 @@ func NewWorkload(name, dir string) Workload {
 
 // IdentityCommand is the shell command that asks the workload `name`, checked out at dir, for its identity: the
 // `identity` verb of the contract (a built-in adapter may answer it its own way).
-func IdentityCommand(name, dir string) string {
+// env (the host's EnvFor the workload) is exported first, as every other call of the workload has it.
+func IdentityCommand(name, dir string, env []string) string {
 	if b, ok := builtinWorkloads[name]; ok {
-		return b.Identity(dir)
+		return ExportEnv(env) + b.Identity(dir)
 	}
-	return "cd " + shellQuote(dir) + " && WORKLOAD_VERB=" + VerbIdentity + " WORKLOAD_ACTION= WORKLOAD_ARGS='[]' sh -c " + shellQuote(name+" "+VerbIdentity)
+	return ExportEnv(env) + "cd " + shellQuote(dir) + " && WORKLOAD_VERB=" + VerbIdentity + " WORKLOAD_ACTION= WORKLOAD_ARGS='[]' sh -c " + shellQuote(name+" "+VerbIdentity)
+}
+
+// ExportEnv is the shell prefix that exports env (KEY=VALUE pairs) to the commands after it ("" for none).
+func ExportEnv(env []string) string {
+	var b strings.Builder
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		fmt.Fprintf(&b, "export %s=%s; ", k, shellQuote(v))
+	}
+	return b.String()
 }
 
 // WorkloadName is the name the spec's workload goes by: the name it carries, or the default built-in adapter's.
@@ -201,8 +213,8 @@ func (w execWorkload) Call(ctx context.Context, c WorkloadCall) (int, string, er
 	return code, tail, err
 }
 
-func (w execWorkload) Grade(ctx context.Context, dir string, log io.Writer) error {
-	code, tail, err := w.Call(ctx, WorkloadCall{Verb: VerbGrade, Action: "report", Args: []string{dir}, Env: []string{"WORKLOAD_RESULTS=" + dir}, Log: log})
+func (w execWorkload) Grade(ctx context.Context, dir string, env []string, log io.Writer) error {
+	code, tail, err := w.Call(ctx, WorkloadCall{Verb: VerbGrade, Action: "report", Args: []string{dir}, Env: append(append([]string{}, env...), "WORKLOAD_RESULTS="+dir), Log: log})
 	if err == nil && code != 0 {
 		err = fmt.Errorf("grade exit %d: %s", code, tail)
 	}

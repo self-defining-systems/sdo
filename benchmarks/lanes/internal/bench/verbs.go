@@ -703,7 +703,7 @@ func Results(ctx context.Context, root Root, name string, with []string, log io.
 		if err := writeFile(filepath.Join(dir, "runs.jsonl"), []byte(strings.Join(lines, "\n")+"\n")); err != nil {
 			return err
 		}
-		return NewWorkload(x.Lock.Spec.Workload, fz).Grade(ctx, dir, log)
+		return NewWorkload(x.Lock.Spec.Workload, fz).Grade(ctx, dir, inv.Hosts[inv.LocalHost()].EnvFor(x.Lock.Spec.Workload), log)
 	}
 	if err := report(nil); err != nil {
 		return fmt.Errorf("fuzzops report: %w", err)
