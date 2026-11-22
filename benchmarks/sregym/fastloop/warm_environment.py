@@ -41,7 +41,7 @@ from benchmarks.sregym.fastloop.reset import (
     restore_application,
 )
 from benchmarks.sregym.fastloop.resident_start import INSTALL_CONFIGMAPS
-from benchmarks.sregym.fastloop.warm_lane import LaneIdentity, WarmLaneBusy
+from benchmarks.sregym.fastloop.warm_lane import LaneIdentity, WarmLaneBusy, WarmLaneRefusal
 from benchmarks.sregym.fastloop.wipe import (
     AttemptMarker,
     KubectlLaneCluster,
@@ -92,7 +92,9 @@ def planned_application_unchanged(environment: Any, planned_commit: str | None) 
 
     changed = deployed_application_change(environment, planned_commit or "HEAD")
     if changed is not None:
-        raise ValueError(f"warm lane application is not the planned deploy: {changed.trigger.value} ({changed.detail})")
+        raise WarmLaneRefusal(
+            f"warm lane application is not the planned deploy: {changed.trigger.value} ({changed.detail})"
+        )
 
 
 class WarmEnvironment:
@@ -164,26 +166,28 @@ class WarmEnvironment:
         env = self.environment
         self._assert_idle()
         if env.shared_accepted_id:
-            raise ValueError("warm transaction currently requires a private accepted repository")
-        if self.incoming_data_faults or LaneInjectionState(env.kubeconfig, env.namespace).reason() is not None:
-            raise ValueError("warm transaction cannot prove data-plane isolation")
-        if AttemptMarker(env.run_dir).pending() is not None:
-            raise ValueError("previous attempt did not finish cleanly")
+            raise WarmLaneRefusal("warm transaction currently requires a private accepted repository")
+        injected = LaneInjectionState(env.kubeconfig, env.namespace).reason()
+        if self.incoming_data_faults or injected is not None:
+            why = "; ".join(self.incoming_data_faults) or (injected.detail if injected else "")
+            raise WarmLaneRefusal(f"warm transaction cannot prove data-plane isolation: {why}")
+        if (unclean := AttemptMarker(env.run_dir).pending()) is not None:
+            raise WarmLaneRefusal(f"previous attempt did not finish cleanly: {unclean.detail}")
         planned_application_unchanged(env, self.planned_commit)
         record = PersistentState.load(env.state_path).controllers.get(env.namespace)
         pod = self.ops.controller_pod(self.control)
         if record is None or pod is None or record.controller_pod_uid != pod.uid:
-            raise ValueError("warm lane has no recorded live controller")
+            raise WarmLaneRefusal("warm lane has no recorded live controller")
         from benchmarks.sregym.fastloop.setup_proof import digest
 
         installed = identity_settings(record.runtime_config)
         if installed != identity_settings(runtime_config_payload(self.config)):
-            raise ValueError("warm controller settings differ from the requested stage")
+            raise WarmLaneRefusal("warm controller settings differ from the requested stage")
         self._installed_digest = digest(installed)
         if record.lifecycle_fingerprint != deployed_lifecycle(env.namespace).fingerprint:
-            raise ValueError("warm controller topology differs from the requested stage")
+            raise WarmLaneRefusal("warm controller topology differs from the requested stage")
         if not self.ops.install(self.config):
-            raise ValueError("warm controller settings cannot be reused")
+            raise WarmLaneRefusal("warm controller settings cannot be reused")
         standby = self._standby_uid()
         self._clean_scope()
         return LaneIdentity(pod.uid, standby, self._head())
@@ -202,21 +206,21 @@ class WarmEnvironment:
             if p.get("status", {}).get("phase") == "Running" and not p["metadata"].get("deletionTimestamp")
         ]
         if len(running) != 1:
-            raise ValueError("warm lane requires exactly one live standby responder")
+            raise WarmLaneRefusal("warm lane requires exactly one live standby responder")
         return str(running[0]["metadata"]["uid"])
 
     def reidentify(self) -> LaneIdentity:
         """The controller and standby running now, without ``inspect``'s idle checks (a new controller is not idle)."""
         pod = self.ops.controller_pod(self.control)
         if pod is None:
-            raise ValueError("warm lane has no live controller")
+            raise WarmLaneRefusal("warm lane has no live controller")
         return LaneIdentity(pod.uid, self._standby_uid(), self._head())
 
     def _clean_scope(self) -> None:
         env = self.environment
         inventory = load_inventory(inventory_path(env.kubeconfig))
         if inventory is None:
-            raise ValueError("warm lane has no installed cluster inventory")
+            raise WarmLaneRefusal("warm lane has no installed cluster inventory")
         leftovers = harness_leftovers(
             KubectlLaneCluster(env.kubeconfig, env.host_owned_kinds).list_objects(),
             inventory,
@@ -224,7 +228,7 @@ class WarmEnvironment:
             control_namespace="",
         )
         if leftovers:
-            raise ValueError("warm lane has resources outside its installed inventory")
+            raise WarmLaneRefusal("warm lane has resources outside its installed inventory")
         assert_clean_baseline(env.kubeconfig, namespace=env.namespace)
 
     def pause(self) -> None:
@@ -339,7 +343,7 @@ class WarmEnvironment:
         state = PersistentState.load(env.state_path)
         record = state.controllers.get(env.namespace)
         if pod is None or record is None:
-            raise ValueError("warm lane has no recorded controller to update")
+            raise WarmLaneRefusal("warm lane has no recorded controller to update")
         record.controller_pod_uid, record.controller_pod_name = pod.uid, pod.name
         record.runtime_config = runtime_config_payload(self.config)
         record.pending = None
@@ -348,7 +352,7 @@ class WarmEnvironment:
     def adopt(self) -> str:
         revision = self._head()
         if AcceptedSource.of(self.environment).revision != revision:
-            raise ValueError("accepted memory changed during restoration")
+            raise WarmLaneRefusal("accepted memory changed during restoration")
         return revision
 
     def prove(self, not_before: datetime, revision: str) -> dict[str, Any]:
@@ -359,7 +363,7 @@ class WarmEnvironment:
         # evaluated this exact revision, not merely mounted its Git checkout.
         state = self.ops.runtime_state(self.control)
         if state.get("setup_evaluated_revision") != revision:
-            raise ValueError("controller has not evaluated the accepted revision")
+            raise WarmLaneRefusal("controller has not evaluated the accepted revision")
         self._require_fresh_equivalent(state, not_before, revision)
         return proof
 

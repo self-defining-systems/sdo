@@ -412,3 +412,24 @@ def test_the_baseline_boundary_precedes_the_reseed_so_the_new_controllers_eviden
 
     assert prepare_lane(lane, tmp_path / "warm.json", now=clock).reused
     assert lane.events.index("boundary") < lane.events.index("reseed") < lane.events.index("prove")
+
+
+def test_a_refusal_the_warm_lane_made_keeps_its_own_text_truncated_and_nothing_else(tmp_path: Path) -> None:
+    """``inspect:ValueError`` told a report nothing; the lane's own refusals carry their reason, an external error's
+    text (which may hold a command line) never does."""
+    import json
+
+    from benchmarks.sregym.fastloop.warm_lane import WarmLaneRefusal
+
+    class Refusing(Lane):
+        def inspect(self) -> LaneIdentity:
+            raise WarmLaneRefusal("previous attempt did not finish cleanly: " + "x" * 400)
+
+    receipt = prepare_lane(Refusing(), tmp_path / "warm.json", now=lambda: NOW)
+    assert receipt.fallback_reason == "inspect:WarmLaneRefusal"
+    assert receipt.detail.startswith("previous attempt did not finish cleanly: xxx")
+    assert len(receipt.detail) <= 200
+    assert json.loads((tmp_path / "warm.json").read_text())["detail"] == receipt.detail
+    lane = Lane()
+    lane.failed_at = "inspect"
+    assert prepare_lane(lane, tmp_path / "other.json", now=lambda: NOW).detail == ""

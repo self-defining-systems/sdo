@@ -895,6 +895,13 @@ def keep_install_identity(env_dir: Path, identity: Mapping[str, Any], *, install
         path.unlink(missing_ok=True)
 
 
+def _fallback_reason(receipt: Mapping[str, Any]) -> str:
+    """fastloop's ``<phase>:<error type>``, then the lane's own refusal text when it gave one."""
+    reason = str(receipt.get("fallback_reason") or "unknown")
+    detail = str(receipt.get("detail") or "")
+    return f"{reason}: {detail}" if detail else reason
+
+
 def reseed_record(results: Path, *, attempted: bool, reason: str) -> dict[str, Any]:
     """The row's ``reseed`` field: tried or not, reused or fell back, and why (from fastloop's receipt)."""
     record: dict[str, Any] = {
@@ -914,7 +921,7 @@ def reseed_record(results: Path, *, attempted: bool, reason: str) -> dict[str, A
     return {
         **record,
         "reused": reused,
-        "reason": "" if reused else str(receipt.get("fallback_reason") or "unknown"),
+        "reason": "" if reused else _fallback_reason(receipt),
         "violations": [str(item) for item in receipt.get("violations") or []],
         "phase_seconds": dict(receipt.get("phase_seconds") or {}),
     }
