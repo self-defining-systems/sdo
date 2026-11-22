@@ -1395,6 +1395,8 @@ func (m *Manager) died(ctx context.Context, l *LaneFile) {
 	}
 	if dead.Kind == StepBuild && dead.Killed != preemptedBy {
 		l.BuildFailures++
+		// It may have died inside `app up`, which is not re-entrant: the next build makes the cluster anew.
+		l.Recreate = m.inv.Hosts[l.Host].RecreatesAfterFailure(l.Lane)
 	}
 	prev := l.Prepared
 	if dead.Kind == StepBuild && prev == nil {
@@ -1508,9 +1510,11 @@ func (m *Manager) adopt(ctx context.Context, l *LaneFile) error {
 				res.LaneDown = fmt.Sprintf("%d builds failed in a row: %s", l.BuildFailures, res.Reason)
 			} else {
 				// An in-place reset that failed is tried next on a new cluster (when the host can make one); a
-				// build refused for its spec (res.Config) did nothing to the cluster, which stays as it is.
+				// build refused for its spec (res.Config) did nothing to the cluster, which stays as it is. A build
+				// the manager killed (cancelled, or past its bound) may have died inside `app up`, which is not
+				// re-entrant: the cluster is made anew even when this very build made it.
 				if res.Config == "" {
-					l.Recreate = !res.Fresh && m.inv.Hosts[l.Host].RecreatesAfterFailure(l.Lane)
+					l.Recreate = (!res.Fresh || ref.Killed != "") && m.inv.Hosts[l.Host].RecreatesAfterFailure(l.Lane)
 				}
 				m.unbind(l, "build failed: "+res.Reason)
 			}
