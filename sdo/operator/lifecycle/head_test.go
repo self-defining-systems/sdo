@@ -182,3 +182,39 @@ func TestADeployedHeadIsNoticedAndAHeldOneIsNot(t *testing.T) {
 		t.Fatalf("a held head must not be noticed as deployed: %+v %+v", result, held.deployed)
 	}
 }
+
+// A detector that fires in the minute after a rollout and clears by itself
+// (a queue's retried jobs failing while a worker restarts) must not decide a
+// head: the same release was accepted in one run and held in the next
+// depending on whether the single evaluation landed inside that minute. The
+// refusal needs a fault that is still there when the bounded window ends.
+func TestAHeadWhoseDetectorsFireOnlyTransientlyIsDeployed(t *testing.T) {
+	w := newHeadWorld(t, true)
+	firing := lifecycle.HealthVerdict{Outcome: lifecycle.VerificationSourceFault, Summary: "accepted health detectors report firing", Detectors: []lifecycle.DetectorState{{DetectorID: "request-metrics", Status: "firing", Reason: "a queue's jobs failed"}}}
+	w.verdicts = []lifecycle.HealthVerdict{firing, firing, {Outcome: lifecycle.VerificationClear}}
+	result, err := w.deployer().Deploy(context.Background(), repairConfig)
+	if err != nil || result.Outcome != lifecycle.HeadDeployed || len(w.recorded) != 1 {
+		t.Fatalf("result = %+v, err = %v, recorded %d: a transient firing held the head", result, err, len(w.recorded))
+	}
+}
+
+// A fault that persists through the whole window still holds the head, with
+// the verdict the last evaluation gave.
+func TestAHeadWhoseDetectorsKeepFiringIsHeld(t *testing.T) {
+	w := newHeadWorld(t, true)
+	firing := lifecycle.HealthVerdict{Outcome: lifecycle.VerificationSourceFault, Summary: "accepted health detectors report firing", Detectors: []lifecycle.DetectorState{{DetectorID: "request-metrics", Status: "firing", Reason: "still failing"}}}
+	w.verdicts = []lifecycle.HealthVerdict{firing}
+	result, err := w.deployer().Deploy(context.Background(), repairConfig)
+	if err != nil || result.Outcome != lifecycle.HeadHeld || result.Hold != lifecycle.HoldHealth || len(w.recorded) != 0 {
+		t.Fatalf("result = %+v, err = %v, recorded %d", result, err, len(w.recorded))
+	}
+	verifies := 0
+	for _, event := range w.events {
+		if len(event) >= 6 && event[:6] == "verify" {
+			verifies++
+		}
+	}
+	if verifies < 2 {
+		t.Fatalf("verified %d time(s) in events %q, want the window re-evaluated before holding", verifies, w.events)
+	}
+}
