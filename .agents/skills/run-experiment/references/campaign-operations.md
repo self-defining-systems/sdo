@@ -109,6 +109,8 @@ Then compare measured wall time with it, per problem and per series, as results 
 - **Hand the why-chain to whoever fixes it.** When a checker or delegate reports an issue, the fixer gets the why-chain along with it and returns the principled change.
 - Validate a fix by replaying recorded incidents on the branch, in minutes, before rebuilding lanes; use a lane rerun only to confirm.
 - Cut every worktree from `origin/main`, not from the shared checkout's branch.
+- **Run the whole `check_errors.sh` and the slow-test budget before pushing a fix, not its Go half.** One ownership fix took three CI rounds (an application name in a test, a new real-API-server test over the 5 s PR-tier budget, a short-skip comment not naming nightly CI). Fix: run `bash scripts/check_errors.sh` and, for a test that starts an API server, give it the `testing.Short()` skip with the wording `tests/unit/sdo/operator/test_ci_speed.py` requires.
+- **Build an image on a host whose build cache is healthy.** `docker buildx` on a lane host failed with `missing parent ... bucket: not found` (a corrupt cache other lanes share, so never prune it). Fix: build on another host and move the image with `docker save | ssh HOST docker load`.
 - Cap concurrent agent builds and tests per host (for example `GOFLAGS=-p=4`).
 
 ## 7. Analyze, finish and clean up
