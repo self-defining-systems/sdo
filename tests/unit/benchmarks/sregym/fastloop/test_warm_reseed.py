@@ -121,6 +121,7 @@ class Cluster:
         monkeypatch.setattr(warm_environment, "kubectl", kubectl)
         monkeypatch.setattr(warm_environment, "reset_control_state", note("reset_control_state"))
         monkeypatch.setattr(warm_environment, "stop_runtime", note("stop_runtime"))
+        monkeypatch.setattr(warm_environment, "release_leader_lease", note("release_leader_lease"))
         monkeypatch.setattr(warm_environment, "restart_observability", note("restart_observability"))
         monkeypatch.setattr(warm_environment, "await_observability", note("await_observability"))
         monkeypatch.setattr(warm_environment, "wait_standby", note("wait_standby"))
@@ -162,7 +163,9 @@ def test_reseed_stops_the_controller_at_the_head_it_holds_then_retires_state_the
     cluster.lane.reseed()
     names = cluster.events
     assert names.index("settle_exports") < names.index(f"reset_controller({HEAD}, preserve_repository=False)")
-    assert names.index("stop_runtime") < names.index("reset_control_state") < names.index("delete_session_configmaps")
+    # The leader Lease is freed once no controller process is left, so the new controller does not wait it out.
+    assert names.index("stop_runtime") < names.index("release_leader_lease") < names.index("reset_control_state")
+    assert names.index("reset_control_state") < names.index("delete_session_configmaps")
     assert names.index("delete_session_configmaps") < names.index("restart_observability")
     assert names.index("wait_standby") < names.index("await_observability")
     assert cluster.deleted == ["sdo-app-1-abc-request", "sdo-reflection-1"]

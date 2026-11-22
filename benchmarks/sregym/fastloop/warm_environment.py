@@ -9,7 +9,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from benchmarks.devswap.controller import SWAP_STANDBY_WAIT_S, wait_standby
+from benchmarks.devswap.controller import SWAP_STANDBY_WAIT_S, release_leader_lease, wait_standby
 from benchmarks.devswap.kube import Kubectl
 from benchmarks.devswap.observability import await_observability, restart_observability
 from benchmarks.sregym.adapter import (
@@ -287,6 +287,9 @@ class WarmEnvironment:
         def stop_controller(head: str) -> None:
             KubectlResetCluster(env.kubeconfig, control).reset_controller(head, preserve_repository=False)
             stop_runtime(control, kubeconfig=str(env.kubeconfig))
+            # No controller process is left, so nobody holds the leader Lease for real; the next controller would
+            # otherwise wait out the rest of its 60 s (devswap measured 41-60 s of every restart).
+            release_leader_lease(kube, control)
 
         def install_controller() -> None:
             install_existing(native_install_config(replace(self.config, reuse_existing=False)))
