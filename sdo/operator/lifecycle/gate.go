@@ -284,7 +284,7 @@ type gateOutcome struct {
 // logged, never silent, and only RefreshHealth can reach it: a Run always has a
 // deployment receipt.
 func (c Coordinator) publishUnverified(ctx context.Context, id string) (gateOutcome, error) {
-	slog.Warn("health_refresh_published_unverified", "proposal", id, "reason", "accepted source has no recorded deployment")
+	slog.Warn("health_refresh_published_unverified", "proposal", id, "reason", "no recorded deployment describes the accepted head")
 	receipt, err := c.Broker.Publish(ctx, id, broker.HealthJudge, broker.InitialPhase)
 	if err != nil {
 		if diagnostics, typed := broker.RejectionDiagnostics(err); typed {

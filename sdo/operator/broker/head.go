@@ -38,42 +38,57 @@ func (b *Broker) HeadToDeploy(ctx context.Context) (change HeadChange, needed bo
 		if err := b.syncUpstream(ctx); err != nil {
 			return err
 		}
-		recorded, found, err := b.acceptedEvidenceLocked(ctx)
-		if err != nil {
-			return err
-		}
-		if !found {
-			// A seeded install (install-existing) adopted what runs and
-			// recorded no deployment. The source it adopted is SDO's own newest
-			// commit; an engineer's push that changes the effective source
-			// after it is a head to deploy like any other.
-			if recorded, found, err = b.seedBaselineLocked(ctx); err != nil || !found {
-				return err
-			}
-		}
-		head, err := gitText(ctx, b.target, "rev-parse", "HEAD")
-		if err != nil {
-			return err
-		}
-		if recorded.AcceptedCommit == head {
-			return nil
-		}
-		tree, err := gitText(ctx, b.target, "rev-parse", head+"^{tree}")
-		if err != nil {
-			return err
-		}
-		effective, err := rendered.Effective(ctx, rendered.ObjectStore{Dir: b.target}, rendered.BaseTree(tree))
-		if err != nil {
-			return fmt.Errorf("compute the effective tree of head %s: %w", head, err)
-		}
-		defer effective.Close()
-		if effective.ID == recorded.EffectiveTree && effective.PatchesDigest == recorded.PatchesDigest {
-			return nil
-		}
-		change, needed = HeadChange{Commit: head, EffectiveTree: effective.ID, PatchesDigest: effective.PatchesDigest}, true
-		return nil
+		change, needed, err = b.headToDeployLocked(ctx)
+		return err
 	})
 	return change, needed, err
+}
+
+// HeadUndeployed reports whether the checked-out head carries an effective
+// source no recorded deployment has applied (HeadToDeploy's answer without
+// syncing the remote): a push that landed after the last deployment.
+func (b *Broker) HeadUndeployed(ctx context.Context) (needed bool, err error) {
+	err = b.locked(func() error {
+		_, needed, err = b.headToDeployLocked(ctx)
+		return err
+	})
+	return needed, err
+}
+
+func (b *Broker) headToDeployLocked(ctx context.Context) (change HeadChange, needed bool, err error) {
+	recorded, found, err := b.acceptedEvidenceLocked(ctx)
+	if err != nil {
+		return change, false, err
+	}
+	if !found {
+		// A seeded install (install-existing) adopted what runs and
+		// recorded no deployment. The source it adopted is SDO's own newest
+		// commit; an engineer's push that changes the effective source
+		// after it is a head to deploy like any other.
+		if recorded, found, err = b.seedBaselineLocked(ctx); err != nil || !found {
+			return change, false, err
+		}
+	}
+	head, err := gitText(ctx, b.target, "rev-parse", "HEAD")
+	if err != nil {
+		return change, false, err
+	}
+	if recorded.AcceptedCommit == head {
+		return change, false, nil
+	}
+	tree, err := gitText(ctx, b.target, "rev-parse", head+"^{tree}")
+	if err != nil {
+		return change, false, err
+	}
+	effective, err := rendered.Effective(ctx, rendered.ObjectStore{Dir: b.target}, rendered.BaseTree(tree))
+	if err != nil {
+		return change, false, fmt.Errorf("compute the effective tree of head %s: %w", head, err)
+	}
+	defer effective.Close()
+	if effective.ID == recorded.EffectiveTree && effective.PatchesDigest == recorded.PatchesDigest {
+		return change, false, nil
+	}
+	return HeadChange{Commit: head, EffectiveTree: effective.ID, PatchesDigest: effective.PatchesDigest}, true, nil
 }
 
 // HeadCheckout is a clean checkout of an accepted commit, for the deployer and

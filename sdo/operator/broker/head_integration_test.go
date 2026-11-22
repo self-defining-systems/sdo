@@ -31,6 +31,9 @@ func TestAForeignHeadIsDeployedAndRecordedWithoutATrailer(t *testing.T) {
 	if err != nil || !needed || change.Commit != head {
 		t.Fatalf("HeadToDeploy = %+v %v %v, want %s", change, needed, err, head)
 	}
+	if undeployed, err := w.broker.HeadUndeployed(ctx); err != nil || !undeployed {
+		t.Fatalf("HeadUndeployed = %v %v, want an engineer's push to be one", undeployed, err)
+	}
 	evidence := advanceEvidenceFor(t, w.accepted, "engineered", true)
 	if err := w.broker.RecordHeadDeployment(ctx, head, evidence); err != nil {
 		t.Fatalf("RecordHeadDeployment: %v", err)
@@ -44,6 +47,9 @@ func TestAForeignHeadIsDeployedAndRecordedWithoutATrailer(t *testing.T) {
 	}
 	if _, needed, err := w.broker.HeadToDeploy(ctx); err != nil || needed {
 		t.Fatalf("a deployed head needs nothing: needed=%v err=%v", needed, err)
+	}
+	if undeployed, err := w.broker.HeadUndeployed(ctx); err != nil || undeployed {
+		t.Fatalf("HeadUndeployed = %v %v, want a deployed head to be none", undeployed, err)
 	}
 	// A broker memory commit on top changes no source: still nothing to deploy.
 	seedMemory(t, w)

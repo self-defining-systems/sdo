@@ -89,3 +89,23 @@ func TestRefreshHealthVerifiesAgainstTheAcceptedObjective(t *testing.T) {
 		t.Fatalf("verified objectives = %q, want the accepted %q", h.verifier.objectives, refreshRevision().Objective)
 	}
 }
+
+// A push that landed after the last deployment is a head to deploy, not a
+// change the deployed application can vouch for: judging the pushed tree
+// against the previous deployment's receipt failed O2.resources (the receipt
+// held the old release's generated Job, the desired set the new one), so the
+// controller crash-looped on start and the head poller, which lives in that
+// controller, never deployed the push. The refresh publishes unverified, as for
+// a seeded install, and the head deployment verifies the push.
+func TestRefreshHealthOfAHeadAheadOfItsDeploymentPublishesWithoutLiveVerification(t *testing.T) {
+	h, fake := gateHarness(t, clear)
+	fake.source = deployedSource()
+	fake.headUndeployed = true
+	receipt, err := h.coordinator.RefreshHealth(context.Background(), refreshConfig(), refreshRevision())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Commit == "" || fake.stages != 0 || fake.accepts != 0 || h.verifier.calls != 0 || len(h.readiness.liveCalls) != 0 {
+		t.Fatalf("receipt=%+v stages=%d accepts=%d verifications=%d live=%v, want a plain publication verified against nothing", receipt, fake.stages, fake.accepts, h.verifier.calls, h.readiness.liveCalls)
+	}
+}
