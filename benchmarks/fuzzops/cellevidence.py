@@ -636,7 +636,7 @@ def build(run_dir: Path, run_pending: bool = False) -> CellEvidence:
                 ):
                     it.status = "truncated"
                     problems.append(Problem(it.name, "truncated", f"{it.path}: {bad}"))
-        elif state != "absent":
+        elif state not in ("absent", "deferred"):
             problems.append(
                 Problem(f"observability {name}", "incomplete", str(_get(obs, name, "detail") or state)[:160])
             )

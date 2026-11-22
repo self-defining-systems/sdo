@@ -22,12 +22,14 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, Any
 
 from benchmarks.commit_series.scenario import Bounds, SeriesOps, run_commit
 from benchmarks.common.replay.replay import ReplayError, ReplayRecord, replay, run_git
 from benchmarks.common.replay.series import Series
+from benchmarks.fuzzops import capture
 from benchmarks.fuzzops import workload as fuzzops_workload
 from benchmarks.fuzzops.hooks import SETTLE_WORK_ONLY_RECORD, verify_start
 from benchmarks.sregym.fastloop.toy_live import ControllerRelaunching, KubectlScenarioOps
@@ -78,9 +80,21 @@ class Entry:
             return None
         base = instances_file.parent
         series = Series.load(base / raw["spec"])
-        options = {k: v for k, v in (("verdict", raw.get("verdict_s")), ("steady", raw.get("steady_s"))) if v}
+        options = {
+            k: v
+            for k, v in (
+                ("verdict", raw.get("verdict_s")),
+                ("steady", raw.get("steady_s")),
+                ("steady_between", raw.get("steady_between_s")),
+            )
+            if v
+        }
         faults = data.get("fault_instances")
         return cls(series, Bounds(**options), base / faults if faults else None)
+
+
+def _iso_epoch(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def wall_start(lane_dir: Path, name: str, now: float, *, first: bool = False) -> float:
@@ -272,7 +286,10 @@ def run(env: dict[str, str], stdout: IO[str], *, ops: SeriesOps | None = None) -
     ahead = start + entry.series.offset(index) - ops.now()
     if ahead > 0:
         ops.sleep(ahead)
-    record = run_commit(ops, entry.series, index, entry.bounds, flags.get("operator", ""))
+    total = len(entry.series.commits)
+    if lane is not None:
+        capture.write_series_position(lane_dir, position=index, total=total, started=_iso_epoch(start))
+    record = run_commit(ops, entry.series, index, entry.bounds.at(index, total), flags.get("operator", ""))
     # The record carries the position's own bounded wait for its incident; settle waits only for work in flight.
     (lane_dir / SETTLE_WORK_ONLY_RECORD).write_text(json.dumps({"position": index}) + "\n")
     if fault := entry.series.faults.get(index):
