@@ -276,7 +276,7 @@ func (i Installer) releaseOperateLock(ctx context.Context, cfg Config, operation
 	if claim.Data["operation_id"] != operationID {
 		return nil
 	}
-	return configMaps.Delete(ctx, OperateLockConfigMap, ownerDeleteOptions(claim.ObjectMeta))
+	return deleteOperateLock(ctx, configMaps, claim)
 }
 
 // WaitOperate requires a complete Job and an attributable success receipt.
