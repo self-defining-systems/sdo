@@ -52,7 +52,7 @@ func TestAnUnexercisedExistingRecordsStepIsWaitedOutBeforeItFails(t *testing.T) 
 	cfg := Config{PendingEvaluations: 4, PendingInterval: time.Second}
 
 	answers, calls := []HealthVerdict{verdict(0), verdict(0), verdict(2)}, 0
-	got, err := c.awaitVerdict(context.Background(), cfg, func() (HealthVerdict, error) {
+	got, err := c.awaitObserved(context.Background(), cfg, func() (HealthVerdict, error) {
 		answer := answers[min(calls, len(answers)-1)]
 		calls++
 		return answer, nil
@@ -62,11 +62,20 @@ func TestAnUnexercisedExistingRecordsStepIsWaitedOutBeforeItFails(t *testing.T) 
 	}
 
 	calls = 0
-	got, err = c.awaitVerdict(context.Background(), cfg, func() (HealthVerdict, error) {
+	got, err = c.awaitObserved(context.Background(), cfg, func() (HealthVerdict, error) {
 		calls++
 		return verdict(0), nil
 	})
 	if err != nil || got.Outcome != VerificationClear || got.ExistingRecords.Exercised != 0 || calls != 4 {
 		t.Fatalf("verdict %+v after %d evaluation(s), err %v: a step that never runs must still reach the check after the whole window", got, calls, err)
+	}
+
+	// A caller that never reads the evidence (a head deployment) does not wait for it.
+	calls = 0
+	if _, err := c.awaitVerdict(context.Background(), cfg, func() (HealthVerdict, error) {
+		calls++
+		return verdict(0), nil
+	}); err != nil || calls != 1 {
+		t.Fatalf("awaitVerdict evaluated %d time(s), err %v: a caller that never reads the existing-records evidence must not wait for it", calls, err)
 	}
 }
