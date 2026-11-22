@@ -65,3 +65,35 @@ func TestAbsentOnboardingIsNotBusy(t *testing.T) {
 		t.Fatalf("reason = %q", reason)
 	}
 }
+
+// The notice of a deployed head is a ConfigMap beside the hold: the commit, its effective source and the verdict,
+// replaced by the next deployment; it clears a hold on the same source (the refusal is over) and keeps one on another.
+func TestADeployedHeadLeavesANoticeAndEndsItsHold(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	holds := ConfigMapHeadHolds{Client: client, Namespace: "sdo-system", Now: func() time.Time { return time.Unix(1, 0) }}
+	change := broker.HeadChange{Commit: "a1", EffectiveTree: "t1", PatchesDigest: "d1"}
+	if err := holds.Hold(ctx, change, lifecycle.HoldHealth, "pending"); err != nil {
+		t.Fatal(err)
+	}
+	if err := holds.Deployed(ctx, change, lifecycle.HeadResult{Outcome: lifecycle.HeadDeployed, Commit: "a1"}); err != nil {
+		t.Fatal(err)
+	}
+	notice, err := holds.Deployment(ctx)
+	if err != nil || notice == nil || notice.Commit != "a1" || notice.EffectiveTree != "t1" || notice.At == "" {
+		t.Fatalf("notice = %+v, err = %v", notice, err)
+	}
+	if _, held, _ := holds.Held(ctx, change); held {
+		t.Fatal("the deployment ended the hold on the same source")
+	}
+	next := broker.HeadChange{Commit: "b2", EffectiveTree: "t2", PatchesDigest: "d1"}
+	if err := holds.Hold(ctx, next, lifecycle.HoldRollout, "stuck"); err != nil {
+		t.Fatal(err)
+	}
+	if err := holds.Deployed(ctx, change, lifecycle.HeadResult{Outcome: lifecycle.HeadDeployed, Commit: "a1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, held, _ := holds.Held(ctx, next); !held {
+		t.Fatal("a deployment of another source keeps the hold on this one")
+	}
+}

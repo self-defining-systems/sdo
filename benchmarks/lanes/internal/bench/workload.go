@@ -51,7 +51,8 @@ type Workload interface {
 	// on stderr. A verb the adapter does not implement returns ErrUnsupported.
 	Call(ctx context.Context, c WorkloadCall) (code int, tail string, err error)
 	// Grade turns the runs under dir into results (fuzzops: `report DIR`).
-	Grade(ctx context.Context, dir string, log io.Writer) error
+	// env is the call's environment, like WorkloadCall.Env.
+	Grade(ctx context.Context, dir string, env []string, log io.Writer) error
 }
 
 // builtinWorkload is a workload adapter that lanes carries, for specs written before the contract existed.
@@ -84,11 +85,22 @@ func NewWorkload(name, dir string) Workload {
 
 // IdentityCommand is the shell command that asks the workload `name`, checked out at dir, for its identity: the
 // `identity` verb of the contract (a built-in adapter may answer it its own way).
-func IdentityCommand(name, dir string) string {
+// env (the host's EnvFor the workload) is exported first, as every other call of the workload has it.
+func IdentityCommand(name, dir string, env []string) string {
 	if b, ok := builtinWorkloads[name]; ok {
-		return b.Identity(dir)
+		return ExportEnv(env) + b.Identity(dir)
 	}
-	return "cd " + shellQuote(dir) + " && WORKLOAD_VERB=" + VerbIdentity + " WORKLOAD_ACTION= WORKLOAD_ARGS='[]' sh -c " + shellQuote(name+" "+VerbIdentity)
+	return ExportEnv(env) + "cd " + shellQuote(dir) + " && WORKLOAD_VERB=" + VerbIdentity + " WORKLOAD_ACTION= WORKLOAD_ARGS='[]' sh -c " + shellQuote(name+" "+VerbIdentity)
+}
+
+// ExportEnv is the shell prefix that exports env (KEY=VALUE pairs) to the commands after it ("" for none).
+func ExportEnv(env []string) string {
+	var b strings.Builder
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		fmt.Fprintf(&b, "export %s=%s; ", k, shellQuote(v))
+	}
+	return b.String()
 }
 
 // WorkloadName is the name the spec's workload goes by: the name it carries, or the default built-in adapter's.
@@ -102,6 +114,10 @@ func (s Spec) WorkloadName() string {
 // runAdapter runs one adapter process the way every workload call has always run: its own process group, SIGTERM
 // on cancel (a cancelled run still undoes its fault, which gets up to ten minutes), stdout to c.Stdout and stderr
 // to the log with its tail kept as the reason of a failure.
+// adapterTermGrace is how long a cancelled adapter's process group gets after TERM (to undo its fault) before the
+// whole group is killed. A var for tests.
+var adapterTermGrace = 10 * time.Minute
+
 func runAdapter(ctx context.Context, dir string, cmd *exec.Cmd, c WorkloadCall, what string) (int, string, error) {
 	// Each verb has a limit (hookTimeouts): past it the adapter's process group is killed and the reason says so.
 	limit := hookTimeouts[c.Verb]
@@ -125,9 +141,14 @@ func runAdapter(ctx context.Context, dir string, cmd *exec.Cmd, c WorkloadCall, 
 		if parent.Err() == nil { // our own limit: no undo to wait for
 			return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		}
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		// TERM gives the adapter its undo; whatever of the group is still there after the grace is killed with it.
+		// (WaitDelay's own kill reaches only the leader, and a child that ignored TERM would keep the output pipe
+		// open and the step waiting.)
+		pgid := cmd.Process.Pid
+		time.AfterFunc(adapterTermGrace, func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) })
+		return syscall.Kill(-pgid, syscall.SIGTERM)
 	}
-	cmd.WaitDelay = 10 * time.Minute
+	cmd.WaitDelay = adapterTermGrace + 10*time.Second
 	fmt.Fprintf(c.Log, "%s %s\n", time.Now().UTC().Format("15:04:05"), what)
 	err := cmd.Run()
 	if limit > 0 && parent.Err() == nil && ctx.Err() == context.DeadlineExceeded {
@@ -201,8 +222,8 @@ func (w execWorkload) Call(ctx context.Context, c WorkloadCall) (int, string, er
 	return code, tail, err
 }
 
-func (w execWorkload) Grade(ctx context.Context, dir string, log io.Writer) error {
-	code, tail, err := w.Call(ctx, WorkloadCall{Verb: VerbGrade, Action: "report", Args: []string{dir}, Env: []string{"WORKLOAD_RESULTS=" + dir}, Log: log})
+func (w execWorkload) Grade(ctx context.Context, dir string, env []string, log io.Writer) error {
+	code, tail, err := w.Call(ctx, WorkloadCall{Verb: VerbGrade, Action: "report", Args: []string{dir}, Env: append(append([]string{}, env...), "WORKLOAD_RESULTS="+dir), Log: log})
 	if err == nil && code != 0 {
 		err = fmt.Errorf("grade exit %d: %s", code, tail)
 	}

@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -309,6 +310,14 @@ func (r *stepRunner) laneEnv(p *Prepared) []string {
 		"KUBE_CONTEXT=kind-" + r.s.Lane, "FUZZOPS_KUBE_CONTEXT=kind-" + r.s.Lane,
 		"BENCH_LANE=" + r.s.Lane, "BENCH_HOST=" + r.s.Host, "BENCH_LANE_DIR=" + r.s.LaneDir, "BENCH_FRESH_FINGERPRINT=" + r.freshFingerprintFile(),
 		"BENCH_EVIDENCE_HOST=" + r.s.Evidence, "BENCH_EVIDENCE_NODE=" + EvidenceNode}
+	// The spec's bounds, for a workload that bounds its own waits: a run that outlives ready_timeout + cap (plus its
+	// own close-out margin) is the adapter's to kill, whatever wait it is stuck in (docs/contract.md).
+	if r.s.Cap > 0 {
+		e = append(e, "BENCH_CAP_SECONDS="+strconv.FormatInt(int64(r.s.Cap.D().Seconds()), 10))
+	}
+	if r.s.ReadyTimeout > 0 {
+		e = append(e, "BENCH_READY_TIMEOUT_SECONDS="+strconv.FormatInt(int64(r.s.ReadyTimeout.D().Seconds()), 10))
+	}
 	e = append(e, r.s.HostEnv...)
 	if r.s.Provider == ProviderEks {
 		if r.s.Virtual {
@@ -357,8 +366,12 @@ func (r *stepRunner) callHook(ctx context.Context, p *Prepared, verb string, ext
 }
 
 // call runs one verb of the step's workload; out gets its result stream (nil: runner.log). code is the adapter's
-// exit status and why the end of its stderr.
-func (r *stepRunner) call(ctx context.Context, env []string, out io.Writer, verb, action string, args ...string) (int, string, error) {
+// exit status and why the end of its stderr. It is the only place a step builds a workload call, and the call's env is
+// always laneEnv(p) (the host's env with the workload's workload_env, and the lane's facts) with extra on top: a step
+// cannot hand a verb a bare env, so a verb added to a step gets the workload's configuration without asking. p is the
+// state of the lane the call is about (nil before the step has one).
+func (r *stepRunner) call(ctx context.Context, p *Prepared, extra []string, out io.Writer, verb, action string, args ...string) (int, string, error) {
+	env := append(r.laneEnv(p), extra...)
 	return r.workload().Call(ctx, WorkloadCall{Verb: verb, Action: action, Args: args, Env: env, Stdout: out, Log: r.log})
 }
 
@@ -441,7 +454,7 @@ func (r *stepRunner) failHook(res HookResult, verb string) {
 
 func (r *stepRunner) version(ctx context.Context) (Version, error) {
 	var out bytes.Buffer
-	code, _, err := r.call(ctx, nil, &out, VerbIdentity, "")
+	code, _, err := r.call(ctx, nil, nil, &out, VerbIdentity, "")
 	var v Version
 	if err == nil && code != 0 {
 		err = fmt.Errorf("exit %d", code)
@@ -500,6 +513,7 @@ func (r *stepRunner) waitIdle(ctx context.Context, p *Prepared) bool {
 		limit = 30 * time.Minute
 	}
 	calm, why := 0, ""
+	progress := start
 	for calm < 2 && time.Since(start) < limit {
 		if res := r.callHook(ctx, p, "idle", BenchIdleForEnv+"="+IdleForTeardown); res.OK() {
 			calm++
@@ -515,13 +529,23 @@ func (r *stepRunner) waitIdle(ctx context.Context, p *Prepared) bool {
 				return false
 			}
 		}
+		if calm < 2 && time.Since(progress) >= idleProgressEvery {
+			progress = time.Now()
+			r.logf("idle: still waiting after %s of at most %s: %s", time.Since(start).Round(time.Second), limit, why)
+		}
 		if calm < 2 {
 			time.Sleep(r.poll)
 		}
 	}
+	if calm < 2 {
+		r.logf("idle: gave up after %s (the cap): %s; the teardown goes on", time.Since(start).Round(time.Second), why)
+	}
 	r.interval("idle", start, calm >= 2, why)
 	return true
 }
+
+// idleProgressEvery is how often a teardown's idle wait says what it still waits for.
+var idleProgressEvery = 5 * time.Minute
 
 // packLoads is the build's pre-flight: the pinned fuzzops loads the spec's pack before anything is made or torn
 // down, so a pack that is not there (the spec's app is a path inside the pinned checkout) or does not parse fails
@@ -531,7 +555,7 @@ func (r *stepRunner) packLoads(ctx context.Context, p *Prepared) bool {
 	if p == nil || p.AppPack == "" {
 		return true
 	}
-	code, why, err := r.call(ctx, nil, io.Discard, VerbAppUp, "check-pack", "--pack", p.AppPack)
+	code, why, err := r.call(ctx, p, nil, io.Discard, VerbAppUp, "check-pack", "--pack", p.AppPack)
 	if err != nil || code != lanelock.ExitInvalid {
 		return true
 	}
@@ -553,7 +577,7 @@ func (r *stepRunner) recoverLane(ctx context.Context, p *Prepared) bool {
 	var why string
 	var err error
 	for {
-		code, why, err = r.call(ctx, r.laneEnv(p), nil, VerbAppReset, "recover", "--namespace", p.Namespace, "--pack", p.AppPack)
+		code, why, err = r.call(ctx, p, nil, nil, VerbAppReset, "recover", "--namespace", p.Namespace, "--pack", p.AppPack)
 		if errors.Is(err, ErrUnsupported) {
 			// The workload leaves nothing to undo between runs (docs/contract.md: unsupported is skipped).
 			r.interval("recover", start, true, "unsupported by the workload")
@@ -878,18 +902,17 @@ func (r *stepRunner) swapCheck(ctx context.Context, p *Prepared) bool {
 // freshApp replaces the app copy of the last sequence and puts down a new one from the pack's seed.
 func (r *stepRunner) freshApp(ctx context.Context) bool {
 	s, p := r.s, r.s.New
-	env := r.laneEnv(p)
 	start := time.Now()
 	r.phase(PhaseApp, "")
 	if q := s.Prev; q != nil && (q.Namespace != p.Namespace || q.AppPack != p.AppPack) {
-		if code, why, err := r.call(ctx, r.laneEnv(q), nil, VerbAppUp, "down", "--pack", q.AppPack, "--namespace", q.Namespace); err != nil || code != 0 {
+		if code, why, err := r.call(ctx, q, nil, nil, VerbAppUp, "down", "--pack", q.AppPack, "--namespace", q.Namespace); err != nil || code != 0 {
 			r.interval("app", start, false, "down of the last app copy: "+failText(code, why, err))
 			r.failCall("app down "+q.Namespace, code, why, err)
 			return false
 		}
 	}
 	for _, verb := range []string{"down", "up"} {
-		if code, why, err := r.call(ctx, env, nil, VerbAppUp, verb, "--pack", p.AppPack, "--namespace", p.Namespace); err != nil || code != 0 {
+		if code, why, err := r.call(ctx, p, nil, nil, VerbAppUp, verb, "--pack", p.AppPack, "--namespace", p.Namespace); err != nil || code != 0 {
 			r.interval("app", start, false, "app "+verb+": "+failText(code, why, err))
 			r.failCall("app "+verb, code, why, err)
 			return false
@@ -921,7 +944,7 @@ func (r *stepRunner) recordFresh(ctx context.Context, p *Prepared) bool {
 	var why string
 	var err error
 	for try := 0; try < 3; try++ {
-		if code, why, err = r.call(ctx, r.laneEnv(p), io.Discard, VerbAppSnapshot, "write", "--pack", p.AppPack, "--namespace", p.Namespace, "--out", file); err == nil && code == 0 {
+		if code, why, err = r.call(ctx, p, nil, io.Discard, VerbAppSnapshot, "write", "--pack", p.AppPack, "--namespace", p.Namespace, "--out", file); err == nil && code == 0 {
 			return true
 		}
 		if errors.Is(err, ErrUnsupported) {
@@ -942,7 +965,7 @@ func (r *stepRunner) appMatchesFresh(ctx context.Context, p *Prepared) string {
 	if _, err := os.Stat(file); err != nil {
 		return "no fingerprint of a fresh copy on this lane"
 	}
-	code, why, err := r.call(ctx, r.laneEnv(p), io.Discard, VerbAppSnapshot, "verify", "--pack", p.AppPack, "--namespace", p.Namespace, "--against", file)
+	code, why, err := r.call(ctx, p, nil, io.Discard, VerbAppSnapshot, "verify", "--pack", p.AppPack, "--namespace", p.Namespace, "--against", file)
 	if err != nil || code != 0 {
 		return fmt.Sprintf("fingerprint check %s (see the runner log)", failText(code, why, err))
 	}
@@ -958,7 +981,7 @@ func (r *stepRunner) appHealthy(ctx context.Context, p *Prepared, final bool) bo
 	start := time.Now()
 	r.phase(PhaseAppHealth, "")
 	for try := 1; ; try++ {
-		code, why, err := r.call(ctx, r.laneEnv(p), nil, VerbGate, "check", "--pack", p.AppPack, "--namespace", p.Namespace,
+		code, why, err := r.call(ctx, p, nil, nil, VerbGate, "check", "--pack", p.AppPack, "--namespace", p.Namespace,
 			"--duration", r.s.ReadyFor.D().String(), "--clean", "--max-bad-seconds", fmt.Sprint(r.s.buildBad()))
 		if err == nil && code == 0 {
 			r.interval("app-health", start, true, fmt.Sprintf("clean on try %d", try))
@@ -1093,7 +1116,7 @@ func (r *stepRunner) makeCluster(ctx context.Context, p *Prepared) bool {
 	}
 	start := time.Now()
 	r.phase(PhaseImages, "")
-	code, why, err := r.call(ctx, r.laneEnv(p), nil, VerbAppUp, "images", "--pack", p.AppPack, "--cluster", s.Lane)
+	code, why, err := r.call(ctx, p, nil, nil, VerbAppUp, "images", "--pack", p.AppPack, "--cluster", s.Lane)
 	if errors.Is(err, ErrUnsupported) {
 		r.interval("images", start, true, "unsupported by the workload")
 		return true
@@ -1235,7 +1258,7 @@ func (r *stepRunner) checkOnce(ctx context.Context, p *Prepared) ([]string, bool
 	}
 	done := make(chan out, 1)
 	go func() {
-		code, why, err := r.call(ctx, r.laneEnv(p), nil, VerbGate, "check", "--pack", p.Pack, "--namespace", p.Namespace,
+		code, why, err := r.call(ctx, p, nil, nil, VerbGate, "check", "--pack", p.Pack, "--namespace", p.Namespace,
 			"--duration", r.s.ReadyFor.D().String(), "--clean", "--max-bad-seconds", fmt.Sprint(r.s.buildBad()),
 			"--ledger-out", filepath.Join(r.s.LaneDir, ledgerFile),
 			"--min-confirmed", fmt.Sprint(ledgerMin+ledgerMargin), "--max-duration", (3 * r.s.ReadyFor.D()).String())
@@ -1308,7 +1331,7 @@ func (r *stepRunner) run(ctx context.Context) {
 	s, p, rs := r.s, r.s.New, r.s.Run
 	defer r.isolate(ctx)()
 	r.res.Prepared = p
-	env := append(r.laneEnv(p), "FUZZOPS_EXEC_OUT="+filepath.Join(r.dir, "exec"), "BENCH_RUN="+rs.ID, "BENCH_FAULT="+faultArg(rs.Fault))
+	env := append([]string{}, "FUZZOPS_EXEC_OUT="+filepath.Join(r.dir, "exec"), "BENCH_RUN="+rs.ID, "BENCH_FAULT="+faultArg(rs.Fault))
 	span := r.gateSpan(p)
 	args := []string{"--skip-reset", "--pack", p.Pack, "--namespace", p.Namespace, "--operator", rs.Label,
 		"--ready-for", span.String(), "--ready-timeout", s.ReadyTimeout.D().String(), "--seed", fmt.Sprint(rs.Seed)}
@@ -1346,7 +1369,7 @@ func (r *stepRunner) run(ctx context.Context) {
 	r.phase(PhaseGate, "")
 	plain := r.log
 	r.log = io.MultiWriter(plain, &phaseWriter{r: r, last: PhaseGate})
-	code, why, err := r.call(ctx, env, f, VerbRun, "run", args...)
+	code, why, err := r.call(ctx, p, env, f, VerbRun, "run", args...)
 	r.log = plain
 	f.Close()
 	var rec record
@@ -1493,10 +1516,9 @@ func (r *stepRunner) safety(ctx context.Context, p *Prepared, rs *RunSpec) {
 		}
 		return
 	}
-	env := r.laneEnv(p)
 	active := func(verb string) (bool, error) {
 		var out bytes.Buffer
-		code, _, err := r.call(ctx, env, &out, VerbRun, verb, "--file", rs.Instances, "--id", rs.Fault, "--pack", p.AppPack, "--namespace", p.Namespace)
+		code, _, err := r.call(ctx, p, nil, &out, VerbRun, verb, "--file", rs.Instances, "--id", rs.Fault, "--pack", p.AppPack, "--namespace", p.Namespace)
 		var answer struct {
 			Active *bool `json:"active"`
 		}

@@ -24,13 +24,7 @@ import (
 
 // toolsProbe is the script that prints "missing TOOL" for each platform tool a step of workload on host h cannot find.
 func toolsProbe(h Host, workload string) string {
-	var b strings.Builder
-	for _, kv := range h.EnvFor(workload) {
-		k, v, _ := strings.Cut(kv, "=")
-		fmt.Fprintf(&b, "export %s=%s; ", k, shellQuote(v))
-	}
-	b.WriteString(toolsScript(h))
-	inner := b.String()
+	inner := ExportEnv(h.EnvFor(workload)) + toolsScript(h)
 	if h.Reserve != nil && len(h.Clusters) > 0 {
 		return "sudo -n --preserve-env " + HelperPath + " lane-exec " + shellQuote(h.Clusters[0]) + " -- sh -c " + shellQuote(inner)
 	}
