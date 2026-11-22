@@ -169,6 +169,20 @@ func (c Coordinator) verifyHealth(ctx context.Context, cfg Config, acceptedCommi
 // awaitVerdict repeats one independent evaluation while it is pending, within
 // cfg's pending bounds, retrying infrastructure failures of each evaluation.
 func (c Coordinator) awaitVerdict(ctx context.Context, cfg Config, evaluate func() (HealthVerdict, error)) (HealthVerdict, error) {
+	return c.await(ctx, cfg, evaluate, false)
+}
+
+// awaitObserved is awaitVerdict for a caller that checks the existing-records
+// evidence (the judge candidate's gate): a clear verdict whose existing-records
+// step has not run yet is an incomplete observation, waited out like a pending
+// one, and only a step that never ran by the last evaluation reaches the O4
+// check. Callers that never read the evidence (a head deployment, a repair)
+// must not wait for it: each evaluation takes about a minute and a half.
+func (c Coordinator) awaitObserved(ctx context.Context, cfg Config, evaluate func() (HealthVerdict, error)) (HealthVerdict, error) {
+	return c.await(ctx, cfg, evaluate, true)
+}
+
+func (c Coordinator) await(ctx context.Context, cfg Config, evaluate func() (HealthVerdict, error), existingRecords bool) (HealthVerdict, error) {
 	evaluations := orDefault(cfg.PendingEvaluations, defaultPendingEvaluations)
 	interval := orDefault(cfg.PendingInterval, defaultPendingInterval)
 	for evaluation := 1; ; evaluation++ {
@@ -180,10 +194,7 @@ func (c Coordinator) awaitVerdict(ctx context.Context, cfg Config, evaluate func
 		if err != nil {
 			return HealthVerdict{}, err
 		}
-		// A clear verdict whose existing-records step has not run yet is an
-		// incomplete observation: it is waited out like a pending one, and only
-		// a step that never ran by the last evaluation reaches the O4 check.
-		unobserved := verdict.Outcome == VerificationClear && verdict.ExistingRecords.Required && verdict.ExistingRecords.Exercised == 0
+		unobserved := existingRecords && verdict.Outcome == VerificationClear && verdict.ExistingRecords.Required && verdict.ExistingRecords.Exercised == 0
 		if verdict.Outcome != VerificationPending && !(unobserved && evaluation < evaluations) {
 			return verdict, nil
 		}

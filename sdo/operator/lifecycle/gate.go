@@ -75,7 +75,7 @@ func (c Coordinator) candidateReport(ctx context.Context, cfg Config, candidate 
 	case failing(applyChecks):
 		checks = append(checks, operability.Check{ID: "O4.detectors", Phase: operability.PhaseLive, Status: operability.StatusSkipped, Detail: "not run: the telemetry apply phase failed"})
 	default:
-		verdict, err := c.awaitVerdict(ctx, cfg, func() (HealthVerdict, error) {
+		verdict, err := c.awaitObserved(ctx, cfg, func() (HealthVerdict, error) {
 			return c.Verifier.VerifyCandidate(ctx, candidate.Path, candidate.Commit, cfg.Namespace, cfg.HealthObjective, deployment)
 		})
 		if err != nil && !errors.As(err, &pending) {
