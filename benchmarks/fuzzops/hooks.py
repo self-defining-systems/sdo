@@ -334,7 +334,7 @@ BASELINE_MISSING_RECORD = "no-baseline.json"
 BASELINE_WAIT_MAX_S = 600.0
 BASELINE_BLIND = "blind: no promoted baseline yet for "
 #: Set by the bench when it asks ``idle`` before deleting the operator (the release's teardown): store baselines only
-#: matter to an inject, so that call does not wait for them.
+#: matter to an inject, and an open incident only through the work in flight for it, so that call waits for neither.
 IDLE_FOR_ENV = "BENCH_IDLE_FOR"
 IDLE_FOR_TEARDOWN = "teardown"
 #: Written by ``watch`` (fuzzops starts it right after the inject) with the run it observes; removed at every run or
@@ -541,12 +541,13 @@ RESPONDER_ACTIVE_DISPATCH = frozenset(
 )
 
 
-def idle_reason(state: dict[str, Any] | None) -> str:
+def idle_reason(state: dict[str, Any] | None, incident: bool = True) -> str:
     """Why SDO is not idle ("" when it is): an open incident, a closure in progress (not one that failed for good),
-    a responder dispatch under way, reflection still queued, or a new install SDO has not yet seen healthy."""
+    a responder dispatch under way, reflection still queued, or a new install SDO has not yet seen healthy.
+    ``incident=False`` leaves out the open incident itself and keeps only the work done for it."""
     if state is None:
         return "no controller state yet"
-    if state.get("incident_open") or state.get("incidentOpen"):
+    if incident and (state.get("incident_open") or state.get("incidentOpen")):
         return "incident open"
     failed = (state.get("closure_state") or state.get("closureState")) == "CLOSURE_STATE_FAILED"
     # A permanently failed closure stays in the state as evidence and does not block the next incident.
@@ -590,11 +591,15 @@ def idle_verdict(
     now: datetime,
     controller_log: str | None = None,
     baselines: bool = True,
+    incident: bool = True,
 ) -> str:
     """The ``idle`` hook's answer: "" when idle, else the reason (``alarm:`` first for an open incident).
     ``baselines=False`` skips the promoted-store-baseline requirement: only an inject needs it, while the waits
-    before the seed import and after resets do not (a fresh install promotes later)."""
-    if state is not None and idle_reason(state) == "incident open":
+    before the seed import and after resets do not (a fresh install promotes later). ``incident=False`` (a
+    teardown's idle) waits for the work an open incident has in flight (a responder dispatch, a closing turn,
+    reflection), never for the incident to close: an escalated one stays open until its alerts clear or a human
+    resets it, and the operator is about to be deleted."""
+    if incident and state is not None and idle_reason(state) == "incident open":
         return f"alarm: incident open {_incident_id(state)}".rstrip()
     if not pod_ready:
         return "down: controller pod not Ready"
@@ -605,7 +610,7 @@ def idle_verdict(
     age = (now - updated).total_seconds()
     if age > FRESH_S:
         return f"stale: state not updated for {age:.0f}s"
-    why = idle_reason(state)
+    why = idle_reason(state, incident=incident)
     if why:
         return f"busy: {why}"
     blind = _request_metrics_blind(state, now) or (_store_baseline_pending(state, controller_log) if baselines else "")
@@ -1477,12 +1482,13 @@ def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     except (subprocess.SubprocessError, json.JSONDecodeError, OSError) as exc:
         out(f"error: controller read failed: {exc}")
         return 1
+    teardown = env.get(IDLE_FOR_ENV) == IDLE_FOR_TEARDOWN
     # No log yet: baselines are judged by the second verdict, after the log read an otherwise idle controller earns.
-    why = idle_verdict(state, updated, ready, datetime.now(UTC), baselines=False)
+    why = idle_verdict(state, updated, ready, datetime.now(UTC), baselines=False, incident=not teardown)
     # Store baselines gate only the inject: after it, settle and the window end need idle twice in a row, which a
     # store whose baseline the fault reset (it re-promotes only later) would never give. A teardown's idle needs them
     # no more: the operator is about to be deleted.
-    if not why and not after_inject(env) and env.get(IDLE_FOR_ENV) != IDLE_FOR_TEARDOWN:
+    if not why and not after_inject(env) and not teardown:
         # Only an otherwise idle controller is worth the full log read the baselines need.
         try:
             log = controller_log(kube, control)

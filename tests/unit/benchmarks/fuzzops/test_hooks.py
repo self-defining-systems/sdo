@@ -567,6 +567,64 @@ def test_a_teardowns_idle_never_waits_for_a_store_baseline(monkeypatch: pytest.M
     assert lines[-1] == "idle"
 
 
+def _lane_with_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, state: dict[str, Any], **extra: str
+) -> dict[str, str]:
+    """A lane whose ready controller reports ``state`` (fresh)."""
+    fresh = (datetime.now(UTC) - timedelta(seconds=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    configmap = {"metadata": {"managedFields": [{"time": fresh}]}, "data": {"runtime-state.json": json.dumps(state)}}
+    pods = {"items": [{"metadata": {"name": "p"}, "status": {"conditions": [{"type": "Ready", "status": "True"}]}}]}
+    monkeypatch.setattr(hooks.subprocess, "run", _fake_kubectl({"configmap": configmap, "pods": pods, "logs": ""}, []))
+    lane = tmp_path / "lane"
+    lane.mkdir(exist_ok=True)
+    return {
+        "FUZZOPS_NAMESPACE": "ns1",
+        "FUZZOPS_KUBE_CONTEXT": "kind-c",
+        "KUBECONFIG": "/k",
+        "BENCH_LANE_DIR": str(lane),
+        **extra,
+    }
+
+
+def _open_incident(dispatch: str) -> dict[str, Any]:
+    return {
+        "version": "sdo.controller/v1",
+        "incident_open": True,
+        "incident_request": {"incident_id": "fg1-1"},
+        "dispatch_state": dispatch,
+        "escalated_at": "2026-01-01T00:00:00Z",
+    }
+
+
+def test_a_teardowns_idle_does_not_wait_for_an_open_incident_no_agent_is_working_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An escalated incident stays open until its alerts clear or a human resets it; the run's settle already waited
+    the cap for it. The release's idle asks only whether work has stopped, and a finished responder is not work (a
+    commit-series release waited a second two hours on an incident the stub responder had escalated)."""
+    lines: list[str] = []
+    gate = _lane_with_state(monkeypatch, tmp_path, _open_incident("DISPATCH_STATE_COMPLETED"))
+    assert hooks.idle(gate, out=lines.append) == 1
+    assert lines[-1] == "alarm: incident open fg1-1"
+    teardown = {**gate, hooks.IDLE_FOR_ENV: hooks.IDLE_FOR_TEARDOWN}
+    assert hooks.idle(teardown, out=lines.append) == 0, lines
+    assert lines[-1] == "idle"
+
+
+def test_a_teardowns_idle_still_waits_for_a_responder_working_on_an_open_incident(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    lines: list[str] = []
+    env = _lane_with_state(
+        monkeypatch,
+        tmp_path,
+        _open_incident("DISPATCH_STATE_RUNNING"),
+        **{hooks.IDLE_FOR_ENV: hooks.IDLE_FOR_TEARDOWN},
+    )
+    assert hooks.idle(env, out=lines.append) == 1
+    assert lines[-1] == "busy: responder dispatch running"
+
+
 @pytest.mark.parametrize(
     "settle_env",
     [
