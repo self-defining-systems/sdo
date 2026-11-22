@@ -195,7 +195,7 @@ func Stop(ctx context.Context, client kubernetes.Interface, namespace string) (S
 		if live {
 			return result, fmt.Errorf("PVC claim %s/%s still has an active owner or creation window", claim.Namespace, claim.Name)
 		}
-		if err := client.CoreV1().ConfigMaps(claim.Namespace).Delete(ctx, claim.Name, ownerDeleteOptions(claim.ObjectMeta)); err != nil && !apierrors.IsNotFound(err) {
+		if err := deleteOperateLock(ctx, client.CoreV1().ConfigMaps(claim.Namespace), &claim); err != nil {
 			return result, err
 		}
 		result.Removed = append(result.Removed, "configmap/"+claim.Namespace+"/"+claim.Name)

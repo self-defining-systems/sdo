@@ -9,6 +9,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/util/retry"
 	"strings"
 	"time"
@@ -22,6 +23,30 @@ func ownerDeleteOptions(meta metav1.ObjectMeta) metav1.DeleteOptions {
 
 // Sync Pods only host completed archive/inspection callbacks and have no
 // shutdown handler. A grace period merely consumes the caller's cleanup budget.
+// deleteOperateLock releases the lock claim itself with the UID and resource-version fence. A Conflict means the object
+// changed or went between the read and the delete (the sync Pod's owner reference lets the garbage collector remove it, and a
+// virtual cluster's store answers a delete of an already-removed object with a precondition Conflict, not NotFound): read it
+// again. Gone, or replaced by another reservation (another UID), is released; the same reservation modified is fenced again.
+func deleteOperateLock(ctx context.Context, maps typedcorev1.ConfigMapInterface, claim *corev1.ConfigMap) error {
+	for attempt := 0; ; attempt++ {
+		err := maps.Delete(ctx, OperateLockConfigMap, ownerDeleteOptions(claim.ObjectMeta))
+		if err == nil || apierrors.IsNotFound(err) {
+			return nil
+		}
+		if !apierrors.IsConflict(err) || attempt >= 3 {
+			return err
+		}
+		current, getErr := maps.Get(ctx, OperateLockConfigMap, metav1.GetOptions{})
+		if apierrors.IsNotFound(getErr) || getErr == nil && current.UID != claim.UID {
+			return nil
+		}
+		if getErr != nil {
+			return getErr
+		}
+		claim = current
+	}
+}
+
 func syncPodDeleteOptions(meta metav1.ObjectMeta) metav1.DeleteOptions {
 	options := ownerDeleteOptions(meta)
 	zero := int64(0)
@@ -179,11 +204,7 @@ func (i Installer) releaseOperateReservation(ctx context.Context, cfg Config, re
 	if current.UID != reservation.UID || current.Data["operation_id"] != reservation.Data["operation_id"] {
 		return nil
 	}
-	err = maps.Delete(ctx, OperateLockConfigMap, ownerDeleteOptions(current.ObjectMeta))
-	if apierrors.IsNotFound(err) {
-		return nil
-	}
-	return err
+	return deleteOperateLock(ctx, maps, current)
 }
 
 // Retire the exact sync Pod, wait for deletion, then release its reservation.
