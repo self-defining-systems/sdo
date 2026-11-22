@@ -69,6 +69,9 @@ type Step struct {
 	// GateAfterCheck: the run gate within gateFreshness of the build check (0: ready_for).
 	GateAfterCheck Seconds `json:"gate_after_check,omitempty"`
 	Poll           Seconds `json:"poll,omitempty"` // idle polls (default 10 s)
+	// IdleConfirm is the gap between the two idle answers the settle and a teardown's idle wait need (nil: Poll); the
+	// subject's own description (Described.IdleConfirm).
+	IdleConfirm *Seconds `json:"idle_confirm,omitempty"`
 	// BuildBad is the bad seconds the build check tolerates (nil: DefaultBuildBadSeconds); runs never use it.
 	BuildBad *int `json:"build_bad,omitempty"`
 
@@ -579,7 +582,7 @@ func (r *stepRunner) waitIdle(ctx context.Context, p *Prepared) bool {
 			r.logf("idle: still waiting after %s of at most %s: %s", time.Since(start).Round(time.Second), limit, why)
 		}
 		if calm < 2 {
-			time.Sleep(r.poll)
+			time.Sleep(r.idleGap(calm))
 		}
 	}
 	if calm < 2 {
@@ -587,6 +590,23 @@ func (r *stepRunner) waitIdle(ctx context.Context, p *Prepared) bool {
 	}
 	r.interval("idle", start, calm >= 2, why)
 	return true
+}
+
+// confirmGap is how long to wait before asking idle again after an idle answer: the subject's described gap, else the
+// poll. A busy answer is polled at the poll either way.
+func (r *stepRunner) confirmGap() time.Duration {
+	if r.s.IdleConfirm == nil {
+		return r.poll
+	}
+	return r.s.IdleConfirm.D()
+}
+
+// idleGap is the wait after an idle answer: calm idle answers in a row so far (0: the last one was busy).
+func (r *stepRunner) idleGap(calm int) time.Duration {
+	if calm > 0 {
+		return r.confirmGap()
+	}
+	return r.poll
 }
 
 // idleProgressEvery is how often a teardown's idle wait says what it still waits for.
@@ -1577,7 +1597,7 @@ func (r *stepRunner) settle(ctx context.Context, p *Prepared, injectAt, own time
 			r.res.Reason = "capped: " + why
 			break
 		}
-		time.Sleep(r.poll)
+		time.Sleep(r.idleGap(calm))
 	}
 	now := time.Now().UTC()
 	r.res.SettleEnd = &now

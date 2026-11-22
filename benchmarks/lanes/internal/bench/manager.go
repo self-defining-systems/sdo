@@ -769,6 +769,25 @@ func (m *Manager) builds(host string) int {
 // churnFull says whether host h already runs max_builds churn steps (a new release or reset waits).
 func (m *Manager) churnFull(h string) bool { return m.builds(h) >= m.inv.Hosts[h].BuildLimit() }
 
+// idleConfirmFor is the gap between idle answers the experiment's subject described (nil: the step's poll, also for an
+// experiment that is gone).
+func (m *Manager) idleConfirmFor(experiment string) *Seconds {
+	x := m.exps[experiment]
+	if x == nil {
+		return nil
+	}
+	s := x.Measured()
+	if s.Operator.Hooks == "" {
+		return nil
+	}
+	gap, ok := s.describedOrLegacy().idleConfirm()
+	if !ok {
+		return nil
+	}
+	v := Seconds(gap.Seconds())
+	return &v
+}
+
 // start fills in the lane's part of a step and starts it on the lane's host.
 func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 	if why := m.laneGate(l.Lane); why != "" && (s.Kind == StepBuild || s.Kind == StepRun) {
@@ -780,6 +799,10 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 	s.Kubeconfig = filepath.Join(h.Kubeconfigs, l.Lane)
 	s.LaneDir = filepath.Join(h.Staging, l.Lane, "lane")
 	s.Poll = Seconds(m.Poll.Seconds())
+	s.IdleConfirm = m.idleConfirmFor(s.Experiment)
+	if s.IdleConfirm == nil && s.Prev != nil {
+		s.IdleConfirm = m.idleConfirmFor(s.Prev.Experiment)
+	}
 	s.ClusterUp, s.ClusterDown = h.ClusterCommand(h.ClusterUp, l.Lane), h.ClusterCommand(h.ClusterDown, l.Lane)
 	s.Evidence = h.LaneEvidence(l.Lane)
 	s.Provider = h.Provider

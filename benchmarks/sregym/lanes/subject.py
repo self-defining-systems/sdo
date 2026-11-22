@@ -8,7 +8,9 @@ planned memory commit, so the hooks own nothing on the lane:
 ``prepare``, ``swap``: the attached pack and the SDO revision (``{"pack", "operator_version", "memory"}``); the
               operator file's seed (a memory directory) is passed to the workload's ``run`` through ``BENCH_OPERATOR``.
 ``idle``      idle (the workload's run waits for SDO's closure itself).
-``describe``  no start-up period (``max_startup`` 0s); ``needs_credentials`` when ``operator.settings`` names a real
+``describe``  no start-up period (``max_startup`` 0s) and no gap between the two ``idle`` answers a settle needs
+              (``idle_confirm`` 0s: ``idle`` is always idle, so a second answer a poll later adds nothing);
+              ``needs_credentials`` when ``operator.settings`` names a real
               agent (``agent.py``), so preflight checks a model credential for it. ``prepare``/``swap`` then also
               answer ``agent`` (provider, model, effort: never the credential path).
 
@@ -72,7 +74,7 @@ def dispatch(verb: str, env: Mapping[str, str], version: Callable[[], str] = rev
     if verb in NOTHING:
         return 0, {"ok": True}
     if verb == "describe":
-        return 0, {"max_startup": "0s", "needs_credentials": agent_of(env) is not None}
+        return 0, {"max_startup": "0s", "idle_confirm": "0s", "needs_credentials": agent_of(env) is not None}
     if verb in ("prepare", "swap"):
         result: dict[str, Any] = {
             "pack": env.get("BENCH_PACK", ""),

@@ -24,6 +24,10 @@ type Described struct {
 	// MaxStartup is how long the subject may report busy after a fresh install (a duration; "" or "0s": no start-up
 	// period). A lane is never failed for a wait shorter than it.
 	MaxStartup string `json:"max_startup,omitempty"`
+	// IdleConfirm is the gap between the two `idle` answers the settle and a teardown's idle wait need in a row (a
+	// duration; "" : the step's poll). A subject whose idle answer cannot change in that gap says "0s": it is not
+	// asked again after a wait. A busy answer is always polled at the step's poll.
+	IdleConfirm string `json:"idle_confirm,omitempty"`
 	// NeedsCredentials says whether the subject calls a model provider, so preflight should check credentials.
 	NeedsCredentials bool `json:"needs_credentials"`
 	// Inputs are the rules on the spec's named inputs (operator.baseline, operator.seed), by input name.
@@ -36,6 +40,19 @@ func (d Described) startup() time.Duration {
 		return 0
 	}
 	return v
+}
+
+// idleConfirm is the described gap between the two idle answers; false when the subject names none (or an unreadable
+// one, which describeHook refuses when it is added).
+func (d Described) idleConfirm() (time.Duration, bool) {
+	if d.IdleConfirm == "" {
+		return 0, false
+	}
+	v, err := time.ParseDuration(d.IdleConfirm)
+	if err != nil || v < 0 {
+		return 0, false
+	}
+	return v, true
 }
 
 // operatorInput is the path the spec sets for the named input ("" when unset).
@@ -121,6 +138,11 @@ func describeHook(ctx context.Context, h Hook, s Spec, log io.Writer) (*Describe
 	if d.MaxStartup != "" {
 		if _, err := time.ParseDuration(d.MaxStartup); err != nil {
 			return nil, fmt.Errorf("hooks %s: describe: max_startup %q: %v", s.Operator.Hooks, d.MaxStartup, err)
+		}
+	}
+	if d.IdleConfirm != "" {
+		if _, ok := d.idleConfirm(); !ok {
+			return nil, fmt.Errorf("hooks %s: describe: idle_confirm %q is not a duration of at least 0s", s.Operator.Hooks, d.IdleConfirm)
 		}
 	}
 	return &d, nil

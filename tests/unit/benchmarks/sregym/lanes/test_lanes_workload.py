@@ -751,7 +751,10 @@ def test_main_prints_the_result_as_the_last_stdout_line(capsys, monkeypatch):
 
 def test_subject_shim_describes_itself_to_the_platform():
     # the workload installs and drives SDO: no start-up period for the hooks to wait out, no model call of its own
-    assert subject.dispatch("describe", {}) == (0, {"max_startup": "0s", "needs_credentials": False})
+    assert subject.dispatch("describe", {}) == (
+        0,
+        {"max_startup": "0s", "idle_confirm": "0s", "needs_credentials": False},
+    )
 
 
 def test_subject_shim_prepares_with_the_pack_and_passes_the_seed(tmp_path):

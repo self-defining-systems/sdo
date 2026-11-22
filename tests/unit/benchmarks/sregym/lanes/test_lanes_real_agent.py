@@ -484,10 +484,19 @@ def test_the_hook_fails_loudly_without_a_credential_file(tmp_path, env):
 
 def test_the_subject_of_a_real_agent_needs_credentials(tmp_path):
     env = {"BENCH_OPERATOR": str(operator_file(tmp_path, REAL_SETTINGS))}
-    assert subject.dispatch("describe", env) == (0, {"max_startup": "0s", "needs_credentials": True})
+    assert subject.dispatch("describe", env) == (
+        0,
+        {"max_startup": "0s", "idle_confirm": "0s", "needs_credentials": True},
+    )
     scripted = {"BENCH_OPERATOR": str(operator_file(tmp_path, {"startup_bound": "0s"}))}
-    assert subject.dispatch("describe", scripted) == (0, {"max_startup": "0s", "needs_credentials": False})
-    assert subject.dispatch("describe", {}) == (0, {"max_startup": "0s", "needs_credentials": False})
+    assert subject.dispatch("describe", scripted) == (
+        0,
+        {"max_startup": "0s", "idle_confirm": "0s", "needs_credentials": False},
+    )
+    assert subject.dispatch("describe", {}) == (
+        0,
+        {"max_startup": "0s", "idle_confirm": "0s", "needs_credentials": False},
+    )
 
 
 def test_the_subject_passes_the_agent_settings_through_without_the_credential_path(tmp_path):
