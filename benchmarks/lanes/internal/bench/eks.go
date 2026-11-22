@@ -87,7 +87,18 @@ type HostEKS struct {
 	// FullLanes are the lanes of a vcluster host that are clusters of their own (a real kube-system and real nodes), for
 	// the plans that need them (the fault matrices): they are labeled node-access=real and taken by a spec with that selector.
 	FullLanes []string `json:"full_lanes,omitempty"`
+	// LocalKind makes the host cluster a kind cluster on this machine instead of an EKS cluster (lanes: vcluster only): no
+	// AWS account, credentials, eksctl or Karpenter, and no cost. Each lane still is a vcluster with nodes of its own (kind
+	// workers labeled and tainted for it), with the same virtual-lane facts, NetworkPolicy sync and local-path storage, and
+	// its images go to a local registry the nodes mirror from instead of ECR. It rehearses the vcluster path of a plan
+	// for free (deploy/eks-vcluster.sh, EKS_LOCAL_KIND).
+	LocalKind bool `json:"local_kind,omitempty"`
+	// LocalRegistryPort is the port of the local registry of a LocalKind host (default 5611).
+	LocalRegistryPort int `json:"local_registry_port,omitempty"`
 }
+
+// DefaultLocalRegistryPort is the registry port of a LocalKind host.
+const DefaultLocalRegistryPort = 5611
 
 // eksFamily is the price and memory shape of an instance family (general purpose, compute, memory optimised).
 type eksFamily struct {
@@ -124,6 +135,13 @@ func (e *HostEKS) minNodeVCPUs() int {
 
 // Registry is the ECR host of the account and region: images are pushed there and nodes pull from it.
 func (e *HostEKS) Registry() string {
+	if e.LocalKind {
+		port := e.LocalRegistryPort
+		if port == 0 {
+			port = DefaultLocalRegistryPort
+		}
+		return "localhost:" + strconv.Itoa(port)
+	}
 	return e.Account + ".dkr.ecr." + e.Region + ".amazonaws.com"
 }
 
@@ -177,8 +195,14 @@ func (e *HostEKS) validate(h Host) []string {
 	if e.Region == "" {
 		errs = append(errs, "eks.region is required")
 	}
-	if e.Account == "" {
+	if e.Account == "" && !e.LocalKind {
 		errs = append(errs, "eks.account is required (the image registry is <account>.dkr.ecr.<region>.amazonaws.com)")
+	}
+	if e.LocalKind && !e.virtual() {
+		errs = append(errs, "eks.local_kind needs lanes: vcluster (the host cluster is one local kind cluster)")
+	}
+	if e.LocalRegistryPort != 0 && !e.LocalKind {
+		errs = append(errs, "eks.local_registry_port belongs to eks.local_kind")
 	}
 	if e.BudgetPerHour <= 0 {
 		errs = append(errs, "eks.budget_per_hour must be positive")
@@ -620,7 +644,7 @@ const eksProbeBound = 45 * time.Second
 
 // observeEksLanes reads each existing EKS lane's cluster: the API must answer and a node be Ready. A lane that fails
 // gets no new work (the reason is its idle reason, alarm eks-lane-unhealthy once); nothing is deleted. A failed read of
-// a lane that is mid-build is no reading (its cluster is being made).
+// a lane that is mid-build is no reading (its cluster is being made), and a lane with no kubeconfig has no cluster to read.
 func (m *Manager) observeEksLanes(ctx context.Context, reachable map[string]bool) {
 	if m.eksWhy == nil {
 		m.eksWhy = map[string]string{}
@@ -635,6 +659,12 @@ func (m *Manager) observeEksLanes(ctx context.Context, reachable map[string]bool
 			continue
 		}
 		lane, kc := l.Lane, filepath.Join(h.Kubeconfigs, l.Lane)
+		if _, err := os.Stat(kc); errors.Is(err, os.ErrNotExist) {
+			// No kubeconfig, no cluster (a cluster-up that failed removes what it made): nothing to read, and the lane's
+			// next build makes it. A read of it would fail for ever and gate the very build that fixes it.
+			delete(m.eksWhy, lane)
+			continue
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -735,7 +765,10 @@ func (m *Manager) eksHeld(host, why string) {
 }
 
 // eksAccountScript prints the account the credentials belong to ("account ID"), empty when they do not work.
-func eksAccountScript() string {
+func eksAccountScript(e *HostEKS) string {
+	if e != nil && e.LocalKind {
+		return `echo "account local-kind"` // no AWS: the host cluster is a local kind cluster
+	}
 	return `a=$(aws sts get-caller-identity --query Account --output text 2>/dev/null) && echo "account $a"; true`
 }
 
@@ -753,6 +786,7 @@ func judgeEksAccount(out string, err error, e *HostEKS) (bool, string) {
 	switch {
 	case account == "":
 		return false, "aws sts get-caller-identity failed: no usable AWS credentials in the step environment"
+	case e != nil && e.LocalKind:
 	case e != nil && e.Account != "" && account != e.Account:
 		return false, fmt.Sprintf("credentials belong to account %s, the host is configured for %s", account, e.Account)
 	}
@@ -763,7 +797,7 @@ func judgeEksAccount(out string, err error, e *HostEKS) (bool, string) {
 func statusEksHost(ctx context.Context, root Root, inv Inventory, host string, run runFn, out io.Writer) {
 	h := inv.Hosts[host]
 	if run != nil {
-		o, err := run(ctx, host, eksAccountScript())
+		o, err := run(ctx, host, eksAccountScript(h.EKS))
 		ok, detail := judgeEksAccount(o, err, h.EKS)
 		state := "credentials ok"
 		if !ok {

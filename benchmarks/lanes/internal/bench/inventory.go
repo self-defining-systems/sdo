@@ -135,6 +135,10 @@ func (h Host) EnvList() []string {
 			all["EKS_REGION"] = h.EKS.Region
 			all["AWS_REGION"] = h.EKS.Region
 			all["BENCH_IMAGE_REGISTRY"] = h.EKS.Registry()
+			if h.EKS.LocalKind {
+				all["EKS_LOCAL_KIND"] = "1"
+				all["EKS_LOCAL_REGISTRY_PORT"] = strings.TrimPrefix(h.EKS.Registry(), "localhost:")
+			}
 			if h.EKS.virtual() {
 				all["EKS_HOST_CLUSTER"] = h.EKS.HostCluster
 				all["EKS_HOST_KUBECONFIG"] = h.hostKubeconfig()

@@ -158,3 +158,39 @@ hosts:
 - **Scripts and tests.** `deploy/eks-vcluster.sh` (`host-up`, `host-scale`, `host-down`, `up`, `down`, `exists`, `prepull`,
   `nodes`) and `internal/bench/eks_vcluster_test.go`, which run it against fake aws, eksctl, kubectl, helm and vcluster
   with a fake clock for the ledger. Each `up` records stage seconds in `<kubeconfig>.stages`.
+
+## A local kind host cluster (`eks.local_kind`)
+
+`eks.local_kind: true` (with `lanes: vcluster`) makes the host cluster a **kind cluster on the manager's machine**, so a
+plan rehearses the whole vcluster path for free before it runs on EKS: the same lane (a vcluster with nodes of its own,
+`BENCH_LANE_VIRTUAL=1`, NetworkPolicy and StorageClass sync, `local-path` storage and node-bound claims), the same adapters
+(`BENCH_LANE_PROVIDER=eks`) and the same plan. It needs no AWS account, credentials, `eksctl` or Karpenter (`kind`, `helm`,
+`vcluster`, `kubectl` and `docker` on the PATH); the account is not asked for and the cost ledger is a fiction (set the
+budget high).
+
+```yaml
+hosts:
+  lvc:
+    local: true
+    provider: eks
+    eks: {region: us-west-2, lanes: vcluster, local_kind: true, host_cluster: lvc-host, local_registry_port: 5611,
+          budget_per_hour: 1000, vcpu_quota: 1000, max_lanes: 6}
+    staging: /var/tmp/lanes/staging
+    kubeconfigs: /var/tmp/lanes/kube
+    evidence: /var/tmp/lanes/evidence
+    clusters: [lv1, lv2, lv3]
+    env: {EKS_LOCAL_WORKERS: "7", EKS_LOCAL_NODE_CPUS: "4", EKS_LOCAL_NODE_MEMORY: "14g"}   # optional
+```
+
+`lanes host adopt HOST` makes the kind cluster (one control plane, `EKS_LOCAL_WORKERS` workers, kindnet, which enforces
+NetworkPolicy), labels the first worker as the system node (`sdo-role=system`, tainted as on EKS), installs `local-path` as the
+default StorageClass and starts two registries on the docker `kind` network: `<host_cluster>-registry` (published on
+`localhost:<local_registry_port>`; what the adapter pushes) and `<host_cluster>-hubcache` (a pull-through cache of
+docker.io). Every node's containerd resolves each upstream to `<registry>/v2/sdo-mirror/<upstream>` first and falls back to the
+upstream, and `localhost:<port>` to the registry, as the node agent does with ECR. A lane claims `EKS_NODES` free workers
+(label and taint `sdo-lane=<lane>`, as Karpenter's NodePool does) and gives them back on `down`. `BENCH_IMAGE_REGISTRY` is
+`localhost:<port>`; the adapter then pushes to it with plain `docker push` (`benchmarks.lanes.eks.Ecr` makes no AWS call
+for a `localhost:` registry).
+
+Not rehearsed: ECR, the node agent and its prepull list, Karpenter capacity and node start time, EBS, the VPC CNI policy
+agent and the AWS network. Those are what only an EKS lane confirms.

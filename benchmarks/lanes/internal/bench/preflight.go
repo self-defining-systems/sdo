@@ -257,7 +257,7 @@ func runPreflight(ctx context.Context, inv Inventory, specs []specFile, opt Pref
 			var out string
 			var err error
 			if host.IsEks() {
-				out, err = run(ctx, h, pre+eksAccountScript())
+				out, err = run(ctx, h, pre+eksAccountScript(host.EKS))
 				ok, d := judgeEksAccount(out, err, host.EKS)
 				add(7, "eks-account", h, ok, "%s", d)
 			} else if host.IsVcluster() {
@@ -423,6 +423,9 @@ func judgeSharedCluster(out string, err error, planned int) (bool, string) {
 
 // platformTools are the external programs the steps, hooks and probes run; a kind host also needs kind.
 func platformTools(h Host) []string {
+	if h.IsEks() && h.EKS != nil && h.EKS.LocalKind {
+		return []string{"kubectl", "docker", "kind", "helm", "vcluster"} // a local kind host cluster: no AWS
+	}
 	if h.IsEks() {
 		t := []string{"kubectl", "docker", "aws", "eksctl"} // no kernel to probe and no kind
 		if h.IsEksVirtual() {
