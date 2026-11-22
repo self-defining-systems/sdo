@@ -76,6 +76,9 @@ class Lane:
     def agent_task_count(self) -> int:
         return self.tasks
 
+    def head_deployment(self) -> None:
+        return None
+
 
 def record(fate: str, **kw: str) -> dict[str, object]:
     return run_commit(Lane(fate, **kw), SERIES, 2, BOUNDS, "exec:sdo-demo-r2")  # type: ignore[arg-type]
@@ -121,3 +124,19 @@ def test_a_commit_that_does_not_apply_is_a_conflict_result_not_a_failure() -> No
     assert got["conflict_paths"] == ["app.txt"]
     assert got["valid"] is True
     assert got["lifecycle"]["inject_at"].endswith("Z")  # type: ignore[index]
+
+
+def test_an_incident_open_before_the_push_is_not_the_verdict_on_the_push() -> None:
+    """Finding S3: SDO deploys nothing while an incident is open; the position that starts under one was graded
+    ``incident`` at once and its own push was never judged. It is a timeout that names the blocking incident."""
+    lane = Lane("ignored", incident=True)
+    got = run_commit(lane, SERIES, 2, BOUNDS, "exec:sdo-demo-r2")  # type: ignore[arg-type]
+    assert got["outcome"] == "timeout"
+    assert got["blocked_by_open_incident"] is True
+    assert got["valid"] is True
+
+
+def test_a_push_made_with_no_incident_open_still_ends_on_the_incident_it_opens() -> None:
+    got = record("incident")
+    assert got["outcome"] == "incident"
+    assert got["blocked_by_open_incident"] is False

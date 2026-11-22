@@ -77,6 +77,7 @@ from benchmarks.sregym.adapter.runtime import (
     collect_production_receipt,
     export_controller_logs,
 )
+from benchmarks.sregym.adapter.wait_progress import WaitProgress
 from benchmarks.sregym.protocol import ProductionReceiptValidationError, validate_production_receipt
 from benchmarks.sregym.protocol.injection import IncidentOpenBeforeInjectionError, InvalidInjectionError
 from benchmarks.sregym.protocol.native_receipt import NativeReceiptValidationError
@@ -1424,6 +1425,7 @@ def _wait_for_followup_closure(
     followups: list[str] = []
     busy = BusyDeadline(wait_for(WaitKind.CLOSEOUT_SETTLE))
     progress = ProgressWatch(wait_for(WaitKind.SLOW_COMMAND))
+    wait_log = WaitProgress(f"follow-up closure after incident {incident_id}", clock.monotonic)
     incident_bound: float | None = None
     while True:
         snapshot = ops.runtime_state(control)
@@ -1465,6 +1467,7 @@ def _wait_for_followup_closure(
                 FollowupClosureWait(incident_id, tuple(followups), waited, bound, False),
                 controller_closure_state(snapshot),
             )
+        wait_log.tick(f"open: {', '.join(names)}")
         clock.sleep(POLL_SECONDS)
     if not followups:
         return None
@@ -1654,7 +1657,9 @@ def _collect_settled_receipt(
     if timeout is None:
         timeout = CLOSEOUT_SETTLE_TIMEOUT_SECONDS
     deadline = clock.monotonic() + timeout
+    progress = WaitProgress(f"close-out settle of incident {incident_id}", clock.monotonic, bound_seconds=timeout)
     while not _closeout_settled(receipt) and clock.monotonic() < deadline:
+        progress.tick()
         clock.sleep(POLL_SECONDS)
         try:
             receipt = ops.collect_receipt(config, incident_id, receipt_dir)
@@ -2119,10 +2124,12 @@ def _wait_for_controller_pod(
     ops: ClusterOps, control: str, clock: Clock, timeout: float = wait_for(WaitKind.ROLLOUT)
 ) -> ControllerPod:
     deadline = clock.monotonic() + timeout
+    progress = WaitProgress(f"controller pod in {control}", clock.monotonic, bound_seconds=timeout)
     while clock.monotonic() < deadline:
         pod = ops.controller_pod(control)
         if pod is not None:
             return pod
+        progress.tick()
         clock.sleep(POLL_SECONDS)
     raise PersistentControllerError(f"no running controller pod in {control!r}")
 
@@ -2152,8 +2159,13 @@ def _wait_for_verified_incident(
     state: dict[str, Any] = {}
     summary = ""
     next_report = started + wait_for(WaitKind.MINUTE)
+    # The loop reports itself every minute below; this only names the wait for a process that kills the run.
+    wait_log = WaitProgress(
+        f"controller verification in {control}", clock.monotonic, bound_seconds=timeout, every=float("inf")
+    )
     while budget.left() > 0:
         state = ops.runtime_state(control)
+        wait_log.tick()
         # A slow state read may have spent the stage budget; stop polling rather than start an observer with none.
         if budget.left() <= 0:
             break
@@ -2266,10 +2278,14 @@ def wait_for_maintenance_ack(
     if timeout is None:
         timeout = MAINTENANCE_ACK_TIMEOUT_SECONDS
     deadline = clock.monotonic() + timeout
+    progress = WaitProgress(
+        f"maintenance acknowledgement {generation} in {control}", clock.monotonic, bound_seconds=timeout
+    )
     while clock.monotonic() < deadline:
         records = _log_records(ops.controller_logs(control))
         if any(record.get("maintenance_generation") == generation for record in records):
             return
+        progress.tick()
         clock.sleep(POLL_SECONDS)
     raise PersistentControllerError(f"controller in {control!r} did not acknowledge maintenance {generation!r}")
 
@@ -2297,6 +2313,7 @@ def _wait_for_reflection_drain(
 
     timeout = max(0.0, (deadline_at - clock.now()).total_seconds())
     budget = Deadline(clock.monotonic() + timeout, clock.monotonic, "reflection drain")
+    wait_log = WaitProgress(f"reflection drain of incident {incident_id}", clock.monotonic, bound_seconds=timeout)
     while True:
         # Only a read that shows SDO still owning the closure makes a passed deadline a reflection deadline.
         # A failed or empty read, or a failed observation, says nothing; retry within the same budget.
@@ -2325,6 +2342,7 @@ def _wait_for_reflection_drain(
             _raise_terminal_controller_job(ops, control, incident_id)
         if budget.left() <= 0:
             break
+        wait_log.tick(error or "")
         clock.sleep(POLL_SECONDS)
     if not state or not incident_work_open(state):
         raise ControllerStateUnavailableError(
@@ -2347,7 +2365,9 @@ def wait_for_outcome_commit(
     acknowledges is for the reflection drain to decide, so this wait never raises for either.
     """
 
-    end = clock.monotonic() + max(0.0, (deadline_at - clock.now()).total_seconds())
+    bound = max(0.0, (deadline_at - clock.now()).total_seconds())
+    end = clock.monotonic() + bound
+    progress = WaitProgress(f"outcome commit of incident {incident_id}", clock.monotonic, bound_seconds=bound)
     while True:
         try:
             state = ops.runtime_state(control)
@@ -2356,7 +2376,13 @@ def wait_for_outcome_commit(
         if state.get("last_acknowledged_incident_id") == incident_id:
             return clock.now()
         if clock.monotonic() >= end:
+            logger.warning(
+                "outcome commit of incident %s not acknowledged by its deadline (%.0fs); the reflection drain decides",
+                incident_id,
+                bound,
+            )
             return None
+        progress.tick(f"controller acknowledged {state.get('last_acknowledged_incident_id')!r}")
         clock.sleep(POLL_SECONDS)
 
 

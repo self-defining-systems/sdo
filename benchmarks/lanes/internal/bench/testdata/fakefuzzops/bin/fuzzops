@@ -78,9 +78,11 @@ run)
   echo "$$" > "$S/run.pid"
   touch "$S/lane-held"   # stands in for fuzzops' lane lock (freed when the run ends or is killed)
   touch "$S/marker-$ns"
+  # fuzzops traps TERM: it undoes its fault, frees the lane lock and ends (the step's kill and a cancelled run rely on it).
+  trap 'rm -f "$S/marker-$ns" "$S/lane-held"; exit 143' TERM
   [ -f "$S/corrupts" ] && echo corrupted > "$S/store-state"   # a repair left the stores different; only a fresh app copy undoes it
   [ -f "$S/dirties" ] && touch "$S/dirty"   # a run whose undo leaves state behind, until the app is put down anew
-  [ -f "$S/sleep" ] && sleep "$(cat "$S/sleep")"
+  if [ -f "$S/sleep" ]; then sleep "$(cat "$S/sleep")" & wait $!; fi
   [ -f "$S/residue" ] && echo "validatingwebhookconfiguration.admissionregistration.k8s.io/blocker" >> "$S/cluster-objects"
   [ -f "$S/busy-after-inject" ] && cp "$S/busy-after-inject" "$HOOK_STATE/busy"
   rm -f "$S/marker-$ns" "$S/lane-held"

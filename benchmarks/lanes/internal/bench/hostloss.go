@@ -70,7 +70,7 @@ func (m *Manager) cancelRemoved(ctx context.Context, l *LaneFile) {
 		return
 	}
 	ref := l.Step
-	if ref.Kind != StepBuild && !(ref.Kind == StepRun && x.Removed.Teardown) {
+	if ref.Kind != StepBuild && !(ref.Kind == StepRun && (x.Removed.Teardown || x.Removed.Cancel)) {
 		return
 	}
 	if ref.Killed == "" {
