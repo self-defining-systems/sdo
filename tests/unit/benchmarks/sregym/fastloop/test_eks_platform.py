@@ -21,7 +21,7 @@ from benchmarks.sregym.adapter.cluster_resources import (
 )
 from benchmarks.sregym.adapter.native_operator import validate_evidence_sink
 from benchmarks.sregym.fastloop import cli, evidence_sink, worker_bridge
-from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images
+from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images, KindOnlyError
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -242,8 +242,9 @@ def _claim(node: str = "node-b") -> str:
     )
 
 
+@pytest.mark.parametrize("evidence_claim", [True, False])
 def test_the_eks_evidence_claim_is_bound_on_one_node_chosen_by_the_lane(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, evidence_claim: bool
 ) -> None:
     monkeypatch.setenv("SDO_VOLUME_NODE", "stale")  # restored at teardown
     monkeypatch.delenv("FASTLOOP_DOCKERHUB_AUTH_FILE", raising=False)
@@ -277,12 +278,16 @@ def test_the_eks_evidence_claim_is_bound_on_one_node_chosen_by_the_lane(
         registry_insecure=True,
         kind_cluster_name="eks-1",
         lane_platform="eks",
-        evidence_claim=True,
+        evidence_claim=evidence_claim,
     )
     prepare_benchmark_resources(config, relay_target_base=None, kubeconfig=tmp_path / "kc")
-    claim = next(i for i in applied if i["kind"] == "PersistentVolumeClaim" and i["metadata"]["name"] == "sdo-evidence")
-    selected = claim["metadata"]["annotations"]["volume.kubernetes.io/selected-node"]
-    assert selected == sink.volume_node(nodes, "eks-1")
+    selected = sink.volume_node(nodes, "eks-1")
+    claims = [i for i in applied if i["kind"] == "PersistentVolumeClaim" and i["metadata"]["name"] == "sdo-evidence"]
+    if evidence_claim:
+        assert claims[0]["metadata"]["annotations"]["volume.kubernetes.io/selected-node"] == selected
+    else:
+        # No evidence sink volume (no evidence root): the repository and registry claims still need one node.
+        assert not claims
     # Node-local claims of the control namespace (repository, registry) are bound where the evidence claim is: the
     # controller mounts all of them, and a lane has more than one node.
     assert os.environ["SDO_VOLUME_NODE"] == selected
@@ -318,7 +323,7 @@ def test_the_evidence_puller_runs_on_the_claims_node_and_pulls_only_the_run_dire
         def __init__(self, command: list[str], **_: Any) -> None:
             calls.append(command)
 
-        def wait(self) -> int:
+        def wait(self, timeout: float | None = None) -> int:
             return 0
 
     monkeypatch.setattr(subprocess, "run", run)
@@ -563,3 +568,82 @@ def test_a_row_of_another_model_gets_no_opus_pool_mount(tmp_path: Path) -> None:
     unmodelled: dict[str, str] = {}
     eks_environment(tmp_path).apply_operator_env(unmodelled)
     assert "SDO_OPUS_POOL_MODE" not in unmodelled
+
+
+def test_a_stalled_evidence_exec_stream_is_killed_and_named(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`kubectl exec ... tar` over a lane API server that stops answering must not outlive the pull."""
+    killed: list[str] = []
+
+    def run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[Any]:
+        if command[0] == "tar":
+            raise subprocess.TimeoutExpired(command, 1)
+        if "pvc" in command:
+            return subprocess.CompletedProcess(command, 0, _claim(), "")
+        if "pods" in command and "get" in command:
+            holder = {
+                "spec": {
+                    "nodeName": "node-b",
+                    "volumes": [{"persistentVolumeClaim": {"claimName": sink.EVIDENCE_CLAIM}}],
+                },
+                "status": {"phase": "Running"},
+            }
+            return subprocess.CompletedProcess(command, 0, json.dumps({"items": [holder]}), "")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    class Exec:
+        stdout = SimpleNamespace(close=lambda: None)
+        stderr = None
+
+        def __init__(self, command: list[str], **_: Any) -> None:
+            pass
+
+        def kill(self) -> None:
+            killed.append("kubectl exec")
+
+        def wait(self, timeout: float | None = None) -> int:
+            return -9
+
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(subprocess, "Popen", Exec)
+    with pytest.raises(evidence_sink.EvidenceSinkError, match="did not finish"):
+        evidence_sink.pull_cluster_sink(eks_environment(tmp_path), ["lane-r1"])
+    assert killed == ["kubectl exec"]
+
+
+def test_down_with_delete_cluster_refuses_an_eks_lane_instead_of_deleting_a_kind_cluster_of_its_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`kind delete cluster --name <lane>` answers success for a cluster kind never had: down then reported the cluster
+    deleted while the host cluster's lane was untouched."""
+    from benchmarks.sregym.fastloop import evidence_queue
+
+    environment = eks_environment(tmp_path)
+    monkeypatch.setattr(FastloopEnvironment, "load", classmethod(lambda cls, path: environment))
+    monkeypatch.setattr(evidence_queue, "settle_lane_exports", lambda env, **kw: [])
+    monkeypatch.setattr(evidence_sink, "settle_lane_evidence", lambda env, **kw: [])
+    ran: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "run", lambda argv, **kw: ran.append(list(argv)))
+    with pytest.raises(KindOnlyError, match="deleting the lane's cluster"):
+        cli._down(argparse.Namespace(run_dir=tmp_path, delete_cluster=True))
+    assert not [argv for argv in ran if argv[:1] == ["kind"]]
+
+
+def test_an_ecr_call_that_fails_once_does_not_lose_a_rows_images(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Six lanes ask ECR at every worker start; a throttled or unreachable answer is retried, not a lost image."""
+    from benchmarks.lanes.eks import EksLaneError
+
+    answers = iter([EksLaneError("throttled"), EksLaneError("throttled"), True])
+
+    class Provider:
+        def holds(self, image: str) -> bool:
+            answer = next(answers)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+    pauses: list[float] = []
+    assert cli._ecr_holds(Provider(), "image", sleep=pauses.append) is True
+    assert len(pauses) == 2
+    forever = SimpleNamespace(holds=lambda image: (_ for _ in ()).throw(EksLaneError("down")))
+    with pytest.raises(EksLaneError, match="down"):
+        cli._ecr_holds(forever, "image", sleep=pauses.append)

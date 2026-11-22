@@ -782,3 +782,16 @@ def test_kubectl_lane_cluster_releases_the_stuck_configmap_through_the_real_wipe
     patch = next(call for call in calls if call[0] == "patch")
     assert patch[1] == TOKEN
     assert f"-n={APP}" in patch
+
+
+def test_a_credentials_hook_that_never_returns_is_killed_and_named(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from benchmarks.sregym.fastloop import wipe
+
+    hook = tmp_path / "hang.sh"
+    hook.write_text("#!/bin/sh\nexec sleep 60\n")
+    hook.chmod(0o755)
+    monkeypatch.setattr(wipe, "wait_for", lambda kind, *a, **k: 0.3)
+    with pytest.raises(WipeError, match="did not finish"):
+        credentials_hook(hook, tmp_path / "kubeconfig")(CONTROL)

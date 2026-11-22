@@ -264,17 +264,25 @@ def pull_cluster_sink(environment: FastloopEnvironment, run_ids: Sequence[str]) 
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        extract = subprocess.run(
-            ["tar", "-C", str(root), "-xf", "-"],
-            stdin=tar.stdout,
-            capture_output=True,
-            check=False,
-            timeout=3 * wait_for(WaitKind.ROLLOUT),
-        )
+        try:
+            extract = subprocess.run(
+                ["tar", "-C", str(root), "-xf", "-"],
+                stdin=tar.stdout,
+                capture_output=True,
+                check=False,
+                timeout=3 * wait_for(WaitKind.ROLLOUT),
+            )
+        except subprocess.TimeoutExpired as exc:
+            # A stalled exec stream (the lane's API server) must not leave `kubectl exec` running past the pull.
+            tar.kill()
+            tar.wait()
+            raise EvidenceSinkError(
+                f"evidence pull did not finish in {3 * wait_for(WaitKind.ROLLOUT):.0f}s: the exec stream was killed"
+            ) from exc
         assert tar.stdout is not None
         tar.stdout.close()
         error = (tar.stderr.read() if tar.stderr else b"").decode()[-300:].strip()
-        if tar.wait() != 0 or extract.returncode != 0:
+        if tar.wait(timeout=wait_for(WaitKind.SLOW_COMMAND)) != 0 or extract.returncode != 0:
             raise EvidenceSinkError(f"evidence pull: {error or extract.stderr.decode()[-300:].strip()}")
     finally:
         subprocess.run(

@@ -197,6 +197,25 @@ def node_images_match(cluster: str, images: Images) -> bool:
     return True
 
 
+#: How often a worker start asks ECR whether it still holds the lane's images before it gives up: a throttled or
+#: briefly unreachable API (six lanes ask at every row) is not a lost image.
+ECR_ATTEMPTS = 3
+
+
+def _ecr_holds(provider: Any, image: str, *, sleep: Callable[[float], None] = time.sleep) -> bool:
+    from benchmarks.lanes.eks import EksLaneError
+
+    for attempt in range(1, ECR_ATTEMPTS + 1):
+        try:
+            return bool(provider.holds(image))
+        except EksLaneError as error:
+            if attempt == ECR_ATTEMPTS:
+                raise
+            logger.warning("ECR did not answer for %s (attempt %d/%d): %s", image, attempt, ECR_ATTEMPTS, error)
+            sleep(wait_for(WaitKind.POLL) * attempt)
+    return False
+
+
 def lane_images_current(environment: FastloopEnvironment) -> bool:
     """Whether every node of the lane still runs the images the lane recorded.
 
@@ -207,7 +226,9 @@ def lane_images_current(environment: FastloopEnvironment) -> bool:
         from benchmarks.lanes.eks import EksProvider
 
         provider = EksProvider(environment.eks, str(environment.kubeconfig))
-        return all(provider.holds(image) for image in (environment.images.controller, environment.images.responder))
+        return all(
+            _ecr_holds(provider, image) for image in (environment.images.controller, environment.images.responder)
+        )
     return node_images_match(environment.cluster, environment.images)
 
 
@@ -276,7 +297,11 @@ def check_host_capacity(args: argparse.Namespace) -> None:
         )
     paths = [getattr(args, "run_dir", REPO_ROOT)]
     inspected = subprocess.run(
-        ["docker", "info", "--format", "{{.DockerRootDir}}"], check=True, capture_output=True, text=True
+        ["docker", "info", "--format", "{{.DockerRootDir}}"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=wait_for(WaitKind.SLOW_COMMAND),
     )
     if inspected.stdout.strip():
         paths.append(Path(inspected.stdout.strip()))
@@ -319,7 +344,13 @@ def up_preflight(args: argparse.Namespace) -> None:
     for executable in ("docker", "kubectl", "go", *(("aws",) if eks_platform else ("kind",))):
         if shutil.which(executable) is None:
             raise ValueError(f"fastloop preflight: missing {executable}")
-    subprocess.run(["docker", "info", "--format", "{{.ServerVersion}}"], check=True, capture_output=True, text=True)
+    subprocess.run(
+        ["docker", "info", "--format", "{{.ServerVersion}}"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=wait_for(WaitKind.SLOW_COMMAND),
+    )
     if not eks_platform:
         check_host_capacity(args)
     if args.dev_mount is None:
@@ -339,7 +370,13 @@ def up_preflight(args: argparse.Namespace) -> None:
     )
     for image, _modules in lane_images:
         if image is not None:
-            subprocess.run(["docker", "image", "inspect", image], check=True, capture_output=True, text=True)
+            subprocess.run(
+                ["docker", "image", "inspect", image],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=wait_for(WaitKind.SLOW_COMMAND),
+            )
     if not getattr(args, "allow_stale_images", False):
         # Label reads only: a stale image fails here in seconds, not after a live run's refresh budget.
         from benchmarks.sregym.fastloop.source_preflight import assert_images_fresh
@@ -531,7 +568,9 @@ def _up(args: argparse.Namespace) -> int:
     if not workspace.exists():
         if args.seed is None:
             raise SystemExit("--seed is required the first time (a git repository with the application source)")
-        subprocess.run(host_clone_command(args.seed, workspace, "--quiet"), check=True)
+        subprocess.run(
+            host_clone_command(args.seed, workspace, "--quiet"), check=True, timeout=wait_for(WaitKind.OPERATION)
+        )
     private_tmp = None if args.no_sandbox else run_dir / "tmp"
     if private_tmp is not None:
         private_tmp.mkdir(exist_ok=True)
@@ -2232,6 +2271,8 @@ def _down(args: argparse.Namespace) -> int:
     if args.delete_cluster and any(error.startswith("evidence copy failed") for error in errors):
         print("cluster kept: the evidence sink is not copied out", file=sys.stderr)
     elif args.delete_cluster:
+        # An EKS lane's cluster belongs to the lanes provider: `kind delete` on its name succeeds and deletes nothing.
+        refuse_on_eks("deleting the lane's cluster", environment.platform)
         subprocess.run(["kind", "delete", "cluster", "--name", environment.cluster], check=True)
         from benchmarks.sregym.fastloop.image_delivery import remove_registry
 

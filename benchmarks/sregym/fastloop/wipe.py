@@ -762,13 +762,20 @@ def credentials_hook(command: Path, kubeconfig: Path) -> Callable[[str], None]:
     """Re-provision SDO credentials by reference: the lane keeper's executable gets the namespace, never a value."""
 
     def provision(control_namespace: str) -> None:
-        completed = subprocess.run(
-            [str(command), control_namespace],
-            env={**os.environ, "KUBECONFIG": str(kubeconfig)},
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                [str(command), control_namespace],
+                env={**os.environ, "KUBECONFIG": str(kubeconfig)},
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=wait_for(WaitKind.OPERATION),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise WipeError(
+                f"eval: credentials hook {command} did not finish for {control_namespace} in "
+                f"{wait_for(WaitKind.OPERATION):.0f}s: it was killed"
+            ) from exc
         if completed.returncode:
             raise WipeError(
                 f"eval: credentials hook {command} failed for {control_namespace} (exit {completed.returncode}): "
