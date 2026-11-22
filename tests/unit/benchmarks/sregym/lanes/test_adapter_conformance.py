@@ -25,7 +25,7 @@ import signal
 import subprocess
 import sys
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -187,7 +187,7 @@ def pods() -> str:
 def fastloop_run(lane: FakeLane) -> Callable[..., str]:
     """A ``fastloop`` child that records one injected, cleaned-up incident (the accepted repository stays empty)."""
 
-    def run(argv, *, env=None, cwd=None, tick=None) -> str:
+    def run(argv, *, env=None, cwd=None, tick=None, **limits) -> str:
         argv = list(argv)
         if "--run-id" in argv:
             results = lane.env_dir / "results" / argv[argv.index("--run-id") + 1]
@@ -208,6 +208,28 @@ def fastloop_run(lane: FakeLane) -> Callable[..., str]:
 # ----- the cases: one per verb and action of the contract -----
 
 
+def real_agent(lane: FakeLane, env: dict[str, str]) -> None:
+    """The spec names a model: ``BENCH_OPERATOR`` is an operator file with provider, model, effort and a credential."""
+    credential = lane.root / "credentials.json"
+    credential.write_text("{}", encoding="utf-8")
+    operator = lane.root / "real-operator.json"
+    operator.write_text(
+        json.dumps(
+            {
+                "hooks": "sregym",
+                "settings": {
+                    "provider": "claude",
+                    "model": "synthetic-model",
+                    "effort": "low",
+                    "auth_file": str(credential),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    env["BENCH_OPERATOR"] = str(operator)
+
+
 @dataclass(frozen=True)
 class Case:
     verb: str
@@ -221,10 +243,12 @@ class Case:
     prepare: Callable[[FakeLane, dict[str, str]], None] = lambda lane, env: None
     #: The exit status the verb answers with the whole environment (64: it is unsupported).
     code: int = 0
+    #: Names a second case of the same verb and action (the same call with another operator file).
+    variant: str = ""
 
     @property
     def id(self) -> str:
-        return f"{self.verb}/{self.action or '-'}"
+        return f"{self.verb}/{self.action or '-'}" + (f"/{self.variant}" if self.variant else "")
 
 
 def lane_files(lane: FakeLane, env: dict[str, str]) -> None:
@@ -244,8 +268,22 @@ CASES: tuple[Case, ...] = (
         "app-up",
         "up",
         needs=LANE | KUBE | {"BENCH_IMAGE_REGISTRY"},
-        optional=frozenset({"BENCH_LANE_PROVIDER", "BENCH_EVIDENCE_HOST"}),
+        optional=frozenset({"BENCH_LANE_PROVIDER", "BENCH_EVIDENCE_HOST", "BENCH_OPERATOR"}),
         args=lambda root: ["--pack", str(PACK), "--namespace", NAMESPACE],
+        seams=lambda lane, env: {
+            "runner": FakeRunner(),
+            "long_runner": lambda argv, *, env=None, cwd=None, tick=None: lane.write_environment() or "",
+            "eks_fence": lambda ctx, env_dir: False,
+        },
+    ),
+    Case(
+        "app-up",
+        "up",
+        variant="real-agent",
+        needs=LANE | KUBE | {"BENCH_IMAGE_REGISTRY"},
+        optional=frozenset({"BENCH_LANE_PROVIDER", "BENCH_EVIDENCE_HOST", "BENCH_OPERATOR"}),
+        args=lambda root: ["--pack", str(PACK), "--namespace", NAMESPACE],
+        prepare=real_agent,
         seams=lambda lane, env: {
             "runner": FakeRunner(),
             "long_runner": lambda argv, *, env=None, cwd=None, tick=None: lane.write_environment() or "",
@@ -276,6 +314,25 @@ CASES: tuple[Case, ...] = (
         args=lambda root: ["--operator", "exec:x", "--seed", "1", "--instance", PROBLEM],
         seams=lambda lane, env: {"runner": FakeRunner(), "long_runner": fastloop_run(lane)},
     ),
+    Case(
+        "run",
+        "run",
+        variant="real-agent",
+        needs=LANE,
+        optional=frozenset(
+            {
+                "BENCH_OPERATOR",
+                "BENCH_EXPERIMENT",
+                "BENCH_RUN",
+                "FUZZOPS_EXEC_OUT",
+                "BENCH_CAP_SECONDS",
+                "BENCH_READY_TIMEOUT_SECONDS",
+            }
+        ),
+        args=lambda root: ["--operator", "exec:x", "--seed", "1", "--instance", PROBLEM],
+        prepare=real_agent,
+        seams=lambda lane, env: {"runner": FakeRunner(), "long_runner": fastloop_run(lane)},
+    ),
     Case("run", "active", needs=LANE, args=lambda root: ["--file", "/i.json", "--id", PROBLEM]),
     Case("run", "undo", needs=LANE, args=lambda root: ["--file", "/i.json", "--id", PROBLEM]),
     Case(
@@ -301,15 +358,17 @@ def runner_for(case: Case, lane: FakeLane, env: Mapping[str, str]) -> dict[str, 
     runner = seams.get("runner")
     if long_runner is not None and isinstance(runner, FakeRunner):
 
-        def recorded(argv, *, env=None, cwd=None, tick=None):
+        def recorded(argv, *, env=None, cwd=None, tick=None, **limits):
             runner.calls.append(list(argv))
-            return long_runner(argv, env=env, cwd=cwd, tick=tick)
+            return long_runner(argv, env=env, cwd=cwd, tick=tick, **limits)
 
         seams["long_runner"] = recorded
     return seams
 
 
-def run_case(case: Case, root: Path, *, without: str = "") -> tuple[int, dict[str, Any], RecordingEnv, list[list[str]]]:
+def run_case(
+    case: Case, root: Path, *, without: str = "", extra: Mapping[str, str] | None = None
+) -> tuple[int, dict[str, Any], RecordingEnv, list[list[str]]]:
     """One adapter call of ``case`` on a fresh fake lane, with the platform's environment minus ``without``."""
     lane = FakeLane(root)
     values = contract_values(root)
@@ -326,6 +385,7 @@ def run_case(case: Case, root: Path, *, without: str = "") -> tuple[int, dict[st
             json.dumps({"namespace": NAMESPACE, "workloads": ["Deployment/frontend replicas=1 images=f:1"]}),
             encoding="utf-8",
         )
+    values.update(extra or {})
     values.pop(without, None)
     env = RecordingEnv({**values, "WORKLOAD_ACTION": case.action, "WORKLOAD_ARGS": json.dumps(case.args(root))})
     seams = runner_for(case, lane, values)
@@ -545,6 +605,22 @@ def pid_from(path: Path) -> int:
             return int(path.read_text(encoding="utf-8"))
         pause.wait(0.02)
     raise AssertionError(f"no pid in {path}")
+
+
+def test_the_run_command_is_bound_to_the_rows_deadline(tmp_path):
+    """The spec's cap reaches the workload as BENCH_CAP_SECONDS: the run must hand a deadline (and the wait it records) to
+    the command it supervises, or a stuck row holds the lane to the platform's 6 h limit."""
+    seen: dict[str, Any] = {}
+
+    def supervised(argv, *, env=None, cwd=None, tick=None, **limits):
+        seen.update(limits)
+        return ""
+
+    case = next(c for c in CASES if c.id == "run/run")
+    bound = replace(case, seams=lambda lane, env: {"runner": FakeRunner(), "long_runner": supervised})
+    run_case(bound, tmp_path, extra={"BENCH_CAP_SECONDS": "600", "BENCH_READY_TIMEOUT_SECONDS": "300"})
+    assert seen.get("deadline_seconds", 0) > 900, seen
+    assert "current_wait" in seen, seen
 
 
 def test_a_command_past_its_deadline_is_a_named_error_and_leaves_no_process(tmp_path, monkeypatch):
