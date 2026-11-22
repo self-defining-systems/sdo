@@ -401,6 +401,7 @@ policies:
     defaultRequest:
       cpu: 50m
       memory: 64Mi
+      ephemeral-storage: null   # the chart's 3Gi per container is counted by the scheduler against the lane's own nodes
 YAML
 }
 

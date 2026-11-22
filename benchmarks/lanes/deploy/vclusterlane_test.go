@@ -42,6 +42,16 @@ func TestVclusterLaneValues(t *testing.T) {
 	}
 }
 
+// The chart's LimitRange gives every container a 3Gi ephemeral-storage request; a lane's nodes are its own, so the scheduler
+// would count disk nobody competes for (see the EKS lane test of the same name).
+func TestVclusterLaneRequestsNoEphemeralStorageByDefault(t *testing.T) {
+	v := values(t)
+	i := strings.Index(v, "defaultRequest:")
+	if i < 0 || !strings.Contains(v[i:], "ephemeral-storage: null") {
+		t.Errorf("the LimitRange's defaultRequest keeps the chart's ephemeral-storage default:\n%s", v)
+	}
+}
+
 func TestVclusterLaneValuesTakeSettings(t *testing.T) {
 	v := values(t, "VCLUSTER_NODEPORTS=24", "VCLUSTER_POD_SECURITY=baseline", "VCLUSTER_QUOTA_CPU=6")
 	for _, want := range []string{`services.nodeports: "24"`, "podSecurityStandard: baseline", `requests.cpu: "6"`} {

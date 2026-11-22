@@ -341,3 +341,22 @@ func TestEksVclusterHostKubeconfigIsReplacedAtomically(t *testing.T) {
 		t.Error("`aws eks update-kubeconfig --kubeconfig $HK` rewrites the shared host kubeconfig in place")
 	}
 }
+
+// A lane's nodes are its own (tainted, one lane each), so a pod's disk is never shared: the vcluster chart's default LimitRange
+// request (ephemeral-storage 3Gi per container) would only make the scheduler count 3 GiB per container against a node's
+// ~89 GiB allocatable. A 2-node astronomy lane (32 app containers + observability + SDO) then ran out of "ephemeral-storage"
+// while the disks were nearly empty, and the SDO claims pinned to one node could not schedule.
+func TestEksVclusterLaneRequestsNoEphemeralStorageByDefault(t *testing.T) {
+	cmd := exec.Command("bash", "-c", `set -e; source <(sed -n '/^lane_values()/,/^}/p' `+filepath.Join(pkgDir, "..", "..", "deploy", "eks-vcluster.sh")+`); lane_values vc3 192.0.2.1 /dev/stdout`)
+	cmd.Env = []string{"PATH=/usr/bin:/bin"}
+	out, err := cmd.CombinedOutput()
+	must(t, err)
+	v := string(out)
+	i := strings.Index(v, "defaultRequest:")
+	if i < 0 {
+		t.Fatalf("the lane's LimitRange has no defaultRequest block:\n%s", v)
+	}
+	if !strings.Contains(v[i:], "ephemeral-storage: null") {
+		t.Errorf("the chart's default ephemeral-storage request (3Gi) is kept; the lane's values must null it:\n%s", v)
+	}
+}
