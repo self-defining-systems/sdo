@@ -13,6 +13,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -31,6 +32,12 @@ STEP_S = 15
 LEAD = timedelta(minutes=5)
 SKIP_METRICS = re.compile(r"^(go_|process_|promhttp_|net_conntrack_|prometheus_(tsdb|engine|sd|rule|notifications)_)")
 TIMEOUT_S = 60
+ATTEMPTS = 3
+RETRY_AFTER_S = 15
+
+
+def _pause(seconds: float) -> None:
+    time.sleep(seconds)
 
 
 def host_load() -> dict[str, float]:
@@ -162,11 +169,17 @@ def capture_all(
 
     def run(name: str, step: Callable[[], dict[str, Any]]) -> None:
         nonlocal left
-        try:
-            receipt[name] = step()
-            left -= int(receipt[name].get("bytes", 0))
-        except Exception as exc:
-            receipt[name] = {"status": "error", "detail": str(exc)[:300]}
+        # Each capture only reads and writes its files atomically, so a transient failure (the store's pod
+        # restarting, an API server stream error) is retried before it fails the cell's evidence.
+        for attempt in range(1, ATTEMPTS + 1):
+            try:
+                receipt[name] = step()
+                left -= int(receipt[name].get("bytes", 0))
+                return
+            except Exception as exc:
+                receipt[name] = {"status": "error", "detail": str(exc)[:300]}
+                if attempt < ATTEMPTS:
+                    _pause(RETRY_AFTER_S)
 
     for key, service, fn in (("prometheus", PROMETHEUS, capture_prometheus), ("jaeger", JAEGER, capture_jaeger)):
         if not service_exists(kube_cmd, control, service[0]):
