@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -193,16 +194,29 @@ func TestEksVclusterHostStatusIncludesTheHostCluster(t *testing.T) {
 	}
 }
 
-func TestEksVclusterLastLaneAsksTheHostToScaleToZero(t *testing.T) {
+// Every release that deletes a vcluster lane may ask the host to scale to zero: the host decides under its lock, from the
+// lanes it holds. A ledger read when each step starts cannot: releases that run together each see the others' lanes, and
+// the system node stayed up with no lane while the ledger billed one control plane.
+func TestEksVclusterEveryClusterDeletingReleaseMayAskTheHostToScaleToZero(t *testing.T) {
 	m := vcManager(t)
+	spy := &startSpy{}
+	m.Ops = func(string, Host) HostOps { return spy }
 	l := m.eksLedger("v")
 	l.Open["vc1"] = eksOpen{Since: m.now(), EksPlan: EksPlan{Virtual: true}}
-	if !m.eksLastLane("v", "vc1") {
-		t.Error("the only lane is the last")
-	}
 	l.Open["vc2"] = eksOpen{Since: m.now(), EksPlan: EksPlan{Virtual: true}}
-	if m.eksLastLane("v", "vc1") {
-		t.Error("a host with another lane scaled to zero under it")
+	for _, lane := range []string{"vc1", "vc2"} {
+		m.lanes[lane].Gone = false
+		if !m.start(context.Background(), m.lanes[lane], Step{Kind: StepRelease, DeleteCluster: true}) {
+			t.Fatalf("release of %s was refused", lane)
+		}
+	}
+	if len(spy.started) != 2 {
+		t.Fatalf("started %d steps", len(spy.started))
+	}
+	for _, s := range spy.started {
+		if !slices.Contains(s.HostEnv, "EKS_HOST_LAST=1") {
+			t.Errorf("the release of %s lacks EKS_HOST_LAST=1 while another lane was open: %v", s.Lane, s.HostEnv)
+		}
 	}
 }
 
@@ -228,6 +242,11 @@ func TestEksVclusterHostAdoptRunsHostUpAndRecordsTheDate(t *testing.T) {
 		!strings.Contains(scripts[0], "export LANES_INSTALL=") {
 		t.Fatalf("script %v", scripts)
 	}
+	// the account is checked by host-up like by every lane step: without it the host cluster would be made in whatever
+	// account the shell's credentials belong to
+	if !strings.Contains(scripts[0], "export EKS_ACCOUNT='123456789012'") {
+		t.Errorf("adopt does not carry EKS_ACCOUNT: %s", scripts[0])
+	}
 	var rec eksHostRecord
 	must(t, readJSON(Root(root).eksHostRecordPath("v"), &rec))
 	if rec.Cluster != "lanes-host-v" || rec.Since.IsZero() {
@@ -243,4 +262,63 @@ func TestEksVclusterHostAdoptRunsHostUpAndRecordsTheDate(t *testing.T) {
 		t.Errorf("adopting again moved the billing date %v -> %v", first, rec.Since)
 	}
 	_ = inv
+}
+
+// Steps of a vcluster host run helm, the vcluster CLI, flock and curl: a host without them fails its first `up` half-made.
+func TestEksVclusterHostToolsIncludeWhatTheLaneScriptRuns(t *testing.T) {
+	m := vcManager(t)
+	got := platformTools(m.inv.Hosts["v"])
+	for _, want := range []string{"kubectl", "aws", "eksctl", "helm", "vcluster", "flock", "curl"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("tools %v lack %s", got, want)
+		}
+	}
+}
+
+// A lane retired after two automatic resets, or one that left hosts.yaml, whose cluster is not shown gone is asked to
+// delete it again; its ledger entry closes once its retired file says the cluster is gone.
+func TestEksRetiredLaneWithALiveClusterIsStillDeleted(t *testing.T) {
+	m := vcManager(t)
+	l := m.lanes["vc1"]
+	l.State, l.Gone = LaneRetired, false
+	if got := m.eksOrphanLanes(); len(got) != 1 || got[0].Lane != "vc1" {
+		t.Fatalf("orphans = %v", got)
+	}
+	l.Gone = true
+	if got := m.eksOrphanLanes(); len(got) != 0 {
+		t.Fatalf("a deleted lane is an orphan: %v", got)
+	}
+}
+
+func TestEksLedgerClosesALaneRetiredAfterItsClusterWasDeleted(t *testing.T) {
+	m := vcManager(t)
+	delete(m.lanes, "vc3")
+	must(t, os.MkdirAll(m.Root.path("lanes", "retired"), 0o755))
+	must(t, writeJSON(m.Root.path("lanes", "retired", "vc3.json"), LaneFile{Lane: "vc3", Host: "v", State: LaneRetired, Gone: true}))
+	l := m.eksLedger("v")
+	l.Open["vc3"] = eksOpen{Since: m.now().Add(-time.Hour), EksPlan: EksPlan{InstanceType: "m6i.xlarge", Nodes: 2, USDPerHour: 0.4, Virtual: true}}
+	m.eksSettle()
+	if _, open := m.eksLedger("v").Open["vc3"]; open {
+		t.Error("a retired lane whose cluster is gone still counts against the host's lanes and budget")
+	}
+	// retired with its cluster left: the entry stays open, and billing
+	must(t, writeJSON(m.Root.path("lanes", "retired", "vc4.json"), LaneFile{Lane: "vc4", Host: "v", State: LaneRetired, Gone: false}))
+	m.eksLedger("v").Open["vc4"] = eksOpen{Since: m.now().Add(-time.Hour), EksPlan: EksPlan{Virtual: true}}
+	m.eksSettle()
+	if _, open := m.eksLedger("v").Open["vc4"]; !open {
+		t.Error("a lane retired with a live cluster was closed in the ledger: its cost would vanish")
+	}
+}
+
+// An eks lane that left hosts.yaml with a cluster but no recorded build still gets its cluster deleted.
+func TestEksLeftLaneWithNoPreparedStateStillHasItsClusterDeleted(t *testing.T) {
+	m := vcManager(t)
+	lf := &LaneFile{Lane: "vcX", Host: "v", Gone: false}
+	if !m.leftHasCluster(lf) {
+		t.Error("a left eks lane with a cluster and no prepared state is retired with its cluster alive")
+	}
+	lf.Gone = true
+	if m.leftHasCluster(lf) {
+		t.Error("a deleted cluster is deleted again")
+	}
 }

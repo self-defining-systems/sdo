@@ -800,8 +800,10 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 		s.HostEnv = append(s.HostEnv, eksEnv(h, p, m.Root.path("eks"))...)
 		if h.EKS.virtualLane(l.Lane) {
 			s.Virtual = true
-			if s.DeleteCluster && m.eksLastLane(l.Host, l.Lane) {
-				s.HostEnv = append(s.HostEnv, "EKS_HOST_LAST=1") // the host's nodes go with its last lane
+			if s.DeleteCluster {
+				// The host's nodes go with its last lane: the script decides under the host lock from the lanes the
+				// host holds. A ledger read here cannot (releases that run together each see the others' lanes).
+				s.HostEnv = append(s.HostEnv, "EKS_HOST_LAST=1")
 			}
 		}
 	}

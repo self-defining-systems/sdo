@@ -128,6 +128,9 @@ type Result struct {
 	// does not parse): it names the pack and why. It is not a failure of the lane: the lane is not recreated and
 	// the failure does not count against it.
 	Config string `json:"config,omitempty"`
+	// TeardownFailed, when set, says a release that deletes the cluster could not tear the operator down first (the
+	// cluster was deleted all the same): the reason, for the record.
+	TeardownFailed string `json:"teardown_failed,omitempty"`
 	// Recycle, when set, says a held lane was not claimable (for example an incident open on it): nothing was
 	// swapped, the lane is recycled and the failure does not count against it.
 	Recycle string `json:"recycle,omitempty"`
@@ -1042,6 +1045,9 @@ func (r *stepRunner) platform() string {
 	return dir
 }
 
+// shellWaitDelay is how long a killed host command may keep the step waiting for its output to close.
+var shellWaitDelay = 10 * time.Second
+
 // shell runs a host-configured command (cluster_up, cluster_down) as the workload/operator command it is: in the pinned
 // workload checkout, with LANES_INSTALL (the platform install) and BENCH_WORKLOAD_DIR (the checkout) in its environment.
 // The platform's own default commands name their scripts through $LANES_INSTALL, so none depends on the directory.
@@ -1059,6 +1065,7 @@ func (r *stepRunner) shell(ctx context.Context, kind, cmdline string, env []stri
 	cmd.Stdout, cmd.Stderr = w, w
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = shellWaitDelay // a descendant outside the group that holds the output open must not outlive the limit
 	r.logf("%s: %s", kind, cmdline)
 	err := cmd.Run()
 	code := 0
@@ -1565,8 +1572,13 @@ func (r *stepRunner) release(ctx context.Context) {
 		return
 	}
 	if r.s.DeleteCluster {
+		// The cluster is deleted whether or not the operator's teardown worked: a broken cluster (its API or nodes
+		// failing) is the one that most needs deleting, and a release that stopped at a failed teardown left it billing
+		// with the lane Down and, after two resets, Retired and forgotten. What the teardown could not do is recorded.
 		if !r.teardown(ctx, r.s.Prev) {
-			return
+			r.logf("teardown failed (%s): the cluster is deleted all the same", r.res.Reason)
+			r.res.TeardownFailed = r.res.Reason
+			r.res.OK, r.res.Reason, r.res.LaneDown = true, "", ""
 		}
 		if r.shell(ctx, "cluster-down", r.s.ClusterDown, nil) {
 			_ = os.RemoveAll(r.s.LaneDir)

@@ -24,11 +24,14 @@ module attaches to a cluster that exists and verifies them.
 from __future__ import annotations
 
 import json
+import fcntl
+import os
 import re
 import shlex
 import subprocess
 import time
 from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -172,9 +175,14 @@ class Ecr:
         if self._logged_in_at is not None and now - self._logged_in_at < self.LOGIN_SECONDS:
             return
         password = self._call(["aws", "ecr", "get-login-password", "--region", self.lane.region]).strip()
-        self._call(
-            ["docker", "login", "--username", "AWS", "--password-stdin", self.lane.registry], input_text=password
-        )
+        # Every lane process of the host logs in, and all of them write the one docker config: one at a time.
+        config = Path(os.environ.get("DOCKER_CONFIG") or Path.home() / ".docker")
+        config.mkdir(parents=True, exist_ok=True)
+        with (config / ".sdo-ecr-login.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            self._call(
+                ["docker", "login", "--username", "AWS", "--password-stdin", self.lane.registry], input_text=password
+            )
         self._logged_in_at = now
 
     def ensure_repository(self, repository: str) -> None:
@@ -190,21 +198,26 @@ class Ecr:
         if "RepositoryNotFoundException" not in described.stderr:
             raise EksLaneError(f"aws ecr describe-repositories {repository}: {described.stderr.strip()[-600:]}")
         tags = [f"Key={key},Value={value}" for key, value in sorted(self.lane.repository_tags.items())]
-        self._call(
-            [
-                "aws",
-                "ecr",
-                "create-repository",
-                "--region",
-                self.lane.region,
-                "--repository-name",
-                repository,
-                "--image-scanning-configuration",
-                "scanOnPush=false",
-                *(["--tags", *tags] if tags else []),
-            ],
-            timeout=120,
-        )
+        try:
+            self._call(
+                [
+                    "aws",
+                    "ecr",
+                    "create-repository",
+                    "--region",
+                    self.lane.region,
+                    "--repository-name",
+                    repository,
+                    "--image-scanning-configuration",
+                    "scanOnPush=false",
+                    *(["--tags", *tags] if tags else []),
+                ],
+                timeout=120,
+            )
+        except EksLaneError as error:
+            # Lanes of a plan push the same declared images at once: the loser of the create has what it asked for.
+            if "RepositoryAlreadyExistsException" not in str(error):
+                raise
 
     def push(self, local: str, repository: str, tag: str) -> str:
         """Push the local image to ``repository:tag``; returns the manifest digest ECR stores."""
@@ -213,7 +226,12 @@ class Ecr:
         self.ensure_repository(repository)
         target = f"{self.lane.registry}/{repository}:{tag}"
         self._call(["docker", "tag", local, target], timeout=60)
-        self._call(["docker", "push", "--quiet", target])
+        pushed = self._call(["docker", "push", target])
+        # The digest of what this push stored: reading it back by tag would return another lane's image when that lane
+        # pushed the same name a moment later.
+        found = re.findall(r"digest: (sha256:[0-9a-f]{64})", pushed)
+        if found:
+            return found[-1]
         digest = self._call(
             [
                 "aws",

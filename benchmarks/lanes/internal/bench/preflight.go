@@ -424,7 +424,13 @@ func judgeSharedCluster(out string, err error, planned int) (bool, string) {
 // platformTools are the external programs the steps, hooks and probes run; a kind host also needs kind.
 func platformTools(h Host) []string {
 	if h.IsEks() {
-		return []string{"kubectl", "docker", "aws", "eksctl"} // no kernel to probe and no kind
+		t := []string{"kubectl", "docker", "aws", "eksctl"} // no kernel to probe and no kind
+		if h.IsEksVirtual() {
+			// vcluster lanes: host-up installs with helm, up/down run the vcluster CLI, the host lock is a flock, the
+			// NodePort rule asks checkip with curl: a host without them fails its first `up` half-made
+			t = append(t, "helm", "vcluster", "flock", "curl")
+		}
+		return t
 	}
 	t := []string{"kubectl", "docker", "ip"}
 	if !h.IsVcluster() {

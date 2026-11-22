@@ -71,7 +71,9 @@ aws)
   esac;;
 eksctl)
   case "$1 $2" in
-  "get cluster") [ -e "$S/cluster-$4" ] || exit 1;;
+  "get cluster")
+    [ -z "${FAKE_EKS_DOWN:-}" ] || { echo "Error: operation error EKS: DescribeCluster, https response error: dial tcp: lookup eks.us-west-2.amazonaws.com: no such host" >&2; exit 1; }
+    [ -e "$S/cluster-$4" ] || { echo "Error: unable to describe cluster control plane: operation error EKS: DescribeCluster, ResourceNotFoundException: No cluster found for name: $4." >&2; exit 1; };;
   "create cluster")
     cfg=$4; n=$(name_of "$cfg"); kc=$6
     echo "create-start $n $(date +%s.%N)" >> "$S/eks-times.log"
@@ -96,7 +98,16 @@ vcluster)
   esac;;
 kubectl)
   # the host cluster of lanes that are vclusters: namespaces, Karpenter NodePools, the nodes they make
+  # a host API that does not answer: every read and delete fails the way kubectl says it
+  case " $* " in *" get "*|*" delete "*) [ -z "${FAKE_KUBE_DOWN:-}" ] || { echo "Unable to connect to the server: dial tcp: i/o timeout" >&2; exit 1; };; esac
   case " $* " in
+  *" get namespace -l sdo-lane-ns=true"*) for n in "$S"/ns-*; do [ -e "$n" ] && echo "${n##*/ns-}"; done; exit 0;;
+  *" get pods -l app.kubernetes.io/name=sdo-lane-node-agent"*"nodeName"*) for f in "$S"/lane-nodes-*; do [ -e "$f" ] || continue; l=${f##*/lane-nodes-}; i=1; while [ "$i" -le "$(cat "$f")" ]; do echo "ip-$l-$i true"; i=$((i+1)); done; done; exit 0;;
+  *" get nodepool lane-"*) np=$(echo "$*" | sed 's/.* get nodepool lane-\([^ ]*\).*/\1/')
+    [ -e "$S/nodepool-$np" ] || { echo "Error from server (NotFound): nodepools.karpenter.sh \"lane-$np\" not found" >&2; exit 1; }
+    echo "nodepool.karpenter.sh/lane-$np"; exit 0;;
+  *" get deployment capacity-"*) echo "Error from server (NotFound): deployments.apps not found" >&2; exit 1;;
+  *" delete namespace "*) ns=$(echo "$*" | sed 's/.* delete namespace \([^ ]*\).*/\1/'); rm -f "$S/ns-$ns"; exit 0;;
   *" get namespace "*" -o name"*) ns=$(echo "$*" | sed 's/.* get namespace \([^ ]*\).*/\1/')
     [ -e "$S/ns-$ns" ] || { [ -n "${FAKE_KUBE_DOWN:-}" ] && { echo "Unable to connect to the server" >&2; exit 1; }; echo "Error from server (NotFound): namespaces \"$ns\" not found" >&2; exit 1; }
     echo "namespace/$ns"; exit 0;;

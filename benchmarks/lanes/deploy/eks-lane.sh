@@ -447,11 +447,17 @@ ecr_login() {
 ecr_push() { # LOCAL REPOSITORY TAG -> digest
   local local_img=$1 repo=$2 tag=$3 ecr
   ecr=$(registry)
-  aws ecr describe-repositories --region "$REGION" --repository-names "$repo" >/dev/null 2>&1 ||
-    aws ecr create-repository --region "$REGION" --repository-name "$repo" --image-scanning-configuration scanOnPush=false \
-      --tags "Key=Project,Value=${EKS_TAG_PROJECT:-sdo-lanes}" >/dev/null
+  if ! aws ecr describe-repositories --region "$REGION" --repository-names "$repo" >/dev/null 2>&1; then
+    # lanes of a plan push the same declared images at once: the loser of the create has what it asked for
+    out=$(aws ecr create-repository --region "$REGION" --repository-name "$repo" --image-scanning-configuration scanOnPush=false \
+      --tags "Key=Project,Value=${EKS_TAG_PROJECT:-sdo-lanes}" 2>&1) ||
+      case $out in *RepositoryAlreadyExistsException*) ;; *) echo "$out" >&2; return 1;; esac
+  fi
   docker tag "$local_img" "$ecr/$repo:$tag"
-  docker push --quiet "$ecr/$repo:$tag" >/dev/null
+  pushed=$(docker push "$ecr/$repo:$tag") || return 1
+  # the digest of what this push stored: by tag it could be another lane's image pushed a moment later
+  digest=$(printf '%s\n' "$pushed" | sed -n 's/.*digest: \(sha256:[0-9a-f]\{64\}\).*/\1/p' | tail -1)
+  if [ -n "$digest" ]; then echo "$digest"; return 0; fi
   aws ecr describe-images --region "$REGION" --repository-name "$repo" --image-ids "imageTag=$tag" --query 'imageDetails[0].imageDigest' --output text
 }
 

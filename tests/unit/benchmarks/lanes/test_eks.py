@@ -217,3 +217,59 @@ def test_a_virtual_lane_attaches_without_reading_the_hosts_kube_system() -> None
     assert not any("daemonset" in call for call in run.calls)
     with pytest.raises(eks.EksLaneError, match="virtual"):
         provider.run_on_nodes("true")
+
+
+def test_a_repository_another_lane_created_first_is_not_a_failure() -> None:
+    """Lanes of a plan push the same declared images in parallel: on the first use of a repository the loser's create
+    answers RepositoryAlreadyExistsException, and the push goes on."""
+    digest = "sha256:" + "c" * 64
+    described = iter([(254, "", "RepositoryNotFoundException"), (0, "{}", "")])
+
+    class Racing(FakeRun):
+        def __call__(self, argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            if "describe-repositories" in argv:
+                self.calls.append(list(argv))
+                self.inputs.append(None)
+                code, out, err = next(described)
+                return subprocess.CompletedProcess(argv, code, out, err)
+            return super().__call__(argv, **kwargs)
+
+    run = Racing(
+        [
+            (("get-login-password",), 0, "secret\n", ""),
+            (("docker", "login"), 0, "", ""),
+            (("create-repository",), 254, "", "An error occurred (RepositoryAlreadyExistsException)"),
+            (("docker", "tag"), 0, "", ""),
+            (("docker", "push"), 0, f"latest: digest: {digest} size: 1234\n", ""),
+            (("describe-images",), 0, "sha256:" + "d" * 64 + "\n", ""),
+        ]
+    )
+    ecr = eks.Ecr(lane(), run=run, clock=lambda: 0.0)
+    assert ecr.push("built:abc", "sdo/x", "latest") == digest, (
+        "the digest of the push, not what another lane's tag holds now"
+    )
+
+
+def test_parallel_lanes_log_in_to_docker_one_at_a_time(tmp_path, monkeypatch) -> None:
+    """Every lane process logs in to ECR; all of them write the one docker config of the host."""
+    import threading
+
+    monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path))
+    meet = threading.Barrier(2)  # two logins inside `docker login` at once meet here
+    overlapped = []
+
+    def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if argv[:2] == ["docker", "login"]:
+            try:
+                meet.wait(timeout=0.05)
+                overlapped.append(True)
+            except threading.BrokenBarrierError:
+                meet.reset()
+        return subprocess.CompletedProcess(argv, 0, "secret\n", "")
+
+    threads = [threading.Thread(target=eks.Ecr(lane(), run=run).login) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert not overlapped

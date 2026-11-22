@@ -46,7 +46,7 @@ KARPENTER=${KARPENTER_VERSION:-1.6.0}
 VCVER=${VCLUSTER_VERSION:-0.37.7}
 TAG=${EKS_TAG_PROJECT:-sdo-lanes}
 
-hk() { kubectl --kubeconfig "$HK" "$@"; }
+hk() { kubectl --kubeconfig "$HK" --request-timeout="${EKS_KUBECTL_TIMEOUT:-60s}" "$@"; }
 need_host() { [ -n "$HOST" ] && [ -n "$HK" ] || die "EKS_HOST_CLUSTER and EKS_HOST_KUBECONFIG are required"; }
 
 account() {
@@ -62,7 +62,29 @@ stage() { # NAME: seconds since the verb began, on stderr and in $STAGE_FILE
   [ -z "${STAGE_FILE:-}" ] || echo "$1 $((SECONDS - STAGE_T0))" >>"$STAGE_FILE"
 }
 
-host_exists() { eksctl get cluster --name "$HOST" --region "$REGION" >/dev/null 2>&1; }
+# host_state: 0 the host cluster exists, 1 it does not (the API said so), 2 cannot tell (credentials, throttle, network):
+# a failed call is never "gone".
+host_state() {
+  local out
+  if out=$(eksctl get cluster --name "$HOST" --region "$REGION" 2>&1); then return 0; fi
+  case $out in *ResourceNotFound*|*"No cluster found"*) return 1;; esac
+  log "cannot tell whether host cluster $HOST exists: ${out: -200}"
+  return 2
+}
+# host_exists: the host cluster exists; a cluster that cannot be read is not "absent" (host-up would create over it, up
+# would report a missing host): callers that act on absence use host_state.
+host_exists() { host_state; }
+
+# refresh_host_kubeconfig: the host kubeconfig is shared by every lane's up and down; it is replaced whole, never
+# rewritten in place (a reader mid-write sees a broken file).
+refresh_host_kubeconfig() {
+  local tmp="$HK.tmp.$$"
+  if aws eks update-kubeconfig --name "$HOST" --region "$REGION" --kubeconfig "$tmp" >/dev/null 2>&1; then
+    chmod 600 "$tmp" && mv "$tmp" "$HK"
+  else
+    rm -f "$tmp"
+  fi
+}
 
 write_host_config() {
   local f=$1
@@ -152,7 +174,8 @@ wait_system() { # a Ready system node
 lock_host() {
   mkdir -p "$(dirname "$HK")"
   exec 9>"$(dirname "$HK")/.host.lock"
-  flock 9
+  log "waiting for the host lock"
+  flock -w "${EKS_HOST_LOCK_WAIT:-900}" 9 || die "the host lock was not free in ${EKS_HOST_LOCK_WAIT:-900} s (another lane's up or down holds it)"
 }
 
 # discovery_tags: Karpenter finds subnets and the security group by tag.
@@ -187,7 +210,7 @@ kind: EC2NodeClass
 metadata: {name: sdo-lane}
 spec:
   role: $role
-  amiSelectorTerms: [{alias: al2023@latest}]
+  amiSelectorTerms: [{alias: ${EKS_AMI_ALIAS:-al2023@latest}}]
   subnetSelectorTerms: [{tags: {karpenter.sh/discovery: $HOST}}]
   securityGroupSelectorTerms: [{tags: {karpenter.sh/discovery: $HOST}}]
   associatePublicIPAddress: true
@@ -229,7 +252,10 @@ cmd_host_up() {
   account >/dev/null
   mkdir -p "$(dirname "$HK")"
   STAGE_FILE="$HK.stages"; : >"$STAGE_FILE"
-  if host_exists; then
+  local st=0
+  host_state || st=$?
+  [ "$st" != 2 ] || die "cannot tell whether host cluster $HOST exists: not creating over it"
+  if [ "$st" = 0 ]; then
     log "host cluster $HOST exists: attaching"
     aws eks update-kubeconfig --name "$HOST" --region "$REGION" --kubeconfig "$HK" >/dev/null
     chmod 600 "$HK"
@@ -264,7 +290,10 @@ cmd_host_scale() {
 
 cmd_host_down() {
   need_host
-  if host_exists; then
+  local st=0
+  host_state || st=$?
+  [ "$st" != 2 ] || die "cannot tell whether host cluster $HOST exists: nothing was deleted"
+  if [ "$st" = 0 ]; then
     # nodes Karpenter made are not in the cluster's stack: delete them first or the VPC cannot go
     hk delete nodepool --all --wait=true --timeout=300s >&2 2>/dev/null || true
     eksctl delete cluster --name "$HOST" --region "$REGION" --wait --disable-nodegroup-eviction >&2
@@ -293,7 +322,9 @@ spec:
         - {key: karpenter.sh/capacity-type, operator: In, values: [on-demand]}
         - {key: topology.kubernetes.io/zone, operator: In, values: [$AZ]}
         - {key: kubernetes.io/arch, operator: In, values: [amd64]}
-  disruption: {consolidationPolicy: WhenEmpty, consolidateAfter: 30m}
+  # an idle lane's nodes go (WhenEmpty); a running lane's nodes are never replaced for drift (a new AMI): their local volumes
+  # (the operator's claims, the app's data) go with the node, and the lane is deleted explicitly
+  disruption: {consolidationPolicy: WhenEmpty, consolidateAfter: 30m, budgets: [{nodes: "0", reasons: [Drifted]}]}
   limits: {cpu: "$((NODES * VCPUS))"}
 ---
 apiVersion: v1
@@ -395,6 +426,22 @@ wait_lane_nodes() { # LANE: the lane's own nodes are Ready
   done
 }
 
+# wait_node_agents LANE: every node of the lane runs a Ready node agent, which writes the containerd mirror config: before
+# that an image that exists only in the ECR mirror is pulled from upstream, fails and backs off for minutes.
+wait_node_agents() {
+  local lane=$1 end=$((SECONDS + ${EKS_AGENT_WAIT:-300})) nodes ready missing n
+  nodes=$(hk get nodes -l "sdo-lane=$lane" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+  while :; do
+    ready=$(hk -n kube-system get pods -l app.kubernetes.io/name=sdo-lane-node-agent -o jsonpath='{range .items[*]}{.spec.nodeName} {.status.containerStatuses[0].ready}{"\n"}{end}' 2>/dev/null || true)
+    missing=""
+    for n in $nodes; do grep -qx "$n true" <<<"$ready" || missing="$missing $n"; done
+    [ -z "$missing" ] && return 0
+    [ $SECONDS -lt $end ] || { log "no Ready node agent on$missing after ${EKS_AGENT_WAIT:-300} s: images only in the mirror will pull late"; return 0; }
+    log "waiting for the node agent on$missing"
+    sleep 5
+  done
+}
+
 # label_nodes LANE: the first node is the infra node, the rest (or the only one) are workers (as an eks lane); the
 # vcluster copies the labels of the lane's nodes.
 label_nodes() {
@@ -417,14 +464,15 @@ cmd_up() {
   mkdir -p "$(dirname "$kc")"
   STAGE_FILE="$kc.stages"; : >"$STAGE_FILE"
   [ -z "$evidence" ] || mkdir -p "$evidence"
-  host_exists || die "host cluster $HOST does not exist: run \`lanes host adopt\` first"
-  aws eks update-kubeconfig --name "$HOST" --region "$REGION" --kubeconfig "$HK" >/dev/null 2>&1 || true
+  host_exists || die "host cluster $HOST does not exist (or cannot be read): run \`lanes host adopt\` first"
+  refresh_host_kubeconfig
   lock_host
   scale_system 1
   wait_system
+  # the lane's NodePool exists before the lock is let go: a down that counts the host's lanes then sees this one
+  lane_nodepool "$lane"
   flock -u 9
   stage host_ready
-  lane_nodepool "$lane"
   stage nodes_requested
   local entry vals
   entry=$(system_entry)
@@ -445,6 +493,7 @@ cmd_up() {
   done
   stage lane_api_ready
   wait_lane_nodes "$lane"
+  wait_node_agents "$lane"
   label_nodes "$lane"
   hk -n sdo-capacity delete deployment "capacity-$lane" --ignore-not-found --wait=false >/dev/null
   stage nodes_ready
@@ -457,44 +506,96 @@ cmd_up() {
   echo "EKS_LANE_READY cluster=$lane host=$HOST instance=$ITYPE nodes=$NODES"
 }
 
-# cmd_down_quiet LANE KUBECONFIG: delete what `up` made, without waiting for the nodes.
+# cmd_down_quiet LANE KUBECONFIG: delete what `up` made, without waiting for the nodes (the failure path of `up`: best
+# effort, the caller is already failing).
 cmd_down_quiet() {
   local lane=$1 kc=${2:-}
-  KUBECONFIG=$HK vcluster delete "$lane" -n "$lane" --delete-namespace --wait=false >&2 || true
-  hk delete namespace "$lane" --ignore-not-found --wait=false >&2 || true
-  hk -n sdo-capacity delete deployment "capacity-$lane" --ignore-not-found --wait=false >&2 || true
-  hk delete nodepool "lane-$lane" --ignore-not-found --wait=false >&2 || true
+  delete_lane_objects "$lane" || true
   [ -z "$kc" ] || rm -f "$kc" "$kc.entry" "$kc.stages" "$kc.host"
+}
+
+# delete_lane_objects LANE: every delete that finds the object gone succeeds; one that cannot reach the host fails.
+delete_lane_objects() {
+  local lane=$1 rc=0
+  KUBECONFIG=$HK vcluster delete "$lane" -n "$lane" --delete-namespace --wait=false >&2 || true # gone already is fine: the namespace delete below decides
+  hk delete namespace "$lane" --ignore-not-found --wait=false >&2 || rc=1
+  hk -n sdo-capacity delete deployment "capacity-$lane" --ignore-not-found --wait=false >&2 || rc=1
+  hk delete nodepool "lane-$lane" --ignore-not-found --wait=false >&2 || rc=1
+  return $rc
+}
+
+# absent KIND NAME [NS]: 0 the object is gone (the API said NotFound), 1 it is there, 2 cannot tell.
+absent() {
+  local kind=$1 name=$2 err ns=()
+  [ -z "${3:-}" ] || ns=(-n "$3")
+  if err=$(hk "${ns[@]}" get "$kind" "$name" -o name 2>&1); then return 1; fi
+  case $err in *NotFound*) return 0;; esac
+  log "cannot tell whether $kind/$name is gone: ${err: -200}"
+  return 2
+}
+
+# lane_left LANE: what is still there of the lane: 0 nothing, 1 something, 2 cannot tell.
+lane_left() {
+  local lane=$1 r worst=0
+  for spec in "namespace $lane" "nodepool lane-$lane"; do
+    # shellcheck disable=SC2086
+    absent $spec && r=0 || r=$?
+    [ "$r" -le "$worst" ] || worst=$r
+    [ "$r" = 2 ] && return 2
+  done
+  return "$worst"
 }
 
 cmd_down() {
   need_host
-  local lane=${1:?lane} kc=${2:-} t0=$SECONDS end
+  local lane=${1:?lane} kc=${2:-} t0=$SECONDS end st=0 left
   trap - EXIT
-  if ! host_exists; then
+  account >/dev/null # no credentials: nothing below could delete, and nothing may say it did
+  host_state || st=$?
+  if [ "$st" = 1 ]; then
     log "host cluster $HOST does not exist: nothing to delete"
     [ -z "$kc" ] || rm -f "$kc" "$kc.entry" "$kc.stages" "$kc.host"
     echo "EKS_LANE_DELETED cluster=$lane seconds=0"; return 0
   fi
-  aws eks update-kubeconfig --name "$HOST" --region "$REGION" --kubeconfig "$HK" >/dev/null 2>&1 || true
-  cmd_down_quiet "$lane" "$kc"
-  # the lane's nodes are released when Karpenter has terminated them: wait for that so the lane's cost ends where it says
+  [ "$st" = 0 ] || die "cannot tell whether host cluster $HOST exists: lane $lane was not deleted"
+  refresh_host_kubeconfig
+  delete_lane_objects "$lane" || die "lane $lane: a delete failed (the host API does not answer?): it is not deleted"
+  # the lane is gone when the host says so; its nodes are released when Karpenter has terminated them: wait for both, so
+  # the lane's cost ends where it says and the next `up` of the name never meets a Terminating namespace
   end=$((SECONDS + ${EKS_DOWN_WAIT:-240}))
-  until [ "$(hk get nodes -l "sdo-lane=$lane" --no-headers 2>/dev/null | wc -l)" -eq 0 ]; do
-    [ $SECONDS -lt $end ] || { log "nodes of $lane still terminating after ${EKS_DOWN_WAIT:-240} s"; break; }
+  while :; do
+    left=0; lane_left "$lane" || left=$?
+    [ "$left" = 0 ] && break
+    [ "$left" != 2 ] || die "lane $lane: the host cannot be read: it is not shown deleted"
+    [ $SECONDS -lt $end ] || die "lane $lane: namespace or NodePool still there after ${EKS_DOWN_WAIT:-240} s"
+    log "waiting for the host to delete lane $lane ($((end - SECONDS)) s left)"
     sleep 3
   done
+  local n
+  while :; do
+    n=$(hk get nodes -l "sdo-lane=$lane" --no-headers 2>&1) || die "lane $lane: cannot list its nodes: ${n: -200}"
+    [ -n "$n" ] || break
+    [ $SECONDS -lt $end ] || { log "nodes of $lane still terminating after ${EKS_DOWN_WAIT:-240} s"; break; }
+    log "waiting for the nodes of lane $lane to terminate ($(echo "$n" | wc -l) left)"
+    sleep 3
+  done
+  [ -z "$kc" ] || rm -f "$kc" "$kc.entry" "$kc.stages" "$kc.host"
   if [ "${EKS_HOST_LAST:-0}" = 1 ]; then
+    # the host's nodes go with its last lane: decided here, under the lock, from what the host holds (releases that run
+    # together each see the others' lanes in any ledger read earlier)
     lock_host
-    if [ "$(hk get nodepool --no-headers 2>/dev/null | wc -l)" -eq 0 ]; then scale_system 0; fi
+    if [ "$(hk get nodepool --no-headers 2>/dev/null | wc -l)" -eq 0 ] && [ -z "$(hk get namespace -l sdo-lane-ns=true --no-headers 2>/dev/null)" ]; then scale_system 0; fi
   fi
   echo "EKS_LANE_DELETED cluster=$lane seconds=$((SECONDS - t0))"
 }
 
+# exists LANE: a lane is a namespace, a NodePool and its capacity pods: it exists while any of them does.
 cmd_exists() {
   need_host
   local lane=${1:?lane} err
   if err=$(hk get namespace "$lane" -o name 2>&1); then exit 0; fi
+  case $err in *NotFound*) ;; *) log "cannot tell whether $lane exists: ${err: -200}"; exit 2;; esac
+  if err=$(hk get nodepool "lane-$lane" -o name 2>&1); then log "lane $lane has no namespace but its NodePool is there"; exit 0; fi
   case $err in *NotFound*) exit 1;; esac
   log "cannot tell whether $lane exists: ${err: -200}"
   exit 2
@@ -516,6 +617,7 @@ cmd_prepull() {
   need_host
   local kc=${1:?kubeconfig}; shift
   [ $# -gt 0 ] || die "prepull KUBECONFIG IMAGE..."
+  lock_host # a read-modify-write of one host ConfigMap: parallel lanes would lose each other's images
   local have
   have=$(hk -n kube-system get configmap sdo-lane-prepull -o jsonpath='{.data.images}' 2>/dev/null || true)
   local tmp img name tag
