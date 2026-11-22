@@ -12,6 +12,8 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+CI_WHOLE_TREE = True
+
 ROOT = Path(__file__).resolve().parents[5]
 ROOTS = ("benchmarks/sregym", "benchmarks/lanes", "benchmarks/fuzzops")
 CALLS = {"run", "check_output", "check_call", "call"}
