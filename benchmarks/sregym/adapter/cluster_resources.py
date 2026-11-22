@@ -378,13 +378,14 @@ def prepare_benchmark_resources(
     trusted = _trusted_kubeconfig(kubeconfig)
     nodes = _kind_nodes(config, trusted) if config.lane_platform == "kind" else []
     resources = _registry_resources(config)
+    # The installer binds the control namespace's node-local claims (repository, registry, evidence) to one node
+    # (SDO_VOLUME_NODE): the controller mounts all of them and a lane has more than one node. That holds with or
+    # without an evidence claim: a lane with no evidence root still has its repository claim.
+    volume_node_name = _claim_node(config, trusted)
     if config.evidence_claim:
-        volume_node_name = _claim_node(config, trusted)
         resources.append(claim_manifest(config.control_namespace, volume_node_name))
-        if volume_node_name:
-            # The installer binds the control namespace's other node-local claims (repository, registry) to the same
-            # node (SDO_VOLUME_NODE): the controller mounts all of them and a lane has more than one node.
-            os.environ["SDO_VOLUME_NODE"] = volume_node_name
+    if volume_node_name:
+        os.environ["SDO_VOLUME_NODE"] = volume_node_name
     if relay_target_base is not None:
         resources.extend(_bridge_resources(config, relay_target_base))
     _kubectl(

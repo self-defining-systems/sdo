@@ -51,7 +51,8 @@ CALL_ENV = frozenset({"WORKLOAD_VERB", "WORKLOAD_ACTION", "WORKLOAD_ARGS", "WORK
 RUN_ENV = frozenset({"FUZZOPS_EXEC_OUT", "BENCH_RUN", "BENCH_FAULT"})
 #: The host's own settings of the SREGym workload (``workload_env`` of hosts.yaml), never given by the platform.
 HOST_PREFIX = "SREGYM_LANES_"
-HOST_NAMES = frozenset({"BENCH_IMAGE_TAGS"})
+#: ``SDO_OPUS_POOL_NFS_SERVER``: where an Opus pool lives when its lane has no node of its own (``hosts.yaml`` ``env``).
+HOST_NAMES = frozenset({"BENCH_IMAGE_TAGS", "SDO_OPUS_POOL_NFS_SERVER"})
 
 
 # ----- the platform's environment, read from the Go source -----
@@ -66,7 +67,7 @@ def _function(source: str, signature: str) -> str:
 def go_lane_variables() -> set[str]:
     """Every variable lanes sets on a step's adapter calls: ``laneEnv``, the host ``EnvList`` and the EKS ``eksEnv``."""
     step = (BENCH / "step.go").read_text(encoding="utf-8")
-    names = set(re.findall(r'"([A-Z][A-Z0-9_]+)="', _function(step, "func (r *stepRunner) laneEnv(")))
+    names = set(re.findall(r'"([A-Z][A-Z0-9_]+)=', _function(step, "func (r *stepRunner) laneEnv(")))
     inventory = (BENCH / "inventory.go").read_text(encoding="utf-8")
     names |= set(re.findall(r'all\["([A-Z][A-Z0-9_]+)"\]', _function(inventory, "func (h Host) EnvList(")))
     eks = (BENCH / "eks.go").read_text(encoding="utf-8")
@@ -268,7 +269,7 @@ CASES: tuple[Case, ...] = (
         "app-up",
         "up",
         needs=LANE | KUBE | {"BENCH_IMAGE_REGISTRY"},
-        optional=frozenset({"BENCH_LANE_PROVIDER", "BENCH_EVIDENCE_HOST", "BENCH_OPERATOR"}),
+        optional=frozenset({"BENCH_LANE_PROVIDER", "BENCH_EVIDENCE_HOST", "BENCH_OPERATOR", "BENCH_LANE_VIRTUAL"}),
         args=lambda root: ["--pack", str(PACK), "--namespace", NAMESPACE],
         seams=lambda lane, env: {
             "runner": FakeRunner(),
@@ -281,7 +282,7 @@ CASES: tuple[Case, ...] = (
         "up",
         variant="real-agent",
         needs=LANE | KUBE | {"BENCH_IMAGE_REGISTRY"},
-        optional=frozenset({"BENCH_LANE_PROVIDER", "BENCH_EVIDENCE_HOST", "BENCH_OPERATOR"}),
+        optional=frozenset({"BENCH_LANE_PROVIDER", "BENCH_EVIDENCE_HOST", "BENCH_OPERATOR", "BENCH_LANE_VIRTUAL"}),
         args=lambda root: ["--pack", str(PACK), "--namespace", NAMESPACE],
         prepare=real_agent,
         seams=lambda lane, env: {
@@ -304,6 +305,7 @@ CASES: tuple[Case, ...] = (
         optional=frozenset(
             {
                 "BENCH_OPERATOR",
+                "BENCH_LANE_VIRTUAL",
                 "BENCH_EXPERIMENT",
                 "BENCH_RUN",
                 "FUZZOPS_EXEC_OUT",
@@ -322,6 +324,7 @@ CASES: tuple[Case, ...] = (
         optional=frozenset(
             {
                 "BENCH_OPERATOR",
+                "BENCH_LANE_VIRTUAL",
                 "BENCH_EXPERIMENT",
                 "BENCH_RUN",
                 "FUZZOPS_EXEC_OUT",

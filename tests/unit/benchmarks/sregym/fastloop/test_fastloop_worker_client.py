@@ -85,3 +85,47 @@ for line in sys.stdin:
         with pytest.raises(SregymWorkerError, match="timed out"):
             worker.request("baseline_oracle", timeout=0.2)
     assert time.monotonic() - started < 0.8
+
+
+def _gone(pid: int, seconds: float = 5.0) -> bool:
+    """Whether the process ended (a zombie does not run) within ``seconds``."""
+    import threading
+    from pathlib import Path as _Path
+
+    pause = threading.Event()
+    waited = 0.0
+    while waited <= seconds:
+        try:
+            state = _Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()[0]
+        except (OSError, IndexError):
+            return True
+        if state == "Z":
+            return True
+        pause.wait(0.02)
+        waited += 0.02
+    return False
+
+
+def test_a_worker_that_timed_out_is_killed_with_everything_it_started(tmp_path: Path) -> None:
+    """A request that outlives its timeout abandons the worker; its helm, docker and kubectl children must not live on
+    and keep changing the lane while the next verb or row starts."""
+    child_pid = tmp_path / "child.pid"
+    script = tmp_path / "tree_worker.py"
+    script.write_text(
+        textwrap.dedent(
+            f"""
+            import json, subprocess, sys, time
+            for line in sys.stdin:
+                child = subprocess.Popen(["sleep", "60"])
+                open({str(child_pid)!r}, "w").write(str(child.pid))
+                time.sleep(60)
+            """
+        ),
+        encoding="utf-8",
+    )
+    worker = SregymWorker([sys.executable, str(script)], env={}, log_path=tmp_path / "worker.log")
+    worker.start()
+    with pytest.raises(SregymWorkerError, match="timed out"):
+        worker.request("hang", timeout=0.5)
+    worker.close()
+    assert _gone(int(child_pid.read_text(encoding="utf-8"))), "the worker's child outlived the worker"

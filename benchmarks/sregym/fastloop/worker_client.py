@@ -16,6 +16,7 @@ import ast
 import json
 import os
 import queue
+import signal
 import subprocess
 import threading
 from pathlib import Path
@@ -30,6 +31,37 @@ if TYPE_CHECKING:
 
 DEFAULT_TIMEOUT_SECONDS = wait_for(WaitKind.RESPONSE)
 WORKER_MODULE = "benchmarks.sregym.fastloop.worker_bridge"
+
+
+def _descendants(pid: int) -> list[int]:
+    """Every process below ``pid`` (children first), read from /proc: the worker shares fastloop's process group, so a
+    group kill would take fastloop with it, and its children (helm, docker, kubectl) are not its direct kin."""
+    parents: dict[int, list[int]] = {}
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            fields = (entry / "stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()
+        except (OSError, IndexError):
+            continue
+        parents.setdefault(int(fields[1]), []).append(int(entry.name))
+    found: list[int] = []
+    pending = [pid]
+    while pending:
+        for child in parents.get(pending.pop(), []):
+            found.append(child)
+            pending.append(child)
+    return found[::-1]
+
+
+def kill_tree(process: subprocess.Popen[str]) -> None:
+    """KILL the process and everything it started, children first (a parent killed first orphans them to init)."""
+    for pid in [*_descendants(process.pid), process.pid]:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    process.wait()
 
 
 class SregymWorkerError(RuntimeError):
@@ -177,7 +209,7 @@ class SregymWorker:
         process = self._process
         if process is not None:
             if self._abandoned and process.poll() is None:
-                process.kill()
+                kill_tree(process)
             if process.poll() is None and process.stdin is not None:
                 try:
                     process.stdin.write(json.dumps({"id": None, "op": "shutdown"}) + "\n")
@@ -187,8 +219,7 @@ class SregymWorker:
                 try:
                     process.wait(timeout=wait_for(WaitKind.COMMAND))
                 except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
+                    kill_tree(process)
             self._process = None
         if self._log is not None:
             self._log.close()

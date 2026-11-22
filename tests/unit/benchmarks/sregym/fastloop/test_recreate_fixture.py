@@ -33,6 +33,7 @@ def test_recreated_application_restores_the_social_fixture(monkeypatch, tmp_path
         workspace=tmp_path,
         baseline_path=tmp_path / "baseline.json",
         worker_env={},
+        host_owned_kinds=(),
     )
     monkeypatch.setattr(cli, "HostLimits", SimpleNamespace(from_env=lambda _env: None))
     monkeypatch.setattr(cli, "LaneInjectionState", lambda *_args: None)

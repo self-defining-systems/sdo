@@ -233,3 +233,21 @@ def install_shared_builds(source_deploy: Any, *, record_path: Path | None, lock_
                 handle.write(json.dumps(record) + "\n")
 
     source_deploy._build_image = shared_build
+
+
+def install_build_lock(source_deploy: Any, *, lock_dir: Path) -> None:
+    """Serialise SREGym's source builds of one content identity on this host, with no shared registry (EKS lanes).
+
+    Two lanes of one application deploying the same sources would otherwise run the same build at once on the one
+    Docker daemon with a cold cache; the second waits here and finds the first's image."""
+    build_image = source_deploy._build_image
+
+    def locked_build(image_ref: str, command: list[str], *, identity: str) -> None:
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        with (lock_dir / f"app-image-{identity}.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            if source_deploy.local_image_identity(image_ref) == identity:
+                return
+            build_image(image_ref, command, identity=identity)
+
+    source_deploy._build_image = locked_build

@@ -111,6 +111,7 @@ def lane(tmp_path: Path) -> SimpleNamespace:
         baseline_path=baseline,
         shared_accepted_id=None,
         run_dir=tmp_path,
+        host_owned_kinds=(),
     )
 
 

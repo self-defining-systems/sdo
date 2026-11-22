@@ -183,6 +183,29 @@ def test_kubectl_lane_cluster_deletes_every_workload_and_pod_in_the_helper_names
     assert "job.batch/load-gen" in delete
 
 
+@pytest.mark.parametrize(("virtual", "lists_classes"), [(False, True), (True, False)])
+def test_a_virtual_lane_never_lists_the_classes_its_host_owns(
+    tmp_path: Path, virtual: bool, lists_classes: bool
+) -> None:
+    """A vcluster syncs StorageClass and IngressClass from its host: an addition there after `up` is no harness
+    leftover, and deleting a synced object is refused, which would fail every row of the lane."""
+    from benchmarks.lanes.eks import EksLane
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+    lane = EksLane(
+        registry="123456789012.dkr.ecr.us-west-2.amazonaws.com",
+        server="https://203.0.113.7:30443",
+        cluster_uid="uid",
+        virtual=virtual,
+    )
+    environment = FastloopEnvironment.model_construct(eks=lane)
+    kinds = KubectlLaneCluster(tmp_path.resolve() / "kubeconfig", environment.host_owned_kinds).listed_kinds
+    assert ("storageclass" in kinds) is lists_classes
+    assert ("ingressclass" in kinds) is lists_classes
+    assert "namespace" in kinds
+    assert "clusterrole" in kinds
+
+
 def test_stale_worker_state_from_a_killed_attempt_does_not_survive_tier_1(tmp_path: Path) -> None:
     stale = {
         "configmap/sdo-health-refresh-4b570905c3-request",
@@ -782,3 +805,16 @@ def test_kubectl_lane_cluster_releases_the_stuck_configmap_through_the_real_wipe
     patch = next(call for call in calls if call[0] == "patch")
     assert patch[1] == TOKEN
     assert f"-n={APP}" in patch
+
+
+def test_a_credentials_hook_that_never_returns_is_killed_and_named(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from benchmarks.sregym.fastloop import wipe
+
+    hook = tmp_path / "hang.sh"
+    hook.write_text("#!/bin/sh\nexec sleep 60\n")
+    hook.chmod(0o755)
+    monkeypatch.setattr(wipe, "wait_for", lambda kind, *a, **k: 0.3)
+    with pytest.raises(WipeError, match="did not finish"):
+        credentials_hook(hook, tmp_path / "kubeconfig")(CONTROL)

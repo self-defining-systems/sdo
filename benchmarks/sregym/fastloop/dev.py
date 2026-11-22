@@ -68,6 +68,7 @@ def build_host_operator(worktree: Path) -> Path:
             ["go", "build", "-buildvcs=false", "-o", str(temporary_output), "./cmd/sdo-operator"],
             cwd=worktree / "sdo" / "operator",
             check=True,
+            timeout=wait_for(WaitKind.LONG_OPERATION),
         )
         os.replace(temporary_output, output)
     finally:

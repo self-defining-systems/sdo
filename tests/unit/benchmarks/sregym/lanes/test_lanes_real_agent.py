@@ -254,6 +254,58 @@ def test_app_up_gives_a_real_agents_images_to_fastloop_up(tmp_path):
     assert images[-1] == "sdo-sregym-responder:plain"  # fastloop takes the last
 
 
+def opus_operator(tmp_path: Path) -> Path:
+    return operator_file(tmp_path, {**real_settings(tmp_path), "model": "claude-opus-5-5"})
+
+
+def test_an_opus_row_on_a_virtual_lane_is_refused_by_name_before_the_lane_is_built(tmp_path):
+    """Opus sessions are admitted through a node-local pool; a virtual lane has no node it can provision, so the row
+    would die after the lane was built and the fault injected (or never start its controller)."""
+
+    def never(argv, **_):
+        raise AssertionError("fastloop up must not start")
+
+    env = lane_env(
+        tmp_path, BENCH_OPERATOR=str(opus_operator(tmp_path)), BENCH_LANE_VIRTUAL="1", SREGYM_LANES_CLUSTER_UP="1"
+    )
+    code, result = call(
+        "app-up",
+        "up",
+        ["--pack", str(PACK), "--namespace", "hotel-reservation"],
+        env,
+        runner=FakeRunner({"kind get clusters": "other\n"}),
+        long_runner=never,
+    )
+    assert code == 1
+    assert "claude-opus-5-5" in result["error"]
+    assert "virtual" in result["error"]
+    assert "node-local" in result["error"]
+
+
+def test_an_opus_row_on_a_virtual_lane_is_refused_by_name_before_fastloop_run(tmp_path):
+    repo, base = accepted_repo(tmp_path)
+    write_environment(tmp_path, repo, seed_commit=base)
+
+    def never(argv, **_):
+        raise AssertionError("fastloop run must not start")
+
+    env = lane_env(tmp_path, BENCH_OPERATOR=str(opus_operator(tmp_path)), BENCH_LANE_VIRTUAL="1")
+    code, result = call("run", "run", RUN_ARGS, env, runner=workload.run_process, long_runner=never)
+    assert code == 1
+    assert "claude-opus-5-5" in result["error"]
+    assert "virtual" in result["error"]
+
+
+def test_an_opus_row_on_a_node_lane_and_any_other_model_on_a_virtual_lane_are_not_refused(tmp_path):
+    opus = agent.AgentSettings.from_operator(opus_operator(tmp_path))
+    sonnet = agent.AgentSettings.from_operator(operator_file(tmp_path, real_settings(tmp_path)))
+    assert opus is not None
+    assert sonnet is not None
+    assert opus.lane_refusal(virtual=False) == ""
+    assert sonnet.lane_refusal(virtual=True) == ""
+    assert opus.lane_refusal(virtual=True)
+
+
 # ----- the credentials hook -----
 
 

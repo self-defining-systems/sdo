@@ -13,6 +13,8 @@ import shlex
 import subprocess
 from typing import Any
 
+from benchmarks.sregym.adapter import WaitKind, wait_for
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,14 +27,30 @@ def install_or_upgrade(**args: Any) -> None:
         raise ValueError("helm deploy requires release_name, chart_path and namespace")
     logger.info("Helm upgrade --install: %s in namespace %s", release_name, namespace)
     if not args.get("remote_chart", False):
-        subprocess.run(["helm", "dependency", "update", str(chart_path)], capture_output=True, check=False)
+        try:
+            subprocess.run(
+                ["helm", "dependency", "update", str(chart_path)],
+                capture_output=True,
+                check=False,
+                timeout=wait_for(WaitKind.OPERATION),
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning("helm dependency update of %s did not answer in time: using the charts on disk", chart_path)
     command = ["helm", "upgrade", "--install", str(release_name), str(chart_path), "-n", str(namespace)]
     command.append("--create-namespace")
     if args.get("version"):
         command += ["--version", str(args["version"])]
     for extra in args.get("extra_args") or []:
         command += shlex.split(str(extra))
-    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    try:
+        completed = subprocess.run(
+            command, capture_output=True, text=True, check=False, timeout=wait_for(WaitKind.LONG_OPERATION)
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"Helm install of release '{release_name}' in namespace '{namespace}' did not finish in "
+            f"{wait_for(WaitKind.LONG_OPERATION):.0f}s (chart {chart_path}); the helm process was killed"
+        ) from exc
     if completed.stderr.strip():
         logger.warning("Helm upgrade --install stderr output:\n%s", completed.stderr.strip())
     if completed.returncode != 0:

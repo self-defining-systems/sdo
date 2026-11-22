@@ -54,6 +54,9 @@ CLUSTER_KINDS: tuple[str, ...] = (
     "namespace",
 )
 NAMESPACE_KIND = "namespace"
+#: Kinds a virtual (vcluster) lane receives from its host cluster, read-only: an addition on the host after the lane's
+#: ``up`` is not harness leftover, and the delete of a synced object is refused, so no row of the lane could ever pass.
+HOST_OWNED_KINDS: tuple[str, ...] = ("ingressclass", "storageclass")
 # What a fault's foreign helper can be: a bare pod or any workload that would recreate one.
 HELPER_KINDS = "cronjob,job,deployment,statefulset,daemonset,replicaset,pod"
 INVENTORY_SUFFIX = ".lane-inventory.json"
@@ -669,17 +672,20 @@ def finalizer_holders(listing: dict[str, Any]) -> tuple[str, ...]:
 
 
 class KubectlLaneCluster:
-    def __init__(self, kubeconfig: Path) -> None:
+    def __init__(self, kubeconfig: Path, host_owned: Collection[str] = ()) -> None:
         if not isinstance(kubeconfig, Path) or not kubeconfig.is_absolute():
             raise ValueError("eval: lane wipe requires an absolute kubeconfig path")
         self._kubeconfig = kubeconfig
+        #: The cluster-scoped kinds listed: the lane's host-owned kinds (``HOST_OWNED_KINDS``) are never listed, so
+        #: never baselined and never deleted.
+        self.listed_kinds = tuple(kind for kind in CLUSTER_KINDS if kind not in host_owned)
         self._namespaced_kinds: str | None = None
 
     def list_objects(self) -> frozenset[str]:
         from benchmarks.sregym.adapter import kubectl
 
         output = kubectl(
-            ["get", ",".join(CLUSTER_KINDS), "-o", "name"], namespace=None, kubeconfig=self._kubeconfig
+            ["get", ",".join(self.listed_kinds), "-o", "name"], namespace=None, kubeconfig=self._kubeconfig
         ).stdout
         return frozenset(line.strip() for line in output.splitlines() if line.strip())
 
@@ -762,13 +768,20 @@ def credentials_hook(command: Path, kubeconfig: Path) -> Callable[[str], None]:
     """Re-provision SDO credentials by reference: the lane keeper's executable gets the namespace, never a value."""
 
     def provision(control_namespace: str) -> None:
-        completed = subprocess.run(
-            [str(command), control_namespace],
-            env={**os.environ, "KUBECONFIG": str(kubeconfig)},
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                [str(command), control_namespace],
+                env={**os.environ, "KUBECONFIG": str(kubeconfig)},
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=wait_for(WaitKind.OPERATION),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise WipeError(
+                f"eval: credentials hook {command} did not finish for {control_namespace} in "
+                f"{wait_for(WaitKind.OPERATION):.0f}s: it was killed"
+            ) from exc
         if completed.returncode:
             raise WipeError(
                 f"eval: credentials hook {command} failed for {control_namespace} (exit {completed.returncode}): "

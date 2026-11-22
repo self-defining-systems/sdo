@@ -274,3 +274,41 @@ def test_real_source_adapter_on_a_fresh_host_pulls_what_another_host_built(share
     assert {image for image in hosts[1].images if image.startswith("yinfangchen/hotelreservation:")} == {
         image for image in hosts[0].images if image.startswith("yinfangchen/hotelreservation:")
     }
+
+
+def test_two_lanes_building_one_identity_without_a_registry_build_it_once(tmp_path: Path) -> None:
+    """EKS lanes share no app-image registry, but one host's lanes still build an identity one at a time."""
+    from types import SimpleNamespace
+
+    built: set[str] = set()
+    started = threading.Event()
+    release = threading.Event()
+    running = 0
+    overlapped = False
+    builds = 0
+
+    def build_image(image_ref: str, command: list[str], *, identity: str) -> None:
+        nonlocal running, overlapped, builds
+        running += 1
+        overlapped = overlapped or running > 1
+        started.set()
+        release.wait(timeout=10)
+        builds += 1
+        built.add(image_ref)
+        running -= 1
+
+    source_deploy = SimpleNamespace(
+        _build_image=build_image, local_image_identity=lambda ref: IDENTITY if ref in built else ""
+    )
+    app_images.install_build_lock(source_deploy, lock_dir=tmp_path)
+    first = threading.Thread(target=source_deploy._build_image, args=(IMAGE, []), kwargs={"identity": IDENTITY})
+    second = threading.Thread(target=source_deploy._build_image, args=(IMAGE, []), kwargs={"identity": IDENTITY})
+    first.start()
+    assert started.wait(timeout=10)
+    second.start()
+    second.join(timeout=0.5)  # blocked on the first's lock (without the lock it would be building beside it)
+    release.set()
+    first.join()
+    second.join()
+    assert not overlapped, "two builds of one identity ran at once"
+    assert builds == 1, "the second lane built what the first had just built"
