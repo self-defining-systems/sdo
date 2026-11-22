@@ -45,6 +45,32 @@ def _sink_run(lane: FastloopEnvironment, results_dir: Path, *, session: str = "s
     return run
 
 
+def _go_index_record(path: str, incident: str) -> str:
+    """One ``index.jsonl`` line as the Go sink writes it (``json.Marshal``: compact, in the struct's field order)."""
+    return (
+        '{"schema":"sdo.evidence-index/v1","kind":"incident","id":"' + incident + '","path":"' + path + '",'
+        '"sealed_at":"2026-11-22T00:28:14.298827538Z","sha256":"' + "0" * 64 + '","files":1,"bytes":3,'
+        '"detected_at":"2026-11-22T00:27:02.78595971Z","acknowledged_at":"2026-11-22T00:28:14.298827538Z",'
+        '"outcome":"cleared_without_action"}\n'
+    )
+
+
+def test_copy_out_verifies_a_sink_whose_index_the_go_writer_wrote_compact(tmp_path: Path) -> None:
+    """The copy rewrites ``index.jsonl`` (only the copied units' records); the Go sink's own compact serialisation is
+    shorter than the copy's, which the size check read as a corrupted copy and refused to grade the row."""
+    lane = _lane(tmp_path, sink_root=tmp_path / "sink")
+    results = lane.run_dir / "results" / "r1"
+    results.mkdir(parents=True)
+    run = _sink_run(lane, results)
+    (run / "index.jsonl").write_text(
+        _go_index_record("incidents/" + "a" * 32, "hotel-reservation-1")
+        + _go_index_record("incidents/" + "b" * 32, "x")
+    )
+    copy = evidence_sink.copy_out_run(lane, results)
+    assert copy.incidents == 2
+    assert (results / "evidence-copy.json").is_file()
+
+
 def test_the_sdo_arm_refuses_a_lane_without_a_sink_and_a_waiver_is_recorded(tmp_path: Path) -> None:
     lane = _lane(tmp_path, sink_root=None)
     results = lane.run_dir / "results" / "r1"

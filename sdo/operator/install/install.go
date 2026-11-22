@@ -505,9 +505,11 @@ func (i Installer) waitPodReady(ctx context.Context, namespace, name string) err
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	var last *corev1.Pod
 	for {
 		pod, err := i.Client.CoreV1().Pods(namespace).Get(waitCtx, name, metav1.GetOptions{})
 		if err == nil {
+			last = pod
 			for _, condition := range pod.Status.Conditions {
 				if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
 					return nil
@@ -520,10 +522,44 @@ func (i Installer) waitPodReady(ctx context.Context, namespace, name string) err
 			return err
 		}
 		if err := i.pause(waitCtx); err != nil {
-			return fmt.Errorf("%s Pod did not become ready: %w", name, err)
+			return fmt.Errorf("%s Pod did not become ready: %w%s", name, err, i.podEvidence(ctx, namespace, name, last))
 		}
 	}
 }
+
+// podEvidence is what the cluster says about a pod that did not become ready: its phase, the conditions that are
+// not true (an unschedulable pod's reason names the node, memory or volume that refused it) and the latest warning
+// events. Empty when nothing was observed; it reads with a fresh short context, the wait's own having expired.
+func (i Installer) podEvidence(ctx context.Context, namespace, name string, pod *corev1.Pod) string {
+	if pod == nil {
+		return " (the Pod was never created)"
+	}
+	parts := []string{"phase " + string(pod.Status.Phase)}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Status != corev1.ConditionTrue {
+			parts = append(parts, fmt.Sprintf("%s=%s %s %s", condition.Type, condition.Status, condition.Reason, condition.Message))
+		}
+	}
+	for _, status := range pod.Status.ContainerStatuses {
+		if waiting := status.State.Waiting; waiting != nil {
+			parts = append(parts, fmt.Sprintf("container %s waiting: %s %s", status.Name, waiting.Reason, waiting.Message))
+		}
+	}
+	readCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	events, err := i.Client.CoreV1().Events(namespace).List(readCtx, metav1.ListOptions{FieldSelector: "involvedObject.name=" + name})
+	if err == nil {
+		warnings := 0
+		for index := len(events.Items) - 1; index >= 0 && warnings < 3; index-- {
+			if event := events.Items[index]; event.Type == corev1.EventTypeWarning && event.InvolvedObject.Name == name {
+				parts = append(parts, fmt.Sprintf("event %s: %s", event.Reason, event.Message))
+				warnings++
+			}
+		}
+	}
+	return " (" + strings.Join(parts, "; ") + ")"
+}
+
 func (i Installer) waitJobDeleted(ctx context.Context, namespace string) error {
 	for {
 		_, err := i.Client.BatchV1().Jobs(namespace).Get(ctx, ControllerJobName, metav1.GetOptions{})

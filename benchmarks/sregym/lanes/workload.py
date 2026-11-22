@@ -465,6 +465,7 @@ def summarize(record: Mapping[str, Any]) -> dict[str, Any]:
         "recovery_error",
         "error",
         "incident_id",
+        "evidence_incomplete",
     )
     out = {key: record.get(key) for key in keys}
     out["injected_at"] = injection.get("started_at")
@@ -710,7 +711,13 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
     record["memory"]["seeded"] = seed_dir is not None
     if summary["injected_at"]:
         record["lifecycle"] = {"inject_at": summary["injected_at"]}
-    why = summary["infra_error"] or ("not injected" if not summary["injected_at"] else "")
+    # A row fastloop's evidence gate refused to grade (`NOT GRADED`: its transcripts were not copied out) is no
+    # valid row: the injection happened, but nothing can grade or learn from it.
+    why = (
+        summary["infra_error"]
+        or ("not injected" if not summary["injected_at"] else "")
+        or (f"evidence incomplete: {summary['evidence_incomplete']}" if summary["evidence_incomplete"] else "")
+    )
     record["valid"] = not why
     record["invalid_reason"] = why or ""
     record["error"] = summary["error"] or failure or ""

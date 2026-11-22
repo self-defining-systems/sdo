@@ -642,6 +642,32 @@ def test_a_not_injected_record_is_invalid(tmp_path):
     assert record["invalid_reason"] == "never_injected_retry"
 
 
+def test_a_row_fastloop_refused_to_grade_is_invalid(tmp_path):
+    """The run's evidence gate stamps `evidence_incomplete` on a row whose transcripts were not copied (and prints
+    `NOT GRADED`); the lane's record must not call such a row valid, or a plan counts a row nothing can grade."""
+    repo, base = accepted_repo(tmp_path)
+    env_dir = write_environment(tmp_path, repo, seed_commit=base)
+
+    def refused(argv, **_):
+        run_id = list(argv)[list(argv).index("--run-id") + 1]
+        (env_dir / "results" / run_id).mkdir(parents=True)
+        row = {**incident(run_id), "evidence_incomplete": "no verified evidence copy (evidence-copy.json)"}
+        (env_dir / "results" / run_id / "incidents.jsonl").write_text(json.dumps(row) + "\n")
+        return ""
+
+    code, record = call(
+        "run",
+        "run",
+        RUN_ARGS,
+        lane_env(tmp_path, FUZZOPS_EXEC_OUT=str(tmp_path / "x")),
+        runner=workload.run_process,
+        long_runner=refused,
+    )
+    assert code == 1
+    assert record["valid"] is False
+    assert record["invalid_reason"] == "evidence incomplete: no verified evidence copy (evidence-copy.json)"
+
+
 def test_grade_rewrites_runs_jsonl_with_one_grade_per_operator(tmp_path):
     rows = [
         {
