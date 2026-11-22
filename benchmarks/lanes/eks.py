@@ -33,9 +33,9 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+ECR_HOST = re.compile(r"^(?P<account>[0-9]{12})\.dkr\.ecr\.(?P<region>[a-z0-9-]+)\.amazonaws\.com$")
 #: The registry of a local kind host cluster (lanes ``eks.local_kind``): a plain-HTTP registry on this machine that
 #: every node resolves, in place of ECR. No AWS call is made for it.
-#: node resolves, in place of ECR. No AWS call is made for it.
 LOCAL_REGISTRY = re.compile(r"^localhost:[0-9]{2,5}$")
 NODE_AGENT = "sdo-lane-node-agent"
 NODE_AGENT_NAMESPACE = "kube-system"
