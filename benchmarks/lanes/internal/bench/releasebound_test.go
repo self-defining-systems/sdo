@@ -6,7 +6,7 @@ import (
 )
 
 // A release's idle wait may last the whole experiment cap, and the cluster delete comes after it: the step bound must
-// outlast both, or the manager kills a release that was only waiting as long as it was allowed (EKS commit series,
+// outlast both, or the manager kills a release that was only waiting as long as it was allowed (an EKS lane,
 // 2026-11-22: a release whose idle wait was the 2 h cap met the 2 h step bound, died, and the lane's cluster billed
 // two hours longer).
 func TestReleaseBoundOutlastsTheIdleWaitAndTheClusterDelete(t *testing.T) {

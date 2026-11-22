@@ -788,7 +788,7 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 				if s.Kind == StepRelease && s.DeleteCluster {
 					// The pins moved on while the lane sat prepared: deleting its cluster needs no workload, and
 					// refusing it every pass would leave the lane's nodes billing for want of a checkout.
-					m.logf("lane %s: the lane's fuzzops %s has no checkout on %s: deleting its cluster without one", l.Lane, prep.WorkloadRev, l.Host)
+					m.logf("lane %s: workload checkout %s is not on %s: deleting its cluster without one", l.Lane, prep.WorkloadRev, l.Host)
 					break
 				}
 				m.logf("lane %s: %s refused: the lane's fuzzops %s has no checkout on %s", l.Lane, s.Kind, prep.WorkloadRev, l.Host)
