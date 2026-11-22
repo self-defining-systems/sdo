@@ -89,6 +89,7 @@ from benchmarks.devswap.kube import (
     SwapError,
     run,
 )
+from benchmarks.devswap.observability import await_observability, restart_observability
 from benchmarks.devswap.seed import MemorySeed, PreparedMemory, SeedSteps, apply_seed, prepare_memory
 from benchmarks.devswap.swap import Phases, SwapPlan, SwapState, swap_compiled
 from benchmarks.devswap.timeline import Timeline
@@ -2503,46 +2504,6 @@ def reset_steps(
         fresh_observability=lambda: restart_observability(kube, control),
         await_observability=lambda: await_observability(kube, control),
     )
-
-
-#: The control namespace's observability Deployments: their data lives in emptyDir volumes.
-OBSERVABILITY_DEPLOYMENTS = ("sdo-prometheus", "sdo-jaeger")
-OBSERVABILITY_ROLLOUT_WAIT_S = 240
-
-
-def _present_observability(kube: Kubectl, control: str) -> list[str]:
-    present = []
-    for name in OBSERVABILITY_DEPLOYMENTS:
-        found = subprocess.run(
-            kube.cmd("-n", control, "get", "deployment", name, "-o", "name"),
-            capture_output=True,
-            timeout=60,
-            check=False,
-        )
-        if found.returncode == 0:
-            present.append(name)
-    return present
-
-
-def restart_observability(kube: Kubectl, control: str) -> None:
-    """Start replacing the control namespace's Prometheus and Jaeger pods so their emptyDir data (TSDB, WAL, traces)
-    is gone; ``await_observability`` waits for the rollouts. Reset puts the app back to the golden copy; the
-    observability stack kept every earlier run, and on a reused lane Prometheus (1 Gi) was OOM-killed and
-    crash-looped on WAL replay. The restart overlaps the app's readiness wait (minutes), so it costs the reset
-    nothing. A lane without them is left as it is."""
-    for name in _present_observability(kube, control):
-        run(kube.cmd("-n", control, "rollout", "restart", f"deployment/{name}"), f"restart {name}", 60)
-
-
-def await_observability(kube: Kubectl, control: str) -> None:
-    for name in _present_observability(kube, control):
-        run(
-            kube.cmd(
-                "-n", control, "rollout", "status", f"deployment/{name}", f"--timeout={OBSERVABILITY_ROLLOUT_WAIT_S}s"
-            ),
-            f"wait for {name}",
-            OBSERVABILITY_ROLLOUT_WAIT_S + 30,
-        )
 
 
 #: The control-namespace ConfigMap SDO keeps its one refused branch head in (``sdo/operator/runtime/head_poll.go``).

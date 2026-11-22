@@ -29,6 +29,7 @@ class Lane:
         self.changed_at: str | None = None
         self.failed_at: str | None = None
         self.fallbacks = 0
+        self.replaced_by_reseed = False
 
     @staticmethod
     def service(port: int, name: str = "app") -> dict[str, Any]:
@@ -65,6 +66,15 @@ class Lane:
         self.step("reset")
         reconcile_application(self, self.baseline, "toy")
 
+    def reidentify(self) -> LaneIdentity:
+        return self.identity
+
+    def reseed(self) -> None:
+        self.step("reseed")
+        if self.replaced_by_reseed:
+            # The reseed replaces the controller process by design: the new identity is the one that must hold.
+            self.identity = LaneIdentity("controller-2", "standby-2", REVISION)
+
     def adopt(self) -> str:
         self.step("adopt")
         return self.identity.accepted_revision
@@ -82,18 +92,20 @@ class Lane:
         self.step("full_reset")
 
 
-def test_changed_only_reset_then_adopt_then_fresh_proof(tmp_path: Path) -> None:
+def test_changed_only_reset_then_reseed_then_adopt_then_fresh_proof(tmp_path: Path) -> None:
     lane = Lane()
     receipt = prepare_lane(lane, tmp_path / "warm.json", now=lambda: NOW)
     assert receipt.reused
     assert lane.writes == ["app"]
-    assert lane.events.index("reset") < lane.events.index("adopt") < lane.events.index("prove")
+    # The app is restored while the old controller is still paused, before the controller is replaced.
+    assert lane.events.index("reset") < lane.events.index("reseed") < lane.events.index("adopt")
+    assert lane.events.index("adopt") < lane.events.index("prove")
     assert not lane.fallbacks
     # Real restoration producer -> real resource consumer, rather than a supplied clean flag.
     assert {obj["metadata"]["name"]: obj["spec"]["ports"][0]["port"] for obj in lane.objects} == {"app": 80, "peer": 80}
 
 
-@pytest.mark.parametrize("step", ["inspect", "pause", "reset", "adopt", "prove"])
+@pytest.mark.parametrize("step", ["inspect", "pause", "reset", "reseed", "adopt", "prove"])
 def test_each_uncertain_boundary_falls_back(tmp_path: Path, step: str) -> None:
     lane = Lane()
     lane.failed_at = step
@@ -104,7 +116,7 @@ def test_each_uncertain_boundary_falls_back(tmp_path: Path, step: str) -> None:
 
 
 @pytest.mark.parametrize("step", ["pause", "reset", "adopt", "prove"])
-def test_process_replacement_invalidates_transaction(tmp_path: Path, step: str) -> None:
+def test_process_replacement_other_than_the_reseed_invalidates_transaction(tmp_path: Path, step: str) -> None:
     lane = Lane()
     lane.changed_at = step
     assert not prepare_lane(lane, tmp_path / "warm.json", now=lambda: NOW).reused
@@ -380,3 +392,23 @@ def test_other_errors_never_put_their_text_in_the_receipt(tmp_path: Path) -> Non
     assert receipt.violations == ()
     assert "synthetic failure" not in (tmp_path / "warm.json").read_text()
     assert json.loads((tmp_path / "warm.json").read_text())["violations"] == []
+
+
+def test_the_reseed_replaces_the_controller_by_design_and_the_new_process_must_hold(tmp_path: Path) -> None:
+    lane = Lane()
+    lane.replaced_by_reseed = True
+    receipt = prepare_lane(lane, tmp_path / "warm.json", now=lambda: NOW)
+    assert receipt.reused
+    assert receipt.identity == LaneIdentity("controller-2", "standby-2", REVISION)
+    assert not lane.fallbacks
+
+
+def test_the_baseline_boundary_precedes_the_reseed_so_the_new_controllers_evidence_postdates_it(tmp_path: Path) -> None:
+    lane = Lane()
+
+    def clock() -> datetime:
+        lane.events.append("boundary")
+        return NOW
+
+    assert prepare_lane(lane, tmp_path / "warm.json", now=clock).reused
+    assert lane.events.index("boundary") < lane.events.index("reseed") < lane.events.index("prove")

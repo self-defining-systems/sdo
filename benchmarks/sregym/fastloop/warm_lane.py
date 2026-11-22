@@ -1,7 +1,8 @@
 """Fail-closed benchmark transaction for a persistent lane, before injection.
 
-A successful transaction retains both process identities and binds fresh baseline
-observations to the accepted revision. No benchmark grade grants admission.
+The lane keeps its SDO install; the transaction restores the application, then swaps the install's state for a fresh
+install's at the row's planned memory (``reseed``: the controller process is replaced by design) and binds fresh
+baseline observations to the accepted revision. No benchmark grade grants admission.
 """
 
 from __future__ import annotations
@@ -66,6 +67,14 @@ class Lane(Protocol):
     def inspect(self) -> LaneIdentity: ...
     def pause(self) -> None: ...
     def reset_changed(self) -> None: ...
+    def reidentify(self) -> LaneIdentity:
+        """The running controller and standby now, without the checks ``inspect`` makes of an idle lane."""
+        ...
+
+    def reseed(self) -> None:
+        """Swap the install's state for a fresh install's at the planned memory; replaces the controller process."""
+        ...
+
     def adopt(self) -> str: ...
     def prove(self, not_before: datetime, revision: str) -> dict[str, Any]: ...
     def full_reset(self) -> None: ...
@@ -116,23 +125,31 @@ def prepare_lane(
             raise TypeError("lane inspection returned no identity")
         run("pause", lane.pause)
         run("reset", lane.reset_changed)
-        revision = run("adopt", lane.adopt)
-        if revision != identity.accepted_revision:
-            raise ValueError("accepted revision changed during reset")
+        if run("pre_reseed_identity", lane.reidentify) != identity:
+            raise ValueError("lane identity changed before the reseed")
+        # What the replaced controller does is after this instant: its start-up, onboarding and evaluations are the
+        # row's own, and the fresh-install comparison holds them to it.
         boundary = now()
         if boundary.tzinfo is None:
             raise ValueError("baseline boundary must be timezone-aware")
+        run("reseed", lane.reseed)
+        # The controller process was replaced by the reseed; from here its new identity is the one that must hold.
+        reidentified: LaneIdentity = run("reidentify", lane.reidentify)
+        identity = reidentified
+        revision = run("adopt", lane.adopt)
+        if revision != reidentified.accepted_revision:
+            raise ValueError("accepted revision changed during reseed")
         proof = run("prove", lambda: lane.prove(boundary, revision))
         if proof.get("passed") is not True:
             raise ValueError("fresh baseline proof did not pass")
-        current = run("confirm_identity", lane.inspect)
+        current = run("confirm_identity", lane.reidentify)
         if current != identity:
             raise ValueError("lane identity changed during warm transaction")
     except WarmLaneBusy:
         _publish(evidence, WarmReceipt(False, None, None, timings, "prior_incident_open"))
         raise
     except Exception as exc:
-        reason = f"{phase}:{type(exc).__name__}"
+        reason = f"{phase}:{getattr(exc, 'reason', None) or type(exc).__name__}"
         try:
             run("full_reset", lane.full_reset)
         except Exception:

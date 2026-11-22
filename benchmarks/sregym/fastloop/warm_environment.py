@@ -3,26 +3,44 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from benchmarks.devswap.controller import SWAP_STANDBY_WAIT_S, wait_standby
+from benchmarks.devswap.kube import Kubectl
+from benchmarks.devswap.observability import await_observability, restart_observability
 from benchmarks.sregym.adapter import (
     PersistentState,
+    WaitKind,
     allowed_namespaces,
     controller_settings,
     deployed_lifecycle,
     incident_work_open,
+    install_existing,
     kubectl,
     native_install_config,
     pause_for_recovery,
+    reset_control_state,
     runtime_config_payload,
+    stop_runtime,
     sync_existing,
+    wait_for,
 )
 from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
 from benchmarks.sregym.fastloop.admission import LaneAdmission
 from benchmarks.sregym.fastloop.clean_start import assert_clean_baseline
-from benchmarks.sregym.fastloop.reset import RestoreChecks, require_terminal_reflection, restore_application
+from benchmarks.sregym.fastloop.reseed import ReseedSteps, reseed_lane
+from benchmarks.sregym.fastloop.reset import (
+    KubectlResetCluster,
+    RestoreChecks,
+    is_worker_record,
+    require_terminal_reflection,
+    restore_application,
+)
+from benchmarks.sregym.fastloop.resident_start import INSTALL_CONFIGMAPS
 from benchmarks.sregym.fastloop.warm_lane import LaneIdentity, WarmLaneBusy
 from benchmarks.sregym.fastloop.wipe import (
     AttemptMarker,
@@ -31,6 +49,7 @@ from benchmarks.sregym.fastloop.wipe import (
     harness_leftovers,
     inventory_path,
     load_inventory,
+    reseed_workspace,
 )
 
 if TYPE_CHECKING:
@@ -43,6 +62,30 @@ if TYPE_CHECKING:
     from benchmarks.sregym.fastloop.reset import HealthWorker
 
 
+logger = logging.getLogger(__name__)
+
+#: Settings that belong to one row and are applied again by every reseed (the controller Job is installed anew from the
+#: row's own configuration): this row's evidence run and the path of its config overlay. They are not install identity.
+PER_ROW_SETTINGS = frozenset({"evidence_run_id", "config_files"})
+
+
+def _session_state(configmap: dict[str, Any]) -> bool:
+    """Whether a control-namespace ConfigMap is an earlier row's incident, session, reflection or worker record: an
+    SDO-managed ConfigMap that is none of the ones every install has (the fresh-install comparison names the rest)."""
+    metadata = configmap.get("metadata") or {}
+    name = str(metadata.get("name", ""))
+    if name in INSTALL_CONFIGMAPS:
+        return False
+    return is_worker_record(configmap) or (
+        name.startswith("sdo-") and (metadata.get("labels") or {}).get("app.kubernetes.io/managed-by") == "sdo"
+    )
+
+
+def identity_settings(payload: dict[str, Any]) -> dict[str, Any]:
+    """What must be the same for a lane's install to serve a row: the controller's settings but the per-row ones."""
+    return {key: value for key, value in controller_settings(payload).items() if key not in PER_ROW_SETTINGS}
+
+
 def planned_application_unchanged(environment: Any, planned_commit: str | None) -> None:
     """A warm lane keeps its app only while it is the deploy of the planned source; otherwise fall back."""
     from benchmarks.sregym.fastloop.deployed_application import deployed_application_change
@@ -53,6 +96,12 @@ def planned_application_unchanged(environment: Any, planned_commit: str | None) 
 
 
 class WarmEnvironment:
+    #: Set when the reseed began: the controller may be stopped and its state gone, so the ordinary idle check (which
+    #: would call that "unknown controller work") no longer describes the lane.
+    _reseeding = False
+    #: Digest of the install identity the lane held when the transaction began (what the row is held against).
+    _installed_digest = ""
+
     def __init__(
         self,
         environment: FastloopEnvironment,
@@ -125,28 +174,43 @@ class WarmEnvironment:
         pod = self.ops.controller_pod(self.control)
         if record is None or pod is None or record.controller_pod_uid != pod.uid:
             raise ValueError("warm lane has no recorded live controller")
-        if controller_settings(record.runtime_config) != controller_settings(runtime_config_payload(self.config)):
+        from benchmarks.sregym.fastloop.setup_proof import digest
+
+        installed = identity_settings(record.runtime_config)
+        if installed != identity_settings(runtime_config_payload(self.config)):
             raise ValueError("warm controller settings differ from the requested stage")
+        self._installed_digest = digest(installed)
         if record.lifecycle_fingerprint != deployed_lifecycle(env.namespace).fingerprint:
             raise ValueError("warm controller topology differs from the requested stage")
         if not self.ops.install(self.config):
             raise ValueError("warm controller settings cannot be reused")
-        standby = json.loads(
+        standby = self._standby_uid()
+        self._clean_scope()
+        return LaneIdentity(pod.uid, standby, self._head())
+
+    def _standby_uid(self) -> str:
+        pods = json.loads(
             kubectl(
                 ["get", "pods", "-l", "sdo.dev/standby=true", "-o", "json"],
                 namespace=self.control,
-                kubeconfig=env.kubeconfig,
+                kubeconfig=self.environment.kubeconfig,
             ).stdout
         )["items"]
         running = [
             p
-            for p in standby
+            for p in pods
             if p.get("status", {}).get("phase") == "Running" and not p["metadata"].get("deletionTimestamp")
         ]
         if len(running) != 1:
             raise ValueError("warm lane requires exactly one live standby responder")
-        self._clean_scope()
-        return LaneIdentity(pod.uid, running[0]["metadata"]["uid"], self._head())
+        return str(running[0]["metadata"]["uid"])
+
+    def reidentify(self) -> LaneIdentity:
+        """The controller and standby running now, without ``inspect``'s idle checks (a new controller is not idle)."""
+        pod = self.ops.controller_pod(self.control)
+        if pod is None:
+            raise ValueError("warm lane has no live controller")
+        return LaneIdentity(pod.uid, self._standby_uid(), self._head())
 
     def _clean_scope(self) -> None:
         env = self.environment
@@ -166,17 +230,20 @@ class WarmEnvironment:
     def pause(self) -> None:
         self._assert_idle()
         pause_for_recovery(self.ops, self.control)
-        # Sync back the accepted checkout, never seed or change it. Restoration
-        # must use the accepted render, not the prior row's stale host mirror.
-        sync_existing(native_install_config(self.config))
+        if self.planned_commit:
+            # The row's own memory: the application below is restored from this source, and the reseed seeds the
+            # controller's volume from it. The earlier row's memory on the volume is replaced there, not read here.
+            reseed_workspace(self.environment.workspace, self.planned_commit)
+        else:
+            # No planned memory: the lane keeps what it holds. Sync back the accepted checkout, never seed or change
+            # it; restoration must use the accepted render, not the prior row's stale host mirror.
+            sync_existing(native_install_config(self.config))
         from benchmarks.sregym.fastloop.setup_proof import RECEIPTS, collect_fingerprint
         from benchmarks.sregym.fastloop.warm_scope import check_cluster_scope
 
         check_cluster_scope(
             self.environment.run_dir / RECEIPTS, collect_fingerprint(self.environment), self.environment.namespace
         )
-        if self.planned_commit and AcceptedSource.of(self.environment).revision != self.planned_commit:
-            raise ValueError("requested revision differs from current accepted memory")
 
     def reset_changed(self) -> None:
         from benchmarks.sregym.fastloop.baseline_recovery import KubectlApplicationCluster
@@ -189,6 +256,91 @@ class WarmEnvironment:
             self.worker,
             checks=checks,
         )
+
+    def _kube(self) -> Kubectl:
+        return Kubectl("", str(self.environment.kubeconfig))
+
+    def reseed(self) -> None:
+        """Swap the install's state for a fresh install's at the planned memory (see ``reseed.py`` for the order).
+
+        The Job, namespace, volume, credentials, RBAC, transport and observability Deployments stay; the controller
+        process does not: Go ``install-existing`` replaces the Job with this row's configuration and evidence run and
+        seeds the volume from the host copy of the accepted repository, which the transaction put at the planned commit.
+        """
+        self._reseeding = True
+        seconds = reseed_lane(self._reseed_steps())
+        self.directory.mkdir(parents=True, exist_ok=True)
+        (self.directory / "reseed-phases.json").write_text(json.dumps(seconds, indent=2) + "\n")
+
+    def _reseed_steps(self) -> ReseedSteps:
+        env, control = self.environment, self.control
+        kube = self._kube()
+
+        def settle_evidence() -> None:
+            from benchmarks.sregym.fastloop.evidence_queue import settle_lane_exports
+            from benchmarks.sregym.fastloop.evidence_sink import settle_lane_evidence
+
+            settle_lane_exports(env)
+            if failures := settle_lane_evidence(env):
+                raise ValueError("the earlier row's evidence is not copied out: " + "; ".join(failures))
+
+        def stop_controller(head: str) -> None:
+            KubectlResetCluster(env.kubeconfig, control).reset_controller(head, preserve_repository=False)
+            stop_runtime(control, kubeconfig=str(env.kubeconfig))
+
+        def install_controller() -> None:
+            install_existing(native_install_config(replace(self.config, reuse_existing=False)))
+
+        return ReseedSteps(
+            settle_evidence=settle_evidence,
+            read_head=self._head,
+            stop_controller=stop_controller,
+            retire_control_state=self._retire_control_state,
+            fresh_observability=lambda: restart_observability(kube, control),
+            install_controller=install_controller,
+            wait_started=self._wait_started,
+            record_controller=self._record_controller,
+            await_observability=lambda: await_observability(kube, control),
+        )
+
+    def _retire_control_state(self) -> None:
+        """Delete every record of the earlier row's controller: Go's control state (controller state, onboarding,
+        maintenance, holds), then the incident, reflection and worker ConfigMaps a fresh install does not have."""
+        env = self.environment
+        reset_control_state(self.control, kubeconfig=str(env.kubeconfig))
+        listing = json.loads(
+            kubectl(["get", "configmaps", "-o", "json"], namespace=self.control, kubeconfig=env.kubeconfig).stdout
+            or "{}"
+        )
+        leftovers = sorted(item["metadata"]["name"] for item in listing.get("items", []) if _session_state(item))
+        if leftovers:
+            kubectl(
+                ["delete", "configmap", *leftovers, "--ignore-not-found=true"],
+                namespace=self.control,
+                kubeconfig=env.kubeconfig,
+            )
+
+    def _wait_started(self) -> None:
+        """The new controller is running and its responder standby is ready (the controller starts it)."""
+        deadline = time.monotonic() + wait_for(WaitKind.ROLLOUT)
+        while self.ops.controller_pod(self.control) is None:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("no running controller pod after the reseed")
+            time.sleep(wait_for(WaitKind.SAMPLE))
+        wait_standby(self._kube(), self.control, SWAP_STANDBY_WAIT_S)
+
+    def _record_controller(self) -> None:
+        """The lane's registry names the controller now running, installed from this row's configuration."""
+        env = self.environment
+        pod = self.ops.controller_pod(self.control)
+        state = PersistentState.load(env.state_path)
+        record = state.controllers.get(env.namespace)
+        if pod is None or record is None:
+            raise ValueError("warm lane has no recorded controller to update")
+        record.controller_pod_uid, record.controller_pod_name = pod.uid, pod.name
+        record.runtime_config = runtime_config_payload(self.config)
+        record.pending = None
+        state.save(env.state_path)
 
     def adopt(self) -> str:
         revision = self._head()
@@ -219,8 +371,10 @@ class WarmEnvironment:
 
         env = self.environment
         names = kubectl(["get", "configmaps", "-o", "name"], namespace=self.control, kubeconfig=env.kubeconfig).stdout
-        record = PersistentState.load(env.state_path).controllers.get(env.namespace)
         reference = env.run_dir / "fresh-onboarding" / f"{self.planned_commit or revision}.json"
+        if not reference.is_file():
+            # Memory does not enter the objects an onboarding names: the lane's latest fresh install is the reference.
+            reference = env.run_dir / "fresh-onboarding" / "latest.json"
         violations = resident_start_violations(
             ResidentStart(
                 state=state,
@@ -228,8 +382,11 @@ class WarmEnvironment:
                 accepted_head=revision,
                 boundary=not_before.isoformat().replace("+00:00", "Z"),
                 control_configmaps=tuple(name.removeprefix("configmap/") for name in names.split()),
-                config_digest=digest(controller_settings(record.runtime_config)) if record else "",
-                expected_config_digest=digest(controller_settings(runtime_config_payload(self.config))),
+                # What the install held when the transaction began against what the row asks for. (Both were equal for
+                # the transaction to begin; the record now names the row's own configuration, so only the earlier
+                # reading can disagree with it.)
+                config_digest=self._installed_digest,
+                expected_config_digest=digest(identity_settings(runtime_config_payload(self.config))),
                 onboarding_reference=json.loads(reference.read_text()) if reference.is_file() else None,
             )
         )
@@ -239,6 +396,13 @@ class WarmEnvironment:
     def full_reset(self) -> None:
         if self.environment.shared_accepted_id:
             raise WarmLaneBusy("shared accepted memory cannot use destructive lane reset")
+        if self._reseeding:
+            # The reseed began (idle was proven when the transaction opened) and failed part way: the controller may be
+            # stopped and its state gone. The row's planned memory is the only memory that may follow.
+            if not self.planned_commit:
+                raise WarmLaneBusy("a reseed failed with no planned memory; refusing to rewind accepted memory")
+            self._full_reset()
+            return
         self._assert_idle()
         if self.ops.controller_pod(self.control) is not None:
             pause_for_recovery(self.ops, self.control)

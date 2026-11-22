@@ -13,7 +13,9 @@ What a fresh install holds at injection, and the rule each item follows here:
 - evaluation state: every history row and detector clear time postdates this row's boundary (the resume), so no
   detector judgement carries over;
 - start-up period: began and was established after the boundary, as a fresh install's admission waits for it;
-- onboarding: equal to the reference a fresh install recorded for the same planned commit; no reference, no reuse;
+- onboarding: the controller's record is for the planned commit and names the objects a fresh install's record names
+  (the reference a fresh install recorded for this application; memory does not enter the object set); no reference,
+  no reuse;
 - sessions and caches: no incident or reflection ConfigMap remains in the control namespace;
 - agent model and configuration: the installed configuration digest equals the row's requested one.
 """
@@ -98,6 +100,37 @@ def _time(value: Any) -> datetime | None:
     return datetime.fromisoformat(text)
 
 
+def _object_identity(ref: Any) -> str:
+    if isinstance(ref, dict):
+        return "/".join(
+            str(ref.get(camel) or ref.get(snake) or "")
+            for camel, snake in (
+                ("apiVersion", "api_version"),
+                ("kind", "kind"),
+                ("namespace", "namespace"),
+                ("name", "name"),
+            )
+        )
+    return str(ref)
+
+
+def onboarding_objects(record: Any) -> frozenset[str]:
+    """The identities of the objects an onboarding record names (the controller's JSON is snake or camel case)."""
+    return frozenset(_object_identity(ref) for ref in (record.get("objects") or []) if isinstance(record, dict))
+
+
+def onboarding_commit(record: Any) -> str:
+    return str(record.get("accepted_commit") or record.get("acceptedCommit") or "") if isinstance(record, dict) else ""
+
+
+def onboarding_matches(record: Any, reference: Any, planned_commit: str) -> bool:
+    """Whether the controller's onboarding is a fresh install's on the planned commit: its own commit is the planned
+    one and it names the same objects as the reference. Timestamps, UIDs and digests belong to each install and never
+    compare; the commit of the reference is the one it was recorded on, which need not be the planned one."""
+    objects = onboarding_objects(record)
+    return bool(objects) and onboarding_commit(record) == planned_commit and objects == onboarding_objects(reference)
+
+
 def resident_start_violations(start: ResidentStart) -> list[str]:
     """Every way the resident state differs from a fresh install at injection; empty means the row may start."""
     state, boundary = start.state, _time(start.boundary)
@@ -125,7 +158,9 @@ def resident_start_violations(start: ResidentStart) -> list[str]:
     startup = state.get("startup") or {}
     if stale(startup.get("began_at")) or stale(startup.get("established_at")):
         violations.append("startup period was not begun and established in this row")
-    if start.onboarding_reference is None or state.get("namespace_onboarding") != start.onboarding_reference:
+    if start.onboarding_reference is None or not onboarding_matches(
+        state.get("namespace_onboarding"), start.onboarding_reference, start.planned_commit
+    ):
         violations.append("onboarding differs from a fresh install's on the planned memory (or has no reference)")
     sessions = sorted(name for name in start.control_configmaps if name not in INSTALL_CONFIGMAPS)
     if sessions:
