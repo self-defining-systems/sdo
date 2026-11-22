@@ -67,12 +67,16 @@ func (i Installer) InspectExisting(ctx context.Context, cfg InspectConfig) (Exis
 	}
 	var podUID string
 	var notReady []string
+	var refused *PodUnschedulableError
 	for index, pod := range pods.Items {
 		owned := false
 		for _, owner := range pod.OwnerReferences {
 			if owner.Kind == "Job" && owner.Name == ControllerJobName && owner.UID == job.UID {
 				owned = true
 			}
+		}
+		if owned && refused == nil {
+			refused = i.resourceRefusal(&pods.Items[index])
 		}
 		if owned && (pod.Status.Phase != corev1.PodRunning || !podReady(pod.Status.Conditions)) {
 			notReady = append(notReady, "Pod "+pod.Name+i.podEvidence(ctx, cfg.ControlNamespace, pod.Name, &pods.Items[index]))
@@ -93,6 +97,10 @@ func (i Installer) InspectExisting(ctx context.Context, cfg InspectConfig) (Exis
 		reason := "existing controller has no ready owned Pod"
 		if len(notReady) > 0 {
 			reason += ": " + strings.Join(notReady, "; ")
+		}
+		if refused != nil {
+			// A caller that waits for the controller ends the wait on this one: no later poll will find room.
+			return ExistingController{}, fmt.Errorf("%s: %w", reason, refused)
 		}
 		return ExistingController{}, errors.New(reason)
 	}

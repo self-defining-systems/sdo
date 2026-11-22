@@ -48,3 +48,25 @@ def test_a_seeded_controller_that_becomes_ready_says_so(
     caplog.set_level("INFO", logger=driver.__name__)
     driver._wait_for_installed_controller(object(), timeout_seconds=60)  # type: ignore[arg-type]
     assert "seeded controller ready after" in caplog.records[-1].getMessage()
+
+
+def test_a_controller_pod_the_scheduler_refused_for_a_resource_ends_the_wait_at_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Go inspect reports a Pod refused for ``Insufficient <resource>`` past its bound; no later poll helps."""
+    clock = _Clock()
+    monkeypatch.setattr(driver.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(driver.time, "sleep", clock.sleep)
+
+    def inspect(_install: Any) -> None:
+        raise NativeOperatorError(
+            "Go operator inspect-existing failed (1): existing controller has no ready owned Pod: "
+            "Pod sdo-controller-run-x (phase Pending; PodScheduled=False Unschedulable 0/9 nodes are available: "
+            "1 Insufficient ephemeral-storage): Pod sdo-controller-run-x cannot be scheduled: the scheduler has "
+            "refused it for lack of a node resource for 75s: 0/9 nodes are available: 1 Insufficient ephemeral-storage"
+        )
+
+    monkeypatch.setattr(driver, "inspect_existing", inspect)
+    with pytest.raises(driver.SeededControllerNotReadyError, match=r"cannot be scheduled.*Insufficient"):
+        driver._wait_for_installed_controller(object(), timeout_seconds=600)  # type: ignore[arg-type]
+    assert clock.now == 0
