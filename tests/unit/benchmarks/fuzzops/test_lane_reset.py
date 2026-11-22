@@ -679,7 +679,8 @@ def test_reset_gives_the_lane_a_fresh_observability_stack(tmp_path: Path) -> Non
     """A reset returns the app to its golden copy but left the control namespace's Prometheus running: its emptyDir TSDB
     (and WAL) carried every earlier run, so on the third use of a warm EKS lane it was OOM-killed at its 1 Gi limit,
     crash-looped on WAL replay, the request-metrics detector lost its source (a head verdict timed out at 904 s) and the
-    evidence capture failed. The reset replaces the stack, with the controller still stopped, before it starts again."""
+    evidence capture failed. The reset starts replacing the stack before the app reset (overlapping the app's readiness
+    wait) and waits for it before the controller starts again."""
     rec = Recorder()
     steps = hooks.ResetSteps(
         resume_controller=lambda: None,
@@ -693,6 +694,17 @@ def test_reset_gives_the_lane_a_fresh_observability_stack(tmp_path: Path) -> Non
         repository_state=lambda: {"head": "h" * 40, "status": "", "outcomes": ""},
         controller_idle=lambda: "",
         fresh_observability=lambda: rec("observability"),
+        await_observability=lambda: rec("observability ready"),
     )
     hooks.reset_lane(lane(tmp_path), steps)
-    assert rec.calls == ["incidents", "retire", "stop", "repo h", "app", "observability", "start", "standby"]
+    assert rec.calls == [
+        "incidents",
+        "retire",
+        "stop",
+        "repo h",
+        "observability",
+        "app",
+        "observability ready",
+        "start",
+        "standby",
+    ]
