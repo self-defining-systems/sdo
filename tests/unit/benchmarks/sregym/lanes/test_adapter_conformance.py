@@ -19,7 +19,12 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
+import signal
+import subprocess
+import sys
+import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -258,7 +263,16 @@ CASES: tuple[Case, ...] = (
         "run",
         "run",
         needs=LANE,
-        optional=frozenset({"BENCH_OPERATOR", "BENCH_EXPERIMENT", "BENCH_RUN", "FUZZOPS_EXEC_OUT"}),
+        optional=frozenset(
+            {
+                "BENCH_OPERATOR",
+                "BENCH_EXPERIMENT",
+                "BENCH_RUN",
+                "FUZZOPS_EXEC_OUT",
+                "BENCH_CAP_SECONDS",
+                "BENCH_READY_TIMEOUT_SECONDS",
+            }
+        ),
         args=lambda root: ["--operator", "exec:x", "--seed", "1", "--instance", PROBLEM],
         seams=lambda lane, env: {"runner": FakeRunner(), "long_runner": fastloop_run(lane)},
     ),
@@ -498,3 +512,69 @@ def test_no_adapter_command_runs_without_a_timeout():
     assert not found, (
         "every command of the adapter carries a deadline (the platform's limit is a backstop):\n" + "\n".join(found)
     )
+
+
+# ----- waits: a deadline ends the command in seconds, and no cancel leaves a child behind -----
+
+TREE = "sleep 60 & echo $! > {pid}; wait"
+
+
+def alive(pid: int) -> bool:
+    """Whether the process runs (a zombie waiting for its parent to reap it does not)."""
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()[0]
+    except (OSError, IndexError):
+        return False
+    return state != "Z"
+
+
+def gone_within(pid: int, seconds: float) -> bool:
+    """Whether the process is gone within ``seconds`` (an event wait, not a sleep: it returns when the time is up)."""
+    pause = threading.Event()
+    waited = 0.0
+    while alive(pid) and waited < seconds:
+        pause.wait(0.02)
+        waited += 0.02
+    return not alive(pid)
+
+
+def pid_from(path: Path) -> int:
+    pause = threading.Event()
+    for _ in range(500):
+        if path.is_file() and path.read_text(encoding="utf-8").strip():
+            return int(path.read_text(encoding="utf-8"))
+        pause.wait(0.02)
+    raise AssertionError(f"no pid in {path}")
+
+
+def test_a_command_past_its_deadline_is_a_named_error_and_leaves_no_process(tmp_path, monkeypatch):
+    monkeypatch.setattr(workload, "KILL_GRACE_SECONDS", 1.0)
+    pidfile = tmp_path / "pid"
+    with pytest.raises(workload.RowDeadlineError, match="row deadline"):
+        workload.run_logged(["sh", "-c", TREE.format(pid=pidfile)], deadline_seconds=0.5)
+    assert gone_within(pid_from(pidfile), 5), "the command's child outlived the kill at the deadline"
+
+
+def test_a_cancel_of_the_adapter_ends_the_whole_process_tree(tmp_path):
+    """The platform cancels a step with TERM to the adapter's process group; the run is in a session of its own, so the
+    adapter must pass the cancel on (an orphaned run keeps injecting into a lane the platform thinks is free)."""
+    pidfile = tmp_path / "pid"
+    code = (
+        "from benchmarks.sregym.lanes import workload as w\n"
+        "w.KILL_GRACE_SECONDS = 2\n"
+        f"w.run_logged(['sh', '-c', {TREE.format(pid=pidfile)!r}])\n"
+    )
+    adapter = subprocess.Popen(
+        [sys.executable, "-c", code], cwd=REPO, env={**os.environ, "PYTHONPATH": str(REPO)}, start_new_session=True
+    )
+    child = 0
+    try:
+        child = pid_from(pidfile)
+        os.killpg(adapter.pid, signal.SIGTERM)
+        assert adapter.wait(timeout=20) != 0
+        assert gone_within(child, 5), "TERM of the adapter's process group left the run's child running"
+    finally:
+        if adapter.poll() is None:
+            os.killpg(adapter.pid, signal.SIGKILL)
+        if child and alive(child):
+            os.kill(child, signal.SIGKILL)

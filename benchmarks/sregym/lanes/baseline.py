@@ -13,7 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.lanes.workload import BUNDLE, MEMORY_FILE
 
 

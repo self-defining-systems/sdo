@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
+from benchmarks.sregym.adapter import WaitKind, wait_for
 from benchmarks.sregym.lanes.agent import AgentSettings
 
 if TYPE_CHECKING:

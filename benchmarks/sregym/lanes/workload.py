@@ -43,6 +43,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -155,6 +156,28 @@ def _kill_tree(process: subprocess.Popen[bytes]) -> None:
     process.wait()
 
 
+def _terminate_with(process: subprocess.Popen[bytes]) -> Callable[[], None]:
+    """Make a TERM or INT of this adapter end the run's whole process tree, and return the call that undoes it.
+
+    The run is in a session of its own (so a deadline can kill its tree), which the platform's kill of the adapter's
+    process group no longer reaches: without this the cancelled run would live on, orphaned, holding the lane. The tree
+    gets TERM and ``KILL_GRACE_SECONDS`` (a cancelled run undoes its fault), then KILL; the adapter then exits."""
+    if threading.current_thread() is not threading.main_thread():
+        return lambda: None
+
+    def handler(signum: int, _frame: object) -> None:
+        _kill_tree(process)
+        raise SystemExit(128 + signum)
+
+    previous = {sig: signal.signal(sig, handler) for sig in (signal.SIGTERM, signal.SIGINT)}
+
+    def restore() -> None:
+        for sig, old in previous.items():
+            signal.signal(sig, old)
+
+    return restore
+
+
 def run_logged(
     argv: Sequence[str],
     *,
@@ -177,21 +200,25 @@ def run_logged(
         start_new_session=True,
     )
     expires = None if deadline_seconds is None else time.monotonic() + deadline_seconds
-    while True:
-        wait = TICK_SECONDS if expires is None else max(0.0, min(TICK_SECONDS, expires - time.monotonic()))
-        try:
-            code = process.wait(timeout=wait)
-            break
-        except subprocess.TimeoutExpired:
-            if expires is not None and time.monotonic() >= expires:
-                named = _named_wait(current_wait)
-                _kill_tree(process)
-                raise RowDeadlineError(
-                    f"row deadline {deadline_seconds:.0f}s exceeded (ready_timeout + cap + closeout); "
-                    f"the run was killed while waiting for: {named or 'no wait recorded'}"
-                ) from None
-            if tick is not None:
-                tick()
+    restore = _terminate_with(process)
+    try:
+        while True:
+            wait = TICK_SECONDS if expires is None else max(0.0, min(TICK_SECONDS, expires - time.monotonic()))
+            try:
+                code = process.wait(timeout=wait)
+                break
+            except subprocess.TimeoutExpired:
+                if expires is not None and time.monotonic() >= expires:
+                    named = _named_wait(current_wait)
+                    _kill_tree(process)
+                    raise RowDeadlineError(
+                        f"row deadline {deadline_seconds:.0f}s exceeded (ready_timeout + cap + closeout); "
+                        f"the run was killed while waiting for: {named or 'no wait recorded'}"
+                    ) from None
+                if tick is not None:
+                    tick()
+    finally:
+        restore()
     if code:
         raise AdapterError(f"{shlex.join(argv)[:300]}: exit {code}")
     return ""
