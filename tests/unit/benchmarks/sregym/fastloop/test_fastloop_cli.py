@@ -939,3 +939,18 @@ def test_rejected_rehearsal_names_its_cause(tmp_path: Path, monkeypatch: pytest.
         cli.rehearse_with_repair(
             _repair_env(tmp_path), Worker(), tmp_path, "p", 0, cli.ApplicationRepair(), revision=None
         )
+
+
+def test_a_warm_lane_row_pays_its_recovery_in_the_row_because_no_wipe_follows_it() -> None:
+    """The deferral of a row's recovery assumes the next row's start wipes the lane and recreates the app (Tier-2).
+    A row that asked for the warm lane has no such successor, and an unverified recovery in its attempt marker would
+    make the next warm transaction refuse the lane (``previous row injected and not verified recovered``): it
+    recovers at its end."""
+    from benchmarks.sregym.fastloop.cli import row_start_tier2
+
+    parser = build_parser()
+    base = ["run", "--run-dir", "d", "--agent", "sdo"]
+    assert row_start_tier2(parser.parse_args(base), wiped_at_start=True, incidents=1) is True
+    warm = parser.parse_args([*base, "--warm-lane"])
+    assert row_start_tier2(warm, wiped_at_start=True, incidents=1) is False
+    assert row_start_tier2(warm, wiped_at_start=False, incidents=1) is False

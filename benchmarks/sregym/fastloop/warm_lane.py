@@ -24,8 +24,16 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+#: How much of a refusal's text a receipt keeps.
+REFUSAL_DETAIL_CHARS = 200
+
+
 class WarmLaneError(RuntimeError):
     """Neither warm reuse nor the ordinary full reset established a usable lane."""
+
+
+class WarmLaneRefusal(ValueError):
+    """The lane differs from what a warm start needs; the message is this package's own text, safe to record."""
 
 
 class WarmLaneBusy(WarmLaneError):
@@ -90,6 +98,8 @@ class WarmReceipt:
     #: What differed from a fresh install, when that is why the lane was not reused: this package's own text, never an
     #: external error's.
     violations: tuple[str, ...] = ()
+    #: The lane's own refusal text (``WarmLaneRefusal``), truncated; empty for every other fallback.
+    detail: str = ""
 
 
 def prepare_lane(
@@ -156,7 +166,8 @@ def prepare_lane(
             _publish(evidence, WarmReceipt(False, None, None, timings, reason + ";full_reset_failed"))
             raise WarmLaneError(f"eval: warm preparation failed ({reason}); full reset failed") from None
         violations = tuple(exc.violations) if isinstance(exc, ResidentStartMismatch) else ()
-        receipt = WarmReceipt(False, None, None, timings, reason, violations)
+        detail = str(exc)[:REFUSAL_DETAIL_CHARS] if isinstance(exc, WarmLaneRefusal) else ""
+        receipt = WarmReceipt(False, None, None, timings, reason, violations, detail)
     else:
         receipt = WarmReceipt(True, identity, boundary.isoformat(), timings)
     _publish(evidence, receipt)

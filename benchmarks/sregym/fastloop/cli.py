@@ -1039,10 +1039,17 @@ def row_start_tier2(args: argparse.Namespace, *, wiped_at_start: bool, incidents
     """Whether the row leaves its fault recovery to the next row's start (Tier-2) instead of paying it at its end.
 
     Only a one-incident SDO row that wiped at start defers it; ``--end-of-row-recovery`` makes it pay the same
-    recovery and cleanup a vanilla row pays, inside the row.
+    recovery and cleanup a vanilla row pays, inside the row. So does ``--warm-lane``: the deferral assumes the next row
+    wipes the lane and recreates the app, and a warm lane's next row does neither (its transaction refuses a lane
+    whose attempt marker says a row was not verified recovered), so the row leaves the lane recovered.
     """
 
-    return wiped_at_start and incidents == 1 and not getattr(args, "end_of_row_recovery", False)
+    return (
+        wiped_at_start
+        and incidents == 1
+        and not getattr(args, "end_of_row_recovery", False)
+        and not getattr(args, "warm_lane", False)
+    )
 
 
 def _warm_reset_args(args: argparse.Namespace, environment: FastloopEnvironment) -> argparse.Namespace:
