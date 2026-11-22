@@ -20,16 +20,18 @@ from __future__ import annotations
 import ast
 import json
 import re
-from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from benchmarks.sregym.lanes import subject, workload
 from benchmarks.sregym.lanes.workload import VERBS, dispatch
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
 
 REPO = Path(__file__).resolve().parents[5]
 BENCH = REPO / "benchmarks/lanes/internal/bench"
@@ -410,11 +412,12 @@ def test_a_missing_variable_is_a_named_error_with_a_json_result(case, name, tmp_
 
 def test_the_adapter_reads_the_process_environment_only_in_main():
     for module in (workload, subject):
-        source = Path(module.__file__).read_text(encoding="utf-8")
+        source = Path(str(module.__file__)).read_text(encoding="utf-8")
         tree = ast.parse(source)
         for function in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name != "main"]:
             text = ast.get_source_segment(source, function) or ""
-            assert "os.environ" not in text and "getenv" not in text, f"{module.__name__}.{function.name}"
+            assert "os.environ" not in text, f"{module.__name__}.{function.name}"
+            assert "getenv" not in text, f"{module.__name__}.{function.name}"
 
 
 # ----- subject verbs -----
@@ -476,8 +479,9 @@ ADAPTER_MODULES = sorted((REPO / "benchmarks/sregym/lanes").glob("*.py"))
 
 def unbounded_calls(path: Path) -> list[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    found = []
-    for node in ast.walk(tree):
+    return [
+        f"{path.name}:{node.lineno} subprocess.{node.func.attr}"
+        for node in ast.walk(tree)
         if (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
@@ -485,9 +489,8 @@ def unbounded_calls(path: Path) -> list[str]:
             and node.func.value.id == "subprocess"
             and node.func.attr in {"run", "call", "check_call", "check_output"}
             and "timeout" not in {keyword.arg for keyword in node.keywords}
-        ):
-            found.append(f"{path.name}:{node.lineno} subprocess.{node.func.attr}")
-    return found
+        )
+    ]
 
 
 def test_no_adapter_command_runs_without_a_timeout():
