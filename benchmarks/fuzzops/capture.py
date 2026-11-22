@@ -15,6 +15,7 @@ import re
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
@@ -38,6 +39,36 @@ RETRY_AFTER_S = 15
 
 def _pause(seconds: float) -> None:
     time.sleep(seconds)
+
+
+SERIES_POSITION_FILE = "series-position.json"
+
+
+@dataclass(frozen=True)
+class CapturePlan:
+    """What a collect step captures of the observability stores: ``defer`` leaves Prometheus and Jaeger to a later
+    position, and ``start`` is where the captured window begins."""
+
+    defer: bool
+    start: str
+
+
+def write_series_position(lane_dir: Path, *, position: int, total: int, started: str) -> None:
+    """The series adapter tells the collect step where in the series the run is: the evidence of one series needs one
+    capture of the stores, over the whole series, taken by its last position."""
+    (lane_dir / SERIES_POSITION_FILE).write_text(
+        json.dumps({"position": position, "total": total, "started": started}) + "\n"
+    )
+
+
+def capture_plan(lane_dir: Path, *, start: str) -> CapturePlan:
+    path = lane_dir / SERIES_POSITION_FILE
+    if not path.is_file():
+        return CapturePlan(defer=False, start=start)
+    marker = json.loads(path.read_text())
+    if marker["position"] < marker["total"]:
+        return CapturePlan(defer=True, start=start)
+    return CapturePlan(defer=False, start=marker["started"])
 
 
 def host_load() -> dict[str, float]:
@@ -160,7 +191,7 @@ def capture_logs(
 
 
 def capture_all(
-    kube_cmd: Callable[..., list[str]], control: str, app: str, dest: Path, start: str, end: str
+    kube_cmd: Callable[..., list[str]], control: str, app: str, dest: Path, start: str, end: str, *, defer: bool = False
 ) -> dict[str, Any]:
     """Run every observability capture; each records its own status in the returned receipt (also written)."""
     s, e = window(start, end)
@@ -182,6 +213,9 @@ def capture_all(
                     _pause(RETRY_AFTER_S)
 
     for key, service, fn in (("prometheus", PROMETHEUS, capture_prometheus), ("jaeger", JAEGER, capture_jaeger)):
+        if defer:
+            receipt[key] = {"status": "deferred", "detail": "captured with the series' last position, over the series"}
+            continue
         if not service_exists(kube_cmd, control, service[0]):
             receipt[key] = {"status": "absent", "detail": f"no service {service[0]} in {control}"}
             continue
