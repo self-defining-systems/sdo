@@ -17,6 +17,8 @@ from benchmarks.fuzzops import capture, cellevidence
 if TYPE_CHECKING:
     from pathlib import Path
 
+    import pytest
+
 
 def test_only_the_last_position_waits_out_the_quiet_window() -> None:
     bounds = Bounds(verdict=900, steady=30)
@@ -40,8 +42,9 @@ def test_a_lane_without_a_series_captures_every_run_over_its_own_window(tmp_path
     assert capture.capture_plan(tmp_path, start="s") == capture.CapturePlan(defer=False, start="s")
 
 
-def test_a_deferred_capture_reads_nothing_and_says_where_it_is(tmp_path: Path) -> None:
+def test_a_deferred_capture_reads_nothing_and_says_where_it_is(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / "observability").mkdir()
+    monkeypatch.setattr(capture, "capture_logs", lambda *a, **k: {"status": "ok", "files": [], "bytes": 0})
     receipt = capture.capture_all(
         lambda *a: ["false"], "ctl", "app", tmp_path, "2026-01-01T00:00:00Z", "2026-01-01T00:10:00Z", defer=True
     )
