@@ -246,7 +246,9 @@ func RunStep(ctx context.Context, path string) error {
 	// Deleting a lane's cluster needs no workload: a lane that never got a build has no checkout to ask.
 	noWorkload := s.Kind == StepRelease && s.Fuzzops == "" && s.DeleteCluster
 	if !noWorkload {
-		r.res.Fuzzops, err = r.version(ctx)
+		if err = r.writeSpecFile(); err == nil {
+			r.res.Fuzzops, err = r.version(ctx)
+		}
 	}
 	switch {
 	case err != nil:
@@ -307,6 +309,43 @@ func (r *stepRunner) interval(kind string, start time.Time, ok bool, detail stri
 		Start: start.UTC(), End: time.Now().UTC(), OK: ok, Detail: detail})
 }
 
+// specFilePath is the lane's spec file (the one every call's env names), kept in the lane directory from one build to the next.
+func (r *stepRunner) specFilePath() string { return filepath.Join(r.s.LaneDir, "operator.json") }
+
+// specFileFor is the file a call about p names ("": the spec has no such block). A step that builds or runs carries
+// the spec's block, and RunStep writes its file before the step's first workload call, so every call of it names the
+// file, also the ones made before the build prepares p; a release or recover names the file the lane was prepared with.
+func (r *stepRunner) specFileFor(p *Prepared) string {
+	for _, q := range []*Prepared{p, r.s.New, r.s.Prev} {
+		if q != nil && q.Operator != "" {
+			return q.Operator
+		}
+	}
+	if r.s.OperatorFile != nil {
+		return r.specFilePath()
+	}
+	return ""
+}
+
+// writeSpecFile writes the spec's block to the lane's file. It is the one place the file is written for a step's
+// workload calls: RunStep calls it before the first one, and whatever empties the lane directory calls it again.
+func (r *stepRunner) writeSpecFile() error {
+	block := r.s.OperatorFile
+	if block == nil {
+		return nil
+	}
+	return writeJSON(r.specFilePath(), block)
+}
+
+// resetLaneDir empties the lane directory (a new cluster, a new app copy) and puts the spec's file back in it.
+func (r *stepRunner) resetLaneDir() error {
+	_ = os.RemoveAll(r.s.LaneDir)
+	if err := os.MkdirAll(r.s.LaneDir, 0o755); err != nil {
+		return err
+	}
+	return r.writeSpecFile()
+}
+
 // laneEnv is the environment of every fuzzops call and hook on the lane.
 func (r *stepRunner) laneEnv(p *Prepared) []string {
 	e := []string{"KUBECONFIG=" + r.s.Kubeconfig, "FUZZOPS_KIND_CLUSTER=" + r.s.Lane, "KIND_CLUSTER=" + r.s.Lane,
@@ -343,9 +382,12 @@ func (r *stepRunner) laneEnv(p *Prepared) []string {
 			registry = "eks-lane.sh" // `push IMAGE...` goes to ECR and the nodes' mirror
 		}
 		e = append(e, "BENCH_REGISTRY="+filepath.Join(r.platform(), "deploy", registry))
-		if p.Operator != "" {
-			e = append(e, "BENCH_OPERATOR="+p.Operator)
-		}
+	}
+	// The spec's block reaches every call of the step, whatever state p is in: a workload that chooses images or
+	// credentials from it must not fall back to the host's defaults for a verb that runs before the build prepared p.
+	// _BLOCK says the spec has one, so a workload can refuse a call that lost the file by name.
+	if f := r.specFileFor(p); f != "" {
+		e = append(e, "BENCH_OPERATOR="+f, "BENCH_OPERATOR_BLOCK=1")
 	}
 	return e
 }
@@ -702,17 +744,12 @@ func (r *stepRunner) build(ctx context.Context) {
 			r.fail("hooks %s: %v", p.Hooks, err)
 			return
 		}
-		_ = os.RemoveAll(s.LaneDir)
-		if err := os.MkdirAll(s.LaneDir, 0o755); err != nil {
+		if err := r.resetLaneDir(); err != nil {
 			r.fail("lane dir: %v", err)
 			return
 		}
-		pre.Operator = filepath.Join(s.LaneDir, "operator.json")
+		pre.Operator = r.specFilePath()
 		pre.EvidenceRun = s.Experiment + "-" + s.Lane + "-" + s.ID
-		if err := writeJSON(pre.Operator, s.OperatorFile); err != nil {
-			r.fail("operator file: %v", err)
-			return
-		}
 		// From here the operator may be (partly) on the lane: the next build tears it down.
 		r.res.Prepared = &pre
 		out := filepath.Join(r.dir, "prepare")
@@ -849,11 +886,7 @@ func (r *stepRunner) swapInto(ctx context.Context) {
 	pre := *p
 	pre.Pack, pre.Version, pre.Memory, pre.EvidenceRun = prev.Pack, prev.Version, prev.Memory, prev.EvidenceRun
 	pre.Golden = prev.Golden
-	pre.Operator = filepath.Join(s.LaneDir, "operator.json")
-	if err := writeJSON(pre.Operator, s.OperatorFile); err != nil {
-		r.fail("operator file: %v", err)
-		return
-	}
+	pre.Operator = r.specFilePath()
 	if err := checkRevision(ctx, p.HooksPath, s.OperatorFile.Revision); err != nil {
 		r.fail("hooks %s: %v", p.Hooks, err)
 		return
@@ -1090,7 +1123,10 @@ func (r *stepRunner) makeClusterUp(ctx context.Context) bool {
 	if !ok {
 		return false
 	}
-	_ = os.RemoveAll(r.s.LaneDir)
+	if err := r.resetLaneDir(); err != nil {
+		r.fail("lane dir: %v", err)
+		return false
+	}
 	if !r.shell(ctx, "cluster-up", r.s.ClusterUp, env) {
 		// A failed cluster-up removes its half-built cluster: nothing the lane file recorded is installed.
 		r.res.Prepared = nil

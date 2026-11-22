@@ -142,8 +142,17 @@ def settings_for(env: Mapping[str, str]) -> AgentSettings | None:
     from benchmarks.sregym.lanes.workload import AdapterError
 
     operator = env.get("BENCH_OPERATOR")
+    if not operator and env.get("BENCH_OPERATOR_BLOCK") == "1":
+        # Lanes says the spec has an operator block (a real agent spec names its model there) but gave this call no
+        # file: running on would build the lane with the host's default (scripted) images instead of the agent's.
+        raise AdapterError(
+            "real agent spec but BENCH_OPERATOR not set: the spec has an operator block and lanes gave this call "
+            "no operator file, so the lane would be built with the host's default images"
+        )
     try:
         settings = AgentSettings.from_operator(Path(operator) if operator else None)
+    except OSError as error:
+        raise AdapterError(f"BENCH_OPERATOR {operator} is not readable: {error}") from error
     except (TypeError, ValueError) as error:
         raise AdapterError(f"operator settings: {error}") from error
     if settings is not None and (

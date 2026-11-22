@@ -17,6 +17,13 @@ Both roles: **environment in, last stdout line JSON out.**
   `BENCH_EXPERIMENT`, `KUBECONFIG`, `FUZZOPS_NAMESPACE`, `BENCH_PACK`, `BENCH_LANE_DIR`, `BENCH_OUT`, the evidence
   variables and the host's own `env`; the `FUZZOPS_*` names are kept for compatibility). A workload call adds
   `WORKLOAD_VERB`, `WORKLOAD_ACTION` and `WORKLOAD_ARGS` (a JSON array of the operation's options).
+- `BENCH_OPERATOR` names the operator file (the spec's operator block: `hooks`, `revision`, `baseline`, `seed`, `settings`)
+  on **every call of a build, run or release step** (workload verbs, hook verbs and the identity) whenever the spec has an
+  operator block, `BENCH_OPERATOR_BLOCK=1` with it. Lanes writes the file before the step's first workload call, so
+  `identity`, `app-up` (`check-pack`, `up`, `down`, `images`), `app-snapshot`, `app-reset`, `gate` and `run` see the same
+  readable file, including the verbs a build runs before it prepares the operator. A workload that chooses images,
+  credentials or seeds from it reads it in any verb; one that finds `BENCH_OPERATOR_BLOCK=1` without `BENCH_OPERATOR`
+  must fail by name, never fall back to defaults. A step with no operator block (a spec without one) gets neither.
 - A run step also carries the spec's bounds, `BENCH_CAP_SECONDS` (inject to idle) and `BENCH_READY_TIMEOUT_SECONDS`
   (the gate). The workload's `run` verb is bounded by them from inside: a run that outlives ready_timeout + cap + its
   own close-out margin is the adapter's to end, killing its whole process tree and answering invalid with a named
