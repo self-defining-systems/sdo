@@ -21,7 +21,7 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
-from benchmarks.sregym.adapter import WaitKind, harness_infra_error, wait_for
+from benchmarks.sregym.adapter import IncidentNotClosedError, WaitKind, harness_infra_error, wait_for
 from benchmarks.sregym.fastloop.records import (
     AgentName,
     DiagnosisGrade,
@@ -55,6 +55,8 @@ logger = logging.getLogger(__name__)
 #: Infrastructure errors that end a row before any agent outcome exists: the row is neither graded nor scored,
 #: and its independent grade is frozen as evidence. Provider capacity, a responder the controller could not
 #: start, and a seeded controller that never became ready.
+#: The row's incident was still open at its closure bound (its alerts never cleared), so no outcome was committed.
+INCIDENT_NOT_CLOSED = "incident_not_closed"
 NOT_AGENT_OUTCOMES = frozenset({"rate_limited", "account_exhausted", "dispatch_failed", "controller_not_ready"})
 
 
@@ -690,6 +692,7 @@ def _run_one(
         measure_resolution(ResolutionGradePoint(outcome.incident_id, outcome.resolved_at) if outcome else None)
 
     online_ended_at: datetime | None = None
+    incident_not_closed = False
     if windows and oracle_finished_at is not None and infra_error not in NOT_AGENT_OUTCOMES:
         # The row's online part is over once the grade is frozen and the agent's outcome is committed. Publish it
         # before the closing turn starts, so a runner can end the row here and wait for the rest as the drain.
@@ -698,6 +701,13 @@ def _run_one(
             if callable(await_committed):
                 try:
                     outcome = replace(outcome, outcome_committed_at=await_committed(outcome))
+                except IncidentNotClosedError as exc:
+                    # Alerts that never cleared cannot close: no commit or closing turn is coming. The grade
+                    # stays as evidence and the row ends named instead of waiting for either.
+                    logger.error("incident %d never closed: %s", index, exc)
+                    infra_error = INCIDENT_NOT_CLOSED
+                    errors.append(_describe(exc))
+                    incident_not_closed = True
                 except Exception:
                     logger.exception("could not observe the outcome commit for incident %d", index)
         online_ended_at = now()
@@ -706,7 +716,9 @@ def _run_one(
         )
 
     learning_complete = outcome is None or not outcome.terminal_error
-    if outcome is not None:
+    if incident_not_closed:
+        learning_complete = False
+    elif outcome is not None:
         try:
             outcome = agent.learn(outcome)
         except Exception as exc:

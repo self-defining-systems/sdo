@@ -501,6 +501,8 @@ bash scripts/run_sdo_example_kind.sh
 
 It requires Docker, Kind, `kubectl`, `jq`, and Go. Typed fixture workers exercise the Go-owned broker without model credentials. The smoke verifies accepted lifecycle commits, a deployed workload, and clear detector evaluations. Incident response and outcome commits remain a separate live validation gate.
 
+A SREGym stub plan (the scripted worker, no model) keeps going past rows it cannot judge. The worker restores only what the accepted source describes, so a Deployment fault (readiness probe, `dnsPolicy`) or a cluster-scoped webhook leaves the oracle failing; the row ends at the spec cap named `incident_not_closed` (fastloop `--closure-bound`, set by the lanes workload from `BENCH_CAP_SECONDS`) with its evidence copied and no closing turn, and the lane's `undo` verdict is "fault still active", which takes only that lane Down until a human `lane reset`. Rows on other lanes continue, and the runner's one automatic retry reruns the known failure: keep such problems out of stub plans (matrix `stub_mitigable: false`) and judge them with a real agent arm.
+
 A green unit suite establishes repository contracts. It does not establish that every target application deploys successfully or that an agent repairs every incident.
 
 ## Go core architecture

@@ -927,6 +927,24 @@ def test_run_gives_the_runner_a_row_deadline_from_the_spec_cap(tmp_path):
     assert seen["wait_file"] == str(tmp_path / "x" / "current-wait.json")
 
 
+def test_run_bounds_the_incident_closure_by_the_spec_cap(tmp_path):
+    """fastloop ends a row whose incident is still open at the cap, named: an alert that never clears never closes."""
+    repo, base = accepted_repo(tmp_path)
+    env_dir = write_environment(tmp_path, repo, seed_commit=base)
+    fast, _ = fake_fastloop_run(tmp_path, env_dir, repo)
+    commands: list[list[str]] = []
+
+    def runner(argv, *, env=None, cwd=None, tick=None, **limits):
+        commands.append(list(argv))
+        return fast(argv, env=env, cwd=cwd, tick=tick)
+
+    env = lane_env(tmp_path, FUZZOPS_EXEC_OUT=str(tmp_path / "x"), BENCH_CAP_SECONDS="1800")
+    code, _ = call("run", "run", RUN_ARGS, env, runner=workload.run_process, long_runner=runner)
+    assert code == 0
+    argv = commands[0]
+    assert argv[argv.index("--closure-bound") + 1] == "1800.0"
+
+
 def test_a_run_past_its_row_deadline_ends_invalid_with_the_named_wait(tmp_path):
     repo, base = accepted_repo(tmp_path)
     env_dir = write_environment(tmp_path, repo, seed_commit=base)

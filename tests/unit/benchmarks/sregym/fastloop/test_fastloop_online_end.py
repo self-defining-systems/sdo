@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
+import pytest
+
 from benchmarks.sregym.adapter.persistent import Clock, wait_for_outcome_commit
 from benchmarks.sregym.fastloop.loop import AgentOutcome, LoopConfig, run_incidents
 from benchmarks.sregym.fastloop.records import IncidentRecord, online_checkpoint_path
@@ -159,3 +161,68 @@ def test_the_commit_wait_is_bounded_by_the_monotonic_clock_when_wall_time_does_n
     ops = StateOps([{}])
     assert wait_for_outcome_commit(ops, "ctl", "i-1", base + timedelta(seconds=30), clock) is None  # type: ignore[arg-type]
     assert ops.reads < 100
+
+
+def test_an_incident_still_open_at_the_closure_bound_ends_the_wait_with_a_named_error() -> None:
+    """A closure that cannot be acknowledged (alerts never cleared) must not hold the row to the reflection deadline."""
+    from benchmarks.sregym.adapter.persistent import IncidentNotClosedError
+
+    fake = FakeClock()
+    clock = _clock(fake)
+    open_state = {"busy_until": "2026-09-27T20:00:00Z", "last_acknowledged_incident_id": "other"}
+    ops = StateOps([open_state])
+    reflection_deadline = clock.now() + timedelta(hours=4, minutes=24)
+    start = fake.monotonic()
+    with pytest.raises(IncidentNotClosedError) as raised:
+        wait_for_outcome_commit(
+            ops,
+            "ctl",
+            "i-1",
+            reflection_deadline,
+            clock,
+            closure_bound_seconds=1800.0,  # type: ignore[arg-type]
+        )
+    assert fake.monotonic() - start <= 1800.0 + 60.0
+    assert "i-1" in str(raised.value)
+    assert "1800" in str(raised.value)
+
+
+def test_a_closure_bound_does_not_cut_a_wait_for_an_idle_controller_short() -> None:
+    """With no incident work open the controller will acknowledge or has nothing to: the old quiet deadline applies."""
+    fake = FakeClock()
+    clock = _clock(fake)
+    ops = StateOps([{"last_acknowledged_incident_id": "other"}])
+    assert (
+        wait_for_outcome_commit(
+            ops,
+            "ctl",
+            "i-1",
+            clock.now() + timedelta(seconds=120),
+            clock,
+            closure_bound_seconds=60.0,  # type: ignore[arg-type]
+        )
+        is None
+    )
+
+
+def test_a_row_whose_incident_never_closed_is_named_and_not_learned_from(tmp_path: Path) -> None:
+    from benchmarks.sregym.adapter.persistent import IncidentNotClosedError
+
+    clock = FakeClock()
+    learned: list[str] = []
+
+    class Agent(CommittingAgent):
+        def await_outcome_committed(self, outcome: AgentOutcome) -> datetime | None:
+            raise IncidentNotClosedError("i-0", waited_seconds=1800.0, bound_seconds=1800.0)
+
+        def learn(self, outcome: AgentOutcome) -> AgentOutcome:
+            learned.append(outcome.incident_id)
+            return super().learn(outcome)
+
+    run_incidents(Agent(clock), FakeDriver(clock), _config(tmp_path), monotonic=clock.monotonic)
+    record = IncidentRecord.model_validate_json((tmp_path / "incidents.jsonl").read_text().splitlines()[-1])
+    assert record.infra_error == "incident_not_closed"
+    assert record.error is not None
+    assert "i-0" in record.error
+    assert learned == []
+    assert record.oracle is not None  # the grade frozen before the wait stays as evidence

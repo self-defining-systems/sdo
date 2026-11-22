@@ -933,6 +933,7 @@ def _sdo_agent(
         verification_timeout_seconds=float(args.composite_deadline if composite else args.timeout + 300),
         reflection_wait_seconds=wait_for(WaitKind.REFLECTION_DRAIN),
         detection_timeout_seconds=args.detection_timeout,
+        closure_bound_seconds=args.closure_bound,
         checkpoint_enabled=not args.no_checkpoints,
     )
     if environment.app == "toy":
@@ -2884,6 +2885,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="SECONDS",
         help="SDO: fail an incident if no detector opens it within this many seconds (default: disabled)",
+    )
+    run.add_argument(
+        "--closure-bound",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help=(
+            "SDO: end the row, named incident_not_closed, when its incident is still open this long after "
+            "injection (the row's cap); default: wait for the reflection deadline"
+        ),
     )
     run.add_argument("--health-timeout", type=float, default=300.0, help="seconds to wait for health after recovery")
     run.add_argument("--proxy-port", type=int, default=0, help="Codex baseline API proxy port (default: free port)")
