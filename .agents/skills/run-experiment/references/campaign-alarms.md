@@ -37,6 +37,9 @@ Each rule ends with the principled fix, so the class cannot recur.
 - **Keep the driver resumable:** chaining logic in a script with state on disk, never in one agent turn. Write decisions and a status line (every 30 minutes) to `NOTES.md` in the run directory so a replacement can take over after a rate limit. Spread agents across accounts.
 - **Wait by bounded foreground polling** (about every 5 minutes), never by ending a turn on a monitor.
 - **Every harness wait has a deadline and logs progress.** A wait that ends silently (for example for a seeded controller Pod that never becomes ready) holds a lane for an hour while the driver counts it as running. Fix: bound the wait, end the row with a named error so the driver requeues it, and give the driver a stall rule that covers every wait.
+- **A removed plan can still hold and bill a lane.** A lane `held` for incomplete evidence stays held after its plan is removed: an EKS lane billed 4 h 40 min that way, and the next plan sat queued behind it and was removed without running. Fix: after removing a plan, and after adding one, read `lanes status` within 10 minutes. Free every lane the removed plan holds through the manager: write `operator/evidence-waiver.json` and rebuild the manifest (`python -m benchmarks.fuzzops.cellevidence manifest RUN_DIR`), then `lane release`. A plan still unplaced after 10 minutes needs its blocking lane named.
+- **Stop a plan's work with `lanes plan remove NAME`, never `lanes remove EXPERIMENT`.** Removing an experiment counts as a failed attempt, so the plan queues an `-x1` retry and starts a fresh lane build.
+- **Set the run cap from the run's own minimum, not a generous default.** Settle and the release's idle wait are bounded by the cap. An incident nothing will close (escalated, stub agent) cost one cap in settle and up to another in the release (2 h each at `cap: 120m`).
 - **Count failures per problem, not per lane, and park on the second identical one.** A problem that fails the same way on every lane is requeued forever when only lane failures are counted (one failed 17 times at 30 minutes each).
 
 ## Reference timings seen
@@ -47,5 +50,6 @@ Calibrate minimums with these and update them when you measure better ones.
 | --- | --- |
 | kind lane up, SREGym app | 5-7 min |
 | GitLab lane, fresh / reused app / warm pool | 20-25 / about 11 / 1-2 min setup |
+| GitLab on an EKS vcluster lane, fresh build | about 18 min |
 | recommend-only cloud agent, injection to plan | about 4 min |
 | SDO SREGym row, warm lane, end to end | 25-35 min (much of it gates and settle, not agent work) |
