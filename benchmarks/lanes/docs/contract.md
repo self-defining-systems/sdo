@@ -17,6 +17,13 @@ Both roles: **environment in, last stdout line JSON out.**
   `BENCH_EXPERIMENT`, `KUBECONFIG`, `FUZZOPS_NAMESPACE`, `BENCH_PACK`, `BENCH_LANE_DIR`, `BENCH_OUT`, the evidence
   variables and the host's own `env`; the `FUZZOPS_*` names are kept for compatibility). A workload call adds
   `WORKLOAD_VERB`, `WORKLOAD_ACTION` and `WORKLOAD_ARGS` (a JSON array of the operation's options).
+- A run step also carries the spec's bounds, `BENCH_CAP_SECONDS` (inject to idle) and `BENCH_READY_TIMEOUT_SECONDS`
+  (the gate). The workload's `run` verb is bounded by them from inside: a run that outlives ready_timeout + cap + its
+  own close-out margin is the adapter's to end, killing its whole process tree and answering invalid with a named
+  reason; lanes' own limit on the verb (`hookTimeouts`) is only the backstop for an adapter that stopped answering.
+- A cancelled or killed step ends its adapter too: the manager signals the step's whole session (TERM, then KILL
+  after a grace), and a workload verb cancelled by its caller gets TERM to its process group and KILL to what is left
+  after `adapterTermGrace`.
 - The result is the **last non-empty line of stdout**, a JSON value. Earlier lines are progress and go to the log.
   stderr is the log; its last bytes are the reason of a failure.
 - Exit 0 is success. Any other exit is a failure of that verb. Retrying is the platform's job: an adapter never

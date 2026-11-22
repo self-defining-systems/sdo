@@ -102,6 +102,10 @@ func (s Spec) WorkloadName() string {
 // runAdapter runs one adapter process the way every workload call has always run: its own process group, SIGTERM
 // on cancel (a cancelled run still undoes its fault, which gets up to ten minutes), stdout to c.Stdout and stderr
 // to the log with its tail kept as the reason of a failure.
+// adapterTermGrace is how long a cancelled adapter's process group gets after TERM (to undo its fault) before the
+// whole group is killed. A var for tests.
+var adapterTermGrace = 10 * time.Minute
+
 func runAdapter(ctx context.Context, dir string, cmd *exec.Cmd, c WorkloadCall, what string) (int, string, error) {
 	// Each verb has a limit (hookTimeouts): past it the adapter's process group is killed and the reason says so.
 	limit := hookTimeouts[c.Verb]
@@ -125,9 +129,14 @@ func runAdapter(ctx context.Context, dir string, cmd *exec.Cmd, c WorkloadCall, 
 		if parent.Err() == nil { // our own limit: no undo to wait for
 			return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		}
-		return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		// TERM gives the adapter its undo; whatever of the group is still there after the grace is killed with it.
+		// (WaitDelay's own kill reaches only the leader, and a child that ignored TERM would keep the output pipe
+		// open and the step waiting.)
+		pgid := cmd.Process.Pid
+		time.AfterFunc(adapterTermGrace, func() { _ = syscall.Kill(-pgid, syscall.SIGKILL) })
+		return syscall.Kill(-pgid, syscall.SIGTERM)
 	}
-	cmd.WaitDelay = 10 * time.Minute
+	cmd.WaitDelay = adapterTermGrace + 10*time.Second
 	fmt.Fprintf(c.Log, "%s %s\n", time.Now().UTC().Format("15:04:05"), what)
 	err := cmd.Run()
 	if limit > 0 && parent.Err() == nil && ctx.Err() == context.DeadlineExceeded {

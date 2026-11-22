@@ -173,6 +173,9 @@ type Removal struct {
 	// KeepLanes: the spec kept its lanes (keep_lanes) and the removal did not ask for a teardown.
 	KeepLanes bool `json:"keep_lanes"`
 	Teardown  bool `json:"teardown,omitempty"`
+	// Cancel: the removal also stops the experiment's runs in flight (`lanes plan remove --cancel`, `plan skip
+	// --cancel`); without it, and without Teardown, a run on a lane finishes.
+	Cancel bool `json:"cancel,omitempty"`
 }
 
 // Root is the results directory.

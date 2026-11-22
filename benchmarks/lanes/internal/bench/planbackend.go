@@ -544,10 +544,10 @@ func (b *PlanBackend) ObserveStep(_ context.Context, dir string) (plan.StepObser
 	return plan.StepObservation{Phase: plan.PhaseRunning}, nil
 }
 
-// Cancel removes the experiment: its queued runs are dropped; a run already on a lane finishes and its results stay
-// (the platform has no way to stop one mid-run).
+// Cancel removes the experiment: its queued runs are dropped and a run already on a lane is killed by the manager
+// (the plan's `--cancel` contract: the runs in flight stop). The lane keeps its cluster when the spec keeps lanes.
 func (b *PlanBackend) Cancel(_ context.Context, exp string) error {
-	err := Remove(b.Root, exp, false)
+	err := RemoveCancel(b.Root, exp)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}

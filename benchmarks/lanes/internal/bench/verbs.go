@@ -226,10 +226,20 @@ func checkPoolCapacity(inv Inventory, s Spec) error {
 // clusters are deleted once no experiment needs their host (as for an experiment without keep_lanes). What remove
 // decided is recorded in <exp>/removed.json before the spec goes, so the manager never sees it removed without it.
 func Remove(root Root, name string, teardown bool) error {
+	return remove(root, name, teardown, false)
+}
+
+// RemoveCancel is Remove that also kills the experiment's runs in flight (their lanes return free through the
+// recover step, as for a dead step) and keeps the spec's keep_lanes: cancelling a run does not delete its cluster.
+func RemoveCancel(root Root, name string) error {
+	return remove(root, name, false, true)
+}
+
+func remove(root Root, name string, teardown, cancel bool) error {
 	if _, err := os.Stat(root.SpecPath(name)); err != nil {
 		return err
 	}
-	rm := Removal{At: time.Now().UTC(), Teardown: teardown}
+	rm := Removal{At: time.Now().UTC(), Teardown: teardown, Cancel: cancel}
 	if x, err := root.LoadExperiment(name); err == nil && x.Spec != nil {
 		rm.KeepLanes = x.Measured().KeepLanes && !teardown
 	}

@@ -39,13 +39,17 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Protocol
+
+from benchmarks.sregym.adapter.wait_progress import CURRENT_WAIT_ENV
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -58,10 +62,20 @@ MEMORY_DIR = "memory"
 BUNDLE = "memory.bundle"
 MEMORY_FILE = "memory.json"
 DEFAULT_RUN_TIMEOUT = 1500
+#: Past the spec's ready_timeout (the gate) and cap (inject to idle), the margin a row's close-out and recovery get
+#: before the adapter kills the run: no wait of the run path outlives its row.
+ROW_CLOSEOUT_SECONDS = 600
+#: After TERM, how long a run that is killed at its row deadline gets before its whole process tree is killed.
+KILL_GRACE_SECONDS = 30.0
 
 
 class AdapterError(RuntimeError):
     """A verb that cannot do its work; the message is the reason the platform records."""
+
+
+class RowDeadlineError(AdapterError):
+    """The run outlived its row deadline (the spec's ready_timeout + cap + a close-out margin) and was killed; the
+    message names the wait it was in."""
 
 
 class Runner(Protocol):
@@ -78,8 +92,12 @@ class LongRunner(Protocol):
         env: Mapping[str, str] | None = None,
         cwd: Path | None = None,
         tick: Callable[[], None] | None = None,
+        deadline_seconds: float | None = None,
+        current_wait: Path | None = None,
     ) -> str:
-        """Run a long command to completion, calling ``tick`` every few seconds; raise ``AdapterError`` on failure."""
+        """Run a long command to completion, calling ``tick`` every few seconds; raise ``AdapterError`` on failure,
+        and ``RowDeadlineError`` (after killing its process tree) when it runs past ``deadline_seconds``.
+        ``current_wait`` is the file the command records the wait it is in."""
         ...
 
 
@@ -96,21 +114,69 @@ def run_process(argv: Sequence[str], *, env: Mapping[str, str] | None = None, cw
 TICK_SECONDS = 5.0
 
 
+def _named_wait(current_wait: Path | None) -> str:
+    """The wait the killed run last recorded in ``current_wait`` ("" when it recorded none)."""
+    if current_wait is None:
+        return ""
+    try:
+        named = json.loads(current_wait.read_text(encoding="utf-8"))
+        return f"{named['wait']} (since {named.get('since', '?')})"
+    except (OSError, ValueError, KeyError, TypeError):
+        return ""
+
+
+def _kill_tree(process: subprocess.Popen[bytes]) -> None:
+    """TERM the run's process group, then KILL what is left after the grace (a child that ignores TERM included)."""
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        process.wait(timeout=KILL_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    process.wait()
+
+
 def run_logged(
     argv: Sequence[str],
     *,
     env: Mapping[str, str] | None = None,
     cwd: Path | None = None,
     tick: Callable[[], None] | None = None,
+    deadline_seconds: float | None = None,
+    current_wait: Path | None = None,
 ) -> str:
     """A long command whose stdout is progress: both streams go to the platform's log (stderr). ``tick`` is called
-    every few seconds while it runs (the fallback page watches the run from there)."""
-    process = subprocess.Popen(list(argv), env=dict(env) if env is not None else None, cwd=cwd, stdout=sys.stderr)
+    every few seconds while it runs (the fallback page watches the run from there).
+
+    The command runs in a process group of its own. Past ``deadline_seconds`` the group is killed (TERM, then KILL
+    after ``KILL_GRACE_SECONDS``) and ``RowDeadlineError`` names the wait ``current_wait`` says it was in."""
+    process = subprocess.Popen(
+        list(argv),
+        env=dict(env) if env is not None else None,
+        cwd=cwd,
+        stdout=sys.stderr,
+        start_new_session=True,
+    )
+    expires = None if deadline_seconds is None else time.monotonic() + deadline_seconds
     while True:
+        wait = TICK_SECONDS if expires is None else max(0.0, min(TICK_SECONDS, expires - time.monotonic()))
         try:
-            code = process.wait(timeout=TICK_SECONDS)
+            code = process.wait(timeout=wait)
             break
         except subprocess.TimeoutExpired:
+            if expires is not None and time.monotonic() >= expires:
+                named = _named_wait(current_wait)
+                _kill_tree(process)
+                raise RowDeadlineError(
+                    f"row deadline {deadline_seconds:.0f}s exceeded (ready_timeout + cap + closeout); "
+                    f"the run was killed while waiting for: {named or 'no wait recorded'}"
+                ) from None
             if tick is not None:
                 tick()
     if code:
@@ -211,6 +277,21 @@ class Context:
         if not value:
             raise AdapterError(f"{name} is not set")
         return value
+
+    def row_deadline_seconds(self) -> float | None:
+        """The row's deadline: the spec's ready_timeout (the gate) plus its cap (inject to idle) plus a close-out
+        margin, from the step's ``BENCH_READY_TIMEOUT_SECONDS`` and ``BENCH_CAP_SECONDS``; None without a cap."""
+        try:
+            cap = float(self.env.get("BENCH_CAP_SECONDS", ""))
+        except ValueError:
+            return None
+        if cap <= 0:
+            return None
+        try:
+            ready = max(0.0, float(self.env.get("BENCH_READY_TIMEOUT_SECONDS", "0")))
+        except ValueError:
+            ready = 0.0
+        return ready + cap + ROW_CLOSEOUT_SECONDS
 
     def lane_env_dir(self) -> Path:
         return Path(self.need("SREGYM_LANES_ENV")) / self.need("BENCH_LANE")
@@ -567,6 +648,8 @@ class FallbackPager:
 
 
 FAULT_STATE = "lanes-fault.json"
+#: Where the run records the wait it is in (beside the run's other exec output).
+CURRENT_WAIT_FILE = "current-wait.json"
 #: Set by cluster.sh (the host's cluster_up): only then may ``app-up up`` make the lane's cluster.
 CLUSTER_UP_ENV = "SREGYM_LANES_CLUSTER_UP"
 
@@ -688,13 +771,27 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
     )
     # Until the run's record says otherwise, its fault may be in place (a run killed mid-way leaves it).
     write_fault_state(env_dir, problem, "unknown")
+    current_wait = exec_out / CURRENT_WAIT_FILE
+    current_wait.unlink(missing_ok=True)
+    limits: dict[str, Any] = {}
+    row_deadline = ctx.row_deadline_seconds()
+    if row_deadline is not None:
+        limits = {"deadline_seconds": row_deadline, "current_wait": current_wait}
+    deadline_failure = ""
     try:
-        ctx.long_runner(command, env=ctx.env, cwd=ctx.root, tick=pager.tick)
+        ctx.long_runner(
+            command, env={**ctx.env, CURRENT_WAIT_ENV: str(current_wait)}, cwd=ctx.root, tick=pager.tick, **limits
+        )
+    except RowDeadlineError as error:
+        failure = deadline_failure = str(error)
     except AdapterError as error:
         failure = str(error)
     if results.is_dir():
         # The run's evidence travels with the run (the lane's environment is rebuilt with the lane).
         shutil.copytree(results, exec_out / "fastloop-results", dirs_exist_ok=True)
+    if deadline_failure:
+        # The fault may still be in place: its verdict stays unknown (active), so the platform recovers the lane.
+        return 1, {**record, "valid": False, "invalid_reason": "row deadline exceeded", "error": deadline_failure}
     incident = _last_record(results)
     if incident is None:
         return 1, {

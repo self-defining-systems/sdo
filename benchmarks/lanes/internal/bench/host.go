@@ -203,7 +203,7 @@ func (h localHost) Start(ctx context.Context, s Step) error {
 }
 
 func (h localHost) Kill(ctx context.Context, lane, id string) error {
-	return exec.CommandContext(ctx, "sh", "-c", killScript(filepath.Join(h.staging, lane, id, "step.json"), 5)).Run()
+	return exec.CommandContext(ctx, "sh", "-c", killScript(filepath.Join(h.staging, lane, id, "step.json"), stepKillGrace)).Run()
 }
 
 func (h localHost) Probe(ctx context.Context, steps map[string]string, fuzzops []string) (Probe, error) {
