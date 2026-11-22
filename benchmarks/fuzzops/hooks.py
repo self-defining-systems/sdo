@@ -341,6 +341,10 @@ IDLE_FOR_TEARDOWN = "teardown"
 #: lane boundary (``collect`` and the lane verbs). While it stands, ``idle`` answers for settle or the window end, and
 #: store baselines (which only an inject needs) are not waited for.
 INJECTED_RECORD = "injected.json"
+#: Left in the lane directory by a workload that has already waited, within its own bound, for the incident its cell
+#: opened and recorded the outcome (a commit-series position): the run's settle then waits only for work in flight, as a
+#: teardown's idle does. The run boundary (``end_run``) removes it.
+SETTLE_WORK_ONLY_RECORD = "settle-work-only.json"
 #: The projected sources under the lane's evidence directory (``devtree``).
 DEV_DIRECTORY = ".dev"
 
@@ -1440,7 +1444,7 @@ def after_inject(env: Mapping[str, str]) -> bool:
     """Whether this ``idle`` call comes after the run's inject (settle, the window end) rather than before it (the
     inject gate). The bench names the cell's own incident only in settle; ``watch`` starts only after the inject and
     records its run, which the gate's own call (``BENCH_RUN`` set to the next run) never matches."""
-    if env.get(OWN_DETECTED_ENV):
+    if env.get(OWN_DETECTED_ENV) or settle_work_only(env):
         return True
     lane = env.get("BENCH_LANE_DIR")
     if not lane:
@@ -1451,6 +1455,12 @@ def after_inject(env: Mapping[str, str]) -> bool:
         return False
     run = env.get("BENCH_RUN", "")
     return isinstance(record, dict) and (not run or record.get("run") == run)
+
+
+def settle_work_only(env: Mapping[str, str]) -> bool:
+    """Whether the workload ended its own incident wait for this run (``SETTLE_WORK_ONLY_RECORD``)."""
+    lane = env.get("BENCH_LANE_DIR")
+    return bool(lane) and (Path(lane) / SETTLE_WORK_ONLY_RECORD).is_file()
 
 
 def mark_injected(env: Mapping[str, str]) -> None:
@@ -1465,6 +1475,7 @@ def end_run(env: Mapping[str, str]) -> None:
     lane = env.get("BENCH_LANE_DIR")
     if lane:
         (Path(lane) / INJECTED_RECORD).unlink(missing_ok=True)
+        (Path(lane) / SETTLE_WORK_ONLY_RECORD).unlink(missing_ok=True)
     clear_baseline_wait(env)
 
 
@@ -1483,8 +1494,11 @@ def idle(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
         out(f"error: controller read failed: {exc}")
         return 1
     teardown = env.get(IDLE_FOR_ENV) == IDLE_FOR_TEARDOWN
+    # A teardown's idle, and a settle after a workload that waited for its own incident (and recorded it), ask only
+    # whether work has stopped: an open incident nobody works on stays open until its alerts clear or a human resets it.
+    work_only = teardown or settle_work_only(env)
     # No log yet: baselines are judged by the second verdict, after the log read an otherwise idle controller earns.
-    why = idle_verdict(state, updated, ready, datetime.now(UTC), baselines=False, incident=not teardown)
+    why = idle_verdict(state, updated, ready, datetime.now(UTC), baselines=False, incident=not work_only)
     # Store baselines gate only the inject: after it, settle and the window end need idle twice in a row, which a
     # store whose baseline the fault reset (it re-promotes only later) would never give. A teardown's idle needs them
     # no more: the operator is about to be deleted.

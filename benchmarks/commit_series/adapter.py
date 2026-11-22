@@ -29,6 +29,7 @@ from benchmarks.commit_series.scenario import Bounds, SeriesOps, run_commit
 from benchmarks.common.replay.replay import ReplayError, ReplayRecord, replay, run_git
 from benchmarks.common.replay.series import Series
 from benchmarks.fuzzops import workload as fuzzops_workload
+from benchmarks.fuzzops.hooks import SETTLE_WORK_ONLY_RECORD
 from benchmarks.sregym.fastloop.toy_live import KubectlScenarioOps
 from benchmarks.sregym.fastloop.toy_upstream import UpstreamLayout, forwarded_remote
 
@@ -168,6 +169,8 @@ def run(env: dict[str, str], stdout: IO[str], *, ops: SeriesOps | None = None) -
     if ahead > 0:
         ops.sleep(ahead)
     record = run_commit(ops, entry.series, index, entry.bounds, flags.get("operator", ""))
+    # The record carries the position's own bounded wait for its incident; settle waits only for work in flight.
+    (lane_dir / SETTLE_WORK_ONLY_RECORD).write_text(json.dumps({"position": index}) + "\n")
     if fault := entry.series.faults.get(index):
         injected = inject_fault(builtin, flags, entry, fault, stdout, env)
         record["fault"] = injected

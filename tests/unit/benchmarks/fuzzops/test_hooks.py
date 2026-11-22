@@ -611,6 +611,34 @@ def test_a_teardowns_idle_does_not_wait_for_an_open_incident_no_agent_is_working
     assert lines[-1] == "idle"
 
 
+def test_a_settle_the_workload_ended_its_own_incident_wait_for_waits_only_for_work_in_flight(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A commit-series position waits for its own incident (bounded) and records the outcome before settle runs; an
+    incident still open then is a result (SDO deploys nothing while one is open, so the next position records that).
+    Settle waiting for it too ended every such position ``capped`` and broke the sequence (finding 9). The workload
+    leaves a record in the lane directory; the run boundary (collect) removes it."""
+    lines: list[str] = []
+    gate = _lane_with_state(monkeypatch, tmp_path, _open_incident("DISPATCH_STATE_COMPLETED"))
+    assert hooks.idle(gate, out=lines.append) == 1
+    assert lines[-1] == "alarm: incident open fg1-1"
+    (Path(gate["BENCH_LANE_DIR"]) / "settle-work-only.json").write_text("{}\n")
+    assert hooks.idle(gate, out=lines.append) == 0, lines
+    assert lines[-1] == "idle"
+    hooks.end_run(gate)
+    assert hooks.idle(gate, out=lines.append) == 1
+
+
+def test_a_settle_the_workload_ended_its_own_incident_wait_for_still_waits_for_a_responder_working(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    lines: list[str] = []
+    env = _lane_with_state(monkeypatch, tmp_path, _open_incident("DISPATCH_STATE_RUNNING"))
+    (Path(env["BENCH_LANE_DIR"]) / "settle-work-only.json").write_text("{}\n")
+    assert hooks.idle(env, out=lines.append) == 1
+    assert lines[-1] == "busy: responder dispatch running"
+
+
 def test_a_teardowns_idle_still_waits_for_a_responder_working_on_an_open_incident(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
