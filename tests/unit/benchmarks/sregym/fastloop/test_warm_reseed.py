@@ -291,3 +291,16 @@ def warm_environment_digest(value: RuntimeConfig) -> str:
     from benchmarks.sregym.fastloop.setup_proof import digest
 
     return digest(identity_settings(runtime_config_payload(value)))
+
+
+def test_inspect_names_why_the_previous_attempt_is_not_clean(cluster, tmp_path):
+    from benchmarks.sregym.fastloop.warm_lane import WarmLaneRefusal
+    from benchmarks.sregym.fastloop.wipe import UNRECOVERED_PREFIX, AttemptMarker, LaneInjectionState
+
+    LaneInjectionState(cluster.environment.kubeconfig, "app").finish(["some_problem"], {"some_problem": []})
+    cluster.lane._assert_idle = lambda: None  # type: ignore[method-assign]
+    cluster.lane.incoming_data_faults = ()
+    marker = AttemptMarker(cluster.environment.run_dir)
+    marker.path.write_text(f"123\n{UNRECOVERED_PREFIX}some_problem\n")
+    with pytest.raises(WarmLaneRefusal, match="not verified recovered: some_problem"):
+        cluster.lane.inspect()

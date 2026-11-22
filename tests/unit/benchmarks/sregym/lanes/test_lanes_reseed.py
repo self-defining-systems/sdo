@@ -180,3 +180,19 @@ def test_the_grade_counts_reseeded_rows_and_fallbacks_with_their_reason(tmp_path
     assert [g["reseed"] for g in grades] == ["reseeded", "fallback", "fresh"]
     assert grades[1]["reseed_reason"] == "reseed:SwapError"
     assert grades[2]["reseed_reason"]
+
+
+def test_a_fallback_row_carries_the_lanes_own_refusal_text(tmp_path):
+    lane = Lane(tmp_path)
+    lane.row(**RESEED)
+    lane.receipt = {
+        "reused": False,
+        "phase_seconds": {},
+        "fallback_reason": "inspect:WarmLaneRefusal",
+        "detail": "previous attempt did not finish cleanly: previous row injected and not verified recovered: p",
+    }
+    _, record = lane.row(**RESEED)
+    assert record["reseed"]["reason"] == (
+        "inspect:WarmLaneRefusal: previous attempt did not finish cleanly: "
+        "previous row injected and not verified recovered: p"
+    )
