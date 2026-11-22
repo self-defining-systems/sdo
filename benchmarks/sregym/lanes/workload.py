@@ -50,7 +50,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Protocol
 
-from benchmarks.sregym.adapter import CURRENT_WAIT_ENV
+from benchmarks.sregym.adapter import CURRENT_WAIT_ENV, WaitKind, wait_for
 from benchmarks.sregym.lanes.agent import settings_for
 
 if TYPE_CHECKING:
@@ -104,10 +104,21 @@ class LongRunner(Protocol):
 
 
 def run_process(argv: Sequence[str], *, env: Mapping[str, str] | None = None, cwd: Path | None = None) -> str:
-    """The real runner: stderr passes through to the platform's log."""
-    result = subprocess.run(
-        list(argv), env=dict(env) if env is not None else None, cwd=cwd, stdout=subprocess.PIPE, text=True, check=False
-    )
+    """The real runner: stderr passes through to the platform's log. A command that outlives ``wait_for(OPERATION)``
+    is killed and named (a ``kubectl`` or ``git`` that never answers must not hold the verb to the platform's limit)."""
+    limit = wait_for(WaitKind.OPERATION)
+    try:
+        result = subprocess.run(
+            list(argv),
+            env=dict(env) if env is not None else None,
+            cwd=cwd,
+            stdout=subprocess.PIPE,
+            text=True,
+            check=False,
+            timeout=limit,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise AdapterError(f"{shlex.join(argv)[:300]}: no answer in {limit:.0f}s, killed") from error
     if result.returncode:
         raise AdapterError(f"{shlex.join(argv)[:300]}: exit {result.returncode}")
     return result.stdout
@@ -302,7 +313,9 @@ class Context:
         return AppPack.load(Path(self.args.get("pack") or self.need("BENCH_PACK")))
 
     def kubectl(self, *args: str) -> str:
-        return self.runner(["kubectl", "--kubeconfig", self.need("KUBECONFIG"), *args], env=self.env)
+        # The server's own bound: a lane API server that stops answering ends the call, not the verb's limit.
+        request = f"--request-timeout={wait_for(WaitKind.SLOW_COMMAND):.0f}s"
+        return self.runner(["kubectl", "--kubeconfig", self.need("KUBECONFIG"), request, *args], env=self.env)
 
 
 # ----- verbs -----
@@ -354,6 +367,7 @@ def app_up(ctx: Context) -> tuple[int, dict[str, Any]]:
     pack = ctx.pack()
     lane = ctx.need("BENCH_LANE")
     env_dir = ctx.lane_env_dir()
+    ctx.need("KUBECONFIG")  # the lane's kubeconfig is copied after `fastloop up`: a missing one fails now, not then
     eks = ctx.env.get("BENCH_LANE_PROVIDER") == "eks"
     clusters: list[str] = []
     if eks:
@@ -433,6 +447,8 @@ def _fingerprint(ctx: Context, namespace: str) -> list[str]:
 
 
 def app_snapshot(ctx: Context) -> tuple[int, dict[str, Any]]:
+    if ctx.action not in ("write", "verify"):
+        return UNSUPPORTED, {"unsupported": True}
     namespace = ctx.args.get("namespace") or ctx.need("FUZZOPS_NAMESPACE")
     rows = _fingerprint(ctx, namespace)
     if ctx.action == "write":
@@ -973,7 +989,7 @@ def grade_line(record: Mapping[str, Any]) -> dict[str, Any]:
 def grade(ctx: Context) -> tuple[int, dict[str, Any]]:
     if ctx.action != "report":
         return UNSUPPORTED, {"unsupported": True}
-    results = Path(ctx.env.get("WORKLOAD_RESULTS") or ctx.args.get("_", ""))
+    results = Path(ctx.env.get("WORKLOAD_RESULTS") or ctx.args.get("_") or ctx.need("WORKLOAD_RESULTS"))
     path = results / "runs.jsonl"
     lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     grades = [grade_line(line) for line in lines]

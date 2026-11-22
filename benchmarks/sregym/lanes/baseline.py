@@ -13,6 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 from benchmarks.sregym.lanes.workload import BUNDLE, MEMORY_FILE
 
 
@@ -20,7 +21,11 @@ def make(repo: Path, commit: str, out: Path) -> dict[str, str]:
     def git(*args: str) -> str:
         path = str(repo.resolve())
         return subprocess.run(
-            ["git", "-c", f"safe.directory={path}", "-C", path, *args], capture_output=True, text=True, check=True
+            ["git", "-c", f"safe.directory={path}", "-C", path, *args],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=wait_for(WaitKind.OPERATION),
         ).stdout.strip()
 
     full = git("rev-parse", "--verify", f"{commit}^{{commit}}")

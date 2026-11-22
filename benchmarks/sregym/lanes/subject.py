@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from benchmarks.sregym.adapter.budgets import WaitKind, wait_for
 from benchmarks.sregym.lanes.agent import AgentSettings
 
 if TYPE_CHECKING:
@@ -34,17 +35,31 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 NOTHING = ("check", "teardown", "collect", "transcripts", "snapshot", "reset", "reset-incidents", "idle", "watch")
 
 
+class SubjectError(RuntimeError):
+    """A verb that cannot do its work; the message is the reason the platform records (exit 1, JSON last line)."""
+
+
 def revision(root: Path = REPO_ROOT) -> str:
-    return subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
-    ).stdout.strip()
+    try:
+        return subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=wait_for(WaitKind.COMMAND),
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError) as error:
+        raise SubjectError(f"git rev-parse HEAD in {root}: {error}") from error
 
 
 def seed_of(env: Mapping[str, str]) -> str:
     path = env.get("BENCH_OPERATOR")
     if not path:
         return ""
-    return str(json.loads(Path(path).read_text(encoding="utf-8")).get("seed") or "")
+    try:
+        return str(json.loads(Path(path).read_text(encoding="utf-8")).get("seed") or "")
+    except (OSError, ValueError, AttributeError) as error:
+        raise SubjectError(f"BENCH_OPERATOR {path}: {error}") from error
 
 
 def agent_of(env: Mapping[str, str]) -> AgentSettings | None:
@@ -72,7 +87,11 @@ def dispatch(verb: str, env: Mapping[str, str], version: Callable[[], str] = rev
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    code, result = dispatch(args[0] if args else "", os.environ)
+    try:
+        code, result = dispatch(args[0] if args else "", os.environ)
+    except SubjectError as error:
+        print(f"sregym subject {args[0] if args else ''}: {error}", file=sys.stderr)
+        code, result = 1, {"error": str(error)}
     print(json.dumps(result), flush=True)
     return code
 
