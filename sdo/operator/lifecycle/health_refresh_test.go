@@ -109,3 +109,20 @@ func TestRefreshHealthOfAHeadAheadOfItsDeploymentPublishesWithoutLiveVerificatio
 		t.Fatalf("receipt=%+v stages=%d accepts=%d verifications=%d live=%v, want a plain publication verified against nothing", receipt, fake.stages, fake.accepts, h.verifier.calls, h.readiness.liveCalls)
 	}
 }
+
+// A refresh re-judges an application already onboarded: its existing-records
+// requirement was met when the map was accepted, and the verdict documents the
+// evidence as gating onboarding acceptance only. A restarted controller
+// evaluates before (or without) the probe's existing-records sample, so gating
+// the refresh on it crash-looped the controller on a healthy application
+// ("O4.existing-records ... still firing after 2 designer corrections") and
+// kept the next push from ever being deployed.
+func TestRefreshHealthDoesNotGateOnExistingRecords(t *testing.T) {
+	unexercised := lifecycle.HealthVerdict{Outcome: lifecycle.VerificationClear, Summary: "accepted health detectors report clear", ExistingRecords: lifecycle.ExistingRecordsEvidence{Required: true}}
+	h, fake := gateHarness(t, unexercised)
+	fake.source = deployedSource()
+	receipt, err := h.coordinator.RefreshHealth(context.Background(), refreshConfig(), refreshRevision())
+	if err != nil || receipt.Commit == "" || fake.accepts != 1 {
+		t.Fatalf("receipt=%+v accepts=%d err=%v: a clear refresh was refused for an unexercised existing-records step", receipt, fake.accepts, err)
+	}
+}

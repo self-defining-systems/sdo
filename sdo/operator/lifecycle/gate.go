@@ -75,13 +75,17 @@ func (c Coordinator) candidateReport(ctx context.Context, cfg Config, candidate 
 	case failing(applyChecks):
 		checks = append(checks, operability.Check{ID: "O4.detectors", Phase: operability.PhaseLive, Status: operability.StatusSkipped, Detail: "not run: the telemetry apply phase failed"})
 	default:
-		verdict, err := c.awaitObserved(ctx, cfg, func() (HealthVerdict, error) {
+		await := c.awaitObserved
+		if cfg.SteadyState {
+			await = c.awaitVerdict
+		}
+		verdict, err := await(ctx, cfg, func() (HealthVerdict, error) {
 			return c.Verifier.VerifyCandidate(ctx, candidate.Path, candidate.Commit, cfg.Namespace, cfg.HealthObjective, deployment)
 		})
 		if err != nil && !errors.As(err, &pending) {
 			return operability.Report{}, nil, err
 		}
-		checks = append(checks, verdictChecks(verdict)...)
+		checks = append(checks, verdictChecks(verdict, !cfg.SteadyState)...)
 	}
 	subject := operability.Subject{
 		AcceptedCommit: candidate.Commit, BaseTree: deployment.BaseTree, EffectiveTree: deployment.EffectiveTree,
@@ -103,9 +107,9 @@ func failing(checks []operability.Check) bool {
 // application's fault; a firing detector or traffic probe the health judge
 // authored is detector_fault first. A failing verdict that names no firing
 // detector cannot be attributed to the designer, so it is the application's.
-func verdictChecks(verdict HealthVerdict) []operability.Check {
+func verdictChecks(verdict HealthVerdict, existingRecords bool) []operability.Check {
 	checks := append(detectorVerdictChecks(verdict), coverageNoteChecks(verdict.CoverageNotes)...)
-	if verdict.Outcome == VerificationClear && verdict.ExistingRecords.Required && verdict.ExistingRecords.Exercised == 0 {
+	if existingRecords && verdict.Outcome == VerificationClear && verdict.ExistingRecords.Required && verdict.ExistingRecords.Exercised == 0 {
 		checks = append(checks, operability.Check{
 			ID: "O4.existing-records", Phase: operability.PhaseLive, Status: operability.StatusFail, Cause: operability.CauseDetectorFault,
 			Detail: "no marked step returned a record the probe did not write; grant the probe identity read access to existing user records (e.g. via the probe-identity procedure) or declare no_user_records: <why>",

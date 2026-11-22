@@ -16,7 +16,7 @@ func TestAcceptanceRequiresAnExercisedExistingRecordsStep(t *testing.T) {
 		return HealthVerdict{Outcome: VerificationClear, Summary: "clear", ExistingRecords: ExistingRecordsEvidence{Required: required, Exercised: exercised}}
 	}
 	failing := func(verdict HealthVerdict) *operability.Check {
-		for _, check := range verdictChecks(verdict) {
+		for _, check := range verdictChecks(verdict, true) {
 			if check.ID == "O4.existing-records" && check.Status == operability.StatusFail {
 				return &check
 			}

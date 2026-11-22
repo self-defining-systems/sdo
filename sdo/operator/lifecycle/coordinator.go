@@ -227,6 +227,9 @@ type Config struct {
 	// recreate the checkout of, the other's task. Empty is the controller's own
 	// start-up refresh.
 	RefreshScope string
+	// SteadyState marks a judge run for an application that is already onboarded (a
+	// health refresh): the onboarding-only evidence (existing records) does not gate it.
+	SteadyState bool
 	// MaxAttempts bounds deployer correction attempts only. The fields below
 	// bound the waits that never consume one; zero selects the default.
 	PendingEvaluations    int
