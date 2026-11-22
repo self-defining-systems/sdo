@@ -247,6 +247,55 @@ def test_down_images_and_recover_are_no_ops(tmp_path):
         assert call(verb, action, ["--pack", str(PACK)], lane_env(tmp_path))[0] == 0
 
 
+def binding(name: str, role: str, *subjects: tuple[str, str, str]) -> dict:
+    return {
+        "metadata": {"name": name},
+        "roleRef": {"kind": "ClusterRole", "name": role},
+        "subjects": [{"kind": kind, "name": who, "namespace": namespace} for kind, who, namespace in subjects],
+    }
+
+
+def test_owned_names_the_cluster_objects_the_lanes_operator_install_recreates_every_row(tmp_path):
+    """The operator is installed at each row start and wiped at the next: its objects are not fault residue."""
+    bindings = {
+        "items": [
+            binding(
+                "sdo-admin-hotel-reservation-sdo",
+                "sdo-admin-hotel-reservation-sdo",
+                ("ServiceAccount", "sdo-controller", "hotel-reservation-sdo"),
+            ),
+            binding(
+                "sdo-prometheus-hotel-reservation-sdo",
+                "sdo-prometheus-hotel-reservation-sdo",
+                ("ServiceAccount", "sdo-prometheus", "hotel-reservation-sdo"),
+            ),
+            binding("cluster-admin", "cluster-admin", ("Group", "system:masters", "")),
+            binding("fault-binding", "fault-role", ("ServiceAccount", "default", "hotel-reservation")),
+            binding(
+                "other-lane-admin",
+                "sdo-admin-social-network-sdo",
+                ("ServiceAccount", "sdo-controller", "social-network-sdo"),
+            ),
+        ]
+    }
+    runner = FakeRunner({"get clusterrolebindings": json.dumps(bindings)})
+    code, result = call("app-reset", "owned", ["--namespace", "hotel-reservation"], lane_env(tmp_path), runner=runner)
+    assert code == 0
+    assert sorted(result["objects"]) == [
+        "clusterrole.rbac.authorization.k8s.io/sdo-admin-hotel-reservation-sdo",
+        "clusterrole.rbac.authorization.k8s.io/sdo-prometheus-hotel-reservation-sdo",
+        "clusterrolebinding.rbac.authorization.k8s.io/sdo-admin-hotel-reservation-sdo",
+        "clusterrolebinding.rbac.authorization.k8s.io/sdo-prometheus-hotel-reservation-sdo",
+        "namespace/hotel-reservation-sdo",
+    ]
+
+
+def test_owned_with_no_operator_installed_still_names_only_its_namespace(tmp_path):
+    runner = FakeRunner({"get clusterrolebindings": '{"items": []}'})
+    code, result = call("app-reset", "owned", ["--namespace", "hotel-reservation"], lane_env(tmp_path), runner=runner)
+    assert (code, result) == (0, {"objects": ["namespace/hotel-reservation-sdo"]})
+
+
 DEPLOYMENTS = {
     "items": [
         {
