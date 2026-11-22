@@ -30,6 +30,7 @@ class SeriesOps(ScenarioOps, Protocol):
     def push_commit(self, index: int) -> ReplayRecord: ...
     def agent_task_count(self) -> int: ...
     def now(self) -> float: ...
+    def head_deployment(self) -> dict[str, Any] | None: ...
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,7 @@ def run_commit(ops: SeriesOps, series: Series, index: int, bounds: Bounds, label
         "valid": True,
     }
     known = {c.sha for c in ops.accepted_commits()}
+    blocked = ops.incident_open()  # SDO deploys nothing while an incident is open: not the verdict on this push
     before = ops.snapshot()
     started = ops.clock()
     record["lifecycle"] = {"inject_at": _iso(ops.now())}
@@ -88,7 +90,7 @@ def run_commit(ops: SeriesOps, series: Series, index: int, bounds: Bounds, label
     if pushed.status == "empty":
         return {**record, "outcome": "empty"}
     sha = pushed.pushed_sha
-    verdict, accepted, hold = wait_verdict(ops, bounds.timings, sha)
+    verdict, accepted, hold = wait_verdict(ops, bounds.timings, sha, incident_ends=not blocked)
     deploy_seconds = round(ops.clock() - started, 1)
     detail = hold_detail(hold) if hold else None
     incident = watch_for_incident(ops, bounds.timings) or verdict == "incident"
@@ -106,6 +108,8 @@ def run_commit(ops: SeriesOps, series: Series, index: int, bounds: Bounds, label
         "hold": None
         if detail is None
         else {"kind": detail.kind, "cause": detail.cause, "owner": detail.owner, "reason": detail.reason},
+        "blocked_by_open_incident": blocked,
+        "head_deployment": ops.head_deployment(),
         "incident_opened": incident,
         "incident_resolved": resolved,
         "agent_tasks": after.agent_tasks - before.agent_tasks,

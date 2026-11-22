@@ -154,7 +154,8 @@ def build(
         "source": f"https://gitlab.com/gitlab-org/charts/gitlab releases; digests in apps/gitlab/{releases_path.name}",
         "upstream": {"repo": str(repo), "base": base_sha, "commits": commits},
         "mode": "diff",
-        "on_conflict": "stop",
+        # a commit that does not apply is skipped and recorded, so one run shows every position that fails
+        "on_conflict": "skip",
     }
     path = dest / "series.json"
     path.write_text(json.dumps(spec, indent=1) + "\n")

@@ -31,12 +31,14 @@ from benchmarks.common.replay.series import Series
 from benchmarks.fuzzops import workload as fuzzops_workload
 from benchmarks.fuzzops.hooks import SETTLE_WORK_ONLY_RECORD, verify_start
 from benchmarks.sregym.fastloop.toy_live import KubectlScenarioOps
-from benchmarks.sregym.fastloop.toy_scenarios import HoldRecord
+from benchmarks.sregym.fastloop.toy_scenarios import AcceptedCommit, HoldRecord
 from benchmarks.sregym.fastloop.toy_upstream import BASE_PATH, REPOSITORY, SERVICE, UpstreamLayout, forwarded_remote
 
 SOURCE_BRANCH_FILE = "source-branch.json"
-#: The control-namespace ConfigMap SDO keeps its one refused branch head in (``sdo/operator/runtime/head_poll.go``).
+#: The control-namespace ConfigMaps SDO keeps its one refused branch head and its newest deployed head in
+#: (``sdo/operator/runtime/head_poll.go``).
 HEAD_HOLD_CONFIGMAP = "sdo-head-hold"
+HEAD_DEPLOYMENT_CONFIGMAP = "sdo-head-deployment"
 _GIT_ENV = {"GIT_TERMINAL_PROMPT": "0", "GIT_ALLOW_PROTOCOL": "file:git"}
 
 
@@ -107,9 +109,41 @@ class LaneOps(KubectlScenarioOps):
         self.series = series
         self.kubeconfig = kubeconfig
         self.pushed: list[str] = []  # the commits this run pushed: a hold is matched to them
+        self._last_accepted: list[AcceptedCommit] = []
 
     def now(self) -> float:
         return time.time()
+
+    def head_deployment(self) -> dict[str, Any] | None:
+        """SDO's notice of the newest head it deployed (None before the first)."""
+        result = self._kubectl(self.control, "get", "configmap", HEAD_DEPLOYMENT_CONFIGMAP, "-o", "json", check=False)
+        if result.returncode != 0:
+            if "NotFound" in result.stderr:
+                return None
+            raise RuntimeError(f"reading {HEAD_DEPLOYMENT_CONFIGMAP} failed: {result.stderr.strip()}")
+        notice = json.loads(json.loads(result.stdout)["data"]["deployment"])
+        return notice if isinstance(notice, dict) else None
+
+    def accepted_commits(self) -> list[AcceptedCommit]:
+        """What SDO accepted, plus the heads it deployed: a head deploy adds no commit and no trailer (the head is the
+        pusher's commit), so the deployment notice stands for it, carrying the pushed sha each deployed head holds.
+        A read while the controller relaunches (it restarts after a deploy) keeps the last answer."""
+        try:
+            commits = super().accepted_commits()
+        except RuntimeError as exc:
+            if "no running controller pod" not in str(exc):
+                raise
+            return self._last_accepted
+        notice = self.head_deployment()
+        if notice is not None:
+            deployed = [
+                AcceptedCommit(notice["commit"], {"SDO-Upstream": sha})
+                for sha in self.pushed
+                if self._is_ancestor(sha, notice["commit"])
+            ]
+            commits = [*deployed, *commits]
+        self._last_accepted = commits
+        return commits
 
     def holds(self) -> list[HoldRecord]:
         """SDO's hold on a head that carries a commit this run pushed, as that commit's hold.
@@ -125,7 +159,19 @@ class LaneOps(KubectlScenarioOps):
         reason = f"{record['reason']}: {record['detail']}"
         return [HoldRecord(sha, reason) for sha in self.pushed if self._is_ancestor(sha, record["commit"])]
 
-    def start_problems(self, env: dict[str, str], lane_dir: Path) -> list[str]:
+    def start_problems(
+        self, env: dict[str, str], lane_dir: Path, *, patience: float = 300.0, poll: float = 15.0
+    ) -> list[str]:
+        """``_start_problems`` again until it finds none, at most ``patience`` seconds: a lane that was just reset or
+        built answers "not quiet" while its controller finishes starting, which is no reason to refuse the series."""
+        deadline = self.clock() + patience
+        while True:
+            problems = self._start_problems(env, lane_dir)
+            if not problems or self.clock() >= deadline:
+                return problems
+            self.sleep(poll)
+
+    def _start_problems(self, env: dict[str, str], lane_dir: Path) -> list[str]:
         """Why the lane is not what a fresh install is at the start of the series: the subject's checks (accepted
         memory at its prepared commit, nothing open or pending in SDO, the base release running; ``verify_start``) and
         the branch's: its head is the prepared head and SDO holds no refused head."""
