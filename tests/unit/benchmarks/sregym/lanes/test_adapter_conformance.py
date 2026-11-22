@@ -608,8 +608,8 @@ def pid_from(path: Path) -> int:
 
 
 def test_the_run_command_is_bound_to_the_rows_deadline(tmp_path):
-    """The spec's cap reaches the workload as BENCH_CAP_SECONDS: the run must hand a deadline (and the wait it records) to
-    the command it supervises, or a stuck row holds the lane to the platform's 6 h limit."""
+    """The spec's cap reaches the workload as BENCH_CAP_SECONDS: the run must hand a deadline (and the wait it
+    records) to the command it supervises, or a stuck row holds the lane to the platform's 6 h limit."""
     seen: dict[str, Any] = {}
 
     def supervised(argv, *, env=None, cwd=None, tick=None, **limits):
