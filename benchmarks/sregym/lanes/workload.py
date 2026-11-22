@@ -51,7 +51,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Protocol
 
-from benchmarks.sregym.adapter import CURRENT_WAIT_ENV, WaitKind, wait_for
+from benchmarks.sregym.adapter import CURRENT_WAIT_ENV, WaitKind, control_namespace_for, wait_for
 from benchmarks.sregym.lanes.agent import REQUESTED_IMAGES_FILE, requested_images, settings_for
 
 if TYPE_CHECKING:
@@ -501,7 +501,33 @@ def app_snapshot(ctx: Context) -> tuple[int, dict[str, Any]]:
     return UNSUPPORTED, {"unsupported": True}
 
 
+def operator_owned_objects(ctx: Context, namespace: str) -> list[str]:
+    """The lane's cluster-scoped objects that SDO's install for ``namespace`` makes (``kubectl get -o name`` names).
+
+    ``fastloop run`` installs SDO at every row start after wiping the last row's install (tier 1: every cluster object
+    not in the lane's inventory goes), so the install's namespace, ClusterRoles and bindings are there at the end of
+    every row and are never fault residue. They are found by who they bind: a ClusterRoleBinding with a ServiceAccount
+    of the control namespace, and the ClusterRole it grants; a fault's own objects bind none of them.
+    """
+    control = control_namespace_for(namespace)
+    owned = {f"namespace/{control}"}
+    bindings = json.loads(ctx.kubectl("get", "clusterrolebindings", "-o", "json")).get("items", [])
+    for row in bindings:
+        if any(
+            subject.get("kind") == "ServiceAccount" and subject.get("namespace") == control
+            for subject in row.get("subjects") or []
+        ):
+            owned.add(f"clusterrolebinding.rbac.authorization.k8s.io/{row['metadata']['name']}")
+            role = row.get("roleRef") or {}
+            if role.get("kind") == "ClusterRole":
+                owned.add(f"clusterrole.rbac.authorization.k8s.io/{role['name']}")
+    return sorted(owned)
+
+
 def app_reset(ctx: Context) -> tuple[int, dict[str, Any]]:
+    if ctx.action == "owned":
+        namespace = ctx.args.get("namespace") or ctx.need("FUZZOPS_NAMESPACE")
+        return 0, {"objects": operator_owned_objects(ctx, namespace)}
     if ctx.action != "recover":
         return UNSUPPORTED, {"unsupported": True}
     # fastloop run recovers and cleans up its own fault before it returns, and resets the lane at row start.

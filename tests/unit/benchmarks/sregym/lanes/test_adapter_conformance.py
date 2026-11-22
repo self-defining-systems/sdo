@@ -314,6 +314,13 @@ CASES: tuple[Case, ...] = (
         "recover",
         args=lambda root: ["--namespace", NAMESPACE, "--pack", str(PACK)],
     ),
+    Case(
+        "app-reset",
+        "owned",
+        needs=KUBE,
+        args=lambda root: ["--namespace", NAMESPACE],
+        seams=lambda lane, env: {"runner": FakeRunner({"get clusterrolebindings": '{"items": []}'})},
+    ),
     Case("gate", "check", needs=KUBE, args=lambda root: ["--namespace", NAMESPACE]),
     Case(
         "run",

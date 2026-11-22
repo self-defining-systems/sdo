@@ -1217,7 +1217,50 @@ func (r *stepRunner) residue(ctx context.Context, p *Prepared) ([]string, error)
 			extra = append(extra, o)
 		}
 	}
-	return extra, nil
+	if len(extra) == 0 {
+		return nil, nil
+	}
+	// A workload that installs its own services at every row start and removes them at the next one (its reset) leaves
+	// those objects at the end of every row: it names them (`app-reset owned`), and a fault's object is none of them.
+	owned, err := r.workloadOwned(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	var left []string
+	for _, o := range extra {
+		if !owned[o] {
+			left = append(left, o)
+		}
+	}
+	return left, nil
+}
+
+// workloadOwned is the cluster-scoped objects (kind/name, as `kubectl get -o name` prints them) the workload's own
+// row-start reset removes and its row recreates (docs/contract.md, `app-reset owned`). A workload that does not
+// implement the verb owns none.
+func (r *stepRunner) workloadOwned(ctx context.Context, p *Prepared) (map[string]bool, error) {
+	var out bytes.Buffer
+	code, tail, err := r.call(ctx, p, nil, &out, VerbAppReset, "owned", "--namespace", p.Namespace)
+	if errors.Is(err, ErrUnsupported) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var answer struct {
+		Objects []string `json:"objects"`
+	}
+	if code != 0 {
+		return nil, fmt.Errorf("app-reset owned exit %d: %s", code, tail)
+	}
+	if err := json.Unmarshal([]byte(lastNonEmpty(out.Bytes())), &answer); err != nil {
+		return nil, fmt.Errorf("app-reset owned: last line is not JSON: %q", lastNonEmpty(out.Bytes()))
+	}
+	owned := map[string]bool{}
+	for _, o := range answer.Objects {
+		owned[o] = true
+	}
+	return owned, nil
 }
 
 // check is the build's own check: one span of ready_for in which the journeys
