@@ -20,7 +20,7 @@ from benchmarks.sregym.adapter.cluster_resources import (
     prepare_benchmark_resources,
 )
 from benchmarks.sregym.adapter.native_operator import validate_evidence_sink
-from benchmarks.sregym.fastloop import cli, evidence_sink, worker_bridge
+from benchmarks.sregym.fastloop import cli, eks_lane, evidence_sink, worker_bridge
 from benchmarks.sregym.fastloop.environment import FastloopEnvironment, Images, KindOnlyError
 
 if TYPE_CHECKING:
@@ -647,3 +647,37 @@ def test_an_ecr_call_that_fails_once_does_not_lose_a_rows_images(monkeypatch: py
     forever = SimpleNamespace(holds=lambda image: (_ for _ in ()).throw(EksLaneError("down")))
     with pytest.raises(EksLaneError, match="down"):
         cli._ecr_holds(forever, "image", sleep=pauses.append)
+
+
+def virtual_environment(tmp_path: Path) -> FastloopEnvironment:
+    environment = eks_environment(tmp_path)
+    assert environment.eks is not None
+    return environment.model_copy(update={"eks": environment.eks.model_copy(update={"virtual": True})})
+
+
+def test_a_virtual_lane_never_gets_a_node_path_pool_for_an_opus_row(tmp_path: Path) -> None:
+    """The Opus pool lives on the nodes; a virtual lane has none, so the controller would mount a path nobody made."""
+    environment = virtual_environment(tmp_path)
+    environ: dict[str, str] = {}
+    with pytest.raises(eks_lane.VirtualLaneError, match="claude-opus-5-5.*virtual"):
+        environment.apply_operator_env(environ, model="claude-opus-5-5")
+    assert "SDO_OPUS_POOL_HOST_PATH" not in environ
+    # Every other model is unaffected.
+    environment.apply_operator_env(environ, model="claude-sonnet-5-5")
+    assert "SDO_OPUS_POOL_HOST_PATH" not in environ
+
+
+def test_provisioning_the_opus_pool_on_a_virtual_lane_is_refused_before_any_node_call(tmp_path: Path) -> None:
+    environment = virtual_environment(tmp_path)
+    with pytest.raises(eks_lane.VirtualLaneError, match="virtual"):
+        eks_lane.ensure_opus_pool(environment, "claude-opus-5-5")
+    assert eks_lane.ensure_opus_pool(environment, "claude-sonnet-5-5") == []
+
+
+def test_a_virtual_lane_runs_opus_through_an_nfs_pool_and_mounts_no_node_path(tmp_path: Path) -> None:
+    environment = virtual_environment(tmp_path)
+    environ = {"SDO_OPUS_POOL_NFS_SERVER": "10.0.0.5", "SDO_OPUS_POOL_NFS_PATH": "/pool", "SDO_OPUS_POOL_HOST_PATH": "/x"}
+    environment.apply_operator_env(environ, model="claude-opus-5-5")
+    assert environ["SDO_OPUS_POOL_NFS_SERVER"] == "10.0.0.5"
+    assert not {"SDO_OPUS_POOL_HOST_PATH", "SDO_OPUS_POOL_MODE"} & set(environ)
+    assert eks_lane.ensure_opus_pool(environment, "claude-opus-5-5", environ) == []

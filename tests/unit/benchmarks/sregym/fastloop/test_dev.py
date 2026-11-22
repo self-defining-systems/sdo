@@ -28,7 +28,7 @@ def test_overlapping_builds_publish_complete_binaries(worktree: Path, tmp_path: 
     payloads = [b"first-build\n" * 4096, b"second-build\n" * 4096]
     destinations = []
 
-    def build(args: list[str], *, cwd: Path, check: bool) -> subprocess.CompletedProcess:
+    def build(args: list[str], *, cwd: Path, check: bool, timeout: float) -> subprocess.CompletedProcess:
         assert args[:4] == ["go", "build", "-buildvcs=false", "-o"]
         assert args[5:] == ["./cmd/sdo-operator"]
         assert cwd == worktree / "sdo/operator"

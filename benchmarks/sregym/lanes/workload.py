@@ -395,6 +395,7 @@ def app_up(ctx: Context) -> tuple[int, dict[str, Any]]:
     lane = ctx.need("BENCH_LANE")
     env_dir = ctx.lane_env_dir()
     ctx.need("KUBECONFIG")  # the lane's kubeconfig is copied after `fastloop up`: a missing one fails now, not then
+    agent = settings_for(ctx.env)  # a model this lane cannot run is refused before the lane is built
     eks = ctx.env.get("BENCH_LANE_PROVIDER") == "eks"
     clusters: list[str] = []
     if eks:
@@ -437,7 +438,7 @@ def app_up(ctx: Context) -> tuple[int, dict[str, Any]]:
             *pack.up_args,
             *shlex.split(ctx.env.get("SREGYM_LANES_UP_ARGS", "")),
             # A real agent's operator images (settings.responder_image/controller_image) override the host's.
-            *(agent.up_flags() if (agent := settings_for(ctx.env)) else ()),
+            *(agent.up_flags() if agent else ()),
         ]
         if seed := ctx.env.get(f"SREGYM_LANES_SEED_{pack.application}"):
             # The host's onboarded memory for this application (a git repository), per application: one host
@@ -798,6 +799,7 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
             "invalid_reason": "unsupported",
             "error": "an SREGym run needs --instance PROBLEM",
         }
+    real = settings_for(ctx.env)  # a model this lane cannot run is refused here, before anything of the row starts
     env_dir = ctx.lane_env_dir()
     environment = json.loads((env_dir / "fastloop.json").read_text(encoding="utf-8"))
     workspace = Path(environment["workspace"])
@@ -825,7 +827,6 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
     )
     stream = exec_out / "stream.json"
     stream.write_text(json.dumps(stream_settings(problem), indent=1) + "\n", encoding="utf-8")
-    real = settings_for(ctx.env)
     host_args = shlex.split(ctx.env.get("SREGYM_LANES_RUN_ARGS", ""))
     run_env: Mapping[str, str] = ctx.env
     if real is None:

@@ -101,6 +101,17 @@ class AgentSettings:
             flags += ["--reasoning-effort", self.effort]
         return [*flags, "--config", str(overlay), "--credentials-hook", str(CREDENTIALS_HOOK)]
 
+    def lane_refusal(self, *, virtual: bool, nfs_pool: bool = False) -> str:
+        """Why this agent's model cannot run on the lane ("" when it can): an Opus session is admitted through a
+        node-local pool (or an NFS-homed one, ``nfs_pool``), and a virtual lane has no node to provision it on."""
+        if not virtual or nfs_pool or "opus" not in self.model.lower():
+            return ""
+        return (
+            f"model {self.model} needs a node-local Opus session pool, and a virtual (vcluster) lane has no node it "
+            "can provision one on: give the pool an NFS home (SDO_OPUS_POOL_NFS_SERVER and SDO_OPUS_POOL_NFS_PATH) "
+            "or run the row on a lane with its own nodes"
+        )
+
     def up_flags(self) -> list[str]:
         """``fastloop up`` flags that name the lane's operator images (after the host's, which they override)."""
         flags: list[str] = []
@@ -126,11 +137,19 @@ class AgentSettings:
 
 
 def settings_for(env: Mapping[str, str]) -> AgentSettings | None:
-    """The agent the call's operator file names; a bad setting is an ``AdapterError``."""
+    """The agent the call's operator file names; a bad setting, or a model this lane cannot run, is an
+    ``AdapterError`` (named before anything is built)."""
     from benchmarks.sregym.lanes.workload import AdapterError
 
     operator = env.get("BENCH_OPERATOR")
     try:
-        return AgentSettings.from_operator(Path(operator) if operator else None)
+        settings = AgentSettings.from_operator(Path(operator) if operator else None)
     except (TypeError, ValueError) as error:
         raise AdapterError(f"operator settings: {error}") from error
+    if settings is not None and (
+        refusal := settings.lane_refusal(
+            virtual=env.get("BENCH_LANE_VIRTUAL") == "1", nfs_pool=bool(env.get("SDO_OPUS_POOL_NFS_SERVER", "").strip())
+        )
+    ):
+        raise AdapterError(refusal)
+    return settings

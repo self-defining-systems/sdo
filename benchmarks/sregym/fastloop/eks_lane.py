@@ -35,6 +35,28 @@ MIRROR_CHECK_TIMEOUT = "120s"
 WORKER_UID = 65532
 
 
+class VirtualLaneError(ValueError):
+    """A row asks a virtual (vcluster) lane for something only a lane with its own nodes can give."""
+
+
+def opus_pool_refusal(model: str | None, *, virtual: bool, environ: Mapping[str, str]) -> str:
+    """Why an Opus row cannot run on this lane ("" when it can).
+
+    The per-node pool is a directory of the node (``provision_opus_pool`` runs a script on each node, the controller
+    mounts that path); a virtual lane has no node agent to run it and no node it owns, so the row would die after the
+    lane was built and the fault injected. The pool can live on an NFS export instead (``SDO_OPUS_POOL_NFS_SERVER``)."""
+
+    if not virtual or model is None or "opus" not in model.lower():
+        return ""
+    if environ.get("SDO_OPUS_POOL_NFS_SERVER", "").strip():
+        return ""
+    return (
+        f"model {model} needs a node-local Opus session pool, and a virtual (vcluster) lane has no node it can "
+        "provision one on: give the pool an NFS home (SDO_OPUS_POOL_NFS_SERVER and SDO_OPUS_POOL_NFS_PATH) or run "
+        "the row on a lane with its own nodes"
+    )
+
+
 def opus_capacity(environ: Mapping[str, str] | None = None) -> int:
     value = (os.environ if environ is None else environ).get("SDO_OPUS_MAX_SESSIONS", "").strip()
     capacity = int(value) if value else DEFAULT_OPUS_HOST_SHARE
@@ -67,6 +89,9 @@ def provision_opus_pool(environment: FastloopEnvironment, environ: Mapping[str, 
     """Provision the per-node Opus pool on every node of the lane; returns the nodes."""
 
     assert environment.eks is not None
+    if environment.eks.virtual:
+        # Never reached by an NFS-homed pool (``ensure_opus_pool`` skips it); a virtual lane has no node to script.
+        raise VirtualLaneError(opus_pool_refusal("opus", virtual=True, environ={}))
     provider = EksProvider(environment.eks, str(environment.kubeconfig))
     return provider.run_on_nodes(opus_pool_script(opus_capacity(environ)), wait=wait_for(WaitKind.ROLLOUT))
 
@@ -78,6 +103,12 @@ def ensure_opus_pool(
     provisions it. Returns the nodes provisioned."""
 
     if "opus" not in model.lower():
+        return []
+    assert environment.eks is not None
+    if environment.eks.virtual:
+        # The pool's home is an NFS export or the row is refused: no node call either way.
+        if refusal := opus_pool_refusal(model, virtual=True, environ=os.environ if environ is None else environ):
+            raise VirtualLaneError(refusal)
         return []
     return provision_opus_pool(environment, environ)
 
@@ -197,6 +228,15 @@ def apply_opus_pool_env(
     if model is None or "opus" not in model.lower():
         for name in pool_names:
             environ.pop(name, None)
+        return
+    assert environment.eks is not None
+    if environment.eks.virtual:
+        if refusal := opus_pool_refusal(model, virtual=True, environ=environ):
+            raise VirtualLaneError(refusal)
+        # An NFS-homed pool: nothing of the lane's nodes is mounted.
+        for name in ("SDO_OPUS_POOL_MODE", "SDO_OPUS_POOL_HOST_ID", "SDO_OPUS_POOL_HOST_PATH", "SDO_OPUS_POOL_DIR"):
+            environ.pop(name, None)
+        environ["SDO_OPUS_MAX_SESSIONS"] = str(opus_capacity(environ))
         return
     environ["SDO_OPUS_POOL_MODE"] = "per_host"
     environ["SDO_OPUS_POOL_HOST_ID"] = environment.cluster
