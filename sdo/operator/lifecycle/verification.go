@@ -180,7 +180,11 @@ func (c Coordinator) awaitVerdict(ctx context.Context, cfg Config, evaluate func
 		if err != nil {
 			return HealthVerdict{}, err
 		}
-		if verdict.Outcome != VerificationPending {
+		// A clear verdict whose existing-records step has not run yet is an
+		// incomplete observation: it is waited out like a pending one, and only
+		// a step that never ran by the last evaluation reaches the O4 check.
+		unobserved := verdict.Outcome == VerificationClear && verdict.ExistingRecords.Required && verdict.ExistingRecords.Exercised == 0
+		if verdict.Outcome != VerificationPending && !(unobserved && evaluation < evaluations) {
 			return verdict, nil
 		}
 		if evaluation >= evaluations {
