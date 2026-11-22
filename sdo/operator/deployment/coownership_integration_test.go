@@ -49,7 +49,7 @@ func coowned(annotations, volume string) []byte {
 // works; what only the install owns stays the install's and does not roll.
 func TestAHeadDeployMayRemoveAFieldTheInstallCoOwned(t *testing.T) {
 	if testing.Short() {
-		t.Skip("starts a real API server (over the PR-tier slow-test budget); runs in the nightly tier")
+		t.Skip("starts a real API server, over the PR-tier slow-test budget; nightly CI runs it without -short")
 	}
 	env := envtestio.Start(t)
 	env.CreateNamespace(t, "app")
