@@ -91,6 +91,8 @@ class SdoAgentSettings:
     verification_timeout_seconds: float = wait_for(WaitKind.INCIDENT_VERIFICATION)
     reflection_wait_seconds: float = wait_for(WaitKind.REFLECTION_DRAIN)
     detection_timeout_seconds: float | None = None
+    #: The row's cap (injection to idle): an incident still open this long after injection ends the row named.
+    closure_bound_seconds: float | None = None
     checkpoint_enabled: bool = True
 
     def __post_init__(self) -> None:
@@ -102,6 +104,8 @@ class SdoAgentSettings:
             raise ValueError("reflection_wait_seconds must be positive")
         if self.detection_timeout_seconds is not None and self.detection_timeout_seconds <= 0:
             raise ValueError("detection_timeout_seconds must be positive")
+        if self.closure_bound_seconds is not None and self.closure_bound_seconds <= 0:
+            raise ValueError("closure_bound_seconds must be positive")
 
 
 def _timestamp(value: object) -> datetime | None:
@@ -324,6 +328,7 @@ class SdoPersistentAgent:
         # With a lane queue, the drain seals evidence and delivery leaves the critical path.
         self._evidence_queue = evidence_queue
         self._on_verified: Callable[[ResolutionGradePoint], None] | None = None
+        self._injected_at: datetime | None = None
         self._settings = settings
         self._ops = ops
         self._lifecycle_inputs = lifecycle_inputs
@@ -405,6 +410,7 @@ class SdoPersistentAgent:
             # Incidents the controller already names are not this injection's; any other is SDO's own since.
             known = state_incident_ids(self._ops.runtime_state(settings.runtime_config.control_namespace))
             windows.append(inject())
+            self._injected_at = windows[0].started_at
             write_injection_marker(settings.results_dir, windows[0].started_at, known)
 
         def measure_verified(incident_id: str, detected_at: datetime | None, verified_at: datetime | None) -> None:
@@ -511,7 +517,19 @@ class SdoPersistentAgent:
         deadline = pending.reflection_deadline_at or self._clock.now() + timedelta(
             seconds=wait_for(WaitKind.REFLECTION_DRAIN)
         )
-        return wait_for_outcome_commit(self._ops, record.control_namespace, outcome.incident_id, deadline, self._clock)
+        closure_bound = None
+        if settings.closure_bound_seconds is not None and self._injected_at is not None:
+            # What is left of the row's cap after the injection; a closure that late was never going to come.
+            elapsed = (self._clock.now() - self._injected_at).total_seconds()
+            closure_bound = max(wait_for(WaitKind.MINUTE), settings.closure_bound_seconds - elapsed)
+        return wait_for_outcome_commit(
+            self._ops,
+            record.control_namespace,
+            outcome.incident_id,
+            deadline,
+            self._clock,
+            closure_bound_seconds=closure_bound,
+        )
 
     def learn(self, outcome: AgentOutcome) -> AgentOutcome:
         """Wait for reflection and detector rollout, then read the incident's strict receipt."""

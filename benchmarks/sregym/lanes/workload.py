@@ -318,6 +318,14 @@ class Context:
             raise AdapterError(f"{name} is not set")
         return value
 
+    def cap_seconds(self) -> float | None:
+        """The spec's cap (injection to idle) from ``BENCH_CAP_SECONDS``; None without a positive one."""
+        try:
+            cap = float(self.env.get("BENCH_CAP_SECONDS", ""))
+        except ValueError:
+            return None
+        return cap if cap > 0 else None
+
     def row_deadline_seconds(self) -> float | None:
         """The row's deadline: the spec's ready_timeout (the gate) plus its cap (inject to idle) plus a close-out
         margin, from the step's ``BENCH_READY_TIMEOUT_SECONDS`` and ``BENCH_CAP_SECONDS``; None without a cap."""
@@ -871,6 +879,9 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
     ]
     if planned:
         command += ["--planned-commit", planned]
+    if (cap := ctx.cap_seconds()) is not None:
+        # An incident still open at the spec's cap never closes: the row ends there, named, with its evidence.
+        command += ["--closure-bound", str(cap)]
     failure = ""
     results = env_dir / "results" / run_id
     pager = FallbackPager(

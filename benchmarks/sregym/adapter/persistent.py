@@ -2355,17 +2355,47 @@ def _wait_for_reflection_drain(
     )
 
 
+class IncidentNotClosedError(PersistentControllerError):
+    """The incident was still open at the row's closure bound: its alerts never cleared, so the controller can
+    never acknowledge a closure. The row ends here, named, instead of waiting for a commit that cannot come."""
+
+    def __init__(self, incident_id: str, *, waited_seconds: float, bound_seconds: float) -> None:
+        super().__init__(
+            f"incident {incident_id!r} was still open after {waited_seconds:.0f}s "
+            f"(closure bound {bound_seconds:.0f}s): its alerts never cleared, so no closure can be acknowledged"
+        )
+        self.incident_id = incident_id
+        self.waited_seconds = waited_seconds
+        self.bound_seconds = bound_seconds
+
+
 def wait_for_outcome_commit(
-    ops: ClusterOps, control: str, incident_id: str, deadline_at: datetime, clock: Clock
+    ops: ClusterOps,
+    control: str,
+    incident_id: str,
+    deadline_at: datetime,
+    clock: Clock,
+    *,
+    closure_bound_seconds: float | None = None,
 ) -> datetime | None:
     """Wait for the controller to acknowledge the incident's closure, which is when its outcome is committed.
 
     The reflection and detector rollout that follow belong to the closing turn and are not waited for here.
     Returns the observation time, or ``None`` at the deadline: an unreadable state or a closure that never
     acknowledges is for the reflection drain to decide, so this wait never raises for either.
+
+    With *closure_bound_seconds* (derived from the row's cap), an incident whose work is still open when the
+    bound passes ends the wait with :class:`IncidentNotClosedError`: alerts that never cleared cannot close.
+    An idle controller keeps the deadline above.
     """
 
     bound = max(0.0, (deadline_at - clock.now()).total_seconds())
+    closure_bound = None if closure_bound_seconds is None else max(0.0, closure_bound_seconds)
+    started = clock.monotonic()
+    if closure_bound is not None and closure_bound < bound:
+        bound = closure_bound
+    else:
+        closure_bound = None
     end = clock.monotonic() + bound
     progress = WaitProgress(f"outcome commit of incident {incident_id}", clock.monotonic, bound_seconds=bound)
     while True:
@@ -2376,6 +2406,10 @@ def wait_for_outcome_commit(
         if state.get("last_acknowledged_incident_id") == incident_id:
             return clock.now()
         if clock.monotonic() >= end:
+            if closure_bound is not None and incident_work_open(state):
+                raise IncidentNotClosedError(
+                    incident_id, waited_seconds=clock.monotonic() - started, bound_seconds=bound
+                )
             logger.warning(
                 "outcome commit of incident %s not acknowledged by its deadline (%.0fs); the reflection drain decides",
                 incident_id,
