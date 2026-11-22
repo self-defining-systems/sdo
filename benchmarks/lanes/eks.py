@@ -34,6 +34,9 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 ECR_HOST = re.compile(r"^(?P<account>[0-9]{12})\.dkr\.ecr\.(?P<region>[a-z0-9-]+)\.amazonaws\.com$")
+#: The registry of a local kind host cluster (lanes ``eks.local_kind``): a plain-HTTP registry on this machine that every
+#: node resolves, in place of ECR. No AWS call is made for it.
+LOCAL_REGISTRY = re.compile(r"^localhost:[0-9]{2,5}$")
 NODE_AGENT = "sdo-lane-node-agent"
 NODE_AGENT_NAMESPACE = "kube-system"
 #: Where the agent mounts the node's ``/etc/containerd/certs.d``.
@@ -78,9 +81,17 @@ class EksLane(BaseModel):
     @field_validator("registry")
     @classmethod
     def ecr_registry(cls, value: str) -> str:
-        if not ECR_HOST.fullmatch(value):
-            raise ValueError("registry must be an ECR host <account>.dkr.ecr.<region>.amazonaws.com")
+        if not ECR_HOST.fullmatch(value) and not LOCAL_REGISTRY.fullmatch(value):
+            raise ValueError(
+                "registry must be an ECR host <account>.dkr.ecr.<region>.amazonaws.com "
+                "or a local kind host's registry localhost:<port>"
+            )
         return value
+
+    @property
+    def local_registry(self) -> bool:
+        """Whether the registry is a local kind host's (no ECR, no AWS credentials)."""
+        return LOCAL_REGISTRY.fullmatch(self.registry) is not None
 
     @field_validator("upstreams")
     @classmethod
@@ -100,7 +111,8 @@ class EksLane(BaseModel):
     @property
     def region(self) -> str:
         match = ECR_HOST.fullmatch(self.registry)
-        assert match is not None
+        if match is None:
+            raise EksLaneError(f"registry {self.registry} is not an ECR host: it has no AWS region")
         return match["region"]
 
 
@@ -168,6 +180,8 @@ class Ecr:
         return completed.stdout
 
     def login(self) -> None:
+        if self.lane.local_registry:
+            return
         now = self._clock()
         if self._logged_in_at is not None and now - self._logged_in_at < self.LOGIN_SECONDS:
             return
@@ -178,6 +192,8 @@ class Ecr:
         self._logged_in_at = now
 
     def ensure_repository(self, repository: str) -> None:
+        if self.lane.local_registry:
+            return  # a plain registry creates a repository on first push
         described = self._run(
             ["aws", "ecr", "describe-repositories", "--region", self.lane.region, "--repository-names", repository],
             capture_output=True,
@@ -214,6 +230,8 @@ class Ecr:
         target = f"{self.lane.registry}/{repository}:{tag}"
         self._call(["docker", "tag", local, target], timeout=60)
         self._call(["docker", "push", "--quiet", target])
+        if self.lane.local_registry:
+            return self._local_digest(target)
         digest = self._call(
             [
                 "aws",
@@ -236,6 +254,17 @@ class Ecr:
             raise EksLaneError(f"ECR returned no digest for {repository}:{tag}: {digest!r}")
         return digest
 
+    def _local_digest(self, target: str) -> str:
+        """The manifest digest the local registry stored for the pushed ``target``."""
+
+        found = self._call(["docker", "image", "inspect", "--format", "{{json .RepoDigests}}", target], timeout=60)
+        repository = target.rsplit(":", 1)[0]
+        for reference in json.loads(found):
+            name, _, digest = reference.partition("@")
+            if name == repository and re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+                return digest
+        raise EksLaneError(f"the local registry returned no digest for {target}: {found.strip()[-300:]}")
+
 
 def _holds(ecr: Ecr, reference: str) -> bool:
     """Whether ECR still stores the image a pinned ``<registry>/<repository>@sha256:...`` reference names."""
@@ -244,6 +273,8 @@ def _holds(ecr: Ecr, reference: str) -> bool:
     registry, _, repository = name.partition("/")
     if registry != ecr.lane.registry or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
         return False
+    if ecr.lane.local_registry:
+        return _local_holds(ecr, registry, repository, digest)
     found = ecr._run(
         [
             "aws",
@@ -267,6 +298,38 @@ def _holds(ecr: Ecr, reference: str) -> bool:
         return False
     # Credentials, throttling, network: "could not ask" is not "the images differ".
     raise EksLaneError(f"cannot tell whether ECR holds {reference}: {found.stderr.strip()[-600:]}")
+
+
+def _local_holds(ecr: Ecr, registry: str, repository: str, digest: str) -> bool:
+    """Whether the local registry still serves the manifest ``digest`` of ``repository`` (HTTP 200; 404 is gone)."""
+
+    found = ecr._run(
+        [
+            "curl",
+            "-s",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "-I",
+            "-H",
+            "Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, "
+            "application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json",
+            f"http://{registry}/v2/{repository}/manifests/{digest}",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    status = found.stdout.strip()
+    if status == "200":
+        return True
+    if status == "404":
+        return False
+    raise EksLaneError(
+        f"cannot tell whether the local registry holds {registry}/{repository}@{digest}: HTTP {status!r}"
+    )
 
 
 def publish_app_image(ecr: Ecr, local: str, declared: str) -> str:

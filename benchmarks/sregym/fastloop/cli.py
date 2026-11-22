@@ -305,7 +305,10 @@ def up_preflight(args: argparse.Namespace) -> None:
         if args.app != "sregym":
             raise ValueError("--platform eks supports SREGym applications only")
         if not getattr(args, "ecr_registry", None):
-            raise ValueError("--platform eks requires --ecr-registry <account>.dkr.ecr.<region>.amazonaws.com")
+            raise ValueError(
+                "--platform eks requires --ecr-registry <account>.dkr.ecr.<region>.amazonaws.com "
+                "(localhost:<port> on a local kind host)"
+            )
         if getattr(args, "parallel_root", None) is not None:
             raise ValueError("an EKS lane shares memory through the remote memory branch, not --parallel-root")
         for item in getattr(args, "ecr_tag", ()):
@@ -316,7 +319,9 @@ def up_preflight(args: argparse.Namespace) -> None:
     if getattr(args, "parallel_root", None) is not None and (args.dev_mount is None or args.app in {"toy", "gitlab"}):
         raise ValueError("--parallel-root requires an SREGym --dev-mount lane")
     # An EKS lane builds images on this host and pushes them; it never runs kind.
-    for executable in ("docker", "kubectl", "go", *(("aws",) if eks_platform else ("kind",))):
+    # (a local kind host's registry needs no AWS CLI)
+    aws_needed = eks_platform and not str(getattr(args, "ecr_registry", "")).startswith("localhost:")
+    for executable in ("docker", "kubectl", "go", *(("aws",) if aws_needed else () if eks_platform else ("kind",))):
         if shutil.which(executable) is None:
             raise ValueError(f"fastloop preflight: missing {executable}")
     subprocess.run(["docker", "info", "--format", "{{.ServerVersion}}"], check=True, capture_output=True, text=True)
@@ -2506,7 +2511,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="eks: attach to the existing EKS cluster KUBECONFIG reaches (implies --reuse-cluster-only; needs "
         "--no-dev-mount and --ecr-registry); images go to ECR, app images keep their names through a node mirror",
     )
-    up.add_argument("--ecr-registry", help="eks: ECR registry host <account>.dkr.ecr.<region>.amazonaws.com")
+    up.add_argument(
+        "--ecr-registry",
+        help="eks: ECR registry host <account>.dkr.ecr.<region>.amazonaws.com (a local kind host: localhost:<port>)",
+    )
     up.add_argument(
         "--ecr-tag", action="append", default=[], help="eks: KEY=VALUE tag on every ECR repository the lane creates"
     )

@@ -217,3 +217,37 @@ def test_a_virtual_lane_attaches_without_reading_the_hosts_kube_system() -> None
     assert not any("daemonset" in call for call in run.calls)
     with pytest.raises(eks.EksLaneError, match="virtual"):
         provider.run_on_nodes("true")
+
+
+LOCAL = "localhost:5611"
+
+
+def test_a_local_kind_hosts_registry_is_accepted_and_has_no_aws_region() -> None:
+    local = lane(registry=LOCAL)
+    assert local.local_registry and not lane().local_registry
+    with pytest.raises(eks.EksLaneError, match="no AWS region"):
+        _ = local.region
+
+
+def test_push_to_a_local_registry_calls_no_aws_and_returns_the_digest_docker_recorded() -> None:
+    digest = "sha256:" + "c" * 64
+    run = FakeRun(
+        [
+            (("docker", "tag"), 0, "", ""),
+            (("docker", "push"), 0, "", ""),
+            (("docker", "image", "inspect"), 0, json.dumps([f"{LOCAL}/sdo/sdo-controller@{digest}"]), ""),
+        ]
+    )
+    ecr = eks.Ecr(lane(registry=LOCAL), run=run, clock=lambda: 0.0)
+    assert eks.pin_image(ecr, "sdo-controller:t") == f"{LOCAL}/sdo/sdo-controller@{digest}"
+    assert not any(call[0] == "aws" or "login" in call for call in run.calls)
+    assert ["docker", "tag", "sdo-controller:t", f"{LOCAL}/sdo/sdo-controller:t"] in run.calls
+
+
+def test_a_local_registry_holds_a_digest_by_its_manifest_status() -> None:
+    digest = "sha256:" + "d" * 64
+    reference = f"{LOCAL}/sdo/sdo-controller@{digest}"
+    assert eks.EksProvider(lane(registry=LOCAL), "/k", run=FakeRun([(("curl",), 0, "200", "")])).holds(reference)
+    assert not eks.EksProvider(lane(registry=LOCAL), "/k", run=FakeRun([(("curl",), 0, "404", "")])).holds(reference)
+    with pytest.raises(eks.EksLaneError, match="cannot tell"):
+        eks.EksProvider(lane(registry=LOCAL), "/k", run=FakeRun([(("curl",), 0, "000", "")])).holds(reference)

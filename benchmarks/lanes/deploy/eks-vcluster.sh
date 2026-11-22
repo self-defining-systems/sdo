@@ -23,6 +23,9 @@
 #    context kind-<lane>).
 # A lane on a vcluster has no real kube-system and no node access (nodes and kube-system are the host's): plans that
 # need them go to a full-cluster eks lane (docs/eks.md, "Lanes as virtual clusters").
+# A local kind host cluster instead of EKS (EKS_LOCAL_KIND=1, host option eks.local_kind): the same lane (vcluster, its own
+# nodes, NetworkPolicy sync, local-path storage) on a kind cluster of this machine, for rehearsing a plan at no cost;
+# see eks-vcluster-local.sh.
 # Settings: EKS_REGION, EKS_ACCOUNT, EKS_HOST_CLUSTER, EKS_HOST_KUBECONFIG (required); EKS_INSTANCE_TYPE (m6i.xlarge),
 # EKS_NODES (2), EKS_NODE_VCPUS (4), EKS_AZ (<region>a), EKS_SYSTEM_INSTANCE (m6i.xlarge), EKS_VERSION (1.34),
 # EKS_VPC / EKS_SUBNETS (as eks-lane.sh), KARPENTER_VERSION (1.6.0), VCLUSTER_VERSION (0.37.7), EKS_HOST_LAST=1 (the
@@ -370,11 +373,27 @@ policies:
 YAML
 }
 
+# node_address SELECTOR: an address of the first node with that label the manager reaches.
+node_address() {
+  hk get nodes -l "$1" -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}'
+}
+
 system_entry() { # an address of the system node the manager reaches
   local ip
-  ip=$(hk get nodes -l sdo-role=system -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}')
+  ip=$(node_address sdo-role=system)
   [ -n "$ip" ] || die "the system node has no external address"
   echo "$ip"
+}
+
+# refresh_host_kubeconfig: the host cluster's admin kubeconfig at $HK, current.
+refresh_host_kubeconfig() {
+  aws eks update-kubeconfig --name "$HOST" --region "$REGION" --kubeconfig "$HK" >/dev/null 2>&1 || true
+}
+
+# release_lane_nodes LANE: give the lane's nodes back (Karpenter terminates them with the NodePool).
+release_lane_nodes() {
+  hk -n sdo-capacity delete deployment "capacity-$1" --ignore-not-found --wait=false >&2 || true
+  hk delete nodepool "lane-$1" --ignore-not-found --wait=false >&2 || true
 }
 
 write_lane_kubeconfig() { # LANE ENTRY OUT
@@ -418,7 +437,7 @@ cmd_up() {
   STAGE_FILE="$kc.stages"; : >"$STAGE_FILE"
   [ -z "$evidence" ] || mkdir -p "$evidence"
   host_exists || die "host cluster $HOST does not exist: run \`lanes host adopt\` first"
-  aws eks update-kubeconfig --name "$HOST" --region "$REGION" --kubeconfig "$HK" >/dev/null 2>&1 || true
+  refresh_host_kubeconfig
   lock_host
   scale_system 1
   wait_system
@@ -449,7 +468,7 @@ cmd_up() {
   hk -n sdo-capacity delete deployment "capacity-$lane" --ignore-not-found --wait=false >/dev/null
   stage nodes_ready
   local ip
-  ip=$(hk get nodes -l "sdo-lane=$lane" -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}')
+  ip=$(node_address "sdo-lane=$lane")
   [ -n "$ip" ] || die "no node address for the entry host"
   echo "$ip" >"$kc.entry"
   cp "$HK" "$kc.host" && chmod 600 "$kc.host"
@@ -462,8 +481,7 @@ cmd_down_quiet() {
   local lane=$1 kc=${2:-}
   KUBECONFIG=$HK vcluster delete "$lane" -n "$lane" --delete-namespace --wait=false >&2 || true
   hk delete namespace "$lane" --ignore-not-found --wait=false >&2 || true
-  hk -n sdo-capacity delete deployment "capacity-$lane" --ignore-not-found --wait=false >&2 || true
-  hk delete nodepool "lane-$lane" --ignore-not-found --wait=false >&2 || true
+  release_lane_nodes "$lane"
   [ -z "$kc" ] || rm -f "$kc" "$kc.entry" "$kc.stages" "$kc.host"
 }
 
@@ -476,7 +494,7 @@ cmd_down() {
     [ -z "$kc" ] || rm -f "$kc" "$kc.entry" "$kc.stages" "$kc.host"
     echo "EKS_LANE_DELETED cluster=$lane seconds=0"; return 0
   fi
-  aws eks update-kubeconfig --name "$HOST" --region "$REGION" --kubeconfig "$HK" >/dev/null 2>&1 || true
+  refresh_host_kubeconfig
   cmd_down_quiet "$lane" "$kc"
   # the lane's nodes are released when Karpenter has terminated them: wait for that so the lane's cost ends where it says
   end=$((SECONDS + ${EKS_DOWN_WAIT:-240}))
@@ -539,6 +557,9 @@ cmd_nodes() {
   [ $# -ge 2 ] || die "nodes KUBECONFIG SCRIPT"
   exec bash "$here/eks-lane.sh" nodes "$HK" "$2"
 }
+
+# A local kind host cluster replaces what needs AWS (eks-vcluster-local.sh redefines those functions).
+if [ "${EKS_LOCAL_KIND:-}" = 1 ]; then . "$here/eks-vcluster-local.sh"; fi
 
 verb=${1:-}
 [ $# -eq 0 ] || shift
