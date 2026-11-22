@@ -161,7 +161,19 @@ scale_system() { # N
   log "system node group of $HOST to $want"
   # a PodDisruptionBudget of the add-ons holds the last node in Terminating:Wait (a drain that cannot evict)
   if [ "$want" = 0 ]; then hk -n kube-system delete pdb coredns metrics-server --ignore-not-found >/dev/null 2>&1 || true; fi
-  eksctl scale nodegroup --cluster "$HOST" --name system --nodes "$want" --nodes-min 0 --nodes-max 2 --region "$REGION" >&2
+  eksctl scale nodegroup --cluster "$HOST" --name system --nodes "$want" --nodes-min 0 --nodes-max "$((want > 2 ? want : 2))" --region "$REGION" >&2
+}
+
+# The system nodes hold the control plane of every vcluster (about six per m6i.xlarge with the add-ons), so a lane's up
+# raises the group when the host's lanes (this one included) outgrow it, and never lowers it under running lanes.
+ensure_system() {
+  local lanes want have per=${EKS_LANES_PER_SYSTEM_NODE:-6}
+  lanes=$(hk get namespace -l sdo-lane-ns=true --no-headers 2>/dev/null | wc -l)
+  want=$(((lanes + 1 + per - 1) / per))
+  [ "$want" -ge 1 ] || want=1
+  have=$(system_nodes)
+  if [ "$have" -ge "$want" ] 2>/dev/null; then return 0; fi
+  scale_system "$want"
 }
 
 wait_system() { # a Ready system node
@@ -476,7 +488,7 @@ cmd_up() {
   host_exists || die "host cluster $HOST does not exist (or cannot be read): run \`lanes host adopt\` first"
   refresh_host_kubeconfig
   lock_host
-  scale_system 1
+  ensure_system
   wait_system
   # the lane's NodePool exists before the lock is let go: a down that counts the host's lanes then sees this one
   lane_nodepool "$lane"

@@ -360,3 +360,37 @@ func TestEksVclusterLaneRequestsNoEphemeralStorageByDefault(t *testing.T) {
 		t.Errorf("the chart's default ephemeral-storage request (3Gi) is kept; the lane's values must null it:\n%s", v)
 	}
 }
+
+// The system node group holds the control plane of every vcluster, so it follows the lane count: a lane's up raises it
+// when the host's lanes outgrow its nodes, never lowers it under lanes that are running, and the group's maximum
+// follows the size asked for (it was fixed at two nodes, so a host with twenty lanes ran them on one).
+func TestEksVclusterLaneUpGrowsTheSystemNodesWithTheLaneCountAndNeverShrinksThem(t *testing.T) {
+	s := newVcScript(t)
+	s.hostUp(t)
+	dir := filepath.Join(t.TempDir(), "kube")
+	for i := 1; i <= 7; i++ {
+		lane := fmt.Sprintf("vc%d", i)
+		if out, err := s.run(nil, "up", lane, filepath.Join(dir, lane)); err != nil {
+			t.Fatalf("up %s: %v\n%s", lane, err, out)
+		}
+	}
+	if !strings.Contains(s.log(), "scale nodegroup --cluster lanes-host-v --name system --nodes 2 --nodes-min 0 --nodes-max 2") {
+		t.Errorf("the seventh lane did not raise the system nodes to 2:\n%s", s.log())
+	}
+	for i := 8; i <= 13; i++ {
+		lane := fmt.Sprintf("vc%d", i)
+		if out, err := s.run(nil, "up", lane, filepath.Join(dir, lane)); err != nil {
+			t.Fatalf("up %s: %v\n%s", lane, err, out)
+		}
+	}
+	if !strings.Contains(s.log(), "--nodes 3 --nodes-min 0 --nodes-max 3") {
+		t.Errorf("thirteen lanes did not raise the system nodes to 3 (maximum 3):\n%s", s.log())
+	}
+	if strings.Contains(s.log(), "--nodes 1 --nodes-min 0 --nodes-max 2") && strings.Index(s.log(), "--nodes 1 --nodes-min") > strings.Index(s.log(), "--nodes 2 --nodes-min") {
+		t.Errorf("a lane's up lowered the system nodes under running lanes:\n%s", s.log())
+	}
+	before := strings.Count(s.log(), "scale nodegroup")
+	if out, err := s.run(nil, "up", "vc1", filepath.Join(dir, "vc1")); err != nil || strings.Count(s.log(), "scale nodegroup") != before {
+		t.Errorf("a repeated up scaled the system nodes: %v\n%s", err, out)
+	}
+}
