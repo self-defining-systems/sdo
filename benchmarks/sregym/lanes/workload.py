@@ -52,7 +52,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Protocol
 
 from benchmarks.sregym.adapter import CURRENT_WAIT_ENV, WaitKind, wait_for
-from benchmarks.sregym.lanes.agent import settings_for
+from benchmarks.sregym.lanes.agent import REQUESTED_IMAGES_FILE, requested_images, settings_for
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -457,6 +457,8 @@ def app_up(ctx: Context) -> tuple[int, dict[str, Any]]:
             # of the controller's claim on EKS, BENCH_EVIDENCE_MODE=pull).
             command += ["--evidence-root", evidence]
         ctx.long_runner(command, env=ctx.env, cwd=ctx.root)
+        # What this lane was asked to run: `fastloop.json` keeps what `up` delivered (an EKS lane: ECR digests).
+        (env_dir / REQUESTED_IMAGES_FILE).write_text(json.dumps(requested_images(command)) + "\n", encoding="utf-8")
     environment = json.loads((env_dir / "fastloop.json").read_text(encoding="utf-8"))
     if environment.get("namespace") != (ctx.args.get("namespace") or pack.namespace):
         raise AdapterError(
@@ -844,7 +846,9 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
     else:
         if not real.auth_file.is_file():
             raise AdapterError(f"agent credential file {real.auth_file} (operator.settings.auth_file) is missing")
-        if mismatch := real.image_mismatch(environment.get("images") or {}):
+        asked = env_dir / REQUESTED_IMAGES_FILE
+        built = json.loads(asked.read_text(encoding="utf-8")) if asked.is_file() else environment.get("images") or {}
+        if mismatch := real.image_mismatch(built):
             raise AdapterError(f"{mismatch}: rebuild the lane for this spec")
         # A real agent: SDO's own responder and closing turn, the spec's config overlay, and the credentials hook that
         # puts the credential file into the lane's Secret. The host's placeholder hook must not replace it.
