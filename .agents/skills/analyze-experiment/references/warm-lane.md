@@ -52,3 +52,15 @@ down` or a control-namespace wipe delivers queued jobs first.
   reflection usage or rollouts as complete. Delivery never grants repair authority.
 - Replay checkpoints of a queued row are captured after delivery from ConfigMaps
   read at the boundary; `unrecorded.json` records a failed capture.
+
+## Lanes workload rows: `reseed`
+
+On an SREGym lanes host with `SREGYM_LANES_RESEED=1`, `run` passes `--warm-lane --deliver-evidence-before-exit` to
+`fastloop run` when the lane's `lane-install.json` (application, namespace, images, agent provider/model/effort and a digest
+of the config overlay) equals the row's. The row record has `reseed`: `{attempted, reused, reason, violations, phase_seconds}`
+(from `results/<run-id>/warm-transaction.json`). `attempted: false` rows installed fresh and `reason` says why (`reseed is not
+enabled for this host`, `no earlier install on this lane`, `install identity differs: <fields>`); `attempted: true, reused:
+false` is a fallback to the fresh install and `reason` is fastloop's `<phase>:<error type>` (`no warm-transaction receipt`
+when fastloop left none). The grade has `reseed` = `reseeded | fallback | fresh` and `reseed_reason`: count them to see how
+many rows skipped the reinstall. `--deliver-evidence-before-exit` makes `fastloop run` finish delivering the sealed evidence
+into `results/` before it returns (the workload copies results out at that moment).

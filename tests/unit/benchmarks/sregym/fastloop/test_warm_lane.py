@@ -304,3 +304,45 @@ def test_every_run_obeys_the_same_lane_owner(tmp_path: Path, monkeypatch, warm: 
     monkeypatch.setattr(cli, "_run_owned", lambda _args: pytest.fail("competing caller mutated an owned lane"))
     with own_lane(locks, env.cluster), pytest.raises(WarmLaneBusy):
         cli._run(Namespace(run_dir=tmp_path, warm_lane=warm, agent="sdo"))
+
+
+@pytest.mark.parametrize("deliver", [False, True])
+def test_a_warm_run_delivers_its_sealed_evidence_before_returning_only_when_asked(
+    tmp_path: Path, monkeypatch, deliver: bool
+) -> None:
+    """A caller that copies the row's results out the moment ``run`` returns (the lanes workload) asks for delivery to
+    finish first; the default leaves delivery queued for the next row, as a long-lived warm lane does."""
+    from argparse import Namespace
+
+    from benchmarks.sregym.fastloop import cli, evidence_queue
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+    env = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="synthetic-lane",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="app",
+        application="synthetic",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+        worker_env={"FASTLOOP_HOST_LOCK_DIR": str(tmp_path / "locks")},
+    )
+    env.save()
+    closed: list[bool] = []
+
+    class Queue:
+        def close(self, *, drain: bool, timeout: float | None = None) -> None:
+            closed.append(drain)
+
+    monkeypatch.setattr(evidence_queue, "lane_queue", lambda _environment: Queue())
+    monkeypatch.setattr(cli, "_run_owned", lambda _args, **_kw: 0)
+    args = Namespace(run_dir=tmp_path, warm_lane=True, agent="sdo", deliver_evidence_before_exit=deliver)
+    assert cli._run(args) == 0
+    assert closed == [deliver]
+    parsed = cli.build_parser().parse_args(["run", "--run-dir", str(tmp_path), "--agent", "sdo", "--warm-lane"])
+    assert parsed.deliver_evidence_before_exit is False
+    parsed = cli.build_parser().parse_args(
+        ["run", "--run-dir", str(tmp_path), "--agent", "sdo", "--warm-lane", "--deliver-evidence-before-exit"]
+    )
+    assert parsed.deliver_evidence_before_exit is True
