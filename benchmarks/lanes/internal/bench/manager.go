@@ -826,7 +826,7 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 // preparedFor is the operator and app a build of x puts on l (before it has run).
 func (m *Manager) preparedFor(l *LaneFile, x *Experiment) *Prepared {
 	s := x.Measured()
-	p := &Prepared{Experiment: x.Name, Namespace: s.Namespace, AppPack: filepath.Join(m.inv.FuzzopsPath(s.Fuzzops, l.Host), s.App),
+	p := &Prepared{Experiment: x.Name, Namespace: s.Namespace, AppPack: m.appPackFor(l.Host, s),
 		Workload: s.Workload, WorkloadRev: s.Fuzzops}
 	if o := s.Operator; o.Hooks != "" {
 		p.Hooks, p.HooksPath, p.Command = o.Hooks, m.inv.HooksPath(o.Hooks, o.Revision, l.Host), m.inv.HookCommand[o.Hooks]
@@ -1020,7 +1020,7 @@ func (m *Manager) assign(ctx context.Context, reachable map[string]bool) {
 			}
 			l.Experiment, l.Seq, l.Attempt, l.Position = n, &q, p.Attempt, 1
 			st.Create = l.Gone
-			st.Recreate = !l.Gone && (l.Recreate || s.NeedsFreshCluster(q.Fault))
+			st.Recreate = !l.Gone && (l.Recreate || s.NeedsFreshCluster(q.Fault) || !swap && m.holdsOtherApp(l, s))
 			st.New.Fault = q.Fault
 			st.ReuseApp = reusableApp(s, st, q.Fault)
 			st.Swap = swap
@@ -1212,12 +1212,42 @@ func (m *Manager) freeLane(name string, s Spec, reachable map[string]bool) *Lane
 // released first (by reset), so that the next build can take it by swap. placed: only lanes that are not known to lack
 // cores: neither Gone nor one whose build waited for cores in vain (Unplaced); those come last.
 func (m *Manager) freeLaneOn(h string, placed bool, s Spec) *LaneFile {
+	var best *LaneFile
+	bestRank := 0
 	for _, l := range m.sortedLanes() {
 		if l.Host == h && m.inv.LaneAccepts(h, l.Lane, s) && l.State == LaneFree && l.Step == nil && !awaitsRelease(l) && !(placed && (l.Unplaced || l.Gone)) && m.eksLaneAdmitted(l, s) {
-			return l
+			if rank := m.laneRank(l, s); best == nil || rank < bestRank {
+				best, bestRank = l, rank
+			}
 		}
 	}
-	return nil
+	return best
+}
+
+// laneRank orders the free lanes a build may take: a lane that still holds the spec's app copy first (the build
+// keeps its cluster), then the rest in lane order (a cluster holding another app is made anew).
+func (m *Manager) laneRank(l *LaneFile, s Spec) int {
+	if m.holdsApp(l, s) {
+		return 0
+	}
+	return 1
+}
+
+// holdsApp: l's cluster exists and its last prepared state is s's app pack in s's namespace.
+func (m *Manager) holdsApp(l *LaneFile, s Spec) bool {
+	p := l.Prepared
+	return p != nil && !l.Gone && p.Ready && p.Namespace == s.Namespace && p.AppPack == m.appPackFor(l.Host, s)
+}
+
+// appPackFor is the absolute path of s's app pack on host h.
+func (m *Manager) appPackFor(h string, s Spec) string {
+	return filepath.Join(m.inv.FuzzopsPath(s.Fuzzops, h), s.App)
+}
+
+// holdsOtherApp: l's cluster holds a ready copy of another app than s's, so a build of s must make the cluster anew
+// (the build of a kept cluster refuses a namespace it was not made for, and the failure would cost a whole build first).
+func (m *Manager) holdsOtherApp(l *LaneFile, s Spec) bool {
+	return l.Prepared != nil && !l.Gone && l.Prepared.Ready && !m.holdsApp(l, s)
 }
 
 // preemptedBy is the Killed reason of a build cancelled by preemptWaitingBuilds; its end counts as no failure.
