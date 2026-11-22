@@ -15,7 +15,8 @@
 # What it cannot rehearse: ECR, the node agent, Karpenter, EBS and the VPC CNI policy agent. Everything of the lane itself
 # (the vcluster, its facts, NetworkPolicy sync, node-bound claims, the app and the subject) is the same.
 # Settings: EKS_LOCAL_WORKERS (14), EKS_LOCAL_REGISTRY_PORT (5611), KIND_NODE_IMAGE, EKS_LOCAL_UPSTREAMS (docker.io ghcr.io
-# quay.io registry.k8s.io).
+# quay.io registry.k8s.io), EKS_LOCAL_NODE_CPUS and EKS_LOCAL_NODE_MEMORY (a docker limit on every node of the host cluster, for a
+# machine others share: `--cpus` and `--memory` values; unset: none).
 
 LOCAL_WORKERS=${EKS_LOCAL_WORKERS:-14}
 REG_PORT=${EKS_LOCAL_REGISTRY_PORT:-5611}
@@ -154,7 +155,12 @@ cmd_host_up() {
   start_registry "$REG_NAME" "-p 127.0.0.1:$REG_PORT:5000"
   start_registry "$CACHE_NAME" "" -e REGISTRY_PROXY_REMOTEURL=https://registry-1.docker.io -v "$CACHE_NAME:/var/lib/registry"
   local node
-  for node in $(kind_nodes); do mirror_node "$node"; done
+  for node in $(kind_nodes); do
+    mirror_node "$node"
+    if [ -n "${EKS_LOCAL_NODE_CPUS:-}${EKS_LOCAL_NODE_MEMORY:-}" ]; then
+      docker update ${EKS_LOCAL_NODE_CPUS:+--cpus "$EKS_LOCAL_NODE_CPUS"} ${EKS_LOCAL_NODE_MEMORY:+--memory "$EKS_LOCAL_NODE_MEMORY" --memory-swap "$EKS_LOCAL_NODE_MEMORY"} "$node" >/dev/null
+    fi
+  done
   stage registry_ready
   stage host_up_total
   echo "EKS_HOST_READY cluster=$HOST created=$created"
