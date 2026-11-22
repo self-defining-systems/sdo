@@ -60,6 +60,14 @@ INSTALL_CONFIGMAPS = frozenset(
 )
 
 
+class ResidentStartMismatch(ValueError):
+    """The resident install differs from a fresh install; ``violations`` names every item (our text, safe to record)."""
+
+    def __init__(self, violations: list[str]) -> None:
+        super().__init__("eval: resident install differs from a fresh install: " + "; ".join(violations))
+        self.violations = tuple(violations)
+
+
 @dataclass(frozen=True)
 class ResidentStart:
     """What the warm transaction read after reseeding and proving the resident install."""

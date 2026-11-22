@@ -103,5 +103,9 @@ def test_the_warm_transaction_falls_back_when_the_resident_state_differs(tmp_pat
         kubeconfig=tmp_path / "kube", namespace="app", state_path=tmp_path, run_dir=tmp_path
     )
     lane.control, lane.config, lane.planned_commit = "app-sdo", None, PLANNED
-    with pytest.raises(ValueError, match="last_acknowledged_incident_id"):
+    with pytest.raises(ValueError, match="last_acknowledged_incident_id") as raised:
         lane._require_fresh_equivalent(state, datetime(2026, 1, 1, 0, 10, tzinfo=timezone.utc), PLANNED)
+    from benchmarks.sregym.fastloop.resident_start import ResidentStartMismatch
+
+    assert isinstance(raised.value, ResidentStartMismatch)
+    assert any("last_acknowledged_incident_id" in row for row in raised.value.violations)

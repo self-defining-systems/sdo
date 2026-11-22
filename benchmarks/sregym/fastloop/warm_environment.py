@@ -210,7 +210,11 @@ class WarmEnvironment:
 
     def _require_fresh_equivalent(self, state: dict[str, Any], not_before: datetime, revision: str) -> None:
         """The resident install starts this row only from what a fresh install would hold at injection."""
-        from benchmarks.sregym.fastloop.resident_start import ResidentStart, resident_start_violations
+        from benchmarks.sregym.fastloop.resident_start import (
+            ResidentStart,
+            ResidentStartMismatch,
+            resident_start_violations,
+        )
         from benchmarks.sregym.fastloop.setup_proof import digest
 
         env = self.environment
@@ -230,7 +234,7 @@ class WarmEnvironment:
             )
         )
         if violations:
-            raise ValueError("eval: resident install differs from a fresh install: " + "; ".join(violations))
+            raise ResidentStartMismatch(violations)
 
     def full_reset(self) -> None:
         if self.environment.shared_accepted_id:
