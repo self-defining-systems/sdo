@@ -673,3 +673,26 @@ def test_a_branch_that_cannot_be_rewound_fails_the_reset_and_the_controller_runs
     with pytest.raises(HookError, match="no rewind command"):
         hooks.reset_lane(lane(tmp_path), steps)
     assert rec.calls[-1] == "start"
+
+
+def test_reset_gives_the_lane_a_fresh_observability_stack(tmp_path: Path) -> None:
+    """A reset returns the app to its golden copy but left the control namespace's Prometheus running: its emptyDir TSDB
+    (and WAL) carried every earlier run, so on the third use of a warm EKS lane it was OOM-killed at its 1 Gi limit,
+    crash-looped on WAL replay, the request-metrics detector lost its source (a head verdict timed out at 904 s) and the
+    evidence capture failed. The reset replaces the stack, with the controller still stopped, before it starts again."""
+    rec = Recorder()
+    steps = hooks.ResetSteps(
+        resume_controller=lambda: None,
+        reset_incidents=lambda: rec("incidents"),
+        retire_standby=lambda: rec("retire"),
+        stop_controller=lambda: rec("stop"),
+        restore_repository=lambda head: rec(f"repo {head[:1]}"),
+        app_reset=lambda: (rec("app") or {"match": True, "total_s": 3.0}),
+        start_controller=lambda: rec("start"),
+        wait_standby=lambda: rec("standby"),
+        repository_state=lambda: {"head": "h" * 40, "status": "", "outcomes": ""},
+        controller_idle=lambda: "",
+        fresh_observability=lambda: rec("observability"),
+    )
+    hooks.reset_lane(lane(tmp_path), steps)
+    assert rec.calls == ["incidents", "retire", "stop", "repo h", "app", "observability", "start", "standby"]
