@@ -203,6 +203,20 @@ def test_any_change_to_what_the_deploy_establishes_invalidates_the_receipt(tmp_p
     assert decision["changed"] == [field]
 
 
+def test_a_changed_object_set_names_the_objects_that_differ(tmp_path, fingerprint):
+    """A refused reuse on a live lane must say which objects moved, or the next run learns nothing."""
+    sealed = replace(
+        fingerprint, live_objects={"app/Service/web": "a", "app/Service/gone": "b", "<cluster>/Node/n": "c"}
+    )
+    proof.seal_application_receipt(tmp_path, sealed, ADMISSION)
+    now = replace(sealed, live_objects={"app/Service/web": "a2", "<cluster>/Node/n": "c", "app/Service/new": "d"})
+
+    decision = proof.application_reuse_decision(tmp_path, now)
+
+    assert decision["changed"] == ["live_objects"]
+    assert decision["differing"] == {"live_objects": ["app/Service/gone", "app/Service/new", "app/Service/web"]}
+
+
 def test_a_tampered_receipt_never_reuses(tmp_path, fingerprint):
     path = proof.seal_application_receipt(tmp_path, fingerprint, ADMISSION)
     document = json.loads(path.read_text())
