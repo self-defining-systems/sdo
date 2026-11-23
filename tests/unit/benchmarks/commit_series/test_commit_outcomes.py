@@ -231,3 +231,18 @@ def test_a_controller_that_never_evaluates_again_ends_the_wait_at_the_resolution
     got = run_commit(lane, SERIES, 1, bounds.at(1, 3), "exec:sdo-demo-r1")  # type: ignore[arg-type]
     assert 300 <= lane.t - lane.pushed_at <= 300 + 15, lane.t
     assert got["incident_opened"] is False
+
+
+class GappyLane(Lane):
+    """A healthy controller whose persisted evaluations arrive in bursts with 15 s gaps between them."""
+
+    def observed_at(self) -> float | None:
+        return self.t - (self.t % 15)
+
+
+def test_the_normal_gaps_between_evaluations_do_not_hold_the_quiet_window() -> None:
+    bounds = Bounds(verdict=60, steady=10, resolution=900, poll=5, steady_between=20, quiet_cap=180)
+    lane = GappyLane("accepted")
+    got = run_commit(lane, SERIES, 1, bounds.at(1, 3), "exec:sdo-demo-r1")  # type: ignore[arg-type]
+    assert got["incident_opened"] is False
+    assert lane.t <= 45, lane.t
