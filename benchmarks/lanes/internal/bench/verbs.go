@@ -327,12 +327,15 @@ func (m *Manager) consumeRelease(l *LaneFile) { _ = os.Remove(m.Root.releasePath
 type HostStatus struct {
 	At        time.Time `json:"at"`
 	Load5     float64   `json:"load5"`
+	Cores     int       `json:"cores,omitempty"` // the host's CPU count, when it reports it
 	Builds    int       `json:"builds"`
 	Free      int64     `json:"free_bytes,omitempty"` // free space of the staging filesystem
 	Error     string    `json:"error,omitempty"`
 	DownSince time.Time `json:"down_since,omitempty"`
 	// Unhealthy is why the host gets no new lanes or steps (the health gate, hosthealth.go); "" when it may.
 	Unhealthy string `json:"unhealthy,omitempty"`
+	// Overloaded is why an eks host starts no build or run: its manager's machine is over max_load5_per_core ("" when not).
+	Overloaded string `json:"overloaded,omitempty"`
 	// Warnings are findings that stop nothing (a shared RDMA netns).
 	Warnings []string `json:"warnings,omitempty"`
 	Inflight []string `json:"inflight,omitempty"` // in-flight markers on the host's lanes
@@ -473,7 +476,7 @@ func StatusOf(root Root, only string) (BenchStatus, error) {
 	}
 	for name, h := range inv.Hosts {
 		hv := HostView{Name: name, HostStatus: hs[name], Lanes: len(h.Clusters), Busy: busy[name], MaxBuilds: h.BuildLimit(),
-			MaxLoad5: h.MaxLoad5, MinFree: h.MinFree}
+			MaxLoad5: h.LoadBudget(hs[name].Cores), MinFree: h.MinFree}
 		st.Hosts = append(st.Hosts, hv)
 		st.Inflight = append(st.Inflight, hs[name].Inflight...)
 	}
@@ -554,6 +557,9 @@ func Status(root Root, only string, w io.Writer) error {
 		if h.Unhealthy != "" {
 			fmt.Fprintf(w, " [NO NEW WORK, %s]", h.Unhealthy)
 		}
+		if h.Overloaded != "" {
+			fmt.Fprintf(w, " [NO NEW BUILD OR RUN, %s]", h.Overloaded)
+		}
 		for _, wn := range h.Warnings {
 			fmt.Fprintf(w, " [warning: %s]", wn)
 		}
@@ -600,6 +606,8 @@ func Status(root Root, only string, w io.Writer) error {
 		}
 		if l.Idle != "" && l.State == LaneFree && l.Step == nil {
 			fmt.Fprintf(w, "  idle %s, not bound: %s", time.Since(l.Since).Round(time.Minute), l.Idle)
+		} else if l.Idle != "" && l.State == LaneReady && l.Step == nil {
+			fmt.Fprintf(w, "  its next run waits: %s", l.Idle)
 		}
 		fmt.Fprintln(w)
 	}

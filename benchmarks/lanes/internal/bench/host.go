@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -83,7 +84,10 @@ const (
 
 // Probe is what a host's probe returns.
 type Probe struct {
-	Load5    float64           `json:"load5"`
+	Load5 float64 `json:"load5"`
+	// Cores is the host's CPU count (0: not reported); a host whose steps run on the manager's machine is gated by its
+	// load per core.
+	Cores    int               `json:"cores,omitempty"`
 	Free     int64             `json:"free_bytes"`
 	Steps    map[string]string `json:"steps"`
 	Inflight []string          `json:"inflight,omitempty"`
@@ -98,7 +102,7 @@ var startGrace = 30 * time.Second
 
 // ProbeStaging reads the steps' states under staging on this machine.
 func ProbeStaging(staging string, steps map[string]string, fuzzops []string) Probe {
-	p := Probe{Steps: map[string]string{}}
+	p := Probe{Steps: map[string]string{}, Cores: runtime.NumCPU()}
 	for lane, id := range steps {
 		dir := filepath.Join(staging, lane, id)
 		switch {

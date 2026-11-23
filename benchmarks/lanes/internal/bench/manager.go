@@ -104,7 +104,11 @@ type Manager struct {
 	eksCleanAt map[string]time.Time
 	eksHeldWhy map[string]string
 	eksWhy     map[string]string // lane -> why an EKS lane gets no new steps
-	EksCheck   func(ctx context.Context, lane, kubeconfig string) error
+	// overSeen is when each eks host's manager machine was last seen over its load gate; loadRetried counts, per item,
+	// the failures written off to that load (managerload.go).
+	overSeen    map[string]time.Time
+	loadRetried map[string]int
+	EksCheck    func(ctx context.Context, lane, kubeconfig string) error
 }
 
 // raiseLaneAlarm appends an alarm about one lane to alarms.jsonl (once per call: the caller raises it when the lane turns bad).
@@ -449,7 +453,7 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 				err = fmt.Errorf("preflight failed, not admitted: %v", perr)
 			}
 		}
-		st := HostStatus{At: m.now().UTC(), Load5: pr.Load5, Free: pr.Free, Inflight: pr.Inflight}
+		st := HostStatus{At: m.now().UTC(), Load5: pr.Load5, Cores: pr.Cores, Free: pr.Free, Inflight: pr.Inflight}
 		// Only a reading of the host's kernel feeds the health gate. A host that does not answer at all is the
 		// unreachable state (bound.go), which has its own recovery.
 		if pr.Canary != nil {
@@ -477,6 +481,9 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 		st.Warnings = append(append([]string(nil), st.Warnings...), m.clusterSourceWarnings(ctx, name)...)
 		st.Warnings = append(st.Warnings, m.toolWarnings(ctx, name)...)
 		m.hosts[name] = st
+		if st.Overloaded = m.observeMachineLoad(name); st.Overloaded != "" {
+			m.hosts[name] = st
+		}
 		if min := m.inv.Hosts[name].MinFreeBytes(); min > 0 && pr.Free > 0 && pr.Free < min {
 			m.alarm(AlarmDiskFloor, name, fmt.Sprintf("%s free, below the floor %s: no new build starts until it is above", size(pr.Free), m.inv.Hosts[name].MinFree))
 		} else {
@@ -968,6 +975,10 @@ func (m *Manager) continueSeq(ctx context.Context, l *LaneFile) {
 	if s.Hold {
 		return // a pool lane waits, prepared, for a claim
 	}
+	if why := m.machineLoad(l.Host); why != "" {
+		l.Idle = why // start refuses the run; the lane says why it waits
+		return
+	}
 	st, err := m.expStep(ctx, l, x, StepRun)
 	if err != nil {
 		m.logf("lane %s: %v", l.Lane, err)
@@ -1133,6 +1144,9 @@ func (m *Manager) explainIdle(waiting map[string]string, reachable map[string]bo
 	for _, l := range m.sortedLanes() {
 		if l.State != LaneFree || l.Step != nil || len(names) == 0 {
 			l.Idle, l.IdleLogged = "", time.Time{}
+			if l.State == LaneReady && l.Step == nil {
+				l.Idle = m.machineLoad(l.Host) // a ready lane whose next run waits for the manager's machine
+			}
 			continue
 		}
 		byWhy := map[string][]string{}
@@ -1203,6 +1217,8 @@ func (m *Manager) buildBlock(h string, s Spec, reachable map[string]bool) string
 		return fmt.Sprintf("host %s has no checkout of the spec's pinned fuzzops or hooks", h)
 	case !reachable[h]:
 		return fmt.Sprintf("host %s is unreachable: %s", h, m.hosts[h].Error)
+	case m.machineLoad(h) != "":
+		return m.machineLoad(h)
 	case m.builds(h) >= hs.BuildLimit():
 		return fmt.Sprintf("host %s runs max_builds (%d) builds", h, hs.BuildLimit())
 	}
@@ -1569,7 +1585,9 @@ func (m *Manager) adopt(ctx context.Context, l *LaneFile) error {
 			// so it counts as no failure; the lane is offered last (Unplaced).
 			m.unbind(l, "build cancelled: it waited for cores")
 		default:
-			l.BuildFailures++
+			if x == nil || l.Seq == nil || !m.lostToLoad(l, ref, res, fmt.Sprintf("%s/%v/build", x.Name, *l.Seq)) {
+				l.BuildFailures++ // a build that timed out on an overloaded manager machine is not the lane's failure
+			}
 			if res.Fresh {
 				l.Gone, l.Recreate = false, false
 			}
@@ -1590,11 +1608,18 @@ func (m *Manager) adopt(ctx context.Context, l *LaneFile) error {
 			}
 		}
 	case StepRun:
-		if x != nil {
+		// A first run that timed out on an overloaded manager machine is the machine's failure: no run is recorded, so the
+		// item stays queued with its attempts, and the lane's cluster is made anew (what the run did to it is unknown).
+		writtenOff := x != nil && ref.Run != nil && ref.Run.Position == 1 && l.Seq != nil && res.Status == StatusInvalid &&
+			m.lostToLoad(l, ref, res, fmt.Sprintf("%s/%v", x.Name, *l.Seq))
+		if x != nil && !writtenOff {
 			m.endRun(x, l, ref.Run, res)
 		}
 		switch {
 		case res.LaneDown != "":
+		case writtenOff:
+			l.GateFailures, l.Recreate = 0, m.inv.Hosts[l.Host].RecreatesAfterFailure(l.Lane)
+			m.unbind(l, "the manager's machine was overloaded: "+clip(res.Reason, 120))
 		case res.Status == StatusNotReady:
 			l.GateFailures++
 			switch {

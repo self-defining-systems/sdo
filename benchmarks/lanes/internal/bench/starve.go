@@ -36,9 +36,15 @@ type starveState struct {
 
 const laneKeyPrefix = "lane:"
 
-// laneGate says why lane gets no new steps ("" when it may): crash-looping pods, or starvation.
+// laneGate says why lane gets no new steps ("" when it may): the manager's machine is over its load gate (eks hosts),
+// crash-looping pods, or starvation.
 func (m *Manager) laneGate(lane string) string {
 	m.loadHealth()
+	if l := m.lanes[lane]; l != nil {
+		if why := m.machineLoad(l.Host); why != "" {
+			return why
+		}
+	}
 	if why := m.crash[lane]; why != "" {
 		return why
 	}

@@ -42,6 +42,7 @@ type fakeWorld struct {
 	killed  []string
 	cleaned []string
 	free    map[string]int64
+	load    map[string]float64 // the 5-minute load each host's probe reports (0: idle)
 	release chan struct{}
 	// ledgerReqs is every ledger reconciliation asked of a host; ledgerReleased is what the fake host reports released.
 	ledgerReqs     []LedgerReq
@@ -49,7 +50,7 @@ type fakeWorld struct {
 }
 
 func newWorld(t *testing.T) *fakeWorld {
-	w := &fakeWorld{mode: map[string]string{}, steps: map[string]*fakeStep{}, free: map[string]int64{}, release: make(chan struct{})}
+	w := &fakeWorld{mode: map[string]string{}, steps: map[string]*fakeStep{}, free: map[string]int64{}, load: map[string]float64{}, release: make(chan struct{})}
 	t.Cleanup(func() { close(w.release) })
 	return w
 }
@@ -99,7 +100,7 @@ func (o fakeOps) Probe(_ context.Context, steps map[string]string, _ []string) (
 	}
 	o.w.mu.Lock()
 	defer o.w.mu.Unlock()
-	p := Probe{Steps: map[string]string{}, Free: o.w.free[o.host]}
+	p := Probe{Steps: map[string]string{}, Free: o.w.free[o.host], Load5: o.w.load[o.host]}
 	for lane, id := range steps {
 		if fs := o.w.steps[id]; fs != nil && fs.host == o.host {
 			p.Steps[lane] = fs.state

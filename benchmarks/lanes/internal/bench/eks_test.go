@@ -429,7 +429,7 @@ func TestBenchEksHostLaneLifecycle(t *testing.T) {
 	l := newLab(t)
 	inv, err := os.ReadFile(l.root.path("hosts.yaml"))
 	must(t, err)
-	s := strings.Replace(string(inv), "clusters: [c1]}", `clusters: [c1], provider: eks, eks: {region: us-west-2, account: "123456789012", budget_per_hour: 3, vcpu_quota: 16, idle_timeout: 1s}}`, 1)
+	s := strings.Replace(string(inv), "clusters: [c1]}", `clusters: [c1], provider: eks, eks: {region: us-west-2, account: "123456789012", budget_per_hour: 3, vcpu_quota: 16, idle_timeout: 1s, max_load5_per_core: 0}}`, 1)
 	must(t, os.WriteFile(l.root.path("hosts.yaml"), []byte(s), 0o644))
 	t.Setenv("PATH", testdata("fakeeks")+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("HOST_CANARY_PROCSYS", "/nonexistent") // a canary read would fail: the eks host must not take one
@@ -587,7 +587,7 @@ func TestBenchEksLanesAreMadeInParallel(t *testing.T) {
 	l := newLab(t)
 	inv, err := os.ReadFile(l.root.path("hosts.yaml"))
 	must(t, err)
-	s := strings.Replace(string(inv), "clusters: [c1]}", `clusters: [c1, c2], provider: eks, eks: {region: us-west-2, account: "123456789012", budget_per_hour: 3, vcpu_quota: 32, idle_timeout: 1s}}`, 1)
+	s := strings.Replace(string(inv), "clusters: [c1]}", `clusters: [c1, c2], provider: eks, eks: {region: us-west-2, account: "123456789012", budget_per_hour: 3, vcpu_quota: 32, idle_timeout: 1s, max_load5_per_core: 0}}`, 1)
 	must(t, os.WriteFile(l.root.path("hosts.yaml"), []byte(s), 0o644))
 	t.Setenv("PATH", testdata("fakeeks")+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("FAKE_EKS_CREATE_SECONDS", "2")
