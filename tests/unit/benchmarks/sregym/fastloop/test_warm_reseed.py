@@ -254,6 +254,8 @@ def test_pause_syncs_then_proves_the_setup_and_only_then_moves_the_host_copy_to_
     monkeypatch.setattr(warm_environment, "reseed_workspace", move)
     monkeypatch.setattr(setup_proof, "collect_fingerprint", fingerprint)
     monkeypatch.setattr(warm_scope, "check_cluster_scope", lambda *args: calls.append("scope"))
+    monkeypatch.setattr(warm_scope, "check_application_scope", lambda *args: calls.append("scope"))
+    monkeypatch.setattr(setup_proof, "collect_application_fingerprint", lambda environment: None)
     cluster.lane._assert_idle = lambda: None  # type: ignore[method-assign]
     cluster.lane.planned_commit = planned
     cluster.lane.pause()
@@ -462,3 +464,48 @@ def test_the_warm_restore_replaces_the_apps_trace_stores_before_restoring_and_be
     cluster.lane.worker = None
     cluster.lane.reset_changed()
     assert events == ["validate", "restart", "restore"]
+
+
+def _application_fingerprint(**changes):
+    from benchmarks.sregym.fastloop.setup_proof import ApplicationFingerprint
+
+    base = {
+        "lane": "synthetic",
+        "code_revision": "a" * 40,
+        "images": {"controller": "synthetic"},
+        "app_manifests": "synthetic",
+        "live_objects": {"<cluster>/ClusterRole/base": "baseline", "app/Service/app": "service-before"},
+        "tools": {"fixture": "synthetic"},
+    }
+    return ApplicationFingerprint(**{**base, **changes})
+
+
+@pytest.mark.parametrize("cluster_changed", [False, True])
+def test_pause_proves_the_cluster_scope_from_the_application_setup_a_lane_seals_at_admission(
+    cluster, monkeypatch, cluster_changed
+):
+    """SREGym lanes never run the no-fault setup rehearsal that writes ``setup-proof/``; every second row fell back
+    at pause ("warm lane requires unchanged cluster configuration and a sealed passing setup") because the check read
+    only that receipt. The application setup receipt each passing admission seals carries the same cluster scope."""
+    import benchmarks.sregym.fastloop.setup_proof as setup_proof
+
+    setup_proof.seal_application_receipt(
+        cluster.environment.run_dir / setup_proof.APPLICATION_RECEIPTS, _application_fingerprint(), {"passed": True}
+    )
+    objects = {"<cluster>/ClusterRole/base": "changed" if cluster_changed else "baseline", "app/Service/app": "after"}
+    monkeypatch.setattr(warm_environment, "pause_for_recovery", lambda *a, **k: None)
+    monkeypatch.setattr(warm_environment, "sync_existing", lambda native: None)
+    monkeypatch.setattr(warm_environment, "reseed_workspace", lambda workspace, commit: None)
+    monkeypatch.setattr(setup_proof, "collect_fingerprint", lambda environment: None)
+    monkeypatch.setattr(
+        setup_proof,
+        "collect_application_fingerprint",
+        lambda environment: _application_fingerprint(live_objects=objects),
+    )
+    cluster.lane._assert_idle = lambda: None  # type: ignore[method-assign]
+    cluster.lane.planned_commit = PLANNED
+    if cluster_changed:
+        with pytest.raises(ValueError, match="ClusterRole/base"):
+            cluster.lane.pause()
+    else:
+        cluster.lane.pause()

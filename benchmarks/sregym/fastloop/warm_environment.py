@@ -265,12 +265,27 @@ class WarmEnvironment:
         # that differs from the memory the controller's volume holds ("installed accepted-memory commit differs from
         # accepted workspace"), which is exactly what moving the host copy to the planned commit makes of it.
         sync_existing(native_install_config(self.config))
-        from benchmarks.sregym.fastloop.setup_proof import RECEIPTS, collect_fingerprint
-        from benchmarks.sregym.fastloop.warm_scope import check_cluster_scope
-
-        check_cluster_scope(
-            self.environment.run_dir / RECEIPTS, collect_fingerprint(self.environment), self.environment.namespace
+        from benchmarks.sregym.fastloop.setup_proof import (
+            APPLICATION_RECEIPTS,
+            RECEIPTS,
+            collect_application_fingerprint,
+            collect_fingerprint,
         )
+        from benchmarks.sregym.fastloop.warm_scope import check_application_scope, check_cluster_scope
+
+        # The full fingerprint also proves the host copy holds the memory on the controller's volume.
+        fingerprint = collect_fingerprint(self.environment)
+        receipts = self.environment.run_dir / RECEIPTS
+        if (receipts / "latest.json").is_file():
+            check_cluster_scope(receipts, fingerprint, self.environment.namespace)
+        else:
+            # A lane that never ran the no-fault setup rehearsal (every SREGym lane) proves its cluster scope against
+            # the application setup it sealed after its last passing admission.
+            check_application_scope(
+                self.environment.run_dir / APPLICATION_RECEIPTS,
+                collect_application_fingerprint(self.environment),
+                self.environment.namespace,
+            )
         if self.planned_commit:
             # The row's own memory: the application below is restored from this source, and the reseed seeds the
             # controller's volume from it. The earlier row's memory on the volume is replaced there, not read here.
