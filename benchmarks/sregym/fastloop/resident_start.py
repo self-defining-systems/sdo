@@ -9,7 +9,8 @@ What a fresh install holds at injection, and the rule each item follows here:
 
 - planned memory: the accepted head and the evaluated setup revision equal the row's planned commit (pass-1 base or
   the pass-2 snapshot) exactly;
-- incident work: no dispatch, pending batch, finding, drift event, closure, failed closure or acknowledged incident;
+- incident work: no dispatch, pending batch, drift event, closure, failed closure or acknowledged incident, and no
+  finding first seen before the boundary;
 - evaluation state: every history row and detector clear time postdates this row's boundary (the resume), so no
   detector judgement carries over;
 - start-up period: established. A fresh install establishes it before injection (its admission waits for it); a
@@ -34,7 +35,6 @@ IDLE = "DISPATCH_STATE_IDLE"
 #: Incident and closure state a fresh install never holds before injection.
 NO_CARRY_OVER = (
     "pending_batch",
-    "finding_states",
     "drift_events",
     "failed_closures",
     "pending_closure",
@@ -169,6 +169,13 @@ def resident_start_violations(start: ResidentStart) -> list[str]:
         violations.append("history has evaluations from before this row")
     if any(stale(value) for value in (state.get("detector_clear_since") or {}).values()):
         violations.append("detector_clear_since has clear times from before this row")
+    # A finding the reseeded controller observed itself (a clue detector during its warm-up, as on a fresh install) is
+    # this row's; one first seen at or before the boundary, or with no first-seen time, carried over.
+    if any(
+        stale((finding or {}).get("first_seen_at") if isinstance(finding, dict) else None)
+        for finding in (state.get("finding_states") or {}).values()
+    ):
+        violations.append("finding_states carries over from an earlier row")
     startup = state.get("startup") or {}
     if _time(startup.get("established_at")) is None:
         violations.append("startup period is not established")

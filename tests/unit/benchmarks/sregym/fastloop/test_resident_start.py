@@ -90,6 +90,7 @@ def mutated(path, value):
         (mutated("pending_closure", {"incident_id": "app-1"}), "pending_closure"),
         (mutated("pending_batch", {"k": 1}), "pending_batch"),
         (mutated("finding_states", {"drift": {}}), "finding_states"),
+        (mutated("finding_states", {"drift": {"first_seen_at": BEFORE}}), "finding_states"),
         (mutated("drift_events", [{"classification": "unexplained"}]), "drift_events"),
         (mutated("failed_closures", ["app-1"]), "failed_closures"),
         (mutated("history", [{"detector_id": "x", "evaluated_at": BEFORE, "status": "clear"}]), "history"),
@@ -171,3 +172,10 @@ def test_pods_and_replicasets_renamed_by_a_rollout_do_not_make_onboarding_differ
     assert onboarding_matches(record, reference, commit)
     record["objects"] = record["objects"][1:]  # a configuration object is missing
     assert not onboarding_matches(record, reference, commit)
+
+
+def test_a_finding_the_reseeded_controller_observed_itself_is_this_rows():
+    """Recorded on EKS (fast-eks8 cold-astro, lane s3): the reseeded controller's own warm-up findings (astronomy's clue
+    detectors) were taken for carry-over and the warm start fell back ('finding_states carries over'). The controller
+    state was retired at the boundary; a finding first seen after it belongs to this row, as on a fresh install."""
+    assert resident_start_violations(mutated("finding_states", {"clue": {"first_seen_at": AFTER}})) == []
