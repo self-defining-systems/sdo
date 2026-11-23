@@ -71,42 +71,67 @@ def test_the_slice_memory_max_bounds_the_lanes_when_no_budget_is_configured(monk
         live.assert_slice_budget("sdo-eval.slice", _plan(lane_memory_cap_gib=60), {"h1": "eks"})
 
 
-def _proc(tmp_path: Path, *, available_gib: float, host_avg60: float, own_avg60: float) -> dict[str, Path]:
+def _psi(path: Path, avg60: float) -> Path:
+    path.write_text(f"some avg10=0.00 avg60={avg60:.2f} avg300=0.00 total=1\nfull avg10=0 avg60=0 avg300=0 total=0\n")
+    return path
+
+
+def _proc(tmp_path: Path, *, available_gib: float, host_avg60: float) -> dict[str, Path]:
     meminfo = tmp_path / "meminfo"
     meminfo.write_text(f"MemAvailable: {int(available_gib * 1024**2)} kB\n")
-    files = {"meminfo": meminfo}
-    for name, avg60 in (("host", host_avg60), ("own", own_avg60)):
-        files[name] = tmp_path / f"{name}.pressure"
-        files[name].write_text(f"some avg10=0.00 avg60={avg60:.2f} avg300=0.00 total=1\n")
-    return files
+    own = tmp_path / "own.slice"
+    own.mkdir()
+    for resource in ("cpu", "io", "memory"):
+        _psi(own / f"{resource}.pressure", 0)
+    return {"meminfo": meminfo, "host": _psi(tmp_path / "host.pressure", host_avg60), "own": own}
 
 
-def test_an_eks_only_plan_gates_on_the_runners_own_cgroup_and_reserves_no_lane_cap(tmp_path: Path) -> None:
-    """A foreign tenant stalling the host (host PSI 91) and 40 GiB free do not hold a row whose lane is a cluster."""
+def _admission(tmp_path: Path, platforms: dict[str, str], **proc: float):
     from benchmarks.sregym.eval import live
 
-    proc = _proc(tmp_path, available_gib=40, host_avg60=91, own_avg60=0)
-    eks = {"h1": "eks", "h2": "eks", "v1": "eks"}
-    check = live.admission_check(
-        _plan(), eks, meminfo=proc["meminfo"], host_pressure=proc["host"], own_pressure=lambda: proc["own"]
+    files = _proc(tmp_path, **proc)  # type: ignore[arg-type]
+    admission = live.admission(
+        _plan(),
+        platforms,
+        meminfo=files["meminfo"],
+        host_pressure=files["host"],
+        own_cgroup=lambda: files["own"],
+        loadavg=lambda: 6000.0,
     )
-    assert check() is None
-    proc["own"].write_text("some avg10=0.00 avg60=50.00 avg300=0.00 total=1\n")  # our own processes stall: refuse
-    assert "avg60=50.00" in (check() or "")
+    return admission, files
 
 
-def test_any_kind_lane_keeps_the_host_wide_gate(tmp_path: Path) -> None:
+def test_an_eks_only_plan_gates_on_the_runners_own_cgroup_not_on_host_load_or_pressure(tmp_path: Path) -> None:
+    """Foreign tenants (host load 6000, host memory PSI 91) and 40 GiB free do not hold a row whose lane is a cluster;
+    the runner's own CPU, IO or memory stalls do."""
+    admission, files = _admission(tmp_path, {"h1": "eks", "h2": "eks", "v1": "eks"}, available_gib=40, host_avg60=91)
+    assert admission.loadavg() == 0.0
+    assert admission.host_check() is None
+    for resource in ("cpu", "io", "memory"):
+        _psi(files["own"] / f"{resource}.pressure", 50)
+        assert f"{resource} pressure some avg60=50.00" in (admission.host_check() or "")
+        _psi(files["own"] / f"{resource}.pressure", 0)
+    files["meminfo"].write_text(f"MemAvailable: {16 * 1024**2} kB\n")  # under the 32 GiB reserve: refuse
+    assert "reserve" in (admission.host_check() or "")
+
+
+def test_any_kind_lane_keeps_the_host_load_and_host_memory_gates(tmp_path: Path) -> None:
+    admission, files = _admission(tmp_path, {"h1": "eks", "h2": "kind", "v1": "eks"}, available_gib=200, host_avg60=91)
+    assert admission.loadavg() == 6000.0
+    assert "avg60=91.00" in (admission.host_check() or "")
+    _psi(files["host"], 0)
+    files["meminfo"].write_text(f"MemAvailable: {40 * 1024**2} kB\n")  # 40 GiB < 32 GiB kind lane cap + 32 GiB reserve
+    assert "lane cap" in (admission.host_check() or "")
+
+
+def test_an_eks_plan_with_no_readable_cgroup_refuses(tmp_path: Path) -> None:
     from benchmarks.sregym.eval import live
 
-    proc = _proc(tmp_path, available_gib=200, host_avg60=91, own_avg60=0)
-    mixed = {"h1": "eks", "h2": "kind", "v1": "eks"}
-    check = live.admission_check(
-        _plan(), mixed, meminfo=proc["meminfo"], host_pressure=proc["host"], own_pressure=lambda: proc["own"]
-    )
-    assert "avg60=91.00" in (check() or "")
-    proc["host"].write_text("some avg10=0.00 avg60=0.00 avg300=0.00 total=1\n")
-    proc["meminfo"].write_text(f"MemAvailable: {40 * 1024**2} kB\n")  # 40 GiB < 32 GiB kind lane cap + 32 GiB reserve
-    assert "lane cap" in (check() or "")
+    def unknown() -> Path:
+        raise ValueError("eval: no cgroup v2 entry in /proc/self/cgroup")
+
+    admission = live.admission(_plan(), {"h1": "eks", "h2": "eks", "v1": "eks"}, own_cgroup=unknown)
+    assert "cgroup v2" in (admission.host_check() or "")
 
 
 def test_lane_platforms_read_each_lane_environment_and_an_unreadable_one_is_kind(tmp_path: Path) -> None:

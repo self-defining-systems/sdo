@@ -116,8 +116,8 @@ def memory_pressure_avg60(path: Path = PRESSURE_FILE) -> float:
     raise ValueError(f"eval: host memory pressure (PSI) unavailable at {path}: no 'some avg60' line")
 
 
-def own_memory_pressure_file(cgroup_file: Path = CGROUP_FILE, root: Path = CGROUP_ROOT) -> Path:
-    """The memory PSI file of this process's cgroup (v2): the stalls of the runner and of every child it starts.
+def own_cgroup_dir(cgroup_file: Path = CGROUP_FILE, root: Path = CGROUP_ROOT) -> Path:
+    """This process's cgroup (v2) directory: its ``*.pressure`` files are the stalls of the runner and its children.
 
     A row on a remote lane (EKS) puts only the runner and the agent CLI on this host, so their own cgroup, not the
     whole host, says whether a row started now would stall. Without a cgroup v2 entry the pressure is unknown and the
@@ -129,8 +129,23 @@ def own_memory_pressure_file(cgroup_file: Path = CGROUP_FILE, root: Path = CGROU
         raise ValueError(f"eval: no cgroup v2 entry readable at {cgroup_file}") from exc
     for line in lines:
         if line.startswith("0::"):
-            return root / line.removeprefix("0::").lstrip("/") / "memory.pressure"
-    raise ValueError(f"eval: no cgroup v2 entry in {cgroup_file}; this process's memory pressure is unknown")
+            return root / line.removeprefix("0::").lstrip("/")
+    raise ValueError(f"eval: no cgroup v2 entry in {cgroup_file}; this process's pressure is unknown")
+
+
+def cgroup_pressure_refusal(directory: Path, max_avg60: float) -> str | None:
+    """Why the cgroup at ``directory`` stalls too much on CPU, IO or memory (PSI ``some avg60``), or ``None``.
+
+    An unreadable pressure file is a refusal too.
+    """
+    for resource in ("cpu", "io", "memory"):
+        try:
+            avg60 = memory_pressure_avg60(directory / f"{resource}.pressure")
+        except ValueError as exc:
+            return str(exc).removeprefix("eval: ")
+        if avg60 >= max_avg60:
+            return f"runner cgroup {resource} pressure some avg60={avg60:.2f} >= {max_avg60:.2f}"
+    return None
 
 
 def host_memory_refusal(

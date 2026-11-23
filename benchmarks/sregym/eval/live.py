@@ -16,13 +16,22 @@ from __future__ import annotations
 import importlib
 import json
 import logging
+import os
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import tomllib
 
-from benchmarks.sregym.adapter import HostMemoryPolicy, host_check, own_memory_pressure_file
+from benchmarks.sregym.adapter import (
+    HostMemoryPolicy,
+    cgroup_pressure_refusal,
+    host_check,
+    host_memory_refusal,
+    own_cgroup_dir,
+)
 from benchmarks.sregym.adapter.host_memory import MEMINFO_FILE, PRESSURE_FILE
+from benchmarks.sregym.adapter.lane_resources import host_available_memory
 from benchmarks.sregym.eval.cell import CellContext
 from benchmarks.sregym.eval.fastloop_row import FastloopRowRunner, RecordAccountant, RowSettings, TranscriptPresenceGate
 from benchmarks.sregym.eval.page import FallbackPageHook, KubectlPageCluster
@@ -78,33 +87,50 @@ def assert_slice_budget(parent: str | None, plan: Plan, platforms: Mapping[str, 
         )
 
 
-def admission_check(
+@dataclass(frozen=True)
+class Admission:
+    """What a cell start waits on: the load figure compared with ``max_load`` and the memory/pressure probe."""
+
+    loadavg: Callable[[], float]
+    host_check: Callable[[], str | None]
+
+
+def admission(
     plan: Plan,
     platforms: Mapping[str, str],
     *,
     meminfo: Path = MEMINFO_FILE,
     host_pressure: Path = PRESSURE_FILE,
-    own_pressure: Callable[[], Path] = own_memory_pressure_file,
-) -> Callable[[], str | None]:
-    """The host memory probe a cell start waits on, following where the plan's lanes run.
+    own_cgroup: Callable[[], Path] = own_cgroup_dir,
+    loadavg: Callable[[], float] = lambda: os.getloadavg()[0],
+) -> Admission:
+    """The cell-start gates, following where the plan's lanes run.
 
-    A kind lane's nodes are containers on this host: a cell needs MemAvailable for the lane's cap plus the reserve and
-    a host that is not stalling on memory (host-wide PSI). An EKS lane's nodes are in its cluster and put only the
-    runner and the agent CLI here, so a plan of EKS lanes reserves no lane cap and reads the PSI of the runner's own
-    cgroup: another tenant thrashing in its own cgroup does not hold the row, the runner's own stalls do.
+    A kind lane's nodes are containers on this host: a cell waits for the host load average under ``max_load``,
+    MemAvailable for the lane's cap plus the reserve, and a host that is not stalling on memory (host-wide PSI). An EKS
+    lane's nodes are in its cluster and put only the runner and the agent CLI here, so a plan of EKS lanes is gated on
+    the runner's own cgroup (CPU, IO and memory PSI under ``max_own_pressure``) and the reserve alone: other tenants
+    loading or thrashing the host in their own cgroups do not hold the row, the runner's own stalls do.
     """
     config = plan.config
     policy = HostMemoryPolicy(
         reserve_bytes=int(config.host_reserve_gib * 1024**3), max_pressure_avg60=config.max_memory_pressure
     )
     if _host_lanes(plan, platforms):
-        return host_check(int(config.lane_memory_cap_gib * 1024**3), policy, meminfo=meminfo, pressure=host_pressure)
-    try:
-        pressure = own_pressure()
-    except ValueError as exc:
-        reason = str(exc).removeprefix("eval: ")
-        return lambda: reason
-    return host_check(0, policy, meminfo=meminfo, pressure=pressure)
+        cap = int(config.lane_memory_cap_gib * 1024**3)
+        return Admission(loadavg, host_check(cap, policy, meminfo=meminfo, pressure=host_pressure))
+
+    def own_check() -> str | None:
+        try:
+            directory = own_cgroup()
+            available = host_available_memory(meminfo)
+        except ValueError as exc:
+            return str(exc).removeprefix("eval: ")
+        if (reason := cgroup_pressure_refusal(directory, config.max_own_pressure)) is not None:
+            return reason
+        return host_memory_refusal(0, policy, available_bytes=available, pressure_avg60=0.0)
+
+    return Admission(lambda: 0.0, own_check)
 
 
 class NoStore:
@@ -166,7 +192,10 @@ def run_live(config_path: Path, plan: Plan) -> int:
     )
     root = config.runs_root / config.stage
     plan.write(root / "plan.json")
-    load_gate = LoadGate(config.max_load, config.admit_spacing_seconds, host_check=admission_check(plan, platforms))
+    gates = admission(plan, platforms)
+    load_gate = LoadGate(
+        config.max_load, config.admit_spacing_seconds, loadavg=gates.loadavg, host_check=gates.host_check
+    )
     rows = Scheduler(plan, context, store, ResultsTable(root), gate=load_gate).run()
     summary = {
         "cells": len(rows),

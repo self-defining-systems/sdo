@@ -14,7 +14,7 @@ from benchmarks.sregym.adapter import (
     assert_lane_budget,
     host_memory_refusal,
     memory_pressure_avg60,
-    own_memory_pressure_file,
+    own_cgroup_dir,
     parse_memory_size,
     running_lane_caps,
 )
@@ -201,20 +201,18 @@ def test_any_other_inspect_failure_still_fails() -> None:
         running_lane_caps("c5-", default_node_bytes=16 * Gi, run=run)
 
 
-def test_own_memory_pressure_file_is_the_psi_of_this_process_cgroup(tmp_path: Path) -> None:
+def test_own_cgroup_dir_is_this_process_cgroup_v2(tmp_path: Path) -> None:
     cgroup = tmp_path / "cgroup"
     cgroup.write_text("0::/user.slice/user-1.slice/user@1.service/app.slice/eks-row.service\n")
     root = tmp_path / "sys"
-    assert own_memory_pressure_file(cgroup, root) == (
-        root / "user.slice/user-1.slice/user@1.service/app.slice/eks-row.service/memory.pressure"
-    )
+    assert own_cgroup_dir(cgroup, root) == root / "user.slice/user-1.slice/user@1.service/app.slice/eks-row.service"
 
 
 @pytest.mark.parametrize("text", ["", "1:name=systemd:/x\n"])
-def test_own_memory_pressure_file_without_cgroup_v2_fails_closed(tmp_path: Path, text: str) -> None:
+def test_own_cgroup_dir_without_cgroup_v2_fails_closed(tmp_path: Path, text: str) -> None:
     cgroup = tmp_path / "cgroup"
     cgroup.write_text(text)
     with pytest.raises(ValueError, match="cgroup v2"):
-        own_memory_pressure_file(cgroup, tmp_path)
+        own_cgroup_dir(cgroup, tmp_path)
     with pytest.raises(ValueError, match="cgroup v2"):
-        own_memory_pressure_file(tmp_path / "missing", tmp_path)
+        own_cgroup_dir(tmp_path / "missing", tmp_path)
