@@ -149,6 +149,41 @@ def test_another_agent_configuration_is_not_reseeded(tmp_path):
     assert "agent" in record["reseed"]["reason"]
 
 
+def _with_learning(settings: dict, **learning: object) -> dict:
+    return {**settings, "config": {**settings["config"], "learning": learning}}
+
+
+def test_arms_that_differ_only_in_the_closing_turn_share_the_install(tmp_path):
+    """Arms of one item run in turn on one lane (cold, p1, p2) and only p1 keeps its closing turn: the setting is
+    applied by every row's own controller install, so it must not make the lane's install look like another one."""
+    lane = Lane(tmp_path)
+    settings = real_settings(tmp_path)
+    lane.row(**RESEED, BENCH_OPERATOR=str(operator_file(tmp_path, _with_learning(settings, closing_turn=False))))
+    code, record = lane.row(**RESEED, BENCH_OPERATOR=str(operator_file(tmp_path, settings)))
+    assert code == 0, record
+    assert "--warm-lane" in lane.calls[1], record["reseed"]
+    code, record = lane.row(
+        **RESEED, BENCH_OPERATOR=str(operator_file(tmp_path, _with_learning(settings, closing_turn=False)))
+    )
+    assert code == 0, record
+    assert "--warm-lane" in lane.calls[2], record["reseed"]
+    # The row's own controller still gets the setting: its config overlay carries it.
+    overlay = json.loads((tmp_path / "exec3" / "operator-config.yaml").read_text())
+    assert overlay["learning"] == {"closing_turn": False}
+
+
+def test_any_other_learning_setting_is_still_install_identity(tmp_path):
+    lane = Lane(tmp_path)
+    settings = real_settings(tmp_path)
+    lane.row(**RESEED, BENCH_OPERATOR=str(operator_file(tmp_path, settings)))
+    code, record = lane.row(
+        **RESEED, BENCH_OPERATOR=str(operator_file(tmp_path, _with_learning(settings, replay="off")))
+    )
+    assert code == 0, record
+    assert "--warm-lane" not in lane.calls[1]
+    assert "config_digest" in record["reseed"]["reason"]
+
+
 def test_the_same_agent_configuration_is_reseeded(tmp_path):
     lane = Lane(tmp_path)
     settings = real_settings(tmp_path)

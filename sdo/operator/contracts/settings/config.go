@@ -169,6 +169,7 @@ type Learning struct {
 	Replay             string `yaml:"replay" doc:"replay and corpus capture: on or off"`
 	ReflectionGuidance string `yaml:"reflection_guidance" doc:"the agent's learning instructions: baseline learns from each confirmed cause; generalize compares related incident signatures and parameterizes a shared playbook; generalize-spec favors predicates visible in resource spec or status. None changes the detector SDK or the validator"`
 	ForceReflection    bool   `yaml:"force_reflection" doc:"always dispatch reflection after a verified closure (not with a frozen mode)"`
+	ClosingTurn        bool   `yaml:"closing_turn" doc:"whether a closed incident is learned from: the responder session's closing turn and cleanup turns, and Go's corpus capture. Off: detection, response, verification and the committed outcome are unchanged, but the incident's work ends when its outcome is acknowledged and nothing is learned (the ledger's reflection_skipped_reason is closing_turn_off); a committed source repair is still deployed. For runs whose learning is discarded (a benchmark arm that measures a fixed memory)"`
 	HealthyBaseline    bool   `yaml:"healthy_baseline" doc:"opt-in detector gate: a proposal that changes learned detector source is replayed against healthy snapshots a runner recorded with sdo-operator baseline-write (one sdktest.Snapshot JSON per file, outside the accepted repository); a detector that fires on one fails validation, and a missing baseline fails closed. It never reads benchmark verdicts"`
 }
 
@@ -219,7 +220,7 @@ func Default() Config {
 		Detection: Detection{
 			SelfHealHold: Duration(DefaultSelfHealHold), StabilityWindow: Duration(15 * time.Second), DriftBatchWindow: Duration(20 * time.Second), RequestMetricsShadow: false,
 		},
-		Learning: Learning{Replay: "on", ReflectionGuidance: "baseline"},
+		Learning: Learning{Replay: "on", ReflectionGuidance: "baseline", ClosingTurn: true},
 		Deployment: Deployment{
 			MaxAttempts: 3, BuildTimeout: Duration(DefaultBuildTimeout), BuildBudget: Duration(DefaultBuildBudget),
 			RolloutTimeout: Duration(DefaultRolloutTimeout),
@@ -321,6 +322,9 @@ func (c Config) Validate() error {
 	}
 	if c.Mode != ModeOperate && c.Learning.ForceReflection {
 		bad("learning.force_reflection", "conflicts with mode %s, which keeps memory frozen", c.Mode)
+	}
+	if c.Learning.ForceReflection && !c.Learning.ClosingTurn {
+		bad("learning.force_reflection", "conflicts with learning.closing_turn off, which learns nothing")
 	}
 	if c.Deployment.MaxAttempts < 1 {
 		bad("deployment.max_attempts", "%d must be at least 1", c.Deployment.MaxAttempts)

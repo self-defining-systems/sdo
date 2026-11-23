@@ -829,6 +829,25 @@ RESEED_ENV = "SREGYM_LANES_RESEED"
 WARM_RECEIPT = "warm-transaction.json"
 
 
+#: Operator settings (``settings.config`` paths) that are a row's, not its install's: every row's controller is
+#: installed from the row's own config overlay (fresh, or by the warm transaction's reseed), and these change only what
+#: follows the row's closure. ``learning.closing_turn`` differs between the arms of one item that share a lane (only
+#: the arm whose memory seeds another learns), so it must not make the next arm's lane look like another install.
+PER_ROW_CONFIG = (("learning", "closing_turn"),)
+
+
+def _install_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    """The config overlay without the per-row settings (``PER_ROW_CONFIG``); a section they leave empty goes too."""
+    kept = json.loads(json.dumps(dict(config)))
+    for section, key in PER_ROW_CONFIG:
+        part = kept.get(section)
+        if isinstance(part, dict):
+            part.pop(key, None)
+            if not part:
+                del kept[section]
+    return kept
+
+
 def install_identity(environment: Mapping[str, Any], built: Mapping[str, str], real: Any) -> dict[str, Any]:
     """What a row needs the lane's SDO install to be: the application, the images, the agent and its configuration.
 
@@ -849,7 +868,9 @@ def install_identity(environment: Mapping[str, Any], built: Mapping[str, str], r
             "provider": real.provider,
             "model": real.model,
             "effort": real.effort,
-            "config_digest": hashlib.sha256(json.dumps(real.config, sort_keys=True).encode()).hexdigest(),
+            "config_digest": hashlib.sha256(
+                json.dumps(_install_config(real.config), sort_keys=True).encode()
+            ).hexdigest(),
         }
     return {
         "application": str(environment.get("application", "")),

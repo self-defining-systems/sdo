@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"encoding/json"
+	"maps"
 	"testing"
 
 	"sdo.dev/operator/broker"
@@ -71,5 +72,25 @@ func TestPageOnlyResponseMarksTheAgentWorkerEnvironment(t *testing.T) {
 	}
 	if environment[PageOnlyEnvironment] != "1" {
 		t.Errorf("%s = %q, want 1", PageOnlyEnvironment, environment[PageOnlyEnvironment])
+	}
+}
+
+// learning.closing_turn only changes what follows a closure: every agent worker, the responder included, runs as
+// with the closing turn on.
+func TestClosingTurnOffLeavesTheAgentWorkerEnvironmentUnchanged(t *testing.T) {
+	launch := &contracts.ControllerConfig{Namespace: "shop", ControlNamespace: "sdo-system"}
+	policy := settings.Default()
+	policy.Agent.Model = "m"
+	on, err := AgentWorkerEnvironment(launch, policy, telemetry.NewRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy.Learning.ClosingTurn = false
+	off, err := AgentWorkerEnvironment(launch, policy, telemetry.NewRegistry())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !maps.Equal(on, off) {
+		t.Fatalf("agent worker environment changed with the closing turn off:\n on  %v\n off %v", on, off)
 	}
 }

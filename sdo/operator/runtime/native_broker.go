@@ -121,8 +121,12 @@ type NativeIncidentBroker struct {
 	// success closure (ClosingLearns).
 	Recording bool
 	// PageOnly is response.page_only: the responder is a plain agent, so no closing, cleanup or learning turn runs.
-	PageOnly     bool
-	CleanupTurns int
+	PageOnly bool
+	// ClosingTurnOff is learning.closing_turn off: a closure commits its outcome as usual, but requires no
+	// reflection (ClosingTurnOffReason), so no closing turn, cleanup turn or corpus capture follows its
+	// acknowledgment; a committed source repair is still published.
+	ClosingTurnOff bool
+	CleanupTurns   int
 
 	// SourceGate is the controller's view of its own activity, read before a
 	// source deploy that runs after the closure. Nil is never busy.
@@ -428,6 +432,12 @@ func (n NativeIncidentBroker) processClosure(ctx context.Context, closure Incide
 			}
 			if !hasResponderSession(closure) && !stageOnlyClosure(closure) {
 				ledger.OutcomeDocument.ReflectionSkipReason = "no_session"
+			}
+			if n.ClosingTurnOff && ledger.RequiresReflection {
+				// Decided with the outcome and persisted, so a restart never changes it. The outcome document
+				// itself is the one a learning closure commits: only the ledger says why nothing follows it.
+				ledger.RequiresReflection = false
+				ledger.ReflectionSkippedReason = ClosingTurnOffReason
 			}
 			if err := n.saveLedger(ledger); err != nil {
 				return err
