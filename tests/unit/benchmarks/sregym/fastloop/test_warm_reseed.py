@@ -509,3 +509,25 @@ def test_pause_proves_the_cluster_scope_from_the_application_setup_a_lane_seals_
             cluster.lane.pause()
     else:
         cluster.lane.pause()
+
+
+def test_inspect_accepts_a_lane_whose_last_row_left_only_its_baseline_proof_to_this_start(cluster, monkeypatch):
+    """The warm reset restores the app and proves its baseline before anything is injected: that is the proof the
+    previous row left to this start, so its marker is no reason to fall back (an unrecovered row still is)."""
+    from benchmarks.sregym.fastloop.wipe import AttemptMarker, LaneInjectionState
+
+    class Reached(Exception):
+        pass
+
+    def planned_application_unchanged(*_args, **_kwargs):
+        raise Reached
+
+    LaneInjectionState(cluster.environment.kubeconfig, "app").finish(["some_problem"], {"some_problem": []})
+    cluster.lane._assert_idle = lambda: None  # type: ignore[method-assign]
+    cluster.lane.incoming_data_faults = ()
+    monkeypatch.setattr(warm_environment, "planned_application_unchanged", planned_application_unchanged)
+    marker = AttemptMarker(cluster.environment.run_dir)
+    marker.begin()
+    marker.end((), baseline_proof_owed=True)
+    with pytest.raises(Reached):
+        cluster.lane.inspect()

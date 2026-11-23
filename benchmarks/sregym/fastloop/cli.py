@@ -74,7 +74,9 @@ from benchmarks.sregym.fastloop.wipe import (
     AttemptMarker,
     KubectlLaneCluster,
     LaneInjectionState,
+    Tier2Trigger,
     application_pod_problems,
+    baseline_proof_owed,
     run_tier2,
     unrecovered_rows,
 )
@@ -1060,6 +1062,23 @@ def row_start_tier2(args: argparse.Namespace, *, wiped_at_start: bool, incidents
     )
 
 
+def baseline_proof_at_next_start(args: argparse.Namespace, *, marked: bool, row_start_tier2: bool) -> bool:
+    """Whether the run's last row leaves the proof of its restored baseline to the lane's next start.
+
+    Only a row that pays its recovery at its end (``--end-of-row-recovery`` or ``--warm-lane``) on a lane whose attempt
+    marker the next start reads (``marked``: it wiped at start or reseeded warm) defers: that start proves the baseline
+    before it injects (the warm reset grades the restored app; otherwise the first no-fault rehearsal grades it afresh),
+    and every reader that does not prove it sees the marker pending. Repeated cleanup passes keep their oracles.
+    """
+
+    return (
+        marked
+        and not row_start_tier2
+        and getattr(args, "cleanup_passes", 1) == 1
+        and (getattr(args, "end_of_row_recovery", False) or getattr(args, "warm_lane", False))
+    )
+
+
 def _warm_reset_args(args: argparse.Namespace, environment: FastloopEnvironment) -> argparse.Namespace:
     # A warm caller retains accepted knowledge by default. An explicitly
     # selected planned revision still owns the ordinary reset semantics.
@@ -1215,17 +1234,21 @@ def rehearse_with_repair(
     repair: ApplicationRepair,
     *,
     revision: str | None,
+    fresh: bool = False,
 ) -> None:
     """Run the no-fault rehearsal; a failing traffic probe recreates the application once, then re-checks.
 
     The rehearsal is the setup health gate: pods Ready does not prove the app serves traffic, and a warm
     lane can carry a broken app from the previous row. Every arm gets the same rule, and
     ``setup-repair.json`` records what was repaired. Only an app that still fails after the recreate rejects the row.
+    ``fresh`` grades the live app even when a healthy rehearsal is cached: the proof a previous row left to this start.
     """
     from benchmarks.sregym.fastloop.wipe import Tier1Receipt, Tier2Reason, Tier2Trigger
 
     def rehearse() -> dict[str, Any]:
-        return worker.request("rehearse_oracles", problem_id=problem_id, timeout=wait_for(WaitKind.LONG_OPERATION))
+        return worker.request(
+            "rehearse_oracles", problem_id=problem_id, fresh=fresh, timeout=wait_for(WaitKind.LONG_OPERATION)
+        )
 
     rehearsal = rehearse()
     if rehearsal.get("success") is not True and not repair.done:
@@ -1369,6 +1392,7 @@ def _application_needs_redeploy(
     current_data_faults: tuple[str, ...] = (),
     *,
     revision: str | None = None,
+    start_proves_baseline: bool = False,
 ) -> Tier2Reason | None:
     """Decide tier 2 from incoming faults, lane injection facts, live application health and its source."""
     from benchmarks.sregym.fastloop.clean_start import assert_clean_baseline
@@ -1394,6 +1418,7 @@ def _application_needs_redeploy(
         lane_state=LaneInjectionState(environment.kubeconfig, environment.namespace),
         current_data_faults=current_data_faults,
         source_change=lambda: _deployed_source_change(environment, revision),
+        start_proves_baseline=start_proves_baseline,
     )
 
 
@@ -1740,10 +1765,14 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
         json.dumps({key: item.model_dump(mode="json") for key, item in descriptions.items()}, indent=2) + "\n",
         encoding="utf-8",
     )
+    deferred_tier2 = row_start_tier2(
+        args, wiped_at_start=tier1 is not None, incidents=len(stream) if stream else args.incidents
+    )
     config = LoopConfig(
         ablation_arm=arm_memory.arm if arm_memory else None,
-        row_start_tier2=row_start_tier2(
-            args, wiped_at_start=tier1 is not None, incidents=len(stream) if stream else args.incidents
+        row_start_tier2=deferred_tier2,
+        baseline_proof_at_next_start=baseline_proof_at_next_start(
+            args, marked=tier1 is not None or warm_preparation is not None, row_start_tier2=deferred_tier2
         ),
         delivery_record_path=environment.run_dir / "image_delivery.jsonl",
         image_delivery=environment.image_delivery,
@@ -1769,9 +1798,21 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
         # revision while the head (and everything readable there) stays where it is.
         environment.app_revision = _application_revision(args, environment)
     marker = AttemptMarker(environment.run_dir)
+    # The previous row recovered its fault and left the proof of the restored baseline to this start. A warm reset
+    # proved it (its restore grades the app afresh); any other start grades it in its first no-fault rehearsal.
+    prove_owed_baseline = (
+        tier1 is not None
+        and warm_preparation is None
+        and (owed := marker.pending()) is not None
+        and owed.trigger is Tier2Trigger.BASELINE_PROOF_OWED
+    )
     redeploy_reason = (
         _application_needs_redeploy(
-            environment, marker, incoming_data_faults, revision=_application_revision(args, environment)
+            environment,
+            marker,
+            incoming_data_faults,
+            revision=_application_revision(args, environment),
+            start_proves_baseline=True,
         )
         if tier1 is not None
         else None
@@ -1807,6 +1848,7 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
                     rehearsal_index,
                     repair,
                     revision=_application_revision(args, environment),
+                    fresh=prove_owed_baseline and rehearsal_index == 0,
                 )
         deployed = time.monotonic()
         described = deployed
@@ -1916,7 +1958,7 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
             except Exception:
                 logger.exception("evidence copy and gate after a failed run")
             raise
-    marker.end(unrecovered_rows(records))
+    marker.end(unrecovered_rows(records), baseline_proof_owed=baseline_proof_owed(records))
     _print_summary(records)
     print(f"results: {config.results_path}")
     evidence_copied = _finish_evidence(args, environment, results_dir)

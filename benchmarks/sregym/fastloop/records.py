@@ -294,6 +294,9 @@ class IncidentRecord(_PersistedModel):
     recovery_oracle: OracleVerdict | None = None
     #: Every recovery-oracle sample until the app settled; only the last decides residue.
     recovery_oracle_samples: list[RecoveryOracleSample] = Field(default_factory=list)
+    #: The row recovered its fault and left the proof of the restored baseline (``recovery_oracle``, then ``None``) to
+    #: the lane's next start, which proves it before injecting; the lane's attempt marker says so until then.
+    baseline_proof_deferred: bool = False
     diagnosis_grade: DiagnosisGrade | None = None
     diagnosis: str = ""
     mitigation: str = ""

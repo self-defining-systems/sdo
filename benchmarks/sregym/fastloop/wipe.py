@@ -364,6 +364,9 @@ class Tier2Trigger(StrEnum):
     RESTORE_INVARIANT = "restore_invariant"
     PODS_UNHEALTHY = "pods_unhealthy"
     TRAFFIC_PROBE_FAILED = "traffic_probe_failed"
+    #: The previous row recovered its fault and verified the cleanup, and left the proof of the restored baseline to
+    #: the next start. Only a start that proves the baseline itself before injecting may keep the app.
+    BASELINE_PROOF_OWED = "baseline_proof_owed"
 
 
 @dataclass(frozen=True)
@@ -375,6 +378,7 @@ class Tier2Reason:
 
 
 UNRECOVERED_PREFIX = "unrecovered: "
+BASELINE_PROOF_OWED_LINE = "baseline-proof-owed"
 
 
 class AttemptMarker:
@@ -382,13 +386,17 @@ class AttemptMarker:
 
     A survivor with no content means the attempt died; one that names rows means they were injected and
     the harness could not verify their recovery. Either makes the next row recreate the application.
+    One that says only ``baseline-proof-owed`` means every row was recovered with its cleanup verified, and the proof
+    of the restored baseline (the traffic probe, sustained pod health and the oracle on the healthy app) was left to
+    the next start: a start that proves it before injecting accepts the lane, every other reader sees it pending.
     Data-level fault history is owned separately by LaneInjectionState.
     """
 
     def __init__(self, run_dir: Path) -> None:
         self.path = run_dir / MARKER_NAME
 
-    def pending(self) -> Tier2Reason | None:
+    def pending(self, *, start_proves_baseline: bool = False) -> Tier2Reason | None:
+        """Why the lane is not known clean; ``start_proves_baseline`` is a start that proves the baseline itself."""
         try:
             content = self.path.read_text(encoding="utf-8")
         except FileNotFoundError:
@@ -400,26 +408,40 @@ class AttemptMarker:
                 Tier2Trigger.PREVIOUS_ROW_UNRECOVERED,
                 f"previous row injected and not verified recovered: {rows.strip()}",
             )
+        if BASELINE_PROOF_OWED_LINE in lines:
+            if start_proves_baseline:
+                return None
+            return Tier2Reason(
+                Tier2Trigger.BASELINE_PROOF_OWED,
+                "previous row recovered its fault and left the proof of the restored baseline to the next start",
+            )
         return Tier2Reason(Tier2Trigger.UNCLEAN_ATTEMPT, "previous attempt did not end cleanly")
 
     def begin(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(f"{os.getpid()}\n", encoding="utf-8")
 
-    def end(self, unrecovered: Collection[str]) -> None:
-        """The run ended: forget the attempt unless it left unrecovered rows."""
-        if not unrecovered:
+    def end(self, unrecovered: Collection[str], *, baseline_proof_owed: bool = False) -> None:
+        """The run ended: forget the attempt unless it left unrecovered rows or a baseline proof to the next start."""
+        if not unrecovered and not baseline_proof_owed:
             self.path.unlink(missing_ok=True)
             return
         lines = [str(os.getpid())]
         if unrecovered:
             lines.append(f"{UNRECOVERED_PREFIX}{', '.join(unrecovered)}")
+        elif baseline_proof_owed:
+            lines.append(BASELINE_PROOF_OWED_LINE)
         self.path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _attempted(record: Any) -> bool:
     injection = record.injection
     return isinstance(injection, Injected) or (isinstance(injection, NotInjected) and injection.stage == "injection")
+
+
+def baseline_proof_owed(records: Iterable[Any]) -> bool:
+    """Whether a row left the proof of its restored baseline to the next start (``baseline_proof_deferred``)."""
+    return any(_attempted(record) and getattr(record, "baseline_proof_deferred", False) for record in records)
 
 
 def unrecovered_rows(records: Iterable[Any]) -> tuple[str, ...]:
@@ -554,8 +576,12 @@ def tier2_reason(
     lane_state: LaneInjectionState | None = None,
     current_data_faults: Sequence[str] = (),
     source_change: Callable[[], Tier2Reason | None] | None = None,
+    start_proves_baseline: bool = False,
 ) -> Tier2Reason | None:
     """Why the application must be recreated, or ``None`` when the warm app stays.
+
+    ``start_proves_baseline``: the caller grades the kept app afresh before injecting (a fresh no-fault rehearsal), so
+    a previous row that left only its baseline proof to this start is no reason to recreate.
 
     The invariant raises ``ValueError``/``RuntimeError`` when the app no longer matches its captured
     baseline. ``unhealthy_pods`` waits its own short bound and returns the pods still not serving.
@@ -570,7 +596,7 @@ def tier2_reason(
         history = lane_state.reason()
         if history is not None:
             return history
-    pending = marker.pending()
+    pending = marker.pending(start_proves_baseline=start_proves_baseline)
     if pending is not None:
         return pending
     try:
