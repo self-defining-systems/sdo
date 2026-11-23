@@ -138,3 +138,58 @@ def test_restored_is_signalled_once_the_writes_are_done_and_before_the_oracle_on
     restore_application(environment(tmp_path), lane, lane, restored=lambda: ops.append("restored"))
     assert ops.index("clean_start") < ops.index("apply") < ops.index("health") < ops.index("restored")
     assert ops[ops.index("restored") + 1 :] == ["baseline_oracle"]
+
+
+def test_a_caller_that_takes_the_sustained_window_gets_it_after_the_oracle_and_it_fails_the_restore(
+    tmp_path: Path,
+) -> None:
+    """The oracle's pod-health window is a minute of Kubernetes history; a re-rolled pod can only fill it by waiting.
+    The warm transaction runs it beside the reseed and the proof, so the restore hands it over instead of blocking."""
+    from benchmarks.sregym.fastloop.reset import restore_application
+
+    requests: list[tuple[str, dict[str, Any]]] = []
+    windows: list[Any] = []
+
+    class Recording(Lane):
+        def __init__(self) -> None:
+            super().__init__()
+            self.client_registered = True
+            self.sustained = {"success": True, "problems": []}
+
+        def request(self, op: str, **kwargs: Any) -> dict[str, Any]:
+            requests.append((op, kwargs))
+            if op == "sustained_health":
+                return self.sustained
+            return super().request(op, **kwargs)
+
+    lane = Recording()
+    restore_application(environment(tmp_path), lane, lane, sustained=windows.append)
+    oracle = [kwargs for op, kwargs in requests if op == "baseline_oracle"]
+    assert oracle and all(kwargs["sustain"] is False for kwargs in oracle)
+    assert "sustained_health" not in [op for op, _ in requests]
+    assert len(windows) == 1
+    windows[0]()
+    assert requests[-1][0] == "sustained_health"
+    lane.sustained = {"success": False, "problems": ["pod a container c restarted (0 -> 1)"]}
+    with pytest.raises(RuntimeError, match="restarted"):
+        windows[0]()
+
+
+def test_without_a_caller_for_the_window_the_oracle_takes_it_inline(tmp_path: Path) -> None:
+    from benchmarks.sregym.fastloop.reset import restore_application
+
+    seen: list[dict[str, Any]] = []
+
+    class Recording(Lane):
+        def __init__(self) -> None:
+            super().__init__()
+            self.client_registered = True
+
+        def request(self, op: str, **kwargs: Any) -> dict[str, Any]:
+            if op == "baseline_oracle":
+                seen.append(kwargs)
+            return super().request(op, **kwargs)
+
+    lane = Recording()
+    restore_application(environment(tmp_path), lane, lane)
+    assert seen and all("sustain" not in kwargs for kwargs in seen)

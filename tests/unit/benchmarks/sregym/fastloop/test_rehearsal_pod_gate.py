@@ -216,3 +216,20 @@ def test_a_pod_healthy_for_part_of_the_window_is_watched_only_for_the_rest():
 def test_a_restart_inside_the_shortened_wait_still_fails():
     problems, _ = run_at([[healthy_since("a", 30)], [healthy_since("a", 30)], [pod("a", restarts=1)]])
     assert problems == ["pod a container c restarted (0 -> 1)"]
+
+
+def test_the_window_can_be_left_to_the_caller_once_a_healthy_grade_is_cached(tmp_path):
+    grade = {"kind": "x", "success": True, "details": {"collateral_ok": True, "traffic_ok": True}}
+    worker = SimpleNamespace(_problem_factory=lambda _: SimpleNamespace(), _grade=lambda *_: grade)
+    windows = []
+    baselines = OracleBaselines(tmp_path / "oracles.json", "seed")
+    rehearse = install_oracle_baselines(
+        worker, baselines, confirm_healthy=healthy_confirm, pod_health_gate=lambda _: windows.append(1) or []
+    )
+    # The first healthy grade becomes the cached baseline: it always takes the window itself.
+    rehearse("p", fresh=True, sustain=False)
+    assert windows == [1]
+    rehearse("p", fresh=True, sustain=False)
+    assert windows == [1]
+    rehearse("p", fresh=True)
+    assert windows == [1, 1]
