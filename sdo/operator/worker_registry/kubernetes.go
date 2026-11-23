@@ -393,8 +393,14 @@ func (e KubernetesExecutor) execute(ctx context.Context, task *contracts.AgentTa
 				return nil, fmt.Errorf("validate agent result: %w", err)
 			}
 			// The worker publishes before its process exits. Hold the incident
-			// lock until Kubernetes reports the Job durably completed.
+			// lock until the worker has exited: its pod succeeded, or Kubernetes
+			// reports the Job completed (a condition the Job controller derives
+			// from the pod seconds later).
 			if jobErr == nil && jobCompleted(job) {
+				return result, nil
+			}
+			// A failed pod listing leaves the Job condition to decide.
+			if exited, err := e.workerExited(ctx, jobName); jobErr == nil && err == nil && exited {
 				return result, nil
 			}
 		}
