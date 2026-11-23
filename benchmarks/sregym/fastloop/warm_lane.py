@@ -169,12 +169,20 @@ def prepare_lane(
         current = run("confirm_identity", lane.reidentify)
         if current != identity:
             raise ValueError("lane identity changed during warm transaction")
+        # The restore's sustained-health window ran beside the reseed and the proof; it holds before the row injects.
+        if (join_sustained := getattr(lane, "join_sustained", None)) is not None:
+            run("sustained_wait", join_sustained)
     except WarmLaneBusy:
         _publish(evidence, WarmReceipt(False, None, None, timings, "prior_incident_open"))
         raise
     except Exception as exc:
         reason = f"{phase}:{getattr(exc, 'reason', None) or type(exc).__name__}"
         try:
+            if (join_sustained := getattr(lane, "join_sustained", None)) is not None:
+                try:
+                    join_sustained()  # a fallback never runs beside a live check
+                except Exception:  # noqa: S110
+                    pass  # the failure being handled is the one recorded
             run("full_reset", lane.full_reset)
         except Exception:
             _publish(evidence, WarmReceipt(False, None, None, timings, reason + ";full_reset_failed"))
@@ -186,6 +194,42 @@ def prepare_lane(
         receipt = WarmReceipt(True, identity, boundary.isoformat(), timings)
     _publish(evidence, receipt)
     return receipt
+
+
+class DeferredCheck:
+    """A check run on its own thread beside the rest of the transaction, whose failure surfaces at ``join``.
+
+    The restore's sustained pod-health window only observes the application, so it need not hold up the reseed or
+    the proof; it must still hold before the row injects, and a failing window fails the transaction like any other
+    step.
+    """
+
+    def __init__(self) -> None:
+        self._thread: threading.Thread | None = None
+        self._error: BaseException | None = None
+
+    def start(self, check: Callable[[], None]) -> None:
+        if self._thread is not None:
+            raise RuntimeError("a deferred check is already running")
+        self._error = None
+
+        def run() -> None:
+            try:
+                check()
+            except BaseException as exc:  # re-raised by join
+                self._error = exc
+
+        self._thread = threading.Thread(target=run, name="warm-deferred-check", daemon=True)
+        self._thread.start()
+
+    def join(self) -> None:
+        thread, self._thread = self._thread, None
+        if thread is None:
+            return
+        thread.join()
+        error, self._error = self._error, None
+        if error is not None:
+            raise error
 
 
 class _Abandoned(Exception):

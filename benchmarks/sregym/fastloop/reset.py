@@ -366,6 +366,7 @@ def restore_application(
     *,
     checks: RestoreChecks | None = None,
     restored: Callable[[], object] | None = None,
+    sustained: Callable[[Callable[[], None]], object] | None = None,
 ) -> None:
     """Restore only the app, from one captured installed manifest set, once.
 
@@ -376,6 +377,12 @@ def restore_application(
     baseline oracle after it only observes the application (its client refresh
     runs only when that observation fails), so a caller may start what needs
     the restored objects, such as a controller, concurrently with it.
+
+    The oracle's sustained pod-health window (a minute of Kubernetes pod history, which a pod this restore just
+    re-rolled can only fill by waiting) is part of the baseline's proof. ``sustained`` hands that window to the
+    caller instead of blocking here: it receives one callable that raises when the pods were not healthy across the
+    window, and must run it and surface its failure before anything is injected. Without ``sustained`` the window
+    runs inside the oracle.
     """
     require_terminal_reflection(environment)
     baselines = load_application_baseline(environment.baseline_path, environment.namespace)
@@ -387,6 +394,7 @@ def restore_application(
     baselines = complete_recovery_baselines(
         source, accepted_restore_baselines(source, baselines, seed_commit=environment.seed_commit)
     )
+    sustain = {} if sustained is None else {"sustain": False}
     phases: dict[str, float] = {}
     mark = time.monotonic()
 
@@ -432,6 +440,7 @@ def restore_application(
         problem_id=environment.deploy_problem,
         verify_traffic=True,
         timeout=wait_for(WaitKind.ROLLOUT),
+        **sustain,
     )
     if not oracle.get("success"):
         refreshed = worker.request(
@@ -446,10 +455,24 @@ def restore_application(
             problem_id=environment.deploy_problem,
             verify_traffic=True,
             timeout=wait_for(WaitKind.ROLLOUT),
+            **sustain,
         )
         if not oracle.get("success"):
             raise RuntimeError(f"reset left independent traffic failing for {environment.deploy_problem}: {oracle}")
     lap("baseline_oracle")
+    if sustained is not None:
+
+        def window() -> None:
+            health = worker.request(
+                "sustained_health", namespace=environment.namespace, timeout=wait_for(WaitKind.ROLLOUT)
+            )
+            if health.get("success") is not True:
+                raise RuntimeError(
+                    f"reset left {environment.namespace} pods unhealthy across the sustained window: "
+                    f"{health.get('problems')}"
+                )
+
+        sustained(window)
     logger.info("restore: %s", ", ".join(f"{name} {seconds:g}s" for name, seconds in phases.items()))
 
     if checks:

@@ -167,7 +167,12 @@ def install_oracle_baselines(
             filtered_grade["success"] = health.get("success") is True if isinstance(health, dict) else health
         return filtered_grade
 
-    def rehearse(problem_id: str, *, fresh: bool = False) -> dict[str, Any]:
+    def rehearse(problem_id: str, *, fresh: bool = False, sustain: bool = True) -> dict[str, Any]:
+        """``sustain=False`` leaves the sustained pod-health window to the caller (it must run it before injection).
+
+        The first healthy grade of a problem is cached as its baseline, so it always takes the window itself.
+        """
+
         def evaluate() -> dict[str, Any]:
             problem = identified(problem_id)
             if confirm_healthy is not None:
@@ -177,7 +182,7 @@ def install_oracle_baselines(
                         return {**health, "details": {**health.get("details", {}), "collateral_ok": False}}
                 elif not health:
                     return {"kind": "health-check", "success": False, "details": {"collateral_ok": False}}
-            if pod_health_gate is not None:
+            if pod_health_gate is not None and (sustain or problem_id not in baselines.grades):
                 problems = pod_health_gate(problem)
                 if problems:
                     return _rejected("pod_health_gate_failed", problems)
