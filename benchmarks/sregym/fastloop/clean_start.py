@@ -7,6 +7,7 @@ project only namespace/name metadata, never credential values or encoded data.
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
@@ -52,74 +53,90 @@ def install_probe_isolation(grading: Any) -> None:
 
 
 def _injected_objects(kubeconfig: Path) -> list[dict[str, Any]]:
-    objects: list[dict[str, Any]] = []
-    for namespaced in (True, False):
+    """Every harness-labelled object in both scopes. The kubectl reads are independent, so each round runs together."""
+
+    def discover(namespaced: bool) -> list[str]:
         discovery = kubectl(
             ["api-resources", "--verbs=list,delete", f"--namespaced={str(namespaced).lower()}", "-o", "name"],
             namespace=None,
             kubeconfig=kubeconfig,
         ).stdout
-        resources = sorted({name for name in discovery.split() if name.split(".")[0] != "secrets" and "/" not in name})
-        if not resources:
-            continue
+        return sorted({name for name in discovery.split() if name.split(".")[0] != "secrets" and "/" not in name})
+
+    def labelled(scope: tuple[bool, list[str]]) -> list[dict[str, Any]]:
+        namespaced, resources = scope
         args = ["get", ",".join(resources), "-l", INJECTED_SELECTOR, "-o", "json"]
         if namespaced:
             args.append("--all-namespaces")
-        objects.extend(json.loads(kubectl(args, namespace=None, kubeconfig=kubeconfig).stdout)["items"])
-    # kubectl's metadata-only projection keeps Secret data out of this process,
-    # logs, captures and error messages. Secrets are excluded from JSON listings.
-    names = kubectl(
-        [
-            "get",
-            "secrets",
-            "--all-namespaces",
-            "-l",
-            INJECTED_SELECTOR,
-            "-o",
-            "custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name",
-            "--no-headers",
-        ],
-        namespace=None,
-        kubeconfig=kubeconfig,
-    ).stdout
-    for line in names.splitlines():
-        namespace, name = line.split()
-        objects.append({"apiVersion": "v1", "kind": "Secret", "metadata": {"namespace": namespace, "name": name}})
+        return json.loads(kubectl(args, namespace=None, kubeconfig=kubeconfig).stdout)["items"]
+
+    def secret_names() -> str:
+        # kubectl's metadata-only projection keeps Secret data out of this process,
+        # logs, captures and error messages. Secrets are excluded from JSON listings.
+        return kubectl(
+            [
+                "get",
+                "secrets",
+                "--all-namespaces",
+                "-l",
+                INJECTED_SELECTOR,
+                "-o",
+                "custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name",
+                "--no-headers",
+            ],
+            namespace=None,
+            kubeconfig=kubeconfig,
+        ).stdout
+
+    objects: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        names = pool.submit(secret_names)
+        scopes = (True, False)
+        resources = list(pool.map(discover, scopes))
+        for items in pool.map(labelled, [(scope, found) for scope, found in zip(scopes, resources) if found]):
+            objects.extend(items)
+        for line in names.result().splitlines():
+            namespace, name = line.split()
+            objects.append({"apiVersion": "v1", "kind": "Secret", "metadata": {"namespace": namespace, "name": name}})
     return objects
 
 
 def assert_clean_baseline(kubeconfig: Path, *, namespace: str | None = None) -> None:
-    """Fail closed if even one labelled fault object survives, in either scope."""
-    remaining = _injected_objects(kubeconfig)
-    if remaining:
-        identities = sorted(
-            f"{value['metadata'].get('namespace', '<cluster>')}/{value['kind']}/{value['metadata']['name']}"
-            for value in remaining
-        )
-        raise RuntimeError(f"clean baseline rejected: injected objects remain: {', '.join(identities)}")
+    """Fail closed if even one labelled fault object survives, in either scope.
 
-    if namespace is not None:
-        listing = kubectl(
-            ["get", "pods,jobs,configmaps", "-o", "json"], namespace=namespace, kubeconfig=kubeconfig
+    The namespace's harness-traffic reads do not depend on the cluster listing, so they run beside it.
+    """
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        in_namespace = pool.submit(_harness_residue, kubeconfig, namespace) if namespace is not None else None
+        remaining = _injected_objects(kubeconfig)
+        if remaining:
+            identities = sorted(
+                f"{value['metadata'].get('namespace', '<cluster>')}/{value['kind']}/{value['metadata']['name']}"
+                for value in remaining
+            )
+            raise RuntimeError(f"clean baseline rejected: injected objects remain: {', '.join(identities)}")
+        if in_namespace is not None:
+            in_namespace.result()
+
+
+def _harness_residue(kubeconfig: Path, namespace: str) -> None:
+    listing = kubectl(["get", "pods,jobs,configmaps", "-o", "json"], namespace=namespace, kubeconfig=kubeconfig).stdout
+    foreign = [
+        f"{value['kind']}/{value['metadata']['name']}" for value in json.loads(listing)["items"] if benchmark_owned(value)
+    ]
+    if foreign:
+        raise RuntimeError(f"clean baseline rejected: benchmark objects in {namespace}: {', '.join(foreign)}")
+    for resources in (
+        ["job/wrk2-job", "configmap/wrk2-payload-script"],
+        ["pods", "--selector=job-name=wrk2-job"],
+    ):
+        legacy = kubectl(
+            ["get", *resources, "--ignore-not-found=true", "-o", "name"],
+            namespace=namespace,
+            kubeconfig=kubeconfig,
         ).stdout
-        foreign = [
-            f"{value['kind']}/{value['metadata']['name']}"
-            for value in json.loads(listing)["items"]
-            if benchmark_owned(value)
-        ]
-        if foreign:
-            raise RuntimeError(f"clean baseline rejected: benchmark objects in {namespace}: {', '.join(foreign)}")
-        for resources in (
-            ["job/wrk2-job", "configmap/wrk2-payload-script"],
-            ["pods", "--selector=job-name=wrk2-job"],
-        ):
-            legacy = kubectl(
-                ["get", *resources, "--ignore-not-found=true", "-o", "name"],
-                namespace=namespace,
-                kubeconfig=kubeconfig,
-            ).stdout
-            if legacy.strip():
-                raise RuntimeError(f"clean baseline rejected: harness traffic remains in {namespace}: {legacy.strip()}")
+        if legacy.strip():
+            raise RuntimeError(f"clean baseline rejected: harness traffic remains in {namespace}: {legacy.strip()}")
 
 
 def remove_injected_objects(kubeconfig: Path) -> None:

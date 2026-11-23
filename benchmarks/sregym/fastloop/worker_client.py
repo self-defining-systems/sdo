@@ -13,6 +13,7 @@ runs under ``bwrap`` with a private ``/tmp`` unless the caller opts out.
 from __future__ import annotations
 
 import ast
+import atexit
 import json
 import os
 import queue
@@ -26,7 +27,7 @@ from benchmarks.sregym.adapter import Deadline, WaitKind, wait_for
 from benchmarks.sregym.fastloop.host_limits import HostLimits
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from types import TracebackType
 
 DEFAULT_TIMEOUT_SECONDS = wait_for(WaitKind.RESPONSE)
@@ -224,3 +225,65 @@ class SregymWorker:
         if self._log is not None:
             self._log.close()
             self._log = None
+
+
+class BackgroundCall:
+    """One call run on its own thread; ``result`` waits for it and re-raises what it raised."""
+
+    def __init__(self, call: Callable[[], Any]) -> None:
+        self._call = call
+        self._value: Any = None
+        self._error: BaseException | None = None
+        self._thread = threading.Thread(target=self._run, name="fastloop-background-call", daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        try:
+            self._value = self._call()
+        except BaseException as exc:  # re-raised by result
+            self._error = exc
+
+    def result(self) -> Any:
+        self._thread.join()
+        if self._error is not None:
+            raise self._error
+        return self._value
+
+
+class PrestartedWorker:
+    """A worker built and started beside other work, entered like ``SregymWorker`` once that work is done.
+
+    The warm transaction runs its own worker and a row needs a second, fresh one afterwards; starting the second
+    (its preflight and the child's imports) during the transaction takes its boot off the row's path. It stays idle
+    until entered, so it carries nothing from the transaction. ``discard`` closes it when the row never gets there.
+    """
+
+    def __init__(self, build: Callable[[], SregymWorker]) -> None:
+        def start() -> SregymWorker:
+            worker = build()
+            worker.start()
+            return worker
+
+        self._pending = BackgroundCall(start)
+        self._worker: SregymWorker | None = None
+        atexit.register(self.discard)
+
+    def __enter__(self) -> SregymWorker:
+        self._worker = self._pending.result()
+        return self._worker
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self.discard()
+
+    def discard(self) -> None:
+        try:
+            worker = self._worker or self._pending.result()
+        except BaseException:  # the build failed: nothing is running
+            return
+        self._worker = None
+        worker.close()
