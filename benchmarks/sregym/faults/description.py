@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from benchmarks.sregym.faults.probe_catalog import CLASS_KINDS, DATA_LEVEL_KINDS
+from benchmarks.sregym.faults.probe_catalog import CLASS_KINDS, DATA_LEVEL_KINDS, RESET_REVERTIBLE_KINDS
 from benchmarks.sregym.faults.sregym_subprocess import SregymSubprocessError, run_sregym_json, sregym_env
 
 PROBE_KINDS = frozenset(CLASS_KINDS.values())
@@ -108,6 +108,11 @@ class FaultSpec:
         """Its state lives in application data, which a restore of Kubernetes objects does not undo."""
         return self.kind in DATA_LEVEL_KINDS
 
+    @property
+    def restore_reverts(self) -> bool:
+        """The application restore from the baseline reverts it exactly as its own SREGym recover would."""
+        return self.kind in RESET_REVERTIBLE_KINDS and not self.data_level
+
 
 class ProblemDescription(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -133,6 +138,11 @@ class ProblemDescription(BaseModel):
         return all(fault.tracking_supported for fault in self.faults) and len({f.name for f in self.faults}) == len(
             self.faults
         )
+
+    @property
+    def restore_reverts_faults(self) -> bool:
+        """Every fault of the problem is one the application restore reverts (``FaultSpec.restore_reverts``)."""
+        return all(fault.restore_reverts for fault in self.faults)
 
     def data_level_faults(self) -> tuple[str, ...]:
         return tuple(fault.name for fault in self.faults if fault.data_level)
