@@ -82,8 +82,7 @@ def test_requests_from_two_threads_are_served_one_at_a_time(tmp_path: Path) -> N
         results: list[dict[str, str]] = []
 
         def ask(op: str) -> None:
-            for _ in range(20):
-                results.append(worker.request(op, timeout=30))
+            results.extend(worker.request(op, timeout=30) for _ in range(20))
 
         threads = [threading.Thread(target=ask, args=(op,)) for op in ("a", "b")]
         for thread in threads:
