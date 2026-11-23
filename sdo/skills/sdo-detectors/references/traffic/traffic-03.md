@@ -50,6 +50,12 @@ func (e *Engine) UsePasswords(source Passwords)
 func (e *Engine) UseSetupLock(l SetupLocker)
     UseSetupLock makes e serialize each setup request across processes with l.
 
+func (e *Engine) UseWarmup(warming func() bool)
+    UseWarmup makes Run pace iterations at the workload's WarmupRate while
+    warming reports true, and at Rate otherwise. The caller owns the predicate:
+    a prober warms up from its start or reset until every scenario holds its
+    SLO's minimum samples.
+
 func (e *Engine) Workload() Workload
     Workload returns the engine's workload with defaults applied.
 
@@ -228,7 +234,4 @@ func (e *HTTPEndpoint) WithBasicAuth(user string, password string) *HTTPEndpoint
     WithBasicAuth sends HTTP basic authentication. Each {key} in user and
     password is filled from State, for example a probe user's password put there
     ("{password}").
-
-func (e *HTTPEndpoint) WithForm(form Params) *HTTPEndpoint
-    WithForm adds a URL-encoded form body.
 ```

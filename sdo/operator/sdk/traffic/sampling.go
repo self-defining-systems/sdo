@@ -84,6 +84,37 @@ func (w Workload) SamplingPlan() SamplingPlan {
 	return plan
 }
 
+// WarmupRate is the iterations per second a health probe runs at while it
+// warms up (Engine.UseWarmup): its sampling plan's cycle compressed into
+// MinSampleInterval, never below its steady rate. A started or reset probe
+// holds no samples, and its detectors stay unconfirmed until every scenario
+// holds its SLO's MinSamples; at the steady rate that takes MinSamples sample
+// intervals (a designer lengthens the interval up to MaxSampleInterval to
+// lower the steady load), at this rate MinSamples floor intervals. The
+// extra load lasts those few intervals, the same plan at the floor interval
+// every health probe may run at. Other workloads keep their rate.
+func (w Workload) WarmupRate() float64 {
+	plan := w.SamplingPlan()
+	if w.Purpose != PurposeHealthProbe || len(plan.Schedule) == 0 {
+		return plan.Rate
+	}
+	return max(plan.Rate, float64(len(plan.Schedule))/MinSampleInterval.Seconds())
+}
+
+// WarmupBound is how long a health probe may warm up after it starts or
+// resets: the time its steady rate needs to give every scenario its SLO's
+// minimum samples, plus one sample interval for the iteration in flight. A
+// warm-up never lasts longer than steady sampling would have taken, so a
+// scenario that cannot record usable samples (its probe user is not
+// provisioned) does not hold the probe at the warm-up rate.
+func (w Workload) WarmupBound() time.Duration {
+	bound := time.Duration(0)
+	for _, scenario := range w.Scenarios {
+		bound = max(bound, time.Duration(w.ScenarioSLO(scenario.ID).MinSamples)*w.ScenarioArrival(scenario.ID))
+	}
+	return bound + w.EffectiveSampleInterval()
+}
+
 // weightedCycle is count picks of smooth weighted round-robin: scenarios are
 // chosen in proportion to their weights, evenly spread.
 func weightedCycle(scenarios []WorkloadScenario, count int) []string {

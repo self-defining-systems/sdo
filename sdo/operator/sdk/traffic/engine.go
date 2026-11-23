@@ -163,6 +163,8 @@ type Engine struct {
 	// limits holds, per target, until when the application asked the probe to
 	// wait (HTTP 429); engines that ShareSetup use one record.
 	limits *rateLimits
+	// warming reports whether the probe is warming up (UseWarmup); nil never.
+	warming func() bool
 }
 
 // rateLimits is, per target base URL, the end of the wait the application
@@ -382,6 +384,12 @@ func (e *Engine) IterationOf(scenario string, from uint64) (uint64, bool) {
 // Rate is the iterations per second the engine starts: the workload's rate,
 // raised when its scenarios' sampling floor needs more.
 func (e *Engine) Rate() float64 { return e.plan.Rate }
+
+// UseWarmup makes Run pace iterations at the workload's WarmupRate while
+// warming reports true, and at Rate otherwise. The caller owns the
+// predicate: a prober warms up from its start or reset until every scenario
+// holds its SLO's minimum samples.
+func (e *Engine) UseWarmup(warming func() bool) { e.warming = warming }
 
 // Rand is the random source of iteration: within one engine the same
 // iteration always yields the same values, so a failing probe replays, and
@@ -824,7 +832,11 @@ func (e *Engine) Run(ctx context.Context, first uint64, emit func(scenario strin
 }
 
 func (e *Engine) gap(rng *rand.Rand) time.Duration {
-	mean := float64(time.Second) / e.plan.Rate
+	rate := e.plan.Rate
+	if e.warming != nil && e.warming() {
+		rate = e.workload.WarmupRate()
+	}
+	mean := float64(time.Second) / rate
 	if e.workload.Arrival == ArrivalPoisson {
 		// Bound the tail so one long gap cannot stall detection.
 		return time.Duration(math.Min(rng.ExpFloat64()*mean, 4*mean))
