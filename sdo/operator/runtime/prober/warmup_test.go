@@ -194,6 +194,8 @@ type sharedAuthorApp struct {
 	mu       sync.Mutex
 	newest   map[string]string
 	composes int
+	// inFlight and overlapped count composes that were answering at once.
+	inFlight, overlapped int
 }
 
 func (a *sharedAuthorApp) Do(request *http.Request) (*http.Response, error) {
@@ -212,7 +214,10 @@ func (a *sharedAuthorApp) Do(request *http.Request) (*http.Response, error) {
 	a.newest[request.PostForm.Get("user")] = request.PostForm.Get("text")
 	a.composes++
 	mine := a.composes
+	a.inFlight++
+	a.overlapped = max(a.overlapped, a.inFlight)
 	a.mu.Unlock()
+	defer func() { a.mu.Lock(); a.inFlight--; a.mu.Unlock() }()
 	for waited := time.Duration(0); waited < 20*time.Millisecond; waited += 200 * time.Microsecond {
 		a.mu.Lock()
 		next := a.composes > mine
@@ -231,27 +236,36 @@ func (a *sharedAuthorApp) Do(request *http.Request) (*http.Response, error) {
 // start together.
 func sharedAuthorProbe(t *testing.T, interval time.Duration) (*Prober, *stepClock) {
 	t.Helper()
+	p, clock, _ := authorProbe(t, interval, "sdoprobe-author", "sdoprobe-author")
+	return p, clock
+}
+
+// authorProbe runs the journey as writeAuthor in probe-write and as
+// callAuthor in probe-call.
+func authorProbe(t *testing.T, interval time.Duration, writeAuthor string, callAuthor string) (*Prober, *stepClock, *sharedAuthorApp) {
+	t.Helper()
 	text, _ := traffic.FromSeedPair("n", 1_000_000_000, func(i int) string { return fmt.Sprintf("sdoprobe-post-%d", i) }, func(i int) string { return fmt.Sprintf("sdoprobe-post-%d", i) })
-	journey := func(id string) traffic.Scenario {
+	journey := func(id string, author string) traffic.Scenario {
 		return traffic.Scenario{ID: id, Target: traffic.Target{Service: "web", Port: 80}, SideEffect: traffic.SideEffectIdempotentWrite, Marker: "sdoprobe",
 			Steps: []traffic.Step{
-				{Name: "compose", Endpoint: traffic.POST("/compose", nil).WithForm(traffic.Params{"user": traffic.Const("sdoprobe-author"), "text": text}).Contains("ok")},
-				{Name: "read-newest", Endpoint: traffic.GET("/newest", traffic.Params{"user": traffic.Const("sdoprobe-author")}).JSONEquals("text", "sdoprobe-post-{n}")},
+				{Name: "compose", Endpoint: traffic.POST("/compose", nil).WithForm(traffic.Params{"user": traffic.Const(author), "text": text}).Contains("ok")},
+				{Name: "read-newest", Endpoint: traffic.GET("/newest", traffic.Params{"user": traffic.Const(author)}).JSONEquals("text", "sdoprobe-post-{n}")},
 			}}
 	}
-	catalog := traffic.Catalog{journey("compose-read"), journey("call-compose-read")}
+	catalog := traffic.Catalog{journey("compose-read", writeAuthor), journey("call-compose-read", callAuthor)}
 	var workloads []traffic.Workload
 	for name, id := range map[string]string{"probe-write": "compose-read", "probe-call": "call-compose-read"} {
 		workloads = append(workloads, traffic.Workload{APIVersion: traffic.APIVersion, Kind: traffic.WorkloadKind, Name: name,
 			Purpose: traffic.PurposeHealthProbe, SampleInterval: traffic.Duration(interval), Scenarios: []traffic.WorkloadScenario{{ID: id}}})
 	}
 	clock := &stepClock{now: time.Date(2026, 11, 16, 9, 30, 0, 0, time.UTC)}
-	p, err := New(Config{Namespace: "app", Catalog: catalog, Workloads: workloads, Client: &sharedAuthorApp{newest: map[string]string{}},
+	app := &sharedAuthorApp{newest: map[string]string{}}
+	p, err := New(Config{Namespace: "app", Catalog: catalog, Workloads: workloads, Client: app,
 		BaseURL: func(traffic.Target) string { return "http://web:80" }, Clock: clock})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return p, clock
+	return p, clock, app
 }
 
 // failures lists every sample that did not pass.
@@ -313,5 +327,30 @@ func TestAWritingProbeWarmsUpAtTheFloorInterval(t *testing.T) {
 	}
 	if failed := failures(p); len(failed) > 0 {
 		t.Fatalf("a read-back saw another sample's write while warming up: %s", strings.Join(failed, "; "))
+	}
+}
+
+// Samples of different synthetic identities still run concurrently: only a
+// shared identity waits.
+func TestSamplesOfDistinctSyntheticIdentitiesStillOverlap(t *testing.T) {
+	p, clock, app := authorProbe(t, traffic.MinSampleInterval, "sdoprobe-author-w", "sdoprobe-author-c")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { defer close(done); p.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	started := 2
+	settle(t, p, clock, started)
+	for range 300 {
+		started += clock.advance(100 * time.Millisecond)
+		settle(t, p, clock, started)
+	}
+	if failed := failures(p); len(failed) > 0 {
+		t.Fatalf("distinct identities failed: %s", strings.Join(failed, "; "))
+	}
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	if app.overlapped < 2 {
+		t.Fatalf("samples of distinct identities never overlapped (%d composes): they were serialized", app.composes)
 	}
 }
