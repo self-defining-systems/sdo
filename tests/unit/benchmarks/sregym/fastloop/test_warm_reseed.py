@@ -583,3 +583,28 @@ def test_an_incidents_unlabelled_state_store_is_session_state_the_reseed_retires
     assert not warm_environment._session_state(
         {"metadata": {"name": "user-config"}, "data": {"runtime-state.json": ""}}
     )
+
+
+def test_each_transaction_step_is_timed_and_a_failed_step_still_names_where_it_failed(cluster):
+    """The warm receipt times whole phases; the steps of each phase are timed beside it, written after every step, so a
+    slow or failed phase names the step that took the time."""
+    proof = {"passed": True}
+    cluster.ops.set_maintenance = lambda control, **_kwargs: None
+    cluster.ops.runtime_state = lambda control: {"setup_evaluated_revision": HEAD}
+    cluster.lane.generation = "warm-synthetic"
+    cluster.lane.admission = SimpleNamespace(prove=lambda control: proof)
+    cluster.lane._require_fresh_equivalent = lambda state, not_before, revision: None  # type: ignore[method-assign]
+    assert cluster.lane.prove(__import__("datetime").datetime.now(), HEAD) is proof
+    cluster.lane.reseed()
+    steps = json.loads((cluster.lane.directory / warm_environment.STEP_SECONDS_FILE).read_text())
+    assert set(steps["prove"]) == {"maintenance_resume", "admission", "runtime_state", "fresh_equivalence"}
+    assert set(steps["reseed.wait_started"]) == {"controller_running", "standby_ready"}
+
+    def unreadable(control):
+        raise RuntimeError("synthetic API failure")
+
+    cluster.ops.runtime_state = unreadable
+    with pytest.raises(RuntimeError):
+        cluster.lane.prove(__import__("datetime").datetime.now(), HEAD)
+    steps = json.loads((cluster.lane.directory / warm_environment.STEP_SECONDS_FILE).read_text())
+    assert "runtime_state" in steps["prove"]
