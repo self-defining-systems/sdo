@@ -368,3 +368,81 @@ def test_anything_beyond_the_installs_own_objects_still_fails_the_warm_scope_che
     scope_cluster(cluster, monkeypatch, [*INSTALL_OBJECTS, foreign])
     with pytest.raises(WarmLaneRefusal, match="outside its installed inventory"):
         cluster.lane._clean_scope()
+
+
+STARTUP_BOUND = "2026-11-23T03:00:00Z"
+START_HOLD = {
+    "busy_until": STARTUP_BOUND,
+    "startup": {"began_at": "2026-11-23T02:30:00Z", "bound_at": STARTUP_BOUND},
+}
+
+
+def with_state(cluster, state):
+    cluster.ops.runtime_state = lambda control: state
+
+
+def test_a_controller_in_its_startup_hold_is_not_a_busy_lane(cluster):
+    """A fresh controller publishes its start-up bound as ``busy_until`` although no incident exists or can open. A row
+    that failed before injection leaves exactly that, and it must not refuse every later warm start for the hold."""
+    with_state(cluster, START_HOLD)
+    cluster.lane._assert_idle()
+    cluster.lane._assert_idle(destructive=True)
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        {**START_HOLD, "incident_open": True},
+        {**START_HOLD, "pending_closure": {"incident_id": "app-1"}},
+        {**START_HOLD, "queued_reflection_incident_ids": ["app-1"]},
+        {"busy_until": "2026-11-23T02:40:00Z", "incident_open": True},
+    ],
+)
+def test_real_incident_work_still_refuses_even_a_destructive_start(cluster, state):
+    with_state(cluster, state)
+    for destructive in (False, True):
+        with pytest.raises(WarmLaneBusy):
+            cluster.lane._assert_idle(destructive=destructive)
+
+
+def test_a_controller_that_published_no_state_is_a_refusal_for_the_warm_start_and_free_to_replace(cluster):
+    from benchmarks.sregym.fastloop.warm_lane import WarmLaneRefusal
+
+    with_state(cluster, {})
+    with pytest.raises(WarmLaneRefusal, match="no state"):
+        cluster.lane._assert_idle()
+    cluster.lane._assert_idle(destructive=True)  # nothing was published: no incident can be open
+
+
+def test_a_state_that_cannot_be_read_is_still_busy(cluster, monkeypatch):
+    def unreadable(args, **kwargs):
+        raise RuntimeError("apiserver unreachable")
+
+    with_state(cluster, {})
+    monkeypatch.setattr(warm_environment, "kubectl", unreadable)
+    for destructive in (False, True):
+        with pytest.raises(WarmLaneBusy):
+            cluster.lane._assert_idle(destructive=destructive)
+
+
+def test_the_warm_restore_replaces_the_apps_trace_stores_before_restoring_and_before_the_reseed_install(
+    cluster, monkeypatch
+):
+    import benchmarks.sregym.fastloop.app_observability as app_observability
+    import benchmarks.sregym.fastloop.baseline_recovery as baseline_recovery
+
+    events: list[str] = []
+    cluster.environment.baseline_path = cluster.environment.run_dir / "baseline.json"
+    monkeypatch.setattr(
+        app_observability, "restart_in_memory_trace_stores", lambda kube, namespaces: events.append("restart")
+    )
+    monkeypatch.setattr(baseline_recovery, "KubectlApplicationCluster", lambda kube: None)
+    monkeypatch.setattr(
+        warm_environment,
+        "RestoreChecks",
+        lambda environment: SimpleNamespace(validate=lambda: events.append("validate")),
+    )
+    monkeypatch.setattr(warm_environment, "restore_application", lambda *a, **k: events.append("restore"))
+    cluster.lane.worker = None
+    cluster.lane.reset_changed()
+    assert events == ["validate", "restart", "restore"]

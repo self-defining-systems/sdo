@@ -18,7 +18,7 @@ from benchmarks.sregym.adapter import (
     allowed_namespaces,
     controller_settings,
     deployed_lifecycle,
-    incident_work_open,
+    incident_work_pending,
     install_existing,
     kubectl,
     native_install_config,
@@ -152,13 +152,31 @@ class WarmEnvironment:
             kubeconfig=self.environment.kubeconfig,
         ).stdout.strip()
 
-    def _assert_idle(self) -> None:
+    def _assert_idle(self, *, destructive: bool = False) -> None:
+        """Refuse only what is real incident work of an earlier row (or what cannot be read).
+
+        A controller's start-up hold also publishes ``busy_until``, with no incident and none able to open: a row that
+        failed before injection leaves exactly that, and it is not incident work. A controller that has published no
+        state has no incident either (opening one publishes first): it is no reason to keep the lane for the warm
+        start (``WarmLaneRefusal``: fall back) and none to refuse replacing it (``destructive``: the full reset).
+        """
         try:
             require_terminal_reflection(self.environment)
             state = self.ops.runtime_state(self.control)
-            if incident_work_open(state) or (not state and self.ops.controller_pod(self.control) is not None):
-                raise WarmLaneBusy("warm lane has unclosed or unknown controller work")
-        except WarmLaneBusy:
+            if incident_work_pending(state):
+                raise WarmLaneBusy("warm lane has unclosed controller work")
+            if not state and self.ops.controller_pod(self.control) is not None:
+                # `runtime_state` answers {} for an unreadable ConfigMap too: only an absent one is "no state yet".
+                absent = not kubectl(
+                    ["get", "configmap", "sdo-controller-state", "--ignore-not-found", "-o", "name"],
+                    namespace=self.control,
+                    kubeconfig=self.environment.kubeconfig,
+                ).stdout.strip()
+                if not absent:
+                    raise WarmLaneBusy("warm lane controller state could not be read")
+                if not destructive:
+                    raise WarmLaneRefusal("warm lane controller has published no state yet")
+        except (WarmLaneBusy, WarmLaneRefusal):
             raise
         except Exception:
             raise WarmLaneBusy("prior native incident ownership could not be checked") from None
@@ -259,10 +277,17 @@ class WarmEnvironment:
         )
 
     def reset_changed(self) -> None:
-        from benchmarks.sregym.fastloop.baseline_recovery import KubectlApplicationCluster
+        from benchmarks.sregym.fastloop.app_observability import restart_in_memory_trace_stores
+        from benchmarks.sregym.fastloop.baseline_recovery import KubectlApplicationCluster, application_namespaces
 
         checks = RestoreChecks(self.environment)
         checks.validate()
+        # An app trace store that grew while the lane idled goes before the reseed's install records the Pods; the
+        # restore's health wait covers the replacement.
+        env = self.environment
+        restart_in_memory_trace_stores(
+            env.kubeconfig, application_namespaces(env.baseline_path, env.kubeconfig, env.namespace)
+        )
         restore_application(
             self.environment,
             KubectlApplicationCluster(self.environment.kubeconfig),
@@ -419,7 +444,7 @@ class WarmEnvironment:
                 raise WarmLaneBusy("a reseed failed with no planned memory; refusing to rewind accepted memory")
             self._full_reset()
             return
-        self._assert_idle()
+        self._assert_idle(destructive=True)
         if self.ops.controller_pod(self.control) is not None:
             pause_for_recovery(self.ops, self.control)
             sync_existing(native_install_config(self.config))
