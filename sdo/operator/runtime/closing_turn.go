@@ -94,6 +94,9 @@ func closingSkipReason(classification string) string {
 	return classification + "_no_learning"
 }
 
+// ClosingTurnOffReason is the ledger's reflection_skipped_reason of a closure under learning.closing_turn off.
+const ClosingTurnOffReason = "closing_turn_off"
+
 // noLearningDecision is the decision for a closing turn that does not learn. When Go already wrote files into the
 // checkout (corpus cases, captured proposals) the decision is "updated", because a no_change over a nonempty diff is
 // rejected by the shared check; otherwise it is a no_change that says why.
@@ -207,7 +210,7 @@ func (n NativeIncidentBroker) cleanupBeforePublish(ctx context.Context, id strin
 	closure := incidentClosureState(ledger.Closure)
 	// Escalated closures get no turn (committed source still publishes), nor does a closure without a session,
 	// a cleaner or a turn budget.
-	if ledger.GetClosure().GetEscalatedAt() != nil || n.Cleaner == nil || n.CleanupTurns <= 0 || !hasResponderSession(closure) {
+	if ledger.GetClosure().GetEscalatedAt() != nil || n.ClosingTurnOff || n.Cleaner == nil || n.CleanupTurns <= 0 || !hasResponderSession(closure) {
 		finish()
 		return
 	}

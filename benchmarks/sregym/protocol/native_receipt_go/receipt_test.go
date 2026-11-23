@@ -364,6 +364,25 @@ func TestFrozenReceiptGradesPrivateEvidence(t *testing.T) {
 	}
 }
 
+// learning.closing_turn off: the outcome is committed and acknowledged as in a learning closure, but no reflection is
+// required or queued, so the ledger names the skip and carries no decision or reflection commit. The row is graded
+// on the same evidence: still a credited mitigation.
+func TestClosingTurnOffReceiptGradesTheCommittedOutcome(t *testing.T) {
+	r := fixture()
+	l := r.NativeLedger
+	l.ReflectionCommit = ""
+	l.RequiresReflection, l.ReflectionQueued, l.ReflectionProcessed = false, false, false
+	l.ReflectionDecision = nil
+	l.ReflectionSkippedReason = "closing_turn_off"
+	got := Evaluate(encoded(t, r), true)
+	if got.GetFailure() != nil {
+		t.Fatal(got.GetFailure())
+	}
+	if got.GetReceipt().GetResolution() != "sdo_mitigated" || got.GetReceipt().GetReflectionSkippedReason() != "closing_turn_off" {
+		t.Fatal(got)
+	}
+}
+
 func externalFixture() *c.NativeProductionReceipt {
 	r := fixture()
 	l := r.NativeLedger

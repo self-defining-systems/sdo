@@ -367,3 +367,18 @@ func TestOnboardingJourneysRequiredDefaultFileAndEnvironment(t *testing.T) {
 		t.Fatal("a non-boolean environment value must be refused")
 	}
 }
+
+// The closing turn is on by default; a file turns it off, and forcing reflection with it off is refused.
+func TestClosingTurnDefaultsOnAndConflictsWithForcedReflection(t *testing.T) {
+	if !settings.Default().Learning.ClosingTurn {
+		t.Fatal("learning.closing_turn must default to true")
+	}
+	cfg, err := settings.Resolve([]string{writeFile(t, "learning:\n  closing_turn: false\n")}, []string{"SDO_AGENT_MODEL=m"})
+	if err != nil || cfg.Learning.ClosingTurn {
+		t.Fatalf("file: %v %+v", err, cfg.Learning)
+	}
+	cfg.Learning.ForceReflection = true
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "learning.closing_turn") {
+		t.Fatalf("Validate = %v, want a learning.closing_turn conflict", err)
+	}
+}

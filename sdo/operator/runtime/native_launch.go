@@ -109,7 +109,7 @@ func nativeBrokerFromLaunch(_ context.Context, config *contracts.ControllerConfi
 		HeadHolds: ConfigMapHeadHolds{Client: client, Namespace: controlNamespace}, HeadPollInterval: time.Duration(policy.Source.PollInterval),
 		CodePath: codePathConfigFromContract(config.GetCodePath()),
 		Deriver:  ProtoOutcomeDeriver{SessionRoot: config.GetRepositoryMountPath(), Recording: policy.Agent.Recording}, ResponderBackend: policy.Agent.Provider, ResponderModel: policy.Agent.Model,
-		ForceReflection: policy.Learning.ForceReflection, FrozenMemory: frozenMemory, PhaseLog: os.Stdout,
+		ForceReflection: policy.Learning.ForceReflection, FrozenMemory: frozenMemory, ClosingTurnOff: !policy.Learning.ClosingTurn, PhaseLog: os.Stdout,
 		SessionRoot: config.GetRepositoryMountPath(), SessionRetention: DefaultSessionRetention,
 	}, client, nil
 }
@@ -203,7 +203,7 @@ func attachNativeReflector(native *NativeIncidentBroker, config *contracts.Contr
 	native.Cleaner = worker
 	native.CleanupTurns = policy.Response.CleanupTurns
 	native.PageOnly = policy.Response.PageOnly
-	if native.PageOnly {
+	if native.PageOnly || native.ClosingTurnOff {
 		native.CleanupTurns = 0
 	}
 	return nil
