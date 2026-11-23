@@ -1580,6 +1580,7 @@ def _run_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQueue 
     path = environment.run_dir / "results" / args.run_id / INCIDENTS_FILENAME
     started = time.monotonic()
     try:
+        _apply_row_operator_env(args, environment)
         return _execute_owned(args, evidence_queue=evidence_queue)
     except (Exception, SystemExit) as exc:
         if not path.exists() or not path.read_text().strip():
@@ -1603,6 +1604,23 @@ def _run_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQueue 
                     ),
                 )
         raise
+
+
+def _apply_row_operator_env(args: argparse.Namespace, environment: FastloopEnvironment) -> None:
+    """Before any row work: the lane's host operator binary and lane environment for every Go operator call.
+
+    The warm transaction (inspect, sync, install-existing) and the row-start wipe call the Go operator and install the
+    controller too, so they run the same binary and environment (the lane's facts, the Opus pool) as a fresh install;
+    otherwise the first call builds the operator from source and a reseeded controller misses the row's pool.
+    """
+    from benchmarks.sregym.fastloop.eks_lane import VirtualLaneError
+
+    try:
+        environment.apply_operator_env(os.environ, model=args.model)
+    except VirtualLaneError as error:
+        raise SystemExit(f"eval: {error}; the row was refused before it deployed or injected") from error
+    if args.agent == "sdo" and (missing := opus_pool_missing(args.model, os.environ)):
+        raise SystemExit(f"eval: {missing}; configure the pool before the row deploys or injects")
 
 
 def _operator_build(environment: Any) -> str | None:
@@ -1759,14 +1777,6 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
             environment.run_dir,
         )
         prepare_dev_mount(*mount_args, environment.parallel_root, evidence_root=environment.evidence_root)
-    from benchmarks.sregym.fastloop.eks_lane import VirtualLaneError
-
-    try:
-        environment.apply_operator_env(os.environ, model=args.model)
-    except VirtualLaneError as error:
-        raise SystemExit(f"eval: {error}; the row was refused before it deployed or injected") from error
-    if args.agent == "sdo" and (missing := opus_pool_missing(args.model, os.environ)):
-        raise SystemExit(f"eval: {missing}; configure the pool before the row deploys or injects")
     if environment.eks is not None and args.agent == "sdo":
         from benchmarks.sregym.fastloop.eks_lane import ensure_opus_pool
 
