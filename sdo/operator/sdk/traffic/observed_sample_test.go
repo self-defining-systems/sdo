@@ -49,8 +49,8 @@ func iterateOnce(t *testing.T, client Doer) Sample {
 // A custom check's own reason says what the probe expected; the sample still
 // keeps what the server said.
 func TestFailedSampleKeepsTheServersBodyBesideTheChecksReason(t *testing.T) {
-	sample := iterateOnce(t, answerDoer{status: http.StatusTooManyRequests, body: "Retry later"})
-	if sample.Outcome != OutcomeError || sample.Status != http.StatusTooManyRequests {
+	sample := iterateOnce(t, answerDoer{status: http.StatusServiceUnavailable, body: "Retry later"})
+	if sample.Outcome != OutcomeError || sample.Status != http.StatusServiceUnavailable {
 		t.Fatalf("sample = %+v", sample)
 	}
 	if !strings.Contains(sample.Error, "leftover branch") {

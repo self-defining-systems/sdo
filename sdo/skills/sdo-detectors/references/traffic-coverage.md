@@ -79,5 +79,11 @@ The prober reads at most `traffic.MaxResponseBody` (64 KiB) of a response. A lis
 is `invalid` with defect `response_truncated`, the scenario stays unproven, and `sdo detect` and the memory check
 report it with the step and the byte cap.
 
+An application that answers the probe user with HTTP 429 (a step whose check does not expect 429) is limiting the
+probe's own rate. The sample is `invalid` with defect `rate_limited`, and the prober sends nothing to that target until
+the answer's `Retry-After` has passed (one minute without one, at most five). Real users the application limits show up
+in its request metrics. If a scenario is rate-limited on every sample, lower its rate or move its search to a cheaper
+read.
+
 - Request small pages from every list step (a page size of at most 20) and assert on a record you know, never on the
   whole collection. Prefer a filter or a single-record read over a large listing.

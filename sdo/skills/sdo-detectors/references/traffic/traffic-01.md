@@ -168,6 +168,19 @@ const DefaultHealthMinDuration = 9 * time.Second
     detected in 3-5s. Nine seconds clears the observed stalls with headroom
     while adding at most one more poll beyond real-fault detection.
 
+const DefaultRateLimitWait = time.Minute
+    DefaultRateLimitWait is how long the probe waits after a 429 without a
+    usable Retry-After: the per-minute windows rate limiters use.
+
+const DefectRateLimited = "rate_limited"
+    DefectRateLimited marks an invalid sample the application refused with HTTP
+    429 (a step whose check does not expect it), or one the engine did not send
+    because that refusal's wait has not passed. The application is limiting the
+    probe's own user: that is the probe's load, not an application failure,
+    and the probe honours Retry-After (DefaultRateLimitWait without one,
+    at most MaxRateLimitWait) before it sends to that target again. Real users
+    the application limits show up in its request metrics, not here.
+
 const DefectResponseTruncated = "response_truncated"
     DefectResponseTruncated marks an invalid sample whose successful (2xx) step
     response was longer than MaxResponseBody and failed its check on the cut
@@ -189,6 +202,10 @@ const MaxKnownBrokenReason = 200
 const MaxLinkExcerpt = 256
     MaxLinkExcerpt bounds response and error text stored in samples.
 
+const MaxRateLimitWait = 5 * time.Minute
+    MaxRateLimitWait caps the wait a Retry-After can ask for, so a broken header
+    cannot blind the probe for long.
+
 const MethodExec = "EXEC"
     MethodExec is the method of a request to an "ssh" target: Path is the
     remote command line, run as the target's User signed in with the key of
@@ -208,25 +225,4 @@ const StateNow = "sdo.now"
     3339 in UTC. The engine sets it and records the same instant as Sample.At,
     so replaying an iteration with that time rebuilds the same requests.
     Build reads the time from here and never from a clock.
-
-const UniqueWidth = 16
-    UniqueWidth is the number of hex digits Unique appends.
-
-
-VARIABLES
-
-var RequiredFaultClasses = []FaultClass{FaultUnreachable, FaultErrorStatus}
-    RequiredFaultClasses are detected by every valid scenario.
-
-var Watch = sdk.WatchKind{APIVersion: APIVersion, Kind: "SyntheticTraffic"}
-    Watch is the watch kind the controller runtime emits when synthetic probe
-    results may change a scenario's verdict. Traffic detectors declare it so
-    they are evaluated as soon as probes fail or recover, not on their interval.
-
-
-FUNCTIONS
-
-func BuildHTTPRequest(ctx context.Context, baseURL string, request Request) (*http.Request, error)
-    BuildHTTPRequest renders request against baseURL (scheme://host:port) with a
-    canonical, sorted query string and the synthetic marker header.
 ```
