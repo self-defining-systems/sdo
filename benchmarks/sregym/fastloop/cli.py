@@ -976,10 +976,18 @@ def _sdo_agent(
             before_proof=getattr(args, "admission_before_proof", None),
             pre_onboarding_hook=getattr(args, "pre_onboarding_hook", None),
         )
+        from benchmarks.sregym.fastloop.admission import CarriedProof
         from benchmarks.sregym.fastloop.setup_proof import seal_after_admission
 
+        warm_uid = getattr(args, "warm_proven_controller_uid", None)
         ops = EvalAdmissionOps(  # type: ignore[assignment]
-            ops, admission, fresh=fresh_memory_start, on_proven=lambda proof: seal_after_admission(environment, proof)
+            ops,
+            admission,
+            fresh=fresh_memory_start,
+            on_proven=lambda proof: seal_after_admission(environment, proof),
+            carried=CarriedProof(warm_uid, unchanged=lambda: not getattr(args, "warm_application_repaired", True))
+            if warm_uid
+            else None,
         )
 
     def start_native(context: object) -> bool:
@@ -1750,6 +1758,10 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
             warm_receipt = prepare_lane(warm_preparation, results_dir / "warm-transaction.json")
         if not warm_receipt.reused:
             warm_preparation = None
+        elif warm_receipt.identity is not None:
+            # The row's injection gate may stand on this proof while the proven controller still runs and no
+            # rehearsal repaired the application (set once the rehearsals ran).
+            args.warm_proven_controller_uid = warm_receipt.identity.controller_uid
     elif _wipes_at_row_start(args, environment):
         tier1 = _wipe_sdo_and_harness(args, environment)
 
@@ -1873,6 +1885,7 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
                     revision=_application_revision(args, environment),
                     fresh=prove_owed_baseline and rehearsal_index == 0,
                 )
+            args.warm_application_repaired = repair.done
         deployed = time.monotonic()
         described = deployed
         baseline = load_application_baseline(environment.baseline_path, environment.namespace)
