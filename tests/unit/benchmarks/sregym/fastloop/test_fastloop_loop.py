@@ -1388,7 +1388,8 @@ def test_a_mitigated_last_row_whose_fault_the_restore_reverts_ends_at_its_closur
     )
 
     assert "recover" not in driver.events
-    assert record.oracle is not None and record.oracle.success
+    assert record.oracle is not None
+    assert record.oracle.success
     assert record.fault_recovery_deferred
     assert record.baseline_proof_deferred
     assert record.recovery_error is None
@@ -1426,7 +1427,8 @@ def test_only_the_runs_last_row_leaves_its_fault_to_the_next_start(tmp_path: Pat
 
     assert driver.events.count("recover") == 1
     assert driver.events.index("recover") < driver.events.index("inject:p1", 1)
-    assert first.full_cleanup_verified and not first.fault_recovery_deferred
+    assert first.full_cleanup_verified
+    assert not first.fault_recovery_deferred
     assert last.fault_recovery_deferred
     assert not last.full_cleanup_verified
 

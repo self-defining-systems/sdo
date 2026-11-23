@@ -403,4 +403,6 @@ def test_a_start_that_restores_the_app_skips_only_the_live_content_comparison(la
     cluster.objects = [deployment(image="app:repaired")]
     assert deployed_application_change(lane, base, live_content=False) is None
     planned = _commit(lane.workspace, {"services/reserve.go": "fixed\n"})
-    assert deployed_application_change(lane, planned, live_content=False).trigger is Tier2Trigger.ACCEPTED_SOURCE_CHANGED
+    refused = deployed_application_change(lane, planned, live_content=False)
+    assert refused is not None
+    assert refused.trigger is Tier2Trigger.ACCEPTED_SOURCE_CHANGED

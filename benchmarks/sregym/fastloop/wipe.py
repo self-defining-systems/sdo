@@ -445,7 +445,10 @@ class AttemptMarker:
             lines = self.path.read_text(encoding="utf-8").splitlines()
         except FileNotFoundError:
             return ()
-        owed = next((line[len(FAULT_RECOVERY_OWED_PREFIX) :] for line in lines if line.startswith(FAULT_RECOVERY_OWED_PREFIX)), "")
+        owed = next(
+            (line[len(FAULT_RECOVERY_OWED_PREFIX) :] for line in lines if line.startswith(FAULT_RECOVERY_OWED_PREFIX)),
+            "",
+        )
         return tuple(row.strip() for row in owed.split(",") if row.strip())
 
     def end(

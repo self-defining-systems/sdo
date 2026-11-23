@@ -533,7 +533,9 @@ def test_inspect_accepts_a_lane_whose_last_row_left_only_its_baseline_proof_to_t
         cluster.lane.inspect()
 
 
-@pytest.mark.parametrize(("owed", "live_content"), [({"fault_recovery_owed": ("p1",)}, False), ({"baseline_proof_owed": True}, True)])
+@pytest.mark.parametrize(
+    ("owed", "live_content"), [({"fault_recovery_owed": ("p1",)}, False), ({"baseline_proof_owed": True}, True)]
+)
 def test_inspect_accepts_a_lane_whose_last_row_left_its_fault_to_this_starts_restore(
     cluster, monkeypatch, owed, live_content
 ):
