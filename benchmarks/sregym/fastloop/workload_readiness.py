@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from benchmarks.sregym.adapter import Deadline, WaitKind, kubectl, wait_for
@@ -186,11 +187,15 @@ def sustained_pod_health(
     read_pods: Callable[[], list[dict[str, Any]]] | None = None,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
+    wall_clock: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> list[str]:
-    """Sample pods across at least ``window_seconds`` (default one minute); return what failed, empty when clean.
+    """Require pods healthy across ``window_seconds`` (default one minute); return what failed, empty when clean.
 
     A crash-looping container is Ready for short windows between backoffs, so one sample proves nothing:
-    every sample must show every container Ready, and no restart count may grow over the window.
+    every sample must show every container Ready, and no restart count may grow over the window. Kubernetes
+    already records how long that has held: a pod Ready since its Ready condition's last transition, with every
+    container running since its start, is proven for that long. Sampling continues only until every pod's
+    recorded healthy stretch covers the window, never longer than the window itself.
     """
     window = wait_for(WaitKind.MINUTE) if window_seconds is None else window_seconds
     poll = wait_for(WaitKind.POLL) if poll_seconds is None else poll_seconds
@@ -203,9 +208,41 @@ def sustained_pod_health(
     restarts: dict[tuple[str, str], int] = {}
     end = clock() + window
     while True:
-        problems = pod_health_problems(read_pods(), restarts)
+        pods = read_pods()
+        problems = pod_health_problems(pods, restarts)
         if problems:
             return problems
         if clock() >= end:
             return []
-        sleep(poll)
+        remaining = min(end - clock(), _unproven_seconds(pods, window, wall_clock()))
+        if remaining <= 0:
+            return []
+        sleep(min(poll, remaining))
+
+
+def _unproven_seconds(pods: list[dict[str, Any]], window: float, now: datetime) -> float:
+    """Seconds of the window that the pods' recorded healthy stretches do not cover yet.
+
+    A pod's stretch starts at the later of its Ready condition's last transition and its containers' current
+    start; a pod without both timestamps has proven nothing and needs the whole window.
+    """
+    unproven = 0.0
+    for pod in pods:
+        metadata, status = pod["metadata"], pod.get("status", {})
+        if metadata.get("deletionTimestamp") or status.get("phase") == "Succeeded":
+            continue
+        ready = [
+            condition.get("lastTransitionTime")
+            for condition in status.get("conditions", [])
+            if condition.get("type") == "Ready" and condition.get("status") == "True"
+        ]
+        started = [
+            container.get("state", {}).get("running", {}).get("startedAt")
+            for container in status.get("containerStatuses", [])
+        ]
+        stamps = [*ready, *started]
+        if not ready or not started or not all(stamps):
+            return window
+        since = max(datetime.fromisoformat(stamp.replace("Z", "+00:00")) for stamp in stamps)
+        unproven = max(unproven, window - (now - since).total_seconds())
+    return unproven

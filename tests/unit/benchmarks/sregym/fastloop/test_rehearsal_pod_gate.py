@@ -1,5 +1,6 @@
 """The no-fault rehearsal rejects an unhealthy pod set before injection, with a named cause."""
 
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -155,3 +156,63 @@ def test_single_red_pod_health_oracle_is_rejected(tmp_path):
     verdict = rehearse("p")
     assert verdict["success"] is False
     assert verdict["details"]["rejection"]["named"] == ["MitigationOracle"]
+
+
+NOW = datetime(2026, 11, 23, 12, 0, 0, tzinfo=UTC)
+
+
+def healthy_since(name, seconds_ago, *, uid=None):
+    """A Running pod whose Ready condition and container start are ``seconds_ago`` old, as Kubernetes reports them."""
+    since = (NOW - timedelta(seconds=seconds_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {
+        "metadata": {"name": name, "uid": uid or name},
+        "status": {
+            "phase": "Running",
+            "conditions": [{"type": "Ready", "status": "True", "lastTransitionTime": since}],
+            "containerStatuses": [
+                {"name": "c", "ready": True, "restartCount": 0, "state": {"running": {"startedAt": since}}}
+            ],
+        },
+    }
+
+
+def run_at(samples, window=60.0, poll=5.0):
+    clock = Clock()
+    feed = iter(samples)
+    last = []
+
+    def read():
+        nonlocal last
+        last = next(feed, last)
+        return last
+
+    problems = sustained_pod_health(
+        None,
+        "ns",
+        window_seconds=window,
+        poll_seconds=poll,
+        read_pods=read,
+        sleep=clock.sleep,
+        clock=lambda: clock.now,
+        wall_clock=lambda: NOW + timedelta(seconds=clock.now),
+    )
+    return problems, clock
+
+
+def test_pods_kubernetes_reports_ready_and_unrestarted_for_the_whole_window_pass_without_waiting():
+    # The Ready condition and the running container's start time already cover the window: no restart, no
+    # Ready transition inside it. Watching it again for a minute proves nothing more.
+    problems, clock = run_at([[healthy_since("a", 600), healthy_since("b", 61)]])
+    assert problems == []
+    assert clock.now == 0.0
+
+
+def test_a_pod_healthy_for_part_of_the_window_is_watched_only_for_the_rest():
+    problems, clock = run_at([[healthy_since("a", 600), healthy_since("b", 20)]])
+    assert problems == []
+    assert 40.0 <= clock.now < 60.0
+
+
+def test_a_restart_inside_the_shortened_wait_still_fails():
+    problems, _ = run_at([[healthy_since("a", 30)], [healthy_since("a", 30)], [pod("a", restarts=1)]])
+    assert problems == ["pod a container c restarted (0 -> 1)"]
