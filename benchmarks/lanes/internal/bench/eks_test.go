@@ -627,7 +627,7 @@ func TestEksNodeAgentPrepullsTheLanesImageList(t *testing.T) {
 		t.Fatalf("up: %v\n%s", err, out)
 	}
 	applied := s.file("applied.yaml")
-	for _, want := range []string{"prepull() {", "ctr -n k8s.io images pull --hosts-dir /certs", "name: sdo-lane-prepull", "optional: true", "path: /usr/bin/ctr", "path: /run/containerd"} {
+	for _, want := range []string{"prepull() {", "ctr -n k8s.io images pull --hosts-dir /etc/containerd/certs.d", "name: sdo-lane-prepull", "optional: true", "{name: host, mountPath: /host, readOnly: true}"} {
 		if !strings.Contains(applied, want) {
 			t.Errorf("the node agent manifest lacks %q", want)
 		}
@@ -645,6 +645,82 @@ func TestEksNodeAgentPrepullsTheLanesImageList(t *testing.T) {
 		if !strings.Contains(log, want) {
 			t.Errorf("the pre-pull list lacks %q:\n%s", want, log)
 		}
+	}
+}
+
+// agentPrepull runs the node agent's prepull function as the manifest `up` applied it, with the agent container's mounts
+// mapped under root and fake aws, ctr and chroot on PATH. The agent image's libc is older than the node's, so a `ctr`
+// run in the container's own root fails to load (the fake container ctr says so, as the real one did); only a ctr run
+// chrooted into the node's root (root/host) can pull, and it records the arguments it got. Returns the agent's output,
+// the lines of the node's pulled-image record and the node ctr's recorded invocations.
+func agentPrepull(t *testing.T, applied string, images ...string) (out string, pulled, calls []string) {
+	t.Helper()
+	const open, closing = "              prepull() {\n", "\n              }\n"
+	i := strings.Index(applied, open)
+	if i < 0 {
+		t.Fatal("the node agent manifest has no prepull function")
+	}
+	body := applied[i:]
+	body = body[:strings.Index(body, closing)+len(closing)]
+	var fn []string
+	for _, ln := range strings.Split(body, "\n") {
+		fn = append(fn, strings.TrimPrefix(ln, "              "))
+	}
+	root := t.TempDir()
+	for _, d := range []string{"prepull", "lane", "bin", "host/usr/bin", "usr/bin"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(rel, content string, mode os.FileMode) {
+		if err := os.WriteFile(filepath.Join(root, rel), []byte(content), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("prepull/images", strings.Join(images, "\n")+"\n", 0o644)
+	// the container's mounted /usr/bin/ctr (old manifests mounted the node's binary there) cannot load in its libc
+	write("usr/bin/ctr", "#!/bin/sh\necho \"ctr: /lib64/libc.so.6: version 'GLIBC_2.34' not found (required by ctr)\" >&2\nexit 1\n", 0o755)
+	write("host/usr/bin/ctr", "#!/bin/sh\necho \"$*\" >> '"+root+"/ctr.calls'\n", 0o755)
+	// chroot ROOT CMD...: the node's own binaries (root/host as the node's /) in place of the container's
+	write("bin/chroot", "#!/bin/sh\nr=$1; shift; c=$1; shift\nexec \"$r$c\" \"$@\"\n", 0o755)
+	write("bin/aws", "#!/bin/sh\necho tok\n", 0o755)
+	script := strings.Join(fn, "\n")
+	for from, to := range map[string]string{"/prepull/images": root + "/prepull/images", "/lane/": root + "/lane/", "-x /usr/bin/ctr": "-x " + root + "/usr/bin/ctr", "/host": root + "/host"} {
+		script = strings.ReplaceAll(script, from, to)
+	}
+	cmd := exec.Command("bash", "-c", script+"\nprepull\n")
+	cmd.Env = append(os.Environ(), "PATH="+filepath.Join(root, "bin")+string(os.PathListSeparator)+filepath.Join(root, "usr/bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
+	b, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("prepull: %v\n%s", err, b)
+	}
+	read := func(f string) []string {
+		data, _ := os.ReadFile(filepath.Join(root, f))
+		return strings.Split(strings.TrimSpace(string(data)), "\n")
+	}
+	return string(b), read("lane/prepulled"), read("ctr.calls")
+}
+
+// The node agent's image is older than the nodes it runs on: the prepull must run the node's own ctr in the node's root
+// (a ctr bind-mounted into the container died with "GLIBC_2.34 not found" on every node, and no image was ever pulled).
+func TestEksNodeAgentPrepullRunsTheNodesCtrInTheNodesRoot(t *testing.T) {
+	s := newEksScript(t)
+	if out, err := s.run(nil, "up", "eks1", filepath.Join(t.TempDir(), "kc")); err != nil {
+		t.Fatalf("up: %v\n%s", err, out)
+	}
+	applied := s.file("applied.yaml")
+	ecr := "123456789012.dkr.ecr.us-west-2.amazonaws.com/sdo/sdo-controller@sha256:" + strings.Repeat("a", 64)
+	out, pulled, calls := agentPrepull(t, applied, "docker.io/library/busybox:1.36", ecr)
+	if strings.Contains(out, "GLIBC") || strings.Contains(out, "failed") {
+		t.Errorf("the prepull ran a ctr the agent's libc cannot load:\n%s", out)
+	}
+	want := []string{"docker.io/library/busybox:1.36", ecr}
+	if strings.Join(pulled, " ") != strings.Join(want, " ") {
+		t.Errorf("pulled = %v, want %v", pulled, want)
+	}
+	if len(calls) != 2 || !strings.Contains(calls[0], "-n k8s.io images pull --hosts-dir /etc/containerd/certs.d docker.io/library/busybox:1.36") ||
+		!strings.Contains(calls[1], "--user AWS:tok") || !strings.HasSuffix(calls[1], ecr) {
+		t.Errorf("the node ctr was called as %q", calls)
 	}
 }
 
