@@ -153,6 +153,24 @@ def harness_leftovers(
     return frozenset(doomed)
 
 
+def install_owned_objects(control_namespace: str, cluster_role_bindings: Iterable[dict[str, Any]]) -> frozenset[str]:
+    """The identities (``kubectl get -o name``) of what SDO's install for one application makes outside the application:
+    its control namespace, the ClusterRoleBindings that bind a ServiceAccount of that namespace, and the ClusterRoles
+    they grant. A fault's own cluster objects bind none of them. Exactly this set, and nothing else, is the resident
+    install's: the Go residue check excuses it (``app-reset owned``) and so does the warm transaction's scope check."""
+    owned = {f"{NAMESPACE_KIND}/{control_namespace}"}
+    for row in cluster_role_bindings:
+        if any(
+            subject.get("kind") == "ServiceAccount" and subject.get("namespace") == control_namespace
+            for subject in row.get("subjects") or []
+        ):
+            owned.add(f"clusterrolebinding.rbac.authorization.k8s.io/{row['metadata']['name']}")
+            role = row.get("roleRef") or {}
+            if role.get("kind") == "ClusterRole":
+                owned.add(f"clusterrole.rbac.authorization.k8s.io/{role['name']}")
+    return frozenset(owned)
+
+
 def _deletion_order(identity: str) -> tuple[int, str]:
     return CLUSTER_KINDS.index(object_kind(identity)), identity
 

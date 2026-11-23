@@ -304,3 +304,67 @@ def test_inspect_names_why_the_previous_attempt_is_not_clean(cluster, tmp_path):
     marker.path.write_text(f"123\n{UNRECOVERED_PREFIX}some_problem\n")
     with pytest.raises(WarmLaneRefusal, match="not verified recovered: some_problem"):
         cluster.lane.inspect()
+
+
+CONTROL = "app-sdo"
+ROLE = "clusterrole.rbac.authorization.k8s.io"
+BINDING = "clusterrolebinding.rbac.authorization.k8s.io"
+INSTALL_OBJECTS = [
+    "namespace/kube-system",
+    "namespace/app",
+    f"namespace/{CONTROL}",
+    f"{ROLE}/sdo-admin-{CONTROL}",
+    f"{ROLE}/sdo-prometheus-{CONTROL}",
+    f"{BINDING}/sdo-admin-{CONTROL}",
+    f"{BINDING}/sdo-prometheus-{CONTROL}",
+]
+
+
+def scope_cluster(cluster, monkeypatch, objects, baseline=("namespace/kube-system", "namespace/app")):
+    from benchmarks.sregym.fastloop import wipe
+
+    def kubectl(args, **kwargs):
+        if args[:2] == ["get", "clusterrolebindings"]:
+            subject = [{"kind": "ServiceAccount", "namespace": CONTROL, "name": "sdo"}]
+            items = [
+                {
+                    "metadata": {"name": f"sdo-admin-{CONTROL}"},
+                    "subjects": subject,
+                    "roleRef": {"kind": "ClusterRole", "name": f"sdo-admin-{CONTROL}"},
+                },
+                {
+                    "metadata": {"name": f"sdo-prometheus-{CONTROL}"},
+                    "subjects": subject,
+                    "roleRef": {"kind": "ClusterRole", "name": f"sdo-prometheus-{CONTROL}"},
+                },
+                {
+                    "metadata": {"name": "fault-binding"},
+                    "subjects": [{"kind": "User", "name": "x"}],
+                    "roleRef": {"kind": "ClusterRole", "name": "fault-role"},
+                },
+            ]
+            return SimpleNamespace(stdout=json.dumps({"items": items}))
+        return SimpleNamespace(stdout="")
+
+    monkeypatch.setattr(warm_environment, "kubectl", kubectl)
+    monkeypatch.setattr(warm_environment, "load_inventory", lambda path: frozenset(baseline))
+    monkeypatch.setattr(wipe.KubectlLaneCluster, "list_objects", lambda self: frozenset(objects))
+    monkeypatch.setattr(warm_environment, "assert_clean_baseline", lambda *a, **k: None)
+    cluster.environment.host_owned_kinds = ()
+
+
+def test_the_resident_installs_own_namespace_and_rbac_are_not_foreign_to_the_warm_scope_check(cluster, monkeypatch):
+    scope_cluster(cluster, monkeypatch, INSTALL_OBJECTS)
+    cluster.lane._clean_scope()
+
+
+@pytest.mark.parametrize(
+    "foreign",
+    [f"{ROLE}/fault-role", f"{BINDING}/fault-binding", "namespace/leftover", f"{ROLE}/sdo-admin-other-sdo"],
+)
+def test_anything_beyond_the_installs_own_objects_still_fails_the_warm_scope_check(cluster, monkeypatch, foreign):
+    from benchmarks.sregym.fastloop.warm_lane import WarmLaneRefusal
+
+    scope_cluster(cluster, monkeypatch, [*INSTALL_OBJECTS, foreign])
+    with pytest.raises(WarmLaneRefusal, match="outside its installed inventory"):
+        cluster.lane._clean_scope()

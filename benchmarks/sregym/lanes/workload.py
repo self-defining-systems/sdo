@@ -527,19 +527,11 @@ def operator_owned_objects(ctx: Context, namespace: str) -> list[str]:
     every row and are never fault residue. They are found by who they bind: a ClusterRoleBinding with a ServiceAccount
     of the control namespace, and the ClusterRole it grants; a fault's own objects bind none of them.
     """
+    from benchmarks.sregym.fastloop.wipe import install_owned_objects
+
     control = control_namespace_for(namespace)
-    owned = {f"namespace/{control}"}
     bindings = json.loads(ctx.kubectl("get", "clusterrolebindings", "-o", "json")).get("items", [])
-    for row in bindings:
-        if any(
-            subject.get("kind") == "ServiceAccount" and subject.get("namespace") == control
-            for subject in row.get("subjects") or []
-        ):
-            owned.add(f"clusterrolebinding.rbac.authorization.k8s.io/{row['metadata']['name']}")
-            role = row.get("roleRef") or {}
-            if role.get("kind") == "ClusterRole":
-                owned.add(f"clusterrole.rbac.authorization.k8s.io/{role['name']}")
-    return sorted(owned)
+    return sorted(install_owned_objects(control, bindings))
 
 
 def app_reset(ctx: Context) -> tuple[int, dict[str, Any]]:
