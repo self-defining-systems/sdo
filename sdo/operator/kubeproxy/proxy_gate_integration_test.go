@@ -4,6 +4,7 @@ package kubeproxy_test
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -22,12 +23,19 @@ import (
 // returns the gate's observation once the proxy has finished the request.
 func abandonThroughGate(t *testing.T, requestLine, body string, headers ...string) *apihistory.MutationObservation {
 	t.Helper()
-	arrived := make(chan struct{}, 1)
+	arrived, finished := make(chan struct{}, 1), make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Reading the body to its end lets the server notice the proxy
+		// hanging up.
+		_, _ = io.Copy(io.Discard, r.Body)
 		arrived <- struct{}{}
-		<-r.Context().Done()
+		select {
+		case <-r.Context().Done():
+		case <-finished:
+		}
 	}))
 	t.Cleanup(upstream.Close)
+	t.Cleanup(func() { close(finished) })
 	address, _ := url.Parse(upstream.URL)
 	gate, err := apihistory.PrepareMutationGate(filepath.Join(t.TempDir(), "gate"))
 	if err != nil {
