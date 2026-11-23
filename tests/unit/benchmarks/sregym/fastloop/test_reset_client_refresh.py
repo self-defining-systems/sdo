@@ -165,7 +165,8 @@ def test_a_caller_that_takes_the_sustained_window_gets_it_after_the_oracle_and_i
     lane = Recording()
     restore_application(environment(tmp_path), lane, lane, sustained=windows.append)
     oracle = [kwargs for op, kwargs in requests if op == "baseline_oracle"]
-    assert oracle and all(kwargs["sustain"] is False for kwargs in oracle)
+    assert oracle
+    assert all(kwargs["sustain"] is False for kwargs in oracle)
     assert "sustained_health" not in [op for op, _ in requests]
     assert len(windows) == 1
     windows[0]()
@@ -192,4 +193,5 @@ def test_without_a_caller_for_the_window_the_oracle_takes_it_inline(tmp_path: Pa
 
     lane = Recording()
     restore_application(environment(tmp_path), lane, lane)
-    assert seen and all("sustain" not in kwargs for kwargs in seen)
+    assert seen
+    assert all("sustain" not in kwargs for kwargs in seen)

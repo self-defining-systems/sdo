@@ -181,7 +181,7 @@ def prepare_lane(
             if (join_sustained := getattr(lane, "join_sustained", None)) is not None:
                 try:
                     join_sustained()  # a fallback never runs beside a live check
-                except Exception:  # noqa: S110
+                except Exception:
                     pass  # the failure being handled is the one recorded
             run("full_reset", lane.full_reset)
         except Exception:
