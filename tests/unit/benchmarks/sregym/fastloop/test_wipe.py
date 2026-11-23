@@ -21,6 +21,7 @@ from benchmarks.sregym.fastloop.wipe import (
     await_healthy_pods,
     baseline_proof_owed,
     credentials_hook,
+    fault_recovery_owed,
     finalizer_holders,
     inventory_path,
     load_inventory,
@@ -884,3 +885,79 @@ def test_rows_that_proved_their_baseline_owe_no_proof(tmp_path: Path) -> None:
     ended.begin()
     ended.end(unrecovered_rows(rows), baseline_proof_owed=baseline_proof_owed(rows))
     assert AttemptMarker(tmp_path).pending() is None
+
+
+def _owed_row(problem_id: str = "p0", **fields: object) -> SimpleNamespace:
+    """A row that verified its incident closed and left the revert of its fault to the next start."""
+    now = datetime(2026, 10, 27, tzinfo=timezone.utc)
+    owed = {"recovery_error": None, "full_cleanup_verified": False, "fault_recovery_deferred": True}
+    return SimpleNamespace(
+        index=0, problem_id=problem_id, injection=Injected(started_at=now, finished_at=now), **{**owed, **fields}
+    )
+
+
+def test_a_row_that_left_its_fault_to_the_next_start_is_kept_only_by_a_start_that_reverts_it(tmp_path: Path) -> None:
+    """The fault is still in place: only a start whose reset reverts it (the warm reset) keeps the app; a start that
+    only proves the baseline, and every other reader, sees the lane pending and recreates the application."""
+    rows = [_owed_row()]
+    assert unrecovered_rows(rows) == ()
+    assert fault_recovery_owed(rows) == ("p0",)
+    ended = AttemptMarker(tmp_path)
+    ended.begin()
+    ended.end(unrecovered_rows(rows), fault_recovery_owed=fault_recovery_owed(rows))
+
+    for proves in (False, True):
+        pending = AttemptMarker(tmp_path).pending(start_proves_baseline=proves)
+        assert pending is not None
+        assert pending.trigger is Tier2Trigger.FAULT_RECOVERY_OWED
+        assert "p0" in pending.detail
+        reason = tier2_reason(AttemptMarker(tmp_path), lambda: None, list, start_proves_baseline=proves)
+        assert reason is not None
+        assert reason.trigger is Tier2Trigger.FAULT_RECOVERY_OWED
+    assert AttemptMarker(tmp_path).pending(start_proves_baseline=True, start_reverts_fault=True) is None
+
+
+def test_an_unrecovered_row_wins_over_a_fault_left_to_the_next_start(tmp_path: Path) -> None:
+    rows = [_owed_row("p0"), _owed_row("p1", recovery_error="fault recovery failed: geo unhealthy")]
+    ended = AttemptMarker(tmp_path)
+    ended.begin()
+    ended.end(unrecovered_rows(rows), fault_recovery_owed=fault_recovery_owed(rows))
+    pending = AttemptMarker(tmp_path).pending(start_proves_baseline=True, start_reverts_fault=True)
+    assert pending is not None
+    assert pending.trigger is Tier2Trigger.PREVIOUS_ROW_UNRECOVERED
+
+
+def test_a_start_that_reverts_a_fault_still_refuses_a_dead_attempt(tmp_path: Path) -> None:
+    AttemptMarker(tmp_path).begin()
+    pending = AttemptMarker(tmp_path).pending(start_proves_baseline=True, start_reverts_fault=True)
+    assert pending is not None
+    assert pending.trigger is Tier2Trigger.UNCLEAN_ATTEMPT
+
+
+def test_the_fault_catalog_owns_which_faults_the_application_restore_reverts() -> None:
+    """Only a fault whose injected state lives in the app namespace's own objects, which the restore replaces whole,
+    may be left to the next start's restore; data-level, cluster-scope and unreviewed faults never are."""
+
+    def fault(class_name: str, index: int = 0) -> FaultSpec:
+        return FaultSpec(kind=CLASS_KINDS[class_name], component="geo", class_name=class_name, declared_index=index)
+
+    def problem(*classes: str) -> ProblemDescription:
+        return ProblemDescription(
+            problem_id="p",
+            composite=len(classes) > 1,
+            faults=tuple(fault(name, index) for index, name in enumerate(classes)),
+            injection_order=tuple(range(len(classes))),
+        )
+
+    for name in ("ReadinessProbeMisconfiguration", "IncorrectImage", "K8STargetPortMisconfig", "WrongDNSPolicy"):
+        assert problem(name).restore_reverts_faults, name
+    assert problem("WrongServiceSelector", "MisconfigAppHotelRes").restore_reverts_faults
+    for name in (
+        "MongoDBRevokeAuth",  # application data
+        "AdmissionWebhookOutage",  # cluster-scope webhook configuration
+        "PSARestrictedBlocksRecreation",  # the Namespace object's labels
+        "MissingConfigMap",  # its recover restarts the consumers; the restore does not
+        "EphemeralPortRangeHotelReservation",  # runtime state
+    ):
+        assert not problem(name).restore_reverts_faults, name
+    assert not problem("WrongServiceSelector", "AdmissionWebhookOutage").restore_reverts_faults
