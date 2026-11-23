@@ -383,15 +383,24 @@ def test_a_fallback_keeps_the_violations_a_fresh_install_comparison_named(tmp_pa
     assert json.loads((tmp_path / "warm.json").read_text())["violations"] == list(receipt.violations)
 
 
-def test_other_errors_never_put_their_text_in_the_receipt(tmp_path: Path) -> None:
+def test_any_errors_text_is_kept_on_one_line_truncated_so_a_fallback_is_diagnosable(tmp_path: Path) -> None:
     import json
 
     lane = Lane()
     lane.failed_at = "prove"
     receipt = prepare_lane(lane, tmp_path / "warm.json", now=lambda: NOW)
     assert receipt.violations == ()
-    assert "synthetic failure" not in (tmp_path / "warm.json").read_text()
-    assert json.loads((tmp_path / "warm.json").read_text())["violations"] == []
+    assert receipt.detail == "synthetic failure"
+    assert json.loads((tmp_path / "warm.json").read_text())["detail"] == "synthetic failure"
+
+    class Noisy(Lane):
+        def pause(self) -> None:
+            raise RuntimeError("kubectl failed:\n" + "stderr line " * 100)
+
+    detail = prepare_lane(Noisy(), tmp_path / "noisy.json", now=lambda: NOW).detail
+    assert "\n" not in detail
+    assert detail.startswith("kubectl failed: stderr line stderr line")
+    assert len(detail) == 300
 
 
 def test_the_reseed_replaces_the_controller_by_design_and_the_new_process_must_hold(tmp_path: Path) -> None:
@@ -414,9 +423,8 @@ def test_the_baseline_boundary_precedes_the_reseed_so_the_new_controllers_eviden
     assert lane.events.index("boundary") < lane.events.index("reseed") < lane.events.index("prove")
 
 
-def test_a_refusal_the_warm_lane_made_keeps_its_own_text_truncated_and_nothing_else(tmp_path: Path) -> None:
-    """``inspect:ValueError`` told a report nothing; the lane's own refusals carry their reason, an external error's
-    text (which may hold a command line) never does."""
+def test_a_refusal_the_warm_lane_made_keeps_its_own_text_truncated(tmp_path: Path) -> None:
+    """``inspect:ValueError`` told a report nothing; the lane's own refusals carry their reason."""
     import json
 
     from benchmarks.sregym.fastloop.warm_lane import WarmLaneRefusal
@@ -428,8 +436,5 @@ def test_a_refusal_the_warm_lane_made_keeps_its_own_text_truncated_and_nothing_e
     receipt = prepare_lane(Refusing(), tmp_path / "warm.json", now=lambda: NOW)
     assert receipt.fallback_reason == "inspect:WarmLaneRefusal"
     assert receipt.detail.startswith("previous attempt did not finish cleanly: xxx")
-    assert len(receipt.detail) <= 200
+    assert len(receipt.detail) <= 300
     assert json.loads((tmp_path / "warm.json").read_text())["detail"] == receipt.detail
-    lane = Lane()
-    lane.failed_at = "inspect"
-    assert prepare_lane(lane, tmp_path / "other.json", now=lambda: NOW).detail == ""

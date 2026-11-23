@@ -225,24 +225,40 @@ def test_a_failed_reseed_with_no_planned_memory_refuses_to_rewind_accepted_memor
 
 
 @pytest.mark.parametrize("planned", [PLANNED, None])
-def test_pause_puts_the_host_copy_at_the_planned_memory_or_syncs_what_the_lane_holds(cluster, monkeypatch, planned):
+def test_pause_syncs_then_proves_the_setup_and_only_then_moves_the_host_copy_to_the_planned_memory(
+    cluster, monkeypatch, planned
+):
+    """The setup fingerprint refuses a host copy that differs from the memory on the controller's volume. Moving the
+    host copy to the planned commit before it made every second row fall back at pause with a bare ValueError."""
     import benchmarks.sregym.fastloop.setup_proof as setup_proof
     import benchmarks.sregym.fastloop.warm_scope as warm_scope
 
+    memory = {"host": "learned-by-the-earlier-row", "volume": "learned-by-the-earlier-row"}
     calls: list[str] = []
+
+    def sync(native) -> None:
+        calls.append("sync_existing")
+        memory["host"] = memory["volume"]
+
+    def fingerprint(environment):
+        calls.append("fingerprint")
+        if memory["host"] != memory["volume"]:
+            raise ValueError("eval: installed accepted-memory commit differs from accepted workspace")
+
+    def move(workspace, commit) -> None:
+        calls.append(f"reseed_workspace({commit})")
+        memory["host"] = commit
+
     monkeypatch.setattr(warm_environment, "pause_for_recovery", lambda *a, **k: calls.append("pause"))
-    monkeypatch.setattr(warm_environment, "sync_existing", lambda native: calls.append("sync_existing"))
-    monkeypatch.setattr(
-        warm_environment, "reseed_workspace", lambda workspace, commit: calls.append(f"reseed_workspace({commit})")
-    )
-    monkeypatch.setattr(setup_proof, "collect_fingerprint", lambda environment: None)
+    monkeypatch.setattr(warm_environment, "sync_existing", sync)
+    monkeypatch.setattr(warm_environment, "reseed_workspace", move)
+    monkeypatch.setattr(setup_proof, "collect_fingerprint", fingerprint)
     monkeypatch.setattr(warm_scope, "check_cluster_scope", lambda *args: calls.append("scope"))
     cluster.lane._assert_idle = lambda: None  # type: ignore[method-assign]
     cluster.lane.planned_commit = planned
     cluster.lane.pause()
-    # The application is restored from the host copy next, so it must already be the row's planned memory; a lane with
-    # no planned memory keeps (and syncs) what it holds. Never both: the sync would overwrite the planned copy.
-    assert calls == ["pause", f"reseed_workspace({planned})" if planned else "sync_existing", "scope"]
+    expected = ["pause", "sync_existing", "fingerprint", "scope"]
+    assert calls == [*expected, f"reseed_workspace({planned})"] if planned else expected
 
 
 def test_a_fresh_installs_onboarding_becomes_the_reference_a_reseeded_controller_is_held_to(tmp_path, monkeypatch):
