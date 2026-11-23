@@ -1068,6 +1068,12 @@ def _wipe_sdo_and_harness(args: argparse.Namespace, environment: FastloopEnviron
     planned = args.planned_commit or environment.seed_commit
     if not planned:
         raise ValueError("eval: the row-start wipe needs --planned-commit or a seed commit captured by fastloop up")
+    from benchmarks.sregym.fastloop.app_observability import await_trace_stores_ready, restart_in_memory_trace_stores
+
+    # The app's own trace store grows while a lane idles; replace it before SDO's install records the namespace's Pods
+    # (the replacement overlaps the wipe).
+    namespaces = application_namespaces(environment.baseline_path, environment.kubeconfig, environment.namespace)
+    restart_in_memory_trace_stores(environment.kubeconfig, namespaces)
     receipt = wipe_environment(
         environment,
         KubectlLaneCluster(environment.kubeconfig, environment.host_owned_kinds),
@@ -1077,6 +1083,7 @@ def _wipe_sdo_and_harness(args: argparse.Namespace, environment: FastloopEnviron
         provenance_path=environment.run_dir / "results" / args.run_id / "reset-generation.json",
         timeout_seconds=wait_for(WaitKind.ROLLOUT),
     )
+    await_trace_stores_ready(environment.kubeconfig, namespaces)
     logger.info(
         "Tier-1 wipe: %.1fs, removed %s, force-finalized %s, helpers removed %s",
         receipt.seconds,

@@ -49,6 +49,15 @@ _INFRASTRUCTURE = frozenset(
 )
 
 
+#: The image of the in-memory trace store several apps ship (every span of the app's life is held in memory).
+_IN_MEMORY_TRACE_STORE = "jaegertracing/all-in-one"
+
+
+def is_in_memory_trace_store(image: str) -> bool:
+    """Whether a container image is an app-owned in-memory trace store: unbounded growth while a lane sits idle."""
+    return _IN_MEMORY_TRACE_STORE in image
+
+
 @dataclass(frozen=True)
 class LaneResourcePolicy:
     """Byte budgets measured before injection, independent of fault/oracle data."""
@@ -219,7 +228,7 @@ def evaluate_lane_resources(
             if age < -5 or age > policy.max_sample_age_seconds:
                 raise ValueError(f"eval: {component} memory sample stale or future: age={age:.1f}s")
             image = container.get("image", "").split("@", 1)[0]
-            jaeger = "jaegertracing/all-in-one" in image
+            jaeger = is_in_memory_trace_store(image)
             budget = policy.component_budgets.get(
                 component,
                 policy.component_budgets.get(
