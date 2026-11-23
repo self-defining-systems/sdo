@@ -81,7 +81,7 @@ from benchmarks.sregym.fastloop.wipe import (
     run_tier2,
     unrecovered_rows,
 )
-from benchmarks.sregym.fastloop.worker_client import BackgroundCall, PrestartedWorker, SregymWorker, worker_argv
+from benchmarks.sregym.fastloop.worker_client import BackgroundCall, HeldWorker, SregymWorker, worker_argv
 from benchmarks.sregym.repository_git import host_clone_command, host_git_command
 from sdo.agents.provider import AGENT_EFFORTS
 
@@ -1789,7 +1789,7 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
         return tuple(f"{key}: {fault}" for key in incoming for fault in faults.get(key, ()))
 
     warm_preparation = None
-    row_worker: PrestartedWorker | None = None
+    row_worker: HeldWorker | None = None
     tier1 = None
     if getattr(args, "warm_lane", False):
         if not _wipes_at_row_start(args, environment):
@@ -1805,11 +1805,10 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
             tier1 = _wipe_sdo_and_harness(_warm_reset_args(args, environment), environment)
 
         os.environ["KUBECONFIG"] = str(environment.kubeconfig)
-        if environment.app != "toy":
-            # The row's own worker boots beside the transaction instead of after it.
-            row_worker = PrestartedWorker(lambda: _worker(environment))
         transaction_started = time.monotonic()
-        with _worker(environment) as warm_worker:
+        warm_worker = _worker(environment)
+        warm_worker.start()
+        try:
             warm_preparation = WarmEnvironment(
                 environment,
                 _cluster_ops(args, environment.namespace),
@@ -1821,10 +1820,18 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
                 planned_commit=args.planned_commit,
             )
             warm_receipt = prepare_lane(warm_preparation, results_dir / "warm-transaction.json")
+        except BaseException:
+            warm_worker.close()
+            raise
         prelude["warm_transaction"] = time.monotonic() - transaction_started
         if not warm_receipt.reused:
+            warm_worker.close()  # releases the cluster lock for the row's own worker
             warm_preparation = None
-        elif warm_receipt.identity is not None:
+        else:
+            # The worker holds the cluster's lock for its life: the row continues on it (idle since the transaction
+            # joined every request) instead of starting a second.
+            row_worker = HeldWorker(warm_worker)
+        if warm_receipt.reused and warm_receipt.identity is not None:
             # The row's injection gate may stand on this proof while the proven controller still runs and no
             # rehearsal repaired the application (set once the rehearsals ran).
             args.warm_proven_controller_uid = warm_receipt.identity.controller_uid

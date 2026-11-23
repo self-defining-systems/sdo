@@ -1,58 +1,98 @@
-"""A row's second worker boots beside the warm transaction and is entered like any worker."""
+"""The row continues on the warm transaction's worker: a worker holds its cluster's host-wide lock for its life."""
 
 from __future__ import annotations
 
+import sys
+import textwrap
 import threading
-from typing import Any
+from pathlib import Path
 
 import pytest
 
-from benchmarks.sregym.fastloop.worker_client import BackgroundCall, PrestartedWorker
+from benchmarks.sregym.fastloop.worker_client import BackgroundCall, HeldWorker, SregymWorker, SregymWorkerError
+
+REPO = Path(__file__).resolve().parents[5]
+WORKER_INFRA = REPO / "third_party" / "sregym" / "sregym" / "worker_infra.py"
+
+# A stand-in worker process that takes the real ``cluster_lock`` (SREGym's own code, loaded by path) the way
+# ``sregym.fastloop.worker`` does, then answers JSON-line requests.
+STUB = textwrap.dedent(
+    """
+    import importlib.util, json, sys
+    spec = importlib.util.spec_from_file_location("worker_infra", sys.argv[1])
+    infra = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(infra)
+    with infra.cluster_lock("lane-under-test"):
+        for line in sys.stdin:
+            request = json.loads(line)
+            if request.get("op") == "shutdown":
+                break
+            print(json.dumps({"id": request["id"], "ok": True, "result": {"op": request["op"]}}), flush=True)
+    """
+)
 
 
-class FakeWorker:
-    def __init__(self) -> None:
-        self.started_on: str | None = None
-        self.closed = 0
-
-    def start(self) -> None:
-        self.started_on = threading.current_thread().name
-
-    def close(self) -> None:
-        self.closed += 1
+def stub_worker(tmp_path: Path) -> SregymWorker:
+    script = tmp_path / "stub_worker.py"
+    script.write_text(STUB)
+    return SregymWorker(
+        [sys.executable, str(script), str(WORKER_INFRA)],
+        env={"HOME": str(tmp_path)},  # the lock directory is under ~/.cache
+        log_path=tmp_path / "worker.log",
+    )
 
 
-def test_the_worker_is_built_and_started_off_the_callers_thread_before_it_is_entered() -> None:
-    built: list[FakeWorker] = []
-
-    def build() -> Any:
-        built.append(FakeWorker())
-        return built[0]
-
-    prestarted = PrestartedWorker(build)
-    with prestarted as worker:
-        assert worker is built[0]
-        assert worker.started_on is not None
-        assert worker.started_on != threading.current_thread().name
-        assert worker.closed == 0
-    assert built[0].closed >= 1
+def started(worker: SregymWorker) -> SregymWorker:
+    worker.start()
+    # The first reply proves the child got past its lock, or reports why it exited.
+    worker.request("ping", timeout=30)
+    return worker
 
 
-def test_a_worker_the_row_never_enters_is_closed_by_discard() -> None:
-    worker = FakeWorker()
-    prestarted = PrestartedWorker(lambda: worker)  # type: ignore[arg-type,return-value]
-    prestarted.discard()
-    assert worker.closed == 1
+@pytest.mark.skipif(not WORKER_INFRA.is_file(), reason="SREGym harness is not checked out")
+def test_a_second_worker_cannot_start_while_the_first_holds_the_cluster_lock(tmp_path: Path) -> None:
+    first = started(stub_worker(tmp_path))
+    try:
+        second = stub_worker(tmp_path)
+        second.start()
+        with pytest.raises(SregymWorkerError, match="exited"):
+            second.request("ping", timeout=30)
+        second.close()
+    finally:
+        first.close()
+    # Once the first closed, the lock is free: starting the row's worker after it is possible.
+    again = started(stub_worker(tmp_path))
+    again.close()
 
 
-def test_a_failed_build_surfaces_when_the_worker_is_entered_and_discard_stays_quiet() -> None:
-    def build() -> Any:
-        raise RuntimeError("lane images differ")
+@pytest.mark.skipif(not WORKER_INFRA.is_file(), reason="SREGym harness is not checked out")
+def test_the_row_reuses_the_transaction_worker_and_closes_it_at_the_end(tmp_path: Path) -> None:
+    transaction_worker = started(stub_worker(tmp_path))
+    with HeldWorker(transaction_worker) as row_worker:
+        assert row_worker is transaction_worker
+        assert row_worker.request("rehearse_oracles", timeout=30) == {"op": "rehearse_oracles"}
+    # Closed: its lock is released for whatever runs next on the lane.
+    started(stub_worker(tmp_path)).close()
 
-    prestarted = PrestartedWorker(build)
-    prestarted.discard()
-    with pytest.raises(RuntimeError, match="lane images differ"), prestarted:
-        pass
+
+@pytest.mark.skipif(not WORKER_INFRA.is_file(), reason="SREGym harness is not checked out")
+def test_requests_from_two_threads_are_served_one_at_a_time(tmp_path: Path) -> None:
+    worker = started(stub_worker(tmp_path))
+    try:
+        results: list[dict[str, str]] = []
+
+        def ask(op: str) -> None:
+            for _ in range(20):
+                results.append(worker.request(op, timeout=30))
+
+        threads = [threading.Thread(target=ask, args=(op,)) for op in ("a", "b")]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert sorted(r["op"] for r in results) == ["a"] * 20 + ["b"] * 20
+    finally:
+        worker.close()
 
 
 def test_a_background_call_returns_its_value_or_re_raises() -> None:

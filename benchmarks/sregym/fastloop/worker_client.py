@@ -13,7 +13,6 @@ runs under ``bwrap`` with a private ``/tmp`` unless the caller opts out.
 from __future__ import annotations
 
 import ast
-import atexit
 import json
 import os
 import queue
@@ -132,6 +131,7 @@ class SregymWorker:
         self._log: IO[str] | None = None
         self._replies: queue.Queue[str | None] = queue.Queue()
         self._next_id = 0
+        self._request_lock = threading.Lock()
         # A timed-out request leaves the worker busy; it is killed instead of asked to stop.
         self._abandoned = False
 
@@ -170,10 +170,12 @@ class SregymWorker:
         self._replies.put(None)
 
     def request(self, op: str, *, timeout: float = DEFAULT_TIMEOUT_SECONDS, **args: Any) -> dict[str, Any]:
-        if op == "deploy":
-            with HostLimits.from_env(self._env).admit("redeploy"):
-                return self._request(op, timeout=timeout, **args)
-        return self._request(op, timeout=timeout, **args)
+        # One request in flight: the reply queue and ids are shared, so a second thread waits its turn.
+        with self._request_lock:
+            if op == "deploy":
+                with HostLimits.from_env(self._env).admit("redeploy"):
+                    return self._request(op, timeout=timeout, **args)
+            return self._request(op, timeout=timeout, **args)
 
     def _request(self, op: str, *, timeout: float, **args: Any) -> dict[str, Any]:
         process = self._process
@@ -250,26 +252,17 @@ class BackgroundCall:
         return self._value
 
 
-class PrestartedWorker:
-    """A worker built and started beside other work, entered like ``SregymWorker`` once that work is done.
+class HeldWorker:
+    """An already started worker entered like ``SregymWorker``: the warm transaction's, kept for the row.
 
-    The warm transaction runs its own worker and a row needs a second, fresh one afterwards; starting the second
-    (its preflight and the child's imports) during the transaction takes its boot off the row's path. It stays idle
-    until entered, so it carries nothing from the transaction. ``discard`` closes it when the row never gets there.
+    A worker holds its cluster's host-wide lock for its whole life, so a second one cannot start beside the first;
+    reusing the first keeps the row from paying a second start. Leaving the block closes it.
     """
 
-    def __init__(self, build: Callable[[], SregymWorker]) -> None:
-        def start() -> SregymWorker:
-            worker = build()
-            worker.start()
-            return worker
-
-        self._pending = BackgroundCall(start)
-        self._worker: SregymWorker | None = None
-        atexit.register(self.discard)
+    def __init__(self, worker: SregymWorker) -> None:
+        self._worker = worker
 
     def __enter__(self) -> SregymWorker:
-        self._worker = self._pending.result()
         return self._worker
 
     def __exit__(
@@ -278,12 +271,4 @@ class PrestartedWorker:
         exc: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
-        self.discard()
-
-    def discard(self) -> None:
-        try:
-            worker = self._worker or self._pending.result()
-        except BaseException:  # the build failed: nothing is running
-            return
-        self._worker = None
-        worker.close()
+        self._worker.close()
