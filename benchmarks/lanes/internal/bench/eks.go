@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strconv"
@@ -95,6 +96,39 @@ type HostEKS struct {
 	LocalKind bool `json:"local_kind,omitempty"`
 	// LocalRegistryPort is the port of the local registry of a LocalKind host (default 5611).
 	LocalRegistryPort int `json:"local_registry_port,omitempty"`
+	// MaxLoad5PerCore is the load gate of the manager's machine, where every step of the host runs (the harness, `go run`,
+	// kubectl, aws): while its 5-minute load per core is above it no build or run starts and a timeout of a step that ran
+	// while it was above is not counted against the step's item. Omitted: DefaultEksMaxLoad5PerCore; 0: no gate. The host's
+	// max_load5 is a load of the host's own cores and does not apply to a host whose nodes are elsewhere.
+	MaxLoad5PerCore *float64 `json:"max_load5_per_core,omitempty"`
+}
+
+// DefaultEksMaxLoad5PerCore is the manager machine's load5 per core above which an eks host starts no build or run: a
+// machine with a load of 4 runnable tasks per core runs a `go run` or a kubectl call so late that steps time out.
+const DefaultEksMaxLoad5PerCore = 4.0
+
+// ManagerLoadLimit is the load5 per core of the manager's machine above which host h (provider eks) starts no build or
+// run; 0 when the host has no such gate (not an eks host, or max_load5_per_core: 0).
+func (h Host) ManagerLoadLimit() float64 {
+	if !h.IsEks() || h.EKS == nil {
+		return 0
+	}
+	if h.EKS.MaxLoad5PerCore != nil {
+		return *h.EKS.MaxLoad5PerCore
+	}
+	return DefaultEksMaxLoad5PerCore
+}
+
+// LoadBudget is the highest 5-minute load host h accepts (0: no gate): its max_load5, or for an eks host the per-core
+// limit of the manager's machine times its cores (cores 0: this machine's).
+func (h Host) LoadBudget(cores int) float64 {
+	if !h.IsEks() {
+		return h.MaxLoad5
+	}
+	if cores <= 0 {
+		cores = runtime.NumCPU()
+	}
+	return h.ManagerLoadLimit() * float64(cores)
 }
 
 // DefaultLocalRegistryPort is the registry port of a LocalKind host.
@@ -215,6 +249,9 @@ func (e *HostEKS) validate(h Host) []string {
 	}
 	if e.MaxLanes < 0 {
 		errs = append(errs, "eks.max_lanes must not be negative")
+	}
+	if e.MaxLoad5PerCore != nil && *e.MaxLoad5PerCore < 0 {
+		errs = append(errs, "eks.max_load5_per_core must not be negative (0 switches the gate off)")
 	}
 	for _, f := range e.InstanceFamilies {
 		if _, ok := eksFamilies[f]; !ok {

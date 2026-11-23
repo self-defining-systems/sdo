@@ -21,6 +21,7 @@ hosts:
       min_node_vcpus: 4             # pod density: a 2 vCPU node holds too few pods
       idle_timeout: 10m             # a free lane's cluster is kept this long when no experiment wants the host
       max_idle_with_waiting: 60m    # hard ceiling when a plan still has waiting work for the lane (default 60m)
+      max_load5_per_core: 4         # load gate of the manager's machine (default 4; 0 switches it off)
     staging: /mnt/data/lanes/staging
     kubeconfigs: /mnt/data/lanes/kube
     evidence: /mnt/data/lanes/evidence    # evidence is pulled here, not mounted on nodes
@@ -90,13 +91,37 @@ predates eks.
   gets no new steps (alarm `eks-lane-unhealthy`); nothing is deleted. The alarm `eks-over-budget` fires if the ledger
   passes the limits.
 
+## The manager's machine
+
+The clusters are in AWS, but every step of an eks host runs on the manager's machine (the harness, `go run`, kubectl,
+aws, fastloop), so that machine's load is the load of the steps. Under a load of thousands (other tenants' workloads, kind
+and containerd threads) kubectl, `go run` and the harness calls time out inside rows: rows fail `not-injected`, a series
+driver loses its lane, and the timings of whole rows are not real. `eks.max_load5_per_core` (default
+`DefaultEksMaxLoad5PerCore`, 4; `0` switches the gate off) gates the manager's machine, not the host's `max_load5`, which
+is a load of the host's own cores and does not apply to a host whose nodes are elsewhere:
+
+- While the machine's 5-minute load per core (the manager's probe) is above the limit no build and no run starts; releases,
+  unholds and recovers still do (they undo what exists). Each waiting lane says why in `lanes status` and `bench.log`:
+  `the manager's machine has load5 9.4/core over max_load5_per_core 4 (load5 150 on 16 cores)`, and the host line shows
+  `[NO NEW BUILD OR RUN, ...]`. The host's `max_load5` in `lanes status --json` and the plan alarm `host-pressure` use the
+  same limit times the machine's cores.
+- A step that fails with a timeout (the reason says `timeout` or `timed out`) while the machine was over the limit at any
+  probe since the step started is the machine's failure: a build does not count toward the lane's `max_build_failures`, and
+  a first run records no run at all, so its item stays queued with its attempts and retries intact (its lane's cluster is made
+  anew), like a step lost to an unreachable host. It is written off at most three times per item; the fourth counts. A
+  run past its first position keeps counting (its sequence's memory is on that lane and cannot be rerun).
+- `lanes preflight` runs the check `manager-machine` for every eks host: the machine's load5, cores and free memory, failed
+  above the limit, so a plan is not added to a machine that cannot run it. When it fails, move the manager to a quiet
+  machine rather than trusting timings from an overloaded one.
+
 ## What is skipped, by design
 
 On EKS there is no host contention: the nodes are the lane's own and autoscale into the account. The host-safety gates of
 [host-safety.md](host-safety.md) therefore do not run for an eks host, and the inventory refuses `reserve`, `lanes` and
 `kernel_minimums` on one instead of ignoring them: no cpuset or core ledger, no memory ledger or hard limit, no kernel
 minimums, no ip-link canary or hung-task gate, no PSI gates, no starvation gate. The crash-loop detector and the churn
-budget (`max_builds`) still apply. Capacity is what the account allows: lanes, vCPUs and dollars.
+budget (`max_builds`) still apply. Capacity is what the account allows: lanes, vCPUs and dollars; the one machine gate that remains is the load of the
+manager's machine (above).
 
 ## Tests
 

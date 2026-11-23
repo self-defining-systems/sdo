@@ -157,4 +157,5 @@ Tests: `TestKernelRaiseOnlyRaises`, `TestHostAdoptAndReserveRaiseTheKernelMinimu
 None of the gates above applies to a host with `provider: eks` (see [eks.md](eks.md)): its lanes are clusters on their own
 autoscaled nodes, so there is no cpuset, ledger, kernel minimum, canary or PSI to protect, and the inventory refuses those
 settings there. Its gates are the lane count, the vCPU quota and the $/h and total budget, plus a per-lane API and node
-Ready check.
+Ready check, and the load of the manager's machine, where every step of the host runs (`eks.max_load5_per_core`, default 4:
+no build or run starts above it; see [eks.md](eks.md#the-managers-machine)).

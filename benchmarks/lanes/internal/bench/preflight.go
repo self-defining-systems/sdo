@@ -260,6 +260,10 @@ func runPreflight(ctx context.Context, inv Inventory, specs []specFile, opt Pref
 				out, err = run(ctx, h, pre+eksAccountScript(host.EKS))
 				ok, d := judgeEksAccount(out, err, host.EKS)
 				add(7, "eks-account", h, ok, "%s", d)
+				// Every step of the host runs on this machine: a plan must not be added to one that cannot run it.
+				out, err = run(ctx, h, pre+capacityScript(host))
+				ok, d = judgeManagerMachine(out, err, host.ManagerLoadLimit())
+				add(7, "manager-machine", h, ok, "%s", d)
 			} else if host.IsVcluster() {
 				out, err = run(ctx, h, pre+sharedClusterScript(host))
 				ok, d := judgeSharedCluster(out, err, planned)
@@ -548,6 +552,27 @@ func (c capacity) judge(toBuild int, maxLoad float64) (bool, string) {
 		return false, strings.Join(bad, "; ") + " [" + d + "]"
 	}
 	return true, d
+}
+
+// judgeManagerMachine judges the machine where an eks host's steps run: its 5-minute load per core must not be over
+// the host's limit (eks.max_load5_per_core; 0: no gate, reported only). Its cores and free memory are reported.
+func judgeManagerMachine(out string, err error, limit float64) (bool, string) {
+	if err != nil {
+		return false, fmt.Sprintf("probe failed: %v", err)
+	}
+	c, perr := parseCapacity(out)
+	if perr != nil {
+		return false, perr.Error()
+	}
+	perCore := c.Load5 / c.Cores
+	d := fmt.Sprintf("the manager's machine: load5 %.1f on %.0f cores = %.2f/core, MemAvailable %s", c.Load5, c.Cores, perCore, gb(c.MemAvail))
+	switch {
+	case limit <= 0:
+		return true, d + " (max_load5_per_core 0: no gate)"
+	case perCore > limit:
+		return false, fmt.Sprintf("load5 per core %.2f is over max_load5_per_core %g: every step of the host runs on this machine and would time out; move the manager to a quiet machine [%s]", perCore, limit, d)
+	}
+	return true, fmt.Sprintf("%s, under max_load5_per_core %g", d, limit)
 }
 
 func gb(b int64) string { return fmt.Sprintf("%.0f GB", float64(b)/(1<<30)) }
