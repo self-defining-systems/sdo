@@ -592,3 +592,32 @@ func TestCorrectDeploymentDispatchesOneDeployerTaskForTheHold(t *testing.T) {
 		t.Fatalf("request = %v", request)
 	}
 }
+
+// provisioning is a verdict pending only because a probe user is still being provisioned: an environment wait whose
+// own declared run time is EnvironmentWait.
+var provisioning = lifecycle.HealthVerdict{Outcome: lifecycle.VerificationPending, Summary: "accepted health detectors report pending", EnvironmentWait: 3 * time.Second,
+	Detectors: []lifecycle.DetectorState{{DetectorID: "workload-health", Status: "pending", Reason: "environment wait, not an application failure: probe user provisioning has not finished"}}}
+
+// EKS series: a head's verification stayed pending for its 8 evaluations because the probe users were still being
+// provisioned on the just-rolled release, and the head was held for it. A pending window an environment wait fills is
+// extended once by that wait's own declared run time (as the controller's warm-up already does), then judged.
+func TestAProvisioningWaitExtendsThePendingWindowOnce(t *testing.T) {
+	verdicts := []lifecycle.HealthVerdict{provisioning, provisioning, provisioning, provisioning, provisioning, provisioning, clear}
+	h := newHarness(t, &fakeVerifier{verdicts: verdicts})
+	if _, err := h.coordinator.Run(context.Background(), config()); err != nil {
+		t.Fatalf("a provisioning wait past the pending bound must be waited out: %v", err)
+	}
+	if h.verifier.calls != 7 {
+		t.Fatalf("verify calls = %d, want 7", h.verifier.calls)
+	}
+
+	forever := newHarness(t, &fakeVerifier{verdicts: []lifecycle.HealthVerdict{provisioning}})
+	_, err := forever.coordinator.Run(context.Background(), config())
+	var terminal *lifecycle.PendingVerificationError
+	if !errors.As(err, &terminal) {
+		t.Fatalf("error = %v, want PendingVerificationError after one extension", err)
+	}
+	if forever.verifier.calls != 4+4 { // the bound (4) and one extension: (3 s wait + 1 s interval) / 1 s
+		t.Fatalf("verify calls = %d, want 8", forever.verifier.calls)
+	}
+}

@@ -88,6 +88,9 @@ type Verdict struct {
 	// line, so a reader can tell a verdict computed after an event from an
 	// earlier one. A one-shot evaluation leaves it zero.
 	StartedAt time.Time `json:"started_at,omitzero"`
+	// EnvironmentWait is the longest probe-user provisioning run the
+	// evaluation's probes are still waiting for; zero when none waits.
+	EnvironmentWait time.Duration `json:"environment_wait,omitempty"`
 }
 
 // Decode parses the verdict strictly: an unknown field or status means the two

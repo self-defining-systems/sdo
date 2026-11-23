@@ -61,6 +61,8 @@ type HealthEvaluation struct {
 	// ExistingRecordsExercised counts probe samples whose marked step
 	// returned a record the probe did not write.
 	ExistingRecordsExercised int
+	// EnvironmentWait is the probe-user provisioning the evaluation waits for.
+	EnvironmentWait time.Duration
 }
 
 type AcceptedDetectorProbe struct {
@@ -230,7 +232,7 @@ func decodeHealthVerdict(stdout, stderr []byte) (HealthEvaluation, error) {
 
 // healthEvaluationOf is a decoded verdict as the probe result the lifecycle reads.
 func healthEvaluationOf(verdict evaluation.Verdict) HealthEvaluation {
-	result := HealthEvaluation{Status: string(verdict.Status), ExistingRecordsExercised: verdict.ExistingRecordsExercised}
+	result := HealthEvaluation{Status: string(verdict.Status), ExistingRecordsExercised: verdict.ExistingRecordsExercised, EnvironmentWait: verdict.EnvironmentWait}
 	for _, state := range verdict.DetectorStates {
 		if state.Status == "clear" && state.Reason != "" {
 			result.CoverageNotes = append(result.CoverageNotes, lifecycle.DetectorState{DetectorID: state.DetectorID, Status: state.Status, Reason: state.Reason})
@@ -272,7 +274,7 @@ func evidenceSuffix(evidence string) string {
 // unavailable are waited out; everything else that is not clear is the
 // deployed source's problem.
 func verdictOf(evaluation HealthEvaluation) lifecycle.HealthVerdict {
-	verdict := lifecycle.HealthVerdict{Summary: "accepted health detectors report " + evaluation.Status, Detectors: evaluation.Detectors, CoverageNotes: evaluation.CoverageNotes}
+	verdict := lifecycle.HealthVerdict{Summary: "accepted health detectors report " + evaluation.Status, Detectors: evaluation.Detectors, CoverageNotes: evaluation.CoverageNotes, EnvironmentWait: evaluation.EnvironmentWait}
 	switch evaluation.Status {
 	case "clear":
 		verdict.Outcome = lifecycle.VerificationClear

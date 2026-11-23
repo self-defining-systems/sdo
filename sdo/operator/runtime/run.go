@@ -2231,9 +2231,11 @@ func evaluateOnce(
 			status = evaluation.Unavailable
 		}
 		exercised := 0
+		var environmentWait time.Duration
 		if trafficProvider.Observer != nil {
 			for _, window := range trafficProvider.Observer.Windows() {
 				exercised += window.ExistingRecordsExercised()
+				environmentWait = max(environmentWait, window.IdentityWait())
 			}
 		}
 		for _, finding := range findings {
@@ -2242,7 +2244,7 @@ func evaluateOnce(
 				break
 			}
 		}
-		return evaluation.Verdict{Status: status, Findings: findings, Unavailable: unavailableNow, DetectorStates: unconfirmed, Progress: progressWhenWatching(watching, controller), ExistingRecordsExercised: exercised, StartedAt: now.UTC()}, nil
+		return evaluation.Verdict{Status: status, Findings: findings, Unavailable: unavailableNow, DetectorStates: unconfirmed, Progress: progressWhenWatching(watching, controller), ExistingRecordsExercised: exercised, StartedAt: now.UTC(), EnvironmentWait: environmentWait}, nil
 	}
 	if *watch > 0 {
 		// The provider warmed above; each pass judges the live application
