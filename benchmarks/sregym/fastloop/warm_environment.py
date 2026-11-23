@@ -47,6 +47,7 @@ from benchmarks.sregym.fastloop.wipe import (
     KubectlLaneCluster,
     LaneInjectionState,
     harness_leftovers,
+    install_owned_objects,
     inventory_path,
     load_inventory,
     reseed_workspace,
@@ -227,6 +228,14 @@ class WarmEnvironment:
             keep_namespaces=allowed_namespaces({env.namespace}),
             control_namespace="",
         )
+        if leftovers:
+            # The lane inventory predates the install, so the resident install's own namespace and RBAC are "new"
+            # since it. They are the lane's, not residue: exempt exactly that set and nothing else.
+            bindings = json.loads(
+                kubectl(["get", "clusterrolebindings", "-o", "json"], namespace=None, kubeconfig=env.kubeconfig).stdout
+                or "{}"
+            ).get("items", [])
+            leftovers = leftovers - install_owned_objects(self.control, bindings)
         if leftovers:
             raise WarmLaneRefusal("warm lane has resources outside its installed inventory")
         assert_clean_baseline(env.kubeconfig, namespace=env.namespace)
