@@ -141,3 +141,33 @@ def test_a_restart_from_memory_continues_the_installs_established_period():
     """A reseeded row restarts the same install: its start-up period was established before the boundary and is
     continued (a restart starts no new period); the evaluation state after the boundary is what this row proves."""
     assert resident_start_violations(mutated("startup", {"began_at": BEFORE, "established_at": BEFORE})) == []
+
+
+def test_pods_and_replicasets_renamed_by_a_rollout_do_not_make_onboarding_differ():
+    """Recorded on EKS (fast-eks7 lane s1): three fresh installs of the same application named different
+    ``ReplicaSet``/``Pod`` objects (pod-template hash, random suffix), so every reseeded row was refused with
+    'onboarding differs from a fresh install's'. Configuration objects still have to match."""
+    from benchmarks.sregym.fastloop.resident_start import onboarding_matches
+
+    commit = "a" * 40
+    reference = {
+        "accepted_commit": commit,
+        "objects": [
+            "v1/ConfigMap/app/settings",
+            "v1/ServiceAccount/app/web",
+            "apps/v1/ReplicaSet/app/web-6b7668b4cb",
+            "v1/Pod/app/web-6b7668b4cb-qwqxp",
+        ],
+    }
+    record = {
+        "acceptedCommit": commit,
+        "objects": [
+            {"apiVersion": "v1", "kind": "ConfigMap", "namespace": "app", "name": "settings"},
+            {"apiVersion": "v1", "kind": "ServiceAccount", "namespace": "app", "name": "web"},
+            {"apiVersion": "apps/v1", "kind": "ReplicaSet", "namespace": "app", "name": "web-79d7cd79b7"},
+            {"apiVersion": "v1", "kind": "Pod", "namespace": "app", "name": "web-79d7cd79b7-lx6nz"},
+        ],
+    }
+    assert onboarding_matches(record, reference, commit)
+    record["objects"] = record["objects"][1:]  # a configuration object is missing
+    assert not onboarding_matches(record, reference, commit)

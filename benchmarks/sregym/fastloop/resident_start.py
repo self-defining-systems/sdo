@@ -118,9 +118,19 @@ def _object_identity(ref: Any) -> str:
     return str(ref)
 
 
+#: Kinds whose names are generated per rollout (a Pod and its ReplicaSet carry the pod-template hash and a random
+#: suffix): every restart renames them, so two installs of the same application never name the same ones. The
+#: comparison is of configuration, as the application setup identity's (setup_proof.RUNTIME_KINDS).
+RUNTIME_KINDS = frozenset({"Pod", "ReplicaSet"})
+
+
 def onboarding_objects(record: Any) -> frozenset[str]:
-    """The identities of the objects an onboarding record names (the controller's JSON is snake or camel case)."""
-    return frozenset(_object_identity(ref) for ref in (record.get("objects") or []) if isinstance(record, dict))
+    """The identities of the configuration objects an onboarding record names (the controller's JSON is snake or camel
+    case; identities are ``apiVersion/kind/namespace/name``); runtime objects with generated names are left out."""
+    if not isinstance(record, dict):
+        return frozenset()
+    identities = (_object_identity(ref) for ref in (record.get("objects") or []))
+    return frozenset(i for i in identities if len(parts := i.split("/")) < 3 or parts[-3] not in RUNTIME_KINDS)
 
 
 def onboarding_commit(record: Any) -> str:
