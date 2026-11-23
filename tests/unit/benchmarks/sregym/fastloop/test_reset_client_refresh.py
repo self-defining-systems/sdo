@@ -111,3 +111,30 @@ def test_refresh_success_does_not_replace_independent_http_verification(tmp_path
         reset_environment(environment(tmp_path), lane, lane, preserve_repository=True)
     assert lane.http_checks == 2
     assert lane.refreshes == 1
+
+
+def test_restored_is_signalled_once_the_writes_are_done_and_before_the_oracle_only_observes(tmp_path: Path) -> None:
+    """The warm transaction starts the new controller on this signal: every write of the restore (objects, clients)
+    precedes it, and only the baseline oracle's observation follows it."""
+    from benchmarks.sregym.fastloop.reset import restore_application
+
+    ops: list[str] = []
+
+    class Recording(Lane):
+        def __init__(self) -> None:
+            super().__init__()
+            self.client_registered = True
+
+        def apply(self, namespace: str, value: dict[str, Any]) -> None:
+            ops.append("apply")
+            super().apply(namespace, value)
+
+        def request(self, op: str, **kwargs: Any) -> dict[str, Any]:
+            ops.append(op)
+            return super().request(op, **kwargs)
+
+    lane = Recording()
+    lane.objects = [{**lane.objects[0], "spec": {**lane.objects[0]["spec"], "replicas": 3}}]
+    restore_application(environment(tmp_path), lane, lane, restored=lambda: ops.append("restored"))
+    assert ops.index("clean_start") < ops.index("apply") < ops.index("health") < ops.index("restored")
+    assert ops[ops.index("restored") + 1 :] == ["baseline_oracle"]

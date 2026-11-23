@@ -125,7 +125,12 @@ class Cluster:
         monkeypatch.setattr(warm_environment, "restart_observability", note("restart_observability"))
         monkeypatch.setattr(warm_environment, "await_observability", note("await_observability"))
         monkeypatch.setattr(warm_environment, "wait_standby", note("wait_standby"))
-        monkeypatch.setattr(warm_environment, "install_existing", lambda native: self.installs.append(native))
+
+        def install(native):
+            self.events.append("install_existing")
+            self.installs.append(native)
+
+        monkeypatch.setattr(warm_environment, "install_existing", install)
         monkeypatch.setattr(warm_environment, "native_install_config", lambda value: value)
         monkeypatch.setattr(warm_environment.time, "sleep", lambda _s: None)
 
@@ -160,13 +165,16 @@ def cluster(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Cluster:
 
 
 def test_reseed_stops_the_controller_at_the_head_it_holds_then_retires_state_then_installs_the_rows_config(cluster):
-    cluster.lane.reseed()
+    cluster.lane.reseed(lambda: cluster.events.append("application_restored"))
     names = cluster.events
     assert names.index("settle_exports") < names.index(f"reset_controller({HEAD}, preserve_repository=False)")
     # The leader Lease is freed once no controller process is left, so the new controller does not wait it out.
     assert names.index("stop_runtime") < names.index("release_leader_lease") < names.index("reset_control_state")
     assert names.index("reset_control_state") < names.index("delete_session_configmaps")
     assert names.index("delete_session_configmaps") < names.index("restart_observability")
+    # The old controller's stop and state retirement overlap the restore; the new one starts on the restored app.
+    assert names.index("restart_observability") < names.index("application_restored")
+    assert names.index("application_restored") < names.index("install_existing") < names.index("wait_standby")
     assert names.index("wait_standby") < names.index("await_observability")
     assert cluster.deleted == ["sdo-app-1-abc-request", "sdo-reflection-1"]
     # The Job is replaced from this row's own configuration: the Go install must not take the existing one.
@@ -460,10 +468,15 @@ def test_the_warm_restore_replaces_the_apps_trace_stores_before_restoring_and_be
         "RestoreChecks",
         lambda environment: SimpleNamespace(validate=lambda: events.append("validate")),
     )
-    monkeypatch.setattr(warm_environment, "restore_application", lambda *a, **k: events.append("restore"))
+
+    def restore(*_args, restored=None, **_kwargs):
+        events.append("restore")
+        restored()
+
+    monkeypatch.setattr(warm_environment, "restore_application", restore)
     cluster.lane.worker = None
-    cluster.lane.reset_changed()
-    assert events == ["validate", "restart", "restore"]
+    cluster.lane.reset_changed(lambda: events.append("restored"))
+    assert events == ["validate", "restart", "restore", "restored"]
 
 
 def _application_fingerprint(**changes):

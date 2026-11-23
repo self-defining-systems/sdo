@@ -5,10 +5,15 @@ Opt-in private-lane `fastloop run --warm-lane` writes
 changed-resource reset, the in-place reseed, accepted-revision equality and fresh
 admission all passed on the lane's own install (no namespace deletion, no new volume).
 `identity` contains controller and standby Pod UIDs plus the full accepted Git revision. `baseline_not_before` is the
-post-reset/adoption boundary. `phase_seconds` splits inspect, pause, reset (application), pre-reseed identity, reseed,
-reidentify, adopt, prove, confirmation and (on fallback) full reset; `warm/reseed-phases.json` splits the reseed into
-settle_evidence, read_head, stop_controller, retire_control_state, fresh_observability, install_controller, wait_started,
-record_controller and await_observability. The controller and standby identities in `identity` are those of the
+boundary taken after the restore's writes and before the new controller's install. After the pause the application
+restore and the reseed run concurrently (the reseed installs only once the restore's writes are done; the restore's
+oracle overlaps the controller's start), so `reset` and `reseed` are per-branch durations that overlap and
+`reset_and_reseed` is their wall time; `reset.restore`/`reset.verify` split the restore at that signal and
+`reseed.await_application` is the reseed's wait for it (the critical path is the restore's writes when it is large).
+`phase_seconds` also holds inspect, pause, pre-reseed identity, reidentify, adopt, prove, confirmation and (on
+fallback) full reset; never sum all its values. `warm/reseed-phases.json` splits the reseed into settle_evidence,
+read_head, stop_controller, retire_control_state, fresh_observability, await_application, install_controller,
+wait_started, record_controller and await_observability. The controller and standby identities in `identity` are those of the
 controller the reseed installed (the process is replaced by design); `reused` means that new process proved equal to a
 fresh install on the planned memory. A fallback at `reseed:<phase>:<error type>` means the controller may have been
 stopped and the full reset (which deletes the control namespace) followed. Ordinary injection admission
