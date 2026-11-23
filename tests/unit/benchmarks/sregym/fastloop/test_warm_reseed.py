@@ -653,3 +653,12 @@ def test_each_transaction_step_is_timed_and_a_failed_step_still_names_where_it_f
         cluster.lane.prove(__import__("datetime").datetime.now(), HEAD)
     steps = json.loads((cluster.lane.directory / warm_environment.STEP_SECONDS_FILE).read_text())
     assert "runtime_state" in steps["prove"]
+
+
+def test_a_rows_healthy_baseline_is_not_install_identity():
+    """Only a row whose closing turn runs captures the healthy baseline (#1853), so the arms sharing a lane differ in
+    it; the reseed installs each row's controller from its own configuration. As install identity it refused every
+    cold/p2 warm start after a learning row on EKS ('warm controller settings differ from the requested stage')."""
+    learning = runtime_config_payload(config(healthy_baseline=True))
+    not_learning = runtime_config_payload(config(healthy_baseline=None))
+    assert identity_settings(learning) == identity_settings(not_learning)
