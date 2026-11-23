@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 #: whose next row follows finds a young store that has been Ready for longer than the baseline check's sustained-health
 #: window, instead of a fresh pod that makes that check wait the whole window; a store left growing on an idle lane
 #: (about 70 MB/min against a 2 GiB budget) is older and still replaced.
-TRACE_STORE_MAX_AGE_SECONDS = 600.0
+TRACE_STORE_MAX_AGE_SECONDS = 10 * wait_for(WaitKind.MINUTE)
 
 
 def restart_in_memory_trace_stores(
