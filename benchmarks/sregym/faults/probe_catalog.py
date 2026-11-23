@@ -180,11 +180,11 @@ UNSUPPORTED_REASONS: dict[str, str] = {
     "MongoDBRevokeAuth": "Mongo auth probe needs a source-grounded geo/rate target",
 }
 
-# Faults whose injected state lives only in existing objects of the application namespace that the application restore
-# replaces whole from the baseline (a Deployment's pod template, a Service's ports or selector), with nothing beyond them
-# in their SREGym recover: the next start's restore reverts them exactly as that recover would. Every other fault
-# (application data, cluster-scope objects, the Namespace itself, runtime or node state, or a recover that also restarts
-# consumers, like MissingConfigMap) and every unreviewed class is recovered by its own recover inside the row.
+# Faults whose injected state lives only in existing objects of the application namespace that the application
+# restore replaces whole from the baseline (a Deployment's pod template, a Service's ports or selector), with nothing
+# beyond them in their SREGym recover: the next start's restore reverts them exactly as that recover would. Every
+# other fault (application data, cluster-scope objects, the Namespace itself, runtime or node state, or a recover that
+# also restarts consumers, like MissingConfigMap) and every unreviewed class is recovered by its own recover in the row.
 RESET_REVERTIBLE_CLASSES = frozenset(
     {
         "K8STargetPortMisconfig",
