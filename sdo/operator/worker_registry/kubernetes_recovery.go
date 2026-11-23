@@ -96,9 +96,14 @@ func (e KubernetesExecutor) RecoverCompleted(ctx context.Context, task *contract
 			}
 		} else {
 			if !jobCompleted(job) {
-				return nil, false, nil
-			}
-			if job.Status.CompletionTime != nil && !job.Status.CompletionTime.IsZero() {
+				// A failed pod listing leaves the Job condition to decide.
+				if exited, err := e.workerExited(ctx, name); err != nil || !exited {
+					return nil, false, nil
+				}
+				if !resultMap.CreationTimestamp.IsZero() {
+					completedAt = resultMap.CreationTimestamp.Time
+				}
+			} else if job.Status.CompletionTime != nil && !job.Status.CompletionTime.IsZero() {
 				completedAt = job.Status.CompletionTime.Time
 			}
 		}
@@ -192,6 +197,28 @@ func taskRequestDigest(task *contracts.AgentTask) string {
 // including workspace, base revision and deadline, rather than just task ID.
 func TaskJobName(task *contracts.AgentTask) string {
 	return "sdo-task-" + taskRequestDigest(task)[:52]
+}
+
+// workerExited reports whether the Job's worker has exited successfully: a pod of
+// the Job succeeded and none is still running. Its result is then final, because
+// a worker writes nothing after it exits and a succeeded pod is never retried.
+// This is the event the Job controller derives Complete from, seconds earlier.
+func (e KubernetesExecutor) workerExited(ctx context.Context, name string) (bool, error) {
+	pods, err := e.Client.CoreV1().Pods(e.Namespace).List(ctx, metav1.ListOptions{LabelSelector: "batch.kubernetes.io/job-name=" + name})
+	if err != nil {
+		return false, fmt.Errorf("inspect agent worker pods: %w", err)
+	}
+	succeeded := false
+	for _, pod := range pods.Items {
+		switch pod.Status.Phase {
+		case corev1.PodSucceeded:
+			succeeded = true
+		case corev1.PodFailed:
+		default:
+			return false, nil
+		}
+	}
+	return succeeded, nil
 }
 
 func (e KubernetesExecutor) verifyWorkerQuiescence(ctx context.Context, name string) error {
