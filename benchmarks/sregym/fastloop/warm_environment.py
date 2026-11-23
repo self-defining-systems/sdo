@@ -6,6 +6,7 @@ import json
 import logging
 import subprocess
 import time
+from contextlib import contextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -56,7 +57,7 @@ from benchmarks.sregym.fastloop.wipe import (
 from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
     from datetime import datetime
     from pathlib import Path
 
@@ -70,6 +71,10 @@ logger = logging.getLogger(__name__)
 #: Settings that belong to one row and are applied again by every reseed (the controller Job is installed anew from the
 #: row's own configuration): this row's evidence run and the path of its config overlay. They are not install identity.
 PER_ROW_SETTINGS = frozenset({"evidence_run_id", "config_files"})
+
+#: The seconds each step of the transaction's phases took (``{phase: {step: seconds}}``), beside the warm receipt:
+#: written after every step, so a phase that failed names the step it failed in and what came before.
+STEP_SECONDS_FILE = "step-seconds.json"
 
 
 #: The runtime's per-incident state store (an incident Job's ``<job>-tools-state``) carries no managed-by label; its
@@ -149,6 +154,8 @@ class WarmEnvironment:
     _reseeding = False
     #: Digest of the install identity the lane held when the transaction began (what the row is held against).
     _installed_digest = ""
+    #: ``{phase: {step: seconds}}`` of this transaction (``STEP_SECONDS_FILE``).
+    _step_seconds: dict[str, dict[str, float]] | None = None
 
     def __init__(
         self,
@@ -176,6 +183,19 @@ class WarmEnvironment:
             install_config=native_install_config(self.config),
             code_path=config.code_path,
         )
+
+    @contextmanager
+    def _step(self, phase: str, name: str) -> Iterator[None]:
+        """Time one step of ``phase`` into ``STEP_SECONDS_FILE``, failed or not."""
+        started = time.monotonic()
+        try:
+            yield
+        finally:
+            if self._step_seconds is None:
+                self._step_seconds = {}
+            self._step_seconds.setdefault(phase, {})[name] = round(time.monotonic() - started, 3)
+            self.directory.mkdir(parents=True, exist_ok=True)
+            (self.directory / STEP_SECONDS_FILE).write_text(json.dumps(self._step_seconds, indent=2) + "\n")
 
     def _head(self) -> str:
         # The installed controller owns this fixed accepted checkout. No worker
@@ -228,10 +248,12 @@ class WarmEnvironment:
 
     def inspect(self) -> LaneIdentity:
         env = self.environment
-        self._assert_idle()
+        with self._step("inspect", "idle"):
+            self._assert_idle()
         if env.shared_accepted_id:
             raise WarmLaneRefusal("warm transaction currently requires a private accepted repository")
-        injected = LaneInjectionState(env.kubeconfig, env.namespace).reason()
+        with self._step("inspect", "injection_state"):
+            injected = LaneInjectionState(env.kubeconfig, env.namespace).reason()
         if self.incoming_data_faults or injected is not None:
             why = "; ".join(self.incoming_data_faults) or (injected.detail if injected else "")
             raise WarmLaneRefusal(f"warm transaction cannot prove data-plane isolation: {why}")
@@ -239,9 +261,11 @@ class WarmEnvironment:
         # reseed and admission: the proof a previous row may have left to this start.
         if (unclean := AttemptMarker(env.run_dir).pending(start_proves_baseline=True)) is not None:
             raise WarmLaneRefusal(f"previous attempt did not finish cleanly: {unclean.detail}")
-        planned_application_unchanged(env, self.planned_commit)
-        record = PersistentState.load(env.state_path).controllers.get(env.namespace)
-        pod = self.ops.controller_pod(self.control)
+        with self._step("inspect", "planned_application"):
+            planned_application_unchanged(env, self.planned_commit)
+        with self._step("inspect", "controller_record"):
+            record = PersistentState.load(env.state_path).controllers.get(env.namespace)
+            pod = self.ops.controller_pod(self.control)
         if record is None or pod is None or record.controller_pod_uid != pod.uid:
             raise WarmLaneRefusal("warm lane has no recorded live controller")
         from benchmarks.sregym.fastloop.setup_proof import digest
@@ -250,13 +274,21 @@ class WarmEnvironment:
         if installed != identity_settings(runtime_config_payload(self.config)):
             raise WarmLaneRefusal("warm controller settings differ from the requested stage")
         self._installed_digest = digest(installed)
-        if record.lifecycle_fingerprint != deployed_lifecycle(env.namespace).fingerprint:
+        with self._step("inspect", "lifecycle"):
+            lifecycle = deployed_lifecycle(env.namespace).fingerprint
+        if record.lifecycle_fingerprint != lifecycle:
             raise WarmLaneRefusal("warm controller topology differs from the requested stage")
-        if not self.ops.install(self.config):
+        with self._step("inspect", "operator_inspect"):
+            reusable = self.ops.install(self.config)
+        if not reusable:
             raise WarmLaneRefusal("warm controller settings cannot be reused")
-        standby = self._standby_uid()
-        self._clean_scope()
-        return LaneIdentity(pod.uid, standby, self._head())
+        with self._step("inspect", "standby"):
+            standby = self._standby_uid()
+        with self._step("inspect", "clean_scope"):
+            self._clean_scope()
+        with self._step("inspect", "head"):
+            head = self._head()
+        return LaneIdentity(pod.uid, standby, head)
 
     def _standby_uid(self) -> str:
         pods = json.loads(
@@ -306,12 +338,15 @@ class WarmEnvironment:
         assert_clean_baseline(env.kubeconfig, namespace=env.namespace)
 
     def pause(self) -> None:
-        self._assert_idle()
-        pause_for_recovery(self.ops, self.control)
+        with self._step("pause", "idle"):
+            self._assert_idle()
+        with self._step("pause", "maintenance_pause"):
+            pause_for_recovery(self.ops, self.control)
         # Sync back the accepted checkout first, planned memory or not: the setup fingerprint below refuses a host copy
         # that differs from the memory the controller's volume holds ("installed accepted-memory commit differs from
         # accepted workspace"), which is exactly what moving the host copy to the planned commit makes of it.
-        sync_existing(native_install_config(self.config))
+        with self._step("pause", "sync_existing"):
+            sync_existing(native_install_config(self.config))
         from benchmarks.sregym.fastloop.setup_proof import (
             APPLICATION_RECEIPTS,
             RECEIPTS,
@@ -321,22 +356,25 @@ class WarmEnvironment:
         from benchmarks.sregym.fastloop.warm_scope import check_application_scope, check_cluster_scope
 
         # The full fingerprint also proves the host copy holds the memory on the controller's volume.
-        fingerprint = collect_fingerprint(self.environment)
+        with self._step("pause", "fingerprint"):
+            fingerprint = collect_fingerprint(self.environment)
         receipts = self.environment.run_dir / RECEIPTS
-        if (receipts / "latest.json").is_file():
-            check_cluster_scope(receipts, fingerprint, self.environment.namespace)
-        else:
-            # A lane that never ran the no-fault setup rehearsal (every SREGym lane) proves its cluster scope against
-            # the application setup it sealed after its last passing admission.
-            check_application_scope(
-                self.environment.run_dir / APPLICATION_RECEIPTS,
-                collect_application_fingerprint(self.environment),
-                self.environment.namespace,
-            )
+        with self._step("pause", "scope"):
+            if (receipts / "latest.json").is_file():
+                check_cluster_scope(receipts, fingerprint, self.environment.namespace)
+            else:
+                # A lane that never ran the no-fault setup rehearsal (every SREGym lane) proves its cluster scope
+                # against the application setup it sealed after its last passing admission.
+                check_application_scope(
+                    self.environment.run_dir / APPLICATION_RECEIPTS,
+                    collect_application_fingerprint(self.environment),
+                    self.environment.namespace,
+                )
         if self.planned_commit:
             # The row's own memory: the application below is restored from this source, and the reseed seeds the
             # controller's volume from it. The earlier row's memory on the volume is replaced there, not read here.
-            reseed_workspace(self.environment.workspace, self.planned_commit)
+            with self._step("pause", "planned_workspace"):
+                reseed_workspace(self.environment.workspace, self.planned_commit)
 
     def reset_changed(self) -> None:
         from benchmarks.sregym.fastloop.app_observability import (
@@ -434,11 +472,15 @@ class WarmEnvironment:
     def _wait_started(self) -> None:
         """The new controller is running and its responder standby is ready (the controller starts it)."""
         deadline = time.monotonic() + wait_for(WaitKind.ROLLOUT)
-        while self.ops.controller_pod(self.control) is None:
-            if time.monotonic() >= deadline:
-                raise TimeoutError("no running controller pod after the reseed")
-            time.sleep(wait_for(WaitKind.SAMPLE))
-        wait_standby(self._kube(), self.control, SWAP_STANDBY_WAIT_S)
+        with self._step("reseed.wait_started", "controller_running"):
+            while self.ops.controller_pod(self.control) is None:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("no running controller pod after the reseed")
+                time.sleep(wait_for(WaitKind.SAMPLE))
+        # The controller creates the standby after its start-up (memory check, build): this is that time plus the
+        # standby's own start.
+        with self._step("reseed.wait_started", "standby_ready"):
+            wait_standby(self._kube(), self.control, SWAP_STANDBY_WAIT_S)
 
     def _record_controller(self) -> None:
         """The lane's registry names the controller now running, installed from this row's configuration."""
@@ -460,15 +502,19 @@ class WarmEnvironment:
         return revision
 
     def prove(self, not_before: datetime, revision: str) -> dict[str, Any]:
-        self.ops.set_maintenance(self.control, paused=False, generation=self.generation + "-proof")
-        proof = self.admission.prove(self.control)
+        with self._step("prove", "maintenance_resume"):
+            self.ops.set_maintenance(self.control, paused=False, generation=self.generation + "-proof")
+        with self._step("prove", "admission"):
+            proof = self.admission.prove(self.control)
         # The existing admission requires all detector samples after its own
         # boundary (later than not_before). Require the controller to have
         # evaluated this exact revision, not merely mounted its Git checkout.
-        state = self.ops.runtime_state(self.control)
+        with self._step("prove", "runtime_state"):
+            state = self.ops.runtime_state(self.control)
         if state.get("setup_evaluated_revision") != revision:
             raise WarmLaneRefusal("controller has not evaluated the accepted revision")
-        self._require_fresh_equivalent(state, not_before, revision)
+        with self._step("prove", "fresh_equivalence"):
+            self._require_fresh_equivalent(state, not_before, revision)
         return proof
 
     def _require_fresh_equivalent(self, state: dict[str, Any], not_before: datetime, revision: str) -> None:
