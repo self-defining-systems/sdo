@@ -38,9 +38,9 @@ Live runs spend real money and quota.
 The experiment is the incidents; everything else is overhead to remove.
 
 1. Before launching, write each phase's in-principle minimum and expected duration, then record actual times in the run directory. Actual time far above the minimum is a bug to find ([campaign-operations.md](references/campaign-operations.md)).
-2. When a phase takes more than twice its estimate, or setup outlasts the incidents, stop waiting. Find the slow step from its logs, fix it, and add a guard or test so it cannot recur. Do not just note it in the report.
+2. When a phase takes more than twice its estimate, or setup outlasts the incidents, stop waiting. Find the slow step from its logs, fix it, and add a guard or test so it cannot recur. Do not just note it.
 3. Prefer removing a step to speeding it up: a warm lane beats a faster image load, and a dev mount beats both.
-4. Report each slow-loop fix with its before and after times.
+4. Report each slow-loop fix with before and after times.
 
 ## Unblock proactively
 
@@ -63,8 +63,10 @@ The experiment is the incidents; everything else is overhead to remove.
 
 Read [references/failure-modes.md](references/failure-modes.md) before step 8, and whenever a run behaves unexpectedly.
 
+For a new eval path or slow debug loop, read [references/iteration.md](references/iteration.md) first.
+
 For a campaign (many lanes, hosts or arms), read [references/campaign-operations.md](references/campaign-operations.md) before launching, then add each costly mistake there.
 
-For offline worker replay use `fastloop replay --run-dir <results/run> --incident N --stage responder|reflection|broker`: agent scripts are the only execution path, with no live fallback. Prompts, rollouts, tool calls and outcomes remain readable analysis evidence. See [the testing guide](../../../docs/testing-guide.md).
+For offline worker replay use `fastloop replay --run-dir <results/run> --incident N --stage responder|reflection|broker`: agent scripts are the only execution path, with no live fallback. See [the testing guide](../../../docs/testing-guide.md).
 
 For toy activation evidence, require populated passing `memory_host_activations` in each changing-memory incident row; see the fastloop README activation-continuity contract. Harness stage budgets use wall time at every scripted time scale.
