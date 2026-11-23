@@ -83,31 +83,41 @@ def _incident_closed(ops: SeriesOps, bounds: Bounds) -> bool:
     return True
 
 
+#: A controller that has evaluated nothing for this long is not observing (a rebuild, a restart): its normal detector
+#: cadence leaves gaps of up to about 15 s between persisted evaluations, a rebuild minutes.
+OBSERVATION_STALL_S = 30.0
+
+
 def watch_until_quiet(ops: SeriesOps, timings: ScenarioTimings, quiet: float, cap: float, patience: float) -> bool:
     """Whether an incident was seen before SDO had none open for ``quiet`` seconds of its own observation.
 
-    The controller observes when its newest detector evaluation (``observed_at``) advances between polls. One that
-    evaluates nothing (a rebuild after a deploy, a restart) says nothing by having no incident open: a poll without
-    a new evaluation restarts the quiet window, and only observed time counts against ``cap``, the bound on a noisy
-    controller. ``patience`` bounds the whole wait in wall time."""
+    Time is the controller's observation clock (``observed_at``: its newest persisted detector evaluation). One that
+    has evaluated nothing for ``OBSERVATION_STALL_S`` (a rebuild after a deploy, a restart) says nothing by having no
+    incident open: the quiet window starts again at its next evaluation, and neither the stall nor the jump after it
+    counts against ``cap``, the bound on a noisy controller. ``patience`` bounds the whole wait in wall time."""
     end = ops.clock() + patience
-    seen, clear_since, observed_time, was_fresh = False, None, 0.0, False
+    seen, clear_since, observed_time = False, None, 0.0
     last = ops.observed_at()
+    last_fresh = ops.clock()
     while ops.clock() < end and observed_time < cap:
         ops.sleep(timings.poll)
-        observed = ops.observed_at()
-        fresh = observed is not None and last is not None and observed > last
-        if fresh and was_fresh:  # the jump after a stall is not observed time
-            observed_time += observed - last  # type: ignore[operator]
-        was_fresh, last = fresh, observed if observed is not None else last
-        if not fresh:
-            clear_since = None
+        now, observed = ops.clock(), ops.observed_at()
+        if observed is None or last is None or observed <= last:
+            if now - last_fresh >= OBSERVATION_STALL_S:
+                clear_since = None
+            last = observed if observed is not None else last
             continue
+        resumed = now - last_fresh >= OBSERVATION_STALL_S
+        if resumed:
+            clear_since = None
+        else:
+            observed_time += observed - last
+        last, last_fresh = observed, now
         if ops.incident_open():
             seen, clear_since = True, None
             continue
         clear_since = observed if clear_since is None else clear_since
-        if observed - clear_since >= quiet:  # type: ignore[operator]
+        if observed - clear_since >= quiet:
             return seen
     return seen
 
