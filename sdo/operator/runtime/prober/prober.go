@@ -115,6 +115,9 @@ type probe struct {
 	scenarios map[string]*scenarioState
 	order     []string
 	skipped   int
+	// warmUntil ends the warm-up that began when the probe started or was
+	// last reset (traffic.Workload.WarmupBound).
+	warmUntil time.Time
 }
 
 // Prober continuously runs the health-probe workloads and runs verify bursts
@@ -206,9 +209,28 @@ func New(config Config) (*Prober, error) {
 		engine.UsePasswords(config.Passwords)
 		engine.UseExec(config.Exec)
 		prober.shareSetup(engine)
-		prober.probes[workload.Name] = newProbe(engine)
+		state := newProbe(engine)
+		state.warmUntil = config.Clock.Now().Add(engine.Workload().WarmupBound())
+		name := workload.Name
+		engine.UseWarmup(func() bool { return prober.warming(name) })
+		prober.probes[name] = state
 	}
 	return prober, nil
+}
+
+// warming reports whether the named probe is warming up: within its warm-up
+// bound of its start or last reset, some scenario lacks the samples its SLO
+// needs to be judged (the predicate the traffic detectors confirm on). Until
+// then the engine samples at the floor interval.
+func (p *Prober) warming(name string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	state := p.probes[name]
+	now := p.config.Clock.Now().UTC()
+	if state == nil || !now.Before(state.warmUntil) {
+		return false
+	}
+	return !probeWindowLocked(state, now).Ready()
 }
 
 // shareSetup makes engine use the prober's one record of completed setup
@@ -291,17 +313,7 @@ func (p *Prober) Windows() map[string]traffic.Window {
 	now := p.config.Clock.Now().UTC()
 	windows := make(map[string]traffic.Window, len(p.probes))
 	for name, state := range p.probes {
-		scenarios := make([]traffic.ScenarioObservations, 0, len(state.order))
-		for _, id := range state.order {
-			scenario := state.scenarios[id]
-			scenarios = append(scenarios, traffic.ScenarioObservations{
-				Scenario: scenario.descriptor, Samples: append([]traffic.Sample(nil), scenario.samples...),
-				Qualified: scenario.qualified, Invalid: scenario.invalid, LastInvalid: scenario.lastInvalid, Defect: scenario.defect, ByteCap: scenario.byteCap, IdentityWait: scenario.identityWait,
-			})
-		}
-		windows[name] = traffic.Window{
-			Workload: state.engine.Workload(), ObservedAt: now, Scenarios: scenarios, Skipped: state.skipped,
-		}
+		windows[name] = probeWindowLocked(state, now)
 	}
 	for name, probe := range p.links {
 		windows[name] = p.linkWindowLocked(probe, now)
@@ -309,18 +321,35 @@ func (p *Prober) Windows() map[string]traffic.Window {
 	return windows
 }
 
-// Reset forgets recent observations, for example after a maintenance pause.
+// probeWindowLocked is the probe's current window; the caller holds p.mu.
+func probeWindowLocked(state *probe, now time.Time) traffic.Window {
+	scenarios := make([]traffic.ScenarioObservations, 0, len(state.order))
+	for _, id := range state.order {
+		scenario := state.scenarios[id]
+		scenarios = append(scenarios, traffic.ScenarioObservations{
+			Scenario: scenario.descriptor, Samples: append([]traffic.Sample(nil), scenario.samples...),
+			Qualified: scenario.qualified, Invalid: scenario.invalid, LastInvalid: scenario.lastInvalid, Defect: scenario.defect, ByteCap: scenario.byteCap, IdentityWait: scenario.identityWait,
+		})
+	}
+	return traffic.Window{Workload: state.engine.Workload(), ObservedAt: now, Scenarios: scenarios, Skipped: state.skipped}
+}
+
+// Reset forgets recent observations, for example after a maintenance pause,
+// and begins a new warm-up.
 // Successful qualification survives for this immutable scenario catalog: a
 // maintenance boundary must not turn an existing regression into an exemption.
 // Iteration numbers keep increasing so every iteration stays replayable.
 func (p *Prober) Reset() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	now := p.config.Clock.Now()
 	for _, state := range p.probes {
 		for _, scenario := range state.scenarios {
 			scenario.samples, scenario.invalid, scenario.lastInvalid, scenario.defect, scenario.byteCap = nil, 0, "", "", 0
 		}
 		state.skipped = 0
+		// The forgotten samples are taken again at the floor interval.
+		state.warmUntil = now.Add(state.engine.Workload().WarmupBound())
 	}
 	// Link samples go, but not which links have ever connected: that is a
 	// fact about the topology, and forgetting it would blind the detector to
