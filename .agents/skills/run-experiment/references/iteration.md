@@ -43,6 +43,7 @@ Read this when a path (a benchmark, an app pack, a cluster kind, a lane pool) ha
 - **Run the machine that drives remote clusters (manager, steps, kubectl, builds) on a dedicated, unloaded host,** or one inside the cloud account. Reason: on a shared, overloaded host its API calls time out and look like lost lanes, rows and series positions.
 - **Gate manager starts and steps on that machine's load per core,** and read it before blaming a lane ([campaign-operations.md](campaign-operations.md) section 2).
 - **Retry a timed-out cluster call; if it still fails, record a harness failure,** never a lost lane.
+- **Size every node by what it can actually give, and alarm on pressure, before blaming the run.** A node's workload memory is its nominal memory less the kubelet and system reservations, the eviction floor and the daemonsets (the planner's `eksNodeOverheadGiB`), and pods that request little but use a lot pack onto one node. A GitLab lane planned on nominal memory (two 16 GiB nodes for 30 GiB) ran a node out of memory during a rollout; with no kubelet reservations the node went NotReady instead of evicting a pod, and the series position died as a harness failure. When a series hits a harness timeout, read the host's node conditions (`lanes preflight` check `eks-nodes`, alarm `eks-node-pressure`) before rerunning: a node under pressure fails the same way on the retry.
 
 ## 6. Agents
 

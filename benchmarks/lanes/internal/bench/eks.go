@@ -308,9 +308,15 @@ type EksPlan struct {
 	Virtual bool `json:"virtual,omitempty"`
 }
 
-// PlanLane sizes a lane's cluster from the workload's footprint: two nodes of the cheapest instance type that holds
-// half of it (one node when it asks for fewer than 4 cores), as a kind lane has two nodes. The control plane is in
-// USDPerHour.
+// eksNodeOverheadGiB is what a lane node's nominal memory gives to other than the workload: the kubelet's and the
+// system's reservations and the hard-eviction floor of the lanes' EC2NodeClass (deploy/eks-vcluster.sh: 600 + 400 +
+// 750 MiB) and the daemonsets (CNI, kube-proxy, the node agent). A lane planned on nominal memory (two 16 GiB
+// nodes for 30 GiB) ran a node out of memory during a rollout and its kubelet stopped reporting.
+const eksNodeOverheadGiB = 2.0
+
+// PlanLane sizes a lane's cluster from the workload's footprint: two nodes of the cheapest instance type whose memory,
+// less eksNodeOverheadGiB, holds half of it (one node when it asks for fewer than 4 cores), as a kind lane has two
+// nodes. The control plane is in USDPerHour.
 func (e *HostEKS) PlanLane(l LaneLimit) (EksPlan, error) { return e.planLane(l, e.virtual()) }
 
 // PlanLaneFor is PlanLane for the named lane of a host (a full-cluster lane of a vcluster host has a control plane of its own).
@@ -329,7 +335,7 @@ func (e *HostEKS) planLane(l LaneLimit, virtual bool) (EksPlan, error) {
 		nodes = 1
 	}
 	needCPU := int(math.Ceil(float64(l.CPUs) / float64(nodes)))
-	needMem := memGiB / float64(nodes)
+	needMem := memGiB/float64(nodes) + eksNodeOverheadGiB
 	var best EksPlan
 	for _, fam := range e.families() {
 		f := eksFamilies[fam]
@@ -745,7 +751,7 @@ func (m *Manager) eksCheck(ctx context.Context, lane, kubeconfig string) error {
 	defer cancel()
 	// The host's env (its PATH) decides which kubectl runs, as for every step on the host: sh resolves it, not this process.
 	cmd := exec.CommandContext(ctx, "sh", "-c", `exec kubectl "$@"`, "sh", "--kubeconfig", kubeconfig, "--context", "kind-"+lane, "--request-timeout=30s", "get", "nodes",
-		"-o", `jsonpath={range .items[*]}{.metadata.name}{"="}{range .status.conditions[?(@.type=="Ready")]}{.status}{end}{"\n"}{end}`)
+		"-o", `jsonpath={range .items[*]}{.metadata.name}{"="}{range .status.conditions[?(@.type=="Ready")]}{.status}{end}{","}{range .status.conditions[?(@.type=="MemoryPressure")]}{.status}{end}{","}{range .status.conditions[?(@.type=="PIDPressure")]}{.status}{end}{","}{range .status.conditions[?(@.type=="DiskPressure")]}{.status}{end}{"\n"}{end}`)
 	cmd.Env = os.Environ()
 	if l := m.lanes[lane]; l != nil {
 		cmd.Env = append(cmd.Env, m.inv.Hosts[l.Host].EnvList()...)
@@ -754,25 +760,66 @@ func (m *Manager) eksCheck(ctx context.Context, lane, kubeconfig string) error {
 	if err != nil {
 		return fmt.Errorf("EKS API not reachable: %v", err)
 	}
-	return judgeNodesReady(string(out))
+	pressure, err := judgeNodesReady(string(out))
+	m.notePressure(lane, pressure)
+	return err
 }
 
-// judgeNodesReady reads `name=True|False|Unknown` lines.
-func judgeNodesReady(out string) error {
+// notePressure raises eks-node-pressure once when a lane's node starts reporting memory, PID or disk pressure (a
+// lane node ran out of memory during a rollout and its kubelet went NotReady, which took the run's harness reads
+// with it) and logs when the lane is clear again. It never stops the lane: the alarm is for the person sizing it.
+func (m *Manager) notePressure(lane string, pressure []string) {
+	m.pressureMu.Lock()
+	defer m.pressureMu.Unlock()
+	if m.eksPressure == nil {
+		m.eksPressure = map[string]string{}
+	}
+	why := ""
+	if len(pressure) > 0 {
+		why = fmt.Sprintf("lane %s nodes under pressure: %s (size the lane's footprint or its instance type up)", lane, strings.Join(pressure, "; "))
+	}
+	was := m.eksPressure[lane]
+	m.eksPressure[lane] = why
+	switch {
+	case why != "" && was == "":
+		m.logf("ALARM %s", why)
+		if l := m.lanes[lane]; l != nil {
+			m.raiseLaneAlarm("eks-node-pressure", l, why)
+		}
+	case why == "" && was != "":
+		m.logf("lane %s: no node under pressure again", lane)
+	}
+}
+
+// judgeNodesReady reads `name=Ready[,MemoryPressure,PIDPressure,DiskPressure]` lines (condition statuses in that
+// order): the lane is unhealthy when no node is Ready. pressure names the nodes whose kubelet reports memory, PID or disk
+// pressure: an alarm before a node stops reporting, not a reason to stop the lane.
+func judgeNodesReady(out string) (pressure []string, err error) {
 	ready, total := 0, 0
 	for _, ln := range strings.Split(out, "\n") {
-		if strings.TrimSpace(ln) == "" {
+		name, statuses, ok := strings.Cut(strings.TrimSpace(ln), "=")
+		if !ok {
 			continue
 		}
 		total++
-		if strings.HasSuffix(ln, "=True") {
+		st := strings.Split(statuses, ",")
+		if st[0] == "True" {
 			ready++
+		}
+		var under []string
+		for i, kind := range []string{"MemoryPressure", "PIDPressure", "DiskPressure"} {
+			if i+1 < len(st) && st[i+1] == "True" {
+				under = append(under, kind)
+			}
+		}
+		if len(under) > 0 {
+			pressure = append(pressure, name+" "+strings.Join(under, "+"))
 		}
 	}
 	if ready == 0 {
-		return fmt.Errorf("no Ready node (%d nodes)", total)
+		return pressure, fmt.Errorf("no Ready node (%d nodes)", total)
 	}
-	return nil
+	return pressure, nil
 }
 
 // eksLaneAdmitted says whether a build of s may take lane l: a lane that has its cluster always may; one that needs a
@@ -810,6 +857,42 @@ func eksAccountScript(e *HostEKS) string {
 		return `echo "account local-kind"` // no AWS: the host cluster is a local kind cluster
 	}
 	return `a=$(aws sts get-caller-identity --query Account --output text 2>/dev/null) && echo "account $a"; true`
+}
+
+// eksNodesScript lists every node of the host cluster (the system node group that holds the vclusters' control planes
+// and every lane's nodes) with its Ready and pressure condition statuses, as judgeNodesReady reads them. A host with no
+// host kubeconfig in the step environment (a host not yet made) prints nothing.
+func eksNodesScript() string {
+	return `[ -n "${EKS_HOST_KUBECONFIG:-}" ] && [ -f "$EKS_HOST_KUBECONFIG" ] || { echo "no-host-kubeconfig"; exit 0; }
+exec kubectl --kubeconfig "$EKS_HOST_KUBECONFIG" --request-timeout=30s get nodes -o 'jsonpath={range .items[*]}{.metadata.name}{"="}{range .status.conditions[?(@.type=="Ready")]}{.status}{end}{","}{range .status.conditions[?(@.type=="MemoryPressure")]}{.status}{end}{","}{range .status.conditions[?(@.type=="PIDPressure")]}{.status}{end}{","}{range .status.conditions[?(@.type=="DiskPressure")]}{.status}{end}{"\n"}{end}'`
+}
+
+// judgeEksNodes: no node of the host is NotReady or under memory, PID or disk pressure. A plan added to a host whose
+// nodes are already starved meets the failure a lane met mid-rollout (its node's kubelet stopped reporting).
+func judgeEksNodes(out string, err error) (bool, string) {
+	if err != nil {
+		return false, fmt.Sprintf("probe failed: %v", err)
+	}
+	if strings.TrimSpace(out) == "no-host-kubeconfig" {
+		return true, "no host cluster yet"
+	}
+	var notReady []string
+	total := 0
+	for _, ln := range strings.Split(out, "\n") {
+		name, statuses, ok := strings.Cut(strings.TrimSpace(ln), "=")
+		if !ok {
+			continue
+		}
+		total++
+		if st, _, _ := strings.Cut(statuses, ","); st != "True" {
+			notReady = append(notReady, name)
+		}
+	}
+	pressure, _ := judgeNodesReady(out)
+	if len(notReady) > 0 || len(pressure) > 0 {
+		return false, fmt.Sprintf("%d nodes: not Ready %v, under pressure %v (size the system node group or the lanes up)", total, notReady, pressure)
+	}
+	return true, fmt.Sprintf("%d nodes Ready, none under pressure", total)
 }
 
 // judgeEksAccount: the credentials work and, when the host names an account, belong to it.

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/self-defining-systems/sdo/benchmarks/lanes/internal/plan"
 )
 
 const eksHost = `hosts:
@@ -82,8 +84,8 @@ func TestEksPlanSizesTheLaneFromItsFootprint(t *testing.T) {
 		usd   float64
 	}{
 		{5, "12Gi", "m6i.xlarge", 2, 0.4840},   // the default footprint: two 4 vCPU nodes
-		{8, "30Gi", "m6i.xlarge", 2, 0.4840},   // half of it fits 4 vCPUs and 16 GiB
-		{16, "64Gi", "m6i.2xlarge", 2, 0.8680}, // 8 vCPUs, 32 GiB per node
+		{8, "30Gi", "m6i.2xlarge", 2, 0.8680},  // 15 GiB a node plus the node's overhead is more than 16 GiB
+		{16, "64Gi", "m6i.4xlarge", 2, 1.6360}, // 32 GiB a node plus the overhead does not fit 32 GiB
 		{2, "4Gi", "m6i.xlarge", 1, 0.2920},    // below 4 cores: one node, never under min_node_vcpus
 		{8, "100Gi", "m6i.4xlarge", 2, 1.6360}, // memory decides: 50 GiB per node needs 16 vCPUs
 		{30, "30Gi", "m6i.4xlarge", 2, 1.6360}, // 15 cores per node
@@ -107,14 +109,44 @@ func TestEksPlanSizesTheLaneFromItsFootprint(t *testing.T) {
 }
 
 func TestJudgeNodesReady(t *testing.T) {
-	if err := judgeNodesReady("a=True\nb=False\n"); err != nil {
+	if _, err := judgeNodesReady("a=True\nb=False\n"); err != nil {
 		t.Errorf("one Ready node is healthy: %v", err)
 	}
-	if err := judgeNodesReady("a=False\nb=Unknown\n"); err == nil || !strings.Contains(err.Error(), "no Ready node") {
+	if _, err := judgeNodesReady("a=False\nb=Unknown\n"); err == nil || !strings.Contains(err.Error(), "no Ready node") {
 		t.Errorf("no Ready node: %v", err)
 	}
-	if err := judgeNodesReady(""); err == nil {
+	if _, err := judgeNodesReady(""); err == nil {
 		t.Error("an empty node list is not healthy")
+	}
+}
+
+// A lane node whose kubelet reports memory or PID pressure is named (an alarm before it stops reporting, as a
+// lane node did during a rollout); a healthy lane names none and pressure alone never makes the lane unhealthy.
+func TestJudgeNodesReadyNamesNodesUnderPressure(t *testing.T) {
+	pressure, err := judgeNodesReady("a=True,False,False,False\nb=True,True,True,False\n")
+	if err != nil || len(pressure) != 1 || pressure[0] != "b MemoryPressure+PIDPressure" {
+		t.Fatalf("pressure = %v, err = %v", pressure, err)
+	}
+	if pressure, _ := judgeNodesReady("a=True,False,False,False\n"); len(pressure) != 0 {
+		t.Fatalf("a healthy node reported pressure: %v", pressure)
+	}
+}
+
+func TestNodePressureRaisesOneAlarmPerOnset(t *testing.T) {
+	m, root := pressureManager(t)
+	m.notePressure("g1", []string{"n1 MemoryPressure"})
+	m.notePressure("g1", []string{"n1 MemoryPressure"})
+	m.notePressure("g1", nil)
+	m.notePressure("g1", []string{"n2 PIDPressure"})
+	alarms := readAlarms(t, root)
+	n := 0
+	for _, a := range alarms {
+		if a.Alarm == "eks-node-pressure" {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("eks-node-pressure raised %d times, want once per onset (2): %+v", n, alarms)
 	}
 }
 
@@ -936,5 +968,34 @@ func TestEksLaneWithoutAKubeconfigIsNotUnhealthyForItsMissingCluster(t *testing.
 	}
 	if why := m.laneGate("eks2"); !strings.Contains(why, "unhealthy") {
 		t.Errorf("a lane whose cluster exists and does not answer must stay gated: %q", why)
+	}
+}
+
+func pressureManager(t *testing.T) (*Manager, Root) {
+	t.Helper()
+	root := Root(t.TempDir())
+	now := time.Date(2026, 11, 23, 16, 0, 0, 0, time.UTC)
+	m := &Manager{Root: root, Now: func() time.Time { return now }}
+	m.lanes = map[string]*LaneFile{"g1": {Lane: "g1", Host: "aws-vc"}}
+	return m, root
+}
+
+func readAlarms(t *testing.T, root Root) []plan.Alarm {
+	t.Helper()
+	return RecentAlarms(root, time.Hour*24*365, time.Date(2026, 11, 23, 16, 0, 0, 0, time.UTC))
+}
+
+func TestPreflightEksNodesFailsOnAStarvedOrNotReadyNode(t *testing.T) {
+	if ok, d := judgeEksNodes("sys=True,False,False,False\nl1=True,False,False,False\n", nil); !ok {
+		t.Fatalf("healthy host refused: %s", d)
+	}
+	if ok, d := judgeEksNodes("sys=True,False,False,False\nl1=Unknown,Unknown,Unknown,Unknown\n", nil); ok || !strings.Contains(d, "l1") {
+		t.Fatalf("a NotReady node passed: %s", d)
+	}
+	if ok, d := judgeEksNodes("sys=True,False,True,False\n", nil); ok || !strings.Contains(d, "PIDPressure") {
+		t.Fatalf("PID pressure passed: %s", d)
+	}
+	if ok, _ := judgeEksNodes("no-host-kubeconfig\n", nil); !ok {
+		t.Fatal("a host not yet made must not fail the check")
 	}
 }

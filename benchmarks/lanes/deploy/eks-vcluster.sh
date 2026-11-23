@@ -230,6 +230,13 @@ spec:
   securityGroupSelectorTerms: [{tags: {karpenter.sh/discovery: $HOST}}]
   associatePublicIPAddress: true
   blockDeviceMappings: [{deviceName: /dev/xvda, ebs: {volumeSize: 100Gi, volumeType: gp3}}]
+  # the kubelet keeps memory and PIDs for itself and evicts a pod before the node runs out, so a lane whose workload
+  # outgrows its node loses a pod, not the node (a lane node with no reservations went NotReady mid-rollout);
+  # the planner counts these against a node's memory (eksNodeOverheadGiB)
+  kubelet:
+    kubeReserved: {cpu: 100m, memory: 600Mi}
+    systemReserved: {cpu: 100m, memory: 400Mi}
+    evictionHard: {memory.available: 750Mi, pid.available: "10%", nodefs.available: "10%"}
   tags: {Project: $TAG, sdo-host: $HOST}
 ---
 apiVersion: scheduling.k8s.io/v1
