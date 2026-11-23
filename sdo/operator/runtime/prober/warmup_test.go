@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -99,16 +100,16 @@ func sampleCount(p *Prober) int {
 	return count
 }
 
-// settle waits (in real time) until every started iteration recorded its
-// sample and the engine waits for its next slot.
+// settle yields to the engine's goroutines until every started iteration
+// recorded its sample and the engine waits for its next slot (bounded by
+// yields, not by the wall clock).
 func settle(t *testing.T, p *Prober, clock *stepClock, started int) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for sampleCount(p) < started || clock.pending() == 0 {
-		if time.Now().After(deadline) {
+	for yields := 0; sampleCount(p) < started || clock.pending() == 0; yields++ {
+		if yields > 5_000_000 {
 			t.Fatalf("prober did not settle: %d of %d samples, %d waiters", sampleCount(p), started, clock.pending())
 		}
-		time.Sleep(time.Millisecond)
+		runtime.Gosched()
 	}
 }
 
