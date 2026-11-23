@@ -82,7 +82,11 @@ func slowProbeWith(t *testing.T, effect traffic.SideEffect) (*Prober, *stepClock
 	var catalog traffic.Catalog
 	var scenarios []traffic.WorkloadScenario
 	for _, id := range []string{"catalog-read", "cart-read"} {
-		catalog = append(catalog, traffic.Scenario{ID: id, Target: traffic.Target{Service: "web", Port: 80}, SideEffect: effect,
+		marker := ""
+		if effect != traffic.SideEffectRead {
+			marker = "sdoprobe-" + id
+		}
+		catalog = append(catalog, traffic.Scenario{ID: id, Target: traffic.Target{Service: "web", Port: 80}, SideEffect: effect, Marker: marker,
 			Steps: []traffic.Step{{Name: "get", Endpoint: traffic.GET("/"+id, nil)}}})
 		scenarios = append(scenarios, traffic.WorkloadScenario{ID: id})
 	}
