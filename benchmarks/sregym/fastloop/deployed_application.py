@@ -240,8 +240,11 @@ def record_deployed_source(environment: Any, revision: str) -> None:
     _write_stamp(environment, stamp)
 
 
-def deployed_application_change(environment: Any, revision: str) -> Tier2Reason | None:
-    """Why the running app is not the deploy of ``revision``; ``None`` keeps it. Never raises for unknowns."""
+def deployed_application_change(environment: Any, revision: str, *, live_content: bool = True) -> Tier2Reason | None:
+    """Why the running app is not the deploy of ``revision``; ``None`` keeps it. Never raises for unknowns.
+
+    ``live_content=False`` skips only the comparison of the live objects with the baseline: for a start whose reset
+    restores them from that baseline anyway (a fault left to it). The source, stamp and cluster checks stay."""
     from benchmarks.sregym.fastloop.baseline_recovery import load_application_baseline
 
     try:
@@ -269,7 +272,8 @@ def deployed_application_change(environment: Any, revision: str) -> Tier2Reason 
         changed = [
             item.namespace
             for item in baselines
-            if application_content(live_objects(environment.kubeconfig, item.namespace), item.namespace)
+            if live_content
+            and application_content(live_objects(environment.kubeconfig, item.namespace), item.namespace)
             != application_content(item.objects, item.namespace)
         ]
     except _UNKNOWN as exc:

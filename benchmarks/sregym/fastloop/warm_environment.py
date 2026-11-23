@@ -137,11 +137,14 @@ def identity_settings(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in controller_settings(payload).items() if key not in PER_ROW_SETTINGS}
 
 
-def planned_application_unchanged(environment: Any, planned_commit: str | None) -> None:
-    """A warm lane keeps its app only while it is the deploy of the planned source; otherwise fall back."""
+def planned_application_unchanged(environment: Any, planned_commit: str | None, *, live_content: bool = True) -> None:
+    """A warm lane keeps its app only while it is the deploy of the planned source; otherwise fall back.
+
+    ``live_content=False``: the previous row left its fault for this start's restore, which replaces the live objects
+    from the baseline, so only their comparison with it is skipped."""
     from benchmarks.sregym.fastloop.deployed_application import deployed_application_change
 
-    changed = deployed_application_change(environment, planned_commit or "HEAD")
+    changed = deployed_application_change(environment, planned_commit or "HEAD", live_content=live_content)
     if changed is not None:
         raise WarmLaneRefusal(
             f"warm lane application is not the planned deploy: {changed.trigger.value} ({changed.detail})"
@@ -259,10 +262,12 @@ class WarmEnvironment:
             raise WarmLaneRefusal(f"warm transaction cannot prove data-plane isolation: {why}")
         # The reset below restores the app and grades it afresh (``restore_application``'s baseline oracle) before the
         # reseed and admission: the proof a previous row may have left to this start.
-        if (unclean := AttemptMarker(env.run_dir).pending(start_proves_baseline=True)) is not None:
+        # A fault the previous row left (one the restore reverts) is reverted by that same reset.
+        marker = AttemptMarker(env.run_dir)
+        if (unclean := marker.pending(start_proves_baseline=True, start_reverts_fault=True)) is not None:
             raise WarmLaneRefusal(f"previous attempt did not finish cleanly: {unclean.detail}")
         with self._step("inspect", "planned_application"):
-            planned_application_unchanged(env, self.planned_commit)
+            planned_application_unchanged(env, self.planned_commit, live_content=not marker.owed_faults())
         with self._step("inspect", "controller_record"):
             record = PersistentState.load(env.state_path).controllers.get(env.namespace)
             pod = self.ops.controller_pod(self.control)
