@@ -119,7 +119,8 @@ The onboarding check is red for a scenario that stays pending or under-sampled t
 The memory check also refuses a probe set whose floor load exceeds the probe-load cap (3 requests/s over all health
 probes, each scenario sampled at least every `sampleInterval`): it names the rate. Fix it by trimming or merging
 scenarios and making each cheaper, or by a modest `sampleInterval` (up to 30 s) when scenarios are many, never by
-stretching it past qualification.
+stretching it past qualification. After a start or reset the prober samples every scenario at the 10 s floor until
+each has its minimum samples, so `sampleInterval` sets fault-detection time, not start-up time.
 
 ## Identities and sessions
 
