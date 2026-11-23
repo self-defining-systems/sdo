@@ -247,8 +247,12 @@ func healthEvaluationOf(verdict evaluation.Verdict) HealthEvaluation {
 		result.Detectors = append(result.Detectors, lifecycle.DetectorState{DetectorID: item.DetectorID, Status: "unavailable", Reason: item.Reason})
 	}
 	for _, finding := range verdict.Findings {
-		if finding.Status == "active" {
+		switch {
+		case evaluation.FindingFires(finding):
 			result.Detectors = append(result.Detectors, lifecycle.DetectorState{DetectorID: finding.DetectorID, Status: "firing", Reason: firstNonEmpty(finding.Summary, finding.RuleID) + evidenceSuffix(finding.Evidence)})
+		case finding.Status == sdk.FindingActive:
+			// a clue (failing background jobs): recorded, never holding
+			result.CoverageNotes = append(result.CoverageNotes, lifecycle.DetectorState{DetectorID: finding.DetectorID, Status: "clue", Reason: firstNonEmpty(finding.Summary, finding.RuleID)})
 		}
 	}
 	return result

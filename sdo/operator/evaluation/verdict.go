@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/requestmetrics"
 )
 
 // Status is the bounded command verdict, not a persisted detector observation.
@@ -70,6 +71,13 @@ type DetectorProgress struct {
 	Evaluations int           `json:"evaluations"`
 	PastHorizon int           `json:"past_horizon"`
 	FirstAt     time.Time     `json:"first_at"`
+}
+
+// FindingFires reports whether an active finding makes a verdict firing. Failing background jobs (a request-metrics
+// finding of an entry only internal operations enter, requestmetrics.MetaBackground) are clues, not failing user
+// traffic: they never open an incident (runtime opens) and never hold a head or a repair.
+func FindingFires(finding sdk.Finding) bool {
+	return finding.Status == sdk.FindingActive && finding.Metadata[requestmetrics.MetaBackground] != true
 }
 
 // Verdict is the whole --evaluate-once output.
