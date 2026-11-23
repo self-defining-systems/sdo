@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"sdo.dev/operator/sdk/internal/clockio"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +43,23 @@ const (
 // cannot judge such a response, so it says nothing about the application: the
 // step must request less data (a smaller page).
 const DefectResponseTruncated = "response_truncated"
+
+// DefectRateLimited marks an invalid sample the application refused with HTTP
+// 429 (a step whose check does not expect it), or one the engine did not send
+// because that refusal's wait has not passed. The application is limiting the
+// probe's own user: that is the probe's load, not an application failure, and
+// the probe honours Retry-After (DefaultRateLimitWait without one, at most
+// MaxRateLimitWait) before it sends to that target again. Real users the
+// application limits show up in its request metrics, not here.
+const DefectRateLimited = "rate_limited"
+
+// DefaultRateLimitWait is how long the probe waits after a 429 without a
+// usable Retry-After: the per-minute windows rate limiters use.
+const DefaultRateLimitWait = time.Minute
+
+// MaxRateLimitWait caps the wait a Retry-After can ask for, so a broken header
+// cannot blind the probe for long.
+const MaxRateLimitWait = 5 * time.Minute
 
 // Sample is the observed result of one scenario iteration.
 type Sample struct {
@@ -142,6 +160,53 @@ type Engine struct {
 	passwords Passwords
 	// execer runs EXEC steps on ssh targets; nil runs none.
 	execer Execer
+	// limits holds, per target, until when the application asked the probe to
+	// wait (HTTP 429); engines that ShareSetup use one record.
+	limits *rateLimits
+}
+
+// rateLimits is, per target base URL, the end of the wait the application
+// last asked for.
+type rateLimits struct {
+	mu    sync.Mutex
+	until map[string]time.Time
+}
+
+// waiting is the end of the wait for base, if it has not passed at now.
+func (r *rateLimits) waiting(base string, now time.Time) (time.Time, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	until, ok := r.until[base]
+	return until, ok && now.Before(until)
+}
+
+// wait records that the application asked the probe to wait for base until until.
+func (r *rateLimits) wait(base string, until time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.until == nil {
+		r.until = map[string]time.Time{}
+	}
+	if until.After(r.until[base]) {
+		r.until[base] = until
+	}
+}
+
+// retryAfter is the wait a 429 asks for: its Retry-After in seconds or as an
+// HTTP date, DefaultRateLimitWait when absent or unreadable, never more than
+// MaxRateLimitWait.
+func retryAfter(header http.Header, now time.Time) time.Duration {
+	wait := DefaultRateLimitWait
+	value := strings.TrimSpace(header.Get("Retry-After"))
+	if seconds, err := strconv.Atoi(value); err == nil && seconds >= 0 {
+		wait = time.Duration(seconds) * time.Second
+	} else if at, err := http.ParseTime(value); err == nil {
+		wait = at.Sub(now)
+	}
+	if wait <= 0 {
+		wait = time.Second
+	}
+	return min(wait, MaxRateLimitWait)
 }
 
 // UsePasswords lets scenarios that declare Users sign in with the passwords
@@ -259,11 +324,14 @@ func NewEngine(workload Workload, catalog Catalog, client Doer, baseURL func(Tar
 		nonce:    newRunNonce(clock.Now()),
 		workload: workload, scenarios: scenarios, plan: workload.SamplingPlan(),
 		client: client, baseURL: baseURL, clock: clock, setups: &setupRecord{progress: map[string]setupProgress{}},
+		limits: &rateLimits{},
 	}, nil
 }
 
 // ShareSetup makes e use source's record of completed setup steps, so a
-// setup step that succeeded in either engine is never run again by the other. A
+// setup step that succeeded in either engine is never run again by the other,
+// and source's rate-limit waits, so neither sends while the application asked
+// the other to wait. A
 // process that runs the same catalog in several engines (a continuous probe
 // and its verify bursts) shares one record: data a setup step wrote and that
 // was lost afterwards then fails every engine instead of being written again.
@@ -271,6 +339,7 @@ func NewEngine(workload Workload, catalog Catalog, client Doer, baseURL func(Tar
 func (e *Engine) ShareSetup(source *Engine) {
 	locker := e.setups.locker
 	e.setups = source.setups
+	e.limits = source.limits
 	if e.setups.locker == nil {
 		e.setups.mu.Lock()
 		e.setups.locker = locker
@@ -652,9 +721,16 @@ func (e *Engine) send(ctx context.Context, scenario Scenario, step Step, target 
 		}
 		return e.execStep(ctx, scenario, step, target, request, state, line)
 	}
+	base := e.baseURL(target)
+	if until, waiting := e.limits.waiting(base, e.clock.Now()); waiting {
+		return stepResult{
+			outcome: OutcomeInvalid, request: line, defect: DefectRateLimited,
+			err: fmt.Sprintf("%s: not sent; the application asked the probe to wait (HTTP 429) until %s: the probe's load, not an application failure", DefectRateLimited, until.UTC().Format(time.RFC3339)),
+		}
+	}
 	requestCtx, cancel := e.withTimeout(ctx, e.workload.Timeout.Duration())
 	defer cancel()
-	built, err := BuildHTTPRequest(requestCtx, e.baseURL(target), request)
+	built, err := BuildHTTPRequest(requestCtx, base, request)
 	if err != nil {
 		return stepResult{outcome: OutcomeInvalid, request: line, err: err.Error()}
 	}
@@ -685,6 +761,15 @@ func (e *Engine) send(ctx context.Context, scenario Scenario, step Step, target 
 		return stepResult{
 			outcome: OutcomeInvalid, status: response.StatusCode, sent: 1, request: line, defect: DefectResponseTruncated, byteCap: MaxResponseBody,
 			err: fmt.Sprintf("%s: step %q response exceeded the %d-byte cap, so its check could not be judged; probe defect, not an application failure: reduce page size or request less data (for a list, at most 20 records)", DefectResponseTruncated, step.Name, MaxResponseBody),
+		}
+	}
+	if !verdict.OK && response.StatusCode == http.StatusTooManyRequests {
+		wait := retryAfter(response.Header, e.clock.Now())
+		e.limits.wait(base, e.clock.Now().Add(wait))
+		return stepResult{
+			outcome: OutcomeInvalid, status: response.StatusCode, sent: 1, request: line, defect: DefectRateLimited,
+			observed: observedExcerpt(body, response.StatusCode, ""),
+			err:      fmt.Sprintf("%s: step %q was refused with HTTP 429; the probe waits %s before it sends to this target again: the probe's load, not an application failure (lower the probe's rate if it recurs)", DefectRateLimited, step.Name, wait),
 		}
 	}
 	if !verdict.OK {

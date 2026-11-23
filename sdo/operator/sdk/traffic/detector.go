@@ -323,6 +323,9 @@ func latestFailure(o ScenarioObservations) string {
 		if sample.Outcome == OutcomeOK {
 			continue
 		}
+		if sample.Defect == DefectRateLimited {
+			return "probe defect " + sample.Defect + " (not an application failure; the application limits the probe user's request rate, and the probe waits as it asks): step " + sample.Step
+		}
 		if sample.Defect != "" {
 			return "probe defect " + sample.Defect + " (not an application failure; reduce page size or response volume): step " + sample.Step + ", byte cap " + strconv.Itoa(sample.ByteCap)
 		}
