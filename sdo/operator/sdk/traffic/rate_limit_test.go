@@ -60,7 +60,7 @@ func limitedEngine(t *testing.T, api Doer, clock Clock) *Engine {
 // The application rate-limiting the probe's own user (HTTP 429) is the probe's load, not an application failure:
 // the sample is an invalid probe defect that names the wait, and the probe sends nothing to that target until the
 // application's Retry-After has passed. A probe that kept sending (or that counted its own throttling as a failed
-// user test) would hold an incident open on load SDO itself generates (GitLab 10.6 limits issue search per user).
+// user test) would hold an incident open on load SDO itself generates (an application that limits search per user).
 func TestRateLimitedProbeBacksOffAndIsNotAFailure(t *testing.T) {
 	clock := &manualClock{now: time.Date(2026, 11, 23, 6, 0, 0, 0, time.UTC)}
 	api := &limitedAPI{limited: true, retryAfter: "30"}
