@@ -836,6 +836,14 @@ WARM_RECEIPT = "warm-transaction.json"
 PER_ROW_CONFIG = (("learning", "closing_turn"),)
 
 
+def row_learns(real: Any) -> bool:
+    """Whether the row's closing turn runs (``learning.closing_turn``, default on); the scripted agent's rows do."""
+    if real is None:
+        return True
+    learning = (getattr(real, "config", None) or {}).get("learning") or {}
+    return learning.get("closing_turn", True) is not False
+
+
 def _install_config(config: Mapping[str, Any]) -> dict[str, Any]:
     """The config overlay without the per-row settings (``PER_ROW_CONFIG``); a section they leave empty goes too."""
     kept = json.loads(json.dumps(dict(config)))
@@ -1038,7 +1046,10 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
         # The eval runner's SDO row flags (benchmarks/sregym/eval/fastloop_row.py row_command).
         "--detection-timeout",
         str(DETECTION_TIMEOUT),
-        "--healthy-baseline",
+        # The healthy snapshots serve only the closing turn's learned-detector validation (learning.healthy_baseline):
+        # a row whose closing turn is off never proposes a detector, so it does not capture them (~12 s before
+        # injection).
+        *(["--healthy-baseline"] if row_learns(real) else []),
         "--inject-before-resume",
         "--require-fault-tracking",
         "--require-full-cleanup",

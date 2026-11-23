@@ -651,3 +651,13 @@ def test_an_adapter_error_names_the_unreadable_overlay_setting(tmp_path):
         agent.settings_for(
             {"BENCH_OPERATOR": str(operator_file(tmp_path, {"provider": "claude", "model": "m", "config": "x"}))}
         )
+
+
+def test_a_row_whose_closing_turn_is_off_does_not_capture_the_healthy_baseline(tmp_path):
+    """The healthy snapshots serve only the closing turn's learned-detector validation; cold and p2 rows (closing turn
+    off) captured them anyway, 12 s before every injection (recorded on EKS). A learning row still captures them."""
+    settings = real_settings(tmp_path)
+    settings["config"] = {**settings["config"], "learning": {"closing_turn": False}}
+    (argv, _), _, _ = run_with(tmp_path, settings)
+    assert "--healthy-baseline" not in argv
+    assert "--inject-before-resume" in argv
