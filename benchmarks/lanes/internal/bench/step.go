@@ -579,7 +579,7 @@ func (r *stepRunner) waitIdle(ctx context.Context, p *Prepared) bool {
 			r.logf("idle: still waiting after %s of at most %s: %s", time.Since(start).Round(time.Second), limit, why)
 		}
 		if calm < 2 {
-			time.Sleep(r.poll)
+			time.Sleep(r.idlePause(calm))
 		}
 	}
 	if calm < 2 {
@@ -1539,8 +1539,17 @@ const BenchOwnDetectedEnv = "BENCH_OWN_DETECTED_AT"
 // settle waits until the operator is idle twice in a row, at most until cap after the inject. With the cell's own
 // incident known (own), the operator is idle once that incident is closed and its closing work done; any other open
 // incident is recorded in the result (OtherIncidents) and not waited for.
-// settleRecheck is the pause between the two calm answers that end a settle.
+// settleRecheck is the pause between the two calm answers that end a settle or a teardown's idle wait.
 const settleRecheck = 2 * time.Second
+
+// idlePause is how long to wait before asking idle again, after calm calm answers in a row: one calm answer only
+// has to be confirmed after a short pause, a busy one is polled at the step's poll.
+func (r *stepRunner) idlePause(calm int) time.Duration {
+	if calm == 1 {
+		return min(r.poll, settleRecheck)
+	}
+	return r.poll
+}
 
 func (r *stepRunner) settle(ctx context.Context, p *Prepared, injectAt, own time.Time) {
 	start := time.Now()
@@ -1580,12 +1589,7 @@ func (r *stepRunner) settle(ctx context.Context, p *Prepared, injectAt, own time
 			r.res.Reason = "capped: " + why
 			break
 		}
-		pause := r.poll
-		if calm == 1 {
-			// One calm answer: the second only has to come after a pause, not after a whole poll.
-			pause = min(pause, settleRecheck)
-		}
-		time.Sleep(pause)
+		time.Sleep(r.idlePause(calm))
 	}
 	now := time.Now().UTC()
 	r.res.SettleEnd = &now
