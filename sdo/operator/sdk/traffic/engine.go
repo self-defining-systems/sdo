@@ -165,6 +165,11 @@ type Engine struct {
 	limits *rateLimits
 	// warming reports whether the probe is warming up (UseWarmup); nil never.
 	warming func() bool
+	// identities serializes the samples that act on one synthetic identity;
+	// engines that ShareSetup use one record. identityKeys are each writing
+	// scenario's identities (writeIdentity).
+	identities   *identityLocks
+	identityKeys map[string][]string
 }
 
 // rateLimits is, per target base URL, the end of the wait the application
@@ -318,22 +323,28 @@ func NewEngine(workload Workload, catalog Catalog, client Doer, baseURL func(Tar
 		clock = RealClock
 	}
 	scenarios := make(map[string]Scenario, len(workload.Scenarios))
+	identityKeys := map[string][]string{}
 	for _, selected := range workload.Scenarios {
 		scenario, _ := catalog.Scenario(selected.ID)
 		scenarios[selected.ID] = scenario
+		if keys := writeIdentity(scenario); len(keys) > 0 {
+			identityKeys[selected.ID] = keys
+		}
 	}
 	return &Engine{
 		nonce:    newRunNonce(clock.Now()),
 		workload: workload, scenarios: scenarios, plan: workload.SamplingPlan(),
 		client: client, baseURL: baseURL, clock: clock, setups: &setupRecord{progress: map[string]setupProgress{}},
-		limits: &rateLimits{},
+		limits: &rateLimits{}, identities: &identityLocks{}, identityKeys: identityKeys,
 	}, nil
 }
 
 // ShareSetup makes e use source's record of completed setup steps, so a
 // setup step that succeeded in either engine is never run again by the other,
-// and source's rate-limit waits, so neither sends while the application asked
-// the other to wait. A
+// source's rate-limit waits, so neither sends while the application asked
+// the other to wait, and source's identity locks, so a writing sample of
+// either engine never overlaps one of the other that acts on the same
+// synthetic identity (Iterate). A
 // process that runs the same catalog in several engines (a continuous probe
 // and its verify bursts) shares one record: data a setup step wrote and that
 // was lost afterwards then fails every engine instead of being written again.
@@ -342,6 +353,7 @@ func (e *Engine) ShareSetup(source *Engine) {
 	locker := e.setups.locker
 	e.setups = source.setups
 	e.limits = source.limits
+	e.identities = source.identities
 	if e.setups.locker == nil {
 		e.setups.mu.Lock()
 		e.setups.locker = locker
@@ -447,6 +459,12 @@ func (e *Engine) PlanAt(ctx context.Context, iteration uint64, at time.Time) ([]
 // setup time is not part of its latency. Cleanup steps of a write-with-cleanup scenario run after any
 // request was sent, even when a step failed; their failures are reported in
 // CleanupError and do not change the outcome.
+//
+// A writing scenario's iteration first waits until no other iteration of this
+// engine, or of one it shares setup with, is acting on the same synthetic
+// identity (the same requests, or the same probe user): its read-back must
+// see its own write, not one a concurrent sample made in between. The wait is
+// before the sample starts, so it is not part of the sample's time or latency.
 func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, result Sample) {
 	if ctx == nil {
 		// Agent-authored tests sometimes pass nil; treat it as "no deadline"
@@ -454,6 +472,12 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
 		ctx = context.Background()
 	}
 	scenario := e.ScenarioAt(iteration)
+	release, err := e.identities.lock(ctx, e.identityKeys[scenario.ID])
+	if err != nil {
+		// Nothing was sent; that says nothing about the application.
+		return scenario.ID, Sample{At: e.clock.Now().UTC(), Iteration: iteration, Outcome: OutcomeInvalid, Step: "identity", Error: "waiting for the scenario's synthetic identity: " + err.Error()}
+	}
+	defer release()
 	rng := e.Rand(iteration)
 	state := State{}
 	sample := Sample{At: e.clock.Now().UTC(), Iteration: iteration, Outcome: OutcomeOK}

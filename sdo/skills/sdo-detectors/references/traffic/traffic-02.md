@@ -213,17 +213,14 @@ func (e *Engine) Iterate(ctx context.Context, iteration uint64) (_ string, resul
     scenario run after any request was sent, even when a step failed; their
     failures are reported in CleanupError and do not change the outcome.
 
+    A writing scenario's iteration first waits until no other iteration of this
+    engine, or of one it shares setup with, is acting on the same synthetic
+    identity (the same requests, or the same probe user): its read-back must
+    see its own write, not one a concurrent sample made in between. The wait is
+    before the sample starts, so it is not part of the sample's time or latency.
+
 func (e *Engine) IterationOf(scenario string, from uint64) (uint64, bool)
     IterationOf is the first iteration at or after from that runs scenario:
     the request the schedule would send for it, so running it now repeats a
     scheduled request. ok is false for a scenario the workload does not run.
-
-func (e *Engine) Plan(ctx context.Context, iteration uint64) ([]Request, error)
-    Plan builds, without sending, the requests of iteration assuming every step
-    succeeds without saving state, as if it started now. It is meant for review;
-    replay uses PlanAt with the failing sample's At.
-
-func (e *Engine) PlanAt(ctx context.Context, iteration uint64, at time.Time) ([]Request, error)
-    PlanAt is Plan for an iteration that started at at (a sample's At), so the
-    requests that depend on the iteration's time are the ones it sent.
 ```
