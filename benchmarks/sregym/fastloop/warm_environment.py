@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import threading
 import time
 from contextlib import contextmanager
 from dataclasses import replace
@@ -156,6 +157,8 @@ class WarmEnvironment:
     _installed_digest = ""
     #: ``{phase: {step: seconds}}`` of this transaction (``STEP_SECONDS_FILE``).
     _step_seconds: dict[str, dict[str, float]] | None = None
+    #: The restore and the reseed run concurrently and both time their steps into ``STEP_SECONDS_FILE``.
+    _step_lock = threading.Lock()
 
     def __init__(
         self,
@@ -191,11 +194,12 @@ class WarmEnvironment:
         try:
             yield
         finally:
-            if self._step_seconds is None:
-                self._step_seconds = {}
-            self._step_seconds.setdefault(phase, {})[name] = round(time.monotonic() - started, 3)
-            self.directory.mkdir(parents=True, exist_ok=True)
-            (self.directory / STEP_SECONDS_FILE).write_text(json.dumps(self._step_seconds, indent=2) + "\n")
+            with self._step_lock:
+                if self._step_seconds is None:
+                    self._step_seconds = {}
+                self._step_seconds.setdefault(phase, {})[name] = round(time.monotonic() - started, 3)
+                self.directory.mkdir(parents=True, exist_ok=True)
+                (self.directory / STEP_SECONDS_FILE).write_text(json.dumps(self._step_seconds, indent=2) + "\n")
 
     def _head(self) -> str:
         # The installed controller owns this fixed accepted checkout. No worker
@@ -376,7 +380,7 @@ class WarmEnvironment:
             with self._step("pause", "planned_workspace"):
                 reseed_workspace(self.environment.workspace, self.planned_commit)
 
-    def reset_changed(self) -> None:
+    def reset_changed(self, restored: Callable[[], None] | None = None) -> None:
         from benchmarks.sregym.fastloop.app_observability import (
             TRACE_STORE_MAX_AGE_SECONDS,
             restart_in_memory_trace_stores,
@@ -400,24 +404,26 @@ class WarmEnvironment:
             KubectlApplicationCluster(self.environment.kubeconfig),
             self.worker,
             checks=checks,
+            restored=restored,
         )
 
     def _kube(self) -> Kubectl:
         return Kubectl("", str(self.environment.kubeconfig))
 
-    def reseed(self) -> None:
+    def reseed(self, application_restored: Callable[[], None] | None = None) -> None:
         """Swap the install's state for a fresh install's at the planned memory (see ``reseed.py`` for the order).
 
         The Job, namespace, volume, credentials, RBAC, transport and observability Deployments stay; the controller
         process does not: Go ``install-existing`` replaces the Job with this row's configuration and evidence run and
         seeds the volume from the host copy of the accepted repository, which the transaction put at the planned commit.
+        ``application_restored`` (the transaction's join with the concurrent restore) runs right before that install.
         """
         self._reseeding = True
-        seconds = reseed_lane(self._reseed_steps())
+        seconds = reseed_lane(self._reseed_steps(application_restored or (lambda: None)))
         self.directory.mkdir(parents=True, exist_ok=True)
         (self.directory / "reseed-phases.json").write_text(json.dumps(seconds, indent=2) + "\n")
 
-    def _reseed_steps(self) -> ReseedSteps:
+    def _reseed_steps(self, application_restored: Callable[[], object]) -> ReseedSteps:
         env, control = self.environment, self.control
         kube = self._kube()
 
@@ -445,6 +451,7 @@ class WarmEnvironment:
             stop_controller=stop_controller,
             retire_control_state=self._retire_control_state,
             fresh_observability=lambda: restart_observability(kube, control),
+            await_application=application_restored,
             install_controller=install_controller,
             wait_started=self._wait_started,
             record_controller=self._record_controller,

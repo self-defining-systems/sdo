@@ -13,7 +13,9 @@ The order is the contract:
 3. every control-state record is retired (the host copy of the accepted repository is already at the planned commit:
    the transaction put it there before restoring the application, which restores from that source);
 4. the control namespace's Prometheus and Jaeger get fresh stores;
-5. the controller is installed again from the row's own configuration (Go ``install-existing``: a new Job with this
+5. the restored application is awaited (``await_application``: the transaction restores it concurrently with the
+   steps above, and the new controller onboards and judges only the restored application);
+6. the controller is installed again from the row's own configuration (Go ``install-existing``: a new Job with this
    row's evidence run, the volume seeded from the host copy), waited for, and recorded as the lane's controller.
 
 A failure raises ``ReseedError`` naming the phase; the controller may then be stopped, and the caller's only way on is
@@ -38,6 +40,7 @@ PHASES = (
     "stop_controller",
     "retire_control_state",
     "fresh_observability",
+    "await_application",
     "install_controller",
     "wait_started",
     "record_controller",
@@ -63,6 +66,8 @@ class ReseedSteps:
     stop_controller: Callable[[str], object]
     retire_control_state: Callable[[], object]
     fresh_observability: Callable[[], object]
+    #: Returns once the application is restored (raises when the restore failed); runs right before the install.
+    await_application: Callable[[], object]
     install_controller: Callable[[], object]
     wait_started: Callable[[], object]
     record_controller: Callable[[], object]
@@ -89,6 +94,7 @@ def reseed_lane(steps: ReseedSteps, *, monotonic: Callable[[], float] = time.mon
     phase("stop_controller", lambda: steps.stop_controller(head))
     phase("retire_control_state", steps.retire_control_state)
     phase("fresh_observability", steps.fresh_observability)
+    phase("await_application", steps.await_application)
     phase("install_controller", steps.install_controller)
     phase("wait_started", steps.wait_started)
     phase("record_controller", steps.record_controller)

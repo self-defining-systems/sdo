@@ -1,8 +1,17 @@
 """Fail-closed benchmark transaction for a persistent lane, before injection.
 
-The lane keeps its SDO install; the transaction restores the application, then swaps the install's state for a fresh
-install's at the row's planned memory (``reseed``: the controller process is replaced by design) and binds fresh
+The lane keeps its SDO install; the transaction restores the application and swaps the install's state for a fresh
+install's at the row's planned memory (``reseed``: the controller process is replaced by design), then binds fresh
 baseline observations to the accepted revision. No benchmark grade grants admission.
+
+The restore touches only the application namespace(s) and the reseed only the SDO control namespace and its volume, so
+after the pause the two run concurrently. Their one dependency is the new controller's start: its onboarding records the
+application's configuration and every judgement it makes after the boundary must be of this row's application, so the
+reseed installs the controller (and the transaction takes the boundary) only once the restore's writes are done and its
+workloads are Ready. What follows in the restore (the sustained-health and traffic verification) only observes the
+application and overlaps the controller's start; the transaction joins both before the proof. The critical path is
+``pause -> restore writes -> install -> started -> prove``, with the old controller's stop and state retirement and the
+restore's verification beside it.
 """
 
 from __future__ import annotations
@@ -11,6 +20,7 @@ import fcntl
 import hashlib
 import json
 import re
+import threading
 import time
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
@@ -74,13 +84,20 @@ class LaneIdentity:
 class Lane(Protocol):
     def inspect(self) -> LaneIdentity: ...
     def pause(self) -> None: ...
-    def reset_changed(self) -> None: ...
+    def reset_changed(self, restored: Callable[[], None] | None = None) -> None:
+        """Restore the application; call ``restored`` once its writes are done and its workloads Ready (what follows
+        only observes it). ``restored`` raises when the transaction already failed elsewhere: stop there."""
+        ...
+
     def reidentify(self) -> LaneIdentity:
         """The running controller and standby now, without the checks ``inspect`` makes of an idle lane."""
         ...
 
-    def reseed(self) -> None:
-        """Swap the install's state for a fresh install's at the planned memory; replaces the controller process."""
+    def reseed(self, application_restored: Callable[[], None] | None = None) -> None:
+        """Swap the install's state for a fresh install's at the planned memory; replaces the controller process.
+
+        ``application_restored`` is called right before the new controller is installed: it returns once the restore's
+        writes are done (and raises when the restore failed)."""
         ...
 
     def adopt(self) -> str: ...
@@ -134,15 +151,12 @@ def prepare_lane(
         if not isinstance(identity, LaneIdentity):
             raise TypeError("lane inspection returned no identity")
         run("pause", lane.pause)
-        run("reset", lane.reset_changed)
-        if run("pre_reseed_identity", lane.reidentify) != identity:
-            raise ValueError("lane identity changed before the reseed")
-        # What the replaced controller does is after this instant: its start-up, onboarding and evaluations are the
-        # row's own, and the fresh-install comparison holds them to it.
-        boundary = now()
-        if boundary.tzinfo is None:
-            raise ValueError("baseline boundary must be timezone-aware")
-        run("reseed", lane.reseed)
+        phase = "reset"
+        overlapped = _restore_and_reseed(lane, identity, timings, now=now, monotonic=monotonic)
+        if isinstance(overlapped, tuple):
+            phase, failure = overlapped
+            raise failure
+        boundary = overlapped
         # The controller process was replaced by the reseed; from here its new identity is the one that must hold.
         reidentified: LaneIdentity = run("reidentify", lane.reidentify)
         identity = reidentified
@@ -172,6 +186,106 @@ def prepare_lane(
         receipt = WarmReceipt(True, identity, boundary.isoformat(), timings)
     _publish(evidence, receipt)
     return receipt
+
+
+class _Abandoned(Exception):
+    """The other branch of the overlapped restore and reseed failed: this one stops at its next safe point."""
+
+
+def _restore_and_reseed(
+    lane: Lane,
+    identity: LaneIdentity,
+    timings: dict[str, float],
+    *,
+    now: Callable[[], datetime],
+    monotonic: Callable[[], float],
+) -> datetime | tuple[str, BaseException]:
+    """Restore the application and reseed the install concurrently (see the module docstring for the dependency).
+
+    Returns the baseline boundary, taken after the restore's writes and before the new controller's install, or the
+    first failure as ``(phase, error)`` once both branches have stopped: a fallback never runs beside a live branch.
+    Timings: ``reset`` and ``reseed`` per branch, ``reset.restore`` (to the restored signal), ``reset.verify``,
+    ``pre_reseed_identity``, ``reseed.await_application`` (the reseed waiting for the restore) and
+    ``reset_and_reseed`` (the wall of both).
+    """
+    restored, failed, lock = threading.Event(), threading.Event(), threading.Lock()
+    failures: list[tuple[str, BaseException]] = []
+    boundaries: list[datetime] = []
+    started = monotonic()
+
+    def fail(phase: str, exc: BaseException) -> None:
+        with lock:
+            if not isinstance(exc, _Abandoned):
+                failures.append((phase, exc))
+            failed.set()
+            restored.set()  # a reseed waiting for the application stops waiting
+
+    def mark_restored() -> None:
+        with lock:
+            if failed.is_set():
+                raise _Abandoned("the reseed failed")
+            if not restored.is_set():
+                timings["reset.restore"] = monotonic() - started
+                restored.set()
+
+    def application_restored() -> None:
+        waited = monotonic()
+        restored.wait()
+        timings["reseed.await_application"] = monotonic() - waited
+        if failed.is_set():
+            raise _Abandoned("the restore failed")
+        # What the replaced controller does is after this instant: its start-up, onboarding and evaluations are the
+        # row's own, of the restored application, and the fresh-install comparison holds them to it.
+        boundary = now()
+        if boundary.tzinfo is None:
+            raise ValueError("baseline boundary must be timezone-aware")
+        boundaries.append(boundary)
+
+    def restore() -> None:
+        try:
+            lane.reset_changed(mark_restored)
+            mark_restored()  # a restore that signalled nothing is restored when it returns
+        except BaseException as exc:  # noqa: BLE001 - joined and re-raised by the transaction
+            fail("reset", exc)
+        finally:
+            timings["reset"] = monotonic() - started
+            if "reset.restore" in timings:
+                timings["reset.verify"] = timings["reset"] - timings["reset.restore"]
+
+    def reseed() -> None:
+        phase = "pre_reseed_identity"
+        try:
+            checked = monotonic()
+            try:
+                current = lane.reidentify()
+            finally:
+                timings["pre_reseed_identity"] = monotonic() - checked
+            # The controller about to be stopped is the one inspected; nothing replaced it since.
+            if current != identity:
+                raise ValueError("lane identity changed before the reseed")
+            if failed.is_set():
+                return  # the restore already failed: leave the controller for the fallback
+            phase = "reseed"
+            reseeding = monotonic()
+            try:
+                lane.reseed(application_restored)
+            finally:
+                timings["reseed"] = monotonic() - reseeding
+            if not boundaries:
+                raise ValueError("the reseed installed the controller without waiting for the restored application")
+        except BaseException as exc:  # noqa: BLE001 - joined and re-raised by the transaction
+            fail(phase, exc)
+
+    branch = threading.Thread(target=restore, name="warm-restore", daemon=True)
+    branch.start()
+    try:
+        reseed()
+    finally:
+        branch.join()
+        timings["reset_and_reseed"] = monotonic() - started
+    if failures:
+        return failures[0]
+    return boundaries[0]
 
 
 def _publish(path: Path, receipt: WarmReceipt) -> None:
