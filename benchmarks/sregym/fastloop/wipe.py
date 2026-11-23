@@ -476,7 +476,7 @@ def _fault_left_for_next_start(record: Any) -> bool:
 
 
 def fault_recovery_owed(records: Iterable[Any]) -> tuple[str, ...]:
-    """Problem ids of rows that left their fault for the next start's restore to revert 
+    """Problem ids of rows that left their fault for the next start's restore to revert
     (``fault_recovery_deferred``)."""
     return tuple(record.problem_id for record in records if _attempted(record) and _fault_left_for_next_start(record))
 
