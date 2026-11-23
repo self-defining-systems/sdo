@@ -2239,7 +2239,7 @@ func evaluateOnce(
 			}
 		}
 		for _, finding := range findings {
-			if finding.Status == sdk.FindingActive {
+			if evaluation.FindingFires(finding) {
 				status = evaluation.Firing
 				break
 			}
