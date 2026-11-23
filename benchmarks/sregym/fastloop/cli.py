@@ -514,8 +514,16 @@ def attach_eks_lane(args: argparse.Namespace) -> tuple[EksLane, Images]:
         and (prior.eks.server, prior.eks.cluster_uid) != (provider.lane.server, provider.lane.cluster_uid)
     ):
         raise EksLaneError("KUBECONFIG reaches a different cluster than the one this lane was created on")
-    images = Images(controller=provider.pin(args.controller_image), responder=provider.pin(args.responder_image))
-    return provider.lane, images
+    pinned = []
+    for image in (args.controller_image, args.responder_image):
+        pinned.append(provider.pin(image))
+        # The lane's nodes pull the image in the background while the next one is pushed and the application builds,
+        # so the first SDO install finds both on the node. Never a reason to fail or wait: the install pulls anyway.
+        try:
+            provider.register_prepull([pinned[-1]])
+        except EksLaneError as error:
+            logger.warning("prepull of %s not registered (the nodes pull it at first use): %s", pinned[-1], error)
+    return provider.lane, Images(controller=pinned[0], responder=pinned[1])
 
 
 def _up(args: argparse.Namespace) -> int:

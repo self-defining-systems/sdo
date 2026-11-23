@@ -365,6 +365,13 @@ func (r *stepRunner) laneEnv(p *Prepared) []string {
 		if r.s.Virtual {
 			e = append(e, "BENCH_LANE_VIRTUAL=1") // kube-system and the nodes are the host cluster's, not the lane's
 		}
+		// The platform script that registers the images the lane will run in the host's pre-pull list (`prepull
+		// KUBECONFIG IMAGE...`): the host cluster's list for a virtual lane, the lane's own cluster's otherwise.
+		prepull := "eks-lane.sh"
+		if r.s.Virtual {
+			prepull = "eks-vcluster.sh"
+		}
+		e = append(e, "BENCH_PREPULL="+filepath.Join(r.platform(), "deploy", prepull))
 		// The lane's entry address (a node the manager reaches on NodePorts) is known once its cluster is up.
 		if b, err := os.ReadFile(r.s.Kubeconfig + ".entry"); err == nil && strings.TrimSpace(string(b)) != "" {
 			e = append(e, "BENCH_ENTRY_HOST="+strings.TrimSpace(string(b)))

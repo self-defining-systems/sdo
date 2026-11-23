@@ -202,6 +202,38 @@ def test_holds_checks_the_pinned_digest_in_the_lanes_registry_only() -> None:
     assert not missing.holds(f"{REGISTRY}/sdo/sdo-controller@{digest}")
 
 
+DIGEST = "sha256:" + "e" * 64
+CONTROLLER = f"{REGISTRY}/sdo/sdo-controller@{DIGEST}"
+
+
+def test_registering_images_for_prepull_runs_the_platforms_prepull_script_on_the_lanes_kubeconfig() -> None:
+    run = FakeRun([(("prepull",), 0, "EKS_PREPULL 1 images\n", "")])
+    provider = eks.EksProvider(lane(), "/k", run=run)
+    assert provider.register_prepull([CONTROLLER], environ={"BENCH_PREPULL": "/p/deploy/eks-vcluster.sh"})
+    assert run.calls == [["bash", "/p/deploy/eks-vcluster.sh", "prepull", "/k", CONTROLLER]]
+
+
+def test_a_lane_without_a_prepull_script_registers_nothing() -> None:
+    run = FakeRun([])
+    assert not eks.EksProvider(lane(), "/k", run=run).register_prepull([CONTROLLER], environ={})
+    assert run.calls == []
+
+
+def test_a_failed_or_stuck_prepull_registration_is_a_named_error_with_the_scripts_reason() -> None:
+    failed = eks.EksProvider(lane(), "/k", run=FakeRun([(("prepull",), 1, "", "the prepull list lock was not free")]))
+    with pytest.raises(eks.EksPrepullError, match="lock was not free"):
+        failed.register_prepull([CONTROLLER], environ={"BENCH_PREPULL": "/p/x.sh"})
+
+    def stuck(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        assert kwargs["timeout"] == 7
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+
+    with pytest.raises(eks.EksPrepullError, match="did not finish in 7"):
+        eks.EksProvider(lane(), "/k", run=stuck).register_prepull(
+            [CONTROLLER], environ={"BENCH_PREPULL": "/p/x.sh"}, timeout=7
+        )
+
+
 def test_a_virtual_lane_attaches_without_reading_the_hosts_kube_system() -> None:
     """A vcluster lane has no aws-node or node agent in its own kube-system: they are the host cluster's.
 

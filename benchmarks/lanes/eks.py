@@ -55,11 +55,21 @@ UPSTREAM_SERVERS = {
     "registry.k8s.io": "https://registry.k8s.io",
 }
 
+#: The lane env variable naming the platform script whose ``prepull KUBECONFIG IMAGE...`` verb adds images to the host's
+#: pre-pull list (the node agent pulls the list on every node); set by the lanes platform, absent on other lanes.
+PREPULL_ENV = "BENCH_PREPULL"
+#: How long registering images may take: a lane does it while its application builds, so it never waits long.
+PREPULL_SECONDS = 90
+
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 
 
 class EksLaneError(RuntimeError):
     """The EKS lane cannot be reached, is not the recorded cluster, or a node step failed."""
+
+
+class EksPrepullError(EksLaneError):
+    """The lane's images could not be added to the host's pre-pull list (the nodes then pull them at first use)."""
 
 
 class EksLane(BaseModel):
@@ -605,6 +615,32 @@ class EksProvider:
 
     def pin(self, local: str) -> str:
         return pin_image(self._ecr, local)
+
+    def register_prepull(
+        self,
+        references: Sequence[str],
+        *,
+        environ: Mapping[str, str] | None = None,
+        timeout: float = PREPULL_SECONDS,
+    ) -> bool:
+        """Add ``references`` to the host's pre-pull list so every node pulls them in the background.
+
+        Returns False when the lane has no platform prepull script (``BENCH_PREPULL``). A script that fails or does not
+        finish in ``timeout`` seconds raises :class:`EksPrepullError`; callers that must not wait for the images log it
+        and go on, because a node then pulls them at their first use."""
+
+        env = dict(os.environ if environ is None else environ)
+        script = env.get(PREPULL_ENV, "")
+        if not script or not references:
+            return False
+        argv = ["bash", script, "prepull", self._kubeconfig, *references]
+        try:
+            completed = self._run(argv, capture_output=True, text=True, check=False, timeout=timeout, env=env)
+        except subprocess.TimeoutExpired as error:
+            raise EksPrepullError(f"{script} prepull did not finish in {timeout:g} s") from error
+        if completed.returncode != 0:
+            raise EksPrepullError(f"{script} prepull failed: {(completed.stderr or completed.stdout).strip()[-600:]}")
+        return True
 
     def holds(self, reference: str) -> bool:
         """Whether a reference :meth:`pin` returned still names a stored image."""
