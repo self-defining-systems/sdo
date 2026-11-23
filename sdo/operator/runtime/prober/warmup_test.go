@@ -74,10 +74,15 @@ func (okClient) Do(request *http.Request) (*http.Response, error) {
 // interval, to keep the steady probe load low.
 func slowProbe(t *testing.T) (*Prober, *stepClock) {
 	t.Helper()
+	return slowProbeWith(t, traffic.SideEffectRead)
+}
+
+func slowProbeWith(t *testing.T, effect traffic.SideEffect) (*Prober, *stepClock) {
+	t.Helper()
 	var catalog traffic.Catalog
 	var scenarios []traffic.WorkloadScenario
 	for _, id := range []string{"catalog-read", "cart-read"} {
-		catalog = append(catalog, traffic.Scenario{ID: id, Target: traffic.Target{Service: "web", Port: 80}, SideEffect: traffic.SideEffectRead,
+		catalog = append(catalog, traffic.Scenario{ID: id, Target: traffic.Target{Service: "web", Port: 80}, SideEffect: effect,
 			Steps: []traffic.Step{{Name: "get", Endpoint: traffic.GET("/"+id, nil)}}})
 		scenarios = append(scenarios, traffic.WorkloadScenario{ID: id})
 	}
@@ -167,5 +172,25 @@ func TestProberWarmsUpAtTheFloorIntervalAfterStartAndReset(t *testing.T) {
 	started = sampleCount(p)
 	if took := readyAfter(t, p, clock, &started, 5*time.Minute); took > floor+traffic.MinSampleInterval {
 		t.Fatalf("reset: window ready after %s, want at most %s", took, floor+traffic.MinSampleInterval)
+	}
+}
+
+// A workload that writes keeps its designer's interval while warming up: its
+// scenarios read back their own writes through shared synthetic users, and at
+// the floor rate samples of different workloads interleave (recorded on EKS:
+// social's compose-read read another sample's post and the install's
+// onboarding was rejected).
+func TestAWritingProbeWarmsUpAtItsOwnInterval(t *testing.T) {
+	p, clock := slowProbeWith(t, traffic.SideEffectIdempotentWrite)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { defer close(done); p.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	started := 1
+	settle(t, p, clock, started)
+	floor := time.Duration(traffic.DefaultMinSamples)*traffic.MinSampleInterval + traffic.MinSampleInterval
+	if took := readyAfter(t, p, clock, &started, 10*time.Minute); took <= floor {
+		t.Fatalf("a writing probe warmed up at the floor interval: ready after %s", took)
 	}
 }
