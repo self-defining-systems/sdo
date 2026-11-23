@@ -93,7 +93,7 @@ def _injected_objects(kubeconfig: Path) -> list[dict[str, Any]]:
         names = pool.submit(secret_names)
         scopes = (True, False)
         resources = list(pool.map(discover, scopes))
-        for items in pool.map(labelled, [(scope, found) for scope, found in zip(scopes, resources) if found]):
+        for items in pool.map(labelled, [(scope, found) for scope, found in zip(scopes, resources, strict=True) if found]):
             objects.extend(items)
         for line in names.result().splitlines():
             namespace, name = line.split()
