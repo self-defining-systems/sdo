@@ -44,7 +44,7 @@ from benchmarks.sregym.fastloop.reset import (
     restore_application,
 )
 from benchmarks.sregym.fastloop.resident_start import INSTALL_CONFIGMAPS
-from benchmarks.sregym.fastloop.warm_lane import LaneIdentity, WarmLaneBusy, WarmLaneRefusal
+from benchmarks.sregym.fastloop.warm_lane import DeferredCheck, LaneIdentity, WarmLaneBusy, WarmLaneRefusal
 from benchmarks.sregym.fastloop.wipe import (
     AttemptMarker,
     KubectlLaneCluster,
@@ -166,6 +166,8 @@ class WarmEnvironment:
     _step_seconds: dict[str, dict[str, float]] | None = None
     #: The restore and the reseed run concurrently and both time their steps into ``STEP_SECONDS_FILE``.
     _step_lock = threading.Lock()
+    #: The restore's sustained-health window, running beside the reseed and the proof until ``join_sustained``.
+    _sustained: DeferredCheck | None = None
 
     def __init__(
         self,
@@ -414,7 +416,17 @@ class WarmEnvironment:
             self.worker,
             checks=checks,
             restored=restored,
+            sustained=self._deferred().start,
         )
+
+    def _deferred(self) -> DeferredCheck:
+        if self._sustained is None:
+            self._sustained = DeferredCheck()
+        return self._sustained
+
+    def join_sustained(self) -> None:
+        """Wait for the restore's sustained-health window and raise when the pods were not healthy across it."""
+        self._deferred().join()
 
     def _kube(self) -> Kubectl:
         return Kubectl("", str(self.environment.kubeconfig))

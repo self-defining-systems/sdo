@@ -214,6 +214,11 @@ def main() -> int:
             problem = self._problem_factory(str(request["problem_id"]))
             assert_clean_baseline(Path(os.environ["KUBECONFIG"]), namespace=problem.namespace)
             return self._rehearse_oracles(str(request["problem_id"]), fresh=request.get("fresh") is True)
+        if op == "sustained_health":
+            from benchmarks.sregym.fastloop.workload_readiness import sustained_pod_health
+
+            problems = sustained_pod_health(Path(os.environ["KUBECONFIG"]), str(request["namespace"]))
+            return {"success": not problems, "problems": problems}
         if op == "attach_existing":
             return attach_existing_cluster(worker_infra)
         if op in {"deploy", "clean_start"}:
@@ -251,7 +256,7 @@ def main() -> int:
             # Rehearsal classifies only once. Recovery still takes a fresh grade:
             # cached healthy observations cannot establish a restored baseline.
             if hasattr(self, "_rehearse_oracles"):
-                verdict = self._rehearse_oracles(problem_id, fresh=True)
+                verdict = self._rehearse_oracles(problem_id, fresh=True, sustain=request.get("sustain") is not False)
             else:
                 verdict = self._grade(problem)
             if request.get("verify_traffic"):

@@ -8,7 +8,7 @@ import pytest
 
 from benchmarks.sregym.adapter import controller_proof
 from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline, reconcile_application
-from benchmarks.sregym.fastloop.warm_lane import LaneIdentity, WarmLaneError, prepare_lane
+from benchmarks.sregym.fastloop.warm_lane import DeferredCheck, LaneIdentity, WarmLaneError, prepare_lane
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -573,3 +573,52 @@ def test_the_row_runs_the_lanes_operator_before_any_row_start_work(tmp_path: Pat
     args = Namespace(run_dir=tmp_path, run_id="synthetic-row", agent="sdo", model="claude-sonnet-5-5", warm_lane=True)
     assert cli._run_owned(args) == 0
     assert seen == [str(operator)]
+
+
+class SustainedLane(OverlapLane):
+    """The restore hands its sustained-health window to the transaction, which runs it beside the reseed and proof."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.window_failure = False
+        self.window = DeferredCheck()
+
+    def reset_changed(self, restored: Callable[[], None] | None = None) -> None:
+        super().reset_changed(restored)
+
+        def window() -> None:
+            self.window_ran.wait(self.WAIT)
+            self.events.append("window")
+            if self.window_failure:
+                raise RuntimeError("pod restarted inside the window")
+
+        self.window.start(window)
+
+    window_ran = threading.Event()
+
+    def prove(self, not_before: datetime, revision: str) -> dict[str, Any]:
+        result = super().prove(not_before, revision)
+        self.window_ran.set()
+        return result
+
+    def join_sustained(self) -> None:
+        self.window.join()
+
+
+def test_the_sustained_window_runs_beside_the_proof_and_is_joined_before_the_transaction_ends(tmp_path: Path) -> None:
+    SustainedLane.window_ran = threading.Event()
+    lane = SustainedLane()
+    receipt = prepare_lane(lane, tmp_path / "warm.json", now=lambda: NOW)
+    assert receipt.reused, (receipt.fallback_reason, receipt.detail)
+    assert lane.events.index("prove") < lane.events.index("window")
+    assert "sustained_wait" in receipt.phase_seconds
+
+
+def test_a_failing_sustained_window_fails_the_transaction_and_falls_back(tmp_path: Path) -> None:
+    SustainedLane.window_ran = threading.Event()
+    lane = SustainedLane()
+    lane.window_failure = True
+    receipt = prepare_lane(lane, tmp_path / "warm.json", now=lambda: NOW)
+    assert not receipt.reused
+    assert receipt.fallback_reason == "sustained_wait:RuntimeError"
+    assert lane.events[-1] == "full_reset"
