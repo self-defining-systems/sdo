@@ -42,6 +42,21 @@ func (d Described) startup() time.Duration {
 	return v
 }
 
+// check refuses a description whose durations do not parse.
+func (d Described) check() error {
+	if d.MaxStartup != "" {
+		if _, err := time.ParseDuration(d.MaxStartup); err != nil {
+			return fmt.Errorf("max_startup %q: %v", d.MaxStartup, err)
+		}
+	}
+	if d.IdleConfirm != "" {
+		if _, ok := d.idleConfirm(); !ok {
+			return fmt.Errorf("idle_confirm %q is not a duration of at least 0s", d.IdleConfirm)
+		}
+	}
+	return nil
+}
+
 // idleConfirm is the described gap between the two idle answers; false when the subject names none (or an unreadable
 // one, which describeHook refuses when it is added).
 func (d Described) idleConfirm() (time.Duration, bool) {
@@ -135,15 +150,8 @@ func describeHook(ctx context.Context, h Hook, s Spec, log io.Writer) (*Describe
 	if err := json.Unmarshal([]byte(r.Last), &d); err != nil {
 		return nil, fmt.Errorf("hooks %s: describe: last line is not JSON: %q", s.Operator.Hooks, clip(r.Last, 120))
 	}
-	if d.MaxStartup != "" {
-		if _, err := time.ParseDuration(d.MaxStartup); err != nil {
-			return nil, fmt.Errorf("hooks %s: describe: max_startup %q: %v", s.Operator.Hooks, d.MaxStartup, err)
-		}
-	}
-	if d.IdleConfirm != "" {
-		if _, ok := d.idleConfirm(); !ok {
-			return nil, fmt.Errorf("hooks %s: describe: idle_confirm %q is not a duration of at least 0s", s.Operator.Hooks, d.IdleConfirm)
-		}
+	if err := d.check(); err != nil {
+		return nil, fmt.Errorf("hooks %s: describe: %v", s.Operator.Hooks, err)
 	}
 	return &d, nil
 }

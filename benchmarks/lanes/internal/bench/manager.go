@@ -776,11 +776,7 @@ func (m *Manager) idleConfirmFor(experiment string) *Seconds {
 	if x == nil {
 		return nil
 	}
-	s := x.Measured()
-	if s.Operator.Hooks == "" {
-		return nil
-	}
-	gap, ok := s.describedOrLegacy().idleConfirm()
+	gap, ok := x.Measured().describedOrLegacy().idleConfirm()
 	if !ok {
 		return nil
 	}
