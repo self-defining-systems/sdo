@@ -2,9 +2,11 @@ package prober
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -74,19 +76,10 @@ func (okClient) Do(request *http.Request) (*http.Response, error) {
 // interval, to keep the steady probe load low.
 func slowProbe(t *testing.T) (*Prober, *stepClock) {
 	t.Helper()
-	return slowProbeWith(t, traffic.SideEffectRead)
-}
-
-func slowProbeWith(t *testing.T, effect traffic.SideEffect) (*Prober, *stepClock) {
-	t.Helper()
 	var catalog traffic.Catalog
 	var scenarios []traffic.WorkloadScenario
 	for _, id := range []string{"catalog-read", "cart-read"} {
-		marker := ""
-		if effect != traffic.SideEffectRead {
-			marker = "sdoprobe-" + id
-		}
-		catalog = append(catalog, traffic.Scenario{ID: id, Target: traffic.Target{Service: "web", Port: 80}, SideEffect: effect, Marker: marker,
+		catalog = append(catalog, traffic.Scenario{ID: id, Target: traffic.Target{Service: "web", Port: 80}, SideEffect: traffic.SideEffectRead,
 			Steps: []traffic.Step{{Name: "get", Endpoint: traffic.GET("/"+id, nil)}}})
 		scenarios = append(scenarios, traffic.WorkloadScenario{ID: id})
 	}
@@ -103,10 +96,23 @@ func slowProbeWith(t *testing.T, effect traffic.SideEffect) (*Prober, *stepClock
 
 func sampleCount(p *Prober) int {
 	count := 0
-	for _, observed := range p.Windows()["probe-later"].Scenarios {
-		count += len(observed.Samples)
+	for _, window := range p.Windows() {
+		for _, observed := range window.Scenarios {
+			count += len(observed.Samples)
+		}
 	}
 	return count
+}
+
+// ready reports whether every workload's window holds each scenario's SLO
+// minimum.
+func ready(p *Prober) bool {
+	for _, window := range p.Windows() {
+		if !window.Ready() {
+			return false
+		}
+	}
+	return true
 }
 
 // settle yields to the engine's goroutines until every started iteration
@@ -127,7 +133,7 @@ func settle(t *testing.T, p *Prober, clock *stepClock, started int) {
 func readyAfter(t *testing.T, p *Prober, clock *stepClock, started *int, limit time.Duration) time.Duration {
 	t.Helper()
 	begin := clock.Now()
-	for !p.Windows()["probe-later"].Ready() {
+	for !ready(p) {
 		if clock.Now().Sub(begin) > limit {
 			t.Fatalf("window not ready %s after the start: %d samples", limit, sampleCount(p))
 		}
@@ -179,22 +185,133 @@ func TestProberWarmsUpAtTheFloorIntervalAfterStartAndReset(t *testing.T) {
 	}
 }
 
-// A workload that writes keeps its designer's interval while warming up: its
-// scenarios read back their own writes through shared synthetic users, and at
-// the floor rate samples of different workloads interleave (recorded on EKS:
-// social's compose-read read another sample's post and the install's
-// onboarding was rejected).
-func TestAWritingProbeWarmsUpAtItsOwnInterval(t *testing.T) {
-	p, clock := slowProbeWith(t, traffic.SideEffectIdempotentWrite)
+// sharedAuthorApp is a synthetic application with one write-read journey:
+// POST /compose stores a user's newest post, GET /newest returns it. Like a
+// fan-out write, a compose answers only once the next compose arrives or a
+// short while has passed, so two samples in flight on the same user interleave
+// their write and read-back.
+type sharedAuthorApp struct {
+	mu       sync.Mutex
+	newest   map[string]string
+	composes int
+}
+
+func (a *sharedAuthorApp) Do(request *http.Request) (*http.Response, error) {
+	answer := func(body string) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+	}
+	if request.Method == http.MethodGet {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return answer(`{"text":"` + a.newest[request.URL.Query().Get("user")] + `"}`)
+	}
+	if err := request.ParseForm(); err != nil {
+		return nil, err
+	}
+	a.mu.Lock()
+	a.newest[request.PostForm.Get("user")] = request.PostForm.Get("text")
+	a.composes++
+	mine := a.composes
+	a.mu.Unlock()
+	for waited := time.Duration(0); waited < 20*time.Millisecond; waited += 200 * time.Microsecond {
+		a.mu.Lock()
+		next := a.composes > mine
+		a.mu.Unlock()
+		if next {
+			break
+		}
+		time.Sleep(200 * time.Microsecond)
+	}
+	return answer("ok")
+}
+
+// sharedAuthorProbe runs the same compose-then-read-newest journey, as the
+// same synthetic author, in two health-probe workloads with one schedule (a
+// designer copying a write-read journey into its call probe), so their samples
+// start together.
+func sharedAuthorProbe(t *testing.T, interval time.Duration) (*Prober, *stepClock) {
+	t.Helper()
+	text, _ := traffic.FromSeedPair("n", 1_000_000_000, func(i int) string { return fmt.Sprintf("sdoprobe-post-%d", i) }, func(i int) string { return fmt.Sprintf("sdoprobe-post-%d", i) })
+	journey := func(id string) traffic.Scenario {
+		return traffic.Scenario{ID: id, Target: traffic.Target{Service: "web", Port: 80}, SideEffect: traffic.SideEffectIdempotentWrite, Marker: "sdoprobe",
+			Steps: []traffic.Step{
+				{Name: "compose", Endpoint: traffic.POST("/compose", nil).WithForm(traffic.Params{"user": traffic.Const("sdoprobe-author"), "text": text}).Contains("ok")},
+				{Name: "read-newest", Endpoint: traffic.GET("/newest", traffic.Params{"user": traffic.Const("sdoprobe-author")}).JSONEquals("text", "sdoprobe-post-{n}")},
+			}}
+	}
+	catalog := traffic.Catalog{journey("compose-read"), journey("call-compose-read")}
+	var workloads []traffic.Workload
+	for name, id := range map[string]string{"probe-write": "compose-read", "probe-call": "call-compose-read"} {
+		workloads = append(workloads, traffic.Workload{APIVersion: traffic.APIVersion, Kind: traffic.WorkloadKind, Name: name,
+			Purpose: traffic.PurposeHealthProbe, SampleInterval: traffic.Duration(interval), Scenarios: []traffic.WorkloadScenario{{ID: id}}})
+	}
+	clock := &stepClock{now: time.Date(2026, 11, 16, 9, 30, 0, 0, time.UTC)}
+	p, err := New(Config{Namespace: "app", Catalog: catalog, Workloads: workloads, Client: &sharedAuthorApp{newest: map[string]string{}},
+		BaseURL: func(traffic.Target) string { return "http://web:80" }, Clock: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p, clock
+}
+
+// failures lists every sample that did not pass.
+func failures(p *Prober) []string {
+	var failed []string
+	for name, window := range p.Windows() {
+		for _, observed := range window.Scenarios {
+			for _, sample := range observed.Samples {
+				if sample.Outcome != traffic.OutcomeOK {
+					failed = append(failed, fmt.Sprintf("%s/%s iteration %d step %s: %s", name, observed.Scenario.ID, sample.Iteration, sample.Step, sample.Error))
+				}
+			}
+		}
+	}
+	sort.Strings(failed)
+	return failed
+}
+
+// Samples that write and read back one synthetic identity never overlap,
+// whichever workload runs them and at whatever pace: a read-back sees its own
+// sample's write (recorded on EKS: social's compose-read read the post its
+// call-probe copy composed as the same author, the write probe fired and the
+// install's onboarding was rejected).
+func TestSamplesOfOneSyntheticIdentityNeverInterleave(t *testing.T) {
+	p, clock := sharedAuthorProbe(t, traffic.MinSampleInterval)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan struct{})
 	go func() { defer close(done); p.Run(ctx) }()
 	defer func() { cancel(); <-done }()
-	started := 1
+	started := 2
+	settle(t, p, clock, started)
+	for range 600 {
+		started += clock.advance(100 * time.Millisecond)
+		settle(t, p, clock, started)
+	}
+	if count := sampleCount(p); count < 12 {
+		t.Fatalf("%d samples in 60 s, want at least 12", count)
+	}
+	if failed := failures(p); len(failed) > 0 {
+		t.Fatalf("a read-back saw another sample's write (%d of %d samples failed): %s", len(failed), sampleCount(p), strings.Join(failed, "; "))
+	}
+}
+
+// A writing probe warms up at the floor interval like a reading one: its
+// window is ready within minimum-samples floor intervals, and no sample fails.
+func TestAWritingProbeWarmsUpAtTheFloorInterval(t *testing.T) {
+	p, clock := sharedAuthorProbe(t, 60*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { defer close(done); p.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	started := 2
 	settle(t, p, clock, started)
 	floor := time.Duration(traffic.DefaultMinSamples)*traffic.MinSampleInterval + traffic.MinSampleInterval
-	if took := readyAfter(t, p, clock, &started, 10*time.Minute); took <= floor {
-		t.Fatalf("a writing probe warmed up at the floor interval: ready after %s", took)
+	if took := readyAfter(t, p, clock, &started, 10*time.Minute); took > floor {
+		t.Fatalf("a writing probe warmed up at its steady interval: ready after %s, want at most %s", took, floor)
+	}
+	if failed := failures(p); len(failed) > 0 {
+		t.Fatalf("a read-back saw another sample's write while warming up: %s", strings.Join(failed, "; "))
 	}
 }
