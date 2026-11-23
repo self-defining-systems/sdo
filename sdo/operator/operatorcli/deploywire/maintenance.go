@@ -13,10 +13,8 @@ import (
 	"sdo.dev/operator/lifecycle"
 )
 
-// RepairMaintenancePrefix marks the maintenance generations a source repair
-// wrote, so a pause it left behind (the controller died mid-deploy) is
-// recognized, and a pause someone else declared is never lifted by a repair.
-const RepairMaintenancePrefix = "source-repair-"
+// RepairMaintenancePrefix is install.RepairMaintenancePrefix.
+const RepairMaintenancePrefix = install.RepairMaintenancePrefix
 
 // Maintenance is the lifecycle.MaintenanceWindow of a source repair that
 // deploys after its incident closed. The pause stops the controller observing

@@ -1138,6 +1138,14 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err != nil {
 		return err
 	}
+	if lifted, ok, liftErr := maintenance.LiftOrphanedRepairPause(runCtx, desired); liftErr != nil {
+		fmt.Fprintf(stderr, "maintenance: %v\n", liftErr)
+	} else if ok {
+		if err := encoder.Encode(map[string]any{"orphaned_repair_pause_lifted": desired.Generation, "maintenance_generation": lifted.Generation}); err != nil {
+			fmt.Fprintln(stderr, err)
+		}
+		desired = lifted
+	}
 	// applied is the mode the controller currently operates under. It lags
 	// desired only while a resume is waiting for a fresh application cache.
 	applied := desired

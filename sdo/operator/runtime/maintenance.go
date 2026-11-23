@@ -11,6 +11,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+
+	"sdo.dev/operator/install"
 )
 
 // MaintenanceConfigMapName is the operator-owned ConfigMap, in the controller's
@@ -65,6 +67,31 @@ type MaintenanceWatcher struct {
 	Client    kubernetes.Interface
 	Namespace string
 	Name      string
+}
+
+// LiftOrphanedRepairPause resumes a pause a source repair or head deploy declared (install.RepairMaintenancePrefix),
+// read when the controller starts: that deploy ran in the previous controller process, so nothing will resume it,
+// and a paused controller polls no head, so it would wait for the pause's deadline. Any other pause is returned
+// unchanged. ok reports that the pause was lifted; the returned state is then active under a new generation.
+func (w MaintenanceWatcher) LiftOrphanedRepairPause(ctx context.Context, state MaintenanceState) (MaintenanceState, bool, error) {
+	if !state.Paused || !strings.HasPrefix(state.Generation, install.RepairMaintenancePrefix) {
+		return state, false, nil
+	}
+	configMaps := w.Client.CoreV1().ConfigMaps(w.Namespace)
+	configMap, err := configMaps.Get(ctx, w.Name, metav1.GetOptions{})
+	if err != nil {
+		return state, false, fmt.Errorf("read maintenance ConfigMap %s/%s: %w", w.Namespace, w.Name, err)
+	}
+	if strings.TrimSpace(configMap.Data[maintenanceGenerationKey]) != state.Generation {
+		return state, false, nil // declared again since the read: its owner is alive
+	}
+	generation := fmt.Sprintf("%sorphan-resumed-%d", install.RepairMaintenancePrefix, timerClock(w.Clock).Now().UnixNano())
+	updated := configMap.DeepCopy()
+	updated.Data = map[string]string{maintenanceStateKey: maintenanceStateActive, maintenanceGenerationKey: generation}
+	if _, err := configMaps.Update(ctx, updated, metav1.UpdateOptions{}); err != nil {
+		return state, false, fmt.Errorf("lift orphaned repair pause %s: %w", state.Generation, err)
+	}
+	return MaintenanceState{Generation: generation}, true, nil
 }
 
 // Read returns the declared mode; an absent ConfigMap means active operation.

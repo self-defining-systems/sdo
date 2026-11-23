@@ -65,6 +65,11 @@ type SyncConfig struct {
 
 const MaintenanceConfigMap = "sdo-controller-maintenance"
 
+// RepairMaintenancePrefix marks the maintenance generations a source repair or head deploy writes. Both run inside
+// the controller process, so a pause with this prefix found when a controller starts was left by a process that is
+// gone (the controller rebuilt or died mid-deploy); a pause anyone else declared is never lifted by a repair.
+const RepairMaintenancePrefix = "source-repair-"
+
 // MaintenanceAckConfigMap is where the controller records the pause generation
 // it stopped under (runtime.MaintenanceAckConfigMapName, the controller module's
 // copy of this name).
