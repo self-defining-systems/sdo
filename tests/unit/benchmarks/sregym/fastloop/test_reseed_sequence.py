@@ -4,7 +4,9 @@ A simulated lane holds what an SDO install keeps between rows: the accepted repo
 each commit holds), the controller's persisted state, its ConfigMaps, the controller process and its standby, the
 observability stores. The simulation encodes the controller's documented rules (state is persisted in
 ``sdo-controller-state``; a start with no state is a new install whose startup period begins now and whose onboarding is
-computed on the repository it finds; a start with state restores it, startup period included). The real transaction
+computed on the repository it finds, unless the install's start-up record (``sdo-install-startup``) says the install
+was already established: a restart from memory continues that period; a start with state restores it, startup period
+included). The real transaction
 (``prepare_lane``), the real reseed order (``reseed_lane``), the real session-ConfigMap predicate and the real
 fresh-install comparison (``resident_start_violations``) run on it, so the test fails when any carry-over class the
 comparison names survives a row: incident and closure state, session and reflection ConfigMaps, startup period,
@@ -73,7 +75,11 @@ class SimLane:
     reference: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
-        self.configmaps = {name: managed(name) for name in INSTALL_CONFIGMAPS if name != "kube-root-ca.crt"}
+        self.configmaps = {
+            name: managed(name)
+            for name in INSTALL_CONFIGMAPS
+            if name not in ("kube-root-ca.crt", "sdo-install-startup")
+        }
 
     def tick(self, seconds: float = 1.0) -> datetime:
         self.clock += timedelta(seconds=seconds)
@@ -88,8 +94,18 @@ class SimLane:
             # A restart restores the install's state: incident work, startup period and onboarding included.
             self.state = persisted["state"]
         else:
-            began = self.tick(5)
-            established = self.tick(150)
+            record = self.configmaps.get("sdo-install-startup")
+            if record is not None:
+                # A restart of an established install from retired state continues the install's period.
+                began, established = record["began"], record["established"]
+            else:
+                began = self.tick(5)
+                established = self.tick(150)
+                self.configmaps["sdo-install-startup"] = {
+                    **managed("sdo-install-startup"),
+                    "began": began,
+                    "established": established,
+                }
             self.state = {
                 "setup_evaluated_revision": self.volume_head,
                 "dispatch_state": "DISPATCH_STATE_IDLE",
@@ -104,6 +120,7 @@ class SimLane:
         """What the row-start wipe and install-existing leave: the reference a fresh install's onboarding records."""
         self.host_head = self.volume_head = commit
         self.configmaps.pop("sdo-controller-state", None)
+        self.configmaps.pop("sdo-install-startup", None)
         self.start_controller()
         self.reference = {"accepted_commit": commit, "objects": list(OBJECTS)}
 
@@ -155,6 +172,7 @@ class Lane:
         sim = self.sim
 
         def retire() -> None:
+            # Go reset-control-state --keep-install-startup: the controller state goes, the install's record stays.
             sim.configmaps.pop("sdo-controller-state", None)
             for name in [n for n, item in sim.configmaps.items() if _session_state(item)]:
                 del sim.configmaps[name]
@@ -219,8 +237,10 @@ def test_p1_then_cold_then_p2_on_one_lane_each_start_from_a_fresh_installs_state
     first_pod = sim.pod
     sim.run_row(learned_memory=P1_MEMORY)  # p1: incident, closing turn, outcome commit
 
+    before_cold = sim.clock
     cold = start_row(sim, BASE, tmp_path)  # cold: the base memory, not what p1 learned
     assert cold.reused, cold.fallback_reason
+    assert sim.clock - before_cold < timedelta(seconds=150)  # a restart from memory starts no new start-up period
     assert sim.volume_head == BASE
     assert "playbook/readiness" not in sim.memory[sim.volume_head]
     assert sim.state is not None
@@ -257,7 +277,6 @@ def test_a_start_that_keeps_the_earlier_rows_state_is_refused_for_each_carry_ove
         "planned memory",  # the volume still holds p1's memory
         "closure_state carries over",
         "last_acknowledged_incident_id carries over",
-        "startup period was not begun and established in this row",
         "session or reflection state remains",
     ):
         assert carried in named, named

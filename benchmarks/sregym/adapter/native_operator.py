@@ -929,14 +929,20 @@ def stop_runtime(
     return result
 
 
-def reset_control_state(control_namespace: str, *, kubeconfig: str | None = None) -> dict[str, Any]:
+def reset_control_state(
+    control_namespace: str, *, kubeconfig: str | None = None, keep_install_startup: bool = False
+) -> dict[str, Any]:
     """Explicitly retire SDO onboarding authority before a fresh-memory install.
 
-    The caller must stop the previous runtime before invoking this command.
+    The caller must stop the previous runtime before invoking this command. ``keep_install_startup`` keeps the
+    install's established start-up record: the reset prepares a restart of the same install from memory, which starts
+    no new start-up period.
     """
     if not control_namespace:
         raise ValueError("reset control state requires an explicit control namespace")
     args = ["--control-namespace", control_namespace, "--timeout", "60s"]
+    if keep_install_startup:
+        args.append("--keep-install-startup")
     if kubeconfig:
         args.extend(("--kubeconfig", kubeconfig))
     result = json.loads(execute_operator("reset-control-state", args, timeout=wait_for(WaitKind.SLOW_COMMAND)))

@@ -1034,6 +1034,11 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if err := retryStartup(func() error { return controller.AttachStateStore(ctx, stateStore) }); err != nil {
 		return fmt.Errorf("restore controller state: %w", err)
 	}
+	if err := retryStartup(func() error {
+		return controller.AttachInstallStartup(ctx, lifecycleio.NewInstallStartupStore(stateClient, *controlNamespace))
+	}); err != nil {
+		return fmt.Errorf("load install start-up record: %w", err)
+	}
 	var acknowledgement *contractsv1alpha1.NamespaceOnboarding
 	err = retryStartup(func() (loadErr error) {
 		acknowledgement, loadErr = onboarding.Load(ctx, bootstrapProvider.Client, *controlNamespace, *namespace)

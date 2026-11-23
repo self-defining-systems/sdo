@@ -348,7 +348,8 @@ class WarmEnvironment:
         """Delete every record of the earlier row's controller: Go's control state (controller state, onboarding,
         maintenance, holds), then the incident, reflection and worker ConfigMaps a fresh install does not have."""
         env = self.environment
-        reset_control_state(self.control, kubeconfig=str(env.kubeconfig))
+        # The same install restarts from memory: it keeps its established start-up period (a restart starts none).
+        reset_control_state(self.control, kubeconfig=str(env.kubeconfig), keep_install_startup=True)
         listing = json.loads(
             kubectl(["get", "configmaps", "-o", "json"], namespace=self.control, kubeconfig=env.kubeconfig).stdout
             or "{}"
