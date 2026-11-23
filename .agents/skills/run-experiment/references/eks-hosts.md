@@ -1,7 +1,7 @@
 # The EKS host entry in `hosts.yaml`
 
 A redacted skeleton of the root's `hosts.yaml` for an EKS vcluster host, from the root that ran the SREGym learning
-plans and the release series (chelan4 `/mnt/data/shli/sdo-exp/lanes-root-eks/hosts.yaml`; read the live file, never
+plans and the release series (the `hosts.yaml` of the EKS lanes root in the external sdo-exp directory; read the live file, never
 copy its `account` into notes). Field semantics: [docs/eks.md](../../../../benchmarks/lanes/docs/eks.md).
 
 ```yaml
