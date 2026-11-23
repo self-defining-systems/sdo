@@ -367,6 +367,9 @@ class Tier2Trigger(StrEnum):
     #: The previous row recovered its fault and verified the cleanup, and left the proof of the restored baseline to
     #: the next start. Only a start that proves the baseline itself before injecting may keep the app.
     BASELINE_PROOF_OWED = "baseline_proof_owed"
+    #: The previous row verified its incident closed and left the revert of its fault (one the application restore
+    #: reverts) to the next start. Only a start whose reset restores the app before injecting may keep it.
+    FAULT_RECOVERY_OWED = "fault_recovery_owed"
 
 
 @dataclass(frozen=True)
@@ -379,6 +382,7 @@ class Tier2Reason:
 
 UNRECOVERED_PREFIX = "unrecovered: "
 BASELINE_PROOF_OWED_LINE = "baseline-proof-owed"
+FAULT_RECOVERY_OWED_PREFIX = "fault-recovery-owed: "
 
 
 class AttemptMarker:
@@ -389,14 +393,17 @@ class AttemptMarker:
     One that says only ``baseline-proof-owed`` means every row was recovered with its cleanup verified, and the proof
     of the restored baseline (the traffic probe, sustained pod health and the oracle on the healthy app) was left to
     the next start: a start that proves it before injecting accepts the lane, every other reader sees it pending.
+    One that says ``fault-recovery-owed: <rows>`` means those rows closed their incidents and left their faults (ones
+    the application restore reverts) in place: only a start whose reset restores and proves the app accepts it.
     Data-level fault history is owned separately by LaneInjectionState.
     """
 
     def __init__(self, run_dir: Path) -> None:
         self.path = run_dir / MARKER_NAME
 
-    def pending(self, *, start_proves_baseline: bool = False) -> Tier2Reason | None:
-        """Why the lane is not known clean; ``start_proves_baseline`` is a start that proves the baseline itself."""
+    def pending(self, *, start_proves_baseline: bool = False, start_reverts_fault: bool = False) -> Tier2Reason | None:
+        """Why the lane is not known clean; ``start_proves_baseline`` is a start that proves the baseline itself, and
+        ``start_reverts_fault`` one whose reset also restores the application from its baseline before that proof."""
         try:
             content = self.path.read_text(encoding="utf-8")
         except FileNotFoundError:
@@ -407,6 +414,17 @@ class AttemptMarker:
             return Tier2Reason(
                 Tier2Trigger.PREVIOUS_ROW_UNRECOVERED,
                 f"previous row injected and not verified recovered: {rows.strip()}",
+            )
+        owed = next(
+            (line[len(FAULT_RECOVERY_OWED_PREFIX) :] for line in lines if line.startswith(FAULT_RECOVERY_OWED_PREFIX)),
+            "",
+        )
+        if owed.strip():
+            if start_proves_baseline and start_reverts_fault:
+                return None
+            return Tier2Reason(
+                Tier2Trigger.FAULT_RECOVERY_OWED,
+                f"previous row left its fault for the next start's restore to revert: {owed.strip()}",
             )
         if BASELINE_PROOF_OWED_LINE in lines:
             if start_proves_baseline:
@@ -421,14 +439,23 @@ class AttemptMarker:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(f"{os.getpid()}\n", encoding="utf-8")
 
-    def end(self, unrecovered: Collection[str], *, baseline_proof_owed: bool = False) -> None:
-        """The run ended: forget the attempt unless it left unrecovered rows or a baseline proof to the next start."""
-        if not unrecovered and not baseline_proof_owed:
+    def end(
+        self,
+        unrecovered: Collection[str],
+        *,
+        baseline_proof_owed: bool = False,
+        fault_recovery_owed: Collection[str] = (),
+    ) -> None:
+        """The run ended: forget the attempt unless it left unrecovered rows, faults or a baseline proof to the next
+        start. Unrecovered rows win; a fault left in place owes the baseline proof too."""
+        if not unrecovered and not baseline_proof_owed and not fault_recovery_owed:
             self.path.unlink(missing_ok=True)
             return
         lines = [str(os.getpid())]
         if unrecovered:
             lines.append(f"{UNRECOVERED_PREFIX}{', '.join(unrecovered)}")
+        elif fault_recovery_owed:
+            lines.append(f"{FAULT_RECOVERY_OWED_PREFIX}{', '.join(fault_recovery_owed)}")
         elif baseline_proof_owed:
             lines.append(BASELINE_PROOF_OWED_LINE)
         self.path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -444,12 +471,24 @@ def baseline_proof_owed(records: Iterable[Any]) -> bool:
     return any(_attempted(record) and getattr(record, "baseline_proof_deferred", False) for record in records)
 
 
+def _fault_left_for_next_start(record: Any) -> bool:
+    return getattr(record, "fault_recovery_deferred", False) is True and record.recovery_error is None
+
+
+def fault_recovery_owed(records: Iterable[Any]) -> tuple[str, ...]:
+    """Problem ids of rows that left their fault for the next start's restore to revert (``fault_recovery_deferred``)."""
+    return tuple(record.problem_id for record in records if _attempted(record) and _fault_left_for_next_start(record))
+
+
 def unrecovered_rows(records: Iterable[Any]) -> tuple[str, ...]:
-    """Problem ids of rows whose fault was injected, or may have been, without a verified full recovery."""
+    """Problem ids of rows whose fault was injected, or may have been, without a verified full recovery or a revert
+    left to the next start's restore."""
     return tuple(
         record.problem_id
         for record in records
-        if _attempted(record) and (record.recovery_error is not None or not record.full_cleanup_verified)
+        if _attempted(record)
+        and not _fault_left_for_next_start(record)
+        and (record.recovery_error is not None or not record.full_cleanup_verified)
     )
 
 
