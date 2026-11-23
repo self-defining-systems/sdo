@@ -261,20 +261,20 @@ class WarmEnvironment:
     def pause(self) -> None:
         self._assert_idle()
         pause_for_recovery(self.ops, self.control)
-        if self.planned_commit:
-            # The row's own memory: the application below is restored from this source, and the reseed seeds the
-            # controller's volume from it. The earlier row's memory on the volume is replaced there, not read here.
-            reseed_workspace(self.environment.workspace, self.planned_commit)
-        else:
-            # No planned memory: the lane keeps what it holds. Sync back the accepted checkout, never seed or change
-            # it; restoration must use the accepted render, not the prior row's stale host mirror.
-            sync_existing(native_install_config(self.config))
+        # Sync back the accepted checkout first, planned memory or not: the setup fingerprint below refuses a host copy
+        # that differs from the memory the controller's volume holds ("installed accepted-memory commit differs from
+        # accepted workspace"), which is exactly what moving the host copy to the planned commit makes of it.
+        sync_existing(native_install_config(self.config))
         from benchmarks.sregym.fastloop.setup_proof import RECEIPTS, collect_fingerprint
         from benchmarks.sregym.fastloop.warm_scope import check_cluster_scope
 
         check_cluster_scope(
             self.environment.run_dir / RECEIPTS, collect_fingerprint(self.environment), self.environment.namespace
         )
+        if self.planned_commit:
+            # The row's own memory: the application below is restored from this source, and the reseed seeds the
+            # controller's volume from it. The earlier row's memory on the volume is replaced there, not read here.
+            reseed_workspace(self.environment.workspace, self.planned_commit)
 
     def reset_changed(self) -> None:
         from benchmarks.sregym.fastloop.app_observability import restart_in_memory_trace_stores

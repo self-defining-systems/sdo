@@ -24,8 +24,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-#: How much of a refusal's text a receipt keeps.
-REFUSAL_DETAIL_CHARS = 200
+#: How much of a failure's text (one line) a receipt keeps.
+REFUSAL_DETAIL_CHARS = 300
 
 
 class WarmLaneError(RuntimeError):
@@ -98,7 +98,7 @@ class WarmReceipt:
     #: What differed from a fresh install, when that is why the lane was not reused: this package's own text, never an
     #: external error's.
     violations: tuple[str, ...] = ()
-    #: The lane's own refusal text (``WarmLaneRefusal``), truncated; empty for every other fallback.
+    #: The failure's text on one line, truncated, so a fallback is diagnosable (kubectl stderr and our own refusals).
     detail: str = ""
 
 
@@ -166,7 +166,7 @@ def prepare_lane(
             _publish(evidence, WarmReceipt(False, None, None, timings, reason + ";full_reset_failed"))
             raise WarmLaneError(f"eval: warm preparation failed ({reason}); full reset failed") from None
         violations = tuple(exc.violations) if isinstance(exc, ResidentStartMismatch) else ()
-        detail = str(exc)[:REFUSAL_DETAIL_CHARS] if isinstance(exc, WarmLaneRefusal) else ""
+        detail = " ".join(str(exc).split())[:REFUSAL_DETAIL_CHARS]
         receipt = WarmReceipt(False, None, None, timings, reason, violations, detail)
     else:
         receipt = WarmReceipt(True, identity, boundary.isoformat(), timings)
