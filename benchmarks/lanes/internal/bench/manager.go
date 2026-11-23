@@ -104,6 +104,9 @@ type Manager struct {
 	eksCleanAt map[string]time.Time
 	eksHeldWhy map[string]string
 	eksWhy     map[string]string // lane -> why an EKS lane gets no new steps
+	// eksPressure is, per lane, the node pressure last alarmed (eks-node-pressure); the lane probes run concurrently.
+	eksPressure map[string]string
+	pressureMu  sync.Mutex
 	// overSeen is when each eks host's manager machine was last seen over its load gate; loadRetried counts, per item,
 	// the failures written off to that load (managerload.go).
 	overSeen    map[string]time.Time

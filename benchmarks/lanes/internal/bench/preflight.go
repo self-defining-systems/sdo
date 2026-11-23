@@ -264,6 +264,9 @@ func runPreflight(ctx context.Context, inv Inventory, specs []specFile, opt Pref
 				out, err = run(ctx, h, pre+capacityScript(host))
 				ok, d = judgeManagerMachine(out, err, host.ManagerLoadLimit())
 				add(7, "manager-machine", h, ok, "%s", d)
+				out, err = run(ctx, h, pre+eksNodesScript())
+				ok, d = judgeEksNodes(out, err)
+				add(7, "eks-nodes", h, ok, "%s", d)
 			} else if host.IsVcluster() {
 				out, err = run(ctx, h, pre+sharedClusterScript(host))
 				ok, d := judgeSharedCluster(out, err, planned)
