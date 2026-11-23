@@ -274,7 +274,7 @@ cmd_host_up() {
     log "host cluster $HOST exists: attaching"
     aws eks update-kubeconfig --name "$HOST" --region "$REGION" --kubeconfig "$HK" >/dev/null
     chmod 600 "$HK"
-    scale_system 1
+    ensure_system # never lowered: running lanes keep their control planes on these nodes
   else
     local cfg
     cfg=$(mktemp); write_host_config "$cfg"
