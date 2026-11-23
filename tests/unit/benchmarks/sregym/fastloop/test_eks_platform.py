@@ -705,3 +705,62 @@ def test_every_app_image_push_of_an_eks_lane_is_recorded_with_its_digest(
             "digest": DIGEST,
         }
     ]
+
+
+class _Provider:
+    """The attached EKS provider, recording the order of its pushes and prepull registrations."""
+
+    lane = LANE
+
+    def __init__(self, events: list[str], *, prepull_error: Exception | None = None) -> None:
+        self.events, self.prepull_error = events, prepull_error
+
+    def pin(self, local: str) -> str:
+        self.events.append(f"pin {local}")
+        return f"{LANE.registry}/sdo/{local}@sha256:{'a' * 64}"
+
+    def register_prepull(self, references: list[str], **_: Any) -> bool:
+        self.events.append("prepull " + " ".join(r.split("/")[-1].split("@")[0] for r in references))
+        if self.prepull_error is not None:
+            raise self.prepull_error
+        return True
+
+
+def _attach(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, provider: _Provider) -> Images:
+    monkeypatch.setenv("KUBECONFIG", str(tmp_path / "kc"))
+    monkeypatch.setattr("benchmarks.lanes.eks.EksProvider.attach", classmethod(lambda cls, *a, **k: provider))
+    args = argparse.Namespace(
+        ecr_registry=LANE.registry,
+        ecr_tag=[],
+        run_dir=tmp_path,
+        controller_image="sdo-controller:t",
+        responder_image="sdo-responder:t",
+    )
+    return cli.attach_eks_lane(args)[1]
+
+
+def test_each_pushed_sdo_image_joins_the_hosts_prepull_list_before_the_next_push(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The lane's nodes pull an image while the next one is pushed and the application builds, so the first install
+    finds both on the node (a node pulls 4.5 GB in about 130 s)."""
+    events: list[str] = []
+    images = _attach(monkeypatch, tmp_path, _Provider(events))
+    assert events == [
+        "pin sdo-controller:t",
+        "prepull sdo-controller:t",
+        "pin sdo-responder:t",
+        "prepull sdo-responder:t",
+    ]
+    assert images.controller.endswith("@sha256:" + "a" * 64)
+
+
+def test_a_prepull_registration_that_fails_never_fails_the_lane_up(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    from benchmarks.lanes.eks import EksPrepullError
+
+    events: list[str] = []
+    images = _attach(monkeypatch, tmp_path, _Provider(events, prepull_error=EksPrepullError("lock not free")))
+    assert images.responder.endswith("@sha256:" + "a" * 64)
+    assert "lock not free" in caplog.text

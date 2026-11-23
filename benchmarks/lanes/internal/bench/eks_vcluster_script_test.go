@@ -8,7 +8,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // --- the script, against fake aws, eksctl, kubectl, helm and vcluster ---
@@ -247,6 +249,47 @@ func TestEksVclusterPrepullMergesIntoTheHostsList(t *testing.T) {
 		if strings.Count(got, want) != 1 {
 			t.Errorf("list lacks exactly one %q:\n%s", want, got)
 		}
+	}
+}
+
+// The host list is the pre-pull list of every node: it keeps the newest images, and a new image goes first (a node that
+// joins pulls in list order, so the image a lane is about to install comes before the ones of lanes long gone), however
+// many lanes of a long plan registered theirs.
+func TestEksVclusterPrepullKeepsTheNewestImagesFirst(t *testing.T) {
+	s := newVcScript(t)
+	s.hostUp(t)
+	s.env = append(s.env, "EKS_PREPULL_KEEP=3")
+	for _, img := range []string{"r/a@sha256:1", "r/b@sha256:2", "r/c@sha256:3", "r/d@sha256:4", "r/b@sha256:2"} {
+		if out, err := s.run(nil, "prepull", "unused", img); err != nil {
+			t.Fatalf("prepull %s: %v\n%s", img, err, out)
+		}
+	}
+	got := strings.Fields(s.file("prepull-images"))
+	want := []string{"r/b@sha256:2", "r/d@sha256:4", "r/c@sha256:3"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("list = %v, want %v", got, want)
+	}
+}
+
+// Registering images is a read-modify-write of one ConfigMap that a lane does while its build runs: it never waits for the
+// host lock another lane's up or down holds for minutes (15 s here against a 900 s wait), and it names what it waited for.
+func TestEksVclusterPrepullDoesNotWaitForTheHostLock(t *testing.T) {
+	s := newVcScript(t)
+	s.hostUp(t)
+	hold := exec.Command("flock", filepath.Join(filepath.Dir(s.hkc), ".host.lock"), "sleep", "60")
+	hold.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := hold.Start(); err != nil {
+		t.Skipf("no flock: %v", err)
+	}
+	defer func() { _ = syscall.Kill(-hold.Process.Pid, syscall.SIGKILL); _ = hold.Wait() }()
+	time.Sleep(500 * time.Millisecond)
+	start := time.Now()
+	out, err := s.run([]string{"EKS_HOST_LOCK_WAIT=900", "EKS_PREPULL_LOCK_WAIT=5"}, "prepull", "unused", "r/a@sha256:1")
+	if err != nil || !strings.Contains(out, "EKS_PREPULL 1 images") {
+		t.Fatalf("prepull under a held host lock: %v\n%s", err, out)
+	}
+	if took := time.Since(start); took > 15*time.Second {
+		t.Errorf("prepull took %v under a held host lock", took)
 	}
 }
 

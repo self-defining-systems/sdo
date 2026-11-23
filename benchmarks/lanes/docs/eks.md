@@ -157,7 +157,11 @@ hosts:
   know what they mean.
 - **Steps** see `BENCH_LANE_VIRTUAL=1` on a vcluster lane, so an adapter that reads nodes or `kube-system` knows they are
   the host's. `BENCH_ENTRY_HOST` is an address of one of the lane's own nodes. `$BENCH_REGISTRY push` works as for a
-  cluster lane; the pre-pull list is the host's, so every node of the host pulls it.
+  cluster lane; the pre-pull list is the host's, so every node of the host pulls it. `BENCH_PREPULL` names the platform
+  script whose `prepull KUBECONFIG IMAGE...` adds images to that list (`eks-vcluster.sh` on a vcluster lane,
+  `eks-lane.sh` otherwise): a workload registers the images it pushed, while it keeps building, so the nodes hold them
+  at the first install (fastloop does so for SDO's controller and responder; a failure is logged, never fatal). The
+  vcluster list keeps the newest 8 images, newest first, and takes its own short lock, not the host lock.
 - **Scripts and tests.** `deploy/eks-vcluster.sh` (`host-up`, `host-scale`, `host-down`, `up`, `down`, `exists`, `prepull`,
   `nodes`) and `internal/bench/eks_vcluster_test.go`, which run it against fake aws, eksctl, kubectl, helm and vcluster
   with a fake clock for the ledger. Each `up` records stage seconds in `<kubeconfig>.stages`.

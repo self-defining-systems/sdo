@@ -640,24 +640,31 @@ split_ref() {
   echo "$name $tag"
 }
 
+# cmd_prepull KUBECONFIG IMAGE...: add images to the host's pre-pull list (ConfigMap sdo-lane-prepull in the host's kube-system;
+# the node agent of every node pulls the list). The list is the newest EKS_PREPULL_KEEP (8) images, newest first: a lane
+# registers the images it is about to install, a node that joins pulls in list order, and the images of lanes long gone
+# are dropped instead of pulled again for ever. A lane registers while its build runs, so this waits only for another
+# prepull (EKS_PREPULL_LOCK_WAIT, 60 s), never for the host lock another lane's up or down holds for minutes.
 cmd_prepull() {
   need_host
   local kc=${1:?kubeconfig}; shift
   [ $# -gt 0 ] || die "prepull KUBECONFIG IMAGE..."
-  lock_host # a read-modify-write of one host ConfigMap: parallel lanes would lose each other's images
+  mkdir -p "$(dirname "$HK")"
+  exec 8>"$(dirname "$HK")/.prepull.lock"
+  flock -w "${EKS_PREPULL_LOCK_WAIT:-60}" 8 || die "the prepull list lock was not free in ${EKS_PREPULL_LOCK_WAIT:-60} s (another lane is registering images)"
   local have
   have=$(hk -n kube-system get configmap sdo-lane-prepull -o jsonpath='{.data.images}' 2>/dev/null || true)
   local tmp img name tag
   tmp=$(mktemp)
   {
-    printf '%s\n' "$have"
     for img in "$@"; do
       case $img in
         *@*) echo "$img";;
         *) read -r name tag <<<"$(split_ref "$img")"; echo "$name:$tag";;
       esac
     done
-  } | grep -v '^$' | sort -u >"$tmp"
+    printf '%s\n' "$have"
+  } | grep -v '^$' | awk '!seen[$0]++' | head -n "${EKS_PREPULL_KEEP:-8}" >"$tmp"
   hk -n kube-system create configmap sdo-lane-prepull --from-file=images="$tmp" --dry-run=client -o yaml | hk apply -f - >/dev/null
   rm -f "$tmp"
   echo "EKS_PREPULL $# images"
