@@ -171,6 +171,8 @@ class Lane:
 
     def reseed(self, application_restored: Callable[[], None] | None = None) -> None:
         if self.sim.skip_reseed:
+            if application_restored is not None:
+                application_restored()  # the boundary, with nothing swapped
             return
         sim = self.sim
 

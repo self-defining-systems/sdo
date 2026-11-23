@@ -424,7 +424,7 @@ def test_the_reseed_replaces_the_controller_by_design_and_the_new_process_must_h
     assert not lane.fallbacks
 
 
-def test_the_baseline_boundary_follows_the_restore_and_precedes_the_install_so_the_new_controllers_evidence_postdates_it(
+def test_the_boundary_follows_the_restore_and_precedes_the_install_so_the_new_controllers_evidence_postdates_it(
     tmp_path: Path,
 ) -> None:
     lane = Lane()
@@ -504,7 +504,8 @@ def test_a_failed_reseed_stops_the_restore_before_its_verification_and_names_the
     receipt = prepare_lane(lane, tmp_path / "warm.json", now=lambda: NOW)
     assert not receipt.reused
     assert receipt.fallback_reason == "reseed:RuntimeError"
-    assert "verify" not in lane.events and "install" not in lane.events
+    assert "verify" not in lane.events
+    assert "install" not in lane.events
     assert lane.events[-1] == "full_reset"
 
 

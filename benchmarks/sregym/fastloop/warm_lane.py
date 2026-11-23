@@ -245,7 +245,7 @@ def _restore_and_reseed(
         try:
             lane.reset_changed(mark_restored)
             mark_restored()  # a restore that signalled nothing is restored when it returns
-        except BaseException as exc:  # noqa: BLE001 - joined and re-raised by the transaction
+        except BaseException as exc:  # joined and re-raised by the transaction
             fail("reset", exc)
         finally:
             timings["reset"] = monotonic() - started
@@ -273,7 +273,7 @@ def _restore_and_reseed(
                 timings["reseed"] = monotonic() - reseeding
             if not boundaries:
                 raise ValueError("the reseed installed the controller without waiting for the restored application")
-        except BaseException as exc:  # noqa: BLE001 - joined and re-raised by the transaction
+        except BaseException as exc:  # joined and re-raised by the transaction
             fail(phase, exc)
 
     branch = threading.Thread(target=restore, name="warm-restore", daemon=True)

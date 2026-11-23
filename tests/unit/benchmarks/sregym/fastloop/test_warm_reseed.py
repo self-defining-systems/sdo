@@ -125,6 +125,7 @@ class Cluster:
         monkeypatch.setattr(warm_environment, "restart_observability", note("restart_observability"))
         monkeypatch.setattr(warm_environment, "await_observability", note("await_observability"))
         monkeypatch.setattr(warm_environment, "wait_standby", note("wait_standby"))
+
         def install(native):
             self.events.append("install_existing")
             self.installs.append(native)
@@ -467,6 +468,7 @@ def test_the_warm_restore_replaces_the_apps_trace_stores_before_restoring_and_be
         "RestoreChecks",
         lambda environment: SimpleNamespace(validate=lambda: events.append("validate")),
     )
+
     def restore(*_args, restored=None, **_kwargs):
         events.append("restore")
         restored()
