@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -66,6 +67,14 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 		var uncertain atomic.Bool
 		session := e.Subresource == "exec" || e.Subresource == "attach" || e.Subresource == "portforward"
 		write := mutating(r.Method) || session
+		// A failed request is an uncertain mutation only when it may still
+		// have changed something; an uncertain record blocks closure for good.
+		certain := certainOnFailure(r, e)
+		markUncertain := func() {
+			if !certain {
+				uncertain.Store(true)
+			}
+		}
 		if write && config.ReadOnly && !nonPersistingReview(e) {
 			refuseReadOnly(w, recorder, e)
 			return
@@ -221,7 +230,7 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 			res.Body = &captureBody{ReadCloser: res.Body, mode: mode, finish: func(body []byte, tooLarge, broken bool) {
 				end.Finished = proxyio.Now().UTC()
 				if broken {
-					uncertain.Store(true)
+					markUncertain()
 					end.Omission = "incomplete_response"
 					body = nil
 					if recorder != nil {
@@ -241,7 +250,7 @@ func NewRecording(upstream *url.URL, readTransport, writeTransport http.RoundTri
 			return nil
 		}
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-			uncertain.Store(true)
+			markUncertain()
 			end := e
 			end.Phase = "end"
 			end.Status = http.StatusBadGateway
@@ -301,6 +310,18 @@ func nonPersistingReview(e apihistory.Event) bool {
 		return true
 	}
 	return false
+}
+
+// certainOnFailure reports a request whose failure cannot leave a change
+// behind. A port-forward carries only the bytes its client sends once the
+// upgrade succeeded, and the lease spans that stream; an access or token
+// review and a server-side dry run persist nothing. Any other write the
+// client or the upstream abandoned may still be applied by the API server.
+func certainOnFailure(r *http.Request, e apihistory.Event) bool {
+	if e.Subresource == "portforward" || nonPersistingReview(e) {
+		return true
+	}
+	return slices.Contains(r.URL.Query()["dryRun"], "All")
 }
 
 func refuseReadOnly(w http.ResponseWriter, recorder Recorder, e apihistory.Event) {
