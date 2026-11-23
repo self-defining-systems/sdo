@@ -6,13 +6,14 @@ import io
 import json
 from typing import TYPE_CHECKING
 
+import pytest
+
 from benchmarks.commit_series import adapter
+from benchmarks.sregym.fastloop.toy_live import ClusterReadTimeout
 from tests.unit.benchmarks.commit_series.test_commit_outcomes import Lane
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 SPEC = {
     "name": "demo",
@@ -178,3 +179,48 @@ def test_position_one_starts_the_series_clock_again(tmp_path: Path) -> None:
     assert adapter.wall_start(tmp_path, "demo", 500.0) == 100.0  # a later position
     assert adapter.wall_start(tmp_path, "demo", 900.0, first=True) == 900.0
     assert adapter.wall_start(tmp_path, "demo", 950.0) == 900.0
+
+
+def test_a_cluster_read_that_times_out_is_a_harness_failure_not_a_lost_lane(tmp_path: Path) -> None:
+    """On an overloaded manager host the first ``kubectl get`` timed out after 30 s, the uncaught
+    ``TimeoutExpired`` killed the adapter and the lanes platform recorded 'lane lost' for position 1 and 'sequence
+    broken' for the rest. The failure is the harness's: the position is invalid, says so, and carries the marker."""
+
+    class Slow(Lane):
+        def accepted_commits(self) -> list:  # type: ignore[type-arg]
+            raise ClusterReadTimeout("kubectl get pods timed out 3 times after 30 s")
+
+    out = io.StringIO()
+    assert adapter.run(env(tmp_path, 1), out, ops=Slow("accepted")) == 0  # type: ignore[arg-type]
+    record = json.loads(out.getvalue().splitlines()[-1])
+    assert record["valid"] is False
+    assert record["invalid_reason"].startswith("harness failure: "), record
+    assert record["harness_failure"] is True
+    assert "timed out 3 times" in record["invalid_reason"]
+
+
+def test_a_kubectl_that_times_out_is_retried_before_it_is_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+
+    from benchmarks.sregym.fastloop import toy_live
+
+    attempts: list[int] = []
+
+    def flaky(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise subprocess.TimeoutExpired(cmd, 30)
+        return subprocess.CompletedProcess(cmd, 0, "ok", "")
+
+    monkeypatch.setattr(toy_live.subprocess, "run", flaky)
+    ops = toy_live.KubectlScenarioOps.__new__(toy_live.KubectlScenarioOps)
+    ops.environment = type("E", (), {"kubeconfig": "/k"})()  # type: ignore[assignment]
+    ops.sleep = lambda seconds: None  # type: ignore[method-assign]
+    assert ops._kubectl("ns", "get", "pods").stdout == "ok"
+    assert len(attempts) == 3
+    attempts.clear()
+    monkeypatch.setattr(
+        toy_live.subprocess, "run", lambda cmd, **kw: (_ for _ in ()).throw(subprocess.TimeoutExpired(cmd, 30))
+    )
+    with pytest.raises(toy_live.ClusterReadTimeout, match="timed out 3 times"):
+        ops._kubectl("ns", "get", "pods")

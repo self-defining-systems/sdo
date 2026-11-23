@@ -32,7 +32,7 @@ from benchmarks.common.replay.series import Series
 from benchmarks.fuzzops import capture
 from benchmarks.fuzzops import workload as fuzzops_workload
 from benchmarks.fuzzops.hooks import SETTLE_WORK_ONLY_RECORD, verify_start
-from benchmarks.sregym.fastloop.toy_live import ControllerRelaunching, KubectlScenarioOps
+from benchmarks.sregym.fastloop.toy_live import ClusterReadTimeout, ControllerRelaunching, KubectlScenarioOps
 from benchmarks.sregym.fastloop.toy_scenarios import AcceptedCommit, HoldRecord
 from benchmarks.sregym.fastloop.toy_upstream import BASE_PATH, REPOSITORY, SERVICE, UpstreamLayout, forwarded_remote
 
@@ -289,7 +289,10 @@ def run(env: dict[str, str], stdout: IO[str], *, ops: SeriesOps | None = None) -
     total = len(entry.series.commits)
     if lane is not None:
         capture.write_series_position(lane_dir, position=index, total=total, started=_iso_epoch(start))
-    record = run_commit(ops, entry.series, index, entry.bounds.at(index, total), flags.get("operator", ""))
+    try:
+        record = run_commit(ops, entry.series, index, entry.bounds.at(index, total), flags.get("operator", ""))
+    except ClusterReadTimeout as exc:
+        return invalid(stdout, entry, index, f"harness failure: {exc}", harness_failure=True)
     # The record carries the position's own bounded wait for its incident; settle waits only for work in flight.
     (lane_dir / SETTLE_WORK_ONLY_RECORD).write_text(json.dumps({"position": index}) + "\n")
     if fault := entry.series.faults.get(index):
@@ -302,9 +305,12 @@ def run(env: dict[str, str], stdout: IO[str], *, ops: SeriesOps | None = None) -
     return 0
 
 
-def invalid(stdout: IO[str], entry: Entry, index: int, reason: str) -> int:
-    """The position cannot be run: an infrastructure problem, not a result (it breaks the rest of the sequence)."""
-    record = {"series": entry.series.name, "index": index, "valid": False, "invalid_reason": reason}
+def invalid(stdout: IO[str], entry: Entry, index: int, reason: str, *, harness_failure: bool = False) -> int:
+    """The position cannot be run: an infrastructure problem, not a result (it breaks the rest of the sequence).
+    ``harness_failure`` says the harness failed (a cluster read that never answered), not SDO or the lane."""
+    record: dict[str, object] = {"series": entry.series.name, "index": index, "valid": False, "invalid_reason": reason}
+    if harness_failure:
+        record["harness_failure"] = True
     stdout.write(json.dumps(record, sort_keys=True) + "\n")
     return 0
 

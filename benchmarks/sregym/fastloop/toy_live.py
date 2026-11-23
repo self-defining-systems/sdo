@@ -41,6 +41,16 @@ STATE_CONFIGMAP = "sdo-controller-state"
 CONTROLLER_SELECTOR = "job-name=sdo-controller-run"
 
 
+class ClusterReadTimeout(RuntimeError):
+    """A kubectl call timed out on every try: the lane's API (or the host running kubectl) is too slow to read."""
+
+
+#: A kubectl read that times out is tried again before it is a failure: an overloaded host or API answers the next
+#: call, and the timeout used to kill the whole run.
+KUBECTL_TRIES = 3
+KUBECTL_RETRY_PAUSE_S = 5.0
+
+
 class ControllerRelaunching(RuntimeError):
     """The controller pod is between two launches: a read of it may be retried later."""
 
@@ -60,13 +70,23 @@ class KubectlScenarioOps:
         time.sleep(seconds)
 
     def _kubectl(self, namespace: str, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            ["kubectl", "--kubeconfig", str(self.environment.kubeconfig), "-n", namespace, *args],
-            capture_output=True,
-            text=True,
-            timeout=wait_for(WaitKind.COMMAND),
-            check=check,
-        )
+        timeout = wait_for(WaitKind.COMMAND)
+        for attempt in range(1, KUBECTL_TRIES + 1):
+            try:
+                return subprocess.run(
+                    ["kubectl", "--kubeconfig", str(self.environment.kubeconfig), "-n", namespace, *args],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    check=check,
+                )
+            except subprocess.TimeoutExpired:
+                if attempt == KUBECTL_TRIES:
+                    raise ClusterReadTimeout(
+                        f"kubectl {' '.join(args[:3])} timed out {KUBECTL_TRIES} times after {timeout:.0f} s"
+                    ) from None
+                self.sleep(KUBECTL_RETRY_PAUSE_S)
+        raise AssertionError("unreachable")
 
     def _json(self, namespace: str, *args: str) -> dict[str, Any]:
         return json.loads(self._kubectl(namespace, *args, "-o", "json").stdout)
