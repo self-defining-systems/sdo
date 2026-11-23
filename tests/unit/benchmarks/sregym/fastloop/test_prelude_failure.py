@@ -21,7 +21,11 @@ def test_rehearsal_failure_records_every_requested_slot(tmp_path, monkeypatch):
         provider="codex",
         reasoning_effort="medium",
     )
-    monkeypatch.setattr(cli.FastloopEnvironment, "load", lambda _: SimpleNamespace(run_dir=tmp_path))
+    monkeypatch.setattr(
+        cli.FastloopEnvironment,
+        "load",
+        lambda _: SimpleNamespace(run_dir=tmp_path, apply_operator_env=lambda *_a, **_k: None),
+    )
 
     def fail(*_args, **_kwargs):
         raise ValueError("no-fault rehearsal: traffic failed")
@@ -51,7 +55,11 @@ def test_existing_incident_error_is_not_replaced_by_wrapper(tmp_path, monkeypatc
             error="original",
         ),
     )
-    monkeypatch.setattr(cli.FastloopEnvironment, "load", lambda _: SimpleNamespace(run_dir=tmp_path))
+    monkeypatch.setattr(
+        cli.FastloopEnvironment,
+        "load",
+        lambda _: SimpleNamespace(run_dir=tmp_path, apply_operator_env=lambda *_a, **_k: None),
+    )
 
     def fail(*_args, **_kwargs):
         raise RuntimeError("outer failure")
