@@ -170,3 +170,18 @@ def test_a_position_another_follows_waits_until_sdo_is_quiet_not_for_a_fixed_win
     last = LateIncidentLane("accepted")
     got = run_commit(last, SERIES, 3, bounds.at(3, 3), "exec:sdo-demo-r3")  # type: ignore[arg-type]
     assert last.t - last.pushed_at < LateIncidentLane.closes + bounds.steady_between
+
+
+def test_a_release_that_keeps_opening_incidents_does_not_hold_the_series_past_the_quiet_cap() -> None:
+    """10.6.0 opens a chain of incidents for half an hour; the next push waited all of it (a position cycle of 42
+    minutes on EKS). The wait for quiet is capped, and the record says SDO was not quiet."""
+
+    class Chain(LateIncidentLane):
+        closes = 10_000.0  # never quiet
+
+    bounds = Bounds(verdict=60, steady=10, resolution=900, poll=5, steady_between=10, quiet_cap=60)
+    lane = Chain("accepted")
+    got = run_commit(lane, SERIES, 1, bounds.at(1, 3), "exec:sdo-demo-r1")  # type: ignore[arg-type]
+    assert lane.t - lane.pushed_at <= 60 + 15, lane.t
+    assert got["noisy_before_next"] is True
+    assert got["incident_opened"] is True
