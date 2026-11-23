@@ -531,3 +531,55 @@ def test_inspect_accepts_a_lane_whose_last_row_left_only_its_baseline_proof_to_t
     marker.end((), baseline_proof_owed=True)
     with pytest.raises(Reached):
         cluster.lane.inspect()
+
+
+def _commit(repo: Path, message: str) -> str:
+    import subprocess
+
+    (repo / "f.txt").write_text(message)
+    subprocess.run(["git", "-C", str(repo), "add", "f.txt"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@invalid", "commit", "-qm", message],
+        check=True,
+    )
+    return subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+
+
+def test_the_installs_own_tree_preparation_on_top_of_the_planned_memory_is_the_planned_memory(tmp_path):
+    """Go install-existing commits the deployment plan record and the generic detectors on top of the planned memory
+    (trailer ``SDO-Origin: install-existing``), as a fresh install does; every reseeded row was refused with
+    'accepted head ... is not the planned memory'. Any other commit above the planned memory still differs."""
+    import subprocess
+
+    from benchmarks.sregym.fastloop.warm_environment import install_prepared_head
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    planned = _commit(tmp_path, "memory: planned")
+    prepared = _commit(tmp_path, "sdo: record the deployment plan\n\nSDO-Actor: human\nSDO-Origin: install-existing")
+    prepared = _commit(tmp_path, "sdo: prepare the generic detectors\n\nSDO-Origin: install-existing")
+    assert install_prepared_head(tmp_path, planned, planned)
+    assert install_prepared_head(tmp_path, planned, prepared)
+    learned = _commit(tmp_path, "playbook: learned by an earlier row\n\nSDO-Origin: closing-turn")
+    assert not install_prepared_head(tmp_path, planned, learned)
+    assert not install_prepared_head(tmp_path, prepared, planned)  # not a descendant
+
+
+def test_an_incidents_unlabelled_state_store_is_session_state_the_reseed_retires():
+    """An incident Job's ``<job>-tools-state`` ConfigMap has no managed-by label; it survived the retire step and the
+    resident-start comparison then refused the row ('session or reflection state remains: ...-tools-state')."""
+    store = {
+        "metadata": {
+            "name": "sdo-app-1795415566658769303-05f348601e-tools-state",
+            "annotations": {"sdo.dev/state-revision": "3"},
+        },
+        "data": {"runtime-state.json": "{}"},
+    }
+    assert warm_environment._session_state(store)
+    install = {
+        "metadata": {"name": "sdo-controller-state", "annotations": {"sdo.dev/state-revision": "9"}},
+        "data": {"runtime-state.json": "{}"},
+    }
+    assert not warm_environment._session_state(install)
+    assert not warm_environment._session_state(
+        {"metadata": {"name": "user-config"}, "data": {"runtime-state.json": ""}}
+    )

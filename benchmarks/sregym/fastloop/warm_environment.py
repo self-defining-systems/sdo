@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
@@ -70,16 +71,53 @@ logger = logging.getLogger(__name__)
 PER_ROW_SETTINGS = frozenset({"evidence_run_id", "config_files"})
 
 
+#: The runtime's per-incident state store (an incident Job's ``<job>-tools-state``) carries no managed-by label; its
+#: compare-and-swap annotation and data key identify it (the same pair Go's reset uses for the controller state).
+STATE_REVISION_ANNOTATION = "sdo.dev/state-revision"
+STATE_DATA_KEY = "runtime-state.json"
+
+
 def _session_state(configmap: dict[str, Any]) -> bool:
     """Whether a control-namespace ConfigMap is an earlier row's incident, session, reflection or worker record: an
-    SDO-managed ConfigMap that is none of the ones every install has (the fresh-install comparison names the rest)."""
+    SDO-managed ConfigMap that is none of the ones every install has (the fresh-install comparison names the rest),
+    or an incident's own state store."""
     metadata = configmap.get("metadata") or {}
     name = str(metadata.get("name", ""))
     if name in INSTALL_CONFIGMAPS:
         return False
-    return is_worker_record(configmap) or (
-        name.startswith("sdo-") and (metadata.get("labels") or {}).get("app.kubernetes.io/managed-by") == "sdo"
+    incident_state = (
+        name.startswith("sdo-")
+        and STATE_REVISION_ANNOTATION in (metadata.get("annotations") or {})
+        and STATE_DATA_KEY in (configmap.get("data") or {})
     )
+    return (
+        is_worker_record(configmap)
+        or incident_state
+        or (name.startswith("sdo-") and (metadata.get("labels") or {}).get("app.kubernetes.io/managed-by") == "sdo")
+    )
+
+
+#: The trailer Go ``install-existing`` puts on the commits with which it prepares the accepted tree for the install
+#: (the deployment plan record, the generic detectors). A fresh install makes the same commits.
+INSTALL_ORIGIN_TRAILER = "SDO-Origin: install-existing"
+
+
+def install_prepared_head(workspace: Path, planned: str, head: str) -> bool:
+    """Whether ``head`` is ``planned`` plus only the install's own tree preparation: ``planned`` is an ancestor and
+    every commit after it carries the install-existing origin trailer."""
+    if head == planned:
+        return True
+
+    def git(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(["git", "-C", str(workspace), *args], capture_output=True, text=True, check=False)
+
+    if git("merge-base", "--is-ancestor", planned, head).returncode != 0:
+        return False
+    listed = git("log", "--format=%H%x00%B%x1e", f"{planned}..{head}")
+    if listed.returncode != 0:
+        return False
+    commits = [entry for entry in listed.stdout.split("\x1e") if entry.strip()]
+    return bool(commits) and all(INSTALL_ORIGIN_TRAILER in entry.partition("\x00")[2].splitlines() for entry in commits)
 
 
 def identity_settings(payload: dict[str, Any]) -> dict[str, Any]:
@@ -434,10 +472,15 @@ class WarmEnvironment:
         if not reference.is_file():
             # Memory does not enter the objects an onboarding names: the lane's latest fresh install is the reference.
             reference = env.run_dir / "fresh-onboarding" / "latest.json"
+        planned = self.planned_commit or revision
+        if install_prepared_head(env.workspace, planned, revision):
+            # Go install-existing prepares the planned tree for the install with its own commits (as a fresh install
+            # does): the row's memory is the planned commit plus exactly that preparation.
+            planned = revision
         violations = resident_start_violations(
             ResidentStart(
                 state=state,
-                planned_commit=self.planned_commit or revision,
+                planned_commit=planned,
                 accepted_head=revision,
                 boundary=not_before.isoformat().replace("+00:00", "Z"),
                 control_configmaps=tuple(name.removeprefix("configmap/") for name in names.split()),
