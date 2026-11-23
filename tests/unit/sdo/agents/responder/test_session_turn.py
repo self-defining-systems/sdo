@@ -12,7 +12,7 @@ from google.protobuf import json_format
 from sdo.agents.responder import CodexSessionBackend, execute_incident, session_output_schema, unwrap_branch
 from sdo.agents.responder.codex import ResponderExecutionError
 from sdo.agents.responder.reflection import ClaudeSessionBackend, closing_prompt
-from sdo.agents.responder.session_turn import WrongBranchError
+from sdo.agents.responder.session_turn import WrongBranchError, session_turn_options
 from sdo.contracts import IncidentRequest, IncidentResult
 from tests.proto_messages import evolve
 from tests.structured_turns import ScriptedAgent, reply
@@ -90,7 +90,7 @@ def test_responder_and_closing_turns_send_the_same_schema_and_no_mcp_server(
     )
 
     assert responder.schemas == reflection.schemas
-    assert json.loads(responder.schemas[0]) == session_output_schema()
+    assert json.loads(responder.schemas[0]) == session_output_schema(provider)
     assert responder.servers == [{}]
     assert reflection.servers == [{}]
 
@@ -108,6 +108,22 @@ def test_session_schema_is_a_strict_wrapper_of_both_turn_results() -> None:
     # Generated schemas are inlined: no reference needs a root definition.
     assert "$ref" not in json.dumps(schema)
     assert "$defs" not in schema
+
+
+def test_claude_wrapper_does_not_require_the_branch_the_turn_leaves_null() -> None:
+    """Claude's output check rejects an omitted null branch and costs a resumed retry turn.
+
+    The answer without ``reflection`` must satisfy Claude's schema; ``unwrap_branch``
+    reads the missing branch as null. Codex's strict mode keeps both keys required.
+    """
+
+    claude = session_turn_options("claude", Path("/tmp"))["output_schema"]
+    codex = session_turn_options("codex", Path("/tmp"))["output_schema"]
+
+    assert claude["required"] == []  # type: ignore[index]
+    assert codex["required"] == ["incident_result", "reflection"]  # type: ignore[index]
+    assert claude["properties"] == codex["properties"]  # type: ignore[index]
+    assert unwrap_branch(json.dumps({"incident_result": {"summary": "x"}}), "incident_result") == {"summary": "x"}
 
 
 @pytest.mark.parametrize(

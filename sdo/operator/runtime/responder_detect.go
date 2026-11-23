@@ -16,6 +16,8 @@ import (
 const (
 	// detectPollInterval is how often `sdo detect --wait` reads again.
 	detectPollInterval = 2 * time.Second
+	// detectRecoveredWatchInterval is how often a waiting `sdo detect --wait` looks at the recovered marker.
+	detectRecoveredWatchInterval = 100 * time.Millisecond
 	// detectMaxWaitSeconds bounds one `sdo detect --wait`.
 	detectMaxWaitSeconds = 600
 )
@@ -311,8 +313,17 @@ func (l *ResponderLoop) waitDetect(ctx context.Context, request ToolRequest) Too
 	deadline := started.Add(time.Duration(request.WaitSeconds * float64(time.Second)))
 	poll := request
 	poll.WaitSeconds = 0
+	// The recovered marker is an in-memory read: watch it on its own short
+	// real-time cadence, and let its flip end a read in flight and the idle
+	// wait at once instead of after the next poll.
+	waitCtx, stopWatch := l.cancelOnRecovered(ctx)
+	defer stopWatch()
 	l.operationMu.RLock()
-	read, response, prepared := l.readOnce(ctx, poll)
+	read, response, prepared := l.readOnce(waitCtx, poll)
+	if waitCtx.Err() != nil && ctx.Err() == nil {
+		// Recovered ended the first read half-way: one complete read is what the answer shows.
+		read, response, prepared = l.readOnce(ctx, poll)
+	}
 	l.operationMu.RUnlock()
 	change := ""
 	if prepared && response.Error == "" {
@@ -324,12 +335,16 @@ func (l *ResponderLoop) waitDetect(ctx context.Context, request ToolRequest) Too
 				break
 			}
 			remaining := deadline.Sub(clock.Now())
-			if remaining <= 0 || waitOnClock(ctx, clock, min(detectPollInterval, remaining)) != nil {
+			if remaining <= 0 || waitOnClock(waitCtx, clock, min(detectPollInterval, remaining)) != nil {
 				break
 			}
 			l.operationMu.RLock()
-			nextRead, next, nextPrepared := l.readOnce(ctx, poll)
+			nextRead, next, nextPrepared := l.readOnce(waitCtx, poll)
 			l.operationMu.RUnlock()
+			if waitCtx.Err() != nil && ctx.Err() == nil {
+				// Recovered ended this read: its partial answer is dropped, the loop top reports it.
+				continue
+			}
 			if !nextPrepared || next.Error != "" {
 				// A read that failed observed nothing: the wait goes on, and
 				// shows the last good read.
@@ -339,6 +354,9 @@ func (l *ResponderLoop) waitDetect(ctx context.Context, request ToolRequest) Too
 			if change = watchChange(before, l.watchState(response, request.Name)); change != "" {
 				break
 			}
+		}
+		if change == "" && ctx.Err() == nil && l.detectIncidentRecovered() {
+			change = "recovered: SDO is ending your incident work"
 		}
 		elapsed := int64(clock.Now().Sub(started).Round(time.Second) / time.Second)
 		line := fmt.Sprintf("wait: no change in %ds", elapsed)
@@ -351,4 +369,30 @@ func (l *ResponderLoop) waitDetect(ctx context.Context, request ToolRequest) Too
 	l.operationMu.RLock()
 	defer l.operationMu.RUnlock()
 	return l.publishRead(ctx, request, read, response, prepared)
+}
+
+// cancelOnRecovered returns a context that ends when the incident's recovered
+// marker is set (or ctx ends); stop releases the watcher. Without a marker
+// source the context is ctx itself.
+func (l *ResponderLoop) cancelOnRecovered(ctx context.Context) (context.Context, func()) {
+	if l.IncidentStatus == nil {
+		return ctx, func() {}
+	}
+	watched, cancel := context.WithCancel(ctx)
+	go func() {
+		ticker := time.NewTicker(detectRecoveredWatchInterval)
+		defer ticker.Stop()
+		for {
+			if l.detectIncidentRecovered() {
+				cancel()
+				return
+			}
+			select {
+			case <-watched.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	return watched, cancel
 }

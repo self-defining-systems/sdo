@@ -51,10 +51,7 @@ func (d KubernetesJobDispatcher) executeResponder(ctx context.Context, executor 
 		return IncidentResult{}, err
 	}
 	result.RepairActions = goIssuedReceipts(result.RepairActions)
-	verification := loop.Handle(ctx, ToolRequest{Command: "verify"})
-	if loop.VerifyResult != nil {
-		verification = loop.VerifyResult(ctx, result)
-	}
+	verification := resultVerification(ctx, loop, result)
 	if verification.Error == "" {
 		// The controller's check observes this turn's writes.
 		loop.locked(loop.closeLoop)
@@ -77,6 +74,16 @@ func (d KubernetesJobDispatcher) executeResponder(ctx context.Context, executor 
 		return IncidentResult{}, err
 	}
 	return result, nil
+}
+
+// resultVerification is the check that judges a responder's returned result.
+// The controller's result check replaces the tool read, so it runs alone: a
+// second verify before it only repeated the capture (about 4s per incident).
+func resultVerification(ctx context.Context, loop *ResponderLoop, result IncidentResult) ToolResponse {
+	if loop.VerifyResult != nil {
+		return loop.VerifyResult(ctx, result)
+	}
+	return loop.Handle(ctx, ToolRequest{Command: "verify"})
 }
 
 func (d KubernetesJobDispatcher) executeResponderTask(ctx context.Context, executor agentTaskExecutor, task *contracts.AgentTask) (IncidentResult, error) {

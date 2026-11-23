@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -401,4 +402,46 @@ func TestDetectWaitSurvivesAFailedRead(t *testing.T) {
 	detectAlertSet(loop, "traffic.health", "create")
 	response := loop.Handle(context.Background(), ToolRequest{Command: "detect", WaitSeconds: 60})
 	waitWasIdle(t, response, clock, 60)
+}
+
+// blockingDetector answers its first call and then blocks until its context ends,
+// like a detector run on a slow read.
+type blockingDetector struct{ calls atomic.Int32 }
+
+func (*blockingDetector) Spec() sdk.DetectorSpec {
+	return sdk.DetectorSpec{ID: "slow.read", Interval: time.Second}
+}
+
+func (d *blockingDetector) Detect(ctx context.Context, _ sdk.DetectionContext) ([]sdk.Finding, error) {
+	if d.calls.Add(1) > 1 {
+		<-ctx.Done()
+	}
+	return nil, nil
+}
+
+func TestDetectWaitReturnsAtOnceWhenTheIncidentRecoversDuringARead(t *testing.T) {
+	loop, _ := detectWorldLoop(&detectWorld{})
+	loop.Detectors = []sdk.Detector{&blockingDetector{}}
+	var recovered atomic.Bool
+	loop.IncidentStatus = func() *apihistory.IncidentVerified {
+		if recovered.Load() {
+			return &apihistory.IncidentVerified{}
+		}
+		return nil
+	}
+	time.AfterFunc(300*time.Millisecond, func() { recovered.Store(true) })
+	done := make(chan ToolResponse, 1)
+	started := time.Now()
+	go func() { done <- loop.Handle(context.Background(), ToolRequest{Command: "detect", WaitSeconds: 60}) }()
+	select {
+	case response := <-done:
+		if first := strings.SplitN(response.Text, "\n", 2)[0]; !strings.HasSuffix(first, "recovered: SDO is ending your incident work") {
+			t.Fatalf("first line = %q", first)
+		}
+		if elapsed := time.Since(started); elapsed > time.Second {
+			t.Fatalf("wait returned %s after the start, want within a second of the recovery", elapsed)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the wait did not return after the incident recovered while a read was in flight")
+	}
 }
