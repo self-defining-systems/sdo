@@ -310,6 +310,23 @@ class HostLimits:
     def worker_env(self) -> dict[str, str]:
         return {"FASTLOOP_HOST_LOCK_DIR": str(self.directory), "FASTLOOP_HOST_REDEPLOYS": str(self.redeploys)}
 
+    def check_capacity(self) -> None:
+        """Fail now, before any lane is built, when the recorded redeploy capacity is not this limit.
+
+        ``admit`` refuses the same mismatch, but only when a lane reaches its first redeploy, after its cluster
+        and nodes exist: 18 lanes failed there at once for a ``FASTLOOP_HOST_REDEPLOYS`` that had been raised.
+        """
+        recorded_file = self.directory / "redeploy.capacity"
+        recorded = recorded_file.read_text().strip() if recorded_file.is_file() else ""
+        if recorded and recorded != str(self.redeploys):
+            raise ValueError(self._capacity_mismatch("redeploy", recorded, self.redeploys))
+
+    def _capacity_mismatch(self, operation: str, recorded: str, count: int) -> str:
+        return (
+            f"eval: host {operation} capacity is {recorded}, requested {count}; configure lanes consistently "
+            f"(to change the capacity of a host no lane is using, delete {self.directory / f'{operation}.capacity'})"
+        )
+
     @contextmanager
     def admit(self, operation: str) -> Iterator[None]:
         """One image delivery or N redeploys; kernel releases slots on death.
@@ -332,9 +349,7 @@ class HostLimits:
             capacity.seek(0)
             recorded = capacity.read().strip()
             if recorded and recorded != str(count):
-                raise ValueError(
-                    f"eval: host {operation} capacity is {recorded}, requested {count}; configure lanes consistently"
-                )
+                raise ValueError(self._capacity_mismatch(operation, recorded, count))
             if not recorded:
                 capacity.write(str(count) + "\n")
                 capacity.flush()

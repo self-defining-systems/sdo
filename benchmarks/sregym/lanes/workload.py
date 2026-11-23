@@ -57,6 +57,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Protocol
 
 from benchmarks.sregym.adapter import CURRENT_WAIT_ENV, WaitKind, control_namespace_for, wait_for
+from benchmarks.sregym.fastloop.host_limits import HostLimits
 from benchmarks.sregym.lanes.agent import REQUESTED_IMAGES_FILE, requested_images, settings_for
 
 if TYPE_CHECKING:
@@ -396,6 +397,11 @@ def app_up(ctx: Context) -> tuple[int, dict[str, Any]]:
         try:
             pack = ctx.pack()
         except AdapterError as error:
+            print(str(error), file=sys.stderr)
+            return EXIT_INVALID, {"error": str(error)}
+        try:
+            HostLimits.from_env(ctx.env).check_capacity()
+        except ValueError as error:
             print(str(error), file=sys.stderr)
             return EXIT_INVALID, {"error": str(error)}
         return 0, {"application": pack.application, "namespace": pack.namespace}

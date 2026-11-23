@@ -124,6 +124,21 @@ def test_check_pack_loads_app_json_or_answers_invalid(tmp_path):
     assert "app pack" in result["error"]
 
 
+def test_check_pack_refuses_a_host_whose_recorded_redeploy_capacity_is_not_the_configured_one(tmp_path):
+    # the capacity file the host's lanes share was 8 when FASTLOOP_HOST_REDEPLOYS was raised to 18: 18 lanes built
+    # their clusters and failed their first redeploy; the first call of a build (before any cluster) now says so
+    locks = tmp_path / "locks"
+    locks.mkdir()
+    (locks / "redeploy.capacity").write_text("8\n")
+    env = {"FASTLOOP_HOST_LOCK_DIR": str(locks), "FASTLOOP_HOST_REDEPLOYS": "18"}
+    code, result = call("app-up", "check-pack", ["--pack", str(PACK)], env)
+    assert code == workload.EXIT_INVALID
+    assert "capacity is 8, requested 18" in result["error"]
+    assert "redeploy.capacity" in result["error"]
+    code, _ = call("app-up", "check-pack", ["--pack", str(PACK)], {**env, "FASTLOOP_HOST_REDEPLOYS": "8"})
+    assert code == 0
+
+
 def test_app_up_runs_fastloop_up_for_a_new_lane_and_copies_its_kubeconfig(tmp_path):
     env = lane_env(
         tmp_path,
