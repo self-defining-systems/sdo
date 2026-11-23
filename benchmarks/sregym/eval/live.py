@@ -23,15 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 import tomllib
 
-from benchmarks.sregym.adapter import (
-    HostMemoryPolicy,
-    cgroup_pressure_refusal,
-    host_check,
-    host_memory_refusal,
-    own_cgroup_dir,
-)
-from benchmarks.sregym.adapter.host_memory import MEMINFO_FILE, PRESSURE_FILE
-from benchmarks.sregym.adapter.lane_resources import host_available_memory
+from benchmarks.sregym.adapter import HostMemoryPolicy, host_check, own_cgroup_check, own_cgroup_dir
 from benchmarks.sregym.eval.cell import CellContext
 from benchmarks.sregym.eval.fastloop_row import FastloopRowRunner, RecordAccountant, RowSettings, TranscriptPresenceGate
 from benchmarks.sregym.eval.page import FallbackPageHook, KubectlPageCluster
@@ -99,12 +91,12 @@ def admission(
     plan: Plan,
     platforms: Mapping[str, str],
     *,
-    meminfo: Path = MEMINFO_FILE,
-    host_pressure: Path = PRESSURE_FILE,
+    meminfo: Path | None = None,
+    host_pressure: Path | None = None,
     own_cgroup: Callable[[], Path] = own_cgroup_dir,
     loadavg: Callable[[], float] = lambda: os.getloadavg()[0],
 ) -> Admission:
-    """The cell-start gates, following where the plan's lanes run.
+    """The cell-start gates, following where the plan's lanes run (``meminfo``/``host_pressure`` override /proc).
 
     A kind lane's nodes are containers on this host: a cell waits for the host load average under ``max_load``,
     MemAvailable for the lane's cap plus the reserve, and a host that is not stalling on memory (host-wide PSI). An EKS
@@ -116,21 +108,11 @@ def admission(
     policy = HostMemoryPolicy(
         reserve_bytes=int(config.host_reserve_gib * 1024**3), max_pressure_avg60=config.max_memory_pressure
     )
+    files: dict[str, Any] = {"meminfo": meminfo} if meminfo is not None else {}
     if _host_lanes(plan, platforms):
-        cap = int(config.lane_memory_cap_gib * 1024**3)
-        return Admission(loadavg, host_check(cap, policy, meminfo=meminfo, pressure=host_pressure))
-
-    def own_check() -> str | None:
-        try:
-            directory = own_cgroup()
-            available = host_available_memory(meminfo)
-        except ValueError as exc:
-            return str(exc).removeprefix("eval: ")
-        if (reason := cgroup_pressure_refusal(directory, config.max_own_pressure)) is not None:
-            return reason
-        return host_memory_refusal(0, policy, available_bytes=available, pressure_avg60=0.0)
-
-    return Admission(lambda: 0.0, own_check)
+        pressure = {"pressure": host_pressure} if host_pressure is not None else {}
+        return Admission(loadavg, host_check(int(config.lane_memory_cap_gib * 1024**3), policy, **files, **pressure))
+    return Admission(lambda: 0.0, own_cgroup_check(policy, config.max_own_pressure, own_cgroup=own_cgroup, **files))
 
 
 class NoStore:

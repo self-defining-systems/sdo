@@ -209,6 +209,33 @@ def host_check(
     return check
 
 
+def own_cgroup_check(
+    policy: HostMemoryPolicy,
+    max_avg60: float,
+    *,
+    meminfo: Path = MEMINFO_FILE,
+    own_cgroup: Callable[[], Path] = own_cgroup_dir,
+) -> Callable[[], str | None]:
+    """A polling probe for work whose cluster is elsewhere: the runner's own cgroup stalls and the host reserve.
+
+    The refusal reason now, or ``None``: CPU, IO or memory PSI of this process's cgroup at or above ``max_avg60``, or
+    MemAvailable under the policy's reserve (no lane cap: the lane's nodes are not on this host). An unknown cgroup
+    or an unreadable measurement is a reason too.
+    """
+
+    def check() -> str | None:
+        try:
+            directory = own_cgroup()
+            available = host_available_memory(meminfo)
+        except ValueError as exc:
+            return str(exc).removeprefix("eval: ")
+        if (reason := cgroup_pressure_refusal(directory, max_avg60)) is not None:
+            return reason
+        return host_memory_refusal(0, policy, available_bytes=available, pressure_avg60=0.0)
+
+    return check
+
+
 def inspect_listed(
     template: str,
     ids: Sequence[str],
