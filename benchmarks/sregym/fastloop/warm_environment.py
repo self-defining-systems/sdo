@@ -31,7 +31,6 @@ from benchmarks.sregym.adapter import (
     wait_for,
 )
 from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
-from benchmarks.sregym.repository_git import host_git_command
 from benchmarks.sregym.fastloop.admission import LaneAdmission
 from benchmarks.sregym.fastloop.clean_start import assert_clean_baseline
 from benchmarks.sregym.fastloop.reseed import ReseedSteps, reseed_lane
@@ -54,6 +53,7 @@ from benchmarks.sregym.fastloop.wipe import (
     load_inventory,
     reseed_workspace,
 )
+from benchmarks.sregym.repository_git import host_git_command
 
 if TYPE_CHECKING:
     from collections.abc import Callable
