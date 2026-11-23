@@ -438,3 +438,39 @@ def test_a_refusal_the_warm_lane_made_keeps_its_own_text_truncated(tmp_path: Pat
     assert receipt.detail.startswith("previous attempt did not finish cleanly: xxx")
     assert len(receipt.detail) <= 300
     assert json.loads((tmp_path / "warm.json").read_text())["detail"] == receipt.detail
+
+
+def test_the_row_runs_the_lanes_operator_before_any_row_start_work(tmp_path: Path, monkeypatch) -> None:
+    """The warm transaction and the row-start wipe call the Go operator (inspect, sync, install-existing) and install
+    the controller: they run the lane's pinned host operator with the lane's environment, as the fresh path's install
+    does, not a source build of whatever checkout runs the harness."""
+    import os
+    from argparse import Namespace
+
+    from benchmarks.sregym.fastloop import cli
+    from benchmarks.sregym.fastloop.environment import FastloopEnvironment
+
+    operator = tmp_path / "bin" / "sdo-operator"
+    env = FastloopEnvironment(
+        run_dir=tmp_path,
+        cluster="synthetic-lane",
+        kubeconfig=tmp_path / "kubeconfig",
+        namespace="app",
+        application="synthetic",
+        workspace=tmp_path / "workspace",
+        sregym_dir=tmp_path / "sregym",
+        private_tmp=None,
+        host_operator=operator,
+    )
+    env.save()
+    monkeypatch.setenv("SDO_OPERATOR_BIN", "")
+    seen: list[str] = []
+
+    def execute(_args: Namespace, **_kwargs: Any) -> int:
+        seen.append(os.environ.get("SDO_OPERATOR_BIN", ""))
+        return 0
+
+    monkeypatch.setattr(cli, "_execute_owned", execute)
+    args = Namespace(run_dir=tmp_path, run_id="synthetic-row", agent="sdo", model="claude-sonnet-5-5", warm_lane=True)
+    assert cli._run_owned(args) == 0
+    assert seen == [str(operator)]
