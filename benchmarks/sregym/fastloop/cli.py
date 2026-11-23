@@ -1086,6 +1086,19 @@ def _warm_reset_args(args: argparse.Namespace, environment: FastloopEnvironment)
     return argparse.Namespace(**{**vars(args), "planned_commit": planned})
 
 
+def _replace_trace_stores_for_next_row(environment: FastloopEnvironment) -> None:
+    """A row's end replaces the app's in-memory trace stores without waiting: the next row on the lane then finds them
+    young and Ready for longer than its baseline check's sustained-health window (a warm start replaces only an old
+    one). Best effort: a failure leaves the next start's own replacement to do it."""
+    from benchmarks.sregym.fastloop.app_observability import restart_in_memory_trace_stores
+
+    try:
+        namespaces = application_namespaces(environment.baseline_path, environment.kubeconfig, environment.namespace)
+        restart_in_memory_trace_stores(environment.kubeconfig, namespaces, reason="row end")
+    except Exception:
+        logger.warning("row end: trace store replacement failed; the next start replaces it", exc_info=True)
+
+
 def _wipe_sdo_and_harness(args: argparse.Namespace, environment: FastloopEnvironment) -> Tier1Receipt:
     """Tier 1: delete SDO's control namespace and every harness leftover, then re-provision and re-seed SDO's inputs."""
     from benchmarks.sregym.fastloop.wipe import credentials_hook, wipe_environment
@@ -1924,6 +1937,8 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
                     diagnosis_grading=grading_mode,
                     on_failed_incident=reset_failed if args.continue_on_error else None,
                 )
+                if getattr(args, "warm_lane", False) or getattr(args, "end_of_row_recovery", False):
+                    _replace_trace_stores_for_next_row(environment)
             elif args.agent in ("claudecode", "external"):
                 run_baseline = _run_claudecode if args.agent == "claudecode" else _run_external
                 records = run_baseline(

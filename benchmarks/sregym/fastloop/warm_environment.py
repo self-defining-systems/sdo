@@ -339,7 +339,10 @@ class WarmEnvironment:
             reseed_workspace(self.environment.workspace, self.planned_commit)
 
     def reset_changed(self) -> None:
-        from benchmarks.sregym.fastloop.app_observability import restart_in_memory_trace_stores
+        from benchmarks.sregym.fastloop.app_observability import (
+            TRACE_STORE_MAX_AGE_SECONDS,
+            restart_in_memory_trace_stores,
+        )
         from benchmarks.sregym.fastloop.baseline_recovery import KubectlApplicationCluster, application_namespaces
 
         checks = RestoreChecks(self.environment)
@@ -348,7 +351,11 @@ class WarmEnvironment:
         # restore's health wait covers the replacement.
         env = self.environment
         restart_in_memory_trace_stores(
-            env.kubeconfig, application_namespaces(env.baseline_path, env.kubeconfig, env.namespace)
+            env.kubeconfig,
+            application_namespaces(env.baseline_path, env.kubeconfig, env.namespace),
+            # The earlier row's end replaced it; a store that young has been Ready longer than the baseline check's
+            # sustained-health window, while a fresh one would make that check wait the whole window.
+            older_than=TRACE_STORE_MAX_AGE_SECONDS,
         )
         restore_application(
             self.environment,

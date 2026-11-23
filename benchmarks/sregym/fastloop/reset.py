@@ -380,8 +380,19 @@ def restore_application(
     baselines = complete_recovery_baselines(
         source, accepted_restore_baselines(source, baselines, seed_commit=environment.seed_commit)
     )
+    phases: dict[str, float] = {}
+    mark = time.monotonic()
+
+    def lap(name: str) -> None:
+        nonlocal mark
+        now = time.monotonic()
+        phases[name] = round(now - mark, 1)
+        mark = now
+
     worker.request("clean_start", problem_id=environment.deploy_problem, timeout=wait_for(WaitKind.ROLLOUT))
+    lap("clean_start")
     reconcile_and_record(cluster, baselines, source, environment.run_dir / RESTORE_RECEIPTS)
+    lap("reconcile")
     deadline = time.monotonic() + wait_for(WaitKind.MINUTE)
     if checks:
         checks.settle()
@@ -392,6 +403,7 @@ def restore_application(
         time.sleep(min(1, max(0, deadline - time.monotonic())))
     if not health.get("healthy"):
         raise RuntimeError(f"reset left {environment.namespace} unhealthy: {health.get('unready')}")
+    lap("health")
     if environment.namespace == "social-network":
         from benchmarks.sregym.fastloop.social_fixture import restore_social_fixture
 
@@ -405,6 +417,7 @@ def restore_application(
         )
         if refreshed.get("success") is not True:
             raise RuntimeError("eval: restored application clients did not settle after dependencies")
+    lap("refresh_clients")
     oracle = worker.request(
         "baseline_oracle",
         problem_id=environment.deploy_problem,
@@ -427,6 +440,8 @@ def restore_application(
         )
         if not oracle.get("success"):
             raise RuntimeError(f"reset left independent traffic failing for {environment.deploy_problem}: {oracle}")
+    lap("baseline_oracle")
+    logger.info("restore: %s", ", ".join(f"{name} {seconds:g}s" for name, seconds in phases.items()))
 
     if checks:
         checks.ready()
