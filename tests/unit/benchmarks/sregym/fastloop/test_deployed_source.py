@@ -395,3 +395,12 @@ def test_the_harness_deploy_renders_the_pinned_revision_not_head(lane) -> None:
     _commit(lane.workspace, {"services/reserve.go": "later\n"})
     assert AcceptedSource(lane.workspace, NAMESPACE, pinned_revision=base).revision == base
     assert AcceptedSource(lane.workspace, NAMESPACE).revision == head(lane)
+
+
+def test_a_start_that_restores_the_app_skips_only_the_live_content_comparison(lane, cluster) -> None:
+    """A fault left to the start's restore is reverted by it; the source and the stamp still decide."""
+    base = deploy(lane, cluster)
+    cluster.objects = [deployment(image="app:repaired")]
+    assert deployed_application_change(lane, base, live_content=False) is None
+    planned = _commit(lane.workspace, {"services/reserve.go": "fixed\n"})
+    assert deployed_application_change(lane, planned, live_content=False).trigger is Tier2Trigger.ACCEPTED_SOURCE_CHANGED

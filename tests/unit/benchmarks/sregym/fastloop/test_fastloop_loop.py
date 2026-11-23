@@ -1368,3 +1368,69 @@ def test_the_baseline_proof_is_deferred_only_from_a_single_verified_end_of_row_c
 ) -> None:
     with pytest.raises(ValueError, match="baseline_proof_at_next_start"):
         replace(_config(tmp_path, 1), baseline_proof_at_next_start=True, **fields)
+
+
+def _deferring(tmp_path: Path, count: int, problems: frozenset[str] = frozenset({"p1"})) -> LoopConfig:
+    return replace(_config(tmp_path, count), baseline_proof_at_next_start=True, fault_recovery_at_next_start=problems)
+
+
+def test_a_mitigated_last_row_whose_fault_the_restore_reverts_ends_at_its_closure_and_owes_the_recovery(
+    tmp_path: Path,
+) -> None:
+    """The next start's application restore reverts the fault: the row pays neither the recovery nor its pause."""
+    from benchmarks.sregym.fastloop.wipe import fault_recovery_owed, unrecovered_rows
+
+    clock = FakeClock()
+    driver = _CleanupDriver(clock)
+
+    [record] = run_incidents(
+        FakeAgent(clock), driver, _deferring(tmp_path, 1), monotonic=clock.monotonic, sleep=clock.advance
+    )
+
+    assert "recover" not in driver.events
+    assert record.oracle is not None and record.oracle.success
+    assert record.fault_recovery_deferred
+    assert record.baseline_proof_deferred
+    assert record.recovery_error is None
+    assert not record.full_cleanup_verified
+    assert record.recovery_finished_at is None
+    assert record.cleanup_skipped_reason == "fault_recovery_at_next_start"
+    assert fault_recovery_owed([record]) == ("p1",)
+    assert unrecovered_rows([record]) == ()
+
+
+@pytest.mark.parametrize(
+    ("oracle_success", "reverted"), [(False, frozenset({"p1"})), (True, frozenset({"other"})), (True, frozenset())]
+)
+def test_a_row_whose_fault_is_unmitigated_or_not_reverted_by_the_restore_recovers_in_the_row(
+    tmp_path: Path, oracle_success: bool, reverted: frozenset[str]
+) -> None:
+    clock = FakeClock()
+    driver = _CleanupDriver(clock, oracle_success=oracle_success)
+
+    [record] = run_incidents(
+        FakeAgent(clock), driver, _deferring(tmp_path, 1, reverted), monotonic=clock.monotonic, sleep=clock.advance
+    )
+
+    assert "recover" in driver.events
+    assert not record.fault_recovery_deferred
+
+
+def test_only_the_runs_last_row_leaves_its_fault_to_the_next_start(tmp_path: Path) -> None:
+    clock = FakeClock()
+    driver = _CleanupDriver(clock)
+
+    first, last = run_incidents(
+        FakeAgent(clock), driver, _deferring(tmp_path, 2), monotonic=clock.monotonic, sleep=clock.advance
+    )
+
+    assert driver.events.count("recover") == 1
+    assert driver.events.index("recover") < driver.events.index("inject:p1", 1)
+    assert first.full_cleanup_verified and not first.fault_recovery_deferred
+    assert last.fault_recovery_deferred
+    assert not last.full_cleanup_verified
+
+
+def test_a_fault_is_left_to_the_next_start_only_when_that_start_also_proves_the_baseline(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="fault_recovery_at_next_start"):
+        replace(_config(tmp_path, 1), fault_recovery_at_next_start=frozenset({"p1"}))
