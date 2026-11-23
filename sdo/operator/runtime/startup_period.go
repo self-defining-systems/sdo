@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -232,4 +233,70 @@ func (c *Controller) startupHolds(now time.Time) bool {
 		slog.Warn("controller_startup", "event", "bound_reached", "began_at", c.startup.began, "bound_at", c.startup.bound)
 	}
 	return c.startup.holding(now)
+}
+
+// InstallStartupStore keeps the install's established start-up period outside
+// the controller state (lifecycleio.InstallStartupStore), so a restart whose
+// controller state was retired continues the install's period.
+type InstallStartupStore interface {
+	Load(context.Context) (*contracts.StartupPeriod, error)
+	Save(context.Context, *contracts.StartupPeriod) error
+}
+
+// startupContinuedInstall names a period a restart continued from the
+// install's record although its controller state was retired.
+const startupContinuedInstall = "install-established"
+
+// AttachInstallStartup attaches the install's start-up record, after
+// AttachStateStore. A restart that restored no controller state but finds the
+// install's established period continues it: the install has been seen
+// healthy, and a restart starts no new period. Restored state keeps its own
+// period; the record then only gets written once the period is established.
+func (c *Controller) AttachInstallStartup(ctx context.Context, store InstallStartupStore) error {
+	if store == nil {
+		return nil
+	}
+	c.mu.Lock()
+	restored, period := c.stateRestored, c.startup
+	c.mu.Unlock()
+	c.installStartup = store
+	if period == nil {
+		return nil
+	}
+	record, err := store.Load(ctx)
+	if err != nil {
+		return err
+	}
+	if record == nil {
+		return nil
+	}
+	c.installStartupRecorded = true
+	if restored {
+		return nil
+	}
+	continued := restoredStartupPeriod(record)
+	c.mu.Lock()
+	c.startup = continued
+	c.mu.Unlock()
+	slog.Info("controller_startup", "event", startupContinuedInstall, "began_at", continued.began, "established_at", continued.established)
+	return nil
+}
+
+// recordInstallStartup writes the install's record once its period is
+// established. A failed write is retried at the next persist.
+func (c *Controller) recordInstallStartup(ctx context.Context) error {
+	if c.installStartup == nil || c.installStartupRecorded {
+		return nil
+	}
+	c.mu.Lock()
+	period := c.startup.contract()
+	c.mu.Unlock()
+	if period.GetEstablishedAt() == nil {
+		return nil
+	}
+	if err := c.installStartup.Save(ctx, period); err != nil {
+		return err
+	}
+	c.installStartupRecorded = true
+	return nil
 }

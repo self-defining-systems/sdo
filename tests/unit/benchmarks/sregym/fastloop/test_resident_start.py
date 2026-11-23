@@ -94,7 +94,7 @@ def mutated(path, value):
         (mutated("failed_closures", ["app-1"]), "failed_closures"),
         (mutated("history", [{"detector_id": "x", "evaluated_at": BEFORE, "status": "clear"}]), "history"),
         (mutated("detector_clear_since", {"x": BEFORE}), "detector_clear_since"),
-        (mutated("startup", {"began_at": BEFORE, "established_at": BEFORE}), "startup"),
+        (mutated("startup", {"began_at": BEFORE}), "startup"),
         (mutated("startup", {"began_at": AFTER}), "startup"),
         (start(onboarding_reference=None), "onboarding"),
         (start(onboarding_reference={"accepted_commit": "b" * 40, "objects": []}), "onboarding"),
@@ -135,3 +135,9 @@ def test_the_warm_transaction_falls_back_when_the_resident_state_differs(tmp_pat
 
     assert isinstance(raised.value, ResidentStartMismatch)
     assert any("last_acknowledged_incident_id" in row for row in raised.value.violations)
+
+
+def test_a_restart_from_memory_continues_the_installs_established_period():
+    """A reseeded row restarts the same install: its start-up period was established before the boundary and is
+    continued (a restart starts no new period); the evaluation state after the boundary is what this row proves."""
+    assert resident_start_violations(mutated("startup", {"began_at": BEFORE, "established_at": BEFORE})) == []

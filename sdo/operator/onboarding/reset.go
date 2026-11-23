@@ -17,16 +17,35 @@ import (
 // names that follow it are left by earlier versions and are retired with it.
 const HeadHoldConfigMapName = "sdo-head-hold"
 
+// InstallStartupConfigMapName is the control-namespace ConfigMap in which the
+// runtime records that the install's start-up period was established (the
+// runtime's lifecycleio.InstallStartupConfigMap). A restart from memory keeps
+// it (ResetControlStateOptions.KeepInstallStartup); a from-scratch reinstall
+// retires it.
+const InstallStartupConfigMapName = "sdo-install-startup"
+
+// ResetControlStateOptions selects what a reset keeps.
+type ResetControlStateOptions struct {
+	// KeepInstallStartup keeps the install's established start-up record: the
+	// reset prepares a restart of the same install from memory, not a new
+	// install, and a restart starts no new start-up period.
+	KeepInstallStartup bool
+}
+
 // ResetControlState retires namespace-lifetime onboarding authority before a
 // from-scratch reinstall. The caller must stop the controller and its workers
 // first. Application objects, Secrets, and repository memory are never accessed.
-func ResetControlState(ctx context.Context, client kubernetes.Interface, control string) ([]string, error) {
+func ResetControlState(ctx context.Context, client kubernetes.Interface, control string, options ...ResetControlStateOptions) ([]string, error) {
+	keepStartup := len(options) > 0 && options[0].KeepInstallStartup
 	deleted := []string{}
 	if control == "" {
 		return deleted, fmt.Errorf("reset control state requires an explicit control namespace")
 	}
 	var records []*corev1.ConfigMap
-	for _, name := range []string{ConfigMapName, PendingConfigMapName, AttemptConfigMapName, WindowConfigMapName, RejectedConfigMapName, "sdo-controller-state", "sdo-controller-maintenance", "sdo-controller-maintenance-ack", HeadHoldConfigMapName, "sdo-upstream-holds", "sdo-upstream-obligations"} {
+	for _, name := range []string{ConfigMapName, PendingConfigMapName, AttemptConfigMapName, WindowConfigMapName, RejectedConfigMapName, "sdo-controller-state", "sdo-controller-maintenance", "sdo-controller-maintenance-ack", HeadHoldConfigMapName, "sdo-upstream-holds", "sdo-upstream-obligations", InstallStartupConfigMapName} {
+		if name == InstallStartupConfigMapName && keepStartup {
+			continue
+		}
 		cm, err := client.CoreV1().ConfigMaps(control).Get(ctx, name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
 			continue

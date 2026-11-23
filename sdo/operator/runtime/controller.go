@@ -186,7 +186,11 @@ type Controller struct {
 	gateProbes    map[string]time.Time
 	persistenceMu sync.Mutex
 	stateStore    StateStore
-	stateRevision string
+	// installStartup records the install's established start-up period beside
+	// the controller state (AttachInstallStartup); nil keeps no record.
+	installStartup         InstallStartupStore
+	installStartupRecorded bool
+	stateRevision          string
 	// stagedTaskIncident is the incident whose prepared task the last saved state references on the repository volume.
 	stagedTaskIncident string
 
@@ -2565,6 +2569,9 @@ func (c *Controller) PersistState(ctx context.Context) error {
 		return err
 	}
 	c.stateRevision = revision
+	if err := c.recordInstallStartup(actionCtx); err != nil && c.OnError != nil {
+		c.OnError(fmt.Errorf("record install start-up: %w", err))
+	}
 	c.releaseLifecycle(queued)
 	c.releaseStaleStagedTask(stagedIncident)
 	c.mu.Lock()

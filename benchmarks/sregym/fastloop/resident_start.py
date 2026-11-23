@@ -12,7 +12,10 @@ What a fresh install holds at injection, and the rule each item follows here:
 - incident work: no dispatch, pending batch, finding, drift event, closure, failed closure or acknowledged incident;
 - evaluation state: every history row and detector clear time postdates this row's boundary (the resume), so no
   detector judgement carries over;
-- start-up period: began and was established after the boundary, as a fresh install's admission waits for it;
+- start-up period: established. A fresh install establishes it before injection (its admission waits for it); a
+  reseeded row restarts the same install from memory, and a restart starts no new period (the controller continues the
+  install's established period, Go reset-control-state --keep-install-startup), so it is already established; the
+  evaluation-state rule above proves every detector judged this row's application after the boundary;
 - onboarding: the controller's record is for the planned commit and names the objects a fresh install's record names
   (the reference a fresh install recorded for this application; memory does not enter the object set); no reference,
   no reuse;
@@ -49,6 +52,7 @@ INSTALL_CONFIGMAPS = frozenset(
         "kube-root-ca.crt",
         "sdo-config",
         "sdo-controller-state",
+        "sdo-install-startup",
         "sdo-controller-maintenance",
         "sdo-controller-maintenance-ack",
         "sdo-namespace-onboarding",
@@ -156,8 +160,8 @@ def resident_start_violations(start: ResidentStart) -> list[str]:
     if any(stale(value) for value in (state.get("detector_clear_since") or {}).values()):
         violations.append("detector_clear_since has clear times from before this row")
     startup = state.get("startup") or {}
-    if stale(startup.get("began_at")) or stale(startup.get("established_at")):
-        violations.append("startup period was not begun and established in this row")
+    if _time(startup.get("established_at")) is None:
+        violations.append("startup period is not established")
     if start.onboarding_reference is None or not onboarding_matches(
         state.get("namespace_onboarding"), start.onboarding_reference, start.planned_commit
     ):
