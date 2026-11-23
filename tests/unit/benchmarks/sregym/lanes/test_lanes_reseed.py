@@ -196,3 +196,19 @@ def test_a_fallback_row_carries_the_lanes_own_refusal_text(tmp_path):
         "inspect:WarmLaneRefusal: previous attempt did not finish cleanly: "
         "previous row injected and not verified recovered: p"
     )
+
+
+def test_with_the_switch_on_every_row_recovers_at_its_end_the_first_row_of_a_lane_included(tmp_path):
+    """The first row installs fresh (no warm flag) and would defer its recovery to the next row's Tier-2; a warm next
+    row has none, so every row of a reseeding host recovers and verifies in the row."""
+    lane = Lane(tmp_path)
+    lane.row(**RESEED)
+    lane.row(**RESEED)
+    assert "--warm-lane" not in lane.calls[0]
+    assert all("--end-of-row-recovery" in argv for argv in lane.calls)
+
+
+def test_with_the_switch_off_a_row_keeps_the_old_deferral(tmp_path):
+    lane = Lane(tmp_path)
+    lane.row()
+    assert "--end-of-row-recovery" not in lane.calls[0]
