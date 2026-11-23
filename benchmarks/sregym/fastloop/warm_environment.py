@@ -71,7 +71,11 @@ logger = logging.getLogger(__name__)
 
 #: Settings that belong to one row and are applied again by every reseed (the controller Job is installed anew from the
 #: row's own configuration): this row's evidence run and the path of its config overlay. They are not install identity.
-PER_ROW_SETTINGS = frozenset({"evidence_run_id", "config_files"})
+#: Settings that are a row's, not its install's: the reseed installs every row's controller from the row's own
+#: configuration. ``healthy_baseline`` is on only for a row whose closing turn runs (the snapshots serve its learned-
+#: detector validation), so it differs between the arms that share a lane; as an install setting it made every
+#: cold/p2 row after a learning row fall back ("warm controller settings differ", fast-eks10).
+PER_ROW_SETTINGS = frozenset({"evidence_run_id", "config_files", "healthy_baseline"})
 
 #: The seconds each step of the transaction's phases took (``{phase: {step: seconds}}``), beside the warm receipt:
 #: written after every step, so a phase that failed names the step it failed in and what came before.
