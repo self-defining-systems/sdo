@@ -152,6 +152,11 @@ def refresh_baseline_clients(problem: Any, *, dependencies_only: bool = False) -
         )
     if dependencies_only and not STARTUP_DEPENDENCIES[problem.namespace]:
         return {"success": True, "scope": "application-dependencies", "deployments": [], "waited_s": 0}
+    if dependencies_only and _dependency_order_holds(problem.namespace, _pod_times(listing)):
+        # Every client already registered after its dependency's current pod (the restore left the registry as it
+        # was): restarting them proves nothing more, and the fresh pods made the next baseline check wait its whole
+        # sustained-health window (60 s on every warm reset).
+        return {"success": True, "scope": "application-dependencies", "deployments": [], "waited_s": 0, "ordered": True}
     resources = " ".join(f"deployment/{name}" for name in clients)
     problem.kubectl.exec_command(f"kubectl rollout restart {resources} -n {shlex.quote(problem.namespace)}")
     clusters = importlib.import_module("sregym.conductor.problems.colocated_composite")
@@ -172,19 +177,35 @@ def refresh_baseline_clients(problem: Any, *, dependencies_only: bool = False) -
         listing = json.loads(
             kubectl(["get", "deployments,pods", "-o", "json"], namespace=problem.namespace, kubeconfig=config).stdout
         )["items"]
-        pod_times = {}
-        for deployment in (row for row in listing if row["kind"] == "Deployment"):
-            labels = deployment["spec"]["selector"]["matchLabels"]
-            pod_times[deployment["metadata"]["name"]] = [
-                row["metadata"]["creationTimestamp"]
-                for row in listing
-                if row["kind"] == "Pod"
-                and not row["metadata"].get("deletionTimestamp")
-                and all(row["metadata"].get("labels", {}).get(key) == value for key, value in labels.items())
-            ]
+        pod_times = _pod_times(listing)
         for dependency in STARTUP_DEPENDENCIES[problem.namespace]:
             require_dependency_order(dependency, pod_times)
     return _refresh_result(clients, settled.waited_s, settled.reason, recreated=recreated, settled=settled.settled)
+
+
+def _pod_times(listing: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """Per Deployment, the creation times of its live (not deleting) Pods."""
+    pod_times: dict[str, list[str]] = {}
+    for deployment in (row for row in listing if row["kind"] == "Deployment"):
+        labels = deployment["spec"]["selector"]["matchLabels"]
+        pod_times[deployment["metadata"]["name"]] = [
+            row["metadata"]["creationTimestamp"]
+            for row in listing
+            if row["kind"] == "Pod"
+            and not row["metadata"].get("deletionTimestamp")
+            and all(row["metadata"].get("labels", {}).get(key) == value for key, value in labels.items())
+        ]
+    return pod_times
+
+
+def _dependency_order_holds(namespace: str, pod_times: dict[str, list[str]]) -> bool:
+    """Whether every startup dependency's clients already registered after its current registry pod."""
+    try:
+        for dependency in STARTUP_DEPENDENCIES[namespace]:
+            require_dependency_order(dependency, pod_times)
+    except ValueError:
+        return False
+    return True
 
 
 def _refresh_result(
