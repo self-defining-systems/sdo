@@ -664,6 +664,7 @@ def summarize(record: Mapping[str, Any]) -> dict[str, Any]:
         "memory_before_commit",
         "memory_after_commit",
         "full_cleanup_verified",
+        "fault_recovery_deferred",
         "infra_error",
         "recovery_error",
         "error",
@@ -1151,7 +1152,8 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
     record["invalid_reason"] = why or ""
     record["error"] = summary["error"] or failure or ""
     # Clear: never injected, or no recovery error and either fastloop verified the full cleanup or the problem's oracle
-    # saw the fault mitigated (fastloop then leaves the full cleanup to the next row's start, row_start_tier2).
+    # saw the fault mitigated (fastloop then leaves the full cleanup to the next row's start: row_start_tier2, or on a
+    # warm lane the next start's restore for a fault it reverts, fault_recovery_deferred; the attempt marker owes it).
     cleared = not summary["injected_at"] or (
         not summary["recovery_error"] and (bool(summary["full_cleanup_verified"]) or summary["success"])
     )

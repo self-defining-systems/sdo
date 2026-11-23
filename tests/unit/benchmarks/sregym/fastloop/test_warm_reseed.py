@@ -546,6 +546,38 @@ def test_inspect_accepts_a_lane_whose_last_row_left_only_its_baseline_proof_to_t
         cluster.lane.inspect()
 
 
+@pytest.mark.parametrize(
+    ("owed", "live_content"), [({"fault_recovery_owed": ("p1",)}, False), ({"baseline_proof_owed": True}, True)]
+)
+def test_inspect_accepts_a_lane_whose_last_row_left_its_fault_to_this_starts_restore(
+    cluster, monkeypatch, owed, live_content
+):
+    """The warm reset replaces the app's objects from the baseline and proves it: a fault the previous row left to it
+    (one that restore reverts) is no reason to fall back, and only the live content's comparison with the baseline is
+    skipped (the deployed source and stamp checks stay)."""
+    from benchmarks.sregym.fastloop.wipe import AttemptMarker, LaneInjectionState
+
+    class Reached(Exception):
+        pass
+
+    seen: list[bool] = []
+
+    def planned_application_unchanged(*_args, live_content=True):
+        seen.append(live_content)
+        raise Reached
+
+    LaneInjectionState(cluster.environment.kubeconfig, "app").finish(["some_problem"], {"some_problem": []})
+    cluster.lane._assert_idle = lambda: None  # type: ignore[method-assign]
+    cluster.lane.incoming_data_faults = ()
+    monkeypatch.setattr(warm_environment, "planned_application_unchanged", planned_application_unchanged)
+    marker = AttemptMarker(cluster.environment.run_dir)
+    marker.begin()
+    marker.end((), **owed)
+    with pytest.raises(Reached):
+        cluster.lane.inspect()
+    assert seen == [live_content]
+
+
 def _commit(repo: Path, message: str) -> str:
     import subprocess
 

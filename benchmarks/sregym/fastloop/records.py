@@ -297,6 +297,9 @@ class IncidentRecord(_PersistedModel):
     #: The row recovered its fault and left the proof of the restored baseline (``recovery_oracle``, then ``None``) to
     #: the lane's next start, which proves it before injecting; the lane's attempt marker says so until then.
     baseline_proof_deferred: bool = False
+    #: The row ended at its verified closure with its (mitigated) fault left for the lane's next start, whose
+    #: application restore reverts it (``LoopConfig.fault_recovery_at_next_start``); the attempt marker owes it.
+    fault_recovery_deferred: bool = False
     diagnosis_grade: DiagnosisGrade | None = None
     diagnosis: str = ""
     mitigation: str = ""

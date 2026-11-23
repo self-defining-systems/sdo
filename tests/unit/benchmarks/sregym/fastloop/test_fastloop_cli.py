@@ -996,3 +996,29 @@ def test_only_a_row_whose_next_start_reads_its_marker_leaves_the_baseline_proof_
 
     args = argparse.Namespace(**{"cleanup_passes": 1, **flags})
     assert cli.baseline_proof_at_next_start(args, marked=marked, row_start_tier2=deferred_tier2) is expected
+
+
+@pytest.mark.parametrize(
+    ("reused_warm", "baseline_proof", "expected"),
+    [
+        (True, True, frozenset({"reverted"})),
+        # A next start that is not warm would recreate the app (a Tier-2) to revert it: the row recovers itself.
+        (False, True, frozenset()),
+        (True, False, frozenset()),
+    ],
+)
+def test_only_a_warm_row_leaves_to_the_next_start_the_faults_its_restore_reverts(
+    reused_warm: bool, baseline_proof: bool, expected: frozenset[str]
+) -> None:
+    from types import SimpleNamespace
+
+    from benchmarks.sregym.fastloop import cli
+
+    descriptions = {
+        "reverted": SimpleNamespace(restore_reverts_faults=True),
+        "kept": SimpleNamespace(restore_reverts_faults=False),
+    }
+    assert (
+        cli.fault_recovery_at_next_start(descriptions, reused_warm=reused_warm, baseline_proof=baseline_proof)
+        == expected
+    )

@@ -213,6 +213,11 @@ class LoopConfig:
     #: to the lane's next start, which proves it before it injects (the warm reset, or a fresh no-fault rehearsal). Rows
     #: followed by another incident of this run still prove it here, before that injection.
     baseline_proof_at_next_start: bool = False
+    #: Problems whose faults the next start's application restore reverts exactly as their own recover would
+    #: (``ProblemDescription.restore_reverts_faults``). The run's last row of only such problems, once the oracle saw
+    #: the fault mitigated, ends at its closure: its recovery (and the intake pause it needs) is left to that restore,
+    #: which also proves the baseline, so it needs ``baseline_proof_at_next_start``.
+    fault_recovery_at_next_start: frozenset[str] = frozenset()
     #: Admission's stabilization rule: sample until the app passes, within this budget.
     recovery_settle_seconds: float = wait_for(WaitKind.ROLLOUT)
     recovery_settle_poll_seconds: float = wait_for(WaitKind.SAMPLE)
@@ -243,6 +248,10 @@ class LoopConfig:
             raise ValueError(
                 "baseline_proof_at_next_start requires one end-of-row cleanup pass and no row-start tier 2"
             )
+        if not isinstance(self.fault_recovery_at_next_start, frozenset):
+            raise TypeError("fault_recovery_at_next_start must be a frozenset of problem ids")
+        if self.fault_recovery_at_next_start and not self.baseline_proof_at_next_start:
+            raise ValueError("fault_recovery_at_next_start requires baseline_proof_at_next_start")
         if not isinstance(self.slot_offset, int) or self.slot_offset < 0:
             raise ValueError("slot_offset must be a non-negative integer")
         if not self.run_id:
@@ -745,7 +754,17 @@ def _run_one(
     # The lane's next start proves the restored baseline before it injects (``baseline_proof_at_next_start``): the
     # run's last row only recovers, so the same app is not proved twice between two incidents.
     baseline_proof_deferred = config.baseline_proof_at_next_start and index == config.slot_offset + config.incidents - 1
-    if windows and not config.row_start_tier2:
+    # A mitigated fault the next start's restore reverts is left to it: the row ends at its verified closure.
+    fault_recovery_deferred = (
+        bool(windows)
+        and baseline_proof_deferred
+        and set(problem_ids) <= config.fault_recovery_at_next_start
+        and infra_error is None
+        and outcome is not None
+        and oracle is not None
+        and oracle.success
+    )
+    if windows and not config.row_start_tier2 and not fault_recovery_deferred:
         try:
             recovery_seconds = 0.0
             for _ in range(config.cleanup_passes):
@@ -773,7 +792,7 @@ def _run_one(
 
     if outcome is not None and outcome.error:
         errors.append(outcome.error)
-    cleanup = getattr(driver, "last_cleanup", None) if windows else None
+    cleanup = getattr(driver, "last_cleanup", None) if windows and not fault_recovery_deferred else None
     delivery, reason = config.image_delivery, config.image_delivery_reason
     if config.delivery_record_path is not None and config.delivery_record_path.is_file():
         from benchmarks.sregym.fastloop.image_delivery import delivery_state
@@ -810,6 +829,7 @@ def _run_one(
         recovery_oracle=recovery_oracle,
         recovery_oracle_samples=recovery_oracle_samples,
         baseline_proof_deferred=bool(windows) and baseline_proof_deferred and recovery_error is None,
+        fault_recovery_deferred=fault_recovery_deferred,
         recovery_error=recovery_error,
         recovery_failures=recovery_failures,
         diagnosis_grade=diagnosis_grade,
@@ -825,6 +845,8 @@ def _run_one(
         cleanup_skipped_reason=(
             "row_start_tier2"
             if windows and config.row_start_tier2
+            else "fault_recovery_at_next_start"
+            if fault_recovery_deferred
             else cleanup.skipped_reason
             if cleanup is not None
             else None
@@ -833,6 +855,7 @@ def _run_one(
         confounds=getattr(driver, "last_confounds", []) if windows else [],
         full_cleanup_verified=(
             not config.row_start_tier2
+            and not fault_recovery_deferred
             and getattr(driver, "last_full_cleanup_verified", False)
             and recovery_error is None
         ),

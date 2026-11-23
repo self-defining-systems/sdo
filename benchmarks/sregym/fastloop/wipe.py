@@ -439,6 +439,18 @@ class AttemptMarker:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(f"{os.getpid()}\n", encoding="utf-8")
 
+    def owed_faults(self) -> tuple[str, ...]:
+        """The rows whose faults the marker says were left for the next start's restore (``fault-recovery-owed``)."""
+        try:
+            lines = self.path.read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            return ()
+        owed = next(
+            (line[len(FAULT_RECOVERY_OWED_PREFIX) :] for line in lines if line.startswith(FAULT_RECOVERY_OWED_PREFIX)),
+            "",
+        )
+        return tuple(row.strip() for row in owed.split(",") if row.strip())
+
     def end(
         self,
         unrecovered: Collection[str],

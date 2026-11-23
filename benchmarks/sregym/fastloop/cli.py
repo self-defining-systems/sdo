@@ -77,6 +77,7 @@ from benchmarks.sregym.fastloop.wipe import (
     Tier2Trigger,
     application_pod_problems,
     baseline_proof_owed,
+    fault_recovery_owed,
     run_tier2,
     unrecovered_rows,
 )
@@ -1087,6 +1088,22 @@ def baseline_proof_at_next_start(args: argparse.Namespace, *, marked: bool, row_
     )
 
 
+def fault_recovery_at_next_start(
+    descriptions: Mapping[str, Any], *, reused_warm: bool, baseline_proof: bool
+) -> frozenset[str]:
+    """Problems whose mitigated fault the run's last row leaves to the lane's next start instead of recovering it.
+
+    Only a row that reused its lane warm (so the next row of the lane is warm too, and its reset restores the app from
+    its baseline and proves it before injecting) defers, and only faults that restore reverts exactly as their own
+    recover would (``restore_reverts_faults``). Any other next start reads the marker's owed fault and recreates the
+    app (a Tier-2), so the cost moves there instead of disappearing.
+    """
+
+    if not (reused_warm and baseline_proof):
+        return frozenset()
+    return frozenset(problem for problem, item in descriptions.items() if item.restore_reverts_faults)
+
+
 def _warm_reset_args(args: argparse.Namespace, environment: FastloopEnvironment) -> argparse.Namespace:
     # A warm caller retains accepted knowledge by default. An explicitly
     # selected planned revision still owns the ordinary reset semantics.
@@ -1803,11 +1820,15 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
     deferred_tier2 = row_start_tier2(
         args, wiped_at_start=tier1 is not None, incidents=len(stream) if stream else args.incidents
     )
+    baseline_proof = baseline_proof_at_next_start(
+        args, marked=tier1 is not None or warm_preparation is not None, row_start_tier2=deferred_tier2
+    )
     config = LoopConfig(
         ablation_arm=arm_memory.arm if arm_memory else None,
         row_start_tier2=deferred_tier2,
-        baseline_proof_at_next_start=baseline_proof_at_next_start(
-            args, marked=tier1 is not None or warm_preparation is not None, row_start_tier2=deferred_tier2
+        baseline_proof_at_next_start=baseline_proof,
+        fault_recovery_at_next_start=fault_recovery_at_next_start(
+            descriptions, reused_warm=warm_preparation is not None, baseline_proof=baseline_proof
         ),
         delivery_record_path=environment.run_dir / "image_delivery.jsonl",
         image_delivery=environment.image_delivery,
@@ -1996,7 +2017,11 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
             except Exception:
                 logger.exception("evidence copy and gate after a failed run")
             raise
-    marker.end(unrecovered_rows(records), baseline_proof_owed=baseline_proof_owed(records))
+    marker.end(
+        unrecovered_rows(records),
+        baseline_proof_owed=baseline_proof_owed(records),
+        fault_recovery_owed=fault_recovery_owed(records),
+    )
     _print_summary(records)
     print(f"results: {config.results_path}")
     evidence_copied = _finish_evidence(args, environment, results_dir)
