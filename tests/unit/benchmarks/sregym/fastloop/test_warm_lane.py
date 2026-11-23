@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -10,6 +12,7 @@ from benchmarks.sregym.fastloop.baseline_recovery import ApplicationBaseline, re
 from benchmarks.sregym.fastloop.warm_lane import LaneIdentity, WarmLaneError, prepare_lane
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -62,15 +65,22 @@ class Lane:
     def pause(self) -> None:
         self.step("pause")
 
-    def reset_changed(self) -> None:
+    def reset_changed(self, restored: Callable[[], None] | None = None) -> None:
         self.step("reset")
         reconcile_application(self, self.baseline, "toy")
+        if restored is not None:
+            restored()
+        self.events.append("restored")
+        self.step("verify")
 
     def reidentify(self) -> LaneIdentity:
         return self.identity
 
-    def reseed(self) -> None:
+    def reseed(self, application_restored: Callable[[], None] | None = None) -> None:
         self.step("reseed")
+        if application_restored is not None:
+            application_restored()
+        self.step("install")
         if self.replaced_by_reseed:
             # The reseed replaces the controller process by design: the new identity is the one that must hold.
             self.identity = LaneIdentity("controller-2", "standby-2", REVISION)
@@ -97,15 +107,15 @@ def test_changed_only_reset_then_reseed_then_adopt_then_fresh_proof(tmp_path: Pa
     receipt = prepare_lane(lane, tmp_path / "warm.json", now=lambda: NOW)
     assert receipt.reused
     assert lane.writes == ["app"]
-    # The app is restored while the old controller is still paused, before the controller is replaced.
-    assert lane.events.index("reset") < lane.events.index("reseed") < lane.events.index("adopt")
-    assert lane.events.index("adopt") < lane.events.index("prove")
+    # The new controller is installed on the restored application; both branches end before adoption and the proof.
+    assert lane.events.index("restored") < lane.events.index("install") < lane.events.index("adopt")
+    assert lane.events.index("verify") < lane.events.index("adopt") < lane.events.index("prove")
     assert not lane.fallbacks
     # Real restoration producer -> real resource consumer, rather than a supplied clean flag.
     assert {obj["metadata"]["name"]: obj["spec"]["ports"][0]["port"] for obj in lane.objects} == {"app": 80, "peer": 80}
 
 
-@pytest.mark.parametrize("step", ["inspect", "pause", "reset", "reseed", "adopt", "prove"])
+@pytest.mark.parametrize("step", ["inspect", "pause", "reset", "verify", "reseed", "install", "adopt", "prove"])
 def test_each_uncertain_boundary_falls_back(tmp_path: Path, step: str) -> None:
     lane = Lane()
     lane.failed_at = step
@@ -115,7 +125,9 @@ def test_each_uncertain_boundary_falls_back(tmp_path: Path, step: str) -> None:
     assert lane.fallbacks == 1
 
 
-@pytest.mark.parametrize("step", ["pause", "reset", "adopt", "prove"])
+# A replacement during the restore is not listed: the reseed stops the controller concurrently with it, so the identity
+# is bound from the inspection to that stop (``pause``) and from the reseed on (``adopt``, ``prove``).
+@pytest.mark.parametrize("step", ["pause", "adopt", "prove"])
 def test_process_replacement_other_than_the_reseed_invalidates_transaction(tmp_path: Path, step: str) -> None:
     lane = Lane()
     lane.changed_at = step
@@ -161,7 +173,7 @@ def test_warm_option_is_explicit(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("field", ["accepted_revision", "standby_uid"])
-@pytest.mark.parametrize("step", ["pause", "reset", "adopt", "prove"])
+@pytest.mark.parametrize("step", ["pause", "adopt", "prove"])
 def test_every_identity_component_is_bound_throughout_transaction(tmp_path: Path, field: str, step: str) -> None:
     from dataclasses import replace
 
@@ -412,7 +424,9 @@ def test_the_reseed_replaces_the_controller_by_design_and_the_new_process_must_h
     assert not lane.fallbacks
 
 
-def test_the_baseline_boundary_precedes_the_reseed_so_the_new_controllers_evidence_postdates_it(tmp_path: Path) -> None:
+def test_the_baseline_boundary_follows_the_restore_and_precedes_the_install_so_the_new_controllers_evidence_postdates_it(
+    tmp_path: Path,
+) -> None:
     lane = Lane()
 
     def clock() -> datetime:
@@ -420,7 +434,88 @@ def test_the_baseline_boundary_precedes_the_reseed_so_the_new_controllers_eviden
         return NOW
 
     assert prepare_lane(lane, tmp_path / "warm.json", now=clock).reused
-    assert lane.events.index("boundary") < lane.events.index("reseed") < lane.events.index("prove")
+    assert lane.events.index("restored") < lane.events.index("boundary") < lane.events.index("install")
+    assert lane.events.index("install") < lane.events.index("prove")
+
+
+class OverlapLane(Lane):
+    """The restore cannot finish its writes until the old controller is stopped: only an overlapped transaction
+    completes (a serial one, restore then reseed, waits out ``WAIT`` and fails)."""
+
+    WAIT = 3.0
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.stopped = threading.Event()
+        self.reseed_failure = False
+
+    def reset_changed(self, restored: Callable[[], None] | None = None) -> None:
+        self.step("reset")
+        if not self.stopped.wait(self.WAIT):
+            raise RuntimeError("the restore ran alone: the reseed did not run beside it")
+        if self.reseed_failure:
+            time.sleep(0.2)  # the reseed's failure is recorded before the restore reaches its restored signal
+        super().reset_changed(restored)
+
+    def reseed(self, application_restored: Callable[[], None] | None = None) -> None:
+        try:
+            self.step("stop")
+        finally:
+            self.stopped.set()
+        super().reseed(application_restored)
+
+
+def test_the_restore_and_the_reseed_overlap_and_the_controller_installs_only_on_the_restored_application(
+    tmp_path: Path,
+) -> None:
+    lane = OverlapLane()
+    receipt = prepare_lane(lane, tmp_path / "warm.json", now=lambda: NOW)
+    assert receipt.reused, (receipt.fallback_reason, receipt.detail)
+    events = lane.events
+    assert events.index("stop") < events.index("restored") < events.index("install")
+    assert events.index("verify") < events.index("adopt")
+    # Each branch and the wall of both are timed in the receipt (warm-transaction.json).
+    assert {
+        "reset",
+        "reset.restore",
+        "reset.verify",
+        "pre_reseed_identity",
+        "reseed",
+        "reseed.await_application",
+        "reset_and_reseed",
+    } <= set(receipt.phase_seconds)
+
+
+def test_a_failed_restore_never_installs_the_controller_and_falls_back_after_both_branches_stop(tmp_path: Path) -> None:
+    lane = OverlapLane()
+    lane.failed_at = "reset"
+    receipt = prepare_lane(lane, tmp_path / "warm.json", now=lambda: NOW)
+    assert not receipt.reused
+    assert receipt.fallback_reason == "reset:RuntimeError"
+    assert "install" not in lane.events
+    assert lane.events[-1] == "full_reset"
+    assert lane.fallbacks == 1
+
+
+def test_a_failed_reseed_stops_the_restore_before_its_verification_and_names_the_reseed(tmp_path: Path) -> None:
+    lane = OverlapLane()
+    lane.reseed_failure = True
+    lane.failed_at = "stop"
+    receipt = prepare_lane(lane, tmp_path / "warm.json", now=lambda: NOW)
+    assert not receipt.reused
+    assert receipt.fallback_reason == "reseed:RuntimeError"
+    assert "verify" not in lane.events and "install" not in lane.events
+    assert lane.events[-1] == "full_reset"
+
+
+def test_a_reseed_that_does_not_wait_for_the_restored_application_is_refused(tmp_path: Path) -> None:
+    class Impatient(Lane):
+        def reseed(self, application_restored: Callable[[], None] | None = None) -> None:
+            super().reseed(None)
+
+    receipt = prepare_lane(Impatient(), tmp_path / "warm.json", now=lambda: NOW)
+    assert not receipt.reused
+    assert receipt.fallback_reason == "reseed:ValueError"
 
 
 def test_a_refusal_the_warm_lane_made_keeps_its_own_text_truncated(tmp_path: Path) -> None:

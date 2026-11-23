@@ -32,6 +32,7 @@ from benchmarks.sregym.fastloop.warm_environment import _session_state
 from benchmarks.sregym.fastloop.warm_lane import LaneIdentity, prepare_lane
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 BASE = "a" * 40
@@ -163,10 +164,12 @@ class Lane:
     def pause(self) -> None:
         self.sim.host_head = self.planned  # the host copy at the row's planned memory, before the app is restored
 
-    def reset_changed(self) -> None:
+    def reset_changed(self, restored: Callable[[], None] | None = None) -> None:
         self.sim.app = "baseline"
+        if restored is not None:
+            restored()
 
-    def reseed(self) -> None:
+    def reseed(self, application_restored: Callable[[], None] | None = None) -> None:
         if self.sim.skip_reseed:
             return
         sim = self.sim
@@ -181,6 +184,8 @@ class Lane:
             sim.controller_running = False
 
         def install() -> None:
+            # The new controller onboards and judges the application it finds: the row's restored one.
+            assert sim.app == "baseline", "the controller was installed before the application was restored"
             sim.volume_head = sim.host_head  # Go install-existing seeds the volume from the host copy
             sim.start_controller()
 
@@ -192,6 +197,7 @@ class Lane:
                 stop_controller=stop,
                 retire_control_state=retire,
                 fresh_observability=lambda: setattr(sim, "observability_generation", sim.observability_generation + 1),
+                await_application=application_restored or noop,
                 install_controller=install,
                 wait_started=noop,
                 record_controller=noop,

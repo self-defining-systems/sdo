@@ -25,6 +25,7 @@ def steps(events: list[str], fail: str = "") -> ReseedSteps:
         stop_controller=step("stop_controller"),
         retire_control_state=step("retire_control_state"),
         fresh_observability=step("fresh_observability"),
+        await_application=step("await_application"),
         install_controller=step("install_controller"),
         wait_started=step("wait_started"),
         record_controller=step("record_controller"),
@@ -42,6 +43,7 @@ def test_the_swap_runs_in_order_and_times_every_phase():
         f"stop_controller({HEAD})",
         "retire_control_state",
         "fresh_observability",
+        "await_application",
         "install_controller",
         "wait_started",
         "record_controller",
@@ -57,6 +59,8 @@ def test_evidence_is_delivered_and_the_controller_stopped_before_any_state_chang
     first_change = events.index("retire_control_state")
     assert events.index("settle_evidence") < events.index(f"stop_controller({HEAD})") < first_change
     assert first_change < events.index("fresh_observability") < events.index("install_controller")
+    # The new controller is installed only on the restored application.
+    assert events.index("await_application") < events.index("install_controller")
     assert events.index("install_controller") < events.index("wait_started") < events.index("record_controller")
 
 
