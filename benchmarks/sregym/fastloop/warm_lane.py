@@ -219,6 +219,10 @@ def _restore_and_reseed(
                 failures.append((phase, exc))
             failed.set()
             restored.set()  # a reseed waiting for the application stops waiting
+        # A lane may observe the failure (its other branch stops at its next safe point).
+        observe = getattr(lane, "branch_failed", None)
+        if callable(observe):
+            observe(phase)
 
     def mark_restored() -> None:
         with lock:

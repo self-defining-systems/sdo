@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -447,14 +446,18 @@ class OverlapLane(Lane):
     def __init__(self) -> None:
         super().__init__()
         self.stopped = threading.Event()
+        self.failure_recorded = threading.Event()
         self.reseed_failure = False
+
+    def branch_failed(self, phase: str) -> None:
+        self.failure_recorded.set()
 
     def reset_changed(self, restored: Callable[[], None] | None = None) -> None:
         self.step("reset")
         if not self.stopped.wait(self.WAIT):
             raise RuntimeError("the restore ran alone: the reseed did not run beside it")
-        if self.reseed_failure:
-            time.sleep(0.2)  # the reseed's failure is recorded before the restore reaches its restored signal
+        if self.reseed_failure and not self.failure_recorded.wait(self.WAIT):
+            raise RuntimeError("the reseed's failure was never recorded")
         super().reset_changed(restored)
 
     def reseed(self, application_restored: Callable[[], None] | None = None) -> None:
