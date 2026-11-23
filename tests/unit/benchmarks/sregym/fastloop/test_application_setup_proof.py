@@ -326,3 +326,34 @@ def test_collector_needs_no_sdo_install_and_reads_only_bounded_gets(tmp_path):
     measured = proof.collect_application_fingerprint(environment, run=run)
     assert set(measured.live_objects) == {"app/Service/web", "<cluster>/Node/node"}
     assert all(0 < kwargs["timeout"] <= 15 for _, kwargs in calls)
+
+
+@pytest.mark.parametrize(
+    ("running_uid", "repaired", "proved_again"),
+    [("warm-uid", False, False), ("other-uid", False, True), ("warm-uid", True, True), (None, False, True)],
+)
+def test_the_injection_gate_stands_on_the_warm_proof_of_the_same_unchanged_controller(
+    running_uid, repaired, proved_again
+):
+    """Recorded on EKS (fast-loop fl2 q2): the injection gate re-proved the controller ~25 s after the warm transaction
+    proved it, with no pause or change in between (~16 s). The warm proof is accepted only while the proven controller
+    still runs and no rehearsal repaired the app; the application setup is still sealed."""
+    from benchmarks.sregym.fastloop.admission import CarriedProof, EvalAdmissionOps
+
+    order = []
+    inner = SimpleNamespace(
+        set_maintenance=lambda *args, **kwargs: None,
+        inject_after_resume=lambda control, generation, inject: order.append("inject") or {},
+        controller_pod=lambda control: SimpleNamespace(uid=running_uid) if running_uid else None,
+    )
+    admission = SimpleNamespace(prove=lambda control, fresh=False: order.append("prove") or dict(ADMISSION))
+    ops = EvalAdmissionOps(
+        inner,
+        admission,
+        on_proven=lambda result: order.append("seal"),
+        carried=CarriedProof("warm-uid", unchanged=lambda: not repaired),
+    )
+    ops.inject_after_resume("app-sdo", "g", lambda: None)
+    assert order == (["prove", "seal", "inject"] if proved_again else ["seal", "inject"])
+    ops.inject_after_resume("app-sdo", "g2", lambda: None)  # a later injection always proves
+    assert order[-3:] == ["prove", "seal", "inject"]

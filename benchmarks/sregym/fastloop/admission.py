@@ -624,6 +624,18 @@ class LaneAdmission:
         return proof
 
 
+@dataclass
+class CarriedProof:
+    """The warm transaction's admission proof of this row's controller, offered to the row's first injection gate.
+
+    The gate accepts it instead of proving again when the controller pod is still the one the warm transaction proved
+    (``controller_uid``) and nothing changed the application since (``unchanged``: no rehearsal repair). It is used at
+    most once."""
+
+    controller_uid: str
+    unchanged: Callable[[], bool]
+
+
 class EvalAdmissionOps:
     """Prove health while ACTIVE, before either ordinary or simultaneous injection."""
 
@@ -634,9 +646,20 @@ class EvalAdmissionOps:
         *,
         fresh: bool = False,
         on_proven: Callable[[dict[str, Any]], object] | None = None,
+        carried: CarriedProof | None = None,
     ) -> None:
         self._inner, self.admission, self._fresh = inner, admission, fresh
         self._on_proven = on_proven
+        self.carried = carried
+
+    def _carried_proof(self, control_namespace: str) -> dict[str, Any] | None:
+        carried, self.carried = self.carried, None
+        if carried is None or self._fresh:
+            return None
+        pod = self._inner.controller_pod(control_namespace)
+        if pod is None or pod.uid != carried.controller_uid or not carried.unchanged():
+            return None
+        return {"passed": True, "carried_from": "warm-transaction prove", "controller_uid": carried.controller_uid}
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
@@ -646,7 +669,9 @@ class EvalAdmissionOps:
     ) -> dict[str, float]:
         started = time.monotonic()
         self._inner.set_maintenance(control_namespace, paused=False, generation=generation + "-proof")
-        proof = self.admission.prove(control_namespace, fresh=self._fresh)
+        # The warm transaction proved this controller moments ago and nothing has changed the app since: that proof
+        # stands (a second one re-read the same state, ~16 s).
+        proof = self._carried_proof(control_namespace) or self.admission.prove(control_namespace, fresh=self._fresh)
         self._fresh = False
         if self._on_proven is not None:
             # The proven, still fault-free lane seals what its next row may reuse. A failed seal only costs that
