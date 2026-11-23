@@ -65,3 +65,56 @@ def test_the_slice_memory_max_bounds_the_lanes_when_no_budget_is_configured(monk
         live.assert_slice_budget("sdo-eval.slice", _plan(lane_memory_cap_gib=40))
     live.assert_slice_budget("sdo-eval.slice", _plan(lane_budget_gib=500, lane_memory_cap_gib=40))  # configured wins
     live.assert_slice_budget(None, _plan(lane_memory_cap_gib=400))  # no slice: unchecked
+    # An EKS lane's nodes are in its cluster: only the kind lanes count against this host's slice.
+    live.assert_slice_budget("sdo-eval.slice", _plan(lane_memory_cap_gib=40), {"h1": "eks", "h2": "eks"})
+    with pytest.raises(ValueError, match="exceed sdo-eval.slice MemoryMax 100 GiB"):
+        live.assert_slice_budget("sdo-eval.slice", _plan(lane_memory_cap_gib=60), {"h1": "eks"})
+
+
+def _proc(tmp_path: Path, *, available_gib: float, host_avg60: float, own_avg60: float) -> dict[str, Path]:
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text(f"MemAvailable: {int(available_gib * 1024**2)} kB\n")
+    files = {"meminfo": meminfo}
+    for name, avg60 in (("host", host_avg60), ("own", own_avg60)):
+        files[name] = tmp_path / f"{name}.pressure"
+        files[name].write_text(f"some avg10=0.00 avg60={avg60:.2f} avg300=0.00 total=1\n")
+    return files
+
+
+def test_an_eks_only_plan_gates_on_the_runners_own_cgroup_and_reserves_no_lane_cap(tmp_path: Path) -> None:
+    """A foreign tenant stalling the host (host PSI 91) and 40 GiB free do not hold a row whose lane is a cluster."""
+    from benchmarks.sregym.eval import live
+
+    proc = _proc(tmp_path, available_gib=40, host_avg60=91, own_avg60=0)
+    eks = {"h1": "eks", "h2": "eks", "v1": "eks"}
+    check = live.admission_check(
+        _plan(), eks, meminfo=proc["meminfo"], host_pressure=proc["host"], own_pressure=lambda: proc["own"]
+    )
+    assert check() is None
+    proc["own"].write_text("some avg10=0.00 avg60=50.00 avg300=0.00 total=1\n")  # our own processes stall: refuse
+    assert "avg60=50.00" in (check() or "")
+
+
+def test_any_kind_lane_keeps_the_host_wide_gate(tmp_path: Path) -> None:
+    from benchmarks.sregym.eval import live
+
+    proc = _proc(tmp_path, available_gib=200, host_avg60=91, own_avg60=0)
+    mixed = {"h1": "eks", "h2": "kind", "v1": "eks"}
+    check = live.admission_check(
+        _plan(), mixed, meminfo=proc["meminfo"], host_pressure=proc["host"], own_pressure=lambda: proc["own"]
+    )
+    assert "avg60=91.00" in (check() or "")
+    proc["host"].write_text("some avg10=0.00 avg60=0.00 avg300=0.00 total=1\n")
+    proc["meminfo"].write_text(f"MemAvailable: {40 * 1024**2} kB\n")  # 40 GiB < 32 GiB kind lane cap + 32 GiB reserve
+    assert "lane cap" in (check() or "")
+
+
+def test_lane_platforms_read_each_lane_environment_and_an_unreadable_one_is_kind(tmp_path: Path) -> None:
+    from benchmarks.sregym.eval import live
+
+    (tmp_path / "e").mkdir()
+    (tmp_path / "e" / "fastloop.json").write_text('{"platform": "eks"}')
+    (tmp_path / "k").mkdir()
+    (tmp_path / "k" / "fastloop.json").write_text("{}")
+    lanes = {"h1": tmp_path / "e", "h2": tmp_path / "k", "v1": tmp_path / "missing"}
+    assert live.lane_platforms(lanes) == {"h1": "eks", "h2": "kind", "v1": "kind"}

@@ -65,6 +65,7 @@ if TYPE_CHECKING:
         host_memory_refusal,
         inspect_listed,
         memory_pressure_avg60,
+        own_memory_pressure_file,
         parse_memory_size,
         running_lane_caps,
     )
@@ -181,6 +182,7 @@ _EXPORTS: dict[str, str] = {
     "host_env": "host_memory",
     "host_memory_refusal": "host_memory",
     "memory_pressure_avg60": "host_memory",
+    "own_memory_pressure_file": "host_memory",
     "parse_memory_size": "host_memory",
     "running_lane_caps": "host_memory",
     "inspect_listed": "host_memory",
@@ -333,6 +335,7 @@ __all__ = [
     "host_env",
     "host_memory_refusal",
     "memory_pressure_avg60",
+    "own_memory_pressure_file",
     "parse_memory_size",
     "running_lane_caps",
     "inspect_listed",

@@ -30,6 +30,8 @@ _GIB = 1024**3
 _SIZE = re.compile(r"([1-9][0-9]*)([bkmgBKMG]?)")
 _UNITS = {"": 1, "b": 1, "k": 1024, "m": 1024**2, "g": 1024**3}
 PRESSURE_FILE = Path("/proc/pressure/memory")
+CGROUP_FILE = Path("/proc/self/cgroup")
+CGROUP_ROOT = Path("/sys/fs/cgroup")
 MEMINFO_FILE = Path("/proc/meminfo")
 KIND_CLUSTER_LABEL = "io.x-k8s.kind.cluster"
 HOST_ENV_FILE = "~/.config/sdo/host.env"
@@ -112,6 +114,23 @@ def memory_pressure_avg60(path: Path = PRESSURE_FILE) -> float:
     except (OSError, ValueError, KeyError) as exc:
         raise ValueError(f"eval: host memory pressure (PSI) unavailable at {path}") from exc
     raise ValueError(f"eval: host memory pressure (PSI) unavailable at {path}: no 'some avg60' line")
+
+
+def own_memory_pressure_file(cgroup_file: Path = CGROUP_FILE, root: Path = CGROUP_ROOT) -> Path:
+    """The memory PSI file of this process's cgroup (v2): the stalls of the runner and of every child it starts.
+
+    A row on a remote lane (EKS) puts only the runner and the agent CLI on this host, so their own cgroup, not the
+    whole host, says whether a row started now would stall. Without a cgroup v2 entry the pressure is unknown and the
+    caller refuses.
+    """
+    try:
+        lines = cgroup_file.read_text().splitlines()
+    except OSError as exc:
+        raise ValueError(f"eval: no cgroup v2 entry readable at {cgroup_file}") from exc
+    for line in lines:
+        if line.startswith("0::"):
+            return root / line.removeprefix("0::").lstrip("/") / "memory.pressure"
+    raise ValueError(f"eval: no cgroup v2 entry in {cgroup_file}; this process's memory pressure is unknown")
 
 
 def host_memory_refusal(
