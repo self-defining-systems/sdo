@@ -14,7 +14,8 @@ import (
 )
 
 // LB13: a build that failed in `app up` said only "app up: exit 1". Every failed command now records its exit code and
-// the end of its output (at most 40 lines) in the step result, the timeline and the lane reason.
+// the end of its output (at most 40 lines) in the step result and the timeline, and the lane reason carries the last
+// reasonLines of it, so a status line that shows the head of the reason shows the cause, not a preamble.
 func TestFailedBuildCarriesExitCodeAndOutputTail(t *testing.T) {
 	l := newLab(t)
 	l.set("app-up-fails", "1")
@@ -22,13 +23,13 @@ func TestFailedBuildCarriesExitCodeAndOutputTail(t *testing.T) {
 	l.until("the lane is down", func() bool { return l.lane().State == LaneDown })
 
 	reason := l.lane().Reason
-	for _, want := range []string{"app up", "exit 1", "app up line 50", "app up line 11"} {
+	for _, want := range []string{"app up", "exit 1", "app up line 50", "app up line 48"} {
 		if !strings.Contains(reason, want) {
 			t.Errorf("lane reason lacks %q: %q", want, reason)
 		}
 	}
-	if strings.Contains(reason, "app up line 10 ") || strings.Contains(reason, "app up line 10|") {
-		t.Errorf("lane reason carries more than the last 40 lines: %q", reason)
+	if strings.Contains(reason, "app up line 47") {
+		t.Errorf("lane reason carries more than the last %d lines: %q", reasonLines, reason)
 	}
 
 	tl, _ := os.ReadFile(l.root.TimelinePath("c1"))
@@ -54,7 +55,7 @@ func TestFailCallFillsTheStepResult(t *testing.T) {
 	if n := strings.Count(r.res.Tail, "\n") + 1; n != 40 || !strings.HasSuffix(r.res.Tail, "out 100") {
 		t.Fatalf("tail has %d lines: %q", n, r.res.Tail)
 	}
-	if !strings.HasPrefix(r.res.Reason, "app up: exit 1: out 61 | ") || !strings.HasSuffix(r.res.Reason, "out 100") {
+	if r.res.Reason != "app up: exit 1: out 98 | out 99 | out 100" {
 		t.Fatalf("reason %q", r.res.Reason)
 	}
 }
@@ -101,5 +102,22 @@ func TestFailedShellCommandReportsExitAndOutput(t *testing.T) {
 	tl, _ := os.ReadFile(filepath.Join(r.dir, "timeline.jsonl"))
 	if !strings.Contains(string(tl), "kubectl not found") {
 		t.Fatalf("timeline %s", tl)
+	}
+}
+
+// A failed command that prints a long preamble before its error (git's detached-HEAD advice, then a traceback) must
+// put the error where a one-line status shows it: first.
+func TestFailedCallReasonLeadsWithTheCauseNotThePreamble(t *testing.T) {
+	out := "Note: switching to 'a58b'.\nYou are in 'detached HEAD' state. You can look around, make experimental\nchanges and commit them.\n" +
+		strings.Repeat("hint: advice\n", 20) +
+		"Traceback (most recent call last):\nValueError: eval: host redeploy capacity is 8, requested 18; configure lanes consistently\n"
+	reason := (&stepRunner{dir: t.TempDir(), log: io.Discard})
+	reason.failCall("app up", 1, tailText(out), nil)
+	head := reason.res.Reason
+	if len(head) > 300 {
+		head = head[:300]
+	}
+	if !strings.Contains(head, "host redeploy capacity is 8, requested 18") || strings.Contains(head, "detached HEAD") {
+		t.Errorf("the first 300 characters of the reason are not the cause: %q", head)
 	}
 }

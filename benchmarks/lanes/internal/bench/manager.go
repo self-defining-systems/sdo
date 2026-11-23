@@ -1255,7 +1255,7 @@ func (m *Manager) freeLaneOn(h string, placed bool, s Spec) *LaneFile {
 	var best *LaneFile
 	bestRank := 0
 	for _, l := range m.sortedLanes() {
-		if l.Host == h && m.inv.LaneAccepts(h, l.Lane, s) && l.State == LaneFree && l.Step == nil && !awaitsRelease(l) && !(placed && (l.Unplaced || l.Gone)) && m.eksLaneAdmitted(l, s) {
+		if l.Host == h && m.inv.LaneAccepts(h, l.Lane, s) && l.State == LaneFree && l.Step == nil && !awaitsRelease(l) && !(placed && (l.Unplaced || l.Gone)) && m.laneGate(l.Lane) == "" && m.eksLaneAdmitted(l, s) {
 			if rank := m.laneRank(l, s); best == nil || rank < bestRank {
 				best, bestRank = l, rank
 			}

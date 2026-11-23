@@ -655,6 +655,9 @@ func (m *Manager) observeEksLanes(ctx context.Context, reachable map[string]bool
 	var wg sync.WaitGroup
 	for _, l := range m.sortedLanes() {
 		h := m.inv.Hosts[l.Host]
+		if h.IsEks() && l.Gone {
+			delete(m.eksWhy, l.Lane) // no cluster to be unhealthy: an earlier reading must not gate the build that makes it
+		}
 		if !h.IsEks() || !reachable[l.Host] || l.Gone || l.Step != nil {
 			continue
 		}
