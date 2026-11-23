@@ -437,3 +437,17 @@ func TestEksVclusterLaneUpGrowsTheSystemNodesWithTheLaneCountAndNeverShrinksThem
 		t.Errorf("a repeated up scaled the system nodes: %v\n%s", err, out)
 	}
 }
+
+// `host adopt` (host-up on an existing host) scaled the system nodes down to one while lanes of a bigger host ran their
+// control planes on them: a lane built during the adopt lost its API server with the node that was terminated.
+func TestEksVclusterHostUpOnAnExistingHostNeverLowersTheSystemNodes(t *testing.T) {
+	s := newVcScript(t)
+	s.hostUp(t)
+	must(t, os.WriteFile(filepath.Join(s.state, "desired"), []byte("2\n"), 0o644))
+	if out, err := s.run(nil, "host-up"); err != nil || !strings.Contains(out, "created=0") {
+		t.Fatalf("second host-up: %v\n%s", err, out)
+	}
+	if strings.Contains(s.log(), "scale nodegroup --cluster lanes-host-v --name system --nodes 1") {
+		t.Errorf("an attach lowered the system nodes from 2 to 1:\n%s", s.log())
+	}
+}
