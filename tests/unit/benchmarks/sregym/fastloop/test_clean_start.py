@@ -283,3 +283,38 @@ def test_cleanup_preserves_unlabelled_application_rbac_and_control_objects(monke
     monkeypatch.setattr(clean_start, "kubectl", api)
     clean_start.remove_injected_objects(Path("synthetic-kubeconfig"))
     assert api.objects == accepted
+
+
+def test_the_cluster_wide_label_reads_of_one_check_run_together(monkeypatch: Any) -> None:
+    """Every assertion lists the cluster in both scopes: a serial walk of a dozen kubectl round trips cost seconds."""
+    import threading
+
+    api = API()
+    api.objects.clear()
+    both_discoveries = threading.Barrier(2, timeout=5)
+
+    def concurrent(args: list[str], **kwargs: Any) -> Any:
+        if args[0] == "api-resources":
+            both_discoveries.wait()
+        return api(args, **kwargs)
+
+    monkeypatch.setattr(clean_start, "kubectl", concurrent)
+    clean_start.assert_clean_baseline(Path("synthetic-kubeconfig"), namespace="hotel-reservation")
+
+
+def test_the_namespace_reads_do_not_wait_for_the_cluster_listing(monkeypatch: Any) -> None:
+    import threading
+
+    api = API()
+    api.objects.clear()
+    overlap = threading.Barrier(2, timeout=5)
+
+    def concurrent(args: list[str], **kwargs: Any) -> Any:
+        if args[0] == "api-resources" and "--namespaced=true" in args:
+            overlap.wait()
+        if args[:2] == ["get", "pods,jobs,configmaps"]:
+            overlap.wait()
+        return api(args, **kwargs)
+
+    monkeypatch.setattr(clean_start, "kubectl", concurrent)
+    clean_start.assert_clean_baseline(Path("synthetic-kubeconfig"), namespace="hotel-reservation")
