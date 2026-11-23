@@ -152,7 +152,8 @@ func (h HeadDeployer) deploy(ctx context.Context, cfg RepairConfig, commit strin
 	// is applied, so the verdict after the rollout reads them instead of waiting for them.
 	var session CandidateSession
 	applyCtx := ctx
-	if sv, ok := h.Deployer.Verifier.(SessionVerifier); ok {
+	// A session needs the clock: a verdict only counts evaluations judged after the rollout.
+	if sv, ok := h.Deployer.Verifier.(SessionVerifier); ok && h.Deployer.Now != nil {
 		begun, err := sv.BeginCandidate(ctx, path, commit, cfg.Namespace, cfg.HealthObjective)
 		if err != nil && !errors.Is(err, ErrNoSession) {
 			return HeadResult{}, err
@@ -186,7 +187,7 @@ func (h HeadDeployer) deploy(ctx context.Context, cfg RepairConfig, commit strin
 	if !completeDeploymentReceipt(receipt) || !rendered.SameDeploymentSource(receipt.Source, accepted.Plan.GetSource()) {
 		return held(HoldRollout, "deployment returned incomplete evidence or another source"), nil
 	}
-	readyAt := time.Now()
+	var readyAt time.Time
 	if h.Deployer.Now != nil {
 		readyAt = h.Deployer.Now()
 	}

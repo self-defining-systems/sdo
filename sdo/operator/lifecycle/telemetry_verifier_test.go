@@ -104,7 +104,7 @@ func TestTelemetrySessionAppliesBackendsBeforeTheInnerSessionObserves(t *testing
 	if err := session.Applied(context.Background(), rendered.ReceiptPins{}); err != nil {
 		t.Fatal(err)
 	}
-	verdict, err := session.Verdict(context.Background(), DeploymentReceipt{}, time.Now())
+	verdict, err := session.Verdict(context.Background(), DeploymentReceipt{}, time.Unix(1, 0))
 	session.Close()
 	want := []string{"apply /checkout", "inner applied", "inner verdict", "inner closed"}
 	if err != nil || verdict.Outcome != VerificationClear || !slices.Equal(log, want) {
@@ -118,7 +118,7 @@ func TestTelemetrySessionTurnsATypedDenialIntoAPendingVerdict(t *testing.T) {
 	v := TelemetryAppliedVerifier{Apply: applierFunc(func(string) (telemetryapply.Applied, error) { return telemetryapply.Applied{}, denial }), Next: &sessionSpy{log: &log}}
 	session, _ := v.BeginCandidate(context.Background(), "/checkout", "c", "ns", "obj")
 	_ = session.Applied(context.Background(), rendered.ReceiptPins{})
-	verdict, err := session.Verdict(context.Background(), DeploymentReceipt{}, time.Now())
+	verdict, err := session.Verdict(context.Background(), DeploymentReceipt{}, time.Unix(1, 0))
 	if err != nil || verdict.Outcome != VerificationPending || !strings.Contains(verdict.Summary, "backends.yaml") || slices.Contains(log, "inner applied") {
 		t.Fatalf("verdict %v err %v log %q", verdict, err, log)
 	}
@@ -130,7 +130,7 @@ func TestTelemetrySessionWithoutAnAppliedCallVerifiesCold(t *testing.T) {
 	next := &sessionSpy{log: &log}
 	v := TelemetryAppliedVerifier{Apply: applierFunc(func(string) (telemetryapply.Applied, error) { return telemetryapply.Applied{}, nil }), Next: next}
 	session, _ := v.BeginCandidate(context.Background(), "/checkout", "c", "ns", "obj")
-	verdict, err := session.Verdict(context.Background(), DeploymentReceipt{}, time.Now())
+	verdict, err := session.Verdict(context.Background(), DeploymentReceipt{}, time.Unix(1, 0))
 	if err != nil || verdict.Outcome != VerificationClear || next.calls != 1 {
 		t.Fatalf("verdict %v err %v cold verifications %d", verdict, err, next.calls)
 	}
