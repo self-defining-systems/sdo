@@ -452,7 +452,7 @@ def test_the_warm_restore_replaces_the_apps_trace_stores_before_restoring_and_be
     events: list[str] = []
     cluster.environment.baseline_path = cluster.environment.run_dir / "baseline.json"
     monkeypatch.setattr(
-        app_observability, "restart_in_memory_trace_stores", lambda kube, namespaces: events.append("restart")
+        app_observability, "restart_in_memory_trace_stores", lambda kube, namespaces, **kw: events.append("restart")
     )
     monkeypatch.setattr(baseline_recovery, "KubectlApplicationCluster", lambda kube: None)
     monkeypatch.setattr(

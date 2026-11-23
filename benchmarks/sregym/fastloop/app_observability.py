@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from benchmarks.sregym.adapter import WaitKind, is_in_memory_trace_store, kubectl, wait_for
@@ -24,8 +25,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def restart_in_memory_trace_stores(kubeconfig: Path, namespaces: Iterable[str]) -> list[str]:
-    """Delete the pods of every in-memory trace store of the app namespaces (their controllers recreate them empty).
+#: A warm start replaces only a trace store older than this. The row's end replaces it (without waiting), so a lane
+#: whose next row follows finds a young store that has been Ready for longer than the baseline check's sustained-health
+#: window, instead of a fresh pod that makes that check wait the whole window; a store left growing on an idle lane
+#: (about 70 MB/min against a 2 GiB budget) is older and still replaced.
+TRACE_STORE_MAX_AGE_SECONDS = 10 * wait_for(WaitKind.MINUTE)
+
+
+def restart_in_memory_trace_stores(
+    kubeconfig: Path,
+    namespaces: Iterable[str],
+    *,
+    older_than: float | None = None,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    reason: str = "row start",
+) -> list[str]:
+    """Delete the pods of every in-memory trace store of the app namespaces (their controllers recreate them empty);
+    with ``older_than``, only the pods created more than that many seconds ago.
 
     Returns the ``namespace/pod`` names. It does not wait: the row's own readiness waits (the restore's health loop, the
     setup's healthy-pods wait) cover the replacement, which overlaps the work that follows.
@@ -41,6 +57,11 @@ def restart_in_memory_trace_stores(kubeconfig: Path, namespaces: Iterable[str]) 
                 is_in_memory_trace_store(str(container.get("image", ""))) for container in spec.get("containers", [])
             ):
                 continue
+            if older_than is not None:
+                created = metadata.get("creationTimestamp")
+                born = datetime.fromisoformat(str(created).replace("Z", "+00:00")) if created else None
+                if born is not None and (now() - born).total_seconds() <= older_than:
+                    continue
             kubectl(
                 ["delete", "pod", metadata["name"], "--ignore-not-found=true", "--wait=false"],
                 namespace=namespace,
@@ -48,7 +69,7 @@ def restart_in_memory_trace_stores(kubeconfig: Path, namespaces: Iterable[str]) 
             )
             restarted.append(f"{namespace}/{metadata['name']}")
     if restarted:
-        logger.info("row start: replaced in-memory trace stores %s", ", ".join(restarted))
+        logger.info("%s: replaced in-memory trace stores %s", reason, ", ".join(restarted))
     return restarted
 
 

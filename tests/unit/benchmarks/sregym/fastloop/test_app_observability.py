@@ -82,7 +82,9 @@ def test_the_row_start_wipe_replaces_the_trace_stores_before_it_and_waits_for_th
     from benchmarks.sregym.fastloop import wipe
 
     events: list[str] = []
-    monkeypatch.setattr(app_observability, "restart_in_memory_trace_stores", lambda kube, ns: events.append("restart"))
+    monkeypatch.setattr(
+        app_observability, "restart_in_memory_trace_stores", lambda kube, ns, **kw: events.append("restart")
+    )
     monkeypatch.setattr(app_observability, "await_trace_stores_ready", lambda kube, ns: events.append("await"))
     monkeypatch.setattr(wipe, "credentials_hook", lambda *a, **k: None)
     receipt = wipe.Tier1Receipt(0.0, (), False, (), ())
@@ -99,3 +101,41 @@ def test_the_row_start_wipe_replaces_the_trace_stores_before_it_and_waits_for_th
     args = SimpleNamespace(credentials_hook=tmp_path / "hook", planned_commit=None, run_id="r")
     REAL_WIPE(args, environment)
     assert events == ["restart", "wipe", "await"]
+
+
+def test_a_warm_start_replaces_only_a_trace_store_older_than_the_bound(tmp_path: Path, monkeypatch):
+    """The earlier row's end replaced the store; replacing it again at the warm start made the baseline check's
+    sustained-health window wait a whole minute for the fresh pod (fast-loop row: reset 114 s). A store left growing on
+    an idle lane is older than the bound and is still replaced."""
+    from datetime import UTC, datetime
+
+    young = pod("jaeger-young", "jaegertracing/all-in-one:1.57")
+    young["metadata"]["creationTimestamp"] = "2026-11-23T07:45:00Z"
+    old = pod("jaeger-old", "jaegertracing/all-in-one:1.57")
+    old["metadata"]["creationTimestamp"] = "2026-11-23T07:20:00Z"
+    deleted: list[str] = []
+
+    def kubectl(args, *, namespace, kubeconfig=None, **kwargs):
+        if args[0] == "delete":
+            deleted.append(args[2])
+        return SimpleNamespace(stdout=json.dumps({"items": [young, old]}) if args[0] == "get" else "")
+
+    monkeypatch.setattr(app_observability, "kubectl", kubectl)
+    now = lambda: datetime(2026, 11, 23, 7, 48, tzinfo=UTC)  # noqa: E731
+    restarted = app_observability.restart_in_memory_trace_stores(
+        tmp_path / "kube", ["app"], older_than=app_observability.TRACE_STORE_MAX_AGE_SECONDS, now=now
+    )
+    assert restarted == ["app/jaeger-old"]
+    assert deleted == ["jaeger-old"]
+
+
+def test_a_reseeded_lane_row_end_replaces_the_trace_stores_for_the_next_row(tmp_path: Path, monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(cli, "application_namespaces", lambda *a: ["app"])
+    monkeypatch.setattr(
+        app_observability, "restart_in_memory_trace_stores", lambda kube, ns, **kw: calls.append(kw.get("reason"))
+    )
+    cli._replace_trace_stores_for_next_row(
+        SimpleNamespace(baseline_path=tmp_path, kubeconfig=tmp_path / "kube", namespace="app")
+    )
+    assert calls == ["row end"]
