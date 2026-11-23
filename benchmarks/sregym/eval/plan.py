@@ -76,6 +76,9 @@ class EvalConfig(BaseModel):
     #: the lane's cap plus this reserve and memory PSI ``some avg60`` is under ``max_memory_pressure``.
     host_reserve_gib: float = Field(default=32.0, ge=0)
     max_memory_pressure: float = Field(default=10.0, gt=0, le=100)
+    #: A plan of EKS lanes is gated on the runner's own cgroup instead of host load and host memory: start a cell only
+    #: while its CPU, IO and memory PSI ``some avg60`` are each under this and MemAvailable covers the reserve.
+    max_own_pressure: float = Field(default=10.0, gt=0, le=100)
     #: Total Docker memory cap of one lane (per-node cap times its kind nodes: 2 x 16 GiB by default).
     lane_memory_cap_gib: float = Field(default=32.0, gt=0)
     #: Budget for the summed caps of the lanes this plan uses; ``None`` leaves it unchecked.

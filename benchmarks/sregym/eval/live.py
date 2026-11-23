@@ -16,12 +16,14 @@ from __future__ import annotations
 import importlib
 import json
 import logging
+import os
 import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import tomllib
 
-from benchmarks.sregym.adapter import HostMemoryPolicy, host_check
+from benchmarks.sregym.adapter import HostMemoryPolicy, host_check, own_cgroup_check, own_cgroup_dir
 from benchmarks.sregym.eval.cell import CellContext
 from benchmarks.sregym.eval.fastloop_row import FastloopRowRunner, RecordAccountant, RowSettings, TranscriptPresenceGate
 from benchmarks.sregym.eval.page import FallbackPageHook, KubectlPageCluster
@@ -30,6 +32,7 @@ from benchmarks.sregym.eval.scheduler import LoadGate, Scheduler, SnapshotStore
 from benchmarks.sregym.fastloop.lane_cgroup import describe_mode, resolve_cgroup_parent, slice_memory_max
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
     from pathlib import Path
 
     from benchmarks.sregym.eval.plan import Cell, Plan
@@ -38,18 +41,78 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def assert_slice_budget(parent: str | None, plan: Plan) -> None:
-    """With a parent slice and no configured ``lane_budget_gib``, the slice's ``MemoryMax`` is the lane budget."""
+def lane_platforms(lane_environments: Mapping[str, Path]) -> dict[str, str]:
+    """Each lane's platform from its ``fastloop.json``: ``kind`` (nodes are containers on this host) or ``eks``.
+
+    A lane whose record is missing or unreadable counts as ``kind``, the platform whose host checks are strictest.
+    """
+    platforms: dict[str, str] = {}
+    for lane, directory in lane_environments.items():
+        try:
+            record = json.loads((directory / "fastloop.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            record = {}
+        platform = record.get("platform", "kind") if isinstance(record, dict) else "kind"
+        platforms[lane] = platform if isinstance(platform, str) else "kind"
+    return platforms
+
+
+def _host_lanes(plan: Plan, platforms: Mapping[str, str]) -> int:
+    """Lanes of the plan whose nodes run on this host; an EKS lane's nodes are in its cluster."""
+    return sum(platforms.get(lane, "kind") == "kind" for _, lane in plan.config.lanes_in_use())
+
+
+def assert_slice_budget(parent: str | None, plan: Plan, platforms: Mapping[str, str] | None = None) -> None:
+    """With a parent slice and no configured ``lane_budget_gib``, the slice's ``MemoryMax`` is the lane budget.
+
+    Only lanes whose nodes run on this host count (``platforms``: lane -> platform; a lane not named is kind).
+    """
     logger.info(describe_mode(parent))
     config = plan.config
     if parent is None or config.lane_budget_gib is not None:
         return
     limit = slice_memory_max(parent)
-    need = len(plan.config.lanes_in_use()) * config.lane_memory_cap_gib * 1024**3
+    need = _host_lanes(plan, platforms or {}) * config.lane_memory_cap_gib * 1024**3
     if limit is not None and need > limit:
         raise ValueError(
             f"eval: lane memory caps {need / 1024**3:g} GiB exceed {parent} MemoryMax {limit / 1024**3:g} GiB"
         )
+
+
+@dataclass(frozen=True)
+class Admission:
+    """What a cell start waits on: the load figure compared with ``max_load`` and the memory/pressure probe."""
+
+    loadavg: Callable[[], float]
+    host_check: Callable[[], str | None]
+
+
+def admission(
+    plan: Plan,
+    platforms: Mapping[str, str],
+    *,
+    meminfo: Path | None = None,
+    host_pressure: Path | None = None,
+    own_cgroup: Callable[[], Path] = own_cgroup_dir,
+    loadavg: Callable[[], float] = lambda: os.getloadavg()[0],
+) -> Admission:
+    """The cell-start gates, following where the plan's lanes run (``meminfo``/``host_pressure`` override /proc).
+
+    A kind lane's nodes are containers on this host: a cell waits for the host load average under ``max_load``,
+    MemAvailable for the lane's cap plus the reserve, and a host that is not stalling on memory (host-wide PSI). An EKS
+    lane's nodes are in its cluster and put only the runner and the agent CLI here, so a plan of EKS lanes is gated on
+    the runner's own cgroup (CPU, IO and memory PSI under ``max_own_pressure``) and the reserve alone: other tenants
+    loading or thrashing the host in their own cgroups do not hold the row, the runner's own stalls do.
+    """
+    config = plan.config
+    policy = HostMemoryPolicy(
+        reserve_bytes=int(config.host_reserve_gib * 1024**3), max_pressure_avg60=config.max_memory_pressure
+    )
+    files: dict[str, Any] = {"meminfo": meminfo} if meminfo is not None else {}
+    if _host_lanes(plan, platforms):
+        pressure = {"pressure": host_pressure} if host_pressure is not None else {}
+        return Admission(loadavg, host_check(int(config.lane_memory_cap_gib * 1024**3), policy, **files, **pressure))
+    return Admission(lambda: 0.0, own_cgroup_check(policy, config.max_own_pressure, own_cgroup=own_cgroup, **files))
 
 
 class NoStore:
@@ -90,7 +153,8 @@ def run_live(config_path: Path, plan: Plan) -> int:
     if "snapshot_repos" not in row and raw.get("store"):
         row["snapshot_repos"] = store.repositories()  # type: ignore[attr-defined]
     settings = RowSettings.model_validate(row)
-    assert_slice_budget(resolve_cgroup_parent(settings.lane_cgroup_parent), plan)
+    platforms = lane_platforms(settings.lane_environments)
+    assert_slice_budget(resolve_cgroup_parent(settings.lane_cgroup_parent), plan, platforms)
     runner = FastloopRowRunner(settings, config.stage, import_memory=import_memory)
     gate = load_factory(raw["gate"])() if "gate" in raw else TranscriptPresenceGate()
     accountant = load_factory(raw["accountant"])() if "accountant" in raw else RecordAccountant(runner.records)
@@ -110,13 +174,9 @@ def run_live(config_path: Path, plan: Plan) -> int:
     )
     root = config.runs_root / config.stage
     plan.write(root / "plan.json")
-    policy = HostMemoryPolicy(
-        reserve_bytes=int(config.host_reserve_gib * 1024**3), max_pressure_avg60=config.max_memory_pressure
-    )
+    gates = admission(plan, platforms)
     load_gate = LoadGate(
-        config.max_load,
-        config.admit_spacing_seconds,
-        host_check=host_check(int(config.lane_memory_cap_gib * 1024**3), policy),
+        config.max_load, config.admit_spacing_seconds, loadavg=gates.loadavg, host_check=gates.host_check
     )
     rows = Scheduler(plan, context, store, ResultsTable(root), gate=load_gate).run()
     summary = {

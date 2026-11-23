@@ -30,6 +30,8 @@ _GIB = 1024**3
 _SIZE = re.compile(r"([1-9][0-9]*)([bkmgBKMG]?)")
 _UNITS = {"": 1, "b": 1, "k": 1024, "m": 1024**2, "g": 1024**3}
 PRESSURE_FILE = Path("/proc/pressure/memory")
+CGROUP_FILE = Path("/proc/self/cgroup")
+CGROUP_ROOT = Path("/sys/fs/cgroup")
 MEMINFO_FILE = Path("/proc/meminfo")
 KIND_CLUSTER_LABEL = "io.x-k8s.kind.cluster"
 HOST_ENV_FILE = "~/.config/sdo/host.env"
@@ -114,6 +116,38 @@ def memory_pressure_avg60(path: Path = PRESSURE_FILE) -> float:
     raise ValueError(f"eval: host memory pressure (PSI) unavailable at {path}: no 'some avg60' line")
 
 
+def own_cgroup_dir(cgroup_file: Path = CGROUP_FILE, root: Path = CGROUP_ROOT) -> Path:
+    """This process's cgroup (v2) directory: its ``*.pressure`` files are the stalls of the runner and its children.
+
+    A row on a remote lane (EKS) puts only the runner and the agent CLI on this host, so their own cgroup, not the
+    whole host, says whether a row started now would stall. Without a cgroup v2 entry the pressure is unknown and the
+    caller refuses.
+    """
+    try:
+        lines = cgroup_file.read_text().splitlines()
+    except OSError as exc:
+        raise ValueError(f"eval: no cgroup v2 entry readable at {cgroup_file}") from exc
+    for line in lines:
+        if line.startswith("0::"):
+            return root / line.removeprefix("0::").lstrip("/")
+    raise ValueError(f"eval: no cgroup v2 entry in {cgroup_file}; this process's pressure is unknown")
+
+
+def cgroup_pressure_refusal(directory: Path, max_avg60: float) -> str | None:
+    """Why the cgroup at ``directory`` stalls too much on CPU, IO or memory (PSI ``some avg60``), or ``None``.
+
+    An unreadable pressure file is a refusal too.
+    """
+    for resource in ("cpu", "io", "memory"):
+        try:
+            avg60 = memory_pressure_avg60(directory / f"{resource}.pressure")
+        except ValueError as exc:
+            return str(exc).removeprefix("eval: ")
+        if avg60 >= max_avg60:
+            return f"runner cgroup {resource} pressure some avg60={avg60:.2f} >= {max_avg60:.2f}"
+    return None
+
+
 def host_memory_refusal(
     cap_bytes: int, policy: HostMemoryPolicy, *, available_bytes: int, pressure_avg60: float
 ) -> str | None:
@@ -171,6 +205,33 @@ def host_check(
         except ValueError as exc:
             return str(exc).removeprefix("eval: ")
         return None
+
+    return check
+
+
+def own_cgroup_check(
+    policy: HostMemoryPolicy,
+    max_avg60: float,
+    *,
+    meminfo: Path = MEMINFO_FILE,
+    own_cgroup: Callable[[], Path] = own_cgroup_dir,
+) -> Callable[[], str | None]:
+    """A polling probe for work whose cluster is elsewhere: the runner's own cgroup stalls and the host reserve.
+
+    The refusal reason now, or ``None``: CPU, IO or memory PSI of this process's cgroup at or above ``max_avg60``, or
+    MemAvailable under the policy's reserve (no lane cap: the lane's nodes are not on this host). An unknown cgroup
+    or an unreadable measurement is a reason too.
+    """
+
+    def check() -> str | None:
+        try:
+            directory = own_cgroup()
+            available = host_available_memory(meminfo)
+        except ValueError as exc:
+            return str(exc).removeprefix("eval: ")
+        if (reason := cgroup_pressure_refusal(directory, max_avg60)) is not None:
+            return reason
+        return host_memory_refusal(0, policy, available_bytes=available, pressure_avg60=0.0)
 
     return check
 
