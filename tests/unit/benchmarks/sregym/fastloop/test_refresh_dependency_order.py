@@ -57,5 +57,6 @@ def test_clients_already_registered_after_the_registry_are_not_restarted(monkeyp
             seed_recovery.refresh_baseline_clients(problem, dependencies_only=True)
     else:
         result = seed_recovery.refresh_baseline_clients(problem, dependencies_only=True)
-        assert result["success"] is True and result["deployments"] == []
+        assert result["success"] is True
+        assert result["deployments"] == []
         exec_command.assert_not_called()
