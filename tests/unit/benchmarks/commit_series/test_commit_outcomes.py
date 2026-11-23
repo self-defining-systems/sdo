@@ -17,7 +17,7 @@ SERIES = Series(
     base="b0",
     commits=("c1", "c2", "c3"),
 )
-BOUNDS = Bounds(verdict=60, steady=10, resolution=30, poll=5)
+BOUNDS = Bounds(verdict=60, steady=10, resolution=30, poll=5, steady_between=10)
 HOLD = "cause=rollout owner=responder items=web rollout: web did not become ready"
 
 
@@ -140,3 +140,33 @@ def test_a_push_made_with_no_incident_open_still_ends_on_the_incident_it_opens()
     got = record("incident")
     assert got["outcome"] == "incident"
     assert got["blocked_by_open_incident"] is False
+
+
+class LateIncidentLane(Lane):
+    """Accepted at once; 8 s later an incident opens (a failing queue's retries) and closes 40 s after the push."""
+
+    def incident_open(self) -> bool:
+        return self.pushed != "" and self.opens <= self.t - self.pushed_at < self.closes
+
+    opens: float = 8.0
+    closes: float = 40.0
+    pushed_at: float = 0.0
+
+    def push_commit(self, index: int) -> ReplayRecord:
+        self.pushed_at = self.t
+        return super().push_commit(index)
+
+
+def test_a_position_another_follows_waits_until_sdo_is_quiet_not_for_a_fixed_window() -> None:
+    """The next push must not meet the incident the last release opened a few seconds after its verdict: the quiet
+    window of a non-final position ends when no incident has been open for ``steady_between`` seconds."""
+    bounds = Bounds(verdict=60, steady=10, resolution=300, poll=5, steady_between=10)
+    lane = LateIncidentLane("accepted")
+    got = run_commit(lane, SERIES, 1, bounds.at(1, 3), "exec:sdo-demo-r1")  # type: ignore[arg-type]
+    assert got["incident_opened"] is True
+    assert lane.t - lane.pushed_at >= LateIncidentLane.closes + bounds.steady_between, lane.t
+    assert not lane.incident_open()
+    # The last position keeps the fixed window: it does not wait for an incident to go quiet after it.
+    last = LateIncidentLane("accepted")
+    got = run_commit(last, SERIES, 3, bounds.at(3, 3), "exec:sdo-demo-r3")  # type: ignore[arg-type]
+    assert last.t - last.pushed_at < LateIncidentLane.closes + bounds.steady_between

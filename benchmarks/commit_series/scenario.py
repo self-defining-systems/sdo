@@ -41,9 +41,11 @@ class Bounds:
     steady: float = 60.0
     resolution: float = 900.0
     poll: float = 5.0
-    #: The quiet window after a position that another one follows. The next push's own verdict and its
-    #: ``blocked_by_open_incident`` catch what opens later; only the last position waits out ``steady``.
-    steady_between: float = 5.0
+    #: After a position another one follows, the next push waits until no incident has been open for this long
+    #: (``until_quiet``): an event, not a fixed window, so a release that opens incidents late (retried jobs of a
+    #: restarted worker) is not met by the next push, and one that opens none costs this many seconds.
+    steady_between: float = 20.0
+    until_quiet: bool = False
 
     def __post_init__(self) -> None:
         for name in ("verdict", "steady", "resolution", "poll", "steady_between"):
@@ -54,7 +56,7 @@ class Bounds:
         """The bounds of position ``index`` of ``total``: the quiet window is the full one at the end of the series."""
         if index >= total:
             return self
-        return replace(self, steady=min(self.steady, self.steady_between))
+        return replace(self, steady=min(self.steady, self.steady_between), until_quiet=True)
 
     @property
     def timings(self) -> ScenarioTimings:
@@ -73,6 +75,21 @@ def _incident_closed(ops: SeriesOps, bounds: Bounds) -> bool:
             return False
         ops.sleep(bounds.poll)
     return True
+
+
+def watch_until_quiet(ops: SeriesOps, timings: ScenarioTimings, quiet: float, cap: float) -> bool:
+    """Whether an incident was seen before SDO had none open for ``quiet`` seconds (at most ``cap`` seconds)."""
+    end = ops.clock() + cap
+    seen, clear_since = False, None
+    while ops.clock() < end:
+        if ops.incident_open():
+            seen, clear_since = True, None
+        else:
+            clear_since = ops.clock() if clear_since is None else clear_since
+            if ops.clock() - clear_since >= quiet:
+                return seen
+        ops.sleep(timings.poll)
+    return seen
 
 
 def run_commit(ops: SeriesOps, series: Series, index: int, bounds: Bounds, label: str) -> dict[str, Any]:
@@ -102,7 +119,12 @@ def run_commit(ops: SeriesOps, series: Series, index: int, bounds: Bounds, label
     verdict, accepted, hold = wait_verdict(ops, bounds.timings, sha, incident_ends=not blocked)
     deploy_seconds = round(ops.clock() - started, 1)
     detail = hold_detail(hold) if hold else None
-    incident = watch_for_incident(ops, bounds.timings) or verdict == "incident"
+    if bounds.until_quiet:
+        incident = (
+            watch_until_quiet(ops, bounds.timings, bounds.steady_between, bounds.resolution) or verdict == "incident"
+        )
+    else:
+        incident = watch_for_incident(ops, bounds.timings) or verdict == "incident"
     resolved = _incident_closed(ops, bounds) if ops.incident_open() else True
     adopted = accepted or upstream_commit(ops.accepted_commits(), sha)
     after = ops.snapshot()
