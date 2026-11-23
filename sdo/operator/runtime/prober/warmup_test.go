@@ -187,8 +187,8 @@ func TestProberWarmsUpAtTheFloorIntervalAfterStartAndReset(t *testing.T) {
 
 // sharedAuthorApp is a synthetic application with one write-read journey:
 // POST /compose stores a user's newest post, GET /newest returns it. Like a
-// fan-out write, a compose answers only once the next compose arrives or a
-// short while has passed, so two samples in flight on the same user interleave
+// fan-out write, a compose answers only once the next compose arrives or
+// after a bounded number of yields, so two samples in flight on the same user interleave
 // their write and read-back.
 type sharedAuthorApp struct {
 	mu       sync.Mutex
@@ -218,14 +218,14 @@ func (a *sharedAuthorApp) Do(request *http.Request) (*http.Response, error) {
 	a.overlapped = max(a.overlapped, a.inFlight)
 	a.mu.Unlock()
 	defer func() { a.mu.Lock(); a.inFlight--; a.mu.Unlock() }()
-	for waited := time.Duration(0); waited < 20*time.Millisecond; waited += 200 * time.Microsecond {
+	for range 20_000 {
 		a.mu.Lock()
 		next := a.composes > mine
 		a.mu.Unlock()
 		if next {
 			break
 		}
-		time.Sleep(200 * time.Microsecond)
+		runtime.Gosched()
 	}
 	return answer("ok")
 }
