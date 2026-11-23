@@ -30,6 +30,12 @@ BUDGET_BYTES = 64 * 1024 * 1024
 PROMETHEUS = ("sdo-prometheus", "9090")
 JAEGER = ("sdo-jaeger", "16686")
 STEP_S = 15
+#: The longest span one Prometheus range query reads. A series' whole window (the last position of a commit series
+#: captures ~30 minutes) in one query per metric OOM-killed the lane's 1 GiB Prometheus; slices bound what one query
+#: loads, and the capture joins them per series.
+SLICE = timedelta(minutes=10)
+#: Range queries in flight at once.
+PROMETHEUS_WORKERS = 2
 LEAD = timedelta(minutes=5)
 SKIP_METRICS = re.compile(r"^(go_|process_|promhttp_|net_conntrack_|prometheus_(tsdb|engine|sd|rule|notifications)_)")
 TIMEOUT_S = 60
@@ -121,17 +127,47 @@ def service_exists(kube_cmd: Callable[..., list[str]], namespace: str, name: str
     return proc.returncode == 0
 
 
+def slices(start: datetime, end: datetime) -> list[tuple[float, float]]:
+    """``[start, end]`` as consecutive spans of at most ``SLICE`` on the ``STEP_S`` grid from ``start``, each starting
+    one step after the previous one ends, so no sample is read twice."""
+    out: list[tuple[float, float]] = []
+    s, e = start.timestamp(), end.timestamp()
+    width = SLICE.total_seconds() - (SLICE.total_seconds() % STEP_S)
+    while s <= e:
+        out.append((s, min(s + width, e)))
+        s += width + STEP_S
+    return out
+
+
+def joined(results: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """Range-query results of consecutive slices as one result: each series' values in time order."""
+    series: dict[str, dict[str, Any]] = {}
+    for result in results:
+        for item in result:
+            key = json.dumps(item.get("metric", {}), sort_keys=True)
+            series.setdefault(key, {"metric": item.get("metric", {}), "values": []})["values"].extend(
+                item.get("values", [])
+            )
+    for item in series.values():
+        item["values"].sort(key=lambda v: float(v[0]))
+    return list(series.values())
+
+
 def capture_prometheus(proxy: Proxy, dest: Path, start: datetime, end: datetime, budget: int) -> dict[str, Any]:
-    """Every metric's series over the window (minus runtime noise), one gzip JSON-lines file: {metric, result}."""
+    """Every metric's series over the window (minus runtime noise), one gzip JSON-lines file: {metric, result}. Each
+    query reads at most ``SLICE`` (see there)."""
     names = json.loads(proxy.get("/api/v1/label/__name__/values"))["data"]
     wanted = [n for n in names if not SKIP_METRICS.match(n)]
+    spans = slices(start, end)
 
     def one(name: str) -> str:
-        q = f"/api/v1/query_range?query={quote(name)}&start={start.timestamp()}&end={end.timestamp()}&step={STEP_S}"
-        data = json.loads(proxy.get(q))
-        return json.dumps({"metric": name, "result": data["data"]["result"]}, separators=(",", ":"))
+        parts = []
+        for s, e in spans:
+            q = f"/api/v1/query_range?query={quote(name)}&start={s}&end={e}&step={STEP_S}"
+            parts.append(json.loads(proxy.get(q))["data"]["result"])
+        return json.dumps({"metric": name, "result": joined(parts)}, separators=(",", ":"))
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=PROMETHEUS_WORKERS) as pool:
         lines = list(pool.map(one, wanted))
     body = ("\n".join(lines) + "\n").encode()
     rel = "observability/prometheus.jsonl.gz"
@@ -139,7 +175,7 @@ def capture_prometheus(proxy: Proxy, dest: Path, start: datetime, end: datetime,
     size = (dest / rel).stat().st_size
     if size > budget:
         raise RuntimeError(f"prometheus capture {size} bytes exceeds the {budget} byte budget")
-    return {"status": "ok", "files": [rel], "metrics": len(wanted), "bytes": size}
+    return {"status": "ok", "files": [rel], "metrics": len(wanted), "bytes": size, "slices": len(spans)}
 
 
 def capture_jaeger(proxy: Proxy, dest: Path, start: datetime, end: datetime, budget: int) -> dict[str, Any]:
