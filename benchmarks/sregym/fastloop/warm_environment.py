@@ -31,6 +31,7 @@ from benchmarks.sregym.adapter import (
     wait_for,
 )
 from benchmarks.sregym.fastloop.accepted_source import AcceptedSource
+from benchmarks.sregym.repository_git import host_git_command
 from benchmarks.sregym.fastloop.admission import LaneAdmission
 from benchmarks.sregym.fastloop.clean_start import assert_clean_baseline
 from benchmarks.sregym.fastloop.reseed import ReseedSteps, reseed_lane
@@ -109,7 +110,13 @@ def install_prepared_head(workspace: Path, planned: str, head: str) -> bool:
         return True
 
     def git(*args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(["git", "-C", str(workspace), *args], capture_output=True, text=True, check=False)
+        return subprocess.run(
+            host_git_command(workspace, *args),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=wait_for(WaitKind.COMMAND),
+        )
 
     if git("merge-base", "--is-ancestor", planned, head).returncode != 0:
         return False
@@ -473,7 +480,7 @@ class WarmEnvironment:
             # Memory does not enter the objects an onboarding names: the lane's latest fresh install is the reference.
             reference = env.run_dir / "fresh-onboarding" / "latest.json"
         planned = self.planned_commit or revision
-        if install_prepared_head(env.workspace, planned, revision):
+        if revision != planned and install_prepared_head(env.workspace, planned, revision):
             # Go install-existing prepares the planned tree for the install with its own commits (as a fresh install
             # does): the row's memory is the planned commit plus exactly that preparation.
             planned = revision
