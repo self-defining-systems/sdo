@@ -26,7 +26,7 @@ from benchmarks.sregym.adapter import Deadline, WaitKind, wait_for
 from benchmarks.sregym.fastloop.host_limits import HostLimits
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from types import TracebackType
 
 DEFAULT_TIMEOUT_SECONDS = wait_for(WaitKind.RESPONSE)
@@ -131,6 +131,7 @@ class SregymWorker:
         self._log: IO[str] | None = None
         self._replies: queue.Queue[str | None] = queue.Queue()
         self._next_id = 0
+        self._request_lock = threading.Lock()
         # A timed-out request leaves the worker busy; it is killed instead of asked to stop.
         self._abandoned = False
 
@@ -169,10 +170,12 @@ class SregymWorker:
         self._replies.put(None)
 
     def request(self, op: str, *, timeout: float = DEFAULT_TIMEOUT_SECONDS, **args: Any) -> dict[str, Any]:
-        if op == "deploy":
-            with HostLimits.from_env(self._env).admit("redeploy"):
-                return self._request(op, timeout=timeout, **args)
-        return self._request(op, timeout=timeout, **args)
+        # One request in flight: the reply queue and ids are shared, so a second thread waits its turn.
+        with self._request_lock:
+            if op == "deploy":
+                with HostLimits.from_env(self._env).admit("redeploy"):
+                    return self._request(op, timeout=timeout, **args)
+            return self._request(op, timeout=timeout, **args)
 
     def _request(self, op: str, *, timeout: float, **args: Any) -> dict[str, Any]:
         process = self._process
@@ -224,3 +227,48 @@ class SregymWorker:
         if self._log is not None:
             self._log.close()
             self._log = None
+
+
+class BackgroundCall:
+    """One call run on its own thread; ``result`` waits for it and re-raises what it raised."""
+
+    def __init__(self, call: Callable[[], Any]) -> None:
+        self._call = call
+        self._value: Any = None
+        self._error: BaseException | None = None
+        self._thread = threading.Thread(target=self._run, name="fastloop-background-call", daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        try:
+            self._value = self._call()
+        except BaseException as exc:  # re-raised by result
+            self._error = exc
+
+    def result(self) -> Any:
+        self._thread.join()
+        if self._error is not None:
+            raise self._error
+        return self._value
+
+
+class HeldWorker:
+    """An already started worker entered like ``SregymWorker``: the warm transaction's, kept for the row.
+
+    A worker holds its cluster's host-wide lock for its whole life, so a second one cannot start beside the first;
+    reusing the first keeps the row from paying a second start. Leaving the block closes it.
+    """
+
+    def __init__(self, worker: SregymWorker) -> None:
+        self._worker = worker
+
+    def __enter__(self) -> SregymWorker:
+        return self._worker
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self._worker.close()

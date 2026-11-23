@@ -26,7 +26,7 @@ import socket
 import subprocess
 import sys
 import time
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -81,7 +81,7 @@ from benchmarks.sregym.fastloop.wipe import (
     run_tier2,
     unrecovered_rows,
 )
-from benchmarks.sregym.fastloop.worker_client import SregymWorker, worker_argv
+from benchmarks.sregym.fastloop.worker_client import BackgroundCall, HeldWorker, SregymWorker, worker_argv
 from benchmarks.sregym.repository_git import host_clone_command, host_git_command
 from sdo.agents.provider import AGENT_EFFORTS
 
@@ -1656,6 +1656,64 @@ def _operator_build(environment: Any) -> str | None:
     return operator_build(environment.dev_mount)
 
 
+@dataclass(frozen=True)
+class RowDiscovery:
+    """What the fault description and capability checks of a row found (no cluster reads)."""
+
+    descriptions: dict[str, Any]
+    capability_evidence: Any
+    catalog: dict[str, Any]
+    incidents: tuple[tuple[str, ...], ...]
+    faults_by_incident: dict[str, tuple[FaultSpec, ...]]
+
+
+def _discover_row(
+    args: argparse.Namespace,
+    environment: FastloopEnvironment,
+    results_dir: Path,
+    stream: tuple[tuple[str, ...], ...],
+    stream_config: Any,
+    problems: tuple[str, ...],
+) -> RowDiscovery:
+    from benchmarks.sregym.fastloop.fault_tracker import describe_sregym_problems, stream_faults
+    from benchmarks.sregym.fastloop.lane_installability import require_runnable
+    from benchmarks.sregym.faults.description import check_composites, validate_suite
+
+    selected_ids = tuple(dict.fromkeys(problem for ids in (stream or tuple((p,) for p in problems)) for problem in ids))
+    descriptions = (
+        describe_sregym_problems(selected_ids, sregym_dir=environment.sregym_dir, app_source_dir=environment.workspace)
+        if environment.app != "toy"
+        else {}
+    )
+    check_composites(descriptions)
+    require_runnable(descriptions, environment, report_path=results_dir / "lane-plan.json")
+    capability_mode = stream_config.capability_mode if stream_config else "strict"
+    capability_evidence = validate_suite(
+        descriptions if args.agent == "sdo" else {},
+        require_tracking=args.require_fault_tracking,
+        capability_mode=capability_mode,
+    )
+    args.permissive_responder = bool(stream_config and stream_config.permissive_responder)
+    args.responder_namespaces = stream_config.responder_namespaces if stream_config else ()
+    if args.agent != "sdo" and args.require_fault_tracking:
+        # Capability scope is specific to SDO; tracking is common to both arms.
+        unsupported = [key for key, item in descriptions.items() if not item.tracking_supported]
+        if unsupported:
+            raise ValueError(f"per-fault tracking unsupported for {unsupported}")
+    catalog = {key: item.ordered_faults() for key, item in descriptions.items()}
+    incidents: tuple[tuple[str, ...], ...] = stream or tuple((problem,) for problem in problems)
+    faults_by_incident: dict[str, tuple[FaultSpec, ...]] = {}
+    for ids in incidents:
+        first_id = next(iter(ids))
+        if len(ids) > 1 or (descriptions and descriptions[first_id].composite):
+            faults_by_incident["+".join(ids)] = stream_faults(ids, catalog=catalog)
+    if args.require_fault_tracking:
+        for key, faults in faults_by_incident.items():
+            if len({fault.name for fault in faults}) != len(faults):
+                raise ValueError(f"{key}: per-fault tracking has duplicate probe identities")
+    return RowDiscovery(descriptions, capability_evidence, catalog, incidents, faults_by_incident)
+
+
 def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQueue | None = None) -> int:
     run_started = time.monotonic()
     environment = FastloopEnvironment.load(args.run_dir.resolve())
@@ -1697,56 +1755,41 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
 
     grader = SregymDiagnosisGrader(environment.sregym_dir, judge_model_id) if grading_mode != "off" else None
     problems = tuple(args.problem or [environment.deploy_problem]) if not stream else tuple(ids[0] for ids in stream)
-    from benchmarks.sregym.fastloop.fault_tracker import describe_sregym_problems, stream_faults
-    from benchmarks.sregym.fastloop.lane_installability import require_runnable
-    from benchmarks.sregym.faults.description import check_composites, validate_suite
+    # Discovery and capability checks must finish before a worker can deploy or launch an agent. A warm start runs
+    # them beside its transaction (they read no cluster) and joins them before the transaction's fallback can deploy
+    # and before anything of the row is set up.
+    description_ran: list[float] = []
 
-    # Discovery and capability checks must finish before a worker can deploy or launch an agent.
-    description_started = time.monotonic()
-    selected_ids = tuple(dict.fromkeys(problem for ids in (stream or tuple((p,) for p in problems)) for problem in ids))
-    descriptions = (
-        describe_sregym_problems(selected_ids, sregym_dir=environment.sregym_dir, app_source_dir=environment.workspace)
-        if environment.app != "toy"
-        else {}
-    )
-    check_composites(descriptions)
-    require_runnable(descriptions, environment, report_path=results_dir / "lane-plan.json")
-    capability_mode = stream_config.capability_mode if stream_config else "strict"
-    capability_evidence = validate_suite(
-        descriptions if args.agent == "sdo" else {},
-        require_tracking=args.require_fault_tracking,
-        capability_mode=capability_mode,
-    )
-    args.permissive_responder = bool(stream_config and stream_config.permissive_responder)
-    args.responder_namespaces = stream_config.responder_namespaces if stream_config else ()
-    if args.agent != "sdo" and args.require_fault_tracking:
-        # Capability scope is specific to SDO; tracking is common to both arms.
-        unsupported = [key for key, item in descriptions.items() if not item.tracking_supported]
-        if unsupported:
-            raise ValueError(f"per-fault tracking unsupported for {unsupported}")
-    catalog = {key: item.ordered_faults() for key, item in descriptions.items()}
-    incidents: tuple[tuple[str, ...], ...] = stream or tuple((problem,) for problem in problems)
-    faults_by_incident: dict[str, tuple[FaultSpec, ...]] = {}
-    for ids in incidents:
-        first_id = next(iter(ids))
-        if len(ids) > 1 or (descriptions and descriptions[first_id].composite):
-            faults_by_incident["+".join(ids)] = stream_faults(ids, catalog=catalog)
-    if args.require_fault_tracking:
-        for key, faults in faults_by_incident.items():
-            if len({fault.name for fault in faults}) != len(faults):
-                raise ValueError(f"{key}: per-fault tracking has duplicate probe identities")
-    registered_composites = bool(faults_by_incident)
-    description_seconds = time.monotonic() - description_started
-    if environment.image_delivery == "kind-load-fallback":
-        from benchmarks.sregym.fastloop.image_delivery import warn_fallback
+    def discover() -> RowDiscovery:
+        started = time.monotonic()
+        try:
+            return _discover_row(args, environment, results_dir, stream, stream_config, problems)
+        finally:
+            description_ran.append(time.monotonic() - started)
 
-        warn_fallback(
-            environment.image_delivery_reason, environment.image_delivery_images, environment.image_delivery_seconds
-        )
-    data_faults = {key: item.data_level_faults() for key, item in descriptions.items()}
+    discovery_pending = BackgroundCall(discover) if getattr(args, "warm_lane", False) else None
+    prelude: dict[str, float] = {}
+
+    discovery_cache: list[RowDiscovery] = []
+
+    def discovered() -> RowDiscovery:
+        if not discovery_cache:
+            waited = time.monotonic()
+            discovery_cache.append(discovery_pending.result() if discovery_pending is not None else discover())
+            prelude["description_wait"] = time.monotonic() - waited
+        return discovery_cache[0]
+
+    if discovery_pending is None:
+        found = discovered()
+        data_faults = {key: item.data_level_faults() for key, item in found.descriptions.items()}
     incoming = stream[0] if stream else (problems[0],)
-    incoming_data_faults = tuple(f"{key}: {fault}" for key in incoming for fault in data_faults.get(key, ()))
+
+    def incoming_faults() -> tuple[str, ...]:
+        faults = {key: item.data_level_faults() for key, item in discovered().descriptions.items()}
+        return tuple(f"{key}: {fault}" for key in incoming for fault in faults.get(key, ()))
+
     warm_preparation = None
+    row_worker: HeldWorker | None = None
     tier1 = None
     if getattr(args, "warm_lane", False):
         if not _wipes_at_row_start(args, environment):
@@ -1756,31 +1799,57 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
 
         def full_reset() -> None:
             nonlocal tier1
+            discovered()  # a fallback deploys: the row's checks come first
             if evidence_queue is not None:
                 evidence_queue.drain()
             tier1 = _wipe_sdo_and_harness(_warm_reset_args(args, environment), environment)
 
         os.environ["KUBECONFIG"] = str(environment.kubeconfig)
-        with _worker(environment) as warm_worker:
+        transaction_started = time.monotonic()
+        warm_worker = _worker(environment)
+        warm_worker.start()
+        try:
             warm_preparation = WarmEnvironment(
                 environment,
                 _cluster_ops(args, environment.namespace),
                 warm_worker,
                 _runtime_config(args, environment, results_dir),
                 results_dir / "warm",
-                incoming_data_faults=incoming_data_faults,
+                incoming_data_faults=incoming_faults,
                 full_reset=full_reset,
                 planned_commit=args.planned_commit,
             )
             warm_receipt = prepare_lane(warm_preparation, results_dir / "warm-transaction.json")
+        except BaseException:
+            warm_worker.close()
+            raise
+        prelude["warm_transaction"] = time.monotonic() - transaction_started
         if not warm_receipt.reused:
+            warm_worker.close()  # releases the cluster lock for the row's own worker
             warm_preparation = None
-        elif warm_receipt.identity is not None:
+        else:
+            # The worker holds the cluster's lock for its life: the row continues on it (idle since the transaction
+            # joined every request) instead of starting a second.
+            row_worker = HeldWorker(warm_worker)
+        if warm_receipt.reused and warm_receipt.identity is not None:
             # The row's injection gate may stand on this proof while the proven controller still runs and no
             # rehearsal repaired the application (set once the rehearsals ran).
             args.warm_proven_controller_uid = warm_receipt.identity.controller_uid
     elif _wipes_at_row_start(args, environment):
         tier1 = _wipe_sdo_and_harness(args, environment)
+    if discovery_pending is not None:
+        found = discovered()
+        data_faults = {key: item.data_level_faults() for key, item in found.descriptions.items()}
+    description_seconds = description_ran[0]
+    descriptions, capability_evidence, catalog = found.descriptions, found.capability_evidence, found.catalog
+    incidents, faults_by_incident = found.incidents, found.faults_by_incident
+    registered_composites = bool(faults_by_incident)
+    if environment.image_delivery == "kind-load-fallback":
+        from benchmarks.sregym.fastloop.image_delivery import warn_fallback
+
+        warn_fallback(
+            environment.image_delivery_reason, environment.image_delivery_images, environment.image_delivery_seconds
+        )
 
     if args.agent == "sdo":
         from benchmarks.sregym.adapter import control_namespace_for
@@ -1866,7 +1935,7 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
         _application_needs_redeploy(
             environment,
             marker,
-            incoming_data_faults,
+            incoming_faults(),
             revision=_application_revision(args, environment),
             start_proves_baseline=True,
         )
@@ -1879,7 +1948,9 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
         )
     if tier1 is not None or warm_preparation is not None:
         marker.begin()
-    with _worker(environment) as worker:
+    row_worker_wait_started = time.monotonic()
+    with row_worker or _worker(environment) as worker:
+        prelude["worker_wait"] = time.monotonic() - row_worker_wait_started
         worker_ready = time.monotonic()
         _setup_application(
             environment,
@@ -1890,9 +1961,11 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
             redeploy_reason=redeploy_reason,
             warm=warm_preparation is not None,
         )
+        prelude["setup_application"] = time.monotonic() - worker_ready
         if tier1 is not None:
             restore_lane_identities(environment, results_dir)
         if environment.app != "toy":
+            rehearsal_started = time.monotonic()
             repair = ApplicationRepair()
             rehearsal_problems = dict.fromkeys(problem for ids in incidents for problem in ids)
             for rehearsal_index, problem_id in enumerate(rehearsal_problems):
@@ -1907,6 +1980,7 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
                     fresh=prove_owed_baseline and rehearsal_index == 0,
                 )
             args.warm_application_repaired = repair.done
+            prelude["rehearsal"] = time.monotonic() - rehearsal_started
         deployed = time.monotonic()
         described = deployed
         baseline = load_application_baseline(environment.baseline_path, environment.namespace)
@@ -1952,6 +2026,7 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
         config = replace(
             config,
             run_prelude_phase_seconds={
+                **prelude,
                 "worker_start": worker_ready - run_started,
                 "worker_deploy": deployed - worker_ready,
                 "fault_description": description_seconds,

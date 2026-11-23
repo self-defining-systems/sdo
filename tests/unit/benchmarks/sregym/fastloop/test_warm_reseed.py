@@ -332,6 +332,25 @@ def test_inspect_names_why_the_previous_attempt_is_not_clean(cluster, tmp_path):
         cluster.lane.inspect()
 
 
+def test_inspect_resolves_the_rows_data_faults_only_after_it_has_read_the_lane(cluster):
+    """The row's fault description runs beside the transaction; inspect asks for its answer last, so every read of
+    the lane before it overlaps the description instead of waiting for it."""
+    from benchmarks.sregym.fastloop.warm_lane import WarmLaneRefusal
+    from benchmarks.sregym.fastloop.wipe import UNRECOVERED_PREFIX, AttemptMarker, LaneInjectionState
+
+    LaneInjectionState(cluster.environment.kubeconfig, "app").finish(["some_problem"], {"some_problem": []})
+    cluster.lane._assert_idle = lambda: None  # type: ignore[method-assign]
+
+    def description_not_ready() -> tuple[str, ...]:
+        raise AssertionError("the description was awaited before the lane was read")
+
+    cluster.lane.incoming_data_faults = description_not_ready
+    marker = AttemptMarker(cluster.environment.run_dir)
+    marker.path.write_text(f"123\n{UNRECOVERED_PREFIX}some_problem\n")
+    with pytest.raises(WarmLaneRefusal, match="not verified recovered: some_problem"):
+        cluster.lane.inspect()
+
+
 CONTROL = "app-sdo"
 ROLE = "clusterrole.rbac.authorization.k8s.io"
 BINDING = "clusterrolebinding.rbac.authorization.k8s.io"

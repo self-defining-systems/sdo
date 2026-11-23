@@ -177,12 +177,14 @@ class WarmEnvironment:
         config: RuntimeConfig,
         directory: Path,
         *,
-        incoming_data_faults: tuple[str, ...],
+        incoming_data_faults: tuple[str, ...] | Callable[[], tuple[str, ...]],
         full_reset: Callable[[], None],
         planned_commit: str | None = None,
     ) -> None:
         self.environment, self.ops, self.worker = environment, ops, worker
         self.config, self.directory = replace(config, reuse_existing=True), directory
+        # A callable is resolved when ``inspect`` has read the lane: the row's fault description may still be running
+        # beside it, and only the refusal (never a write) needs its answer.
         self.incoming_data_faults = incoming_data_faults
         self._full_reset = full_reset
         self.planned_commit = planned_commit
@@ -267,9 +269,8 @@ class WarmEnvironment:
             raise WarmLaneRefusal("warm transaction currently requires a private accepted repository")
         with self._step("inspect", "injection_state"):
             injected = LaneInjectionState(env.kubeconfig, env.namespace).reason()
-        if self.incoming_data_faults or injected is not None:
-            why = "; ".join(self.incoming_data_faults) or (injected.detail if injected else "")
-            raise WarmLaneRefusal(f"warm transaction cannot prove data-plane isolation: {why}")
+        if injected is not None:
+            raise WarmLaneRefusal(f"warm transaction cannot prove data-plane isolation: {injected.detail}")
         # The reset below restores the app and grades it afresh (``restore_application``'s baseline oracle) before the
         # reseed and admission: the proof a previous row may have left to this start.
         # A fault the previous row left (one the restore reverts) is reverted by that same reset.
@@ -303,6 +304,9 @@ class WarmEnvironment:
             self._clean_scope()
         with self._step("inspect", "head"):
             head = self._head()
+        incoming = self.incoming_data_faults() if callable(self.incoming_data_faults) else self.incoming_data_faults
+        if incoming:
+            raise WarmLaneRefusal(f"warm transaction cannot prove data-plane isolation: {'; '.join(incoming)}")
         return LaneIdentity(pod.uid, standby, head)
 
     def _standby_uid(self) -> str:
