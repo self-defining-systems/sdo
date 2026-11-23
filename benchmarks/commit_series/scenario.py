@@ -46,9 +46,13 @@ class Bounds:
     #: restarted worker) is not met by the next push, and one that opens none costs this many seconds.
     steady_between: float = 20.0
     until_quiet: bool = False
+    #: The longest a non-final position waits for quiet. A release that keeps opening incidents (10.6.0: a chain of
+    #: them, each a few minutes) is SDO's work, not a reason to hold the series for half an hour: the next push goes
+    #: after this, and the record says SDO was not quiet (``noisy_before_next``).
+    quiet_cap: float = 180.0
 
     def __post_init__(self) -> None:
-        for name in ("verdict", "steady", "resolution", "poll", "steady_between"):
+        for name in ("verdict", "steady", "resolution", "poll", "steady_between", "quiet_cap"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
 
@@ -119,13 +123,17 @@ def run_commit(ops: SeriesOps, series: Series, index: int, bounds: Bounds, label
     verdict, accepted, hold = wait_verdict(ops, bounds.timings, sha, incident_ends=not blocked)
     deploy_seconds = round(ops.clock() - started, 1)
     detail = hold_detail(hold) if hold else None
+    noisy = False
     if bounds.until_quiet:
         incident = (
-            watch_until_quiet(ops, bounds.timings, bounds.steady_between, bounds.resolution) or verdict == "incident"
+            watch_until_quiet(ops, bounds.timings, bounds.steady_between, bounds.quiet_cap) or verdict == "incident"
         )
+        # The next push goes now: an incident still open is SDO's work on this release, not a wait for the series.
+        noisy = ops.incident_open()
+        resolved = not noisy
     else:
         incident = watch_for_incident(ops, bounds.timings) or verdict == "incident"
-    resolved = _incident_closed(ops, bounds) if ops.incident_open() else True
+        resolved = _incident_closed(ops, bounds) if ops.incident_open() else True
     adopted = accepted or upstream_commit(ops.accepted_commits(), sha)
     after = ops.snapshot()
     return {
@@ -142,6 +150,7 @@ def run_commit(ops: SeriesOps, series: Series, index: int, bounds: Bounds, label
         "blocked_by_open_incident": blocked,
         "head_deployment": ops.head_deployment(),
         "incident_opened": incident,
+        "noisy_before_next": noisy,
         "incident_resolved": resolved,
         "agent_tasks": after.agent_tasks - before.agent_tasks,
         "pod_failures": max(0, after.pod_failures - before.pod_failures),
