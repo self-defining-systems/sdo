@@ -1942,7 +1942,7 @@ def _execute_owned(args: argparse.Namespace, *, evidence_queue: EvidenceExportQu
     if tier1 is not None or warm_preparation is not None:
         marker.begin()
     row_worker_wait_started = time.monotonic()
-    with (row_worker or _worker(environment)) as worker:
+    with row_worker or _worker(environment) as worker:
         prelude["worker_wait"] = time.monotonic() - row_worker_wait_started
         worker_ready = time.monotonic()
         _setup_application(
