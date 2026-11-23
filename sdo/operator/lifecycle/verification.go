@@ -51,6 +51,11 @@ type HealthVerdict struct {
 	// could not observe (a store Go reads but never read healthy). They never
 	// hold the verdict; the operability report records them under O3.
 	CoverageNotes []DetectorState
+	// EnvironmentWait is the longest probe-user provisioning run the
+	// evaluation's probes were still waiting for (zero when none): a pending
+	// verdict it explains is an environment wait, not the release's, and the
+	// pending window is extended once by it before the verdict holds.
+	EnvironmentWait time.Duration
 	// ExistingRecords is what the probes' existing-records steps saw. It gates
 	// onboarding acceptance only; steady-state evaluation never reads it.
 	ExistingRecords ExistingRecordsEvidence
@@ -185,6 +190,7 @@ func (c Coordinator) awaitObserved(ctx context.Context, cfg Config, evaluate fun
 func (c Coordinator) await(ctx context.Context, cfg Config, evaluate func() (HealthVerdict, error), existingRecords bool) (HealthVerdict, error) {
 	evaluations := orDefault(cfg.PendingEvaluations, defaultPendingEvaluations)
 	interval := orDefault(cfg.PendingInterval, defaultPendingInterval)
+	extended := false
 	for evaluation := 1; ; evaluation++ {
 		var verdict HealthVerdict
 		err := c.retryInfrastructure(ctx, cfg, "independent health verification", func() (err error) {
@@ -197,6 +203,12 @@ func (c Coordinator) await(ctx context.Context, cfg Config, evaluate func() (Hea
 		unobserved := existingRecords && verdict.Outcome == VerificationClear && verdict.ExistingRecords.Required && verdict.ExistingRecords.Exercised == 0
 		if verdict.Outcome != VerificationPending && !(unobserved && evaluation < evaluations) {
 			return verdict, nil
+		}
+		if evaluation >= evaluations && verdict.Outcome == VerificationPending && verdict.EnvironmentWait > 0 && !extended {
+			// A probe user still being provisioned is an environment wait: wait
+			// once for the run it declared, plus one interval to judge after it.
+			extended = true
+			evaluations += int((verdict.EnvironmentWait + interval + interval - 1) / interval)
 		}
 		if evaluation >= evaluations {
 			return verdict, &PendingVerificationError{Evaluations: evaluation, Window: time.Duration(evaluation-1) * interval, Verdict: verdict}
