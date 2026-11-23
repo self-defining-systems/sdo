@@ -87,10 +87,18 @@ type memoryActivation struct {
 	results chan memoryCandidate
 	notify  chan struct{}
 	current *memoryCandidate
-	cancel  context.CancelFunc
-	done    chan struct{}
-	build   func(context.Context, string) memoryCandidate
-	install func(context.Context, memoryCandidate) error
+	// launchedAt is the commit of the host this process launched with, kept once a
+	// later commit reuses it (before any host of its own was built).
+	launchedAt string
+	cancel     context.CancelFunc
+	done       chan struct{}
+	build      func(context.Context, string) memoryCandidate
+	install    func(context.Context, memoryCandidate) error
+	// sameInputs reports whether two accepted commits give the memory host the
+	// same compiled source (detector, playbook and library trees). A commit that
+	// only adds outcomes or corpus cases then needs no new host: the running one
+	// is already the accepted memory. Nil means every commit builds a host.
+	sameInputs func(ctx context.Context, hostCommit, commit string) (bool, error)
 }
 
 func (a *memoryActivation) refresh(ctx context.Context, commit string) (bool, error) {
@@ -136,6 +144,16 @@ func (a *memoryActivation) refresh(ctx context.Context, commit string) (bool, er
 	}
 	if a.active == commit {
 		return true, nil
+	}
+	if a.sameInputs != nil && a.pending == "" {
+		// A fingerprint that cannot be read falls through to the build, which fails or succeeds on its own.
+		if same, err := a.sameInputs(ctx, a.hostCommit(), commit); err == nil && same {
+			if a.current == nil && a.launchedAt == "" {
+				a.launchedAt = a.active
+			}
+			a.active = commit
+			return true, nil
+		}
 	}
 	a.pending = commit
 	buildCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
@@ -191,9 +209,18 @@ func (a *memoryActivation) close() {
 		a.current.close()
 	}
 }
-func (a *memoryActivation) acceptedCommit() string {
+
+// acceptedCommit is the accepted memory revision; hostCommit is the revision
+// the running host was built for, which differs after a commit that left its
+// compiled inputs unchanged.
+func (a *memoryActivation) acceptedCommit() string { return a.active }
+
+func (a *memoryActivation) hostCommit() string {
 	if a.current != nil {
 		return a.current.commit
+	}
+	if a.launchedAt != "" {
+		return a.launchedAt
 	}
 	return a.active
 }

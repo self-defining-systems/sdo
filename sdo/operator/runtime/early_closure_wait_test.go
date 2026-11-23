@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"sdo.dev/operator/apihistory"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
@@ -80,5 +81,43 @@ func TestEarlyClosureStopsAtTheResponseDeadline(t *testing.T) {
 	c.finishEarlyReport(ctx, now.Add(2*time.Minute))
 	if d.stopCount() != 1 || c.currentIncidentRequest != nil {
 		t.Fatalf("the stalled responder was not retired at the deadline (stops %d)", d.stopCount())
+	}
+}
+
+// The final result of a session that already verified hands the closure off at
+// once, not at the next detector pass.
+func TestAcceptingTheFinalResultOfAVerifiedIncidentHandsTheClosureOff(t *testing.T) {
+	ctx := context.Background()
+	now := time.Unix(1000, 0).UTC()
+	c, d := earlyClosureController(t, now)
+
+	final := completedResult("synthetic")
+	if err := c.acceptDispatchCompletion(ctx, dispatchCompletion{incidentID: "synthetic", result: final}, now.Add(20*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if d.stopCount() != 1 || c.currentIncidentRequest != nil {
+		t.Fatalf("the closure was not handed off by the completion itself (stops %d)", d.stopCount())
+	}
+}
+
+// Recovered is announced to the session while the closure evidence is still being captured.
+func TestRecoveredIsAnnouncedBeforeTheClosureCapture(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	c, _ := earlyClosureController(t, now)
+	c.pendingClosure = nil
+	if c.incidentVerificationWarning("synthetic") != nil {
+		t.Fatal("recovered announced before anything verified")
+	}
+	c.mu.Lock()
+	c.cacheVerificationLocked(ToolResponse{Command: "verify", Healthy: true, IncidentVerified: apihistory.VerificationWarning(now)})
+	c.mu.Unlock()
+	if c.incidentVerificationWarning("synthetic") == nil {
+		t.Fatal("a verified, announced incident does not read as recovered while its capture runs")
+	}
+	c.mu.Lock()
+	c.cacheVerificationLocked(ToolResponse{Command: "verify"})
+	c.mu.Unlock()
+	if c.incidentVerificationWarning("synthetic") != nil {
+		t.Fatal("a later unverified pass did not withdraw the announcement")
 	}
 }

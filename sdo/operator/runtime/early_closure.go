@@ -450,6 +450,11 @@ func (c *Controller) incidentVerificationWarning(id string) *apihistory.Incident
 	if c.pendingClosureVerifiedLocked(id) {
 		return apihistory.VerificationWarning(c.pendingClosure.VerifiedAt)
 	}
+	// Recovered announced while the closure evidence is still being captured.
+	if c.cachedVerification != nil && c.cachedIncidentID == id && c.cachedVerification.Healthy && c.cachedVerification.IncidentVerified != nil &&
+		c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == id {
+		return c.cachedVerification.IncidentVerified
+	}
 	return nil
 }
 
@@ -521,4 +526,19 @@ func (c *Controller) cachedFindingView(id string) ToolResponse {
 		return ToolResponse{Findings: append([]sdk.Finding(nil), c.currentIncidentRequest.Findings...)}
 	}
 	return ToolResponse{}
+}
+
+// acceptDispatchCompletion records a responder's completion. When the incident
+// verified before the responder returned, the report it was waiting for is now
+// in, so the closure is handed off here instead of at the next detector pass
+// (which can start seconds later, behind a slow evaluation).
+func (c *Controller) acceptDispatchCompletion(ctx context.Context, completion dispatchCompletion, observedAt time.Time) error {
+	c.handleDispatchCompletion(completion, observedAt)
+	c.mu.Lock()
+	pending := c.earlyReportPendingLocked() && c.responderDone
+	c.mu.Unlock()
+	if !pending {
+		return nil
+	}
+	return c.stepPaused(ctx, observedAt)
 }
