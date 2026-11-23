@@ -190,7 +190,9 @@ class WarmEnvironment:
         if self.incoming_data_faults or injected is not None:
             why = "; ".join(self.incoming_data_faults) or (injected.detail if injected else "")
             raise WarmLaneRefusal(f"warm transaction cannot prove data-plane isolation: {why}")
-        if (unclean := AttemptMarker(env.run_dir).pending()) is not None:
+        # The reset below restores the app and grades it afresh (``restore_application``'s baseline oracle) before the
+        # reseed and admission: the proof a previous row may have left to this start.
+        if (unclean := AttemptMarker(env.run_dir).pending(start_proves_baseline=True)) is not None:
             raise WarmLaneRefusal(f"previous attempt did not finish cleanly: {unclean.detail}")
         planned_application_unchanged(env, self.planned_commit)
         record = PersistentState.load(env.state_path).controllers.get(env.namespace)

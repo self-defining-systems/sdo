@@ -1287,3 +1287,84 @@ def test_reversion_evidence_is_frozen_before_oracle_and_cleanup(tmp_path: Path) 
     assert record.faults_reverted == 0
     assert record.faults_unknown == 0
     assert driver.events.index("reversion") < driver.events.index("oracle") < driver.events.index("recover")
+
+
+@dataclass
+class _CleanupDriver(_SettlingDriver):
+    """Seed recovery verifies full cleanup; every independent baseline sample is recorded."""
+
+    last_full_cleanup_verified: bool = False
+
+    def recover(self) -> float:
+        seconds = super().recover()
+        self.last_full_cleanup_verified = True
+        return seconds
+
+    def recovery_oracle(self) -> OracleVerdict:
+        self.events.append("baseline_proof")
+        return super().recovery_oracle()
+
+
+def test_the_runs_last_row_recovers_its_fault_and_leaves_the_baseline_proof_to_the_next_start(tmp_path: Path) -> None:
+    """Between two incidents on a lane the baseline is proved once: the next start proves it; the row only recovers."""
+    clock = FakeClock()
+    driver = _CleanupDriver(clock)
+
+    [record] = run_incidents(
+        FakeAgent(clock),
+        driver,
+        replace(_config(tmp_path, 1), baseline_proof_at_next_start=True),
+        monotonic=clock.monotonic,
+        sleep=clock.advance,
+    )
+
+    assert "recover" in driver.events
+    assert "baseline_proof" not in driver.events
+    assert record.recovery_error is None
+    assert record.full_cleanup_verified
+    assert record.recovery_finished_at is not None
+    assert record.recovery_oracle is None
+    assert record.baseline_proof_deferred
+
+
+def test_a_row_followed_by_another_incident_of_the_same_run_still_proves_its_baseline_before_it(tmp_path: Path) -> None:
+    clock = FakeClock()
+    driver = _CleanupDriver(clock)
+
+    first, last = run_incidents(
+        FakeAgent(clock),
+        driver,
+        replace(_config(tmp_path, 2), baseline_proof_at_next_start=True),
+        monotonic=clock.monotonic,
+        sleep=clock.advance,
+    )
+
+    assert driver.events.count("baseline_proof") == 1
+    assert driver.events.index("baseline_proof") < driver.events.index("inject:p1", 1)
+    assert first.recovery_oracle is not None
+    assert first.recovery_oracle.success
+    assert not first.baseline_proof_deferred
+    assert last.recovery_oracle is None
+    assert last.baseline_proof_deferred
+
+
+def test_a_row_without_a_proving_next_start_proves_its_baseline_in_the_row(tmp_path: Path) -> None:
+    clock = FakeClock()
+    driver = _CleanupDriver(clock)
+
+    [record] = run_incidents(
+        FakeAgent(clock), driver, _config(tmp_path, 1), monotonic=clock.monotonic, sleep=clock.advance
+    )
+
+    assert driver.events.count("baseline_proof") == 1
+    assert record.recovery_oracle is not None
+    assert record.recovery_oracle.success
+    assert not record.baseline_proof_deferred
+
+
+@pytest.mark.parametrize("fields", [{"cleanup_passes": 2}, {"row_start_tier2": True}])
+def test_the_baseline_proof_is_deferred_only_from_a_single_verified_end_of_row_cleanup(
+    tmp_path: Path, fields: dict[str, object]
+) -> None:
+    with pytest.raises(ValueError, match="baseline_proof_at_next_start"):
+        replace(_config(tmp_path, 1), baseline_proof_at_next_start=True, **fields)

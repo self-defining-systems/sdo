@@ -1060,6 +1060,7 @@ def run(ctx: Context) -> tuple[int, dict[str, Any]]:
         # With the switch on every row may be followed by a warm one, the first row of a lane included (it installs
         # fresh): the next row neither wipes the lane nor recreates the app, so this row recovers and verifies in the
         # row instead of leaving its recovery to a Tier-2 that never comes (an unverified row refuses the warm start).
+        # The proof of the restored baseline is the next start's (the warm reset grades the app), not proved twice.
         command.append("--end-of-row-recovery")
     if (cap := ctx.cap_seconds()) is not None:
         # An incident still open at the spec's cap never closes: the row ends there, named, with its evidence.

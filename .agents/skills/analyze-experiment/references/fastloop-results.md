@@ -93,7 +93,7 @@ limits and revision-bound failure signals, not mutation history.
 For capability policy, infrastructure outcomes, mixed-app ordering and image delivery evidence, read [fastloop dispatch evidence](fastloop-dispatch.md).
 ## Seed recovery oracle
 
-A full seed-compatible cleanup intentionally removes fault-created objects. Its `recovery_oracle` is an independent baseline check plus a fresh HTTP probe, not another mitigation verdict for the removed injection. Keep the original `oracle` and its failed components unchanged. A failed or incomplete seed probe blocks reuse and keeps `full_cleanup_verified=False`; no benchmark verdict is supplied to production learning. Legacy drivers without this check retain their fault-oracle recovery behavior.
+A full seed-compatible cleanup intentionally removes fault-created objects. Its `recovery_oracle` is an independent baseline check plus a fresh HTTP probe, not another mitigation verdict for the removed injection. Keep the original `oracle` and its failed components unchanged. A failed or incomplete seed probe blocks reuse and keeps `full_cleanup_verified=False`; no benchmark verdict is supplied to production learning. Legacy drivers without this check retain their fault-oracle recovery behavior. A run's last row with `baseline_proof_deferred: true` (`--end-of-row-recovery`/`--warm-lane` on a marked lane) recovered its fault and verified the cleanup but has no `recovery_oracle`: the lane's attempt marker says `baseline-proof-owed` and the next start proves the restored baseline before injecting (the warm reset's baseline oracle, else a fresh first rehearsal in `oracle-rehearsals/000.json`); a missing `recovery_oracle` there is not a failed incident.
 
 ### Startup versus resumed baseline timing
 

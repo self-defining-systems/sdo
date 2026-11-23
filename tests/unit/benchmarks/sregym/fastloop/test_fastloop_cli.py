@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -954,3 +955,44 @@ def test_a_warm_lane_row_pays_its_recovery_in_the_row_because_no_wipe_follows_it
     warm = parser.parse_args([*base, "--warm-lane"])
     assert row_start_tier2(warm, wiped_at_start=True, incidents=1) is False
     assert row_start_tier2(warm, wiped_at_start=False, incidents=1) is False
+
+
+def test_a_rehearsal_that_proves_an_owed_baseline_grades_the_live_app_afresh(tmp_path: Path) -> None:
+    """A cached healthy rehearsal proves nothing about the app running now: a start that owes the previous row's
+    baseline proof asks the worker for a fresh grade (traffic probe, sustained pod health and the oracle)."""
+    from benchmarks.sregym.fastloop import cli
+
+    requests: list[dict[str, object]] = []
+
+    class Worker:
+        def request(self, op: str, **kwargs: object) -> dict[str, object]:
+            requests.append({"op": op, **kwargs})
+            return {"success": True, "details": {"traffic_ok": True}}
+
+    repair = cli.ApplicationRepair()
+    cli.rehearse_with_repair(_repair_env(tmp_path), Worker(), tmp_path, "p0", 0, repair, revision=None, fresh=True)
+    cli.rehearse_with_repair(_repair_env(tmp_path), Worker(), tmp_path, "p1", 1, repair, revision=None)
+    assert [(item["op"], item.get("fresh")) for item in requests] == [
+        ("rehearse_oracles", True),
+        ("rehearse_oracles", False),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("flags", "marked", "deferred_tier2", "expected"),
+    [
+        ({"warm_lane": True}, True, False, True),
+        ({"end_of_row_recovery": True}, True, False, True),
+        ({"end_of_row_recovery": True, "cleanup_passes": 2}, True, False, False),
+        # No attempt marker is read by the next start (a row that does not wipe or reseed): it proves in the row.
+        ({"end_of_row_recovery": True}, False, False, False),
+        ({}, True, True, False),
+    ],
+)
+def test_only_a_row_whose_next_start_reads_its_marker_leaves_the_baseline_proof_to_it(
+    flags: dict[str, object], marked: bool, deferred_tier2: bool, expected: bool
+) -> None:
+    from benchmarks.sregym.fastloop import cli
+
+    args = argparse.Namespace(**{"cleanup_passes": 1, **flags})
+    assert cli.baseline_proof_at_next_start(args, marked=marked, row_start_tier2=deferred_tier2) is expected

@@ -209,6 +209,10 @@ class LoopConfig:
     accepted_repository: Path | None = None
     #: A single row whose next invocation rebuilds dirty application state.
     row_start_tier2: bool = False
+    #: The run's last row recovers its fault (verified cleanup and health) and leaves the proof of the restored baseline
+    #: to the lane's next start, which proves it before it injects (the warm reset, or a fresh no-fault rehearsal). Rows
+    #: followed by another incident of this run still prove it here, before that injection.
+    baseline_proof_at_next_start: bool = False
     #: Admission's stabilization rule: sample until the app passes, within this budget.
     recovery_settle_seconds: float = wait_for(WaitKind.ROLLOUT)
     recovery_settle_poll_seconds: float = wait_for(WaitKind.SAMPLE)
@@ -233,6 +237,12 @@ class LoopConfig:
             raise ValueError("recovery_settle_poll_seconds must be positive")
         if type(self.cleanup_passes) is not int or not 1 <= self.cleanup_passes <= 2:
             raise ValueError("cleanup_passes must be 1 or 2")
+        if type(self.baseline_proof_at_next_start) is not bool:
+            raise TypeError("baseline_proof_at_next_start must be a boolean")
+        if self.baseline_proof_at_next_start and (self.row_start_tier2 or self.cleanup_passes != 1):
+            raise ValueError(
+                "baseline_proof_at_next_start requires one end-of-row cleanup pass and no row-start tier 2"
+            )
         if not isinstance(self.slot_offset, int) or self.slot_offset < 0:
             raise ValueError("slot_offset must be a non-negative integer")
         if not self.run_id:
@@ -732,18 +742,22 @@ def _run_one(
                 errors.append(f"learning failed: {_describe(exc)}")
             learning_complete = False
 
+    # The lane's next start proves the restored baseline before it injects (``baseline_proof_at_next_start``): the
+    # run's last row only recovers, so the same app is not proved twice between two incidents.
+    baseline_proof_deferred = config.baseline_proof_at_next_start and index == config.slot_offset + config.incidents - 1
     if windows and not config.row_start_tier2:
         try:
             recovery_seconds = 0.0
             for _ in range(config.cleanup_passes):
                 recovery_seconds += _recover_fault(agent, driver, outcome, post_closure_waits)
-                # Seed cleanup can remove injected workloads; grade the recovered baseline.
-                recovery_oracle = _settled_recovery_oracle(
-                    driver, grade, config, recovery_oracle_samples, monotonic=monotonic, sleep=sleep
-                )
-                if not recovery_oracle.success:
-                    raise RuntimeError("recovery residue: the fault oracle still fails after harness recovery")
                 full_cleanup = getattr(driver, "last_full_cleanup_verified", False)
+                if not baseline_proof_deferred:
+                    # Seed cleanup can remove injected workloads; grade the recovered baseline.
+                    recovery_oracle = _settled_recovery_oracle(
+                        driver, grade, config, recovery_oracle_samples, monotonic=monotonic, sleep=sleep
+                    )
+                    if not recovery_oracle.success:
+                        raise RuntimeError("recovery residue: the fault oracle still fails after harness recovery")
                 if config.cleanup_passes > 1 and not full_cleanup:
                     raise RuntimeError("repeated cleanup requires verified full seed recovery on every pass")
                 if full_cleanup:
@@ -795,6 +809,7 @@ def _run_one(
         oracle=oracle,
         recovery_oracle=recovery_oracle,
         recovery_oracle_samples=recovery_oracle_samples,
+        baseline_proof_deferred=bool(windows) and baseline_proof_deferred and recovery_error is None,
         recovery_error=recovery_error,
         recovery_failures=recovery_failures,
         diagnosis_grade=diagnosis_grade,

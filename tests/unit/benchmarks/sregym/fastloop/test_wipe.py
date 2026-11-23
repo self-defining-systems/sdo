@@ -19,6 +19,7 @@ from benchmarks.sregym.fastloop.wipe import (
     Tier2Trigger,
     WipeError,
     await_healthy_pods,
+    baseline_proof_owed,
     credentials_hook,
     finalizer_holders,
     inventory_path,
@@ -818,3 +819,68 @@ def test_a_credentials_hook_that_never_returns_is_killed_and_named(
     monkeypatch.setattr(wipe, "wait_for", lambda kind, *a, **k: 0.3)
     with pytest.raises(WipeError, match="did not finish"):
         credentials_hook(hook, tmp_path / "kubeconfig")(CONTROL)
+
+
+def _deferred_row(**fields: object) -> SimpleNamespace:
+    now = datetime(2026, 10, 27, tzinfo=timezone.utc)
+    recovered = {"recovery_error": None, "full_cleanup_verified": True, "baseline_proof_deferred": True}
+    return SimpleNamespace(
+        index=0, problem_id="p0", injection=Injected(started_at=now, finished_at=now), **{**recovered, **fields}
+    )
+
+
+def test_a_row_that_left_its_baseline_proof_to_the_next_start_is_pending_for_a_start_that_does_not_prove_it(
+    tmp_path: Path,
+) -> None:
+    """The fault was recovered and its cleanup verified, but the restored baseline was not proved: only a start that
+    proves the baseline itself before injecting may keep the app; every other reader still sees a pending lane."""
+    rows = [_deferred_row()]
+    ended = AttemptMarker(tmp_path)
+    ended.begin()
+    ended.end(unrecovered_rows(rows), baseline_proof_owed=baseline_proof_owed(rows))
+
+    pending = AttemptMarker(tmp_path).pending()
+    assert pending is not None
+    assert pending.trigger is Tier2Trigger.BASELINE_PROOF_OWED
+    assert AttemptMarker(tmp_path).pending(start_proves_baseline=True) is None
+    assert tier2_reason(AttemptMarker(tmp_path), lambda: None, list, start_proves_baseline=True) is None
+    reason = tier2_reason(AttemptMarker(tmp_path), lambda: None, list)
+    assert reason is not None
+    assert reason.trigger is Tier2Trigger.BASELINE_PROOF_OWED
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"recovery_error": "fault recovery failed: geo unhealthy", "full_cleanup_verified": False},
+        {"full_cleanup_verified": False},
+    ],
+)
+def test_a_start_that_proves_the_baseline_never_excuses_a_row_that_was_not_recovered(
+    tmp_path: Path, fields: dict[str, object]
+) -> None:
+    rows = [_deferred_row(**fields)]
+    ended = AttemptMarker(tmp_path)
+    ended.begin()
+    ended.end(unrecovered_rows(rows), baseline_proof_owed=baseline_proof_owed(rows))
+
+    for proves in (False, True):
+        pending = AttemptMarker(tmp_path).pending(start_proves_baseline=proves)
+        assert pending is not None
+        assert pending.trigger is Tier2Trigger.PREVIOUS_ROW_UNRECOVERED
+
+
+def test_a_dead_attempt_is_never_excused_by_a_start_that_proves_the_baseline(tmp_path: Path) -> None:
+    AttemptMarker(tmp_path).begin()
+    pending = AttemptMarker(tmp_path).pending(start_proves_baseline=True)
+    assert pending is not None
+    assert pending.trigger is Tier2Trigger.UNCLEAN_ATTEMPT
+
+
+def test_rows_that_proved_their_baseline_owe_no_proof(tmp_path: Path) -> None:
+    rows = [_deferred_row(baseline_proof_deferred=False)]
+    assert not baseline_proof_owed(rows)
+    ended = AttemptMarker(tmp_path)
+    ended.begin()
+    ended.end(unrecovered_rows(rows), baseline_proof_owed=baseline_proof_owed(rows))
+    assert AttemptMarker(tmp_path).pending() is None

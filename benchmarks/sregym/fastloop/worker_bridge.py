@@ -213,7 +213,7 @@ def main() -> int:
         if op == "rehearse_oracles":
             problem = self._problem_factory(str(request["problem_id"]))
             assert_clean_baseline(Path(os.environ["KUBECONFIG"]), namespace=problem.namespace)
-            return self._rehearse_oracles(str(request["problem_id"]))
+            return self._rehearse_oracles(str(request["problem_id"]), fresh=request.get("fresh") is True)
         if op == "attach_existing":
             return attach_existing_cluster(worker_infra)
         if op in {"deploy", "clean_start"}:
