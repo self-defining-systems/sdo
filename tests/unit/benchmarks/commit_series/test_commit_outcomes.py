@@ -70,6 +70,10 @@ class Lane:
     def incident_open(self) -> bool:
         return self.incident
 
+    def observed_at(self) -> float | None:
+        """The controller's newest detector evaluation: it evaluates continuously."""
+        return self.t
+
     def operability(self) -> None:
         return None
 
@@ -185,3 +189,45 @@ def test_a_release_that_keeps_opening_incidents_does_not_hold_the_series_past_th
     assert lane.t - lane.pushed_at <= 60 + 15, lane.t
     assert got["noisy_before_next"] is True
     assert got["incident_opened"] is True
+
+
+class RebuildLane(LateIncidentLane):
+    """Accepted at once; the controller then rebuilds for 120 s (it evaluates nothing, so no incident can open), and
+    15 s after it evaluates again the release's incident opens and lasts 40 s."""
+
+    rebuild: float = 120.0
+    opens = 120.0 + 15.0
+    closes = 120.0 + 55.0
+
+    def observed_at(self) -> float | None:
+        since = self.t - self.pushed_at
+        if self.pushed and since < self.rebuild:
+            return self.pushed_at
+        return self.t
+
+
+def test_quiet_counts_only_while_the_controller_evaluates() -> None:
+    """EKS series (10.6.0): after the verdict the controller rebuilt itself for a health-judge refresh for three
+    minutes; the quiet window passed while nothing was evaluated, and the incident 10.6.0 caused opened 15 s after
+    the restart, 1 s after the next position's push, which was graded for it. A controller
+    that evaluates nothing is not quiet: the window runs on its observation clock, and the rebuild does not use up
+    the quiet cap."""
+    bounds = Bounds(verdict=60, steady=10, resolution=900, poll=5, steady_between=20, quiet_cap=120)
+    lane = RebuildLane("accepted")
+    got = run_commit(lane, SERIES, 1, bounds.at(1, 3), "exec:sdo-demo-r1")  # type: ignore[arg-type]
+    assert got["incident_opened"] is True
+    assert got["noisy_before_next"] is False
+    assert lane.t - lane.pushed_at >= RebuildLane.closes + bounds.steady_between, lane.t
+    # The 120 s rebuild did not use up the 120 s cap: the wait went on until the release's incident had closed.
+
+
+def test_a_controller_that_never_evaluates_again_ends_the_wait_at_the_resolution_bound() -> None:
+    class Dead(RebuildLane):
+        rebuild = 1e9
+        opens = closes = 1e9
+
+    bounds = Bounds(verdict=60, steady=10, resolution=300, poll=5, steady_between=20, quiet_cap=60)
+    lane = Dead("accepted")
+    got = run_commit(lane, SERIES, 1, bounds.at(1, 3), "exec:sdo-demo-r1")  # type: ignore[arg-type]
+    assert 300 <= lane.t - lane.pushed_at <= 300 + 15, lane.t
+    assert got["incident_opened"] is False
