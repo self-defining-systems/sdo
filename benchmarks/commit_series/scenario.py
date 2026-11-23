@@ -31,6 +31,7 @@ class SeriesOps(ScenarioOps, Protocol):
     def agent_task_count(self) -> int: ...
     def now(self) -> float: ...
     def head_deployment(self) -> dict[str, Any] | None: ...
+    def observed_at(self) -> float | None: ...
 
 
 @dataclass(frozen=True)
@@ -46,9 +47,10 @@ class Bounds:
     #: restarted worker) is not met by the next push, and one that opens none costs this many seconds.
     steady_between: float = 20.0
     until_quiet: bool = False
-    #: The longest a non-final position waits for quiet. A release that keeps opening incidents (10.6.0: a chain of
-    #: them, each a few minutes) is SDO's work, not a reason to hold the series for half an hour: the next push goes
-    #: after this, and the record says SDO was not quiet (``noisy_before_next``).
+    #: The longest a non-final position waits for quiet, counting only time the controller observes. A release that
+    #: keeps opening incidents (10.6.0: a chain of them, each a few minutes) is SDO's work, not a reason to hold the
+    #: series for half an hour: the next push goes after this, and the record says SDO was not quiet
+    #: (``noisy_before_next``).
     quiet_cap: float = 180.0
 
     def __post_init__(self) -> None:
@@ -81,18 +83,32 @@ def _incident_closed(ops: SeriesOps, bounds: Bounds) -> bool:
     return True
 
 
-def watch_until_quiet(ops: SeriesOps, timings: ScenarioTimings, quiet: float, cap: float) -> bool:
-    """Whether an incident was seen before SDO had none open for ``quiet`` seconds (at most ``cap`` seconds)."""
-    end = ops.clock() + cap
-    seen, clear_since = False, None
-    while ops.clock() < end:
+def watch_until_quiet(ops: SeriesOps, timings: ScenarioTimings, quiet: float, cap: float, patience: float) -> bool:
+    """Whether an incident was seen before SDO had none open for ``quiet`` seconds of its own observation.
+
+    The controller observes when its newest detector evaluation (``observed_at``) advances between polls. One that
+    evaluates nothing (a rebuild after a deploy, a restart) says nothing by having no incident open: a poll without
+    a new evaluation restarts the quiet window, and only observed time counts against ``cap``, the bound on a noisy
+    controller. ``patience`` bounds the whole wait in wall time."""
+    end = ops.clock() + patience
+    seen, clear_since, observed_time, was_fresh = False, None, 0.0, False
+    last = ops.observed_at()
+    while ops.clock() < end and observed_time < cap:
+        ops.sleep(timings.poll)
+        observed = ops.observed_at()
+        fresh = observed is not None and last is not None and observed > last
+        if fresh and was_fresh:  # the jump after a stall is not observed time
+            observed_time += observed - last  # type: ignore[operator]
+        was_fresh, last = fresh, observed if observed is not None else last
+        if not fresh:
+            clear_since = None
+            continue
         if ops.incident_open():
             seen, clear_since = True, None
-        else:
-            clear_since = ops.clock() if clear_since is None else clear_since
-            if ops.clock() - clear_since >= quiet:
-                return seen
-        ops.sleep(timings.poll)
+            continue
+        clear_since = observed if clear_since is None else clear_since
+        if observed - clear_since >= quiet:  # type: ignore[operator]
+            return seen
     return seen
 
 
@@ -126,7 +142,8 @@ def run_commit(ops: SeriesOps, series: Series, index: int, bounds: Bounds, label
     noisy = False
     if bounds.until_quiet:
         incident = (
-            watch_until_quiet(ops, bounds.timings, bounds.steady_between, bounds.quiet_cap) or verdict == "incident"
+            watch_until_quiet(ops, bounds.timings, bounds.steady_between, bounds.quiet_cap, bounds.resolution)
+            or verdict == "incident"
         )
         # The next push goes now: an incident still open is SDO's work on this release, not a wait for the series.
         noisy = ops.incident_open()

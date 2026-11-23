@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -32,7 +33,12 @@ from benchmarks.common.replay.series import Series
 from benchmarks.fuzzops import capture
 from benchmarks.fuzzops import workload as fuzzops_workload
 from benchmarks.fuzzops.hooks import SETTLE_WORK_ONLY_RECORD, verify_start
-from benchmarks.sregym.fastloop.toy_live import ClusterReadTimeout, ControllerRelaunching, KubectlScenarioOps
+from benchmarks.sregym.fastloop.toy_live import (
+    STATE_CONFIGMAP,
+    ClusterReadTimeout,
+    ControllerRelaunching,
+    KubectlScenarioOps,
+)
 from benchmarks.sregym.fastloop.toy_scenarios import AcceptedCommit, HoldRecord
 from benchmarks.sregym.fastloop.toy_upstream import BASE_PATH, REPOSITORY, SERVICE, UpstreamLayout, forwarded_remote
 
@@ -97,6 +103,24 @@ def _iso_epoch(epoch: float) -> str:
     return datetime.fromtimestamp(epoch, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def newest_evaluation(state: dict[str, Any]) -> float | None:
+    """The newest ``evaluated_at`` of a controller runtime state's detector history, as epoch seconds."""
+    stamps = [
+        rfc3339_seconds(entry["evaluated_at"]) for entry in state.get("history") or [] if entry.get("evaluated_at")
+    ]
+    return max(stamps) if stamps else None
+
+
+def rfc3339_seconds(text: str) -> float:
+    """Epoch seconds of a Go RFC 3339 time (nanosecond fractions, ``Z`` or an offset)."""
+    match = re.fullmatch(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d+))?(Z|[+-]\d\d:\d\d)", text)
+    if match is None:
+        raise ValueError(f"not an RFC 3339 time: {text!r}")
+    whole, fraction, zone = match.groups()
+    stamp = datetime.fromisoformat(whole + ("+00:00" if zone == "Z" else zone))
+    return stamp.timestamp() + (float("0." + fraction) if fraction else 0.0)
+
+
 def wall_start(lane_dir: Path, name: str, now: float, *, first: bool = False) -> float:
     """When position 1 of the series ran; later positions are scheduled from it. Position 1 starts the clock again: a
     lane reset in place runs the series again, and its schedule must not count from the earlier run."""
@@ -137,6 +161,13 @@ class LaneOps(KubectlScenarioOps):
             raise RuntimeError(f"reading {HEAD_DEPLOYMENT_CONFIGMAP} failed: {result.stderr.strip()}")
         notice = json.loads(json.loads(result.stdout)["data"]["deployment"])
         return notice if isinstance(notice, dict) else None
+
+    def observed_at(self) -> float | None:
+        """The controller's newest detector evaluation (epoch seconds) in its persisted state: its observation clock,
+        which stands still while it evaluates nothing (a rebuild, a restart). None when there is none to read."""
+        data = self._json(self.control, "get", "configmap", STATE_CONFIGMAP).get("data") or {}
+        state = data.get("runtime-state.json")
+        return newest_evaluation(json.loads(state)) if state else None
 
     def accepted_commits(self) -> list[AcceptedCommit]:
         """What SDO accepted, plus the heads it deployed: a head deploy adds no commit and no trailer (the head is the

@@ -224,3 +224,23 @@ def test_a_kubectl_that_times_out_is_retried_before_it_is_a_failure(monkeypatch:
     )
     with pytest.raises(toy_live.ClusterReadTimeout, match="timed out 3 times"):
         ops._kubectl("ns", "get", "pods")
+
+
+def test_the_observation_clock_is_the_newest_detector_evaluation() -> None:
+    """The quiet wait runs on the controller's newest evaluation in its persisted state (Go nanosecond times)."""
+    from benchmarks.commit_series.adapter import newest_evaluation, rfc3339_seconds
+
+    state = {
+        "history": [
+            {"detector_id": "a", "evaluated_at": "2026-11-23T06:24:12.037787019Z"},
+            {"detector_id": "b", "evaluated_at": "2026-11-23T06:24:18.5Z"},
+            {"detector_id": "c", "evaluated_at": "2026-11-23T06:24:01Z"},
+        ]
+    }
+    assert newest_evaluation(state) == rfc3339_seconds("2026-11-23T06:24:18.5Z")
+    assert rfc3339_seconds("2026-11-23T06:24:18.5Z") - rfc3339_seconds(
+        "2026-11-23T06:24:12.037787019Z"
+    ) == pytest.approx(6.462212981)
+    assert newest_evaluation({}) is None
+    with pytest.raises(ValueError, match="not an RFC 3339 time"):
+        rfc3339_seconds("yesterday")
