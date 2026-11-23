@@ -66,3 +66,40 @@ func TestTeardownIdleLogsWhatItWaitsForAndWhenItGivesUp(t *testing.T) {
 		t.Errorf("giving up at the cap is not logged: %q", got)
 	}
 }
+
+// Two calm answers end a teardown's idle wait, and the second only has to come after the same short pause the settle
+// uses, not after the step's whole idle poll: with a 10 s poll every release spent 11.1 s on two answers of an
+// operator whose idle is a constant.
+func TestTeardownIdleRechecksACalmOperatorAfterAShortPause(t *testing.T) {
+	dir := t.TempDir()
+	hook := filepath.Join(dir, "hook.sh")
+	must(t, os.WriteFile(hook, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	p := &Prepared{Hooks: "t", HooksPath: dir, Command: hook, Ready: true}
+	r := &stepRunner{dir: t.TempDir(), poll: 30 * time.Second, hookLog: io.Discard}
+	r.s.Cap = Seconds(time.Minute.Seconds())
+	start := time.Now()
+	if !r.waitIdle(context.Background(), p) {
+		t.Fatal("waitIdle failed")
+	}
+	if took := time.Since(start); took > 10*time.Second {
+		t.Fatalf("a calm operator took %s to be idle before a teardown with a 30 s poll, want the second answer after the short recheck pause", took)
+	}
+}
+
+// A busy answer is still polled at the step's poll: only a calm one is rechecked early.
+func TestTeardownIdlePollsABusyOperatorAtThePoll(t *testing.T) {
+	dir := t.TempDir()
+	flag := filepath.Join(dir, "busy-once")
+	hook := filepath.Join(dir, "hook.sh")
+	must(t, os.WriteFile(hook, []byte("#!/bin/sh\nif [ ! -e "+flag+" ]; then touch "+flag+"; echo 'alarm: busy'; exit 1; fi\nexit 0\n"), 0o755))
+	p := &Prepared{Hooks: "t", HooksPath: dir, Command: hook, Ready: true}
+	r := &stepRunner{dir: t.TempDir(), poll: 1500 * time.Millisecond, hookLog: io.Discard}
+	r.s.Cap = Seconds(time.Minute.Seconds())
+	start := time.Now()
+	if !r.waitIdle(context.Background(), p) {
+		t.Fatal("waitIdle failed")
+	}
+	if took := time.Since(start); took < 1500*time.Millisecond {
+		t.Fatalf("a busy answer was asked again after %s, less than the poll", took)
+	}
+}
