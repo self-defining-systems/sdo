@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -152,6 +153,10 @@ func run(verb string, args []string) int {
 		return 2
 	}
 	r := bench.Root(abs)
+	if err := refuseForeignFlags(fs, verb); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
 	need := func(n int) bool {
 		if len(pos) != n {
 			fmt.Fprintln(os.Stderr, usage)
@@ -351,4 +356,33 @@ func planVerb(r bench.Root, pos []string, jsonOut, dryRun, cancel, keep, allPark
 		return bench.PlanControl(r, pos[1], func(d string) error { return plan.SkipItem(d, pos[2], cancel) })
 	}
 	return fmt.Errorf("plan: unknown subcommand %q (want add, status, results, pause, resume, remove, skip, unskip, retry)", pos[0])
+}
+
+// verbFlags are the flags each verb takes besides --root. The flag set is shared by every verb, so a flag of another
+// verb parses without error and used to be ignored: `lanes add FILE --dry-run` stored the experiment (three pools of
+// 18 lane builds) instead of checking it.
+var verbFlags = map[string][]string{
+	"plan":      {"json", "cancel", "keep", "repin", "all-parked", "dry-run", "tsv", "final", "done", "grade-fields"},
+	"results":   {"with", "tsv", "final", "done", "grade-fields"},
+	"status":    {"json"},
+	"preflight": {"max-load", "allow-memory-diag", "spec"},
+	"remove":    {"teardown"},
+}
+
+// refuseForeignFlags is an error naming every flag given on the command line that verb does not take.
+func refuseForeignFlags(fs *flag.FlagSet, verb string) error {
+	var bad []string
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name != "root" && !slices.Contains(verbFlags[verb], f.Name) {
+			bad = append(bad, "--"+f.Name)
+		}
+	})
+	if len(bad) == 0 {
+		return nil
+	}
+	hint := ""
+	if slices.Contains(bad, "--dry-run") {
+		hint = " (--dry-run belongs to `plan add`: it validates a plan and stores nothing)"
+	}
+	return fmt.Errorf("%s: unknown flag %s%s", verb, strings.Join(bad, ", "), hint)
 }

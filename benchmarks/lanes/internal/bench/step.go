@@ -478,10 +478,30 @@ func failText(code int, tail string, err error) string {
 	if err != nil {
 		out += " " + err.Error()
 	}
-	if t := oneLine(tail); t != "" {
+	if t := oneLine(lastLines(tail, reasonLines)); t != "" {
 		out += ": " + t
 	}
 	return out
+}
+
+// reasonLines is how many of the last output lines the one-line reason of a failed call carries: a status line shows
+// the head of the reason, and the cause is at the end of the output (a traceback's exception, a command's last
+// error), after any preamble (git's detached-HEAD note was all `lane status` showed of a failed `app up`). The whole
+// tail stays in the step result and the log.
+const reasonLines = 3
+
+// lastLines is the last n non-empty lines of s.
+func lastLines(s string, n int) string {
+	var lines []string
+	for _, l := range strings.Split(s, "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // failCall fails the step for a workload call that exited non-zero: the reason, the step result (Exit, Tail, Log) and

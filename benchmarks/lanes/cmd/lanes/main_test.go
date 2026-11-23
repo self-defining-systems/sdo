@@ -46,3 +46,34 @@ func TestHostVerbTakesRootFlag(t *testing.T) {
 		}
 	}
 }
+
+// `--dry-run` belongs to `plan add`; every flag belongs to some verbs only; `lanes add FILE --dry-run` used to ignore the flag and store the experiment (three
+// pool experiments of 18 lanes were added that way and billed a vcluster host for 35 minutes).
+func TestAVerbRefusesAFlagOfAnotherVerbInsteadOfIgnoringIt(t *testing.T) {
+	t.Setenv("FUZZOPS_BENCH_ROOT", "")
+	root := t.TempDir()
+	spec := filepath.Join(root, "spec.json")
+	if err := os.WriteFile(spec, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for verb, args := range map[string][]string{
+		"add":    {spec, "--dry-run"},
+		"pause":  {"x", "--keep"},
+		"resume": {"x", "--json"},
+		"status": {"--keep"},
+		"gc":     {"--tsv"},
+	} {
+		var code int
+		_, errs := capture(t, func() { code = run(verb, append(args, "--root", root)) })
+		if code == 0 || !strings.Contains(errs, "unknown flag") {
+			t.Errorf("%s %v: exit %d, stderr %q; want a refusal naming the flag", verb, args, code, errs)
+		}
+	}
+	_, errs := capture(t, func() { run("add", []string{spec, "--dry-run", "--root", root}) })
+	if !strings.Contains(errs, "plan add") {
+		t.Errorf("add --dry-run does not point at plan add: %q", errs)
+	}
+	if _, err := os.Stat(filepath.Join(root, "bench.lock")); err == nil {
+		t.Error("add --dry-run reached the add (it took the add lock)")
+	}
+}
