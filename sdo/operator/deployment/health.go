@@ -119,6 +119,28 @@ type PreparedProbe struct {
 // Prepare compiles the accepted detectors and memory host of acceptedRoot.
 // Close releases the build workspace.
 func (probe AcceptedDetectorProbe) Prepare(ctx context.Context, acceptedRoot, operatorRoot, namespace string, scope HealthScope) (*PreparedProbe, error) {
+	compiled, err := probe.Compile(ctx, acceptedRoot, operatorRoot)
+	if err != nil {
+		return nil, err
+	}
+	return compiled.Prepare(namespace, scope)
+}
+
+// CompiledProbe is the accepted detectors and memory host of one root, built:
+// everything a probe needs that does not depend on the deployment it will
+// judge (its namespace and the images it applied). Prepare finishes it; Close
+// releases it when it was never finished.
+type CompiledProbe struct {
+	probe        AcceptedDetectorProbe
+	acceptedRoot string
+	workspace    *builder.Workspace
+	binary       string
+	artifact     builder.MemoryHostArtifact
+	revision     string
+}
+
+// Compile builds the accepted detectors and memory host of acceptedRoot.
+func (probe AcceptedDetectorProbe) Compile(ctx context.Context, acceptedRoot, operatorRoot string) (*CompiledProbe, error) {
 	projected, err := memory.AcceptedDiagnostics(ctx, acceptedRoot)
 	if err != nil {
 		return nil, fmt.Errorf("resolve accepted diagnostics: %w", err)
@@ -133,8 +155,8 @@ func (probe AcceptedDetectorProbe) Prepare(ctx context.Context, acceptedRoot, op
 	if err != nil {
 		return nil, fmt.Errorf("stage accepted diagnostics: %w", err)
 	}
-	prepared := &PreparedProbe{workspace: workspace}
-	fail := func(err error) (*PreparedProbe, error) { workspace.Close(); return nil, err }
+	compiled := &CompiledProbe{probe: probe, acceptedRoot: acceptedRoot, workspace: workspace, revision: projected.AcceptedRevision}
+	fail := func(err error) (*CompiledProbe, error) { workspace.Close(); return nil, err }
 	// A host check reads no advisories: skip the informational playbook tests
 	// and the program-corpus replay, which only a launch's notes consume. Every
 	// gate that decides whether the detectors run still runs.
@@ -142,13 +164,24 @@ func (probe AcceptedDetectorProbe) Prepare(ctx context.Context, acceptedRoot, op
 	if probe.Host {
 		build = workspace.BuildForLaunch
 	}
-	if prepared.binary, err = build(ctx); err != nil {
+	if compiled.binary, err = build(ctx); err != nil {
 		return fail(fmt.Errorf("compile accepted health detectors: %w", err))
 	}
-	artifact, err := workspace.BuildMemoryHost(ctx)
-	if err != nil {
+	if compiled.artifact, err = workspace.BuildMemoryHost(ctx); err != nil {
 		return fail(fmt.Errorf("compile accepted memory host: %w", err))
 	}
+	return compiled, nil
+}
+
+// Close releases the build workspace of a probe that was never prepared.
+func (c *CompiledProbe) Close() { c.workspace.Close() }
+
+// Prepare finishes the probe for one deployment: its namespace and image pins.
+// The returned probe owns the workspace.
+func (c *CompiledProbe) Prepare(namespace string, scope HealthScope) (*PreparedProbe, error) {
+	probe, workspace := c.probe, c.workspace
+	prepared := &PreparedProbe{workspace: workspace, binary: c.binary}
+	fail := func(err error) (*PreparedProbe, error) { workspace.Close(); return nil, err }
 	pinsFile := ""
 	if len(scope.Pins.Images) > 0 {
 		pinsFile = filepath.Join(workspace.Directory, "image-pins.json")
@@ -160,7 +193,7 @@ func (probe AcceptedDetectorProbe) Prepare(ctx context.Context, acceptedRoot, op
 			return fail(fmt.Errorf("write image pins: %w", err))
 		}
 	}
-	args := probe.evaluationArgs(acceptedRoot, namespace, scope, pinsFile)
+	args := probe.evaluationArgs(c.acceptedRoot, namespace, scope, pinsFile)
 	if probe.Host {
 		// The probes keep their identity seed under the repository mount, which
 		// is /workspace in the cluster and not writable on a host.
@@ -170,7 +203,7 @@ func (probe AcceptedDetectorProbe) Prepare(ctx context.Context, acceptedRoot, op
 		}
 		args = append(args, "--repository-mount-path", mount)
 	}
-	prepared.args = append(args, "--memory-host-binary", artifact.Path, "--memory-host-digest", artifact.Digest, "--memory-commit", projected.AcceptedRevision)
+	prepared.args = append(args, "--memory-host-binary", c.artifact.Path, "--memory-host-digest", c.artifact.Digest, "--memory-commit", c.revision)
 	if probe.Kubeconfig != "" {
 		prepared.env = append(prepared.env, "KUBECONFIG="+probe.Kubeconfig)
 	}
@@ -192,6 +225,11 @@ func decodeHealthVerdict(stdout, stderr []byte) (HealthEvaluation, error) {
 	if err != nil {
 		return HealthEvaluation{}, fmt.Errorf("decode health detector verdict: %w (stdout=%q stderr=%q)", err, boundedHealthOutput(stdout), boundedHealthOutput(stderr))
 	}
+	return healthEvaluationOf(verdict), nil
+}
+
+// healthEvaluationOf is a decoded verdict as the probe result the lifecycle reads.
+func healthEvaluationOf(verdict evaluation.Verdict) HealthEvaluation {
 	result := HealthEvaluation{Status: string(verdict.Status), ExistingRecordsExercised: verdict.ExistingRecordsExercised}
 	for _, state := range verdict.DetectorStates {
 		if state.Status == "clear" && state.Reason != "" {
@@ -211,7 +249,7 @@ func decodeHealthVerdict(stdout, stderr []byte) (HealthEvaluation, error) {
 			result.Detectors = append(result.Detectors, lifecycle.DetectorState{DetectorID: finding.DetectorID, Status: "firing", Reason: firstNonEmpty(finding.Summary, finding.RuleID) + evidenceSuffix(finding.Evidence)})
 		}
 	}
-	return result, nil
+	return result
 }
 
 func firstNonEmpty(values ...string) string {
@@ -370,8 +408,33 @@ func (v IndependentHealthVerifier) Verify(ctx context.Context, acceptedCommit, n
 // (re-verified in root, where commit lives), and neither root nor its
 // detector tree may change during the evaluation.
 func (v IndependentHealthVerifier) VerifyCandidate(ctx context.Context, root, commit, namespace, objective string, source lifecycle.DeploymentReceipt) (lifecycle.HealthVerdict, error) {
+	checked, err := v.checkCandidate(ctx, root, commit, namespace, objective, source)
+	if err != nil {
+		return lifecycle.HealthVerdict{}, err
+	}
+	probe := v.Probe
+	if probe == nil {
+		probe = AcceptedDetectorProbe{}
+	}
+	evaluation, err := probe.Evaluate(ctx, root, v.OperatorRoot, namespace, scopeOf(source))
+	if err != nil {
+		return lifecycle.HealthVerdict{}, err
+	}
+	return checked.verdict(evaluation)
+}
+
+// checkedCandidate is a candidate whose commit, deployment and detector tree were verified before its
+// evaluation; verdict re-checks them after it.
+type checkedCandidate struct {
+	root, detectorTree string
+	git                func(args ...string) (string, error)
+}
+
+// checkCandidate verifies what a verdict on commit rests on: it is the clean HEAD of root, the deployed source
+// is an ancestor, the diagnostics tree exists, and the deployment still is what the receipt says.
+func (v IndependentHealthVerifier) checkCandidate(ctx context.Context, root, commit, namespace, objective string, source lifecycle.DeploymentReceipt) (checkedCandidate, error) {
 	if root == "" || v.OperatorRoot == "" || v.Readiness == nil || namespace == "" || strings.TrimSpace(objective) == "" || commit == "" || !source.Ready {
-		return lifecycle.HealthVerdict{}, errors.New("repository, operator, observer, namespace, objective, commit, and source evidence are required")
+		return checkedCandidate{}, errors.New("repository, operator, observer, namespace, objective, commit, and source evidence are required")
 	}
 	git := func(args ...string) (string, error) {
 		output, err := deploymentio.Run(ctx, "git", append([]string{"-C", root}, args...), nil)
@@ -382,19 +445,19 @@ func (v IndependentHealthVerifier) VerifyCandidate(ctx context.Context, root, co
 	}
 	head, err := git("rev-parse", "HEAD")
 	if err != nil {
-		return lifecycle.HealthVerdict{}, err
+		return checkedCandidate{}, err
 	}
 	if head != commit {
-		return lifecycle.HealthVerdict{}, fmt.Errorf("verified commit %s is not the HEAD of %s", commit, root)
+		return checkedCandidate{}, fmt.Errorf("verified commit %s is not the HEAD of %s", commit, root)
 	}
 	if status, err := git("status", "--porcelain"); err != nil {
-		return lifecycle.HealthVerdict{}, err
+		return checkedCandidate{}, err
 	} else if status != "" {
-		return lifecycle.HealthVerdict{}, errors.New("verified repository changed before health verification")
+		return checkedCandidate{}, errors.New("verified repository changed before health verification")
 	}
 	ancestorTrees, err := git("log", "--format=%H %T", commit)
 	if err != nil {
-		return lifecycle.HealthVerdict{}, err
+		return checkedCandidate{}, err
 	}
 	sourceCommit := ""
 	for _, line := range strings.Split(ancestorTrees, "\n") {
@@ -405,39 +468,36 @@ func (v IndependentHealthVerifier) VerifyCandidate(ctx context.Context, root, co
 		}
 	}
 	if sourceCommit == "" {
-		return lifecycle.HealthVerdict{}, errors.New("deployed source tree is not an ancestor of the verified health diagnostics")
+		return checkedCandidate{}, errors.New("deployed source tree is not an ancestor of the verified health diagnostics")
 	}
 	detectorTree, err := git("rev-parse", commit+":"+layout.DiagnosticsDir)
 	if err != nil {
-		return lifecycle.HealthVerdict{}, fmt.Errorf("verified health diagnostics: %w", err)
+		return checkedCandidate{}, fmt.Errorf("verified health diagnostics: %w", err)
 	}
 	if detectorTree == "" {
-		return lifecycle.HealthVerdict{}, errors.New("verified detector tree is empty")
+		return checkedCandidate{}, errors.New("verified detector tree is empty")
 	}
 	// The commit lives in root, which is not the accepted repository for a
 	// candidate: re-verify the deployment against root.
 	readiness := *v.Readiness
 	readiness.AcceptedRoot = root
 	if _, err := readiness.VerifyAccepted(ctx, sourceCommit, namespace, source); err != nil {
-		return lifecycle.HealthVerdict{}, fmt.Errorf("deployed source changed before health verification: %w", err)
+		return checkedCandidate{}, fmt.Errorf("deployed source changed before health verification: %w", err)
 	}
-	probe := v.Probe
-	if probe == nil {
-		probe = AcceptedDetectorProbe{}
-	}
-	evaluation, err := probe.Evaluate(ctx, root, v.OperatorRoot, namespace, scopeOf(source))
-	if err != nil {
-		return lifecycle.HealthVerdict{}, err
-	}
+	return checkedCandidate{root: root, detectorTree: detectorTree, git: git}, nil
+}
+
+// verdict is the lifecycle's verdict for an evaluation of the checked candidate.
+func (c checkedCandidate) verdict(evaluation HealthEvaluation) (lifecycle.HealthVerdict, error) {
 	verdict := verdictOf(evaluation)
-	verdict.ExistingRecords = lifecycle.ExistingRecordsEvidence{Required: recordsRequired(root), Exercised: evaluation.ExistingRecordsExercised}
+	verdict.ExistingRecords = lifecycle.ExistingRecordsEvidence{Required: recordsRequired(c.root), Exercised: evaluation.ExistingRecordsExercised}
 	if verdict.Outcome != lifecycle.VerificationClear {
 		return verdict, nil
 	}
-	if got, err := git("rev-parse", "HEAD:"+layout.DiagnosticsDir); err != nil || got != detectorTree {
+	if got, err := c.git("rev-parse", "HEAD:"+layout.DiagnosticsDir); err != nil || got != c.detectorTree {
 		return lifecycle.HealthVerdict{}, errors.New("verified health detectors changed during verification")
 	}
-	if status, err := git("status", "--porcelain"); err != nil || status != "" {
+	if status, err := c.git("status", "--porcelain"); err != nil || status != "" {
 		return lifecycle.HealthVerdict{}, errors.New("verified repository changed during health verification")
 	}
 	return verdict, nil

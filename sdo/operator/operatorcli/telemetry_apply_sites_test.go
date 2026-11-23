@@ -21,6 +21,7 @@ var verifyCandidateOwners = map[string]string{
 	"lifecycle/repair.go":             "RepairDeployer.Verifier is deploywire.AppliedVerifier",
 	"lifecycle/head.go":               "HeadDeployer.Deployer is a RepairDeployer whose Verifier is deploywire.AppliedVerifier",
 	"deployment/health.go":            "the verifier itself",
+	"deployment/health_session.go":    "the session verifies cold when its watch never ran; the telemetry wrapper has applied the backends",
 	"lifecycle/telemetry_verifier.go": "the apply wrapper",
 }
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"sdo.dev/operator/broker"
 	"sdo.dev/operator/imagesrc"
@@ -145,9 +147,30 @@ func (h HeadDeployer) deploy(ctx context.Context, cfg RepairConfig, commit strin
 	}
 	steps := Coordinator{Wait: h.Deployer.Wait}
 	bounds := Config{Namespace: cfg.Namespace, HealthObjective: cfg.HealthObjective, PendingEvaluations: cfg.PendingEvaluations, PendingInterval: cfg.PendingInterval, InfrastructureTries: cfg.InfrastructureTries, InfrastructureBackoff: cfg.InfrastructureBackoff}
+	// The verdict's own preparation overlaps the rollout when the verifier can: the detectors compile
+	// while the pods roll, and the prober's required samples accumulate from the moment the deployment
+	// is applied, so the verdict after the rollout reads them instead of waiting for them.
+	var session CandidateSession
+	applyCtx := ctx
+	// A session needs the clock: a verdict only counts evaluations judged after the rollout.
+	if sv, ok := h.Deployer.Verifier.(SessionVerifier); ok && h.Deployer.Now != nil {
+		begun, err := sv.BeginCandidate(ctx, path, commit, cfg.Namespace, cfg.HealthObjective)
+		if err != nil && !errors.Is(err, ErrNoSession) {
+			return HeadResult{}, err
+		}
+		if err == nil {
+			session = begun
+			defer session.Close()
+			applyCtx = WithAppliedHook(ctx, func(pins rendered.ReceiptPins) {
+				if err := session.Applied(ctx, pins); err != nil {
+					slog.Warn("head_verification_session_not_started", "commit", commit, "error", err)
+				}
+			})
+		}
+	}
 	var receipt DeploymentReceipt
 	err = steps.retryInfrastructure(ctx, bounds, "head deployment", func() (err error) {
-		receipt, err = h.Deployer.Readiness.ApplyAndVerify(ctx, path, accepted.Plan)
+		receipt, err = h.Deployer.Readiness.ApplyAndVerify(applyCtx, path, accepted.Plan)
 		return err
 	})
 	if err != nil {
@@ -164,7 +187,14 @@ func (h HeadDeployer) deploy(ctx context.Context, cfg RepairConfig, commit strin
 	if !completeDeploymentReceipt(receipt) || !rendered.SameDeploymentSource(receipt.Source, accepted.Plan.GetSource()) {
 		return held(HoldRollout, "deployment returned incomplete evidence or another source"), nil
 	}
+	var readyAt time.Time
+	if h.Deployer.Now != nil {
+		readyAt = h.Deployer.Now()
+	}
 	evaluate := func() (HealthVerdict, error) {
+		if session != nil {
+			return session.Verdict(ctx, receipt, readyAt)
+		}
 		return h.Deployer.Verifier.VerifyCandidate(ctx, path, commit, cfg.Namespace, cfg.HealthObjective, receipt)
 	}
 	verdict, err := steps.awaitVerdict(ctx, bounds, evaluate)
