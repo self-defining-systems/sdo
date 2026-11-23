@@ -102,3 +102,22 @@ echo "alarm: incident open other-1"; exit 1
 		t.Error("own unknown: any open incident must still hold the settle")
 	}
 }
+
+// Two calm answers end the settle, and the second only has to come after a pause, not after the step's whole
+// idle poll: with a 10 s poll the settle of every position of a series took 12.9 s for two answers a second
+// or two of work apart.
+func TestSettleRechecksACalmOperatorAfterAShortPause(t *testing.T) {
+	dir := t.TempDir()
+	hook := filepath.Join(dir, "hook.sh")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := &Prepared{Hooks: "t", HooksPath: dir, Command: hook}
+	r := &stepRunner{dir: t.TempDir(), poll: 30 * time.Second, hookLog: io.Discard}
+	r.s.Cap = Seconds(time.Hour.Seconds())
+	start := time.Now()
+	r.settle(context.Background(), p, time.Now(), time.Time{})
+	if took := time.Since(start); took > 10*time.Second {
+		t.Fatalf("a calm operator took %s to settle with a 30 s poll, want the second answer after the short recheck pause", took)
+	}
+}

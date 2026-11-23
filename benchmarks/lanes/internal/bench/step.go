@@ -1539,6 +1539,9 @@ const BenchOwnDetectedEnv = "BENCH_OWN_DETECTED_AT"
 // settle waits until the operator is idle twice in a row, at most until cap after the inject. With the cell's own
 // incident known (own), the operator is idle once that incident is closed and its closing work done; any other open
 // incident is recorded in the result (OtherIncidents) and not waited for.
+// settleRecheck is the pause between the two calm answers that end a settle.
+const settleRecheck = 2 * time.Second
+
 func (r *stepRunner) settle(ctx context.Context, p *Prepared, injectAt, own time.Time) {
 	start := time.Now()
 	r.phase(PhaseSettle, "")
@@ -1577,7 +1580,12 @@ func (r *stepRunner) settle(ctx context.Context, p *Prepared, injectAt, own time
 			r.res.Reason = "capped: " + why
 			break
 		}
-		time.Sleep(r.poll)
+		pause := r.poll
+		if calm == 1 {
+			// One calm answer: the second only has to come after a pause, not after a whole poll.
+			pause = min(pause, settleRecheck)
+		}
+		time.Sleep(pause)
 	}
 	now := time.Now().UTC()
 	r.res.SettleEnd = &now
