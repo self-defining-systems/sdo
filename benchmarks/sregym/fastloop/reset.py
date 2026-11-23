@@ -22,6 +22,7 @@ from benchmarks.sregym.fastloop.baseline_recovery import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from benchmarks.sregym.fastloop.environment import FastloopEnvironment
@@ -364,11 +365,17 @@ def restore_application(
     worker: HealthWorker,
     *,
     checks: RestoreChecks | None = None,
+    restored: Callable[[], object] | None = None,
 ) -> None:
     """Restore only the app, from one captured installed manifest set, once.
 
     The controller, accepted memory and incident clocks are untouched. Restore
     runs before admission, which only observes the resulting application.
+    ``restored`` is called once the restore's writes are done and the workloads
+    are Ready (the objects are the baseline's, the clients refreshed): the
+    baseline oracle after it only observes the application (its client refresh
+    runs only when that observation fails), so a caller may start what needs
+    the restored objects, such as a controller, concurrently with it.
     """
     require_terminal_reflection(environment)
     baselines = load_application_baseline(environment.baseline_path, environment.namespace)
@@ -418,6 +425,8 @@ def restore_application(
         if refreshed.get("success") is not True:
             raise RuntimeError("eval: restored application clients did not settle after dependencies")
     lap("refresh_clients")
+    if restored is not None:
+        restored()
     oracle = worker.request(
         "baseline_oracle",
         problem_id=environment.deploy_problem,
