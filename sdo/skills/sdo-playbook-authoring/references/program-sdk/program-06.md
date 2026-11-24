@@ -60,6 +60,10 @@ func (r Row) IsNull(name string) bool
 func (r Row) String(name string) (string, bool)
     String reads a string field.
 
+func (r *Row) UnmarshalJSON(data []byte) error
+    UnmarshalJSON keeps integer precision across program reads and corpus
+    replay.
+
 type RunJob struct {
 	Object     ApplyObject
 	Completion WaitFor
