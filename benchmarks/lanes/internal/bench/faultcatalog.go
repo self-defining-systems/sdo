@@ -13,8 +13,8 @@ const (
 	compositeFault
 )
 
-// faultCatalog reads the ID indexes emitted by fuzzops. Only fuzzops can
-// compute canonical IDs because parameter defaults come from its templates.
+// faultCatalog reads the workload’s ID indexes. The workload computes
+// canonical IDs from its template defaults.
 func faultCatalog(path string) (map[string]faultKind, error) {
 	var f struct {
 		IDs          []string          `json:"ids"`
@@ -25,7 +25,7 @@ func faultCatalog(path string) (map[string]faultKind, error) {
 		return nil, err
 	}
 	if len(f.CompositeIDs) != len(f.Composites) {
-		return nil, fmt.Errorf("composites require a matching composite_ids index; regenerate with fuzzops composites expand")
+		return nil, fmt.Errorf("composites require a matching composite_ids index; regenerate the composite expansion")
 	}
 	index := make(map[string]faultKind, len(f.IDs)+len(f.CompositeIDs))
 	for _, id := range f.IDs {
