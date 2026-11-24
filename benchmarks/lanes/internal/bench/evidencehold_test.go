@@ -281,6 +281,7 @@ func TestAVerifiedRunIsReleasedAtOnce(t *testing.T) {
 func TestACheckBringsHomeWhatItCollectedOnlyWhenItIsVerified(t *testing.T) {
 	l := newEvLab(t, true)
 	l.w.files["record.json"] = "{}"
+	l.w.files["manifest.json"] = `[{"path":"record.json","sha256":"stale","size":1}]` // what the step wrote before the check
 	l.w.check = missing("x")
 	l.end(done(nil))
 	l.staysHeld()
@@ -291,6 +292,11 @@ func TestACheckBringsHomeWhatItCollectedOnlyWhenItIsVerified(t *testing.T) {
 	l.verifies()
 	if !fileExists(home) || !fileExists(filepath.Join(filepath.Dir(home), "record.json")) || !fileExists(filepath.Join(filepath.Dir(home), "run.json")) {
 		t.Fatal("the run directory lacks what was verified, or lost what it had")
+	}
+	var m []ManifestEntry
+	evOK(t, readJSON(filepath.Join(filepath.Dir(home), "manifest.json"), &m))
+	if err := VerifyManifest(filepath.Dir(home), m); err != nil || len(m) < 2 {
+		t.Fatalf("the manifest at home does not describe the files at home: %v %v", m, err)
 	}
 }
 
