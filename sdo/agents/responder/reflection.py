@@ -403,7 +403,8 @@ class CodexSessionBackend:
                 timeout_seconds=timeout_seconds,
                 resume_session_id=session_id,
                 executor=self.executor,
-                environment=closing_tool_timeouts(),
+                # The live tool server ends with responder dispatch.
+                environment={**closing_tool_timeouts(), "SDO_TOOLS_DIR": ""},
                 **session_turn_options(self.provider, worktree, phase="reflection"),
             )
         except StructuredTurnError as exc:

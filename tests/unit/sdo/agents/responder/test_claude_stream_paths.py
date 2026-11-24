@@ -145,3 +145,4 @@ def test_the_closing_turn_lets_a_foreground_memory_check_finish_inside_the_tool_
     bound = str((memory_check_timeout_seconds() + 30) * 1000)
     assert environment["BASH_DEFAULT_TIMEOUT_MS"] == bound
     assert environment["BASH_MAX_TIMEOUT_MS"] == bound
+    assert environment["SDO_TOOLS_DIR"] == ""

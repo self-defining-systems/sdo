@@ -497,7 +497,15 @@ def _request(args: argparse.Namespace) -> dict[str, object]:
     return request
 
 
+class LiveToolsUnavailable(OSError):
+    """The live responder transport was disabled for this turn."""
+
+
 def _exchange(request: dict[str, object], directory: Path) -> dict[str, object]:
+    if os.environ.get("SDO_TOOLS_DIR") == "":
+        raise LiveToolsUnavailable(
+            "Live incident tools are unavailable in the closing turn. Use the recorded incident evidence."
+        )
     calls, responses = directory / "requests", directory / "responses"
     if not calls.is_dir() or not responses.is_dir():
         raise OSError("SDO tools are unavailable in this responder session")
@@ -568,6 +576,10 @@ def _print_response(response: dict[str, Any], *, full_json: bool) -> None:
 
 def _print_client_error(args: argparse.Namespace, error: Exception) -> None:
     print(f"sdo: {error}", file=sys.stderr)
+    if isinstance(error, LiveToolsUnavailable):
+        if args.json:
+            print(json.dumps({"command": args.command, "error": str(error), "summary": str(error)}))
+        return
     try:
         _print_response({"command": args.command, "error": str(error), "summary": str(error)}, full_json=args.json)
     except (OSError, ValueError) as persistence_error:

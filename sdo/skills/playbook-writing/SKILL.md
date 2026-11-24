@@ -25,6 +25,8 @@ Copy the closer of `examples/template-drift/` or `examples/stuck-pods/` to
 
 If the cause has a signal of its own, add a detector that names the playbook: [detector.md](detector.md).
 
+Live incident tools are unavailable in the closing turn. Use captured incident evidence and the checks below.
+
 Check:
 1. `sdo-operator memory check`
 2. `sdo-operator memory test <id>`
