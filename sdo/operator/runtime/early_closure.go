@@ -200,7 +200,7 @@ func (c *Controller) earlyReportWakeLocked() time.Time {
 	if !c.earlyStopRetryAt.IsZero() {
 		return c.earlyStopRetryAt
 	}
-	if c.responderDone {
+	if c.responderDone || c.config.WatchOnly {
 		return c.clock()
 	}
 	return c.finalResultDeadlineLocked()
@@ -232,7 +232,8 @@ func (c *Controller) finishEarlyReport(ctx context.Context, now time.Time) {
 	// structured result is provisional, and the changes made after it are in the
 	// final one. Wait for the session to finish, bounded by the response
 	// deadline.
-	if !done && now.Before(c.finalResultDeadlineLocked()) {
+	// Older watch-only controllers persisted this wait without a worker.
+	if !done && !c.config.WatchOnly && now.Before(c.finalResultDeadlineLocked()) {
 		c.mu.Unlock()
 		return
 	}

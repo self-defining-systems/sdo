@@ -12,6 +12,9 @@ import (
 )
 
 func (c *Controller) closureVerificationDeadline(closure IncidentClosure) time.Time {
+	if c.config.WatchOnly {
+		return closure.VerifiedAt.Add(c.config.VerificationTimeout)
+	}
 	deadline := closure.ResponderCompletedAt.Add(c.config.VerificationTimeout)
 	if response := closure.Request.ResponseDeadline; !response.IsZero() && response.Before(deadline) {
 		deadline = response

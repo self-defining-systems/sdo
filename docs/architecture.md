@@ -101,14 +101,11 @@ closes the page-opened incident as escalated and records any unresolved alerts
 or missing verification. Escalated closures never learn. A page is accepted once
 (`ControllerState.last_page_id`). Watch-only controllers ignore pages.
 
-Watch-only mode (operator configuration `mode: watch-only`; memory stays frozen
-and external incidents are excluded) is the opposite measurement: detection,
-incident opening, independent verification and closure run unchanged, but
-`NewController` selects no automatic stage and replaces the dispatcher with one
-that starts no worker and returns only when the controller ends the response
-(verified health, or the response deadline). No responder dispatch is recorded and
-frozen memory skips reflection, so every incident's findings, detectors and
-open/close times are recorded with no agent run and no change to the cluster.
+Watch-only mode (operator configuration `mode: watch-only`) detects and opens
+incidents, then observes the alert set until independent recovery verification
+holds. The dispatcher completes locally without claiming a worker, so closure
+can proceed as soon as recovery is verified. Frozen memory skips reflection.
+The controller records each incident's findings, detectors and open/close times.
 
 The benchmark adapter alone sends the generic alert after injection and grades the
 cluster with its oracle after responder completion. Fault identity, injection metadata
