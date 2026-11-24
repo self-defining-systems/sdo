@@ -49,6 +49,7 @@ func (c *Controller) stepClosureLocked(event lifecyclecore.Event) ([]lifecycleco
 	event.Policy = lifecyclecore.RetryPolicy{MaxAttempts: int32(c.config.ClosureRetry.MaxAttempts), InitialBackoff: c.config.ClosureRetry.InitialBackoff, MaxBackoff: c.config.ClosureRetry.MaxBackoff}
 	next, effects := lifecyclecore.Step(state, event)
 	c.applyClosureCoreLocked(next)
+	c.publishHeldLocked()
 	return effects, nil
 }
 

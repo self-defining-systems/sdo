@@ -189,11 +189,28 @@ func (c *Controller) ExecuteClosureEffect(ctx context.Context, effect ClosureEff
 		recheckStart := c.clock()
 		recheck := c.revalidateClosure(actionCtx, snapshot, effect.Closure)
 		slog.Info("closure_recheck_timing", "incident_id", effect.Closure.Request.IncidentID, "recheck_ms", c.clock().Sub(recheckStart).Milliseconds())
+		scope := newRecoveryScope(alertKeys(&effect.Closure.Request))
+		now := c.clock()
 		for _, observation := range recheck.Observations {
-			if effect.Closure.ClosureStabilityWindow == 0 && observation.Status == DetectorEvaluationClear {
+			if !recheck.Admitting && effect.Closure.ClosureStabilityWindow == 0 && observation.Status == DetectorEvaluationClear {
 				continue
 			}
-			c.recordRecoveryObservation(actionCtx, observation.ID, c.clock(), observation.Findings, observation.Status, observation.Error, observation.Reason, newRecoveryScope(alertKeys(&effect.Closure.Request)))
+			c.recordRecoveryObservation(actionCtx, observation.ID, now, observation.Findings, observation.Status, observation.Error, observation.Reason, scope)
+		}
+		c.mu.Lock()
+		resumed := c.pendingClosure == nil
+		c.mu.Unlock()
+		if resumed {
+			cancel()
+			return c.PersistState(ctx)
+		}
+		// A raw sample may be the first observation of a new episode. Give it
+		// a chance to activate through the tracker before freezing, within the
+		// join window. Unavailable nonmembers carry no recovery obligation.
+		if recheck.Admitting && c.closureHasConfirmingOpeners(recheck.Observations, scope) {
+			c.scheduleClosureRecheck()
+			cancel()
+			return c.PersistState(ctx)
 		}
 		if len(effect.Closure.FinalDetectorStates) > 0 {
 			c.mu.Lock()
@@ -522,6 +539,7 @@ const (
 )
 
 type closureRecheck struct {
+	Admitting    bool
 	Observations []recoveryObservation
 	States       []DetectorEvaluation
 	// IncompleteStates preserve named blockers in the accepted outcome history.
@@ -561,16 +579,18 @@ const closureInventoryLoadBound = 30 * time.Second
 
 // revalidateClosure checks live dependencies and admitted source fields, rather
 // than treating a matching policy generation as proof of continued recovery.
-// Every detector is evaluated, so a contradiction dominates an incomplete peer.
-// Source and render state are information only: an unavailable source check
-// waits and is noted, and only an observed difference contradicts.
+// Alert owners prove recovery. Eligible nonmembers are sampled for admission.
+// Source and render checks can add notes to the outcome.
 func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.DetectionContext, closure IncidentClosure) (result closureRecheck) {
 	var observations []recoveryObservation
 	var states []DetectorEvaluation
-	defer func() { result.Observations = observations; result.States = states }()
+	var admitting bool
+	defer func() {
+		result.Observations, result.States, result.Admitting = observations, states, admitting
+	}()
 	confirmed := closureRecheck{Verdict: closureRecheckConfirmed}
-	if len(closure.FinalDetectorStates) == 0 || closure.DispatchError != "" {
-		// Already unverified or without detector states to recheck; the outcome
+	if (len(closure.FinalDetectorStates) == 0 && closure.HealthClearedAt == nil) || closure.DispatchError != "" {
+		// Already unverified; the outcome
 		// still records what differs from the accepted source.
 		driftNotes, _, _ := c.closureDriftNotes(ctx, snapshot, closure)
 		confirmed.DriftNotes = driftNotes
@@ -592,6 +612,23 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 	ordered := make([]string, 0, len(ids))
 	for id := range ids {
 		ordered = append(ordered, id)
+	}
+	// A verified outcome must see new opening findings since the last
+	// scheduled pass, even on a detector outside the original proof.
+	admitting = !closure.Frozen && !closure.DetectedAt.IsZero() && c.clock().Sub(closure.DetectedAt) <= AlertJoinWindow
+	if admitting {
+		var nonmembers []sdk.Detector
+		for id, detector := range c.detectors {
+			if !ids[id] {
+				nonmembers = append(nonmembers, detector)
+			}
+		}
+		slices.SortFunc(nonmembers, func(a, b sdk.Detector) int { return strings.Compare(a.Spec().ID, b.Spec().ID) })
+		for id, opens := range c.closureOpeners(ctx, nonmembers) {
+			if opens {
+				ordered = append(ordered, id)
+			}
+		}
 	}
 	sort.Strings(ordered)
 	var incomplete, sourceNotes []string
@@ -626,10 +663,13 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		if detector == nil {
 			return contradicted("closure observation detector %s is unavailable", id)
 		}
-		evaluated++
 		read := reads[id]
 		findings, status, err := read.findings, read.status, read.err
 		observations = append(observations, recoveryObservation{ID: id, Findings: findings, Status: status, Error: err, Reason: detectorConfirmationReasonIn(detector, snapshot, scope)})
+		if !ids[id] {
+			continue
+		}
+		evaluated++
 		state := DetectorEvaluation{DetectorID: id, EvaluatedAt: c.clock(), Status: status, Fingerprints: findingFingerprints(scope.blocking(findings)), Reason: detectorConfirmationReasonIn(detector, snapshot, scope)}
 		if err != nil {
 			state.Error = err.Error()
@@ -676,6 +716,18 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 	confirmed.Skipped = gone
 	confirmed.DriftNotes = driftNotes
 	return confirmed
+}
+
+func (c *Controller) closureHasConfirmingOpeners(observations []recoveryObservation, scope recoveryScope) bool {
+	for _, observation := range observations {
+		for _, finding := range observation.Findings {
+			if finding.Status == sdk.FindingActive && !scope.holds(finding) &&
+				c.tracker.awaitingActivation(findingKey(finding)) && c.opens(finding) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // closureDriftNotes compares the accepted source with the live namespace for a

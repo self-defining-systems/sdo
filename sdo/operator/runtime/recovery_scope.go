@@ -23,10 +23,13 @@ func newRecoveryScope(keys []string) recoveryScope {
 
 // recoveryScopeLocked is the open incident's scope, or nil. Caller holds c.mu.
 func (c *Controller) recoveryScopeLocked() recoveryScope {
-	if !c.incidentOpen || c.currentIncidentRequest == nil {
-		return nil
+	if c.currentIncidentRequest != nil && (c.incidentOpen || c.earlyReportPendingLocked()) {
+		return newRecoveryScope(alertKeys(c.currentIncidentRequest))
 	}
-	return newRecoveryScope(alertKeys(c.currentIncidentRequest))
+	if c.provisionalClosureLocked() {
+		return newRecoveryScope(alertKeys(&c.pendingClosure.Request))
+	}
+	return nil
 }
 
 func (c *Controller) recoveryScope() recoveryScope {

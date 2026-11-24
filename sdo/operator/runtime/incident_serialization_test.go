@@ -87,9 +87,8 @@ func (r *recordingFirings) relations(fingerprint string) []string {
 }
 
 // The controller runs one incident at a time. A second opener that starts
-// while an incident's responder works waits for the next incident: it does not
-// hold this incident's verification or closure, and the closure record still
-// lists it as after dispatch so analysis sees it arrived.
+// after the join window waits for the next incident. The first closure
+// records when the second opener arrived.
 func TestLaterOpenerAfterDispatchWaitsForTheNextIncident(t *testing.T) {
 	runOnOneProcessor(t)
 	ctx := context.Background()
@@ -97,6 +96,7 @@ func TestLaterOpenerAfterDispatchWaitsForTheNextIncident(t *testing.T) {
 	cfg := testControllerConfig()
 	cfg.ClosureStabilityWindow = 5 * time.Second
 	cfg.VerificationTimeout = 5 * time.Minute
+	cfg.ResponseTimeout = 8 * time.Minute
 	health := &twoFaultHealth{}
 	health.first.Store(true)
 	dispatcher := &blockingDispatcher{}
@@ -126,7 +126,7 @@ func TestLaterOpenerAfterDispatchWaitsForTheNextIncident(t *testing.T) {
 		switch {
 		case dispatchedAt.IsZero() && dispatcher.hasStarted():
 			dispatchedAt = at
-		case !dispatchedAt.IsZero() && secondAt.IsZero() && at.Sub(dispatchedAt) >= 5*time.Second:
+		case !dispatchedAt.IsZero() && secondAt.IsZero() && at.Sub(dispatchedAt) > AlertJoinWindow:
 			health.second.Store(true)
 			secondAt = at
 		case !secondAt.IsZero() && at.Sub(secondAt) == 5*time.Second:
