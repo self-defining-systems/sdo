@@ -564,11 +564,14 @@ def _last_bad(row: Row, inject: datetime | None) -> datetime | None:
     return inject + timedelta(seconds=row.inject_to_last_bad_s)
 
 
-def _capped(bounds: tuple[datetime | None, datetime | None], end: datetime | None) -> tuple[datetime | None, ...]:
+def _capped(
+    bounds: tuple[datetime | None, datetime | None], end: datetime | None
+) -> tuple[datetime | None, datetime | None]:
     """The recovery bounds, no later than the end of the agent session or incident that wrote."""
     if end is None:
         return bounds
-    return tuple(min(x, end) if x is not None else end for x in bounds)
+    bound, slack = bounds
+    return min(bound, end) if bound else end, min(slack, end) if slack else end
 
 
 def _last_write(
