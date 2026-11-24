@@ -188,7 +188,7 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 		return next, nil
 	}
 	if event.Kind == Unconfirmed {
-		if pending == nil || pending.GetFrozen() || phase != contracts.ClosureState_CLOSURE_STATE_PENDING || len(pending.GetFinalDetectorStates()) == 0 ||
+		if pending == nil || pending.GetFrozen() || phase != contracts.ClosureState_CLOSURE_STATE_PENDING || len(pending.GetFinalDetectorStates()) == 0 && pending.GetHealthClearedAt() == nil ||
 			event.UnconfirmedReason == contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED {
 			return next, nil
 		}
@@ -197,6 +197,7 @@ func Step(state *contracts.ControllerState, event Event) (*contracts.ControllerS
 			pending.PartialDetectorStates = append(pending.PartialDetectorStates, proto.Clone(state).(*contracts.DetectorEvaluation))
 		}
 		pending.FinalDetectorStates = nil
+		pending.HealthClearedAt = nil
 		pending.UnconfirmedReason = event.UnconfirmedReason
 		pending.UnconfirmedDetail = event.Error
 		if event.Verification != nil {

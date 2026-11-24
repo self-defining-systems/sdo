@@ -30,19 +30,11 @@ func (c *Controller) verifyClosureSource(ctx context.Context, now time.Time, sna
 		result = c.currentIncidentResult
 	}
 	namespace := c.currentIncidentRequest.Namespace
-	for _, finding := range findings {
-		rolloutRefs = append(rolloutRefs, finding.PrimaryResource)
-		rolloutRefs = append(rolloutRefs, finding.RelatedResources...)
-	}
-	for _, state := range c.tracker.Snapshot() {
-		if state.Active {
-			rolloutRefs = append(rolloutRefs, state.Finding.PrimaryResource)
-			rolloutRefs = append(rolloutRefs, state.Finding.RelatedResources...)
-		}
-	}
 	if result != nil {
 		for _, action := range result.RepairActions {
-			rolloutRefs = append(rolloutRefs, action.Resources...)
+			if action.Success {
+				rolloutRefs = append(rolloutRefs, action.Resources...)
+			}
 		}
 	}
 	_, drift := c.verifySourceInventoryLocked(result)

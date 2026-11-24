@@ -193,7 +193,7 @@ func TestAPageOpenedIncidentClosesOnlyAfterTheResponderReturns(t *testing.T) {
 			if c.incidentOpen || closed.Result == nil {
 				t.Fatal("the page-opened incident did not close after the responder returned and alerts stayed clear")
 			}
-			if !c.escalatedAt.IsZero() || closed.UnconfirmedReason != contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED || len(closed.FinalDetectorStates) == 0 {
+			if !c.escalatedAt.IsZero() || closed.UnconfirmedReason != contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED || closed.HealthClearedAt == nil {
 				t.Fatalf("closure is not a verified one: escalated %v reason %v states %d", c.escalatedAt, closed.UnconfirmedReason, len(closed.FinalDetectorStates))
 			}
 			state, err := c.ExportState()

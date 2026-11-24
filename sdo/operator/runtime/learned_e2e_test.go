@@ -126,6 +126,7 @@ func TestLearnedPlaybookFixesASymptomThatJoinsAChurnIncident(t *testing.T) {
 		Findings: churnFinding, OpeningKeys: findingKeys(churnFinding), ResponseDeadline: lifecycleio.Now().Add(time.Hour)}
 	executor := PlanExecutor{Client: TypedPlanClient{Client: world.client}, Source: world, Rollouts: world, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: world}}
 	loop := NewResponderLoop(request, registry, world, detectors, executor, 5)
+	loop.Now = c.now
 	loop.ReadView = func(v sdk.DetectionContext) program.ReadView {
 		return &sdktest.ReplayReadView{Snapshot: v.(sdktest.Snapshot)}
 	}

@@ -40,12 +40,8 @@ type recoveryCheck struct {
 	horizon time.Duration
 }
 
-// verificationInput is everything Recovered reads: the accepted map (to
-// resolve written workloads), the live view (traffic windows, workloads,
-// Pods), the incident's opening alerts and SDO's writes. It is a pure function
-// of these.
+// verificationInput is the live view, the incident alert set and SDO writes.
 type verificationInput struct {
-	m        appmap.Map
 	view     sdk.DetectionContext
 	request  IncidentRequest
 	result   *IncidentResult
@@ -65,8 +61,7 @@ func (c *Controller) recoveryCheck(ctx context.Context, snapshot sdk.DetectionCo
 	if snapshot == nil {
 		return recoveryCheck{verdict: recoveryVerified}
 	}
-	m, _ := acceptedVerificationMap(ctx, c.gitRead, request)
-	return recovered(verificationInput{m: m, view: snapshot, request: request, result: result, detected: detected, stability: stability})
+	return recovered(verificationInput{view: snapshot, request: request, result: result, detected: detected, stability: stability})
 }
 
 // acceptedVerificationMap reads the application map at the incident's
@@ -121,20 +116,22 @@ func recovered(in verificationInput) recoveryCheck {
 	opening := openingKeys(&in.request)
 	record := &contracts.RecoveryVerification{OpeningKeys: append([]string(nil), opening...), JoinedKeys: append([]string(nil), in.request.JoinedKeys...)}
 	check := recoveryCheck{record: record}
-	writes, since, settled := sdoWrites(in, newComponentResolver(in.m, in.view, in.request.Namespace))
+	writes, since, settled := sdoWrites(in)
 	record.Since = timestamppb.New(since)
 	record.WritesSettled = settled
 	for _, w := range writes {
 		record.Writes = append(record.Writes, &contracts.WriteSettlement{ApplicationId: w.id, SettledAt: optionalTimestamp(w.settledAt), Settled: w.settled})
 	}
 	var pending []string
-	userTests := 0
 	for _, key := range alertKeys(&in.request) {
 		workload, scenario, ok := openingUserTest(in.request, key)
 		if !ok {
+			if detector, fingerprint, found := strings.Cut(key, "\x00"); found &&
+				strings.HasPrefix(detector, memory.TrafficDetectorPrefix) && strings.HasPrefix(fingerprint, detector+"/"+traffic.RuleIDPrefix) {
+				pending = append(pending, "missing user test identity for "+detector)
+			}
 			continue
 		}
-		userTests++
 		passed, detail, horizon := memberPassed(windows[workload], scenario, since, in.stability)
 		check.horizon = max(check.horizon, horizon)
 		if !passed {
@@ -142,9 +139,7 @@ func recovered(in verificationInput) recoveryCheck {
 		}
 	}
 	switch {
-	case !settled && userTests > 0:
-		// A condition opener's closure already waits on pending rollouts of
-		// the written workloads; a user test needs the settle time as since.
+	case !settled:
 		check.verdict, check.reason = recoveryPending, "an SDO write has not settled (its rollout is still pending)"
 	case len(pending) > 0:
 		check.verdict, check.reason = recoveryPending, "not recovered since SDO's last write settled: "+strings.Join(pending, "; ")
@@ -220,27 +215,14 @@ type sdoWrite struct {
 // and since: the later of detection and the latest settle time. A write whose
 // rollout is still pending, or whose workload is still rolling out, has not
 // settled, and settled is then false.
-func sdoWrites(in verificationInput, resolve componentResolver) (writes []sdoWrite, since time.Time, settled bool) {
+func sdoWrites(in verificationInput) (writes []sdoWrite, since time.Time, settled bool) {
 	since, settled = in.detected, true
 	if in.result == nil {
 		return nil, since, true
 	}
 	for i, application := range in.result.PlanApplications {
-		var refs []sdk.ObjectRef
-		for _, effect := range application.Result.ObjectEffects {
-			if effect.State != "not_applied" {
-				refs = append(refs, effect.Ref)
-			}
-		}
-		if len(refs) == 0 && (application.Result.Applied || application.Result.RolledBack) {
-			// No recorded object effect (a rollout still pending when the plan
-			// returned): the objects its actions name are what it wrote.
-			for _, action := range application.Result.Plan.Actions {
-				if ref, err := planActionRef(action); err == nil && ref.Name != "" {
-					refs = append(refs, ref)
-				}
-			}
-		}
+		refs := recoveryApplicationRefs(application)
+		pendingAtCompletion := application.Pending || application.Result.RolloutPending != nil
 		if !application.Result.Applied && !application.Result.RolledBack && len(refs) == 0 {
 			continue
 		}
@@ -248,18 +230,9 @@ func sdoWrites(in verificationInput, resolve componentResolver) (writes []sdoWri
 		if id == "" {
 			id = fmt.Sprintf("plan-application-%d", i)
 		}
-		// A rollout pending when the plan completed settles once Go sees the
-		// written workloads Ready again; without a workload to watch it never
-		// settles. Either way the settle time is never earlier than the
-		// latest Ready transition of the written workloads' Pods.
-		pendingAtCompletion := application.Pending || application.Result.RolloutPending != nil
 		w := sdoWrite{id: id, settledAt: application.CompletedAt, settled: !pendingAtCompletion || len(refs) > 0}
 		for _, ref := range refs {
-			ready, rolling := resolve.readySince(ref)
-			w.settled = w.settled && !rolling
-			if ready.After(w.settledAt) {
-				w.settledAt = ready
-			}
+			w.settled = w.settled && !writeRevisionPending(in.view, ref, pendingAtCompletion)
 		}
 		writes = append(writes, w)
 	}
@@ -269,13 +242,7 @@ func sdoWrites(in verificationInput, resolve componentResolver) (writes []sdoWri
 		}
 		w := sdoWrite{id: action.ActionID, settledAt: action.CompletedAt, settled: true}
 		for _, ref := range action.Resources {
-			ready, rolling := resolve.readySince(ref)
-			if rolling {
-				w.settled = false
-			}
-			if ready.After(w.settledAt) {
-				w.settledAt = ready
-			}
+			w.settled = w.settled && !writeRevisionPending(in.view, ref, false)
 		}
 		writes = append(writes, w)
 	}
@@ -399,65 +366,62 @@ func (r componentResolver) selecting(podLabels map[string]string) string {
 	return ""
 }
 
-// readySince is the latest Ready transition among the current Pods of the
-// workload a written object belongs to, and whether that workload is still
-// rolling out (a Pod not Ready, or fewer updated replicas than desired).
-func (r componentResolver) readySince(ref sdk.ObjectRef) (time.Time, bool) {
-	var workload string
+// recoveryApplicationRefs are the resources written by the application. A
+// pending receipt may predate the executor's readback of an action.
+func recoveryApplicationRefs(application RecordedPlanApplication) []sdk.ObjectRef {
+	var refs []sdk.ObjectRef
+	for _, effect := range application.Result.ObjectEffects {
+		if effect.State != "not_applied" {
+			refs = append(refs, effect.Ref)
+		}
+	}
+	actions := application.Result.ActionsApplied
+	if len(actions) == 0 && (application.Pending || application.Result.RolloutPending != nil) &&
+		(application.Result.Applied || application.Result.RolledBack) {
+		actions = application.Result.Plan.Actions
+	}
+	for _, action := range actions {
+		if ref, err := planActionRef(action); err == nil && ref.Name != "" {
+			refs = append(refs, ref)
+		}
+	}
+	return refs
+}
+
+// A workload write settles when the workload controller has observed the
+// generation and, for a pending rollout, started the intended revision.
+// Current Pod availability and Ready transitions are health observations.
+func writeRevisionPending(view sdk.DetectionContext, ref sdk.ObjectRef, rolloutPending bool) bool {
 	switch ref.Kind {
-	case "Deployment", "StatefulSet", "DaemonSet":
-		workload = ref.Kind + "/" + ref.Name
-	default:
-		component := r.component(ref)
-		if component == "" {
-			return time.Time{}, false
-		}
-		for kindName, name := range r.byWorkload {
-			if name == component {
-				workload = kindName
-			}
-		}
-	}
-	var latest time.Time
-	rolling := false
-	for _, pod := range r.view.Pods() {
-		if pod.Namespace != r.namespace || pod.DeletionTimestamp != nil || r.owner(pod.OwnerReferences) != workload {
-			continue
-		}
-		ready := false
-		for _, condition := range pod.Status.Conditions {
-			if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
-				ready = true
-				if condition.LastTransitionTime.After(latest) {
-					latest = condition.LastTransitionTime.Time
-				}
-			}
-		}
-		rolling = rolling || !ready
-	}
-	kind, name, _ := strings.Cut(workload, "/")
-	switch kind {
 	case "Deployment":
-		for _, d := range r.view.Deployments() {
-			if d.Namespace == r.namespace && d.Name == name && d.Spec.Replicas != nil && d.Status.UpdatedReplicas < *d.Spec.Replicas {
-				rolling = true
+		for _, d := range view.Deployments() {
+			if d.Namespace == ref.Namespace && d.Name == ref.Name {
+				return d.Status.ObservedGeneration < d.Generation ||
+					rolloutPending && deploymentDesiredReplicas(&d) > 0 && d.Status.UpdatedReplicas == 0
 			}
 		}
 	case "StatefulSet":
-		for _, s := range r.view.StatefulSets() {
-			if s.Namespace == r.namespace && s.Name == name && s.Spec.Replicas != nil && s.Status.UpdatedReplicas < *s.Spec.Replicas && s.Status.UpdateRevision != "" && s.Status.CurrentRevision != s.Status.UpdateRevision {
-				rolling = true
+		for _, s := range view.StatefulSets() {
+			if s.Namespace == ref.Namespace && s.Name == ref.Name {
+				return s.Status.ObservedGeneration < s.Generation ||
+					rolloutPending && s.Status.UpdateRevision != s.Status.CurrentRevision && s.Status.UpdatedReplicas == 0
+			}
+		}
+	case "DaemonSet":
+		for _, d := range view.DaemonSets() {
+			if d.Namespace == ref.Namespace && d.Name == ref.Name {
+				return d.Status.ObservedGeneration < d.Generation ||
+					rolloutPending && d.Status.DesiredNumberScheduled > 0 && d.Status.UpdatedNumberScheduled == 0
 			}
 		}
 	}
-	return latest, rolling
+	return false
 }
 
 // stageRecoveryCheck is Recovered for the automatic stage's wait and the
 // claim-time check: the incident's opening alerts and the loop's recorded
 // writes, observed on view.
 func (l *ResponderLoop) stageRecoveryCheck(ctx context.Context, view sdk.DetectionContext, state *IncidentState) recoveryCheck {
-	m, _ := acceptedVerificationMap(ctx, l.gitRead(), state.Request)
 	result := IncidentResult{PlanApplications: l.applicationEvidenceLocked()}
-	return recovered(verificationInput{m: m, view: view, request: state.Request, result: &result, detected: state.Request.DetectedAt})
+	return recovered(verificationInput{view: view, request: state.Request, result: &result, detected: state.Request.DetectedAt})
 }

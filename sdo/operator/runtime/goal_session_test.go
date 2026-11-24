@@ -47,7 +47,7 @@ func goalSessionController(t *testing.T, unhealthy bool, dispatcher Dispatcher) 
 	c.now = func() time.Time { return now }
 	c.incidentOpen, c.responderDone = true, true
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
-	c.currentIncidentRequest = &IncidentRequest{IncidentID: "synthetic", Application: "demo", ResponseDeadline: now.Add(time.Hour)}
+	c.currentIncidentRequest = &IncidentRequest{IncidentID: "synthetic", Application: "demo", Findings: []sdk.Finding{{DetectorID: "health", RuleID: "unhealthy", Status: sdk.FindingActive}}, ResponseDeadline: now.Add(time.Hour)}
 	c.incidentDetectedAt, c.incidentDispatchedAt = now.Add(-time.Hour), now.Add(-time.Hour)
 	// The responder returned longer ago than the grace in which Recovered may still hold.
 	c.responderCompletedAt = now.Add(-cfg.VerificationTimeout - time.Minute)

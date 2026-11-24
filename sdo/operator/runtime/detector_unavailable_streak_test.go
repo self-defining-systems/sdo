@@ -59,15 +59,17 @@ func TestDetectorFailureEndsClearStreak(t *testing.T) {
 	}
 }
 
-// The streak is the proof: after a skipped pass the next clear pass completes
-// the stability window from the original clear time, and a detector in the
-// alert set that was never observed clear still fails closed.
-func TestSkippedPassDoesNotRestartRecoveryWindow(t *testing.T) {
+// Tracker history survives an unavailable pass, but its recovery proof must
+// start again after the observation gap.
+func TestSkippedRequiredPassRestartsRecoveryWindow(t *testing.T) {
 	const id = "traffic-probe-read-later"
 	since := time.Unix(100, 0).UTC()
 	window := 60 * time.Second
 	c := openersController(t, &recordingDispatcher{})
 	c.config.ClosureStabilityWindow = window
+	c.healthDetectorIDs = []string{id}
+	c.incidentOpen = true
+	c.currentIncidentRequest = &IncidentRequest{OpeningKeys: []string{FindingStateKey(id, "x")}}
 	c.recoverySafetyLost = false
 	scope := newRecoveryScope([]string{FindingStateKey(id, "x")})
 
@@ -82,8 +84,11 @@ func TestSkippedPassDoesNotRestartRecoveryWindow(t *testing.T) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.recoveryProofForEpochLocked(now, states, true, since) {
-		t.Fatalf("recovery proof refused 65s after the clear streak began (window %v): a skipped pass restarted it", window)
+	if c.recoveryProofForEpochLocked(now, states, true, since) {
+		t.Fatal("recovery reused the clear window across an unavailable observation")
+	}
+	if !c.recoveryProofForEpochLocked(now.Add(window), states, true, since) {
+		t.Fatal("recovery did not complete after a new stability window")
 	}
 
 	// Never observed clear: no streak, no proof.
