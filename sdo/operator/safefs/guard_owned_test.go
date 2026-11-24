@@ -92,7 +92,6 @@ var operatorOwned = map[string]string{
 	"runtime/prober/setup_lock.go":                     "empty advisory lock files under the OS temp directory (sdo-setup-locks/<namespace>), a fixed path never in a checkout and never published",
 	"runtime/internal/lifecycleio/task_store.go":       reasonLedger,
 	"runtime/investigators_dispatch.go":                reasonState,
-	"runtime/jitview/cmd/gen/main.go":                  reasonTool,
 	"runtime/native_broker.go":                         reasonLedger,
 	"runtime/routing_capture.go":                       reasonLedger,
 	"runtime/store_backups.go":                         "controller-owned backup state under .sdo-runtime/backups on the repository volume, keyed by incident digest; never a checkout and never published",
