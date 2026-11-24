@@ -129,13 +129,13 @@ jobs:
           limit=$(python3 -c 'import json,sys; print(json.load(open(".github/ci_budgets.json"))["cache"]["families"][sys.argv[1]]["max_mb"])' "$family")
           bash scripts/ci_cache_guard.sh "$limit" "$GOCACHE"
       - name: Save the end-to-end cache
-        if: steps.e2e-cache-size.outputs.oversize != 'true'
+        if: github.ref == 'refs/heads/main' && (inputs.scenario == '' || inputs.scenario == 'all') && steps.e2e-cache-size.outputs.oversize != 'true'
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684
         with:
           path: ~/.cache/sdo-e2e/go-build
           key: ci-controller-e2e-v1-${{ runner.os }}-${{ runner.arch }}-1.26.8-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
       - name: Prune the superseded end-to-end caches
-        if: steps.e2e-cache-size.outputs.oversize != 'true'
+        if: github.ref == 'refs/heads/main' && (inputs.scenario == '' || inputs.scenario == 'all') && steps.e2e-cache-size.outputs.oversize != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
