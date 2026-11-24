@@ -181,8 +181,16 @@ def prepare(env: Mapping[str, str]) -> None:
     print(json.dumps({"pack": env["BENCH_PACK"], "operator_version": f"{MODEL}/{EFFORT}", "memory": "none"}))
 
 
-def vertex(env: Mapping[str, str]) -> tuple[Path, dict[str, str]]:
+def operator_settings(env: Mapping[str, str]) -> dict[str, Any]:
     settings = json.loads(Path(env["BENCH_OPERATOR"]).read_text())["settings"]
+    window = settings.get("window_seconds")
+    if not isinstance(window, int) or isinstance(window, bool) or window <= 0:
+        raise HookError("vanilla requires a positive settings.window_seconds matching run.window")
+    return settings
+
+
+def vertex(env: Mapping[str, str]) -> tuple[Path, dict[str, str]]:
+    settings = operator_settings(env)
     auth = Path(settings["auth_file"]).expanduser().resolve()
     extra = dict(item.split("=", 1) for item in settings["config"]["agent"]["extra_env"])
     if extra.get("CLAUDE_CODE_USE_VERTEX") != "1" or any(not extra.get(key) for key in VERTEX_ENV):
@@ -327,11 +335,11 @@ def capture_agent(env: Mapping[str, str], target: Path, injected: float) -> None
         )
 
 
-def await_onset(env: Mapping[str, str], injected: float) -> tuple[float | None, list[str]]:
+def await_onset(env: Mapping[str, str], watch_at: float) -> tuple[float | None, list[str]]:
     pack = Path(env["BENCH_PACK"])
     names = [journey["name"] for journey in page.journeys(pack)["journeys"]]
     fuzzops = Path(env["FUZZOPS_BIN"]).resolve()
-    deadline = injected + ONSET_SECONDS
+    deadline = watch_at + ONSET_SECONDS
     args = [
         str(fuzzops),
         "check",
@@ -374,16 +382,23 @@ def supervise(env: Mapping[str, str], injected: float, lock_fd: int) -> None:
 
 
 def watch(env: Mapping[str, str]) -> int:
-    injected = time.time()
+    watch_at = time.time()
+    # FuzzOps sets the operator deadline to inject_at + the configured window.
+    # The env value has second precision. Standalone hook tests may omit it.
+    deadline = env.get("FUZZOPS_DEADLINE")
+    injected = watch_at
+    if deadline:
+        window = operator_settings(env)["window_seconds"]
+        injected = datetime.fromisoformat(deadline).timestamp() - window
     target = run_dir(env)
     target.mkdir(mode=0o700)
-    atomic_write_json(target / "start.json", {"watch_at": timestamp(injected)})
+    atomic_write_json(target / "start.json", {"watch_at": timestamp(watch_at), "inject_at": timestamp(injected)})
     if env.get("BENCH_FAULT") == "none":
         atomic_write_json(target / "done.json", {"skipped": "healthy control"})
         return 0
     print("vanilla: waiting for harm onset", flush=True)
     try:
-        onset, failing = await_onset(env, injected)
+        onset, failing = await_onset(env, watch_at)
     except HookError as exc:
         atomic_write_json(target / "done.json", {"error": str(exc)})
         raise
