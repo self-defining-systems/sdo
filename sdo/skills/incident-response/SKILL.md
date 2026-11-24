@@ -6,18 +6,17 @@ description: A general method for finding and removing what is hurting an applic
 # Incident response
 
 - **Look at what fails.** Run the failing operation and read its exact response. The opening alert can be a side effect.
-- **Follow the change.** Something changed near onset on or upstream of the failing path (config, code, data, a
-  dependency), or a latent condition was triggered. Check unexplained findings on that path.
-  For suspected Secret rotation, verify the authentication failure. Ownership timestamps alone are inconclusive.
-- **Hold a rival.** Name your lead explanation and the runner-up, and run the check whose outcome differs most.
-- **Change as an experiment.** Predict which operations a change will fix, then check them. Prefer the
-  fastest supported operation with the same effect and side effects, including cache invalidation.
-- **Done** when the failing operation keeps passing. Verify the serving process uses the changed state.
-  If corrected configuration does not roll that process, replace it. For paged incidents, return
-  `completed` after verified recovery or `failed` if unverified.
-  SDO ends detector-opened work on recovery. To wait, run
-  `sdo detect --wait SECONDS` (up to 600), never `sleep`: it returns early only when the incident's state changes. A result submitted while a background command still runs is
-  interim: you are woken when it finishes and must keep working; the last result stands.
-- **Record.** `findings`: what you saw and where, what you ruled out and why (and what you did not check), never the
-  probable cause; required, also when you give up. `agent_changes`: each change, what, where and when (RFC 3339);
-  empty if none.
+- **Follow the change.** Look for changes on or upstream of the failing path near onset, or a latent trigger.
+  Keep unexplained findings on that path open until checked.
+  A passing operation shows a node is alive, not that its data for the failing one is right.
+  Verify suspected Secret rotation by checking authentication. Ownership timestamps alone are inconclusive.
+- **Hold a rival.** Name the top two explanations and run the check that best distinguishes them.
+- **Test each change.** Predict what it fixes, then recheck after it takes effect. Unchanged failure counts against the hypothesis.
+- Prefer the fastest supported operation with the same effect and side effects, including cache invalidation.
+- Done when the serving process uses the changed state. Replace it if corrected configuration does not roll it.
+- **Verify recovery.** The failing operation must keep passing. For paged incidents, return `completed` if verified, `failed` otherwise.
+  SDO ends detector-opened work on recovery. Wait with `sdo detect --wait SECONDS` (up to 600), never `sleep`.
+  It returns early only on incident state changes. Results submitted during background work are interim.
+  When woken on command completion, keep working. The last result stands.
+- **Record.** `findings` (required even if you give up): what you saw and where, what you ruled out and why, and gaps.
+  Keep probable causes out. `agent_changes`: what, where and when (RFC 3339) for each change, empty if none.

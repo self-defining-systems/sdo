@@ -19,11 +19,12 @@ description: Reading and changing an application through SDO's `sdo` command.
 - `sdo menu [NAME]`: list fixes. `sdo mitigate NAME --bind ROLE=Kind/ns/name`: apply one
 - `sdo mitigate ReconcileFromSource --bind ref=Deployment/shop/api`: restore source
 
-Read captured evidence before repeating slow reads. Verify a learned diagnosis or mitigation against that evidence before relying on it. SDO skips non-matches. They can still suggest a fix.
+Read captured evidence before repeating slow reads. Check learned diagnoses and mitigations against it before use. SDO never applies non-matching playbooks. Reuse their mitigation if the cause holds.
 
 `sdo COMMAND --help` gives the syntax. Use `kubectl` for reads and changes. Keep a source fix with `git commit`.
 
 At handoff, run `sdo detect` for evidence and refusals.
+SDO ends detector-opened work on recovery.
 
 Never print, copy, log or write a credential value anywhere, including findings and memory. A credential already in a
 pod's environment or mounted files may be used in place (exec into that pod and let its client read it) to check the
