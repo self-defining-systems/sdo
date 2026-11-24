@@ -149,9 +149,17 @@ runs. Grader metrics come from `record.json`. Validity also honors the lanes sta
   from these sources may require inspecting the evidence. The mutation cross-check looks for
   the same Kubernetes object during the call or within ten seconds after it. FuzzOps' Kubernetes
   polls cannot corroborate in-pod database writes.
-- Usage sums the row's SDO responder and closing phases separately. SDO input tokens already
-  include cache tokens. Vanilla input adds cache creation and reads to uncached input.
-  Unavailable values are null in JSON Lines and a dash in Markdown. Vanilla has no SDO incident count.
+- The evidence manifest lists read-only investigator worker directories in `investigators`,
+  keyed by directory digest with the worker ID as value. Each ID identifies its parent incident
+  via the `-inv-N` suffix. Investigator workers do not add to `incident_count` or
+  `open_incident_count`. The row tool also recognizes their identities in older manifests.
+- Usage sums the row's SDO response and closing phases separately. The `responder_*` totals
+  include investigators. Native incident usage already includes them, so the row tool uses it
+  once and falls back to known journal values where metrics are missing. `responder_usage_complete`
+  marks whether the total is complete, and `response_sessions` lists each worker's parent incident,
+  role, available usage and completeness. A start-only journal leaves that worker's cost unknown.
+  SDO input tokens already include cache tokens. Vanilla input adds cache creation and reads to
+  uncached input. Unavailable values are null in JSON Lines and a dash in Markdown.
 
 When the evidence is only on another host, run the standard-library script there via SSH
 without transferring the raw evidence. Replace the host and path as needed.
