@@ -14,7 +14,7 @@ import (
 
 func TestCompileReportsTheFailingStage(t *testing.T) {
 	if testing.Short() {
-		t.Skip("nightly runs the real compiler; TestCompileStageDiagnostics covers the stage contract in PR CI")
+		t.Skip("nightly CI runs it without -short: TestCompileStageDiagnostics covers the stage contract in PR CI")
 	}
 	for _, test := range []struct {
 		name   string
