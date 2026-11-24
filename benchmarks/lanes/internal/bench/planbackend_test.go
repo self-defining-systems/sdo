@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,7 +27,11 @@ type planLab struct {
 
 func newPlanLab(t *testing.T) *planLab {
 	root := Root(t.TempDir())
-	return &planLab{t: t, root: root, b: &PlanBackend{Root: root}}
+	grading := &sync.WaitGroup{}
+	// RunData starts a background grading job that writes into the root; let it end before the root is removed
+	// (cleanups run last-in first-out, so this runs before the TempDir removal).
+	t.Cleanup(grading.Wait)
+	return &planLab{t: t, root: root, b: &PlanBackend{Root: root, Grading: grading}}
 }
 
 func (l *planLab) experiment(name string, runs map[string]RunFile) {
