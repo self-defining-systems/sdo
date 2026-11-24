@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -318,10 +317,21 @@ func nonPersistingReview(e apihistory.Event) bool {
 // review and a server-side dry run persist nothing. Any other write the
 // client or the upstream abandoned may still be applied by the API server.
 func certainOnFailure(r *http.Request, e apihistory.Event) bool {
-	if e.Subresource == "portforward" || nonPersistingReview(e) {
+	if e.Group == "" && e.Version == "v1" && e.Resource == "pods" && e.Namespace != "" && e.Name != "" && e.Subresource == "portforward" {
 		return true
 	}
-	return slices.Contains(r.URL.Query()["dryRun"], "All")
+	if nonPersistingReview(e) {
+		return true
+	}
+	// Only these resource operations take dry-run options from the query.
+	// Connection endpoints can ignore the flag, and DeleteOptions in a
+	// request body take precedence over it.
+	switch r.Method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch:
+		return e.DryRun && e.Resource != "proxy"
+	default:
+		return false
+	}
 }
 
 func refuseReadOnly(w http.ResponseWriter, recorder Recorder, e apihistory.Event) {

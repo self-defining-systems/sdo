@@ -104,8 +104,8 @@ func TestAbandonedRequestThatCannotWriteLeavesNoUncertainMutation(t *testing.T) 
 	for name, request := range cases {
 		t.Run(name, func(t *testing.T) {
 			observation := abandonThroughGate(t, request.line, request.body, request.headers...)
-			if observation.Pending {
-				t.Fatalf("an abandoned %s is recorded as a pending or uncertain mutation; closure would never be fenced", name)
+			if err := observation.Fence(time.Unix(1000, 0)); err != nil {
+				t.Fatalf("abandoned %s blocked closure: %v", name, err)
 			}
 		})
 	}
@@ -114,9 +114,33 @@ func TestAbandonedRequestThatCannotWriteLeavesNoUncertainMutation(t *testing.T) 
 // A real write the client abandoned may still be applied by the API server:
 // it stays uncertain.
 func TestAbandonedWriteStaysUncertain(t *testing.T) {
-	observation := abandonThroughGate(t, "PATCH /apis/apps/v1/namespaces/app/deployments/web HTTP/1.1", "{}",
-		"Content-Type: application/merge-patch+json")
-	if !observation.Pending {
-		t.Fatal("an abandoned write must stay uncertain")
+	for _, request := range []struct {
+		name, line, body string
+		headers          []string
+	}{
+		{
+			name:    "ordinary patch",
+			line:    "PATCH /apis/apps/v1/namespaces/app/deployments/web HTTP/1.1",
+			body:    "{}",
+			headers: []string{"Content-Type: application/merge-patch+json"},
+		},
+		{
+			name:    "connection request ignores dry run query",
+			line:    "POST /api/v1/namespaces/app/pods/web-0/exec?dryRun=All HTTP/1.1",
+			headers: []string{"Connection: Upgrade", "Upgrade: SPDY/3.1"},
+		},
+		{
+			name:    "delete options body overrides dry run query",
+			line:    "DELETE /api/v1/namespaces/app/pods/web-0?dryRun=All HTTP/1.1",
+			body:    "{}",
+			headers: []string{"Content-Type: application/json"},
+		},
+	} {
+		t.Run(request.name, func(t *testing.T) {
+			observation := abandonThroughGate(t, request.line, request.body, request.headers...)
+			if err := observation.Fence(time.Unix(1000, 0)); err == nil {
+				t.Fatal("an abandoned write must block closure")
+			}
+		})
 	}
 }
