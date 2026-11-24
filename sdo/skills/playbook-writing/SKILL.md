@@ -8,7 +8,7 @@ description: Turn the fix you just made into a playbook SDO can run by itself ne
 Start from `examples/template-drift/` or `examples/stuck-pods/`. Write `diagnose.go` and `mitigate.go` in `.sdo/playbooks/<id>/`.
 
 - `Spec()`: the `ID` and no object role. SDO tries it on every pass, so `Diagnose` finds its own subject through `ReadView` (app map,
-  owners, `DiffAgainstSource`) and returns `program.NoMatch` when it is absent.
+  owners, normalized `DiffAgainstSource`) and returns `program.NoMatch` when it is absent.
 - `Diagnose`: test the state your fix changed (a row, setting, key or object field), read live, not a symptom. A log line is the symptom's echo (it can rotate away): never require it; at most `Evidence` once matched. Select the fault's own state exactly as you saw it (column type, constraint text, key).
   Return `program.Match`, `program.NoMatch`, or `program.Unknown` (failed read, unbaselined store, unscanned `ScanTruncated`). It must Match its own incident before you save it; stay `NoMatch` on a healthy install or another fault. An absent object is not a failed read. Check its list.
 - Secret drift: test only declared keys via `DiffAgainstSource`. Deliberate rotation can match and be reverted.
@@ -20,7 +20,7 @@ Start from `examples/template-drift/` or `examples/stuck-pods/`. Write `diagnose
 - Scope absence claims to where you looked. Before recreating or overwriting lost data, require a live check for the authoritative copy and restore it if found. If the check is unavailable, leave the write to the responder.
 - Set the known-good value directly, not from controller history a repeat may lack.
 - Carry a whole source restore as `program.ReconcileFromSource`. Omit changes that did not help.
-- Memory is for this application and may name its own tables, resources and commands; generalize over what varies, not away from the application. A program for just the mechanical part beats none; leave judgement to the README. No passwords.
+- Memory is for this application and may name its own tables, resources and commands; generalize over what varies, not away from the application. Automate mechanical steps; leave judgement to the README. No passwords.
 - Save commands that worked with waits and checks, recheck state first, and find names through relations. A matching Diagnose can select scripts or typed actions.
 - Script output is discarded; signal by exit code.
 
