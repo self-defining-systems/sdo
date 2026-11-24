@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterable, Iterator
 
 Document = dict[str, Any]
 
@@ -222,7 +222,10 @@ _RUBY_WRITE = re.compile(
     r"|\.expire_\w+|\bRails\.cache\.(?:delete|delete_matched|clear|write)\b"
 )
 _EXEC_WRITE = re.compile(
-    r"(?:^|[;&|]\s*)(?:rm|mv|cp|mkdir|chmod|chown|install|truncate|tee|touch)\s"
+    # A command word: at the start, after a separator, a shell keyword, `sh -c`, `find -exec` or `xargs`.
+    r"(?:^|[;&|({]\s*|(?:^|\s)(?:do|then|else|-c|-exec|xargs(?:\s+-\S+)*)\s+)"
+    r"(?:rm|mv|cp|mkdir|chmod|chown|install|truncate|tee|touch)\s"
+    r"|\bfind\b[^;&|]*\s-delete\b"
     r"|\bsed\s+-i\b|(?<![\d<>=])>{1,2}\s*/(?!dev/null\b)"
     r"|\bcurl\b[^;&|]*\s(?:-X\s*|--request[= ])(?:POST|PUT|PATCH|DELETE)\b"
     r"|\bredis-cli\b[^;&|]*?\s(?i:del|unlink|set|setex|mset|expire|persist|flushdb|flushall|sadd|srem|hset|hdel"
@@ -239,8 +242,57 @@ def _target(kind: str, name: str) -> str:
     return f"{_KIND.get(kind, kind)}/{name}"
 
 
+#: Words that come before the command itself: shell keywords and wrappers (`timeout` takes a duration too).
+_COMMAND_PREFIX = {
+    "command",
+    "env",
+    "sudo",
+    "time",
+    "timeout",
+    "do",
+    "then",
+    "else",
+    "if",
+    "while",
+    "until",
+    "!",
+    "{",
+    "(",
+}
+
+#: A command the server or the database acknowledged: it took effect even when another command of the call failed.
+_RECEIPT = re.compile(
+    r"(?m)^(?:[\w.-]+/[\w.-]+ (?:configured|created|patched|scaled|restarted|replaced|labeled|annotated)\b"
+    r"|[\w.-]+ \"[\w.-]+\" (?:force )?deleted\b|(?:UPDATE|DELETE|INSERT 0) [1-9])"
+)
+
+
+def _without_comments(command: str) -> str:
+    """The command without shell comments. A `#` inside a word or a quote (`${#x}`, "a # b") is no comment."""
+    out, quote, skipping, i = [], "", False, 0
+    while i < len(command):
+        char = command[i]
+        if skipping:
+            skipping = char != "\n"
+        elif not quote and char == "#" and (i == 0 or command[i - 1] in " \t\n;&|("):
+            skipping = True
+        elif char == "\\" and quote != "'":
+            out.append(command[i : i + 2])
+            i += 2
+            continue
+        elif quote:
+            quote = "" if char == quote else quote
+        elif char in "'\"":
+            quote = char
+        if not skipping:
+            out.append(char)
+        i += 1
+    return "".join(out)
+
+
 def _segments(command: str) -> Iterator[list[str]]:
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|\n")
+    lexer = shlex.shlex(_without_comments(command), posix=True, punctuation_chars=";&|\n")
+    lexer.commenters = ""
     lexer.whitespace = " \r\t"
     lexer.whitespace_split = True
     segment: list[str] = []
@@ -276,8 +328,8 @@ def _command_writes(command: str, output: str) -> tuple[bool, tuple[str, ...]]:
     data = False
     targets = []
     for segment in _segments(command):
-        while segment and (re.match(r"^\w+=", segment[0]) or segment[0] in ("command", "env", "sudo")):
-            segment = segment[1:]
+        while segment and (re.match(r"^\w+=", segment[0]) or segment[0] in _COMMAND_PREFIX):
+            segment = segment[2:] if segment[0] == "timeout" else segment[1:]
         if not segment:
             continue
         exe, *args = segment
@@ -290,6 +342,8 @@ def _command_writes(command: str, output: str) -> tuple[bool, tuple[str, ...]]:
         verb, *objects = _positionals(args[:cut]) or [""]
         if verb == "exec":
             payload = " ".join(args[cut + 1 :])
+            if {"-i", "-it", "-ti", "--stdin"} & set(args[:cut]):
+                payload += " " + command  # the statement comes on stdin, from a heredoc or a pipe
             data |= bool(
                 (re.search(r"\bpsql\b", payload) and _SQL_WRITE.search(payload))
                 or (re.search(r"\brails\s+runner\b", payload) and _RUBY_WRITE.search(payload))
@@ -389,7 +443,7 @@ def _transcript(path: Path) -> Iterator[Write]:
     writes: list[Write] = []
     stamps: set[datetime] = set()
     for call, end, provider, output, error in _tool_results(path):
-        if error or _NO_EFFECT.search(output):
+        if (error or _NO_EFFECT.search(output)) and not _RECEIPT.search(output):
             continue
         if output.strip() and all(
             line.endswith((" unchanged", " not patched")) for line in output.strip().splitlines()
@@ -470,23 +524,46 @@ def _vanilla(row: Row, op: Path, inject: datetime | None, observed: list[Documen
         return
     # LastBadSecond denotes the final bad bucket. Writes starting after that bucket
     # cannot explain graded recovery, even if the agent kept working.
-    bound = end
-    if row.fixed_in_window and inject is not None and row.inject_to_last_bad_s is not None:
-        bad_end = inject + timedelta(seconds=row.inject_to_last_bad_s + 1)
-        bound = min(end, bad_end) if end else bad_end
-    paths = sorted((op / "session-dir").rglob("*.jsonl"))
-    writes = (write for path in [*paths, transcript] for write in _transcript(path))
-    last = max(
-        (w for w in writes if start <= w.at and (bound is None or (w.tool_start or w.at) <= bound)),
-        key=lambda w: w.at,
-        default=None,
-    )
+    writes = [
+        w
+        for path in [*sorted((op / "session-dir").rglob("*.jsonl")), transcript]
+        for w in _transcript(path)
+        if start <= w.at
+    ]
+    last = _last_write(writes, *_capped(_recovery_bounds(row, inject), end))
     if last:
         _record_write(row, start, last, observed)
         row.ttf_s, row.ttf_source = row.anchor_to_last_write_s, last.source
 
 
 EPISODE_GAP_S = 30
+
+#: A failing request is charged to the second it started and may hang for the client timeout (3 s) before it fails, so
+#: the fix that ended it can start a few seconds after the last bad second.
+RECOVERY_SLACK_S = 4
+
+
+def _recovery_bounds(row: Row, inject: datetime | None) -> tuple[datetime | None, datetime | None]:
+    """The latest start of a write that can explain the graded recovery (the last bad second's bucket), and that bound
+    plus the slack a hanging request needs."""
+    if not row.fixed_in_window or inject is None or row.inject_to_last_bad_s is None:
+        return None, None
+    bound = inject + timedelta(seconds=row.inject_to_last_bad_s + 1)
+    return bound, bound + timedelta(seconds=RECOVERY_SLACK_S)
+
+
+def _capped(bounds: tuple[datetime | None, datetime | None], end: datetime | None) -> tuple[datetime | None, ...]:
+    """The recovery bounds, no later than the end of the agent session or incident that wrote."""
+    if end is None:
+        return bounds
+    return tuple(min(x, end) if x is not None else end for x in bounds)
+
+
+def _last_write(writes: Iterable[Write], bound: datetime | None, slack: datetime | None) -> Write | None:
+    """The last write within the bound; only when nothing precedes it, the last one within the slack."""
+    started = [w for w in writes if bound is None or (w.tool_start or w.at) <= (slack or bound)]
+    within = [w for w in started if bound is None or (w.tool_start or w.at) <= bound]
+    return max(within or started, key=lambda w: w.at, default=None)
 
 
 def first_episode_end(record: Document, inject: datetime | None) -> float | None:
@@ -703,7 +780,8 @@ def _sdo(
         if start is None:
             continue
         clear = _time(timeline.get("health_cleared_at"))
-        bound = clear or _time(timeline.get("recovered_at")) or _time(timeline.get("closing_turn_dispatch_at"))
+        ended = clear or _time(timeline.get("recovered_at")) or _time(timeline.get("closing_turn_dispatch_at"))
+        bound, slack = _capped(_recovery_bounds(row, inject), ended)
         paths = []
         for agent in _objects(manifest.get("agents")):
             if agent.get("role") == "responder" and agent.get("incident") in {incident, folder.name[:12], folder.name}:
@@ -719,17 +797,16 @@ def _sdo(
             doc = next(
                 (_read(p) for p in sorted((run / "operator/memory/.sdo/outcomes").glob(f"{folder.name}*.json"))), {}
             )
-        writes.extend(
-            (start, w) for w in _incident_writes(doc, paths) if start <= w.at and (bound is None or w.at <= bound)
-        )
+        # One rule for both arms: the write that explains the graded recovery, never a later one.
+        if last := _last_write([w for w in _incident_writes(doc, paths) if start <= w.at], bound, slack):
+            writes.append((start, last))
         for priority, (marker, at) in enumerate(
             (
-                ("health_cleared_at", clear),
                 ("playbook_applied_at", apply),
                 ("first_agent_change_at", _time(timeline.get("first_agent_change_at"))),
             )
         ):
-            if at is not None and start <= at and (bound is None or at <= bound):
+            if at is not None and start <= at and (slack is None or at <= slack):
                 fallbacks.append((priority, at, start, marker))
     for digest in open_ids:
         folder = root / Path(digest).name
@@ -744,15 +821,11 @@ def _sdo(
         # An incident with no sealed timeline (still open at collect, or reset after the window) still holds the
         # responder's transcript: its writes count from the page, bounded by the graded recovery.
         if page is not None:
-            bound = None
-            if row.fixed_in_window and inject is not None and row.inject_to_last_bad_s is not None:
-                bound = inject + timedelta(seconds=row.inject_to_last_bad_s + 1)
+            bound, slack = _recovery_bounds(row, inject)
             paths = [*folder.glob("claude/projects/**/*.jsonl"), *folder.rglob("rollout-*.jsonl")]
-            writes.extend(
-                (page, w)
-                for w in _incident_writes({}, paths)
-                if page <= w.at and (bound is None or (w.tool_start or w.at) <= bound)
-            )
+            found = [w for w in _incident_writes({}, paths) if page <= w.at]
+            if last := _last_write(found, bound, slack):
+                writes.append((page, last))
     for sessions in investigators.values():
         # An investigator can be collected even when the parent evidence was lost.
         responders.extend(session.usage for session in sessions)

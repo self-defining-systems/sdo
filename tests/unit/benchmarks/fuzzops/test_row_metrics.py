@@ -1,7 +1,10 @@
 """Measurement contracts for lanes row reports, using synthetic evidence."""
 
+import hashlib
 import json
 from pathlib import Path
+
+import pytest
 
 from benchmarks.fuzzops.row_metrics import main, measure
 
@@ -432,3 +435,104 @@ def test_terminating_a_blocking_session_is_a_fixing_write(tmp_path: Path) -> Non
     )
     row = measure(tmp_path)
     assert (row.ttf_s, row.last_write_source) == (8, "claude_tool_start")
+
+
+def test_a_fix_within_the_client_timeout_of_the_last_bad_second_counts(tmp_path: Path) -> None:
+    # A hanging request is charged to the second it started: the kill that ends the hang can land a few seconds after
+    # the last bad second. A write well after it cannot explain the recovery.
+    grade(tmp_path)  # last_bad_second 29, inject at 0
+    put(tmp_path, "operator/done.json", {"started_at": at(3), "ended_at": at(40)})
+
+    def row(second: int):
+        put(tmp_path, "operator/done.json", {"started_at": at(3), "ended_at": at(40)})
+        transcript(
+            tmp_path,
+            "operator/transcript.jsonl",
+            [(second, second + 1, "kubectl delete pod web-1", False, 'pod "web-1" deleted')],
+        )
+        return measure(tmp_path)
+
+    assert row(32).ttf_s == 29  # within the slack
+    assert row(36).ttf_s is None  # too late
+
+
+ARMS = ("vanilla", "sealed", "open")
+
+
+def arm_row(run: Path, arm: str, calls: list[tuple[int, int, str, bool, str]]):
+    """The same transcript from +5 s as a plain-agent row or an SDO row (sealed or still open incident)."""
+    grade(run)
+    if arm == "vanilla":
+        put(run, "operator/done.json", {"started_at": at(5), "ended_at": at(50)})
+        transcript(run, "operator/transcript.jsonl", calls)
+        return measure(run)
+    folder = hashlib.sha256(b"app-1").hexdigest()[:32] if arm == "sealed" else "open"
+    sealed = {"incident": "app-1", "opened_at": at(5), "health_cleared_at": at(50), "resolution_path": "responder"}
+    put(
+        run,
+        "operator/evidence-manifest.json",
+        {
+            "timelines": [sealed] if arm == "sealed" else [],
+            "open_incidents": [] if arm == "sealed" else ["open"],
+        },
+    )
+    put(run, "operator/collect.json", {"page_source": "own", "sdo_page_at": at(5)})
+    put(run, f"operator/evidence/incidents/{folder}/incident.json", {"incident_id": "app-1"})
+    transcript(run, f"operator/evidence/incidents/{folder}/claude/projects/w/session.jsonl", calls)
+    return measure(run)
+
+
+@pytest.mark.parametrize("arm", ARMS)
+@pytest.mark.parametrize(
+    ("command", "output"),
+    [
+        ("kubectl delete pod web-1", 'pod "web-1" deleted'),
+        ("kubectl exec db-0 -- psql -Atc 'DROP TRIGGER trg ON public.issues'", "DROP TRIGGER"),
+        ("kubectl exec db-0 -- psql -Atc 'select pg_terminate_backend(41)'", "t"),
+        ("kubectl exec redis-0 -- redis-cli DEL cache:x", "(integer) 1"),
+        # A shell construct around the write, a `#` inside a word, and another command of the call failing.
+        ('kubectl exec git-0 -- sh -c \'for d in /r/*/hooks; do mv "$d" "$d.off"; done\'', ""),
+        ("kubectl exec git-0 -- sh -c 'find /r -name hook -exec rm {} \\;'", ""),
+        ("kubectl exec git-0 -- find /r -name hook -delete", ""),
+        ("T=$(cat t) || exit 1; [ ${#T} -eq 64 ] || exit 1; kubectl replace -f -", "secret/s replaced"),
+        ("# isn't it the pod?\nkubectl delete pod web-1", 'pod "web-1" deleted'),
+        ("kubectl exec -i db-0 -- psql -At <<'SQL'\nDROP TRIGGER t ON public.x;\nSQL", "DROP TRIGGER"),
+        ("echo 'DROP TRIGGER t ON x' | kubectl exec -i db-0 -- psql", "DROP TRIGGER"),
+        ("for d in a b; do kubectl rollout restart deploy/$d; done", "deployment.apps/a restarted"),
+        ("timeout 60 kubectl delete pod web-1", 'pod "web-1" deleted'),
+        ("kubectl get secret s; kubectl delete pod web-1", 'Error from server (Forbidden)\npod "web-1" deleted'),
+    ],
+)
+def test_every_write_kind_counts_the_same_for_both_arms(tmp_path: Path, arm: str, command: str, output: str) -> None:
+    assert arm_row(tmp_path, arm, [(12, 13, command, False, output)]).ttf_s == 7
+
+
+@pytest.mark.parametrize("arm", ARMS)
+@pytest.mark.parametrize(
+    ("command", "output"),
+    [
+        ("kubectl exec git-0 -- sh -c 'for d in /r/*/hooks; do ls \"$d\"; done'", ""),
+        ("kubectl exec git-0 -- find /r -name hook", "/r/hook"),
+        ("kubectl get pod web-1 # kubectl delete pod web-1", ""),
+        ("kubectl patch secret s -p '{}'", "Error from server (Forbidden)"),
+    ],
+)
+def test_reads_and_refused_writes_count_for_neither_arm(tmp_path: Path, arm: str, command: str, output: str) -> None:
+    assert arm_row(tmp_path, arm, [(12, 13, command, False, output)]).ttf_s is None
+
+
+@pytest.mark.parametrize("arm", ARMS)
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [
+        ([12, 40], 7),  # a write after the graded recovery (last bad second 29) explains nothing
+        ([12, 32], 7),  # nor does one in the slack while an earlier one exists
+        ([32], 27),  # the slack covers a hanging request's client timeout
+        ([36], None),  # past the slack
+    ],
+)
+def test_the_fixing_write_rule_is_the_same_for_both_arms(
+    tmp_path: Path, arm: str, seconds: list[int], expected: int | None
+) -> None:
+    calls = [(s, s + 1, "kubectl delete pod web-1", False, 'pod "web-1" deleted') for s in seconds]
+    assert arm_row(tmp_path, arm, calls).ttf_s == expected
