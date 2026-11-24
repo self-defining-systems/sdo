@@ -271,6 +271,7 @@ type Controller struct {
 	acknowledgmentResults chan acknowledgmentCompletion
 	reflectionResults     chan reflectionCompletion
 	head                  headPollState
+	invalidateSourceCache func()
 	reflections           reflectionQueueState
 	busy                  busyWindow
 	// startup holds a new install's openers until the application is seen
@@ -632,6 +633,9 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	c.timePhase("early_report", func() { c.finishEarlyReport(ctx, now) })
 	c.timePhase("broker_completions", c.processBrokerCompletions)
 	if err := c.timePhaseErr("queued_reflections", func() error { return c.driveQueuedReflections(ctx, now) }); err != nil {
+		return err
+	}
+	if err := c.refreshAcceptedDeployment(ctx); err != nil {
 		return err
 	}
 	c.timePhase("head_poll", func() { c.driveHeadPoll(ctx, now) })
@@ -1156,7 +1160,10 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 		}
 		return nil
 	}
-	if closurePending {
+	c.mu.Lock()
+	headRunning := c.head.running
+	c.mu.Unlock()
+	if closurePending || headRunning {
 		return nil
 	}
 	// The startup period holds detector-opened incidents.

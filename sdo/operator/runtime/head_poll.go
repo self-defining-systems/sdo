@@ -32,7 +32,9 @@ const headDeploymentConfigMap = "sdo-head-deployment"
 // HeadPoller is what the controller needs to deploy a branch head: the
 // deployer, and the interval between looks.
 type HeadPoller struct {
-	Deployer lifecycle.HeadDeployer
+	// AcceptedRevision reads the newest accepted deployment from the broker.
+	AcceptedRevision func(context.Context) (string, error)
+	Deployer         lifecycle.HeadDeployer
 	// Config reads the install's namespace and current health objective at
 	// each look, so an objective the designer changed is the one verified.
 	Config   func() (lifecycle.RepairConfig, error)
@@ -105,6 +107,32 @@ func (c *Controller) handleHeadCompletion(completion reflectionCompletion) {
 	if completion.err != nil {
 		c.reportBrokerError("deploy branch head", completion.err)
 	}
+}
+
+// refreshAcceptedDeployment binds the current observation to the accepted
+// deployment. Incident requests copy this binding and keep it through the
+// response. Later memory-only commits still advance the memory revision.
+func (c *Controller) refreshAcceptedDeployment(ctx context.Context) error {
+	c.mu.Lock()
+	poller := c.head.poller
+	inFlight := c.head.running || c.incidentOpen
+	c.mu.Unlock()
+	if inFlight || poller == nil || poller.AcceptedRevision == nil {
+		return nil
+	}
+	revision, err := poller.AcceptedRevision(ctx)
+	if err != nil {
+		return fmt.Errorf("read accepted deployment revision: %w", err)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if revision != "" && revision != c.config.DeployedCommit {
+		if c.invalidateSourceCache != nil {
+			c.invalidateSourceCache()
+		}
+		c.config.SourceCommit, c.config.DeployedCommit = revision, revision
+	}
+	return nil
 }
 
 // headHoldRecord is the stored hold.
@@ -255,8 +283,9 @@ func (n *NativeIncidentBroker) headPoller() *HeadPoller {
 		deployer.Busy = func(context.Context) (string, error) { return repairer.Gate.Busy(), nil }
 	}
 	return &HeadPoller{
-		Deployer: lifecycle.HeadDeployer{Broker: n.Repository, Deployer: deployer, Holds: holds},
-		Interval: n.HeadPollInterval,
+		AcceptedRevision: n.Repository.AcceptedDeploymentRevision,
+		Deployer:         lifecycle.HeadDeployer{Broker: n.Repository, Deployer: deployer, Holds: holds},
+		Interval:         n.HeadPollInterval,
 		Config: func() (lifecycle.RepairConfig, error) {
 			objective, err := memory.AcceptedHealthObjective(repairer.AppRoot)
 			return lifecycle.RepairConfig{Namespace: repairer.Namespace, HealthObjective: objective}, err

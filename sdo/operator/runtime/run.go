@@ -1022,6 +1022,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return true, nil
 		}
 	}
+	controller.invalidateSourceCache = planSource.InvalidateCache
 	if stateBaseline {
 		controller.Baseline = stateTracker
 	}

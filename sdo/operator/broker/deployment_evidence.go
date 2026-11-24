@@ -65,6 +65,20 @@ func (b *Broker) acceptedEvidenceLocked(ctx context.Context) (SourceEvidence, bo
 	return b.sourceEvidenceLocked(ctx, incidentID, Receipt{IncidentID: incidentID, Commit: commit})
 }
 
+// AcceptedDeploymentRevision is the newest deployment recorded as accepted
+// on the branch. A held head and later memory-only commits leave it unchanged.
+func (b *Broker) AcceptedDeploymentRevision(ctx context.Context) (string, error) {
+	var revision string
+	err := b.locked(func() error {
+		evidence, found, err := b.acceptedEvidenceLocked(ctx)
+		if found {
+			revision = evidence.AcceptedCommit
+		}
+		return err
+	})
+	return revision, err
+}
+
 // AcceptedImagePins are the images the newest accepted deployment applied,
 // bound to the effective tree it deployed. They are the image part of desired
 // state (rendered.PinProvider): the controller reads them from the same
