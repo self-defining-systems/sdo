@@ -75,14 +75,14 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 		failedInApplication := map[string]bool{}
 		creditedInOutcome := map[string]bool{}
 		rejectedInOutcome := map[string]bool{}
-		terminalRollouts := map[[2]string]bool{}
+		terminalStageFailures := map[[2]string]bool{}
 		for _, attempt := range deterministicStageReport(outcome.GetPriorStages()).GetMitigations() {
 			id, revision := attempt.GetPlaybookId(), attempt.GetProgramRevision()
 			key := [2]string{id, revision}
-			if !attempt.GetRolloutUnsettledAtDeadline() || id == "" || revision == "" || terminalRollouts[key] {
+			if (!attempt.GetRolloutUnsettledAtDeadline() && !automaticPlanRefused(attempt)) || id == "" || revision == "" || terminalStageFailures[key] {
 				continue
 			}
-			terminalRollouts[key] = true
+			terminalStageFailures[key] = true
 			if revisions[id] == "" {
 				revisions[id] = revision
 			}
@@ -114,7 +114,7 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 				}
 				state = stateForRevision(id, revision)
 				failed := applicationExecutionFailed(application)
-				if failed && !terminalRollouts[[2]string{id, revision}] {
+				if failed && !terminalStageFailures[[2]string{id, revision}] {
 					state.Failures = recordFailure(id, revision)
 					state.VerifiedSuccesses = 0
 					failedInApplication[id] = true

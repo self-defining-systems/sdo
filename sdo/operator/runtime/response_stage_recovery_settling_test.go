@@ -93,6 +93,7 @@ func (s *recordingStage) Run(context.Context, *IncidentState) (*contracts.StageR
 }
 
 type settlingCase struct {
+	testMitigate func() (program.Plan, error)
 	// healAfter is when, after the restart, the windowed detectors stop
 	// reporting the fault; zero means the fault persists.
 	healAfter time.Duration
@@ -293,6 +294,9 @@ func settlingStageOn(t *testing.T, tc settlingCase, world *settlingWorld) (*Dete
 	if tc.traffic != nil {
 		stallDetector = trafficLearnedStall{stall}
 		restart = trafficStallProgram{restartProgram{id: "api-request-stall"}}
+	}
+	if tc.testMitigate != nil {
+		restart = remotePlanningTestProgram(t, planningTestProgram{restartProgram: restartProgram{id: "api-request-stall"}, mitigate: tc.testMitigate})
 	}
 	detectors := []sdk.Detector{traffic, stallDetector}
 	if tc.storeRestart > 0 {
