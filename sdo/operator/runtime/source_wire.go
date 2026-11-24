@@ -66,8 +66,7 @@ func normalizeWireValue(accepted, observed any, typ reflect.Type) {
 					typ == reflect.TypeFor[corev1.Container]() || typ == reflect.TypeFor[corev1.EphemeralContainerCommon]()) {
 					keys = append(keys, "protocol")
 				}
-				sortWireList(a, keys)
-				sortWireList(b, keys)
+				alignWireList(a, b, keys)
 			}
 			normalizeWireValue(a, b, field.Type)
 		}
@@ -136,39 +135,49 @@ func normalizeWireDefaults(fields map[string]any, typ reflect.Type) {
 	}
 }
 
-func sortWireList(value any, keys []string) {
-	items, _ := value.([]any)
-	if len(items) < 2 {
+// Align the accepted ordering with the observed ordering when both lists
+// contain the same unique keys. Drift and settlement paths retain their live
+// indices, including when a watcher reports changes elsewhere on the object.
+func alignWireList(accepted, observed any, keys []string) {
+	left, _ := accepted.([]any)
+	right, _ := observed.([]any)
+	if len(left) < 2 || len(left) != len(right) {
 		return
 	}
-	type keyedItem struct {
-		key   string
-		value any
-	}
-	keyed := make([]keyedItem, len(items))
-	for i, value := range items {
-		item, _ := value.(map[string]any)
-		parts := make([]any, 0, len(keys))
-		for _, key := range keys {
-			part := item[key]
-			if key == "protocol" && (part == nil || part == "") {
-				part = "TCP"
-			}
-			if part == nil {
-				return
-			}
-			parts = append(parts, part)
-		}
-		encoded, _ := json.Marshal(parts)
-		keyed[i] = keyedItem{key: string(encoded), value: value}
-	}
-	slices.SortFunc(keyed, func(a, b keyedItem) int { return strings.Compare(a.key, b.key) })
-	for i := 1; i < len(keyed); i++ {
-		if keyed[i-1].key == keyed[i].key {
+	byKey := make(map[string]any, len(left))
+	for _, item := range left {
+		key := wireListKey(item, keys)
+		if _, duplicate := byKey[key]; key == "" || duplicate {
 			return
 		}
+		byKey[key] = item
 	}
-	for i, item := range keyed {
-		items[i] = item.value
+	aligned := make([]any, len(left))
+	for i, item := range right {
+		key := wireListKey(item, keys)
+		matched, found := byKey[key]
+		if !found {
+			return
+		}
+		aligned[i] = matched
+		delete(byKey, key)
 	}
+	copy(left, aligned)
+}
+
+func wireListKey(value any, keys []string) string {
+	item, _ := value.(map[string]any)
+	parts := make([]any, 0, len(keys))
+	for _, key := range keys {
+		part := item[key]
+		if key == "protocol" && (part == nil || part == "") {
+			part = "TCP"
+		}
+		if part == nil {
+			return ""
+		}
+		parts = append(parts, part)
+	}
+	encoded, _ := json.Marshal(parts)
+	return string(encoded)
 }
