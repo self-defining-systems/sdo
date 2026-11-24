@@ -1353,21 +1353,16 @@ func (c *Controller) nextWake() (time.Time, string) {
 	verificationDeadline := time.Time{}
 	automatic := c.awaitingAutomaticRecoveryLocked()
 	if verificationPending {
+		verificationDeadline = c.recoveryGraceEndsLocked()
 		if automatic != nil {
 			verificationDeadline = c.automaticDeadlineLocked(automatic)
-			// At the response cap a clear, settled incident can finish
-			// its running stability proof on that window's own wake.
-			if automatic.GetStabilityDeadlineEvaluated() && !verificationDeadline.After(c.clock()) && !c.closureStableSince.IsZero() {
-				verificationDeadline = time.Time{}
-			}
-		} else {
-			verificationDeadline = c.recoveryGraceEndsLocked()
-			if c.earlyStopRetryAt.After(verificationDeadline) {
-				verificationDeadline = c.earlyStopRetryAt
-			}
-			if !verificationDeadline.After(c.clock()) && c.recoveryWindowRunningLocked(c.clock()) {
-				verificationDeadline = time.Time{}
-			}
+		}
+		if c.earlyStopRetryAt.After(verificationDeadline) {
+			verificationDeadline = c.earlyStopRetryAt
+		}
+		if (automatic == nil || automatic.GetStabilityDeadlineEvaluated()) &&
+			!verificationDeadline.After(c.clock()) && c.recoveryWindowRunningLocked(c.clock()) {
+			verificationDeadline = time.Time{}
 		}
 	}
 	earlyDeadline := time.Time{}
@@ -2060,8 +2055,8 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		}
 	}
 
-	var automaticEscalation string
-	if stage := c.awaitingAutomaticRecoveryLocked(); stage != nil && !terminalFailure {
+	stage := c.awaitingAutomaticRecoveryLocked()
+	if stage != nil && !terminalFailure {
 		if !verified && stage.GetRecoveryWait().GetExitReason() == contracts.RecoveryWait_EXIT_REASON_CLEARED {
 			stage.RecoveryWait = nil
 		}
@@ -2069,18 +2064,21 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		if observationErr != nil {
 			healthSnapshot = nil
 		}
-		var closeIncident bool
-		closeIncident, automaticEscalation = c.automaticRecoveryLocked(now, stage, healthSnapshot, recovery, source.Rollouts, verified)
-		if !closeIncident {
+		if !c.automaticRecoveryLocked(now, stage, healthSnapshot, recovery, source.Rollouts, verified) {
 			c.mu.Unlock()
 			return false
 		}
-	} else if !verified && !terminalFailure {
+	}
+	if !verified && !terminalFailure {
 		if early {
 			c.mu.Unlock()
 			return false
 		}
-		if now.Before(c.recoveryGraceEndsLocked()) {
+		deadline := c.recoveryGraceEndsLocked()
+		if stage.GetStabilityDeadlineEvaluated() {
+			deadline = c.automaticDeadlineLocked(stage)
+		}
+		if now.Before(deadline) {
 			c.mu.Unlock()
 			return false
 		}
@@ -2195,15 +2193,12 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 	if page && !verified && closure.Result != nil {
 		closure.Result.UnresolvedFindings = append([]sdk.Finding(nil), verification.Findings...)
 	}
-	if !verified && !terminalFailure && (automaticEscalation != "" || len(verification.Findings) == 0) {
+	if !verified && !terminalFailure && len(verification.Findings) == 0 {
 		closure.UnconfirmedReason = contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
 		if verification.Error != "" {
 			closure.UnconfirmedReason = contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE
 		}
 		closure.UnconfirmedDetail = verification.Summary
-		if automaticEscalation != "" {
-			closure.UnconfirmedDetail = automaticEscalation
-		}
 		// Pending/error states are outcome evidence, not independently cleared
 		// causes. Preserve every named blocker through the memory edge.
 		for _, blocker := range verification.VerificationBlockers {

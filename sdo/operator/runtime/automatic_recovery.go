@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -13,23 +12,25 @@ import (
 	"sdo.dev/operator/sdk"
 )
 
-// automaticRecoveryLocked decides whether the shared recovery proof can close
-// the incident, whether to hand off, and when an unsettled wait must end.
-// The stage report and dispatch decision are saved before any worker task.
-func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.StageReport, snapshot sdk.DetectionContext, check recoveryCheck, rolloutBlockers []sdk.Finding, verified bool) (closeIncident bool, escalationReason string) {
+// automaticRecoveryLocked owns the stage handoff decision. It returns true
+// when ordinary incident recovery and response timeout processing may proceed.
+func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.StageReport, snapshot sdk.DetectionContext, check recoveryCheck, rolloutBlockers []sdk.Finding, verified bool) bool {
 	observedAt := laterObservationTime(now, c.clock())
 	request := c.currentIncidentRequest
 	applied := playbookWrote(report)
 	scoped := applied || stagePlanRefused(report)
 	extension := report.GetStabilityDeadline()
+	if report.GetStabilityDeadlineEvaluated() {
+		return true
+	}
 	if extension.IsValid() && observedAt.Before(extension.AsTime()) {
-		return false, ""
+		return false
 	}
 	if verified {
 		if extension.IsValid() {
 			report.StabilityDeadlineEvaluated = true
 		}
-		return true, ""
+		return true
 	}
 
 	keys := alertKeys(request)
@@ -39,59 +40,23 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 			report.RecoveryDeadline = contractTimestamp(deadline)
 		}
 		if observedAt.Before(deadline) {
-			return false, ""
+			return false
 		}
-
-		if !report.GetStabilityDeadlineEvaluated() {
-			firing, unavailable := c.automaticAlertStatusLocked(now, *request, keys, snapshot)
-			if len(firing) == 0 && !extension.IsValid() {
-				end := c.automaticVerificationExtensionLocked(observedAt, *request)
-				report.StabilityDeadline = contractTimestamp(end)
-				if observedAt.Before(end) {
-					return false, ""
-				}
+		keys = c.unresolvedAlertKeysLocked(now, *request, keys, snapshot)
+		if len(keys) == 0 && !extension.IsValid() {
+			end := c.automaticVerificationExtensionLocked(observedAt, *request)
+			report.StabilityDeadline = contractTimestamp(end)
+			if observedAt.Before(end) {
+				return false
 			}
-			if report.GetStabilityDeadline().IsValid() {
-				report.StabilityDeadlineEvaluated = true
-			}
-			keys = append(firing, unavailable...)
-			slices.Sort(keys)
-		} else {
-			// A clear decision consumed the handoff opportunity. Continue to
-			// observe Recovered without reopening it on a subsequent read.
-			keys = nil
+		}
+		if report.GetStabilityDeadline().IsValid() {
+			report.StabilityDeadlineEvaluated = true
 		}
 		if len(keys) == 0 {
-			if observedAt.Before(c.automaticResponseDeadlineLocked()) {
-				return false, ""
-			}
-			// The extension resolved handoff. Closing still requires current
-			// evidence that every alert cleared.
-			firing, unavailable := c.automaticAlertStatusLocked(now, *request, alertKeys(request), snapshot)
-			clear := len(firing) == 0 && len(unavailable) == 0
-			if clear && !c.closureStableSince.IsZero() {
-				return false, ""
-			}
-
-			reason := "recovery unconfirmed at response deadline"
-			switch {
-			case !clear:
-				reason = fmt.Sprintf("alerts unresolved at response deadline (firing=%q, unavailable=%q)", firing, unavailable)
-			case len(rolloutBlockers) != 0 || check.record != nil && !check.record.GetWritesSettled():
-				reason = "write never settled"
-			}
-			if report.Error != "" {
-				report.Error += ". "
-			}
-			report.Error += reason
-			markAutomaticRecovery(report, observedAt, contracts.RecoveryWait_EXIT_REASON_DEADLINE)
-			markUnsettledRollouts(report, check.record, rolloutBlockers)
-			c.escalateLocked(observedAt)
-			if !clear {
-				return false, ""
-			}
-			return true, reason
+			return true
 		}
+		slices.Sort(keys)
 	} else if !stageEscalatedIn(request.PriorStages) {
 		keys = findingKeys(request.Findings)
 	}
@@ -103,7 +68,7 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 		(request.ResponseDeadline.IsZero() || observedAt.Before(request.ResponseDeadline))
 	if !canDispatch || stageEscalatedIn(request.PriorStages) || !agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages) {
 		c.escalateLocked(observedAt)
-		return false, ""
+		return false
 	}
 
 	report.HandoffSelected = true
@@ -115,14 +80,13 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	c.responderCompletedAt = time.Time{}
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_PENDING
 	c.resetDispatchRetryLocked()
-	return false, ""
+	return false
 }
 
-// A scoped firing sample identifies the failing keys. A pending, errored
-// or absent sample cannot establish either failure or clearance.
-func (c *Controller) automaticAlertStatusLocked(now time.Time, request IncidentRequest, keys []string, snapshot sdk.DetectionContext) (firing, unavailable []string) {
+// Only a fresh scoped observation can remove an alert from handoff.
+func (c *Controller) unresolvedAlertKeysLocked(now time.Time, request IncidentRequest, keys []string, snapshot sdk.DetectionContext) []string {
 	if snapshot == nil {
-		return nil, keys
+		return slices.Clone(keys)
 	}
 	scope := newRecoveryScope(keys)
 	observed := make(map[string]DetectorEvaluationStatus)
@@ -142,10 +106,11 @@ func (c *Controller) automaticAlertStatusLocked(now time.Time, request IncidentR
 			}
 		}
 	}
+	var unresolved []string
 	for _, key := range keys {
 		id, _, _ := strings.Cut(key, "\x00")
 		if failed[key] {
-			firing = append(firing, key)
+			unresolved = append(unresolved, key)
 			continue
 		}
 		status := observed[id]
@@ -157,9 +122,9 @@ func (c *Controller) automaticAlertStatusLocked(now time.Time, request IncidentR
 			detectorConfirmedIn(c.detectors[id], snapshot, recoveryScope{key: {}}) {
 			continue
 		}
-		unavailable = append(unavailable, key)
+		unresolved = append(unresolved, key)
 	}
-	return firing, unavailable
+	return unresolved
 }
 
 func (c *Controller) automaticVerificationExtensionLocked(now time.Time, request IncidentRequest) time.Time {
@@ -179,19 +144,15 @@ func (c *Controller) automaticVerificationExtensionLocked(now time.Time, request
 
 func (c *Controller) automaticDeadlineLocked(report *contracts.StageReport) time.Time {
 	if report.GetStabilityDeadlineEvaluated() {
-		return c.automaticResponseDeadlineLocked()
+		if at := c.currentIncidentRequest.ResponseDeadline; !at.IsZero() {
+			return at
+		}
+		return c.recoveryGraceEndsLocked()
 	}
 	if at := report.GetStabilityDeadline(); at.IsValid() {
 		return at.AsTime()
 	}
 	return c.automaticApplyDeadlineLocked(report)
-}
-
-func (c *Controller) automaticResponseDeadlineLocked() time.Time {
-	if at := c.currentIncidentRequest.ResponseDeadline; !at.IsZero() {
-		return at
-	}
-	return c.recoveryGraceEndsLocked()
 }
 
 func (c *Controller) automaticApplyDeadlineLocked(report *contracts.StageReport) time.Time {

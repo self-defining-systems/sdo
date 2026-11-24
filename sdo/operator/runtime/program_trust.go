@@ -49,9 +49,6 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 		if outcome == nil {
 			continue
 		}
-		class := outcome.GetClassification()
-		recovered := class == outcomeclass.Success || class == outcomeclass.ClearedWithoutAction ||
-			outcome.GetTimestamps().GetVerifiedAt().IsValid()
 		revisions := map[string]string{}
 		for _, run := range outcome.GetProgramRuns() {
 			revision := run.GetProgramRevision()
@@ -82,7 +79,7 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 		for _, attempt := range deterministicStageReport(outcome.GetPriorStages()).GetMitigations() {
 			id, revision := attempt.GetPlaybookId(), attempt.GetProgramRevision()
 			key := [2]string{id, revision}
-			if recovered || (!attempt.GetRolloutUnsettledAtDeadline() && !automaticPlanRefused(attempt)) || id == "" || revision == "" || terminalStageFailures[key] {
+			if (!attempt.GetRolloutUnsettledAtDeadline() && !automaticPlanRefused(attempt)) || id == "" || revision == "" || terminalStageFailures[key] {
 				continue
 			}
 			terminalStageFailures[key] = true
@@ -117,7 +114,7 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 				}
 				state = stateForRevision(id, revision)
 				failed := applicationExecutionFailed(application)
-				if !recovered && failed && !terminalStageFailures[[2]string{id, revision}] {
+				if failed && !terminalStageFailures[[2]string{id, revision}] {
 					state.Failures = recordFailure(id, revision)
 					state.VerifiedSuccesses = 0
 					failedInApplication[id] = true
@@ -129,9 +126,11 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 				stats[id] = state
 			}
 		}
-		// Escalation and eventual recovery are independent. A failed or
-		// escalated close without proof charges each applied revision once.
-		if !recovered && (class == outcomeclass.Failed || class == outcomeclass.Escalated) {
+		// A close that did not recover users after a playbook applied lowers that playbook's trust, once per
+		// incident and revision. This is about the outcome (the opening alerts did not clear), not about what a
+		// repair did to data, so it does not touch "never a gate or a credit rule": trust gates nothing, it is
+		// the failure count that coverage and `sdo detect` show.
+		if class := outcome.GetClassification(); class == outcomeclass.Failed || class == outcomeclass.Escalated {
 			for _, application := range outcome.GetPlanApplications() {
 				// "Applied" means what the application loop above counts.
 				if application.GetDryRun() || (application.GetRolloutPending() != nil && !applicationExecutionFailed(application)) ||
@@ -164,7 +163,7 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 			}
 			for _, item := range items {
 				id, revision := item.GetProgramId(), item.GetProgramRevision()
-				if recovered || item.GetDisposition() != "false_match" || id == "" || revision == "" {
+				if item.GetDisposition() != "false_match" || id == "" || revision == "" {
 					continue
 				}
 				state := stateForRevision(id, revision)
@@ -185,9 +184,6 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 				stats[id] = state
 				creditedInOutcome[id] = true
 			}
-		}
-		if recovered {
-			continue
 		}
 		seenFailures := map[string]bool{}
 		for _, signal := range outcome.GetProgramFailureSignals() {

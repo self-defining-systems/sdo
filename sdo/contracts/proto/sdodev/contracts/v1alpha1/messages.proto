@@ -803,7 +803,7 @@ message StageReport {
   // Apply completion and the immutable deadline chosen for that batch.
   google.protobuf.Timestamp apply_completed_at = 10;
   google.protobuf.Timestamp recovery_deadline = 11;
-  // One response-capped extension for observation and stability when no alert is observed firing.
+  // One response-capped extension for observation and stability when all alerts are freshly confirmed clear.
   google.protobuf.Timestamp stability_deadline = 12;
   // The saved dispatch decision and its exact residual alert set.
   bool handoff_selected = 13;
