@@ -55,6 +55,9 @@ func mapCompileTree(t *testing.T, dependsOnFix string) string {
 }
 
 func TestApplicationMapAgainstCompiledScenarios(t *testing.T) {
+	if testing.Short() {
+		t.Skip("nightly: generated application-map programs require multiple full builds")
+	}
 	ctx := context.Background()
 	t.Run("matching scenarios pass", func(t *testing.T) {
 		t.Parallel()

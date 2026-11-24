@@ -42,10 +42,3 @@ def test_an_operatorcli_only_selection_still_runs_the_safefs_writer_guard() -> N
     regex, packages = select.shard_go_guards(plan, config, "rest")
     assert "TestCheckoutWritersGoThroughSafefs" in regex
     assert "./sdo/operator/safefs" in packages
-
-
-def test_marked_validator_tests_are_not_gate_tests() -> None:
-    """The validate shard skips the gate tests, so a guard named there would run in no shard."""
-    config = select.Config.load(ROOT)
-    marked = select.go_whole_tree_tests(ROOT, select.tracked_files(ROOT)).get(select.VALIDATE_DIR, [])
-    assert not set(marked) & set(config.go_validate_gate_tests)

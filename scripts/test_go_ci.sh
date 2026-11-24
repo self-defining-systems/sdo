@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
 # All modules use Go's content-addressed compiler/module caches. No per-module
 # cache or serial preparation job; package parallelism uses the runner's CPUs.
-# Usage: test_go_ci.sh [pr|nightly] [validate|gate|cli|rest]
-# The optional shard splits the PR run across four hosted jobs. "validate" and "gate" are
-# the memory validator package, whose compiler-backed tests dominate wall time: "gate" runs
-# only go_validate_gate_tests and "validate" the rest (a package splits no other way); "cli" is the
-# directories named in go_cli_shard of .github/ci_selection.json (the operator CLI
-# and the envtest-backed packages, chosen by measured duration); "rest" is every
-# other package. Without a shard, one invocation schedules every package.
+# Usage: test_go_ci.sh [pr|nightly] [validate|cli|rest]
+# The optional shard selects packages by directory using .github/ci_selection.json.
+# Without a shard, one invocation schedules every package.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$root/scripts/isolate_git_config.sh"
@@ -42,8 +38,6 @@ patterns=()
     echo ')'
 } > "$GOWORK"
 cd "$root"
-shard="${2:-}"
-validate_pattern="./sdo/operator/memory/validate"
 # A pull request run names the packages its changes can affect (scripts/ci_select.py);
 # without a plan, or when the plan is the full suite, every package runs.
 if [[ -n "${SDO_CI_PLAN:-}" && "$(python3 scripts/ci_select.py mode --plan "$SDO_CI_PLAN")" == selected ]]; then
@@ -71,11 +65,11 @@ if [[ -n "${SDO_CI_PLAN:-}" && "$(python3 scripts/ci_select.py mode --plan "$SDO
 fi
 case "${2:-}" in
     "" | selected) ;;
-    validate | gate) patterns=("$validate_pattern") ;;
-    rest | cli)
+    rest | cli | validate)
         # The package list is fixed here; go test then schedules it as one run.
-        mapfile -t patterns < <(go list -tags=integration -f '{{.ImportPath}} {{.Dir}}' "${patterns[@]}" |
-            python3 scripts/ci_select.py partition-go --root "$root" --shard "$2" || true)
+        partition="$(go list -tags=integration -f '{{.ImportPath}} {{.Dir}}' "${patterns[@]}" |
+            python3 scripts/ci_select.py partition-go --root "$root" --shard "$2")"
+        mapfile -t patterns <<< "$partition"
         [[ ${#patterns[@]} -gt 0 && -n "${patterns[0]}" ]] || { echo "no packages in the $2 shard" >&2; exit 1; }
         ;;
     *) echo "unknown Go test shard: $2" >&2; exit 2 ;;
@@ -83,13 +77,6 @@ esac
 if [[ "${1:-pr}" != nightly ]]; then
     # Quarantined flaky tests (.github/ci_quarantine.json) run in the nightly tier only.
     skip="$(python3 "$root/scripts/ci_quarantine.py" go-skip)"
-    # The validator package is split by test between the validate and gate shards.
-    mapfile -t split < <(python3 scripts/ci_select.py go-test-filter --shard "$shard")
-    if [[ ${#split[@]} -eq 2 && ${split[0]} == -run ]]; then
-        args+=(-run "${split[1]}")
-    elif [[ ${#split[@]} -eq 2 ]]; then
-        skip="${skip:+$skip|}${split[1]}"
-    fi
     if [[ -n "$skip" ]]; then
         args+=(-skip "$skip")
     fi
@@ -111,7 +98,7 @@ if [[ ${#patterns[@]} -gt 0 ]]; then
     run_go_test "${args[@]}" "${patterns[@]}" || status=$?
 fi
 if [[ -n "${guard_run:-}" ]]; then
-    # The guards run in packages the selection skipped; -run narrows the earlier -run (validator split) away.
+    # The guards run in packages the selection skipped.
     run_go_test "${args[@]}" -run "$guard_run" "${guard_patterns[@]}" || status=$?
 fi
 exit "$status"
