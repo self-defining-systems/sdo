@@ -341,6 +341,26 @@ func (p delayedAutomaticSnapshot) Snapshot(ctx context.Context) (sdk.DetectionCo
 	return p.world.Snapshot(ctx)
 }
 
+func TestAutomaticRecoveryUsesClearSampleThatCrossesDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c, world, closed := automaticRecoveryWorld(t, settlingCase{healAfter: 94 * time.Second}, settings.AfterPlaybookAgent)
+		c.provider = delayedAutomaticSnapshot{world: world}
+		bound := autoReport(c).GetRecoveryDeadline().AsTime()
+		autoStep(t, c, world.clock, bound.Sub(world.clock.Now())-time.Second)
+		report := autoReport(c)
+		if !report.GetStabilityDeadline().IsValid() || report.GetHandoffSelected() || !c.escalatedAt.IsZero() {
+			t.Fatalf("clear sample crossing the deadline did not enter stability: report=%v escalated=%v", report, c.escalatedAt)
+		}
+		c.provider = world
+		for range 4 {
+			autoStep(t, c, world.clock, time.Second)
+		}
+		if closed.Result == nil || !closed.EscalatedAt.IsZero() {
+			t.Fatalf("stability did not close the recovered incident: stable since %v now %v report %v", c.closureStableSince, world.clock.Now(), report)
+		}
+	})
+}
+
 func TestAutomaticDeadlineHandsOffAfterSlowOrUnavailableObservation(t *testing.T) {
 	for _, tc := range []struct {
 		name string

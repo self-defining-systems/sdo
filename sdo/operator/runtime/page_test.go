@@ -10,6 +10,7 @@ import (
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/traffic"
 )
 
 const syntheticPage = "Users report failures. Find and fix it."
@@ -142,14 +143,22 @@ func TestAPageJoinsTheOpenIncidentInsteadOfOpeningASecond(t *testing.T) {
 }
 
 // A page-opened incident is Recovered only after the responder returned and
-// every alert stays clear for the stability window; a user test that joined
-// holds it. Its closure is a verified (learnable) one, not an escalation.
+// every alert stays clear for the stability window. A joined user test can
+// supply recovery proof even if the responder gave up.
 func TestAPageOpenedIncidentClosesOnlyAfterTheResponderReturns(t *testing.T) {
-	for _, joined := range []bool{false, true} {
-		t.Run(map[bool]string{false: "clear", true: "joined user test holds"}[joined], func(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		joined     bool
+		escalation bool
+	}{
+		{name: "verified by responder"},
+		{name: "joined user test recovers", joined: true},
+		{name: "joined user test keeps failing", joined: true, escalation: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
-			now := time.Unix(1000, 0).UTC()
-			probe := &switchedProbe{id: memory.TrafficDetectorPrefix + "web", scenario: "browse"}
+			now := verifyT0
+			probe := &switchedProbe{id: memory.TrafficDetectorPrefix + "probe-call", scenario: "browse-items"}
 			c, dispatcher, _ := pageController(t, now, probe)
 			closed := new(IncidentClosure)
 			c.OnIncidentClosed = func(closure IncidentClosure) { *closed = closure }
@@ -158,10 +167,18 @@ func TestAPageOpenedIncidentClosesOnlyAfterTheResponderReturns(t *testing.T) {
 			}
 			executePendingEffect(t, c)
 			awaitRequest(t, dispatcher.requests)
+			var clearedAt time.Time
 			step := func(count int) {
 				for range count {
 					now = now.Add(time.Second)
 					c.now = func() time.Time { return now }
+					view := verifyWorld{now: now, probeOK: func(sample time.Time) bool {
+						return !clearedAt.IsZero() && !sample.Before(clearedAt)
+					}}.view()
+					window := view.Traffic["probe-call"]
+					window.Workload.SLO = traffic.SLO{MinSamples: 2, MaxAge: traffic.Duration(2 * time.Second)}
+					view.Traffic["probe-call"] = window
+					c.provider = riskSnapshots{view: view}
 					if err := c.Step(ctx, now, nil); err != nil {
 						t.Fatal(err)
 					}
@@ -171,7 +188,7 @@ func TestAPageOpenedIncidentClosesOnlyAfterTheResponderReturns(t *testing.T) {
 			if !c.incidentOpen || closed.Result != nil || c.pendingClosure != nil {
 				t.Fatal("a page-opened incident closed while its responder was still working")
 			}
-			if joined {
+			if test.joined {
 				probe.failing.Store(true)
 				step(2)
 				if got := c.currentIncidentRequest.JoinedKeys; len(got) != 1 {
@@ -179,16 +196,31 @@ func TestAPageOpenedIncidentClosesOnlyAfterTheResponderReturns(t *testing.T) {
 				}
 			}
 			dispatcher.returned <- struct{}{}
-			c.handleDispatchCompletion(<-c.results, now)
+			completion := <-c.results
+			if test.joined {
+				completion.result.Status = IncidentFailed
+			}
+			c.handleDispatchCompletion(completion, now)
 			if !c.responderDoneNow() {
 				t.Fatal("the responder's return never reached the controller")
 			}
 			step(5)
-			if joined {
+			if test.joined {
 				if !c.incidentOpen || closed.Result != nil {
 					t.Fatal("closed while a joined user test still failed")
 				}
-				return
+				if test.escalation {
+					now = c.recoveryGraceEndsLocked().Add(-time.Second)
+					step(1)
+					if c.incidentOpen || closed.EscalatedAt.IsZero() || closed.HealthClearedAt != nil ||
+						closed.Result == nil || len(closed.Result.UnresolvedFindings) != 1 {
+						t.Fatal("escalation did not close the page with its unresolved joined alert")
+					}
+					return
+				}
+				probe.failing.Store(false)
+				clearedAt = now
+				step(5)
 			}
 			if c.incidentOpen || closed.Result == nil {
 				t.Fatal("the page-opened incident did not close after the responder returned and alerts stayed clear")

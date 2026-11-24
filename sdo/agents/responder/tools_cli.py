@@ -128,9 +128,8 @@ def _parser() -> argparse.ArgumentParser:
             "request its prober sends, and shows the result), a detector (runs it alone), or an item of the "
             "summary (a component, clue ID, tests, conditions or background). --wait SECONDS returns early only when "
             "the incident's alert set changes or Recovered holds, else after SECONDS; use it, not sleep. "
-            "SDO ends your incident work "
-            "when Recovered holds (the opening alerts cleared and stayed clear after your last change "
-            "settled); return only to give up."
+            "SDO ends detector-opened incident work when its alerts stay clear after writes settle. "
+            "For a page-opened incident, verify the reported operation and return the result."
         ),
     )
     detect.add_argument("name", nargs="?", metavar="NAME", help="a user test, detector or summary item")

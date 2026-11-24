@@ -1,1 +1,1 @@
-Fill this on the incident-response turn, and only when you give up: ending a turn submits it. It is null on the reflection turn.
+Ending the incident-response turn submits this result. Use failed when giving up. Leave it null on the reflection turn.

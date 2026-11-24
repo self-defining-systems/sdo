@@ -17,7 +17,12 @@ program execution or a controller restart.
 ## Stage reports
 
 `ControllerConfig.code_path.overrides.response_stages` defaults to `deterministic,agent`; `agent`
-alone is the baseline. `IncidentRequest.prior_stages` and
+alone is the baseline. A page that opened the incident (`page` set, no `opening_keys`) starts the
+responder directly, even during startup. Read `responder_dispatched` for the
+dispatch and `escalated_at` for a verification-bound closure without proof.
+A page-only alert set uses the responder's explicit verification of the reported
+operation and controller settlement evidence. Joined alerts use detector proof.
+`IncidentRequest.prior_stages` and
 `OutcomeRecord.prior_stages` retain typed controller-owned stage reports.
 Each mitigation identifies the accepted playbook revision, bindings, plan,
 `apply_receipt`, post-apply Diagnose, and cleared/remaining finding fingerprints.

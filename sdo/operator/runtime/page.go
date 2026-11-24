@@ -17,7 +17,7 @@ import (
 // is the one opener that is not a detector alert:
 //
 //   - with no incident open it opens one whose alert set starts empty, and the
-//     responder is dispatched once with the page text (IncidentRequest.Page);
+//     responder starts directly, including during startup, with the page text;
 //   - with an incident open it joins it: the request records the page and the
 //     responder is never re-prompted;
 //   - a page that opened an incident requires its responder to return.
@@ -26,9 +26,8 @@ import (
 //     evidence and the opening and joined alerts decide verification.
 //
 // A page is accepted once (lastPageID, persisted); the producer may leave it in
-// the inbox. One that cannot open yet (a closure in flight, the start-up
-// period) stays unaccepted and is read again. Watch-only controllers never
-// dispatch, so they ignore pages.
+// the inbox. A page arriving during a closure stays unaccepted and is read
+// again. Watch-only controllers ignore pages.
 
 // pageOpened reports an incident a page opened rather than a detector alert.
 func pageOpened(request *IncidentRequest) bool {
@@ -104,8 +103,7 @@ func (c *Controller) admitPage(ctx context.Context, now time.Time, snapshot sdk.
 	}
 	busy := c.earlyReportPendingLocked() || c.closureBlocksNextLocked()
 	c.mu.Unlock()
-	// Like any opener, a page waits out a new install's start-up period.
-	if busy || c.startupHolds(now) {
+	if busy {
 		return ErrExternalIncidentBusy
 	}
 	if snapshot == nil {

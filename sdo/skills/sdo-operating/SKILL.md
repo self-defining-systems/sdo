@@ -23,8 +23,8 @@ A listed non-matching playbook may still describe the fix: check its cause, reus
 
 `sdo COMMAND --help` gives the syntax. Use `kubectl` for reads and changes. Keep a source fix with `git commit`.
 
-SDO ends work when incident alerts stay clear after writes settle.
-On handoff, use `sdo detect` for fresh alert evidence and plan refusals. Returning escalates.
+On handoff, use `sdo detect` for fresh evidence and plan refusals. For a page-opened incident, verify the symptom and return `completed` or `failed`.
+SDO ends detector-opened work on recovery.
 
 Never print, copy, log or write a credential value anywhere, including findings and memory. A credential already in a
 pod's environment or mounted files may be used in place (exec into that pod and let its client read it) to check the
