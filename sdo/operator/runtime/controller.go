@@ -1607,6 +1607,9 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 	if len(completion.priorStages) > 0 {
 		c.currentIncidentRequest.PriorStages = mergeLaterStagePasses(completion.priorStages, c.currentIncidentRequest.PriorStages)
 	}
+	var jobFailed *ResponderJobFailedError
+	var capacityConfiguration *responderCapacityConfigurationError
+	terminal := errors.As(completion.err, &jobFailed) || errors.As(completion.err, &capacityConfiguration)
 	if c.earlyReportPendingLocked() {
 		if completion.err == nil {
 			snapshot := *c.pendingClosure.Result
@@ -1623,20 +1626,18 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 			c.pendingClosure.Result = cloneIncidentResult(&result)
 			c.pendingClosure.ResponderCompletedAt = observedAt.UTC()
 		}
-		var terminal *ResponderJobFailedError
-		if completion.err == nil || errors.As(completion.err, &terminal) {
+		if completion.err == nil || terminal {
 			c.responderDone = true
 			c.emitLifecycleLocked(&contracts.LifecycleEvent{Event: PhaseResponderCompleted, RecordedAt: contractTimestamp(observedAt), IncidentId: completion.incidentID, DispatchError: completion.err != nil})
 		}
 		c.mu.Unlock()
-		if completion.err != nil && terminal == nil {
+		if completion.err != nil && !terminal {
 			// The verified incident keeps waiting for a final result that this dispatch will not deliver:
 			// say why instead of waiting silently for the response deadline.
 			c.reportBrokerError("responder dispatch ended with an error after the incident verified", completion.err)
 		}
 		return
 	}
-	var jobFailed *ResponderJobFailedError
 	var timedOut *ResponseTimeoutError
 	if errors.As(completion.err, &timedOut) {
 		// The response timeout is a safety stop, not a failure: the agent never
@@ -1651,10 +1652,9 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		c.currentIncidentResult = &IncidentResult{SchemaVersion: ProtocolSchemaVersion, IncidentID: completion.incidentID, Status: IncidentCompleted, ResponderSessionID: completion.result.ResponderSessionID, Timing: TimingMetrics{StartedAt: c.incidentDispatchedAt, CompletedAt: c.responderCompletedAt}}
 		c.escalateLocked(c.responderCompletedAt)
 		c.resetDispatchRetryLocked()
-	} else if errors.As(completion.err, &jobFailed) {
-		// A failed Job is terminal and exactly-once dispatch forbids a second
-		// responder, so the responder is done without a result. Health alone
-		// decides closure, and the broker records the outcome as failed.
+	} else if terminal {
+		// A failed Job or invalid admission configuration ends the dispatch.
+		// There is no worker result authorizing repair or learning claims.
 		c.responderDone = true
 		c.responderCompletedAt = observedAt.UTC()
 		if c.responderCompletedAt.Before(c.incidentDispatchedAt) {
@@ -1867,13 +1867,13 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 		c.recoverySafetyLost = true
 	}
 	// A terminal dispatch failure closes as failed: once health permits it, or
-	// at once when the responder is done, because a failed Job leaves no
-	// attempt to verify and waiting would only hold still-firing findings back
-	// from the next attempt.
-	jobFailed := !early && c.dispatchError != ""
-	terminalFailure := jobFailed || (healthVerified && c.dispatchError != "")
-	if jobFailed && !healthVerified {
-		slog.Info("incident_terminal_dispatch_failure", "incident_id", c.currentIncidentRequest.IncidentID, "reason", "responder_job_failed", "active_health_detectors", c.activeHealthDetectors())
+	// at once when the responder is done, because there is no attempt to
+	// verify and waiting would hold still-firing findings back from the next
+	// attempt.
+	dispatchFailed := !early && c.dispatchError != ""
+	terminalFailure := dispatchFailed || (healthVerified && c.dispatchError != "")
+	if dispatchFailed && !healthVerified {
+		slog.Info("incident_terminal_dispatch_failure", "incident_id", c.currentIncidentRequest.IncidentID, "error", c.dispatchError, "active_health_detectors", c.activeHealthDetectors())
 	}
 	verification := c.continuationVerificationLocked(healthVerified, source)
 	if snapshotErr != nil {

@@ -45,9 +45,20 @@ def _result() -> IncidentResult:
     return parse_json((FIXTURES / "incident_result.json").read_text(), IncidentResult())
 
 
-def test_worker_preserves_rate_limit_through_typed_transport(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("model", "pool_environment", "reason"),
+    [
+        ("sonnet", {}, "rate_limited"),
+        ("opus", {}, "capacity_configuration_error"),
+        ("opus", {"SDO_OPUS_POOL_MODE": "per_account"}, "capacity_configuration_error"),
+    ],
+)
+def test_worker_preserves_capacity_failure_through_typed_transport(
+    tmp_path: Path, model: str, pool_environment: dict[str, str], reason: str
+) -> None:
     from libs.agent_cli.provider_capacity import ProviderCapacity, RateLimitPolicy
     from libs.agent_cli.structured import run_structured_turn
+    from sdo.agents.responder.codex import ResponderExecutionError
     from sdo.contracts import validate
     from tests.structured_turns import ScriptedAgent, failure
 
@@ -56,7 +67,7 @@ def test_worker_preserves_rate_limit_through_typed_transport(tmp_path: Path) -> 
     publisher = RecordingPublisher()
     seconds = [0.0]
     capacity = ProviderCapacity(
-        environment={},
+        environment=pool_environment,
         policy=RateLimitPolicy(initial_delay_seconds=1, max_delay_seconds=1, max_wait_seconds=1),
         monotonic=lambda: seconds[0],
         sleep=lambda value: seconds.__setitem__(0, seconds[0] + value),
@@ -64,25 +75,29 @@ def test_worker_preserves_rate_limit_through_typed_transport(tmp_path: Path) -> 
     cli = ScriptedAgent(lambda _: failure(stderr="You've hit your limit · resets 5pm (America/Los_Angeles)"))
 
     def limited(_request):
-        run_structured_turn(
-            "claude",
-            "prompt",
-            output_schema={"type": "object"},
-            cwd=tmp_path,
-            model="sonnet",
-            access="read-only",
-            executor=cli.executor,
-            provider_capacity=capacity,
-        )
+        try:
+            run_structured_turn(
+                "claude",
+                "prompt",
+                output_schema={"type": "object"},
+                cwd=tmp_path,
+                model=model,
+                access="read-only",
+                executor=cli.executor,
+                provider_capacity=capacity,
+            )
+        except RuntimeError as exc:
+            raise ResponderExecutionError("responder failed") from exc
         pytest.fail("exhausted Claude call returned")
 
     result = run_worker_task(path, "result-map", publisher, executor=limited)
     validate(result)
     assert result.status == "failed"
-    assert result.failure_reason == "rate_limited"
+    assert result.failure_reason == reason
+    assert result.error_summary.startswith(reason + ":")
     assert not result.HasField("response")
     assert publisher.published is not None
-    assert parse_json(publisher.published[2], AgentResult()).failure_reason == "rate_limited"
+    assert parse_json(publisher.published[2], AgentResult()).failure_reason == reason
 
 
 def test_worker_uses_typed_envelope_and_returns_typed_response(tmp_path: Path) -> None:

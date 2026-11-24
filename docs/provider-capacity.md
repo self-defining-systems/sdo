@@ -7,8 +7,13 @@ Named sessions resume; completed work and accounting survive the retry. A retry
 releases its Opus token before backoff. Other CLI errors retain their ordinary
 failure behavior.
 
-Opus turns (including an unspecified Claude model, whose CLI default may be
-Opus) require an explicitly configured lock pool. `SDO_OPUS_POOL_MODE=shared`
+Claude subscription turns using Opus require a configured lock pool, including
+when the CLI chooses an unspecified model. Explicit Vertex, Bedrock, Foundry,
+and Anthropic API-key routing skips the subscription pool and uses the normal
+provider retry policy. Explicit `per_account` routing selects a managed
+subscription account and uses its own account pool.
+
+`SDO_OPUS_POOL_MODE=shared`
 (the default) uses one account-wide filesystem directory, with eight tokens by
 default. `SDO_OPUS_POOL_MODE=per_host` assigns a static share to each host,
 defaulting to four tokens per host (4 + 4 = 8). `SDO_OPUS_MAX_SESSIONS` sets the
@@ -30,8 +35,9 @@ every worker Job inherit these values and mount that export at `/sdo/opus-pool`.
 Nodes need NFS client support and network access to the same server on both
 hosts. Provision directory and file permissions for the worker UID (65532) and
 any host callers; these files contain only capacity/lock metadata. Never put
-credentials in this directory. A missing or unavailable pool blocks Opus before
-starting the CLI.
+credentials in this directory. A missing, misconfigured, or inaccessible Opus
+pool returns `capacity_configuration_error` before starting the CLI. The
+controller ends that responder dispatch on the first failed result.
 
 For **per-host pools**, use an existing writable kind extraMount; lanes need
 not be recreated. Provision the tokens on the host first, outside source
