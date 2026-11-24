@@ -122,7 +122,10 @@ func RecordCorpus(root, captures, incidentID string, instances map[string][]prog
 				return nil, err
 			}
 			// The healthy snapshot is the verified fixed one; the case references it.
-			cases[name] = map[string][]byte{"open.json": opened, "fixed.json": fixed, "recordings.json": recordings, "labels.json": encoded}
+			files := map[string][]byte{"open.json": opened, "fixed.json": fixed, "labels.json": encoded, "recordings.json": recordings}
+			if prepareCorpusCase(files, incidentID, id) {
+				cases[name] = files
+			}
 		}
 	}
 	// Files and directories this call created, removed again on failure. The

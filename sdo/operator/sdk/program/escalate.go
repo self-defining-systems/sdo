@@ -21,13 +21,25 @@ var causeClasses = []string{
 	"state-lost", "data-corrupt", "data-missing", "read-only", "code-defect", "other",
 }
 
-// CauseClasses lists the values Verdict.CauseClass may take besides "".
+// CauseClasses lists the categories used to summarize diagnosed causes.
 func CauseClasses() []string { return slices.Clone(causeClasses) }
 
-func validateCause(class, reach string) error {
-	if class != "" && !slices.Contains(causeClasses, class) {
-		return fmt.Errorf("cause class %q is not one of %s", class, strings.Join(causeClasses, ", "))
+// CanEscalate reports whether a diagnosis may drive automatic escalation.
+func (v Verdict) CanEscalate() bool {
+	return v.Result == Match && v.Reach == ReachOutOfReach && slices.Contains(causeClasses, v.CauseClass) && v.Validate() == nil
+}
+
+func normalizeCause(v Verdict) Verdict {
+	if v.CauseClass != "" && !slices.Contains(causeClasses, v.CauseClass) {
+		if v.Reach == ReachOutOfReach {
+			v.Reach = ""
+		}
+		v.CauseClass = "other"
 	}
+	return v
+}
+
+func validateCause(class, reach string) error {
 	switch reach {
 	case "", ReachInScope, ReachOutOfReach:
 	default:

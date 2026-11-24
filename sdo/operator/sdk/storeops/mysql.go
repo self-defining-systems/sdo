@@ -92,6 +92,7 @@ func mysqlText(what, text string) error {
 // ValidateStatement accepts "delete" or a SET clause, applied to the rows the
 // selector matches.
 func (mysql) ValidateStatement(statement string) error {
+	statement = normalizeSQLRepair(statement)
 	if statement == "delete" {
 		return nil
 	}
@@ -135,6 +136,7 @@ func (e mysql) Backup(port int, s Scope) Command {
 // only when their number is within [min, max].
 func (e mysql) Write(port int, s Scope, statement string, min, max int) Command {
 	s = e.Normalize(s)
+	statement = normalizeSQLRepair(statement)
 	table := mysqlTable(s.Collection)
 	inBounds := fmt.Sprintf("@sdo_n BETWEEN %d AND %d", min, max)
 	change := "UPDATE " + table + " " + statement + " WHERE (" + s.Selector + ") AND " + inBounds

@@ -148,7 +148,7 @@ func TestVerdictCauseVocabulary(t *testing.T) {
 		"match out of reach":        {program.Verdict{Result: program.Match, CauseClass: "network-delay", Reach: program.ReachOutOfReach}, true},
 		"match in scope":            {program.Verdict{Result: program.Match, CauseClass: "config-value-wrong", Reach: program.ReachInScope}, true},
 		"class without reach":       {program.Verdict{Result: program.Match, CauseClass: "data-corrupt"}, true},
-		"unknown class":             {program.Verdict{Result: program.Match, CauseClass: "gremlins", Reach: program.ReachInScope}, false},
+		"unknown class":             {program.Verdict{Result: program.Match, CauseClass: "gremlins", Reach: program.ReachInScope}, true},
 		"unknown reach":             {program.Verdict{Result: program.Match, CauseClass: "network-loss", Reach: "elsewhere"}, false},
 		"out of reach needs class":  {program.Verdict{Result: program.Match, Reach: program.ReachOutOfReach}, false},
 		"reach on a no-match":       {program.Verdict{Result: program.NoMatch, CauseClass: "network-loss", Reach: program.ReachOutOfReach}, false},
@@ -160,6 +160,23 @@ func TestVerdictCauseVocabulary(t *testing.T) {
 	}
 	if len(program.CauseClasses()) == 0 {
 		t.Fatal("no cause classes")
+	}
+}
+
+type freeTextCauseDiagnosis struct{}
+
+func (freeTextCauseDiagnosis) Spec() program.ProgramSpec {
+	return program.ProgramSpec{ID: "free-text-cause"}
+}
+
+func (freeTextCauseDiagnosis) Diagnose(context.Context, program.ReadView, program.Bindings) (program.Verdict, error) {
+	return program.Verdict{Result: program.Match, CauseClass: "application-specific condition"}, nil
+}
+
+func TestRunDiagnoseCategorizesFreeTextCauseWithoutChangingMatch(t *testing.T) {
+	verdict := program.RunDiagnose(context.Background(), freeTextCauseDiagnosis{}, nil, program.Bindings{}, time.Second)
+	if verdict.Result != program.Match || verdict.CauseClass != "other" {
+		t.Fatalf("diagnosis = %+v, want Match with cause class other", verdict)
 	}
 }
 

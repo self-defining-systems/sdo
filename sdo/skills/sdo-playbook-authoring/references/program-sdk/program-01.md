@@ -144,7 +144,7 @@ func BoundedLogOptions(options corev1.PodLogOptions) (corev1.PodLogOptions, int6
     LimitBytes, when set, lowers that bound.
 
 func CauseClasses() []string
-    CauseClasses lists the values Verdict.CauseClass may take besides "".
+    CauseClasses lists the categories used to summarize diagnosed causes.
 
 func CheckFindingRoles(spec ProgramSpec) error
     CheckFindingRoles rejects object roles that no unnamed finding can bind.

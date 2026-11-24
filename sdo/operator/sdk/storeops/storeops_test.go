@@ -95,6 +95,8 @@ func TestStatementValidation(t *testing.T) {
 		"mongodb replacement":        {"mongodb", `{"a": 1}`, false},
 		"mongodb not json":           {"mongodb", `db.items.drop()`, false},
 		"postgres set":               {"postgres", "SET status = 'open'", true},
+		"postgres bare assignments":  {"postgres", "status = 'open', count = 2", true},
+		"postgres bare where":        {"postgres", "status = 'open' WHERE TRUE", false},
 		"postgres delete":            {"postgres", "delete", true},
 		"postgres own where":         {"postgres", "SET a = 1 WHERE TRUE", false},
 		"postgres correlated":        {"postgres", "SET total = (SELECT sum(n) FROM lines WHERE lines.order_id = orders.id)", true},
@@ -108,6 +110,7 @@ func TestStatementValidation(t *testing.T) {
 		"memcached delete":           {"memcached", "delete", true},
 		"memcached set":              {"memcached", "set 1", false},
 		"mysql set":                  {"mysql", "SET status = 'open'", true},
+		"mysql bare assignments":     {"mysql", "status = 'open', count = 2", true},
 		"mysql delete":               {"mysql", "delete", true},
 		"mysql own where":            {"mysql", "SET a = 1 WHERE TRUE", false},
 		"mysql comment":              {"mysql", "SET a = 1 # x", false},
@@ -290,6 +293,18 @@ func TestCopyScopes(t *testing.T) {
 			_, err := engine(t, test.engine).Copy(1, test.from, test.into, 1, 10)
 			if (err == nil) != test.ok {
 				t.Fatalf("Copy = %v, want ok=%v", err, test.ok)
+			}
+		})
+	}
+}
+
+func TestBareSQLAssignmentsWriteWithSelector(t *testing.T) {
+	for _, name := range []string{"postgres", "mysql"} {
+		t.Run(name, func(t *testing.T) {
+			e := engine(t, name)
+			cmd := e.Write(5432, storeops.Scope{Collection: "items", Selector: "id = 42"}, "status = 'open', n = 2", 1, 1)
+			if !strings.Contains(strings.Join(cmd.Args, " ")+cmd.Stdin, " SET status = 'open', n = 2 WHERE (id = 42)") {
+				t.Fatal("write did not normalize the assignments while keeping the selector")
 			}
 		})
 	}

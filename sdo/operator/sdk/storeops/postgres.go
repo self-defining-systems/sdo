@@ -66,6 +66,7 @@ func postgresTable(name string) (string, error) {
 // ValidateStatement accepts "delete" or a SET clause ("SET status = 'open'"),
 // which SDO applies only to the rows the selector matches.
 func (postgres) ValidateStatement(statement string) error {
+	statement = normalizeSQLRepair(statement)
 	if statement == "delete" {
 		return nil
 	}
@@ -79,6 +80,15 @@ func (postgres) ValidateStatement(statement string) error {
 		return fmt.Errorf("postgres repair statement may not carry its own top-level WHERE or RETURNING; the scope selects the rows (a subquery in parentheses may use them)")
 	}
 	return nil
+}
+
+var bareSQLAssignment = regexp.MustCompile(`^(?:[A-Za-z_][A-Za-z0-9_$]*|"[^"]+"|` + "`[^`]+`" + `)[ \t]*=`)
+
+func normalizeSQLRepair(statement string) string {
+	if !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(statement)), "SET ") && bareSQLAssignment.MatchString(strings.TrimSpace(statement)) {
+		return "SET " + strings.TrimSpace(statement)
+	}
+	return statement
 }
 
 // topLevelSQL blanks the text inside parentheses and quotes, so a check sees
@@ -139,6 +149,7 @@ func (e postgres) Backup(port int, s Scope) Command {
 // changed is within [min, max].
 func (e postgres) Write(port int, s Scope, statement string, min, max int) Command {
 	s = e.Normalize(s)
+	statement = normalizeSQLRepair(statement)
 	table, _ := postgresTable(s.Collection)
 	change := "UPDATE " + table + " " + statement + " WHERE (" + s.Selector + ") RETURNING 1"
 	if statement == "delete" {
