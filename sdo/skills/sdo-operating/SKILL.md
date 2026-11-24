@@ -23,7 +23,7 @@ A listed non-matching playbook may still describe the fix: check its cause, reus
 
 `sdo COMMAND --help` gives the syntax. Use `kubectl` for reads and changes. Keep a source fix with `git commit`.
 
-At handoff, run `sdo detect` for evidence and refusals. For paged incidents, verify symptoms and return `completed` or `failed`.
+At handoff, run `sdo detect` for residual alerts and refusals. Verify paged symptoms and return `completed` or `failed`.
 SDO ends detector-opened work on recovery.
 
 Never print, copy, log or write a credential value anywhere, including findings and memory. A credential already in a

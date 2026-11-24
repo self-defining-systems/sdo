@@ -188,18 +188,28 @@ func TestAutomaticCreditRequiresUnambiguousRecoveredClosure(t *testing.T) {
 	}
 }
 
-func TestAutomaticRolloutUnsettledAtDeadlineChargesItsRevision(t *testing.T) {
-	o := creditOutcome("success")
-	attempt := o.PriorStages[0].Mitigations[0]
-	attempt.ProgramRevision = "synthetic-rev"
-	attempt.RolloutUnsettledAtDeadline = true
-	// A late rollout can settle before closure. The deadline observation is
-	// terminal even when the final receipt no longer carries RolloutPending.
-	for _, rollout := range []*contracts.RolloutPending{nil, {Reason: "unsettled"}} {
-		attempt.ApplyReceipt.RolloutPending = rollout
-		got := ProgramTrustStats([]*contracts.OutcomeRecord{o})["fix"]
-		if got.Failures != 1 || got.LastChange != "synthetic-rev" || got.VerifiedSuccesses != 0 {
-			t.Fatalf("trust = %+v, want one terminal failure for synthetic-rev", got)
-		}
+func TestAutomaticRolloutUnsettledAtDeadlineChargesOnlyUnrecoveredIncidents(t *testing.T) {
+	for _, tc := range []struct {
+		name, classification string
+		verified             bool
+		failures             int
+	}{
+		{"still unhealthy", "escalated", false, 1},
+		{"later recovered", "success", true, 0},
+		{"escalated then verified", "escalated", true, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := creditOutcome(tc.classification)
+			attempt := o.PriorStages[0].Mitigations[0]
+			attempt.ProgramRevision = "synthetic-rev"
+			attempt.RolloutUnsettledAtDeadline = true
+			if tc.verified {
+				o.Timestamps = &contracts.OutcomeTimestamps{VerifiedAt: creditAt(11)}
+			}
+			stats := ProgramTrustStats([]*contracts.OutcomeRecord{o})["fix"]
+			if stats.Failures != tc.failures {
+				t.Fatalf("trust = %+v, want %d failures", stats, tc.failures)
+			}
+		})
 	}
 }

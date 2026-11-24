@@ -10,6 +10,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	outcomeclass "sdo.dev/operator/contracts/outcome"
 	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/sdk"
 )
@@ -91,7 +92,7 @@ func TestAutomaticRecoveryWaitsOnlyForClosure(t *testing.T) {
 	autoStep(t, c, world.clock, 2*time.Second)
 	report := autoReport(c)
 	extension := report.GetStabilityDeadline().AsTime()
-	if !extension.Equal(world.clock.Now().Add(4*time.Second)) || !report.GetRecoveryDeadline().AsTime().Equal(initial) {
+	if !extension.Equal(world.clock.Now().Add(6*time.Second)) || !report.GetRecoveryDeadline().AsTime().Equal(initial) {
 		t.Fatalf("deadline and extension = %s, %s", report.GetRecoveryDeadline(), report.GetStabilityDeadline())
 	}
 	if report.GetHandoffSelected() || !c.escalatedAt.IsZero() || report.GetMitigations()[0].GetRolloutUnsettledAtDeadline() {
@@ -165,11 +166,22 @@ func TestAutomaticRecoveryDeadlineAppliesPolicyToObservedAlerts(t *testing.T) {
 			}
 			autoStep(t, c, world.clock, time.Second)
 			report := autoReport(c)
+			if !tc.failing {
+				extension := report.GetStabilityDeadline().AsTime()
+				autoStep(t, c, world.clock, extension.Sub(world.clock.Now()))
+				if report.GetHandoffSelected() || !c.escalatedAt.IsZero() || report.GetMitigations()[0].GetRolloutUnsettledAtDeadline() {
+					t.Fatal("a clear alert escalated while settlement was pending")
+				}
+				if err := c.Step(t.Context(), world.clock.Now(), nil); err != nil {
+					t.Fatal(err)
+				}
+				if !c.NextWake().After(world.clock.Now()) {
+					t.Fatal("expired extension caused an immediate wake with clear alerts")
+				}
+				return
+			}
 			if report.GetHandoffSelected() != tc.handoff || c.escalatedAt.IsZero() == !tc.handoff {
 				t.Fatalf("handoff = %v, escalated at %s, want handoff = %v", report.GetHandoffSelected(), c.escalatedAt, tc.handoff)
-			}
-			if !tc.failing && !report.GetMitigations()[0].GetRolloutUnsettledAtDeadline() {
-				t.Fatal("unsettled rollout at expiry did not record terminal evidence")
 			}
 		})
 	}
@@ -383,6 +395,13 @@ func TestAutomaticDeadlineHandsOffAfterSlowOrUnavailableObservation(t *testing.T
 					}
 				}
 				report := autoReport(c)
+				if tc.err != nil {
+					extension := report.GetStabilityDeadline().AsTime()
+					if !extension.After(world.clock.Now()) || report.GetHandoffSelected() || !c.escalatedAt.IsZero() {
+						t.Fatalf("unavailable snapshot did not wait for verification: %v", report)
+					}
+					autoStep(t, c, world.clock, extension.Sub(world.clock.Now()))
+				}
 				if !report.GetHandoffSelected() || !slices.Equal(report.GetHandoffKeys(), c.currentIncidentRequest.OpeningKeys) ||
 					!c.escalatedAt.IsZero() || c.awaitingAutomaticRecoveryLocked() != nil {
 					t.Fatalf("deadline did not select one handoff for the alert set: report=%v escalated=%v", report, c.escalatedAt)
@@ -596,5 +615,142 @@ func TestAutomaticHandoffVerifiesRecoveryWhileResponderWaits(t *testing.T) {
 				t.Fatalf("expected scoped recovery despite the remaining clue: %v", closed.FinalDetectorStates)
 			}
 		})
+	}
+}
+
+type deadlineConfirmationProbe struct {
+	windowedSettlingDetector
+	confirmAt   time.Time
+	unavailable bool
+}
+
+func (d *deadlineConfirmationProbe) Confirmed(sdk.DetectionContext) bool {
+	return !d.clock.Now().Before(d.confirmAt)
+}
+
+func (d *deadlineConfirmationProbe) Detect(ctx context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
+	if d.unavailable {
+		return nil, sdk.ErrUnavailable
+	}
+	return d.windowedSettlingDetector.Detect(ctx, view)
+}
+
+func TestAutomaticClearAtHandoffDeadline(t *testing.T) {
+	for _, scenario := range []string{"393ms before deadline, unconfirmed", "confirmed exactly at deadline", "refires during extension", "detector unavailable", "clear at response cap"} {
+		t.Run(scenario, func(t *testing.T) {
+			c, world, closed := automaticRecoveryWorld(t, settlingCase{}, settings.AfterPlaybookAgent)
+			report := autoReport(c)
+			bound := report.GetRecoveryDeadline().AsTime()
+			probe := &deadlineConfirmationProbe{
+				windowedSettlingDetector: c.detectors["traffic-health"].(windowedSettlingDetector),
+				confirmAt:                bound,
+			}
+			probe.healAt = bound
+			switch scenario {
+			case "393ms before deadline, unconfirmed":
+				probe.healAt = bound.Add(-393 * time.Millisecond)
+				probe.confirmAt = bound.Add(time.Second)
+			case "detector unavailable":
+				probe.unavailable = true
+			case "clear at response cap":
+				c.currentIncidentRequest.ResponseDeadline = bound.Add(time.Second)
+				probe.confirmAt = c.currentIncidentRequest.ResponseDeadline
+			}
+			c.detectors[probe.id] = probe
+			c.responderLoop.Detectors[0] = probe
+			autoStep(t, c, world.clock, bound.Sub(world.clock.Now())-time.Second)
+			autoStep(t, c, world.clock, time.Second)
+
+			extension := report.GetStabilityDeadline().AsTime()
+			wantExtension := bound.Add(probe.Spec().Interval + c.config.ClosureStabilityWindow)
+			if cap := c.currentIncidentRequest.ResponseDeadline; cap.Before(wantExtension) {
+				wantExtension = cap
+			}
+			if !extension.Equal(wantExtension) || report.GetHandoffSelected() || !c.escalatedAt.IsZero() {
+				t.Fatalf("initial deadline: extension=%s want=%s, handoff=%v escalation=%s", extension, wantExtension, report.GetHandoffSelected(), c.escalatedAt)
+			}
+			if scenario == "refires during extension" {
+				probe.healAt = time.Time{}
+			}
+			autoStep(t, c, world.clock, time.Second)
+			if world.clock.Now().Before(extension) && (report.GetHandoffSelected() || !c.escalatedAt.IsZero()) {
+				t.Fatal("extension ended early")
+			}
+			autoStep(t, c, world.clock, extension.Sub(world.clock.Now()))
+			if !report.GetRecoveryDeadline().AsTime().Equal(bound) || !report.GetStabilityDeadline().AsTime().Equal(extension) || world.restarts.Load() != 1 {
+				t.Fatal("verification moved a deadline or ran another repair")
+			}
+
+			if scenario == "refires during extension" || scenario == "detector unavailable" {
+				if !report.GetHandoffSelected() || !slices.Equal(report.GetHandoffKeys(), c.currentIncidentRequest.OpeningKeys) || !c.escalatedAt.IsZero() {
+					t.Fatalf("extension did not select one scoped handoff: %v, escalation=%s", report, c.escalatedAt)
+				}
+				return
+			}
+			if c.IncidentOpen() {
+				autoStep(t, c, world.clock, c.config.ClosureStabilityWindow)
+			}
+			if c.IncidentOpen() {
+				autoStep(t, c, world.clock, time.Second)
+			}
+			closedReport := deterministicStageReport(closed.Request.PriorStages)
+			if closed.Result == nil || closed.HealthClearedAt == nil || !closed.EscalatedAt.IsZero() ||
+				closedReport.GetHandoffSelected() || closedReport.GetRecoveryWait().GetExitReason() != contracts.RecoveryWait_EXIT_REASON_CLEARED {
+				t.Fatalf("expected stage-only verified closure, got %v, report %v", closed.VerifiedAt, closedReport)
+			}
+			outcome, err := (ProtoOutcomeDeriver{}).Derive(t.Context(), *closed, "", "synthetic", "synthetic")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if outcome.Record.GetClassification() != outcomeclass.Success {
+				t.Fatalf("stage-only repair outcome = %s", outcome.Record.GetClassification())
+			}
+			id := report.GetMitigations()[0].GetPlaybookId()
+			if trust := ProgramTrustStats([]*contracts.OutcomeRecord{outcome.Record})[id]; trust.Failures != 0 {
+				t.Fatalf("recovered stage charged failure: %+v", trust)
+			}
+		})
+	}
+}
+
+func TestAlertJoiningDuringAutomaticExtensionKeepsTheDeadline(t *testing.T) {
+	probe := &switchedProbe{id: "traffic-late", scenario: "late"}
+	probe.failing.Store(true)
+	c, world, _ := automaticRecoveryWorld(t, settlingCase{healAfter: 95 * time.Second}, settings.AfterPlaybookAgent, probe)
+	clock := world.clock
+	deadline := autoReport(c).GetRecoveryDeadline().AsTime()
+	autoStep(t, c, clock, deadline.Sub(clock.Now()))
+	extension := autoReport(c).GetStabilityDeadline().AsTime()
+	if !extension.After(deadline) || autoReport(c).GetHandoffSelected() || !c.escalatedAt.IsZero() {
+		t.Fatal("clear opening alert did not enter verification")
+	}
+
+	_ = clock.advance(t.Context(), time.Second)
+	if !c.joinAlertSet(probe.finding(), clock.Now()) {
+		t.Fatal("late alert never joined")
+	}
+	autoStep(t, c, clock, 0)
+	if autoReport(c).GetHandoffSelected() || !c.escalatedAt.IsZero() {
+		t.Fatal("the join ended the extension before its bound")
+	}
+
+	checkpoint, err := c.ExportState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	detectors := []sdk.Detector{c.detectors["traffic-health"], probe}
+	restarted, err := NewController(c.config, detectors, c.provider, c.dispatcher, clock.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted.now, restarted.codePath = clock.Now, c.codePath
+	if err := restarted.RestoreState(checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	autoStep(t, restarted, clock, extension.Sub(clock.Now()))
+	report := autoReport(restarted)
+	if !report.GetStabilityDeadline().AsTime().Equal(extension) || !report.GetHandoffSelected() ||
+		!slices.Equal(report.GetHandoffKeys(), []string{findingKey(probe.finding())}) || !restarted.escalatedAt.IsZero() {
+		t.Fatalf("late alert failed to hand off at the restored deadline: %v", report)
 	}
 }

@@ -240,7 +240,7 @@ func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, 
 	awaiting := c.awaitingAutomaticRecoveryLocked()
 	if awaiting != nil {
 		var cancelWait context.CancelFunc
-		actionCtx, cancelWait = context.WithTimeout(actionCtx, c.automaticDeadlineLocked(awaiting).Sub(c.clock()))
+		actionCtx, cancelWait = context.WithTimeout(actionCtx, c.automaticApplyDeadlineLocked(awaiting).Sub(c.clock()))
 		defer cancelWait()
 	}
 	c.mu.Unlock()

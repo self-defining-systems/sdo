@@ -45,7 +45,7 @@ A plan application rejected with `SETTLEMENT_REJECTION_REASON_EFFECT_NOT_CONFIRM
 (a failure before any comparison, such as no pre-image or an unreadable or replaced object), `mismatches` (object, path, expected,
 observed; Secret data redacted) and `rollout_status` when settlement ran. Its `error` starts `effect_not_confirmed:` and replaces
 the apply-time error (often a stale `rollout_pending`).
-`rollout_pending_at_handoff` is the apply receipt's pending-rollout label. The controller owns the actual handoff decision. Join `apply_completed_at`, `recovery_deadline`, the optional `stability_deadline`, and `handoff_keys` to episode timing. `rollout_unsettled_at_deadline` is terminal trust evidence for the recorded program revision. Historically a stalled rollout could trigger an early handoff or a separate lag wait.
+`rollout_pending_at_handoff` is the apply receipt's pending-rollout label. The controller owns the actual handoff decision. Join `apply_completed_at`, `recovery_deadline`, the optional `stability_deadline`, and `handoff_keys` to episode timing. `rollout_unsettled_at_deadline` records an unsettled rollout at an unsuccessful expiry. A later verified closure prevents a trust failure. Historically a stalled rollout could trigger an early handoff or a separate lag wait.
 
 The stage applies matched bindings sequentially with a single rollout sample, re-running Diagnose on fresh
 state after the preceding application returns. It then observes all pending applications under one durable shared recovery deadline (up to 90 seconds, bounded by the response deadline). A pending handoff

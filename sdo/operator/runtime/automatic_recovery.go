@@ -13,9 +13,10 @@ import (
 )
 
 // automaticRecoveryLocked is the controller's only automatic-stage dispatch
-// decision. The completed stage report and dispatch state are saved together
+// decision. An extension defers dispatch while Recovered gathers evidence.
+// The completed stage report and dispatch state are saved together
 // before ordinary dispatch preparation publishes a worker task.
-func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.StageReport, stabilityOnly bool, check recoveryCheck, rolloutBlockers []sdk.Finding) {
+func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.StageReport, snapshot sdk.DetectionContext, check recoveryCheck, rolloutBlockers []sdk.Finding) {
 	observedAt := laterObservationTime(now, c.clock())
 	request := c.currentIncidentRequest
 	applied := playbookWrote(report)
@@ -23,27 +24,36 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	scoped := applied || refused
 	deadline := c.automaticDeadlineLocked(report)
 	if applied && report.RecoveryDeadline == nil {
-		report.RecoveryDeadline = contractTimestamp(deadline)
+		report.RecoveryDeadline = contractTimestamp(c.automaticApplyDeadlineLocked(report))
 	}
-	if applied && observedAt.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
-		return
-	}
-	if stabilityOnly && scoped {
-		if report.StabilityDeadline == nil {
-			interval := time.Second
-			for _, id := range c.recoveryDetectorIDs(*request) {
-				interval = max(interval, c.detectorSpecs[id].Interval)
-			}
-			report.StabilityDeadline = contractTimestamp(c.closureStableSince.Add(c.config.ClosureStabilityWindow + interval))
-		}
+	if scoped && observedAt.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
 		return
 	}
 
-	// A fresh scoped clear can remove an alert from the handoff. Missing or
-	// unconfirmed health cannot establish that users recovered.
 	keys := alertKeys(request)
 	if scoped {
-		keys = c.unresolvedAlertKeysLocked(now, *request)
+		var firing, unavailable []string
+		if snapshot != nil {
+			firing, unavailable = c.automaticAlertStatusLocked(now, *request, keys, snapshot)
+		} else {
+			unavailable = keys
+		}
+		if len(firing) == 0 && !report.GetStabilityDeadline().IsValid() {
+			extension := c.automaticVerificationExtensionLocked(observedAt, *request)
+			report.StabilityDeadline = contractTimestamp(extension)
+			if observedAt.Before(extension) {
+				return
+			}
+		}
+		keys = firing
+		if report.GetStabilityDeadline().IsValid() {
+			keys = append(keys, unavailable...)
+			slices.Sort(keys)
+		}
+		if len(keys) == 0 {
+			// A clear alert set still has to pass the shared recovery proof.
+			return
+		}
 	} else if !stageEscalatedIn(request.PriorStages) {
 		keys = findingKeys(request.Findings)
 	}
@@ -53,7 +63,7 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	}
 	canDispatch := c.codePath != nil && slices.Contains(c.codePath.Selection.ResponseStages, "agent") &&
 		(request.ResponseDeadline.IsZero() || observedAt.Before(request.ResponseDeadline))
-	if !canDispatch || stageEscalatedIn(request.PriorStages) || !agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages) || scoped && len(keys) == 0 {
+	if !canDispatch || stageEscalatedIn(request.PriorStages) || !agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages) {
 		c.escalateLocked(observedAt)
 		return
 	}
@@ -69,12 +79,12 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	c.resetDispatchRetryLocked()
 }
 
-func (c *Controller) unresolvedAlertKeysLocked(now time.Time, request IncidentRequest) []string {
-	keys := alertKeys(&request)
+// A scoped firing sample identifies the failing keys. A pending, errored
+// or absent sample cannot establish either failure or clearance.
+func (c *Controller) automaticAlertStatusLocked(now time.Time, request IncidentRequest, keys []string, snapshot sdk.DetectionContext) (firing, unavailable []string) {
 	scope := newRecoveryScope(keys)
-	clear := make(map[string]bool)
-	firing := make(map[string]bool)
-	sampledFiring := make(map[string]bool)
+	observed := make(map[string]DetectorEvaluationStatus)
+	failed := make(map[string]bool)
 	for _, id := range c.recoveryDetectorIDs(request) {
 		if !c.recoverySamples[id].matches(now, scope) {
 			continue
@@ -83,30 +93,56 @@ func (c *Controller) unresolvedAlertKeysLocked(now time.Time, request IncidentRe
 		if len(states) == 0 || !states[0].EvaluatedAt.Equal(now) {
 			continue
 		}
-		switch states[0].Status {
-		case DetectorEvaluationClear:
-			clear[id] = true
-		case DetectorEvaluationFiring:
-			sampledFiring[id] = true
+		observed[id] = states[0].Status
+		if states[0].Status == DetectorEvaluationFiring {
 			for _, fp := range states[0].Fingerprints {
-				firing[FindingStateKey(id, fp)] = true
+				failed[FindingStateKey(id, fp)] = true
 			}
 		}
 	}
-	var unresolved []string
 	for _, key := range keys {
 		id, _, _ := strings.Cut(key, "\x00")
-		if firing[key] || !clear[id] && !sampledFiring[id] {
-			unresolved = append(unresolved, key)
+		if failed[key] {
+			firing = append(firing, key)
+			continue
 		}
+		status := observed[id]
+		if status == DetectorEvaluationClear {
+			continue
+		}
+		// A detector can read one scenario while a sibling is unavailable.
+		if (status == DetectorEvaluationPending || status == DetectorEvaluationFiring) &&
+			detectorConfirmedIn(c.detectors[id], snapshot, recoveryScope{key: {}}) {
+			continue
+		}
+		unavailable = append(unavailable, key)
 	}
-	return unresolved
+	return firing, unavailable
+}
+
+func (c *Controller) automaticVerificationExtensionLocked(now time.Time, request IncidentRequest) time.Time {
+	var interval time.Duration
+	for _, id := range c.recoveryDetectorIDs(request) {
+		interval = max(interval, c.detectorSpecs[id].Interval)
+	}
+	if interval == 0 {
+		interval = time.Second
+	}
+	end := now.Add(interval + c.config.ClosureStabilityWindow)
+	if cap := request.ResponseDeadline; !cap.IsZero() && cap.Before(end) {
+		end = cap
+	}
+	return end
 }
 
 func (c *Controller) automaticDeadlineLocked(report *contracts.StageReport) time.Time {
 	if at := report.GetStabilityDeadline(); at.IsValid() {
 		return at.AsTime()
 	}
+	return c.automaticApplyDeadlineLocked(report)
+}
+
+func (c *Controller) automaticApplyDeadlineLocked(report *contracts.StageReport) time.Time {
 	if at := report.GetRecoveryDeadline(); at.IsValid() {
 		return at.AsTime()
 	}
@@ -183,24 +219,27 @@ func (c *Controller) awaitingAutomaticRecoveryLocked() *contracts.StageReport {
 func (c *Controller) automaticObservationContext(ctx context.Context, now time.Time) (context.Context, context.CancelFunc) {
 	c.mu.Lock()
 	report := c.awaitingAutomaticRecoveryLocked()
-	if !playbookWrote(report) {
+	if !playbookWrote(report) && !stagePlanRefused(report) {
 		c.mu.Unlock()
 		return ctx, func() {}
 	}
 	response := c.currentIncidentRequest.ResponseDeadline
 	c.mu.Unlock()
-	if response.IsZero() {
+	remaining := response.Sub(laterObservationTime(now, c.clock()))
+	if response.IsZero() || remaining <= 0 {
+		// The response deadline caps dispatch. An observation at that bound
+		// still has its normal read budget so a clear can enter Recovered.
 		return ctx, func() {}
 	}
-	return context.WithTimeout(ctx, response.Sub(laterObservationTime(now, c.clock())))
+	return context.WithTimeout(ctx, remaining)
 }
 
-func (c *Controller) loseAutomaticObservation(now time.Time) {
+func (c *Controller) loseAutomaticObservation(now time.Time, snapshot sdk.DetectionContext) {
 	c.resetEarlyStability()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if report := c.awaitingAutomaticRecoveryLocked(); (playbookWrote(report) || stagePlanRefused(report)) && !c.midStage.running && !c.closurePreparingLocked() {
-		c.automaticRecoveryLocked(now, report, false, recoveryCheck{}, nil)
+		c.automaticRecoveryLocked(now, report, snapshot, recoveryCheck{}, nil)
 	}
 }
 

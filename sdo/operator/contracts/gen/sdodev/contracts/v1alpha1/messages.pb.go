@@ -4849,7 +4849,7 @@ type StageReport struct {
 	// Apply completion and the immutable deadline chosen for that batch.
 	ApplyCompletedAt *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=apply_completed_at,json=applyCompletedAt,proto3" json:"apply_completed_at,omitempty"`
 	RecoveryDeadline *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=recovery_deadline,json=recoveryDeadline,proto3" json:"recovery_deadline,omitempty"`
-	// Only the first confirmed stability-only wait can extend the deadline.
+	// One response-capped extension for observation and stability when no alert is observed firing.
 	StabilityDeadline *timestamppb.Timestamp `protobuf:"bytes,12,opt,name=stability_deadline,json=stabilityDeadline,proto3" json:"stability_deadline,omitempty"`
 	// The saved dispatch decision and its exact residual alert set.
 	HandoffSelected bool     `protobuf:"varint,13,opt,name=handoff_selected,json=handoffSelected,proto3" json:"handoff_selected,omitempty"`
