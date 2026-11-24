@@ -14,15 +14,14 @@ import (
 	"sdo.dev/operator/sdk/storeops"
 )
 
-// repairStatementDiagnostics checks, in the source of the changed playbook programs, what a learned Mitigate states
-// about a RepairData in literals: its Statement must be accepted by some store engine the way the engine will apply it,
-// and its ExpectMin/ExpectMax must change something. The replay cannot run a Mitigate before Go has written the case,
-// so a plan that would fail on apply is otherwise found only on the repeat. A Statement the program computes is not
-// checked here; the plan check in the replay validates the plan it yields.
+// repairStatementDiagnostics requires raw repair statements in changed learned
+// code to be fixed and accepted by a store engine, even when captured reads
+// cannot produce a plan. Plan.Validate checks concrete actions and their
+// selected engine whenever Mitigate can run.
 func repairStatementDiagnostics(root string, paths []string) []Diagnostic {
 	var files []string
 	for _, path := range paths {
-		if kind, _, ok := layout.Classify(path); ok && kind == layout.KindPlaybookProgram && strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
+		if kind, _, ok := layout.Classify(path); ok && (kind == layout.KindPlaybookProgram || kind == layout.KindLibrary) && strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
 			files = append(files, path)
 		}
 	}
@@ -42,7 +41,7 @@ func repairStatementDiagnostics(root string, paths []string) []Diagnostic {
 			line := fset.Position(literal.Pos()).Line
 			for _, problem := range repairLiteralProblems(literal) {
 				diagnostics = append(diagnostics, Diagnostic{Rule: RuleProgramPlanInvalid, Path: path, Line: line, Message: "RepairData " + problem,
-					Hint: "the plan fails on apply, not here: use \"delete\", a SET clause (postgres, mysql), an update document (mongodb) or a single-key write (redis)"})
+					Hint: "use a quoted engine-native statement such as \"SET status = 0\" (postgres, mysql) or \"delete\"; derive the target and scope separately"})
 			}
 			return true
 		})
@@ -72,21 +71,22 @@ func repairLiteralProblems(literal *ast.CompositeLit) []string {
 		if !ok {
 			continue
 		}
-		basic, ok := pair.Value.(*ast.BasicLit)
-		if !ok {
-			continue
-		}
+		basic, _ := ast.Unparen(pair.Value).(*ast.BasicLit)
 		switch key.Name {
 		case "Statement":
+			if basic == nil || basic.Kind != token.STRING {
+				problems = append(problems, "Statement must be a fixed string literal so it can be checked without captured reads")
+				continue
+			}
 			statement, err := strconv.Unquote(basic.Value)
-			if err != nil || basic.Kind != token.STRING {
+			if err != nil {
 				continue
 			}
 			if problem := statementProblem(statement); problem != "" {
 				problems = append(problems, problem)
 			}
 		case "ExpectMin", "ExpectMax":
-			if basic.Kind != token.INT {
+			if basic == nil || basic.Kind != token.INT {
 				continue
 			}
 			value, err := strconv.Atoi(basic.Value)

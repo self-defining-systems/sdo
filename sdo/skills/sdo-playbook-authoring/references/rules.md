@@ -86,8 +86,10 @@ Replay results are information only.
 
 Every recorded hand repair needs an executable typed SDK or RunScript step (partial coverage is fine), with
 relation-derived Env and digest-to-receipt linkage; README text holds only judgement and ordering.
-- A `RepairData` states a `Statement` some store engine accepts (`delete`, a postgres/mysql SET clause, a mongodb
-  update document, a redis single-key write) and an `ExpectMax` above 0. Enforced by: `program.plan-invalid`.
+- Write `RepairData.Statement` as a fixed string literal the target engine accepts, such as `"SET status = 0"`
+  for postgres/mysql, `"delete"`, a mongodb update document, or a redis single-key write. Derive the target and
+  scope from reads, and set an `ExpectMax` above 0. The check can validate the literal even when replay lacks a
+  read. Enforced by: `program.plan-invalid`.
 
 <!-- replay:on -->
 ## Corpus evidence
