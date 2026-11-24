@@ -115,6 +115,8 @@ def test_the_learning_turn_resumes_the_responder_session_and_carries_the_changes
     for line in CHANGES:
         assert line in prompt
     assert "playbook-writing/SKILL.md" in prompt
+    assert "Check the diagnosis and mitigation against recorded evidence." in prompt
+    assert "Use supported cause classes and plan forms." in prompt
     decision = ReflectionResult()
     assert result.response.Unpack(decision)
     # An empty diff is no_change; the agent's line is the reason.

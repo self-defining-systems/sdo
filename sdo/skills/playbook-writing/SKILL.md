@@ -5,8 +5,8 @@ description: Turn the fix you just made into a playbook SDO can run by itself ne
 
 # Writing a playbook
 
-A playbook is `.sdo/playbooks/<id>/` with `diagnose.go` and `mitigate.go`. Copy the closer of
-`examples/template-drift/` or `examples/stuck-pods/`; only Go.
+Copy the closer of `examples/template-drift/` or `examples/stuck-pods/` to
+`.sdo/playbooks/<id>/` as `diagnose.go` and `mitigate.go`.
 
 - `Spec()`: the `ID` and no object role. SDO tries it on every pass, so `Diagnose` finds its own subject through `ReadView` (app map,
   owners, `DiffAgainstSource`) and returns `program.NoMatch` when it is absent.
@@ -15,9 +15,10 @@ A playbook is `.sdo/playbooks/<id>/` with `diagnose.go` and `mitigate.go`. Copy 
 - `Mitigate`: the changes that fixed it, in order: `program.DeletePod`,
   `program.RestartRollout`, `program.SetField`; for an `sdo mitigate X`, the same
   `program.X` with the same fields.
-- The SDK can run commands, not only restart and patch: a fix with no typed action (SQL, a CLI) is `program.EnsureExec` (check, then repair, in a Pod; credentials from the container's environment). All actions: `/opt/sdo/sdo/skills/sdo-playbook-authoring/references/sdk-card.md`. A plan that is only `program.Escalate` repairs nothing.
-- Done when users recover: after restoring data or a spec, also refresh what serves it (caches, old pods); `memory test` should show the plan covers it.
-- A `Mitigate` runs while users fail: prefer the most direct action; check its apply time.
+- The SDK can run commands, not only restart and patch: a fix with no typed action (SQL, a CLI) is `program.EnsureExec` (check, then repair, in a Pod; credentials from the container's environment). All actions: `/opt/sdo/sdo/skills/sdo-playbook-authoring/references/sdk-card.md`. `program.Escalate` alone repairs nothing.
+- Prefer the fastest supported action with equivalent effects, including cache invalidation. Verify the plan
+  updates the process serving users. Replace it if corrected configuration does not roll it.
+- Check diagnosis and mitigation against recorded evidence. Use SDK-supported cause classes and plan forms.
 - Set the known-good value directly, not from controller history a repeat may lack.
 - Carry a source restore you ran as `program.SetField` with `program.FromSource`. Omit changes that did not help.
 - Memory is for this application and may name its own tables, resources and commands; generalize over what varies, not away from the application. A partial program beats none. No `RunScript`, no passwords.
