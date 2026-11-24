@@ -925,7 +925,7 @@ class WriteSettlement(_message.Message):
     def __init__(self, application_id: _Optional[str] = ..., settled_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., settled: _Optional[bool] = ...) -> None: ...
 
 class StageReport(_message.Message):
-    __slots__ = ("stage", "mitigations", "remaining_finding_fingerprints", "error", "cleared_finding_fingerprints", "recovery_wait", "started_at", "handoff_state", "diagnoses")
+    __slots__ = ("stage", "mitigations", "remaining_finding_fingerprints", "error", "cleared_finding_fingerprints", "recovery_wait", "started_at", "handoff_state", "diagnoses", "apply_completed_at", "recovery_deadline", "stability_deadline", "handoff_selected", "handoff_keys")
     STAGE_FIELD_NUMBER: _ClassVar[int]
     MITIGATIONS_FIELD_NUMBER: _ClassVar[int]
     REMAINING_FINDING_FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
@@ -935,6 +935,11 @@ class StageReport(_message.Message):
     STARTED_AT_FIELD_NUMBER: _ClassVar[int]
     HANDOFF_STATE_FIELD_NUMBER: _ClassVar[int]
     DIAGNOSES_FIELD_NUMBER: _ClassVar[int]
+    APPLY_COMPLETED_AT_FIELD_NUMBER: _ClassVar[int]
+    RECOVERY_DEADLINE_FIELD_NUMBER: _ClassVar[int]
+    STABILITY_DEADLINE_FIELD_NUMBER: _ClassVar[int]
+    HANDOFF_SELECTED_FIELD_NUMBER: _ClassVar[int]
+    HANDOFF_KEYS_FIELD_NUMBER: _ClassVar[int]
     stage: str
     mitigations: _containers.RepeatedCompositeFieldContainer[StageMitigation]
     remaining_finding_fingerprints: _containers.RepeatedScalarFieldContainer[str]
@@ -944,7 +949,12 @@ class StageReport(_message.Message):
     started_at: _timestamp_pb2.Timestamp
     handoff_state: HandoffState
     diagnoses: _containers.RepeatedCompositeFieldContainer[_program_pb2.PlaybookVerdict]
-    def __init__(self, stage: _Optional[str] = ..., mitigations: _Optional[_Iterable[_Union[StageMitigation, _Mapping]]] = ..., remaining_finding_fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., cleared_finding_fingerprints: _Optional[_Iterable[str]] = ..., recovery_wait: _Optional[_Union[_program_pb2.RecoveryWait, _Mapping]] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., handoff_state: _Optional[_Union[HandoffState, _Mapping]] = ..., diagnoses: _Optional[_Iterable[_Union[_program_pb2.PlaybookVerdict, _Mapping]]] = ...) -> None: ...
+    apply_completed_at: _timestamp_pb2.Timestamp
+    recovery_deadline: _timestamp_pb2.Timestamp
+    stability_deadline: _timestamp_pb2.Timestamp
+    handoff_selected: bool
+    handoff_keys: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, stage: _Optional[str] = ..., mitigations: _Optional[_Iterable[_Union[StageMitigation, _Mapping]]] = ..., remaining_finding_fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., cleared_finding_fingerprints: _Optional[_Iterable[str]] = ..., recovery_wait: _Optional[_Union[_program_pb2.RecoveryWait, _Mapping]] = ..., started_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., handoff_state: _Optional[_Union[HandoffState, _Mapping]] = ..., diagnoses: _Optional[_Iterable[_Union[_program_pb2.PlaybookVerdict, _Mapping]]] = ..., apply_completed_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., recovery_deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., stability_deadline: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., handoff_selected: _Optional[bool] = ..., handoff_keys: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class HandoffState(_message.Message):
     __slots__ = ("repair_state", "applied_playbook_ids", "applied_at", "post_apply_diagnose", "residual_findings", "observe_only", "observe_until", "mutation_rounds_per_finding", "settlement_extension")
@@ -1008,7 +1018,7 @@ class HandoffState(_message.Message):
     def __init__(self, repair_state: _Optional[_Union[HandoffState.RepairState, str]] = ..., applied_playbook_ids: _Optional[_Iterable[str]] = ..., applied_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., post_apply_diagnose: _Optional[_Union[HandoffState.PostApplyDiagnose, str]] = ..., residual_findings: _Optional[_Iterable[_Union[HandoffState.ResidualFinding, _Mapping]]] = ..., observe_only: _Optional[bool] = ..., observe_until: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., mutation_rounds_per_finding: _Optional[int] = ..., settlement_extension: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ...) -> None: ...
 
 class StageMitigation(_message.Message):
-    __slots__ = ("playbook_id", "program_revision", "bindings", "plan_id", "apply_receipt", "result", "skip_reason", "post_apply_diagnose", "cleared_finding_fingerprints", "remaining_finding_fingerprints", "error", "plan_action_start", "plan_action_count", "touched_objects", "kept_reason", "escalation", "escalated_resources", "escalation_reason")
+    __slots__ = ("playbook_id", "program_revision", "bindings", "plan_id", "apply_receipt", "result", "skip_reason", "post_apply_diagnose", "cleared_finding_fingerprints", "remaining_finding_fingerprints", "error", "plan_action_start", "plan_action_count", "touched_objects", "kept_reason", "escalation", "escalated_resources", "escalation_reason", "rollout_unsettled_at_deadline")
     PLAYBOOK_ID_FIELD_NUMBER: _ClassVar[int]
     PROGRAM_REVISION_FIELD_NUMBER: _ClassVar[int]
     BINDINGS_FIELD_NUMBER: _ClassVar[int]
@@ -1027,6 +1037,7 @@ class StageMitigation(_message.Message):
     ESCALATION_FIELD_NUMBER: _ClassVar[int]
     ESCALATED_RESOURCES_FIELD_NUMBER: _ClassVar[int]
     ESCALATION_REASON_FIELD_NUMBER: _ClassVar[int]
+    ROLLOUT_UNSETTLED_AT_DEADLINE_FIELD_NUMBER: _ClassVar[int]
     playbook_id: str
     program_revision: str
     bindings: _containers.RepeatedCompositeFieldContainer[_program_pb2.Binding]
@@ -1045,7 +1056,8 @@ class StageMitigation(_message.Message):
     escalation: _program_pb2.ProgramRun
     escalated_resources: _containers.RepeatedCompositeFieldContainer[_common_pb2.ObjectRef]
     escalation_reason: str
-    def __init__(self, playbook_id: _Optional[str] = ..., program_revision: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[_program_pb2.Binding, _Mapping]]] = ..., plan_id: _Optional[str] = ..., apply_receipt: _Optional[_Union[_program_pb2.PlanApplication, _Mapping]] = ..., result: _Optional[str] = ..., skip_reason: _Optional[str] = ..., post_apply_diagnose: _Optional[_Union[_program_pb2.ProgramRun, _Mapping]] = ..., cleared_finding_fingerprints: _Optional[_Iterable[str]] = ..., remaining_finding_fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., plan_action_start: _Optional[int] = ..., plan_action_count: _Optional[int] = ..., touched_objects: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., kept_reason: _Optional[str] = ..., escalation: _Optional[_Union[_program_pb2.ProgramRun, _Mapping]] = ..., escalated_resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., escalation_reason: _Optional[str] = ...) -> None: ...
+    rollout_unsettled_at_deadline: bool
+    def __init__(self, playbook_id: _Optional[str] = ..., program_revision: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[_program_pb2.Binding, _Mapping]]] = ..., plan_id: _Optional[str] = ..., apply_receipt: _Optional[_Union[_program_pb2.PlanApplication, _Mapping]] = ..., result: _Optional[str] = ..., skip_reason: _Optional[str] = ..., post_apply_diagnose: _Optional[_Union[_program_pb2.ProgramRun, _Mapping]] = ..., cleared_finding_fingerprints: _Optional[_Iterable[str]] = ..., remaining_finding_fingerprints: _Optional[_Iterable[str]] = ..., error: _Optional[str] = ..., plan_action_start: _Optional[int] = ..., plan_action_count: _Optional[int] = ..., touched_objects: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., kept_reason: _Optional[str] = ..., escalation: _Optional[_Union[_program_pb2.ProgramRun, _Mapping]] = ..., escalated_resources: _Optional[_Iterable[_Union[_common_pb2.ObjectRef, _Mapping]]] = ..., escalation_reason: _Optional[str] = ..., rollout_unsettled_at_deadline: _Optional[bool] = ...) -> None: ...
 
 class DriftReprompt(_message.Message):
     __slots__ = ("findings_before", "findings_after")

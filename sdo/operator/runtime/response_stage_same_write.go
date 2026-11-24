@@ -9,7 +9,6 @@ import (
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	deploymentpkg "sdo.dev/operator/deployment"
-	"sdo.dev/operator/runtime/internal/lifecycleio"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -66,13 +65,11 @@ func (l *ResponderLoop) sameWriteInProgress(ctx context.Context, now time.Time, 
 }
 
 // stageWriteUnsettled is an applied, unreverted attempt that neither failed
-// nor settled, and whose own diagnosis no longer matches. It is only a
-// candidate for "in progress"; the live state decides.
+// nor settled. The live rollout and age decide whether it still owns the write.
 func stageWriteUnsettled(attempt *contracts.StageMitigation) bool {
 	receipt := attempt.GetApplyReceipt()
 	unsettled := attempt.GetResult() == "rollout_pending_at_handoff" || attempt.GetResult() == "applied_still_matching"
-	return unsettled && receipt.GetApplied() && !receipt.GetRolledBack() &&
-		attempt.GetPostApplyDiagnose().GetVerdict().GetResult() == contracts.Verdict_RESULT_NO_MATCH
+	return unsettled && receipt.GetApplied() && !receipt.GetRolledBack()
 }
 
 // recoveryWindowOpen is the bounded time after a write in which its recovery
@@ -230,9 +227,3 @@ func valueIdentity(value program.Value) any {
 }
 
 // stageNow is the stage clock the recovery window is measured on.
-func (stage *DeterministicResponseStage) stageNow() time.Time {
-	if stage.recoveryNow != nil {
-		return stage.recoveryNow()
-	}
-	return lifecycleio.Now()
-}

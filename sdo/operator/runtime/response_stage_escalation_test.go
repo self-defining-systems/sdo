@@ -68,7 +68,7 @@ func escalationStage(t *testing.T, mitigator program.Mitigator, diagnoser progra
 	}
 	loop.saveToolState = func(context.Context, []byte) error { return nil }
 	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true,
-		ObservationInterval: time.Second, recoveryNow: clock.Now, recoveryWait: clock.advance}
+		diagnoseWait: clock.advance}
 	return stage, &IncidentState{Request: request, Findings: findings}
 }
 

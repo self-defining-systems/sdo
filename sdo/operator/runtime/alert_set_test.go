@@ -207,6 +207,9 @@ func TestJoinedTestStillFailingAfterAPlaybookHandsOffToTheAgent(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	c, dispatcher := afterPlaybookJoinedController(t, now, "")
 	stepFor(t, c, now, 8)
+	if _, err := c.PrepareDispatchStep(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	if dispatcher.prepared.Load() == 0 {
 		t.Fatalf("no agent hand-off for a joined test still failing: joined %v", c.currentIncidentRequest.JoinedKeys)
 	}

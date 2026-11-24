@@ -1287,6 +1287,54 @@ func TestBenchIncompleteEvidenceHoldsTheLane(t *testing.T) {
 	}
 }
 
+func TestBenchUnholdWithOptionalIncidentReset(t *testing.T) {
+	for _, tc := range []struct {
+		name, reply, wantState string
+	}{
+		{"unsupported exit", "exit 64", LaneFree},
+		{"unsupported JSON", `echo '{"unsupported":true}'; exit 1`, LaneFree},
+		{"legacy usage error", "echo 'unknown command' >&2; exit 2", LaneFree},
+		{"reset failed", "exit 1", LaneHeld},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l := newLab(t)
+			now := time.Now()
+			l.m.Now = func() time.Time { return now }
+			hook := filepath.Join(l.hooks, "subject.sh")
+			writeHook := func(reply string) {
+				must(t, os.WriteFile(hook, []byte("if [ \"$1\" = reset-incidents ]; then "+reply+"; fi\n"), 0o644))
+			}
+			writeHook(tc.reply)
+			t.Cleanup(func() {
+				// Let the lab's cleanup finish after a failed unhold.
+				writeHook("exit 0")
+				now = now.Add(time.Minute)
+			})
+
+			manifest := filepath.Join(l.hooks, EvidenceManifest)
+			must(t, os.WriteFile(manifest, []byte(`{"problems":[]}`), 0o644))
+			held := LaneFile{Lane: "c1", Host: "h1", State: LaneHeld, HeldRun: manifest, Since: now,
+				Prepared: &Prepared{Hooks: "test", HooksPath: l.hooks, Command: "sh " + shellQuote(hook), WorkloadRev: "0b528ac"}}
+			must(t, writeJSON(l.root.LanePath("c1"), held))
+
+			l.until("unhold result", func() bool {
+				lf := l.lane()
+				return lf.State == LaneFree || strings.HasPrefix(lf.Reason, "unhold failed:")
+			})
+			lf := l.lane()
+			if lf.State != tc.wantState {
+				t.Fatalf("lane state = %s, want %s (reason: %s)", lf.State, tc.wantState, lf.Reason)
+			}
+			if tc.wantState == LaneHeld && (lf.HeldRun != manifest || !strings.Contains(lf.Reason, "reset-incidents exit 1")) {
+				t.Fatalf("failed reset lost hold or failure detail: %+v", lf)
+			}
+			if tc.wantState == LaneFree && lf.HeldRun != "" {
+				t.Fatalf("unhold left the evidence hold at %s", lf.HeldRun)
+			}
+		})
+	}
+}
+
 // A sink in place with a gap in an earlier run's rollouts still proves the sink: the lane becomes ready.
 func TestBenchSinkProofToleratesEarlierTranscriptGap(t *testing.T) {
 	l := newLab(t)

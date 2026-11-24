@@ -63,7 +63,7 @@ func (c *Controller) dispatchNeedsPreparationLocked() bool {
 	}
 	request := c.currentIncidentRequest
 	return c.dispatchState == contracts.DispatchState_DISPATCH_STATE_PENDING && request != nil && request.PreparedAgentTask == "" &&
-		!c.automaticResponsePending(&contracts.IncidentRequest{PriorStages: request.PriorStages})
+		!c.automaticResponsePending(request)
 }
 
 // PrepareDispatchStep freezes the pending dispatch's worker task, or applies
@@ -88,7 +88,7 @@ func (c *Controller) PrepareDispatchStep(ctx context.Context) (bool, error) {
 	if !ok {
 		return false, nil
 	}
-	prepared, err := preparer.PrepareDispatch(actionCtx, request)
+	prepared, err := preparer.PrepareDispatch(actionCtx, stageDispatchRequest(request))
 	if err != nil {
 		if ctx.Err() != nil {
 			return false, ctx.Err()
@@ -102,7 +102,12 @@ func (c *Controller) PrepareDispatchStep(ctx context.Context) (bool, error) {
 		// the current one.
 		return false, nil
 	}
-	c.currentIncidentRequest = cloneIncidentRequest(&prepared)
+	if deterministicStageReport(request.PriorStages).GetHandoffSelected() {
+		c.currentIncidentRequest.PreparedAgentTask = prepared.PreparedAgentTask
+		c.currentIncidentRequest.MaxResponseLoops = prepared.MaxResponseLoops
+	} else {
+		c.currentIncidentRequest = cloneIncidentRequest(&prepared)
+	}
 	c.publishHeldLocked()
 	c.prepareRetries.cleared(request.IncidentID)
 	c.resetDispatchRetryLocked()
@@ -157,10 +162,16 @@ func (c *Controller) escalateDispatchFailureLocked(now time.Time, class string, 
 	}
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
 	c.dispatchError = ""
-	c.currentIncidentResult = &IncidentResult{
+	result := c.currentIncidentResult
+	if result == nil {
+		result = &IncidentResult{}
+	}
+	*result = IncidentResult{
+		PlanApplications: result.PlanApplications, ProgramRuns: result.ProgramRuns, RepairActions: result.RepairActions,
 		SchemaVersion: ProtocolSchemaVersion, IncidentID: incidentID, Status: IncidentFailed, Error: "responder dispatch failed: " + reason,
 		Timing: TimingMetrics{StartedAt: c.incidentDispatchedAt, CompletedAt: now},
 	}
+	c.currentIncidentResult = result
 	c.resetDispatchRetryLocked()
 	c.emitLifecycleLocked(&contracts.LifecycleEvent{
 		Event: PhaseDispatchFailed, RecordedAt: contractTimestamp(now), IncidentId: incidentID, DispatchError: true, Reason: reason,

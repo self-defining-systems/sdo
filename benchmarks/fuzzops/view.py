@@ -90,7 +90,8 @@ _QUOTED = re.compile(
 )
 # Unquoted pairs: a colon or an equals sign between key and value.
 _PLAIN = re.compile(
-    r"(?<![\w-])(" + _KEY + r"[ \t]*[:=][ \t]*)(?!\[redacted\])((?:Bearer|Basic)[ \t]+\S+|[^\s\"',;&]+)", re.IGNORECASE
+    r"(?<![\w-])(" + _KEY + r"[ \t]*[:=][ \t]*[\"']?)(?!\[redacted\])((?:Bearer|Basic)[ \t]+\S+|[^\s\"',;&\\]+)",
+    re.IGNORECASE,
 )
 _SCHEME = re.compile(r"\b(Bearer|Basic)[ \t]+([A-Za-z0-9._~+/=-]{8,})")
 _BASE64_FIELD = re.compile(
@@ -124,6 +125,34 @@ def redact(text: str, identities: Iterable[str] = ()) -> str:
     text = _PLAIN.sub(_plain, text)
     text = _SCHEME.sub(_scheme, text)
     return _BASE64_FIELD.sub(lambda m: m.group(1) + REDACTED, text)
+
+
+_SECRET_KEY = re.compile(r"^" + _KEY + r"$", re.IGNORECASE)
+
+
+def _redact_value(value: Any, identities: Iterable[str]) -> Any:
+    if isinstance(value, str):
+        return redact(value, identities)
+    if isinstance(value, list):
+        return [_redact_value(item, identities) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: REDACTED
+            if isinstance(item, str) and _SECRET_KEY.match(str(key)) and not re.fullmatch(r"\d{1,9}", item)
+            else _redact_value(item, identities)
+            for key, item in value.items()
+        }
+    return value
+
+
+def redact_json_line(line: str, identities: Iterable[str] = ()) -> str:
+    """``line`` without credentials, still valid JSON when it was: a JSON document is redacted on its decoded
+    strings (and secret-named keys' values), never on its escaped text, where a pattern can eat an escape."""
+    try:
+        document = json.loads(line)
+    except ValueError:
+        return redact(line, identities)
+    return json.dumps(_redact_value(document, list(identities)), ensure_ascii=False, separators=(",", ":"))
 
 
 # ---- the contract ----------------------------------------------------------------------------------------------

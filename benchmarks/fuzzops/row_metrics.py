@@ -13,7 +13,7 @@ import math
 import re
 import shlex
 import sys
-from dataclasses import asdict, dataclass, fields, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -105,12 +105,28 @@ class Usage:
         )
 
 
-def _total(usages: list[Usage]) -> Usage:
+def _total(usages: list[Usage], *, keep_partial: bool = False) -> Usage:
     def add(name: str) -> Any:
         values = [getattr(usage, name) for usage in usages]
-        return None if None in values else sum(values)
+        known = [value for value in values if value is not None]
+        return sum(known) if len(known) == len(values) or (keep_partial and known) else None
 
     return Usage(add("usd"), add("input_tokens"), add("output_tokens"))
+
+
+@dataclass(frozen=True)
+class ResponseSessionUsage:
+    incident: str
+    worker: str
+    role: str
+    usage: Usage
+    complete: bool
+
+
+def _investigator_parent(worker: object) -> str | None:
+    # Match the evidence identity convention in sink.py. This script also runs standalone on evidence hosts.
+    match = re.fullmatch(r"(.+)-inv-\d+", worker) if isinstance(worker, str) else None
+    return match[1] if match else None
 
 
 @dataclass
@@ -142,6 +158,9 @@ class Row:
     closing_turn_input_tokens: int | None = None
     closing_turn_output_tokens: int | None = None
     incident_count: int | None = None
+    open_incident_count: int | None = None
+    responder_usage_complete: bool | None = None
+    response_sessions: list[ResponseSessionUsage] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -523,38 +542,91 @@ def _incident_writes(doc: Document, paths: list[Path]) -> Iterator[Write]:
                 yield write
 
 
-def _phase_usage(timeline: Document, ledger: Document, folder: Path, phase: str) -> Usage:
-    usage = _object(timeline.get(f"{phase}_usage"))
-    cost = timeline.get(f"{phase}_cost_usd")
+def _closing_usage(timeline: Document, ledger: Document, folder: Path) -> Usage:
+    usage = _object(timeline.get("closing_turn_usage"))
+    cost = timeline.get("closing_turn_cost_usd")
     if usage:
         return Usage.read(usage, cost)
-    if phase == "closing_turn":
-        logged = [
-            Usage.read(_object(event.get("usage")), event.get("cost_usd"))
-            for event in _events(folder / "reflection-usage.jsonl")
-            if event.get("event", "complete") == "complete" and event.get("usage")
-        ]
-        if logged:
-            total = _total(logged)
-            return Usage(total.usd if total.usd is not None else _number(cost), total.input_tokens, total.output_tokens)
-        results = [
-            Usage.read(_object(r.get("usage"))) for r in _objects(ledger.get("reflection_results")) if r.get("usage")
-        ]
-        if results:
-            total = _total(results)
-            return Usage(_number(cost) if cost is not None else total.usd, total.input_tokens, total.output_tokens)
-    role = "responder" if phase == "responder" else "reflection"
+    logged = [
+        Usage.read(_object(event.get("usage")), event.get("cost_usd"))
+        for event in _events(folder / "reflection-usage.jsonl")
+        if event.get("event", "complete") == "complete" and event.get("usage")
+    ]
+    if logged:
+        total = _total(logged)
+        return Usage(total.usd if total.usd is not None else _number(cost), total.input_tokens, total.output_tokens)
+    results = [
+        Usage.read(_object(r.get("usage"))) for r in _objects(ledger.get("reflection_results")) if r.get("usage")
+    ]
+    if results:
+        total = _total(results)
+        return Usage(_number(cost) if cost is not None else total.usd, total.input_tokens, total.output_tokens)
     turns = [
         Usage.read(_object(event.get("usage")))
         for event in _events(folder / "claude-turns.jsonl")
-        if event.get("role") == role and event.get("event") == "complete"
+        if event.get("role") == "reflection" and event.get("event") == "complete"
     ]
     if turns:
         total = _total(turns)
         return Usage(_number(cost) if cost is not None else total.usd, total.input_tokens, total.output_tokens)
-    if cost is not None or timeline.get("dispatched_at" if phase == "responder" else "closing_turn_dispatch_at"):
+    if cost is not None or timeline.get("closing_turn_dispatch_at"):
         return Usage.read({}, cost)
     return Usage(0.0, 0, 0)
+
+
+def _usage_complete(usage: Usage) -> bool:
+    return usage.usd is not None and usage.input_tokens is not None and usage.output_tokens is not None
+
+
+def _worker_usage(folder: Path, incident: str, worker: str, role: str) -> ResponseSessionUsage | None:
+    turns = []
+    pending = 0
+    complete = True
+    for event in _events(folder / "claude-turns.jsonl"):
+        # Older workers used the responder journal role for investigations.
+        if event.get("role") not in {"responder", role}:
+            continue
+        if event.get("event") == "start":
+            pending += 1
+        elif event.get("event") == "complete":
+            pending = max(0, pending - 1)
+            usage = Usage.read(_object(event.get("usage")))
+            turns.append(usage)
+            complete &= _usage_complete(usage) and event.get("usd_complete") is not False
+    if not (turns or pending):
+        return None
+    usage = _total(turns, keep_partial=True) if turns else Usage()
+    return ResponseSessionUsage(incident, worker, role, usage, not pending and complete)
+
+
+def _responder_usage(
+    timeline: Document, folder: Path, incident: str, investigators: list[ResponseSessionUsage]
+) -> tuple[Usage, bool, list[ResponseSessionUsage]]:
+    native = _object(timeline.get("responder_usage"))
+    cost = timeline.get("responder_cost_usd")
+    responder = _worker_usage(folder, incident, incident, "responder")
+    aggregate = Usage.read(native, cost)
+    sessions = list(investigators)
+    if responder is None and (
+        native or cost is not None or timeline.get("dispatched_at") or timeline.get("resolution_path") == "responder"
+    ):
+        # A native total is attributable to one worker only when it had no investigators.
+        usage = Usage() if investigators else aggregate
+        responder = ResponseSessionUsage(
+            incident, incident, "responder", usage, _usage_complete(usage) and not native.get("partial")
+        )
+    if responder is not None:
+        sessions.insert(0, responder)
+    journal = _total([session.usage for session in sessions], keep_partial=True)
+    # The native outcome already includes investigators. Fill gaps from the
+    # journals, but never add journal charges to the native total.
+    usage = Usage(
+        aggregate.usd if aggregate.usd is not None else journal.usd,
+        aggregate.input_tokens if aggregate.input_tokens is not None else journal.input_tokens,
+        aggregate.output_tokens if aggregate.output_tokens is not None else journal.output_tokens,
+    )
+    complete = _usage_complete(usage) and not native.get("partial") and all(session.complete for session in sessions)
+    return usage, complete, sessions
 
 
 def _sdo(
@@ -579,8 +651,29 @@ def _sdo(
         ledger = _read(path)
         if ledger.get("incident_id"):
             ledgers[ledger["incident_id"]] = (path.parent, ledger)
-    open_ids = manifest.get("open_incidents") or []
+    investigators: dict[str, list[ResponseSessionUsage]] = {}
+    workers = dict(_object(manifest.get("investigators")))
+    open_ids = []
+    for digest in manifest.get("open_incidents") or []:
+        # Backward compatibility for manifests written before worker attribution.
+        worker = _read(root / Path(digest).name / "incident.json").get("incident_id")
+        if _investigator_parent(worker):
+            workers[digest] = worker
+        else:
+            open_ids.append(digest)
+    for digest, worker in sorted(workers.items()):
+        parent = _investigator_parent(worker)
+        folder = root / Path(digest).name
+        if parent is None:
+            continue
+        session = _worker_usage(folder, parent, worker, "investigator")
+        if session is None and (any(folder.glob("claude/projects/*/*.jsonl")) or any(folder.rglob("rollout-*.jsonl"))):
+            session = ResponseSessionUsage(parent, worker, "investigator", Usage(), False)
+        if session is not None:
+            investigators.setdefault(parent, []).append(session)
+    row.open_incident_count = len(open_ids)
     row.incident_count = len(timelines) + len(open_ids)
+    row.responder_usage_complete = True
     responders, closers = [], []
     writes: list[tuple[datetime, Write]] = []
     fallbacks: list[tuple[int, datetime, datetime, str]] = []
@@ -590,8 +683,11 @@ def _sdo(
         incident = str(timeline.get("incident", ""))
         digest = hashlib.sha256(incident.encode()).hexdigest()[:32]
         folder, ledger = ledgers.get(incident, (root / digest, {}))
-        responders.append(_phase_usage(timeline, ledger, folder, "responder"))
-        closers.append(_phase_usage(timeline, ledger, folder, "closing_turn"))
+        usage, complete, sessions = _responder_usage(timeline, folder, incident, investigators.pop(incident, []))
+        responders.append(usage)
+        row.responder_usage_complete &= complete
+        row.response_sessions.extend(sessions)
+        closers.append(_closing_usage(timeline, ledger, folder))
         start = _time(timeline.get("opened_at"))
         apply = _time(timeline.get("playbook_applied_at"))
         dispatched = _time(timeline.get("dispatched_at"))
@@ -621,7 +717,7 @@ def _sdo(
         writes.extend(
             (start, w) for w in _incident_writes(doc, paths) if start <= w.at and (bound is None or w.at <= bound)
         )
-        for priority, (field, at) in enumerate(
+        for priority, (marker, at) in enumerate(
             (
                 ("health_cleared_at", clear),
                 ("playbook_applied_at", apply),
@@ -629,21 +725,31 @@ def _sdo(
             )
         ):
             if at is not None and start <= at and (bound is None or at <= bound):
-                fallbacks.append((priority, at, start, field))
+                fallbacks.append((priority, at, start, marker))
     for digest in open_ids:
         folder = root / Path(digest).name
-        usage = _phase_usage({"dispatched_at": True}, {}, folder, "responder")
+        incident = str(_read(folder / "incident.json").get("incident_id") or digest)
+        usage, complete, sessions = _responder_usage(
+            {"dispatched_at": True}, folder, incident, investigators.pop(incident, [])
+        )
         responders.append(usage)
-        responder_dispatched |= usage.input_tokens is not None
+        row.responder_usage_complete &= complete
+        row.response_sessions.extend(sessions)
+        responder_dispatched |= bool(sessions) and sessions[0].usage.input_tokens is not None
+    for sessions in investigators.values():
+        # An investigator can be collected even when the parent evidence was lost.
+        responders.extend(session.usage for session in sessions)
+        row.responder_usage_complete = False
+        row.response_sessions.extend(sessions)
     row.fixed_by_playbook_alone = row.fixed_in_window and (deterministic or (applied and not responder_dispatched))
-    _set_usage(row, _total(responders), _total(closers))
+    _set_usage(row, _total(responders, keep_partial=True), _total(closers))
     if writes:
         start, last = max(writes, key=lambda pair: pair[1].at)
         _record_write(row, start, last, observed)
         row.ttf_s, row.ttf_source = row.anchor_to_last_write_s, last.source
     elif fallbacks:
-        _, at, start, field = max(fallbacks)
-        row.ttf_s, row.ttf_source = _seconds(start, at), f"fallback_{field}"
+        _, at, start, marker = max(fallbacks)
+        row.ttf_s, row.ttf_source = _seconds(start, at), f"fallback_{marker}"
 
 
 def measure(run: Path) -> Row:

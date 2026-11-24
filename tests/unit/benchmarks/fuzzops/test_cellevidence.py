@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from benchmarks.fuzzops import cellevidence as ce
+from benchmarks.fuzzops.row_metrics import measure
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -449,3 +450,73 @@ def test_a_commit_series_record_is_not_missing_the_fuzzops_run_fields(tmp_path: 
     _w(run / "record.json", {"series": "s", "index": 1, "outcome": "accepted", "valid": True})
     ev = ce.write_manifest(run)
     assert not [p for p in ev.problems if p.startswith("record.json")], ev.problems
+
+
+@pytest.mark.parametrize("native_accounting", [True, False])
+def test_investigator_worker_sessions_belong_to_one_incident(tmp_path: Path, native_accounting: bool) -> None:
+    run = make_cell(tmp_path)
+    root = run / "operator/evidence/incidents"
+    responder = root / INC
+    ledger = json.loads((responder / "ledger.json").read_text())
+    ledger["outcome_document"]["usage"] = (
+        {"total_cost_usd": 2, "input_tokens": 40, "output_tokens": 8, "partial": True} if native_accounting else {}
+    )
+    _w(responder / "ledger.json", ledger)
+    _w(
+        responder / "claude-turns.jsonl",
+        json.dumps(
+            {
+                "event": "complete",
+                "role": "responder",
+                "session_id": SID,
+                "usage": {"total_cost_usd": 1.5, "input_tokens": 30, "output_tokens": 6},
+            }
+        )
+        + "\n",
+    )
+    investigators = ["f" * 32, "e" * 32]
+    for i, digest in enumerate(investigators, start=1):
+        worker = root / digest
+        sid = f"worker-{i}"
+        _w(worker / "incident.json", {"incident_id": f"i1-inv-{i}"})
+        _w(worker / "claude/projects/p" / f"{sid}.jsonl", '{"type":"user"}\n')
+        turns: list[dict[str, object]] = [{"event": "start", "role": "responder", "session_id": ""}]
+        if i == 2:
+            turns.append(
+                {
+                    "event": "complete",
+                    "role": "responder",
+                    "session_id": sid,
+                    "usage": {"total_cost_usd": 0.25, "input_tokens": 5, "output_tokens": 1},
+                }
+            )
+        _w(worker / "claude-turns.jsonl", "".join(json.dumps(turn) + "\n" for turn in turns))
+
+    manifest = ce.write_manifest(run)
+    assert len(manifest.timelines) == 1
+    assert manifest.open_incidents == []
+    assert ce.load(run).investigators == dict(zip(investigators, ("i1-inv-1", "i1-inv-2"), strict=True))
+    assert sorted((s.incident, s.role) for s in manifest.agents if s.role == "investigator") == [
+        ("i1", "investigator"),
+        ("i1", "investigator"),
+    ]
+    for legacy in (False, True):
+        if legacy:
+            # Older manifests listed the investigator folders as open incidents.
+            raw = manifest.to_json()
+            raw.pop("investigators")
+            raw["open_incidents"] = investigators
+            _w(run / "operator" / ce.MANIFEST, raw)
+        row = measure(run)
+        assert (row.incident_count, row.open_incident_count) == (1, 0)
+        assert row.responder_cost_usd == pytest.approx(2 if native_accounting else 1.75)
+        assert (row.responder_input_tokens, row.responder_output_tokens) == ((40, 8) if native_accounting else (35, 7))
+        assert row.responder_usage_complete is False
+        assert row.closing_turn_cost_usd == pytest.approx(0.2)
+        assert {
+            (session.incident, session.role, session.usage.usd, session.complete) for session in row.response_sessions
+        } == {
+            ("i1", "responder", 1.5, True),
+            ("i1", "investigator", None, False),
+            ("i1", "investigator", 0.25, True),
+        }

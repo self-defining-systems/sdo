@@ -126,14 +126,15 @@ func TestLearnedPlaybookFixesASymptomThatJoinsAChurnIncident(t *testing.T) {
 		Findings: churnFinding, OpeningKeys: findingKeys(churnFinding), ResponseDeadline: lifecycleio.Now().Add(time.Hour)}
 	executor := PlanExecutor{Client: TypedPlanClient{Client: world.client}, Source: world, Rollouts: world, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: world}}
 	loop := NewResponderLoop(request, registry, world, detectors, executor, 5)
+	loop.Now = c.now
 	loop.ReadView = func(v sdk.DetectionContext) program.ReadView {
 		return &sdktest.ReplayReadView{Snapshot: v.(sdktest.Snapshot)}
 	}
 	loop.saveToolState = func(context.Context, []byte) error { return nil }
 	instant := newInstantRecoveryClock()
 	c.tuneMidStage = func(stage *DeterministicResponseStage) {
-		stage.recoveryNow, stage.recoveryWait = instant.now, instant.wait
-		stage.Budget, stage.RolloutTimeout, stage.ObservationInterval = time.Minute, time.Minute, time.Millisecond
+		stage.diagnoseWait = instant.wait
+		stage.RolloutTimeout = time.Minute
 	}
 	c.codePath = &CodePath{Selection: CodePathSelection{ResponseStages: []string{"deterministic", "agent"}}}
 	c.responderLoop = loop
@@ -161,11 +162,11 @@ func TestLearnedPlaybookFixesASymptomThatJoinsAChurnIncident(t *testing.T) {
 	applied := false
 	for _, report := range c.currentIncidentRequest.PriorStages {
 		for _, m := range report.Mitigations {
-			applied = applied || m.PlaybookId == "fix" && m.Result == "applied_cleared"
+			applied = applied || m.PlaybookId == "fix" && m.GetApplyReceipt().GetApplied()
 		}
 	}
 	if !applied {
-		t.Fatalf("the learned playbook was not applied and cleared: %v", c.currentIncidentRequest.PriorStages)
+		t.Fatalf("the learned playbook was not applied: %v", c.currentIncidentRequest.PriorStages)
 	}
 	if world.restarts.Load() != 1 {
 		t.Fatalf("the learned playbook wrote %d times, want one restart of the component", world.restarts.Load())

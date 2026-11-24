@@ -248,6 +248,8 @@ class CellEvidence:
     #: Incident directories with no ledger and no seal: incidents still open when collect ran (not the cell's own, which
     #: the settle waits for). Their session files are checked; their ledger does not exist yet.
     open_incidents: list[str] = field(default_factory=list)
+    #: Worker evidence directory digest to investigator ID. The ID carries its parent incident.
+    investigators: dict[str, str] = field(default_factory=dict)
     #: True when any incident of the cell ran declared stand-in agents: a stub row, valid but not a measurement of a
     #: model. Real-agent incidents of the same cell keep the strict checks.
     stub: bool = False
@@ -274,6 +276,7 @@ class CellEvidence:
             waived=list(raw.get("waived", [])),
             excluded=list(raw.get("excluded", [])),
             open_incidents=list(raw.get("open_incidents", [])),
+            investigators=dict(raw.get("investigators", {})),
             stub=bool(raw.get("stub", False)),
         )
 
@@ -659,8 +662,15 @@ def build(run_dir: Path, run_pending: bool = False) -> CellEvidence:
             ev.excluded.append(d.name)
             continue
         if not (d / "ledger.json").exists() and not (d / "seal.json").exists():
-            ev.open_incidents.append(d.name)
             sessions, session_problems = _sessions(run, d)
+            if sink.is_investigator_dir(d):
+                worker = sink.incident_identity(d)
+                ev.investigators[d.name] = worker
+                for session in sessions:
+                    session.incident = sink.parent_incident_id(worker)
+                    session.role = "investigator"
+            else:
+                ev.open_incidents.append(d.name)
             ev.agents.extend(sessions)
             problems += session_problems
             continue

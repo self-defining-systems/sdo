@@ -3,8 +3,8 @@
 SDO already runs in the cluster (it was installed once, ``benchmarks.fuzzops.install``); fuzzops neither starts
 nor stops it. This watcher polls the controller state ConfigMap and
 
-* prints one line per SDO step (incident opened, responder dispatched, each repair, closure): fuzzops records
-  each stdout line as an operator action;
+* prints applied plans and successful repairs to stdout, which fuzzops records as operator actions;
+* sends lifecycle and evidence notices to stderr;
 * writes ``$FUZZOPS_REPORT`` (fuzzops' diagnosis vocabulary) from the detector findings as soon as an incident
   opens, and again from the responder's confirmed root causes once it has them;
 * keeps every distinct state snapshot under ``$FUZZOPS_OUT`` for later analysis;
@@ -262,9 +262,15 @@ def report_from_findings(findings: list[dict[str, Any]]) -> dict[str, Any] | Non
     return None
 
 
+@dataclass(frozen=True)
+class WatchLine:
+    text: str
+    action: bool = False
+
+
 @dataclass
 class Watcher:
-    """Turns successive controller states into action lines and reports. Pure: no I/O."""
+    """Turns successive controller states into notices, actions and reports. Pure: no I/O."""
 
     started: datetime
     targets: frozenset[str] = frozenset()  # resource names of the faulted component (see ``window``)
@@ -274,13 +280,13 @@ class Watcher:
     stamps: dict[str, str] = field(default_factory=dict)
     cause: dict[str, Any] | None = None
 
-    def _once(self, key: str, line: str, out: list[str]) -> None:
+    def _once(self, key: str, line: str, out: list[WatchLine], *, action: bool = False) -> None:
         if key not in self.seen:
             self.seen.add(key)
-            out.append(line)
+            out.append(WatchLine(line, action))
 
-    def step(self, state: dict[str, Any]) -> tuple[list[str], dict[str, Any] | None]:
-        """Action lines for new SDO steps, and the report to write when it changed (cause plus lifecycle stamps)."""
+    def step(self, state: dict[str, Any]) -> tuple[list[WatchLine], dict[str, Any] | None]:
+        """Messages for new SDO steps, and the report to write when it changed (cause plus lifecycle stamps)."""
         lines, cause = self._step(state)
         if cause is not None:
             self.cause = cause
@@ -297,8 +303,8 @@ class Watcher:
     def _stamp(self, name: str, value: str) -> None:
         self.stamps.setdefault(name, value)
 
-    def _step(self, state: dict[str, Any]) -> tuple[list[str], dict[str, Any] | None]:
-        lines: list[str] = []
+    def _step(self, state: dict[str, Any]) -> tuple[list[WatchLine], dict[str, Any] | None]:
+        lines: list[WatchLine] = []
         report: dict[str, Any] | None = None
         request = _get(state, "incident_request") or {}
         result = _get(state, "incident_result") or {}
@@ -358,16 +364,23 @@ class Watcher:
         if result and (not incident or incident == self.incident or self.incident.startswith("detected-")):
             for plan in _get(result, "plan_applications") or []:
                 pid = _get(plan, "playbook_id") or _get(plan, "program_id") or "plan"
+                applied = bool(_get(plan, "applied")) and not (_get(plan, "dry_run") or _get(plan, "rolled_back"))
+                status = "applied" if applied else "no retained application for"
                 self._once(
-                    f"plan:{json.dumps(plan, sort_keys=True)[:200]}", f"sdo automatic stage: applied {pid}", lines
+                    f"plan:{json.dumps(plan, sort_keys=True)[:200]}",
+                    f"sdo automatic stage: {status} {pid}",
+                    lines,
+                    action=applied,
                 )
             for action in _get(result, "repair_actions") or []:
                 aid = str(_get(action, "action_id") or json.dumps(action, sort_keys=True)[:120])
-                ok = "ok" if _get(action, "success") else "failed"
+                success = bool(_get(action, "success"))
+                ok = "ok" if success else "failed"
                 self._once(
                     f"repair:{aid}",
                     f"sdo repair ({ok}): {_get(action, 'kind')} {_get(action, 'target')}: {_get(action, 'summary')}",
                     lines,
+                    action=success,
                 )
             for name, value in lifecycle_times(state, result).items():
                 if name != "detected_at":
@@ -454,7 +467,11 @@ def seal_boundary(target: EvidenceTarget, incident: str) -> None:
     """Seal the runtime evidence at an incident boundary; a failure is reported, never fatal."""
     try:
         sealed = snapshot(target, snapshot_id_for(incident))
-        print(f"sdo: evidence snapshot {sealed.get('snapshot_id')} sealed ({sealed.get('bytes')} bytes)", flush=True)
+        print(
+            f"sdo: evidence snapshot {sealed.get('snapshot_id')} sealed ({sealed.get('bytes')} bytes)",
+            file=sys.stderr,
+            flush=True,
+        )
     except (EvidenceError, OSError, subprocess.TimeoutExpired, ValueError) as exc:
         print(f"evidence snapshot failed: {exc}", file=sys.stderr, flush=True)
 
@@ -481,7 +498,7 @@ def start_pager(a: argparse.Namespace, context: str, out: Path) -> threading.Thr
     def run() -> None:
         try:
             pager.run(t0)
-            print(f"sdo: harness page sent at +{round(time.time() - t0)}s", flush=True)
+            print(f"sdo: harness page sent at +{round(time.time() - t0)}s", file=sys.stderr, flush=True)
         except Exception as exc:  # the window must go on; the missing page shows in the record
             print(f"harness page failed: {exc}", file=sys.stderr, flush=True)
 
@@ -507,7 +524,7 @@ def submit_fallback(paging: PageEvidence, receipt: Path, args: argparse.Namespac
         return
     paging.fallback_page_at = _stamp(datetime.fromtimestamp(time.time(), UTC))
     atomic_write_json(receipt, asdict(paging))
-    print("sdo: fallback page sent", flush=True)
+    print("sdo: fallback page sent", file=sys.stderr, flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -596,7 +613,7 @@ def main(argv: list[str] | None = None) -> int:
                 (out / f"state-{n:04d}-{datetime.now(UTC).strftime('%H%M%S')}.json").write_text(raw)
             lines, report = watcher.step(state)
             for line in lines:
-                print(line, flush=True)
+                print(" ".join(line.text.splitlines()), file=sys.stdout if line.action else sys.stderr, flush=True)
             if report and report_path:
                 tmp = Path(report_path + ".tmp")
                 tmp.write_text(json.dumps(report))

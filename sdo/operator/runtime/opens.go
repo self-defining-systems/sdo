@@ -111,6 +111,7 @@ func (c *Controller) joinAlertSet(finding sdk.Finding, now time.Time) bool {
 	sortFindings(request.Findings)
 	c.publishHeldLocked()
 	c.closureStableSince = time.Time{}
+	c.recoverySafetyLost = true
 	// A new alert reopens a settled automatic stage (see attachLearnedActivation).
 	c.midStage.settled = false
 	return true

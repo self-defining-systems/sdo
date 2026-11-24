@@ -115,7 +115,7 @@ def _parser() -> argparse.ArgumentParser:
         description=(
             "Read fresh findings and detector confirmation without running programs or planning repairs. "
             "Use diagnose for program verdicts and plan or menu to prepare repairs. "
-            "prior_stages lists what automatic stages already did."
+            "prior_stages lists automatic writes and rollout blockers. Completed writes stay applied."
         ),
     )
     detect = commands.add_parser(

@@ -3,11 +3,8 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"slices"
 	"sort"
-
-	"sdo.dev/operator/runtime/internal/lifecycleio"
 
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -36,9 +33,7 @@ type IncidentState struct {
 	// ran: Findings are re-observed and coverage is rebuilt, and attempts the
 	// stage recorded earlier are never repeated.
 	Refresh bool
-	// AfterPlaybook is response.after_playbook: what follows an applied
-	// playbook that did not recover the opening alerts within the stage's bound.
-	AfterPlaybook string
+
 	// LiveAlertSet reads the user tests that joined the incident since the
 	// request was frozen; a stage that outlives a join judges the whole alert
 	// set, not the set it started with.
@@ -56,10 +51,7 @@ func RunResponseStages(ctx context.Context, state *IncidentState, stages []Respo
 		if len(state.Findings) == 0 {
 			break
 		}
-		if stage.Name() == "agent" && !agentMayFollowPlaybook(state.AfterPlaybook, state.PriorStages) {
-			slog.Info("after_playbook_withheld", "incident_id", state.Request.IncidentID, "policy", state.AfterPlaybook, "remaining_findings", len(state.Findings))
-			break
-		}
+
 		before := findingFingerprints(state.Findings)
 		report, err := stage.Run(ctx, state)
 		if report == nil {
@@ -137,6 +129,20 @@ func RunStageAgain(ctx context.Context, state *IncidentState, stage ResponseStag
 		report.Error = err.Error()
 	}
 	if index >= 0 {
+		report.ApplyCompletedAt = earlier.ApplyCompletedAt
+		report.RecoveryDeadline = earlier.RecoveryDeadline
+		report.StabilityDeadline = earlier.StabilityDeadline
+		report.RecoveryWait = earlier.RecoveryWait
+		report.HandoffSelected = earlier.HandoffSelected
+		report.HandoffKeys = earlier.HandoffKeys
+		report.HandoffState = earlier.HandoffState
+		for _, attempt := range report.Mitigations {
+			for _, previous := range earlier.GetMitigations() {
+				if id := attempt.GetApplyReceipt().GetApplicationId(); id != "" && id == previous.GetApplyReceipt().GetApplicationId() && previous.GetRolloutUnsettledAtDeadline() {
+					attempt.RolloutUnsettledAtDeadline = true
+				}
+			}
+		}
 		state.PriorStages[index] = report
 	} else {
 		state.PriorStages = append(state.PriorStages, report)
@@ -153,44 +159,6 @@ func cloneStageReports(reports []*contracts.StageReport) []*contracts.StageRepor
 		result = append(result, proto.Clone(report).(*contracts.StageReport))
 	}
 	return result
-}
-
-// AgentResponseStage adapts the current responder without changing its tool or
-// continuation semantics. Earlier actions arrive before its first model turn.
-type AgentResponseStage struct {
-	Dispatcher Dispatcher
-	Prepare    func(context.Context, IncidentRequest) (IncidentRequest, error)
-}
-
-func (AgentResponseStage) Name() string { return "agent" }
-func (stage AgentResponseStage) Run(ctx context.Context, state *IncidentState) (*contracts.StageReport, error) {
-	request := *cloneIncidentRequest(&state.Request)
-	if len(state.PriorStages) > 0 {
-		attachHandoffState(state, lifecycleio.Now())
-		request.PriorStages = cloneStageReports(state.PriorStages)
-		request.Findings = append([]sdk.Finding(nil), state.Findings...)
-		request.PreparedAgentTask = ""
-	}
-	if stage.Prepare != nil {
-		var err error
-		request, err = stage.Prepare(ctx, request)
-		if err != nil {
-			return &contracts.StageReport{Stage: stage.Name()}, err
-		}
-	}
-	result, err := stage.Dispatcher.Dispatch(ctx, request)
-	state.Result = &result
-	if result.automaticStages != nil {
-		state.PriorStages = cloneStageReports(result.automaticStages)
-		if result.ResolutionPath == "deterministic" {
-			state.Findings = append([]sdk.Finding(nil), result.UnresolvedFindings...)
-		}
-	}
-	if err == nil && len(result.FinalDetectorStates) > 0 {
-		updateStageFindings(state, ToolResponse{Findings: result.UnresolvedFindings, DetectorStates: result.FinalDetectorStates})
-	}
-	// A responder report never proves clearance. The controller still verifies it.
-	return &contracts.StageReport{Stage: stage.Name()}, err
 }
 
 func (state *IncidentState) refreshUnexplained() {

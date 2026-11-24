@@ -122,16 +122,22 @@ def watch_until_quiet(ops: SeriesOps, timings: ScenarioTimings, quiet: float, ca
     return seen
 
 
-def run_commit(ops: SeriesOps, series: Series, index: int, bounds: Bounds, label: str) -> dict[str, Any]:
+def run_commit(
+    ops: SeriesOps, series: Series, index: int, bounds: Bounds, label: str, *, position: int | None = None
+) -> dict[str, Any]:
     """Push commit ``index`` (1-based) and return its record: the outcome, times and what SDO reported.
 
+    ``position`` is the commit event's sequence position (``index`` when the series has no fault events); the record's
+    ``index`` is the position and ``commit_index`` the commit's number.
     ``valid`` is true for every outcome SDO can have (accepted, held, incident, timeout) and for a commit the
     series cannot apply (conflict, empty): those are results, not harness failures.
     """
     record: dict[str, Any] = {
         "operator": label,
         "series": series.name,
-        "index": index,
+        "index": index if position is None else position,
+        "event": "commit",
+        "commit_index": index,
         "commit": series.commits[index - 1],
         "valid": True,
     }

@@ -156,3 +156,50 @@ func TestAFailedCloseAfterAnAppliedPlaybookLowersItsTrust(t *testing.T) {
 		t.Errorf("a failed close with no applied playbook produced trust %v", got)
 	}
 }
+
+func TestAutomaticCreditRequiresUnambiguousRecoveredClosure(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*contracts.OutcomeRecord)
+		want   bool
+	}{
+		{"one application without a handoff", func(*contracts.OutcomeRecord) {}, true},
+		{"handoff", func(o *contracts.OutcomeRecord) { o.PriorStages[0].HandoffSelected = true }, false},
+		{"two applications", func(o *contracts.OutcomeRecord) {
+			o.PlanApplications = append(o.PlanApplications, creditApplication("app-2", "fix", 9))
+		}, false},
+		{"agent change before recovery", func(o *contracts.OutcomeRecord) { o.AgentChanges = []*contracts.AgentChange{{At: creditAt(10)}} }, false},
+		{"agent change after recovery", func(o *contracts.OutcomeRecord) { o.AgentChanges = []*contracts.AgentChange{{At: creditAt(12)}} }, true},
+		{"deadline", func(o *contracts.OutcomeRecord) {
+			o.PriorStages[0].RecoveryWait.ExitReason = contracts.RecoveryWait_EXIT_REASON_DEADLINE
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := creditOutcome("success")
+			o.Timestamps = &contracts.OutcomeTimestamps{VerifiedAt: creditAt(11)}
+			o.RecoveryVerification.WritesSettled = true
+			o.PriorStages[0].ApplyCompletedAt = creditAt(10)
+			o.PriorStages[0].RecoveryWait = &contracts.RecoveryWait{ExitReason: contracts.RecoveryWait_EXIT_REASON_CLEARED}
+			tc.change(o)
+			if got := ProgramCreditIndex([]*contracts.OutcomeRecord{o}).Has("fix"); got != tc.want {
+				t.Fatalf("automatic credit = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAutomaticRolloutUnsettledAtDeadlineChargesItsRevision(t *testing.T) {
+	o := creditOutcome("success")
+	attempt := o.PriorStages[0].Mitigations[0]
+	attempt.ProgramRevision = "synthetic-rev"
+	attempt.RolloutUnsettledAtDeadline = true
+	// A late rollout can settle before closure. The deadline observation is
+	// terminal even when the final receipt no longer carries RolloutPending.
+	for _, rollout := range []*contracts.RolloutPending{nil, {Reason: "unsettled"}} {
+		attempt.ApplyReceipt.RolloutPending = rollout
+		got := ProgramTrustStats([]*contracts.OutcomeRecord{o})["fix"]
+		if got.Failures != 1 || got.LastChange != "synthetic-rev" || got.VerifiedSuccesses != 0 {
+			t.Fatalf("trust = %+v, want one terminal failure for synthetic-rev", got)
+		}
+	}
+}

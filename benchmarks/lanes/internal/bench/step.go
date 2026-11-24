@@ -1805,16 +1805,16 @@ func (r *stepRunner) recover(ctx context.Context) {
 	}
 }
 
-// unhold runs the hook's reset-incidents verb on a lane held for incomplete evidence: the operator reset that collect
-// skipped, so the lane returns to use instead of being rebuilt by the next gate's alarm.
+// unhold gives the subject a chance to reset incidents after a hold for incomplete evidence.
+// A subject without this optional verb has nothing to reset.
 func (r *stepRunner) unhold(ctx context.Context) {
 	p := r.s.Prev
 	if p == nil || p.Hooks == "" {
 		r.res.OK = true
 		return
 	}
-	if res := r.callHook(ctx, p, "reset-incidents", "BENCH_OUT="+r.dir); !res.OK() {
-		r.failHook(res, "reset-incidents")
+	if res := r.callHook(ctx, p, verbUnhold, "BENCH_OUT="+r.dir); !res.OK() && !res.Unsupported() {
+		r.failHook(res, verbUnhold)
 		return
 	}
 	r.res.OK = true

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
-	"sdo.dev/operator/runtime/internal/lifecycleio"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/settings"
@@ -52,8 +51,8 @@ func (d KubernetesJobDispatcher) DeterministicResponseStage() ResponseStage {
 
 // Before automatic execution only the incident intent is durable. Freezing a
 // worker task here could overwrite its external payload at the later handoff.
-func (c *Controller) automaticResponsePending(request *contracts.IncidentRequest) bool {
-	if request == nil || len(request.PriorStages) != 0 {
+func (c *Controller) automaticResponsePending(request *IncidentRequest) bool {
+	if request == nil || request.PreparedAgentTask != "" || deterministicStageReport(request.PriorStages).GetHandoffSelected() {
 		return false
 	}
 	for _, name := range c.codePath.Selection.ResponseStages {
@@ -91,34 +90,25 @@ func (d agentLifecycleDispatcher) Dispatch(ctx context.Context, request Incident
 	return c.dispatcher.Dispatch(ctx, request)
 }
 
-func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRequest) (IncidentResult, []*contracts.StageReport, error) {
+func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRequest) dispatchCompletion {
 	dispatcher := agentLifecycleDispatcher{controller: c}
-	// This is the exact original dispatch path for baseline experiments, including
-	// its frozen task, result and error semantics.
-	if len(c.codePath.Selection.ResponseStages) == 1 && c.codePath.Selection.ResponseStages[0] == "agent" {
+	// A direct responder uses the original frozen task and result path.
+	if len(c.codePath.Selection.ResponseStages) > 0 && c.codePath.Selection.ResponseStages[0] == "agent" {
 		result, err := dispatcher.Dispatch(ctx, request)
-		return result, nil, err
+		return dispatchCompletion{result: result, err: err}
 	}
-	// Prepared requests re-enter dispatch, where actual execution ownership
-	// forces rejoin. Unclaimed requests still pass the shared recovery decision
-	// immediately before their first worker publication.
-	if request.PreparedAgentTask != "" && len(request.PriorStages) > 0 {
-		c.mu.Lock()
-		c.responseStagesRunning = false
-		c.mu.Unlock()
-		result, err := dispatcher.Dispatch(ctx, request)
-		reports := request.PriorStages
-		if result.automaticStages != nil {
-			reports = result.automaticStages
-		}
-		state := &IncidentState{Request: request, PriorStages: cloneStageReports(reports), Result: &result}
+	// Rejoin the frozen handoff with no claim-time health observation.
+	report := deterministicStageReport(request.PriorStages)
+	if report.GetHandoffSelected() || request.PreparedAgentTask != "" && report != nil {
+		result, err := dispatcher.Dispatch(ctx, stageDispatchRequest(request))
+		state := &IncidentState{Request: request, PriorStages: cloneStageReports(request.PriorStages), Result: &result}
 		merged, encodeErr := responsePipelineResult(state, result.Timing.StartedAt, result.Timing.CompletedAt)
 		if err == nil {
 			err = encodeErr
 		}
-		return merged, cloneStageReports(reports), err
+		return dispatchCompletion{result: merged, priorStages: state.PriorStages, err: err}
 	}
-	state := &IncidentState{Request: request, Findings: append([]sdk.Finding(nil), request.Findings...), Coverage: cloneCoverage(request.PlaybookCoverage), AfterPlaybook: c.config.AfterPlaybook}
+	state := &IncidentState{Request: request, Findings: append([]sdk.Finding(nil), request.Findings...), Coverage: cloneCoverage(request.PlaybookCoverage)}
 	state.LiveAlertSet = func() ([]string, []sdk.Finding) { return c.liveJoined(request.IncidentID) }
 	var stages []ResponseStage
 	automaticAvailable, agentConfigured := false, false
@@ -127,8 +117,11 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 		case "deterministic":
 			if source, ok := c.dispatcher.(interface{ DeterministicResponseStage() ResponseStage }); ok {
 				if stage := source.DeterministicResponseStage(); stage != nil {
-					if deterministic, ok := stage.(*DeterministicResponseStage); ok && c.config.AfterPlaybook == settings.AfterPlaybookWait {
-						deterministic.WaitBound = c.config.AfterPlaybookWait
+					if deterministic, ok := stage.(*DeterministicResponseStage); ok {
+						deterministic.StabilityWindow = c.config.ClosureStabilityWindow
+						if c.config.AfterPlaybook == settings.AfterPlaybookWait {
+							deterministic.WaitBound = c.config.AfterPlaybookWait
+						}
 					}
 					stages = append(stages, stage)
 					automaticAvailable = true
@@ -136,15 +129,6 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 			}
 		case "agent":
 			agentConfigured = true
-			stages = append(stages, AgentResponseStage{Dispatcher: dispatcher, Prepare: func(ctx context.Context, request IncidentRequest) (IncidentRequest, error) {
-				c.mu.Lock()
-				if c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == state.Request.IncidentID {
-					c.currentIncidentRequest.PlaybookCoverage = cloneCoverage(state.Coverage)
-					c.currentIncidentRequest.InitialProgramRuns = append([]ProgramRun(nil), state.Request.InitialProgramRuns...)
-				}
-				c.mu.Unlock()
-				return c.prepareResponseStageHandoff(ctx, request)
-			}})
 		}
 	}
 	// A transport without an automatic stage preserves its original frozen
@@ -154,10 +138,14 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 		c.responseStagesRunning = false
 		c.mu.Unlock()
 		result, err := dispatcher.Dispatch(ctx, request)
-		return result, nil, err
+		return dispatchCompletion{result: result, err: err}
 	}
-	started := lifecycleio.Now().UTC()
+	started := c.clock().UTC()
 	err := RunResponseStages(ctx, state, stages)
+	if len(state.PriorStages) == 0 && automaticAvailable {
+		state.PriorStages = []*contracts.StageReport{{Stage: "deterministic", ApplyCompletedAt: contractTimestamp(c.clock()),
+			RecoveryWait: &contracts.RecoveryWait{ExitReason: contracts.RecoveryWait_EXIT_REASON_NOTHING_APPLIED}}}
+	}
 	c.mu.Lock()
 	if c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == request.IncidentID {
 		// The result below is built from these reports, so a playbook a later
@@ -167,7 +155,6 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 			state.Request.InitialProgramRuns = append([]ProgramRun(nil), c.currentIncidentRequest.InitialProgramRuns...)
 		}
 		state.PriorStages = mergeLaterStagePasses(state.PriorStages, c.currentIncidentRequest.PriorStages)
-		c.currentIncidentRequest.PriorStages = cloneStageReports(state.PriorStages)
 		// Findings that joined the incident mid-way are the ones those passes
 		// cleared, so the root causes need them.
 		known := map[string]bool{}
@@ -179,15 +166,13 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 				state.Request.Findings = append(state.Request.Findings, finding)
 			}
 		}
-		c.currentIncidentRequest.PlaybookCoverage = cloneCoverage(state.Coverage)
-		c.currentIncidentRequest.InitialProgramRuns = append([]ProgramRun(nil), state.Request.InitialProgramRuns...)
 	}
 	c.mu.Unlock()
-	result, encodeErr := responsePipelineResult(state, started, lifecycleio.Now().UTC())
+	result, encodeErr := responsePipelineResult(state, started, c.clock().UTC())
 	if err == nil {
 		err = encodeErr
 	}
-	return result, cloneStageReports(state.PriorStages), err
+	return dispatchCompletion{automatic: state, result: result, priorStages: cloneStageReports(state.PriorStages), err: err}
 }
 
 // responsePipelineResult projects controller receipts into the existing outcome
@@ -366,37 +351,6 @@ func mergeStageCause(causes []ConfirmedRootCause, cause ConfirmedRootCause) []Co
 		i = 0
 	}
 	return append(causes, cause)
-}
-
-// The task including prior stages is frozen in the controller's durable state
-// before the dispatcher can create a worker. State saves share one CAS writer.
-func (c *Controller) prepareResponseStageHandoff(ctx context.Context, request IncidentRequest) (IncidentRequest, error) {
-	prepared := request
-	if preparer, ok := c.dispatcher.(interface {
-		PrepareDispatch(context.Context, IncidentRequest) (IncidentRequest, error)
-	}); ok {
-		var err error
-		prepared, err = preparer.PrepareDispatch(ctx, request)
-		if err != nil {
-			return IncidentRequest{}, &DispatchPrepareError{Err: fmt.Errorf("prepare stage handoff: %w", err)}
-		}
-	}
-	c.mu.Lock()
-	if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != request.IncidentID {
-		c.mu.Unlock()
-		return IncidentRequest{}, ErrStateConflict
-	}
-	c.currentIncidentRequest.PriorStages = cloneStageReports(request.PriorStages)
-	c.currentIncidentRequest.PreparedAgentTask = prepared.PreparedAgentTask
-	c.currentIncidentRequest.MaxResponseLoops = prepared.MaxResponseLoops
-	c.mu.Unlock()
-	if err := c.PersistState(ctx); err != nil {
-		return IncidentRequest{}, fmt.Errorf("persist stage handoff: %w", err)
-	}
-	c.mu.Lock()
-	c.responseStagesRunning = false
-	c.mu.Unlock()
-	return prepared, nil
 }
 
 // addressedFindings are the incident findings an applied attempt was matched

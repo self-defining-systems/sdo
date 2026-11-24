@@ -53,3 +53,60 @@ def test_load_reads_a_file_and_names_it_on_error(tmp_path: Path) -> None:
 def test_invalid_series_is_refused_at_load(change: dict[str, object], match: str) -> None:
     with pytest.raises(ValueError, match=match):
         Series.from_dict({**SPEC, **change})
+
+
+def _events(series: Series) -> list[tuple[str, object]]:
+    return [("commit", e.commit) if e.kind == "commit" else ("fault", e.fault) for e in series.events]
+
+
+def test_with_no_events_each_position_pushes_one_commit() -> None:
+    series = Series.from_dict({k: v for k, v in SPEC.items() if k != "faults"})
+    assert _events(series) == [("commit", 1), ("commit", 2), ("commit", 3)]
+
+
+def test_a_fault_listed_after_a_commit_is_its_own_event_right_after_it() -> None:
+    series = Series.from_dict(SPEC)
+    assert _events(series) == [("commit", 1), ("commit", 2), ("fault", "some-fault"), ("commit", 3)]
+    assert [series.commits_before(p) for p in range(1, 5)] == [1, 2, 2, 3]
+    assert series.fault_ids == ("some-fault",)
+
+
+def test_events_put_faults_anywhere_and_several_after_one_commit() -> None:
+    events = [{"fault": "f0"}, {"commit": 1}, {"fault": "f1"}, {"fault": "f2"}, {"commit": 2}, {"commit": 3}]
+    series = Series.from_dict({**{k: v for k, v in SPEC.items() if k != "faults"}, "events": events})
+    assert _events(series) == [
+        ("fault", "f0"),
+        ("commit", 1),
+        ("fault", "f1"),
+        ("fault", "f2"),
+        ("commit", 2),
+        ("commit", 3),
+    ]
+    assert series.event(4).fault == "f2"
+    assert series.commits_before(1) == 0
+    assert series.commits_before(4) == 1
+    assert series.offset(3) == 90  # the schedule is per commit, not per position
+    with pytest.raises(ValueError, match="position 7"):
+        series.event(7)
+
+
+@pytest.mark.parametrize(
+    ("events", "match"),
+    [
+        ([{"commit": 1}, {"commit": 3}], "every commit exactly once"),
+        ([{"commit": 1}, {"commit": 2}, {"commit": 2}, {"commit": 3}], "every commit exactly once"),
+        ([{"commit": 2}, {"commit": 1}, {"commit": 3}], "in order"),
+        ([{"commit": 1}, {"commit": 2}, {"commit": 3}, {"commit": 4}], "outside the series"),
+        ([{"commit": 1, "fault": "x"}, {"commit": 2}, {"commit": 3}], "exactly one of commit or fault"),
+        ([{"commit": 1}, {"fault": ""}, {"commit": 2}, {"commit": 3}], "fault id"),
+        ([{"commit": 1}, {"pause": 3}, {"commit": 2}, {"commit": 3}], "exactly one of commit or fault"),
+    ],
+)
+def test_invalid_events_are_refused_at_load(events: list[dict[str, object]], match: str) -> None:
+    with pytest.raises(ValueError, match=match):
+        Series.from_dict({**{k: v for k, v in SPEC.items() if k != "faults"}, "events": events})
+
+
+def test_events_and_faults_together_are_refused() -> None:
+    with pytest.raises(ValueError, match="events or faults"):
+        Series.from_dict({**SPEC, "events": [{"commit": 1}, {"commit": 2}, {"commit": 3}]})

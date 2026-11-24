@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, BinaryIO
 from benchmarks.fuzzops import eks
 from benchmarks.fuzzops.cellevidence import atomic_write_json, cell_problems
 from benchmarks.fuzzops.hooks import HookError, fuzzops_app, prove_golden
-from benchmarks.fuzzops.view import redact
+from benchmarks.fuzzops.view import redact_json_line
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
@@ -258,7 +258,7 @@ def copy_log(source: Path, dest: Path, identities: Sequence[str]) -> dict[str, A
     result: dict[str, Any] = {}
     with source.open(errors="replace") as raw, dest.open("w") as out:
         for line in raw:
-            safe = redact(line.rstrip("\n"), identities)
+            safe = redact_json_line(line.rstrip("\n"), identities)
             out.write(safe + "\n")
             try:
                 event = json.loads(safe)

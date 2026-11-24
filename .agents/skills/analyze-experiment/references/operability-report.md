@@ -114,15 +114,18 @@ replay; the replayer never edits anything for SDO.
 ## Commit-series records (lanes)
 
 A commit series (`benchmarks/commit_series`, README there) is one lane experiment with `sequences: [[1..N]]`: position *i*
-pushes commit *i* of a series spec to the branch SDO deploys from, so SDO and the app live on the lane for the whole
-series with no reset between positions. `lanes plan results NAME --tsv` has **one row per commit** (`position` column,
-1-based; `run` is the position's run id); the commit's record is the row's `grade`. Fields: `series`, `index`, `commit`
+runs event *i* of a series spec (with no `events` in the spec, commit *i*), so SDO and the app live on the lane for the
+whole series with no reset between positions. An event is a commit pushed to the branch SDO deploys from or a fault.
+`lanes plan results NAME --tsv` has **one row per event** (`position` column, 1-based; `run` is the position's run id);
+the event's record is the row's `grade`. A fault event's record is the wrapped fuzzops run record plus `series`,
+`index` (the position), `event: "fault"`, `fault_id` and `after_commit`. A commit event's fields: `series`, `index` (the
+position), `event: "commit"`, `commit_index`, `commit`
 (upstream SHA), `pushed` (the SHA on SDO's branch), `outcome` (`accepted`, `held`, `incident`, `timeout`, `conflict`,
 `empty`), `deploy_seconds` (push to verdict) and `wall_seconds` (push to the end of the quiet window and any incident),
 `accepted_commit`, `accepted_commits` (every new accepted commit, so agent commits show), `hold` (`kind`, `cause`,
 `owner`, `reason`), `incident_opened`, `incident_resolved`, `agent_tasks`, `pod_failures`, `controller_relaunches`,
 `operability` (same shape as above, `{"stale": true}` when the report is for an earlier commit), `lifecycle.inject_at`
-(the push time) and, for a fault injected after the commit, `fault` (the wrapped workload's record). `valid` is true for
+(the push time). `valid` is true for
 every outcome SDO can have, including `held`, `timeout` and `conflict`; it is false only for an infrastructure problem,
 which breaks the rest of the sequence ("sequence broken"). A `conflict` means the series commit did not apply to the
 branch (with `on_conflict: stop` the later commits cannot apply either). Compare `deploy_seconds` with the GitLab release

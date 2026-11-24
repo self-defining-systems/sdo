@@ -23,8 +23,8 @@ A listed non-matching playbook may still describe the fix: check its cause, reus
 
 `sdo COMMAND --help` gives the syntax. Use `kubectl` for reads and changes. Keep a source fix with `git commit`.
 
-SDO decides recovery: the opening alerts cleared and stayed clear after your last change settled, then
-it ends your work. Return only to give up; that escalates.
+SDO ends work when incident alerts stay clear after writes settle.
+On repair handoff (alert firing or unreadable), check fresh evidence. Returning escalates.
 
 Never print, copy, log or write a credential value anywhere, including findings and memory. A credential already in a
 pod's environment or mounted files may be used in place (exec into that pod and let its client read it) to check the

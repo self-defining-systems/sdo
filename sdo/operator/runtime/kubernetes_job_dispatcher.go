@@ -177,8 +177,10 @@ func (l *ResponderLoop) prepareDispatch(ctx context.Context, request IncidentReq
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.Trust = trust
-	if request.ExternalMessage != "" {
-		request.MaxResponseLoops = l.MaxBatches
+	request.MaxResponseLoops = l.MaxBatches
+	if request.ExternalMessage != "" || deterministicStageReport(request.PriorStages).GetHandoffSelected() {
+		// Handoff already has the controller's alert decision and receipts.
+		// Optional live diagnosis may be unavailable or spend the claim budget.
 		return request
 	}
 	// The automatic stage and the controller already stored open@detect; only a
@@ -190,7 +192,6 @@ func (l *ResponderLoop) prepareDispatch(ctx context.Context, request IncidentReq
 	request.InitialProgramRuns = l.diagnose(ctx, l.findings, false)
 	fillProgramRevisions(ctx, request.InitialProgramRuns, request.RepositoryWorktree, request.SourceCommit)
 	request.PlaybookCoverage = coverage.Coverage(request.Findings, request.InitialProgramRuns, l.lastDiagnosisView, trust)
-	request.MaxResponseLoops = l.MaxBatches
 	return request
 }
 
@@ -306,20 +307,6 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 		CapturedCorpusReadOnly: d.RequireMemorySnapshot,
 		TaskPayload:            request.PreparedAgentTask,
 	}
-	// Last observation before any standby binding or cold worker publication.
-	// This covers prepared-task rejoin and controller verification follow-ups
-	// through the same recovery decision as the ordinary response stage.
-	recovery, recoveryErr := d.beforeFirstResponderClaim(ctx, request, task, loop)
-	if recoveryErr != nil {
-		return IncidentResult{}, recoveryErr
-	}
-	if recovery != nil {
-		request.PriorStages = recovery.PriorStages
-		request.Findings = recovery.Findings
-		if deterministicStageReport(recovery.PriorStages).GetRecoveryWait().GetExitReason() == contracts.RecoveryWait_EXIT_REASON_CLEARED {
-			return automaticClaimResult(recovery)
-		}
-	}
 	if d.beforeClaim != nil {
 		d.beforeClaim()
 	}
@@ -413,9 +400,6 @@ func (d KubernetesJobDispatcher) dispatch(ctx context.Context, request IncidentR
 	}
 	if err := validateIncidentResultFor(result, request); err != nil {
 		return IncidentResult{}, fmt.Errorf("validate incident result: %w", err)
-	}
-	if recovery != nil {
-		result.automaticStages = cloneStageReports(recovery.PriorStages)
 	}
 	return result, nil
 }

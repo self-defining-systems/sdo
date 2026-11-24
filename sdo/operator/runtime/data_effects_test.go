@@ -38,7 +38,7 @@ func TestDeterministicStageRunsLearnedRestartOfDataHoldingWorkload(t *testing.T)
 	loop.Request.RepositoryWorktree = "synthetic-worktree"
 	instant := newInstantRecoveryClock()
 	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true,
-		recoveryNow: instant.now, recoveryWait: instant.wait}
+		diagnoseWait: instant.wait}
 	report, err := stage.Run(context.Background(), state)
 	if err != nil {
 		t.Fatal(err)

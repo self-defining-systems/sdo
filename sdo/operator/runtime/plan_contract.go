@@ -154,7 +154,7 @@ func planApplicationState(application *contracts.PlanApplication) RecordedPlanAp
 	if application.GetDuration() != nil {
 		result.Duration = application.GetDuration().AsDuration()
 	}
-	return RecordedPlanApplication{ID: application.GetApplicationId(), ProgramIDs: append([]string(nil), application.GetProgramIds()...), Result: result,
+	return RecordedPlanApplication{Pending: application.GetStartedAt() != nil && application.GetCompletedAt() == nil, ID: application.GetApplicationId(), ProgramIDs: append([]string(nil), application.GetProgramIds()...), Result: result,
 		StartedAt: controllerTime(application.GetStartedAt()), CompletedAt: controllerTime(application.GetCompletedAt()), Error: application.GetError(), RolledBack: application.GetRolledBack(), RollbackError: application.GetRollbackError(), RunningCommit: application.GetRunningCommit(), RunningDirty: application.GetRunningDirty()}
 }
 

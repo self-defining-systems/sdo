@@ -9,7 +9,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
-	"sdo.dev/operator/memory/appmap"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/sdktest"
 	"sdo.dev/operator/sdk/traffic"
@@ -94,9 +93,10 @@ func (w verifyWorld) view() sdktest.Snapshot {
 			Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue, LastTransitionTime: metav1.NewTime(verifyT0.Add(-time.Hour))}}}}
 	}
 	snapshot := sdktest.Snapshot{NamespaceName: "app",
-		PodList:         []corev1.Pod{pod("front-1", "front", "Deployment"), pod("api-1", "api", "Deployment"), pod("db-0", "db", "StatefulSet"), pod("cache-1", "cache", "Deployment"), pod("ssh-gate-1", "ssh-gate", "Deployment")},
-		StatefulSetList: []appsv1.StatefulSet{{ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "app"}}},
-		Traffic:         map[string]traffic.Window{},
+		PodList: []corev1.Pod{pod("front-1", "front", "Deployment"), pod("api-1", "api", "Deployment"), pod("db-0", "db", "StatefulSet"), pod("cache-1", "cache", "Deployment"), pod("ssh-gate-1", "ssh-gate", "Deployment")},
+		StatefulSetList: []appsv1.StatefulSet{{ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "app", Generation: 1},
+			Status: appsv1.StatefulSetStatus{ObservedGeneration: 1, ReadyReplicas: 1, UpdatedReplicas: 1, CurrentRevision: "r1", UpdateRevision: "r1"}}},
+		Traffic: map[string]traffic.Window{},
 	}
 	if !w.noProbes {
 		probeOK := w.probeOK
@@ -135,20 +135,12 @@ func browseTest() sdk.Finding {
 		PrimaryResource: sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "app", Name: "front"}}
 }
 
-// runVerify is recovered() over the synthetic map: findings[:opening] opened
+// runVerify is recovered() over the synthetic snapshot: findings[:opening] opened
 // the incident, the rest are clues.
 func runVerify(t *testing.T, world verifyWorld, findings []sdk.Finding, opening int, result *IncidentResult) recoveryCheck {
 	t.Helper()
-	region, found, err := appmap.Find(verifyArch)
-	if !found || err != nil {
-		t.Fatal(err)
-	}
-	m, err := appmap.Parse(region.YAML)
-	if err != nil {
-		t.Fatal(err)
-	}
 	request := IncidentRequest{Namespace: "app", Findings: findings, OpeningKeys: findingKeys(findings[:opening])}
-	return recovered(verificationInput{m: m, view: world.view(), request: request, result: result, detected: verifyT0, stability: 10 * time.Second})
+	return recovered(verificationInput{view: world.view(), request: request, result: result, detected: verifyT0, stability: 10 * time.Second})
 }
 
 func restartOf(kind, name string, completed time.Time) *IncidentResult {
@@ -208,12 +200,10 @@ func TestCluesAndConditionsDoNotHoldTheUserTestPredicate(t *testing.T) {
 // An unsettled write (its workload still rolling out) holds the verdict.
 func TestUnsettledWriteHoldsRecovery(t *testing.T) {
 	now := verifyT0.Add(2 * time.Minute)
-	region, _, _ := appmap.Find(verifyArch)
-	m, _ := appmap.Parse(region.YAML)
 	view := verifyWorld{now: now}.view()
-	view.PodList[1].Status.Conditions[0].Status = corev1.ConditionFalse
+	view.DeploymentList = []appsv1.Deployment{{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "app", Generation: 2}}}
 	opening := browseTest()
-	check := recovered(verificationInput{m: m, view: view, request: IncidentRequest{Namespace: "app", Findings: []sdk.Finding{opening}, OpeningKeys: findingKeys([]sdk.Finding{opening})},
+	check := recovered(verificationInput{view: view, request: IncidentRequest{Namespace: "app", Findings: []sdk.Finding{opening}, OpeningKeys: findingKeys([]sdk.Finding{opening})},
 		result: restartOf("Deployment", "api", verifyT0.Add(30*time.Second)), detected: verifyT0})
 	if check.verdict != recoveryPending || check.record.GetWritesSettled() {
 		t.Fatalf("verdict %v: %s", check.verdict, check.reason)
@@ -237,9 +227,8 @@ func TestClosureCommitsTheRecoveredVerdict(t *testing.T) {
 			after := verifyT0.Add(time.Minute)
 			cfg := testControllerConfig()
 			cfg.Namespace = "app"
-			world := &sameWriteWorld{}
-			world.healthy.Store(true)
-			controller, err := NewController(cfg, []sdk.Detector{sameWriteDetector{world: world}}, riskSnapshots{view: verifyWorld{now: now, probeOK: test.probeOK}.view()}, &recordingDispatcher{}, after)
+
+			controller, err := NewController(cfg, []sdk.Detector{&closureScopeDetector{id: "traffic-probe-call"}}, riskSnapshots{view: verifyWorld{now: now, probeOK: test.probeOK}.view()}, &recordingDispatcher{}, after)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -289,10 +278,8 @@ func TestRecoveredJudgesUserTestsThatJoinedTheAlertSet(t *testing.T) {
 	joined := browseTest()
 	findings := []sdk.Finding{condition, joined}
 	run := func(probeOK func(time.Time) bool, joinedKeys []string) recoveryCheck {
-		region, _, _ := appmap.Find(verifyArch)
-		m, _ := appmap.Parse(region.YAML)
 		request := IncidentRequest{Namespace: "app", Findings: findings, OpeningKeys: findingKeys(findings[:1]), JoinedKeys: joinedKeys}
-		return recovered(verificationInput{m: m, view: verifyWorld{now: now, probeOK: probeOK}.view(), request: request,
+		return recovered(verificationInput{view: verifyWorld{now: now, probeOK: probeOK}.view(), request: request,
 			result: restartOf("StatefulSet", "db", write), detected: verifyT0, stability: 10 * time.Second})
 	}
 	failing := func(time.Time) bool { return false }
@@ -308,5 +295,26 @@ func TestRecoveredJudgesUserTestsThatJoinedTheAlertSet(t *testing.T) {
 	}
 	if got := run(always, joinedKeys).record.GetJoinedKeys(); len(got) != 1 || got[0] != joinedKeys[0] {
 		t.Fatalf("the recovery record names joined keys %v, want %v", got, joinedKeys)
+	}
+}
+
+func TestConditionRecoveryRequiresWrittenWorkloadToSettle(t *testing.T) {
+	world := verifyWorld{now: verifyT0.Add(time.Minute)}
+	view := world.view()
+	view.StatefulSetList[0].Generation = 2
+	alert := verifyFinding("workload-health", "StatefulSet", "db", sdk.SeverityCritical)
+	request := IncidentRequest{Namespace: "app", Findings: []sdk.Finding{alert}, OpeningKeys: findingKeys([]sdk.Finding{alert})}
+	check := recovered(verificationInput{view: view, request: request, result: restartOf("StatefulSet", "db", verifyT0), detected: verifyT0})
+	if check.verdict != recoveryPending {
+		t.Fatal("clear condition let recovery pass a pending rollout")
+	}
+}
+
+func TestProbeRecoveryRequiresAlertIdentity(t *testing.T) {
+	view := verifyWorld{now: verifyT0.Add(time.Minute)}.view()
+	request := IncidentRequest{Namespace: "app", OpeningKeys: findingKeys([]sdk.Finding{browseTest()})}
+	check := recovered(verificationInput{view: view, request: request, detected: verifyT0})
+	if check.verdict != recoveryPending {
+		t.Fatal("recovery treated a missing probe identity as a condition")
 	}
 }

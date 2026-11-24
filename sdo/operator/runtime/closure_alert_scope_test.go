@@ -87,3 +87,16 @@ func TestScenarioScopeMatchesRealFindingKeys(t *testing.T) {
 		t.Fatalf("include(write-issue)=%v include(write)=%v include(write-commit)=%v", include("write-issue"), include("write"), include("write-commit"))
 	}
 }
+
+func TestFiringSiblingCannotConfirmAnUnobservedAlert(t *testing.T) {
+	const id = "traffic-probe-write"
+	detector := traffic.NewDetector(sdk.DetectorSpec{ID: id, Class: sdk.DetectorClassHealth}, "probe-write")
+	view := oneWindowView{window: scenarioWindow()}
+	sibling := traffic.ScenarioFinding(detector.Spec(), "app", view.window.Workload,
+		view.window.Scenarios[0].Scenario, traffic.SLOVerdict{})
+	scope := newRecoveryScope([]string{scenarioKey(id, "write-commit")})
+	_, status, err := validateDetectorObservation(detector, view, []sdk.Finding{sibling}, nil, scope)
+	if err != nil || status != DetectorEvaluationPending {
+		t.Fatalf("unobserved alert with a firing sibling: %s, %v", status, err)
+	}
+}

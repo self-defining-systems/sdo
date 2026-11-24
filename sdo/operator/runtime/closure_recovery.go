@@ -34,11 +34,15 @@ func (c *Controller) resumeClosureVerification(ctx context.Context, effect Closu
 	}
 	c.incidentOpen = true
 	c.currentIncidentRequest = cloneIncidentRequest(&closure.Request)
+	if report := deterministicStageReport(c.currentIncidentRequest.PriorStages); report.GetRecoveryWait().GetExitReason() == contracts.RecoveryWait_EXIT_REASON_CLEARED {
+		report.RecoveryWait = nil
+	}
 	c.publishHeldLocked()
 	c.currentIncidentResult = cloneIncidentResult(closure.Result)
 	c.incidentDetectedAt = closure.DetectedAt
 	c.incidentDispatchedAt = closure.DispatchedAt
 	c.responderCompletedAt = closure.ResponderCompletedAt
+	c.escalatedAt = closure.EscalatedAt
 	c.responderDone = true
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
 	c.incidentFindingKeys = findingKeys(closure.Request.Findings)
