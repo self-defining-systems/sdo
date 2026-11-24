@@ -15,6 +15,7 @@ Start from `examples/template-drift/` or `examples/stuck-pods/`. Write `diagnose
 - `Mitigate`: the changes that fixed it, in order: `program.DeletePod`,
   `program.RestartRollout`, `program.SetField`; for an `sdo mitigate X`, the same
   `program.X` with the same fields.
+- For SQL or CLI repairs, see `program.EnsureExec` in `sdk-card.md`.
 - Use the fastest equivalent action. Verify serving processes use the new state.
 - Scope absence claims to where you looked. Before recreating or overwriting lost data, require a live check for the authoritative copy and restore it if found. If the check is unavailable, leave the write to the responder.
 - Set the known-good value directly, not from controller history a repeat may lack.
