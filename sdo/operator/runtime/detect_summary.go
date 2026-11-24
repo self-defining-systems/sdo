@@ -846,7 +846,9 @@ func buildDetectSummary(in detectInput) detectSummary {
 	}
 	for _, note := range in.Request.PriorStages {
 		for _, mitigation := range note.GetMitigations() {
-			if mitigation.GetResult() != "skipped" {
+			if automaticPlanRefused(mitigation) {
+				header = append(header, fmt.Sprintf("stage: by sdo (playbook %s): plan validation refused: %s", mitigation.GetPlaybookId(), redactDetectText(mitigation.GetError(), 200)))
+			} else if mitigation.GetResult() != "skipped" {
 				header = append(header, fmt.Sprintf("stage: by sdo (playbook %s): %s", mitigation.GetPlaybookId(), redactDetectText(mitigation.GetResult(), 40)))
 			}
 		}

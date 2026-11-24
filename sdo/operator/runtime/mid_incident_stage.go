@@ -347,6 +347,9 @@ func stageReportProgress(report *contracts.StageReport) int {
 // original await bound is still open. An actual responder keeps its existing
 // later-pass behavior.
 func (c *Controller) learnedPassAllowedLocked() bool {
+	if c.currentIncidentRequest != nil && stagePlanRefused(deterministicStageReport(c.currentIncidentRequest.PriorStages)) {
+		return false
+	}
 	if report := c.awaitingAutomaticRecoveryLocked(); report != nil {
 		return playbookWrote(report) && c.escalatedAt.IsZero() && c.clock().Before(controllerTime(report.GetRecoveryDeadline()))
 	}

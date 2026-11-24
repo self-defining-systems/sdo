@@ -181,6 +181,8 @@ message RunProgramResponse {
     Plan plan = 3;
     string error = 4;
   }
+  // Set on an error frame when host validation refused a computed plan.
+  bool plan_refused = 5;
 }
 
 // Exactly one read may be outstanding. The operation names a method of the

@@ -1075,7 +1075,6 @@ func (l *ResponderLoop) RediagnosePrograms(ctx context.Context, ids map[string]b
 	}
 	runs := SelectKeyedProgramCandidates(ctx, onlyPrograms{ProgramRegistry: l.Programs, ids: ids}, view, l.findings, l.deadline(), KeyedMatching{Credits: l.Credits, OpeningKeys: l.Request.OpeningKeys, Stage: true, Restore: sourceRestoreCandidates(view, l.Request, l.findings)})
 	l.stampProgramRuns(runs)
-	l.rememberMatchedViews(ctx, runs, view)
 	l.runs = append(l.runs, runs...)
 	return runs
 }
@@ -1124,7 +1123,10 @@ func (l *ResponderLoop) diagnose(ctx context.Context, findings []sdk.Finding, st
 	}
 	runs := l.selectCandidates(ctx, view, findings, stage)
 	l.stampProgramRuns(runs)
-	l.rememberMatchedViews(ctx, runs, view)
+	// Automatic planning follows candidate filtering and a fresh diagnosis.
+	if !stage {
+		l.rememberMatchedViews(ctx, runs, view)
+	}
 	l.lastDiagnosisView = view
 	l.runs = append(l.runs, runs...)
 	if l.capturePhase != "" {
@@ -1274,6 +1276,7 @@ func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response 
 		}
 	}
 	if err := plan.Validate(); err != nil {
+		l.rememberTerminalPlanError(request.ProgramID, l.programRevision(request.ProgramID), request.Bindings, &NonExecutablePlanError{Cause: err})
 		response.Error = err.Error()
 		return
 	}

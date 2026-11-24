@@ -22,6 +22,16 @@ import (
 
 const stagePlanNotExecutable = "plan_not_executable"
 
+func automaticPlanRefused(attempt *contracts.StageMitigation) bool {
+	// Older reports recorded this reason as a skipped binding. Only a terminal
+	// refusal recorded as a failed attempt ends the stage and affects trust.
+	return attempt.GetResult() == "apply_error" && attempt.GetSkipReason() == stagePlanNotExecutable
+}
+
+func stagePlanRefused(report *contracts.StageReport) bool {
+	return slices.ContainsFunc(report.GetMitigations(), automaticPlanRefused)
+}
+
 // stageIneffective skips a match whose program revision already applied in
 // this incident for the same findings and left them open (or matching). Its
 // replacement objects, such as the Pod a restart creates, are new bindings
@@ -108,6 +118,9 @@ func (l *ResponderLoop) restoreTerminalStagePlanErrors() {
 func (*DeterministicResponseStage) Name() string { return "deterministic" }
 
 func (stage *DeterministicResponseStage) Run(ctx context.Context, state *IncidentState) (*contracts.StageReport, error) {
+	if prior := deterministicStageReport(state.PriorStages); stagePlanRefused(prior) {
+		return proto.Clone(prior).(*contracts.StageReport), nil
+	}
 	report := &contracts.StageReport{Stage: stage.Name(), StartedAt: contractTimestamp(lifecycleio.Now().UTC())}
 	// The first responder must read a page that opened the incident. Clues
 	// accompanying the page cannot substitute for its report.
@@ -177,7 +190,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 				}
 			}
 		}
-		if progress.Complete && !state.Refresh {
+		if stagePlanRefused(report) || progress.Complete && !state.Refresh {
 			stage.armRecovery(state, loop, report, progress)
 			return report, save(true)
 		}
@@ -202,18 +215,16 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}()
 			runs = loop.RefreshDiagnose(ctx)
 			fillProgramRevisionsWith(loop.gitRead(), ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
-			fresh, err := stage.reaskUnanswered(ctx, loop, state, runs)
-			if err != nil {
-				return report, err
-			}
-			runs = append(append([]ProgramRun(nil), state.Request.InitialProgramRuns...), fresh...)
 		} else {
 			runs = loop.InitialDiagnose(ctx)
 			fillProgramRevisionsWith(loop.gitRead(), ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
-			var err error
-			if runs, err = stage.reaskUnanswered(ctx, loop, state, runs); err != nil {
-				return report, err
-			}
+		}
+		var err error
+		if runs, err = stage.reaskUnanswered(ctx, loop, state, runs); err != nil {
+			return report, err
+		}
+		if state.Refresh {
+			runs = append(append([]ProgramRun(nil), state.Request.InitialProgramRuns...), runs...)
 		}
 		state.Request.InitialProgramRuns = runs
 		report.Diagnoses = mergeStageDiagnoses(report.Diagnoses, stageDiagnoses(runs))
@@ -282,12 +293,12 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			recordStageFindingProgress(attempt, match.targets, state.Findings)
 			return save(false)
 		}
-		if terminal := loop.terminalPlanError(match.PlaybookId, bindings); terminal != nil {
-			attempt.Error = terminal.Error()
-			if err := skip(stagePlanNotExecutable); err != nil {
-				return report, err
-			}
-			continue
+
+		recordRefusal := func(err error) {
+			attempt.Result = "apply_error"
+			attempt.SkipReason = stagePlanNotExecutable
+			attempt.Error = err.Error()
+			recordStageFindingProgress(attempt, match.targets, state.Findings)
 		}
 		if ineffective.covers(attempt.PlaybookId, attempt.ProgramRevision, match.targets) {
 			if err := skip(stageIneffective); err != nil {
@@ -384,7 +395,14 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 			continue
 		}
-		if escalation, ok := stageEscalation(ctx, mitigator, canMitigate, view, bindings, before, loop.deadline()); ok {
+		escalation, escalates, escalationErr := stageEscalation(ctx, mitigator, canMitigate, view, bindings, before, loop.deadline())
+		var refusal *NonExecutablePlanError
+		if match.PlaybookId != SourceRestoreID && errors.As(escalationErr, &refusal) {
+			loop.rememberTerminalPlanError(attempt.PlaybookId, attempt.ProgramRevision, bindings, refusal)
+			recordRefusal(refusal)
+			break
+		}
+		if escalates {
 			escalateStageAttempt(state, attempt, match, bindings, before, escalation)
 			progressed = true
 			if err := save(false); err != nil {
@@ -411,10 +429,14 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		if planResponse.Error != "" {
 			if terminal := loop.terminalPlanError(match.PlaybookId, bindings); terminal != nil {
 				attempt.Error = terminal.Error()
-				if err := skip(stagePlanNotExecutable); err != nil {
-					return report, err
+				if match.PlaybookId == SourceRestoreID {
+					if err := skip(stagePlanNotExecutable); err != nil {
+						return report, err
+					}
+					continue
 				}
-				continue
+				recordRefusal(terminal)
+				break
 			}
 			attempt.Result = "apply_error"
 			attempt.Error = planResponse.Error

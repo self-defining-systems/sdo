@@ -520,6 +520,9 @@ func (p *remoteProgram) execute(ctx context.Context, view program.ReadView, b pr
 	if err != nil {
 		return nil, err
 	}
+	if response.GetPlanRefused() && response.GetError() != "" {
+		return nil, &NonExecutablePlanError{Cause: errors.New(response.GetError())}
+	}
 	if response.GetError() == sdk.ErrReadReplyLimit.Error() {
 		return nil, sdk.ErrReadReplyLimit
 	}
@@ -554,7 +557,10 @@ func (p *remoteProgram) Mitigate(ctx context.Context, view program.ReadView, b p
 	for _, a := range result.Actions {
 		plan.Actions = append(plan.Actions, planActionState(a))
 	}
-	return plan, plan.Validate()
+	if err := plan.Validate(); err != nil {
+		return program.Plan{}, &NonExecutablePlanError{Cause: err}
+	}
+	return plan, nil
 }
 
 // capture retains the active host lease and any requested mirror barrier through the RPC.

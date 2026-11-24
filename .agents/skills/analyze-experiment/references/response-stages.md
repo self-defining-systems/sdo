@@ -190,3 +190,5 @@ came after the fault's onset); and recovery followed the playbook's write (the w
 second, and no bad second came more than a short settle allowance, 15 s, after the write completed). A harm that
 ended before the write, or a fault that never hurt users, is not credited to the playbook. The record's `users`
 series is indexed from `users.start`, not from inject: shift it by `users.start - inject_at`.
+
+A terminal validation refusal is an `apply_error` with `skip_reason: plan_not_executable`. The attempt records the playbook, revision and rejecting check without a write receipt for that plan. It ends automatic execution and counts one failure for that revision in the incident. Historical skipped attempts with that reason do not count as terminal failures.
