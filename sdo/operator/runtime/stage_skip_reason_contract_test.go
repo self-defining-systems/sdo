@@ -17,7 +17,7 @@ func TestStageSkipReasonsAreContractValues(t *testing.T) {
 		t.Fatalf("new validator: %v", err)
 	}
 	for _, reason := range []string{
-		stagePlanNotExecutable, stageIneffective, stageAlreadyAttempted, stageBuiltinRestoreManual, "script_unprovenanced",
+		stagePlanNotExecutable, stagePlanUnverified, stageIneffective, stageAlreadyAttempted, stageBuiltinRestoreManual, "script_unprovenanced",
 	} {
 		mitigation := &contracts.StageMitigation{PlaybookId: "p", Result: "skipped", SkipReason: reason}
 		if err := validator.Validate(mitigation); err != nil {

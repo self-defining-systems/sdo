@@ -18,7 +18,7 @@ type MemoryHostArtifact struct {
 // BuildMemoryHost is the single candidate-validation/accepted-runtime build
 // seam. It uses the same staged diagnostics, playbooks and lib as Check. It
 // returns an executable used by the opt-in controller launch path.
-func (workspace *Workspace) prepareMemoryHost() error {
+func (workspace *Workspace) prepareMemoryHost(verifiedPlanIDs []string) error {
 	if workspace == nil || workspace.Directory == "" {
 		return fmt.Errorf("workspace is required")
 	}
@@ -57,6 +57,7 @@ func main(){
  server,err:=memoryhost.NewServer(*commit,digest,generated.All());if err!=nil{log.Fatal(err)}
  programs,err:=generated.Programs();if err!=nil{log.Fatal(err)}
  server.WithPrograms(programs)
+ server.WithVerifiedPlans(%#v)
  server.WithTelemetrySources([]byte(generated.TelemetrySources))
  catalog,documents:=generated.TrafficCatalog(),generated.TrafficWorkloads
  if !*synthetic {catalog,documents=nil,nil}
@@ -73,7 +74,7 @@ func main(){
  ctx,cancel:=signal.NotifyContext(context.Background(),syscall.SIGTERM,syscall.SIGINT);defer cancel()
  if err=hostio.Serve(ctx,*socket,*capBytes,server);err!=nil{log.Fatal(err)}
 }
-`, workspace.ModulePath+"/generated")
+`, workspace.ModulePath+"/generated", verifiedPlanIDs)
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(main), 0644); err != nil {
 		return err
 	}
@@ -82,10 +83,13 @@ func main(){
 
 // BuildMemoryHost builds the same entry point selected by Check. It is not a
 // second acceptance gate: Check (repeated by the broker) is the only one, and
-// it treats authored playbook tests as informational, so building executes no
-// tests. A tree the broker accepted must activate.
+// it treats authored playbook tests as informational. The captured-plan
+// check only decides which playbooks can repair unattended.
 func (workspace *Workspace) BuildMemoryHost(ctx context.Context) (MemoryHostArtifact, error) {
-	if err := workspace.prepareMemoryHost(); err != nil {
+	if workspace == nil || workspace.Directory == "" {
+		return MemoryHostArtifact{}, fmt.Errorf("workspace is required")
+	}
+	if err := workspace.prepareMemoryHost(nil); err != nil {
 		return MemoryHostArtifact{}, err
 	}
 	path := filepath.Join(workspace.Directory, "sdo-memory-host")
@@ -93,10 +97,16 @@ func (workspace *Workspace) BuildMemoryHost(ctx context.Context) (MemoryHostArti
 	if workspace.compileOnly {
 		build = lean(build...)
 	}
-	for _, args := range [][]string{{"mod", "tidy"}, build} {
-		if err := workspace.runGo(ctx, args...); err != nil {
+	if err := workspace.runGo(ctx, "mod", "tidy"); err != nil {
+		return MemoryHostArtifact{}, err
+	}
+	if ids := workspace.verifiedPlanIDs(ctx); len(ids) > 0 {
+		if err := workspace.prepareMemoryHost(ids); err != nil {
 			return MemoryHostArtifact{}, err
 		}
+	}
+	if err := workspace.runGo(ctx, build...); err != nil {
+		return MemoryHostArtifact{}, err
 	}
 	bytes, err := os.ReadFile(path)
 	if err != nil {

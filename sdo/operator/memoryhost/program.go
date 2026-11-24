@@ -40,6 +40,12 @@ func (s *Server) WithPrograms(registry program.ProgramRegistry) *Server {
 	return s
 }
 
+// WithVerifiedPlans attaches IDs proven by the captured-plan check for this binary.
+func (s *Server) WithVerifiedPlans(ids []string) *Server {
+	s.identity.VerifiedPlanIds = append([]string(nil), ids...)
+	return s
+}
+
 // WithTelemetrySources records the accepted revision's telemetry sources file
 // (empty when there is none) so Ready carries it to the controller.
 func (s *Server) WithTelemetrySources(sources []byte) *Server {
@@ -136,7 +142,7 @@ func (s *Server) executeProgram(ctx context.Context, invocation *pb.MemoryProgra
 		if err := program.ValidateBindings(p.Spec(), bindings); err != nil {
 			return programError(err), nil
 		}
-		plan, err := mitigate(ctx, p, view, bindings)
+		plan, err := BuildProgramPlan(ctx, p, view, bindings)
 		if aborted := view.ReadAbortError(); aborted != nil {
 			err = aborted
 		}
@@ -169,7 +175,10 @@ func verdictProto(verdict program.Verdict) *pb.Verdict {
 	}
 	return out
 }
-func mitigate(ctx context.Context, p program.Mitigator, view program.ReadView, bindings program.Bindings) (*pb.Plan, error) {
+
+// BuildProgramPlan validates and encodes the actual program output at the
+// host boundary. Captured-plan validation uses this same boundary.
+func BuildProgramPlan(ctx context.Context, p program.Mitigator, view program.ReadView, bindings program.Bindings) (*pb.Plan, error) {
 	checked := &checkedView{ReadView: view}
 	// Programs that honor their context end before the transport gives up, so a
 	// slow program is a plan error and never a failed host.

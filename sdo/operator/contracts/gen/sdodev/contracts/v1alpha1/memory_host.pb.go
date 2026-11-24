@@ -187,8 +187,11 @@ type ReadyResponse struct {
 	// to memory_commit by binary_digest, so a swap rebuilds the controller's
 	// sources from exactly the accepted bindings.
 	TelemetrySources []byte `protobuf:"bytes,8,opt,name=telemetry_sources,json=telemetrySources,proto3" json:"telemetry_sources,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Mitigators whose computed plan validated on a captured positive case
+	// with this host's exact staged code. Other mitigators remain callable.
+	VerifiedPlanIds []string `protobuf:"bytes,9,rep,name=verified_plan_ids,json=verifiedPlanIds,proto3" json:"verified_plan_ids,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ReadyResponse) Reset() {
@@ -273,6 +276,13 @@ func (x *ReadyResponse) GetMitigatorIds() []string {
 func (x *ReadyResponse) GetTelemetrySources() []byte {
 	if x != nil {
 		return x.TelemetrySources
+	}
+	return nil
+}
+
+func (x *ReadyResponse) GetVerifiedPlanIds() []string {
+	if x != nil {
+		return x.VerifiedPlanIds
 	}
 	return nil
 }
@@ -1754,7 +1764,7 @@ var File_sdodev_contracts_v1alpha1_memory_host_proto protoreflect.FileDescriptor
 const file_sdodev_contracts_v1alpha1_memory_host_proto_rawDesc = "" +
 	"\n" +
 	"+sdodev/contracts/v1alpha1/memory_host.proto\x12\x19sdodev.contracts.v1alpha1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a&sdodev/contracts/v1alpha1/common.proto\x1a(sdodev/contracts/v1alpha1/messages.proto\x1a'sdodev/contracts/v1alpha1/program.proto\"\x0e\n" +
-	"\fReadyRequest\"\x96\x03\n" +
+	"\fReadyRequest\"\xc2\x03\n" +
 	"\rReadyResponse\x12#\n" +
 	"\rmemory_commit\x18\x01 \x01(\tR\fmemoryCommit\x12#\n" +
 	"\rbinary_digest\x18\x02 \x01(\tR\fbinaryDigest\x12'\n" +
@@ -1763,7 +1773,8 @@ const file_sdodev_contracts_v1alpha1_memory_host_proto_rawDesc = "" +
 	"\tdetectors\x18\x05 \x03(\v25.sdodev.contracts.v1alpha1.MemoryDetectorRegistrationR\tdetectors\x12B\n" +
 	"\bprograms\x18\x06 \x03(\v2&.sdodev.contracts.v1alpha1.ProgramSpecR\bprograms\x12#\n" +
 	"\rmitigator_ids\x18\a \x03(\tR\fmitigatorIds\x12+\n" +
-	"\x11telemetry_sources\x18\b \x01(\fR\x10telemetrySources\"k\n" +
+	"\x11telemetry_sources\x18\b \x01(\fR\x10telemetrySources\x12*\n" +
+	"\x11verified_plan_ids\x18\t \x03(\tR\x0fverifiedPlanIds\"k\n" +
 	"\x1aMemoryDetectorRegistration\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12=\n" +
 	"\rspecification\x18\x02 \x01(\v2\x17.google.protobuf.StructR\rspecification\"\x8b\x02\n" +

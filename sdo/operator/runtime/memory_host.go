@@ -109,8 +109,18 @@ func NewRemoteMemory(ready *pb.ReadyResponse, rpc MirroredMemoryRPC) (*RemoteMem
 	}
 	var err error
 	registry, err := program.NewRegistry(ds, ms)
-	r.Programs = &remoteProgramRegistry{ProgramRegistry: registry}
-	return r, err
+	if err != nil {
+		return nil, err
+	}
+	verified := map[string]bool{}
+	for _, id := range ready.GetVerifiedPlanIds() {
+		if _, ok := registry.Mitigator(id); !ok {
+			return nil, fmt.Errorf("verified plan %q has no registered mitigator", id)
+		}
+		verified[id] = true
+	}
+	r.Programs = &remoteProgramRegistry{ProgramRegistry: registry, verifiedPlans: verified}
+	return r, nil
 }
 
 // ReadState asks the host to run one app-state reader. The failure of the call
@@ -200,7 +210,19 @@ func appStateReaderClue(spec sdk.DetectorSpec, view sdk.DetectionContext) []sdk.
 	}}
 }
 
-type remoteProgramRegistry struct{ program.ProgramRegistry }
+type remoteProgramRegistry struct {
+	program.ProgramRegistry
+	verifiedPlans map[string]bool
+}
+
+func (r *remoteProgramRegistry) allowsAutomaticPlan(id string) bool { return r.verifiedPlans[id] }
+
+// In-process registries contain operator-supplied programs. Repository-authored
+// programs are served by the accepted host, whose Ready includes its replay proof.
+func allowsAutomaticPlan(registry program.ProgramRegistry, id string) bool {
+	authority, ok := registry.(interface{ allowsAutomaticPlan(string) bool })
+	return !ok || authority.allowsAutomaticPlan(id)
+}
 
 type remoteDetector struct {
 	memoryhost.Registration

@@ -95,12 +95,39 @@ func (s *run) compile(ctx context.Context) error {
 		if s.req.MitigationReplayNotes != nil {
 			*s.req.MitigationReplayNotes = append(*s.req.MitigationReplayNotes, notes...)
 		}
+		plans, planErr := workspace.CapturedPlanResults()
+		if planErr != nil {
+			s.req.noteGaps(Diagnostic{Rule: RuleCapturedPlan, Path: layout.PlaybooksDir, Message: "unattended plan validation unavailable: " + planErr.Error()})
+		}
+		for _, plan := range plans {
+			note := Diagnostic{Rule: RuleCapturedPlan, Path: layout.PlaybookDir(plan.ProgramID)}
+			switch {
+			case plan.Problem == "":
+				note.Message = "unattended plan verified on case " + plan.CaseID
+			case plan.CaseID == "":
+				note.Message = "unattended plan unverified: " + plan.Problem
+				note.Hint = "use create_corpus to save a positive case with the opening snapshot, actual opening read replies and case bindings"
+			default:
+				note.Message = "unattended plan unverified on case " + plan.CaseID + ": " + plan.Problem
+				note.Hint = "for an unrecorded call, save a new case with the exact method, arguments and observed opening reply, or use observations already in the capture"
+			}
+			s.req.noteGaps(note)
+		}
 		gaps, gapErr := workspace.CoverageGaps()
 		if gapErr != nil {
 			s.req.noteGaps(Diagnostic{Rule: RuleReplayObservation, Message: "replay unverified: " + gapErr.Error()})
 		}
 		for _, gap := range gaps {
-			s.req.noteGaps(Diagnostic{Rule: RuleReplayObservation, Path: layout.PlaybooksDir, Message: gap})
+			note := Diagnostic{Rule: RuleReplayObservation, Path: layout.PlaybooksDir, Message: gap}
+			// Incident-plan notes include the exact opening phase and any
+			// missing primitive call. Surface them under the affected playbook.
+			if rest, ok := strings.CutPrefix(gap, "program "); ok {
+				if id, _, found := strings.Cut(rest, " is not verified on its own incident ("); found && layout.ValidPlaybookID(id) {
+					note.Rule, note.Path = RuleCapturedPlan, layout.PlaybookDir(id)
+					note.Hint = "record any missing call's exact method, arguments and observed opening reply in the positive case"
+				}
+			}
+			s.req.noteGaps(note)
 		}
 		verdicts, verdictErr := workspace.OwnIncidentResults()
 		if verdictErr != nil {

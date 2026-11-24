@@ -132,7 +132,7 @@ func (workspace *Workspace) acceptance(ctx context.Context, classifyGenerated bo
 	if workspace != nil && workspace.compileOnly {
 		return errors.New("unvalidated adoption workspace cannot run the acceptance checker")
 	}
-	if err := workspace.prepareMemoryHost(); err != nil {
+	if err := workspace.prepareMemoryHost(nil); err != nil {
 		return err
 	}
 	_, err := workspace.validate(ctx, true, classifyGenerated)

@@ -225,7 +225,13 @@ func (h *harness) newHost(rev planRevision) *simActivationHost {
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	server.WithPrograms(programs)
+	var verified []string
+	for _, spec := range programs.List() {
+		// These fixture programs stand in for a revision that passed a
+		// capture. The schedules exercise failures on its later live inputs.
+		verified = append(verified, spec.ID)
+	}
+	server.WithPrograms(programs).WithVerifiedPlans(verified)
 	rpc, stop := memoryTestRPC(h.t, server)
 	return &simActivationHost{testMemoryRPC: rpc, stop: stop}
 }

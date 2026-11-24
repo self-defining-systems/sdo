@@ -101,6 +101,11 @@ func TestWorkedExamplesPassTheReflectionMemoryCheck(t *testing.T) {
 	if len(ds) != 0 {
 		t.Fatalf("worked examples fail the reflection memory check: %+v", ds)
 	}
+	if !slices.ContainsFunc(gaps, func(note Diagnostic) bool {
+		return note.Rule == RuleCapturedPlan && strings.HasPrefix(note.Message, "unattended plan verified on case ")
+	}) {
+		t.Errorf("shared memory check verified no worked example's captured plan: %+v", gaps)
+	}
 	for _, id := range ids {
 		if !slices.ContainsFunc(notes, func(n sdktest.MitigationReplayResult) bool {
 			return n.ProgramID == id && slices.Contains(n.Effects, "open diagnosis: Match") && slices.Contains(n.Effects, "healthy diagnosis: NoMatch")

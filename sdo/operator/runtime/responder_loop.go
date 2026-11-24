@@ -109,7 +109,8 @@ type VerificationStatus string
 const VerificationAwaitingResponderCompletion VerificationStatus = "awaiting_responder_completion"
 
 type ToolResponse struct {
-	Text string `json:"text,omitempty"`
+	automaticPlanUnverified bool
+	Text                    string `json:"text,omitempty"`
 	// Data is a structured answer (`map` with Structured), never prose in JSON.
 	Data                json.RawMessage     `json:"data,omitempty"`
 	Burst               *prober.BurstResult `json:"burst,omitempty"`
@@ -1242,6 +1243,11 @@ func (l *ResponderLoop) plan(ctx context.Context, request ToolRequest, response 
 	mitigator, ok := l.Programs.Mitigator(request.ProgramID)
 	if !ok {
 		response.Error = fmt.Sprintf("program %q has no mitigator", request.ProgramID)
+		return
+	}
+	if request.stage && !allowsAutomaticPlan(l.Programs, request.ProgramID) {
+		response.Error = "this playbook revision needs a verified captured plan"
+		response.automaticPlanUnverified = true
 		return
 	}
 	if err := program.ValidateBindings(mitigator.Spec(), request.Bindings); err != nil {

@@ -28,11 +28,8 @@ Work in the proposal checkout, in this order. Open other files only when a step 
    `originating_incident: <incident id>`, `description: <one line>`. The README holds only judgement and
    ordering: when to use it, what first, what to check after. SDO adds `fault_class` and the index entry.
 <!-- replay:on -->
-5. **Label one corpus case** per new program (rules below): `create_corpus` copies the controller's captures
-   (pass `observations` only when none exist, with `repair_receipt_ids`) and writes it in one call. Each program should Match its fault
-   capture and NoMatch healthy: decide from what the capture holds (snapshot objects, `pod_admission`, reads
-   `recordings_index` lists); a read the capture lacks replays as Unknown, so keep uncaptured live-only reads
-   in Mitigate, as `webhook-ca-sync` does.
+5. **Save one positive case** per new program with `create_corpus` and its `repair_receipt_ids`.
+   Run `sdo-operator memory test <id>` for [unattended plan evidence](references/rules.md#corpus-evidence).
 <!-- /replay:on -->
 6. **Check**: `check_memory` with `learning_decision: updated`, `proposed_artifact_ids` = the changed
    playbook IDs, and a summary. Fix each blocking diagnostic as its hint says; follow `next`. A healthy-replay
@@ -81,9 +78,7 @@ A case is `.sdo/corpus/<case-id>/`. Use a new ID; never edit or delete an accept
   `reflection.program-required` hint prints the exact entry otherwise).
 - `open.json`, `fixed.json`, `healthy.json` snapshots, and `accepted.json` when Mitigate reads source.
   Omit `open.json` or `healthy.json` when identical to `fixed.json`; the loader uses that file.
-  Missing captures never block saving; replay results are information. Diagnose replays recorded phase
-  reads, including source comparisons, webhooks, database catalogs and pod admission; an unrecorded read
-  is Unknown and names the call. Use its open capture (repair reads are in pre-apply); never invent replies.
+  Use opening or pre-apply observations. Preserve exact read arguments and actual observed replies.
 
 <!-- /replay:on -->
 ## More detail, only when needed

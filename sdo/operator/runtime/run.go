@@ -910,7 +910,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		activation = &memoryActivation{manager: hostManager, active: launchConfig.GetControllerRevision(), results: make(chan memoryCandidate, 1), notify: make(chan struct{}, 1)}
 		activation.build = func(buildCtx context.Context, commit string) memoryCandidate {
 			started := clock.Now()
-			workspace, artifact, err := builder.BuildAcceptedMemoryHost(buildCtx, builder.Config{ApplicationRoot: resolvedRoot, OperatorRoot: operatorRoot}, commit)
+			workspace, artifact, err := builder.BuildAcceptedMemoryHost(buildCtx, builder.Config{Replay: replayMode, ApplicationRoot: resolvedRoot, OperatorRoot: operatorRoot}, commit)
 			if err != nil {
 				return memoryCandidate{commit: commit, err: err}
 			}

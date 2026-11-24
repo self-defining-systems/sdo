@@ -129,6 +129,10 @@ func withSourceRestore(inner program.ProgramRegistry, evidence *sourceRestoreEvi
 	return sourceRestoreRegistry{ProgramRegistry: inner, restore: sourceRestoreProgram{evidence: evidence}}
 }
 
+func (r sourceRestoreRegistry) allowsAutomaticPlan(id string) bool {
+	return id == SourceRestoreID || allowsAutomaticPlan(r.ProgramRegistry, id)
+}
+
 func (r sourceRestoreRegistry) List() []program.ProgramSpec {
 	var specs []program.ProgramSpec
 	if r.ProgramRegistry != nil {

@@ -92,6 +92,14 @@ relation-derived Env and digest-to-receipt linkage; README text holds only judge
 <!-- replay:on -->
 ## Corpus evidence
 
+- **Captured plan**: to run unattended, an accepted playbook revision must Match a positive case and build a
+  nonempty valid plan from its opening state. The same check reports `program.captured-plan` in
+  `sdo-operator memory check` and `sdo-operator memory test <id>`. If it names an unrecorded call, use
+  `recordings_index` to find available reads. Use `create_corpus` with `observations` to save the exact method,
+  arguments and observed opening reply in a new positive case, or use reads already in the capture. Missing
+  evidence leaves the playbook available to the responder and the deterministic stage reports `plan_unverified`.
+  Enforced by: `program.captured-plan`.
+
 - Build replay fixtures from recorded session observations when available. Missing or inconclusive replay
   is recorded with its reason and never rejects publication; retain RunScript receipt linkage. Enforced by: `program.mitigation-not-repaired`.
 - Preserve every accepted case exactly as it appears at the accepted base commit, including snapshots, recordings,

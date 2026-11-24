@@ -454,6 +454,50 @@ func TestProgramCorpus(t *testing.T){
 	return test.String()
 }
 
+// CapturedPlanTests generates the same bounded replay for the shared memory
+// check and the accepted host build. The report belongs to this workspace.
+func CapturedPlanTests(programs []Spec) string {
+	var rows strings.Builder
+	for _, item := range programs {
+		if item.Mitigator == "" {
+			continue
+		}
+		fmt.Fprintf(&rows, " check(%q, %#v)\n", item.ID, item.Cases)
+	}
+	if rows.Len() == 0 {
+		return ""
+	}
+	return `package generated
+import("context";"encoding/json";"os";"path/filepath";"testing";"sdo.dev/operator/runtime/replay")
+func TestCapturedPlans(t *testing.T) {
+ registry, err := Programs()
+ if err != nil { t.Fatal(err) }
+ type result struct { ProgramID, CaseID, Problem string }
+ var results []result
+ check := func(id string, cases []string) {
+  if len(cases) == 0 {
+   results = append(results, result{ProgramID:id, Problem:"no positive captured case"})
+   return
+  }
+  p, _ := registry.Diagnoser(id)
+  m, _ := registry.Mitigator(id)
+  for _, caseID := range cases {
+   row := result{ProgramID:id, CaseID:caseID}
+   c, err := replay.LoadRepairCase(filepath.Join("..","corpus",caseID))
+   if err == nil { err = replay.ValidateCapturedPlan(context.Background(), p, m, c) }
+   if err != nil { row.Problem = err.Error() }
+   results = append(results,row)
+   if err == nil { break }
+  }
+ }
+` + rows.String() + `
+ data, err := json.Marshal(results)
+ if err != nil { t.Fatal(err) }
+ if err := os.WriteFile("captured-plans.json",data,0600); err != nil { t.Fatal(err) }
+}
+`
+}
+
 // IncidentPlanTests is the generated test that runs each program's Mitigate on the incident's captured open state
 // (testdata/incident-open) and fails when the plan is one the host refuses to apply. A program whose plan could not
 // be built there is written to incident-plan-gaps.json, which the check shows as a coverage note.

@@ -6,14 +6,17 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"sdo.dev/operator/builder/internal/buildio"
 )
 
-// corpusTest is the generated program-corpus replay. It is informational: its
-// failures never reject a workspace, every other generated test does.
-const corpusTest = "TestProgramCorpus"
+// These replay tests report evidence without blocking memory publication.
+const (
+	corpusTest        = "TestProgramCorpus"
+	capturedPlansTest = "TestCapturedPlans"
+)
 
 // healthyBaselineTestName is the generated healthy-baseline replay. It runs as its
 // own stage after every other generated test passed, so its violations never
@@ -22,7 +25,7 @@ const corpusTest = "TestProgramCorpus"
 const healthyBaselineTestName = "TestLearnedDetectorsStayQuietOnHealthyBaseline"
 
 // separateStages are the generated tests the main generated stage skips.
-const separateStages = "^(" + corpusTest + "|" + healthyBaselineTestName + ")$"
+const separateStages = "^(" + corpusTest + "|" + capturedPlansTest + "|" + healthyBaselineTestName + ")$"
 
 // IsHealthyBaselineStage reports whether a rejected stage is the healthy-baseline
 // replay alone, so its output holds only that test's violations.
@@ -40,14 +43,20 @@ func (workspace *Workspace) runHealthyBaseline(ctx context.Context) error {
 }
 
 // runGeneratedTests links the generated test binary once and classifies its
-// result per test. A failing corpus replay becomes an advisory note; any other
+// result per test. A failing replay becomes an advisory note; any other
 // failing test, or a result that cannot be attributed to individual tests
 // (build error, panic, timeout), rejects through the plain acceptance stage so
 // its diagnostics keep their usual shape.
 func (workspace *Workspace) runGeneratedTests(ctx context.Context) error {
 	workspace.generatedClassified = true
 	workspace.corpusAdvisory = ""
-	err := workspace.runGo(ctx, "test", "-json", "-timeout=30s", "-skip", "^"+healthyBaselineTestName+"$", "./generated")
+	args := []string{"test", "-json", "-timeout=30s", "-skip", "^" + healthyBaselineTestName + "$"}
+	if _, err := os.Stat(filepath.Join(workspace.Directory, "generated", "captured_plans_test.go")); err == nil {
+		// The check consumes a workspace-local report, which a cached test does
+		// not rewrite.
+		args = append(args, "-count=1")
+	}
+	err := workspace.runGo(ctx, append(args, "./generated")...)
 	var stage *buildio.StageError
 	if err == nil || !errors.As(err, &stage) {
 		return err
@@ -115,7 +124,7 @@ func classifyGeneratedRun(output string) (string, generatedVerdict) {
 		return plain, generatedUnclassified
 	}
 	for name := range failed {
-		if name != corpusTest && !strings.HasPrefix(name, corpusTest+"/") {
+		if name != capturedPlansTest && name != corpusTest && !strings.HasPrefix(name, corpusTest+"/") {
 			return plain, generatedRejected
 		}
 	}

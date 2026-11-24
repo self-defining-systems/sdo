@@ -83,6 +83,11 @@ func stagePrograms(ctx context.Context, config Config, workspace, module string)
 	if config.Replay == "off" {
 		return os.Remove(filepath.Join(workspace, "generated", "programs_test.go"))
 	}
+	if source := programvalidation.CapturedPlanTests(programs); source != "" {
+		if err := os.WriteFile(filepath.Join(workspace, "generated", "captured_plans_test.go"), []byte(source), 0o644); err != nil {
+			return err
+		}
+	}
 	if err := generateIncidentPlanTest(config.IncidentCapture, workspace, programs); err != nil {
 		return err
 	}

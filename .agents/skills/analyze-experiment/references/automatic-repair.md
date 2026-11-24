@@ -89,6 +89,10 @@ class without treating missing observations as success or bypassing watched UID/
 
 `reverted_ineffective` (HALF1) is an applied attempt of the current run that cleared none of its target findings while a fresh diagnosis of the same program/binding still matched; the stage restored its writes from the executor's preimages (receipt `rolled_back=true`, a stage `rollback` tool call) before handoff, so the responder starts from the original fault. Other applied attempts that left findings open stay `applied_still_matching` with `kept_reason`: `partial` (cleared a finding or its own diagnosis), `irreversible` (delete, exec, script, external call, webhook CA sync or restart; never undone), or `rollback_failed` (`apply_receipt.rollback_error`). `touched_objects` lists what each attempt wrote. A reverted attempt counts toward `ineffective` skips, is not progress for a later pass, and reflection marks its playbook stale. Runs before HALF1 left such writes in place.
 
+`plan_unverified` means the accepted memory host has no positive captured case on which this revision both
+matches and builds a valid plan. The playbook remains available to the responder. Read `program.captured-plan`
+in the shared memory check to find case or observation gaps. Live outcome counters are independent of this check.
+
 `plan_not_executable` is a typed terminal skip for a structurally invalid learned plan (including an empty plan or incompatible raw patch/list edits). The common plan builder returns `NonExecutablePlanError`; failures bind to the program revision and complete object/scalar assignment, and the durable stage report restores that binding's decision across refresh and restart. Other bindings remain eligible. Older builds cached by program/revision and could skip a real webhook after a phantom binding failed. No writes are attempted for the refused binding. Observation, timeout and execution errors remain retryable. This is runtime handling, never a replay publication gate.
 
 Before structural validation, learned `SyncWebhookCA` plans can fill missing Secret reference fields from

@@ -22,6 +22,7 @@ import (
 )
 
 const stagePlanNotExecutable = "plan_not_executable"
+const stagePlanUnverified = "plan_unverified"
 
 // stageIneffective skips a match whose program revision already applied in
 // this incident for the same findings and left them open (or matching). Its
@@ -352,6 +353,12 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		// A Diagnose-only playbook still runs: an out-of-reach diagnosis
 		// escalates without a mitigation.
 		mitigator, canMitigate := loop.Programs.Mitigator(match.PlaybookId)
+		if canMitigate && !allowsAutomaticPlan(loop.Programs, match.PlaybookId) {
+			if err := skip(stagePlanUnverified); err != nil {
+				return report, err
+			}
+			continue
+		}
 		diagnoser, ok := loop.Programs.Diagnoser(match.PlaybookId)
 		if !ok {
 			if err := skip("diagnose_unavailable"); err != nil {
@@ -433,6 +440,12 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			return report, err
 		}
 		if planResponse.Error != "" {
+			if planResponse.automaticPlanUnverified {
+				if err := skip(stagePlanUnverified); err != nil {
+					return report, err
+				}
+				continue
+			}
 			if terminal := loop.terminalPlanError(match.PlaybookId, bindings); terminal != nil {
 				attempt.Error = terminal.Error()
 				if err := skip(stagePlanNotExecutable); err != nil {

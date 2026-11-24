@@ -63,6 +63,10 @@ type workingProgramRegistry struct {
 	revisions map[string]string
 }
 
+func (r *workingProgramRegistry) allowsAutomaticPlan(id string) bool {
+	return r.overrides[id] == nil && allowsAutomaticPlan(r.accepted, id)
+}
+
 func (r *workingProgramRegistry) List() []program.ProgramSpec {
 	specs := map[string]program.ProgramSpec{}
 	if r.accepted != nil {

@@ -152,6 +152,7 @@ const (
 
 	// Informational replay evidence, never an acceptance diagnostic.
 	RuleReplayObservation = "program.replay-observation"
+	RuleCapturedPlan      = "program.captured-plan"
 	// Informational traffic coverage: a health-probe scenario that keeps the
 	// default latency bound. Never an acceptance diagnostic.
 	RuleTrafficDefaultLatency = "traffic.default-latency"

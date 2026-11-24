@@ -39,6 +39,9 @@ message ReadyResponse {
   // to memory_commit by binary_digest, so a swap rebuilds the controller's
   // sources from exactly the accepted bindings.
   bytes telemetry_sources = 8;
+  // Mitigators whose computed plan validated on a captured positive case
+  // with this host's exact staged code. Other mitigators remain callable.
+  repeated string verified_plan_ids = 9;
 }
 
 message MemoryDetectorRegistration {

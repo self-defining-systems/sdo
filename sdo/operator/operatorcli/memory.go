@@ -89,7 +89,8 @@ commands:
         "memory check", reduced to the playbook's own replay lines and whether anything
         blocks. A playbook new in this change also shows its verdict on the incident it was written for:
         "diagnose on incident: match", "failed" (Diagnose returned NoMatch there: blocks) or "unverified"
-        (the capture cannot say: does not block). At most about 1 KB.
+        (the capture cannot say: does not block).
+        Captured-plan lines show unattended eligibility and any missing opening reads.
         Each case line also gives how long every action took when it was recorded ("action 0 apply
         219.8s"): a Mitigate runs while users fail, so a slow one is a defect to rewrite.
   ls [--root .] [--kind goal|architecture|playbook|script|detector] [--json]
@@ -651,6 +652,14 @@ func memoryTest(ctx context.Context, args []string, getenv func(string) string, 
 	fmt.Fprintf(stdout, "  checked %s\n", checkedLabel(checked))
 	for _, line := range ownIncidentLines(checked, id) {
 		fmt.Fprintln(stdout, line)
+	}
+	for _, note := range checked.GetCoverageGaps() {
+		if note.GetRule() == validate.RuleCapturedPlan && note.GetPath() == layout.PlaybookDir(id) {
+			fmt.Fprintf(stdout, "  %s\n", note.GetMessage())
+			if note.GetHint() != "" {
+				fmt.Fprintf(stdout, "  %s\n", note.GetHint())
+			}
+		}
 	}
 	replayed := 0
 	for _, note := range checked.GetMitigationReplayNotes() {
