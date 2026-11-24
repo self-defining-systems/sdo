@@ -877,6 +877,11 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 		// probe decides. A step that never ran shows as dead and is followed by a recover step.
 		m.logf("lane %s: start %s: %v (the probe decides whether it runs)", l.Lane, s.ID, err)
 	}
+	// A replacement may finish before the next sample, so drop the old baseline at launch.
+	if replacesPreparation(s.Kind) {
+		delete(m.crashTrack, l.Lane)
+		delete(m.crash, l.Lane)
+	}
 	l.Step = &StepRef{ID: s.ID, Kind: s.Kind, DeleteCluster: s.DeleteCluster, Started: m.now().UTC(), Run: s.Run, Bound: Seconds(stepBound(s.Kind, limitSpec).Seconds())}
 	if s.Run != nil {
 		l.Step.RunID = s.Run.ID

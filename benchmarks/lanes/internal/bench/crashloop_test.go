@@ -84,10 +84,34 @@ func TestCrashLoopingLaneGetsNoNewSteps(t *testing.T) {
 		return n
 	}
 	pass(0)
-	if reads != 1 || m.crashBlock("c1") != "" {
-		t.Fatalf("one bounded read per lane per tick: reads=%d block=%q", reads, m.crashBlock("c1"))
-	}
 	pods["c1"] = map[string]int64{"ns/a/c": 12}
+	pass(time.Minute)
+	lane := m.lanes["c1"]
+	lane.State = LaneReady
+	lane.Prepared = &Prepared{Ready: true, WorkloadRev: "abc"}
+	if err := writeJSON(root.LanePath("c1"), lane); err != nil {
+		t.Fatal(err)
+	}
+	pods["c1"] = map[string]int64{"ns/a/c": 24}
+	pass(time.Minute)
+	if why := m.crashBlock("c1"); why != "" || alarms() != 0 || reads != 1 {
+		t.Fatalf("first ready sample baselines bring-up restarts: block=%q alarms=%d reads=%d", why, alarms(), reads)
+	}
+	// A replacement can start and finish between ticks. The next ready sample starts a new baseline.
+	lane = m.lanes["c1"]
+	if !m.start(context.Background(), lane, Step{Kind: StepBuild}) {
+		t.Fatal("bring-up restarts must not hold back a replacement build")
+	}
+	lane.Step = nil
+	if err := writeJSON(root.LanePath("c1"), lane); err != nil {
+		t.Fatal(err)
+	}
+	pods["c1"] = map[string]int64{"ns/replacement/c": 12}
+	pass(time.Minute)
+	if why := m.crashBlock("c1"); why != "" || alarms() != 0 {
+		t.Fatalf("replacement bring-up restarts must not count: block=%q alarms=%d", why, alarms())
+	}
+	pods["c1"] = map[string]int64{"ns/replacement/c": 24}
 	pass(time.Minute)
 	why := m.crashBlock("c1")
 	if !strings.Contains(why, "crash-looping") || !strings.Contains(why, "12") {

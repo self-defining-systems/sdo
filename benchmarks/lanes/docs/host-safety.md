@@ -39,13 +39,13 @@ of a step that died, counts but is never held back: what a dead step left must b
 ## Crash-loop detector
 
 Pods killed at their memory limit restart again and again, and every restart creates a container and a network
-namespace. Once per tick the manager makes one bounded read per lane with a cluster (`kubectl get pods -A -o json`,
+namespace. Once per tick the manager makes one bounded read per lane whose preparation passed its check (`kubectl get pods -A -o json`,
 15s, over the host's transport). A lane whose containers restarted more than `crashloop.restarts` times (default 10)
 within `crashloop.window` (default 10m) is crash-looping: it gets no new build or run (the reason is its idle reason in
 `lanes status`) and the alarm `lane-crash-looping` fires once. Nothing is killed; release, recover and reset still run.
-Restarts are summed between consecutive readings, so history before the first reading, a deleted and recreated pod and
-a pod that merely exists with old restarts do not count. A failed read is no reading: it neither marks nor clears the
-lane. The lane is released as the restarts age out of the window. Tests: `TestCrashTrackerCountsRestartsInTheWindowOnly`,
+The first reading after preparation is the baseline, so bring-up restarts do not count. Builds and releases discard
+the previous baseline. Later readings count increases and restarts of newly observed containers during the window.
+A failed read neither marks nor clears the lane. The lane is released as the restarts age out of the window. Tests: `TestCrashTrackerCountsRestartsInTheWindowOnly`,
 `TestCrashLoopingLaneGetsNoNewSteps`.
 
 ```yaml
