@@ -340,61 +340,59 @@ func (s revisionPlanSource) Revision(ctx context.Context, ref sdk.ObjectRef, rev
 	return s.AcceptedManifest(ctx, revision, ref)
 }
 
-func TestReconcileFromSourceRepairsOnlyDriftAndSkipsASecondWrite(t *testing.T) {
+func TestSourceRestoreUsesAcceptedRevisionAndReplacesDeclaredLists(t *testing.T) {
 	const pinned = "registry.invalid/app@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	ctx := context.Background()
-	set := syntheticSet(pinned, func(set *appsv1.StatefulSet) {
-		set.Spec.Template.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{{Name: "data", MountPath: "/data"}}
-	})
-	set.Status = appsv1.StatefulSetStatus{}
-	manifest, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(set)
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := &unstructured.Unstructured{Object: manifest}
-	container := source.Object["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)
-	container["volumeMounts"].([]any)[0].(map[string]any)["readOnly"] = false
-	set.Spec.Template.Spec.Containers[0].TerminationMessagePath = "/dev/termination-log"
-	client := fake.NewSimpleClientset(set)
 	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "StatefulSet", Namespace: "app", Name: "store"}
-	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
-	raw := source.DeepCopy()
-	raw.Object["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["image"] = "registry.invalid/app:release"
-	executor := PlanExecutor{Client: TypedPlanClient{Client: client}, Source: revisionPlanSource{"deployed": source, "accepted": raw},
-		Rollouts: recordedRollouts{new([]sdk.ObjectRef)}, Verifier: passingVerifier{}, Now: func() time.Time { return now }, deferConvergence: true}
-	incident := IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions", SourceCommit: "accepted", DeployedCommit: "deployed"}
-	plan := program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: ref}}}
-	apply := func(expectedWrites int) {
+	accepted := syntheticSet(pinned, func(set *appsv1.StatefulSet) {
+		set.Spec.Template.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{{Name: "data", MountPath: "/data"}}
+		set.Spec.Template.Spec.Volumes = []corev1.Volume{{Name: "data"}}
+	})
+	document := func(set *appsv1.StatefulSet) *unstructured.Unstructured {
 		t.Helper()
-		client.ClearActions()
-		result, err := executor.Apply(ctx, incident, plan, false)
+		object, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(set)
 		if err != nil {
 			t.Fatal(err)
 		}
-		writes := 0
-		for _, action := range client.Actions() {
-			if action.GetVerb() == "patch" {
-				writes++
+		return &unstructured.Unstructured{Object: object}
+	}
+	obsolete := accepted.DeepCopy()
+	obsolete.Spec.Template.Spec.Containers[0].Image = "registry.invalid/app:obsolete"
+	obsolete.Spec.Template.Spec.Containers[0].Env = []corev1.EnvVar{{Name: "VERSION", Value: "obsolete"}}
+	for _, scenario := range []struct {
+		name            string
+		staleDeployment bool
+		drift           func(*corev1.PodSpec)
+	}{
+		{"obsolete deployment revision", true, func(*corev1.PodSpec) {}},
+		{"injected command without a record", false, func(spec *corev1.PodSpec) {
+			spec.Containers[0].Command = []string{"injected"}
+			spec.Containers[0].VolumeMounts[0].MountPath = "/wrong"
+		}},
+		{"undeclared mount flag without a record", false, func(spec *corev1.PodSpec) {
+			spec.Containers[0].VolumeMounts[0].ReadOnly = true
+		}},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			live := accepted.DeepCopy()
+			scenario.drift(&live.Spec.Template.Spec)
+			incident := IncidentRequest{Namespace: ref.Namespace, SourceCommit: "accepted"}
+			if scenario.staleDeployment {
+				incident.DeployedCommit = "obsolete"
 			}
-		}
-		if writes != expectedWrites || result.Applied != (writes != 0) {
-			t.Fatalf("writes = %d, result applied = %v, want %d writes", writes, result.Applied, expectedWrites)
-		}
+			executor := PlanExecutor{Source: revisionPlanSource{"accepted": document(accepted), "obsolete": document(obsolete)}}
+			next, err := executor.prepareAction(context.Background(), incident, program.ReconcileFromSource{Ref: ref}, document(live))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result appsv1.StatefulSet
+			if err := kruntime.DefaultUnstructuredConverter.FromUnstructured(next.Object, &result); err != nil {
+				t.Fatal(err)
+			}
+			got := result.Spec.Template.Spec.Containers[0]
+			if got.Image != pinned || len(got.Env) != 0 || len(got.Command) != 0 ||
+				!slices.Equal(got.VolumeMounts, accepted.Spec.Template.Spec.Containers[0].VolumeMounts) {
+				t.Fatalf("restore left incorrect container fields: %+v", got)
+			}
+		})
 	}
-	apply(0)
-	drift := set.DeepCopy()
-	drift.Spec.Template.Spec.Containers[0].VolumeMounts[0].MountPath = "/wrong"
-	if _, err := client.AppsV1().StatefulSets("app").Update(ctx, drift, metav1.UpdateOptions{}); err != nil {
-		t.Fatal(err)
-	}
-	apply(1)
-	repaired, err := client.AppsV1().StatefulSets("app").Get(ctx, "store", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := repaired.Spec.Template.Spec.Containers[0]; got.Image != pinned ||
-		got.TerminationMessagePath != "/dev/termination-log" || !slices.Equal(got.VolumeMounts, set.Spec.Template.Spec.Containers[0].VolumeMounts) {
-		t.Fatalf("repair changed more than the drift: %+v", got)
-	}
-	apply(0)
 }

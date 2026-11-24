@@ -109,7 +109,7 @@ func (e PlanExecutor) observeSourceResiduals(ctx context.Context, incident Incid
 			return false
 		}
 		ref, _ := planActionRef(action)
-		return written[ref] && result.ActionReports[index].Status != "unchanged"
+		return written[ref]
 	}
 	unread := 0
 	for index, action := range result.Plan.Actions {
@@ -154,7 +154,7 @@ func (e PlanExecutor) observeSourceResiduals(ctx context.Context, incident Incid
 			}
 			report.ObservationError = "direct object readback unavailable or identity changed"
 		} else {
-			source, sourceErr := acceptedIncidentManifest(readCtx, e.Source, restoreSourceRevision(incident), incident.Namespace, ref)
+			source, sourceErr := acceptedIncidentManifest(readCtx, e.Source, incident.SourceCommit, incident.Namespace, ref)
 			if sourceErr != nil || source == nil || !samePlanRef(source, ref) {
 				report.ObservationError = "accepted source unavailable for readback comparison"
 			} else {
@@ -357,35 +357,6 @@ func (e PlanExecutor) waitSourceConvergence(waitCtx, readCtx context.Context, in
 		select {
 		case <-waitCtx.Done():
 		case <-lifecycleio.After(100 * time.Millisecond):
-		}
-	}
-}
-
-// A source-declared container list controls membership and order. Match the
-// entries by name so replacing one declared field preserves the current
-// server-defaulted and admission-provided fields of the same container.
-func preserveWorkloadContainerFields(source, live *unstructured.Unstructured) {
-	declared, err := rendered.PodSpec(source.Object)
-	if err != nil {
-		return
-	}
-	observed, err := rendered.PodSpec(live.Object)
-	if err != nil {
-		return
-	}
-	for _, field := range rendered.ContainerFields {
-		items, _ := declared[field].([]any)
-		current, _ := observed[field].([]any)
-		for i, item := range items {
-			container, _ := item.(map[string]any)
-			name, _ := container["name"].(string)
-			for _, other := range current {
-				liveContainer, _ := other.(map[string]any)
-				if name != "" && liveContainer["name"] == name {
-					items[i] = restoreDeclaredValue(runtime.DeepCopyJSON(liveContainer), container)
-					break
-				}
-			}
 		}
 	}
 }

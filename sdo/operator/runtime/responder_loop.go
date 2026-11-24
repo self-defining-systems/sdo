@@ -810,7 +810,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			// accepted source itself is still shown.
 			l.recordSourceComparisons(ctx, l.capturePhase, *request.Ref)
 		}
-		object, err := acceptedIncidentManifest(ctx, l.Executor.Source, restoreSourceRevision(l.Request), l.Request.Namespace, *request.Ref)
+		object, err := acceptedIncidentManifest(ctx, l.Executor.Source, l.Request.SourceCommit, l.Request.Namespace, *request.Ref)
 		if errors.Is(err, ErrAcceptedManifestAbsent) {
 			response.Summary = "resource is absent from accepted source"
 			break

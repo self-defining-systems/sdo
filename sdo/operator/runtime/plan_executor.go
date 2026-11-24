@@ -231,9 +231,6 @@ func (e PlanExecutor) Apply(ctx context.Context, incident IncidentRequest, plan 
 		var objectWrites []PlanPatch
 		var refs []sdk.ObjectRef
 		for _, patch := range result.Patches {
-			if patch.Operation == "no-op" {
-				continue
-			}
 			if patch.After != nil || patch.Operation == "delete" {
 				objectWrites = append(objectWrites, patch)
 			}
@@ -374,19 +371,13 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 		if patchErr != nil {
 			return result, patchErr
 		}
-		var operation string
-		if isSourceReconcile(action) && planValuesEqual(current[ref].Object, next.Object) {
-			operation = "no-op"
-		}
-		result.Patches = append(result.Patches, PlanPatch{Operation: operation, Authorization: planAuthorizationMode(action), Irreversible: isAdmissionRetry(action), Ref: ref, Patch: patch, Before: current[ref].DeepCopy(), After: next.DeepCopy(), Structured: structuredPlanRef(plan, ref), SourceCommit: incident.SourceCommit})
+		result.Patches = append(result.Patches, PlanPatch{Authorization: planAuthorizationMode(action), Irreversible: isAdmissionRetry(action), Ref: ref, Patch: patch, Before: current[ref].DeepCopy(), After: next.DeepCopy(), Structured: structuredPlanRef(plan, ref), SourceCommit: incident.SourceCommit})
 		current[ref] = next
 	}
 	// Rollback and write reconciliation compare after-images with live values, so
 	// the plan's values take the form the API server stores.
 	for i := range result.Patches {
-		if result.Patches[i].Operation != "no-op" {
-			canonicalizePlanObject(result.Patches[i].After)
-		}
+		canonicalizePlanObject(result.Patches[i].After)
 	}
 	if err := coalesceDocumentPatches(&result); err != nil {
 		return result, err
@@ -405,16 +396,6 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 	for index := 0; index < len(result.Patches); {
 		patch := &result.Patches[index]
 		count := patch.ActionCount
-		if patch.Operation == "no-op" {
-			for member := index; member < index+count; member++ {
-				result.ActionReports[member].Status = "unchanged"
-			}
-			// Keep the positional prefix for rollback and receipt recovery in
-			// plans with other writes. The no-op has no compensation.
-			result.ActionsApplied = append(result.ActionsApplied, plan.Actions[index:index+count]...)
-			index += count
-			continue
-		}
 		pending := index
 		result.PendingAction = &pending
 		if err := e.Client.Patch(ctx, patch.Ref, types.MergePatchType, patch.Patch); err != nil {
@@ -441,10 +422,6 @@ func (e PlanExecutor) applyOnce(ctx context.Context, incident IncidentRequest, p
 		index += count
 	}
 	writesLanded = true
-	if !result.Applied && len(stuckPods) == 0 {
-		result.ActionsApplied = nil
-		return result, nil
-	}
 	result.Applied = true
 	if err := e.replaceStuckPods(ctx, stuckPods, &result); err != nil {
 		return result, err
@@ -499,7 +476,7 @@ func (e PlanExecutor) rollback(ctx context.Context, application *PlanApplication
 				return errors.New("rollback requires in-process field writes")
 			}
 			patch := application.Patches[index]
-			if patch.Operation == "delete" || patch.Operation == "no-op" || patch.Irreversible {
+			if patch.Operation == "delete" || patch.Irreversible {
 				return nil
 			}
 			if patch.Operation == "create" {
@@ -783,19 +760,11 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 		if e.Source == nil || incident.SourceCommit == "" {
 			return nil, errors.New("accepted source is required for reconcile")
 		}
-		source, err := acceptedIncidentManifest(ctx, e.Source, restoreSourceRevision(incident), incident.Namespace, a.Ref)
+		source, err := acceptedIncidentManifest(ctx, e.Source, incident.SourceCommit, incident.Namespace, a.Ref)
 		if err != nil {
 			return nil, err
 		}
-		if source == nil || !samePlanRef(source, a.Ref) {
-			return nil, fmt.Errorf("source object does not match %s/%s", a.Ref.Kind, a.Ref.Name)
-		}
-		if paths, _ := sourceResidualPaths(current, source); len(paths) == 0 {
-			return next, nil
-		}
-		desired := source.DeepCopy()
-		preserveWorkloadContainerFields(desired, current)
-		next, err = sourceFields(next, desired, a.Ref)
+		next, err = sourceFields(next, source, a.Ref)
 		if err != nil {
 			return nil, err
 		}
