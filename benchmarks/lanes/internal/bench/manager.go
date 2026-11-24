@@ -1984,9 +1984,14 @@ func sameOperatorProfile(a, b *Experiment) bool {
 		x.Operator.Hooks == "" || x.Operator.Hooks != y.Operator.Hooks || !reflect.DeepEqual(x.Operator.Settings, y.Operator.Settings) {
 		return false
 	}
-	// A subject without memory (no baseline on either side) matches; one with memory matches only the same content.
-	if a.Lock.Baseline == nil || b.Lock.Baseline == nil {
-		return a.Lock.Baseline == nil && b.Lock.Baseline == nil
+	return sameInput(a.Lock.Baseline, b.Lock.Baseline)
+}
+
+// sameInput: two stored inputs hold the same content, or neither experiment has one (a subject that keeps no state
+// across runs); an input never matches its absence.
+func sameInput(x, y *Input) bool {
+	if x == nil || y == nil {
+		return x == nil && y == nil
 	}
-	return a.Lock.Baseline.SHA256 == b.Lock.Baseline.SHA256
+	return x.SHA256 == y.SHA256
 }
