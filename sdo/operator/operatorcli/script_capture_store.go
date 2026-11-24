@@ -5,11 +5,16 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	typedcore "k8s.io/client-go/kubernetes/typed/core/v1"
+	"sdo.dev/operator/render"
+	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -47,18 +52,24 @@ func (s scriptCaptureStore) save(ctx context.Context, path string, capture progr
 	} else if capture.After != nil {
 		delete(manifest.Data, "after_absent")
 	}
+	for _, image := range []*unstructured.Unstructured{capture.Before, capture.After} {
+		if projected := scriptCaptureImage(path, image); projected != image {
+			capture.Ref = sdk.ObjectIdentity(*projected)
+			break
+		}
+	}
 	ref, _ := json.Marshal(capture.Ref)
 	manifest.Data["ref"] = string(ref)
 	for _, stage := range []struct {
 		name      string
-		image     any
+		image     *unstructured.Unstructured
 		present   bool
 		immutable bool
 	}{{"before", capture.Before, capture.Before != nil, true}, {"after", capture.After, capture.After != nil, false}} {
 		if !stage.present || stage.immutable && manifest.Data[stage.name+"_chunks"] != "" {
 			continue
 		}
-		raw, err := json.Marshal(stage.image)
+		raw, err := json.Marshal(scriptCaptureImage(path, stage.image))
 		if err != nil {
 			return "", err
 		}
@@ -88,6 +99,25 @@ func (s scriptCaptureStore) save(ctx context.Context, path string, capture progr
 		return "", err
 	}
 	return "ConfigMap/" + s.namespace + "/" + name, nil
+}
+
+// The API path identifies the resource even when list items omit TypeMeta.
+func scriptCaptureImage(path string, image *unstructured.Unstructured) *unstructured.Unstructured {
+	if image == nil {
+		return nil
+	}
+	parts := strings.SplitN(strings.TrimPrefix(path, "/api/v1/namespaces/"), "/", 4)
+	if !strings.HasPrefix(path, "/api/v1/namespaces/") || len(parts) < 2 || parts[1] != "secrets" {
+		return image
+	}
+	namespace, _ := url.PathUnescape(parts[0])
+	name := image.GetName()
+	if len(parts) >= 3 && parts[2] != "" {
+		name, _ = url.PathUnescape(parts[2])
+	}
+	return &unstructured.Unstructured{Object: render.SecretIdentity(map[string]any{
+		"apiVersion": "v1", "metadata": map[string]any{"name": name, "namespace": namespace},
+	})}
 }
 
 func (s scriptCaptureStore) receipt(ctx context.Context, receipt program.ScriptAPIReceipt) error {
