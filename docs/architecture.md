@@ -130,12 +130,12 @@ Captures omit Kubernetes write metadata and sensitive environment values. Reflec
 
 RunScript is a first-class learnable mitigation alongside typed actions. Mitigate
 returns inline bash and relation-derived Values resolved into process environment.
-A fixed tool image executes an control-namespace Job with `backoffLimit: 0` under
+A fixed tool image executes a control-namespace Job with `backoffLimit: 0` under
 `sdo-script`, which holds the same cluster grant as every SDO identity. The installer accepts `--script-image` for the
 slim `script-tools` build target; existing installations reuse the cached trusted
 controller image. Script execution defaults to 60 seconds, bounded by five minutes
 and the remaining incident budget, including a short evidence-publication reserve.
-Script text is bounded at 64 KiB. The controller prefills the dedicated script image in an init container and runs script Jobs on its node.
+Script text is bounded at 64 KiB. A best-effort Job prewarms the dedicated script image on the controller node independently of controller startup.
 
 A private control-namespace ConfigMap reserves the application before Job creation
 and records the Job UID. A restart joins that Job or recovers its result; an
