@@ -100,7 +100,7 @@ func keyedStageLoop(t *testing.T, credits ProgramCredits) (*sameWriteWorld, *Det
 	}
 	loop.saveToolState = func(context.Context, []byte) error { return nil }
 	instant := newInstantRecoveryClock()
-	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true, recoveryNow: instant.now, recoveryWait: instant.wait}
+	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true, diagnoseWait: instant.wait}
 	return world, stage, &IncidentState{Request: request, Findings: findings}
 }
 

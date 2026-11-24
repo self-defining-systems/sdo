@@ -192,9 +192,6 @@ type ResourceOwners struct {
 }
 
 type IncidentResult struct {
-	// automaticStages carries an in-process pre-claim observation back to the
-	// pipeline. Durable evidence remains in request stage reports and receipts.
-	automaticStages       []*contracts.StageReport
 	UnresolvedFindings    []sdk.Finding
 	DriftEvents           []sdk.DriftEvent
 	SchemaVersion         string

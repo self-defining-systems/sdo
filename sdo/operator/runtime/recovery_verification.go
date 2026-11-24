@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -223,7 +224,7 @@ func sdoWrites(in verificationInput) (writes []sdoWrite, since time.Time, settle
 	for i, application := range in.result.PlanApplications {
 		refs := recoveryApplicationRefs(application)
 		pendingAtCompletion := application.Pending || application.Result.RolloutPending != nil
-		if !application.Result.Applied && !application.Result.RolledBack && len(refs) == 0 {
+		if !pendingAtCompletion && !application.Result.Applied && !application.Result.RolledBack && len(refs) == 0 {
 			continue
 		}
 		id := application.ID
@@ -231,6 +232,16 @@ func sdoWrites(in verificationInput) (writes []sdoWrite, since time.Time, settle
 			id = fmt.Sprintf("plan-application-%d", i)
 		}
 		w := sdoWrite{id: id, settledAt: application.CompletedAt, settled: !pendingAtCompletion || len(refs) > 0}
+		for _, effect := range application.Result.ObjectEffects {
+			if effect.State == "not_applied" || effect.Operation != "delete" || effect.Ref.Kind != "Pod" || effect.UID == "" {
+				continue
+			}
+			for _, pod := range in.view.Pods() {
+				if pod.Namespace == effect.Ref.Namespace && pod.Name == effect.Ref.Name && string(pod.UID) == effect.UID {
+					w.settled = false
+				}
+			}
+		}
 		for _, ref := range refs {
 			w.settled = w.settled && !writeRevisionPending(in.view, ref, pendingAtCompletion)
 		}
@@ -403,8 +414,20 @@ func writeRevisionPending(view sdk.DetectionContext, ref sdk.ObjectRef, rolloutP
 	case "StatefulSet":
 		for _, s := range view.StatefulSets() {
 			if s.Namespace == ref.Namespace && s.Name == ref.Name {
-				return s.Status.ObservedGeneration < s.Generation ||
-					rolloutPending && s.Status.UpdateRevision != s.Status.CurrentRevision && s.Status.UpdatedReplicas == 0
+				if s.Status.ObservedGeneration < s.Generation {
+					return true
+				}
+				if !rolloutPending || s.Spec.UpdateStrategy.Type == appsv1.OnDeleteStatefulSetStrategyType {
+					return false
+				}
+				desired := int32(1)
+				if s.Spec.Replicas != nil {
+					desired = *s.Spec.Replicas
+				}
+				if rolling := s.Spec.UpdateStrategy.RollingUpdate; rolling != nil && rolling.Partition != nil {
+					desired -= *rolling.Partition
+				}
+				return desired > 0 && s.Status.UpdateRevision != s.Status.CurrentRevision && s.Status.UpdatedReplicas == 0
 			}
 		}
 	case "DaemonSet":
@@ -416,12 +439,4 @@ func writeRevisionPending(view sdk.DetectionContext, ref sdk.ObjectRef, rolloutP
 		}
 	}
 	return false
-}
-
-// stageRecoveryCheck is Recovered for the automatic stage's wait and the
-// claim-time check: the incident's opening alerts and the loop's recorded
-// writes, observed on view.
-func (l *ResponderLoop) stageRecoveryCheck(ctx context.Context, view sdk.DetectionContext, state *IncidentState) recoveryCheck {
-	result := IncidentResult{PlanApplications: l.applicationEvidenceLocked()}
-	return recovered(verificationInput{view: view, request: state.Request, result: &result, detected: state.Request.DetectedAt})
 }

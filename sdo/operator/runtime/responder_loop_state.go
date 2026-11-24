@@ -12,6 +12,7 @@ import (
 // Pending is retained separately because it is not part of PlanApplication.
 type applicationEvidence struct {
 	Receipt   json.RawMessage
+	PlanIDs   []string `json:",omitempty"`
 	Pending   bool
 	PreImages []PlanPreImage
 	Patches   []PlanPatch
@@ -65,7 +66,7 @@ func (l *ResponderLoop) persistToolState(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("encode application evidence: %w", err)
 		}
-		evidence = append(evidence, applicationEvidence{Receipt: encoded, Pending: application.Pending, PreImages: application.Result.PreImages, Patches: application.Result.Patches})
+		evidence = append(evidence, applicationEvidence{Receipt: encoded, PlanIDs: application.PlanIDs, Pending: application.Pending, PreImages: application.Result.PreImages, Patches: application.Result.Patches})
 	}
 	var repairs []recordedRepairEvidence
 	for _, repair := range l.applicationRepairsLocked() {
@@ -116,6 +117,7 @@ func (l *ResponderLoop) restoreToolSnapshot(payload []byte) error {
 		}
 		seen[receipt.ApplicationId] = true
 		application := planApplicationState(&receipt)
+		application.PlanIDs = entry.PlanIDs
 		application.Pending = entry.Pending
 		application.Result.PreImages = entry.PreImages
 		application.Result.Patches = entry.Patches

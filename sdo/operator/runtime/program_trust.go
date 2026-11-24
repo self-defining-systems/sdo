@@ -75,6 +75,23 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 		failedInApplication := map[string]bool{}
 		creditedInOutcome := map[string]bool{}
 		rejectedInOutcome := map[string]bool{}
+		terminalRollouts := map[[2]string]bool{}
+		for _, attempt := range deterministicStageReport(outcome.GetPriorStages()).GetMitigations() {
+			id, revision := attempt.GetPlaybookId(), attempt.GetProgramRevision()
+			key := [2]string{id, revision}
+			if !attempt.GetRolloutUnsettledAtDeadline() || id == "" || revision == "" || terminalRollouts[key] {
+				continue
+			}
+			terminalRollouts[key] = true
+			if revisions[id] == "" {
+				revisions[id] = revision
+			}
+			state := stateForRevision(id, revision)
+			state.Failures = recordFailure(id, revision)
+			state.VerifiedSuccesses = 0
+			failedInApplication[id] = true
+			stats[id] = state
+		}
 		for _, application := range outcome.GetPlanApplications() {
 			if application.GetSettlementRejectionReason() != contracts.SettlementRejectionReason_SETTLEMENT_REJECTION_REASON_UNSPECIFIED {
 				for _, id := range application.GetProgramIds() {
@@ -97,12 +114,12 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 				}
 				state = stateForRevision(id, revision)
 				failed := applicationExecutionFailed(application)
-				if failed {
+				if failed && !terminalRollouts[[2]string{id, revision}] {
 					state.Failures = recordFailure(id, revision)
 					state.VerifiedSuccesses = 0
 					failedInApplication[id] = true
 				}
-				if !failed && recoveryApplicationSucceeded(outcome, application, id, revision) && !creditedInOutcome[id] {
+				if !failed && !failedInApplication[id] && outcomeAllowsAutomaticCredit(outcome, id) && recoveryApplicationSucceeded(outcome, application, id, revision) && !creditedInOutcome[id] {
 					state.VerifiedSuccesses++
 					creditedInOutcome[id] = true
 				}
@@ -159,7 +176,7 @@ func ProgramTrustStats(outcomes []*contracts.OutcomeRecord) map[string]ProgramTr
 			}
 			for _, item := range items {
 				id, revision := item.GetProgramId(), item.GetProgramRevision()
-				if item.GetDisposition() != "covered" || id == "" || revision == "" || revision != revisions[id] || failedInApplication[id] || creditedInOutcome[id] || rejectedInOutcome[id] {
+				if item.GetDisposition() != "covered" || id == "" || revision == "" || revision != revisions[id] || failedInApplication[id] || creditedInOutcome[id] || rejectedInOutcome[id] || !outcomeAllowsAutomaticCredit(outcome, id) {
 					continue
 				}
 				state := stateForRevision(id, revision)

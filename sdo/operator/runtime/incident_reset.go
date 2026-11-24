@@ -21,6 +21,7 @@ import (
 // completes normally. Memory and learned playbooks are untouched. It returns
 // the reset incident's ID, empty when none was open.
 func (c *Controller) ResetIncidents(ctx context.Context, now time.Time) (string, error) {
+	defer c.lockObservation("incident_reset")()
 	c.mu.Lock()
 	request := cloneIncidentRequest(c.currentIncidentRequest)
 	open := c.incidentOpen && request != nil && !c.closureBlocksNextLocked() &&

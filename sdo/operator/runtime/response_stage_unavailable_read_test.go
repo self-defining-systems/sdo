@@ -33,20 +33,18 @@ func (d restartingStoreDetector) Detect(context.Context, sdk.DetectionContext) (
 }
 
 // A detector that cannot read a store the write is restarting has not observed
-// the outcome yet; that is not the write failing. The application and its
-// attempt record no error, and the recovery wait keeps observing until the
-// store reads again and recovery is proven.
+// the outcome yet. The application returns its write facts, and closure
+// independently observes the health window.
 func TestUnavailableReadDuringPostApplyVerificationIsNotAFailedWrite(t *testing.T) {
 	stage, state, clock, world := settlingStage(t, settlingCase{healAfter: 20 * time.Second, traffic: &settlingTraffic{}, storeRestart: 5 * time.Second})
 	// The write completes within the apply (as a Pod delete the StatefulSet
 	// recreates does), so the apply's own verification reads the store.
 	world.observed.Store(1)
 	started := clock.Now()
-	agent := &recordingStage{}
-	if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, agent}); err != nil {
+	report, err := stage.Run(t.Context(), state)
+	if err != nil {
 		t.Fatal(err)
 	}
-	report := state.PriorStages[0]
 	if len(report.Mitigations) != 1 || world.restarts.Load() != 1 {
 		t.Fatalf("the stage must apply one restart (writes=%d): %v", world.restarts.Load(), report)
 	}
@@ -54,7 +52,7 @@ func TestUnavailableReadDuringPostApplyVerificationIsNotAFailedWrite(t *testing.
 	if attempt.GetError() != "" || attempt.GetApplyReceipt().GetError() != "" {
 		t.Fatalf("an unavailable read was recorded as the write failing: attempt %q, receipt %q", attempt.GetError(), attempt.GetApplyReceipt().GetError())
 	}
-	if got := report.GetRecoveryWait().GetExitReason(); got != contracts.RecoveryWait_EXIT_REASON_CLEARED || attempt.Result != "applied_cleared" || agent.dispatched {
-		t.Fatalf("exit %s after %s, result %s, dispatched %v; want CLEARED, applied_cleared, not dispatched: %v", got, clock.Now().Sub(started), attempt.Result, agent.dispatched, attempt)
+	if report.GetRecoveryWait().GetExitReason() == contracts.RecoveryWait_EXIT_REASON_CLEARED || attempt.Result == "applied_cleared" || !clock.Now().Equal(started) {
+		t.Fatalf("apply observed recovery or delayed its receipt: %v", report)
 	}
 }

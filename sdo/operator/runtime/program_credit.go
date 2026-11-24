@@ -3,6 +3,7 @@ package runtime
 import (
 	"slices"
 	"sort"
+	"time"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
@@ -55,7 +56,7 @@ func ProgramCreditIndex(outcomes []*contracts.OutcomeRecord) ProgramCredits {
 			continue
 		}
 		application := finalApplication(outcome)
-		if application == nil || len(application.GetProgramIds()) != 1 {
+		if application == nil || len(application.GetProgramIds()) != 1 || !outcomeAllowsAutomaticCredit(outcome, application.GetProgramIds()[0]) {
 			// A batched application cannot attribute recovery to one playbook.
 			continue
 		}
@@ -167,4 +168,56 @@ func outcomeCaseContext(outcome *contracts.OutcomeRecord) memory.CaseContext {
 		}
 	}
 	return result
+}
+
+// automaticCreditApplication is the application eligible for attribution under
+// the controller-owned stage protocol. A second effective application, a
+// handoff or a reported change before Recovered makes attribution ambiguous.
+func automaticCreditApplication(report *contracts.StageReport, applications []*contracts.PlanApplication, changes []*contracts.AgentChange, recovered time.Time) string {
+	if report.GetHandoffSelected() || report.GetRecoveryWait().GetExitReason() != contracts.RecoveryWait_EXIT_REASON_CLEARED || recovered.IsZero() {
+		return ""
+	}
+	for _, change := range changes {
+		if !change.GetAt().IsValid() || !change.GetAt().AsTime().After(recovered) {
+			return ""
+		}
+	}
+	ids := map[string]bool{}
+	for _, attempt := range report.GetMitigations() {
+		app := attempt.GetApplyReceipt()
+		if stageReceiptWrote(app) && !app.GetRolledBack() {
+			if app.GetApplicationId() == "" || attempt.GetRolloutUnsettledAtDeadline() {
+				return ""
+			}
+			ids[app.GetApplicationId()] = true
+		}
+	}
+	if len(ids) != 1 {
+		return ""
+	}
+	for _, app := range applications {
+		if stageReceiptWrote(app) && !app.GetRolledBack() && !ids[app.GetApplicationId()] {
+			return ""
+		}
+	}
+	for id := range ids {
+		return id
+	}
+	return ""
+}
+
+func outcomeAllowsAutomaticCredit(outcome *contracts.OutcomeRecord, playbook string) bool {
+	report := deterministicStageReport(outcome.GetPriorStages())
+	if report.GetApplyCompletedAt() == nil {
+		// Historical receipts retain their original interpretation.
+		return true
+	}
+	automatic := slices.ContainsFunc(report.GetMitigations(), func(attempt *contracts.StageMitigation) bool {
+		return attempt.GetPlaybookId() == playbook && stageReceiptWrote(attempt.GetApplyReceipt())
+	})
+	if !automatic {
+		return true
+	}
+	return outcome.GetClassification() == "success" && outcome.GetRecoveryVerification().GetWritesSettled() &&
+		automaticCreditApplication(report, outcome.GetPlanApplications(), outcome.GetAgentChanges(), controllerTime(outcome.GetTimestamps().GetVerifiedAt())) != ""
 }

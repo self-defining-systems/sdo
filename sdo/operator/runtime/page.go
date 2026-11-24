@@ -20,11 +20,10 @@ import (
 //     responder is dispatched once with the page text (IncidentRequest.Page);
 //   - with an incident open it joins it: the request records the page and the
 //     responder is never re-prompted;
-//   - an incident holding a page is Recovered only after its responder
-//     returned and every alert of its alert set (the user tests that join
-//     within AlertJoinWindow, or every health detector when none did) stays
-//     clear for the stability window after SDO's last known write. The closure
-//     is an ordinary verified one, so the learning gate is unchanged.
+//   - a page that opened an incident requires its responder to return.
+//     A page joined during a running responder turn also waits for its return.
+//     During automatic recovery of an alert-opened incident, a joined page is
+//     evidence and the opening and joined alerts decide verification.
 //
 // A page is accepted once (lastPageID, persisted); the producer may leave it in
 // the inbox. One that cannot open yet (a closure in flight, the start-up
@@ -36,8 +35,8 @@ func pageOpened(request *IncidentRequest) bool {
 	return request != nil && request.Page != "" && len(request.OpeningKeys) == 0
 }
 
-// awaitsResponderReturn reports an incident only the responder's return can
-// make Recovered: an external incident or one holding a page.
+// awaitsResponderReturn prevents early closure of a running responder's
+// external incident or an incident carrying a page.
 func awaitsResponderReturn(request *IncidentRequest) bool {
 	return request != nil && (request.ExternalMessage != "" || request.Page != "")
 }
@@ -88,6 +87,11 @@ func (c *Controller) admitPage(ctx context.Context, now time.Time, snapshot sdk.
 	if c.incidentOpen && c.currentIncidentRequest != nil {
 		request := c.currentIncidentRequest
 		if request.Page == "" {
+			// Preserve legacy detector-opened requests whose alert keys were
+			// implicit before a joined page made an empty key set significant.
+			if len(request.OpeningKeys) == 0 {
+				request.OpeningKeys = openingKeys(request)
+			}
 			request.Page = alert.Message
 			if c.incidentDispatchedAt.IsZero() {
 				request.PreparedAgentTask = ""

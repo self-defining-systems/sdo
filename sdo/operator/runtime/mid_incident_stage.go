@@ -59,8 +59,7 @@ func (n StageNote) String() string {
 func (c *Controller) attachLearnedActivation(ctx context.Context, finding sdk.Finding) bool {
 	c.mu.Lock()
 	loop := c.responderLoop
-	if !c.incidentOpen || c.currentIncidentRequest == nil || c.incidentDispatchedAt.IsZero() ||
-		c.dispatchState != contracts.DispatchState_DISPATCH_STATE_RUNNING || c.responderDone ||
+	if !c.incidentOpen || c.currentIncidentRequest == nil || c.incidentDispatchedAt.IsZero() || !c.learnedPassAllowedLocked() ||
 		loop == nil || c.midStage.passes >= maxMidIncidentPasses || !c.deterministicStageSelectedLocked() ||
 		!learnedPlaybookExplains(loop, finding) {
 		c.mu.Unlock()
@@ -117,7 +116,7 @@ func (c *Controller) resumePendingLearnedPass(ctx context.Context) {
 	c.mu.Lock()
 	loop := c.responderLoop
 	if !c.midStage.pending || c.responseStagesRunning || c.midStage.running || c.midStage.settled || !c.incidentOpen ||
-		c.currentIncidentRequest == nil || c.dispatchState != contracts.DispatchState_DISPATCH_STATE_RUNNING || c.responderDone ||
+		c.currentIncidentRequest == nil || !c.learnedPassAllowedLocked() ||
 		loop == nil || c.midStage.passes >= maxMidIncidentPasses {
 		c.mu.Unlock()
 		return
@@ -163,7 +162,7 @@ func deterministicStageReport(reports []*contracts.StageReport) *contracts.Stage
 func stageAppliedPrograms(report *contracts.StageReport) map[string]bool {
 	applied := map[string]bool{}
 	for _, attempt := range report.GetMitigations() {
-		if attempt.GetResult() != "skipped" && attempt.GetResult() != stageRevertedIneffective {
+		if attempt.GetResult() != "skipped" {
 			applied[attempt.GetPlaybookId()] = true
 		}
 	}
@@ -206,7 +205,7 @@ func (c *Controller) runMidIncidentPasses(ctx context.Context, incidentID string
 			c.midStage.settled = true
 		}
 		again := c.midStage.dirty && !c.midStage.settled && c.midStage.passes < maxMidIncidentPasses && c.incidentOpen &&
-			c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == incidentID && !c.responderDone
+			c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == incidentID && c.learnedPassAllowedLocked()
 		c.midStage.dirty = false
 		if !again {
 			c.midStage.running = false
@@ -218,7 +217,7 @@ func (c *Controller) runMidIncidentPasses(ctx context.Context, incidentID string
 }
 
 // runMidIncidentPass runs the automatic stage again on the responder's own
-// loop, so its applications, rollout waits and receipts are the ones the
+// loop, so its applications and receipts are the ones the
 // responder sees, and serialize with its tool calls. It reports whether the
 // pass made progress (stagePassProgressed).
 func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, loop *ResponderLoop) (bool, error) {
@@ -228,7 +227,7 @@ func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, 
 	}
 	defer cancel()
 	// The pass holds the loop's locks, so no read inside it may hang: twice the
-	// stage's own budget covers its checks, apply and rollout wait.
+	// stage's own budget covers its checks and apply.
 	actionCtx, stop := context.WithTimeout(actionCtx, 2*c.config.StageBudget)
 	defer stop()
 	c.mu.Lock()
@@ -238,6 +237,12 @@ func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, 
 	}
 	c.midStage.passes++
 	request := *cloneIncidentRequest(c.currentIncidentRequest)
+	awaiting := c.awaitingAutomaticRecoveryLocked()
+	if awaiting != nil {
+		var cancelWait context.CancelFunc
+		actionCtx, cancelWait = context.WithTimeout(actionCtx, c.automaticDeadlineLocked(awaiting).Sub(c.clock()))
+		defer cancelWait()
+	}
 	c.mu.Unlock()
 	state := &IncidentState{Request: request, Findings: append([]sdk.Finding(nil), request.Findings...), Coverage: cloneCoverage(request.PlaybookCoverage), PriorStages: cloneStageReports(request.PriorStages)}
 	earlier := deterministicStageReport(state.PriorStages)
@@ -254,6 +259,15 @@ func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, 
 		// Publishing only the report loses the proof required by reflection.
 		c.currentIncidentRequest.PlaybookCoverage = cloneCoverage(state.Coverage)
 		c.currentIncidentRequest.InitialProgramRuns = append([]ProgramRun(nil), state.Request.InitialProgramRuns...)
+		if awaiting != nil && c.awaitingAutomaticRecoveryLocked() != nil {
+			previous := c.currentIncidentResult.Timing
+			if merged, err := responsePipelineResult(state, previous.StartedAt, previous.CompletedAt); err == nil {
+				c.currentIncidentResult = &merged
+				c.closurePrep = nil
+			} else if runErr == nil {
+				runErr = err
+			}
+		}
 	}
 	c.mu.Unlock()
 	loop.noteStages(notes)
@@ -327,4 +341,14 @@ func stageReportProgress(report *contracts.StageReport) int {
 		}
 	}
 	return progress
+}
+
+// Before handoff, new evidence can request one more apply pass while the
+// original await bound is still open. An actual responder keeps its existing
+// later-pass behavior.
+func (c *Controller) learnedPassAllowedLocked() bool {
+	if report := c.awaitingAutomaticRecoveryLocked(); report != nil {
+		return playbookWrote(report) && c.escalatedAt.IsZero() && c.clock().Before(controllerTime(report.GetRecoveryDeadline()))
+	}
+	return c.dispatchState == contracts.DispatchState_DISPATCH_STATE_RUNNING && !c.responderDone
 }
