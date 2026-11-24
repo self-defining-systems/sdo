@@ -32,7 +32,7 @@ func (c helperCleanupTestBatch) Jobs(namespace string) batchclient.JobInterface 
 type helperCleanupTestJobs struct {
 	batchclient.JobInterface
 	namespace string
-	batch helperCleanupTestBatch
+	batch     helperCleanupTestBatch
 }
 
 func (c helperCleanupTestJobs) List(ctx context.Context, opts metav1.ListOptions) (*batchv1.JobList, error) {
@@ -53,7 +53,7 @@ func TestHelperCleanupProgressesAcrossNamespaces(t *testing.T) {
 		)
 		blocked, independent := make(chan struct{}), make(chan struct{}, 1)
 		cleaner := KubernetesHelperCleaner{
-			Client: helperCleanupTestClient{client, helperCleanupTestBatch{client.BatchV1(), blocked, independent}},
+			Client:     helperCleanupTestClient{client, helperCleanupTestBatch{client.BatchV1(), blocked, independent}},
 			Namespaces: []string{"application", "control", "control", ""},
 		}
 		done := make(chan struct{})
