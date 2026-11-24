@@ -42,7 +42,7 @@ type MitigationReplayResult struct {
 // Diagnosis replay is an analysis helper; its outcome never gates publication.
 func CheckMitigation(p program.Diagnoser, m program.Mitigator, c CorpusCase) (MitigationReplayResult, error) {
 	result := MitigationReplayResult{ProgramID: p.Spec().ID}
-	plan, err := m.Mitigate(context.Background(), &ReplayReadView{Snapshot: c.Open, Calls: c.PhaseRecordings("open")}, c.Bindings)
+	plan, err := replayMitigation(m, &ReplayReadView{Snapshot: c.Open, Calls: c.PhaseRecordings("open")}, c.Bindings)
 	if err != nil {
 		return result, fmt.Errorf("program.mitigation-unreplayable: Mitigate: %w", err)
 	}
@@ -295,7 +295,7 @@ func CheckPlanValid(m program.Mitigator, c CorpusCase) error {
 // planOnState is CheckPlanValid with the reason the plan could not be checked ("" when it was): Mitigate failed on
 // the recorded reads (a binding or a read the capture lacks), or it yielded no action there.
 func planOnState(m program.Mitigator, c CorpusCase) (unverified string, err error) {
-	plan, err := m.Mitigate(context.Background(), &ReplayReadView{Snapshot: c.Open, Calls: c.PhaseRecordings("open")}, c.Bindings)
+	plan, err := replayMitigation(m, &ReplayReadView{Snapshot: c.Open, Calls: c.PhaseRecordings("open")}, c.Bindings)
 	if err != nil {
 		return "Mitigate could not run on it: " + err.Error(), nil
 	}
@@ -356,10 +356,28 @@ func escalationNote(m program.Mitigator, plan program.Plan, c CorpusCase) string
 		return ""
 	}
 	if diagnoser, ok := m.(program.Diagnoser); ok {
-		verdict, err := diagnoser.Diagnose(context.Background(), &ReplayReadView{Snapshot: c.Open, Calls: c.PhaseRecordings("open")}, c.Bindings)
-		if err == nil && verdict.Result == program.Match && verdict.Reach == program.ReachOutOfReach {
+		view := &ReplayReadView{Snapshot: c.Open, Calls: c.PhaseRecordings("open")}
+		verdict := program.RunDiagnose(context.Background(), diagnoser, view, c.Bindings, 5*time.Second)
+		if verdict.Result == program.Match && verdict.Reach == program.ReachOutOfReach {
 			return ""
 		}
 	}
 	return "Mitigate only escalates, so a repeat still needs the responder; commands such as SQL can be automated with program.EnsureExec"
+}
+
+func replayMitigation(m program.Mitigator, view *ReplayReadView, bindings program.Bindings) (plan program.Plan, err error) {
+	defer func() {
+		if value := recover(); value != nil {
+			if value != sdk.ErrReadReplyLimit {
+				panic(value)
+			}
+			plan, err = program.Plan{}, sdk.ErrReadReplyLimit
+		}
+	}()
+	source := view.ReplayProgramReadView(view)
+	plan, err = m.Mitigate(context.Background(), source, bindings)
+	if aborted := program.ReadAbortError(source); aborted != nil {
+		return program.Plan{}, aborted
+	}
+	return plan, err
 }

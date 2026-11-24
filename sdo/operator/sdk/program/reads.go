@@ -26,7 +26,7 @@ func ReadFrom(view sdk.DetectionContext) ReadView {
 // CheckReads gives one evaluation its own failure tracking. A failed read
 // cannot be ignored to turn Unknown into clearance.
 func CheckReads(view ReadView) (sdk.DetectionContext, func() error) {
-	checked := &checkedReadView{ReadView: view}
+	checked := &checkedReadView{ReadView: view, readChecks: &readChecks{}}
 	return checked, checked.failure
 }
 func (v snapshotReadView) QueryMetrics(q metrics.Query) metrics.Result {
@@ -106,4 +106,21 @@ func (v snapshotReadView) CaptureObjects(refs []sdk.ObjectRef) ([]unstructured.U
 		return source.CaptureObjects(refs)
 	}
 	return sdk.TypedObjects(v.DetectionContext), nil
+}
+
+// ReplayProgramView applies recorded transport limits to the actual program
+// view, after any wrapper has prepared its snapshot or checked its bindings.
+func ReplayProgramView(recorded, source ReadView) ReadView {
+	if replay, ok := recorded.(interface{ ReplayProgramReadView(ReadView) ReadView }); ok {
+		return replay.ReplayProgramReadView(source)
+	}
+	return source
+}
+
+// ReadAbortError reports a transport abort even if a program recovered while unwinding.
+func ReadAbortError(view ReadView) error {
+	if source, ok := view.(interface{ ReadAbortError() error }); ok {
+		return source.ReadAbortError()
+	}
+	return nil
 }

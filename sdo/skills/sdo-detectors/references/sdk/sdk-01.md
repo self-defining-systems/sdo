@@ -67,6 +67,8 @@ VARIABLES
 var (
 	// ErrUnavailable marks a read that could not observe the state.
 	ErrUnavailable = errors.New("read unavailable")
+	// ErrReadReplyLimit is an unavailable observation whose reply exceeded the host frame budget.
+	ErrReadReplyLimit = Classified("program read result exceeds the memory-host message limit", ErrUnavailable)
 	// ErrRefused marks a read the target itself answered with a refusal.
 	ErrRefused = errors.New("read refused by target")
 	// ErrInvalidRead marks a read the program was not allowed to make.
@@ -219,12 +221,4 @@ func Predicted(finding Finding) bool
 func ProjectCABundle(ca []byte) []byte
     ProjectCABundle replaces certificate bytes with an idempotent digest.
     It is shared by typed observations, raw API reads and capture projection.
-
-func ProjectForeignDeployment(o appsv1.Deployment) appsv1.Deployment
-    Foreign projections use an allowlist. No environment, commands, arguments,
-    annotations, probes, volumes, Secret references or arbitrary status
-    messages.
-
-func ProjectForeignEndpoints(o corev1.Endpoints) corev1.Endpoints
-func ProjectForeignService(o corev1.Service) corev1.Service
 ```

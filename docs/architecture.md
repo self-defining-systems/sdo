@@ -1185,9 +1185,13 @@ child and streams one Diagnose or Mitigate invocation on the same socket.
 The controller serves each read against the invocation's SDK view, including
 frozen metrics, logs, objects, and the existing bounded live primitives.
 An invocation sends only its bindings, requested reads, and result. Reads use the
-same SDK dispatch as working playbooks and enter the controller's evidence
-sink through its normal recording view. The lease pins the child during
-execution and leaves activation and other reads free to proceed.
+same SDK dispatch as working playbooks. The controller publishes read evidence
+after sending the reply selected under the protobuf frame budget. An oversized
+reply yields a classified unavailable error, a `QueryMetrics` result with the
+query and its error, or a transport failure for signatures with neither error
+channel. Replay honors that recorded limit before consulting the snapshot.
+The lease pins the child during execution and leaves activation and other reads
+free to proceed.
 Unchanged projections retain their sequence. Errors and disconnects remain
 detector/program errors, never clearance or an authorized empty plan.
 

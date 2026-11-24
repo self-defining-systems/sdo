@@ -52,7 +52,7 @@ func CheckMitigatorGeneralization(t testing.TB, p program.Mitigator, c CorpusCas
 		if err := program.ValidateBindings(p.Spec(), c.Bindings); err != nil {
 			t.Fatal(err)
 		}
-		plan, err := p.Mitigate(context.Background(), &ReplayReadView{Snapshot: tc.snapshot, Calls: c.PhaseRecordings(tc.name)}, c.Bindings)
+		plan, err := replayMitigation(p, &ReplayReadView{Snapshot: tc.snapshot, Calls: c.PhaseRecordings(tc.name)}, c.Bindings)
 		if err != nil {
 			t.Errorf("%s: %v", tc.name, err)
 			continue

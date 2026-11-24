@@ -37,6 +37,11 @@ type PrimitiveCall struct {
 	ErrorClass string `json:"error_class,omitempty"`
 }
 
+// FrameLimited reports an unavailable host reply that takes precedence over snapshot fallbacks.
+func (c PrimitiveCall) FrameLimited() bool {
+	return c.Error == sdk.ErrReadReplyLimit.Error() && c.ErrorClass == sdk.ReadClassUnavailable
+}
+
 // RecordingReadView serializes recorded calls and OnRecord callbacks. ReadView
 // must support concurrent reads; inspect Calls only after all readers finish.
 type RecordingReadView struct {
@@ -44,9 +49,21 @@ type RecordingReadView struct {
 	Calls    []PrimitiveCall
 	OnRecord func(PrimitiveCall)
 	mu       sync.Mutex
+	stage    func(method string, arguments, result any, err error)
+}
+
+// StageRecords keeps one read's records private until the caller publishes them.
+func (v *RecordingReadView) StageRecords(source program.ReadView, stage func(func())) *RecordingReadView {
+	return &RecordingReadView{ReadView: source, stage: func(method string, arguments, result any, err error) {
+		stage(func() { v.record(method, arguments, result, err) })
+	}}
 }
 
 func (v *RecordingReadView) record(method string, arguments any, result any, err error) {
+	if v.stage != nil {
+		v.stage(method, arguments, result, err)
+		return
+	}
 	args, _ := json.Marshal(arguments)
 	value, _ := json.Marshal(result)
 	call := PrimitiveCall{Method: method, Arguments: args, Result: value}
@@ -364,6 +381,9 @@ func (c CorpusCase) PhaseRecordings(phase string) []PrimitiveCall {
 func RecordPrimitiveCalls(view program.ReadView, calls []PrimitiveCall) ([]PrimitiveCall, error) {
 	recorder := &RecordingReadView{ReadView: view}
 	for _, call := range calls {
+		if call.FrameLimited() {
+			continue // A transport-limited reply supplies no observation to repeat.
+		}
 		var args []json.RawMessage
 		if err := json.Unmarshal(call.Arguments, &args); err != nil {
 			return nil, fmt.Errorf("invalid %s recording arguments", call.Method)

@@ -18,6 +18,8 @@ import "errors"
 var (
 	// ErrUnavailable marks a read that could not observe the state.
 	ErrUnavailable = errors.New("read unavailable")
+	// ErrReadReplyLimit is an unavailable observation whose reply exceeded the host frame budget.
+	ErrReadReplyLimit = Classified("program read result exceeds the memory-host message limit", ErrUnavailable)
 	// ErrRefused marks a read the target itself answered with a refusal.
 	ErrRefused = errors.New("read refused by target")
 	// ErrInvalidRead marks a read the program was not allowed to make.

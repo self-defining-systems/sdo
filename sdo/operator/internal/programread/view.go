@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"sync/atomic"
 
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/metrics"
@@ -23,14 +24,32 @@ type Message struct {
 	Error            string                         `json:"error,omitempty"`
 	UsageUnavailable *metrics.UsageUnavailableError `json:"usage_unavailable,omitempty"`
 	ErrorClass       string                         `json:"error_class,omitempty"`
+
+	// OnReply publishes evidence after the transport has sent the bounded reply.
+	OnReply func(Message) `json:"-"`
 }
 
 type View struct {
 	mu       sync.Mutex
+	aborted  atomic.Bool
 	Exchange func(Message) (Message, error)
 }
 
 var _ program.ReadView = (*View)(nil)
+
+func (v *View) abort(err error) {
+	if err == sdk.ErrReadReplyLimit {
+		v.aborted.Store(true)
+	}
+	panic(err)
+}
+
+func (v *View) ReadAbortError() error {
+	if v.aborted.Load() {
+		return sdk.ErrReadReplyLimit
+	}
+	return nil
+}
 
 func (v *View) call(method string, args, outputs []any) error {
 	v.mu.Lock()
@@ -58,16 +77,31 @@ func (v *View) call(method string, args, outputs []any) error {
 	if response.UsageUnavailable != nil {
 		return response.UsageUnavailable
 	}
+	if IsFrameLimited(response) {
+		return sdk.ErrReadReplyLimit
+	}
 	if response.Error != "" {
 		return sdk.ErrorWithClass(response.Error, response.ErrorClass)
 	}
 	return nil
 }
 
+func FrameLimitedReply() Message {
+	return Message{Error: sdk.ErrReadReplyLimit.Error(), ErrorClass: sdk.ReadClassUnavailable}
+}
+
+func IsFrameLimited(reply Message) bool {
+	return reply.Error == sdk.ErrReadReplyLimit.Error() && reply.ErrorClass == sdk.ReadClassUnavailable
+}
+
 func Read(view program.ReadView, request Message) (response Message) {
 	defer func() {
 		if r := recover(); r != nil {
-			response = Message{Error: fmt.Sprintf("program read: %v", r)}
+			if r == sdk.ErrReadReplyLimit {
+				response = FrameLimitedReply()
+			} else {
+				response = Message{Error: fmt.Sprintf("program read: %v", r)}
+			}
 		}
 	}()
 	method, ok := reflect.TypeFor[program.ReadView]().MethodByName(request.Method)

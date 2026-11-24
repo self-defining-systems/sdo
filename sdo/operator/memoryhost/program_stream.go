@@ -131,15 +131,30 @@ func replyToProgram(ctx context.Context, stream pb.MemoryHostService_RunProgramC
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+	bounded, frame := boundProgramReadReply(answer)
+	if err := stream.Send(frame); err != nil {
+		return err
+	}
+	recordProgramRead(answer, bounded)
+	return nil
+}
+
+func recordProgramRead(answer, bounded programread.Message) {
+	if answer.OnReply != nil {
+		answer.OnReply(bounded)
+	}
+}
+
+func boundProgramReadReply(answer programread.Message) (programread.Message, *pb.RunProgramRequest) {
+	answer.OnReply = nil
 	reply := &pb.ProgramReadReply{Values: asBytes(answer.Values), Error: answer.Error, ErrorClass: answer.ErrorClass}
 	if answer.UsageUnavailable != nil {
 		reply.UsageUnavailable = &answer.UsageUnavailable.Reason
 	}
 	frame := &pb.RunProgramRequest{Frame: &pb.RunProgramRequest_Read{Read: reply}}
 	if proto.Size(frame) > MaxMessageBytes {
-		frame.Frame = &pb.RunProgramRequest_Read{Read: &pb.ProgramReadReply{
-			Error: "program read result exceeds the memory-host message limit", ErrorClass: sdk.ReadClassUnavailable,
-		}}
+		answer = programread.FrameLimitedReply()
+		frame.Frame = &pb.RunProgramRequest_Read{Read: &pb.ProgramReadReply{Error: answer.Error, ErrorClass: answer.ErrorClass}}
 	}
-	return stream.Send(frame)
+	return answer, frame
 }

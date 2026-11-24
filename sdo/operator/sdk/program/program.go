@@ -485,14 +485,21 @@ func RunDiagnose(ctx context.Context, p Diagnoser, v ReadView, b Bindings, deadl
 		failures []readFailure
 	}
 	result := make(chan outcome, 1)
-	checked := &checkedReadView{ReadView: v, maxReads: MaxDiagnoseReads}
+	checked := &checkedReadView{ReadView: ReplayProgramView(v, v), readChecks: &readChecks{maxReads: MaxDiagnoseReads}}
 	go func() {
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				result <- outcome{err: fmt.Errorf("panic: %v", recovered)}
+				if recovered == sdk.ErrReadReplyLimit {
+					result <- outcome{err: sdk.ErrReadReplyLimit}
+				} else {
+					result <- outcome{err: fmt.Errorf("panic: %v", recovered)}
+				}
 			}
 		}()
 		verdict, err := p.Diagnose(ctx, checked, b)
+		if aborted := ReadAbortError(checked.ReadView); aborted != nil {
+			err = aborted
+		}
 		result <- outcome{verdict, err, checked.failures()}
 	}()
 	traced := func(v Verdict) Verdict {
@@ -520,6 +527,15 @@ func unknown(err error) Verdict {
 // checkedReadView prevents an unavailable observation from being treated as clearance.
 type checkedReadView struct {
 	ReadView
+	*readChecks
+}
+
+// TransformReadSource preserves this invocation's checks while replacing the read source.
+func (v *checkedReadView) TransformReadSource(transform func(ReadView) ReadView) ReadView {
+	return &checkedReadView{ReadView: transform(v.ReadView), readChecks: v.readChecks}
+}
+
+type readChecks struct {
 	mu     sync.Mutex
 	failed []readFailure
 	// maxReads bounds Read calls when positive (a Diagnose); reads counts them.

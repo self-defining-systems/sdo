@@ -74,6 +74,10 @@ func ReadFrom(view sdk.DetectionContext) ReadView
     ReadFrom exposes the shared runtime reads to a detector. An object-only
     context returns explicit unavailable results for unsupported reads.
 
+func ReplayProgramView(recorded, source ReadView) ReadView
+    ReplayProgramView applies recorded transport limits to the actual program
+    view, after any wrapper has prepared its snapshot or checked its bindings.
+
 type ReconcileFromSource struct{ Ref sdk.ObjectRef }
     ReconcileFromSource restores a whole source-owned object to accepted source,
     removing additions SourceDiff reports; prefer SetField for one field.
@@ -209,14 +213,4 @@ const (
 	Unknown        Result = "Unknown"
 	NeedsJudgement Result = "NeedsJudgement"
 )
-type RetireOldRevision struct {
-	Ref sdk.ObjectRef
-}
-    RetireOldRevision scales one old-revision ReplicaSet of a Deployment to
-    zero. It releases a rollout whose replacement Pod cannot be placed or
-    created while the old revision's Pod holds its place (hard anti-affinity,
-    a host port, node capacity or namespace quota). The Deployment controller
-    never scales a retired revision back up. It is refused like any ReplicaSet
-    scale for a current revision or a ReplicaSet without an observed controlling
-    Deployment.
 ```

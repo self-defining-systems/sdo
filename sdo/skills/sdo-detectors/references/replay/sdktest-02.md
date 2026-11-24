@@ -31,10 +31,15 @@ func RecordPrimitiveCalls(view program.ReadView, calls []PrimitiveCall) ([]Primi
     RecordPrimitiveCalls repeats previously observed reads on a fresh view.
     It records errors as observations; malformed templates fail explicitly.
 
+func (c PrimitiveCall) FrameLimited() bool
+    FrameLimited reports an unavailable host reply that takes precedence over
+    snapshot fallbacks.
+
 type RecordingReadView struct {
 	program.ReadView
 	Calls    []PrimitiveCall
 	OnRecord func(PrimitiveCall)
+
 	// Has unexported fields.
 }
     RecordingReadView serializes recorded calls and OnRecord callbacks. ReadView
@@ -117,6 +122,10 @@ func (v *RecordingReadView) ServiceReachability() (servicehealth.ReachabilityWin
 func (v *RecordingReadView) SnapshotCalls() []PrimitiveCall
     SnapshotCalls copies recorded evidence while timed-out readers may still
     finish.
+
+func (v *RecordingReadView) StageRecords(source program.ReadView, stage func(func())) *RecordingReadView
+    StageRecords keeps one read's records private until the caller publishes
+    them.
 
 func (v *RecordingReadView) TrafficWindow(name string) (traffic.Window, bool)
 
@@ -231,17 +240,7 @@ func (v *ReplayReadView) Recorded(method string, arguments any, result any) erro
     consuming it: a live read view freezes such reads per snapshot, so repeated
     identical reads see the same answer. Missing replies are *UnrecordedError.
 
-func (v *ReplayReadView) ReplicaSets() []appsv1.ReplicaSet
-
-func (v *ReplayReadView) ScopedDeployments(namespace string) ([]appsv1.Deployment, error)
-
-func (v *ReplayReadView) ScopedEndpoints(namespace string) ([]corev1.Endpoints, error)
-
-func (v *ReplayReadView) ScopedServices(namespace string) ([]corev1.Service, error)
-
-func (v *ReplayReadView) Secrets() []sdk.SecretMetadata
-
-func (v *ReplayReadView) ServiceAccounts() []corev1.ServiceAccount
-
-func (v *ReplayReadView) ServiceReachability() (servicehealth.ReachabilityWindow, bool)
+func (v *ReplayReadView) ReplayProgramReadView(source program.ReadView) program.ReadView
+    ReplayProgramReadView overlays bounded host replies ahead of any snapshot
+    fallback, including for SDK methods that cannot return an error.
 ```

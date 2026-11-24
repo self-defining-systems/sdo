@@ -10,6 +10,12 @@ is an environment reference. Plain `Headers` carry nonsecret values only.
 
 A `Mitigate` runs while users are failing: prefer the most direct action that restores service, and check how long it takes to apply.
 
+## Bounded reads
+
+Prefer targeted reads with an error return. An oversized memory-host reply is
+unavailable. Check the `Error` field from `QueryMetrics`. An oversized reply
+from an error-less accessor such as `Pods()` ends the invocation.
+
 ## Kubernetes objects and subresources
 
 Object edits in a plan write atomically per object; use strategic patches for keyed lists (JSON merge replacement is refused).

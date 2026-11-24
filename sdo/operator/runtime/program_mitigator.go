@@ -115,7 +115,11 @@ func BuildMitigationPlan(ctx context.Context, p program.Mitigator, view program.
 		defer func() { <-mitigationSlots }()
 		defer func() {
 			if r := recover(); r != nil {
-				results <- outcome{err: fmt.Errorf("mitigator panic: %v", r)}
+				if r == sdk.ErrReadReplyLimit {
+					results <- outcome{err: sdk.ErrReadReplyLimit}
+				} else {
+					results <- outcome{err: fmt.Errorf("mitigator panic: %v", r)}
+				}
 			}
 		}()
 		if err := program.ValidateBindings(p.Spec(), bindings); err != nil {
@@ -126,7 +130,12 @@ func BuildMitigationPlan(ctx context.Context, p program.Mitigator, view program.
 		// private snapshot and read capabilities, never maps owned by ResponderLoop.
 		isolated := newMitigationReadView(ctx, view)
 		observed, readFailure := program.CheckReads(isolated)
-		plan, err := p.Mitigate(ctx, program.ReadFrom(observed), bindings)
+		programView := program.ReplayProgramView(view, program.ReadFrom(observed))
+		plan, err := p.Mitigate(ctx, programView, bindings)
+		if aborted := program.ReadAbortError(programView); aborted != nil {
+			results <- outcome{err: aborted}
+			return
+		}
 		if readErr := readFailure(); readErr != nil {
 			err = readErr
 		}

@@ -222,6 +222,10 @@ func ProjectPatch(object map[string]any, a PatchObject) (map[string]any, error)
     ProjectPatch is the shared atomic projection used by production and replay.
     Errors leave the input untouched. The API server still validates its schema.
 
+func ReadAbortError(view ReadView) error
+    ReadAbortError reports a transport abort even if a program recovered while
+    unwinding.
+
 func ScriptDigest(script string) string
     ScriptDigest identifies exact script bytes; application inputs belong in
     Env.
@@ -248,8 +252,4 @@ func ValidateRemoveServicePort(a RemoveServicePort) error
 func ValidateResolvedSetField(f SetField, value any) error
     ValidateResolvedSetField checks the resolved schema without changing
     provenance.
-
-func ValidateRestartRollout(a RestartRollout) error
-    ValidateRestartRollout accepts one named, namespaced apps/v1 Deployment,
-    StatefulSet or DaemonSet: the workloads kubectl rollout restart restarts.
 ```

@@ -111,6 +111,9 @@ func firstObservationKey(call sdktest.PrimitiveCall) (string, bool, error) {
 	if phase == "" {
 		phase = "open"
 	}
+	if call.FrameLimited() {
+		return phase + "\x00frame-limit\x00" + recordedReadKey(call), true, nil
+	}
 	switch call.Method {
 	case "DatabaseUsers":
 		identity, err := databaseCaptureIdentity(call)

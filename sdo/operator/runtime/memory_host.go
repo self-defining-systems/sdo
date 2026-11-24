@@ -514,10 +514,13 @@ func (p *remoteProgram) execute(ctx context.Context, view program.ReadView, b pr
 	defer release()
 	invocation := &pb.MemoryProgramInvocation{ProgramId: p.spec.ID, Bindings: programBindingsContract(b), Operation: operation}
 	response, err := rpc.ExecuteProgram(ctx, invocation, func(call programread.Message) programread.Message {
-		return programread.Read(view, call)
+		return readForRemoteProgram(view, call)
 	})
 	if err != nil {
 		return nil, err
+	}
+	if response.GetError() == sdk.ErrReadReplyLimit.Error() {
+		return nil, sdk.ErrReadReplyLimit
 	}
 	if response.GetError() != "" {
 		return nil, errors.New(response.GetError())
