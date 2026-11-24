@@ -716,3 +716,20 @@ def test_without_a_recording_the_repair_actions_still_draw_the_act_lane(tmp_path
     acts = [e["text"] for e in doc["events"] if e["lane"] == "act"]
     assert acts == ["kubectl-patch Deployment/ns/user: restore probe"]
     assert not [e for e in doc["events"] if e["lane"] == "read"]
+
+
+def test_redact_json_line_keeps_the_line_valid_json() -> None:
+    # A redaction applied to raw JSON text ate the backslash of an escaped quote (secretName=\"...\") and broke the
+    # line; redaction of a JSON document works on its decoded strings, so the result always parses.
+    event = {
+        "type": "assistant",
+        "input": {"command": 'jq \'.secretName=="gitlab-object-storage" or .token="abc123def456"\''},
+        "env": {"password": "hunter2-long-value", "count": 3},
+        "note": "Bearer abc9DEF8ghi7JKL6",
+    }
+    out = view.redact_json_line(json.dumps(event))
+    parsed = json.loads(out)
+    for secret in ("abc123def456", "hunter2-long-value", "abc9DEF8ghi7JKL6"):
+        assert secret not in out
+    assert (parsed["env"]["count"], parsed["type"]) == (3, "assistant")
+    assert view.redact_json_line("not json token=abcdefgh123") == view.redact("not json token=abcdefgh123")
