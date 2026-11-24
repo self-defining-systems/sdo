@@ -48,14 +48,8 @@ func plannedRequestMetrics(root string) (requestmetrics.Config, bool) {
 	rule := requestmetrics.DefaultRule()
 	cfg := requestmetrics.Config{Rule: rule}
 	used := map[string]bool{}
-	// exposed marks a service some operation enters as a user call; a service
-	// only background work enters (internal entries) is judged as background.
-	exposed := map[string]bool{}
 	for _, op := range parsed.Operations {
 		used[op.Entry.Service] = true
-		if !parsed.Internal(op) {
-			exposed[op.Entry.Service] = true
-		}
 	}
 	var services []string
 	for s := range used {
@@ -76,7 +70,7 @@ func plannedRequestMetrics(root string) (requestmetrics.Config, bool) {
 			RouteLabel: e.Labels.Route, MethodLabel: e.Labels.Method, StatusLabel: e.Labels.Status,
 			Recent:   e.IncreaseByOperation("30s", ""),
 			Baseline: e.IncreaseByOperation(requestMetricsBaselineWindow, requestMetricsBaselineOffset),
-			Presence: e.SeriesByOperation(), Background: !exposed[s],
+			Presence: e.SeriesByOperation(), Background: parsed.Background(e),
 		})
 	}
 	for _, op := range parsed.Operations {

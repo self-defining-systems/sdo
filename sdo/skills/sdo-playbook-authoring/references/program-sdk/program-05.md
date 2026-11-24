@@ -85,12 +85,12 @@ type ReconcileFromSource struct{ Ref sdk.ObjectRef }
     data or whose render is not deterministic (a generated password); then
     Escalate. Restart the readers that started after the foreign change with
     RestartRollout later in the same plan, because a running Pod keeps the value
-    it started with (finding secret-readers-predate-change names them). After it
-    restores a StatefulSet's pod template, each Pod still on another revision
-    than status.updateRevision that is failing (ImagePullBackOff, ErrImagePull,
-    CrashLoopBackOff) or not Ready past a short bound is deleted, one at a time
-    in ordinal order, so the controller recreates it at the restored revision;
-    the receipt names each deleted Pod and why.
+    it started with. Identify readers from their pod template Secret references.
+    After it restores a StatefulSet's pod template, each Pod still on another
+    revision than status.updateRevision that is failing (ImagePullBackOff,
+    ErrImagePull, CrashLoopBackOff) or not Ready past a short bound is deleted,
+    one at a time in ordinal order, so the controller recreates it at the
+    restored revision; the receipt names each deleted Pod and why.
 
 type RemoveServicePort struct {
 	Ref        sdk.ObjectRef

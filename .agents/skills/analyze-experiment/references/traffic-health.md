@@ -15,3 +15,10 @@ timed-out window still fires and one-sample windows remain strict.
 
 A lone timeout in raw evidence therefore does not by itself establish an active traffic finding.
 Correlate the evaluated scenario, its effective bounds, and the reported violations.
+
+### Request-metrics entry roles
+
+A service appearing as the entry of any user operation is foreground. An entry used only by
+internal operations (no port or method) is background, so request errors from it are clues.
+For job counters used only to check a journey's triggered work, the map can declare
+`background: true` on the entry without a separate operation. Metric names carry no role.

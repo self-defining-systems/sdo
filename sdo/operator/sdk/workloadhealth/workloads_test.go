@@ -2,6 +2,7 @@ package workloadhealth
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -224,3 +225,27 @@ func TestCrashLoopIsReportedDespiteAnObservedStartup(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// An unready Deployment must not bypass the startup decision when its
+// replacement Pod has no finding. The old availability timer may already
+// have elapsed while the replacement was scheduled and initialized.
+func TestDeploymentAvailabilityHonorsItsReplacementPodStartup(t *testing.T) {
+	hold := 60 * time.Second
+	unavailable := appsv1.DeploymentCondition{Type: appsv1.DeploymentAvailable, Status: corev1.ConditionFalse, LastTransitionTime: ago(65 * time.Second)}
+	deployment := api(2, 1, unavailable)
+	for _, tc := range []struct {
+		name string
+		age  time.Duration
+		want []string
+	}{
+		{name: "replacement still starting", age: 40 * time.Second},
+		{name: "replacement stuck past allowance", age: 90 * time.Second, want: []string{RuleNotReady + " Deployment/api"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := rules(detectObserved(t, hold, 85*time.Second, []appsv1.Deployment{deployment}, healthy("api-old"), bootingNoProbe("api-new", tc.age)))
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

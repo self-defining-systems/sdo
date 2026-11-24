@@ -353,6 +353,16 @@ func (e *evaluation) deployment(deployment appsv1.Deployment, pods []corev1.Pod)
 	if available == nil || available.Status != corev1.ConditionFalse || !e.held(available.LastTransitionTime.Time) {
 		return
 	}
+	// Availability is a fallback when no pod explains the failure. A pod
+	// still within its startup allowance must not page via this fallback.
+	for _, pod := range pods {
+		if pod.Namespace != ref.Namespace {
+			continue
+		}
+		if owner, _, ok := e.owner(pod); ok && owner == ref && sdk.PodStarting(e.ctx, pod) {
+			return
+		}
+	}
 	e.addDeployment(RuleDeploymentUnavailable, ref, deployment, pods, fmt.Sprintf(
 		"Deployment %s has %s; unavailable since %s.%s%s", deployment.Name, availability,
 		available.LastTransitionTime.UTC().Format(time.RFC3339), replicaFailure(deployment), e.deploymentEvents(deployment)), "Unavailable")

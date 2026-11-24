@@ -19,6 +19,7 @@ def _at(seconds: int) -> str:
 def _finding() -> dict[str, Any]:
     return {
         "detector_id": "workload-ready",
+        "fingerprint": "workload-ready/web",
         "summary": "Deployment web has 0/1 ready pods: ImagePullBackOff",
         "primary_resource": {"kind": "Deployment", "name": "web"},
     }
@@ -84,7 +85,11 @@ def test_watcher_reports_each_step_once_and_closes() -> None:
     base = {
         "incident_open": True,
         "incident_detected_at": _at(5),
-        "incident_request": {"incident_id": "inc-1", "findings": [_finding()]},
+        "incident_request": {
+            "incident_id": "inc-1",
+            "findings": [_finding()],
+            "opening_keys": ["workload-ready\x00workload-ready/web"],
+        },
     }
     lines, report = w.step(base)
     assert lines == [
@@ -132,7 +137,9 @@ def test_incident_opened_line_names_the_opening_alerts_not_the_clues() -> None:
             "standing_keys": ["resource-saturation\x00f-clue"],
         },
     }
-    lines, _ = Watcher(started=START).step(state)
+    lines, report = Watcher(started=START).step(state)
+    assert report is not None
+    assert report["summary"].startswith("SDO detector traffic-probe-call:")
     assert lines == ["sdo: incident opened at 12:00:05 (traffic-probe-call: scenario commit-call violates its SLO)"]
     camel = {
         **state,
@@ -197,7 +204,11 @@ def test_watcher_report_carries_lifecycle_stamps_from_sdo_records() -> None:
     base = {
         "incident_open": True,
         "incident_detected_at": _at(5),
-        "incident_request": {"incident_id": "inc-1", "findings": [_finding()]},
+        "incident_request": {
+            "incident_id": "inc-1",
+            "findings": [_finding()],
+            "opening_keys": ["workload-ready\x00workload-ready/web"],
+        },
     }
     _, report = w.step(base)
     assert report is not None
@@ -255,3 +266,36 @@ def test_an_incident_already_in_closure_when_the_watcher_starts_is_reported() ->
     lines, _ = w.step(state)
     assert any("incident opened" in line for line in lines)
     assert w.stamps["detected_at"] == detected
+
+
+def test_harness_page_with_only_a_standing_clue_has_no_preliminary_location() -> None:
+    watcher = Watcher(started=START, targets=frozenset({"web"}))
+    state = {
+        "incident_open": True,
+        "incident_detected_at": _at(5),
+        "incident_request": {
+            "incident_id": "page-1",
+            "external_message": "failures on the user route",
+            "findings": [{**_finding(), "fingerprint": "clue"}],
+            "standing_keys": ["workload-ready\x00clue"],
+        },
+    }
+    assert watcher.step({**state, "incident_detected_at": _at(-60)}) == ([], None)
+    _, report = watcher.step(state)
+    assert report is None
+    assert "localized_at" not in watcher.stamps
+    _, diagnosed = watcher.step({**state, "incident_result": {**_result(), "incident_id": "page-1"}})
+    assert diagnosed is not None
+    assert diagnosed["summary"].startswith("SDO responder:")
+
+
+def test_legacy_incident_with_no_opening_keys_reports_from_findings() -> None:
+    state = {
+        "incident_open": True,
+        "incident_detected_at": _at(5),
+        "incident_request": {"incident_id": "legacy", "findings": [_finding()]},
+    }
+    _, report = Watcher(started=START).step(state)
+    assert report is not None
+    assert report["component"] == "deploy/web"
+    assert report["summary"].startswith("SDO detector workload-ready:")

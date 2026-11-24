@@ -32,7 +32,7 @@ edges:
   - {from: api, to: worker, evidence: [config], source: x}
 entries:
   - {service: web, metric: http_requests_total, selector: {job: web}, labels: {route: route, method: method, status: code}, errors: "5.."}
-  - {service: queue, metric: jobs_total, selector: {job: web}, labels: {route: class, status: outcome}, errors: "failed"}
+  - {service: queue, background: true, metric: executions_total, selector: {job: web}, labels: {route: class, status: outcome}, errors: "failed"}
 operations:
   - id: list-items
     entry: {service: web, port: 80, method: GET, path: /items}
@@ -60,7 +60,7 @@ func journeyRun(t *testing.T, mapText string, w *world, brk bool) Report {
 	}
 	cfg.Map = m
 	cfg.Routes = fakeRoutes{"GET /items", "POST /mail", "GET /healthz"}
-	cfg.Prom.(*fakeProm).add("jobs_total", map[string]string{"job": "web", "class": "MailWorker", "outcome": "done"}, 5)
+	cfg.Prom.(*fakeProm).add("executions_total", map[string]string{"job": "web", "class": "MailWorker", "outcome": "done"}, 5)
 	r, err := Run(context.Background(), cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -163,8 +163,8 @@ func TestMissingEdgeIsRedAndSpuriousEdgeIsANote(t *testing.T) {
 
 func TestUnattributedBackgroundWorkIsReportedAndCanBeExcludedWithAReason(t *testing.T) {
 	seed := func(p *fakeProm) {
-		p.add("jobs_total", map[string]string{"job": "web", "class": "MailWorker", "outcome": "done"}, 5)
-		p.add("jobs_total", map[string]string{"job": "web", "class": "VacuumWorker", "outcome": "done"}, 9)
+		p.add("executions_total", map[string]string{"job": "web", "class": "MailWorker", "outcome": "done"}, 5)
+		p.add("executions_total", map[string]string{"job": "web", "class": "VacuumWorker", "outcome": "done"}, 9)
 	}
 	run := func(text string) Report {
 		m, err := appmap.Parse(text)
@@ -285,14 +285,15 @@ func TestGivenJourneysNeedAnOperationAndOperationsNeedAKnownJourney(t *testing.T
 // background work is still unattributed (the grader's attribution follows
 // triggers).
 func TestAnOperationEnteringAtTheJobMetricDoesNotAttributeItsOwnClass(t *testing.T) {
-	text := strings.Replace(journeyMap, "routes:\n  list:", "  - id: vacuum\n    route: VacuumWorker\n    entry: {service: queue}\n    path: [worker]\nroutes:\n  list:", 1)
+	text := strings.Replace(journeyMap, "background: true, ", "", 1)
+	text = strings.Replace(text, "routes:\n  list:", "  - id: vacuum\n    route: VacuumWorker\n    entry: {service: queue}\n    path: [worker]\nroutes:\n  list:", 1)
 	m, err := appmap.Parse(text)
 	if err != nil {
 		t.Fatal(err)
 	}
 	p := &fakeProm{}
-	p.add("jobs_total", map[string]string{"job": "web", "class": "MailWorker", "outcome": "done"}, 5)
-	p.add("jobs_total", map[string]string{"job": "web", "class": "VacuumWorker", "outcome": "done"}, 9)
+	p.add("executions_total", map[string]string{"job": "web", "class": "MailWorker", "outcome": "done"}, 5)
+	p.add("executions_total", map[string]string{"job": "web", "class": "VacuumWorker", "outcome": "done"}, 9)
 	r, err := Run(context.Background(), Config{Map: m, Commit: "c", Prom: p, Sender: fakeSender{prom: p, emit: perRoute}, Requests: 1, Settle: time.Second, Poll: time.Second, Wait: p.wait})
 	if err != nil {
 		t.Fatal(err)

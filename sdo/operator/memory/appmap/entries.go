@@ -47,6 +47,8 @@ type MetricEntry struct {
 	// Errors is a regular expression over the status label's values that
 	// counts a request as an error.
 	Errors string `yaml:"errors,omitempty"`
+	// Background declares a job counter used for triggered work without its own operation.
+	Background bool `yaml:"background,omitempty"`
 }
 
 // Reason explains why an onboarding check item cannot be made green for a
@@ -88,6 +90,23 @@ func (m Map) Internal(op Operation) bool {
 	}
 	_, ok := m.EntryFor(op.Entry.Service)
 	return ok
+}
+
+// Background reports whether an entry is declared for background work. Any user
+// operation entering the service makes it foreground. Otherwise an internal
+// operation or an explicit entry declaration establishes a background role.
+func (m Map) Background(entry MetricEntry) bool {
+	used := false
+	for _, op := range m.Operations {
+		if op.Entry.Service != entry.Service {
+			continue
+		}
+		used = true
+		if !m.Internal(op) {
+			return false
+		}
+	}
+	return used || entry.Background
 }
 
 func (c *checker) internalEntry(op Operation) bool { return c.m.Internal(op) }

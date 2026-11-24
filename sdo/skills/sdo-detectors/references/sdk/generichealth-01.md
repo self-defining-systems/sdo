@@ -13,18 +13,11 @@ errors.
 CONSTANTS
 
 const (
-	// RuleSecretReaderSkew: some readers started before the change and
-	// others after it, so they may hold different versions of one Secret.
-	RuleSecretReaderSkew = "secret-reader-skew"
-	// RuleSecretReadersPredateChange: every reader started before the change.
+	RuleSecretReaderSkew           = "secret-reader-skew"
 	RuleSecretReadersPredateChange = "secret-readers-predate-change"
 )
-    Secret reader rules. A Secret's data is read into env at container start,
-    and an application often reads mounted key files only at start too, so a
-    reader that started before the Secret's data last changed may hold the old
-    value. Both rules judge metadata only (SecretMetadata cannot hold values)
-    and fire only while a user-facing probe fails, because a reader that reloads
-    files, or a rotation nobody depends on yet, is not a fault.
+    Legacy Secret reader rule IDs remain available to consumers of old evidence.
+    Field ownership timestamps alone cannot verify that Secret contents changed.
 
 const ProgressWindow = 10 * time.Minute
     ProgressWindow allows ordinary controller convergence before reporting a
@@ -47,9 +40,8 @@ func NewWarnings(s sdk.DetectorSpec) sdk.Detector
     objects whose current state is not healthy.
 
 func NewWiring(s sdk.DetectorSpec) sdk.Detector
-    NewWiring checks selectors, ports, references, storage, ingress, DNS aliases
-    and, while a user-facing probe fails, pods that started before a Secret they
-    read last changed.
+    NewWiring checks selectors, ports, references, storage, ingress and DNS
+    aliases.
 
 func NewWorkloads(s sdk.DetectorSpec) sdk.Detector
     NewWorkloads checks StatefulSets, DaemonSets, Jobs and CronJobs. Unready

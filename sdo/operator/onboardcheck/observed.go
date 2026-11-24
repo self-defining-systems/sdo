@@ -39,32 +39,15 @@ const (
 )
 
 var (
-	backgroundMetric = regexp.MustCompile(`(?i)(job|queue|worker|task)`)
-	durationName     = regexp.MustCompile(`(duration|latency|seconds)`)
-	durationWhat     = regexp.MustCompile(`(request|transaction|http|handler|rpc|rack|endpoint|completion)`)
-	durationNot      = regexp.MustCompile(`(sql|database|external|redis|gitaly|cache|queue|elasticsearch|housekeeping|enqueue)`)
+	durationName = regexp.MustCompile(`(duration|latency|seconds)`)
+	durationWhat = regexp.MustCompile(`(request|transaction|http|handler|rpc|rack|endpoint|completion)`)
+	durationNot  = regexp.MustCompile(`(sql|database|external|redis|gitaly|cache|queue|elasticsearch|housekeeping|enqueue)`)
 )
 
 // isRequestDuration reports whether a metric family name is a request or
 // transaction duration (not a database, cache, queue or external-call one).
 func isRequestDuration(name string) bool {
 	return durationName.MatchString(name) && durationWhat.MatchString(name) && !durationNot.MatchString(name)
-}
-
-// background reports whether the entry counts background work: every operation
-// entering through it is internal, or its metric is named for jobs or queues.
-func background(m appmap.Map, es *entryState, ops []*opState) bool {
-	any := false
-	for _, st := range ops {
-		if st.entry.Service != es.entry.Service {
-			continue
-		}
-		any = true
-		if !st.internal {
-			return backgroundMetric.MatchString(es.entry.Metric)
-		}
-	}
-	return any || backgroundMetric.MatchString(es.entry.Metric)
 }
 
 // nearest returns the observed route label closest to want that skip does not
@@ -202,7 +185,7 @@ func runObserved(ctx context.Context, cfg Config, report *Report, ops []*opState
 		}
 		var undeclared []routeCount
 		total, covered := 0.0, 0.0
-		isBackground := background(cfg.Map, es, ops)
+		isBackground := cfg.Map.Background(es.entry)
 		for route, n := range es.routesAfter {
 			real := n - sentTo[name][route]
 			if real <= 0 {

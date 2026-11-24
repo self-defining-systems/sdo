@@ -102,7 +102,7 @@ func TestSourceDeparturesNeverMatchWhileDeploying(t *testing.T) {
 	}
 }
 
-func TestSourceDeparturesCompareSecretsByMetadataOnly(t *testing.T) {
+func TestSourceDeparturesExcludeMetadataOnlySecretClaims(t *testing.T) {
 	changed := detectOnset.Add(-time.Minute)
 	app := detectApp()
 	app.SecretList = []sdk.SecretMetadata{{Name: "creds", Namespace: "app", DataChangedAt: changed}, {Name: "untouched", Namespace: "app"}}
@@ -113,11 +113,8 @@ func TestSourceDeparturesCompareSecretsByMetadataOnly(t *testing.T) {
 	// DiffAgainstSource would error on a Secret; the classifier must not call it.
 	view := departureView{detectFake: app}
 	got := SourceDepartures(DepartureInput{View: view, Onset: detectOnset}, []sdk.ObjectRef{dref("Secret", "creds"), dref("Secret", "untouched")})
-	if len(got) != 1 || got[0].Kind != DepartureSecretData || got[0].Ref.Name != "creds" {
-		t.Fatalf("departures = %v", got)
-	}
-	if got[0].Command() != "" || !strings.Contains(got[0].Text(), "values not compared") {
-		t.Fatalf("a Secret has no restore command and says its values were not compared: %q", got[0].Text())
+	if len(got) != 0 {
+		t.Fatalf("Secret write metadata asserted an accepted-source departure: %v", got)
 	}
 }
 
@@ -238,25 +235,6 @@ func TestMissingObjectsNeedTheLatestWriterToBeForeign(t *testing.T) {
 	view.diffs["Service/not-yet"] = sdk.SourceDiff{Changed: true}
 	if got := SourceDepartures(DepartureInput{View: view, Events: events, Onset: detectOnset, DeploymentInFlight: true}, objects); len(got) != 0 {
 		t.Fatalf("nothing is missing yet while an advance is in flight: %v", got)
-	}
-}
-
-func TestSecretDepartureNeedsAReadingPodAndNoLaterSDOWrite(t *testing.T) {
-	changed := detectOnset.Add(-time.Minute)
-	app := detectApp()
-	app.SecretList = []sdk.SecretMetadata{
-		{Name: "read", Namespace: "app", DataChangedAt: changed}, {Name: "unread", Namespace: "app", DataChangedAt: changed},
-		{Name: "rewritten", Namespace: "app", DataChangedAt: changed},
-	}
-	started := metav1.NewTime(changed.Add(-time.Hour))
-	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "app", CreationTimestamp: started}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "main",
-		EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "read"}}}},
-		Env:     []corev1.EnvVar{{Name: "X", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "rewritten"}}}}}}}}}
-	app.PodList = []corev1.Pod{pod}
-	events := []sdk.DriftEvent{departureEvent(dref("Secret", "rewritten"), sdk.DeployerFieldManager, changed.Add(time.Second), "data")}
-	got := SourceDepartures(DepartureInput{View: departureView{detectFake: app}, Events: events, Onset: detectOnset}, []sdk.ObjectRef{dref("Secret", "read"), dref("Secret", "unread"), dref("Secret", "rewritten")})
-	if len(got) != 1 || got[0].Ref.Name != "read" {
-		t.Fatalf("departures = %v", got)
 	}
 }
 

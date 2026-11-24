@@ -100,3 +100,8 @@ cause class, reach, tokens and cost (`None` for an unpriced model), `auto-applie
 deterministic`, `partial` = a learned plan applied and the responder still ran) and the reflection decision when a
 ledger is present. Repeats are compared with the first run of their sequence (users' recovery time, else escalation,
 else SDO's closure time). The summary also counts churn findings, false alarms and alarms while gating.
+
+The watcher's preliminary diagnosis uses findings whose keys appear in the incident request's
+`opening_keys`. For older detector-opened requests without that field, it uses the available
+findings after excluding `standing_keys` when present. External pages can supply a confirmed
+responder diagnosis even when they have no opening findings.

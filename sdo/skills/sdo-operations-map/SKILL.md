@@ -15,6 +15,8 @@ memory check enforces the [rules](references/rules.md).
 - **Entries**: one record per exposed entry (Ingress backend, Gateway route, LoadBalancer or NodePort Service)
   and per internal entry (background workers, schedules): the request metric, a selector, the names of its
   route, method and status labels, and the error pattern ([observability](../sdo-observability/SKILL.md)).
+  Declare `background: true` on a job counter used only to account for triggered work. An entry used by
+  any user operation is foreground. Internal operations declare their entry without a port or method.
 - **Operations**: every user journey. Find each entry point in source (routes, API specs, proxy config,
   non-HTTP entries, workers, schedules). Each operation has an `entry` (service, port, method, path), a `route`
   when its metric's route value differs from the path, `writes: true` when it changes stored state, a `path` of
@@ -46,6 +48,7 @@ entries:
     labels: {route: route, method: method, status: code}
     errors: '5..'
   - service: internal                 # job metrics: the route label is the job class
+    background: true
     metric: jobs_total
     labels: {route: queue, status: outcome}
     errors: 'failed|dead'

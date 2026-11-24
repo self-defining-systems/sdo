@@ -178,6 +178,10 @@ def lifecycle_times(state: dict[str, Any], result: dict[str, Any]) -> dict[str, 
     return stamps
 
 
+def _finding_key(finding: dict[str, Any]) -> str:
+    return f"{_get(finding, 'detector_id')}\x00{_get(finding, 'fingerprint')}"
+
+
 def report_from_findings(findings: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Preliminary fuzzops report from the incident's detector findings (before the responder answers)."""
     for finding in findings:
@@ -244,6 +248,16 @@ class Watcher:
         detected_raw = _get(state, "incident_detected_at") or _get(closure, "detected_at")
         detected = _parse_time(detected_raw)
         incident = str(_get(request, "incident_id") or _get(result, "incident_id") or "")
+        findings = _get(request, "findings") or []
+        standing_keys = set(_get(request, "standing_keys") or [])
+        current_findings = [f for f in findings if _finding_key(f) not in standing_keys]
+        opening_keys = _get(request, "opening_keys")
+        if opening_keys is None and not (_get(request, "page") or _get(request, "external_message")):
+            # Older detector-opened requests only carried the findings.
+            openers = current_findings
+        else:
+            keys = set(opening_keys or [])
+            openers = [f for f in current_findings if _finding_key(f) in keys]
         # An incident SDO opened (and maybe already handed to closure) shortly
         # before this watcher started still belongs to the window: the watcher
         # starts some seconds after the inject, and a fast detection beats it.
@@ -254,7 +268,7 @@ class Watcher:
             detected >= self.started
             or concerns(
                 {
-                    "findings": _get(request, "findings") or [],
+                    "findings": current_findings,
                     "confirmed_root_causes": _get(result, "confirmed_root_causes") or [],
                     "repair_actions": _get(result, "repair_actions") or [],
                 },
@@ -263,19 +277,14 @@ class Watcher:
         )
         if active and detected is not None and mine:
             self.incident = self.incident or incident or f"detected-{detected.isoformat()}"
-            findings = _get(request, "findings") or []
-            # The alerts that opened the incident, not the clues that joined it.
-            keys = set(_get(request, "opening_keys") or [])
-            openers = [
-                f for f in findings if f"{_get(f, 'detector_id')}\x00{_get(f, 'fingerprint')}" in keys
-            ] or findings
-            what = "; ".join(f"{_get(f, 'detector_id')}: {_get(f, 'summary')}" for f in openers[:3])
+            display = openers or current_findings
+            what = "; ".join(f"{_get(f, 'detector_id')}: {_get(f, 'summary')}" for f in display[:3])
             self._once(
                 "open", f"sdo: incident opened at {detected.strftime('%H:%M:%S')} ({what or 'findings pending'})", lines
             )
             self._stamp("detected_at", str(detected_raw))
-            if findings and "report:findings" not in self.seen and "report:result" not in self.seen:
-                report = report_from_findings(findings)
+            if openers and "report:findings" not in self.seen and "report:result" not in self.seen:
+                report = report_from_findings(openers)
                 if report:
                     self.seen.add("report:findings")
                     if report.get("component"):
