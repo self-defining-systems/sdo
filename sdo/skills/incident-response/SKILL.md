@@ -17,6 +17,6 @@ description: A general method for finding and removing what is hurting an applic
 - **Verify recovery.** The operation must keep passing. For paged incidents, return `completed` if verified, else `failed`.
   If fenced, finish your report. A later alert can keep the incident open and escalated after you return.
   SDO ends detector-opened work on recovery. Wait with `sdo detect --wait SECONDS` (max 600), never `sleep`.
-  It returns early only on state changes. Background results are interim. Resume when the command ends. The last result stands.
+  It returns early only on state changes. Background results are interim. Keep working when it ends. The last result stands.
 - **Record.** `findings` (required even if you give up): what you saw and where, what you ruled out and why, and gaps.
   Keep probable causes out. `agent_changes`: what, where and when (RFC 3339) for each change, empty if none.
