@@ -56,7 +56,8 @@ func (c *Controller) ExecuteDispatchEffect(ctx context.Context, effect DispatchE
 		return err
 	}
 	c.responderCancel = cancel
-	c.responseStagesRunning = !pageOpened(&effect.Request) && !(len(c.codePath.Selection.ResponseStages) == 1 && c.codePath.Selection.ResponseStages[0] == "agent")
+	entry := c.responseEntry(effect.Request)
+	c.responseStagesRunning = entry == runAutomaticStages
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
 	if c.incidentDispatchedAt.IsZero() {
 		c.incidentDispatchedAt = c.clock()
@@ -67,7 +68,7 @@ func (c *Controller) ExecuteDispatchEffect(ctx context.Context, effect DispatchE
 		defer cancel()
 		dispatchCtx, endDispatch := context.WithTimeout(actionCtx, endBy)
 		defer endDispatch()
-		completion := c.runResponsePipeline(dispatchCtx, effect.Request)
+		completion := c.runResponsePipeline(dispatchCtx, effect.Request, entry)
 		if completion.err != nil && actionCtx.Err() == nil && errors.Is(dispatchCtx.Err(), context.DeadlineExceeded) {
 			stage := deterministicStageReport(completion.priorStages)
 			if completion.automatic != nil && playbookWrote(stage) {

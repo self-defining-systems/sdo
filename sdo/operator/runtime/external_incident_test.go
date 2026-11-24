@@ -145,6 +145,10 @@ func TestExternalCompletionSchedulesClosureImmediately(t *testing.T) {
 	if err := c.OpenExternalIncident(context.Background(), now, ExternalIncident{ID: "external-wake", Namespace: cfg.Namespace, Message: "investigate"}); err != nil {
 		t.Fatal(err)
 	}
+	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
+	if wake := c.NextWake(); !wake.After(now) {
+		t.Fatalf("open external incident without detectors must have a future wake, got %v", wake)
+	}
 	c.responderDone = true
 	c.responderCompletedAt = now
 	if wake := c.NextWake(); wake.After(now) || wake.IsZero() {

@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -483,5 +484,117 @@ func TestAutomaticHandoffAndClosureIgnoreAPermanentlyUnavailableClue(t *testing.
 	}
 	if unavailable.reads != 0 {
 		t.Fatalf("handoff preparation made %d live observation reads", unavailable.reads)
+	}
+}
+
+type handoffRecoveryProbe struct {
+	windowedSettlingDetector
+	repaired atomic.Bool
+}
+
+func (d *handoffRecoveryProbe) Detect(ctx context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
+	if d.repaired.Load() {
+		return nil, nil
+	}
+	return d.windowedSettlingDetector.Detect(ctx, view)
+}
+
+// This responder fixes the synthetic fault on request and withholds its
+// report while the controller verifies recovery.
+type recoveryWaitingHandoff struct {
+	probe    *handoffRecoveryProbe
+	started  chan struct{}
+	repair   chan struct{}
+	repaired chan struct{}
+}
+
+func (d *recoveryWaitingHandoff) Dispatch(ctx context.Context, _ IncidentRequest) (IncidentResult, error) {
+	close(d.started)
+	select {
+	case <-d.repair:
+		d.probe.repaired.Store(true)
+		close(d.repaired)
+	case <-ctx.Done():
+		return IncidentResult{}, ctx.Err()
+	}
+	<-ctx.Done()
+	return IncidentResult{}, ctx.Err()
+}
+
+func TestAutomaticHandoffVerifiesRecoveryWhileResponderWaits(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		applied bool
+	}{
+		{"applied", true},
+		{"nothing applied", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, world, closed := automaticRecoveryWorld(t, settlingCase{
+				unexplainedDrift: true, undecided: !tc.applied,
+			}, settings.AfterPlaybookAgent)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer func() { cancel(); c.Wait() }()
+			report := autoReport(c)
+			if playbookWrote(report) != tc.applied {
+				t.Fatalf("automatic live write = %v, want %v", playbookWrote(report), tc.applied)
+			}
+			unresolved := c.currentIncidentResult.UnresolvedFindings
+			clueIndex := slices.IndexFunc(unresolved, func(f sdk.Finding) bool {
+				return f.DetectorID == "drift.unexplained" && f.Status == sdk.FindingActive
+			})
+			if clueIndex < 0 {
+				t.Fatal("automatic stage finished without a residual drift clue")
+			}
+			clue := unresolved[clueIndex]
+			c.tracker.ObserveBinding(world.clock.Now(), clue, true)
+
+			probe := &handoffRecoveryProbe{windowedSettlingDetector: c.detectors["traffic-health"].(windowedSettlingDetector)}
+			c.detectors[probe.id] = probe
+			c.responderLoop.Detectors[0] = probe
+			c.scheduler = NewScheduler([]sdk.Detector{probe}, world.clock.Now())
+			dispatcher := &recoveryWaitingHandoff{probe: probe, started: make(chan struct{}), repair: make(chan struct{}), repaired: make(chan struct{})}
+			c.dispatcher = dispatcher
+			stepAt := func(at time.Time) {
+				t.Helper()
+				if err := world.clock.advance(ctx, at.Sub(world.clock.Now())); err != nil {
+					t.Fatal(err)
+				}
+				if err := c.Step(ctx, at, nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+			stepAt(c.automaticDeadlineLocked(report))
+			effect, ok := c.PendingDispatchEffect()
+			if !ok || !autoReport(c).GetHandoffSelected() {
+				t.Fatal("the residual alert did not hand off to the responder")
+			}
+			if err := c.ExecuteDispatchEffect(ctx, effect); err != nil {
+				t.Fatal(err)
+			}
+			<-dispatcher.started
+			close(dispatcher.repair)
+			<-dispatcher.repaired
+
+			for i := 0; c.IncidentOpen() && i < 12; i++ {
+				wake := c.NextWake()
+				if !wake.After(world.clock.Now()) {
+					t.Fatalf("open incident has no future wake: %s", wake)
+				}
+				stepAt(wake)
+				if i == 0 && c.closureStableSince.IsZero() {
+					t.Fatal("controller never started recovery verification while the responder was waiting")
+				}
+			}
+			if c.IncidentOpen() || !closed.VerifiedWhileResponderRunning || closed.HealthClearedAt == nil {
+				t.Fatalf("controller did not verify and close while the responder waited: %+v", closed)
+			}
+			if !c.tracker.HasActiveKeys([]string{findingKey(clue)}) {
+				t.Fatal("the drift clue cleared during the simulation")
+			}
+			if len(closed.FinalDetectorStates) != 1 || closed.FinalDetectorStates[0].DetectorID != probe.id {
+				t.Fatalf("expected scoped recovery despite the remaining clue: %v", closed.FinalDetectorStates)
+			}
+		})
 	}
 }
