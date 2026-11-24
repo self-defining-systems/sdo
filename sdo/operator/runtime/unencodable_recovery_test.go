@@ -69,7 +69,7 @@ func TestResultProjectionKeepsGoodEvidenceWithMalformedFields(t *testing.T) {
 	result.ResponderSessionID = "session"
 	result.ResolutionPath = "responder"
 	result.Error = "failed with \xff"
-	result.ProposedArtifactIDs = []string{"/invalid/reference", "valid-playbook"}
+	result.ProposedArtifactIDs = []string{"valid-playbook"}
 	result.PlanApplications = []RecordedPlanApplication{{ID: "recorded"}}
 	c.currentIncidentResult, c.dispatchError = &result, "dispatch failed with \xff"
 	check := func(got *contracts.IncidentResult) {
@@ -118,7 +118,7 @@ func (d *failingFreezeUsage) ResponderUsage(string) (*contracts.UsageMetrics, er
 	return nil, errors.New("synthetic freeze failure")
 }
 
-func TestClosureFreezeRetryStopsAndReportsOnce(t *testing.T) {
+func TestClosureFreezeRetryCapsDelayAndReportsOnce(t *testing.T) {
 	now := verifyT0
 	clock := &settlingClock{now: now}
 	world := &settlingDetector{id: "service-health", class: sdk.DetectorClassHealth, clock: clock, healAt: now.Add(time.Second)}
@@ -126,7 +126,7 @@ func TestClosureFreezeRetryStopsAndReportsOnce(t *testing.T) {
 		PrimaryResource: sdk.ObjectRef{Kind: "Pod", APIVersion: "v1", Namespace: "app", Name: "worker"}, Evidence: "synthetic", Summary: "unready"}}
 	cfg := testControllerConfig()
 	cfg.ClosureStabilityWindow = 5 * time.Second
-	cfg.ClosureRetry.MaxAttempts = 2
+	cfg.ClosureRetry = ClosureRetryPolicy{MaxAttempts: 2, InitialBackoff: 2 * time.Second, MaxBackoff: 3 * time.Second}
 	dispatcher := &failingFreezeUsage{}
 	c, err := NewController(cfg, []sdk.Detector{world}, staticProvider{}, dispatcher, now)
 	if err != nil {
@@ -147,10 +147,25 @@ func TestClosureFreezeRetryStopsAndReportsOnce(t *testing.T) {
 	}
 	autoStep(t, c, clock, time.Second)
 	autoStep(t, c, clock, 5*time.Second)
-	for range 4 {
+	for _, calls := range []int{1, 2, 2, 2, 3, 3, 3, 4} {
 		autoStep(t, c, clock, time.Second)
+		if dispatcher.calls != calls {
+			t.Fatalf("freeze attempts=%d, want %d", dispatcher.calls, calls)
+		}
 	}
-	if dispatcher.calls != 2 || reports != 1 {
-		t.Fatalf("freeze attempts=%d cause reports=%d, want 2 and 1", dispatcher.calls, reports)
+	if reports != 1 {
+		t.Fatalf("cause reports=%d, want 1", reports)
+	}
+}
+
+func TestResultProjectionRejectsMalformedMemoryReferences(t *testing.T) {
+	for _, result := range []IncidentResult{
+		{AppliedPlaybooks: []AppliedPlaybook{{PlaybookID: "/invalid/reference"}}},
+		{AppliedPlaybooks: []AppliedPlaybook{{PlaybookID: "valid-playbook", ScriptNames: []string{"/invalid/reference"}}}},
+		{ProposedArtifactIDs: []string{"/invalid/reference"}},
+	} {
+		if _, err := incidentResultContract(result); err == nil {
+			t.Fatalf("accepted malformed memory reference: %+v", result)
+		}
 	}
 }

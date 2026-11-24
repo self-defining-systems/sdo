@@ -242,7 +242,8 @@ type Controller struct {
 	closureState            contracts.ClosureState
 	closureReceipt          *ClosureReceipt
 	closureFailure          *ClosureFailure
-	closureFreezeAttempts   int
+	closureFreezeDelay      time.Duration
+	closureFreezeRetryAt    time.Time
 	closureFreezeCauses     map[string]bool
 	failedClosures          []*contracts.FailedIncidentClosure
 	dispatchFailureAttempts int
@@ -1376,6 +1377,13 @@ func (c *Controller) nextWake() (time.Time, string) {
 		earlyDeadline = c.earlyReportWakeLocked()
 		earlyReason = "early report"
 	}
+	if retry := c.closureFreezeRetryAt; retry.After(c.clock()) {
+		if !c.earlyReportPendingLocked() {
+			earlyDeadline = time.Time{}
+		}
+		verificationDeadline = time.Time{}
+		consider(retry, "closure freeze retry")
+	}
 	incidentOpen := c.incidentOpen
 	externalCompleted := c.config.ExternalIncidentsOnly && incidentOpen && c.responderDone
 	retireDeadline := c.retirementWakeLocked(c.clock())
@@ -1834,7 +1842,7 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		return false
 	}
 	c.mu.Lock()
-	if !c.incidentOpen || c.currentIncidentRequest == nil || c.closureFreezeAttempts >= c.config.ClosureRetry.MaxAttempts {
+	if !c.incidentOpen || c.currentIncidentRequest == nil || now.Before(c.closureFreezeRetryAt) {
 		c.mu.Unlock()
 		return false
 	}
@@ -2236,24 +2244,26 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		_, err = c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Begin, At: now, Closure: projected})
 	}
 	if err != nil {
-		c.closureFreezeAttempts++
+		policy := c.config.ClosureRetry
+		if c.closureFreezeDelay == 0 {
+			c.closureFreezeDelay = policy.InitialBackoff
+		} else {
+			c.closureFreezeDelay += min(c.closureFreezeDelay, policy.MaxBackoff-c.closureFreezeDelay)
+		}
+		c.closureFreezeRetryAt = now.Add(c.closureFreezeDelay)
 		if c.closureFreezeCauses == nil {
 			c.closureFreezeCauses = map[string]bool{}
 		}
 		cause := err.Error()
 		first := !c.closureFreezeCauses[cause]
 		c.closureFreezeCauses[cause] = true
-		exhausted := c.closureFreezeAttempts >= c.config.ClosureRetry.MaxAttempts
 		c.mu.Unlock()
 		if first {
 			c.reportBrokerError("freeze closure", err)
 		}
-		if exhausted {
-			slog.Error("incident_closure_freeze_exhausted", "incident_id", closure.Request.IncidentID)
-		}
 		return false
 	}
-	c.closureFreezeAttempts = 0
+	c.closureFreezeDelay, c.closureFreezeRetryAt = 0, time.Time{}
 	c.emitLifecycleLocked(&contracts.LifecycleEvent{
 		Event: PhaseClosed, RecordedAt: contractTimestamp(verifiedAt), IncidentId: closure.Request.IncidentID,
 		HealthClearedAt:               optionalContractTimestamp(closure.HealthClearedAt),

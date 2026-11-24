@@ -315,13 +315,13 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 	for _, playbook := range result.AppliedPlaybooks {
 		id, err := layout.PlaybookID(playbook.PlaybookID)
 		if err != nil {
-			continue
+			return nil, err
 		}
 		item := &contracts.AppliedPlaybook{PlaybookId: id, ParameterBindings: bindingsContract(playbook.ParameterBindings), ScriptNames: make([]string, 0, len(playbook.ScriptNames))}
 		for _, script := range playbook.ScriptNames {
 			name, err := layout.PlaybookScriptName(id, script)
 			if err != nil {
-				continue
+				return nil, err
 			}
 			item.ScriptNames = append(item.ScriptNames, name)
 		}
@@ -351,7 +351,7 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 	for _, reference := range result.ProposedArtifactIDs {
 		id, err := layout.ArtifactID(reference)
 		if err != nil {
-			continue
+			return nil, err
 		}
 		message.ProposedArtifactIds = append(message.ProposedArtifactIds, id)
 	}
