@@ -3,11 +3,12 @@ package main
 import (
 	"fmt"
 	"go/format"
-	"os"
 	"reflect"
-	"sdo.dev/operator/sdk/program"
 	"sort"
 	"strings"
+
+	"sdo.dev/operator/safefs"
+	"sdo.dev/operator/sdk/program"
 )
 
 func main() {
@@ -81,7 +82,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	if err := os.WriteFile("view_generated.go", formatted, 0644); err != nil {
+	if err := safefs.WriteFile(".", "view_generated.go", formatted, 0o644); err != nil {
 		panic(err)
 	}
 }
