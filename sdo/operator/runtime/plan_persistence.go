@@ -141,14 +141,15 @@ func encodePersistedActions(actions []program.Action) ([]persistedAction, error)
 		case program.ProposeSourceChange, *program.ProposeSourceChange:
 			kind = "propose_source_change"
 		default:
-			return nil, fmt.Errorf("unsupported plan action %T", action)
+			kind = "unencodable"
 		}
 		payload, err := json.Marshal(action)
-		if err != nil {
-			return nil, fmt.Errorf("encode %s action: %w", kind, err)
-		}
-		if string(payload) == "null" {
-			return nil, fmt.Errorf("nil %s action", kind)
+		if kind == "unencodable" || err != nil || string(payload) == "null" || historicalActionProto(action).GetUnencodable() != nil {
+			kind = "unencodable"
+			payload, err = json.Marshal(unencodableActionFor(action))
+			if err != nil {
+				return nil, err
+			}
 		}
 		encoded = append(encoded, persistedAction{Kind: kind, Action: payload})
 	}
@@ -163,6 +164,8 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 	for _, entry := range encoded {
 		var action program.Action
 		switch entry.Kind {
+		case "unencodable":
+			action = &unencodableAction{}
 		case "patch_object":
 			action = &program.PatchObject{}
 		case "apply_object":
@@ -234,6 +237,8 @@ func decodePersistedActions(encoded []persistedAction) ([]program.Action, error)
 			return nil, fmt.Errorf("decode %s action: %w", entry.Kind, err)
 		}
 		switch value := action.(type) {
+		case *unencodableAction:
+			decoded = append(decoded, *value)
 		case *program.SyncWebhookCA:
 			decoded = append(decoded, *value)
 		case *program.PatchObject:

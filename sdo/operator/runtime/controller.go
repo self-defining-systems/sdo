@@ -242,6 +242,9 @@ type Controller struct {
 	closureState            contracts.ClosureState
 	closureReceipt          *ClosureReceipt
 	closureFailure          *ClosureFailure
+	closureFreezeDelay      time.Duration
+	closureFreezeRetryAt    time.Time
+	closureFreezeCauses     map[string]bool
 	failedClosures          []*contracts.FailedIncidentClosure
 	dispatchFailureAttempts int
 	dispatchNextRetryAt     time.Time
@@ -1374,6 +1377,13 @@ func (c *Controller) nextWake() (time.Time, string) {
 		earlyDeadline = c.earlyReportWakeLocked()
 		earlyReason = "early report"
 	}
+	if retry := c.closureFreezeRetryAt; retry.After(c.clock()) {
+		if !c.earlyReportPendingLocked() {
+			earlyDeadline = time.Time{}
+		}
+		verificationDeadline = time.Time{}
+		consider(retry, "closure freeze retry")
+	}
 	incidentOpen := c.incidentOpen
 	externalCompleted := c.config.ExternalIncidentsOnly && incidentOpen && c.responderDone
 	retireDeadline := c.retirementWakeLocked(c.clock())
@@ -1832,7 +1842,7 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		return false
 	}
 	c.mu.Lock()
-	if !c.incidentOpen || c.currentIncidentRequest == nil {
+	if !c.incidentOpen || c.currentIncidentRequest == nil || now.Before(c.closureFreezeRetryAt) {
 		c.mu.Unlock()
 		return false
 	}
@@ -2148,7 +2158,6 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 			cleared := c.closureStableSince
 			healthClearedAt = &cleared
 		}
-		logIncidentVerified(c.currentIncidentRequest.IncidentID, healthClearedAt, c.responderCompletedAt, verifiedAt)
 	}
 	windowUsed := time.Duration(0)
 	if requiresStability {
@@ -2230,6 +2239,31 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 	sortTimeline(closure.DetectorTimeline)
 	closure.LearnedDetectorFiredBeforeDispatch, closure.LearnedDetectorFiredAfterDispatch,
 		closure.NoLearnedDetectorFired = timelineSummary(closure.DetectorTimeline)
+	projected, err := incidentClosureContract(closure)
+	if err == nil {
+		_, err = c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Begin, At: now, Closure: projected})
+	}
+	if err != nil {
+		policy := c.config.ClosureRetry
+		if c.closureFreezeDelay == 0 {
+			c.closureFreezeDelay = policy.InitialBackoff
+		} else {
+			c.closureFreezeDelay += min(c.closureFreezeDelay, policy.MaxBackoff-c.closureFreezeDelay)
+		}
+		c.closureFreezeRetryAt = now.Add(c.closureFreezeDelay)
+		if c.closureFreezeCauses == nil {
+			c.closureFreezeCauses = map[string]bool{}
+		}
+		cause := err.Error()
+		first := !c.closureFreezeCauses[cause]
+		c.closureFreezeCauses[cause] = true
+		c.mu.Unlock()
+		if first {
+			c.reportBrokerError("freeze closure", err)
+		}
+		return false
+	}
+	c.closureFreezeDelay, c.closureFreezeRetryAt = 0, time.Time{}
 	c.emitLifecycleLocked(&contracts.LifecycleEvent{
 		Event: PhaseClosed, RecordedAt: contractTimestamp(verifiedAt), IncidentId: closure.Request.IncidentID,
 		HealthClearedAt:               optionalContractTimestamp(closure.HealthClearedAt),
@@ -2239,15 +2273,15 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		AfterDispatchFindingKeys:      afterDispatchKeys(closure.DetectorTimeline),
 	})
 	c.timeline = nil
-	projected, err := incidentClosureContract(closure)
-	if err == nil {
-		_, err = c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Begin, At: now, Closure: projected})
+	if verified {
+		logIncidentVerified(closure.Request.IncidentID, healthClearedAt, c.responderCompletedAt, verifiedAt)
 	}
-	if err != nil {
-		c.mu.Unlock()
-		c.reportBrokerError("freeze closure", err)
-		return false
+	for _, app := range projected.GetResult().GetPlanApplications() {
+		if slices.ContainsFunc(app.GetPlan().GetActions(), hasUnencodableAction) || slices.ContainsFunc(app.GetActionsApplied(), hasUnencodableAction) {
+			slog.Warn("incident_action_evidence_unencodable", "incident_id", closure.Request.IncidentID, "application_id", app.GetApplicationId())
+		}
 	}
+
 	if early {
 		c.incidentOpen = false
 		c.publishHeldLocked()
@@ -2430,7 +2464,7 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 			Findings: batch, Deadlines: timestampsContract(pendingBatch.Deadlines), Deadline: optionalTimestamp(pendingBatch.Deadline),
 		},
 		History: evaluationsContract(history), IncidentOpen: c.incidentOpen, ResponderDone: c.responderDone,
-		DispatchError: c.dispatchError, IncidentDetectedAt: optionalTimestamp(c.incidentDetectedAt),
+		DispatchError: validContractText(c.dispatchError), IncidentDetectedAt: optionalTimestamp(c.incidentDetectedAt),
 		IncidentDispatchedAt: optionalTimestamp(c.incidentDispatchedAt), ResponderCompletedAt: optionalTimestamp(c.responderCompletedAt),
 		EscalatedAt:             optionalTimestamp(c.escalatedAt),
 		DispatchFailureAttempts: int32(c.dispatchFailureAttempts),
