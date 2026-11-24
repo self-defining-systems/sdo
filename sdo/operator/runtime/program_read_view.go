@@ -6,6 +6,7 @@ import (
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -184,6 +186,9 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	}
 	if v.Source == nil || v.SourceCommit == "" {
 		return program.Diff{}, errors.New("accepted source is unavailable")
+	}
+	if ref.Kind == "Secret" {
+		return v.diffSecretAgainstSource(ref)
 	}
 	observed, err := v.snapshotObject(ref)
 	if err != nil && !errors.Is(err, errSnapshotObjectAbsent) {
@@ -407,6 +412,55 @@ func projectSourceFields(observed, declared any) any {
 	default:
 		return observed
 	}
+}
+
+// Keep the raw reads inside the operator. Only key names enter the diff.
+func (v LiveReadView) diffSecretAgainstSource(ref sdk.ObjectRef) (program.Diff, error) {
+	source, ok := v.Source.(secretDataSource)
+	if ref.Namespace == "" || ref.Namespace != v.Namespace() || ref.APIVersion != "v1" || ref.Name == "" {
+		return program.Diff{}, sdk.Classified("Secret comparison requires a v1 Secret in the application namespace", sdk.ErrInvalidRead)
+	}
+	if !ok || v.Client == nil {
+		return program.Diff{}, errors.New("Secret comparison readers unavailable")
+	}
+	ctx, cancel := context.WithTimeout(v.context(), DefaultDiagnosisDeadline)
+	defer cancel()
+	accepted, err := source.AcceptedSecretData(ctx, v.SourceCommit, v.Namespace(), ref)
+	sourceAbsent := errors.Is(err, ErrAcceptedManifestAbsent)
+	if err != nil && !sourceAbsent && !errors.Is(err, rendered.ErrSecretSourceNoLiteral) {
+		return program.Diff{}, errors.New("accepted Secret data unavailable")
+	}
+	secret, err := v.Client.CoreV1().Secrets(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	liveAbsent := apierrors.IsNotFound(err)
+	if err != nil && !liveAbsent {
+		return program.Diff{}, errors.New("live Secret data unavailable")
+	}
+	var live map[string][]byte
+	if !liveAbsent {
+		live = secret.Data
+	}
+	before, after := map[string]any{}, map[string]any{}
+	for key, value := range accepted {
+		if other, present := live[key]; !present || !bytes.Equal(value, other) {
+			before[key] = nil
+		}
+	}
+	for key, value := range live {
+		if other, present := accepted[key]; !present || !bytes.Equal(value, other) {
+			after[key] = nil
+		}
+	}
+	return program.Diff{SourceAbsent: sourceAbsent, LiveAbsent: liveAbsent,
+		Changed: sourceAbsent != liveAbsent || len(before)+len(after) > 0,
+		Text:    sdk.SourceComparisonText(secretDiffSide(before, sourceAbsent), secretDiffSide(after, liveAbsent))}, nil
+}
+
+func secretDiffSide(keys map[string]any, absent bool) []byte {
+	if absent {
+		return []byte("null")
+	}
+	text, _ := json.Marshal(map[string]any{"data": keys})
+	return text
 }
 
 func (v LiveReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, error) {
