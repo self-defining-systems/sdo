@@ -37,15 +37,20 @@ func routeErrors(t *testing.T, playbook string) sdk.Finding {
 	return finding
 }
 
-// churnController is an incident that opened on routine churn, whose responder
-// is running with the learned playbook loaded. Each automatic pass attempt
+// churnController is an incident that opened on routine churn, whose automatic stage
+// is checking recovery with the learned playbook loaded. Each automatic pass attempt
 // shows as one count of the health check that guards it.
 func churnController(t *testing.T, now time.Time) (*Controller, *atomic.Int32) {
 	t.Helper()
 	c, _ := alertSetController(t, now, &switchedProbe{id: memory.TrafficDetectorPrefix + "opening", scenario: "ssh"})
 	c.config.RequestMetricsOpens = true
-	c.responderDone = false
-	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
+	c.responderDone = true
+	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
+	c.currentIncidentResult = &IncidentResult{ResolutionPath: "deterministic"}
+	c.currentIncidentRequest.PriorStages = []*contracts.StageReport{{
+		Stage: "deterministic", RecoveryDeadline: contractTimestamp(now.Add(time.Minute)),
+		Mitigations: []*contracts.StageMitigation{{ApplyReceipt: &contracts.PlanApplication{Applied: true}}},
+	}}
 	c.codePath = &CodePath{Selection: CodePathSelection{ResponseStages: []string{"deterministic", "agent"}}}
 	registry, err := program.NewRegistry([]program.Diagnoser{routeFix{id: "route-fix"}}, []program.Mitigator{routeFix{id: "route-fix"}})
 	if err != nil {

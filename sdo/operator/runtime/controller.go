@@ -1002,8 +1002,8 @@ func (c *Controller) EvaluateAll(ctx context.Context, now time.Time) error {
 }
 
 // admitActivation is the one entry for a newly active finding. A finding
-// already in the open incident is refreshed; a clue joins the incident before
-// launch, or as a learned playbook's activation after it, and otherwise stays
+// already in the open incident is refreshed; a clue joins before
+// launch or while the automatic stage owns the repair, and otherwise stays
 // tracked only. An opener joins the incident's opening alerts before launch
 // and otherwise waits in the batcher for the next incident.
 func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, now time.Time, spec sdk.DetectorSpec) {
@@ -1026,8 +1026,8 @@ func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, n
 	// An opener inside the join window belongs to the current alert set.
 	// Later openers wait for the next incident.
 	if c.joinAlertSet(finding, now) {
-		// The alert set changed: a learned playbook for the joined symptom is
-		// evaluated against live state, not only the opening alerts' playbooks.
+		// The automatic stage can evaluate a learned playbook for the joined
+		// symptom while it owns the repair.
 		c.attachLearnedActivation(ctx, finding)
 		return
 	}

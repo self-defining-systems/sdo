@@ -89,12 +89,10 @@ func e2eWorld() *sameWriteWorld {
 	return world
 }
 
-// Routine churn opens the incident and the agent starts with nothing to apply.
-// The fault's own request-metrics symptom joins the alert set afterwards: the
-// learned playbook is evaluated against it, matches, applies, the alerts clear
-// and the incident closes success, with the agent dispatched once and never
-// re-prompted.
-func TestLearnedPlaybookFixesASymptomThatJoinsAChurnIncident(t *testing.T) {
+// A linked symptom that appears after handoff can make a previously
+// non-matching program applicable. The finding still joins the alert set,
+// but the responder owns the repair.
+func TestLearnedPlaybookDoesNotWriteAfterHandoff(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	now := time.Unix(1000, 0).UTC()
@@ -125,6 +123,8 @@ func TestLearnedPlaybookFixesASymptomThatJoinsAChurnIncident(t *testing.T) {
 	request := IncidentRequest{IncidentID: "synthetic-e2e", Application: "demo", Namespace: "app", SourceCommit: "synthetic", RepairPolicy: "recorded-actions",
 		Findings: churnFinding, OpeningKeys: findingKeys(churnFinding), ResponseDeadline: lifecycleio.Now().Add(time.Hour)}
 	executor := PlanExecutor{Client: TypedPlanClient{Client: world.client}, Source: world, Rollouts: world, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: world}}
+	request.InitialProgramRuns = []ProgramRun{{ProgramID: "fix", Verdict: program.Verdict{Result: program.NoMatch}}}
+	request.PriorStages = []*contracts.StageReport{{Stage: "deterministic", HandoffSelected: true}}
 	loop := NewResponderLoop(request, registry, world, detectors, executor, 5)
 	loop.Now = c.now
 	loop.ReadView = func(v sdk.DetectionContext) program.ReadView {
@@ -159,23 +159,13 @@ func TestLearnedPlaybookFixesASymptomThatJoinsAChurnIncident(t *testing.T) {
 	churn.on.Store(false)
 	route.shown.Store(true)
 	step(5)
-	applied := false
-	for _, report := range c.currentIncidentRequest.PriorStages {
-		for _, m := range report.Mitigations {
-			applied = applied || m.PlaybookId == "fix" && m.GetApplyReceipt().GetApplied()
-		}
+	if world.restarts.Load() != 0 {
+		t.Fatalf("automatic stage wrote %d times after handoff", world.restarts.Load())
 	}
-	if !applied {
-		t.Fatalf("the learned playbook was not applied: %v", c.currentIncidentRequest.PriorStages)
+	if len(c.currentIncidentRequest.JoinedKeys) != 1 {
+		t.Fatalf("the symptom did not join the alert set: %v", c.currentIncidentRequest.JoinedKeys)
 	}
-	if world.restarts.Load() != 1 {
-		t.Fatalf("the learned playbook wrote %d times, want one restart of the component", world.restarts.Load())
-	}
-	step(15)
-	if closed.Result == nil || closed.Result.Status != IncidentCompleted {
-		t.Fatalf("the incident did not close success: %+v (joined %v)", closed.Result, c.currentIncidentRequest)
-	}
-	if dispatcher.calls != 0 {
-		t.Fatalf("the agent was dispatched %d more times", dispatcher.calls)
+	if closed.Result != nil || dispatcher.calls != 0 {
+		t.Fatal("the responder's incident closed or dispatched another agent")
 	}
 }
