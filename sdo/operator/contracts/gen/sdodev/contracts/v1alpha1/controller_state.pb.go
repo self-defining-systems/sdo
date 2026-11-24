@@ -1173,7 +1173,8 @@ type StartupObservation struct {
 	// "Kind/name" of the pod's owning workload.
 	Workload   string                 `protobuf:"bytes,1,opt,name=workload,proto3" json:"workload,omitempty"`
 	ReadyAfter []*durationpb.Duration `protobuf:"bytes,2,rep,name=ready_after,json=readyAfter,proto3" json:"ready_after,omitempty"`
-	// The latest Ready transition already sampled, so a pod is counted once.
+	// The latest Ready transition sampled. Absent: no start was seen yet, and
+	// ready_after is an upper bound from pods first seen already Ready.
 	LastReadyAt   *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=last_ready_at,json=lastReadyAt,proto3" json:"last_ready_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

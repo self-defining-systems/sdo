@@ -127,6 +127,9 @@ func TestObservedStartupIsTheFirstReadyOnly(t *testing.T) {
 			observeAll(store, test.passes...)
 			var got []time.Duration
 			for _, item := range store.contract() {
+				if item.GetLastReadyAt() == nil {
+					continue // a bound, not an observed start
+				}
 				for _, d := range item.GetReadyAfter() {
 					got = append(got, d.AsDuration())
 				}
@@ -177,5 +180,46 @@ func TestObservedStartupSurvivesAControllerRestart(t *testing.T) {
 	observeAll(second.config.StartupObservations, observedAt{2000 * time.Second, readyPod("a", observationEpoch.Add(1051*time.Second), 1051*time.Second)})
 	if got := second.config.StartupObservations.Allowances()["Deployment/web"]; got != 135*time.Second {
 		t.Fatalf("allowance after re-observing = %s, want 135s", got)
+	}
+}
+
+// A fresh install first sees its pods already Ready. Until a start is seen live
+// the allowance covers the time those pods took at most, so a real start is
+// not judged late; a later flap never raises it, also not across a restart.
+func TestStartupAllowanceBeforeAnyObservedStart(t *testing.T) {
+	const s = time.Second
+	at := func(d time.Duration) time.Time { return observationEpoch.Add(d) }
+	allowance := func(store *StartupObservations) time.Duration { return store.Allowances()["Deployment/web"] }
+	restart := func(store *StartupObservations) *StartupObservations {
+		next := NewStartupObservations()
+		next.restore(store.contract())
+		return next
+	}
+
+	store := NewStartupObservations()
+	if got := allowance(store); got != 0 {
+		t.Fatalf("allowance of an unseen workload = %s, want none (the declared allowance and the self-heal hold apply)", got)
+	}
+	store.Observe(at(300*s), []corev1.Pod{readyPod("a", at(48*s), 48*s), readyPod("b", at(70*s), 70*s)}, sameWorkload)
+	want := 97*s + 500*time.Millisecond // 70 s x 1.25 + 10 s
+	if got := allowance(store); got != want {
+		t.Fatalf("allowance from pods first seen Ready = %s, want %s", got, want)
+	}
+	flapped := observedAt{1100 * s, readyPod("a", at(1051*s), 1051*s)}
+	observeAll(store, flapped)
+	if got := allowance(store); got != want {
+		t.Fatalf("allowance after a flap = %s, want %s", got, want)
+	}
+	store = restart(store)
+	observeAll(store, flapped)
+	if got := allowance(store); got != want {
+		t.Fatalf("allowance after a restart and a flap = %s, want %s", got, want)
+	}
+	observeAll(store, liveStart("c", 100*s)...)
+	if got := allowance(store); got != 135*s {
+		t.Fatalf("allowance after a live start = %s, want 135s", got)
+	}
+	if got := allowance(restart(store)); got != 135*s {
+		t.Fatalf("restored allowance after a live start = %s, want 135s", got)
 	}
 }

@@ -3,7 +3,6 @@ package runtime
 import (
 	"maps"
 	"slices"
-	"sort"
 	"sync"
 	"time"
 
@@ -50,6 +49,9 @@ type StartupObservations struct {
 type workloadStartups struct {
 	ready     []time.Duration
 	lastReady time.Time
+	// bound is the most any pod took when all were Ready before a start was
+	// seen; it stands in for the missing starts and is never raised.
+	bound time.Duration
 }
 
 // NewStartupObservations returns an empty store.
@@ -60,112 +62,74 @@ func NewStartupObservations() *StartupObservations {
 // Observe records the healthy starts among pods as seen at `at`: a pod seen
 // before its containers were ever Ready that is now Ready with no container
 // restart. Kubernetes keeps only the last Ready transition, so a pod first seen
-// Ready, or that was Ready before, may have flapped and gives no sample.
+// Ready, or that was Ready before, may have flapped and is no start; the pods a
+// new workload is first seen with only bound its starts until one is seen.
 // workload names a pod's workload (sdk.PodWorkload).
 func (s *StartupObservations) Observe(at time.Time, pods []corev1.Pod, workload func(corev1.Pod) string) {
 	if s == nil {
 		return
 	}
-	type sample struct {
-		workload string
-		readyAt  time.Time
-		after    time.Duration
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var samples []sample
-	starting := map[types.UID]time.Time{}
+	starting, bounds := map[types.UID]time.Time{}, map[string]time.Duration{}
 	for _, pod := range pods {
-		if podNeverReady(pod) {
-			starting[pod.UID] = at
-			continue
-		}
-		seen, ok := s.starting[pod.UID]
-		if !ok {
-			continue
-		}
-		readyAt, after, ok := podStartToReady(pod)
-		if ok && readyAt.Sub(seen) <= startupMaxUnseen {
-			samples = append(samples, sample{workload(pod), readyAt, after})
+		started, ready, clean := podStart(pod)
+		readyAt := ready.LastTransitionTime.Time
+		switch seen, tracked := s.starting[pod.UID]; {
+		case !clean:
+		case ready.Status != corev1.ConditionTrue:
+			// Never Ready: nothing started, or unready since before the start.
+			// A pod that lost Ready carries the time it lost it instead.
+			if started.IsZero() || !readyAt.IsZero() && !readyAt.After(started) {
+				starting[pod.UID] = at
+			}
+		case started.IsZero() || readyAt.Before(started):
+		case !tracked:
+			bounds[workload(pod)] = max(bounds[workload(pod)], readyAt.Sub(started))
+		case readyAt.Sub(seen) <= startupMaxUnseen:
+			if w := s.workload(workload(pod)); w != nil {
+				w.ready = append(w.ready, readyAt.Sub(started))
+				w.ready = w.ready[max(0, len(w.ready)-startupSamplesPerWorkload):]
+				w.lastReady = readyAt
+			}
 		}
 	}
 	s.starting = starting
-	sort.SliceStable(samples, func(i, j int) bool { return samples[i].readyAt.Before(samples[j].readyAt) })
-	for _, item := range samples {
-		w := s.workloads[item.workload]
-		if w == nil {
-			if len(s.workloads) >= startupMaxWorkloads {
-				continue
+	for name, bound := range bounds {
+		if s.workloads[name] == nil {
+			if w := s.workload(name); w != nil {
+				w.bound = bound
 			}
-			w = &workloadStartups{}
-			s.workloads[item.workload] = w
-		}
-		if !item.readyAt.After(w.lastReady) {
-			continue
-		}
-		w.lastReady = item.readyAt
-		w.ready = append(w.ready, item.after)
-		if len(w.ready) > startupSamplesPerWorkload {
-			w.ready = w.ready[len(w.ready)-startupSamplesPerWorkload:]
 		}
 	}
 }
 
-// podNeverReady reports that the status proves the pod's containers have not
-// been Ready: none has started, or Ready has been false since before the first
-// of them started. A pod that lost Ready carries the time it lost it instead.
-func podNeverReady(pod corev1.Pod) bool {
-	if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodPending && pod.Status.Phase != corev1.PodRunning {
-		return false
+// workload is the named workload's record, created within startupMaxWorkloads.
+func (s *StartupObservations) workload(name string) *workloadStartups {
+	if s.workloads[name] == nil && len(s.workloads) < startupMaxWorkloads {
+		s.workloads[name] = &workloadStartups{}
 	}
-	var started time.Time
+	return s.workloads[name]
+}
+
+// podStart is when the pod's first container started (zero when none has) and
+// its Ready condition. A pod being deleted or with a container that ended or
+// restarted is not a clean start.
+func podStart(pod corev1.Pod) (started time.Time, ready corev1.PodCondition, clean bool) {
 	for _, status := range pod.Status.ContainerStatuses {
 		if status.RestartCount > 0 || status.State.Terminated != nil || status.LastTerminationState.Terminated != nil {
-			return false
+			return time.Time{}, ready, false
 		}
-		if status.State.Running == nil {
-			continue
-		}
-		if at := status.State.Running.StartedAt.Time; started.IsZero() || at.Before(started) {
-			started = at
+		if running := status.State.Running; running != nil && (started.IsZero() || running.StartedAt.Time.Before(started)) {
+			started = running.StartedAt.Time
 		}
 	}
 	for _, condition := range pod.Status.Conditions {
 		if condition.Type == corev1.PodReady {
-			return condition.Status != corev1.ConditionTrue && (started.IsZero() || !condition.LastTransitionTime.IsZero() && !condition.LastTransitionTime.Time.After(started))
+			ready = condition
 		}
 	}
-	return started.IsZero()
-}
-
-// podStartToReady is the time from a Running pod's first container start to
-// its last Ready transition. A pod that restarted a container, or whose Ready
-// transition precedes a container start, is not a clean start.
-func podStartToReady(pod corev1.Pod) (readyAt time.Time, after time.Duration, ok bool) {
-	if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning || len(pod.Status.ContainerStatuses) == 0 {
-		return time.Time{}, 0, false
-	}
-	for _, condition := range pod.Status.Conditions {
-		if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
-			readyAt = condition.LastTransitionTime.Time
-		}
-	}
-	if readyAt.IsZero() {
-		return time.Time{}, 0, false
-	}
-	var started time.Time
-	for _, status := range pod.Status.ContainerStatuses {
-		if status.RestartCount > 0 || status.State.Running == nil || status.State.Running.StartedAt.IsZero() {
-			return time.Time{}, 0, false
-		}
-		if at := status.State.Running.StartedAt.Time; started.IsZero() || at.Before(started) {
-			started = at
-		}
-	}
-	if readyAt.Before(started) {
-		return time.Time{}, 0, false
-	}
-	return readyAt, readyAt.Sub(started), true
+	return started, ready, pod.DeletionTimestamp == nil
 }
 
 // Allowances returns each observed workload's startup allowance: the
@@ -179,10 +143,10 @@ func (s *StartupObservations) Allowances() map[string]time.Duration {
 	defer s.mu.Unlock()
 	var out map[string]time.Duration
 	for name, w := range s.workloads {
-		if len(w.ready) == 0 {
+		sorted := w.samples()
+		if len(sorted) == 0 {
 			continue
 		}
-		sorted := slices.Clone(w.ready)
 		slices.Sort(sorted)
 		rank := int(float64(len(sorted))*startupPercentile+0.999999) - 1
 		rank = max(0, min(rank, len(sorted)-1))
@@ -193,6 +157,14 @@ func (s *StartupObservations) Allowances() map[string]time.Duration {
 		out[name] = allowance
 	}
 	return out
+}
+
+// samples are the observed starts, or the bound while there are none.
+func (w *workloadStartups) samples() []time.Duration {
+	if len(w.ready) == 0 && w.bound > 0 {
+		return []time.Duration{w.bound}
+	}
+	return slices.Clone(w.ready)
 }
 
 // workloadName names a pod's workload against a snapshot's ReplicaSets.
@@ -210,7 +182,7 @@ func (s *StartupObservations) contract() []*contracts.StartupObservation {
 	for _, name := range slices.Sorted(maps.Keys(s.workloads)) {
 		w := s.workloads[name]
 		item := &contracts.StartupObservation{Workload: name, LastReadyAt: optionalTimestamp(w.lastReady)}
-		for _, d := range w.ready {
+		for _, d := range w.samples() {
 			item.ReadyAfter = append(item.ReadyAfter, durationpb.New(d))
 		}
 		out = append(out, item)
@@ -227,22 +199,20 @@ func (s *StartupObservations) restore(items []*contracts.StartupObservation) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, item := range items {
-		if len(s.workloads) >= startupMaxWorkloads && s.workloads[item.GetWorkload()] == nil {
+		w := s.workload(item.GetWorkload())
+		if w == nil {
 			continue
 		}
 		var ready []time.Duration
 		for _, d := range item.GetReadyAfter() {
 			ready = append(ready, d.AsDuration())
 		}
-		w := s.workloads[item.GetWorkload()]
-		if w == nil {
-			w = &workloadStartups{}
-			s.workloads[item.GetWorkload()] = w
+		if item.GetLastReadyAt() == nil {
+			w.bound = slices.Max(append(ready, 0)) // no start was seen yet
+			continue
 		}
 		w.ready = append(ready, w.ready...)
-		if len(w.ready) > startupSamplesPerWorkload {
-			w.ready = w.ready[len(w.ready)-startupSamplesPerWorkload:]
-		}
+		w.ready = w.ready[max(0, len(w.ready)-startupSamplesPerWorkload):]
 		if at := controllerTime(item.GetLastReadyAt()); at.After(w.lastReady) {
 			w.lastReady = at
 		}

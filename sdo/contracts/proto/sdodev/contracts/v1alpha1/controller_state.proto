@@ -249,7 +249,8 @@ message StartupObservation {
   // "Kind/name" of the pod's owning workload.
   string workload = 1;
   repeated google.protobuf.Duration ready_after = 2;
-  // The latest Ready transition already sampled, so a pod is counted once.
+  // The latest Ready transition sampled. Absent: no start was seen yet, and
+  // ready_after is an upper bound from pods first seen already Ready.
   google.protobuf.Timestamp last_ready_at = 3;
 }
 
