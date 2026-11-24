@@ -2,12 +2,14 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"testing"
 	"time"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
 )
 
@@ -72,6 +74,18 @@ func TestProvisionalClosureAdmitsNewOpeners(t *testing.T) {
 // The route has not run in the scheduled loop when the closure effect starts.
 // It must still be read before a verified outcome can reach the broker.
 func TestClosurePublicationChecksOpenersOutsideTheInitialProof(t *testing.T) {
+	t.Run("persisted opener joins", func(t *testing.T) { testClosureAdmission(t, "persistent") })
+	t.Run("single blip clears", func(t *testing.T) { testClosureAdmission(t, "blip") })
+	t.Run("non-member observer fails", func(t *testing.T) { testClosureAdmission(t, "unavailable") })
+	t.Run("known broken probes are excluded", func(t *testing.T) { testClosureAdmission(t, "known-broken") })
+}
+
+type countedClosureProbe struct{ *sequenceDetector }
+
+func (countedClosureProbe) ScenarioSLOWorkload() string { return "known-broken" }
+
+func testClosureAdmission(t *testing.T, scenario string) {
+	t.Helper()
 	now := time.Unix(1000, 0).UTC()
 	condition := userTestFinding("original")
 	condition.DetectorID, condition.RuleID = "workload-controllers", "statefulset-unready"
@@ -79,7 +93,23 @@ func TestClosurePublicationChecksOpenersOutsideTheInitialProof(t *testing.T) {
 	route.DetectorID = memory.RequestMetricsDetectorID
 	probe := controllerDetector(condition.DetectorID, time.Second, sdk.Finding{})
 	metrics := controllerDetector(route.DetectorID, time.Second, route)
-	c := openersController(t, &recordingDispatcher{}, probe, metrics)
+	metrics.spec.Persistence.Firing = 2
+	metrics.spec.Persistence.Clearing = 1
+	probeTest := controllerDetector("traffic-known-broken", time.Second, userTestFinding("browse-items"))
+	probeTest.errors[0] = errors.New("probe unavailable")
+	if scenario == "unavailable" {
+		metrics.errors[0] = errors.New("Prometheus unavailable")
+	}
+	if scenario == "known-broken" {
+		metrics.samples = [][]sdk.Finding{nil}
+	}
+	c := openersController(t, &recordingDispatcher{}, probe, metrics, countedClosureProbe{probeTest})
+	c.gitRead = func(ctx context.Context, repo string, args ...string) ([]byte, error) {
+		if len(args) == 2 && args[0] == "show" && args[1] == "synthetic-accepted:"+layout.TrafficWorkloadsDir+"/known-broken.yaml" {
+			return []byte("name: known-broken\npurpose: health-probe\nscenarios:\n- id: browse-items\n  knownBroken: {reason: test fixture, failsWith: ['404']}\n"), nil
+		}
+		return fakeArchitecture(verifyArch)(ctx, repo, args...)
+	}
 	c.now = func() time.Time { return now }
 	c.config.RequestMetricsOpens = true
 	c.broker = &riskBroker{}
@@ -95,12 +125,41 @@ func TestClosurePublicationChecksOpenersOutsideTheInitialProof(t *testing.T) {
 		FinalDetectorStates: []DetectorEvaluation{{DetectorID: condition.DetectorID, Status: DetectorEvaluationClear, EvaluatedAt: now.Add(-time.Second)}}}
 	c.closureState = contracts.ClosureState_CLOSURE_STATE_PENDING
 
-	effect, ok := c.PendingClosureEffect()
-	if !ok {
-		t.Fatal("fixture has no pending closure publication")
+	execute := func() {
+		t.Helper()
+		effect, ok := c.PendingClosureEffect()
+		if !ok {
+			t.Fatal("fixture has no pending closure publication")
+		}
+		if err := c.ExecuteClosureEffect(context.Background(), effect); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := c.ExecuteClosureEffect(context.Background(), effect); err != nil {
-		t.Fatal(err)
+	requireFrozen := func() {
+		t.Helper()
+		if c.pendingClosure == nil || !c.pendingClosure.Frozen || len(c.pendingClosure.Request.JoinedKeys) != 0 {
+			t.Fatalf("expected a verified freeze with the original alert set: %+v", c.pendingClosure)
+		}
+	}
+	execute()
+	if scenario == "known-broken" || scenario == "unavailable" {
+		if probeTest.calls != 0 {
+			t.Error("known-broken-only probe was sampled")
+		}
+		requireFrozen()
+		return
+	}
+	if c.pendingClosure == nil || c.pendingClosure.Frozen || c.IncidentOpen() || len(c.pendingClosure.Request.JoinedKeys) != 0 {
+		t.Fatalf("a single raw finding must wait for persistence: open=%v, closure=%+v", c.IncidentOpen(), c.pendingClosure)
+	}
+	if scenario == "blip" {
+		metrics.samples = append(metrics.samples, nil)
+	}
+	c.now = func() time.Time { return now.Add(time.Second) }
+	execute()
+	if scenario == "blip" {
+		requireFrozen()
+		return
 	}
 	key := findingKey(route)
 	if !c.IncidentOpen() || c.pendingClosure != nil || !slices.Contains(c.currentIncidentRequest.JoinedKeys, key) {
@@ -128,12 +187,12 @@ func TestClosurePublicationChecksOpenersOutsideTheInitialProof(t *testing.T) {
 		t.Fatalf("joined alert or responder result lost on restart: open=%v done=%v held=%v", restarted.IncidentOpen(), restarted.responderDone, *restarted.heldKeys.Load())
 	}
 
-	step(t, c, now.Unix()+1)
+	step(t, c, now.Unix()+2)
 	if !c.IncidentOpen() || c.pendingClosure != nil {
 		t.Fatal("the incident closed while the admitted route still failed")
 	}
 	metrics.samples = [][]sdk.Finding{nil}
-	step(t, c, now.Unix()+2)
+	step(t, c, now.Unix()+3)
 	step(t, c, now.Unix()+4)
 	if !c.IncidentOpen() || c.pendingClosure != nil {
 		t.Fatal("the incident reused its stability proof from before the route joined")
@@ -141,7 +200,7 @@ func TestClosurePublicationChecksOpenersOutsideTheInitialProof(t *testing.T) {
 	for second := int64(5); second <= 15 && c.pendingClosure == nil; second++ {
 		step(t, c, now.Unix()+second)
 	}
-	if c.pendingClosure == nil || !slices.Contains(c.pendingClosure.Request.JoinedKeys, key) {
-		t.Fatal("a fresh continuous clear window did not produce a closure covering the route")
+	if c.pendingClosure == nil || !slices.Contains(c.pendingClosure.Request.JoinedKeys, key) || c.pendingClosure.EscalatedAt.IsZero() {
+		t.Fatal("a fresh continuous clear window did not produce an escalated closure covering the route")
 	}
 }

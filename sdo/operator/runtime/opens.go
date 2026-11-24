@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"path"
 	"slices"
 	"sort"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/appmap"
+	"sdo.dev/operator/memory/layout"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/requestmetrics"
 	"sdo.dev/operator/sdk/traffic"
@@ -22,6 +24,7 @@ type openers struct {
 	loaded    bool
 	commit    string
 	userTests map[string]bool
+	workloads map[string]appmap.Workload
 }
 
 // opens reports whether a finding is an alert that opens an incident:
@@ -120,6 +123,40 @@ func (c *Controller) verificationOpeners(detectors []sdk.Detector, catalog []app
 	return result
 }
 
+// closureOpeners uses the accepted workload files even when a probe is down.
+func (c *Controller) closureOpeners(ctx context.Context, detectors []sdk.Detector) map[string]bool {
+	tests := c.userTests()
+	c.openers.mu.Lock()
+	var catalog []appmap.Workload
+	if c.gitRead != nil && tests != nil {
+		c.mu.Lock()
+		repository := c.config.RepositoryWorktree
+		c.mu.Unlock()
+		for _, detector := range detectors {
+			name := traffic.ScenarioSLOWorkload(detector)
+			if name == "" {
+				continue
+			}
+			workload, loaded := c.openers.workloads[name]
+			if !loaded {
+				file := name + ".yaml"
+				content, err := c.gitRead(ctx, repository, "show", c.openers.commit+":"+path.Join(layout.TrafficWorkloadsDir, file))
+				if err == nil {
+					workload, _ = memory.MapWorkload(file, content)
+				}
+				if ctx.Err() == nil {
+					c.openers.workloads[name] = workload
+				}
+			}
+			if workload.Name != "" {
+				catalog = append(catalog, workload)
+			}
+		}
+	}
+	c.openers.mu.Unlock()
+	return c.verificationOpeners(detectors, catalog)
+}
+
 // AlertJoinWindow bounds when a new opener belongs to the same incident.
 // After the window an independent fault can open the next incident.
 const AlertJoinWindow = 5 * time.Minute
@@ -169,6 +206,8 @@ func (c *Controller) joinAlertSet(finding sdk.Finding, now time.Time) bool {
 	c.recoverySafetyLost = true
 	if c.earlyReportPendingLocked() {
 		c.cacheVerificationLocked(ToolResponse{Command: "verify", Summary: "recovery proof invalidated by a joined alert", Findings: []sdk.Finding{finding}})
+	} else if c.responderDone {
+		c.escalateLocked(now)
 	}
 	// A new alert reopens a settled automatic stage while repair is ongoing.
 	c.midStage.settled = false
@@ -196,6 +235,7 @@ func (c *Controller) userTests() map[string]bool {
 		}
 	}
 	c.openers.loaded, c.openers.commit, c.openers.userTests = true, commit, tests
+	c.openers.workloads = make(map[string]appmap.Workload)
 	return tests
 }
 
