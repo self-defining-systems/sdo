@@ -267,6 +267,11 @@ _RECEIPT = re.compile(
 )
 
 
+_REDIS_WRITE = re.compile(r"(?i)\bredis-cli\b[^;&|]*?\s(?:del|unlink|hdel|srem|zrem|lrem|expire|persist|set|flushdb)\b")
+#: Redis answers a changing command with a count or OK, on a line of its own.
+_REDIS_REPLY = re.compile(r"(?m)^(?:\(integer\) )?[1-9]\d*$|^OK$")
+
+
 def _without_comments(command: str) -> str:
     """The command without shell comments. A `#` inside a word or a quote (`${#x}`, "a # b") is no comment."""
     out, quote, skipping, i = [], "", False, 0
@@ -443,7 +448,8 @@ def _transcript(path: Path) -> Iterator[Write]:
     writes: list[Write] = []
     stamps: set[datetime] = set()
     for call, end, provider, output, error in _tool_results(path):
-        if (error or _NO_EFFECT.search(output)) and not _RECEIPT.search(output):
+        acknowledged = _RECEIPT.search(output) or (_REDIS_WRITE.search(call.command) and _REDIS_REPLY.search(output))
+        if (error or _NO_EFFECT.search(output)) and not acknowledged:
             continue
         if output.strip() and all(
             line.endswith((" unchanged", " not patched")) for line in output.strip().splitlines()

@@ -502,6 +502,7 @@ def arm_row(run: Path, arm: str, calls: list[tuple[int, int, str, bool, str]], l
         ("echo 'DROP TRIGGER t ON x' | kubectl exec -i db-0 -- psql", "DROP TRIGGER"),
         ("for d in a b; do kubectl rollout restart deploy/$d; done", "deployment.apps/a restarted"),
         ("timeout 60 kubectl delete pod web-1", 'pod "web-1" deleted'),
+        ("kubectl exec r-0 -- redis-cli del cache:x; kubectl exec r-0 -- redis-cli get y", "3\nError from server (x)"),
         ("kubectl get secret s; kubectl delete pod web-1", 'Error from server (Forbidden)\npod "web-1" deleted'),
     ],
 )
@@ -517,6 +518,7 @@ def test_every_write_kind_counts_the_same_for_both_arms(tmp_path: Path, arm: str
         ("kubectl exec git-0 -- find /r -name hook", "/r/hook"),
         ("kubectl get pod web-1 # kubectl delete pod web-1", ""),
         ("kubectl patch secret s -p '{}'", "Error from server (Forbidden)"),
+        ("kubectl exec r-0 -- redis-cli del cache:x", "Error from server (incident_verified): rejected"),
     ],
 )
 def test_reads_and_refused_writes_count_for_neither_arm(tmp_path: Path, arm: str, command: str, output: str) -> None:
