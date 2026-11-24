@@ -1381,7 +1381,10 @@ func (c *Controller) nextWake() (time.Time, string) {
 		if !c.earlyReportPendingLocked() {
 			earlyDeadline = time.Time{}
 		}
-		verificationDeadline = time.Time{}
+		// A closure write retry does not replace a future handoff bound.
+		if c.awaitingAutomaticRecoveryLocked() == nil || !verificationDeadline.After(c.clock()) {
+			verificationDeadline = time.Time{}
+		}
 		consider(retry, "closure freeze retry")
 	}
 	incidentOpen := c.incidentOpen
@@ -1842,7 +1845,8 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		return false
 	}
 	c.mu.Lock()
-	if !c.incidentOpen || c.currentIncidentRequest == nil || now.Before(c.closureFreezeRetryAt) {
+	if !c.incidentOpen || c.currentIncidentRequest == nil ||
+		now.Before(c.closureFreezeRetryAt) && c.awaitingAutomaticRecoveryLocked() == nil {
 		c.mu.Unlock()
 		return false
 	}
@@ -2094,6 +2098,12 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 			c.mu.Unlock()
 			return false
 		}
+	}
+	// Back off freezing the closure after deciding whether automatic recovery
+	// should hand off. A prior freeze failure cannot suppress that decision.
+	if now.Before(c.closureFreezeRetryAt) {
+		c.mu.Unlock()
+		return false
 	}
 	if !verified {
 		finalStates = nil

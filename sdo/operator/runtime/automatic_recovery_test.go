@@ -680,3 +680,26 @@ func TestAutomaticRecoveryExtendsWhenClearAtDeadline(t *testing.T) {
 		})
 	}
 }
+
+func TestClosureFreezeBackoffDoesNotDelayAutomaticHandoff(t *testing.T) {
+	c, world, _ := automaticRecoveryWorld(t, settlingCase{}, settings.AfterPlaybookAgent)
+	bound := autoReport(c).GetRecoveryDeadline().AsTime()
+	// A closure freeze failed before the alert re-fired. Its retry may be
+	// after the response deadline, so waiting for it could skip handoff.
+	c.closureFreezeRetryAt = c.currentIncidentRequest.ResponseDeadline.Add(time.Second)
+	autoStep(t, c, world.clock, bound.Sub(world.clock.Now())-time.Second)
+	if autoReport(c).GetHandoffSelected() {
+		t.Fatal("handoff selected before the recovery deadline")
+	}
+	// Remove the periodic detector wake so this assertion exercises the
+	// automatic deadline itself. Recovery still uses the detector registry.
+	c.scheduler = NewScheduler(nil, world.clock.Now(), c.config.Namespace)
+	if wake, reason := c.nextWake(); !wake.Equal(bound) || reason != "verification deadline" {
+		t.Fatalf("next wake %s (%s), want the automatic recovery deadline %s", wake, reason, bound)
+	}
+	autoStep(t, c, world.clock, time.Second)
+	if !autoReport(c).GetHandoffSelected() ||
+		c.responseEntry(*c.currentIncidentRequest) != dispatchStagedHandoff {
+		t.Fatal("closure freeze backoff prevented automatic handoff at its deadline")
+	}
+}
