@@ -558,6 +558,10 @@ func TestAcceptedInventoryListsHookObjectsApartFromDesiredOnes(t *testing.T) {
 		if got := refs(inventory.Hooks); !reflect.DeepEqual(got, []string{"Job/app/setup-a1b2c3d", "ConfigMap/app/setup"}) {
 			t.Errorf("%s: hook objects = %v (Secrets are never listed)", name, got)
 		}
+		hook := sdk.ObjectRef{APIVersion: "v1", Kind: "Secret", Namespace: "app", Name: "setup-token"}
+		if _, err := source.AcceptedSecretData(context.Background(), rev, "app", hook); !errors.Is(err, rendered.ErrSecretSourceHook) {
+			t.Errorf("%s: hook Secret = %v", name, err)
+		}
 		manifests, err := source.AcceptedManifests(context.Background(), rev, "app")
 		if err != nil || len(manifests) != 1 {
 			t.Errorf("%s: accepted manifests = %d, %v: hook objects are not desired state", name, len(manifests), err)

@@ -23,8 +23,11 @@ var ErrSecretSourceNoLiteral = errors.New("accepted source declares no literal d
 // accepted value.
 var ErrSecretSourceNondeterministic = errors.New("the accepted render of the Secret is not deterministic")
 
+// ErrSecretSourceHook marks a Secret rendered only as a hook, without an accepted steady state.
+var ErrSecretSourceHook = fmt.Errorf("Secret is a render hook: %w", ErrAcceptedManifestAbsent)
+
 // AcceptedSecretData returns the literal data of one Secret as the deployer
-// renders the accepted revision (SecretsInclude), for the restore step only:
+// renders the accepted revision (SecretsInclude), for private restore and comparison:
 // the controller writes it to the API server and nothing records it. The tree
 // is rendered twice and the data must be equal, so a generated value is
 // refused instead of replaced by another. Errors never carry a value.
@@ -67,11 +70,13 @@ func (s Source) renderSecretData(ctx context.Context, revision, namespace string
 	if err != nil {
 		return nil, classifySource(err)
 	}
-	for _, object := range set.Objects() {
-		if object.Ref != ref || object.Hook {
-			continue
+	for _, object := range append(set.Objects(), set.Hooks()...) {
+		if object.Ref == ref {
+			if object.Hook {
+				return nil, ErrSecretSourceHook
+			}
+			return secretLiteralData(object.Object.Object)
 		}
-		return secretLiteralData(object.Object.Object)
 	}
 	return nil, fmt.Errorf("%w: %s/%s", ErrAcceptedManifestAbsent, ref.Kind, ref.Name)
 }

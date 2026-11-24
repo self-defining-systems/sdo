@@ -6,6 +6,7 @@ import (
 	"sdo.dev/operator/sdk/servicehealth"
 	"sdo.dev/operator/sdk/traffic"
 
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -184,6 +186,9 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	}
 	if v.Source == nil || v.SourceCommit == "" {
 		return program.Diff{}, errors.New("accepted source is unavailable")
+	}
+	if ref.Kind == "Secret" {
+		return v.diffSecretAgainstSource(ref)
 	}
 	observed, err := v.snapshotObject(ref)
 	if err != nil && !errors.Is(err, errSnapshotObjectAbsent) {
@@ -407,6 +412,74 @@ func projectSourceFields(observed, declared any) any {
 	default:
 		return observed
 	}
+}
+
+var errSecretDiffRender = sdk.Classified("accepted Secret render failed", sdk.ErrUnavailable)
+
+// Keep the raw reads inside the operator. Only key names and fixed markers enter the diff.
+func (v LiveReadView) diffSecretAgainstSource(ref sdk.ObjectRef) (program.Diff, error) {
+	source, ok := v.Source.(secretDataSource)
+	if ref.Namespace == "" || ref.Namespace != v.Namespace() || ref.APIVersion != "v1" || ref.Name == "" {
+		return program.Diff{}, sdk.Classified("Secret comparison requires a v1 Secret in the application namespace", sdk.ErrInvalidRead)
+	}
+	if !ok || v.Client == nil {
+		return program.Diff{}, errors.New("Secret comparison readers unavailable")
+	}
+	ctx, cancel := context.WithTimeout(v.context(), DefaultDiagnosisDeadline)
+	defer cancel()
+	accepted, err := source.AcceptedSecretData(ctx, v.SourceCommit, v.Namespace(), ref)
+	if errors.Is(err, rendered.ErrSecretSourceHook) || errors.Is(err, rendered.ErrSecretSourceNoLiteral) {
+		return program.Diff{}, sdk.Classified("accepted Secret has no comparable literal data", sdk.ErrUnavailable)
+	}
+	sourceAbsent := errors.Is(err, ErrAcceptedManifestAbsent)
+	if err != nil && !sourceAbsent {
+		return program.Diff{}, secretDiffReadError(err, errSecretDiffRender)
+	}
+	secret, err := v.Client.CoreV1().Secrets(ref.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	liveAbsent := apierrors.IsNotFound(err)
+	if err != nil && !liveAbsent {
+		return program.Diff{}, secretDiffReadError(err, sdk.ErrUnavailable)
+	}
+	if liveAbsent {
+		secret = &corev1.Secret{}
+	}
+	before, after, extra := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	for key, value := range secret.Data {
+		if expected, declared := accepted[key]; !declared {
+			extra[key] = true
+		} else if !bytes.Equal(expected, value) {
+			before[key], after[key] = true, false
+		}
+	}
+	for key := range accepted {
+		if _, present := secret.Data[key]; !present {
+			before[key] = true
+		}
+	}
+	return program.Diff{SourceAbsent: sourceAbsent, LiveAbsent: liveAbsent, Changed: len(before) > 0,
+		Text: sdk.SourceComparisonText(secretDiffSide(before, nil, sourceAbsent), secretDiffSide(after, extra, liveAbsent))}, nil
+}
+
+func secretDiffReadError(err, fallback error) error {
+	switch {
+	case apierrors.IsForbidden(err):
+		return sdk.Classified("Secret comparison forbidden", sdk.ErrRefused)
+	case errors.Is(err, context.DeadlineExceeded), apierrors.IsTimeout(err), apierrors.IsServerTimeout(err):
+		return sdk.Classified("Secret comparison timed out", context.DeadlineExceeded)
+	default:
+		return fallback
+	}
+}
+
+func secretDiffSide(keys, extra map[string]bool, absent bool) []byte {
+	if absent {
+		return []byte("null")
+	}
+	text, _ := json.Marshal(struct {
+		Data  map[string]bool `json:"data"`
+		Extra map[string]bool `json:"extra_keys,omitempty"`
+	}{keys, extra})
+	return text
 }
 
 func (v LiveReadView) DiffAgainstBaseline(ref sdk.ObjectRef) (program.Diff, error) {
