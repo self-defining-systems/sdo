@@ -120,8 +120,9 @@ type StepRef struct {
 	// Phase is what the step was doing at the manager's last pass (nil: not known).
 	Phase *Phase `json:"phase,omitempty"`
 	// Bound is how long the step may run before the manager kills it (0: no bound recorded); Killed says why it was.
-	Bound  Seconds `json:"bound,omitempty"`
-	Killed string  `json:"killed,omitempty"`
+	Bound         Seconds `json:"bound,omitempty"`
+	Killed        string  `json:"killed,omitempty"`
+	DeleteCluster bool    `json:"delete_cluster,omitempty"`
 }
 
 // Prepared is an operator set up on a lane and how to tear it down, plus the app copy it runs on.

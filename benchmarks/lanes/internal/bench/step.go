@@ -82,6 +82,7 @@ type Step struct {
 	Create        bool     `json:"create,omitempty"`
 	Recreate      bool     `json:"recreate,omitempty"`
 	DeleteCluster bool     `json:"delete_cluster,omitempty"`
+	ResumeDelete  bool     `json:"resume_delete,omitempty"`
 	// Virtual: the host is an eks host whose lanes are vclusters (eks_vcluster.go).
 	Virtual bool `json:"virtual,omitempty"`
 	// Evidence is the lane's evidence directory on the host, mounted on every node at EvidenceNode.
@@ -1700,7 +1701,8 @@ func (r *stepRunner) checkResidue(ctx context.Context, p *Prepared) {
 
 // release tears the lane's operator down.
 func (r *stepRunner) release(ctx context.Context) {
-	if r.distrustPrepared(ctx) {
+	missing := r.distrustPrepared(ctx)
+	if missing && !r.s.ResumeDelete {
 		// The cluster is gone, and with it the operator: there is nothing to tear down or reset.
 		r.res.OK, r.res.Prepared, r.res.Gone = true, nil, r.s.ClusterUp != ""
 		r.freeLaneCores()
@@ -1710,7 +1712,7 @@ func (r *stepRunner) release(ctx context.Context) {
 		// The cluster is deleted whether or not the teardown hook worked: a broken cluster (its API or nodes
 		// failing) is the one that most needs deleting, and a release that stopped at a failed teardown left it billing
 		// with the lane Down and, after two resets, Retired and forgotten. What the teardown could not do is recorded.
-		if !r.teardown(ctx, r.s.Prev) {
+		if !missing && !r.teardown(ctx, r.s.Prev) {
 			r.logf("teardown failed (%s): the cluster is deleted all the same", r.res.Reason)
 			r.res.TeardownFailed = r.res.Reason
 			r.res.OK, r.res.Reason, r.res.LaneDown = true, "", ""

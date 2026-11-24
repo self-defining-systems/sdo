@@ -70,6 +70,9 @@ func (m *Manager) cancelRemoved(ctx context.Context, l *LaneFile) {
 		return
 	}
 	ref := l.Step
+	if ref.Phase.teardown() {
+		return
+	}
 	if ref.Kind != StepBuild && !(ref.Kind == StepRun && (x.Removed.Teardown || x.Removed.Cancel)) {
 		return
 	}
@@ -80,6 +83,26 @@ func (m *Manager) cancelRemoved(ctx context.Context, l *LaneFile) {
 	if err := m.ops(l.Host).Kill(ctx, l.Lane, ref.ID); err != nil {
 		m.logf("lane %s: kill %s: %v (retried next pass)", l.Lane, ref.ID, err)
 	}
+}
+
+// retryTeardown replays idempotent cleanup before the lane can be assigned again.
+func (m *Manager) retryTeardown(ctx context.Context, l *LaneFile, ref *StepRef) bool {
+	if ref.Kind != StepRelease && !ref.Phase.teardown() {
+		return false
+	}
+	del := ref.DeleteCluster || ref.Phase.deleting()
+	prev := l.Prepared
+	if ref.Phase.deleting() {
+		prev = nil // teardown hooks already ran
+	}
+	if (!del && prev == nil) || !m.start(ctx, l, Step{Kind: StepRelease, Prev: prev, DeleteCluster: del, ResumeDelete: del}) {
+		return false
+	}
+	if err := m.ops(l.Host).Clean(ctx, l.Lane, ref.ID); err != nil {
+		m.logf("lane %s: clean %s: %v (staging left for gc)", l.Lane, ref.ID, err)
+	}
+	m.unbind(l, "retrying interrupted teardown: "+ref.ID)
+	return true
 }
 
 // enforceBound kills a step that has run past its bound. The next probe finds it dead and died() records why.

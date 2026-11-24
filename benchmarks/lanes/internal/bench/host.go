@@ -91,7 +91,7 @@ type Probe struct {
 	Free     int64             `json:"free_bytes"`
 	Steps    map[string]string `json:"steps"`
 	Inflight []string          `json:"inflight,omitempty"`
-	// Phases is what each running step is doing (phase.json); a host binary from before phases reports none.
+	// Phases is the latest phase of each step (phase.json); a host binary from before phases reports none.
 	Phases map[string]*Phase `json:"phases,omitempty"`
 	// Canary is the host health reading (hosthealth.go); nil when the transport takes none.
 	Canary *Canary `json:"canary,omitempty"`
@@ -116,7 +116,7 @@ func ProbeStaging(staging string, steps map[string]string, fuzzops []string) Pro
 			p.Steps[lane] = StepDead
 		}
 		var ph Phase
-		if p.Steps[lane] == StepRunning && readJSON(filepath.Join(dir, phaseFile), &ph) == nil {
+		if p.Steps[lane] != StepFinished && readJSON(filepath.Join(dir, phaseFile), &ph) == nil {
 			if p.Phases == nil {
 				p.Phases = map[string]*Phase{}
 			}
