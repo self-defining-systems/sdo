@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from benchmarks.fuzzops import observe
 from benchmarks.fuzzops.observe import Watcher, classify, component, report_from_result
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 START = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 
@@ -299,3 +304,81 @@ def test_legacy_incident_with_no_opening_keys_reports_from_findings() -> None:
     assert report is not None
     assert report["component"] == "deploy/web"
     assert report["summary"].startswith("SDO detector workload-ready:")
+
+
+@pytest.mark.parametrize("opened", [30, 119, None])
+def test_watch_pages_only_if_sdo_has_not_opened_an_incident(
+    opened: int | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The watcher starts ten seconds after injection. The deadline falls
+    # between two regular polls, and a deadline read must see the +119 page.
+    t = 10.0
+    sent: list[tuple[float, dict[str, Any]]] = []
+
+    def sleep(seconds: float) -> None:
+        nonlocal t
+        t += seconds
+        assert t < 145, "watcher never saw incident closure"
+
+    def state(*_args: str) -> dict[str, Any]:
+        opened_at = opened if opened is not None else 122 if sent else None
+        if opened_at is None or t < opened_at:
+            return {}
+        request = {"incidentId": "app-incident"}
+        request.update({"page": message} if sent else {"openingKeys": ["users/failing"]})
+        if t >= 126:
+            return {
+                "pendingClosure": {"request": request, "detectedAt": _at(opened_at)},
+                "lastAcknowledgedIncidentId": "app-incident",
+            }
+        return {"incidentOpen": True, "incidentDetectedAt": _at(opened_at), "incidentRequest": request}
+
+    message = "Users are reporting problems with the application in namespace app; investigate and fix it."
+    traffic = tmp_path / "traffic.jsonl"
+    traffic.write_text(json.dumps({"inject_at": _at(0), "first_bad": None}) + "\n")
+    monkeypatch.setenv("FUZZOPS_TRAFFIC", str(traffic))
+    monkeypatch.setenv("FUZZOPS_OUT", str(tmp_path))
+    monkeypatch.setattr(observe.time, "time", lambda: START.timestamp() + t)
+    monkeypatch.setattr(observe.time, "monotonic", lambda: t)
+    monkeypatch.setattr(observe.time, "sleep", sleep)
+    monkeypatch.setattr(observe, "read_state", state)
+    monkeypatch.setattr(observe, "kubectl_apply", lambda manifest, *_: sent.append((t, manifest)))
+
+    assert (
+        observe.main(
+            [
+                "--control-namespace",
+                "app-sdo",
+                "--page-namespace",
+                "app",
+                "--fallback-page-after",
+                "120",
+                "--linger",
+                "0",
+            ]
+        )
+        == 0
+    )
+    record = json.loads((tmp_path / "sdo-page.json").read_text())
+    assert record["inject_at"] == _at(0)
+    assert record["sdo_page_at"] == _at(opened if opened is not None else 122)
+    if opened is not None:
+        assert not sent
+        assert record["page_source"] == "own"
+        assert record["fallback_page_at"] is None
+    else:
+        [(at, manifest)] = sent
+        assert at == 120
+        assert manifest["metadata"] == {"name": "sdo-external-incident", "namespace": "app-sdo"}
+        alert = json.loads(manifest["data"]["incident.json"])
+        assert alert == {"id": record["fallback_id"], "namespace": "app", "message": message}
+        assert record["page_source"] == "fallback"
+        assert record["fallback_page_at"] == _at(120)
+
+
+def test_a_page_that_closed_between_polls_still_counts_as_own() -> None:
+    evidence = observe.PageEvidence(inject_at=_at(0))
+    assert not evidence.observe({"last_acknowledged_incident_id": f"app-{int(START.timestamp() - 1) * 10**9}"})
+    assert evidence.observe({"last_acknowledged_incident_id": f"app-{int(START.timestamp() + 30) * 10**9}"})
+    assert evidence.page_source == "own"
+    assert evidence.sdo_page_at == _at(30)

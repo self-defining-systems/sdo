@@ -903,9 +903,18 @@ def test_watch_runs_the_observer_for_the_fault_without_pvc_snapshots(
     assert argv[argv.index("--control-namespace") + 1] == "ns1-sdo"
     assert argv[argv.index("--fault") + 1] == "t@deploy/web"
     assert "--operator-binary" not in argv
+    assert float(argv[argv.index("--fallback-page-after") + 1]) == 120
     env["BENCH_FAULT"] = "none"
     hooks.watch(env)
     assert "--fault" not in seen[1]
+    assert "--fallback-page-after" not in seen[1]
+    env["BENCH_FAULT"] = "t@deploy/web"
+    env["BENCH_OPERATOR"] = str(_operator_file(tmp_path, tmp_path, fallback_page=False))
+    hooks.watch(env)
+    assert "--fallback-page-after" not in seen[2]
+    env["BENCH_OPERATOR"] = str(_operator_file(tmp_path, tmp_path, fallback_page_seconds=90))
+    hooks.watch(env)
+    assert float(seen[3][seen[3].index("--fallback-page-after") + 1]) == 90
 
 
 def test_collected_memory_paths_hold_what_a_seed_needs_to_apply_a_playbook() -> None:
@@ -1113,6 +1122,33 @@ def test_collect_copies_the_interval_from_the_host_sink(tmp_path: Path, monkeypa
     assert json.loads((out / "collect.json").read_text())["parts"]["evidence"].startswith("ok")
     assert json.loads((out / "collect.json").read_text())["parts"]["view"].startswith("ok")
     assert json.loads((out / "view.json").read_text())["schema"] == "fuzzops.view/v1"
+
+
+def test_collect_records_the_watchers_fallback_page(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    run = tmp_path / "run"
+    watch_out = run / "exec" / "watch"
+    watch_out.mkdir(parents=True)
+    doc = {
+        "inject_at": "2026-11-12T10:00:00.123Z",
+        "sdo_page_at": "2026-11-12T10:02:01Z",
+        "page_source": "fallback",
+        "fallback_page_at": "2026-11-12T10:02:00.123Z",
+        "fallback_id": "fallback-test",
+    }
+    (run / "record.json").write_text(json.dumps({"lifecycle": {"inject_at": doc["inject_at"]}}))
+    (watch_out / "sdo-page.json").write_text(json.dumps(doc))
+    calls: list[list[str]] = []
+
+    def run_cmd(cmd: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 1, "", "no cluster")
+
+    monkeypatch.setattr(hooks.subprocess, "run", run_cmd)
+    dest = run / "operator"
+    hooks.collect(_sink_env(tmp_path, BENCH_OUT=str(dest)), out=lambda _: None)
+    summary = json.loads((dest / "collect.json").read_text())
+    assert {key: summary[key] for key in doc} == doc
+    assert any("delete" in cmd and "sdo-external-incident" in cmd for cmd in calls)
 
 
 def test_collect_does_not_report_the_managers_run_json_as_missing(

@@ -65,6 +65,11 @@ overlay files it passed are under the lane's `sdo-config/`.
 
 ## Reading it
 
+- Detector-first SDO rows record RFC 3339 `inject_at`, `sdo_page_at` (controller incident opening),
+  `page_source` (`own` or `fallback`), and `fallback_page_at` (inbox write acknowledgement, or observed opening
+  if the write acknowledgement is lost) in `operator/collect.json`. Fields with no observed event are null.
+  `fallback_id` correlates the inbox write with its controller acknowledgement. The watch copy is
+  `exec/*/sdo-page.json`. The 120 s default delay starts at `FUZZOPS_TRAFFIC`'s `inject_at`.
 - Vanilla Claude rows on a pin that exports `FUZZOPS_TRAFFIC` include `operator/onset-probes.jsonl`,
   the live samples of the run's own journey workload through the first bad bucket or window deadline.
   Use `operator/onset.json` for the hook's trigger time (`at`), the workload's `first_bad.Start`,

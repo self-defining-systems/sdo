@@ -540,7 +540,11 @@ def is_investigator_dir(directory: Path) -> bool:
 def incident_detected_at(directory: Path) -> datetime | None:
     """When the incident was detected, from its ID (``<namespace>-<unix nanoseconds>``); for a ledger-less directory.
     An investigator directory takes its parent incident's time."""
-    suffix = parent_incident_id(incident_identity(directory)).rsplit("-", 1)[-1]
+    return incident_id_time(incident_identity(directory))
+
+
+def incident_id_time(incident_id: str) -> datetime | None:
+    suffix = parent_incident_id(incident_id).rsplit("-", 1)[-1]
     return datetime.fromtimestamp(int(suffix) / 1e9, UTC) if suffix.isdigit() else None
 
 
