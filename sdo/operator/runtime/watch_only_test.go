@@ -17,13 +17,15 @@ import (
 // usual, but never responds: the configured dispatcher is never called, no
 // automatic stage is selected and no dispatch is recorded in lifecycle events.
 func TestWatchOnlyIncidentClosesOnHealthWithoutResponding(t *testing.T) {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	opened := dataRiskOpened
 	world := &sameWriteWorld{}
 	cfg := testControllerConfig()
 	cfg.Namespace, cfg.SourceCommit, cfg.RepositoryWorktree = "app", "synthetic-accepted", "synthetic-worktree"
 	cfg.ClosureStabilityWindow = 5 * time.Second
-	cfg.VerificationTimeout = 5 * time.Minute
+	cfg.VerificationTimeout = 30 * time.Second
+	cfg.ResponseTimeout = 5 * time.Hour
 	cfg = cfg.WithMode(settings.ModeWatchOnly)
 	responder := &recordingDispatcher{requests: make(chan IncidentRequest, 8)}
 	controller, err := NewController(cfg, []sdk.Detector{sameWriteDetector{world: world}}, newRestartedStore(opened), responder, opened)
@@ -44,16 +46,15 @@ func TestWatchOnlyIncidentClosesOnHealthWithoutResponding(t *testing.T) {
 		defer lifecycleMu.Unlock()
 		events = append(events, event.GetEvent())
 	}))
-	broker := &riskBroker{}
+	broker := &watchOnlyTestBroker{}
 	controller.broker = broker
 	healedAt := opened.Add(90 * time.Second)
-	for step := 0; step < 600 && len(broker.closures()) == 0; step++ {
+	var firstAcknowledgedAt time.Time
+	for step := 0; step < 300; step++ {
 		clockMu.Lock()
 		at := now
 		clockMu.Unlock()
-		if !at.Before(healedAt) {
-			world.healthy.Store(true)
-		}
+		world.healthy.Store(!at.Before(healedAt) && firstAcknowledgedAt.IsZero())
 		if err := controller.Step(ctx, at, nil); err != nil {
 			t.Fatal(err)
 		}
@@ -72,6 +73,19 @@ func TestWatchOnlyIncidentClosesOnHealthWithoutResponding(t *testing.T) {
 				t.Fatal(err)
 			}
 			awaitEffectGoroutines(controller)
+		} else if effect, ok := controller.PendingClosureAcknowledgmentEffect(); ok {
+			if err := controller.ExecuteClosureAcknowledgmentEffect(ctx, effect); err != nil {
+				t.Fatal(err)
+			}
+			awaitEffectGoroutines(controller)
+		}
+		if first := controller.LastAcknowledgedIncidentID(); first != "" {
+			if firstAcknowledgedAt.IsZero() {
+				firstAcknowledgedAt = at
+			}
+			if controller.incidentOpen && controller.currentIncidentRequest.IncidentID != first {
+				break
+			}
 		}
 		clockMu.Lock()
 		now = now.Add(time.Second)
@@ -91,7 +105,13 @@ func TestWatchOnlyIncidentClosesOnHealthWithoutResponding(t *testing.T) {
 	if closure.Request.IncidentID == "" || len(closure.Request.Findings) == 0 || closure.DetectedAt.IsZero() {
 		t.Fatalf("watch-only closure lost its incident record: %+v", closure.Request)
 	}
-	if elapsed := controller.clock().Sub(healedAt); elapsed > time.Minute {
+	if firstAcknowledgedAt.IsZero() || !controller.incidentOpen || controller.currentIncidentRequest.IncidentID == closure.Request.IncidentID {
+		t.Fatal("second alert did not open a new incident after acknowledgement")
+	}
+	if !closure.EscalatedAt.IsZero() {
+		t.Fatalf("watch-only closure escalated at %s", closure.EscalatedAt)
+	}
+	if elapsed := firstAcknowledgedAt.Sub(healedAt); elapsed > time.Minute {
 		t.Fatalf("closure took %s after the workload healed", elapsed)
 	}
 	lifecycleMu.Lock()
@@ -102,6 +122,54 @@ func TestWatchOnlyIncidentClosesOnHealthWithoutResponding(t *testing.T) {
 	if !slices.Contains(events, PhaseClosed) {
 		t.Fatalf("watch-only controller recorded no closure: %v", events)
 	}
+}
+
+func TestWatchOnlyRestartResumesLegacyPendingClosure(t *testing.T) {
+	// A blocking dispatcher produces the same persisted report wait as the
+	// old watch-only dispatcher.
+	world := newClosureRestartWorld(t)
+	original := world.controller
+	world.runUntil(t, 45, nil, func() bool { return original.earlyReportPendingLocked() })
+	state, err := original.ExportState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	original.responderCancel()
+	original.Wait()
+	if !state.GetPendingClosure().GetVerifiedWhileResponderRunning() {
+		t.Fatal("the legacy controller did not reach the pending report wait")
+	}
+	now := original.clock()
+	restarted, err := NewController(original.config.WithMode(settings.ModeWatchOnly),
+		[]sdk.Detector{sameWriteDetector{world: world.world}}, newRestartedStore(now), nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted.now = func() time.Time { return now }
+	restarted.gitRead = fakeArchitecture("")
+	restarted.broker = world.broker
+	if err := restarted.RestoreState(state); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if id, err := restarted.ResetIncidents(ctx, now); err != nil || id != "" {
+		t.Fatalf("reset during pending closure = %q, %v", id, err)
+	}
+	if err := restarted.Step(ctx, now, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := restarted.PendingClosureEffect(); !ok {
+		t.Fatal("restarted controller is still waiting for a responder")
+	}
+}
+
+type watchOnlyTestBroker struct{ riskBroker }
+
+func (b *watchOnlyTestBroker) ProcessClosure(ctx context.Context, closure IncidentClosure) (ClosureReceipt, error) {
+	receipt, err := b.riskBroker.ProcessClosure(ctx, closure)
+	receipt.OutcomeCommit = "synthetic-accepted"
+	receipt.AckToken = "synthetic-ack"
+	return receipt, err
 }
 
 func TestWatchOnlyRejectsExternalIncidents(t *testing.T) {
