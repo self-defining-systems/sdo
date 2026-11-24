@@ -17,7 +17,7 @@ import (
 // compiler for the contracts that use it.
 func TestGateCompileRowsOnRealGo(t *testing.T) {
 	if testing.Short() {
-		t.Skip("nightly: the PR gate runs the same rejection rows with FakeGo")
+		t.Skip("nightly CI runs it without -short: the PR gate runs the same rejection rows with FakeGo")
 	}
 	t.Run("a candidate every stage accepts", func(t *testing.T) {
 		t.Parallel()
