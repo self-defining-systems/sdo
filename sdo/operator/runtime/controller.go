@@ -1671,7 +1671,7 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		c.currentIncidentRequest.InitialProgramRuns = append([]ProgramRun(nil), completion.automatic.Request.InitialProgramRuns...)
 	}
 	if len(completion.priorStages) > 0 && (completion.err == nil || completion.automatic == nil) {
-		c.currentIncidentRequest.PriorStages = mergeLaterStagePasses(completion.priorStages, c.currentIncidentRequest.PriorStages)
+		c.currentIncidentRequest.PriorStages = mergeStageReports(c.currentIncidentRequest.PriorStages, completion.priorStages)
 	}
 	var jobFailed *ResponderJobFailedError
 	var capacityConfiguration *responderCapacityConfigurationError
@@ -1854,7 +1854,7 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		return false
 	}
 	requiresStability := early || c.codePath != nil && c.codePath.Selection.DetectorSource == "shell"
-	if early && c.responseStagesRunning || !early && (c.midStage.running || c.closurePreparingLocked()) {
+	if early && c.responseStagesRunning || !early && (c.midStage.running || c.pendingLearnedPassReadyLocked() || c.closurePreparingLocked()) {
 		c.mu.Unlock()
 		return false
 	}
@@ -1964,6 +1964,10 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		return false
 	}
 	c.mu.Lock()
+	if c.midStage.running || c.pendingLearnedPassReadyLocked() || automatic != c.awaitingAutomaticRecoveryLocked() {
+		c.mu.Unlock()
+		return false
+	}
 	// Any observed responder write restarts the stability window, including
 	// the last writes before the responder finished.
 	if safe && guard != nil && c.closureMutationRevision != guard.Revision {

@@ -16,6 +16,11 @@ import (
 // decision. The completed stage report and dispatch state are saved together
 // before ordinary dispatch preparation publishes a worker task.
 func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.StageReport, stabilityOnly bool, check recoveryCheck, rolloutBlockers []sdk.Finding) {
+	// A pass can start while recovery observations run with c.mu released.
+	// Let it publish before selecting and freezing a handoff.
+	if c.midStage.running || c.pendingLearnedPassReadyLocked() {
+		return
+	}
 	observedAt := laterObservationTime(now, c.clock())
 	request := c.currentIncidentRequest
 	applied := playbookWrote(report)

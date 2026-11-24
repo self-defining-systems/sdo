@@ -163,8 +163,7 @@ func sortedDiagnoses(best map[string]*contracts.PlaybookVerdict) []*contracts.Pl
 	return result
 }
 
-// diagnosisLines states, as facts for the agent's page, what the stage tried: each match with how it was retrieved
-// and each Unknown with why. A plain NoMatch is the common case and stays off the page.
+// diagnosisLines renders historical stage verdicts for sdo detect.
 func diagnosisLines(stages []*contracts.StageReport) []string {
 	var lines []string
 	for _, stage := range stages {
@@ -176,6 +175,12 @@ func diagnosisLines(stages []*contracts.StageReport) []string {
 					detail = "retrieval unknown"
 				}
 				lines = append(lines, "tried by sdo: "+verdict.GetPlaybookId()+" -> match ("+detail+")")
+			case "no_match":
+				asked := "time unavailable"
+				if verdict.GetAskedAt().IsValid() {
+					asked = hms(verdict.GetAskedAt().AsTime())
+				}
+				lines = append(lines, "tried by sdo: "+verdict.GetPlaybookId()+" -> no_match (asked "+asked+")")
 			case "unknown", "needs_judgement":
 				lines = append(lines, "tried by sdo: "+verdict.GetPlaybookId()+" -> "+verdict.GetResult()+" ("+orQuestion(redactDetectText(verdict.GetReason(), 160))+")")
 			}

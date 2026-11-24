@@ -300,6 +300,8 @@ message PlaybookVerdict {
   // Outcomes in which this playbook was tried and returned Unknown. A counter that
   // gates nothing.
   int32 unknown_on_recurrence = 6;
+  // When this recorded diagnosis was asked. Older reports omit it.
+  google.protobuf.Timestamp asked_at = 7;
 }
 
 message ReadStep {

@@ -115,8 +115,7 @@ def _parser() -> argparse.ArgumentParser:
         description=(
             "Read fresh findings and detector confirmation without running programs or planning repairs. "
             "Use diagnose for program verdicts and plan or menu to prepare repairs. "
-            "prior_stages lists automatic writes and rollout blockers. Completed writes stay applied. "
-            "Use detect for automatic plan refusals."
+            "Use detect for automatic writes, verdicts and rollout blockers."
         ),
     )
     detect = commands.add_parser(
@@ -124,7 +123,8 @@ def _parser() -> argparse.ArgumentParser:
         help="run detectors now: what is failing, since when, suspects; NAME runs one test or detector",
         description=(
             "Run the incident's detectors on reads taken now and summarize what users see failing, since when, "
-            "and the suspects. NAME is a user test (SDO sends that test's scheduled request now, the same "
+            "and the suspects. Stage verdicts are historical; use diagnose for a live verdict. "
+            "NAME is a user test (SDO sends that test's scheduled request now, the same "
             "request its prober sends, and shows the result), a detector (runs it alone), or an item of the "
             "summary (a component, clue ID, tests, conditions or background). --wait SECONDS returns early only when "
             "the incident's alert set changes or Recovered holds, else after SECONDS; use it, not sleep. "
@@ -286,11 +286,11 @@ def _parser() -> argparse.ArgumentParser:
         )
     mitigate = commands.add_parser(
         "mitigate",
-        help="apply a fix by name, with the same --bind as diagnose",
+        help="recheck and apply a fix by name, with the same --bind as diagnose",
         description=(
             "Apply a playbook's fix, or a built-in action such as DeletePod, by name. "
-            "Take the name and --bind values from sdo diagnose, or omit --bind when sdo diagnose "
-            "or coverage already matched the playbook once. "
+            "With explicit --bind values, sdo mitigate tests the playbook live and applies its fix if it matches. "
+            "You can run it directly after an opening non-match. Omit --bind for a unique recorded binding. "
             "To apply independent fixes together, separate the commands with --: "
             "sdo mitigate A --bind x=Kind/ns/a -- B --bind y=Kind/ns/b. "
             "Overlapping writes are refused. 'Not applied' means no write landed for that failure. "

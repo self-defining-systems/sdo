@@ -160,6 +160,15 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		state.Request.InitialProgramRuns = append([]ProgramRun(nil), progress.InitialProgramRuns...)
 		loop.Request = state.Request
 	}
+	if state.Refresh {
+		if prior := deterministicStageReport(state.PriorStages); prior != nil {
+			report = mergeStagePass(prior, report)
+		}
+		if !playbookWrote(report) {
+			report.ApplyCompletedAt, report.RecoveryWait = nil, nil
+		}
+	}
+
 	if report.StartedAt == nil {
 		report.StartedAt = startedAt
 	}
@@ -223,11 +232,11 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		if runs, err = stage.reaskUnanswered(ctx, loop, state, runs); err != nil {
 			return report, err
 		}
+		report.Diagnoses = mergeStageDiagnoses(report.Diagnoses, stageDiagnoses(runs))
 		if state.Refresh {
 			runs = append(append([]ProgramRun(nil), state.Request.InitialProgramRuns...), runs...)
 		}
 		state.Request.InitialProgramRuns = runs
-		report.Diagnoses = mergeStageDiagnoses(report.Diagnoses, stageDiagnoses(runs))
 		state.Coverage = buildPlaybookCoverage(state.Findings, state.Request.InitialProgramRuns, loop.lastDiagnosisView, loop.Trust)
 		state.Request.PlaybookCoverage = cloneCoverage(state.Coverage)
 		loop.Request = state.Request

@@ -6,6 +6,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/sdk"
 )
 
@@ -93,13 +94,16 @@ func (c *Controller) startMidPassesLocked(ctx context.Context, incidentID string
 func (c *Controller) resumePendingLearnedPass(ctx context.Context) {
 	c.mu.Lock()
 	loop := c.responderLoop
-	if !c.midStage.pending || c.responseStagesRunning || c.midStage.running || c.midStage.settled || !c.incidentOpen ||
-		c.currentIncidentRequest == nil || !c.learnedPassAllowedLocked() ||
-		loop == nil || c.midStage.passes >= maxMidIncidentPasses {
+	if !c.pendingLearnedPassReadyLocked() {
 		c.mu.Unlock()
 		return
 	}
 	c.startMidPassesLocked(ctx, c.currentIncidentRequest.IncidentID, loop)
+}
+
+func (c *Controller) pendingLearnedPassReadyLocked() bool {
+	return c.midStage.pending && !c.responseStagesRunning && !c.midStage.running && !c.midStage.settled &&
+		c.responderLoop != nil && c.midStage.passes < maxMidIncidentPasses && c.learnedPassAllowedLocked()
 }
 
 func (c *Controller) deterministicStageSelectedLocked() bool {
@@ -207,29 +211,37 @@ func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, 
 	actionCtx, stop := context.WithTimeout(actionCtx, 2*c.config.StageBudget)
 	defer stop()
 	c.mu.Lock()
-	if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != incidentID {
+	if c.currentIncidentRequest == nil || c.currentIncidentRequest.IncidentID != incidentID || !c.learnedPassAllowedLocked() {
 		c.mu.Unlock()
 		return false, nil
 	}
 	c.midStage.passes++
 	request := *cloneIncidentRequest(c.currentIncidentRequest)
 	awaiting := c.awaitingAutomaticRecoveryLocked()
-	if awaiting != nil {
+	deadline := request.ResponseDeadline
+	if playbookWrote(awaiting) {
+		deadline = c.automaticDeadlineLocked(awaiting)
+	}
+	if !deadline.IsZero() {
 		var cancelWait context.CancelFunc
-		actionCtx, cancelWait = context.WithTimeout(actionCtx, c.automaticDeadlineLocked(awaiting).Sub(c.clock()))
+		actionCtx, cancelWait = context.WithTimeout(actionCtx, deadline.Sub(c.clock()))
 		defer cancelWait()
 	}
 	c.mu.Unlock()
 	state := &IncidentState{Request: request, Findings: append([]sdk.Finding(nil), request.Findings...), Coverage: cloneCoverage(request.PlaybookCoverage), PriorStages: cloneStageReports(request.PriorStages)}
 	earlier := deterministicStageReport(state.PriorStages)
-	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true}
+	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true, StabilityWindow: c.config.ClosureStabilityWindow}
+	if c.config.AfterPlaybook == settings.AfterPlaybookWait {
+		stage.WaitBound = c.config.AfterPlaybookWait
+	}
 	if c.tuneMidStage != nil {
 		c.tuneMidStage(stage)
 	}
 	report, runErr := RunStageAgain(actionCtx, state, stage)
 	c.mu.Lock()
 	if c.currentIncidentRequest != nil && c.currentIncidentRequest.IncidentID == incidentID {
-		c.currentIncidentRequest.PriorStages = cloneStageReports(state.PriorStages)
+		state.PriorStages = mergeStageReports(c.currentIncidentRequest.PriorStages, state.PriorStages)
+		c.currentIncidentRequest.PriorStages = state.PriorStages
 		// Receipts, their diagnoses and finding coverage form one snapshot.
 		// Publishing only the report loses the proof required by reflection.
 		c.currentIncidentRequest.PlaybookCoverage = cloneCoverage(state.Coverage)
@@ -251,30 +263,23 @@ func (c *Controller) runMidIncidentPass(ctx context.Context, incidentID string, 
 	return stagePassProgressed(earlier, report), runErr
 }
 
-// mergeLaterStagePasses keeps what later passes added while the pipeline ran:
-// the pipeline returns the reports it started with, and a stage's report only
-// ever gains attempts and results, so the one with more of them is the newer.
-func mergeLaterStagePasses(completed, current []*contracts.StageReport) []*contracts.StageReport {
-	merged := cloneStageReports(completed)
-	for i, report := range merged {
-		for _, newer := range current {
-			if newer.GetStage() == report.GetStage() && stageReportProgress(newer) > stageReportProgress(report) {
-				merged[i] = proto.Clone(newer).(*contracts.StageReport)
+// mergeStageReports folds new evidence into the existing stage order.
+func mergeStageReports(earlier, fresh []*contracts.StageReport) []*contracts.StageReport {
+	merged := cloneStageReports(earlier)
+	for _, report := range fresh {
+		found := false
+		for i, prior := range merged {
+			if prior.GetStage() == report.GetStage() {
+				merged[i] = mergeStagePass(prior, proto.Clone(report).(*contracts.StageReport))
+				found = true
+				break
 			}
+		}
+		if !found {
+			merged = append(merged, proto.Clone(report).(*contracts.StageReport))
 		}
 	}
 	return merged
-}
-
-func stageReportProgress(report *contracts.StageReport) int {
-	progress := 0
-	for _, attempt := range report.GetMitigations() {
-		progress++
-		if attempt.GetResult() != "skipped" {
-			progress += len(report.GetMitigations()) + 1
-		}
-	}
-	return progress
 }
 
 // The automatic stage can take new evidence only while it owns the repair.
@@ -284,5 +289,13 @@ func (c *Controller) learnedPassAllowedLocked() bool {
 		return true
 	}
 	report := c.awaitingAutomaticRecoveryLocked()
-	return playbookWrote(report) && !stagePlanRefused(report) && c.clock().Before(controllerTime(report.GetRecoveryDeadline()))
+	if report == nil || stagePlanRefused(report) {
+		return false
+	}
+	if playbookWrote(report) {
+		return c.clock().Before(c.automaticDeadlineLocked(report))
+	}
+	// Drain evidence queued during the opening pass even if it wrote nothing.
+	deadline := c.currentIncidentRequest.ResponseDeadline
+	return (c.midStage.pending || c.midStage.running) && (deadline.IsZero() || c.clock().Before(deadline))
 }

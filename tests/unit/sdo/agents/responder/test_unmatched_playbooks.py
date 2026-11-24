@@ -45,7 +45,7 @@ def test_a_no_match_playbook_is_listed_with_its_origin_last_read_and_source_path
 
     block = unmatched_playbooks_block(request)
 
-    assert "did not match" in block
+    assert "did not match at opening; rerun `sdo diagnose` for the current answer" in block
     assert "narrow-check: NoMatch" in block
     assert "inc-7" in block
     assert "widen a varchar column" in block
