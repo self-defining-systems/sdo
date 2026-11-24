@@ -81,7 +81,7 @@ class Config:
     python_go_consumers: list[str]
     python_shards: dict[str, list[str]]
     go_cli_shard: list[str]
-    go_validate_gate_tests: list[str]
+    go_validate_shard: list[str]
 
     def __post_init__(self) -> None:
         for name in ("full_suite", "go_workspace_modules", "go_binaries", "python_go_consumers"):
@@ -499,9 +499,6 @@ def shard_of(test: str, config: Config) -> str:
     return "core"
 
 
-VALIDATE_DIR = "sdo/operator/memory/validate"
-
-
 def load_plan(path: Path) -> Plan:
     data = json.loads(path.read_text())
     return Plan(
@@ -516,45 +513,24 @@ def load_plan(path: Path) -> Plan:
 
 def go_shard_of(directory: str, config: Config) -> str:
     """The Go shard that owns a package directory (relative to the repo root)."""
-    if directory == VALIDATE_DIR:
-        return "validate"
-    for owned in config.go_cli_shard:
-        if directory == owned or directory.startswith(owned + "/"):
-            return "cli"
+    for shard, directories in (("validate", config.go_validate_shard), ("cli", config.go_cli_shard)):
+        if any(directory == owned or directory.startswith(owned + "/") for owned in directories):
+            return shard
     return "rest"
 
 
-# The ``gate`` shard runs the memory validator package too, restricted to go_validate_gate_tests;
-# the ``validate`` shard runs the rest of that package. A package cannot be split any other way.
-SHARD_PACKAGE_OWNER = {"gate": "validate"}
-
-
 def shard_go_packages(plan: Plan, config: Config, shard: str) -> list[str]:
-    """The ``go test`` patterns one Go shard runs; ``validate`` and ``gate`` share the memory validator
-    package and ``cli`` is the directories (and subdirectories) listed in ``go_cli_shard``."""
-    owner = SHARD_PACKAGE_OWNER.get(shard, shard)
-    return [f"./{d}" for d in plan.go_packages if go_shard_of(d, config) == owner]
+    """The ``go test`` patterns one Go shard runs."""
+    return [f"./{d}" for d in plan.go_packages if go_shard_of(d, config) == shard]
 
 
 def shard_go_guards(plan: Plan, config: Config, shard: str) -> tuple[str, list[str]]:
-    """The ``-run`` regex and package patterns for whole-tree guards in packages the plan does not run in full.
-
-    The validator package is owned by the ``validate`` shard alone; the ``gate`` shard runs only its own tests."""
-    if shard == "gate":
-        return "", []
+    """The regex and package patterns for whole-tree guards in unselected packages."""
     chosen = {
         d: names for d, names in plan.go_guards.items() if d not in plan.go_packages and go_shard_of(d, config) == shard
     }
     names = sorted({n for ns in chosen.values() for n in ns})
     return ("^(" + "|".join(names) + ")$" if names else ""), [f"./{d}" for d in chosen]
-
-
-def go_test_filter(config: Config, shard: str) -> tuple[str, str] | None:
-    """The ``go test`` flag (``-run`` or ``-skip``) and regexp that split the validator package."""
-    if shard not in ("validate", "gate") or not config.go_validate_gate_tests:
-        return None
-    names = "|".join(re.escape(name) for name in config.go_validate_gate_tests)
-    return ("-run", f"^({names})$") if shard == "gate" else ("-skip", f"^({names})$")
 
 
 def partition_go_packages(listing: str, root: Path, config: Config, shard: str) -> list[str]:
@@ -611,8 +587,6 @@ def main(argv: list[str] | None = None) -> int:
         if name == "skip":
             cmd.add_argument("--kind", choices=["go", "python"], required=True)
     sub.add_parser("check-marks")
-    filter_cmd = sub.add_parser("go-test-filter")
-    filter_cmd.add_argument("--shard", required=True)
     partition_cmd = sub.add_parser("partition-go")
     partition_cmd.add_argument("--shard", required=True)
     partition_cmd.add_argument("--root", type=Path, default=ROOT)
@@ -623,12 +597,6 @@ def main(argv: list[str] | None = None) -> int:
     miss_cmd.add_argument("--pytest-log", type=Path)
     args = parser.parse_args(argv)
     config = Config.load()
-
-    if args.command == "go-test-filter":
-        chosen_filter = go_test_filter(config, args.shard)
-        if chosen_filter:
-            print(*chosen_filter, sep="\n")
-        return 0
 
     if args.command == "partition-go":
         print("\n".join(partition_go_packages(sys.stdin.read(), args.root, config, args.shard)))

@@ -54,7 +54,7 @@ CONFIG = {
     "python_go_consumers": ["tests/unit/test_tool.py"],
     "python_shards": {"slow": ["tests/unit/slow/**"]},
     "go_cli_shard": ["goa/cli"],
-    "go_validate_gate_tests": ["TestHeavy", "TestOther"],
+    "go_validate_shard": ["goa/validate"],
 }
 
 FILES = {
@@ -235,14 +235,14 @@ def test_shards_partition_the_selected_tests(repo: Path, config: select.Config) 
 
 
 def test_go_shards_partition_every_package_exactly_once(config: select.Config) -> None:
-    dirs = ["goa/cli", "goa/cli/sub", "goa/clix", "goa/leaf", select.VALIDATE_DIR]
+    dirs = ["goa/cli", "goa/cli/sub", "goa/clix", "goa/leaf", "goa/validate"]
     owners = {d: select.go_shard_of(d, config) for d in dirs}
     assert owners == {
         "goa/cli": "cli",
         "goa/cli/sub": "cli",
         "goa/clix": "rest",
         "goa/leaf": "rest",
-        select.VALIDATE_DIR: "validate",
+        "goa/validate": "validate",
     }
     root = Path("/repo")
     listing = "".join(f"m/{d} {root / d}\n" for d in dirs)
@@ -250,27 +250,9 @@ def test_go_shards_partition_every_package_exactly_once(config: select.Config) -
     assert sorted(sum(chosen, [])) == sorted(f"m/{d}" for d in dirs)
 
 
-def test_validator_package_is_split_by_test_between_validate_and_gate(config: select.Config) -> None:
-    validator = select.Plan(go_packages=[select.VALIDATE_DIR])
-    for shard in ("validate", "gate"):
-        assert select.shard_go_packages(validator, config, shard) == [f"./{select.VALIDATE_DIR}"]
-        assert select.shard_go_packages(validator, config, "rest") == []
-    assert select.go_test_filter(config, "gate") == ("-run", "^(TestHeavy|TestOther)$")
-    assert select.go_test_filter(config, "validate") == ("-skip", "^(TestHeavy|TestOther)$")
-    assert select.go_test_filter(config, "rest") is None
-    assert select.go_test_filter(config, "cli") is None
-
-
-def test_the_real_gate_tests_exist_in_the_validator_package() -> None:
-    names = select.Config.load(ROOT).go_validate_gate_tests
-    assert names
-    source = "\n".join(p.read_text() for p in (ROOT / select.VALIDATE_DIR).glob("*_test.go"))
-    for name in names:
-        assert re.search(rf"^func {name}\(t \*testing\.T\)", source, re.MULTILINE), name
-
-
-def test_the_real_cli_shard_names_existing_directories() -> None:
-    for directory in select.Config.load(ROOT).go_cli_shard:
+def test_configured_go_shard_paths_exist() -> None:
+    config = select.Config.load(ROOT)
+    for directory in config.go_cli_shard + config.go_validate_shard:
         assert (ROOT / directory).is_dir(), directory
 
 

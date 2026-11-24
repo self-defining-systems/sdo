@@ -12,6 +12,7 @@ import (
 
 // All configurations must stage. Compile the strict missing-catalog case once:
 // the other cases emit the same empty registry, and adoption skips acceptance.
+// Nightly links the full controller; PR CI checks staging for every case.
 func TestEmptyCatalogControllerBuild(t *testing.T) {
 	for _, present := range []bool{false, true} {
 		for _, compileOnly := range []bool{false, true} {
@@ -28,7 +29,7 @@ func TestEmptyCatalogControllerBuild(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer workspace.Close()
-				if !present && !compileOnly {
+				if !present && !compileOnly && !testing.Short() {
 					if _, err := workspace.ValidateAndBuild(context.Background()); err != nil {
 						t.Fatal(err)
 					}

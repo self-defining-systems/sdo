@@ -69,8 +69,9 @@
     "sdo/operator/runtime/envtestio",
     "sdo/operator/runtime/e2e"
   ],
-  "go_validate_gate_tests": [
-    "TestGateCompileRowsOnRealGo"
+  "go_validate_shard": [
+    "sdo/operator/memory/validate",
+    "benchmarks/lanes/internal/bench"
   ],
   "documentation": [
     "README.md",
