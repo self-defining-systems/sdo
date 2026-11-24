@@ -1915,12 +1915,12 @@ func (m *Manager) gcHost(ctx context.Context, host string) {
 			continue
 		}
 		if l.Step != nil {
-			// The lock of a live step, whatever the lane's cluster: a lane's first build runs while it is Gone.
-			keep = append(keep, filepath.Join(l.Lane, l.Step.ID), filepath.Join(l.Lane, "step.lock"),
-				filepath.Join(l.Lane, hookInputDirName(l.Step.ID)))
+			// All of a lane with a live step, whatever the lane's cluster: a lane's first build runs while it is Gone, and
+			// every entry of its staging (lock, lane directory, fresh fingerprint, hook input) may be the step's.
+			keep = append(keep, l.Lane)
 		}
 		if !l.Gone {
-			keep = append(keep, filepath.Join(l.Lane, "lane"), filepath.Join(l.Lane, "step.lock"))
+			keep = append(keep, filepath.Join(l.Lane, "lane"), filepath.Join(l.Lane, "step.lock"), filepath.Join(l.Lane, freshFingerprintName))
 		}
 		if l.Hold != nil && l.Hold.Step != "" {
 			keep = append(keep, filepath.Join(l.Lane, l.Hold.Step))

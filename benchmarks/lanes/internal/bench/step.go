@@ -1022,8 +1022,11 @@ func (r *stepRunner) freshApp(ctx context.Context) bool {
 // freshFingerprintFile keeps the data stores' fingerprint of the lane's last fresh app copy, beside the lane
 // directory (a build empties that).
 func (r *stepRunner) freshFingerprintFile() string {
-	return filepath.Join(filepath.Dir(r.s.LaneDir), "fresh-fingerprint.json")
+	return filepath.Join(filepath.Dir(r.s.LaneDir), freshFingerprintName)
 }
+
+// freshFingerprintName is the fingerprint's file in the lane's staging directory; the staging gc keeps it by this name.
+const freshFingerprintName = "fresh-fingerprint.json"
 
 // freshCopyDetail marks the app interval of a build that put down a fresh copy.
 const freshCopyDetail = "fresh copy"
