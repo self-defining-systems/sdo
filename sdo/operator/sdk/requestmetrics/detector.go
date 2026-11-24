@@ -135,9 +135,13 @@ const MetaBackground = "background"
 
 // Operation is one user operation the detector watches.
 type Operation struct {
-	ID      string
-	Service string
-	Route   string
+	// ProbePath and ProbePort bind direct probe requests to this entry metric.
+	// The path is literal or uses whole-segment {parameter} placeholders.
+	ProbePath string
+	ProbePort int
+	ID        string
+	Service   string
+	Route     string
 	// Method restricts the operation to one HTTP method; empty matches any.
 	Method string
 	// Unmeasurable, when set, says why the map gives this operation no request
@@ -295,6 +299,11 @@ func (d *detector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Fi
 		}
 		results[q.ID] = r
 	}
+	receipts := probeObservations(ctx)
+	discounts := make(map[string]map[probeStep]float64, len(d.entries))
+	for service, plan := range d.entries {
+		discounts[service] = plan.probeDiscounts(d.cfg.Operations, receipts, results[plan.recent.ID], d.cfg.Rule.Window)
+	}
 	var findings []sdk.Finding
 	for _, op := range d.cfg.Operations {
 		if op.Unmeasurable != "" {
@@ -308,7 +317,7 @@ func (d *detector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Fi
 			findings = append(findings, d.notInstrumented(ctx, op, why))
 			continue
 		}
-		if f, ok := d.judge(ctx, op, plan, results); ok {
+		if f, ok := d.judge(ctx, op, plan, results, discounts[op.Service]); ok {
 			findings = append(findings, f)
 		}
 	}
@@ -447,7 +456,7 @@ func (d *detector) undeclared(ctx sdk.DetectionContext, plan entryPlan, results 
 	volume, failed := map[string]float64{}, map[string]float64{}
 	for _, s := range results[plan.recent.ID].Series {
 		route := s.Labels[plan.RouteLabel]
-		if declared[route] {
+		if declared[route] || s.Labels[ProbeCoverageLabel] == "bracketed" {
 			continue
 		}
 		if _, seen := volume[route]; !seen {
@@ -486,7 +495,7 @@ func (d *detector) undeclared(ctx sdk.DetectionContext, plan entryPlan, results 
 	var out []sdk.Finding
 	for _, route := range routes {
 		op := Operation{ID: "undeclared route " + route, Service: plan.Service, Route: route, undeclared: true, truncated: truncated}
-		if f, ok := d.judge(ctx, op, plan, results); ok {
+		if f, ok := d.judge(ctx, op, plan, results, nil); ok {
 			out = append(out, f)
 		}
 	}
@@ -518,17 +527,27 @@ func (d *detector) notInstrumented(ctx sdk.DetectionContext, op Operation, why s
 }
 
 // perStep sums the operation's series per sample time.
-func (p entryPlan) perStep(op Operation, series []metrics.Series) map[time.Time]counts {
-	out := map[time.Time]counts{}
+func (p entryPlan) perStep(op Operation, series []metrics.Series, discounts map[probeStep]float64) (map[time.Time]counts, map[time.Time]counts) {
+	out, removed := map[time.Time]counts{}, map[time.Time]counts{}
 	for _, s := range series {
-		if !p.matches(op, s.Labels) {
+		if s.Labels[ProbeCoverageLabel] == "bracketed" || !p.matches(op, s.Labels) {
 			continue
 		}
+		bucket := p.bucket(s.Labels)
 		for _, sample := range s.Samples {
-			out[sample.At] = out[sample.At].add(p.classify(s.Labels, sample.Value))
+			raw := p.classify(s.Labels, sample.Value)
+			own := discounts[probeStep{sample.At, bucket}]
+			// A bucket smaller than the claimed count contradicts the join.
+			// Leave it unchanged, just as with missing evidence.
+			if own > 0 && own <= raw.total && !math.IsInf(raw.total, 0) {
+				discount := p.classify(s.Labels, own)
+				raw = raw.subtract(discount)
+				removed[sample.At] = removed[sample.At].add(discount)
+			}
+			out[sample.At] = out[sample.At].add(raw)
 		}
 	}
-	return out
+	return out, removed
 }
 
 // healthy is the operation's healthy server and client-error shares.
@@ -622,10 +641,10 @@ func quietNewest(steps map[time.Time]counts, times []time.Time, observedAt time.
 	return steps[last].total == 0 || (!observedAt.IsZero() && observedAt.Sub(last) >= window)
 }
 
-func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan, results map[string]metrics.Result) (sdk.Finding, bool) {
+func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan, results map[string]metrics.Result, discounts map[probeStep]float64) (sdk.Finding, bool) {
 	r := d.cfg.Rule
 	recent := results[plan.recent.ID]
-	steps := plan.perStep(op, recent.Series)
+	steps, removed := plan.perStep(op, recent.Series, discounts)
 	times := make([]time.Time, 0, len(steps))
 	for t := range steps {
 		times = append(times, t)
@@ -730,6 +749,11 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 	window := r.Window.String()
 	fingerprint, note := "requestmetrics/errors/"+op.ID, unconfirmed+heldUnconfirmed
 	meta := map[string]any{}
+	discount := removed[times[raisedAt]]
+	if discount.total > 0 {
+		meta["probe_discount_total"] = discount.total
+		meta["probe_discount_failed"] = discount.server + discount.client
+	}
 	if unconfirmed != "" || heldUnconfirmed != "" {
 		meta["recovery_unconfirmed"] = true
 	}
@@ -743,6 +767,9 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 			note += " Truncated: " + op.truncated + "."
 			meta["undeclared_truncated"] = op.truncated
 		}
+	}
+	if discount.total > 0 {
+		note += fmt.Sprintf(" Discounted %.0f of SDO's own requests (%.0f failed) in the reported step.", discount.total, discount.server+discount.client)
 	}
 	rule, severity := RuleErrors, sdk.SeverityWarning
 	if unjudged {

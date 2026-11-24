@@ -3,6 +3,7 @@ package prober
 import (
 	"context"
 	"testing"
+	"time"
 
 	"sdo.dev/operator/sdk/traffic"
 )
@@ -17,8 +18,9 @@ func TestBurstOnAHealthProbeSendsTheScheduledRequestNowAndRecordsIt(t *testing.T
 	steady := traffic.Workload{APIVersion: traffic.APIVersion, Kind: traffic.WorkloadKind, Name: "probe",
 		Purpose: traffic.PurposeHealthProbe, Scenarios: []traffic.WorkloadScenario{{ID: other.ID}, {ID: read.ID}}}
 	store := &fixtureStore{items: map[string]bool{}}
+	clock := &staticProbeClock{at: time.Unix(100, 0).UTC()}
 	p, err := New(Config{Namespace: "app", Catalog: traffic.Catalog{read, other}, Workloads: []traffic.Workload{steady},
-		Client: store, BaseURL: func(traffic.Target) string { return "http://web:80" }})
+		Client: store, Clock: clock, BaseURL: func(traffic.Target) string { return "http://web:80" }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,8 +35,18 @@ func TestBurstOnAHealthProbeSendsTheScheduledRequestNowAndRecordsIt(t *testing.T
 	if len(sent) != 1 || sent[0].Requests == 0 {
 		t.Fatalf("sent samples = %+v", sent)
 	}
+	windows := p.Windows()
+	if len(windows) != 1 {
+		t.Fatalf("workload API returned a non-workload: %+v", windows)
+	}
+	requests := p.observationWindows()[traffic.HTTPReceiptWindowID].HTTPRequests
+	want := traffic.HTTPReceipt{Service: "web", Port: 80, PathKey: traffic.HTTPPathKey("/items"), Method: "GET",
+		SentAt: clock.at, Answered: clock.at, Status: 200}
+	if len(requests) != 1 || requests[0] != want {
+		t.Fatalf("HTTP receipts = %+v, want [%+v]", requests, want)
+	}
 	var recorded []traffic.Sample
-	for _, observed := range p.Windows()["probe"].Scenarios {
+	for _, observed := range windows["probe"].Scenarios {
 		if observed.Scenario.ID == read.ID {
 			recorded = observed.Samples
 		} else if len(observed.Samples) > 0 {
@@ -51,3 +63,8 @@ func TestBurstOnAHealthProbeSendsTheScheduledRequestNowAndRecordsIt(t *testing.T
 		t.Fatal("a health probe runs named tests only, never its whole workload")
 	}
 }
+
+type staticProbeClock struct{ at time.Time }
+
+func (c *staticProbeClock) Now() time.Time                     { return c.at }
+func (*staticProbeClock) After(time.Duration) <-chan time.Time { return nil }

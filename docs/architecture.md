@@ -35,6 +35,14 @@ changes no repository scope or production/benchmark boundary. Fastloop incident 
 record `replay`; older and baseline rows use null. Offline reflection rows record
 `replay_mode`, with disabled replay reported as skipped, never successful.
 
+Request-metrics paging reads the application's existing operation counters. For a declared HTTP
+entry, the detector can subtract its own probe requests from each rolling step when its accepted
+map and scrape samples establish a matching service, port, path, method, status and interval. The
+memory host's prober keeps a bounded receipt history in its ordinary observation reply. The
+controller forwards that history with the frozen query results and corpus captures preserve both
+inputs. An absent receipt or scrape bracket leaves the counts unchanged. A finding reports the
+discount for the step it cites.
+
 ## End-to-end lifecycle
 
 ```text

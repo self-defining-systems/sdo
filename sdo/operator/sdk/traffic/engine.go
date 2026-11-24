@@ -134,6 +134,9 @@ type Clock interface {
 	After(time.Duration) <-chan time.Time
 }
 
+// UseHTTPRecorder installs the prober's receipt sink before the engine runs.
+func (e *Engine) UseHTTPRecorder(record func(HTTPReceipt)) { e.recordHTTP = record }
+
 type realClock struct{ clockio.Clock }
 
 // RealClock is the wall clock.
@@ -142,12 +145,13 @@ var RealClock Clock = realClock{}
 // Engine runs one workload's scenarios. It alone decides which scenario an
 // iteration runs, seeds its random source, bounds its time, and measures it.
 type Engine struct {
-	workload  Workload
-	scenarios map[string]Scenario
-	plan      SamplingPlan
-	client    Doer
-	baseURL   func(Target) string
-	clock     Clock
+	workload   Workload
+	scenarios  map[string]Scenario
+	plan       SamplingPlan
+	client     Doer
+	baseURL    func(Target) string
+	clock      Clock
+	recordHTTP func(HTTPReceipt)
 	// nonce is this engine's run nonce, mixed into every iteration's random
 	// source so a restarted prober never replays the previous run's values.
 	nonce uint64
@@ -766,7 +770,16 @@ func (e *Engine) send(ctx context.Context, scenario Scenario, step Step, target 
 	if err != nil {
 		return stepResult{outcome: OutcomeInvalid, request: line, err: err.Error()}
 	}
+	sentAt := e.clock.Now()
 	response, err := e.client.Do(built)
+	if e.recordHTTP != nil {
+		receipt := HTTPReceipt{Service: target.Service, Port: target.Port, PathKey: HTTPPathKey(built.URL.Path),
+			Method: built.Method, SentAt: sentAt.UTC(), Answered: e.clock.Now().UTC()}
+		if response != nil && err == nil {
+			receipt.Status = response.StatusCode
+		}
+		e.recordHTTP(receipt)
+	}
 	if err != nil {
 		dial := isDialError(err)
 		cause := transportCause(err)
