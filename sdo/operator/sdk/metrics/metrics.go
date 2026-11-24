@@ -266,9 +266,7 @@ type ResultSet interface {
 	MetricResults() map[string]Result
 }
 
-// NotFrozenError is the Result.Error of an on-demand query a program asked for
-// where no metrics source is attached and the frozen observation holds no answer
-// (the memory host). It is a request for the controller to answer, not a verdict.
+// NotFrozenError reports a metric query missing from the host's supplied observation.
 const NotFrozenError = "metric query not in the frozen observation"
 
 // QuerySource evaluates a typed metrics query through the runtime.

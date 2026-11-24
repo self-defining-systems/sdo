@@ -484,7 +484,8 @@ The controller is split by stability and privilege:
 | `sdo/operator/memory/mapseed/` | Deterministic application-map seed from the rendered accepted objects (Secrets never read): one component per workload, data roles by well-known store image (`holds_data` from the engine or persistent volumes), call edges from env values, args and imported or mounted ConfigMaps that name a Service address, entry candidates (exposed or uncalled Services with the workload's HTTP health probes), and one procedure per Job (re-created from its template, effect `long` until the designer corrects it). Every seeded role and edge carries evidence `manifest`. The first architecture commit carries it when there is no map, so an application deployed without source still gets data roles, Go's store readers and a starting map for the designer |
 | `sdo/operator/core/` | Detector execution, snapshot validation, finding emission, and playbook-path validation |
 | `sdo/operator/runtime/prober/` | Host-owned routing and traffic engine: continuous probes, bounded bursts, read-only primitives and stateless reachability rounds (no Kubernetes dependency). A scenario that must sign in names probe users (`traffic.ProbeUser`); the memory host passes `hostio.ProbeUsers`, which derives each user's password from SDO's seed on the repository volume (`.sdo-runtime/probe-identity/seed`, so every host agrees), runs the map's `probe_identity` procedure once per user in the background (single-flight, password on stdin, output never captured) and answers pending until it succeeds; the engine puts the password in the iteration State only, never in the setup record, and redacts it from every sample before bounding; a pending or failed user is an invalid sample, not a health signal. A step may name its own `Target`; on an `ssh` target it is an `EXEC` (command line and stdin in, exit status and bounded stdout out) that the prober's in-process `SSHExecer` (`golang.org/x/crypto/ssh`, one fresh connection per step, any host key) runs signed by the scenario's probe user that declares `SSHKey`: `hostio.ProbeUsers` derives that user's ed25519 key from the same seed, gives the engine only the public authorized-keys line (State, for registration through the application's API) and the prober only a signer, so the private key never enters the SDK, State, samples or memory; an EXEC is always a marked write, never carries a probe-user password, and records `exit <n>` rather than an HTTP status |
-| `sdo/operator/memoryhost/` | Accepted detector/program/traffic execution, mirror barriers, candidate activation, leased retirement and crash recovery; the host never mutates. Each call carries the frozen scoped observation and pod-admission result in `MemoryObservation`; generic `Object`/`CaptureObjects` reads use the host's own discovery-backed reader, which refuses the SDO control namespace |
+| `sdo/operator/memoryhost/` | Accepted detector/program/traffic execution, mirror barriers for detectors, candidate activation, leased retirement and crash recovery. Programs request read-only SDK inputs from their controller view on demand. |
+| `sdo/operator/internal/programread/` | Shared read-only SDK proxy for accepted and working playbooks. |
 | `sdo/operator/runtime/internal/lifecycleio/external_incident.go` | Kubernetes alert inbox edge; decodes generic typed alerts, without benchmark or health authority |
 | `sdo/operator/runtime/opens.go`, `runtime/recovery_scope.go` | `opens()`: which findings open an incident (failing user tests, held Kubernetes conditions); every other finding is a clue. The opening-alert scope: only `opening_keys` hold recovery |
 | `sdo/operator/runtime/source_departures.go` | `SourceDepartures`, the one classifier of non-SDO departures from accepted source on a suspect's objects: a drift event names a manager other than SDO's (`sdk.IsSDOFieldManager`) and a time at or before onset, and `DiffAgainstSource` still shows the difference now (changed, missing, or live but absent from source). Nothing matches while a deployment or advance is in flight. Secret data is outside this comparison. The wiring detector can still report missing references and keys. It decides nothing itself: `sdo detect` prints each departure with `sdo mitigate ReconcileFromSource`, `CreateFromSource` or `DeleteObject` as its expand line |
@@ -1175,15 +1176,18 @@ anonymous RSS nor reclaimable, so such growth is missed until the first OOM kill
 Accepted memory executes only in a bounded memory-host child. The generated
 controller imports runtime alone and stays long-lived across accepted revisions.
 Remote SDK adapters register from Ready; accepted detector, program and traffic
-constructors run only in the child. Evaluate, Diagnose and Mitigate use
-the typed `MemoryHostService` over gRPC on a private Unix socket. Informer snapshot projections fan out as complete, contiguous mirror deltas to
-active and prepared hosts. Each call leases its child (retirement waits for the
-lease) and evaluates exactly the mirror sequence its view was published at; the host keeps
-its last sixteen sequences readable. No lock or lease is held across a call into detector or
-program code, so one detector's hang or failure never delays another detector, a swap, a
-failure or recovery. The host ends a detector shortly before the transport deadline,
-reports a detector error, and never runs the same detector twice at once. Optional input
-windows remain request-local.
+constructors run only in the child. The typed `MemoryHostService` uses gRPC on
+a private Unix socket. Informer snapshots fan out as contiguous mirror deltas.
+Evaluate leases the child and uses the exact mirror sequence for its view,
+with request-local optional inputs. The host keeps its last sixteen sequences
+readable and never runs the same detector twice at once. RunProgram leases the
+child and streams one Diagnose or Mitigate invocation on the same socket.
+The controller serves each read against the invocation's SDK view, including
+frozen metrics, logs, objects, and the existing bounded live primitives.
+An invocation sends only its bindings, requested reads, and result. Reads use the
+same SDK dispatch as working playbooks and enter the controller's evidence
+sink through its normal recording view. The lease pins the child during
+execution and leaves activation and other reads free to proceed.
 Unchanged projections retain their sequence. Errors and disconnects remain
 detector/program errors, never clearance or an authorized empty plan.
 
@@ -1191,20 +1195,17 @@ detector/program errors, never clearance or an authorized empty plan.
 diagnostics, playbooks and shared library used by `validate.Check`. Validation
 builds that executable too. Building it executes no tests: `validate.Check`
 (repeated by the broker) is the only acceptance gate, authored playbook tests
-are informational there, and a commit the broker accepted always activates. The controller alone executes plans. The host owns
-bounded namespace-scoped log reads and GET/HEAD/TCP probes and returns typed
-primitive receipts; the controller records those through its existing program
-evidence and corpus sinks. Source/baseline diffs arrive as frozen typed read inputs. Source comparison uses
-the accepted manifest projection without issuing a Kubernetes dry-run PATCH;
-unavailable inputs fail closed.
-No mutation client or controller callback is exposed to programs.
+are informational there, and a commit the broker accepted always activates.
+The controller alone executes plans. Programs receive only the read-only SDK
+interface. Source comparison uses the accepted manifest projection and unavailable
+inputs fail closed.
 
 | Component | Responsibility |
 | --- | --- |
 | `memoryhost/` | Protocol server, registrations, deterministic snapshot execution, receipts, mirror fan-out and manager leases |
 | `memoryhost/hostio/` | Declared nondeterminism edge: child launch/reaping, memory bound, Unix transport and read-only live reads (`KubernetesRead`, `DatabaseUsers`, `Observe`, `PodUsage`/`NodeUsage`, `WebhookCAMatchesSecret`, `AdmissionWebhooksFor`, logs, probes) confined to the observed namespace, refusing the control namespace |
 | `kubereads/` | Shared read-only Kubernetes reads (transports injected by the controller or the host edge) |
-| `runtime/memory_host.go` | Remote SDK detector/program adapters, input transport and evidence forwarding |
+| `runtime/memory_host.go` | Remote SDK detector/program adapters and invocation-scoped read dispatch |
 | `builder/memory_host.go` | Staged host build; digest binds the launched executable |
 
 The artifact ownership matrix is unchanged: the host reads accepted diagnostics

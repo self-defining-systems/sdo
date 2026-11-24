@@ -2,20 +2,15 @@
 // read-only view. Programs return plans; only the controller executes them.
 package jitview
 
-//go:generate go run ./cmd/gen
-
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"reflect"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
-	"sync"
 
-	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/metrics"
+	"sdo.dev/operator/internal/programread"
 	"sdo.dev/operator/sdk/program"
 )
 
@@ -25,68 +20,20 @@ type StructuralPlanError struct{ Message string }
 func (e *StructuralPlanError) Error() string { return e.Message }
 
 type Message struct {
-	StructuralPlanFailure string                         `json:"structural_plan_failure,omitempty"`
-	Method                string                         `json:"method,omitempty"`
-	Arguments             []json.RawMessage              `json:"arguments,omitempty"`
-	Values                []json.RawMessage              `json:"values,omitempty"`
-	Result                json.RawMessage                `json:"result,omitempty"`
-	Error                 string                         `json:"error,omitempty"`
-	UsageUnavailable      *metrics.UsageUnavailableError `json:"usage_unavailable,omitempty"`
-	// ObjectAbsent marks an error that is an observation of absence, which
-	// the program must still be able to recognize with errors.Is.
-	ObjectAbsent bool `json:"object_absent,omitempty"`
+	programread.Message
+	StructuralPlanFailure string          `json:"structural_plan_failure,omitempty"`
+	Result                json.RawMessage `json:"result,omitempty"`
 }
 
-// absentError is the program-side form of sdk.ErrObjectAbsent.
-type absentError struct{ message string }
-
-func (e *absentError) Error() string { return e.message }
-func (e *absentError) Unwrap() error { return sdk.ErrObjectAbsent }
-
-type View struct {
-	mu     sync.Mutex
-	Input  *json.Decoder
-	Output *json.Encoder
-}
-
-var _ program.ReadView = (*View)(nil)
-
-func (v *View) call(method string, args, outputs []any) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	request := Message{Method: method}
-	for _, arg := range args {
-		data, err := json.Marshal(arg)
-		if err != nil {
-			return err
+func PipeView(input *json.Decoder, output *json.Encoder) *programread.View {
+	return &programread.View{Exchange: func(request programread.Message) (programread.Message, error) {
+		if err := output.Encode(request); err != nil {
+			return programread.Message{}, err
 		}
-		request.Arguments = append(request.Arguments, data)
-	}
-	if err := v.Output.Encode(request); err != nil {
-		return err
-	}
-	var response Message
-	if err := v.Input.Decode(&response); err != nil {
-		return err
-	}
-	if response.Error != "" {
-		if response.UsageUnavailable != nil {
-			return response.UsageUnavailable
-		}
-		if response.ObjectAbsent {
-			return &absentError{message: response.Error}
-		}
-		return errors.New(response.Error)
-	}
-	if len(response.Values) != len(outputs) {
-		return errors.New("invalid program read response")
-	}
-	for i, out := range outputs {
-		if err := json.Unmarshal(response.Values[i], out); err != nil {
-			return err
-		}
-	}
-	return nil
+		var response programread.Message
+		err := input.Decode(&response)
+		return response, err
+	}}
 }
 
 // Run exchanges reads on private process pipes. Its view exposes no writers.
@@ -124,50 +71,9 @@ func Run(ctx context.Context, binary string, request any, view program.ReadView)
 			}
 			return message.Result, nil
 		}
-		response := read(view, message)
+		response := programread.Read(view, message.Message)
 		if err = encoder.Encode(response); err != nil {
 			return nil, err
 		}
 	}
-}
-
-func read(view program.ReadView, request Message) (response Message) {
-	defer func() {
-		if r := recover(); r != nil {
-			response = Message{Error: fmt.Sprintf("program read: %v", r)}
-		}
-	}()
-	method, ok := reflect.TypeFor[program.ReadView]().MethodByName(request.Method)
-	if !ok || view == nil || len(request.Arguments) != method.Type.NumIn() {
-		return Message{Error: "invalid program read"}
-	}
-	args := make([]reflect.Value, len(request.Arguments))
-	for i, raw := range request.Arguments {
-		value := reflect.New(method.Type.In(i))
-		if err := json.Unmarshal(raw, value.Interface()); err != nil {
-			return Message{Error: err.Error()}
-		}
-		args[i] = value.Elem()
-	}
-	values := reflect.ValueOf(view).MethodByName(request.Method).Call(args)
-	for _, value := range values {
-		if value.Type() == reflect.TypeFor[error]() {
-			if !value.IsNil() {
-				err := value.Interface().(error)
-				response.Error = err.Error()
-				response.ObjectAbsent = errors.Is(err, sdk.ErrObjectAbsent)
-				var unavailable *metrics.UsageUnavailableError
-				if errors.As(err, &unavailable) {
-					response.UsageUnavailable = unavailable
-				}
-			}
-			continue
-		}
-		raw, err := json.Marshal(value.Interface())
-		if err != nil {
-			return Message{Error: err.Error()}
-		}
-		response.Values = append(response.Values, raw)
-	}
-	return response
 }

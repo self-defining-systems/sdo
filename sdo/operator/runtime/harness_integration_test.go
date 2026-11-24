@@ -23,6 +23,7 @@ import (
 
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/settings"
+	"sdo.dev/operator/internal/programread"
 	"sdo.dev/operator/memory/observation"
 	"sdo.dev/operator/memoryhost"
 	"sdo.dev/operator/runtime/sim"
@@ -198,11 +199,8 @@ type recordingHost struct {
 }
 
 func (h recordingHost) MemoryCommit() string { return h.commit }
-func (h recordingHost) Diagnose(ctx context.Context, r *pb.DiagnoseRequest) (*pb.DiagnoseResponse, error) {
-	return h.rpc.Diagnose(ctx, r)
-}
-func (h recordingHost) Mitigate(ctx context.Context, r *pb.MitigateRequest) (*pb.MitigateResponse, error) {
-	return h.rpc.Mitigate(ctx, r)
+func (h recordingHost) ExecuteProgram(ctx context.Context, invocation *pb.MemoryProgramInvocation, read func(programread.Message) programread.Message) (*pb.RunProgramResponse, error) {
+	return h.rpc.ExecuteProgram(ctx, invocation, read)
 }
 func (h recordingHost) Evaluate(ctx context.Context, request *pb.EvaluateRequest) (*pb.EvaluateResponse, error) {
 	response, err := h.rpc.Evaluate(ctx, request)

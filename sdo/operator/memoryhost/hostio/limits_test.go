@@ -8,15 +8,19 @@ import (
 	"testing"
 
 	"google.golang.org/grpc"
+	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 )
 
-// Memory-code RPCs decode every read receipt of a request; unbounded fan-out of them
-// is what exhausted the host's address space, so only a few may run at once.
+type limitTestStream struct{ grpc.ServerStream }
+
+func (limitTestStream) Context() context.Context { return context.Background() }
+
+// Only a few playbooks may execute and decode inputs concurrently.
 func TestHeavyCallsAreBounded(t *testing.T) {
-	interceptor := boundHeavyCalls(2)
+	interceptor := boundProgramCalls(2)
 	var running, peak atomic.Int32
 	release := make(chan struct{})
-	handler := func(ctx context.Context, request any) (any, error) {
+	handler := func(any, grpc.ServerStream) error {
 		now := running.Add(1)
 		for {
 			seen := peak.Load()
@@ -26,14 +30,14 @@ func TestHeavyCallsAreBounded(t *testing.T) {
 		}
 		<-release
 		running.Add(-1)
-		return nil, nil
+		return nil
 	}
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _ = interceptor(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/sdodev.contracts.v1alpha1.MemoryHostService/Diagnose"}, handler)
+			_ = interceptor(nil, limitTestStream{}, &grpc.StreamServerInfo{FullMethod: pb.MemoryHostService_RunProgram_FullMethodName}, handler)
 		}()
 	}
 	for running.Load() < 2 {
@@ -47,18 +51,18 @@ func TestHeavyCallsAreBounded(t *testing.T) {
 }
 
 func TestLightCallsAreNotQueuedBehindHeavyOnes(t *testing.T) {
-	interceptor := boundHeavyCalls(1)
+	interceptor := boundProgramCalls(1)
 	block := make(chan struct{})
 	started := make(chan struct{})
 	go func() {
-		_, _ = interceptor(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/x/Diagnose"}, func(context.Context, any) (any, error) {
+		_ = interceptor(nil, limitTestStream{}, &grpc.StreamServerInfo{FullMethod: pb.MemoryHostService_RunProgram_FullMethodName}, func(any, grpc.ServerStream) error {
 			close(started)
 			<-block
-			return nil, nil
+			return nil
 		})
 	}()
 	<-started
-	if _, err := interceptor(context.Background(), nil, &grpc.UnaryServerInfo{FullMethod: "/x/Ready"}, func(context.Context, any) (any, error) { return nil, nil }); err != nil {
+	if err := interceptor(nil, limitTestStream{}, &grpc.StreamServerInfo{FullMethod: pb.MemoryHostService_Mirror_FullMethodName}, func(any, grpc.ServerStream) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	close(block)

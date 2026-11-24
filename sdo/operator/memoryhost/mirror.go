@@ -8,6 +8,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/programread"
 	"sdo.dev/operator/sdk"
 )
 
@@ -179,14 +180,17 @@ func (m *Manager) Activate(ctx context.Context, h Host, commit, digest string) e
 }
 
 // Capture leases the active host at the sequence the view was published at. The
-// barriers it takes (the mirror and the manager state) end before it returns:
-// the lease only pins the host against retirement, so other captures, publishes,
-// failures and recoveries never wait for the call made under it.
+// barriers it takes (the mirror and the manager state) end before it returns.
+// A nil view leases the accepted host without publishing a program snapshot.
+// In either case the lease pins the host against retirement and other calls
+// can proceed.
 func (m *Manager) Capture(ctx context.Context, view sdk.DetectionContext) (Host, uint64, func(), error) {
 	m.mirror.mu.Lock()
-	if err := m.publish(ctx, view); err != nil {
-		m.mirror.mu.Unlock()
-		return nil, 0, nil, err
+	if view != nil {
+		if err := m.publish(ctx, view); err != nil {
+			m.mirror.mu.Unlock()
+			return nil, 0, nil, err
+		}
 	}
 	m.mu.Lock()
 	h := m.active
@@ -247,32 +251,20 @@ func (h *capturedHost) record(caller context.Context, err error) {
 		h.failure = err
 	}
 }
-func (h *capturedHost) Diagnose(ctx context.Context, r *pb.DiagnoseRequest) (*pb.DiagnoseResponse, error) {
+func (h *capturedHost) ExecuteProgram(ctx context.Context, invocation *pb.MemoryProgramInvocation, read func(programread.Message) programread.Message) (*pb.RunProgramResponse, error) {
+	host, ok := h.Host.(ProgramRPC)
+	if !ok {
+		return nil, errors.New("host lacks program RPC")
+	}
 	caller := ctx
 	ctx, cancel := context.WithTimeout(ctx, h.manager.timeout)
 	defer cancel()
-	host, ok := h.Host.(interface {
-		Diagnose(context.Context, *pb.DiagnoseRequest) (*pb.DiagnoseResponse, error)
-	})
-	if !ok {
-		return nil, errors.New("host lacks diagnosis")
+	response, err := host.ExecuteProgram(ctx, invocation, read)
+	// CallProgram returns a local context error when a controller read outlives
+	// the invocation. RPC failures from the child carry a gRPC status.
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		h.record(caller, err)
 	}
-	response, err := host.Diagnose(ctx, r)
-	h.record(caller, err)
-	return response, err
-}
-func (h *capturedHost) Mitigate(ctx context.Context, r *pb.MitigateRequest) (*pb.MitigateResponse, error) {
-	caller := ctx
-	ctx, cancel := context.WithTimeout(ctx, h.manager.timeout)
-	defer cancel()
-	host, ok := h.Host.(interface {
-		Mitigate(context.Context, *pb.MitigateRequest) (*pb.MitigateResponse, error)
-	})
-	if !ok {
-		return nil, errors.New("host lacks mitigation")
-	}
-	response, err := host.Mitigate(ctx, r)
-	h.record(caller, err)
 	return response, err
 }
 

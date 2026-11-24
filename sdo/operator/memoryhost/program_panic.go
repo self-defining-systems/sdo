@@ -5,41 +5,69 @@ import (
 	"encoding/json"
 	"log/slog"
 	"runtime/debug"
+	"sync"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	pb "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/internal/programread"
 	"sdo.dev/operator/sdk/program"
-	"sdo.dev/operator/sdk/sdktest"
 )
 
-// The snapshot is the one used to construct the view, after observation overlay.
-// Retaining it avoids a second mirror lookup racing history eviction on panic.
-type programRecording struct {
-	*sdktest.RecordingReadView
-	snapshot sdktest.Snapshot
+// Keep the requested inputs for panic replay. The trace is bounded independently
+// of the RPC so retaining a large read cannot consume the host's memory budget.
+const maxPanicTraceBytes = 1 << 20
+const maxPanicTraceReads = 256
+
+type programPanicRead struct {
+	Call  programread.Message `json:"call"`
+	Reply programread.Message `json:"reply"`
+}
+
+type programPanicTrace struct {
+	mu        sync.Mutex
+	bytes     int
+	truncated bool
+	reads     []programPanicRead
+}
+
+func (t *programPanicTrace) add(call, reply programread.Message) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.truncated {
+		return
+	}
+	size := len(call.Method) + len(reply.Error) + len(reply.ErrorClass)
+	if reply.UsageUnavailable != nil {
+		size += len(reply.UsageUnavailable.Reason)
+	}
+	for _, arg := range call.Arguments {
+		size += len(arg)
+	}
+	for _, value := range reply.Values {
+		size += len(value)
+	}
+	if len(t.reads) >= maxPanicTraceReads || t.bytes+size > maxPanicTraceBytes {
+		t.truncated = true
+		return
+	}
+	t.bytes += size
+	t.reads = append(t.reads, programPanicRead{Call: call, Reply: reply})
 }
 
 type programPanicCase struct {
-	SchemaVersion string                  `json:"schema_version"`
-	Operation     string                  `json:"operation"`
-	Input         json.RawMessage         `json:"input"`
-	Snapshot      sdktest.Snapshot        `json:"snapshot"`
-	Calls         []sdktest.PrimitiveCall `json:"calls"`
+	SchemaVersion string             `json:"schema_version"`
+	Input         json.RawMessage    `json:"input"`
+	Reads         []programPanicRead `json:"reads"`
+	Truncated     bool               `json:"truncated,omitempty"`
 }
 
-// Record at the host boundary, before unwinding loses the program's frames.
-// Input is ProtoJSON (including bindings, observation and prefetched reads);
-// Snapshot and Calls replay with sdktest.ReplayReadView. The host's stderr is
-// retained with controller logs; this never publishes unvalidated corpus files.
-func (s *Server) recordProgramPanic(operation string, input *pb.MemoryProgramInput, view *programRecording, value any) {
-	raw, inputErr := protojson.Marshal(input)
-	captured := programPanicCase{SchemaVersion: "sdo.program-panic/v1", Operation: operation, Input: raw}
-	if view != nil {
-		captured.Snapshot = view.snapshot
-		captured.Calls = view.SnapshotCalls()
-	}
-	data, captureErr := json.Marshal(captured)
-	slog.Error("memory_program_panic", "operation", operation, "program_id", input.GetProgramId(), "memory_commit", s.identity.GetMemoryCommit(), "binary_digest", s.identity.GetBinaryDigest(), "panic", value, "stack", string(debug.Stack()), "captured_case", string(data), "input_error", inputErr, "capture_error", captureErr)
+// Record inside the child, before unwinding loses the program's frames.
+func (s *Server) recordProgramPanic(invocation *pb.MemoryProgramInvocation, trace *programPanicTrace, value any) {
+	raw, inputErr := protojson.Marshal(invocation)
+	trace.mu.Lock()
+	data, captureErr := json.Marshal(programPanicCase{SchemaVersion: "sdo.program-panic/v2", Input: raw, Reads: trace.reads, Truncated: trace.truncated})
+	trace.mu.Unlock()
+	slog.Error("memory_program_panic", "operation", invocation.GetOperation().String(), "program_id", invocation.GetProgramId(), "memory_commit", s.identity.GetMemoryCommit(), "binary_digest", s.identity.GetBinaryDigest(), "panic", value, "stack", string(debug.Stack()), "captured_case", string(data), "input_error", inputErr, "capture_error", captureErr)
 }
 
 // RunDiagnose contains panics in its own goroutine and converts them to Unknown.

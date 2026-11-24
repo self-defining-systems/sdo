@@ -90,14 +90,12 @@ summaries. Missing endpoints are omitted, never zero.
 
 `memory_program_panic` in controller/memory-host logs records `operation`,
 `program_id`, `memory_commit`, `binary_digest`, `panic`, and the original `stack`.
-Its `captured_case` is JSON with schema `sdo.program-panic/v1`: `input` is the
-original ProtoJSON MemoryProgramInput (bindings, observation, mirror sequence,
-prefetched reads); `snapshot` is the exact frozen SDK snapshot after observation
-overlay, and `calls` are recorded read arguments, results and errors through the
-panic. Restore the original input observation overlay as `memoryhost.programView`
-does (snapshot JSON omits some ephemeral fields), then replay with
-`sdktest.ReplayReadView{Snapshot: snapshot, Calls: calls}` and the original input
-bindings against the recorded memory revision/binary. These
-are diagnostic captures in logs, not broker-accepted corpus or successful
-outcomes. Unknown diagnosis and planner errors remain failures. A missing
-capture or non-null `input_error`/`capture_error` means replay is incomplete.
+Its `captured_case` is JSON. Schema `sdo.program-panic/v2` stores the
+ProtoJSON `MemoryProgramInvocation` (operation, program ID and bindings) and
+the ordered `reads` (each SDK call and the controller's reply). Replay the matching
+accepted memory revision against those replies in call order. The `truncated`
+flag means the transcript stopped at its size or read count limit. Older
+`sdo.program-panic/v1` captures carry the input observation overlay, snapshot
+and primitive calls for `sdktest.ReplayReadView`. A missing capture or non-null
+`input_error` or `capture_error` means replay is incomplete. These captures are
+private diagnostic evidence. A panic yields an Unknown diagnosis or planner error.

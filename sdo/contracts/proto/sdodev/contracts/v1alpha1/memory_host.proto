@@ -18,8 +18,8 @@ service MemoryHostService {
   rpc Ready(ReadyRequest) returns (ReadyResponse);
   rpc Mirror(stream MirrorRequest) returns (MirrorResponse);
   rpc Evaluate(EvaluateRequest) returns (EvaluateResponse);
-  rpc Diagnose(DiagnoseRequest) returns (DiagnoseResponse);
-  rpc Mitigate(MitigateRequest) returns (MitigateResponse);
+  // RunProgram runs one accepted playbook against the controller's invocation view.
+  rpc RunProgram(stream RunProgramRequest) returns (stream RunProgramResponse);
   // ReadState runs one app-state reader (appstate.Reader) over the host's live
   // read factory and returns the key-value state it read.
   rpc ReadState(ReadStateRequest) returns (ReadStateResponse);
@@ -156,30 +156,45 @@ message MemoryReadReceipt {
   // Empty means a legacy receipt, which reads as unavailable.
   string error_class = 6;
 }
-message MemoryProgramInput {
+message MemoryProgramInvocation {
+  enum Operation {
+    OPERATION_UNSPECIFIED = 0;
+    OPERATION_DIAGNOSE = 1;
+    OPERATION_MITIGATE = 2;
+  }
   string program_id = 1;
   repeated Binding bindings = 2;
-  uint64 mirror_sequence = 3;
-  MemoryObservation observation = 4;
-  repeated MemoryReadReceipt reads = 5;
+  Operation operation = 3;
 }
-message DiagnoseRequest { MemoryProgramInput input = 1; }
-message DiagnoseResponse {
-  Verdict verdict = 1;
-  string error = 2;
-  repeated MemoryReadReceipt reads = 3;
-  // Metric queries (metrics.Query JSON) the program asked for that the request's
-  // observation did not hold. The host has no metrics source: the controller
-  // answers them live and sends the request again with the results.
-  repeated google.protobuf.Struct wanted_metrics = 4;
+
+message RunProgramRequest {
+  oneof frame {
+    MemoryProgramInvocation invocation = 1;
+    ProgramReadReply read = 2;
+  }
 }
-message MitigateRequest { MemoryProgramInput input = 1; }
-message MitigateResponse {
-  Plan plan = 1;
+
+message RunProgramResponse {
+  oneof frame {
+    ProgramReadCall read = 1;
+    Verdict verdict = 2;
+    Plan plan = 3;
+    string error = 4;
+  }
+}
+
+// Exactly one read may be outstanding. The operation names a method of the
+// read-only SDK interface. Each argument and return value is SDK JSON, keeping
+// integers and Kubernetes field types intact.
+message ProgramReadCall {
+  string method = 1;
+  repeated bytes arguments = 2;
+}
+message ProgramReadReply {
+  repeated bytes values = 1;
   string error = 2;
-  repeated MemoryReadReceipt reads = 3;
-  // As DiagnoseResponse.wanted_metrics.
-  repeated google.protobuf.Struct wanted_metrics = 4;
+  string error_class = 3;
+  optional string usage_unavailable = 4;
 }
 
 // Host-owned traffic scheduler and read-only primitives. No mutation operation

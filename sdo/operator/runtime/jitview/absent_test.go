@@ -8,6 +8,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"sdo.dev/operator/internal/programread"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
@@ -26,10 +27,10 @@ func TestObjectAbsenceSurvivesTheWire(t *testing.T) {
 			if decoder.Decode(&request) != nil {
 				return
 			}
-			_ = encoder.Encode(read(absentReader{view}, request))
+			_ = encoder.Encode(programread.Read(absentReader{view}, request.Message))
 		}
 	}()
-	view := &View{Input: json.NewDecoder(toProgram), Output: json.NewEncoder(fromProgram)}
+	view := PipeView(json.NewDecoder(toProgram), json.NewEncoder(fromProgram))
 	_, err := view.Object(sdk.ObjectRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "app", Name: "cm"})
 	if !errors.Is(err, sdk.ErrObjectAbsent) {
 		t.Fatalf("Object = %v, want ErrObjectAbsent across the wire", err)

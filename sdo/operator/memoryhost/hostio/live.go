@@ -89,8 +89,7 @@ func NewLiveReadView(ctx context.Context, snapshot sdktest.Snapshot, backends Re
 
 // QueryMetrics answers from the frozen observation. The host has no metrics
 // source: a query the observation does not hold is reported as
-// metrics.NotFrozenError, which the server returns to the controller to answer
-// live. It is never answered from the empty replay recording.
+// metrics.NotFrozenError. Accepted playbooks query the controller view directly.
 func (v *LiveReadView) QueryMetrics(q metrics.Query) metrics.Result {
 	if err := q.Validate(); err != nil {
 		return metrics.Result{Query: q, Error: err.Error()}
@@ -102,9 +101,7 @@ func (v *LiveReadView) QueryMetrics(q metrics.Query) metrics.Result {
 }
 
 // MetricResult, AlertsResult, TrafficWindow and ServiceReachability answer
-// from the cycle observation the controller sent, which carries every result
-// its own view froze. The embedded replay holds no recording and must not
-// answer them.
+// from the supplied observation. The embedded replay holds no recording.
 func (v *LiveReadView) MetricResult(id string) (metrics.Result, bool) {
 	return v.Snapshot.MetricResult(id)
 }
