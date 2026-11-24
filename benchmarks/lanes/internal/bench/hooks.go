@@ -47,6 +47,7 @@ var hookTimeouts = map[string]time.Duration{
 	// The workload verbs (docs/contract.md). A run is bounded by the spec's cap inside; this is the backstop for an
 	// adapter that stops answering, above what the cap and the undo (up to ten minutes) can take together.
 	VerbIdentity:    time.Minute,
+	VerbAppContent:  appContentTimeout,
 	VerbAppUp:       90 * time.Minute,
 	VerbAppSnapshot: 90 * time.Minute,
 	VerbAppReset:    35 * time.Minute,

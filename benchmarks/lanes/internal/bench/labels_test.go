@@ -3,6 +3,7 @@
 package bench
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -71,14 +72,14 @@ func TestFreeLaneIsOfferedOnlyToSpecsThatMatchIt(t *testing.T) {
 		"sg":    {Lane: "sg", Host: "h", State: LaneFree},
 		"plain": {Lane: "plain", Host: "h", State: LaneFree},
 	}}
-	if l := m.freeLaneOn("h", false, Spec{}); l == nil || l.Lane != "plain" {
+	if l := m.freeLaneOn(context.Background(), "h", false, Spec{}); l == nil || l.Lane != "plain" {
 		t.Fatalf("a spec with no selector must skip the labeled lane, got %+v", l)
 	}
-	if l := m.freeLaneOn("h", false, Spec{Selector: map[string]string{"workload": "sregym"}}); l == nil || l.Lane != "sg" {
+	if l := m.freeLaneOn(context.Background(), "h", false, Spec{Selector: map[string]string{"workload": "sregym"}}); l == nil || l.Lane != "sg" {
 		t.Fatalf("the sregym spec must get its lane, got %+v", l)
 	}
 	delete(m.lanes, "plain")
-	if l := m.freeLaneOn("h", false, Spec{}); l != nil {
+	if l := m.freeLaneOn(context.Background(), "h", false, Spec{}); l != nil {
 		t.Fatalf("nothing but a labeled lane is free: a spec without selector gets none, got %+v", l)
 	}
 }

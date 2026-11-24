@@ -951,7 +951,7 @@ func claimWait(root Root, x *Experiment, lanes []LaneFile) string {
 	case !pool.Measured().Hold:
 		return fmt.Sprintf("waits for pool %s, which is not a hold experiment", name)
 	case !sameOperatorProfile(pool, x):
-		return fmt.Sprintf("waits for pool %s, whose operator profile differs (app, namespace, fuzzops, hooks, baseline or settings): it can never be claimed", name)
+		return fmt.Sprintf("waits for pool %s, whose operator profile differs (hooks, baseline or settings): it can never be claimed", name)
 	case pool.Paused:
 		return fmt.Sprintf("waits for pool %s, which is paused", name)
 	}

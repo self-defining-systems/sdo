@@ -705,7 +705,7 @@ func (r *stepRunner) build(ctx context.Context) {
 		r.s.Prev, r.res.Prepared = nil, nil
 	}
 	s, p := r.s, r.s.New
-	if !r.packLoads(ctx, p) {
+	if !r.packLoads(ctx, p) || !r.checkAppContent(ctx, p) {
 		return
 	}
 	if !s.Create && !s.Recreate && r.shapeChanged(ctx) {
@@ -967,7 +967,7 @@ func (r *stepRunner) freshApp(ctx context.Context) bool {
 	s, p := r.s, r.s.New
 	start := time.Now()
 	r.phase(PhaseApp, "")
-	if q := s.Prev; q != nil && (q.Namespace != p.Namespace || q.AppPack != p.AppPack) {
+	if q := s.Prev; q != nil && !s.Recreate && appDifference(q, p) != "" {
 		if code, why, err := r.call(ctx, q, nil, nil, VerbAppUp, "down", "--pack", q.AppPack, "--namespace", q.Namespace); err != nil || code != 0 {
 			r.interval("app", start, false, "down of the last app copy: "+failText(code, why, err))
 			r.failCall("app down "+q.Namespace, code, why, err)

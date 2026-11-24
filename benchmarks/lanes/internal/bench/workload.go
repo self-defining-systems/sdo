@@ -19,6 +19,7 @@ import (
 // spec with no workload runs exactly as it always did.
 const (
 	VerbIdentity    = "identity" // which workload revision answers (fuzzops: `version`)
+	VerbAppContent  = "app-content"
 	VerbAppUp       = "app-up"
 	VerbAppSnapshot = "app-snapshot"
 	VerbAppReset    = "app-reset"
@@ -29,7 +30,7 @@ const (
 )
 
 // WorkloadVerbs are the verbs of the workload contract.
-var WorkloadVerbs = []string{VerbIdentity, VerbAppUp, VerbAppSnapshot, VerbAppReset, VerbGate, VerbRun, VerbGrade, VerbFootprint}
+var WorkloadVerbs = []string{VerbIdentity, VerbAppContent, VerbAppUp, VerbAppSnapshot, VerbAppReset, VerbGate, VerbRun, VerbGrade, VerbFootprint}
 
 // ErrUnsupported is a verb the adapter does not implement (docs/contract.md, "Unsupported verbs").
 var ErrUnsupported = errors.New("verb not supported by the adapter")

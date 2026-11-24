@@ -28,6 +28,9 @@ type Manager struct {
 	Poll       time.Duration // idle polls inside steps (default 10 s)
 	Log        io.Writer
 	claimSince map[string]time.Time // when each claimant began waiting for a pool lane
+
+	appContents      map[appContentRequest]appContentResult
+	appContentRunner runFn
 	// stepWoken are the steps whose finish already ended a wait for the next pass (waitTick).
 	stepWoken map[string]bool
 	// Ops returns how to reach host (default: local steps with Bin, or ssh).
@@ -876,7 +879,7 @@ func (m *Manager) start(ctx context.Context, l *LaneFile, s Step) bool {
 // preparedFor is the operator and app a build of x puts on l (before it has run).
 func (m *Manager) preparedFor(l *LaneFile, x *Experiment) *Prepared {
 	s := x.Measured()
-	p := &Prepared{Experiment: x.Name, Namespace: s.Namespace, AppPack: m.appPackFor(l.Host, s),
+	p := &Prepared{Experiment: x.Name, Namespace: s.Namespace, AppPack: m.appRequest(l.Host, s).pack,
 		Workload: s.Workload, WorkloadRev: s.Fuzzops}
 	if o := s.Operator; o.Hooks != "" {
 		p.Hooks, p.HooksPath, p.Command = o.Hooks, m.inv.HooksPath(o.Hooks, o.Revision, l.Host), m.inv.HookCommand[o.Hooks]
@@ -1012,6 +1015,7 @@ func (m *Manager) continueSeq(ctx context.Context, l *LaneFile) {
 // experiment take its turn in name order, so a pool never refills or rebuilds a lane one of its claimants could take.
 // Afterwards every free lane says why it was not bound while some experiment has queued sequences (explainIdle).
 func (m *Manager) assign(ctx context.Context, reachable map[string]bool) {
+	clear(m.appContents)
 	var names []string
 	for n := range m.exps {
 		names = append(names, n)
@@ -1029,7 +1033,7 @@ func (m *Manager) assign(ctx context.Context, reachable map[string]bool) {
 			waiting[n] = why
 		}
 	}
-	m.explainIdle(waiting, reachable)
+	m.explainIdle(ctx, waiting, reachable)
 }
 
 // assignExp binds free lanes to the queued sequences of experiment n's current wave and says whether some stay queued
@@ -1062,16 +1066,16 @@ func (m *Manager) assignExp(ctx context.Context, n string, reachable map[string]
 			why = fmt.Sprintf("it holds its lanes: %d", s.Lanes)
 			break
 		}
-		l, swap := m.claimable(x, s), true
+		l, swap := m.claimable(ctx, x, s), true
 		if l == nil {
-			l = m.resettable(x, s, reachable, claimsOnly)
+			l = m.resettable(ctx, x, s, reachable, claimsOnly)
 		}
 		if l == nil && claimsOnly {
 			break
 		}
 		if l == nil && !s.ClaimWaits() {
 			// A claimant that waits for its pool never builds a lane of its own: the pool builds the lanes.
-			l, swap = m.freeLane(n, s, reachable), false
+			l, swap = m.freeLane(ctx, n, s, reachable), false
 		}
 		if l == nil {
 			why = ""
@@ -1085,6 +1089,12 @@ func (m *Manager) assignExp(ctx context.Context, n string, reachable map[string]
 		}
 		delete(m.claimSince, n)
 		pool := m.poolOf(l) // before the lane is bound: the pool whose lane it is
+		content, err := m.desiredAppContent(ctx, m.appRequest(l.Host, s))
+		if err != nil {
+			m.logf("lane %s: %v", l.Lane, err)
+			why = err.Error()
+			break
+		}
 		st, err := m.expStep(ctx, l, x, StepBuild)
 		if err != nil {
 			m.logf("lane %s: %v", l.Lane, err)
@@ -1092,8 +1102,13 @@ func (m *Manager) assignExp(ctx context.Context, n string, reachable map[string]
 			break
 		}
 		l.Experiment, l.Seq, l.Attempt, l.Position = n, &q, p.Attempt, 1
+		st.New.AppContent = content
 		st.Create = l.Gone
-		st.Recreate = !l.Gone && (l.Recreate || s.NeedsFreshCluster(q.Fault) || !swap && m.holdsOtherApp(l, s))
+		var changed string
+		if !l.Gone && l.Prepared != nil && l.Prepared.Ready {
+			changed = appDifference(l.Prepared, st.New)
+		}
+		st.Recreate = !l.Gone && (l.Recreate || s.NeedsFreshCluster(q.Fault) || changed != "")
 		st.New.Fault = q.Fault
 		st.ReuseApp = reusableApp(s, st, q.Fault)
 		st.Swap = swap
@@ -1105,6 +1120,9 @@ func (m *Manager) assignExp(ctx context.Context, n string, reachable map[string]
 			m.unbind(l, "")
 			why = "its build could not start"
 			break
+		}
+		if changed != "" {
+			m.logf("lane %s: recreating for %s: app identity differs in %s", l.Lane, n, changed)
 		}
 		m.setState(l, LaneBuilding, "")
 		bound[q] = true
@@ -1155,7 +1173,7 @@ const idleLogEvery = 10 * time.Minute
 // explainIdle records on every free lane why none of the waiting experiments took it (LaneFile.Idle, shown by
 // `status`), from the checks assign itself makes (laneBlock), and logs it when the lane stays idle that way longer
 // than idleLogEvery. A lane is explained only while some experiment has queued sequences.
-func (m *Manager) explainIdle(waiting map[string]string, reachable map[string]bool) {
+func (m *Manager) explainIdle(ctx context.Context, waiting map[string]string, reachable map[string]bool) {
 	var names []string
 	for n := range waiting {
 		names = append(names, n)
@@ -1176,7 +1194,7 @@ func (m *Manager) explainIdle(waiting map[string]string, reachable map[string]bo
 			why := waiting[n]
 			if why == "" {
 				x := m.exps[n]
-				why = m.laneBlock(l, x, x.Measured(), reachable)
+				why = m.laneBlock(ctx, l, x, x.Measured(), reachable)
 			}
 			if why == "" {
 				why = "nothing (bound at the next pass)"
@@ -1205,7 +1223,7 @@ func (m *Manager) explainIdle(waiting map[string]string, reachable map[string]bo
 
 // laneBlock says why the free lane l was not bound to a sequence of x this pass ("" when nothing stood in the way):
 // the checks of resettable and freeLane (a ready pool lane that claimable takes is not free).
-func (m *Manager) laneBlock(l *LaneFile, x *Experiment, s Spec, reachable map[string]bool) string {
+func (m *Manager) laneBlock(ctx context.Context, l *LaneFile, x *Experiment, s Spec, reachable map[string]bool) string {
 	if why := m.laneGate(l.Lane); why != "" {
 		return why
 	}
@@ -1215,7 +1233,7 @@ func (m *Manager) laneBlock(l *LaneFile, x *Experiment, s Spec, reachable map[st
 	if !m.inv.LaneAccepts(l.Host, l.Lane, s) {
 		return fmt.Sprintf("the lane's labels [%s] do not match the spec's selector [%s]", labelsText(m.inv.Hosts[l.Host].LaneLabels[l.Lane]), labelsText(s.Selector))
 	}
-	if m.resetFits(l, x, s) {
+	if m.resetFits(ctx, l, x, s) {
 		return ""
 	}
 	if awaitsRelease(l) {
@@ -1263,7 +1281,7 @@ func (m *Manager) freshBlock(h string) (why string, floor bool) {
 }
 
 // freeLane picks a free lane for experiment name on the spec's usable hosts (buildOrder), within the host's limits.
-func (m *Manager) freeLane(name string, s Spec, reachable map[string]bool) *LaneFile {
+func (m *Manager) freeLane(ctx context.Context, name string, s Spec, reachable map[string]bool) *LaneFile {
 	for _, h := range m.buildOrder(name, s) {
 		if m.buildBlock(h, s, reachable) != "" {
 			continue
@@ -1275,10 +1293,10 @@ func (m *Manager) freeLane(name string, s Spec, reachable map[string]bool) *Lane
 			m.gcWanted[h] = m.gcWanted[h] || floor
 			continue
 		}
-		if l := m.freeLaneOn(h, true, s); l != nil {
+		if l := m.freeLaneOn(ctx, h, true, s); l != nil {
 			return l
 		}
-		if l := m.freeLaneOn(h, false, s); l != nil {
+		if l := m.freeLaneOn(ctx, h, false, s); l != nil {
 			return l
 		}
 	}
@@ -1288,12 +1306,12 @@ func (m *Manager) freeLane(name string, s Spec, reachable map[string]bool) *Lane
 // freeLaneOn is the first free lane of host h that a build may take. A pool lane whose operator still runs is
 // released first (by reset), so that the next build can take it by swap. placed: only lanes that are not known to lack
 // cores: neither Gone nor one whose build waited for cores in vain (Unplaced); those come last.
-func (m *Manager) freeLaneOn(h string, placed bool, s Spec) *LaneFile {
+func (m *Manager) freeLaneOn(ctx context.Context, h string, placed bool, s Spec) *LaneFile {
 	var best *LaneFile
 	bestRank := 0
 	for _, l := range m.sortedLanes() {
 		if l.Host == h && m.inv.LaneAccepts(h, l.Lane, s) && l.State == LaneFree && l.Step == nil && !awaitsRelease(l) && !(placed && (l.Unplaced || l.Gone)) && m.laneGate(l.Lane) == "" && m.eksLaneAdmitted(l, s) {
-			if rank := m.laneRank(l, s); best == nil || rank < bestRank {
+			if rank := m.laneRank(ctx, l, s); best == nil || rank < bestRank {
 				best, bestRank = l, rank
 			}
 		}
@@ -1303,28 +1321,40 @@ func (m *Manager) freeLaneOn(h string, placed bool, s Spec) *LaneFile {
 
 // laneRank orders the free lanes a build may take: a lane that still holds the spec's app copy first (the build
 // keeps its cluster), then the rest in lane order (a cluster holding another app is made anew).
-func (m *Manager) laneRank(l *LaneFile, s Spec) int {
-	if m.holdsApp(l, s) {
+func (m *Manager) laneRank(ctx context.Context, l *LaneFile, s Spec) int {
+	if m.holdsApp(ctx, l, s) {
 		return 0
 	}
 	return 1
 }
 
-// holdsApp: l's cluster exists and its last prepared state is s's app pack in s's namespace.
-func (m *Manager) holdsApp(l *LaneFile, s Spec) bool {
+// holdsApp means the prepared copy matches the requested deployment on this host.
+func (m *Manager) holdsApp(ctx context.Context, l *LaneFile, s Spec) bool {
+	return m.appFits(ctx, l, s, false)
+}
+
+func (m *Manager) appFits(ctx context.Context, l *LaneFile, s Spec, swap bool) bool {
 	p := l.Prepared
-	return p != nil && !l.Gone && p.Ready && p.Namespace == s.Namespace && p.AppPack == m.appPackFor(l.Host, s)
+	if p == nil || l.Gone || !p.Ready || p.Namespace != s.Namespace {
+		return false
+	}
+	q := m.appRequest(l.Host, s)
+	content, err := m.desiredAppContent(ctx, q)
+	if err != nil || appDifference(p, &Prepared{Namespace: q.namespace, AppPack: q.pack, AppContent: content}) != "" {
+		return false
+	}
+	if !swap {
+		return true
+	}
+	if content == nil {
+		return p.WorkloadRev == s.Fuzzops
+	}
+	return p.AppContent.Attachments == content.Attachments
 }
 
-// appPackFor is the absolute path of s's app pack on host h.
-func (m *Manager) appPackFor(h string, s Spec) string {
-	return filepath.Join(m.inv.FuzzopsPath(s.Fuzzops, h), s.App)
-}
-
-// holdsOtherApp: l's cluster holds a ready copy of another app than s's, so a build of s must make the cluster anew
-// (the build of a kept cluster refuses a namespace it was not made for, and the failure would cost a whole build first).
-func (m *Manager) holdsOtherApp(l *LaneFile, s Spec) bool {
-	return l.Prepared != nil && !l.Gone && l.Prepared.Ready && !m.holdsApp(l, s)
+func (m *Manager) appRequest(host string, s Spec) appContentRequest {
+	dir := m.inv.FuzzopsPath(s.Fuzzops, host)
+	return appContentRequest{host, dir, s.Workload, filepath.Join(dir, s.App), s.Namespace}
 }
 
 // preemptedBy is the Killed reason of a build cancelled by preemptWaitingBuilds; its end counts as no failure.
@@ -1892,7 +1922,7 @@ func reusableApp(s Spec, st Step, fault string) bool {
 	prev := st.Prev
 	return s.ReuseApp && !st.Create && !st.Recreate && !s.NeedsFreshApp(fault) &&
 		prev != nil && prev.Ready &&
-		prev.Namespace == st.New.Namespace && prev.AppPack == st.New.AppPack && !s.NeedsFreshApp(prev.Fault)
+		appDifference(prev, st.New) == "" && !s.NeedsFreshApp(prev.Fault)
 }
 
 // freshBuildsFile lists the builds of claimants that made a fresh app copy instead of taking a pool lane.
@@ -1914,24 +1944,24 @@ func appCopy(p *Prepared, gone bool) *Prepared {
 		return nil
 	}
 	return &Prepared{Experiment: p.Experiment, Namespace: p.Namespace, AppPack: p.AppPack, Ready: true, Fault: p.Fault,
-		Workload: p.Workload, WorkloadRev: p.WorkloadRev}
+		Workload: p.Workload, WorkloadRev: p.WorkloadRev, AppContent: p.AppContent}
 }
 
 // claimable is a ready, unused lane of the Hold experiment x claims, on a host x can use, whose prepared operator
 // matches x's in everything but the sources: a lane x takes by swap.
-func (m *Manager) claimable(x *Experiment, s Spec) *LaneFile {
+func (m *Manager) claimable(ctx context.Context, x *Experiment, s Spec) *LaneFile {
 	if s.Claim == "" {
 		return nil
 	}
 	pool := m.exps[s.Claim]
-	if pool == nil || pool.Spec == nil || !pool.Measured().Hold || pool.Paused {
+	if pool == nil || pool.Spec == nil || !pool.Measured().Hold || pool.Paused || !sameOperatorProfile(pool, x) {
 		return nil
 	}
 	for _, l := range m.sortedLanes() {
 		if l.State != LaneReady || l.Step != nil || l.Experiment != s.Claim || l.Prepared == nil || !l.Prepared.Ready {
 			continue
 		}
-		if !slices.Contains(m.inv.UsableHosts(s), l.Host) || !sameOperatorProfile(pool, x) {
+		if !slices.Contains(m.inv.UsableHosts(s), l.Host) || !m.appFits(ctx, l, s, true) {
 			continue
 		}
 		return l
@@ -1948,12 +1978,12 @@ func awaitsRelease(l *LaneFile) bool {
 // resettable is a free lane that a claimed run left at its golden copy (Prepared.Reset) whose operator profile is
 // x's: the build takes it by swap, with no teardown, app copy or prepare. Subject to the host's build limits.
 // ownPool: only a lane of the pool x claims.
-func (m *Manager) resettable(x *Experiment, s Spec, reachable map[string]bool, ownPool bool) *LaneFile {
+func (m *Manager) resettable(ctx context.Context, x *Experiment, s Spec, reachable map[string]bool, ownPool bool) *LaneFile {
 	for _, l := range m.sortedLanes() {
 		if ownPool && m.lanePool(l) != s.Claim {
 			continue
 		}
-		if m.resetFits(l, x, s) && m.buildBlock(l.Host, s, reachable) == "" {
+		if m.buildBlock(l.Host, s, reachable) == "" && m.resetFits(ctx, l, x, s) {
 			return l
 		}
 	}
@@ -1962,12 +1992,12 @@ func (m *Manager) resettable(x *Experiment, s Spec, reachable map[string]bool, o
 
 // resetFits: l is a free lane at its pool's golden copy whose operator profile is x's (resettable, without the host's
 // limits). The profile is the pool's (lanePool), not that of the claimant that ran on the lane last, which may be gone.
-func (m *Manager) resetFits(l *LaneFile, x *Experiment, s Spec) bool {
+func (m *Manager) resetFits(ctx context.Context, l *LaneFile, x *Experiment, s Spec) bool {
 	if l.State != LaneFree || l.Step != nil || !resetAndReady(l) || l.Gone || !m.inv.LaneAccepts(l.Host, l.Lane, s) {
 		return false
 	}
 	pool := m.exps[m.lanePool(l)]
-	return pool != nil && pool.Spec != nil && sameOperatorProfile(pool, x)
+	return pool != nil && pool.Spec != nil && sameOperatorProfile(pool, x) && m.appFits(ctx, l, s, true)
 }
 
 // resetAndReady: the lane's operator was returned to its golden copy and passed its check. A swap needs both: a reset
@@ -1976,12 +2006,10 @@ func resetAndReady(l *LaneFile) bool {
 	return l.Prepared != nil && l.Prepared.Reset && l.Prepared.Ready
 }
 
-// sameOperatorProfile: everything a swap cannot change on a prepared lane is equal: the app and where it runs, the
-// fuzzops checkout, the hooks, the baseline memory and the operator settings (the sources' revision may differ).
+// sameOperatorProfile compares hooks, baseline memory and settings. The lane's app is checked separately.
 func sameOperatorProfile(a, b *Experiment) bool {
 	x, y := a.Measured(), b.Measured()
-	if x.App != y.App || x.Fuzzops != y.Fuzzops || x.Namespace != y.Namespace ||
-		x.Operator.Hooks == "" || x.Operator.Hooks != y.Operator.Hooks || !reflect.DeepEqual(x.Operator.Settings, y.Operator.Settings) {
+	if x.Operator.Hooks == "" || x.Operator.Hooks != y.Operator.Hooks || !reflect.DeepEqual(x.Operator.Settings, y.Operator.Settings) {
 		return false
 	}
 	return sameInput(a.Lock.Baseline, b.Lock.Baseline)

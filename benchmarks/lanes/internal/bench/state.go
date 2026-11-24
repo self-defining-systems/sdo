@@ -136,10 +136,11 @@ type Prepared struct {
 	// Workload and WorkloadRev are the workload adapter and the pinned workload checkout (revision) the lane was prepared
 	// with. Steps without an experiment (release, recover, unhold) take both from here: a lane is never handled by
 	// a guess among the host's checkouts. WorkloadRev empty: nothing recorded.
-	Workload    string `json:"workload,omitempty"`
-	WorkloadRev string `json:"workload_rev,omitempty"`
-	Pack        string `json:"pack,omitempty"`  // the attached pack prepare returned
-	Ready       bool   `json:"ready,omitempty"` // the build finished and passed its check
+	Workload    string      `json:"workload,omitempty"`
+	WorkloadRev string      `json:"workload_rev,omitempty"`
+	AppContent  *AppContent `json:"app_content,omitempty"`
+	Pack        string      `json:"pack,omitempty"`  // the attached pack prepare returned
+	Ready       bool        `json:"ready,omitempty"` // the build finished and passed its check
 	// CheckedAt is when the build check passed: a run within gateFreshness of it needs only a short ready gate.
 	CheckedAt time.Time `json:"checked_at,omitempty"`
 	Fault     string    `json:"fault,omitempty"` // the fault of the sequence this build was made for
