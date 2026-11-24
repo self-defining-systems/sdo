@@ -31,6 +31,6 @@ The [generated runtime contract](references/runtime.md) defines decision fields,
 The controller decides recovery and ends the incident work when Recovered holds.
 `sdo detect` runs the detectors on reads taken now, `sdo detect TEST` sends one
 user test's scheduled request now, and `sdo detect --wait SECONDS` waits up to
-SECONDS and returns early only when the incident's alert set changes or Recovered holds. The host is read-only; only the controller applies
+SECONDS and returns early only when the incident's alert set changes or Recovered holds. If Recovered holds while a read is running, the wait can return the recovery notice without that read's output. The host is read-only; only the controller applies
 plans. Agents must reach accepted memory only through `sdo` incident tools, never
 a host socket or a prober URL.
