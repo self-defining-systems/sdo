@@ -117,3 +117,40 @@ The watcher's preliminary diagnosis uses findings whose keys appear in the incid
 `opening_keys`. For older detector-opened requests without that field, it uses the available
 findings after excluding `standing_keys` when present. External pages can supply a confirmed
 responder diagnosis even when they have no opening findings.
+
+## Row metrics for SDO and vanilla Claude
+
+`uv run python -m benchmarks.fuzzops.row_metrics [--format markdown] RUN_DIR [RUN_DIR ...]`
+prints JSON Lines by default. Each directory contributes a row, including invalid or incomplete
+runs. Grader metrics come from `record.json`. Validity also honors the lanes status in
+`result.json` or `run.json`. A reported recovery and an invalid grade can coexist.
+
+- SDO page delay starts at the inject and ends at the own incident opening or the fallback inbox
+  acknowledgement. An older row with only the opening timestamp uses that as its own page.
+  Vanilla uses `done.json`'s agent start as its endpoint and marks the page source `n.a.`.
+- The SDO headline starts at the incident opening and ends at the last evidenced fixing write
+  for that incident. The tool looks for successful responder mutations and applied plan receipts
+  before health clearance, or before recovery or the closing turn when clearance is absent.
+  It uses the write's transcript timestamp, a correlated agent change or database update
+  timestamp when available, or the plan application receipt. If none is available,
+  `ttf_source` labels the fallback timeline marker. The fallback does not fill the
+  evidence-based `anchor_to_last_write_s` column.
+- The vanilla headline is agent start to end. Its secondary duration uses agent start to the
+  last fixing write. For a recovered row, the tool searches calls issued through the final
+  graded bad bucket. A database timestamp can place the exact write later than that bucket.
+- When the transcript only brackets the write, the `*_tool_start` source gives the invocation's
+  start as a lower bound and `last_write_tool_end_at` gives the result timestamp. The tool
+  recognizes common Kubernetes and in-pod write commands. Shell scripts that hide their effects
+  from these sources may require inspecting the evidence. The mutation cross-check looks for
+  the same Kubernetes object during the call or within ten seconds after it. FuzzOps' Kubernetes
+  polls cannot corroborate in-pod database writes.
+- Usage sums the row's SDO responder and closing phases separately. SDO input tokens already
+  include cache tokens. Vanilla input adds cache creation and reads to uncached input.
+  Unavailable values are null in JSON Lines and a dash in Markdown. Vanilla has no SDO incident count.
+
+When the evidence is only on another host, run the standard-library script there via SSH
+without transferring the raw evidence. Replace the host and path as needed.
+
+```bash
+ssh evidence-host 'python3 - /path/to/experiment/runs/*/' < benchmarks/fuzzops/row_metrics.py
+```
