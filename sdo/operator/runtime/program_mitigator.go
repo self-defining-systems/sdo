@@ -72,9 +72,8 @@ func (l *ResponderLoop) runMitigator(ctx context.Context, id string, p program.M
 	}
 	deadline := l.deadline()
 	executionBindings := cloneProgramBindings(bindings)
-	origin := l.scriptProvenance(id)
 	if stepErr := withoutResponderLocks(l, "mitigator "+id, false, func() {
-		plan, err = BuildMitigationPlan(ctx, p, view, executionBindings, deadline, origin)
+		plan, err = BuildMitigationPlan(ctx, p, view, executionBindings, deadline)
 	}); stepErr != nil {
 		err = stepErr
 	}
@@ -98,7 +97,7 @@ func (l *ResponderLoop) runMitigator(ctx context.Context, id string, p program.M
 // BuildMitigationPlan is the one way a learned mitigation's plan is built: the
 // automatic stage, the responder's plan command, follow-ups and replay
 // validation all come here, so a plan one of them would refuse fails them all.
-func BuildMitigationPlan(ctx context.Context, p program.Mitigator, view program.ReadView, bindings program.Bindings, deadline time.Duration, origins ...ScriptProvenance) (program.Plan, error) {
+func BuildMitigationPlan(ctx context.Context, p program.Mitigator, view program.ReadView, bindings program.Bindings, deadline time.Duration) (program.Plan, error) {
 	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 	select {
@@ -141,9 +140,6 @@ func BuildMitigationPlan(ctx context.Context, p program.Mitigator, view program.
 		}
 		if err == nil {
 			plan, err = detachExecutablePlan(plan, program.ReadFrom(observed))
-		}
-		if err == nil {
-			err = checkPlanScriptProvenance(ctx, p.Spec().ID, plan, origins)
 		}
 		if err == nil {
 			plan, err = bindMitigationValues(plan, p.Spec(), bindings, isolated)

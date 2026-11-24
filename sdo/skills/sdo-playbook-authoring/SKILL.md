@@ -53,12 +53,8 @@ Keep revisions that applied cleanly unless this incident shows failure or incomp
   `MissingButInSource()`. A healthy, source-matching object is no evidence. Confirm the fault class on the
   bound target (image, ports, a read or exec); NoMatch on a workload of the wrong kind, with a near-miss test.
 - Mitigate returns to accepted or observed state: [more program rules](references/programs.md#more-program-rules).
-- `RunScript`: inline bash byte-identical to the recorded command, application inputs only through
-  relation-derived Env, and a successful accepted receipt for those bytes; preserve
-  [each script revision's original receipt](references/script-receipts.md).
-<!-- replay:on -->
-  Link the script digest to its receipt ID in the case's `script_origins`.
-<!-- /replay:on -->
+- `RunScript`: preserve proven shell commands, waits and checks. Bind varying inputs via
+  relation-derived Env. Do not print secrets. [Receipt links](references/script-receipts.md) are optional.
 
 - `reflection.detector-required`: no finding binds the program's roles. List the playbook in the detector it names, or copy
   `assets/examples/detectors/crashloop-script-repair/` to `.sdo/diagnostics/detectors/learned/<id>/`,
@@ -75,7 +71,7 @@ A case is `.sdo/corpus/<case-id>/`. Use a new ID; never edit or delete an accept
     wrongly matched).
   - `bindings.objects`: role name (as in `ParamSpec`) to `{api_version, kind, namespace, name}`; bind each
     resource the linked receipts repaired, or its recorded owner.
-  - `provenance.incident_id`: this incident. `script_origins`: RunScript sha256 to receipt ID.
+  - `provenance.incident_id`: this incident. Optional `script_origins`: RunScript sha256 to receipt ID.
 - `recordings.json`: the replies Diagnose reads, `{"phase", "method", "arguments", "result"}` (empty phase
   is open; `fixed`, `healthy`), plus one `RepairReceipt` entry per encoded hand repair (`create_corpus` adds them; a
   `reflection.program-required` hint prints the exact entry otherwise).

@@ -79,9 +79,8 @@ func ValidateScriptOrigins(root string, outcome *contracts.OutcomeRecord, paths 
 	return nil
 }
 
-// ValidateScriptOriginsWithoutCorpus preserves exact script provenance without
-// requiring replay snapshots or labels. Recorded digests prove the bytes directly;
-// legacy receipts without bytes need an explicit README/metadata receipt link.
+// ValidateScriptOriginsWithoutCorpus checks explicitly linked script receipts
+// without requiring replay snapshots or labels.
 func ValidateScriptOriginsWithoutCorpus(ctx context.Context, root, baseCommit string, outcome *contracts.OutcomeRecord, paths []string) error {
 	directories := map[string]bool{}
 	for _, path := range paths {
@@ -118,6 +117,9 @@ func ValidateScriptOriginsWithoutCorpus(ctx context.Context, root, baseCommit st
 		for _, script := range scripts {
 			digest := sdkprogram.ScriptDigest(script)
 			origin := origins.ForScript(script)
+			if _, claimed := origins.ScriptReceipts[digest]; !claimed && origins.ScriptOrigins[digest] == "" {
+				continue
+			}
 			linked := origin.IncidentID == outcome.GetIncidentId() && ScriptReceiptMatches(script, origin.LegacyOrigins, origin.IncidentID, outcome, origin.ReceiptID)
 			if !linked && baseCommit != "" && origin.IncidentID != "" {
 				resolved, err := memoryio.Git(ctx, root, false, nil, "rev-parse", "--verify", baseCommit+"^{commit}")

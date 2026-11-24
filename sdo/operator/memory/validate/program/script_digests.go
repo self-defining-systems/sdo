@@ -16,8 +16,7 @@ import (
 	"sdo.dev/operator/sdk/sdktest"
 )
 
-// Script bytes have provenance independent of whether a diagnosis matches a
-// replay fixture. Application inputs belong in Env, keeping the script fixed.
+// Existing origin claims must resolve to receipts. A script can have no origin claim.
 func validateScriptDigests(base, corpusRoot string, item Spec) error {
 	scripts, err := scriptTexts(base)
 	if err != nil {
@@ -25,7 +24,6 @@ func validateScriptDigests(base, corpusRoot string, item Spec) error {
 	}
 	for _, script := range scripts {
 		digest := sdkprogram.ScriptDigest(script)
-		linked := false
 		for _, id := range item.Cases {
 			corpus, err := sdktest.LoadCorpusMetadata(filepath.Join(corpusRoot, id))
 			if err != nil {
@@ -37,10 +35,6 @@ func validateScriptDigests(base, corpusRoot string, item Spec) error {
 			if _, err := sdktest.ScriptOrigin(sdkprogram.RunScript{Script: script}, corpus); err != nil {
 				return err
 			}
-			linked = true
-		}
-		if !linked {
-			return fmt.Errorf("RunScript digest %s requires linkage to its original successful receipt", digest)
 		}
 	}
 	return nil
