@@ -377,7 +377,10 @@ func (r *RemoteMemory) observation(view sdk.DetectionContext) (*pb.MemoryObserva
 	}
 	return r.buildObservation(view)
 }
-func (r *RemoteMemory) buildObservation(view sdk.DetectionContext) (*pb.MemoryObservation, error) {
+
+// observationSource is the controller's own cycle inputs beneath any
+// per-evaluation wrapper.
+func observationSource(view sdk.DetectionContext) inputs.Carrier {
 	sourceView := view
 	for {
 		wrapper, ok := sourceView.(interface{ UnderlyingReadView() program.ReadView })
@@ -386,7 +389,69 @@ func (r *RemoteMemory) buildObservation(view sdk.DetectionContext) (*pb.MemoryOb
 		}
 		sourceView = wrapper.UnderlyingReadView()
 	}
-	source := inputs.New(sourceView)
+	return inputs.New(sourceView)
+}
+
+// programObservation is the cycle's observation plus every frozen result the
+// controller's own view holds, so a program in the host reads the cycle inputs
+// the controller's view would answer, not only those a host detector declared.
+func (r *RemoteMemory) programObservation(view sdk.DetectionContext) (*pb.MemoryObservation, error) {
+	shared, err := r.observation(view)
+	if err != nil {
+		return nil, err
+	}
+	// The observation is shared across the cycle's detectors: extend a copy.
+	out := proto.Clone(shared).(*pb.MemoryObservation)
+	source := observationSource(view)
+	if out.Metrics, err = carryAll(out.Metrics, source.MetricResults(), nil); err != nil {
+		return nil, err
+	}
+	if out.Traffic, err = carryAll(out.Traffic, source.TrafficWindows(), nil); err != nil {
+		return nil, err
+	}
+	if out.PodReads, err = carryAll(out.PodReads, source.PodReadResults(), nil); err != nil {
+		return nil, err
+	}
+	if out.Vantage, err = carryAll(out.Vantage, source.VantageResults(), nil); err != nil {
+		return nil, err
+	}
+	out.AppState, err = carryAll(out.AppState, source.AppStateResults(), func(v carried.Result) any {
+		return boundAppState(v, appStateObservationBudget)
+	})
+	return out, err
+}
+
+// carryAll adds every result of set that into does not hold yet, in key order.
+func carryAll[T any](into map[string]*structpb.Struct, set map[string]T, project func(T) any) (map[string]*structpb.Struct, error) {
+	if len(set) == 0 {
+		return into, nil
+	}
+	if into == nil {
+		into = map[string]*structpb.Struct{}
+	}
+	ids := make([]string, 0, len(set))
+	for id := range set {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if _, held := into[id]; held {
+			continue
+		}
+		var value any = set[id]
+		if project != nil {
+			value = project(set[id])
+		}
+		wire, err := wireStruct(value)
+		if err != nil {
+			return nil, err
+		}
+		into[id] = wire
+	}
+	return into, nil
+}
+func (r *RemoteMemory) buildObservation(view sdk.DetectionContext) (*pb.MemoryObservation, error) {
+	source := observationSource(view)
 	out := &pb.MemoryObservation{Traffic: map[string]*structpb.Struct{}, Metrics: map[string]*structpb.Struct{}, Logs: map[string]*structpb.Struct{}, PodReads: map[string]*structpb.Struct{}, Vantage: map[string]*structpb.Struct{}, AppState: map[string]*structpb.Struct{}}
 	if at := source.ObservedAt(); !at.IsZero() {
 		out.ObservedAt = timestamppb.New(at)
@@ -541,7 +606,7 @@ func (p *remoteProgram) reads(view program.ReadView, b program.Bindings) ([]*pb.
 	return append(reads, accepted...), nil
 }
 func (p *remoteProgram) input(view program.ReadView, b program.Bindings, sequence uint64, reads []*pb.MemoryReadReceipt) (*pb.MemoryProgramInput, error) {
-	observation, err := p.remote.observation(view)
+	observation, err := p.remote.programObservation(view)
 	if err != nil {
 		return nil, err
 	}
