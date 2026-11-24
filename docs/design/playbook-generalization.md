@@ -226,3 +226,13 @@ but it does not reject a valid program for a name it shares.
 - No automatic merge, retirement or migration of existing duplicate playbooks or detectors.
 - No change to health detectors, the judge's traffic generators, or SREGym/benchmark code.
 - No live runs (the orchestrator runs the reuse wave).
+
+## Open RunScript recovery issues
+
+- **Cancellation during Job creation.** The API server can accept a Job create
+  after the caller loses the response. A recovery read can race that commit.
+  Reconcile the original reservation through the create ambiguity window before
+  reporting that no Job started.
+- **API failures during restart recovery.** A failed read of the reservation,
+  Job, or receipts can leave the application with incomplete write evidence.
+  Persist the unresolved recovery work and retry it without creating a new Job.
