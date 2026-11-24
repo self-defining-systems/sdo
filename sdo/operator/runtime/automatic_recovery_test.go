@@ -141,24 +141,14 @@ func TestAutomaticRecoveryDeadlineAppliesPolicyToObservedAlerts(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		policy  string
-		failing bool
 		handoff bool
 	}{
-		{"one still firing", settings.AfterPlaybookAgent, true, true},
-		{"escalate policy", settings.AfterPlaybookEscalate, true, false},
-		{"no firing, rollout unsettled", settings.AfterPlaybookAgent, false, false},
+		{"one still firing", settings.AfterPlaybookAgent, true},
+		{"escalate policy", settings.AfterPlaybookEscalate, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			data := settlingCase{}
-			if !tc.failing {
-				data.healAfter = 15 * time.Second
-			}
-			c, world, _ := automaticRecoveryWorld(t, data, tc.policy)
+			c, world, _ := automaticRecoveryWorld(t, settlingCase{}, tc.policy)
 			bound := autoReport(c).GetRecoveryDeadline().AsTime()
-			if !tc.failing {
-				ref := sdk.ObjectRef{Kind: "Deployment", Namespace: "app", Name: "api"}
-				setRolloutUnsettled(t, world, ref)
-			}
 			autoStep(t, c, world.clock, bound.Sub(world.clock.Now())-time.Second)
 			if autoReport(c).GetHandoffSelected() || !c.escalatedAt.IsZero() {
 				t.Fatal("handoff or escalation before the fixed deadline")
@@ -168,21 +158,18 @@ func TestAutomaticRecoveryDeadlineAppliesPolicyToObservedAlerts(t *testing.T) {
 			if report.GetHandoffSelected() != tc.handoff || c.escalatedAt.IsZero() == !tc.handoff {
 				t.Fatalf("handoff = %v, escalated at %s, want handoff = %v", report.GetHandoffSelected(), c.escalatedAt, tc.handoff)
 			}
-			if !tc.failing && !report.GetMitigations()[0].GetRolloutUnsettledAtDeadline() {
-				t.Fatal("unsettled rollout at expiry did not record terminal evidence")
-			}
 		})
 	}
 }
 
-func setRolloutUnsettled(t *testing.T, world *settlingWorld, ref sdk.ObjectRef) {
+func setUpdatedReplicas(t *testing.T, world *settlingWorld, replicas int32) {
 	t.Helper()
-	deployments := world.client.AppsV1().Deployments(ref.Namespace)
-	object, err := deployments.Get(t.Context(), ref.Name, metav1.GetOptions{})
+	deployments := world.client.AppsV1().Deployments("app")
+	object, err := deployments.Get(t.Context(), "api", metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	object.Status.UpdatedReplicas = 0
+	object.Status.UpdatedReplicas = replicas
 	if _, err := deployments.UpdateStatus(t.Context(), object, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -594,6 +581,61 @@ func TestAutomaticHandoffVerifiesRecoveryWhileResponderWaits(t *testing.T) {
 			}
 			if len(closed.FinalDetectorStates) != 1 || closed.FinalDetectorStates[0].DetectorID != probe.id {
 				t.Fatalf("expected scoped recovery despite the remaining clue: %v", closed.FinalDetectorStates)
+			}
+		})
+	}
+}
+
+func TestAutomaticRecoveryExtendsWhenClearAtDeadline(t *testing.T) {
+	for _, name := range []string{"recovers", "refires", "unsettled"} {
+		t.Run(name, func(t *testing.T) {
+			c, world, closed := automaticRecoveryWorld(t, settlingCase{}, settings.AfterPlaybookAgent)
+			probe := &handoffRecoveryProbe{windowedSettlingDetector: c.detectors["traffic-health"].(windowedSettlingDetector)}
+			c.detectors[probe.id] = probe
+			report := autoReport(c)
+			bound := report.GetRecoveryDeadline().AsTime()
+			setUpdatedReplicas(t, world, 0)
+			autoStep(t, c, world.clock, bound.Sub(world.clock.Now())-400*time.Millisecond)
+			probe.repaired.Store(true)
+			autoStep(t, c, world.clock, 400*time.Millisecond)
+			extension := bound.Add(c.config.ClosureStabilityWindow + probe.Spec().Interval)
+			if got := report.GetStabilityDeadline().AsTime(); !got.Equal(extension) ||
+				!c.IncidentOpen() || !c.escalatedAt.IsZero() || report.GetHandoffSelected() {
+				t.Fatalf("clear alerts at stage bound: stability deadline=%v, want %v, escalated=%v, handoff=%v",
+					report.GetStabilityDeadline(), extension, c.escalatedAt, report.GetHandoffSelected())
+			}
+
+			switch name {
+			case "recovers":
+				setUpdatedReplicas(t, world, 1)
+				for i := 0; c.IncidentOpen() && i < 12; i++ {
+					autoStep(t, c, world.clock, time.Second)
+				}
+				if c.IncidentOpen() || closed.Result == nil || !closed.EscalatedAt.IsZero() ||
+					deterministicStageReport(closed.Request.PriorStages).GetRecoveryWait().GetExitReason() != contracts.RecoveryWait_EXIT_REASON_CLEARED {
+					t.Fatalf("recovery did not close the incident: %+v", closed)
+				}
+			case "refires":
+				probe.repaired.Store(false)
+				autoStep(t, c, world.clock, time.Second)
+				if !c.IncidentOpen() || report.GetHandoffSelected() || !c.escalatedAt.IsZero() {
+					t.Fatal("recurrence interrupted the extension")
+				}
+				autoStep(t, c, world.clock, extension.Sub(world.clock.Now()))
+				if !c.IncidentOpen() || !report.GetHandoffSelected() || !c.escalatedAt.IsZero() ||
+					!slices.Equal(report.GetHandoffKeys(), c.currentIncidentRequest.OpeningKeys) {
+					t.Fatalf("recurrence did not hand off the open incident's alert: %v", report)
+				}
+			case "unsettled":
+				autoStep(t, c, world.clock, extension.Sub(world.clock.Now()))
+				if !c.escalatedAt.Equal(extension) || report.GetHandoffSelected() ||
+					!report.GetMitigations()[0].GetRolloutUnsettledAtDeadline() {
+					t.Fatalf("unsettled rollout at expiry: escalated=%v, report=%v", c.escalatedAt, report)
+				}
+				autoStep(t, c, world.clock, time.Second)
+				if !c.IncidentOpen() || !c.escalatedAt.Equal(extension) || !report.GetStabilityDeadline().AsTime().Equal(extension) {
+					t.Fatal("unsettled rollout changed the escalation after the single extension")
+				}
 			}
 		})
 	}

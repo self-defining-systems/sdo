@@ -25,7 +25,7 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	if applied && report.RecoveryDeadline == nil {
 		report.RecoveryDeadline = contractTimestamp(deadline)
 	}
-	if applied && observedAt.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
+	if (applied || refused && report.StabilityDeadline != nil) && observedAt.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
 		return
 	}
 	if stabilityOnly && scoped {
@@ -46,6 +46,18 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 		keys = c.unresolvedAlertKeysLocked(now, *request)
 	} else if !stageEscalatedIn(request.PriorStages) {
 		keys = findingKeys(request.Findings)
+	}
+	if scoped && len(keys) == 0 && report.StabilityDeadline == nil {
+		interval := time.Second
+		for _, id := range c.recoveryDetectorIDs(*request) {
+			interval = max(interval, c.detectorSpecs[id].Interval)
+		}
+		stabilityDeadline := observedAt.Add(c.config.ClosureStabilityWindow + interval)
+		if response := request.ResponseDeadline; !response.IsZero() && response.Before(stabilityDeadline) {
+			stabilityDeadline = response
+		}
+		report.StabilityDeadline = contractTimestamp(stabilityDeadline)
+		return
 	}
 	if applied {
 		markAutomaticRecovery(report, observedAt, contracts.RecoveryWait_EXIT_REASON_DEADLINE)
