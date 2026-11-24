@@ -490,10 +490,35 @@ def arm_row(run: Path, arm: str, calls: list[tuple[int, int, str, bool, str]]):
         ("kubectl exec db-0 -- psql -Atc 'DROP TRIGGER trg ON public.issues'", "DROP TRIGGER"),
         ("kubectl exec db-0 -- psql -Atc 'select pg_terminate_backend(41)'", "t"),
         ("kubectl exec redis-0 -- redis-cli DEL cache:x", "(integer) 1"),
+        # A shell construct around the write, a `#` inside a word, and another command of the call failing.
+        ('kubectl exec git-0 -- sh -c \'for d in /r/*/hooks; do mv "$d" "$d.off"; done\'', ""),
+        ("kubectl exec git-0 -- sh -c 'find /r -name hook -exec rm {} \\;'", ""),
+        ("kubectl exec git-0 -- find /r -name hook -delete", ""),
+        ("T=$(cat t) || exit 1; [ ${#T} -eq 64 ] || exit 1; kubectl replace -f -", "secret/s replaced"),
+        ("# isn't it the pod?\nkubectl delete pod web-1", 'pod "web-1" deleted'),
+        ("kubectl exec -i db-0 -- psql -At <<'SQL'\nDROP TRIGGER t ON public.x;\nSQL", "DROP TRIGGER"),
+        ("echo 'DROP TRIGGER t ON x' | kubectl exec -i db-0 -- psql", "DROP TRIGGER"),
+        ("for d in a b; do kubectl rollout restart deploy/$d; done", "deployment.apps/a restarted"),
+        ("timeout 60 kubectl delete pod web-1", 'pod "web-1" deleted'),
+        ("kubectl get secret s; kubectl delete pod web-1", 'Error from server (Forbidden)\npod "web-1" deleted'),
     ],
 )
 def test_every_write_kind_counts_the_same_for_both_arms(tmp_path: Path, arm: str, command: str, output: str) -> None:
     assert arm_row(tmp_path, arm, [(12, 13, command, False, output)]).ttf_s == 7
+
+
+@pytest.mark.parametrize("arm", ARMS)
+@pytest.mark.parametrize(
+    ("command", "output"),
+    [
+        ("kubectl exec git-0 -- sh -c 'for d in /r/*/hooks; do ls \"$d\"; done'", ""),
+        ("kubectl exec git-0 -- find /r -name hook", "/r/hook"),
+        ("kubectl get pod web-1 # kubectl delete pod web-1", ""),
+        ("kubectl patch secret s -p '{}'", "Error from server (Forbidden)"),
+    ],
+)
+def test_reads_and_refused_writes_count_for_neither_arm(tmp_path: Path, arm: str, command: str, output: str) -> None:
+    assert arm_row(tmp_path, arm, [(12, 13, command, False, output)]).ttf_s is None
 
 
 @pytest.mark.parametrize("arm", ARMS)

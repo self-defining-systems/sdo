@@ -222,7 +222,10 @@ _RUBY_WRITE = re.compile(
     r"|\.expire_\w+|\bRails\.cache\.(?:delete|delete_matched|clear|write)\b"
 )
 _EXEC_WRITE = re.compile(
-    r"(?:^|[;&|]\s*)(?:rm|mv|cp|mkdir|chmod|chown|install|truncate|tee|touch)\s"
+    # A command word: at the start, after a separator, a shell keyword, `sh -c`, `find -exec` or `xargs`.
+    r"(?:^|[;&|({]\s*|(?:^|\s)(?:do|then|else|-c|-exec|xargs(?:\s+-\S+)*)\s+)"
+    r"(?:rm|mv|cp|mkdir|chmod|chown|install|truncate|tee|touch)\s"
+    r"|\bfind\b[^;&|]*\s-delete\b"
     r"|\bsed\s+-i\b|(?<![\d<>=])>{1,2}\s*/(?!dev/null\b)"
     r"|\bcurl\b[^;&|]*\s(?:-X\s*|--request[= ])(?:POST|PUT|PATCH|DELETE)\b"
     r"|\bredis-cli\b[^;&|]*?\s(?i:del|unlink|set|setex|mset|expire|persist|flushdb|flushall|sadd|srem|hset|hdel"
@@ -239,8 +242,57 @@ def _target(kind: str, name: str) -> str:
     return f"{_KIND.get(kind, kind)}/{name}"
 
 
+#: Words that come before the command itself: shell keywords and wrappers (`timeout` takes a duration too).
+_COMMAND_PREFIX = {
+    "command",
+    "env",
+    "sudo",
+    "time",
+    "timeout",
+    "do",
+    "then",
+    "else",
+    "if",
+    "while",
+    "until",
+    "!",
+    "{",
+    "(",
+}
+
+#: A command the server or the database acknowledged: it took effect even when another command of the call failed.
+_RECEIPT = re.compile(
+    r"(?m)^(?:[\w.-]+/[\w.-]+ (?:configured|created|patched|scaled|restarted|replaced|labeled|annotated)\b"
+    r"|[\w.-]+ \"[\w.-]+\" (?:force )?deleted\b|(?:UPDATE|DELETE|INSERT 0) [1-9])"
+)
+
+
+def _without_comments(command: str) -> str:
+    """The command without shell comments. A `#` inside a word or a quote (`${#x}`, "a # b") is no comment."""
+    out, quote, skipping, i = [], "", False, 0
+    while i < len(command):
+        char = command[i]
+        if skipping:
+            skipping = char != "\n"
+        elif not quote and char == "#" and (i == 0 or command[i - 1] in " \t\n;&|("):
+            skipping = True
+        elif char == "\\" and quote != "'":
+            out.append(command[i : i + 2])
+            i += 2
+            continue
+        elif quote:
+            quote = "" if char == quote else quote
+        elif char in "'\"":
+            quote = char
+        if not skipping:
+            out.append(char)
+        i += 1
+    return "".join(out)
+
+
 def _segments(command: str) -> Iterator[list[str]]:
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|\n")
+    lexer = shlex.shlex(_without_comments(command), posix=True, punctuation_chars=";&|\n")
+    lexer.commenters = ""
     lexer.whitespace = " \r\t"
     lexer.whitespace_split = True
     segment: list[str] = []
@@ -276,8 +328,8 @@ def _command_writes(command: str, output: str) -> tuple[bool, tuple[str, ...]]:
     data = False
     targets = []
     for segment in _segments(command):
-        while segment and (re.match(r"^\w+=", segment[0]) or segment[0] in ("command", "env", "sudo")):
-            segment = segment[1:]
+        while segment and (re.match(r"^\w+=", segment[0]) or segment[0] in _COMMAND_PREFIX):
+            segment = segment[2:] if segment[0] == "timeout" else segment[1:]
         if not segment:
             continue
         exe, *args = segment
@@ -290,6 +342,8 @@ def _command_writes(command: str, output: str) -> tuple[bool, tuple[str, ...]]:
         verb, *objects = _positionals(args[:cut]) or [""]
         if verb == "exec":
             payload = " ".join(args[cut + 1 :])
+            if {"-i", "-it", "-ti", "--stdin"} & set(args[:cut]):
+                payload += " " + command  # the statement comes on stdin, from a heredoc or a pipe
             data |= bool(
                 (re.search(r"\bpsql\b", payload) and _SQL_WRITE.search(payload))
                 or (re.search(r"\brails\s+runner\b", payload) and _RUBY_WRITE.search(payload))
@@ -389,7 +443,7 @@ def _transcript(path: Path) -> Iterator[Write]:
     writes: list[Write] = []
     stamps: set[datetime] = set()
     for call, end, provider, output, error in _tool_results(path):
-        if error or _NO_EFFECT.search(output):
+        if (error or _NO_EFFECT.search(output)) and not _RECEIPT.search(output):
             continue
         if output.strip() and all(
             line.endswith((" unchanged", " not patched")) for line in output.strip().splitlines()
