@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -32,6 +33,29 @@ type secretDataSource interface {
 	AcceptedSecretData(ctx context.Context, revision, namespace string, ref sdk.ObjectRef) (map[string][]byte, error)
 }
 
+type secretInventorySource interface {
+	AcceptedSecretInventory(context.Context, string, string) (func(sdk.ObjectRef) (map[string][]byte, error), error)
+}
+
+type incidentSecretCache struct {
+	source            secretInventorySource
+	once              sync.Once
+	commit, namespace string
+	lookup            func(sdk.ObjectRef) (map[string][]byte, error)
+	err               error
+}
+
+func (s *incidentSecretCache) AcceptedSecretData(ctx context.Context, revision, namespace string, ref sdk.ObjectRef) (map[string][]byte, error) {
+	if revision != s.commit || namespace != s.namespace {
+		return nil, errors.New("accepted Secret cache is outside the incident scope")
+	}
+	s.once.Do(func() { s.lookup, s.err = s.source.AcceptedSecretInventory(ctx, revision, namespace) })
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.lookup(ref)
+}
+
 func generalSecretRestore(action program.Action) program.ReconcileFromSource {
 	switch a := action.(type) {
 	case program.ReconcileFromSource:
@@ -49,7 +73,7 @@ func (c TypedPlanClient) RestoreSecretData(ctx context.Context, ref sdk.ObjectRe
 	if err := c.checkPlanNamespace(ref.Namespace); err != nil {
 		return false, err
 	}
-	if c.Client == nil || ref.Kind != "Secret" || ref.APIVersion != "v1" || version == "" {
+	if c.Client == nil || ref.Kind != "Secret" || ref.APIVersion != "v1" {
 		return false, errors.New("Secret restore requires a v1 Secret comparison")
 	}
 	secrets := c.Client.CoreV1().Secrets(ref.Namespace)
@@ -57,7 +81,10 @@ func (c TypedPlanClient) RestoreSecretData(ctx context.Context, ref sdk.ObjectRe
 	if err != nil {
 		return false, safeSecretAPIError(err)
 	}
-	if live.ResourceVersion != version {
+	if version == "" {
+		version = live.ResourceVersion
+	}
+	if version == "" || live.ResourceVersion != version {
 		return false, errors.New("Secret changed after comparison")
 	}
 	encoded := make(map[string]string, len(data))
@@ -75,10 +102,15 @@ func (c TypedPlanClient) RestoreSecretData(ctx context.Context, ref sdk.ObjectRe
 		return false, err
 	}
 	if _, err := secrets.Patch(ctx, ref.Name, types.MergePatchType, patch, metav1.PatchOptions{FieldManager: sdk.ResponderFieldManager}); err != nil {
-		return false, safeSecretAPIError(err)
+		if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) || apierrors.IsConflict(err) || apierrors.IsNotFound(err) || apierrors.IsInvalid(err) || apierrors.IsBadRequest(err) {
+			return false, safeSecretAPIError(err)
+		}
+		return false, errSecretWriteUnknown
 	}
 	return true, nil
 }
+
+var errSecretWriteUnknown = errors.New("Secret write unconfirmed")
 
 func safeSecretAPIError(err error) error {
 	switch {
@@ -98,16 +130,20 @@ func safeSecretAPIError(err error) error {
 func (e PlanExecutor) secretRestoreStep(ctx context.Context, incident IncidentRequest, a program.ReconcileFromSource, dry bool) (PlanApplicationResult, error) {
 	r := PlanApplicationResult{Plan: program.Plan{Actions: []program.Action{a}}, DryRun: dry}
 	r.ActionReports = newPlanReports(r.Plan)
+	manual := len(a.Keys) == 0 && a.SecretCommit == "" && a.SecretResourceVersion == ""
 	switch {
 	case incident.Namespace == "" || a.Ref.Namespace != incident.Namespace:
 		return r, fmt.Errorf("Secret %s/%s is outside incident namespace %q", a.Ref.Namespace, a.Ref.Name, incident.Namespace)
-	case incident.SourceCommit == "" || incident.SourceCommit != a.SecretCommit || len(a.Keys) == 0 || a.SecretResourceVersion == "":
+	case incident.SourceCommit == "" || !manual && (incident.SourceCommit != a.SecretCommit || len(a.Keys) == 0 || a.SecretResourceVersion == ""):
 		return r, errors.New("Secret restore requires compared keys and version at the incident's accepted commit")
 	case !dry && incident.RepairPolicy != "recorded-actions":
 		return r, fmt.Errorf("repair policy %q denies direct plan mutations", incident.RepairPolicy)
 	}
-	source, ok := e.Source.(secretDataSource)
-	if !ok {
+	source := e.secretSource
+	if source == nil {
+		source, _ = e.Source.(secretDataSource)
+	}
+	if source == nil {
 		return r, errors.New("accepted Secret source unavailable")
 	}
 	client, ok := e.Client.(PlanSecretRestoreClient)
@@ -131,20 +167,30 @@ func (e PlanExecutor) secretRestoreStep(ctx context.Context, incident IncidentRe
 		}
 		selected[key] = value
 	}
+	if manual {
+		selected = data
+	}
 	wrote, err := client.RestoreSecretData(ctx, a.Ref, a.SecretResourceVersion, selected, dry)
-	if err != nil {
+	if err != nil && !errors.Is(err, errSecretWriteUnknown) {
 		r.ActionReports[0].Status = "refused"
 		return r, err
 	}
-	if !wrote {
+	if !wrote && err == nil {
 		return r, nil
 	}
-	keys := append([]string(nil), a.Keys...)
+	keys := make([]string, 0, len(selected))
+	for key := range selected {
+		keys = append(keys, key)
+	}
 	sort.Strings(keys)
 	r.Applied = true
 	r.ActionsApplied = []program.Action{a}
 	r.Patches = []PlanPatch{{Ref: a.Ref, Operation: "restore_secret", Irreversible: true}}
 	r.ActionReports[0].Status = "applied"
+	if err != nil {
+		r.ActionReports[0].Status = "unknown"
+		return r, err
+	}
 	r.ActionReports[0].Observed = "restored keys: " + strings.Join(keys, ", ")
 	return r, nil
 }

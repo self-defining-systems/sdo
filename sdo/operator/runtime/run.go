@@ -807,9 +807,10 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 						loop.CorpusSessionRoot = options.NativeBroker.SessionRoot
 					}
 				}
+				loop.Executor.secretSource = &incidentSecretCache{source: planSource, commit: request.SourceCommit, namespace: request.Namespace}
 				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 					return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: clients.incidentRead, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
-						Source: planSource, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: baselineOf(stateTracker)}
+						Source: planSource, SourceCommit: request.SourceCommit, secretSource: loop.Executor.secretSource, Baseline: request.StateChanges, BaselineSource: baselineOf(stateTracker)}
 				}
 				controller.mu.Lock()
 				controller.responderLoop = loop

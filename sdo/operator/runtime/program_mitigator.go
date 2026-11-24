@@ -222,6 +222,9 @@ func (v mitigationReadView) checkComparedSecretKeys(plan program.Plan) error {
 			continue
 		}
 		restore := generalSecretRestore(action)
+		if len(restore.Keys) == 0 {
+			return errors.New("learned Secret restore must name compared keys")
+		}
 		for _, key := range restore.Keys {
 			if _, ok := v.compared.Load(program.SecretKey{Ref: restore.Ref, Key: key}); !ok {
 				return errors.New("Mitigate must compare each restored Secret key with accepted source")

@@ -110,6 +110,7 @@ type PlanApplicationResult struct {
 }
 
 type PlanExecutor struct {
+	secretSource secretDataSource
 	// ApplicationID is durable across restart and selects one script Job.
 	ApplicationID     string
 	scriptActionIndex int

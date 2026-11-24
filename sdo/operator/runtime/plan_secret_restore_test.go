@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -305,5 +307,92 @@ func TestSecretRestoreConcurrentPatchConflictIsValueFree(t *testing.T) {
 	result, err := executor.Apply(context.Background(), incident, plan, false)
 	if err == nil || !strings.Contains(err.Error(), "changed after comparison") || result.Applied || strings.Contains(err.Error(), "synthetic-conflict-canary") {
 		t.Fatalf("expected value-free conflict and no reported write, got %v", err)
+	}
+}
+
+func TestSecretRestoreManualAndLostReply(t *testing.T) {
+	for _, lost := range []bool{false, true} {
+		t.Run(fmt.Sprint(lost), func(t *testing.T) {
+			client, ref, _, incident := secretRestoreFixture()
+			if lost {
+				client.PrependReactor("patch", "secrets", func(kubetesting.Action) (bool, kruntime.Object, error) {
+					return true, nil, io.ErrUnexpectedEOF
+				})
+			}
+			executor := PlanExecutor{
+				Client: TypedPlanClient{Client: client}, Source: secretSource{data: map[string][]byte{"key": []byte(acceptedSyntheticValue), "other": []byte("manual")}},
+				Rollouts: recordedRollouts{new([]sdk.ObjectRef)}, Verifier: passingVerifier{},
+			}
+			plan := program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: ref}}}
+			result, err := executor.Apply(t.Context(), incident, plan, false)
+			if !result.Applied || (lost && (!errors.Is(err, errSecretWriteUnknown) || result.ActionReports[0].Status != "unknown")) || (!lost && err != nil) {
+				t.Fatalf("manual restore applied=%t reports=%v err=%v", result.Applied, result.ActionReports, err)
+			}
+			if !lost {
+				live, _ := client.CoreV1().Secrets(ref.Namespace).Get(t.Context(), ref.Name, metav1.GetOptions{})
+				if string(live.Data["other"]) != "manual" {
+					t.Fatal("manual restore did not write all accepted keys")
+				}
+			}
+		})
+	}
+}
+
+func TestSecretEqualMissingObjectIsDrift(t *testing.T) {
+	client, ref, _, incident := secretRestoreFixture()
+	if err := client.CoreV1().Secrets(ref.Namespace).Delete(t.Context(), ref.Name, metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: incident.Namespace}), Client: client,
+		SourceCommit: incident.SourceCommit, Source: secretSource{data: map[string][]byte{"key": []byte(acceptedSyntheticValue)}}}
+	left := program.SecretKey{Ref: ref, Key: "key"}
+	right := left
+	right.Accepted = true
+	if equal, err := view.SecretEqual(left, right); err != nil || equal {
+		t.Fatalf("missing Secret: equal=%t, err=%v", equal, err)
+	}
+}
+
+type countedSecretInventory int
+
+func (n *countedSecretInventory) AcceptedSecretInventory(context.Context, string, string) (func(sdk.ObjectRef) (map[string][]byte, error), error) {
+	*n++
+	return func(sdk.ObjectRef) (map[string][]byte, error) {
+		return map[string][]byte{"a": []byte("synthetic"), "b": []byte("synthetic"), "c": []byte("synthetic"), "d": []byte("synthetic")}, nil
+	}, nil
+}
+
+func TestSecretEqualReusesAcceptedInventoryAcrossKeys(t *testing.T) {
+	client, ref, _, incident := secretRestoreFixture()
+	renders := countedSecretInventory(0)
+	source := &incidentSecretCache{source: &renders, commit: incident.SourceCommit, namespace: incident.Namespace}
+	view := LiveReadView{Carrier: inputs.New(sdktest.Snapshot{NamespaceName: incident.Namespace}), Client: client,
+		SourceCommit: incident.SourceCommit, secretSource: source}
+	for _, key := range []string{"a", "b", "c", "d"} {
+		left := program.SecretKey{Ref: ref, Key: key}
+		right := left
+		right.Accepted = true
+		if equal, err := view.SecretEqual(left, right); err != nil || equal {
+			t.Fatalf("comparison %s: equal=%t err=%v", key, equal, err)
+		}
+	}
+	if renders != 1 {
+		t.Fatalf("rendered %d inventories, want one", renders)
+	}
+}
+
+func TestMitigateByNameRestoresSecretFromSource(t *testing.T) {
+	client, ref, _, incident := secretRestoreFixture()
+	_, loop := targetLoop(t)
+	loop.Request = incident
+	loop.Executor = PlanExecutor{Client: TypedPlanClient{Client: client},
+		Source:   secretSource{data: map[string][]byte{"key": []byte(acceptedSyntheticValue)}},
+		Rollouts: recordedRollouts{new([]sdk.ObjectRef)}, Verifier: passingVerifier{}}
+	response := loop.Handle(t.Context(), ToolRequest{Command: "mitigate", Targets: []MitigateTarget{{
+		Name: "ReconcileFromSource", Parameters: map[string]BindValues{"ref": {"Secret/app/creds"}},
+	}}})
+	live, err := client.CoreV1().Secrets(ref.Namespace).Get(t.Context(), ref.Name, metav1.GetOptions{})
+	if err != nil || response.Error != "" || live == nil || string(live.Data["key"]) != acceptedSyntheticValue {
+		t.Fatalf("manual mitigate did not restore the Secret: response=%q reports=%v read=%v", response.Error, response.MenuExecution, err)
 	}
 }

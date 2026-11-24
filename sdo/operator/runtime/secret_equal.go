@@ -51,8 +51,11 @@ func (v LiveReadView) SecretEqual(left, right program.SecretKey) (bool, error) {
 func (v LiveReadView) secretKey(ctx context.Context, key program.SecretKey, version *string) ([]byte, error) {
 	var data map[string][]byte
 	if key.Accepted {
-		source, ok := v.Source.(secretDataSource)
-		if !ok || v.SourceCommit == "" {
+		source := v.secretSource
+		if source == nil {
+			source, _ = v.Source.(secretDataSource)
+		}
+		if source == nil || v.SourceCommit == "" {
 			return nil, sdk.Classified("accepted Secret source unavailable", sdk.ErrUnavailable)
 		}
 		var err error
@@ -66,6 +69,9 @@ func (v LiveReadView) secretKey(ctx context.Context, key program.SecretKey, vers
 		}
 		object, err := v.Client.CoreV1().Secrets(key.Ref.Namespace).Get(ctx, key.Ref.Name, metav1.GetOptions{})
 		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil, sdk.ErrObjectAbsent
+			}
 			if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
 				return nil, sdk.Classified("live Secret read refused", sdk.ErrRefused)
 			}

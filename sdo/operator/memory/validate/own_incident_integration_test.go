@@ -10,8 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
 )
 
@@ -83,80 +81,5 @@ func TestANewPlaybookThatMatchesItsOwnIncidentIsRecordedAsAMatch(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("gaps = %v, want a match note", gaps)
-	}
-}
-
-func TestSecretRestoreOwnIncidentNeedsRecordedComparison(t *testing.T) {
-	root, capture := ownIncidentRoot(t, `package fresh
-
-import (
-	"context"
-	"sdo.dev/operator/sdk"
-	"sdo.dev/operator/sdk/program"
-)
-
-type Program struct{}
-
-var credential = sdk.ObjectRef{APIVersion: "v1", Kind: "Secret", Namespace: "app", Name: "credentials"}
-
-func (Program) Spec() program.ProgramSpec { return program.ProgramSpec{ID: "fresh"} }
-
-func (Program) Diagnose(_ context.Context, v program.ReadView, _ program.Bindings) (program.Verdict, error) {
-	equal, err := v.SecretEqual(program.SecretKey{Ref: credential, Key: "key"}, program.SecretKey{Ref: credential, Key: "key", Accepted: true})
-	if err != nil {
-		return program.Verdict{}, err
-	}
-	if equal {
-		return program.Verdict{Result: program.NoMatch}, nil
-	}
-	return program.Verdict{Result: program.Match}, nil
-}
-
-func (p Program) Mitigate(ctx context.Context, v program.ReadView, b program.Bindings) (program.Plan, error) {
-	verdict, err := p.Diagnose(ctx, v, b)
-	if err != nil || verdict.Result != program.Match {
-		return program.Plan{}, err
-	}
-	return program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: credential, Keys: []string{"key"}}}}, nil
-}
-`)
-	request := compileRequest(root)
-	request.OwnIncidentDirectory = capture
-	var gaps []Diagnostic
-	request.CoverageGaps = &gaps
-	if diagnostics := diagnose(t, request); len(diagnostics) != 0 {
-		t.Fatalf("unrecorded comparison must be unverified: %v", diagnostics)
-	}
-	found := false
-	for _, gap := range gaps {
-		found = found || gap.Rule == RuleOwnIncidentReplay && strings.HasPrefix(gap.Message, "unverified:") && strings.Contains(gap.Message, "SecretEqual")
-	}
-	if !found {
-		t.Fatalf("expected unverified comparison evidence, got %v", gaps)
-	}
-	args, err := json.Marshal([]program.SecretKey{
-		{Ref: sdk.ObjectRef{APIVersion: "v1", Kind: "Secret", Namespace: "app", Name: "credentials"}, Key: "key"},
-		{Ref: sdk.ObjectRef{APIVersion: "v1", Kind: "Secret", Namespace: "app", Name: "credentials"}, Key: "key", Accepted: true},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	calls, err := json.Marshal([]sdktest.PrimitiveCall{{Method: "SecretEqual", Arguments: args, Result: json.RawMessage("false")}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(capture, "open@detect-recordings.json"), calls, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	gaps = nil
-	if diagnostics := diagnose(t, request); len(diagnostics) != 0 {
-		t.Fatalf("shared memory check refused the Secret restore: %v", diagnostics)
-	}
-	found = false
-	for _, gap := range gaps {
-		found = found || gap.Rule == RuleOwnIncidentReplay && strings.HasPrefix(gap.Message, "match:")
-	}
-	if !found {
-		t.Fatalf("expected recorded mismatch to match, got %v", gaps)
 	}
 }

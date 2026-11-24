@@ -29,24 +29,41 @@ var ErrSecretSourceNondeterministic = errors.New("the accepted render of the Sec
 // is rendered twice and the data must be equal, so a generated value is
 // refused instead of replaced by another. Errors never carry a value.
 func (s Source) AcceptedSecretData(ctx context.Context, revision, namespace string, ref sdk.ObjectRef) (map[string][]byte, error) {
-	first, err := s.renderSecretData(ctx, revision, namespace, ref)
+	lookup, err := s.AcceptedSecretInventory(ctx, revision, namespace)
 	if err != nil {
 		return nil, err
 	}
-	second, err := s.renderSecretData(ctx, revision, namespace, ref)
-	if err != nil {
-		return nil, err
-	}
-	if !maps.EqualFunc(first, second, bytes.Equal) {
-		return nil, ErrSecretSourceNondeterministic
-	}
-	return first, nil
+	return lookup(ref)
 }
 
-func (s Source) renderSecretData(ctx context.Context, revision, namespace string, ref sdk.ObjectRef) (map[string][]byte, error) {
-	if ref.Kind != "Secret" {
-		return nil, fmt.Errorf("accepted Secret data requires a Secret, not %s", ref.Kind)
+// AcceptedSecretInventory produces one private incident lookup. The existing
+// two-sample check still rejects generated values; key reads do no rendering.
+func (s Source) AcceptedSecretInventory(ctx context.Context, revision, namespace string) (func(sdk.ObjectRef) (map[string][]byte, error), error) {
+	first, err := s.renderSecretInventory(ctx, revision, namespace)
+	if err != nil {
+		return nil, err
 	}
+	second, err := s.renderSecretInventory(ctx, revision, namespace)
+	if err != nil {
+		return nil, err
+	}
+	return func(ref sdk.ObjectRef) (map[string][]byte, error) {
+		if first[ref] == nil {
+			return nil, ErrAcceptedManifestAbsent
+		}
+		a, err := secretLiteralData(first[ref])
+		if err != nil {
+			return nil, err
+		}
+		b, err := secretLiteralData(second[ref])
+		if err != nil || !maps.EqualFunc(a, b, bytes.Equal) {
+			return nil, ErrSecretSourceNondeterministic
+		}
+		return a, nil
+	}, nil
+}
+
+func (s Source) renderSecretInventory(ctx context.Context, revision, namespace string) (map[sdk.ObjectRef]map[string]any, error) {
 	if err := s.requireDesired(namespace); err != nil {
 		return nil, err
 	}
@@ -67,13 +84,13 @@ func (s Source) renderSecretData(ctx context.Context, revision, namespace string
 	if err != nil {
 		return nil, classifySource(err)
 	}
+	out := make(map[sdk.ObjectRef]map[string]any)
 	for _, object := range set.Objects() {
-		if object.Ref != ref || object.Hook {
-			continue
+		if object.Ref.Kind == "Secret" && object.Ref.Namespace == namespace && !object.Hook {
+			out[object.Ref] = object.Object.Object
 		}
-		return secretLiteralData(object.Object.Object)
 	}
-	return nil, fmt.Errorf("%w: %s/%s", ErrAcceptedManifestAbsent, ref.Kind, ref.Name)
+	return out, nil
 }
 
 // secretLiteralData decodes data and stringData (which wins) of a Secret.
