@@ -94,6 +94,11 @@ def _json(path: Path) -> Any:
         return None
 
 
+def read_json_object(path: Path) -> dict[str, Any]:
+    value = _json(path)
+    return value if isinstance(value, dict) else {}
+
+
 def jsonl_problem(path: Path) -> str:
     """Why a JSONL file is not whole ("" when every line parses): a killed writer leaves a partial last line."""
     try:

@@ -52,6 +52,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
@@ -430,6 +431,8 @@ class OperatorBlock:
     #: ``settings.harness_page``: the harness-paged arm (``page.PageConfig``): the benchmark opens the one SDO
     #: incident through the external-incident inbox at the inject plus ``after`` seconds; detectors only observe.
     harness_page: page.PageConfig | None = None
+    fallback_page: bool = True
+    fallback_page_seconds: float = page.DEFAULT_FALLBACK_SECONDS
     #: ``settings.dev_mount``: run the pods from the base images (``image_tag``) with the checkout's sources and
     #: binary projected over them from the lane's evidence mount (``devtree``): no image build for this revision.
     dev_mount: bool = False
@@ -449,6 +452,10 @@ class OperatorBlock:
         if not self.image_tag:
             object.__setattr__(self, "image_tag", f"fz-{self.revision[:8]}")
         refuse_hook_keys(self.config, "settings.config")
+        if not isinstance(self.fallback_page, bool):
+            raise TypeError("settings.fallback_page must be a boolean")
+        if not math.isfinite(self.fallback_page_seconds) or self.fallback_page_seconds <= 0:
+            raise ValueError("settings.fallback_page_seconds must be finite and positive")
         if self.harness_page is not None and "mode" in self.config:
             raise ValueError("settings.harness_page sets the operator mode; settings.config may not")
 
@@ -483,6 +490,8 @@ class OperatorBlock:
                 auth_file=Path(str(settings.get("auth_file") or Path.home() / ".codex" / "auth.json")).expanduser(),
                 config=settings.get("config") or {},
                 harness_page=page.PageConfig.from_settings(settings.get("harness_page")),
+                fallback_page=settings.get("fallback_page", True),
+                fallback_page_seconds=float(settings.get("fallback_page_seconds", page.DEFAULT_FALLBACK_SECONDS)),
                 dev_mount=bool(settings.get("dev_mount")),
                 seed=Path(str(raw["seed"])) if raw.get("seed") else None,
                 source_branch=SourceBranch.from_settings(settings.get("source_branch")),
@@ -1682,7 +1691,30 @@ def watch(env: Mapping[str, str]) -> int:
             "--page-namespace",
             _need(env, "FUZZOPS_NAMESPACE"),
         ]
+    elif fault and fault != "none" and (block is None or block.fallback_page):
+        argv += [
+            "--fallback-page-after",
+            str(block.fallback_page_seconds if block is not None else page.DEFAULT_FALLBACK_SECONDS),
+            "--page-namespace",
+            _need(env, "FUZZOPS_NAMESPACE"),
+        ]
     return observe.main(argv)
+
+
+def collect_page(run: Path, state: dict[str, Any]) -> observe.PageEvidence:
+    # Collect runs after FuzzOps writes record.json, including on pins without
+    # the live traffic stream. The run directory holds this attempt only.
+    record = cellevidence.read_json_object(run / "record.json")
+    inject_at = (record.get("lifecycle") or {}).get("inject_at")
+    for path in sorted((run / "exec").glob(f"*/{observe.PAGE_EVIDENCE}")):
+        watched = cellevidence.read_json_object(path)
+        if watched and (inject_at is None or watched.get("inject_at") == inject_at):
+            paging = observe.PageEvidence(**watched)
+            break
+    else:
+        paging = observe.PageEvidence(inject_at=inject_at)
+    paging.observe(state)
+    return paging
 
 
 def collect(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
@@ -1741,6 +1773,19 @@ def collect(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
 
     part("memory", memory)
     part("state", state)
+    paging = collect_page(dest.parent, cellevidence.read_json_object(dest / "controller-state.json"))
+    if paging.fallback_id:
+        # Remove a pending page too, so a delayed admission cannot cross into
+        # the next row after its incident reset.
+        def remove_fallback() -> str:
+            _run(
+                kube.cmd("-n", control, "delete", "configmap", page.INBOX, "--ignore-not-found"),
+                "delete fallback inbox",
+                60,
+            )
+            return "ok"
+
+        part("fallback-inbox", remove_fallback)
     part("logs", logs)
     part("evidence", evidence)
 
@@ -1785,7 +1830,7 @@ def collect(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
 
     part("observability", observability)
 
-    def write_collect_json(final: bool) -> None:
+    def write_collect_json() -> None:
         summary = {
             "control_namespace": control,
             "run": env.get("BENCH_RUN", ""),
@@ -1793,13 +1838,14 @@ def collect(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
             "interval": [env.get("BENCH_INTERVAL_START", ""), env.get("BENCH_INTERVAL_END", "")],
             "collected_at": _now(),
             "parts": parts,
+            **asdict(paging),
         }
         cellevidence.atomic_write_json(dest / "collect.json", summary)
 
     # Every capture is on disk. Validate before the operator reset: an incomplete cell keeps its lane's incidents
     # open (the reset waits) until the evidence is complete, `hooks validate` passes, or a waiver is written.
     # run.json does not exist yet: the bench manager writes it after this step ends.
-    write_collect_json(False)
+    write_collect_json()
     manifest = cellevidence.write_manifest(dest.parent, run_pending=True)
     why = cellevidence.verdict(manifest)
     if why:
@@ -1809,7 +1855,7 @@ def collect(env: Mapping[str, str], out: Callable[[str], None] = _print) -> int:
     else:
         parts["evidence-manifest"] = f"ok ({len(manifest.items)} items, {len(manifest.waived)} waived)"
         part("reset", lambda: _reset_receipt(env, control, dest))
-    write_collect_json(True)
+    write_collect_json()
     failed = sorted(k for k, v in parts.items() if v.startswith("error"))
     out(f"collect: {'failed ' + ','.join(failed) if failed else 'ok'}")
     return 1 if failed else 0

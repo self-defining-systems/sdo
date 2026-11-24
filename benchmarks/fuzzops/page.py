@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 INBOX = "sdo-external-incident"
+DEFAULT_FALLBACK_SECONDS = 120.0
 DEFAULT_ENTRY = "http://gitlab-webservice-default:8181"
 #: ``ExternalIncident.message`` max_len: the controller's inbox refuses a longer alert.
 MAX_MESSAGE = 4096
@@ -254,6 +255,10 @@ def page_message(
     return (head + recipe(pack_journeys, list(failing), entry, budget=MAX_MESSAGE - len(head), results=failing))[
         :MAX_MESSAGE
     ]
+
+
+def fallback_message(namespace: str) -> str:
+    return f"Users are reporting problems with the application in namespace {namespace}; investigate and fix it."
 
 
 def inbox_manifest(control_namespace: str, incident_id: str, namespace: str, message: str) -> dict[str, Any]:
