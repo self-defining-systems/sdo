@@ -350,6 +350,7 @@ func memoryCheck(ctx context.Context, args []string, getenv func(string) string,
 			for _, d := range report.GetDiagnostics() {
 				fmt.Fprintln(stdout, d.GetRule()+": "+d.GetMessage())
 			}
+			writePlanPreviewGaps(stdout, report, "")
 		}
 		if len(report.GetDiagnostics()) != 0 {
 			return exitDiagnostics, nil
@@ -624,6 +625,15 @@ func applyTimes(effects []string) string {
 	return line
 }
 
+func writePlanPreviewGaps(stdout io.Writer, report *contracts.MemoryCheckReport, id string) {
+	for _, gap := range report.GetCoverageGaps() {
+		programLabel, _, ok := strings.Cut(gap.GetMessage(), " preview (")
+		if ok && strings.HasPrefix(programLabel, "program ") && (id == "" || programLabel == "program "+id) {
+			fmt.Fprintln(stdout, "  "+gap.GetMessage())
+		}
+	}
+}
+
 // memoryTest is "memory check" read for one playbook: its replay verdicts per captured case and whether anything blocks
 // publication. It runs the same check, so it cannot disagree with the broker's, and prints at most a few short lines.
 func memoryTest(ctx context.Context, args []string, getenv func(string) string, stdout io.Writer) (int, error) {
@@ -652,11 +662,7 @@ func memoryTest(ctx context.Context, args []string, getenv func(string) string, 
 	for _, line := range ownIncidentLines(checked, id) {
 		fmt.Fprintln(stdout, line)
 	}
-	for _, gap := range checked.GetCoverageGaps() {
-		if strings.HasPrefix(gap.GetMessage(), "program "+id+" preview (") {
-			fmt.Fprintf(stdout, "  %s\n", gap.GetMessage())
-		}
-	}
+	writePlanPreviewGaps(stdout, checked, id)
 	replayed := 0
 	for _, note := range checked.GetMitigationReplayNotes() {
 		if note.GetProgramId() == id {
