@@ -59,6 +59,7 @@
     "extra_instructions": "template_data.responder-incident_01-extra_instructions"
   },
   "responder/incident_shell": {
+    "symptom": "template_data.responder-incident_prompt-symptom",
     "incident_id": "template_data.responder-incident_shell-incident_id",
     "recent_changes": "template_data.responder-incident_shell-recent_changes",
     "skills_root": "template_data.responder-incident_shell-skills_root",

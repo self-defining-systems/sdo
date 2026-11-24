@@ -51,7 +51,7 @@ def _opening(request: IncidentRequest) -> list[Finding]:
     return opening or list(request.findings)
 
 
-def _page_opened(request: IncidentRequest) -> bool:
+def page_opened(request: IncidentRequest) -> bool:
     """A page (the inbox in detector mode) opened the incident: it holds no opening alert."""
     return bool(request.page) and not request.opening_keys
 
@@ -60,7 +60,7 @@ def opened_on(request: IncidentRequest) -> str:
     """Failing user tests, the failing object and condition, the page, or the external alert."""
     if request.external_message:
         return "external alert"
-    if _page_opened(request):
+    if page_opened(request):
         return "page"
     opening = _opening(request)
     tests = [
@@ -114,9 +114,12 @@ def symptom(request: IncidentRequest) -> str:
         return f"Opened on external alert{at}; return when it is fixed:\n{request.external_message.strip()}"[
             :_MAX_SYMPTOM
         ]
-    if _page_opened(request):
+    if page_opened(request):
         at = f" at {_hms(opened)} UTC" if opened else ""
-        return f"Opened on a page{at}; return when it is fixed:\n{request.page.strip()}"[:_MAX_SYMPTOM]
+        return (
+            f"Opened on a page{at}. Before returning `completed`, verify the reported problem is fixed. "
+            f"Use `failed` if you cannot verify recovery.\n{request.page.strip()}"
+        )[:_MAX_SYMPTOM]
     tests = _failing_tests(request)
     if not tests:
         return f"Opened on {opened_on(request)}" + (f" at {_hms(opened)} UTC." if opened else ".")

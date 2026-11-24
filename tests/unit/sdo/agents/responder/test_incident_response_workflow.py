@@ -131,7 +131,7 @@ def test_nothing_tells_the_responder_to_end_a_turn_to_wait() -> None:
     assert "end your turn to wait" not in text
     assert "between turns" not in text
     assert "return only to give up" in text
-    assert "only when you give up" in text
+    assert "use failed when giving up" in text
 
 
 def test_a_result_submitted_while_background_work_runs_is_told_to_be_interim() -> None:

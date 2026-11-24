@@ -124,7 +124,8 @@ func recovered(in verificationInput) recoveryCheck {
 		record.Writes = append(record.Writes, &contracts.WriteSettlement{ApplicationId: w.id, SettledAt: optionalTimestamp(w.settledAt), Settled: w.settled})
 	}
 	var pending []string
-	for _, key := range alertKeys(&in.request) {
+	keys := alertKeys(&in.request)
+	for _, key := range keys {
 		workload, scenario, ok := openingUserTest(in.request, key)
 		if !ok {
 			if detector, fingerprint, found := strings.Cut(key, "\x00"); found &&
@@ -142,6 +143,9 @@ func recovered(in verificationInput) recoveryCheck {
 	switch {
 	case !settled:
 		check.verdict, check.reason = recoveryPending, "an SDO write has not settled (its rollout is still pending)"
+	case pageOpened(&in.request) && (in.result == nil || in.result.ResolutionPath == "deterministic" ||
+		len(keys) == 0 && in.result.Status != IncidentCompleted):
+		check.verdict, check.reason = recoveryPending, "the responder has not verified recovery of the reported problem"
 	case len(pending) > 0:
 		check.verdict, check.reason = recoveryPending, "not recovered since SDO's last write settled: "+strings.Join(pending, "; ")
 	default:

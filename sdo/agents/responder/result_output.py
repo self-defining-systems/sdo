@@ -25,7 +25,7 @@ class IncidentResultValidationError(ValueError):
 def with_worker_facts(payload: dict[str, Any], incident_id: str, started_at: datetime) -> dict[str, Any]:
     """The model's reply plus what the worker knows: the incident, a completed turn and its start and end.
 
-    The model supplies only ``findings`` and ``agent_changes``; a field it did supply is kept.
+    The model supplies ``status``, ``findings`` and ``agent_changes``; a field it did supply is kept.
     """
 
     now = datetime.now(UTC)

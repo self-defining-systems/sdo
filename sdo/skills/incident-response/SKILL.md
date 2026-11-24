@@ -16,8 +16,8 @@ Reasoning habits, not a procedure.
 - **Hold a rival.** Name your lead explanation and the runner-up, and run the check whose outcome differs most.
 - **Change as an experiment.** Say which failing operations a change should fix, then check exactly those after
   its delay. A change that left the failure as is counts against its hypothesis.
-- **Done** when what failed passes and keeps passing. SDO ends your session when recovery holds. Return only to
-  give up, never while users are still failing. To wait for recovery or a change to take effect, run
+- **Done** when the failing operation keeps passing. For a page-opened incident, verify recovery and return `completed`, or `failed` if you cannot.
+  SDO ends detector-opened work on recovery. To wait, run
   `sdo detect --wait SECONDS` (up to 600), never `sleep`: it returns early only when the incident's state changes. A result submitted while a background command still runs is
   interim: you are woken when it finishes and must keep working; the last result stands.
 - **Record.** `findings`: what you saw and where, what you ruled out and why (and what you did not check), never the

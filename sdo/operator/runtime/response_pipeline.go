@@ -52,7 +52,7 @@ func (d KubernetesJobDispatcher) DeterministicResponseStage() ResponseStage {
 // Before automatic execution only the incident intent is durable. Freezing a
 // worker task here could overwrite its external payload at the later handoff.
 func (c *Controller) automaticResponsePending(request *IncidentRequest) bool {
-	if request == nil || request.PreparedAgentTask != "" || deterministicStageReport(request.PriorStages).GetHandoffSelected() {
+	if request == nil || pageOpened(request) || request.PreparedAgentTask != "" || deterministicStageReport(request.PriorStages).GetHandoffSelected() {
 		return false
 	}
 	for _, name := range c.codePath.Selection.ResponseStages {
@@ -93,13 +93,14 @@ func (d agentLifecycleDispatcher) Dispatch(ctx context.Context, request Incident
 func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRequest) dispatchCompletion {
 	dispatcher := agentLifecycleDispatcher{controller: c}
 	// A direct responder uses the original frozen task and result path.
-	if len(c.codePath.Selection.ResponseStages) > 0 && c.codePath.Selection.ResponseStages[0] == "agent" {
+	if pageOpened(&request) && deterministicStageReport(request.PriorStages) == nil ||
+		len(c.codePath.Selection.ResponseStages) > 0 && c.codePath.Selection.ResponseStages[0] == "agent" {
 		result, err := dispatcher.Dispatch(ctx, request)
 		return dispatchCompletion{result: result, err: err}
 	}
 	// Rejoin the frozen handoff with no claim-time health observation.
 	report := deterministicStageReport(request.PriorStages)
-	if report.GetHandoffSelected() || request.PreparedAgentTask != "" && report != nil {
+	if report.GetHandoffSelected() || report != nil && (request.PreparedAgentTask != "" || pageOpened(&request)) {
 		result, err := dispatcher.Dispatch(ctx, stageDispatchRequest(request))
 		state := &IncidentState{Request: request, PriorStages: cloneStageReports(request.PriorStages), Result: &result}
 		merged, encodeErr := responsePipelineResult(state, result.Timing.StartedAt, result.Timing.CompletedAt)
