@@ -65,6 +65,17 @@ func (b *Broker) acceptedEvidenceLocked(ctx context.Context) (SourceEvidence, bo
 	return b.sourceEvidenceLocked(ctx, incidentID, Receipt{IncidentID: incidentID, Commit: commit})
 }
 
+// TryAcceptedDeploymentRevision reads the deployment ledger without waiting
+// for a publisher holding its lock. The controller retries on lock contention.
+func (b *Broker) TryAcceptedDeploymentRevision(ctx context.Context) (revision string, err error) {
+	err = b.tryLocked(func() error {
+		evidence, _, err := b.acceptedEvidenceLocked(ctx)
+		revision = evidence.AcceptedCommit
+		return err
+	})
+	return revision, err
+}
+
 // AcceptedImagePins are the images the newest accepted deployment applied,
 // bound to the effective tree it deployed. They are the image part of desired
 // state (rendered.PinProvider): the controller reads them from the same

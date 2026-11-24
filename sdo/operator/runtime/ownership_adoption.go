@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -58,8 +59,9 @@ func (c *Controller) recordAdoptionError(now time.Time, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	status := c.ownershipAdoption
-	if status.SourceCommit != c.config.SourceCommit {
-		status = OwnershipAdoptionStatus{SourceCommit: c.config.SourceCommit, AcceptedObjects: status.AcceptedObjects}
+	revision := cmp.Or(c.config.DeployedCommit, c.config.SourceCommit)
+	if status.SourceCommit != revision {
+		status = OwnershipAdoptionStatus{SourceCommit: revision, AcceptedObjects: status.AcceptedObjects}
 	}
 	switch {
 	case errors.Is(err, rendered.ErrSourceUnconfigured):
@@ -130,7 +132,8 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 		return err
 	}
 	defer cancel()
-	objects, renderErr := c.drift.Source.AcceptedManifests(actionCtx, c.config.SourceCommit, c.config.Namespace)
+	revision := c.CurrentRenderedRevision()
+	objects, renderErr := c.drift.Source.AcceptedManifests(actionCtx, revision, c.config.Namespace)
 	if renderErr != nil && len(objects) == 0 {
 		return fmt.Errorf("render accepted manifests for ownership adoption: %w", renderErr)
 	}
@@ -138,9 +141,9 @@ func (c *Controller) adoptOwnership(ctx context.Context, now time.Time, snapshot
 	status := c.ownershipAdoption
 	c.mu.Unlock()
 	status.FromManagers = append([]string(nil), status.FromManagers...)
-	record := status.SourceCommit != c.config.SourceCommit || status.AdoptedObjects == 0
-	if status.SourceCommit != c.config.SourceCommit {
-		status = OwnershipAdoptionStatus{SourceCommit: c.config.SourceCommit, AcceptedObjects: status.AcceptedObjects}
+	record := status.SourceCommit != revision || status.AdoptedObjects == 0
+	if status.SourceCommit != revision {
+		status = OwnershipAdoptionStatus{SourceCommit: revision, AcceptedObjects: status.AcceptedObjects}
 	}
 	// A retry pass follows a failed one. Objects it already adopted and
 	// recorded are not dry-run again: one permanently refused object would

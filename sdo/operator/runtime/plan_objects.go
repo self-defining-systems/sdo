@@ -348,13 +348,13 @@ func (e PlanExecutor) prepareObjectAction(ctx context.Context, incident Incident
 		}
 		return nil, nil
 	}
-	if e.Source == nil || incident.SourceCommit == "" {
+	if e.Source == nil || incident.renderedRevision() == "" {
 		return nil, fmt.Errorf("accepted source is required for CreateFromSource")
 	}
 	if _, ok := e.Client.(PlanAcceptanceClient); !ok {
 		return nil, fmt.Errorf("acceptance record writer is required for CreateFromSource")
 	}
-	source, err := e.Source.AcceptedManifest(ctx, incident.SourceCommit, ref)
+	source, err := e.Source.AcceptedManifest(ctx, incident.renderedRevision(), ref)
 	if err != nil || source == nil || !samePlanRef(source, ref) {
 		return nil, fmt.Errorf("CreateFromSource requires a matching accepted object")
 	}

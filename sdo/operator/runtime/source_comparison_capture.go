@@ -61,11 +61,7 @@ func sourceInventoryComparisons(ctx context.Context, snapshot sdk.DetectionConte
 		if lister, ok := live.Source.(interface {
 			AcceptedManifests(context.Context, string, string) ([]*unstructured.Unstructured, error)
 		}); ok {
-			commit := live.SourceCommit
-			if live.SourceRevision != nil {
-				commit = live.SourceRevision()
-			}
-			objects, err := lister.AcceptedManifests(ctx, commit, namespace)
+			objects, err := lister.AcceptedManifests(ctx, live.renderedRevision(), namespace)
 			if err != nil {
 				slog.Warn("source comparison evidence gap", "namespace", namespace, "error", err)
 			}

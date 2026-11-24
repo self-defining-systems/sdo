@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -271,6 +272,7 @@ type Controller struct {
 	acknowledgmentResults chan acknowledgmentCompletion
 	reflectionResults     chan reflectionCompletion
 	head                  headPollState
+	invalidateSourceCache func()
 	reflections           reflectionQueueState
 	busy                  busyWindow
 	// startup holds a new install's openers until the application is seen
@@ -634,6 +636,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	if err := c.timePhaseErr("queued_reflections", func() error { return c.driveQueuedReflections(ctx, now) }); err != nil {
 		return err
 	}
+	c.retryDeploymentReceipt(ctx, now)
 	c.timePhase("head_poll", func() { c.driveHeadPoll(ctx, now) })
 	if c.config.ExternalIncidentsOnly {
 		c.maybeCloseIncident(ctx, now, nil)
@@ -940,7 +943,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 		retryAt := c.ownershipAdoption.RetryAt
 		retryCommit := c.ownershipAdoption.SourceCommit
 		c.mu.Unlock()
-		if retryCommit != c.config.SourceCommit || !now.Before(retryAt) {
+		if retryCommit != c.CurrentRenderedRevision() || !now.Before(retryAt) {
 			if err := c.timePhaseErr("adopt_ownership", func() error { return c.adoptOwnership(ctx, now, snapshot) }); err != nil {
 				c.recordAdoptionError(now, err)
 				if c.OnError != nil {
@@ -1334,6 +1337,7 @@ func (c *Controller) nextWake() (time.Time, string) {
 	}
 	consider(c.scheduler.NextRun(), "detector schedule")
 	c.mu.Lock()
+	consider(c.head.receiptRetryAt, "deployment receipt retry")
 	if c.head.poller != nil && !c.head.running {
 		consider(c.head.nextAt, "head poll")
 	}
@@ -1543,6 +1547,13 @@ func (c *Controller) CurrentAcceptedCommit() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.config.SourceCommit
+}
+
+// CurrentRenderedRevision is the deployed revision used by live source reads.
+func (c *Controller) CurrentRenderedRevision() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return cmp.Or(c.config.DeployedCommit, c.config.SourceCommit)
 }
 
 // detectorOrigins maps each learned detector to the incident it was

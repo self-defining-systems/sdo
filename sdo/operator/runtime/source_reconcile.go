@@ -154,7 +154,7 @@ func (e PlanExecutor) observeSourceResiduals(ctx context.Context, incident Incid
 			}
 			report.ObservationError = "direct object readback unavailable or identity changed"
 		} else {
-			source, sourceErr := acceptedIncidentManifest(readCtx, e.Source, incident.SourceCommit, incident.Namespace, ref)
+			source, sourceErr := acceptedIncidentManifest(readCtx, e.Source, incident.renderedRevision(), incident.Namespace, ref)
 			if sourceErr != nil || source == nil || !samePlanRef(source, ref) {
 				report.ObservationError = "accepted source unavailable for readback comparison"
 			} else {

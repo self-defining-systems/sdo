@@ -44,6 +44,9 @@ type headPollState struct {
 	poller  *HeadPoller
 	running bool
 	nextAt  time.Time
+
+	lastObservedReceipt string
+	receiptRetryAt      time.Time
 }
 
 // SetHeadPoller makes the controller deploy branch heads SDO did not write
@@ -77,9 +80,7 @@ func (c *Controller) driveHeadPoll(ctx context.Context, now time.Time) {
 	c.mu.Unlock()
 	actionCtx, cancel, err := c.actionContext(ctx)
 	if err != nil {
-		c.mu.Lock()
-		c.head.running = false
-		c.mu.Unlock()
+		c.handleHeadCompletion(reflectionCompletion{head: &lifecycle.HeadResult{}, deployedRevision: c.readAcceptedDeployment(ctx), err: err})
 		return
 	}
 	c.goBackground(func() {
@@ -92,7 +93,7 @@ func (c *Controller) driveHeadPoll(ctx context.Context, now time.Time) {
 		if err == nil && result.Outcome != lifecycle.HeadCurrent {
 			slog.Info("head_deployment", "outcome", string(result.Outcome), "commit", result.Commit, "hold", string(result.Hold), "detail", result.Detail, "detector_coverage", result.Verdict.CoverageNotes)
 		}
-		c.reflectionResults <- reflectionCompletion{head: true, err: err}
+		c.reflectionResults <- reflectionCompletion{head: &result, deployedRevision: c.readAcceptedDeployment(ctx), err: err}
 	})
 }
 
@@ -100,10 +101,70 @@ func (c *Controller) driveHeadPoll(ctx context.Context, now time.Time) {
 // and tried again at the next interval: a failed look never blocks the queue.
 func (c *Controller) handleHeadCompletion(completion reflectionCompletion) {
 	c.mu.Lock()
+	if completion.deployedRevision != "" {
+		c.acceptDeploymentLocked(completion.deployedRevision)
+	} else if completion.head.Outcome == lifecycle.HeadDeployed {
+		c.acceptDeploymentLocked(completion.head.Commit)
+	}
 	c.head.running = false
 	c.mu.Unlock()
 	if completion.err != nil {
 		c.reportBrokerError("deploy branch head", completion.err)
+	}
+}
+
+func (c *Controller) readAcceptedDeployment(ctx context.Context) string {
+	c.mu.Lock()
+	var reader lifecycle.HeadBroker
+	if c.head.poller != nil {
+		reader = c.head.poller.Deployer.Broker
+	}
+	if native, ok := c.broker.(*NativeIncidentBroker); ok && native.Repository != nil {
+		reader = native.Repository
+	}
+	c.mu.Unlock()
+	if reader == nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	revision, err := reader.TryAcceptedDeploymentRevision(ctx)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.head.receiptRetryAt = time.Time{}
+	if err != nil {
+		c.head.receiptRetryAt = c.clock().Add(DefaultHeadPollInterval)
+		slog.Warn("read accepted deployment revision", "error", err)
+		return ""
+	}
+	return revision
+}
+
+func (c *Controller) syncDeploymentReceipt(ctx context.Context) {
+	revision := c.readAcceptedDeployment(ctx)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.acceptDeploymentLocked(revision)
+}
+
+func (c *Controller) retryDeploymentReceipt(ctx context.Context, now time.Time) {
+	c.mu.Lock()
+	retry := !c.head.receiptRetryAt.IsZero() && !now.Before(c.head.receiptRetryAt)
+	c.mu.Unlock()
+	if retry {
+		c.syncDeploymentReceipt(ctx)
+	}
+}
+
+func (c *Controller) acceptDeploymentLocked(revision string) {
+	if revision == "" || revision == c.head.lastObservedReceipt {
+		return
+	}
+	c.head.lastObservedReceipt = revision
+	c.config.DeployedCommit = revision
+	c.sourceInventory = nil
+	if c.invalidateSourceCache != nil {
+		c.invalidateSourceCache()
 	}
 }
 

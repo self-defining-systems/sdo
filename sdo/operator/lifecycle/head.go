@@ -18,6 +18,7 @@ type HeadBroker interface {
 	// HeadToDeploy syncs the branch and names the accepted head when its
 	// effective source differs from the newest recorded deployment.
 	HeadToDeploy(ctx context.Context) (change broker.HeadChange, needed bool, err error)
+	TryAcceptedDeploymentRevision(context.Context) (string, error)
 	AcceptedSourceEvidence(ctx context.Context) (accepted broker.AcceptedSource, found bool, err error)
 	HeadCheckout(ctx context.Context, commit string) (path string, release func(), err error)
 	RecordHeadDeployment(ctx context.Context, commit string, evidence broker.SourceEvidence) error
@@ -123,7 +124,7 @@ func (h HeadDeployer) Deploy(ctx context.Context, cfg RepairConfig) (HeadResult,
 	}
 	if notices, ok := h.Holds.(HeadDeployments); ok && out.Outcome == HeadDeployed {
 		if err := notices.Deployed(ctx, change, out); err != nil {
-			return HeadResult{}, fmt.Errorf("record head deployment notice: %w", err)
+			return out, fmt.Errorf("record head deployment notice: %w", err)
 		}
 	}
 	return out, nil

@@ -58,6 +58,15 @@ func (c *manifestCache) read(ctx context.Context, source Source, revision, names
 	return objects, nil
 }
 
+// InvalidateCache drops renders taken before a new deployment receipt existed.
+func (s Source) InvalidateCache() {
+	if s.cache != nil {
+		s.cache.mu.Lock()
+		defer s.cache.mu.Unlock()
+		s.cache.entries = nil
+	}
+}
+
 func copyManifests(objects []*unstructured.Unstructured) []*unstructured.Unstructured {
 	if objects == nil {
 		return nil

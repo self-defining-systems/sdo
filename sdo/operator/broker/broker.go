@@ -799,6 +799,14 @@ func (b *Broker) locked(fn func() error) error {
 }
 
 func (b *Broker) lockedAt(path string, fn func() error) error {
+	return b.lockedWith(path, syscall.LOCK_EX, fn)
+}
+
+func (b *Broker) tryLocked(fn func() error) error {
+	return b.lockedWith(b.lockPath, syscall.LOCK_EX|syscall.LOCK_NB, fn)
+}
+
+func (b *Broker) lockedWith(path string, flags int, fn func() error) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -807,7 +815,7 @@ func (b *Broker) lockedAt(path string, fn func() error) error {
 		return err
 	}
 	defer file.Close()
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+	if err := syscall.Flock(int(file.Fd()), flags); err != nil {
 		return err
 	}
 	defer syscall.Flock(int(file.Fd()), syscall.LOCK_UN)

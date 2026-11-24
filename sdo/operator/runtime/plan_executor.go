@@ -757,10 +757,10 @@ func (e PlanExecutor) prepareAction(ctx context.Context, incident IncidentReques
 	next := current.DeepCopy()
 	switch a := action.(type) {
 	case program.ReconcileFromSource:
-		if e.Source == nil || incident.SourceCommit == "" {
+		if e.Source == nil || incident.renderedRevision() == "" {
 			return nil, errors.New("accepted source is required for reconcile")
 		}
-		source, err := acceptedIncidentManifest(ctx, e.Source, incident.SourceCommit, incident.Namespace, a.Ref)
+		source, err := acceptedIncidentManifest(ctx, e.Source, incident.renderedRevision(), incident.Namespace, a.Ref)
 		if err != nil {
 			return nil, err
 		}

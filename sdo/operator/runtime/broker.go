@@ -48,6 +48,6 @@ type closureCompletion struct {
 }
 
 type acknowledgmentCompletion struct {
-	effectID string
-	err      error
+	effectID, deployedRevision string
+	err                        error
 }
