@@ -123,10 +123,12 @@ class Row:
     fixed_in_window: bool | None
     window_bad_user_s: float | None
     inject_to_last_bad_s: float | None
+    first_episode_end_s: float | None = None
     inject_to_page_s: float | None = None
     page_source: str = "n.a."
     ttf_s: float | None = None
     ttf_source: str = "unavailable"
+    agent_wall_s: float | None = None
     anchor_to_last_write_s: float | None = None
     last_write_source: str | None = None
     last_write_at: str | None = None
@@ -424,9 +426,9 @@ def _vanilla(row: Row, op: Path, inject: datetime | None, observed: list[Documen
     done = _read(op / "done.json")
     start, end = _time(done.get("started_at")), _time(done.get("ended_at"))
     row.inject_to_page_s = _seconds(inject, start)
-    row.ttf_s = _seconds(start, end)
-    if row.ttf_s is not None:
-        row.ttf_source = "agent_start_to_end"
+    # The headline time to fix ends at the last fixing write for both arms (set by _record_write); the agent's
+    # session end includes its own verification after the fix, so it is kept apart.
+    row.agent_wall_s = _seconds(start, end)
     transcript = op / "transcript.jsonl"
     usage = _read(op / "usage.json")
     if not usage:
@@ -453,6 +455,29 @@ def _vanilla(row: Row, op: Path, inject: datetime | None, observed: list[Documen
     )
     if last:
         _record_write(row, start, last, observed)
+        row.ttf_s, row.ttf_source = row.anchor_to_last_write_s, last.source
+
+
+EPISODE_GAP_S = 30
+
+
+def first_episode_end(record: Document, inject: datetime | None) -> float | None:
+    """Seconds from the inject to the last bad second of the first failure episode: an episode ends at the first
+    clean gap of EPISODE_GAP_S seconds, so isolated later blips (churn, a single failed request) do not extend it."""
+    users = _object(record.get("users"))
+    start, bad = _time(users.get("start")), users.get("bad")
+    if inject is None or start is None or not isinstance(bad, list):
+        return None
+    offset = (inject - start).total_seconds()
+    seconds = [i - offset for i, value in enumerate(bad) if value and i >= offset]
+    if not seconds:
+        return None
+    end = seconds[0]
+    for second in seconds[1:]:
+        if second - end > EPISODE_GAP_S:
+            break
+        end = second
+    return end
 
 
 def _plan_writes(doc: Document) -> Iterator[Write]:
@@ -658,6 +683,7 @@ def measure(run: Path) -> Row:
         _number(_object(record.get("window")).get("BadSeconds")),
         _number(record.get("last_bad_second")),
     )
+    row.first_episode_end_s = first_episode_end(record, inject)
     observed = list(_objects(_object(lifecycle.get("observed")).get("mutations") or record.get("observed_mutations")))
     if arm == "sdo":
         _sdo(row, run, manifest, collect, inject, observed)
