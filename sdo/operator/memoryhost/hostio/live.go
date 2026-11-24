@@ -17,6 +17,8 @@ import (
 	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/program"
 	"sdo.dev/operator/sdk/sdktest"
+	"sdo.dev/operator/sdk/servicehealth"
+	"sdo.dev/operator/sdk/traffic"
 	"strconv"
 	"strings"
 	"time"
@@ -97,6 +99,21 @@ func (v *LiveReadView) QueryMetrics(q metrics.Query) metrics.Result {
 		return r
 	}
 	return metrics.Result{Query: q, Error: metrics.NotFrozenError}
+}
+
+// MetricResult, AlertsResult, TrafficWindow and ServiceReachability answer
+// from the cycle observation the controller sent, which carries every result
+// its own view froze. The embedded replay holds no recording and must not
+// answer them.
+func (v *LiveReadView) MetricResult(id string) (metrics.Result, bool) {
+	return v.Snapshot.MetricResult(id)
+}
+func (v *LiveReadView) AlertsResult() (metrics.AlertsResult, bool) { return v.Snapshot.AlertsResult() }
+func (v *LiveReadView) TrafficWindow(name string) (traffic.Window, bool) {
+	return v.Snapshot.TrafficWindow(name)
+}
+func (v *LiveReadView) ServiceReachability() (servicehealth.ReachabilityWindow, bool) {
+	return v.Snapshot.ServiceReachability()
 }
 func (v *LiveReadView) Logs(ref sdk.ObjectRef, container string, since time.Duration) (string, error) {
 	if ref.Kind != "Pod" || ref.Namespace != v.Namespace() || ref.Name == "" || since < 0 || v.client == nil {
