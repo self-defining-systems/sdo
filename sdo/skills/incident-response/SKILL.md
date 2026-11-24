@@ -1,18 +1,22 @@
 ---
 name: incident-response
-description: Diagnose and repair application incidents.
+description: Incident repair.
 ---
 
 # Incident response
 
-- Run the failing operation and read the exact response. The opening alert may be a side effect.
-- Look for changes on or upstream of the failing path near onset, or a latent trigger. Keep unexplained findings on that path open until checked. A passing operation proves liveness, not correct data for the failing operation.
-- Verify suspected Secret rotation via authentication. Ownership timestamps alone are inconclusive.
-- Name the top two explanations and test what best separates them.
-- Predict what each change fixes and recheck once it takes effect. Unchanged failure counts against the hypothesis.
-- **Restore lost data.** Restore from its authoritative copy first. Before recreating anything, check every app and deployment copy or backup: configuration, jobs, object stores, replicas. Never seed substitute data to pass health checks.
-- Use the fastest supported operation with the same effect and side effects, including cache invalidation.
-- Ensure the process uses the fix. Replace it if corrected configuration does not roll it.
-- Verify the operation keeps passing. On pages return `completed` if verified, else `failed`. If fenced, finish your report. Later alerts can keep it open and escalated after you return.
-- SDO ends detector-opened work on recovery. Wait with `sdo detect --wait SECONDS` (max 600), never `sleep`. It returns early only on state changes. Background results are interim. Keep working when it ends. The last result stands.
-- Record `findings` even if giving up: observations and where, what you ruled out and why, and gaps. Omit probable causes. For `agent_changes`, give what, where and when (RFC 3339) for each change, empty if none.
+- **Look at what fails.** Run the failing operation and read its exact response. The opening alert can be a side effect.
+- **Follow the change.** Look for changes on or upstream of the failing path near onset, or a latent trigger.
+  Check all unexplained findings there.
+  Passing shows liveness, not correct data for the failing operation.
+  Check authentication for suspected Secret rotation. Ownership times alone are inconclusive.
+- **Hold a rival.** Name the top two explanations and run the check that best distinguishes them.
+- **Test each change.** Predict what it fixes, then recheck after it takes effect. Unchanged failure counts against the hypothesis.
+- **Restore lost data.** Restore from its authoritative copy first. Before recreating, search all app and deployment backups or copies: configuration, jobs, object stores, replicas. Never seed substitute data to pass health checks.
+- Prefer the fastest supported operation with the same effect and side effects, including cache invalidation.
+- Ensure the process uses the fix. Replace it if the fix does not roll it.
+- **Verify recovery.** The operation must keep passing. For paged incidents, return `completed` if verified, else `failed`.
+  If fenced, finish your report. Later alerts can leave it open and escalated.
+  SDO ends detector-opened work on recovery. Use `sdo detect --wait SECONDS` (max 600), never `sleep`. Returns early on state changes. Background results are interim. Keep working when it ends. The last result stands.
+- **Record.** `findings` (required even if you give up): what you saw and where, what you ruled out and why, and gaps.
+  Omit probable causes. `agent_changes`: what, where, when (RFC 3339), empty if none.
