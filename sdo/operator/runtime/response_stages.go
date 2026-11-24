@@ -132,6 +132,7 @@ func RunStageAgain(ctx context.Context, state *IncidentState, stage ResponseStag
 		report.ApplyCompletedAt = earlier.ApplyCompletedAt
 		report.RecoveryDeadline = earlier.RecoveryDeadline
 		report.StabilityDeadline = earlier.StabilityDeadline
+		report.StabilityDeadlineEvaluated = earlier.StabilityDeadlineEvaluated
 		report.RecoveryWait = earlier.RecoveryWait
 		report.HandoffSelected = earlier.HandoffSelected
 		report.HandoffKeys = earlier.HandoffKeys

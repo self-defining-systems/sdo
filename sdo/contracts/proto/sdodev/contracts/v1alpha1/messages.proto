@@ -808,6 +808,8 @@ message StageReport {
   // The saved dispatch decision and its exact residual alert set.
   bool handoff_selected = 13;
   repeated string handoff_keys = 14;
+  // The single decision at stability_deadline has been consumed.
+  bool stability_deadline_evaluated = 15;
 }
 
 // HandoffState is what the controller knows about a repair its automatic stage

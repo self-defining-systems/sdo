@@ -12,47 +12,75 @@ import (
 	"sdo.dev/operator/sdk"
 )
 
-// automaticRecoveryLocked is the controller's only automatic-stage dispatch
-// decision. An extension defers dispatch while Recovered gathers evidence.
-// The completed stage report and dispatch state are saved together
-// before ordinary dispatch preparation publishes a worker task.
-func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.StageReport, snapshot sdk.DetectionContext, check recoveryCheck, rolloutBlockers []sdk.Finding) {
+// automaticRecoveryLocked decides whether the shared recovery proof can close
+// the incident, whether to hand off, and when an unsettled wait must end.
+// The stage report and dispatch decision are saved before any worker task.
+func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.StageReport, snapshot sdk.DetectionContext, check recoveryCheck, rolloutBlockers []sdk.Finding, verified bool) (closeIncident bool, escalationReason string) {
 	observedAt := laterObservationTime(now, c.clock())
 	request := c.currentIncidentRequest
 	applied := playbookWrote(report)
-	refused := stagePlanRefused(report)
-	scoped := applied || refused
-	deadline := c.automaticDeadlineLocked(report)
-	if applied && report.RecoveryDeadline == nil {
-		report.RecoveryDeadline = contractTimestamp(c.automaticApplyDeadlineLocked(report))
+	scoped := applied || stagePlanRefused(report)
+	extension := report.GetStabilityDeadline()
+	if extension.IsValid() && observedAt.Before(extension.AsTime()) {
+		return false, ""
 	}
-	if scoped && observedAt.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
-		return
+	if verified {
+		if extension.IsValid() {
+			report.StabilityDeadlineEvaluated = true
+		}
+		return true, ""
 	}
 
 	keys := alertKeys(request)
 	if scoped {
-		var firing, unavailable []string
-		if snapshot != nil {
-			firing, unavailable = c.automaticAlertStatusLocked(now, *request, keys, snapshot)
-		} else {
-			unavailable = keys
+		deadline := c.automaticApplyDeadlineLocked(report)
+		if applied && report.RecoveryDeadline == nil {
+			report.RecoveryDeadline = contractTimestamp(deadline)
 		}
-		if len(firing) == 0 && !report.GetStabilityDeadline().IsValid() {
-			extension := c.automaticVerificationExtensionLocked(observedAt, *request)
-			report.StabilityDeadline = contractTimestamp(extension)
-			if observedAt.Before(extension) {
-				return
+		if observedAt.Before(deadline) {
+			return false, ""
+		}
+
+		if !report.GetStabilityDeadlineEvaluated() {
+			var firing, unavailable []string
+			if snapshot != nil {
+				firing, unavailable = c.automaticAlertStatusLocked(now, *request, keys, snapshot)
+			} else {
+				unavailable = keys
 			}
-		}
-		keys = firing
-		if report.GetStabilityDeadline().IsValid() {
-			keys = append(keys, unavailable...)
+			if len(firing) == 0 && !extension.IsValid() {
+				end := c.automaticVerificationExtensionLocked(observedAt, *request)
+				report.StabilityDeadline = contractTimestamp(end)
+				if observedAt.Before(end) {
+					return false, ""
+				}
+			}
+			if report.GetStabilityDeadline().IsValid() {
+				report.StabilityDeadlineEvaluated = true
+			}
+			keys = append(firing, unavailable...)
 			slices.Sort(keys)
+		} else {
+			// A clear decision consumed the handoff opportunity. Continue to
+			// observe Recovered without reopening it on a subsequent read.
+			keys = nil
 		}
 		if len(keys) == 0 {
-			// A clear alert set still has to pass the shared recovery proof.
-			return
+			if observedAt.Before(c.automaticResponseDeadlineLocked()) || !c.closureStableSince.IsZero() {
+				return false, ""
+			}
+			reason := "recovery unconfirmed at response deadline"
+			if len(rolloutBlockers) != 0 || check.record != nil && !check.record.GetWritesSettled() {
+				reason = "write never settled"
+			}
+			if report.Error != "" {
+				report.Error += ". "
+			}
+			report.Error += reason
+			markAutomaticRecovery(report, observedAt, contracts.RecoveryWait_EXIT_REASON_DEADLINE)
+			markUnsettledRollouts(report, check.record, rolloutBlockers)
+			c.escalateLocked(observedAt)
+			return true, reason
 		}
 	} else if !stageEscalatedIn(request.PriorStages) {
 		keys = findingKeys(request.Findings)
@@ -65,7 +93,7 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 		(request.ResponseDeadline.IsZero() || observedAt.Before(request.ResponseDeadline))
 	if !canDispatch || stageEscalatedIn(request.PriorStages) || !agentMayFollowPlaybook(c.config.AfterPlaybook, request.PriorStages) {
 		c.escalateLocked(observedAt)
-		return
+		return false, ""
 	}
 
 	report.HandoffSelected = true
@@ -77,6 +105,7 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	c.responderCompletedAt = time.Time{}
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_PENDING
 	c.resetDispatchRetryLocked()
+	return false, ""
 }
 
 // A scoped firing sample identifies the failing keys. A pending, errored
@@ -136,10 +165,20 @@ func (c *Controller) automaticVerificationExtensionLocked(now time.Time, request
 }
 
 func (c *Controller) automaticDeadlineLocked(report *contracts.StageReport) time.Time {
+	if report.GetStabilityDeadlineEvaluated() {
+		return c.automaticResponseDeadlineLocked()
+	}
 	if at := report.GetStabilityDeadline(); at.IsValid() {
 		return at.AsTime()
 	}
 	return c.automaticApplyDeadlineLocked(report)
+}
+
+func (c *Controller) automaticResponseDeadlineLocked() time.Time {
+	if at := c.currentIncidentRequest.ResponseDeadline; !at.IsZero() {
+		return at
+	}
+	return c.recoveryGraceEndsLocked()
 }
 
 func (c *Controller) automaticApplyDeadlineLocked(report *contracts.StageReport) time.Time {
@@ -232,15 +271,6 @@ func (c *Controller) automaticObservationContext(ctx context.Context, now time.T
 		return ctx, func() {}
 	}
 	return context.WithTimeout(ctx, remaining)
-}
-
-func (c *Controller) loseAutomaticObservation(now time.Time, snapshot sdk.DetectionContext) {
-	c.resetEarlyStability()
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if report := c.awaitingAutomaticRecoveryLocked(); (playbookWrote(report) || stagePlanRefused(report)) && !c.midStage.running && !c.closurePreparingLocked() {
-		c.automaticRecoveryLocked(now, report, snapshot, recoveryCheck{}, nil)
-	}
 }
 
 // A controller restart restores the already-written application's journal on

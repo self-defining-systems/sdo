@@ -100,6 +100,13 @@ func TestAutomaticRecoveryWaitsOnlyForClosure(t *testing.T) {
 	}
 	autoStep(t, c, world.clock, 3*time.Second)
 	autoStep(t, c, world.clock, time.Second)
+	if closed.Result != nil {
+		t.Fatal("recovery shortened the fixed extension")
+	}
+	autoStep(t, c, world.clock, extension.Sub(world.clock.Now()))
+	if c.IncidentOpen() {
+		autoStep(t, c, world.clock, 0)
+	}
 	if closed.Result == nil || deterministicStageReport(closed.Request.PriorStages).GetRecoveryWait().GetExitReason() != contracts.RecoveryWait_EXIT_REASON_CLEARED {
 		t.Fatalf("closure did not award the stage its recovery result: %+v", closed)
 	}
@@ -365,8 +372,10 @@ func TestAutomaticRecoveryUsesClearSampleThatCrossesDeadline(t *testing.T) {
 			t.Fatalf("clear sample crossing the deadline did not enter stability: report=%v escalated=%v", report, c.escalatedAt)
 		}
 		c.provider = world
-		for range 4 {
-			autoStep(t, c, world.clock, time.Second)
+		extension := report.GetStabilityDeadline().AsTime()
+		autoStep(t, c, world.clock, extension.Sub(world.clock.Now()))
+		if c.IncidentOpen() {
+			autoStep(t, c, world.clock, 0)
 		}
 		if closed.Result == nil || !closed.EscalatedAt.IsZero() {
 			t.Fatalf("stability did not close the recovered incident: stable since %v now %v report %v", c.closureStableSince, world.clock.Now(), report)
@@ -752,5 +761,125 @@ func TestAlertJoiningDuringAutomaticExtensionKeepsTheDeadline(t *testing.T) {
 	if !report.GetStabilityDeadline().AsTime().Equal(extension) || !report.GetHandoffSelected() ||
 		!slices.Equal(report.GetHandoffKeys(), []string{findingKey(probe.finding())}) || !restarted.escalatedAt.IsZero() {
 		t.Fatalf("late alert failed to hand off at the restored deadline: %v", report)
+	}
+}
+
+func TestAutomaticExtensionWaitsDespiteLaterStageEscalation(t *testing.T) {
+	c, world, _ := automaticRecoveryWorld(t, settlingCase{}, settings.AfterPlaybookAgent)
+	report := autoReport(c)
+	deadline := report.GetRecoveryDeadline().AsTime()
+	probe := &deadlineConfirmationProbe{
+		windowedSettlingDetector: c.detectors["traffic-health"].(windowedSettlingDetector),
+		unavailable:              true,
+	}
+	c.detectors[probe.id] = probe
+	c.responderLoop.Detectors[0] = probe
+	report.Mitigations = append(report.Mitigations, &contracts.StageMitigation{PlaybookId: "later", Result: stageEscalated})
+	autoStep(t, c, world.clock, deadline.Sub(world.clock.Now()))
+	end := report.GetStabilityDeadline().AsTime()
+	if !end.After(deadline) {
+		t.Fatal("stage escalation did not allow a verification extension")
+	}
+	autoStep(t, c, world.clock, time.Second)
+	if !c.escalatedAt.IsZero() || report.GetHandoffSelected() || !report.GetStabilityDeadline().AsTime().Equal(end) {
+		t.Fatal("later stage escalation bypassed the fixed extension")
+	}
+	autoStep(t, c, world.clock, end.Sub(world.clock.Now()))
+	if !c.escalatedAt.Equal(end) || report.GetHandoffSelected() {
+		t.Fatal("out-of-reach stage attempt did not retain its escalation policy at expiry")
+	}
+}
+
+func TestAutomaticExtensionConsumedDespiteLaterUnavailableRead(t *testing.T) {
+	c, world, _ := automaticRecoveryWorld(t, settlingCase{healAfter: time.Second}, settings.AfterPlaybookAgent)
+	report := autoReport(c)
+	deadline := report.GetRecoveryDeadline().AsTime()
+	probe := &deadlineConfirmationProbe{windowedSettlingDetector: c.detectors["traffic-health"].(windowedSettlingDetector)}
+	c.detectors[probe.id] = probe
+	c.responderLoop.Detectors[0] = probe
+	setRolloutUnsettled(t, world, sdk.ObjectRef{Kind: "Deployment", Namespace: "app", Name: "api"})
+	autoStep(t, c, world.clock, deadline.Sub(world.clock.Now()))
+	end := report.GetStabilityDeadline().AsTime()
+	autoStep(t, c, world.clock, end.Sub(world.clock.Now()))
+	if report.GetHandoffSelected() || !c.escalatedAt.IsZero() {
+		t.Fatal("clear alerts at the extension end transferred ownership")
+	}
+	probe.unavailable = true
+	autoStep(t, c, world.clock, time.Second)
+	if report.GetHandoffSelected() || !c.escalatedAt.IsZero() {
+		t.Fatal("a failed read after the extension end transferred ownership")
+	}
+
+	state, err := c.ExportState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := NewController(c.config, []sdk.Detector{probe}, world, c.dispatcher, world.clock.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted.now, restarted.codePath = world.clock.Now, c.codePath
+	if err := restarted.RestoreState(state); err != nil {
+		t.Fatal(err)
+	}
+	autoStep(t, restarted, world.clock, time.Second)
+	if autoReport(restarted).GetHandoffSelected() || !restarted.escalatedAt.IsZero() {
+		t.Fatal("a restart reopened the extension decision")
+	}
+}
+
+func TestAutomaticUnsettledWriteEndsAtResponseDeadline(t *testing.T) {
+	c, world, closed := automaticRecoveryWorld(t, settlingCase{healAfter: time.Second}, settings.AfterPlaybookAgent)
+	setRolloutUnsettled(t, world, sdk.ObjectRef{Kind: "Deployment", Namespace: "app", Name: "api"})
+	deadline := autoReport(c).GetRecoveryDeadline().AsTime()
+	autoStep(t, c, world.clock, deadline.Sub(world.clock.Now()))
+	end := autoReport(c).GetStabilityDeadline().AsTime()
+	autoStep(t, c, world.clock, end.Sub(world.clock.Now()))
+	bound := c.currentIncidentRequest.ResponseDeadline
+	c.scheduler = NewScheduler(nil, end)
+	if got := c.NextWake(); !got.Equal(bound) {
+		t.Errorf("wake after spent extension = %s, want response deadline %s", got, bound)
+	}
+	autoStep(t, c, world.clock, bound.Sub(world.clock.Now())-time.Millisecond)
+	if !c.IncidentOpen() || !c.escalatedAt.IsZero() {
+		t.Fatal("the pending write escalated before the response deadline")
+	}
+	if err := world.clock.advance(t.Context(), time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Step(t.Context(), bound, nil); err != nil {
+		t.Fatal(err)
+	}
+	if c.IncidentOpen() || !closed.EscalatedAt.Equal(bound) || closed.HealthClearedAt != nil || len(closed.FinalDetectorStates) != 0 || closed.UnconfirmedDetail != "write never settled" {
+		t.Fatalf("response deadline did not freeze an unverified unsettled-write escalation: open=%v escalated=%v detail=%q", c.IncidentOpen(), closed.EscalatedAt, closed.UnconfirmedDetail)
+	}
+	outcome, err := (ProtoOutcomeDeriver{}).Derive(t.Context(), *closed, "", "synthetic", "synthetic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := outcome.Record
+	attempt := deterministicStageReport(closed.Request.PriorStages).GetMitigations()[0]
+	trust := ProgramTrustStats([]*contracts.OutcomeRecord{record})[attempt.GetPlaybookId()]
+	if record.GetClassification() != outcomeclass.Escalated || record.GetTimestamps().GetVerifiedAt() != nil || !attempt.GetRolloutUnsettledAtDeadline() || trust.Failures != 1 {
+		t.Fatalf("escalation lost its rollout or trust evidence: classification=%s, attempt=%v, trust=%+v", record.GetClassification(), attempt, trust)
+	}
+}
+
+func TestAutomaticStageDeadlineHandsOffWholeUnresolvedSet(t *testing.T) {
+	extra := &deadlineConfirmationProbe{
+		windowedSettlingDetector: windowedSettlingDetector{settlingDetector: settlingDetector{id: "traffic-other", class: sdk.DetectorClassHealth}},
+		unavailable:              true,
+	}
+	c, world, _ := automaticRecoveryWorld(t, settlingCase{}, settings.AfterPlaybookAgent, extra)
+	extra.clock = world.clock
+	joined := sdk.Finding{DetectorID: extra.id, RuleID: "probe.other", Status: sdk.FindingActive, PrimaryResource: sdk.ObjectRef{Kind: "Deployment", Namespace: "app", Name: "other"}}
+	c.currentIncidentRequest.Findings = append(c.currentIncidentRequest.Findings, joined)
+	c.currentIncidentRequest.JoinedKeys = []string{findingKey(joined)}
+	report := autoReport(c)
+	autoStep(t, c, world.clock, report.GetRecoveryDeadline().AsTime().Sub(world.clock.Now()))
+	want := slices.Clone(alertKeys(c.currentIncidentRequest))
+	slices.Sort(want)
+	if !report.GetHandoffSelected() || !slices.Equal(report.GetHandoffKeys(), want) || report.GetStabilityDeadline().IsValid() {
+		t.Fatalf("handoff keys = %v, want %v", report.GetHandoffKeys(), want)
 	}
 }

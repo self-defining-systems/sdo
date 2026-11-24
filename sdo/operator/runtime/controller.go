@@ -702,7 +702,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	endSnapshot()
 	if err != nil {
 		if ctx.Err() == nil {
-			c.loseAutomaticObservation(now, nil)
+			c.resetEarlyStability()
 			if c.maybeCloseIncidentObserved(ctx, ctx, now, nil, err) {
 				// The run loop must persist and process the escalated closure.
 				return nil
@@ -948,7 +948,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 
 	c.timePhase("close_incident", func() {
 		if observationCtx.Err() != nil && ctx.Err() == nil {
-			c.loseAutomaticObservation(now, snapshot)
+			c.maybeCloseIncidentObserved(ctx, ctx, now, snapshot, observationCtx.Err())
 			return
 		}
 		c.maybeCloseIncidentObserved(ctx, observationCtx, now, snapshot, nil)
@@ -1351,28 +1351,29 @@ func (c *Controller) nextWake() (time.Time, string) {
 	verificationPending := c.incidentOpen && c.responderDone && c.currentIncidentRequest != nil &&
 		(c.escalatedAt.IsZero() || pageOpened(c.currentIncidentRequest)) && !c.midStage.running && !c.closurePreparingLocked()
 	verificationDeadline := time.Time{}
+	automatic := c.awaitingAutomaticRecoveryLocked()
 	if verificationPending {
-		verificationDeadline = c.recoveryGraceEndsLocked()
-		if report := c.awaitingAutomaticRecoveryLocked(); report != nil {
-			verificationDeadline = c.automaticDeadlineLocked(report)
-			if report.GetStabilityDeadline().IsValid() && !verificationDeadline.After(c.clock()) {
-				// Clear alerts may still need rollout settlement or stability.
-				// Keep observing without repeatedly waking at the spent bound.
-				verificationDeadline = c.clock().Add(time.Second)
+		if automatic != nil {
+			verificationDeadline = c.automaticDeadlineLocked(automatic)
+			// At the response cap a clear, settled incident can finish
+			// its running stability proof on that window's own wake.
+			if automatic.GetStabilityDeadlineEvaluated() && !verificationDeadline.After(c.clock()) && !c.closureStableSince.IsZero() {
+				verificationDeadline = time.Time{}
 			}
-		}
-		if c.earlyStopRetryAt.After(verificationDeadline) {
-			verificationDeadline = c.earlyStopRetryAt
-		}
-		// A running stability window outlives the deadline; its own wake
-		// below covers it, and an expired deadline would spin the loop.
-		if !verificationDeadline.After(c.clock()) && c.recoveryWindowRunningLocked(c.clock()) {
-			verificationDeadline = time.Time{}
+		} else {
+			verificationDeadline = c.recoveryGraceEndsLocked()
+			if c.earlyStopRetryAt.After(verificationDeadline) {
+				verificationDeadline = c.earlyStopRetryAt
+			}
+			if !verificationDeadline.After(c.clock()) && c.recoveryWindowRunningLocked(c.clock()) {
+				verificationDeadline = time.Time{}
+			}
 		}
 	}
 	earlyDeadline := time.Time{}
 	earlyReason := "closure stability window"
-	if c.incidentOpen && !c.closurePreparingLocked() && !c.closureStableSince.IsZero() {
+	extensionPending := automatic.GetStabilityDeadline().IsValid() && !automatic.GetStabilityDeadlineEvaluated()
+	if c.incidentOpen && !c.closurePreparingLocked() && !c.closureStableSince.IsZero() && !extensionPending {
 		earlyDeadline = c.closureStableSince.Add(c.config.ClosureStabilityWindow)
 	}
 	if c.earlyReportPendingLocked() {
@@ -1788,7 +1789,8 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		c.dispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
 		c.dispatchError = ""
 		c.currentIncidentResult = cloneIncidentResult(&completion.result)
-		if completion.automatic != nil && stageEscalatedIn(c.currentIncidentRequest.PriorStages) {
+		report := deterministicStageReport(c.currentIncidentRequest.PriorStages)
+		if completion.automatic != nil && !playbookWrote(report) && !stagePlanRefused(report) && stageEscalatedIn(c.currentIncidentRequest.PriorStages) {
 			c.escalateLocked(observedAt)
 		}
 		c.resetDispatchRetryLocked()
@@ -1859,33 +1861,38 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 	}
 	page := pageOpened(c.currentIncidentRequest)
 	pageBoundReached := page && !early && !now.Before(c.recoveryGraceEndsLocked())
-	if observationErr != nil && !pageBoundReached {
+	automatic := c.awaitingAutomaticRecoveryLocked()
+	scopedAutomatic := playbookWrote(automatic) || stagePlanRefused(automatic)
+	if observationErr != nil && !pageBoundReached && !scopedAutomatic {
 		c.mu.Unlock()
 		return false
 	}
 	loop := c.responderLoop
 	request := *cloneIncidentRequest(c.currentIncidentRequest)
-	automatic := c.awaitingAutomaticRecoveryLocked()
 	var automaticDeadline time.Time
 	if playbookWrote(automatic) {
 		automaticDeadline = c.automaticApplyDeadlineLocked(automatic)
 	}
-	restore := loop == nil && playbookWrote(automatic)
+	restore := observationErr == nil && loop == nil && playbookWrote(automatic)
 	c.mu.Unlock()
 	if restore {
 		var err error
 		loop, err = c.restoreAutomaticLoop(observationCtx, request)
 		if err != nil {
 			if ctx.Err() == nil {
-				c.loseAutomaticObservation(now, nil)
 				c.reportBrokerError("restore automatic repair journal", err)
+				return c.maybeCloseIncidentObserved(ctx, ctx, now, nil, err)
 			}
 			return false
 		}
 	}
-	restorePending, wrote := c.advanceAutomaticRestores(observationCtx, now, loop, automatic, automaticDeadline)
-	if wrote {
-		return false
+	var restorePending bool
+	if observationErr == nil {
+		var wrote bool
+		restorePending, wrote = c.advanceAutomaticRestores(observationCtx, now, loop, automatic, automaticDeadline)
+		if wrote {
+			return false
+		}
 	}
 	var guard *apihistory.MutationObservation
 	release := func() {}
@@ -1913,10 +1920,10 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 	}
 	if observationErr != nil {
 		if ctx.Err() == nil {
-			c.loseAutomaticObservation(now, nil)
+			c.resetEarlyStability()
 			c.reportBrokerError("verify observation scope", observationErr)
 		}
-		if !pageBoundReached {
+		if !pageBoundReached && !scopedAutomatic {
 			return false
 		}
 	}
@@ -1954,7 +1961,7 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 	}
 	if observationCtx.Err() != nil {
 		if ctx.Err() == nil {
-			c.loseAutomaticObservation(now, snapshot)
+			return c.maybeCloseIncidentObserved(ctx, ctx, now, snapshot, observationCtx.Err())
 		}
 		return false
 	}
@@ -2053,16 +2060,19 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		}
 	}
 
-	if !verified && !terminalFailure {
-		if early {
+	var automaticEscalation string
+	if stage := c.awaitingAutomaticRecoveryLocked(); stage != nil && !terminalFailure {
+		if !verified && stage.GetRecoveryWait().GetExitReason() == contracts.RecoveryWait_EXIT_REASON_CLEARED {
+			stage.RecoveryWait = nil
+		}
+		var closeIncident bool
+		closeIncident, automaticEscalation = c.automaticRecoveryLocked(now, stage, snapshot, recovery, source.Rollouts, verified)
+		if !closeIncident {
 			c.mu.Unlock()
 			return false
 		}
-		if stage := c.awaitingAutomaticRecoveryLocked(); stage != nil {
-			if stage.GetRecoveryWait().GetExitReason() == contracts.RecoveryWait_EXIT_REASON_CLEARED {
-				stage.RecoveryWait = nil
-			}
-			c.automaticRecoveryLocked(now, stage, snapshot, recovery, source.Rollouts)
+	} else if !verified && !terminalFailure {
+		if early {
 			c.mu.Unlock()
 			return false
 		}
@@ -2181,12 +2191,15 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 	if page && !verified && closure.Result != nil {
 		closure.Result.UnresolvedFindings = append([]sdk.Finding(nil), verification.Findings...)
 	}
-	if !verified && !terminalFailure && len(verification.Findings) == 0 {
+	if !verified && !terminalFailure && (automaticEscalation != "" || len(verification.Findings) == 0) {
 		closure.UnconfirmedReason = contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVATION_INCOMPLETE
 		if verification.Error != "" {
 			closure.UnconfirmedReason = contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_OBSERVER_UNAVAILABLE
 		}
 		closure.UnconfirmedDetail = verification.Summary
+		if automaticEscalation != "" {
+			closure.UnconfirmedDetail = automaticEscalation
+		}
 		// Pending/error states are outcome evidence, not independently cleared
 		// causes. Preserve every named blocker through the memory edge.
 		for _, blocker := range verification.VerificationBlockers {

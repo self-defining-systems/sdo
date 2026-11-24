@@ -4854,8 +4854,10 @@ type StageReport struct {
 	// The saved dispatch decision and its exact residual alert set.
 	HandoffSelected bool     `protobuf:"varint,13,opt,name=handoff_selected,json=handoffSelected,proto3" json:"handoff_selected,omitempty"`
 	HandoffKeys     []string `protobuf:"bytes,14,rep,name=handoff_keys,json=handoffKeys,proto3" json:"handoff_keys,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// The single decision at stability_deadline has been consumed.
+	StabilityDeadlineEvaluated bool `protobuf:"varint,15,opt,name=stability_deadline_evaluated,json=stabilityDeadlineEvaluated,proto3" json:"stability_deadline_evaluated,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
 }
 
 func (x *StageReport) Reset() {
@@ -4984,6 +4986,13 @@ func (x *StageReport) GetHandoffKeys() []string {
 		return x.HandoffKeys
 	}
 	return nil
+}
+
+func (x *StageReport) GetStabilityDeadlineEvaluated() bool {
+	if x != nil {
+		return x.StabilityDeadlineEvaluated
+	}
+	return false
 }
 
 // HandoffState is what the controller knows about a repair its automatic stage
@@ -5985,7 +5994,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x0eapplication_id\x18\x01 \x01(\tR\rapplicationId\x129\n" +
 	"\n" +
 	"settled_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\tsettledAt\x12\x18\n" +
-	"\asettled\x18\x03 \x01(\bR\asettled\"\xe5\x06\n" +
+	"\asettled\x18\x03 \x01(\bR\asettled\"\xa7\a\n" +
 	"\vStageReport\x12\x1d\n" +
 	"\x05stage\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x05stage\x12L\n" +
 	"\vmitigations\x18\x02 \x03(\v2*.sdodev.contracts.v1alpha1.StageMitigationR\vmitigations\x12D\n" +
@@ -6002,7 +6011,8 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x11recovery_deadline\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\x10recoveryDeadline\x12I\n" +
 	"\x12stability_deadline\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\x11stabilityDeadline\x12)\n" +
 	"\x10handoff_selected\x18\r \x01(\bR\x0fhandoffSelected\x12!\n" +
-	"\fhandoff_keys\x18\x0e \x03(\tR\vhandoffKeys\"\xa1\n" +
+	"\fhandoff_keys\x18\x0e \x03(\tR\vhandoffKeys\x12@\n" +
+	"\x1cstability_deadline_evaluated\x18\x0f \x01(\bR\x1astabilityDeadlineEvaluated\"\xa1\n" +
 	"\n" +
 	"\fHandoffState\x12V\n" +
 	"\frepair_state\x18\x01 \x01(\x0e23.sdodev.contracts.v1alpha1.HandoffState.RepairStateR\vrepairState\x120\n" +
