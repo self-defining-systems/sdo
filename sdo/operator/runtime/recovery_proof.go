@@ -44,30 +44,16 @@ func (c *Controller) recoveryProofForEpochLocked(now time.Time, states []Detecto
 	if c.recoveryObserverStarted.After(since) {
 		since = c.recoveryObserverStarted
 	}
-	for _, state := range states {
-		clear, ok := c.detectorClearSince[state.DetectorID]
-		if !ok || state.Status != DetectorEvaluationClear {
-			c.closureStableSince = time.Time{}
-			return false
-		}
-		if clear.After(since) {
-			since = clear
-		}
-	}
 	if c.recoverySafetyLost {
+		// Lost safety restarts the window at the first safe observation.
 		since = now
+	}
+	held, _ := recoveryHeld(&c.closureStableSince, now, c.config.ClosureStabilityWindow, states, c.detectorClearSince, since, "")
+	if !c.closureStableSince.IsZero() {
+		// The run started: every detector was evaluated clear.
 		c.recoverySafetyLost = false
 	}
-	// Starting a new observer requires a fresh window, even if persisted detector
-	// streaks predate its restart. A live observer may overlap tracker clearing.
-	if c.closureStableSince.IsZero() {
-		c.closureStableSince = since
-	}
-	if since.After(c.closureStableSince) {
-		c.closureStableSince = since
-	}
-	stableAt := c.closureStableSince.Add(c.config.ClosureStabilityWindow)
-	return !now.Before(stableAt)
+	return held
 }
 
 // Completed receipt timestamps bound the applied write, independently of how

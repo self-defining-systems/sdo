@@ -83,47 +83,10 @@ func (d KubernetesJobDispatcher) beforeFirstResponderClaim(ctx context.Context, 
 	if response.Error != "" {
 		return nil, fmt.Errorf("observe saved recovery before responder claim: %s", response.Error)
 	}
-	// A claim follows an applied write: only the alert set (opening alerts plus joined user tests) decides whether a
-	// worker is still needed.
-	scope := newRecoveryScope(alertKeys(&state.Request))
-	state.Findings = holdingFindings(scope, state.Findings)
-	state.refreshUnexplained()
-	openingDetectors := map[string]bool{}
-	for _, finding := range state.Request.Findings {
-		if scope.holds(finding) {
-			openingDetectors[finding.DetectorID] = true
-		}
-	}
-	_, refreshed := loop.settleRecoveryApplicationsLocked(ctx, IncidentResult{PlanApplications: loop.applicationEvidenceLocked()}, state.PriorStages)
-	if updated := deterministicStageReport(refreshed); updated != nil {
-		proto.Reset(report)
-		proto.Merge(report, updated)
-	}
-	// Health recovery and attribution are separate facts. A historical receipt
-	// may fail settlement even though independent detectors confirm that no work
-	// remains. Such a receipt must not force a needless model invocation.
-	if len(state.Findings) == 0 && len(response.DetectorStates) > 0 {
-		clear := true
-		for _, evaluation := range response.DetectorStates {
-			clear = clear && (evaluation.Status == DetectorEvaluationClear || !openingDetectors[evaluation.DetectorID])
-		}
-		if clear {
-			// The same proof the stage's own recovery wait requires. One
-			// observation cannot show Recovered holding through a stability
-			// window, so the wait below observes it and hands off what stays
-			// unproven.
-			view, err := loop.snapshotView(ctx)
-			recovery := stageRecovery{window: loop.StabilityWindow}
-			clear = err == nil && recovery.observe(lifecycleio.Now(), decideStageRecovery(loop.stageRecoveryCheck(ctx, view, state), "") == stageCleared)
-		}
-		if clear {
-			report.RecoveryWait = &contracts.RecoveryWait{ExitReason: contracts.RecoveryWait_EXIT_REASON_CLEARED}
-			report.RemainingFindingFingerprints = nil
-			state.ProgramToolCalls = append([]ToolCall(nil), loop.calls...)
-			state.RepairActions = ProgramRepairReceipts(loop.applicationEvidenceLocked(), nil)
-			return state, nil
-		}
-	}
+	// The stage's own wait decides, with the one Recovered evaluator, against
+	// the deadline it persisted: a wait that already ended observes once more
+	// (one observation never credits a stability window), and a resumed one
+	// keeps observing until that deadline.
 	stage := &DeterministicResponseStage{}
 	// Old checkpoints lacking the private deadline cannot mint a fresh wait on
 	// every dispatch. Bound observation from their last immutable write receipt.

@@ -104,6 +104,16 @@ func openingUserTest(request IncidentRequest, key string) (workload, scenario st
 	return "", "", false
 }
 
+// requestHolds reports whether the request carries the finding of key.
+func requestHolds(request IncidentRequest, key string) bool {
+	for _, finding := range request.Findings {
+		if FindingStateKey(finding.DetectorID, FindingFingerprint(finding)) == key {
+			return true
+		}
+	}
+	return false
+}
+
 // recovered is Recovered, the one predicate that closes an incident, clears
 // the automatic stage and ends the responder session: no SDO write is still
 // rolling out, and every user test of the incident's alert set (opening
@@ -132,6 +142,12 @@ func recovered(in verificationInput) recoveryCheck {
 	for _, key := range alertKeys(&in.request) {
 		workload, scenario, ok := openingUserTest(in.request, key)
 		if !ok {
+			if detectorID, _, _ := strings.Cut(key, "\x00"); strings.HasPrefix(detectorID, memory.TrafficDetectorPrefix) && !requestHolds(in.request, key) {
+				// An alert-set user test whose finding the request no longer
+				// carries cannot be evaluated: it is not recovered.
+				userTests++
+				pending = append(pending, "user test of "+detectorID+" has no finding to evaluate")
+			}
 			continue
 		}
 		userTests++

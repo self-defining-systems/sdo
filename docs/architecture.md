@@ -371,30 +371,32 @@ re-prompts the agent. A joined alert (or a clue) that a learned playbook can bin
 after the responder returns never escalates an incident whose alerts are clear while the stability window is still running. Credit and symptom matching keep `opening_keys`. Clues never hold it. The controller asks it before
 closing and before marking the responder verified; the broker asks it again at freeze (a user test that has not
 passed by its horizon plus the stability window commits `unconfirmed`, `OBSERVATION_INCOMPLETE`). That confirmation judges only the alert set: of a probe workload, only the scenarios whose findings are opening or joined alerts must have enough usable samples, and a sibling scenario that never alerted neither blocks nor counts; the stage's
-recovery wait and the claim-time check (`stageRecoveryCheck`) exit `CLEARED` only once it held, with the stage's open
-findings clear, through the stability window, as closure requires (`stageRecovery`; one observation never proves it,
-so the claim-time check and the lag extension credit only what they observed holding through the window, and alerts that
-re-fire inside it hand off exactly as a failed stage); they keep waiting while a program
-still diagnoses its fault, and otherwise hand off only at a bound anchored on the observed settle of SDO's writes: the
-first time they are seen settled (Kubernetes reports the written workloads rolled out and Ready) fixes the anchor and
-the deadline, and no later Pod event (a workload that keeps becoming Ready) moves either. The alert set must clear
-within the longest clearing horizon among its still-open members plus the closure stability window after that anchor,
-the time Recovered would take had the repair worked at settle, so an application converging later than its detectors'
-own lag is still credited to the stage; past that only a running stability window keeps the stage, at most one more
-window. The stage never observes past half of the response budget left when it started, so the responder always
-inherits the other half. A
+recovery wait (also the claim-time check, which only resumes that wait) exits `CLEARED` only on Recovered as closure
+decides it: one shared evaluator, `recoveryHeld` (`runtime/recovery_hold.go`), which closure's stability proof also
+calls. It holds when no alert-set finding is open, `recovered()` is verified, no program still diagnoses its fault,
+and every detector that owns a member of the alert set (`recoveryDetectorSet`; health detectors when the alert set
+names none) was evaluated clear (missing, pending, failed or unavailable is not clear, so silence never counts), and
+that held at every observation through the stability window from the later of the last write's settle and the
+detectors' clear streaks; one observation never proves it. A user-test key of the alert set whose finding the request
+no longer carries cannot be evaluated and keeps `recovered()` pending. Otherwise the stage hands off at one deadline
+per attempt, never moved: before settle the pre-settle floor plus the written workloads' observed startup; at the
+first observed settle of SDO's writes (Kubernetes reports the written workloads rolled out and Ready) it becomes
+settle + the longest clearing horizon among the alert set's open members + two stability windows (one for the
+application's own convergence, such as caches, one for Recovered to hold) + one observation interval, so an
+application converging later than its detectors' own lag is still credited. No later Pod event moves it, every
+observation runs under its context, and the stage hands off as soon as Recovered can no longer hold by it. The
+response deadline is the only outer bound. A
 finding that judges current state only (no evaluation window) and outlives its own horizon after settle hands off at once.
 Before settle the bound is the pre-settle floor plus the written workloads' observed startup (under
 `response.after_playbook: wait` the bound is `response.after_playbook_wait` and only a refuted or failed write ends the
 wait early), and the wait exits `NOTHING_APPLIED` when no learned playbook applied. The closure and outcome carry `RecoveryVerification`: `since`, `writes_settled`, per-write settle times,
 `opening_keys` and `stable_since`.
-After a stage applied a repair that detectors have not confirmed, the stage's recovery wait is extended by Go to
-one detector window when the program no longer matches and only probe lag remains (`runtime/handoff_state.go`).
-The residual probe's SLO error rate must not rise while it waits. The deterministic `StageReport` then carries a
-typed `handoff_state`: `residual_findings[].residual_class` is `PROBE_LAG`, `BASELINE_CLUE` (in
+After a stage applied a repair that detectors have not confirmed, the deterministic `StageReport` carries a
+typed `handoff_state` (`runtime/handoff_state.go`; no further wait: the deadline above already includes the
+detectors' lag): `residual_findings[].residual_class` is `BASELINE_CLUE` (in
 `IncidentRequest.standing_keys`, the clues already active at open, and unchanged in severity and summary) or
-`ACTIVE`; `observe_only` (with `observe_until`, after which the responder reports what remains for a human)
-holds only when the program does not match and every residual is lag or baseline, and the responder is then given
+`ACTIVE` (`PROBE_LAG` is no longer produced); `observe_only` (with `observe_until`, after which the responder reports what remains for a human)
+holds only when the program does not match and every residual is baseline, and the responder is then given
 the observe-first instruction; otherwise `mutation_rounds_per_finding` is 1. This is guidance carried by the task,
 not a refusal: SDO refuses no repair for its kind.
 Data effects never change the outcome: each applied effect is recorded as a `data effect:` line in the

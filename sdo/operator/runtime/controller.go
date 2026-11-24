@@ -235,7 +235,7 @@ type Controller struct {
 	// detectorClearSince maps each detector to the start of its current
 	// streak of clear evaluations; a firing or erroring evaluation ends
 	// the streak. Guarded by mu.
-	detectorClearSince      map[string]time.Time
+	detectorClearSince      clearStreaks
 	pendingClosure          *IncidentClosure
 	closureState            contracts.ClosureState
 	closureReceipt          *ClosureReceipt
@@ -1425,16 +1425,10 @@ func noObservation(err error) bool {
 func (c *Controller) trackClearStreak(detectorID string, now time.Time, clear bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !clear {
-		delete(c.detectorClearSince, detectorID)
-		return
-	}
 	if c.detectorClearSince == nil {
-		c.detectorClearSince = make(map[string]time.Time)
+		c.detectorClearSince = clearStreaks{}
 	}
-	if _, ok := c.detectorClearSince[detectorID]; !ok {
-		c.detectorClearSince[detectorID] = now.UTC()
-	}
+	c.detectorClearSince.track(detectorID, now, clear)
 }
 
 // healthClearedAtLocked bounds repair attribution by the incident's findings.

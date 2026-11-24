@@ -479,7 +479,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	if err := ctx.Err(); err != nil {
 		return report, err
 	}
-	if err := stage.settleLagBeforeHandoff(ctx, loop, state, report, save); err != nil {
+	if err := stage.recordHandoffState(loop, state, report, save); err != nil {
 		return report, err
 	}
 	// Use the responder's completion verifier for final field equivalence;
@@ -977,35 +977,91 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			return err
 		}
 	}
-	// Re-entry and legacy receipt reconstruction retain the responder's share
-	// of the response budget as well as the shared recovery bound.
-	if end := stageObservationEnd(report, state.Request.ResponseDeadline); !end.IsZero() && end.Before(progress.RecoveryDeadline) {
-		progress.RecoveryDeadline = end
-	}
-	observe, cancel := context.WithDeadline(ctx, progress.RecoveryDeadline)
-	defer func() { cancel() }()
-	// rebound moves the observation context to a deadline set once the
-	// writes are seen settled.
-	rebound := func() {
-		cancel()
-		observe, cancel = context.WithDeadline(ctx, progress.RecoveryDeadline)
+	// The response deadline is the only outer bound, on entry and on re-entry.
+	if deadline := state.Request.ResponseDeadline; !deadline.IsZero() && deadline.Before(progress.RecoveryDeadline) {
+		progress.RecoveryDeadline = deadline
 	}
 	interval := stage.ObservationInterval
 	if interval <= 0 {
 		interval = 250 * time.Millisecond
 	}
+	// Every observation (snapshot, detector evaluation, settlement) runs under
+	// the stage's one deadline: none outlives it.
+	// A re-entry past its deadline still gets its one observation.
+	observeUntil := progress.RecoveryDeadline
+	if floor := lifecycleio.Now().Add(interval); floor.After(observeUntil) {
+		observeUntil = floor
+	}
+	observe, cancel := context.WithDeadline(ctx, observeUntil)
+	defer func() { cancel() }()
+	// rebound moves observation to the deadline fixed at the observed settle.
+	rebound := func() {
+		cancel()
+		observe, cancel = context.WithDeadline(ctx, progress.RecoveryDeadline)
+	}
 	effects := recoveryEffects{}
-	recovery := stageRecovery{window: loop.StabilityWindow}
-	for {
+	// Recovered is recoveryHeld over the stage's own observations: the same
+	// decision closure makes, on the same alert-set detectors.
+	known, health := detectorIDs(loop.Detectors)
+	streaks := clearStreaks{}
+	var run time.Time
+	window := loop.StabilityWindow
+	for first := true; ; first = false {
+		if !first {
+			left := progress.RecoveryDeadline.Sub(now())
+			if left <= 0 {
+				exit = contracts.RecoveryWait_EXIT_REASON_DEADLINE
+				return ctx.Err()
+			}
+			if err := wait(observe, min(interval, left)); err != nil || observe.Err() != nil {
+				if observe.Err() != nil && ctx.Err() == nil {
+					exit = contracts.RecoveryWait_EXIT_REASON_DEADLINE
+					return nil
+				}
+				return err
+			}
+			// A restored workload template may leave a Pod its controller will not
+			// replace; one sample at apply time can be too early to see it.
+			loop.replaceStuckRevisionPods(observe)
+		}
+		// Observe first, every pass after a write: a re-entry past its deadline
+		// still takes one observation, and one observation never credits a
+		// window. A stage that wrote nothing has nothing to observe yet.
+		response := ToolResponse{}
+		if !first || playbookWrote(report) {
+			loop.verify(observe, nil, &response, true)
+			updateStageFindings(state, response)
+			_, stages := loop.settleRecoveryApplicationsLocked(observe, IncidentResult{PlanApplications: loop.applicationEvidenceLocked()}, []*contracts.StageReport{report})
+			if len(stages) > 0 {
+				proto.Reset(report)
+				proto.Merge(report, stages[0])
+			}
+			// Scoped settlement retires only the targets with bound recovery proof.
+			for _, attempt := range report.Mitigations {
+				if attempt.Result == "applied_cleared" {
+					clearVerifiedStageTargets(state, attempt, attempt.ClearedFindingFingerprints, response)
+				}
+			}
+			if err := save(false); err != nil {
+				return err
+			}
+		}
+		observedAt := now()
+		for _, evaluation := range response.DetectorStates {
+			streaks.track(evaluation.DetectorID, observedAt, evaluation.Status == DetectorEvaluationClear)
+		}
 		state.syncAlertSet()
 		scope = newRecoveryScope(alertKeys(&state.Request))
 		pending := false
 		applied := false
+		// failure is positive evidence the stage's writes did not work; it ends
+		// the wait unless Recovered already holds.
+		failure, failureExit := "", contracts.RecoveryWait_EXIT_REASON_FAILED
 		var settling []*contracts.StageMitigation
 		for _, attempt := range report.Mitigations {
 			if reason := attempt.GetApplyReceipt().GetRolloutPending().GetReasonCode(); reason == "rollout_stalled" || reason == "admission_blocked" {
-				exit = contracts.RecoveryWait_EXIT_REASON_BLOCKER
-				return nil
+				failure, failureExit = "rollout "+reason, contracts.RecoveryWait_EXIT_REASON_BLOCKER
+				break
 			}
 			if attempt.GetApplyReceipt().GetApplied() && !attempt.GetApplyReceipt().GetRolledBack() {
 				applied = true
@@ -1018,8 +1074,8 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 				// A write still taking effect, or one whose remaining findings only wait
 				// for their detectors to re-observe it, is checked below once a view exists.
 				if !writeVerifiedForSettling(attempt) && !writeTakingEffect(attempt) {
-					branch = "write refuted: " + attempt.GetPlaybookId() + " " + attempt.GetApplyReceipt().GetSettlementRejectionReason().String()
-					return nil
+					failure = "write refuted: " + attempt.GetPlaybookId() + " " + attempt.GetApplyReceipt().GetSettlementRejectionReason().String()
+					continue
 				}
 				if attempt.GetApplyReceipt().GetRolloutPending() != nil {
 					pending = true
@@ -1028,27 +1084,32 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 				settling = append(settling, attempt)
 			default:
 				// Real failure or a verified dependency needs another actor.
-				branch = "attempt " + attempt.GetPlaybookId() + " " + attempt.Result
-				return nil
+				failure = "attempt " + attempt.GetPlaybookId() + " " + attempt.Result
 			}
 		}
-		if !applied && len(state.Findings) > 0 {
+		fail := func() error {
+			exit, branch = failureExit, failure
+			return nil
+		}
+		if failure != "" && (pending || failureExit == contracts.RecoveryWait_EXIT_REASON_BLOCKER) {
+			return fail()
+		}
+		if failure == "" && !applied && len(state.Findings) > 0 {
 			exit = contracts.RecoveryWait_EXIT_REASON_NOTHING_APPLIED
 			return nil
 		}
-		if !applied && !pending && len(state.Findings) == 0 {
+		if failure == "" && !applied && !pending && len(state.Findings) == 0 {
 			// No write of this stage to prove: detector clearance decides.
 			exit = contracts.RecoveryWait_EXIT_REASON_CLEARED
 			return nil
-		}
-		if recoveryTimeLeft(stage, progress.RecoveryDeadline, 0) == 0 {
-			exit = contracts.RecoveryWait_EXIT_REASON_DEADLINE
-			return ctx.Err()
 		}
 		view, viewErr := loop.snapshotView(observe)
 		if viewErr != nil {
 			// The stage cannot observe recovery, so another actor takes over; say why.
 			slog.Warn("recovery_wait_snapshot_unavailable", "incident_id", state.Request.IncidentID, "error", viewErr)
+			if !now().Before(progress.RecoveryDeadline) {
+				exit = contracts.RecoveryWait_EXIT_REASON_DEADLINE
+			}
 			if len(held) == 0 {
 				held, heldReason = sortedFindings(seen), "recovery could not be observed"
 			}
@@ -1069,7 +1130,9 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 		// clue no detector re-observes and no attempt covered cannot clear by
 		// waiting, so it neither blocks nor times out the wait.
 		open, unrelated := splitStageFindings(state.Findings, loop.Detectors, report.Mitigations, scope)
-		if !pending {
+		if pending {
+			run = time.Time{}
+		} else {
 			check := loop.stageRecoveryCheck(observe, view, state)
 			horizonOf := func(id string) (horizon, window time.Duration) {
 				for _, detector := range loop.Detectors {
@@ -1100,12 +1163,20 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 					matching = "program " + attempt.GetPlaybookId() + " still diagnoses the fault after its write"
 				}
 			}
-			// Recovered, as closure judges it: the shared predicate (whose user
-			// tests also hold through the trailing stability window) with every
-			// open finding clear, holding through the stability window. Only
-			// that credits the stage's writes and skips the responder.
-			holds := len(open) == 0 && decideStageRecovery(check, matching) == stageCleared
-			if recovery.observe(now(), holds) {
+			blocked := ""
+			switch {
+			case len(open) > 0:
+				blocked = "finding " + FindingFingerprint(open[0]) + " still active"
+			case check.verdict == recoveryPending:
+				blocked = check.reason
+			case matching != "":
+				blocked = matching
+			}
+			// Recovered, exactly as closure decides it: only that credits the
+			// stage's writes and skips the responder.
+			required := alertSetStates(recoveryDetectorSet(state.Request, known, health), response.DetectorStates)
+			recoveredHeld, reason := recoveryHeld(&run, now(), window, required, streaks, check.record.GetSince().AsTime(), blocked)
+			if recoveredHeld {
 				exit = contracts.RecoveryWait_EXIT_REASON_CLEARED
 				if len(unrelated) > 0 {
 					slog.Info("recovery_wait_unrelated_findings", "incident_id", state.Request.IncidentID, "count", len(unrelated))
@@ -1115,14 +1186,8 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 				promoteSettledAttempts(settling)
 				return nil
 			}
-			reason := check.reason
-			switch {
-			case len(open) > 0:
-				reason = "finding " + FindingFingerprint(open[0]) + " still active"
-			case matching != "":
-				reason = matching
-			case holds:
-				reason = "recovery has not yet held through the stability window"
+			if failure != "" {
+				return fail()
 			}
 			if len(open) == 0 {
 				held, heldReason = sortedFindings(seen), reason
@@ -1133,151 +1198,77 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			} else {
 				settled = -1
 			}
-			// Once SDO's writes have settled, a finding that judges current state
-			// only (no evaluation window) and is still active past its own horizon
-			// says the fault is there now: hand off.
 			if settled >= 0 && stage.WaitBound <= 0 {
+				// Once SDO's writes have settled, a finding that judges current
+				// state only (no evaluation window) and is still active past its
+				// own horizon says the fault is there now: hand off.
 				for _, finding := range open {
 					if _, window := horizonOf(finding.DetectorID); window == 0 && settled >= findingHorizon(finding) {
 						branch = "finding " + FindingFingerprint(finding) + " judges current state and persisted past its horizon after the stage's writes settled"
 						return nil
 					}
 				}
-				// Windowed findings and user tests aggregate over time, and with
-				// them the application's own convergence (caches, retries). The
-				// alert set must clear within the longest clearing horizon of its
-				// open members plus the stability window (the allowance closure
-				// gives Recovered) after the writes settled, then hold through the
-				// stability window. The settle is the one first observed: a later
-				// Pod event (a workload that keeps becoming Ready) never moves it,
-				// and the deadline is fixed then.
-				horizon := check.horizon + 2*interval
-				for _, finding := range open {
-					horizon = max(horizon, findingHorizon(finding))
-				}
 				if progress.SettledAt.IsZero() {
+					// The one hand-off deadline, fixed at the first observed settle
+					// and never moved by a later Pod event: windowed findings and
+					// user tests aggregate over time, and with them the
+					// application's own convergence (caches, retries), so the alert
+					// set may clear within the longest clearing horizon of its open
+					// members plus one stability window, then must hold through the
+					// stability window; one more observation decides it.
+					horizon := check.horizon + 2*interval
+					for _, finding := range open {
+						horizon = max(horizon, findingHorizon(finding))
+					}
 					progress.SettledAt = check.record.GetSince().AsTime()
-					// One more observation at the end of the window decides it.
-					if deadline := stage.settledDeadline(report, progress.RecoveryDeadline, progress.SettledAt.Add(horizon+2*loop.StabilityWindow+interval), state.Request.ResponseDeadline); deadline.After(progress.RecoveryDeadline) {
-						progress.RecoveryDeadline = deadline
+					if stage.Budget <= 0 && stage.ObservationCeiling <= 0 {
+						progress.RecoveryDeadline = progress.SettledAt.Add(horizon + 2*window + interval)
+						if deadline := state.Request.ResponseDeadline; !deadline.IsZero() && deadline.Before(progress.RecoveryDeadline) {
+							progress.RecoveryDeadline = deadline
+						}
 						rebound()
 					}
 					if err := save(false); err != nil {
 						return err
 					}
 				}
-				// Past the bound only a stability window already running keeps
-				// the stage; alerts that re-fire inside it hand off at once. A
-				// program still matching over clear alerts is judged below.
-				alertsClear := len(open) == 0 && check.verdict != recoveryPending
-				if !alertsClear && !now().Before(progress.SettledAt.Add(horizon+loop.StabilityWindow)) {
-					branch = "not recovered by its settle-anchored bound: " + reason
+				// Recovered can no longer hold by the deadline once its window
+				// has not started (or restarted) by the deadline minus the
+				// window: hand off now.
+				latest := progress.RecoveryDeadline.Add(-window)
+				if running := !run.IsZero() && blocked == "" && !run.After(latest); !running && !now().Before(latest) {
+					branch = "not recovered by its settle-anchored deadline: " + reason
 					return nil
 				}
-			}
-			if matching != "" && check.verdict != recoveryPending && len(open) == 0 {
-				var window time.Duration
-				for _, finding := range seen {
-					_, w := horizonOf(finding.DetectorID)
-					window = max(window, w)
+				if matching != "" && check.verdict != recoveryPending && len(open) == 0 {
+					var window time.Duration
+					for _, finding := range seen {
+						_, w := horizonOf(finding.DetectorID)
+						window = max(window, w)
+					}
+					if settled >= window {
+						branch = matching
+						return nil
+					}
 				}
-				if settled >= window && stage.WaitBound <= 0 {
-					branch = matching
-					return nil
-				}
 			}
 		}
-		left := progress.RecoveryDeadline.Sub(now())
-		if left <= 0 {
-			exit = contracts.RecoveryWait_EXIT_REASON_DEADLINE
-			return nil
-		}
-		if err := wait(observe, min(interval, left)); err != nil {
-			if observe.Err() != nil && ctx.Err() == nil {
-				exit = contracts.RecoveryWait_EXIT_REASON_DEADLINE
-				return nil
-			}
-			return err
-		}
-		if observe.Err() != nil || recoveryTimeLeft(stage, progress.RecoveryDeadline, 0) == 0 {
-			exit = contracts.RecoveryWait_EXIT_REASON_DEADLINE
-			return ctx.Err()
-		}
-		// A restored workload template may leave a Pod its controller will not
-		// replace; one sample at apply time can be too early to see it.
-		loop.replaceStuckRevisionPods(observe)
-		response := ToolResponse{}
-		loop.verify(observe, nil, &response, true)
-		updateStageFindings(state, response)
-		_, stages := loop.settleRecoveryApplicationsLocked(observe, IncidentResult{PlanApplications: loop.applicationEvidenceLocked()}, []*contracts.StageReport{report})
-		if len(stages) > 0 {
-			proto.Reset(report)
-			proto.Merge(report, stages[0])
-		}
-		// Scoped settlement retires only the targets with bound recovery proof.
-		for _, attempt := range report.Mitigations {
-			if attempt.Result == "applied_cleared" {
-				clearVerifiedStageTargets(state, attempt, attempt.ClearedFindingFingerprints, response)
-			}
-		}
-		if err := save(false); err != nil {
-			return err
+		if failure != "" {
+			return fail()
 		}
 	}
 }
 
-// settledDeadline is the recovery deadline once the stage's writes have
-// settled: the settle-anchored bound when it is later than the deadline set
-// before the writes settled, never past the stage's share of the response
-// budget. A test budget or observation ceiling keeps the deadline it set.
-func (stage *DeterministicResponseStage) settledDeadline(report *contracts.StageReport, current, bound, responseDeadline time.Time) time.Time {
-	if stage.Budget > 0 || stage.ObservationCeiling > 0 {
-		return current
+// detectorIDs are the IDs of detectors and of the health detectors among them.
+func detectorIDs(detectors []sdk.Detector) (all, health []string) {
+	for _, detector := range detectors {
+		spec := detector.Spec()
+		all = append(all, spec.ID)
+		if spec.Class == sdk.DetectorClassHealth {
+			health = append(health, spec.ID)
+		}
 	}
-	if end := stageObservationEnd(report, responseDeadline); !end.IsZero() && end.Before(bound) {
-		bound = end
-	}
-	if bound.After(current) {
-		return bound
-	}
-	return current
-}
-
-// stageObservationEnd is the latest the automatic stage may observe: halfway
-// from its start to the response deadline, so the responder always inherits
-// at least half of the budget left when the stage started. Zero when the
-// incident has no response deadline.
-func stageObservationEnd(report *contracts.StageReport, responseDeadline time.Time) time.Time {
-	if responseDeadline.IsZero() {
-		return time.Time{}
-	}
-	started := report.GetStartedAt()
-	if started == nil || !started.AsTime().Before(responseDeadline) {
-		return responseDeadline
-	}
-	return started.AsTime().Add(responseDeadline.Sub(started.AsTime()) / 2)
-}
-
-// stageRecovery is Recovered as the stage observes it over time: closure
-// credits recovery only once it held through the stability window, and so
-// does the stage. A single observation proves it only without a window.
-type stageRecovery struct {
-	window time.Duration
-	since  time.Time
-}
-
-// observe records whether Recovered holds at now and reports whether it has
-// held, at every observation, through the stability window. An observation
-// that does not hold restarts the window.
-func (r *stageRecovery) observe(now time.Time, holds bool) bool {
-	if !holds {
-		r.since = time.Time{}
-		return false
-	}
-	if r.since.IsZero() {
-		r.since = now
-	}
-	return !now.Before(r.since.Add(r.window))
+	return all, health
 }
 
 // writtenWorkloadsStartup is the longest observed startup of the workloads the
@@ -1396,26 +1387,6 @@ func writeTakingEffect(attempt *contracts.StageMitigation) bool {
 		return true
 	}
 	return false
-}
-
-// stageDecision is what the stage's wait does once every finding is clear.
-type stageDecision int
-
-const (
-	stageWait stageDecision = iota
-	stageCleared
-)
-
-// decideStageRecovery applies Recovered to a stage whose findings have all
-// cleared: it clears (the responder is skipped) when the opening alerts
-// recovered. A program that still diagnoses its fault, or opening user tests
-// that have not passed since the stage's writes settled, keep it waiting; the
-// stage budget then hands off.
-func decideStageRecovery(check recoveryCheck, matching string) stageDecision {
-	if matching != "" || check.verdict == recoveryPending {
-		return stageWait
-	}
-	return stageCleared
 }
 
 // promoteSettledAttempts records attempts whose remaining findings cleared on

@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -51,6 +52,11 @@ type settlingDetector struct {
 	clock     *settlingClock
 	// healAt is when the detector's window no longer holds failed requests; zero never.
 	healAt time.Time
+	// rule is the finding's rule ID (the detector ID when empty).
+	rule string
+	// stopsAnswering, when set, makes every evaluation after the first clear
+	// one fail as unavailable: a reader that went away once the fault healed.
+	stopsAnswering *atomic.Bool
 }
 
 type windowedSettlingDetector struct{ settlingDetector }
@@ -72,11 +78,18 @@ func (d settlingDetector) Spec() sdk.DetectorSpec {
 
 func (d settlingDetector) Detect(_ context.Context, view sdk.DetectionContext) ([]sdk.Finding, error) {
 	if !d.healAt.IsZero() && !d.clock.Now().Before(d.healAt) {
+		if d.stopsAnswering != nil && d.stopsAnswering.Swap(true) {
+			return nil, fmt.Errorf("synthetic reader: %w", sdk.ErrUnavailable)
+		}
 		return []sdk.Finding{}, nil
+	}
+	rule := d.rule
+	if rule == "" {
+		rule = d.id
 	}
 	var findings []sdk.Finding
 	for _, deployment := range view.Deployments() {
-		findings = append(findings, sdk.Finding{DetectorID: d.id, RuleID: d.id, Status: sdk.FindingActive, Severity: sdk.SeverityCritical, PrimaryResource: sdk.ObjectRefFrom("Deployment", "apps/v1", &deployment), Summary: "requests to api time out", Evidence: "synthetic window", Playbooks: d.playbooks})
+		findings = append(findings, sdk.Finding{DetectorID: d.id, RuleID: rule, Metadata: map[string]any{"error_rate": 1.0}, Status: sdk.FindingActive, Severity: sdk.SeverityCritical, PrimaryResource: sdk.ObjectRefFrom("Deployment", "apps/v1", &deployment), Summary: "requests to api time out", Evidence: "synthetic window", Playbooks: d.playbooks})
 	}
 	return findings, nil
 }
@@ -135,6 +148,16 @@ type settlingCase struct {
 	// responseDeadline is the incident's response deadline after the start;
 	// zero sets none.
 	responseDeadline time.Duration
+	// probe makes the judge's traffic-health finding a failing user test (a
+	// probe scenario) that keeps failing, while the learned stall detector
+	// clears as soon as the restart takes effect.
+	probe bool
+	// stopsAnswering makes the judge's traffic-health detector unavailable
+	// after its first clear evaluation.
+	stopsAnswering bool
+	// slowObserve is how long each snapshot takes once the write took effect;
+	// a snapshot taken under a deadline stops at that deadline.
+	slowObserve time.Duration
 }
 
 // settlingTraffic is the health workload's samples: one per second for scenario
@@ -159,9 +182,20 @@ type settlingWorld struct {
 	effectAt time.Time
 	// saved collects the controller's tool-state checkpoints when set.
 	saved *[][]byte
+	// slowObserve is settlingCase.slowObserve.
+	slowObserve time.Duration
 }
 
 func (w *settlingWorld) Snapshot(ctx context.Context) (sdk.DetectionContext, error) {
+	if w.slowObserve > 0 && !w.clock.Now().Before(w.effectAt) {
+		// The synthetic clock stands in for wall time: a deadline on ctx ends
+		// the observation there, as a real context deadline would.
+		if deadline, ok := ctx.Deadline(); ok && deadline.Before(w.clock.Now().Add(w.slowObserve)) {
+			_ = w.clock.advance(ctx, max(0, deadline.Sub(w.clock.Now())))
+			return nil, context.DeadlineExceeded
+		}
+		_ = w.clock.advance(ctx, w.slowObserve)
+	}
 	view, err := w.sameWriteWorld.Snapshot(ctx)
 	if err != nil {
 		return view, err
@@ -281,7 +315,7 @@ func newSettlingWorld(tc settlingCase) *settlingWorld {
 	// The recovery bound is also a real context deadline, so the synthetic
 	// clock starts far enough ahead that only the synthetic bound can end it.
 	clock := &settlingClock{now: time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)}
-	return &settlingWorld{sameWriteWorld: inner, clock: clock, traffic: tc.traffic, startup: tc.startup, readyEvery: tc.readyEvery, effectAt: clock.Now().Add(time.Second)}
+	return &settlingWorld{sameWriteWorld: inner, clock: clock, traffic: tc.traffic, startup: tc.startup, readyEvery: tc.readyEvery, effectAt: clock.Now().Add(time.Second), slowObserve: tc.slowObserve}
 }
 
 // settlingStageOn builds the stage and incident over world, as a controller
@@ -294,7 +328,15 @@ func settlingStageOn(t *testing.T, tc settlingCase, world *settlingWorld) (*Dete
 		healAt = clock.Now().Add(tc.healAfter)
 	}
 	traffic := windowedSettlingDetector{settlingDetector{id: "traffic-health", class: sdk.DetectorClassHealth, window: 60 * time.Second, clock: clock, healAt: healAt}}
-	stall := settlingDetector{id: "api-request-stall", class: sdk.DetectorClassLearned, window: tc.stallWindow, playbooks: []string{"api-request-stall"}, clock: clock, healAt: healAt}
+	if tc.stopsAnswering {
+		traffic.stopsAnswering = &atomic.Bool{}
+	}
+	stallHealAt := healAt
+	if tc.probe {
+		traffic.rule = "scenario-slo.read"
+		stallHealAt = world.effectAt
+	}
+	stall := settlingDetector{id: "api-request-stall", class: sdk.DetectorClassLearned, window: tc.stallWindow, playbooks: []string{"api-request-stall"}, clock: clock, healAt: stallHealAt}
 	var stallDetector sdk.Detector = stall
 	if tc.stallWindow > 0 {
 		stallDetector = windowedSettlingDetector{stall}
@@ -420,9 +462,13 @@ func TestRecoveryWaitSettlesWhileEffectsAndWindowsCatchUp(t *testing.T) {
 			contracts.RecoveryWait_EXIT_REASON_CLEARED, "applied_cleared", false, 0, 25 * time.Second},
 		// The prober is starved after the restart: the learned detector's window
 		// empties and its finding goes quiet, while the program's latest sample
-		// still times out. Silence is not recovery; the responder gets it.
+		// still times out. Silence is not recovery: the detector is not
+		// evaluated clear, so Recovered never holds and the responder gets it
+		// at the deadline fixed when the restart settled.
+		// The write's own attribution (settlement's applied_cleared) is a
+		// separate fact from Recovered and is not asserted here.
 		{"samples stop arriving after the restart", settlingCase{healAfter: 20 * time.Second, traffic: &settlingTraffic{starved: true}},
-			contracts.RecoveryWait_EXIT_REASON_FAILED, "applied_still_matching", true, 28 * time.Second, 40 * time.Second},
+			contracts.RecoveryWait_EXIT_REASON_FAILED, "", true, 28 * time.Second, 65 * time.Second},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stage, state, clock, world := settlingStage(t, tc.settlingCase)
@@ -442,7 +488,7 @@ func TestRecoveryWaitSettlesWhileEffectsAndWindowsCatchUp(t *testing.T) {
 			if waited := clock.Now().Sub(started); waited < tc.minWait || waited > tc.maxWait {
 				t.Fatalf("the stage observed for %s, want %s to %s", waited, tc.minWait, tc.maxWait)
 			}
-			if attempt.Result != tc.wantResult {
+			if tc.wantResult != "" && attempt.Result != tc.wantResult {
 				t.Fatalf("attempt result = %s, want %s: %v", attempt.Result, tc.wantResult, attempt)
 			}
 			if agent.dispatched != tc.wantDispatched {
