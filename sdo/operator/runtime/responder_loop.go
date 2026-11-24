@@ -781,7 +781,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	case "plan":
 		l.plan(ctx, request, &response)
 	case "source":
-		if request.Ref == nil || l.Executor.Source == nil || l.Request.SourceCommit == "" {
+		if request.Ref == nil || l.Executor.Source == nil || l.Request.renderedRevision() == "" {
 			response.Error = "source requires a resource and accepted source"
 			break
 		}
@@ -803,7 +803,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			// accepted source itself is still shown.
 			l.recordSourceComparisons(ctx, l.capturePhase, *request.Ref)
 		}
-		object, err := acceptedIncidentManifest(ctx, l.Executor.Source, l.Request.SourceCommit, l.Request.Namespace, *request.Ref)
+		object, err := acceptedIncidentManifest(ctx, l.Executor.Source, l.Request.renderedRevision(), l.Request.Namespace, *request.Ref)
 		if errors.Is(err, ErrAcceptedManifestAbsent) {
 			response.Summary = "resource is absent from accepted source"
 			break

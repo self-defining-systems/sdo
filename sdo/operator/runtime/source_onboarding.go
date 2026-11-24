@@ -289,7 +289,7 @@ func (c *Controller) pendingInventoryFindings(record *contracts.NamespaceOnboard
 	if c.drift == nil || !c.drift.Inventory {
 		return nil, true
 	}
-	if c.sourceInventory == nil || c.sourceInventory.Revision != c.CurrentAcceptedCommit() {
+	if c.sourceInventory == nil || c.sourceInventory.Revision != c.CurrentRenderedRevision() {
 		return nil, false
 	}
 	reader, ok := c.drift.Events.(interface {

@@ -101,7 +101,7 @@ func (c *Controller) admitPage(ctx context.Context, now time.Time, snapshot sdk.
 		c.mu.Unlock()
 		return nil
 	}
-	busy := c.earlyReportPendingLocked() || c.closureBlocksNextLocked()
+	busy := c.head.running || c.earlyReportPendingLocked() || c.closureBlocksNextLocked()
 	c.mu.Unlock()
 	if busy {
 		return ErrExternalIncidentBusy

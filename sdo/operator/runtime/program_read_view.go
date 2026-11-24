@@ -613,6 +613,9 @@ func (v LiveReadView) scopedObject(ref sdk.ObjectRef) (*unstructured.Unstructure
 
 // ScopedRefAllowed binds drift admission to the snapshot's exact observed targets.
 func (v LiveReadView) ScopedRefAllowed(ref sdk.ObjectRef) bool {
+	if v.SourceRevision != nil {
+		v.SourceCommit = v.SourceRevision()
+	}
 	if ref.Namespace == "" && v.Source != nil {
 		_, err := acceptedIncidentManifest(v.context(), v.Source, v.SourceCommit, v.Namespace(), ref)
 		if err == nil {

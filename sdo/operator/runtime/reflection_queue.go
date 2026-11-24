@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sdo.dev/operator/lifecycle"
 	"slices"
 	"time"
 )
@@ -28,7 +29,8 @@ type reflectionCompletion struct {
 	err        error
 	// head marks the end of a branch head deploy, which shares the queue's
 	// completion channel but not its bookkeeping.
-	head bool
+	head             *lifecycle.HeadResult
+	deployedRevision string
 }
 
 type reflectionQueueState struct {
@@ -124,13 +126,17 @@ func (c *Controller) driveQueuedReflections(ctx context.Context, now time.Time) 
 		} else {
 			err = queue.ProcessQueuedReflection(actionCtx, id)
 		}
-		c.reflectionResults <- reflectionCompletion{incidentID: id, err: err}
+		completion := reflectionCompletion{incidentID: id, err: err}
+		if err == nil {
+			completion.deployedRevision = c.readAcceptedDeployment(actionCtx)
+		}
+		c.reflectionResults <- completion
 	})
 	return nil
 }
 
 func (c *Controller) handleReflectionCompletion(completion reflectionCompletion) {
-	if completion.head {
+	if completion.head != nil {
 		c.handleHeadCompletion(completion)
 		return
 	}
@@ -138,6 +144,7 @@ func (c *Controller) handleReflectionCompletion(completion reflectionCompletion)
 	state := &c.reflections
 	state.running, state.rescan = "", true
 	if completion.err == nil {
+		c.acceptDeploymentLocked(completion.deployedRevision)
 		delete(state.attempts, completion.incidentID)
 		delete(state.lastErr, completion.incidentID)
 		delete(state.deferred, completion.incidentID)

@@ -2,10 +2,13 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sdo.dev/operator/broker"
+	"sdo.dev/operator/lifecycle"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
@@ -22,18 +25,30 @@ func (s cachedRevisionSource) Revision(ctx context.Context, ref sdk.ObjectRef, r
 	return s.AcceptedManifest(ctx, revision, ref)
 }
 
+type headReceiptReader struct {
+	lifecycle.HeadBroker
+	revision string
+	reads    int
+	err      error
+}
+
+func (b *headReceiptReader) AcceptedSourceEvidence(context.Context) (broker.AcceptedSource, bool, error) {
+	b.reads++
+	return broker.AcceptedSource{Evidence: broker.SourceEvidence{AcceptedCommit: b.revision}}, b.revision != "", b.err
+}
+
 func TestHeadAcceptanceRebindsSourceRepairWithoutRestart(t *testing.T) {
 	ctx := context.Background()
 	now := time.Unix(1_700_000_000, 0)
 	config := testControllerConfig()
-	config.SourceCommit, config.DeployedCommit = "v1", "v1"
+	config.SourceCommit, config.DeployedCommit = "memory", "startup"
 	config.ExternalIncidentsOnly = true
 	c, err := NewController(config, nil, staticProvider{}, &recordingDispatcher{}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	accepted := "v1"
-	c.SetHeadPoller(&HeadPoller{AcceptedRevision: func(context.Context) (string, error) { return accepted, nil }})
+	ledger := &headReceiptReader{revision: "v1"}
+	c.SetHeadPoller(&HeadPoller{Deployer: lifecycle.HeadDeployer{Broker: ledger}})
 	c.head.nextAt = now.Add(time.Hour)
 	var invalidations int
 	c.invalidateSourceCache = func() { invalidations++ }
@@ -46,20 +61,35 @@ func TestHeadAcceptanceRebindsSourceRepairWithoutRestart(t *testing.T) {
 		}}
 	}
 	source := cachedRevisionSource{"v1": manifest("old", "v1-setting"), "v2": manifest("new", "v2-setting")}
-	warm, err := source.AcceptedManifest(ctx, c.CurrentAcceptedCommit(), ref)
+	c.acceptDeploymentLocked(c.readAcceptedDeployment(ctx))
+	if c.CurrentAcceptedCommit() != "memory" {
+		t.Fatalf("startup deployment lookup changed accepted memory to %q", c.CurrentAcceptedCommit())
+	}
+	warm, err := source.AcceptedManifest(ctx, c.config.DeployedCommit, ref)
 	if err != nil || warm.Object["data"].(map[string]any)["release"] != "old" {
 		t.Fatalf("initial source: %v %v", warm, err)
 	}
 	// Head polling published the v2 deployment while this controller stayed up.
-	accepted = "v2"
+	c.handleHeadCompletion(reflectionCompletion{head: &lifecycle.HeadResult{Outcome: lifecycle.HeadDeployed, Commit: "v2"}})
+	c.config.SourceCommit = "memory-after-v2"
 	if err := c.StepEvents(ctx, now.Add(time.Second), nil); err != nil {
 		t.Fatal(err)
 	}
 	request := c.incidentRequest(now, nil)
+	for _, completion := range []reflectionCompletion{
+		{head: &lifecycle.HeadResult{Outcome: lifecycle.HeadHeld, Commit: "v3"}},
+		{head: &lifecycle.HeadResult{Outcome: lifecycle.HeadDeferred, Commit: "v3"}},
+		{head: &lifecycle.HeadResult{Commit: "v3"}, err: errors.New("deploy refused or rolled back")},
+	} {
+		c.handleHeadCompletion(completion)
+	}
+	if ledger.reads != 1 || c.CurrentRenderedRevision() != "v2" {
+		t.Fatalf("idle/refused poll changed the accepted render or read the broker: %q reads=%d", c.CurrentRenderedRevision(), ledger.reads)
+	}
 	observed := manifest("new", "drifted")
 	snapshot := sdktest.Snapshot{NamespaceName: config.Namespace, ObjectSnapshotVersion: sdktest.ObjectsOnlySnapshotVersion,
 		Objects: []unstructured.Unstructured{*observed}}
-	view := LiveReadView{Carrier: inputs.New(snapshot), Source: source, SourceRevision: c.CurrentAcceptedCommit}
+	view := LiveReadView{Carrier: inputs.New(snapshot), Source: source, SourceRevision: c.CurrentRenderedRevision}
 	diff, err := view.DiffAgainstSource(ref)
 	if err != nil {
 		t.Fatal(err)
@@ -77,11 +107,15 @@ func TestHeadAcceptanceRebindsSourceRepairWithoutRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if invalidations != 1 {
-		t.Fatalf("accepted deployment invalidated pinned renders %d times, want 1", invalidations)
+	if invalidations != 2 {
+		t.Fatalf("startup and accepted deployment invalidated pinned renders %d times, want 2", invalidations)
 	}
-	if request.SourceCommit != "v2" || request.DeployedCommit != "v2" || !planValuesEqual(next.Object, source["v2"].Object) {
+	if request.SourceCommit != "memory-after-v2" || request.RepositoryBaseCommit != "memory-after-v2" || request.DeployedCommit != "v2" || !planValuesEqual(next.Object, source["v2"].Object) {
 		t.Fatalf("source %q deployment %q repaired to %v, want v2", request.SourceCommit, request.DeployedCommit, next.Object)
+	}
+	previous, err := executor.prepareAction(ctx, request, program.Rollback{Ref: ref, ToRevision: "v1"}, next)
+	if err != nil || !planValuesEqual(previous.Object, source["v1"].Object) {
+		t.Fatalf("explicit rollback lost its own target: %v %v", previous, err)
 	}
 }
 
@@ -94,18 +128,17 @@ func TestHeadReceiptInvalidatesRenderOfSameRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	accepted := ""
-	c.SetHeadPoller(&HeadPoller{AcceptedRevision: func(context.Context) (string, error) { return accepted, nil }})
+	ledger := &headReceiptReader{err: errors.New("ledger unavailable")}
+	c.SetHeadPoller(&HeadPoller{Deployer: lifecycle.HeadDeployer{Broker: ledger}})
 	invalidations := 0
 	c.invalidateSourceCache = func() { invalidations++ }
-	if err := c.refreshAcceptedDeployment(ctx); err != nil || invalidations != 0 {
-		t.Fatalf("before acceptance: invalidations=%d err=%v", invalidations, err)
+	c.acceptDeploymentLocked(c.readAcceptedDeployment(ctx))
+	if invalidations != 0 {
+		t.Fatalf("before acceptance: %d invalidations", invalidations)
 	}
-	accepted = "v2"
+	ledger.revision, ledger.err = "v2", nil
 	for range 2 {
-		if err := c.refreshAcceptedDeployment(ctx); err != nil {
-			t.Fatal(err)
-		}
+		c.acceptDeploymentLocked(c.readAcceptedDeployment(ctx))
 	}
 	if invalidations != 1 {
 		t.Fatalf("same-revision receipt invalidated %d times, want 1", invalidations)

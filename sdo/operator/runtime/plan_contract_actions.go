@@ -48,7 +48,7 @@ func (e PlanExecutor) applyContractActions(ctx context.Context, incident Inciden
 			return true, result, fmt.Errorf("proposed source change of %s/%s is outside incident namespace %q", change.Ref.Namespace, change.Ref.Name, incident.Namespace)
 		}
 		if e.Source != nil {
-			if _, err := acceptedIncidentManifest(ctx, e.Source, incident.SourceCommit, incident.Namespace, change.Ref); err != nil {
+			if _, err := acceptedIncidentManifest(ctx, e.Source, incident.renderedRevision(), incident.Namespace, change.Ref); err != nil {
 				return true, result, fmt.Errorf("proposed source change of %s %s: the object is not in accepted source: %w", change.Ref.Kind, change.Ref.Name, err)
 			}
 		}

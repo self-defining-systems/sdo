@@ -73,7 +73,7 @@ func (e PlanExecutor) secretRestoreStep(ctx context.Context, incident IncidentRe
 	switch {
 	case incident.Namespace == "" || a.Ref.Namespace != incident.Namespace:
 		return r, fmt.Errorf("Secret %s/%s is outside incident namespace %q", a.Ref.Namespace, a.Ref.Name, incident.Namespace)
-	case incident.SourceCommit == "":
+	case incident.renderedRevision() == "":
 		return r, errors.New("accepted source is required to restore a Secret")
 	case !dry && incident.RepairPolicy != "recorded-actions":
 		return r, fmt.Errorf("repair policy %q denies direct plan mutations", incident.RepairPolicy)
@@ -86,7 +86,7 @@ func (e PlanExecutor) secretRestoreStep(ctx context.Context, incident IncidentRe
 	if !ok {
 		return r, errors.New("Secret restore transport unavailable")
 	}
-	data, err := source.AcceptedSecretData(ctx, incident.SourceCommit, incident.Namespace, a.Ref)
+	data, err := source.AcceptedSecretData(ctx, incident.renderedRevision(), incident.Namespace, a.Ref)
 	if err != nil {
 		return r, fmt.Errorf("restore Secret %s/%s from accepted source: %w", a.Ref.Namespace, a.Ref.Name, err)
 	}

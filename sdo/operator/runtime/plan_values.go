@@ -88,7 +88,7 @@ func settlePlanReports(result *PlanApplicationResult, err error) {
 }
 func (e PlanExecutor) valueInputs(ctx context.Context, incident IncidentRequest) program.ValueInputs {
 	in := e.Values
-	in.SourceCommit = incident.SourceCommit
+	in.SourceCommit = incident.renderedRevision()
 	in.Source = func(ref sdk.ObjectRef) (map[string]any, error) {
 		if err := program.FromSource(ref, "metadata.name").Validate(); err != nil {
 			return nil, err
@@ -100,7 +100,7 @@ func (e PlanExecutor) valueInputs(ctx context.Context, incident IncidentRequest)
 			return nil, fmt.Errorf("accepted source is required")
 		}
 
-		object, err := acceptedIncidentManifest(ctx, e.Source, incident.SourceCommit, incident.Namespace, ref)
+		object, err := acceptedIncidentManifest(ctx, e.Source, incident.renderedRevision(), incident.Namespace, ref)
 		if err != nil || object == nil || !samePlanRef(object, ref) {
 			return nil, fmt.Errorf("accepted value object unavailable")
 		}

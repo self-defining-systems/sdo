@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 
@@ -8,6 +9,11 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
+
+// renderedRevision falls back to the memory commit for legacy incident requests.
+func (r IncidentRequest) renderedRevision() string {
+	return cmp.Or(r.DeployedCommit, r.SourceCommit)
+}
 
 // acceptedIncidentManifest keeps cluster identity separate from the application
 // namespace that owns the accepted render lock. Foreign source is never a grant.
@@ -40,9 +46,9 @@ func (e PlanExecutor) acceptedClusterReconcile(ctx context.Context, incident Inc
 	default:
 		return false
 	}
-	if ref.Namespace != "" || e.Source == nil || incident.SourceCommit == "" {
+	if ref.Namespace != "" || e.Source == nil || incident.renderedRevision() == "" {
 		return false
 	}
-	_, err := acceptedIncidentManifest(ctx, e.Source, incident.SourceCommit, incident.Namespace, ref)
+	_, err := acceptedIncidentManifest(ctx, e.Source, incident.renderedRevision(), incident.Namespace, ref)
 	return err == nil
 }

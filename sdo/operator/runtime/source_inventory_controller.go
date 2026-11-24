@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"sdo.dev/operator/runtime/internal/lifecycleio"
@@ -16,7 +17,7 @@ func (c *Controller) prepareSourceInventory(ctx context.Context) error {
 	if c.drift == nil || !c.drift.Inventory {
 		return nil
 	}
-	revision := c.CurrentAcceptedCommit()
+	revision := c.CurrentRenderedRevision()
 	c.mu.Lock()
 	current := c.sourceInventory
 	retryAt := c.sourceInventoryRetryAt
@@ -168,7 +169,7 @@ func (c *Controller) sourceInventoryAvailableLocked() bool {
 	if source, ok := c.drift.Events.(interface{ SourceDriftReady() bool }); ok {
 		ready = source.SourceDriftReady()
 	}
-	return c.sourceInventory != nil && c.sourceInventory.Revision == c.config.SourceCommit && ready
+	return c.sourceInventory != nil && c.sourceInventory.Revision == cmp.Or(c.config.DeployedCommit, c.config.SourceCommit) && ready
 }
 
 // Caller holds c.mu; neither this check nor acceptance performs external reads.

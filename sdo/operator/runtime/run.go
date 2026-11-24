@@ -812,7 +812,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 				}
 				loop.ReadView = func(snapshot sdk.DetectionContext) program.ReadView {
 					return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: clients.incidentRead, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
-						Source: planSource, SourceCommit: request.SourceCommit, Baseline: request.StateChanges, BaselineSource: baselineOf(stateTracker)}
+						Source: planSource, SourceCommit: request.renderedRevision(), Baseline: request.StateChanges, BaselineSource: baselineOf(stateTracker)}
 				}
 				controller.mu.Lock()
 				controller.responderLoop = loop
@@ -842,9 +842,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	liveView := func(snapshot sdk.DetectionContext) program.ReadView {
 		return LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber, Source: planSource, SourceCommit: resolvedSourceCommit, SourceRevision: func() string {
 			if controller != nil {
-				return controller.CurrentAcceptedCommit()
+				return controller.CurrentRenderedRevision()
 			}
-			return resolvedSourceCommit
+			return resolvedDeployedCommit
 		}, BaselineSource: baselineOf(stateTracker)}
 	}
 	snapshotProvider = ReadSnapshotProvider{Base: snapshotProvider, View: liveView}
@@ -884,7 +884,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					return cycle
 				}
 				return NewCycleReadView(LiveReadView{Carrier: inputs.New(snapshot), Context: ctx, Client: bootstrapProvider.Client, DatabaseExecConfig: planExecConfig, ProtectedNamespace: protectedNamespace, Prober: primitiveProber,
-					Source: planSource, SourceCommit: controller.CurrentAcceptedCommit(), BaselineSource: baselineOf(stateTracker)})
+					Source: planSource, SourceCommit: controller.CurrentRenderedRevision(), BaselineSource: baselineOf(stateTracker)})
 			},
 		})
 	}
@@ -1023,6 +1023,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 		}
 	}
 	controller.invalidateSourceCache = planSource.InvalidateCache
+	controller.acceptDeploymentLocked(controller.readAcceptedDeployment(ctx))
 	if stateBaseline {
 		controller.Baseline = stateTracker
 	}

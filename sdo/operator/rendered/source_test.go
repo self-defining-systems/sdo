@@ -568,3 +568,27 @@ func TestAcceptedInventoryListsHookObjectsApartFromDesiredOnes(t *testing.T) {
 		}
 	}
 }
+
+func TestInvalidatedCacheReadsPinsPublishedForTheSameRevision(t *testing.T) {
+	pins := new(rendered.ReceiptPins)
+	source := (rendered.Source{Repository: "/synthetic", Deployment: rawSource(t, "loose.yaml"),
+		Catalog: catalog(t), Git: treeGit(rawTree), Pins: pins}).WithCache()
+	tag := webImage(t, source)
+	object, err := source.AcceptedManifest(context.Background(), syntheticCommit, webRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	containers, _, _ := unstructured.NestedSlice(object.Object, "spec", "template", "spec", "containers")
+	name := containers[0].(map[string]any)["name"].(string)
+	const digest = "example/web@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	*pins = rendered.ReceiptPins{EffectiveTree: syntheticTree, Images: []rendered.DeployedImage{
+		{Ref: webRef, Name: name, Applied: digest, Digest: digest},
+	}}
+	if got := webImage(t, source); got != tag {
+		t.Fatalf("before invalidation = %v, want cached tag %v", got, tag)
+	}
+	source.InvalidateCache()
+	if got := webImage(t, source); got != digest {
+		t.Fatalf("after invalidation = %v, want the accepted digest", got)
+	}
+}
