@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -102,9 +103,8 @@ func TestRecoveredWaitsForUserTestsThatFailWhileTheIncidentIsOpen(t *testing.T) 
 	}
 }
 
-// Only a user test inside the join window joins. A clue, a Kubernetes
-// condition and a test that starts failing after the window never do.
-func TestOnlyUserTestsInTheJoinWindowJoinTheAlertSet(t *testing.T) {
+// Every opener uses the same join window. Clues never hold recovery.
+func TestOnlyOpenersInTheJoinWindowJoinTheAlertSet(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	opening := &switchedProbe{id: memory.TrafficDetectorPrefix + "opening", scenario: "ssh"}
 	c, _ := alertSetController(t, now, opening)
@@ -114,19 +114,18 @@ func TestOnlyUserTestsInTheJoinWindowJoinTheAlertSet(t *testing.T) {
 	condition := sdk.Finding{DetectorID: memory.KubernetesConditionDetectorIDs()[0], RuleID: "stuck", Status: sdk.FindingActive, Severity: sdk.SeverityCritical,
 		Summary: "stuck", Evidence: "synthetic", PrimaryResource: sdk.ObjectRef{Kind: "Pod", Namespace: "demo", Name: "web"}}
 	ctx := context.Background()
-	for _, finding := range []sdk.Finding{clue, condition} {
-		c.admitActivation(ctx, finding, now, sdk.DetectorSpec{})
-	}
+	c.admitActivation(ctx, clue, now, sdk.DetectorSpec{})
 	if len(c.currentIncidentRequest.JoinedKeys) != 0 {
-		t.Fatalf("a clue or condition joined the alert set: %v", c.currentIncidentRequest.JoinedKeys)
+		t.Fatalf("a clue joined the alert set: %v", c.currentIncidentRequest.JoinedKeys)
 	}
+	c.admitActivation(ctx, condition, now, sdk.DetectorSpec{})
 	c.admitActivation(ctx, userTest, c.incidentDetectedAt.Add(AlertJoinWindow), sdk.DetectorSpec{})
-	if len(c.currentIncidentRequest.JoinedKeys) != 1 {
-		t.Fatalf("a user test at the window edge did not join: %v", c.currentIncidentRequest.JoinedKeys)
+	if got := c.currentIncidentRequest.JoinedKeys; len(got) != 2 || !slices.Contains(got, findingKey(condition)) || !slices.Contains(got, findingKey(userTest)) {
+		t.Fatalf("expected the condition and probe to join: %v", got)
 	}
-	c.currentIncidentRequest.JoinedKeys = nil
-	c.admitActivation(ctx, userTest, c.incidentDetectedAt.Add(AlertJoinWindow+time.Second), sdk.DetectorSpec{})
-	if len(c.currentIncidentRequest.JoinedKeys) != 0 {
+	late := (&switchedProbe{id: memory.TrafficDetectorPrefix + "independent", scenario: "write"}).finding()
+	c.admitActivation(ctx, late, c.incidentDetectedAt.Add(AlertJoinWindow+time.Second), sdk.DetectorSpec{})
+	if len(c.currentIncidentRequest.JoinedKeys) != 2 {
 		t.Fatalf("a user test after the window joined: %v", c.currentIncidentRequest.JoinedKeys)
 	}
 }

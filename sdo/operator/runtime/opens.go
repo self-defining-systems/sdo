@@ -120,46 +120,57 @@ func (c *Controller) verificationOpeners(detectors []sdk.Detector, catalog []app
 	return result
 }
 
-// AlertJoinWindow bounds how long after detection a user test that starts
-// failing joins the open incident's alert set. The live side-effect cases had
-// a second test failing within seconds to about a minute of onset; a test that
-// begins failing later is more likely an independent fault and opens the next
-// incident. The set only grows inside the window, so it cannot hold an
-// incident forever.
+// AlertJoinWindow bounds when a new opener belongs to the same incident.
+// After the window an independent fault can open the next incident.
 const AlertJoinWindow = 5 * time.Minute
 
-// joinAlertSet adds a user test or failing user traffic that activated while the open incident is
-// inside its join window to the incident's alert set instead of the batcher.
-// It reports whether the finding is now (or already was) in the set. It never
-// dispatches or re-prompts the agent.
+// joinAlertSet admits an opener within the join window, including while the
+// outcome is provisional. Joining never dispatches or re-prompts a responder.
 func (c *Controller) joinAlertSet(finding sdk.Finding, now time.Time) bool {
-	if role := c.openingRole(finding, nil); role != userTestOpener && role != userTrafficOpener {
+	if !c.opens(finding) {
 		return false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.incidentOpen || c.currentIncidentRequest == nil {
+	request, detected := c.currentIncidentRequest, c.incidentDetectedAt
+	pending := !c.incidentOpen && c.provisionalClosureLocked()
+	if pending && request == nil {
+		request, detected = &c.pendingClosure.Request, c.pendingClosure.DetectedAt
+	}
+	if request == nil || (!c.incidentOpen && !pending) {
 		return false
 	}
-	request := c.currentIncidentRequest
-	key := FindingStateKey(finding.DetectorID, FindingFingerprint(finding))
+	key := findingKey(finding)
 	if slices.Contains(alertKeys(request), key) {
 		return true
 	}
-	if now.Sub(c.incidentDetectedAt) > AlertJoinWindow {
+	if now.Sub(detected) > AlertJoinWindow {
 		return false
+	}
+	if pending && !c.earlyReportPendingLocked() {
+		if err := c.reobserveClosureLocked(now, request); err != nil {
+			return false
+		}
+		request = c.currentIncidentRequest
+	}
+	if len(request.OpeningKeys) == 0 && request.Page == "" {
+		request.OpeningKeys = openingKeys(request)
 	}
 	request.JoinedKeys = append(request.JoinedKeys, key)
 	sort.Strings(request.JoinedKeys)
-	// The finding rides in the request so Recovered can judge the test's
-	// samples (openingUserTest resolves a key through request.Findings).
 	finding.Fingerprint = FindingFingerprint(finding)
 	request.Findings = append(request.Findings, finding)
 	sortFindings(request.Findings)
+	if !c.incidentDispatchedAt.IsZero() {
+		c.markLateJoinedLocked(key)
+	}
 	c.publishHeldLocked()
 	c.closureStableSince = time.Time{}
 	c.recoverySafetyLost = true
-	// A new alert reopens a settled automatic stage (see attachLearnedActivation).
+	if c.earlyReportPendingLocked() {
+		c.cacheVerificationLocked(ToolResponse{Command: "verify", Summary: "recovery proof invalidated by a joined alert", Findings: []sdk.Finding{finding}})
+	}
+	// A new alert reopens a settled automatic stage while repair is ongoing.
 	c.midStage.settled = false
 	return true
 }
@@ -204,9 +215,8 @@ func openingKeys(request *IncidentRequest) []string {
 	return findingKeys(request.Findings)
 }
 
-// alertKeys are the incident's alert set: its opening alerts plus the user
-// tests that joined while it was open. Recovered waits on all of them; credit
-// and symptom matching keep openingKeys.
+// alertKeys are the incident's opening and joined alerts. Recovered waits on
+// all of them. Credit and symptom matching use openingKeys.
 func alertKeys(request *IncidentRequest) []string {
 	if request == nil {
 		return nil

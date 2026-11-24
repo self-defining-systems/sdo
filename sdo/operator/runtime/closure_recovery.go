@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -18,23 +19,46 @@ func (c *Controller) closureVerificationDeadline(closure IncidentClosure) time.T
 	return deadline
 }
 
-// No broker has seen an unfrozen closure. Return its original work and receipts
-// to the existing residual/continuation path, without a fresh incident budget.
+// Only provisional closures can be returned to observation. A frozen
+// payload may already be in the broker ledger even after controller restart.
+func (c *Controller) provisionalClosureLocked() bool {
+	return c.closureState == contracts.ClosureState_CLOSURE_STATE_PENDING &&
+		c.pendingClosure != nil && !c.pendingClosure.Frozen &&
+		c.pendingClosure.DispatchError == "" && (len(c.pendingClosure.FinalDetectorStates) > 0 || c.pendingClosure.HealthClearedAt != nil)
+}
+
 func (c *Controller) resumeClosureVerification(ctx context.Context, effect ClosureEffect) error {
 	c.mu.Lock()
 	if c.pendingClosure == nil || !sameIncidentClosure(*c.pendingClosure, effect.Closure) || c.pendingClosure.Frozen {
 		c.mu.Unlock()
 		return fmt.Errorf("closure changed before residual handoff")
 	}
-	closure := *cloneIncidentClosure(c.pendingClosure)
-	_, err := c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Reobserve, At: c.clock()})
+	err := c.reobserveClosureLocked(c.clock(), &effect.Closure.Request)
+	c.mu.Unlock()
 	if err != nil {
-		c.mu.Unlock()
 		return err
 	}
+	return c.PersistState(ctx)
+}
+
+// No broker has seen this closure. Return its report and receipts to the
+// original incident. The responder has finished or been retired and keeps its
+// original budget. Callers hold mu.
+func (c *Controller) reobserveClosureLocked(now time.Time, request *IncidentRequest) error {
+	closure := c.pendingClosure
+	resumed := cloneIncidentRequest(&closure.Request)
+	resumed.Findings = append([]sdk.Finding(nil), request.Findings...)
+	resumed.JoinedKeys = append([]string(nil), request.JoinedKeys...)
+	if _, err := c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Reobserve, At: now}); err != nil {
+		return err
+	}
+	if c.pendingClosure != nil {
+		return fmt.Errorf("closure is no longer provisional")
+	}
+	c.clearIncidentLocked()
 	c.incidentOpen = true
-	c.currentIncidentRequest = cloneIncidentRequest(&closure.Request)
-	if report := deterministicStageReport(c.currentIncidentRequest.PriorStages); report.GetRecoveryWait().GetExitReason() == contracts.RecoveryWait_EXIT_REASON_CLEARED {
+	c.currentIncidentRequest = resumed
+	if report := deterministicStageReport(resumed.PriorStages); report.GetRecoveryWait().GetExitReason() == contracts.RecoveryWait_EXIT_REASON_CLEARED {
 		report.RecoveryWait = nil
 	}
 	c.publishHeldLocked()
@@ -45,14 +69,20 @@ func (c *Controller) resumeClosureVerification(ctx context.Context, effect Closu
 	c.escalatedAt = closure.EscalatedAt
 	c.responderDone = true
 	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
-	c.incidentFindingKeys = findingKeys(closure.Request.Findings)
+	c.incidentFindingKeys = findingKeys(request.Findings)
 	c.cleanedHelpers = append([]string(nil), closure.CleanedHelpers...)
+	late := c.timeline
 	c.timeline = cloneTimeline(closure.DetectorTimeline)
+	for _, entry := range late {
+		if slices.Contains(resumed.JoinedKeys, entry.key()) && !slices.Contains(closure.Request.JoinedKeys, entry.key()) {
+			c.timeline = append(c.timeline, entry)
+		}
+	}
 	c.lateJoinedKeys = lateJoinedFromTimeline(c.timeline)
-	c.closureStableSince = time.Time{}
 	c.recoverySafetyLost = true
-	c.mu.Unlock()
-	return c.PersistState(ctx)
+	c.cachedVerification = nil
+	c.closureRecheckIdentity, c.closureRecheckSince, c.closureRecheckRetryAt = "", time.Time{}, time.Time{}
+	return nil
 }
 
 // Broker command identity and current health are different durable facts. An

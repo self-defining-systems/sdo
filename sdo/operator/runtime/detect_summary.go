@@ -1072,7 +1072,7 @@ func (l *ResponderLoop) detectIncidentRecovered() bool {
 	return l.IncidentStatus != nil && l.IncidentStatus() != nil
 }
 
-// alertSetLine says what Recovered waits on when user tests joined the
+// alertSetLine says what Recovered waits on when new alerts joined the
 // opening alerts: the whole set must clear and stay clear. "" when none joined.
 func alertSetLine(request *IncidentRequest) string {
 	if request == nil || len(request.JoinedKeys) == 0 {
@@ -1085,5 +1085,5 @@ func alertSetLine(request *IncidentRequest) string {
 		}
 	}
 	sort.Strings(names)
-	return fmt.Sprintf("alert set: %d opening + %d joined user tests (%s); recovered needs all of them clear and staying clear", len(openingKeys(request)), len(names), strings.Join(names, ", "))
+	return fmt.Sprintf("alert set: %d opening + %d joined alerts (%s); recovered needs all of them clear and staying clear", len(openingKeys(request)), len(names), strings.Join(names, ", "))
 }

@@ -232,7 +232,7 @@ func (c *Controller) recordFiring(spec sdk.DetectorSpec, now time.Time, findings
 
 // classifyFindingLocked relates a finding to the open incident, if any.
 func (c *Controller) classifyFindingLocked(detectorID string, finding sdk.Finding) (string, FiringRelation) {
-	if !c.incidentOpen || c.currentIncidentRequest == nil {
+	if c.currentIncidentRequest == nil || (!c.incidentOpen && !c.earlyReportPendingLocked()) {
 		return "", RelationNoIncident
 	}
 	incidentID := c.currentIncidentRequest.IncidentID
