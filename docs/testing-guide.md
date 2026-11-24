@@ -6,7 +6,7 @@ SDO spans Python agents, Go operator modules, generated detector workspaces, and
 
 Prove each guarantee at the cheapest level that can hold it (the `design-for-verification` order).
 
-**Who owns what.** Controller properties are tested. Agent-written code (detectors, programs) is checked at the gate: `sdo-operator memory check`, the same check the broker runs, must reject bad code. The gate table (`memory/validate/gate_table_test.go`) holds one row per validator rule: a bad change that must be rejected for that rule, plus good changes that must pass. `TestGateTableNamesEveryRule` fails when a rule has neither a row nor a stated reason. The shell code path (`shell.format`) has its own `shell:` rows. The broker's `memory.conflict` cannot be a row (it needs two proposals on one repository); `broker/memory_conflict_integration_test.go` covers it. Compile rows run on FakeGo on every PR and on the real `go` under the `integration` tag (`gate_real_integration_test.go`); both must produce the same rejection. Agent behaviour (repairing a fault, saving a useful program) is measured in live runs and never unit-tested.
+**Who owns what.** Controller properties are tested. Agent-written code (detectors, programs) is checked at the gate: `sdo-operator memory check`, the same check the broker runs, must reject bad code. The gate table (`memory/validate/gate_table_test.go`) holds one row per validator rule: a bad change that must be rejected for that rule, plus good changes that must pass. `TestGateTableNamesEveryRule` fails when a rule has neither a row nor a stated reason. The shell code path (`shell.format`) has its own `shell:` rows. The broker's `memory.conflict` cannot be a row (it needs two proposals on one repository); `broker/memory_conflict_integration_test.go` covers it. Compile rows run on FakeGo on every PR and on the real `go` in the nightly tier under the `integration` tag (`gate_real_integration_test.go`); both must produce the same rejection. Agent behaviour (repairing a fault, saving a useful program) is measured in live runs and never unit-tested.
 
 **By construction.** These hold through the architecture and are guarded by static checks, not runtime tests:
 
@@ -1017,10 +1017,14 @@ The stop simulation continues using virtual time for production wait adapters.
 
 ### PR CI budget
 
-PRs and merge groups run `static checks`, two `Python tests` shards (`core`, and
-`fastloop`, split by `SDO_PYTEST_SHARD` in `test_python.sh`), four `Go tests` shards
-(`validate` and `gate`, the compiler-backed memory validator package split by test (`go_validate_gate_tests` in `ci_selection.json` runs in `gate`, the rest in `validate`; a package cannot be split any other way), `cli`, the operator CLI and envtest packages named in `go_cli_shard`, and `rest`; `test_go_ci.sh pr <shard>`),
-and `Required PR CI`. Shards are independent jobs that each build from the Go
+PRs and merge groups run `static checks`, three `Python tests` shards (`core`,
+`adapter` and `fastloop`), three `Go tests` shards and `Required PR CI`. The
+`validate` shard runs the memory validator and serial lane-manager package,
+`cli` runs the operator CLI and envtest packages, and `rest` runs the remaining
+packages. Package ownership is in `ci_selection.json`. Nightly runs the real Go
+gate conformance, compiled application-map scenarios, and empty-catalog
+controller link. PR CI runs the FakeGo gate table and all empty-catalog staging
+cases. Shards are independent jobs that each build from the Go
 caches (no compiler artifact transfer); every job has a five-minute cap and
 targets about three minutes. Every cache restore (cache actions and setup-uv) is bounded by
 `SEGMENT_DOWNLOAD_TIMEOUT_MINS` and, for the cache actions, a step `timeout-minutes` with

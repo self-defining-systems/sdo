@@ -5,7 +5,7 @@
 # changed. `mark` (right after the restore) ages every entry to three hours; the run then refreshes exactly the
 # entries it reads; `trim` (right before the save) deletes whatever is still older than two hours and the module
 # zip archives (a module is extracted beside its zip, and the zip is read only to extract it; zips do not compress).
-# usage: ci_go_cache.sh mark | trim   (GOCACHE / GOMODCACHE default to the CI runner's paths)
+# usage: ci_go_cache.sh mark | trim | trim-build   (GOCACHE / GOMODCACHE default to the CI runner's paths)
 set -euo pipefail
 build="${GOCACHE:-$HOME/.cache/go-build}"
 modules="${GOMODCACHE:-$HOME/go/pkg/mod}"
@@ -13,12 +13,12 @@ case "${1:-}" in
     mark)
         [[ -d "$build" ]] && find "$build" -type f -exec touch -d '3 hours ago' {} +
         ;;
-    trim)
+    trim | trim-build)
         [[ -d "$build" ]] && find "$build" -type f -mmin +120 -delete
-        [[ -d "$modules/cache/download" ]] && find "$modules/cache/download" -type f -name '*.zip' -delete
+        [[ "${1:-}" == trim && -d "$modules/cache/download" ]] && find "$modules/cache/download" -type f -name '*.zip' -delete
         ;;
     *)
-        echo "usage: ci_go_cache.sh mark | trim" >&2
+        echo "usage: ci_go_cache.sh mark | trim | trim-build" >&2
         exit 2
         ;;
 esac
