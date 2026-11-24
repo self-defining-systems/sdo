@@ -25,7 +25,7 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 	if applied && report.RecoveryDeadline == nil {
 		report.RecoveryDeadline = contractTimestamp(deadline)
 	}
-	if applied && !refused && observedAt.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
+	if applied && observedAt.Before(deadline) && !stageEscalatedIn(request.PriorStages) {
 		return
 	}
 	if stabilityOnly && scoped {
@@ -106,10 +106,6 @@ func (c *Controller) unresolvedAlertKeysLocked(now time.Time, request IncidentRe
 func (c *Controller) automaticDeadlineLocked(report *contracts.StageReport) time.Time {
 	if at := report.GetStabilityDeadline(); at.IsValid() {
 		return at.AsTime()
-	}
-	// A refused plan ends the stage at once, even if an earlier plan wrote.
-	if stagePlanRefused(report) {
-		return c.responderCompletedAt
 	}
 	if at := report.GetRecoveryDeadline(); at.IsValid() {
 		return at.AsTime()

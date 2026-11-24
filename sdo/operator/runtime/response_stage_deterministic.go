@@ -115,25 +115,6 @@ func (l *ResponderLoop) restoreTerminalStagePlanErrors() {
 	}
 }
 
-// A matched-plan preview is already a production check. Stop at its first
-// refusal before the stage can run a different candidate or re-ask a diagnosis.
-func (loop *ResponderLoop) previewRefusal(runs []ProgramRun) *contracts.StageMitigation {
-	loop.mu.Lock()
-	defer loop.mu.Unlock()
-	for _, run := range runs {
-		if run.Verdict.Result != program.Match || run.ProgramID == SourceRestoreID {
-			continue
-		}
-		if terminal := loop.terminalPlanError(run.ProgramID, run.Bindings); terminal != nil {
-			return &contracts.StageMitigation{
-				PlaybookId: run.ProgramID, ProgramRevision: run.ProgramRevision, Bindings: programBindingsContract(run.Bindings),
-				Result: "apply_error", SkipReason: stagePlanNotExecutable, Error: terminal.Error(),
-			}
-		}
-	}
-	return nil
-}
-
 func (*DeterministicResponseStage) Name() string { return "deterministic" }
 
 func (stage *DeterministicResponseStage) Run(ctx context.Context, state *IncidentState) (*contracts.StageReport, error) {
@@ -219,7 +200,6 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	if state.Refresh {
 		state.Coverage = nil
 	}
-	var previewRefusal *contracts.StageMitigation
 	if state.Coverage == nil {
 		var runs []ProgramRun
 		if state.Refresh {
@@ -235,20 +215,14 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}()
 			runs = loop.RefreshDiagnose(ctx)
 			fillProgramRevisionsWith(loop.gitRead(), ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
-			fresh, err := stage.reaskUnanswered(ctx, loop, state, runs)
-			if err != nil {
-				return report, err
-			}
-			runs = fresh
 		} else {
 			runs = loop.InitialDiagnose(ctx)
 			fillProgramRevisionsWith(loop.gitRead(), ctx, runs, state.Request.RepositoryWorktree, state.Request.SourceCommit)
-			var err error
-			if runs, err = stage.reaskUnanswered(ctx, loop, state, runs); err != nil {
-				return report, err
-			}
 		}
-		previewRefusal = loop.previewRefusal(runs)
+		var err error
+		if runs, err = stage.reaskUnanswered(ctx, loop, state, runs); err != nil {
+			return report, err
+		}
 		if state.Refresh {
 			runs = append(append([]ProgramRun(nil), state.Request.InitialProgramRuns...), runs...)
 		}
@@ -262,13 +236,6 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	defer loop.operationMu.Unlock()
 	loop.mu.Lock()
 	defer loop.mu.Unlock()
-	if previewRefusal != nil {
-		report.Mitigations = append(report.Mitigations, previewRefusal)
-		if !state.Refresh {
-			stage.armRecovery(state, loop, report, progress)
-		}
-		return report, save(true)
-	}
 	matches := stageCandidates(state)
 	attempted := map[string]bool{}
 	// A later pass may complete a binding an earlier one only skipped, because
@@ -995,9 +962,6 @@ func (stage *DeterministicResponseStage) diagnoseBackoff(ctx context.Context) er
 // is appended after them.
 func (stage *DeterministicResponseStage) reaskUnanswered(ctx context.Context, loop *ResponderLoop, state *IncidentState, runs []ProgramRun) ([]ProgramRun, error) {
 	for try := 1; try < stageDiagnoseTries; try++ {
-		if loop.previewRefusal(runs) != nil {
-			break
-		}
 		unanswered := unansweredRuns(runs)
 		if len(unanswered) == 0 {
 			return runs, nil
