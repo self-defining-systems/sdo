@@ -389,3 +389,24 @@ def test_vanilla_sql_ddl_counts_as_a_fixing_write(tmp_path: Path) -> None:
     )
     row = measure(tmp_path)
     assert (row.ttf_s, row.last_write_source) == (9, "claude_tool_start")
+
+
+def test_sdo_open_or_reset_incident_still_yields_its_fixing_write(tmp_path: Path) -> None:
+    # A fallback-paged incident that was reset after the window has no sealed timeline: the responder's writes in its
+    # folder still give the time to fix, from the page, bounded by the graded recovery.
+    grade(tmp_path)
+    put(tmp_path, "operator/evidence-manifest.json", {"timelines": [], "open_incidents": ["open"]})
+    put(tmp_path, "operator/collect.json", {"page_source": "fallback", "fallback_page_at": at(5), "sdo_page_at": at(5)})
+    put(tmp_path, "operator/evidence/incidents/open/incident.json", {"incident_id": "app-1"})
+    transcript(
+        tmp_path,
+        "operator/evidence/incidents/open/claude/projects/w/session.jsonl",
+        [
+            (9, 10, "kubectl exec db-0 -- psql -Atc 'select tgname from pg_trigger'", False, "trg"),
+            (14, 15, "kubectl exec db-0 -- psql -Atc 'DROP TRIGGER trg ON public.issues'", False, "DROP TRIGGER"),
+            (35, 36, "kubectl exec db-0 -- psql -Atc 'UPDATE issues SET title = title'", False, "UPDATE 3"),
+        ],
+    )
+    row = measure(tmp_path)
+    # The 35 s write starts after the last graded bad second (29): it cannot explain the recovery.
+    assert (row.ttf_s, row.ttf_source) == (9, "claude_tool_start")
