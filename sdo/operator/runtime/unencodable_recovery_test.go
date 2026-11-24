@@ -97,6 +97,15 @@ func TestResultProjectionKeepsGoodEvidenceWithMalformedFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	check(dispatched)
+	stage, err := incidentRequestToProto(IncidentRequest{PriorStages: []*contracts.StageReport{{Error: result.Error}}})
+	if err != nil || stage.GetPriorStages()[0].GetError() != "failed with �" {
+		t.Fatalf("prior stage = %v, %v", stage, err)
+	}
+	closure, err := incidentClosureContract(IncidentClosure{Result: &result, DispatchError: c.dispatchError})
+	if err != nil || closure.GetDispatchError() != checkpoint.GetDispatchError() {
+		t.Fatalf("closure = %v, %v", closure, err)
+	}
+	check(closure.GetResult())
 }
 
 type failingFreezeUsage struct {

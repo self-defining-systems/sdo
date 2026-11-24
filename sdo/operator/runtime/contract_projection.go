@@ -256,6 +256,9 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 			SourceCommit: prior.SourceCommit, ExactSourceMatch: prior.ExactSourceMatch,
 		})
 	}
+	for i, stage := range result.PriorStages {
+		result.PriorStages[i] = repairContractText(stage)
+	}
 	return result, nil
 }
 
@@ -358,11 +361,15 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 	if result.Error != "" {
 		message.Error = &result.Error
 	}
+	return repairContractText(message), nil
+}
+
+func repairContractText[T proto.Message](message T) T {
 	if _, err := proto.Marshal(message); err != nil {
 		message = proto.CloneOf(message)
 		sanitizeContractText(message.ProtoReflect())
 	}
-	return message, nil
+	return message
 }
 
 // Text from workers and tools can contain arbitrary bytes. Keep intact fields

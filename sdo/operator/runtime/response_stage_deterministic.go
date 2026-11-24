@@ -583,7 +583,7 @@ func recordedPlanContract(application RecordedPlanApplication) (*contracts.PlanA
 	receipt.StartedAt = optionalTimestamp(application.StartedAt)
 	receipt.CompletedAt = optionalTimestamp(application.CompletedAt)
 	receipt.Error = application.Error
-	return receipt, nil
+	return repairContractText(receipt), nil
 }
 
 // Protobuf receipts contain oneofs; encoding/json cannot reconstruct them.
