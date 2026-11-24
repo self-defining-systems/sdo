@@ -145,14 +145,11 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			return report, err
 		}
 	}
+	loop.locked(func() { loop.recoverInterruptedScripts(ctx) })
 	if loop.stageProgress == nil {
 		loop.stageProgress = map[string]responseStageProgress{}
 	}
 	progress := loop.stageProgress[stage.Name()]
-	for _, prior := range state.PriorStages {
-		loop.restoreScriptRefusals(prior)
-	}
-	loop.restoreScriptRefusals(progress.Report)
 	if progress.Report != nil {
 		report = proto.Clone(progress.Report).(*contracts.StageReport)
 		state.Coverage = cloneCoverage(progress.Coverage)
@@ -175,11 +172,12 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	// checkpoint. Recover it by immutable plan identity without repeating it.
 	if progress.Report != nil {
 		for _, attempt := range report.Mitigations {
-			if attempt.PlanId == "" || attempt.ApplyReceipt != nil {
+			if attempt.PlanId == "" {
 				continue
 			}
 			for _, app := range loop.ApplicationEvidence() {
-				if slices.Contains(app.PlanIDs, attempt.PlanId) {
+				if slices.Contains(app.PlanIDs, attempt.PlanId) && (attempt.ApplyReceipt == nil ||
+					app.Result.Applied && hasAppliedScript(app.Result.Plan.Actions) && app.Error != "") {
 					receipt, err := recordedPlanContract(app)
 					if err != nil {
 						return report, err
@@ -440,9 +438,6 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 			attempt.Result = "apply_error"
 			attempt.Error = planResponse.Error
-			if planResponse.FailureReason == "script_unprovenanced" {
-				attempt.SkipReason = "script_unprovenanced"
-			}
 			if err := save(false); err != nil {
 				return report, err
 			}

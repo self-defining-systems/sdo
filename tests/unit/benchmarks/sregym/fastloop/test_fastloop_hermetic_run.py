@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from copy import deepcopy
@@ -70,7 +72,8 @@ func main() {
 	if err := json.Unmarshal(recorded, &calls); err != nil {
 		panic(err)
 	}
-	view := &sdktest.ReplayReadView{Snapshot: snapshot, Calls: calls}
+	capture := sdktest.CorpusCase{Recordings: calls}
+	view := &sdktest.ReplayReadView{Snapshot: snapshot, Calls: capture.PhaseRecordings(os.Args[4])}
 	bindings := program.Bindings{Objects: program.ObjectBindings{
 		"service": sdk.ObjectRef{APIVersion: "v1", Kind: "Service", Namespace: "hotel-reservation", Name: "geo"},
 	}}
@@ -79,45 +82,30 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	plan, err := candidate.Mitigate(context.Background(), view, bindings)
-	if err != nil {
-		panic(err)
+	result := map[string]any{"result": verdict.Result}
+	if verdict.Result == program.Match {
+		plan, err := candidate.Mitigate(context.Background(), view, bindings)
+		if err != nil { panic(err) }
+		if err := plan.Validate(); err != nil { panic(err) }
+		action := plan.Actions[0].(program.RunScript)
+		source := func(ref sdk.ObjectRef) (map[string]any, error) {
+			raw, err := os.ReadFile(os.Args[3])
+			if err != nil { return nil, err }
+			var object map[string]any
+			err = json.Unmarshal(raw, &object)
+			return object, err
+		}
+		inputs := program.ValueInputs{SourceCommit: "accepted", Source: source}
+		env := map[string]string{}
+		for key, ref := range action.Env {
+			value, _, err := program.ResolveValue(ref, inputs)
+			if err != nil { panic(err) }
+			env[key], err = program.ScriptEnvText(value)
+			if err != nil { panic(err) }
+		}
+		result["script"], result["env"] = action.Script, env
 	}
-	if len(plan.Actions) != 1 {
-		panic("expected one targetPort action")
-	}
-	action, ok := plan.Actions[0].(program.SetField)
-	if !ok {
-		panic("expected SetField")
-	}
-	value, _, err := program.ResolveValue(action.Value, program.ValueInputs{
-        SourceCommit: "accepted",
-        Source: func(ref sdk.ObjectRef) (map[string]any, error) {
-            raw, err := os.ReadFile(os.Args[3])
-            if err != nil { return nil, err }
-            var object map[string]any
-            err = json.Unmarshal(raw, &object)
-            return object, err
-        },
-        Observed: func(ref sdk.ObjectRef) (map[string]any, error) {
-        for _, pod := range snapshot.Pods() {
-            if ref.Kind == "Pod" && pod.Namespace == ref.Namespace && pod.Name == ref.Name {
-                raw, err := json.Marshal(pod)
-                if err != nil { return nil, err }
-                var object map[string]any
-                err = json.Unmarshal(raw, &object)
-                return object, err
-            }
-        }
-        return nil, os.ErrNotExist
-        },
-    })
-    if err != nil { panic(err) }
-	if err := json.NewEncoder(os.Stdout).Encode(map[string]any{
-		"result": verdict.Result, "path": action.Path, "value": value,
-	}); err != nil {
-		panic(err)
-	}
+	if err := json.NewEncoder(os.Stdout).Encode(result); err != nil { panic(err) }
 }
 """
 
@@ -399,6 +387,7 @@ class Controller(FakeOps):
         self.registrations: list[Path | None] = []
         self.sweep: Path | None = None
         self.sweep_result: dict[str, Any] | None = None
+        self.script_runs = 0
         self.reflection_lock = threading.Lock()
 
     def install(self, config: Any) -> bool:
@@ -525,7 +514,9 @@ class Controller(FakeOps):
                 turn = scripts.Reflector().learn(
                     worktree=self.app.workspace,
                     incident_id=incident,
-                    closure=SimpleNamespace(request=SimpleNamespace(namespace=NAMESPACE, drift_events=[])),
+                    closure=SimpleNamespace(
+                        request=SimpleNamespace(namespace=NAMESPACE, application="toy", drift_events=[])
+                    ),
                 )
                 assert turn.note
                 directory = self.app.workspace / ".sdo/playbooks" / scripts.PROGRAM_ID
@@ -590,24 +581,7 @@ class Controller(FakeOps):
             if self.incidents == 2:
                 assert (self.app.workspace / ".sdo/playbooks/service-targetport-mismatch/diagnose.go").is_file()
                 assert self.sweep is not None
-                snapshot = self.capture / "open@detect.json"
-                accepted = self.sweep / "accepted-service.json"
-                accepted.write_text(json.dumps(self.app.baseline["Service", "geo"]))
-                completed = subprocess.run(
-                    [
-                        str(self.sweep / "diagnose"),
-                        str(snapshot),
-                        str(self.capture / "open@detect-recordings.json"),
-                        str(accepted),
-                    ],
-                    cwd=self.sweep,
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
-                assert completed.returncode == 0, completed.stderr
-                self.sweep_result = json.loads(completed.stdout)
+                self.sweep_result = self.run_sweep("open")
                 runs = [
                     {
                         "program_id": scripts.PROGRAM_ID,
@@ -618,19 +592,71 @@ class Controller(FakeOps):
                 self.program_runs_by_incident[f"incident-{self.incidents}"] = runs
                 return {"program_runs": runs}
             return {"program_runs": []}
-        if args[0] == "plan":
-            assert args[1] == scripts.PROGRAM_ID
+        if args[0] == "mitigate":
+            assert args[1:] == (scripts.PROGRAM_ID, "--bind", f"service=Service/{NAMESPACE}/geo")
             assert self.sweep_result is not None
-            assert self.sweep_result["path"] == "spec.ports[0].targetPort"
-            return {"plan_id": "targetport-plan"}
-        if args[0] == "apply":
-            assert args[1:] == ("targetport-plan",)
-            assert self.sweep_result is not None
-            self.app.objects["Service", "geo"]["spec"]["ports"][0]["targetPort"] = self.sweep_result["value"]
+            self.apply_script(self.sweep_result)
             return {"healthy": False}
         if args[0] == "detect":
             return {"healthy": self.app.healthy(), "summary": "fake detector sweep"}
         raise AssertionError(args)
+
+    def run_sweep(self, phase: str) -> dict[str, Any]:
+        assert self.sweep is not None
+        accepted = self.sweep / "accepted-service.json"
+        accepted.write_text(json.dumps(self.app.baseline["Service", "geo"]))
+        snapshot = self.capture / ("fixed.json" if phase == "fixed" else "open@detect.json")
+        run = subprocess.run(
+            [
+                str(self.sweep / "diagnose"),
+                str(snapshot),
+                str(self.capture / "open@detect-recordings.json"),
+                str(accepted),
+                phase,
+            ],
+            cwd=self.sweep,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return json.loads(run.stdout)
+
+    def apply_script(self, result: dict[str, Any]) -> None:
+        assert self.sweep is not None
+        service = self.app.objects["Service", "geo"]
+        state = self.sweep / "target-port"
+        state.write_text(str(service["spec"]["ports"][0]["targetPort"]))
+        kubectl = self.sweep / "kubectl"
+        kubectl.write_text(
+            f"#!{sys.executable}\n"
+            + """
+import json, os, sys
+from pathlib import Path
+
+command, kind, name, *args = sys.argv[1:]
+assert (kind, name) == ("service", "geo")
+state = Path(os.environ["PORT_STATE"])
+if command == "get":
+    assert args == ["-o", "jsonpath={.spec.ports[0].targetPort}"]
+    print(state.read_text())
+else:
+    assert command == "patch" and args[:2] == ["--type=json", "-p"]
+    [operation] = json.loads(args[2])
+    assert operation["op"] == "replace" and operation["path"] == "/spec/ports/0/targetPort"
+    state.write_text(str(operation["value"]))
+"""
+        )
+        kubectl.chmod(0o700)
+        subprocess.run(
+            ["bash", "-c", result["script"]],
+            env={**os.environ, **result["env"], "PATH": f"{self.sweep}:{os.environ['PATH']}", "PORT_STATE": str(state)},
+            check=True,
+            capture_output=True,
+            timeout=10,
+        )
+        self.script_runs += 1
+        service["spec"]["ports"][0]["targetPort"] = int(state.read_text())
 
     def command(self, argv: list[str], **_kwargs: Any) -> str:
         if argv[0] == "kubectl":

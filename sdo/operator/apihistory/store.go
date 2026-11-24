@@ -78,6 +78,8 @@ type Event struct {
 	Omission        string    `json:"omission,omitempty"`
 	DryRun          bool      `json:"dry_run,omitempty"`
 	Partial         bool      `json:"partial,omitempty"`
+	// CollectionQuery is used for in-process delete preimages only.
+	CollectionQuery string `json:"-"`
 	// FieldManager is the manager the proxy forced on a write.
 	FieldManager string `json:"field_manager,omitempty"`
 	// RunningCommit is the commit of the writer's checkout when the write happened; RunningDirty marks a

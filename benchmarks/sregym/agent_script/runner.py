@@ -98,6 +98,7 @@ def execute(
             action = Command(
                 kind="command",
                 command=shlex.join(step.argv),
+                input_json=step.input_json,
                 exit_code=step.exit_code,
                 contains=step.contains,
                 timeout=step.timeout,

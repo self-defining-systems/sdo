@@ -63,8 +63,8 @@ func TestMigrateToSchema4OnlyStamps(t *testing.T) {
 	if err != nil || !changed {
 		t.Fatalf("Migrate = %v, %v; want changed", changed, err)
 	}
-	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "13\n" {
-		t.Fatalf("schema-version = %q, want 13", got)
+	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "14\n" {
+		t.Fatalf("schema-version = %q, want 14", got)
 	}
 	var files []string
 	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
@@ -100,8 +100,8 @@ func TestMigrateToSchema8KeepsExistingCorpusCases(t *testing.T) {
 	if err != nil || !changed {
 		t.Fatalf("Migrate = %v, %v; want changed", changed, err)
 	}
-	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "13\n" {
-		t.Fatalf("schema-version = %q, want 13", got)
+	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "14\n" {
+		t.Fatalf("schema-version = %q, want 14", got)
 	}
 	if got, _ := os.ReadFile(filepath.Join(root, filepath.FromSlash(CorpusDir+"/case-1/labels.json"))); string(got) != labels {
 		t.Fatalf("an existing case changed: %q", got)
@@ -128,8 +128,8 @@ func TestMigrateToSchema11KeepsExistingOutcomes(t *testing.T) {
 	if err != nil || !changed {
 		t.Fatalf("Migrate = %v, %v; want changed", changed, err)
 	}
-	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "13\n" {
-		t.Fatalf("schema-version = %q, want 13", got)
+	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "14\n" {
+		t.Fatalf("schema-version = %q, want 14", got)
 	}
 	if got, _ := os.ReadFile(filepath.Join(root, filepath.FromSlash(path))); string(got) != outcome {
 		t.Fatalf("an existing outcome changed: %q", got)
@@ -155,8 +155,8 @@ func TestMigrateToSchema12KeepsExistingRecordings(t *testing.T) {
 	if err != nil || !changed {
 		t.Fatalf("Migrate = %v, %v; want changed", changed, err)
 	}
-	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "13\n" {
-		t.Fatalf("schema-version = %q, want 13", got)
+	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "14\n" {
+		t.Fatalf("schema-version = %q, want 14", got)
 	}
 	if got, _ := os.ReadFile(filepath.Join(root, filepath.FromSlash(CorpusDir+"/case-1/recordings.json"))); string(got) != recordings {
 		t.Fatalf("an existing recording changed: %q", got)

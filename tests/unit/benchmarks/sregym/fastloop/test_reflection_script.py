@@ -44,9 +44,15 @@ def test_reflection_script_preserves_capture_provenance(tmp_path: Path) -> None:
     assert labels["bindings"]["service"]["name"] == "front"
     assert labels["peer_bindings"]["service"]["name"] == "peer"
     assert turn.result["note"]
-    assert isinstance(turn.steps[-2], Tool)
-    assert turn.steps[-2].argv[:3] == ["sdo-operator", "memory", "check"]
-    assert turn.steps[-2].timeout == 300.0
+    check = turn.steps[-1]
+    assert isinstance(check, Tool)
+    assert check.argv[:3] == ["sdo-operator", "memory", "check"]
+    assert check.argv[-2:] == ["--decision", "/dev/stdin"]
+    assert check.input_json == {
+        "learning_decision": "updated",
+        "proposed_artifact_ids": ["service-targetport-mismatch"],
+    }
+    assert check.timeout == 300.0
     assert "service-targetport-mismatch/README.md" in writes[".sdo/playbooks/README.md"]
     assert not (tmp_path / ".sdo").exists(), "generation must have no checkout side effects"
 

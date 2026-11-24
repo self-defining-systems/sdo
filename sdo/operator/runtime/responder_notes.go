@@ -98,14 +98,36 @@ func (l *ResponderLoop) incidentWrites() []IncidentChange {
 			}
 		}
 	}
-	for _, application := range l.applicationsLog {
+	for _, application := range l.applicationEvidenceLocked() {
 		// The agent applies through `sdo mitigate` (menu attempts); SDO's
 		// automatic stage applies plans and verification records equivalent repairs.
 		actor, writer := ActorAgent, "sdo mitigate"
 		if strings.HasPrefix(application.ID, "application-") || strings.HasPrefix(application.ID, "equivalent-repair-") {
 			actor, writer = ActorSDO, "sdo playbook stage"
 		}
+		for _, report := range application.Result.ActionReports {
+			if script := report.Script; script != nil && script.JobUID != "" {
+				summary := fmt.Sprintf("script ran in %d ms; exit status unavailable", script.DurationMS)
+				if script.ExitCode != nil {
+					summary = fmt.Sprintf("script ran in %d ms; exit %d", script.DurationMS, *script.ExitCode)
+				}
+				if report.FailureReason == "outcome_unknown" {
+					summary += "; effects unknown"
+				}
+				refs := scriptWriteRefs(script)
+				if len(refs) == 0 {
+					refs = []sdk.ObjectRef{{Kind: "Job", Name: script.JobName}}
+				}
+				for _, ref := range refs {
+					rows = append(rows, IncidentChange{At: application.CompletedAt, Source: "write", ReaderOrObject: ref.Kind + "/" + ref.Name,
+						Key: "run-script", After: summary, Writer: writer, Actor: actor, RunningCommit: application.RunningCommit, RunningDirty: application.RunningDirty})
+				}
+			}
+		}
 		for _, receipt := range ProgramRepairReceipts([]RecordedPlanApplication{application}, nil) {
+			if receipt.Kind == "run-script" {
+				continue
+			}
 			rows = append(rows, IncidentChange{At: at(receipt), Source: "write", ReaderOrObject: object(receipt), Key: "mitigation",
 				After: "playbook " + strings.Join(application.ProgramIDs, ","), Writer: writer, Actor: actor, RunningCommit: application.RunningCommit, RunningDirty: application.RunningDirty})
 		}

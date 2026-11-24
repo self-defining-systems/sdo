@@ -3,17 +3,14 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import hashlib
 import json
-import os
-import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from benchmarks.sregym.agent_script.model import AgentScript, Command, Delete, ScriptTurn, Tool, Write
+from benchmarks.sregym.agent_script.model import AgentScript, Delete, ScriptTurn, Tool, Write
 from sdo.contracts import AgentTask, ReflectionRequest, parse_json
 
 if TYPE_CHECKING:
@@ -23,6 +20,37 @@ PROGRAM_ID = "service-targetport-mismatch"
 NETWORKPOLICY_PROGRAM_ID = "networkpolicy-service-isolation"
 PROGRAM_SOURCE = Path(__file__).with_name("scripted_program")
 NETWORKPOLICY_PROGRAM_SOURCE = Path(__file__).with_name("scripted_networkpolicy_program")
+
+
+# The toy fixture has single-port Services. The script uses accepted input and
+# rechecks the live target before writing through the incident proxy.
+TOY_SCRIPT_MITIGATE = """package service_targetport_mismatch
+
+import (
+	"context"
+
+	"sdo.dev/operator/sdk/program"
+)
+
+func (Program) Mitigate(_ context.Context, _ program.ReadView, b program.Bindings) (program.Plan, error) {
+	ref := b.Objects["service"]
+	return program.Plan{Actions: []program.Action{program.RunScript{
+		Script: `set -eu
+before=$(kubectl get service "$SERVICE" -o jsonpath='{.spec.ports[0].targetPort}')
+if [ "$before" != "$TARGET" ]; then
+    case "$TARGET" in ''|*[!0-9]*) exit 2;; esac
+    patch=$(printf '[{"op":"replace","path":"/spec/ports/0/targetPort","value":%s}]' "$TARGET")
+    kubectl patch service "$SERVICE" --type=json -p "$patch"
+fi
+test "$(kubectl get service "$SERVICE" -o jsonpath='{.spec.ports[0].targetPort}')" = "$TARGET"`,
+		Env: map[string]program.Value{
+			"SERVICE": program.FromSource(ref, "metadata.name"),
+			"TARGET":  program.FromSource(ref, "spec.ports[0].targetPort"),
+		},
+		Reason: "restore accepted targetPort",
+	}}}, nil
+}
+"""
 
 
 def _captured_pair(capture: Path, open_at: str = "pre-apply") -> tuple[str, str] | None:
@@ -92,8 +120,15 @@ def reflection_script(
     def write(path: Path, text: str, **_: Any) -> None:
         steps.append(Write(kind="write", path=str(path.relative_to(worktree)), text=text))
 
-    def tool(argv: list[str], **_: Any) -> None:
-        steps.append(Tool(kind="tool", argv=argv, timeout=300.0 if argv[1:3] == ["memory", "check"] else 180.0))
+    def tool(argv: list[str], *, input_json: dict[str, Any] | None = None) -> None:
+        steps.append(
+            Tool(
+                kind="tool",
+                argv=argv,
+                input_json=input_json,
+                timeout=300.0 if argv[1:3] == ["memory", "check"] else 180.0,
+            )
+        )
 
     def finish(**fields: Any) -> AgentScript:
         # The closing turn replies with one line; Go derives the decision from the checkout's diff.
@@ -155,6 +190,8 @@ def reflection_script(
     files = ("README.md", "diagnose.go") if policy_pair else ("README.md", "diagnose.go", "mitigate.go")
     for name in files:
         write(target / name, (program_source / name).read_text(encoding="utf-8"))
+    if not policy_pair and getattr(closure.request, "application", "") == "toy":
+        write(target / "mitigate.go", TOY_SCRIPT_MITIGATE)
     body = (program_source / "README.md").read_text(encoding="utf-8")
     if body.startswith("---\n"):
         body = body.split("\n---\n", 1)[1]
@@ -221,21 +258,10 @@ def reflection_script(
         ),
         encoding="utf-8",
     )
-    # The validator checks every checkout change, so the decision belongs in
-    # the worker's writable tool exchange, outside repository-owned artifacts.
-    tools = Path(os.environ.get("SDO_AGENT_SCRIPT_WORK_DIR", os.environ.get("SDO_TOOLS_DIR", "/sdo/session/tools")))
-    decision = tools / ("reflection-decision-" + hashlib.sha256(incident.encode()).hexdigest() + ".json")
-    encoded = base64.b64encode(
-        json.dumps({"learning_decision": "updated", "proposed_artifact_ids": [program_id]}).encode()
-    ).decode()
-    steps.append(
-        Command(
-            kind="command",
-            command=f"set -C; printf %s {shlex.quote(encoded)} | base64 -d > {shlex.quote(str(decision))}",
-        )
+    tool(
+        ["sdo-operator", "memory", "check", "--root", str(worktree), "--decision", "/dev/stdin"],
+        input_json={"learning_decision": "updated", "proposed_artifact_ids": [program_id]},
     )
-    tool(["sdo-operator", "memory", "check", "--root", str(worktree), "--decision", str(decision)])
-    steps.append(Command(kind="command", command=f"rm -f -- {shlex.quote(str(decision))}"))
     return finish(
         summary=f"Compiled {program_id} program from captured repair",
         learning_decision="updated",

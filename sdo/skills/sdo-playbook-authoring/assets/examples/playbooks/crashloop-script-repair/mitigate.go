@@ -6,8 +6,7 @@ import (
 	"sdo.dev/operator/sdk/program"
 )
 
-// script is byte-identical to the recorded hand command; labels.json script_origins maps
-// its digest to that receipt. Names reach it only through Env, read from the bound object.
+// Names reach the script through Env, read from the bound object.
 const script = `kubectl delete pod --namespace "$NAMESPACE" --selector "app=$APP" --wait=false`
 
 func (Program) Mitigate(_ context.Context, _ program.ReadView, b program.Bindings) (program.Plan, error) {

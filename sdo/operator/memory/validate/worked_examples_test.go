@@ -52,7 +52,7 @@ func TestWorkedExamplesPassTheReflectionMemoryCheck(t *testing.T) {
 			if call.Method != "RepairReceipt" {
 				continue
 			}
-			var link program.ScriptOriginReceipt
+			var link program.RecordedRepairReceipt
 			if err := json.Unmarshal(call.Result, &link); err != nil {
 				t.Fatal(err)
 			}

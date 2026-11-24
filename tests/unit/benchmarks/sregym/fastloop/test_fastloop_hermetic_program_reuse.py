@@ -52,7 +52,7 @@ from tests.unit.benchmarks.sregym.fastloop.test_fastloop_hermetic_run import (  
 pytestmark = pytest.mark.go_integration
 
 
-def test_scripted_fastloop_reuses_reflected_target_port_program(
+def test_scripted_fastloop_learns_applies_and_disarms_run_script(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     control_api: SimpleNamespace,  # noqa: F811
@@ -389,7 +389,9 @@ def test_scripted_fastloop_reuses_reflected_target_port_program(
     assert ".sdo/playbooks/service-targetport-mismatch/diagnose.go" in committed
     assert str((corpus / "open.json").relative_to(workspace)) in committed
     assert records[1].program_verdicts.get("Match") == 1
-    assert records[1].tool_commands.get("apply") == 1
+    assert records[1].tool_commands.get("mitigate") == 1
+    assert controller.script_runs == 1
+    assert controller.run_sweep("fixed") == {"result": "NoMatch"}
     assert app.objects == app.baseline
     saved = PersistentState.load(tmp_path / "sdo_persistent_controller.json").controllers[NAMESPACE]
     assert saved.served_stages == ["fastloop-000", "fastloop-001"]

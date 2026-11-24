@@ -6,20 +6,12 @@ Offline skilleval rows and `run-config.json` record `replay_mode` and `replay`,
 respectively. Default remains on. Never infer off from a missing corpus.
 
 With off, capture/replay and every corpus requirement are disabled. A successful memory
-check still compiles and vets source, enforces imports, ownership and formatting, and
-checks RunScript origin against successful accepted receipts. Missing labels,
+check still compiles and vets source, enforces imports, ownership and formatting, and authored-file hygiene. Missing labels,
 snapshots and replay observations are expected. A skipped replay is unmeasured, not
 Match/NoMatch, and does not count as a replay pass. Program stages and fresh live
 observations are unchanged; offline save success alone cannot establish live reliability.
 
-The hand-repair executable gate remains, while receipt-to-case binding is disabled.
-RunScript digests bind directly to the originating accepted outcome; a legacy receipt
-without captured bytes needs an explicit receipt link. README `script_receipts` maps each
-digest to `{incident_id, receipt_id}`; legacy `script_origins` plus `originating_incident`
-remains readable (shared helpers: metadata.yaml). Earlier accepted script proof remains
-valid when a later incident changes the playbook. Existing accepted corpus origins remain valid for
-live execution when corroborated by the accepted original outcome. Corpus bytes alone
-never prove a successful receipt, including when replay off skipped their validation. Outcome storage and trust credit formats are unchanged.
+Historical script receipt links can explain an observed transition in an offline replay. A live Match is the planning gate for RunScript, and absent script evidence leaves replay unmeasured.
 
 For a paired offline comparison use identical frozen SKILLEVAL2 scenarios, skills,
 source overlay, binary, provider/model/effort and two runs per arm. Report model calls,

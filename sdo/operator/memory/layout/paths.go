@@ -73,7 +73,8 @@ const (
 	// recorded (the retired field is dropped on read), an earlier case is valid
 	// without the optional labels, and an earlier recording without a class reads
 	// as unavailable.
-	CurrentSchemaVersion = 13
+	// Version 14 retires optional script linkage from corpus labels.
+	CurrentSchemaVersion = 14
 )
 
 // Kind names a class of file in operational memory.

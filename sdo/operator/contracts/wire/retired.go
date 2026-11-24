@@ -35,8 +35,10 @@ var retiredFieldNames = map[string]string{
 // retiredValues maps "<message>.<field>" to retired value -> successor, for
 // string fields with an allowed-values list and for enum fields.
 var retiredValues = map[string]map[string]string{
-	"sdodev.contracts.v1alpha1.ReflectionWorkItem.reason":         {"evidence_gap": "no_recorded_repair"},
-	"sdodev.contracts.v1alpha1.ReflectionDecision.decline_reason": {"evidence_gap": "no_recorded_repair"},
+	"sdodev.contracts.v1alpha1.RepairActionReceipt.failure_reason": {"script_unprovenanced": "authorization_denied"},
+	"sdodev.contracts.v1alpha1.StageMitigation.skip_reason":        {"script_unprovenanced": "plan_not_executable"},
+	"sdodev.contracts.v1alpha1.ReflectionWorkItem.reason":          {"evidence_gap": "no_recorded_repair"},
+	"sdodev.contracts.v1alpha1.ReflectionDecision.decline_reason":  {"evidence_gap": "no_recorded_repair"},
 }
 
 // UnmarshalLenientMigrating is UnmarshalLenient for stored documents: retired

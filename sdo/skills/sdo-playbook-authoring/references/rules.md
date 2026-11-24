@@ -85,15 +85,15 @@ Replay results are information only.
 ## Executable repair evidence
 
 Every recorded hand repair needs an executable typed SDK or RunScript step (partial coverage is fine), with
-relation-derived Env and digest-to-receipt linkage; README text holds only judgement and ordering.
+relation-derived Env for script inputs; README text holds only judgement and ordering.
 - A `RepairData` states a `Statement` some store engine accepts (`delete`, a postgres/mysql SET clause, a mongodb
   update document, a redis single-key write) and an `ExpectMax` above 0. Enforced by: `program.plan-invalid`.
 
 <!-- replay:on -->
 ## Corpus evidence
 
-- Build replay fixtures from recorded session observations when available. Missing or inconclusive replay
-  is recorded with its reason and never rejects publication; retain RunScript receipt linkage. Enforced by: `program.mitigation-not-repaired`.
+Build replay fixtures from recorded observations. Missing or inconclusive replay is advisory.
+
 - Preserve every accepted case exactly as it appears at the accepted base commit, including snapshots, recordings,
   provenance, bindings and labels. Do not delete or relabel it; submit new evidence with a new case ID. Enforced by: `program.corpus-immutable`.
 <!-- /replay:on -->
