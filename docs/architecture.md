@@ -374,7 +374,9 @@ because its SLO window can still hold samples from before the fix. An opening Ku
 finding is inactive with a clear streak of the stability window. The alert set is `opening_keys` plus `joined_keys`. New user tests, traffic errors and held Kubernetes conditions
 join after firing persistence activates them, within `AlertJoinWindow` (5 minutes) of detection while recovery is
 provisional. A join resets the recovery proof. A responder fenced to finish its report retires after that report.
-If an alert joins after the responder returns, the same incident stays open and escalated until recovery.
+If an alert joins after an automatic-only recovery, the incident resumes the automatic recovery policy
+and can hand off to its first responder at the original bound. If an alert joins after the responder returns,
+the same incident stays open and escalated until recovery.
 SDO dispatches the responder once and withholds learning credit on the escalated close. An applied learned
 playbook still receives a failure against its revision. Later episodes wait in the batcher for the next incident. A joined alert (or a clue) that a learned playbook can bind reopens the automatic stage for one more bounded pass
 (`maxMidIncidentPasses`; a symptom arriving while the first pipeline or a pass runs queues one more pass, and a pass diagnoses live detector findings, not the loop's last observation), so a playbook is judged against the fault's own symptom even when routine churn opened the incident. The verification grace

@@ -74,7 +74,8 @@ func TestProvisionalClosureAdmitsNewOpeners(t *testing.T) {
 // The route has not run in the scheduled loop when the closure effect starts.
 // It must still be read before a verified outcome can reach the broker.
 func TestClosurePublicationChecksOpenersOutsideTheInitialProof(t *testing.T) {
-	t.Run("persisted opener joins", func(t *testing.T) { testClosureAdmission(t, "persistent") })
+	t.Run("persisted opener joins after responder returned", func(t *testing.T) { testClosureAdmission(t, "persistent") })
+	t.Run("persisted opener hands off after playbook-only close", func(t *testing.T) { testClosureAdmission(t, "stage-only") })
 	t.Run("single blip clears", func(t *testing.T) { testClosureAdmission(t, "blip") })
 	t.Run("non-member observer fails", func(t *testing.T) { testClosureAdmission(t, "unavailable") })
 	t.Run("known broken probes are excluded", func(t *testing.T) { testClosureAdmission(t, "known-broken") })
@@ -103,7 +104,8 @@ func testClosureAdmission(t *testing.T, scenario string) {
 	if scenario == "known-broken" {
 		metrics.samples = [][]sdk.Finding{nil}
 	}
-	c := openersController(t, &recordingDispatcher{}, probe, metrics, countedClosureProbe{probeTest})
+	dispatcher := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
+	c := openersController(t, dispatcher, probe, metrics, countedClosureProbe{probeTest})
 	c.gitRead = func(ctx context.Context, repo string, args ...string) ([]byte, error) {
 		if len(args) == 2 && args[0] == "show" && args[1] == "synthetic-accepted:"+layout.TrafficWorkloadsDir+"/known-broken.yaml" {
 			return []byte("name: known-broken\npurpose: health-probe\nscenarios:\n- id: browse-items\n  knownBroken: {reason: test fixture, failsWith: ['404']}\n"), nil
@@ -123,6 +125,18 @@ func testClosureAdmission(t *testing.T, scenario string) {
 	c.pendingClosure = &IncidentClosure{Request: request, Result: &result, DetectedAt: now.Add(-time.Minute),
 		DispatchedAt: now.Add(-30 * time.Second), ResponderCompletedAt: now.Add(-time.Second), VerifiedAt: now.Add(-time.Second),
 		FinalDetectorStates: []DetectorEvaluation{{DetectorID: condition.DetectorID, Status: DetectorEvaluationClear, EvaluatedAt: now.Add(-time.Second)}}}
+	if scenario == "stage-only" {
+		result.ResolutionPath = "deterministic"
+		result.ResponderSessionID = ""
+		c.pendingClosure.Request.PriorStages = []*contracts.StageReport{{
+			Stage:            "deterministic",
+			Mitigations:      []*contracts.StageMitigation{{ApplyReceipt: &contracts.PlanApplication{Applied: true}}},
+			ApplyCompletedAt: contractTimestamp(now.Add(-30 * time.Second)),
+			RecoveryDeadline: contractTimestamp(now.Add(2 * time.Second)),
+			RecoveryWait:     &contracts.RecoveryWait{ExitReason: contracts.RecoveryWait_EXIT_REASON_CLEARED},
+		}}
+		c.codePath = &CodePath{Selection: CodePathSelection{ResponseStages: []string{"deterministic", "agent"}}}
+	}
 	c.closureState = contracts.ClosureState_CLOSURE_STATE_PENDING
 
 	execute := func() {
@@ -168,6 +182,29 @@ func testClosureAdmission(t *testing.T, scenario string) {
 	}
 	if got := c.broker.(*riskBroker).closures(); len(got) != 0 {
 		t.Fatalf("broker received a contradicted closure: %+v", got)
+	}
+	if scenario == "stage-only" {
+		c.now = func() time.Time { return now.Add(2 * time.Second) }
+		step(t, c, now.Unix()+2)
+		effect, ok := c.PendingDispatchEffect()
+		if !ok {
+			t.Fatalf("missing first responder handoff after provisional recovery: escalated=%s", c.escalatedAt)
+		}
+		if err := c.ExecuteDispatchEffect(t.Context(), effect); err != nil {
+			t.Fatal(err)
+		}
+		c.Wait()
+		if got := dispatcher.callCount(); got != 1 {
+			t.Fatalf("responder dispatched %d times, want 1", got)
+		}
+		dispatched := <-dispatcher.requests
+		if dispatched.IncidentID != request.IncidentID || !slices.Equal(findingKeys(dispatched.Findings), []string{key}) {
+			t.Fatalf("handoff should contain only the residual alert for the same incident: %+v", dispatched)
+		}
+		if _, another := c.PendingDispatchEffect(); another {
+			t.Fatal("selected handoff remained pending after dispatch")
+		}
+		return
 	}
 	if _, ok := c.PendingDispatchEffect(); ok {
 		t.Fatal("a new alert requested another responder")
