@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/render"
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/program"
 )
@@ -19,38 +19,8 @@ func structuralSecret(document string, ref sdk.ObjectRef, path string) (sdk.Obje
 	if len(parts) >= 5 && strings.Join(parts[:3], "/") == "api/v1/namespaces" && parts[4] == "secrets" {
 		return sdk.ObjectRef{APIVersion: "v1", Kind: "Secret", Namespace: parts[3], Name: strings.SplitN(strings.Join(parts[5:], "/"), "/", 2)[0]}, true
 	}
-	var decoded string
-	if json.Unmarshal([]byte(document), &decoded) == nil {
-		document = decoded
-	}
-	reader := yamlutil.NewYAMLOrJSONDecoder(strings.NewReader(document), 4096)
-	for {
-		var object map[string]any
-		if reader.Decode(&object) != nil {
-			break
-		}
-		if kind, _ := object["kind"].(string); kind == "Secret" {
-			metadata, _ := object["metadata"].(map[string]any)
-			ref.Name, _ = metadata["name"].(string)
-			ref.Namespace, _ = metadata["namespace"].(string)
-			ref.Kind, ref.APIVersion = kind, "v1"
-			return ref, true
-		} else if strings.HasSuffix(kind, "List") {
-			items, _ := object["items"].([]any)
-			for _, item := range items {
-				if kind == "SecretList" {
-					if child, ok := item.(map[string]any); ok && child["kind"] == nil {
-						child["kind"] = "Secret"
-					}
-				}
-				body, _ := json.Marshal(item)
-				if found, ok := structuralSecret(string(body), ref, ""); ok {
-					return found, true
-				}
-			}
-		}
-	}
-	return sdk.ObjectRef{}, false
+	namespace, name, ok := render.SecretDocumentIdentity(document)
+	return sdk.ObjectRef{APIVersion: "v1", Kind: "Secret", Namespace: namespace, Name: name}, ok
 }
 
 type secretToolIdentity struct {
