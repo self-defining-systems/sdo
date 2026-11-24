@@ -1,0 +1,307 @@
+"""Measurement contracts for lanes row reports, using synthetic evidence."""
+
+import json
+from pathlib import Path
+
+from benchmarks.fuzzops.row_metrics import main, measure
+
+
+def at(second: int) -> str:
+    return f"2026-01-01T00:00:{second:02d}Z"
+
+
+def put(run: Path, name: str, value: object) -> None:
+    path = run / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value), encoding="utf-8")
+
+
+def grade(run: Path, mutations: list[dict[str, str]] | None = None) -> None:
+    put(
+        run,
+        "record.json",
+        {
+            "fault": "synthetic",
+            "valid": True,
+            "window": {"BadSeconds": 14},
+            "last_bad_second": 29,
+            "recovered_in_window": True,
+            "lifecycle": {"inject_at": at(0), "observed": {"mutations": mutations or []}},
+        },
+    )
+    put(run, "result.json", {"status": "done"})
+
+
+def transcript(run: Path, name: str, calls: list[tuple[int, int, str, bool, str]]) -> None:
+    events = []
+    for i, (start, end, command, error, output) in enumerate(calls):
+        events.extend(
+            [
+                {
+                    "type": "assistant",
+                    "timestamp": at(start),
+                    "message": {
+                        "content": [
+                            {"type": "tool_use", "id": str(i), "name": "Bash", "input": {"command": command}},
+                        ]
+                    },
+                },
+                {
+                    "type": "user",
+                    "timestamp": at(end),
+                    "message": {
+                        "content": [
+                            {"type": "tool_result", "tool_use_id": str(i), "is_error": error, "content": output},
+                        ]
+                    },
+                },
+            ]
+        )
+    path = run / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(map(json.dumps, events)), encoding="utf-8")
+
+
+def test_vanilla_wall_clock_and_database_write(tmp_path: Path) -> None:
+    grade(tmp_path, [{"at": at(28), "target": "deployment/unrelated", "op": "changed"}])
+    put(tmp_path, "operator/done.json", {"started_at": at(3), "ended_at": at(40)})
+    put(
+        tmp_path,
+        "operator/usage.json",
+        {
+            "input_tokens": 2,
+            "cache_read_input_tokens": 10,
+            "cache_creation_input_tokens": 4,
+            "output_tokens": 5,
+            "total_cost_usd": 0.01,
+        },
+    )
+    transcript(
+        tmp_path,
+        "operator/session-dir/project/parent.jsonl",
+        [
+            (5, 6, "echo 'kubectl delete pod example'", False, ""),
+            (8, 9, "kubectl exec database -- psql -c 'SELECT 1 FOR UPDATE'", False, "1"),
+            (
+                19,
+                21,
+                "kubectl exec database -- sh -c 'psql -c \"UPDATE widgets SET enabled = true\"'",
+                False,
+                "UPDATE 4",
+            ),
+            (23, 24, "kubectl patch deployment/widgets -p '{}'", True, "Forbidden"),
+            (25, 26, "kubectl apply -f manifest.yaml", False, "deployment.apps/widgets unchanged"),
+            (27, 28, "kubectl rollout status deployment/widgets", False, ""),
+            (32, 33, "kubectl delete pod debug", False, 'pod "debug" deleted'),
+        ],
+    )
+    row = measure(tmp_path)
+    assert (row.arm, row.inject_to_page_s, row.page_source, row.ttf_s) == ("vanilla", 3, "n.a.", 37)
+    assert row.anchor_to_last_write_s == 16
+    assert row.last_write_source == "claude_tool_start"
+    assert row.mutation_crosscheck == "data_write_not_observed"
+    assert (row.responder_input_tokens, row.responder_output_tokens, row.responder_cost_usd) == (16, 5, 0.01)
+    assert row.incident_count is None
+
+
+def test_sdo_keeps_last_plan_and_separate_phase_usage(tmp_path: Path) -> None:
+    grade(tmp_path, [{"at": at(24), "target": "deployment/widgets", "op": "changed"}])
+    put(
+        tmp_path,
+        "operator/collect.json",
+        {
+            "sdo_page_at": at(8),
+            "fallback_page_at": at(7),
+            "page_source": "fallback",
+        },
+    )
+    put(
+        tmp_path,
+        "operator/evidence-manifest.json",
+        {
+            "timelines": [
+                {
+                    "incident": "incident-a",
+                    "opened_at": at(8),
+                    "playbook_applied_at": at(11),
+                    "health_cleared_at": at(33),
+                    "recovered_at": at(39),
+                    "resolution_path": "deterministic",
+                    "closing_turn_dispatch_at": at(40),
+                    "closing_turn_cost_usd": 0.05,
+                }
+            ],
+            "open_incidents": [],
+        },
+    )
+    put(
+        tmp_path,
+        "operator/evidence/incidents/hash/ledger.json",
+        {
+            "incident_id": "incident-a",
+            "outcome_document": {
+                "plan_applications": [
+                    {"applied": True, "completed_at": at(11)},
+                    {
+                        "applied": True,
+                        "completed_at": at(23),
+                        "object_effects": [
+                            {"ref": {"kind": "Deployment", "name": "widgets"}, "confirmed": True},
+                        ],
+                    },
+                    {"applied": True, "completed_at": at(25), "dry_run": True},
+                    {"applied": False, "completed_at": at(26)},
+                ]
+            },
+            "reflection_results": [
+                {
+                    "usage": {
+                        "input_tokens": "10",
+                        "cache_read_input_tokens": "9",
+                        "output_tokens": "2",
+                        "total_cost_usd": 0.05,
+                    }
+                }
+            ],
+        },
+    )
+    row = measure(tmp_path)
+    assert (row.arm, row.inject_to_page_s, row.page_source, row.ttf_s) == ("sdo", 7, "fallback", 15)
+    assert row.ttf_source == "plan_application_completed_at"
+    assert row.mutation_crosscheck == "target_observed"
+    assert row.fixed_by_playbook_alone is True
+    assert row.incident_count == 1
+    assert (row.responder_input_tokens, row.closing_turn_input_tokens, row.closing_turn_cost_usd) == (0, 10, 0.05)
+
+
+def test_sdo_fallback_is_labeled_and_invalid_row_is_preserved(tmp_path: Path, capsys) -> None:
+    grade(tmp_path)
+    put(tmp_path, "result.json", {"status": "invalid", "reason": "lane lost"})
+    put(
+        tmp_path,
+        "operator/evidence-manifest.json",
+        {
+            "timelines": [
+                {
+                    "opened_at": at(8),
+                    "dispatched_at": at(10),
+                    "first_agent_change_at": at(17),
+                    "health_cleared_at": at(33),
+                    "responder_usage": {"input_tokens": "18", "output_tokens": 2},
+                }
+            ]
+        },
+    )
+    row = measure(tmp_path)
+    assert (row.valid, row.invalid_reason, row.fixed_in_window) == (False, "lane lost", True)
+    assert (row.ttf_s, row.ttf_source, row.anchor_to_last_write_s) == (9, "fallback_first_agent_change_at", None)
+    assert main([str(tmp_path)]) == 0
+    assert json.loads(capsys.readouterr().out)["window_bad_user_s"] == 14
+    assert main(["--format", "markdown", str(tmp_path)]) == 0
+    assert "lane lost" in capsys.readouterr().out
+
+
+def test_vanilla_verification_timestamps_the_completed_write(tmp_path: Path) -> None:
+    grade(tmp_path)
+    put(tmp_path, "operator/done.json", {"started_at": at(3), "ended_at": at(40)})
+    transcript(
+        tmp_path,
+        "operator/transcript.jsonl",
+        [
+            (15, 32, "kubectl exec app -- rails runner 'Widget.first.update!(enabled: true)'", False, "true"),
+            (
+                34,
+                35,
+                "kubectl exec database -- psql -c 'SELECT id, updated_at FROM widgets; SELECT now()'",
+                False,
+                "1 | 2026-01-01 00:00:31.500\n2026-01-01 00:00:35+00",
+            ),
+        ],
+    )
+    row = measure(tmp_path)
+    assert row.ttf_s == 37
+    assert (row.anchor_to_last_write_s, row.last_write_source) == (28.5, "transcript_db_updated_at")
+
+
+def test_sdo_correlates_codex_receipt_and_counts_open_incident_usage(tmp_path: Path) -> None:
+    grade(tmp_path, [{"at": at(23), "target": "sts/database", "op": "changed"}])
+    path = "operator/evidence/incidents/closed/rollout-test.jsonl"
+    put(
+        tmp_path,
+        "operator/evidence-manifest.json",
+        {
+            "timelines": [
+                {
+                    "incident": "closed-a",
+                    "opened_at": at(7),
+                    "dispatched_at": at(8),
+                    "health_cleared_at": at(27),
+                    "closing_turn_dispatch_at": at(30),
+                    "responder_usage": {"input_tokens": 20, "output_tokens": 2, "total_cost_usd": 0.1},
+                }
+            ],
+            "open_incidents": ["open"],
+            "agents": [{"role": "responder", "incident": "closed-a", "path": path}],
+        },
+    )
+    put(
+        tmp_path,
+        "operator/evidence/incidents/closed/ledger.json",
+        {
+            "incident_id": "closed-a",
+            "outcome_document": {"agent_changes": [{"at": at(22)}]},
+        },
+    )
+    open_log = tmp_path / "operator/evidence/incidents/open/claude-turns.jsonl"
+    open_log.parent.mkdir(parents=True)
+    open_log.write_text(
+        json.dumps(
+            {
+                "role": "responder",
+                "event": "complete",
+                "usage": {
+                    "input_tokens": 3,
+                    "output_tokens": 1,
+                    "total_cost_usd": 0.2,
+                },
+            }
+        )
+    )
+    log = tmp_path / path
+    events = []
+    for i, second, output in [
+        (1, 20, "statefulset.apps/database patched"),
+        (2, 31, "statefulset.apps/database patched"),
+    ]:
+        events.extend(
+            [
+                {
+                    "type": "response_item",
+                    "timestamp": at(second),
+                    "payload": {
+                        "type": "function_call",
+                        "name": "exec_command",
+                        "call_id": str(i),
+                        "arguments": json.dumps({"cmd": "kubectl patch statefulset/database -p '{}'"}),
+                    },
+                },
+                {
+                    "type": "response_item",
+                    "timestamp": at(second + 3),
+                    "payload": {
+                        "type": "function_call_output",
+                        "call_id": str(i),
+                        "output": output,
+                    },
+                },
+            ]
+        )
+    log.write_text("\n".join(map(json.dumps, events)))
+    row = measure(tmp_path)
+    assert (row.ttf_s, row.ttf_source, row.mutation_crosscheck) == (
+        15,
+        "transcript_and_agent_change_at",
+        "target_observed",
+    )
+    assert (row.responder_input_tokens, row.responder_output_tokens, row.incident_count) == (23, 3, 2)
+    assert row.closing_turn_input_tokens is None
