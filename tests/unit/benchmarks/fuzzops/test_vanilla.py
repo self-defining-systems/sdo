@@ -58,23 +58,21 @@ def test_scoped_kubeconfig_and_clean_pool(tmp_path, monkeypatch, capsys):
 def test_detached_onset_launcher_and_evidence(tmp_path):
     tools = tmp_path / "bin"
     tools.mkdir()
-    pack = tmp_path / "pack"
-    pack.mkdir()
-    (pack / "journeys.yaml").write_text("journeys: [{name: read-project}]\n")
-    counter = tmp_path / "checks"
+    traffic = tmp_path / "traffic.jsonl"
     ready, release = tmp_path / "agent-ready", tmp_path / "agent-release"
     os.mkfifo(ready)
     os.mkfifo(release)
-    write_executable(
-        tools / "fuzzops",
-        f"""#!/bin/sh
-test "$3" = '{pack}' && test "$7" = 4s || exit 2
-if [ -f '{counter}' ]; then
-  echo 'read-project 503 (failed) synthetic' >&2
-fi
-touch '{counter}'
-""",
-    )
+    nominal_inject = datetime.now(timezone.utc)
+    sample = {
+        "inject_at": nominal_inject.isoformat(),
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "requests": 6,
+        "first_bad": None,
+    }
+    healthy = json.dumps(sample)
+    bad_bucket = {"Start": nominal_inject.replace(microsecond=0).isoformat(), "Failed": 6}
+    hurt = json.dumps({**sample, "first_bad": bad_bucket})
+    traffic.write_text(healthy + "\n" + hurt[:20])
     write_executable(tools / "kubectl", "#!/bin/sh\nexit 0\n")
     write_executable(
         tools / "bwrap",
@@ -155,30 +153,41 @@ print(json.dumps({'type': 'result', 'session_id': 'synthetic', 'usage': {'input_
     state.mkdir(parents=True)
     (state / "kubeconfig").write_text('{"users":[{"user":{"token":"synthetic-kube-token"}}]}')
     evidence = tmp_path / "evidence"
-    nominal_inject = datetime.now(timezone.utc).replace(microsecond=0)
     env = {
         **os.environ,
         "PATH": f"{tools}:{os.environ['PATH']}",
         "AWS_SHARED_CREDENTIALS_FILE": "/synthetic/aws",
         "BENCH_OPERATOR": str(config),
-        "BENCH_PACK": str(pack),
         "BENCH_OUT": str(evidence),
         "BENCH_LANE_DIR": str(lane_dir),
         "BENCH_RUN": "proof",
         "BENCH_FAULT": "synthetic",
-        "FUZZOPS_BIN": str(tools / "fuzzops"),
+        "FUZZOPS_TRAFFIC": str(traffic),
         "FUZZOPS_DEADLINE": (nominal_inject + timedelta(seconds=600)).isoformat(),
         "FUZZOPS_NAMESPACE": "fg1",
     }
     ready_fd = os.open(ready, os.O_RDWR | os.O_NONBLOCK)
     release_fd = os.open(release, os.O_RDWR | os.O_NONBLOCK)
-    watch = subprocess.Popen([sys.executable, "-m", vanilla.__name__, "watch"], env=env)
+    watch = subprocess.Popen(
+        [sys.executable, "-m", vanilla.__name__, "watch"],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
     try:
+        assert watch.stderr is not None
+        assert select.select([watch.stderr], [], [], 15)[0]
+        assert "waiting for harm onset" in watch.stderr.readline()
+        assert not select.select([ready_fd], [], [], 0)[0]
+        with traffic.open("a") as stream:
+            stream.write(hurt[20:] + "\n")
         assert select.select([ready_fd], [], [], 15)[0]
         assert os.read(ready_fd, 1) == b"R"
         assert vanilla.main(["idle"], env) == 1
         watch.kill()
-        watch.wait(timeout=4)
+        stdout, _ = watch.communicate(timeout=4)
+        assert stdout == ""
         os.write(release_fd, b"G")
         # The detached supervisor owns the lock through evidence publication.
         subprocess.run(
@@ -197,10 +206,49 @@ print(json.dumps({'type': 'result', 'session_id': 'synthetic', 'usage': {'input_
     assert vanilla.main(["collect"], env) == 0
     assert cell_problems(evidence, "vanilla") == []
     assert json.loads((evidence / "start.json").read_text())["inject_at"] == nominal_inject.isoformat()
-    assert json.loads((evidence / "onset.json").read_text())["failing"] == ["read-project"]
+    assert json.loads((evidence / "onset.json").read_text())["first_bad"] == bad_bucket
+    assert (evidence / "onset-probes.jsonl").read_text() == healthy + "\n" + hurt + "\n"
     assert json.loads((evidence / "usage.json").read_text())["input_tokens"] == 7
     transcript = (evidence / "transcript.jsonl").read_text()
     assert "synthetic-kube-token" not in transcript
     assert "synthetic-vertex-key" not in transcript
     assert vanilla.main(["collect"], env) == 0
     assert not list(evidence.rglob("kubeconfig"))
+
+
+def test_watch_without_harm_never_launches(tmp_path, monkeypatch, capsys):
+    traffic = tmp_path / "traffic.jsonl"
+    traffic.write_text(
+        '{"inject_at":"2026-01-01T00:00:00Z","observed_at":"2026-01-01T00:00:05Z","requests":6,"first_bad":null}\n'
+    )
+    env = {
+        "BENCH_LANE_DIR": str(tmp_path),
+        "BENCH_RUN": "proof",
+        "BENCH_OUT": str(tmp_path / "evidence"),
+        "FUZZOPS_TRAFFIC": str(traffic),
+        "FUZZOPS_DEADLINE": datetime.now(timezone.utc).isoformat(),
+    }
+
+    def unexpected_launch(*args, **kwargs):
+        raise AssertionError("launched Claude without user harm")
+
+    monkeypatch.setattr(vanilla.subprocess, "Popen", unexpected_launch)
+    assert vanilla.main(["watch"], env) == 0
+    assert capsys.readouterr().out == ""
+    assert vanilla.main(["collect"], env) == 0
+    evidence = Path(env["BENCH_OUT"])
+    assert json.loads((evidence / "onset.json").read_text())["at"] is None
+    assert (evidence / "onset-probes.jsonl").read_text() == traffic.read_text()
+
+
+def test_watch_reports_missing_traffic_on_stderr(tmp_path, capsys):
+    env = {
+        "BENCH_LANE_DIR": str(tmp_path),
+        "BENCH_RUN": "proof",
+        "FUZZOPS_DEADLINE": datetime.now(timezone.utc).isoformat(),
+    }
+    assert vanilla.main(["watch"], env) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "requires a FuzzOps pin that publishes FUZZOPS_TRAFFIC" in captured.err
+    assert json.loads((tmp_path / "vanilla" / "proof" / "done.json").read_text())["error"] in captured.err

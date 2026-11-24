@@ -65,6 +65,13 @@ overlay files it passed are under the lane's `sdo-config/`.
 
 ## Reading it
 
+- Vanilla Claude rows on a pin that exports `FUZZOPS_TRAFFIC` include `operator/onset-probes.jsonl`,
+  the live samples of the run's own journey workload through the first bad bucket or window deadline.
+  Use `operator/onset.json` for the hook's trigger time (`at`), the workload's `first_bad.Start`,
+  and the exact `inject_at`. A null `at` with `done.json` saying no user harm was observed means
+  Claude was never launched. Earlier hooks used a separate journey check and launched at a cap even
+  when `at` was null. The final grader may backdate harm after checking for lost writes.
+
 - Only `done` runs are graded. `invalid` reasons: `capped: <idle reason>` (SDO was still busy at the cap, often a
   queued reflection), `lane lost`, `inject failed`, a fuzzops invalid reason, `host interference`, `sequence broken`.
   Not-ready gates are lane events (in `gates.jsonl` and the lane timeline), not runs.
