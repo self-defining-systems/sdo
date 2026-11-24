@@ -105,9 +105,6 @@ func TestRecordCorpusWritesAProgramsFirstCaseWithoutAPeer(t *testing.T) {
 	for name, binding := range map[string]program.Bindings{"role-less": {}, "one role": component("front")} {
 		t.Run(name, func(t *testing.T) {
 			root, captures := t.TempDir(), t.TempDir()
-			if err := os.MkdirAll(filepath.Join(root, layout.CorpusDir), 0o755); err != nil {
-				t.Fatal(err)
-			}
 			for _, file := range []string{"fixed.json", "open@detect.json"} {
 				writeCaptureFile(t, filepath.Join(captures, file), "{}")
 			}
