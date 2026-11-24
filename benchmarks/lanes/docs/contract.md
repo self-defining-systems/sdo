@@ -92,6 +92,7 @@ The `idle` before a teardown (a release, a rebuild that removes the operator) is
 | verb | operations (`WORKLOAD_ACTION`) | built-in `fuzzops` workload runs |
 |---|---|---|
 | `identity` | none | `bin/fuzzops version` (JSON: `workload` id when it says one, `revision`, `modified`); the pin check at `add` / `plan add` (on each usable host, through the workload's own identity command) and every step fail if it is not the pinned revision or was built from a modified checkout. The revision is stored in lane and step files as `workload_rev` (files written before read `fuzzops_rev`, and the old key is still written for a rollback) |
+| `app-content` | none | unsupported (see below) |
 | `app-up` | `check-pack`, `up`, `down`, `images` | `pack load`, `app up`, `app down`, `app images` |
 | `app-snapshot` | `write`, `verify` | `app fingerprint --out F`, `app fingerprint --against F` |
 | `app-reset` | `recover`, `owned` | `recover` (undo a fault a dead run left; exit 2 busy, 3 invalid input); `owned` is unsupported. `owned` answers `{"objects":["kind/name",...]}` (names as `kubectl get -o name` prints them): the cluster-scoped objects the workload's own row start removes and its row recreates, for example an operator it installs at every row. A run step's residue check (cluster-scoped objects beyond the build's baseline: a fault's webhook or ClusterRole makes the cluster be made anew) excuses exactly those and nothing else; it asks only when it found something, so a lane with no residue pays no call. Unsupported: nothing is excused. An answer that cannot be read leaves the residue `unchecked`, which counts as residue |
@@ -99,6 +100,18 @@ The `idle` before a teardown (a release, a rebuild that removes the operator) is
 | `run` | `run`, `active`, `undo` (answer `{"active": bool}`: whether the fault is still active) | `run` (record JSON on stdout), `active-instance`, `undo-instance` (their `active=<bool>` text is turned into the answer) |
 | `grade` | `report` | `report DIR` (`DIR/runs.jsonl` in, `report.md`, `grades.json` out) |
 | `footprint` | none | the lane size the workload wants for its app (`BENCH_PACK` is the app), answered `{"cpus":8,"memory":"30Gi"}`. Lanes asks at `add` / `plan add` for a spec that sets no `lane`, on the manager's host, and records the answer in the experiment's lock (`lane`). Unsupported: the platform default (5 cores, 12Gi). The built-in fuzzops workload carries its own sizes (a GitLab pack gets 8 cores and 30Gi); lanes reads no app name. A lock written before keeps its size: a spec with no recorded `lane` still resolves to the same value |
+
+The optional `app-content` verb runs on the candidate host before placement, with `BENCH_PACK`, `BENCH_NAMESPACE`
+and the workload's host environment. It needs no cluster, lane or subject state. Return one JSON line with stable
+content digests `render`, `images` and `data` for what app up will deploy (rendered manifests, image references and the
+inputs that select or create the clean data copy). Exclude checkout paths, tool revisions and mutable live data.
+If a swap keeps attached workload assets, also return an `attachments` digest of those inputs. A difference there
+requires fresh subject preparation while still allowing the app copy to be reused.
+
+The manager prefers a matching ready copy and logs the changed fields when it recreates a cluster. A build rechecks
+the digests before changing the lane and records them in its ready state as `app_content`. App recovery, data fingerprint
+verification and golden-copy reset still run on their existing paths. Unsupported adapters retain pinned pack-path
+matching. A pre-upgrade lane without recorded content cannot establish a match to a content-reporting request.
 
 The built-in workload is the default (`workload` unset or `fuzzops` in the spec): it runs `bin/fuzzops` with the
 same command lines, environment, process-group and SIGTERM handling as before the contract existed, so existing
@@ -119,8 +132,7 @@ run is graded under its own operator label (`exec:<hooks>-<name>-r<position>`). 
 such an experiment (`position`, 1-based; the TSV gets a `position` column only when a row has one); a one-run experiment
 is one row, as ever.
 
-The workload name is not part of an experiment's identity yet (a pool claim does not compare it); plan the
-identity change with the plan engine.
+The workload name is not part of an experiment's identity yet; plan the identity change with the plan engine.
 
 ## Status
 

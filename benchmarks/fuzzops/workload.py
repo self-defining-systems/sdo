@@ -38,11 +38,14 @@ import re
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from benchmarks.fuzzops import eks
+import yaml
+
+from benchmarks.fuzzops import app_content, eks
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -169,6 +172,19 @@ def handle(
             print(json.dumps({"unsupported": True}))
             return UNSUPPORTED
         print(json.dumps(size))
+        return 0
+    if verb == "app-content":
+        try:
+            content = app_content.identify(env)
+        except subprocess.CalledProcessError as exc:
+            print(f"app-content: Helm render failed: {exc.stderr.strip()}", file=sys.stderr)
+            return 1
+        except (KeyError, OSError, ValueError, subprocess.TimeoutExpired, tarfile.TarError, yaml.YAMLError) as exc:
+            print(f"app-content: {exc}", file=sys.stderr)
+            return 1
+        if content is None:
+            return UNSUPPORTED
+        print(json.dumps(content))
         return 0
     builtin = json.loads(env["WORKLOAD_BUILTIN"]) if env.get("WORKLOAD_BUILTIN") else []
     if not builtin:

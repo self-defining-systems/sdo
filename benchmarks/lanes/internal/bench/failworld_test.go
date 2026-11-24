@@ -258,6 +258,7 @@ func newFlab(t *testing.T, hostLanes ...string) *flab {
 	addHostRunner = func(Inventory) runFn { return localRunner }
 	t.Cleanup(func() { addHostRunner = old })
 	l.m = &Manager{Root: l.root, Poll: time.Second, Ops: l.w.ops, Log: os.Stderr}
+	l.m.appContentRunner = func(context.Context, string, string) (string, error) { return `{"unsupported":true}`, nil }
 	l.m.Now = func() time.Time { return l.now }
 	return l
 }

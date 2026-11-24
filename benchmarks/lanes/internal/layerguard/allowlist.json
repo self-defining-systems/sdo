@@ -113,9 +113,9 @@
     "internal/bench/manager.go": {
       "reason": "operator block staging, FuzzopsRev, reset-incidents step (audit A6, A7, B3, B10)",
       "terms": {
-        "fuzzops": 19,
+        "fuzzops": 18,
         "incident": 2,
-        "operator": 32,
+        "operator": 31,
         "sdo": 6,
         "sdo-config": 9
       }
@@ -208,7 +208,7 @@
     "internal/bench/verbs.go": {
       "reason": "baseline and seed shipping, fuzzops report, transcripts wording (audit A6, A8, B8)",
       "terms": {
-        "fuzzops": 17,
+        "fuzzops": 16,
         "incident": 7,
         "operator": 33,
         "sdo": 6,
