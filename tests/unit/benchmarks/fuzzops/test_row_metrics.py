@@ -96,7 +96,9 @@ def test_vanilla_wall_clock_and_database_write(tmp_path: Path) -> None:
         ],
     )
     row = measure(tmp_path)
-    assert (row.arm, row.inject_to_page_s, row.page_source, row.ttf_s) == ("vanilla", 3, "n.a.", 37)
+    # Both arms share the headline endpoint, the last fixing write; the session end is kept apart.
+    assert (row.arm, row.inject_to_page_s, row.page_source, row.ttf_s) == ("vanilla", 3, "n.a.", 16)
+    assert (row.ttf_source, row.agent_wall_s) == ("claude_tool_start", 37)
     assert row.anchor_to_last_write_s == 16
     assert row.last_write_source == "claude_tool_start"
     assert row.mutation_crosscheck == "data_write_not_observed"
@@ -219,7 +221,7 @@ def test_vanilla_verification_timestamps_the_completed_write(tmp_path: Path) -> 
         ],
     )
     row = measure(tmp_path)
-    assert row.ttf_s == 37
+    assert (row.ttf_s, row.agent_wall_s) == (28.5, 37)
     assert (row.anchor_to_last_write_s, row.last_write_source) == (28.5, "transcript_db_updated_at")
 
 
@@ -305,3 +307,38 @@ def test_sdo_correlates_codex_receipt_and_counts_open_incident_usage(tmp_path: P
     )
     assert (row.responder_input_tokens, row.responder_output_tokens, row.incident_count) == (23, 3, 2)
     assert row.closing_turn_input_tokens is None
+
+
+def test_vanilla_without_a_fixing_write_has_no_headline(tmp_path: Path) -> None:
+    grade(tmp_path)
+    put(tmp_path, "operator/done.json", {"started_at": at(3), "ended_at": at(40)})
+    row = measure(tmp_path)
+    assert (row.ttf_s, row.ttf_source, row.agent_wall_s) == (None, "unavailable", 37)
+
+
+def test_first_failure_episode_ends_at_a_30_second_clean_gap(tmp_path: Path) -> None:
+    # users.bad is per second from users.start; the inject is 2 s after the start. Bad seconds at +5..+9 and
+    # +20 belong to one episode (gap under 30 s); the single blips at +60 and +95 do not.
+    bad = [0] * 120
+    for second in [*range(7, 12), 22, 62, 97]:
+        bad[second] = 1
+    put(
+        tmp_path,
+        "record.json",
+        {
+            "fault": "synthetic",
+            "valid": True,
+            "window": {"BadSeconds": 8},
+            "last_bad_second": 95,
+            "recovered_in_window": True,
+            "lifecycle": {"inject_at": at(2)},
+            "users": {"start": at(0), "bad": bad},
+        },
+    )
+    row = measure(tmp_path)
+    assert (row.inject_to_last_bad_s, row.first_episode_end_s) == (95, 20)
+
+
+def test_first_failure_episode_is_absent_without_per_second_users(tmp_path: Path) -> None:
+    grade(tmp_path)
+    assert measure(tmp_path).first_episode_end_s is None

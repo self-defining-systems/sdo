@@ -135,9 +135,14 @@ runs. Grader metrics come from `record.json`. Validity also honors the lanes sta
   timestamp when available, or the plan application receipt. If none is available,
   `ttf_source` labels the fallback timeline marker. The fallback does not fill the
   evidence-based `anchor_to_last_write_s` column.
-- The vanilla headline is agent start to end. Its secondary duration uses agent start to the
-  last fixing write. For a recovered row, the tool searches calls issued through the final
+- Both arms' headline time to fix ends at the last fixing write: SDO from the incident opening,
+  vanilla from the agent start (`ttf_s` = `anchor_to_last_write_s`, null when no fixing write was
+  found). The vanilla session end, which includes the agent's own verification after the fix,
+  is `agent_wall_s`. For a recovered row, the tool searches calls issued through the final
   graded bad bucket. A database timestamp can place the exact write later than that bucket.
+- `first_episode_end_s` is the inject to the last bad second of the first failure episode, which
+  ends at the first clean gap of 30 s; read it beside `inject_to_last_bad_s`, which isolated
+  later blips (churn, one failed request) can extend.
 - When the transcript only brackets the write, the `*_tool_start` source gives the invocation's
   start as a lower bound and `last_write_tool_end_at` gives the result timestamp. The tool
   recognizes common Kubernetes and in-pod write commands. Shell scripts that hide their effects
