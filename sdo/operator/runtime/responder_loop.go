@@ -651,6 +651,9 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 	if request.Command == "apply" || request.Command == "mitigate" || request.Command == "rollback" {
 		if l.gateError != nil {
 			response.Error = l.gateError.Error()
+			if request.Command == "mitigate" {
+				l.refuseSelection(&response, "mutation_gate_unavailable", response.Error)
+			}
 			return response
 		}
 		if l.MutationGate != nil {
@@ -660,6 +663,9 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 				response.FailureReason = "execution_failed"
 				if response.Error == "incident_verified" {
 					response.FailureReason = "incident_verified"
+				}
+				if request.Command == "mitigate" {
+					l.refuseSelection(&response, response.FailureReason, response.Error)
 				}
 				response.Receipt = &contracts.RepairActionReceipt{FailureReason: response.FailureReason, ActionId: "sdo-rejected-" + l.sessionID, Kind: request.Command, Summary: "incident is closed", StartedAt: contractTimestamp(started.UTC()), CompletedAt: contractTimestamp(l.clock().UTC())}
 				return response
@@ -672,6 +678,9 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		} else if l.IncidentStatus != nil && l.IncidentStatus() != nil {
 			response.Error = "incident_verified"
 			response.FailureReason = "incident_verified"
+			if request.Command == "mitigate" {
+				l.refuseSelection(&response, response.FailureReason, response.Error)
+			}
 			response.Receipt = &contracts.RepairActionReceipt{FailureReason: "incident_verified", ActionId: "sdo-rejected-" + l.sessionID, Kind: request.Command, Summary: "incident is closed", StartedAt: contractTimestamp(started.UTC()), CompletedAt: contractTimestamp(l.clock().UTC())}
 			return response
 		}
@@ -692,15 +701,15 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		}
 	case "mitigate":
 		if err := l.loadTargetPrograms(ctx, request.Targets); err != nil {
-			response.Error = err.Error()
+			l.refuseSelection(&response, "program_unavailable", err.Error())
 			return response
 		}
 		if err := l.resolveMitigateTargets(&request); err != nil {
-			response.Error = err.Error()
+			l.refuseSelection(&response, "invalid_selection", err.Error())
 			return response
 		}
 		if err := l.loadSelectedWorkingPrograms(ctx, request); err != nil {
-			response.Error = err.Error()
+			l.refuseSelection(&response, "program_unavailable", err.Error())
 			return response
 		}
 	}
@@ -709,7 +718,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		l.listMenu(ctx, request, &response)
 	case "mitigate":
 		if err := l.validateFindingTargets(request.FindingFingerprints); err != nil {
-			response.Error = err.Error()
+			l.refuseSelection(&response, "invalid_selection", err.Error())
 			break
 		}
 		l.mitigateSelection(ctx, request, &response)

@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 from sdo.agents.responder import tool_output
 
 MAX_MUTATION_OUTPUT_BYTES = 2048
+UNAPPLIED_PREFIX = "Not applied: "
 
 
 def command_report_schema() -> dict[str, str]:
@@ -80,6 +81,40 @@ def _failure_line(action: Mapping[str, Any]) -> str:
     )
     status = f"{reason}, exit {code}" if code not in (None, "") else reason
     return f"failed: {_bounded_text(detail, 120)} [{status}]"
+
+
+def _unapplied_mitigation(action: Mapping[str, Any]) -> str:
+    """Find failed writes in controller receipts without inspecting plans or inputs."""
+    if action.get("command") != "mitigate":
+        return ""
+    report = action.get("report") or {}
+    options = action.get("option_reports") or [report]
+    executions = report.get("execution", [])
+    details = []
+    for option in options:
+        refused = option.get("status") == "STATUS_REFUSED"
+        failed_phase = option.get("failed_phase")
+        if not (refused or failed_phase in ("planning", "forward")):
+            continue
+        reason = option.get("reason_code") or "mitigation refused"
+        if failed_phase == "forward":
+            # The controller sets this phase only when the failed round applied nothing.
+            # Transport errors can carry values, so use the typed reason.
+            details.append(reason)
+            continue
+        option_id = option.get("option_id")
+        failure = next(
+            (
+                entry["error"]
+                for entry in reversed(executions)
+                if entry.get("error") and (not option_id or entry.get("option_id") == option_id)
+            ),
+            None,
+        )
+        details.append(failure or (action.get("error") if len(options) == 1 else None) or reason)
+    if not details:
+        return ""
+    return UNAPPLIED_PREFIX + _bounded_text(" | ".join(dict.fromkeys(details)), 160)
 
 
 def _warning(action: Mapping[str, Any]) -> dict[str, str] | None:
@@ -168,8 +203,10 @@ def format_mutation_response(
     warning = next(
         (action.get("incident_verified") for action in reversed(actions) if action.get("incident_verified")), None
     )
+    unapplied = ""
     if len(actions) == 1:
         action = actions[0]
+        unapplied = _unapplied_mitigation(action)
         if action.get("error") or action.get("success") is False or action.get("exit_code"):
             result = _failure_line(action)
         elif action.get("targeted_healthy"):
@@ -178,7 +215,7 @@ def format_mutation_response(
             result = "mutation completed; verification follows the controller"
         else:
             result = _bounded_text(action.get("summary", "completed; see report"), 80)
-        lines = [f"This action: {result}."]
+        lines = [unapplied or f"This action: {result}."]
         if action.get("hint"):
             lines.append(f"Fix: {_bounded_text(action['hint'], 200)}")
     else:
@@ -200,6 +237,9 @@ def format_mutation_response(
         "Schema (top-level keys):",
     ]
     tail.extend(f"{key}[]: {description.removeprefix('array of ')}" for key, description in schema.items())
+    if unapplied:
+        # The last line also survives shell pipelines such as `tail -15`.
+        tail.append(unapplied)
     rows = []
     for key in ("new", "unchanged"):
         rows.extend(f"{key}: {_line(finding)}" for finding in progress[key])
@@ -230,6 +270,7 @@ def format_mutation_response(
                 f"{key}[]: {description.removeprefix('array of ').split(': ', 1)[0]}"
                 for key, description in schema.items()
             ),
+            *([unapplied] if unapplied else []),
         ]
 
     omitted = "Additional finding lines are in the full report's new[] and unchanged[] arrays."

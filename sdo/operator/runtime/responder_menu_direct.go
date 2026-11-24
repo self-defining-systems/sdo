@@ -153,16 +153,16 @@ func (l *ResponderLoop) mitigateMenu(ctx context.Context, selection *contracts.M
 
 func (l *ResponderLoop) executeMenuOption(ctx context.Context, selection *contracts.MitigationSelection, parameters map[string]string, targetFingerprints []string, response *ToolResponse, consumeRound bool) {
 	if l.MenuConfig == nil {
-		response.Error = "mitigation menu is disabled"
+		l.refuseSelection(response, "menu_disabled", "mitigation menu is disabled")
 		return
 	}
 	if selection == nil {
-		response.Error = "mitigate requires an option"
+		l.refuseSelection(response, "invalid_selection", "mitigate requires an option")
 		return
 	}
 	entry, ok := l.menuEntries.lookup(selection.OptionId)
 	if !ok {
-		response.Error = "unknown mitigation option"
+		l.refuseSelection(response, "invalid_selection", "unknown mitigation option")
 		return
 	}
 	l.executeMenuEntry(ctx, entry, selection, parameters, targetFingerprints, response, consumeRound)
@@ -191,7 +191,7 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 		rounds = 5
 	}
 	if consumeRound && rounds > uint32(l.loopsRemaining()) {
-		response.Error = "response loop budget exhausted"
+		l.refuseSelection(response, "round_budget_exhausted", "response loop budget exhausted")
 		return
 	}
 	var followUp *program.Plan

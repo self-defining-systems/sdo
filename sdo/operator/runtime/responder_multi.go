@@ -52,14 +52,14 @@ func (l *ResponderLoop) mitigateSelection(ctx context.Context, request ToolReque
 		return
 	}
 	if l.loopsRemaining() == 0 {
-		response.Error = "response loop budget exhausted"
+		l.refuseSelection(response, "round_budget_exhausted", "response loop budget exhausted")
 		return
 	}
 	if l.menuEntries.empty() {
 		listing := ToolResponse{}
 		l.listMenu(ctx, ToolRequest{Command: "menu"}, &listing)
 		if listing.Error != "" {
-			response.Error = listing.Error
+			l.refuseSelection(response, "menu_unavailable", listing.Error)
 			return
 		}
 	}

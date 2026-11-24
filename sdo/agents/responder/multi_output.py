@@ -69,6 +69,7 @@ def format_selection_response(
     """Use the shared summary and retain the complete controller response once."""
     from sdo.agents.responder.mutation_output import (
         MAX_MUTATION_OUTPUT_BYTES,
+        UNAPPLIED_PREFIX,
         _bounded_text,
         clamp_mutation_summary,
         compact_mutation_envelope,
@@ -93,7 +94,8 @@ def format_selection_response(
         if response.get("rollout_pending"):
             lines = text.splitlines()
             application = _bounded_text(response.get("application_id", "unknown"), 80)
-            lines[0] = f"This action: rollout pending; application={application}."
+            if not lines[0].startswith(UNAPPLIED_PREFIX):
+                lines[0] = f"This action: rollout pending; application={application}."
             lines[1:1] = releases
             return clamp_mutation_summary("\n".join(lines), path, response, json_output=json_output), path
         return text, path
@@ -103,8 +105,14 @@ def format_selection_response(
     succeeded = sum(action["targeted_healthy"] for action in actions)
     unresolved = len(actions) - pending - failed - succeeded
     lines = text.splitlines()
-    lines[0] = f"Options: {succeeded} succeeded; {pending} pending; {failed} failed; {unresolved} unresolved."
-    lines[1:1] = releases
+    heading = f"Options: {succeeded} succeeded; {pending} pending; {failed} failed; {unresolved} unresolved."
+    if lines[0].startswith(UNAPPLIED_PREFIX):
+        lines.insert(1, heading)
+        heading_lines = 2
+    else:
+        lines[0] = heading
+        heading_lines = 1
+    lines[heading_lines:heading_lines] = releases
     rows = []
     for action in actions:
         execution = (action["report"].get("execution") or [{}])[0]
@@ -140,12 +148,15 @@ def format_selection_response(
     for row in rows:
         omitted = len(rows) - len(shown) - 1
         tail = [f"Options omitted: {omitted}; see option_reports[] in Full JSON."] if omitted else []
-        if emitted_bytes([*lines[:1], *shown, row, *tail, *lines[1:]]) > MAX_MUTATION_OUTPUT_BYTES - 1:
+        if (
+            emitted_bytes([*lines[:heading_lines], *shown, row, *tail, *lines[heading_lines:]])
+            > MAX_MUTATION_OUTPUT_BYTES - 1
+        ):
             break
         shown.append(row)
     omitted = len(rows) - len(shown)
     if omitted:
         shown.append(f"Options omitted: {omitted}; see option_reports[] in Full JSON.")
     return clamp_mutation_summary(
-        "\n".join([*lines[:1], *shown, *lines[1:]]), path, response, json_output=json_output
+        "\n".join([*lines[:heading_lines], *shown, *lines[heading_lines:]]), path, response, json_output=json_output
     ), path

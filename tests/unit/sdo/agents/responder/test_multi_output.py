@@ -226,3 +226,85 @@ def test_stalled_mitigation_names_its_standard_release(tmp_path, monkeypatch):
             "Deployment/app/web cannot roll out beside its old revision: "
             "sdo mitigate RetireOldRevision --bind ref=ReplicaSet/app/web-old"
         ) in text.splitlines()[:3]
+
+
+@pytest.mark.parametrize(
+    ("report", "expected"),
+    [
+        (
+            {
+                "status": "STATUS_EXECUTION_ERROR",
+                "failed_phase": "planning",
+                "execution": [
+                    {
+                        "option_id": "DeleteObject",
+                        "changes_remain": False,
+                        "error": "invalid sdodev.contracts.v1alpha1.Action: validation error: "
+                        "delete_object.reason: must be at least 1 characters",
+                    }
+                ],
+            },
+            "delete_object.reason: must be at least 1 characters",
+        ),
+        (
+            {
+                "status": "STATUS_REFUSED",
+                "failed_phase": "acceptance",
+                "reason_code": "direct_plan_failed",
+            },
+            "Secret data is unavailable; use credential references",
+        ),
+    ],
+    ids=["missing-reason", "secret-refusal"],
+)
+def test_unapplied_mitigation_is_visible_before_health_and_after_tail(tmp_path, monkeypatch, capsys, report, expected):
+    from sdo.agents.responder.tools_cli import print_tool_response
+
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    findings = [{"fingerprint": str(i), "summary": "still failing", "detector_id": "synthetic"} for i in range(12)]
+    response = {
+        "command": "mitigate",
+        "summary": "mitigation STATUS_UNRESOLVED",
+        "report": report,
+        "before_findings": findings,
+        "controller_findings": findings,
+    }
+    if report["status"] == "STATUS_REFUSED":
+        response["error"] = expected
+        response["parameters"] = {"object": {"kind": "Secret", "data": {"key": "synthetic-secret-value"}}}
+
+    print_tool_response(response, full_json=False)
+    output = capsys.readouterr().out
+    lines = output.splitlines()
+    assert lines[0].startswith("Not applied: ")
+    assert expected in lines[0]
+    assert lines[-1] == lines[0]
+    assert sum(line.startswith("Not applied: ") for line in lines) == 2
+    assert expected in "\n".join(lines[-15:])
+    assert "Incident: NOT verified" in output
+    assert "synthetic-secret-value" not in output
+    assert len(output.encode()) <= 2048
+
+
+def test_batch_preserves_unapplied_banner_alongside_a_success(tmp_path, monkeypatch):
+    from sdo.agents.responder.multi_output import format_selection_response
+
+    monkeypatch.setenv("SDO_SESSION_SCRATCH", str(tmp_path))
+    response = {
+        "command": "mitigate",
+        "option_reports": [
+            {"option_id": "peer", "status": "STATUS_SUCCESS"},
+            {"option_id": "target", "status": "STATUS_EXECUTION_ERROR", "failed_phase": "planning"},
+        ],
+        "report": {
+            "execution": [
+                {"option_id": "peer", "changes_remain": True},
+                {"option_id": "target", "changes_remain": False, "error": "invalid target"},
+            ]
+        },
+    }
+    text, _ = format_selection_response([], [], response)
+    lines = text.splitlines()
+    assert lines[0] == lines[-1] == "Not applied: invalid target"
+    assert "1 succeeded; 0 pending; 1 failed" in lines[1]
+    assert "Incident: NOT verified" in text

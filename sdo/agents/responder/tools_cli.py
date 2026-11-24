@@ -293,7 +293,8 @@ def _parser() -> argparse.ArgumentParser:
             "or coverage already matched the playbook once. "
             "To apply independent fixes together, separate the commands with --: "
             "sdo mitigate A --bind x=Kind/ns/a -- B --bind y=Kind/ns/b. "
-            "Overlapping writes are refused." + " Programs use the current checkout; edits compile on demand."
+            "Overlapping writes are refused. 'Not applied' means no write landed for that failure. "
+            "Programs use the current checkout; edits compile on demand."
         ),
         epilog="Example: " + CLI_EXAMPLES[2],
     )

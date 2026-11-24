@@ -86,6 +86,9 @@ func TestMitigateUnknownNameIsRefused(t *testing.T) {
 	if !strings.Contains(response.Error, "unknown playbook or action 'no-such-playbook'") {
 		t.Fatalf("error = %q", response.Error)
 	}
+	if response.Report.GetStatus() != contracts.MitigationReport_STATUS_REFUSED {
+		t.Fatalf("unknown target did not return a refusal report: %v", response.Report)
+	}
 }
 
 func TestMitigateAmbiguousRecordedMatchListsCandidatesAsCommands(t *testing.T) {
