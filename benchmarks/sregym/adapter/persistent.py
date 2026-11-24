@@ -1639,6 +1639,7 @@ def _collect_settled_receipt(
     receipt_dir: Path,
     clock: Clock,
     timeout: float | None = None,
+    stats: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Collect the receipt once close-out has settled, or once the bounded wait elapses.
 
@@ -1647,25 +1648,36 @@ def _collect_settled_receipt(
     A genuinely unsettled receipt (for example a responder that never reported
     ``completed``) still falls through after ``timeout`` and is validated as-is, so
     a real failure is reported promptly rather than hidden.
+
+    ``stats`` receives where the time went: ``collect_attempts``, ``collect_call_seconds``
+    (inside ``collect_receipt``) and ``settle_sleep_seconds`` (waiting between samples).
     """
 
-    try:
-        receipt = ops.collect_receipt(config, incident_id, receipt_dir)
-    except Exception:
-        export_closure_failure_evidence(ops, config.control_namespace, receipt_dir)
-        raise
+    stats = stats if stats is not None else {}
+    stats.update(collect_attempts=0.0, collect_call_seconds=0.0, settle_sleep_seconds=0.0)
+
+    def collect() -> dict[str, Any]:
+        begun = clock.monotonic()
+        try:
+            return ops.collect_receipt(config, incident_id, receipt_dir)
+        except Exception:
+            export_closure_failure_evidence(ops, config.control_namespace, receipt_dir)
+            raise
+        finally:
+            stats["collect_attempts"] += 1
+            stats["collect_call_seconds"] += clock.monotonic() - begun
+
+    receipt = collect()
     if timeout is None:
         timeout = CLOSEOUT_SETTLE_TIMEOUT_SECONDS
     deadline = clock.monotonic() + timeout
     progress = WaitProgress(f"close-out settle of incident {incident_id}", clock.monotonic, bound_seconds=timeout)
     while not _closeout_settled(receipt) and clock.monotonic() < deadline:
         progress.tick()
+        slept = clock.monotonic()
         clock.sleep(POLL_SECONDS)
-        try:
-            receipt = ops.collect_receipt(config, incident_id, receipt_dir)
-        except Exception:
-            export_closure_failure_evidence(ops, config.control_namespace, receipt_dir)
-            raise
+        stats["settle_sleep_seconds"] += clock.monotonic() - slept
+        receipt = collect()
     if not receipt:
         export_closure_failure_evidence(ops, config.control_namespace, receipt_dir)
     return receipt
@@ -1769,7 +1781,11 @@ def drain_pending_incident(
     phases["runtime_artifacts"] = clock.monotonic() - started - phases["wait_for_ack"]
     receipt: dict[str, Any] = {}
     try:
-        receipt = _collect_settled_receipt(ops, config, pending.incident_id, pending.receipt_dir, clock)
+        collect_stats: dict[str, float] = {}
+        receipt = _collect_settled_receipt(
+            ops, config, pending.incident_id, pending.receipt_dir, clock, stats=collect_stats
+        )
+        phases.update({f"collect_settled_receipt.{name}": value for name, value in collect_stats.items()})
         phases["collect_settled_receipt"] = (
             clock.monotonic() - started - phases["wait_for_ack"] - phases["runtime_artifacts"]
         )

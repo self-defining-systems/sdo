@@ -909,6 +909,20 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 	if hostManager != nil {
 		operatorRoot := builder.DefaultOperatorRoot()
 		activation = &memoryActivation{manager: hostManager, active: launchConfig.GetControllerRevision(), results: make(chan memoryCandidate, 1), notify: make(chan struct{}, 1)}
+		if options.NativeBroker != nil {
+			repository := options.NativeBroker.Repository
+			activation.sameInputs = func(ctx context.Context, hostCommit, commit string) (bool, error) {
+				host, err := repository.DiagnosticsFingerprint(ctx, hostCommit)
+				if err != nil {
+					return false, err
+				}
+				next, err := repository.DiagnosticsFingerprint(ctx, commit)
+				if err != nil {
+					return false, err
+				}
+				return host == next, nil
+			}
+		}
 		activation.build = func(buildCtx context.Context, commit string) memoryCandidate {
 			started := clock.Now()
 			workspace, artifact, err := builder.BuildAcceptedMemoryHost(buildCtx, builder.Config{ApplicationRoot: resolvedRoot, OperatorRoot: operatorRoot}, commit)
@@ -988,7 +1002,7 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if identityErr != nil {
 				return false, identityErr
 			}
-			if identity.GetMemoryCommit() != activation.acceptedCommit() || identity.GetBinaryDigest() != activation.acceptedDigest(*memoryHostDigest) {
+			if identity.GetMemoryCommit() != activation.hostCommit() || identity.GetBinaryDigest() != activation.acceptedDigest(*memoryHostDigest) {
 				return false, errors.New("active host does not match accepted memory")
 			}
 			if options.NativeBroker != nil {
@@ -1608,7 +1622,12 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			if stopTimerForRuntimeEvent(runCtx, timer) {
 				return nil
 			}
-			controller.handleDispatchCompletion(completion, clock.Now().UTC())
+			if err := controller.acceptDispatchCompletion(runCtx, completion, clock.Now().UTC()); err != nil {
+				if runCtx.Err() != nil {
+					return nil
+				}
+				return err
+			}
 			persistControllerState()
 			if err := survive(executeStartupEffects(runCtx, controller, applied.Paused)); err != nil {
 				if runCtx.Err() != nil {

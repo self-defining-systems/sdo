@@ -1832,6 +1832,29 @@ def test_settled_receipt_requires_no_model_completion_event(
     assert clock.monotonic() == 0
 
 
+def test_settled_receipt_collection_reports_where_its_time_went(tmp_path: Path) -> None:
+    from benchmarks.sregym.adapter.persistent import _collect_settled_receipt
+
+    settled = {
+        "schema_version": "sdo.production-receipt/v2",
+        "incident_id": "synthetic",
+        "native_ledger": {"incident_id": "synthetic", "acknowledged": True, "requires_reflection": False},
+    }
+    samples = [{}, settled]
+
+    class ReceiptOps(FakeOps):
+        def collect_receipt(self, config: RuntimeConfig, incident_id: str, artifacts_dir: Path) -> dict[str, Any]:
+            return samples.pop(0)
+
+    ops = ReceiptOps()
+    clock = _clock(ops)
+    stats: dict[str, float] = {}
+    config = _inputs(tmp_path, "synthetic").runtime_config
+    assert _collect_settled_receipt(ops, config, "synthetic", tmp_path, clock, stats=stats) == settled
+    assert stats["collect_attempts"] == 2
+    assert stats["settle_sleep_seconds"] > 0
+
+
 def test_external_stage_delivers_only_after_injection_and_skips_health_baseline(tmp_path):
     class ExternalOps(FakeOps):
         def inject_after_resume(self, *_args, **_kwargs):

@@ -2109,6 +2109,14 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 			}
 		}
 		if early {
+			// Recovered is announced before the slow capture: the agent's
+			// `detect --wait` and its mutation gate read this marker, so the
+			// session ends its work while the capture runs. The next pass caches
+			// a fresh verification, which withdraws the announcement if the
+			// capture fails or recovery no longer holds.
+			announced := cloneVerification(verification)
+			announced.IncidentVerified = apihistory.VerificationWarning(verifiedAt)
+			c.cacheVerificationLocked(announced)
 			// The closure guard holds the responder's locks, so the capture stays
 			// on this pass; settlement joins it below under the same guard.
 			c.mu.Unlock()

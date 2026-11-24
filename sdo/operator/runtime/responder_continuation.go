@@ -298,6 +298,17 @@ func (c *Controller) responderVerification(ctx context.Context, incidentID strin
 	return c.responderResultVerification(ctx, incidentID, nil)
 }
 func (c *Controller) responderResultVerification(ctx context.Context, incidentID string, result *IncidentResult) ToolResponse {
+	// An incident the controller already verified (and froze into its pending
+	// closure) has its recovery proof: a fresh snapshot, closure-source read and
+	// wait for the observation lock (about 5s while detector passes hold it)
+	// would only re-derive it.
+	c.mu.Lock()
+	if c.pendingClosureVerifiedLocked(incidentID) && c.cachedIncidentID == incidentID && c.cachedVerification != nil && c.cachedVerification.Healthy {
+		proof := cloneVerification(*c.cachedVerification)
+		c.mu.Unlock()
+		return proof
+	}
+	c.mu.Unlock()
 	defer c.lockObservation("responder_verify")()
 	if c.config.ExternalIncidentsOnly {
 		return ToolResponse{Command: "verify", VerificationStatus: VerificationAwaitingResponderCompletion, Summary: "External incident: declare completion by returning your result. No detector verification is available."}
