@@ -613,3 +613,31 @@ func TestUnscrapedMetricsAreNotConfirmed(t *testing.T) {
 		t.Fatalf("a scraped target stayed unconfirmed: %s", confirmer.ConfirmationReason(scraped))
 	}
 }
+
+func TestUnattributedRequestMetricsAreNonblockingCoverageGap(t *testing.T) {
+	unattributed := series(webRoute, "429", steady(12, 7)...)
+	delete(unattributed.Labels, requestmetrics.TrafficOriginLabel)
+	s := snapshot([]metrics.Series{unattributed}, nil, []metrics.Series{unattributed})
+	if got := detect(t, s); len(got) != 0 {
+		t.Fatalf("missing attribution emitted findings instead of a coverage note: %+v", got)
+	}
+	d := newDetector().(interface {
+		Confirmed(sdk.DetectionContext) bool
+		ConfirmationReason(sdk.DetectionContext) string
+	})
+	if !d.Confirmed(s) || !strings.Contains(d.ConfirmationReason(s), requestmetrics.TrafficOriginLabel) {
+		t.Fatalf("missing nonblocking coverage note: %q", d.ConfirmationReason(s))
+	}
+}
+
+func TestLosingTrafficAttributionDoesNotClearAUserAlert(t *testing.T) {
+	unattributed := series(webRoute, "200", steady(12, 7)...)
+	delete(unattributed.Labels, requestmetrics.TrafficOriginLabel)
+	s := snapshot([]metrics.Series{unattributed}, nil, []metrics.Series{unattributed})
+	s.HeldKeys = []string{pkgErrorsKey, "request-metrics\x00requestmetrics/errors/undeclared/web//other"}
+	got := detect(t, s)
+	if len(got) != 2 || got[0].Fingerprint != "requestmetrics/errors/package-download" ||
+		got[1].Fingerprint != "requestmetrics/errors/undeclared/web//other" {
+		t.Fatalf("attribution loss cleared an alert: %+v", got)
+	}
+}

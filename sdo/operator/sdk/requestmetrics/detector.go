@@ -13,7 +13,9 @@
 // metric at all (Operation.Unmeasurable) is not applicable: the detector
 // raises nothing for it and names it in its coverage note
 // (ConfirmationReason while confirmed), so an application without request
-// metrics never fails acceptance, opens or holds an incident here.
+// metrics never fails acceptance, opens or holds an incident here. A foreground
+// entry with a counter that lacks traffic attribution uses the same coverage
+// note. If attribution is lost for a held alert, it cannot establish recovery.
 package requestmetrics
 
 import (
@@ -326,6 +328,12 @@ func (d *detector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Fi
 			findings = append(findings, d.notInstrumented(ctx, op, why))
 			continue
 		}
+		if why := plan.originGap(results[plan.pres.ID].Series); why != "" {
+			if sdk.HeldFingerprints(ctx, d.cfg.Spec.ID)[errorsFingerprint(op)] {
+				findings = append(findings, d.notInstrumented(ctx, op, why))
+			}
+			continue
+		}
 		if f, ok := d.judge(ctx, op, plan, results); ok {
 			findings = append(findings, f)
 		}
@@ -345,28 +353,33 @@ func (d *detector) Detect(_ context.Context, ctx sdk.DetectionContext) ([]sdk.Fi
 func (d *detector) Confirmed(ctx sdk.DetectionContext) bool { return d.unscraped(ctx) == "" }
 
 // ConfirmationReason names the declared services whose metric has no series
-// while unconfirmed. Once confirmed it is the coverage note naming the
-// operations the detector is not applicable to, or "".
+// while unconfirmed. Once confirmed it names operations the detector cannot
+// watch because they lack a metric source or traffic attribution.
 func (d *detector) ConfirmationReason(ctx sdk.DetectionContext) string {
 	if why := d.unscraped(ctx); why != "" {
 		return why
 	}
-	return d.notApplicable()
+	return d.notApplicable(ctx)
 }
 
-// notApplicable words the operations the map gives no request metric, grouped
-// by reason, or "" when every operation is measurable.
-func (d *detector) notApplicable() string {
+// notApplicable groups operations without usable request metrics by reason.
+func (d *detector) notApplicable(ctx sdk.DetectionContext) string {
 	byReason := map[string][]string{}
 	var reasons []string
 	for _, op := range d.cfg.Operations {
-		if op.Unmeasurable == "" {
+		reason := op.Unmeasurable
+		if reason == "" {
+			plan := d.entries[op.Service]
+			presence, _ := metrics.ResultFrom(ctx, plan.pres.ID)
+			reason = plan.originGap(presence.Series)
+		}
+		if reason == "" {
 			continue
 		}
-		if _, seen := byReason[op.Unmeasurable]; !seen {
-			reasons = append(reasons, op.Unmeasurable)
+		if _, seen := byReason[reason]; !seen {
+			reasons = append(reasons, reason)
 		}
-		byReason[op.Unmeasurable] = append(byReason[op.Unmeasurable], op.ID)
+		byReason[reason] = append(byReason[reason], op.ID)
 	}
 	if len(reasons) == 0 {
 		return ""
@@ -442,16 +455,22 @@ func (p entryPlan) instrumentation(results map[string]metrics.Result) string {
 			return fmt.Sprintf("metric %s%s carries no %q label", p.Metric, p.Selector, label)
 		}
 	}
-	if !p.Background {
-		for _, s := range presence {
-			switch s.Labels[TrafficOriginLabel] {
-			case userOrigin, syntheticOrigin:
-				return ""
-			}
-		}
-		return fmt.Sprintf("metric %s%s carries no %q attribution for user and synthetic traffic", p.Metric, p.Selector, TrafficOriginLabel)
-	}
 	return ""
+}
+
+// originGap reports a coverage gap when the counter separates no traffic
+// origins. A missing counter is handled by instrumentation instead.
+func (p entryPlan) originGap(presence []metrics.Series) string {
+	if p.Background || len(presence) == 0 {
+		return ""
+	}
+	for _, s := range presence {
+		switch s.Labels[TrafficOriginLabel] {
+		case userOrigin, syntheticOrigin:
+			return ""
+		}
+	}
+	return fmt.Sprintf("metric %s%s carries no %q attribution for user and synthetic traffic", p.Metric, p.Selector, TrafficOriginLabel)
 }
 
 // undeclared judges every route value of the entry's request metric that no
@@ -461,6 +480,17 @@ func (p entryPlan) instrumentation(results map[string]metrics.Result) string {
 func (d *detector) undeclared(ctx sdk.DetectionContext, plan entryPlan, results map[string]metrics.Result) []sdk.Finding {
 	if plan.instrumentation(results) != "" {
 		return nil // declared operations report it; with none there is nothing to name
+	}
+	if why := plan.originGap(results[plan.pres.ID].Series); why != "" {
+		var held []sdk.Finding
+		prefix := "requestmetrics/errors/undeclared/" + plan.Service + "/"
+		for fingerprint := range sdk.HeldFingerprints(ctx, d.cfg.Spec.ID) {
+			if route, ok := strings.CutPrefix(fingerprint, prefix); ok {
+				op := Operation{ID: "undeclared route " + route, Service: plan.Service, Route: route, undeclared: true}
+				held = append(held, d.notInstrumented(ctx, op, why))
+			}
+		}
+		return held
 	}
 	declared := map[string]bool{}
 	for _, op := range d.cfg.Operations {
@@ -539,7 +569,7 @@ func (d *detector) notInstrumented(ctx sdk.DetectionContext, op Operation, why s
 		Summary:         fmt.Sprintf("operation %s is not instrumented for request metrics", op.ID),
 		Evidence:        fmt.Sprintf("operation %s (route %q) cannot be watched: %s", op.ID, op.Route, why),
 		PrimaryResource: sdk.ObjectRef{Kind: "Service", Namespace: ctx.Namespace(), Name: op.Service},
-		Fingerprint:     "requestmetrics/errors/" + op.ID,
+		Fingerprint:     errorsFingerprint(op),
 		Metadata:        map[string]any{"operation": op.ID, "route": op.Route, "method": op.Method, "service": op.Service, "reason": why},
 	}
 }
