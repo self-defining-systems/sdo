@@ -335,6 +335,9 @@ func HasNonObjectEffect(actions []program.Action) bool {
 
 func classifyEffect(action *contracts.Action) (nonObject, known bool) {
 	switch action.GetKind().(type) {
+	case *contracts.Action_Unencodable:
+		// A recorded identity cannot establish what the action changed.
+		return true, true
 	case *contracts.Action_Exec, *contracts.Action_EnsureDatabaseUser, *contracts.Action_EnsureExec,
 		*contracts.Action_EnsureHttp, *contracts.Action_RunJob, *contracts.Action_RunScript,
 		*contracts.Action_StoreBackup, *contracts.Action_InvalidateDerived, *contracts.Action_RepairData,
