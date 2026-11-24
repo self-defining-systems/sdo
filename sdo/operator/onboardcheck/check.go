@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -413,6 +414,8 @@ func runChecks(ctx context.Context, cfg Config) (Report, error) {
 	return report, nil
 }
 
+var jobLikeMetric = regexp.MustCompile(`(?i)(job|queue|worker|task)`)
+
 func runMetrics(ctx context.Context, cfg Config, report *Report) error {
 	add := func(item, subject, status, detail string) {
 		report.Results = append(report.Results, Result{Item: item, Subject: subject, Status: status, Detail: detail})
@@ -452,11 +455,17 @@ func runMetrics(ctx context.Context, cfg Config, report *Report) error {
 		es.declared[st.route] = true
 	}
 
-	// Job metrics are judged for the classes the operations trigger even when
-	// no operation enters through them.
+	// A declared background entry can account for triggered classes without
+	// having an operation of its own.
 	for _, e := range cfg.Map.Entries {
-		if _, ok := entries[e.Service]; !ok && cfg.Map.Background(e) && e.Labels.Route != "" {
+		if _, ok := entries[e.Service]; ok || e.Labels.Route == "" {
+			continue
+		}
+		switch {
+		case cfg.Map.Background(e):
 			entries[e.Service] = &entryState{entry: e, declared: map[string]bool{}, attributed: map[string]bool{}}
+		case jobLikeMetric.MatchString(e.Metric):
+			add(ItemBackground, e.Service, Note, fmt.Sprintf("no operation enters through %s: declare background: true if it counts triggered work, or map its user operations", e.Metric))
 		}
 	}
 	for _, es := range entries {

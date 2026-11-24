@@ -287,3 +287,15 @@ def test_harness_page_with_only_a_standing_clue_has_no_preliminary_location() ->
     _, diagnosed = watcher.step({**state, "incident_result": {**_result(), "incident_id": "page-1"}})
     assert diagnosed is not None
     assert diagnosed["summary"].startswith("SDO responder:")
+
+
+def test_legacy_incident_with_no_opening_keys_reports_from_findings() -> None:
+    state = {
+        "incident_open": True,
+        "incident_detected_at": _at(5),
+        "incident_request": {"incident_id": "legacy", "findings": [_finding()]},
+    }
+    _, report = Watcher(started=START).step(state)
+    assert report is not None
+    assert report["component"] == "deploy/web"
+    assert report["summary"].startswith("SDO detector workload-ready:")

@@ -47,6 +47,8 @@ type MetricEntry struct {
 	// Errors is a regular expression over the status label's values that
 	// counts a request as an error.
 	Errors string `yaml:"errors,omitempty"`
+	// Background declares a job counter used for triggered work without its own operation.
+	Background bool `yaml:"background,omitempty"`
 }
 
 // Reason explains why an onboarding check item cannot be made green for a
@@ -59,7 +61,6 @@ type Reason struct {
 
 var (
 	metricNamePattern = regexp.MustCompile(`^[a-zA-Z_:][a-zA-Z0-9_:]*$`)
-	backgroundMetric  = regexp.MustCompile(`(?i)(job|queue|worker|task)`)
 	labelNamePattern  = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 )
 
@@ -91,13 +92,10 @@ func (m Map) Internal(op Operation) bool {
 	return ok
 }
 
-// Background reports whether the metric entry counts background work. Job
-// metrics remain background even in older maps that give the entry an HTTP
-// operation. Otherwise, every operation entering the service must be internal.
+// Background reports whether an entry is declared for background work. Any user
+// operation entering the service makes it foreground. Otherwise an internal
+// operation or an explicit entry declaration establishes a background role.
 func (m Map) Background(entry MetricEntry) bool {
-	if backgroundMetric.MatchString(entry.Metric) {
-		return true
-	}
 	used := false
 	for _, op := range m.Operations {
 		if op.Entry.Service != entry.Service {
@@ -108,7 +106,7 @@ func (m Map) Background(entry MetricEntry) bool {
 			return false
 		}
 	}
-	return used
+	return used || entry.Background
 }
 
 func (c *checker) internalEntry(op Operation) bool { return c.m.Internal(op) }

@@ -385,7 +385,7 @@ func (c Coordinator) verifyResumed(ctx context.Context, cfg Config, commit strin
 // MigrateMemory has the Upkeep actor bring an already-bootstrapped repository's
 // operational memory to the current schema. It is the same step Run performs
 // first, so an interrupted migration resumes by operation ID and an up-to-date
-// repository with current generated policy is left untouched.
+// repository is left untouched.
 func (c Coordinator) MigrateMemory(ctx context.Context, operationID string) (broker.Receipt, error) {
 	if c.Broker == nil || c.Bootstrap == nil || strings.TrimSpace(operationID) == "" {
 		return broker.Receipt{}, errors.New("broker, artifact store, and operation ID are required")

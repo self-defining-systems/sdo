@@ -251,8 +251,13 @@ class Watcher:
         findings = _get(request, "findings") or []
         standing_keys = set(_get(request, "standing_keys") or [])
         current_findings = [f for f in findings if _finding_key(f) not in standing_keys]
-        opening_keys = set(_get(request, "opening_keys") or [])
-        openers = [f for f in current_findings if _finding_key(f) in opening_keys]
+        opening_keys = _get(request, "opening_keys")
+        if opening_keys is None and not (_get(request, "page") or _get(request, "external_message")):
+            # Older detector-opened requests only carried the findings.
+            openers = current_findings
+        else:
+            keys = set(opening_keys or [])
+            openers = [f for f in current_findings if _finding_key(f) in keys]
         # An incident SDO opened (and maybe already handed to closure) shortly
         # before this watcher started still belongs to the window: the watcher
         # starts some seconds after the inject, and a fast detection beats it.

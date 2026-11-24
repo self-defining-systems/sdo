@@ -13,11 +13,10 @@ import (
 	"sdo.dev/operator/memory/layout"
 )
 
-// memoryMigrationOperationID names the Upkeep migration for the current
-// schema and detector policy. The policy revision lets a previously migrated
-// repository refresh generated detectors without a schema change.
+// memoryMigrationOperationID names the accepted Upkeep migration for the
+// current schema, so a restarted controller finds it instead of repeating it.
 func memoryMigrationOperationID() string {
-	return fmt.Sprintf("memory-v%d-detectors-v2", layout.CurrentSchemaVersion)
+	return fmt.Sprintf("memory-v%d", layout.CurrentSchemaVersion)
 }
 
 // migrateAcceptedMemory has the Upkeep actor bring an already-bootstrapped

@@ -2,8 +2,6 @@ package memory
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -94,25 +92,6 @@ func plannedRequestMetrics(root string) (requestmetrics.Config, bool) {
 		cfg.Entries[i].ServerErrors = e.Errors
 	}
 	return cfg, true
-}
-
-// refreshInstalledRequestMetrics upgrades the generated policy in existing
-// memory. The installed manifest establishes that metrics were enabled there.
-func refreshInstalledRequestMetrics(root string) error {
-	path := layout.DetectorManifestPath(layout.ClassHealth, RequestMetricsDetectorID)
-	data, err := os.ReadFile(filepath.Join(root, path))
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read %s: %w", path, err)
-	}
-	manifest, err := layout.ParseDetectorManifest(data)
-	if err != nil || manifest.OriginatingCommit != "lifecycle-bootstrap" {
-		// Leave authored or invalid manifests for the shared memory validator.
-		return nil
-	}
-	return prepareRequestMetricsDetector(root, true)
 }
 
 // prepareRequestMetricsDetector installs the detector when the environment can

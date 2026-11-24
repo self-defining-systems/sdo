@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"sdo.dev/operator/memory"
 	"sdo.dev/operator/memory/layout"
 )
 
@@ -98,33 +97,5 @@ func TestInitialProposalWithoutADeclaredProbeWorkloadFails(t *testing.T) {
 	request := Request{Root: root, Base: "HEAD", Actor: HealthJudge, Phase: InitialPhase, Layers: Static}
 	if got := ruleSet(diagnose(t, request)); len(got) == 0 {
 		t.Fatal("a map probe without its workload file passed validation")
-	}
-}
-
-func TestUpkeepAllowsOnlyTheGeneratedRequestMetricsRefresh(t *testing.T) {
-	const entry = `entries:
-  - {service: web, metric: http_requests_total, labels: {route: route, status: code}, errors: "5.."}
-`
-	initialMap := mapYAML + entry
-	root := mapTree(t, &initialMap)
-	if err := memory.PrepareHealthWith(root, memory.HealthOptions{RequestMetrics: true}); err != nil {
-		t.Fatal(err)
-	}
-	// Keep Go's foreground generation, but commit the legacy job map it
-	// would have been generated for before the policy recognized job metrics.
-	jobMap := strings.Replace(initialMap, "http_requests_total", "jobs_total", 1)
-	write(t, root, layout.ArchitectureFile, mapInventory+"\n"+mapRegion(jobMap))
-	commit(t, root, "legacy request-metrics policy")
-	if err := memory.WriteSchema(root); err != nil {
-		t.Fatal(err)
-	}
-	req := Request{Root: root, Base: "HEAD", Actor: Upkeep, Phase: InitialPhase, Layers: Ownership}
-	if got := ruleSet(diagnose(t, req)); len(got) != 0 {
-		t.Fatalf("Upkeep denied an exact policy refresh: %v", got)
-	}
-	path := layout.DetectorDir(layout.ClassHealth, memory.RequestMetricsDetectorID) + "/" + layout.DetectorFileName
-	edit(t, root, path, "Background: true", "Background: false")
-	if got := ruleSet(diagnose(t, req)); !same(got, []string{RuleUpkeepMigration}) {
-		t.Fatalf("Upkeep allowed a manual change to the generated policy: %v", got)
 	}
 }
