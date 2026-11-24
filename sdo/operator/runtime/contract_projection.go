@@ -8,6 +8,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -311,13 +312,13 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 	for _, playbook := range result.AppliedPlaybooks {
 		id, err := layout.PlaybookID(playbook.PlaybookID)
 		if err != nil {
-			return nil, err
+			continue
 		}
 		item := &contracts.AppliedPlaybook{PlaybookId: id, ParameterBindings: bindingsContract(playbook.ParameterBindings), ScriptNames: make([]string, 0, len(playbook.ScriptNames))}
 		for _, script := range playbook.ScriptNames {
 			name, err := layout.PlaybookScriptName(id, script)
 			if err != nil {
-				return nil, err
+				continue
 			}
 			item.ScriptNames = append(item.ScriptNames, name)
 		}
@@ -326,7 +327,8 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 	for _, finding := range result.UnresolvedFindings {
 		encoded, err := findingContract(finding)
 		if err != nil {
-			return nil, err
+			finding.Metadata = nil
+			encoded, _ = findingContract(finding)
 		}
 		message.UnresolvedFindings = append(message.UnresolvedFindings, encoded)
 	}
@@ -346,7 +348,7 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 	for _, reference := range result.ProposedArtifactIDs {
 		id, err := layout.ArtifactID(reference)
 		if err != nil {
-			return nil, err
+			continue
 		}
 		message.ProposedArtifactIds = append(message.ProposedArtifactIds, id)
 	}
@@ -356,8 +358,50 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 	if result.Error != "" {
 		message.Error = &result.Error
 	}
+	if _, err := proto.Marshal(message); err != nil {
+		message = proto.CloneOf(message)
+		sanitizeContractText(message.ProtoReflect())
+	}
 	return message, nil
 }
+
+// Text from workers and tools can contain arbitrary bytes. Keep intact fields
+// and repair UTF-8 at the common result boundary.
+func sanitizeContractText(message protoreflect.Message) {
+	clean := func(field protoreflect.FieldDescriptor, value protoreflect.Value) protoreflect.Value {
+		switch field.Kind() {
+		case protoreflect.MessageKind:
+			sanitizeContractText(value.Message())
+		case protoreflect.StringKind:
+			return protoreflect.ValueOfString(validContractText(value.String()))
+		}
+		return value
+	}
+	message.Range(func(field protoreflect.FieldDescriptor, value protoreflect.Value) bool {
+		switch {
+		case field.IsList():
+			list := value.List()
+			for i := range list.Len() {
+				list.Set(i, clean(field, list.Get(i)))
+			}
+		case field.IsMap():
+			entries := value.Map()
+			entries.Range(func(key protoreflect.MapKey, item protoreflect.Value) bool {
+				if field.MapKey().Kind() == protoreflect.StringKind && key.String() != validContractText(key.String()) {
+					entries.Clear(key)
+				} else {
+					entries.Set(key, clean(field.MapValue(), item))
+				}
+				return true
+			})
+		default:
+			message.Set(field, clean(field, value))
+		}
+		return true
+	})
+}
+
+func validContractText(text string) string { return strings.ToValidUTF8(text, "�") }
 
 func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 	result := IncidentResult{
@@ -469,21 +513,13 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 	}
 	if closure.Result != nil {
 		message.Result, err = incidentResultContract(*closure.Result)
-		if err == nil {
-			_, err = protojson.Marshal(message.Result)
-		}
 		if err != nil {
-			if closure.HealthClearedAt == nil {
-				return nil, fmt.Errorf("closure result: %w", err)
-			}
-			message.Result = &contracts.IncidentResult{SchemaVersion: ProtocolSchemaVersion,
-				IncidentId: request.GetIncidentId(), Status: string(closure.Result.Status),
-				Timing:               &contracts.TimingMetrics{StartedAt: message.DispatchedAt, CompletedAt: message.ResponderCompletedAt},
-				VerificationEvidence: []*contracts.VerificationEvidence{{Name: "unencodable_result_evidence", ObservedAt: message.VerifiedAt}}}
+			return nil, fmt.Errorf("closure result: %w", err)
 		}
 	}
 	if closure.DispatchError != "" {
-		message.DispatchError = &closure.DispatchError
+		detail := validContractText(closure.DispatchError)
+		message.DispatchError = &detail
 	}
 	request.PlaybookCoverage = settledApplicationCoverage(request, message.Result)
 	message.DetectorTimeline = detectorTimelineContract(closure.DetectorTimeline)

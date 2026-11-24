@@ -242,7 +242,8 @@ type Controller struct {
 	closureState            contracts.ClosureState
 	closureReceipt          *ClosureReceipt
 	closureFailure          *ClosureFailure
-	lastClosureFreezeError  string
+	closureFreezeAttempts   int
+	closureFreezeCauses     map[string]bool
 	failedClosures          []*contracts.FailedIncidentClosure
 	dispatchFailureAttempts int
 	dispatchNextRetryAt     time.Time
@@ -1833,7 +1834,7 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		return false
 	}
 	c.mu.Lock()
-	if !c.incidentOpen || c.currentIncidentRequest == nil {
+	if !c.incidentOpen || c.currentIncidentRequest == nil || c.closureFreezeAttempts >= c.config.ClosureRetry.MaxAttempts {
 		c.mu.Unlock()
 		return false
 	}
@@ -2235,16 +2236,24 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		_, err = c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Begin, At: now, Closure: projected})
 	}
 	if err != nil {
-		key := closure.Request.IncidentID + ": " + err.Error()
-		first := key != c.lastClosureFreezeError
-		c.lastClosureFreezeError = key
+		c.closureFreezeAttempts++
+		if c.closureFreezeCauses == nil {
+			c.closureFreezeCauses = map[string]bool{}
+		}
+		cause := err.Error()
+		first := !c.closureFreezeCauses[cause]
+		c.closureFreezeCauses[cause] = true
+		exhausted := c.closureFreezeAttempts >= c.config.ClosureRetry.MaxAttempts
 		c.mu.Unlock()
 		if first {
 			c.reportBrokerError("freeze closure", err)
 		}
+		if exhausted {
+			slog.Error("incident_closure_freeze_exhausted", "incident_id", closure.Request.IncidentID)
+		}
 		return false
 	}
-	c.lastClosureFreezeError = ""
+	c.closureFreezeAttempts = 0
 	c.emitLifecycleLocked(&contracts.LifecycleEvent{
 		Event: PhaseClosed, RecordedAt: contractTimestamp(verifiedAt), IncidentId: closure.Request.IncidentID,
 		HealthClearedAt:               optionalContractTimestamp(closure.HealthClearedAt),
@@ -2256,12 +2265,6 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 	c.timeline = nil
 	if verified {
 		logIncidentVerified(closure.Request.IncidentID, healthClearedAt, c.responderCompletedAt, verifiedAt)
-	}
-	for _, evidence := range projected.GetResult().GetVerificationEvidence() {
-		if evidence.GetName() == "unencodable_result_evidence" {
-			slog.Warn("incident_result_evidence_unencodable", "incident_id", closure.Request.IncidentID)
-			break
-		}
 	}
 	for _, app := range projected.GetResult().GetPlanApplications() {
 		if slices.ContainsFunc(app.GetPlan().GetActions(), hasUnencodableAction) || slices.ContainsFunc(app.GetActionsApplied(), hasUnencodableAction) {
@@ -2451,7 +2454,7 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 			Findings: batch, Deadlines: timestampsContract(pendingBatch.Deadlines), Deadline: optionalTimestamp(pendingBatch.Deadline),
 		},
 		History: evaluationsContract(history), IncidentOpen: c.incidentOpen, ResponderDone: c.responderDone,
-		DispatchError: c.dispatchError, IncidentDetectedAt: optionalTimestamp(c.incidentDetectedAt),
+		DispatchError: validContractText(c.dispatchError), IncidentDetectedAt: optionalTimestamp(c.incidentDetectedAt),
 		IncidentDispatchedAt: optionalTimestamp(c.incidentDispatchedAt), ResponderCompletedAt: optionalTimestamp(c.responderCompletedAt),
 		EscalatedAt:             optionalTimestamp(c.escalatedAt),
 		DispatchFailureAttempts: int32(c.dispatchFailureAttempts),

@@ -91,10 +91,10 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 // Embedding Action lets the receipt keep its position through a restore.
 // The executor and executable encoder reject this private action type.
 type unencodableAction struct {
-	program.Action
-	Type   string
-	Ref    sdk.ObjectRef
-	Reason string
+	program.Action `json:"-"`
+	Type           string
+	Ref            sdk.ObjectRef
+	Reason         string
 }
 
 // This encoding is for historical receipts only. Execution uses ActionProto.
@@ -107,15 +107,22 @@ func historicalActionProto(action program.Action) *contracts.Action {
 				return encoded
 			}
 		}
-		ref, _ := planActionRef(action)
-		for _, field := range []*string{&ref.APIVersion, &ref.Kind, &ref.Namespace, &ref.Name} {
-			*field = strings.ToValidUTF8(*field, "")
-		}
-		gap = unencodableAction{Type: fmt.Sprintf("%T", action), Ref: ref, Reason: "unencodable: action_encoding"}
+		gap = unencodableActionFor(action)
 	}
 	return &contracts.Action{Kind: &contracts.Action_Unencodable{Unencodable: &contracts.UnencodableAction{
 		ActionType: gap.Type, Ref: planRefProto(gap.Ref), Reason: gap.Reason,
 	}}}
+}
+
+func unencodableActionFor(action program.Action) unencodableAction {
+	if gap, ok := action.(unencodableAction); ok {
+		return gap
+	}
+	ref, _ := planActionRef(action)
+	for _, field := range []*string{&ref.APIVersion, &ref.Kind, &ref.Namespace, &ref.Name} {
+		*field = strings.ToValidUTF8(*field, "")
+	}
+	return unencodableAction{Type: fmt.Sprintf("%T", action), Ref: ref, Reason: "unencodable: action_encoding"}
 }
 
 func hasUnencodableAction(action *contracts.Action) bool { return action.GetUnencodable() != nil }
