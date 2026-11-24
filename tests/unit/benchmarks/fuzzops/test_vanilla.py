@@ -5,6 +5,7 @@ import os
 import select
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from benchmarks.fuzzops import vanilla
@@ -134,6 +135,7 @@ print(json.dumps({'type': 'result', 'session_id': 'synthetic', 'usage': {'input_
             {
                 "settings": {
                     "auth_file": str(auth),
+                    "window_seconds": 600,
                     "config": {
                         "agent": {
                             "extra_env": [
@@ -153,6 +155,7 @@ print(json.dumps({'type': 'result', 'session_id': 'synthetic', 'usage': {'input_
     state.mkdir(parents=True)
     (state / "kubeconfig").write_text('{"users":[{"user":{"token":"synthetic-kube-token"}}]}')
     evidence = tmp_path / "evidence"
+    nominal_inject = datetime.now(timezone.utc).replace(microsecond=0)
     env = {
         **os.environ,
         "PATH": f"{tools}:{os.environ['PATH']}",
@@ -164,6 +167,7 @@ print(json.dumps({'type': 'result', 'session_id': 'synthetic', 'usage': {'input_
         "BENCH_RUN": "proof",
         "BENCH_FAULT": "synthetic",
         "FUZZOPS_BIN": str(tools / "fuzzops"),
+        "FUZZOPS_DEADLINE": (nominal_inject + timedelta(seconds=600)).isoformat(),
         "FUZZOPS_NAMESPACE": "fg1",
     }
     ready_fd = os.open(ready, os.O_RDWR | os.O_NONBLOCK)
@@ -192,6 +196,7 @@ print(json.dumps({'type': 'result', 'session_id': 'synthetic', 'usage': {'input_
             watch.wait()
     assert vanilla.main(["collect"], env) == 0
     assert cell_problems(evidence, "vanilla") == []
+    assert json.loads((evidence / "start.json").read_text())["inject_at"] == nominal_inject.isoformat()
     assert json.loads((evidence / "onset.json").read_text())["failing"] == ["read-project"]
     assert json.loads((evidence / "usage.json").read_text())["input_tokens"] == 7
     transcript = (evidence / "transcript.jsonl").read_text()

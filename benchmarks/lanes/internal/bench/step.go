@@ -1457,11 +1457,12 @@ func (r *stepRunner) run(ctx context.Context) {
 		}
 		env = append(env, "FUZZOPS_EXEC_CMD_"+strings.ToUpper(labelChars.ReplaceAllString(strings.TrimPrefix(rs.Label, "exec:"), "_"))+"="+hookCmd+" watch")
 	}
-	if rs.Fault == Healthy {
-		args = append(args, "--fault", "none")
-	} else {
-		args = append(args, "--instance-file", rs.Instances, "--instance", rs.Fault)
+	faultArgs, err := rs.faultFlags()
+	if err != nil {
+		r.fail("select fault: %v", err)
+		return
 	}
+	args = append(args, faultArgs...)
 	if ledgerWrites(s.LaneDir) >= ledgerMin {
 		// The run changes the app's data: the ledger is spent until a reset puts the golden copy (and its ledger) back.
 		used := filepath.Join(s.LaneDir, ledgerUsed)

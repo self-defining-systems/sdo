@@ -118,30 +118,6 @@ func Add(ctx context.Context, root Root, specFile string, log io.Writer, opts ..
 	return writeFile(root.SpecPath(s.Name), b)
 }
 
-// checkIDs checks that every fault ID (but healthy) is in the instances file.
-func checkIDs(path string, ids []string) error {
-	var f struct {
-		IDs []string `json:"ids"`
-	}
-	if err := readJSON(path, &f); err != nil {
-		return err
-	}
-	have := map[string]bool{}
-	for _, id := range f.IDs {
-		have[id] = true
-	}
-	var missing []string
-	for _, id := range ids {
-		if id != Healthy && !have[id] {
-			missing = append(missing, id)
-		}
-	}
-	if len(missing) > 0 {
-		return fmt.Errorf("fault IDs not in the instances file: %s", strings.Join(missing, ", "))
-	}
-	return nil
-}
-
 func hookCheck(ctx context.Context, root Root, inv Inventory, s Spec, lock Lock, dir string, log io.Writer) error {
 	tmp, err := os.MkdirTemp("", "bench-check-")
 	if err != nil {
