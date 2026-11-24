@@ -24,9 +24,9 @@ func (s Snapshot) SecretEqual(left, right program.SecretKey) (bool, error) {
 	return (&ReplayReadView{Calls: s.Readings}).SecretEqual(left, right)
 }
 
-// A captured Secret comparison can verify diagnosis before and after a
-// restore without simulating credential bytes or unrelated plan effects.
-func observesSecretRestore(plan program.Plan, c CorpusCase) bool {
+// HasObservedSecretRestore identifies a restore with a recorded key mismatch.
+// It does not infer the write or establish the result of other plan actions.
+func HasObservedSecretRestore(plan program.Plan, c CorpusCase) bool {
 	for _, call := range c.PhaseRecordings("open") {
 		if call.Method != "SecretEqual" || call.Error != "" || string(call.Result) != "false" {
 			continue

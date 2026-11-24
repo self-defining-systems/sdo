@@ -91,6 +91,10 @@ func ExternalNameEndpointViolations(detector sdk.Detector, serviceNames []string
     depend on backends, such as a Service type check, are allowed. Pass the
     application's own Service names so inventory-scoped detectors are exercised.
 
+func HasObservedSecretRestore(plan program.Plan, c CorpusCase) bool
+    HasObservedSecretRestore identifies a restore with a recorded key mismatch.
+    It does not infer the write or establish the result of other plan actions.
+
 func HealthyBaselineViolations(detector sdk.Detector, snapshots []Snapshot) []string
     HealthyBaselineViolations replays the detector on recorded snapshots of the
     healthy application and returns actionable messages for active findings
@@ -212,13 +216,4 @@ const (
 	// holds an error for, a binding it cannot supply, or no capture at all.
 	OwnIncidentUnverified OwnIncidentOutcome = "unverified"
 )
-type OwnIncidentResult struct {
-	ProgramID string             `json:"program_id"`
-	Outcome   OwnIncidentOutcome `json:"outcome"`
-	Capture   string             `json:"capture,omitempty"`
-	Reason    string             `json:"reason,omitempty"`
-}
-    OwnIncidentResult is one playbook's own-incident replay verdict. Capture
-    names the open@* snapshot the outcome comes from; Reason says why a failed
-    or unverified outcome is one.
 ```

@@ -81,20 +81,16 @@ component name in either (`playbook.component-literal`, `detector.component-lite
 
 ## Source restoration
 
-Choose playbooks by failure mechanism. Admission mutation, resource exhaustion and old-revision
-blockage need separate diagnoses and steps even on one Deployment; link them from findings and explain
-ordering in READMEs. Keep actions together only when one repair needs them. Unrelated unavailable reads
-must not make a decidable source comparison Unknown. Preserve earlier cases when refining variants.
-Judge a pending stage by its final receipt: a later verified settlement preserves the working step;
-a handoff snapshot alone does not justify a rewrite.
+Separate repairs by failure mechanism and link their order in findings and READMEs.
+Keep prior cases. Unrelated unavailable reads cannot invalidate a decidable comparison.
+Judge a pending stage by its final receipt.
 
 - `SetField` restores one schema-checked field; named list selectors (`env[name=X]`) and ConfigMap
   JSON/YAML entries (`DocumentFormat`, `DocumentPath`) preserve unrelated values. A missing final
   `env[name=X]` entry is inserted.
-- Diagnose Secret drift with `SecretEqual(live, other)` using `program.SecretKey{Ref: ref, Key: key}`.
-  Set `Accepted: true` on the second key to compare against the accepted render. A mismatch
-  is observable even with zero endpoints. A read error leaves the diagnosis Unknown.
-  Restore accepted Secret data with `ReconcileFromSource` and restart readers that need it.
+- `SecretEqual(live, other)` compares `program.SecretKey` references even with zero endpoints.
+  Set `Accepted: true` on the second key for source. A read failure is Unknown.
+  Restore with `ReconcileFromSource` and restart readers that need it.
 - `ReconcileFromSource` restores a whole source-owned object and removes reported additions;
   `CreateFromSource` restores a named missing object. `DeleteObject` is irreversible; a delete-style Diagnose
   matches on `diff.PresentButNotInSource()`, a recreate-style one on `diff.MissingButInSource()`

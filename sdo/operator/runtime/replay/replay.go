@@ -164,6 +164,16 @@ func Check(ctx context.Context, p program.Diagnoser, m program.Mitigator, detect
 	if containsScript(plan) {
 		return observedScriptTransition(ctx, p, c, plan, source, r)
 	}
+	if sdktest.HasObservedSecretRestore(plan, c.Corpus) {
+		fixed := newReadView(ctx, c.Corpus.Fixed, c.Corpus.PhaseRecordings("fixed"), source)
+		r.Post = program.RunDiagnose(ctx, p, fixed, bindings, 5*time.Second)
+		if r.Post.Result != program.NoMatch {
+			return fail(fmt.Errorf("recorded fixed Secret diagnosis is %s, want NoMatch", r.Post.Result))
+		}
+		r.ReplayBasis = "observed-transition"
+		r.Status = "replayed"
+		return r
+	}
 	client, err := newCluster(c.Corpus.Open)
 	if err != nil {
 		return fail(err)
