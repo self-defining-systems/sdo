@@ -66,6 +66,21 @@ func TestReconcileFromSourceRestoresASecretThenRestartsItsReaders(t *testing.T) 
 		program.ReconcileFromSource{Ref: secretRef},
 		program.RestartRollout{Ref: webRef, Reason: "readers hold the foreign value"},
 	}}
+	wire, err := (PlanApplicationResult{Plan: plan}).Proto()
+	if err != nil {
+		t.Fatalf("encode the learned plan: %v", err)
+	}
+	plan = planApplicationState(wire).Result.Plan
+	if err := plan.Validate(); err != nil || len(plan.Actions) != 2 {
+		t.Fatalf("decoded plan has %d actions: %v", len(plan.Actions), err)
+	}
+	if preview, err := executor.Apply(t.Context(), incident, plan, true); err != nil || preview.Applied {
+		t.Fatalf("dry run applied=%t: %v", preview.Applied, err)
+	}
+	before, err := client.CoreV1().Secrets("app").Get(t.Context(), "creds", metav1.GetOptions{})
+	if err != nil || string(before.Data["key"]) != foreignSyntheticValue {
+		t.Fatalf("dry run must leave the live key untouched: %v", err)
+	}
 	result, err := executor.Apply(context.Background(), incident, plan, false)
 	if err != nil || !result.Applied || len(result.ActionsApplied) != 2 {
 		t.Fatalf("Apply = %+v, %v", result, err)
