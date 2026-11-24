@@ -19,7 +19,7 @@ Start from `examples/template-drift/` or `examples/stuck-pods/`. Write `diagnose
 - Use the fastest equivalent action. Verify serving processes use the new state.
 - Scope absence claims to where you looked. Before recreating or overwriting lost data, require a live check for the authoritative copy and restore it if found. If the check is unavailable, leave the write to the responder.
 - Set the known-good value directly, not from controller history a repeat may lack.
-- Carry a whole source restore as `program.ReconcileFromSource`. Omit changes that did not help.
+- Use `program.ReconcileFromSource` for a whole restore to the deployed configuration. Skip healthy workloads.
 - Memory is for this application and may name its own tables, resources and commands; generalize over what varies, not away from the application. Automate mechanical steps; leave judgement to the README. No `RunScript`, no passwords.
 
 If the cause has a signal of its own, add a detector that names the playbook: [detector.md](detector.md).

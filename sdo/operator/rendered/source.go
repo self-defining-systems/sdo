@@ -443,10 +443,7 @@ func (s Source) AcceptedApplicationManifest(ctx context.Context, revision, names
 	return s.acceptedObject(ctx, revision, namespace, ref)
 }
 
-// apply replaces the image of each container of the workload that a pin names.
-// A pin that records a Live image (the running pods already ran the pinned
-// digest, so the template kept the tag) leaves the image as declared: desired
-// state is what the template holds, so the tag is in sync, not drift.
+// apply restores the image reference recorded for each deployed container.
 func (p ReceiptPins) apply(document map[string]any, ref sdk.ObjectRef) {
 	podSpec, err := PodSpec(document)
 	if err != nil {
@@ -462,9 +459,9 @@ func (p ReceiptPins) apply(document map[string]any, ref sdk.ObjectRef) {
 			name, _ := container["name"].(string)
 			for _, pin := range p.Images {
 				if pin.Ref.Kind == ref.Kind && pin.Ref.Namespace == ref.Namespace && pin.Ref.Name == ref.Name &&
-					pin.Name == name && pin.Init == (field == InitContainers) && pin.Applied != "" && pin.Live == "" &&
+					pin.Name == name && pin.Init == (field == InitContainers) && pin.TemplateImage() != "" &&
 					(!p.inherited || container["image"] == pin.Inputs.SourceImage) {
-					container["image"] = pin.Applied
+					container["image"] = pin.TemplateImage()
 				}
 			}
 		}

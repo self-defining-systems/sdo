@@ -525,6 +525,23 @@ func TestReadsKeepTheTagForAPinRecordedAsLive(t *testing.T) {
 	}
 }
 
+func TestReadsKeepTheEffectiveDigestRecordedAsLive(t *testing.T) {
+	const kept = "example/web@sha256:" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	source := rendered.Source{Repository: "/synthetic", Deployment: rawSource(t, "loose.yaml"), Catalog: catalog(t), Git: treeGit(rawTree)}
+	object, err := source.AcceptedManifest(context.Background(), syntheticCommit, webRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	containers, _, _ := unstructured.NestedSlice(object.Object, "spec", "template", "spec", "containers")
+	name := containers[0].(map[string]any)["name"].(string)
+	source.Pins = rendered.ReceiptPins{EffectiveTree: syntheticTree, Images: []rendered.DeployedImage{
+		{Ref: webRef, Name: name, Applied: kept, Digest: kept, Live: kept},
+	}}
+	if got := webImage(t, source); got != kept {
+		t.Fatalf("effective template image = %v, want %s", got, kept)
+	}
+}
+
 // Hook-phase objects are applied by the deployer but are not desired state:
 // reads of the accepted manifests never return them, and the accepted
 // inventory lists them separately so drift can accept them as optional.

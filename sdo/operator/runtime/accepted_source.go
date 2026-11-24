@@ -30,6 +30,15 @@ func acceptedIncidentManifest(ctx context.Context, source PlanSource, revision, 
 	return source.AcceptedManifest(ctx, revision, ref)
 }
 
+// restoreSourceRevision selects the effective tree that was deployed. The
+// accepted memory head can move on every outcome without a new deployment.
+func restoreSourceRevision(incident IncidentRequest) string {
+	if incident.DeployedCommit != "" {
+		return incident.DeployedCommit
+	}
+	return incident.SourceCommit
+}
+
 func (e PlanExecutor) acceptedClusterReconcile(ctx context.Context, incident IncidentRequest, action program.Action, ref sdk.ObjectRef) bool {
 	switch a := action.(type) {
 	case program.ReconcileFromSource:
@@ -43,6 +52,6 @@ func (e PlanExecutor) acceptedClusterReconcile(ctx context.Context, incident Inc
 	if ref.Namespace != "" || e.Source == nil || incident.SourceCommit == "" {
 		return false
 	}
-	_, err := acceptedIncidentManifest(ctx, e.Source, incident.SourceCommit, incident.Namespace, ref)
+	_, err := acceptedIncidentManifest(ctx, e.Source, restoreSourceRevision(incident), incident.Namespace, ref)
 	return err == nil
 }

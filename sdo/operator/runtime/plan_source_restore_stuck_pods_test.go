@@ -329,3 +329,72 @@ func testAutomaticStatefulSetRestore(t *testing.T, replacementUnavailable bool) 
 		t.Fatalf("application did not retain ordered replacement receipts: %v", effects)
 	}
 }
+
+type revisionPlanSource map[string]*unstructured.Unstructured
+
+func (s revisionPlanSource) AcceptedManifest(_ context.Context, revision string, _ sdk.ObjectRef) (*unstructured.Unstructured, error) {
+	return s[revision].DeepCopy(), nil
+}
+
+func (s revisionPlanSource) Revision(ctx context.Context, ref sdk.ObjectRef, revision string) (*unstructured.Unstructured, error) {
+	return s.AcceptedManifest(ctx, revision, ref)
+}
+
+func TestReconcileFromSourceRepairsOnlyDriftAndSkipsASecondWrite(t *testing.T) {
+	const pinned = "registry.invalid/app@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	ctx := context.Background()
+	set := syntheticSet(pinned, func(set *appsv1.StatefulSet) {
+		set.Spec.Template.Spec.Containers[0].VolumeMounts = []corev1.VolumeMount{{Name: "data", MountPath: "/data"}}
+	})
+	set.Status = appsv1.StatefulSetStatus{}
+	manifest, err := kruntime.DefaultUnstructuredConverter.ToUnstructured(set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := &unstructured.Unstructured{Object: manifest}
+	container := source.Object["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)
+	container["volumeMounts"].([]any)[0].(map[string]any)["readOnly"] = false
+	set.Spec.Template.Spec.Containers[0].TerminationMessagePath = "/dev/termination-log"
+	client := fake.NewSimpleClientset(set)
+	ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "StatefulSet", Namespace: "app", Name: "store"}
+	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	raw := source.DeepCopy()
+	raw.Object["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["image"] = "registry.invalid/app:release"
+	executor := PlanExecutor{Client: TypedPlanClient{Client: client}, Source: revisionPlanSource{"deployed": source, "accepted": raw},
+		Rollouts: recordedRollouts{new([]sdk.ObjectRef)}, Verifier: passingVerifier{}, Now: func() time.Time { return now }, deferConvergence: true}
+	incident := IncidentRequest{Namespace: "app", RepairPolicy: "recorded-actions", SourceCommit: "accepted", DeployedCommit: "deployed"}
+	plan := program.Plan{Actions: []program.Action{program.ReconcileFromSource{Ref: ref}}}
+	apply := func(expectedWrites int) {
+		t.Helper()
+		client.ClearActions()
+		result, err := executor.Apply(ctx, incident, plan, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writes := 0
+		for _, action := range client.Actions() {
+			if action.GetVerb() == "patch" {
+				writes++
+			}
+		}
+		if writes != expectedWrites || result.Applied != (writes != 0) {
+			t.Fatalf("writes = %d, result applied = %v, want %d writes", writes, result.Applied, expectedWrites)
+		}
+	}
+	apply(0)
+	drift := set.DeepCopy()
+	drift.Spec.Template.Spec.Containers[0].VolumeMounts[0].MountPath = "/wrong"
+	if _, err := client.AppsV1().StatefulSets("app").Update(ctx, drift, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	apply(1)
+	repaired, err := client.AppsV1().StatefulSets("app").Get(ctx, "store", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := repaired.Spec.Template.Spec.Containers[0]; got.Image != pinned ||
+		got.TerminationMessagePath != "/dev/termination-log" || !slices.Equal(got.VolumeMounts, set.Spec.Template.Spec.Containers[0].VolumeMounts) {
+		t.Fatalf("repair changed more than the drift: %+v", got)
+	}
+	apply(0)
+}

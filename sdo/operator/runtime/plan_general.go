@@ -110,8 +110,8 @@ func (e PlanExecutor) applyGeneralPlan(ctx context.Context, incident IncidentReq
 			report.ActionIndex = i
 			result.ActionReports[i] = report
 		}
-		if step.Applied {
-			result.Applied = true
+		if step.Applied || result.ActionReports[i].Status == "unchanged" {
+			result.Applied = result.Applied || step.Applied
 			result.ActionsApplied = append(result.ActionsApplied, a)
 		}
 		if stepErr != nil {
@@ -119,6 +119,9 @@ func (e PlanExecutor) applyGeneralPlan(ctx context.Context, incident IncidentReq
 		}
 	}
 	complete = true
+	if !result.Applied {
+		result.ActionsApplied = nil
+	}
 	return result, nil
 }
 func (e PlanExecutor) generalStep(ctx context.Context, incident IncidentRequest, action program.Action, dry bool) (r PlanApplicationResult, err error) {

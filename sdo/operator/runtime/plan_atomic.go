@@ -57,6 +57,9 @@ func coalesceDocumentPatches(result *PlanApplicationResult) error {
 			patch.Authorization = "general"
 		}
 		for i := first; i < end; i++ {
+			if result.Patches[i].Operation != "no-op" {
+				patch.Operation = result.Patches[i].Operation
+			}
 			if isGeneralAction(result.Plan.Actions[i]) {
 				patch.Authorization = "general"
 				patch.Structured = true
@@ -71,9 +74,13 @@ func coalesceDocumentPatches(result *PlanApplicationResult) error {
 		if err != nil {
 			return err
 		}
-		patch.Patch, err = createConditionalObjectPatch(before, after, patch.Before)
-		if err != nil {
-			return err
+		if patch.Operation == "no-op" {
+			patch.Patch = json.RawMessage(`{}`)
+		} else {
+			patch.Patch, err = createConditionalObjectPatch(before, after, patch.Before)
+			if err != nil {
+				return err
+			}
 		}
 		for i := first + 1; i < end; i++ {
 			result.Patches[i].Before = patch.After.DeepCopy()

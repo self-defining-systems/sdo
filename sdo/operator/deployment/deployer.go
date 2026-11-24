@@ -307,17 +307,14 @@ func (r *applyRun) apply(ctx context.Context, set rendered.DesiredSet, operation
 			}
 			images, err := Stamp(document, r.effective.ID, func(site ImageSite) string {
 				pinned := r.resolved[site.Image]
-				applied := pinned.Ref
 				live := kept[ContainerSite{Name: site.Container, Init: site.Init}]
-				if live != "" {
-					applied = live
-				}
-				record.named = append(record.named, rendered.DeployedImage{
+				image := rendered.DeployedImage{
 					Ref:  sdk.ObjectRef{APIVersion: object.Ref.APIVersion, Kind: site.Kind, Namespace: object.Ref.Namespace, Name: site.Name},
 					Name: site.Container, Init: site.Init, Applied: pinned.Ref, Digest: pinned.Ref, Live: live,
 					Inputs: rendered.ImageInputs{SourceImage: pinned.Inputs.SourceImage, ContextPath: pinned.Inputs.ContextPath, DockerfilePath: pinned.Inputs.DockerfilePath},
-				})
-				return applied
+				}
+				record.named = append(record.named, image)
+				return image.TemplateImage()
 			})
 			if err != nil {
 				return fmt.Errorf("stamp %s/%s: %w", object.Ref.Kind, object.Ref.Name, err)

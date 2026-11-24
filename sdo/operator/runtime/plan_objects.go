@@ -354,7 +354,7 @@ func (e PlanExecutor) prepareObjectAction(ctx context.Context, incident Incident
 	if _, ok := e.Client.(PlanAcceptanceClient); !ok {
 		return nil, fmt.Errorf("acceptance record writer is required for CreateFromSource")
 	}
-	source, err := e.Source.AcceptedManifest(ctx, incident.SourceCommit, ref)
+	source, err := acceptedIncidentManifest(ctx, e.Source, restoreSourceRevision(incident), incident.Namespace, ref)
 	if err != nil || source == nil || !samePlanRef(source, ref) {
 		return nil, fmt.Errorf("CreateFromSource requires a matching accepted object")
 	}

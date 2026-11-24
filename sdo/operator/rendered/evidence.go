@@ -3,8 +3,8 @@ package rendered
 import "sdo.dev/operator/sdk"
 
 // DeployedImage is captured by the trusted deployer from its applied document
-// and verified rollout. It is information about a deployment; no diff,
-// reconcile or closure depends on it.
+// and verified rollout. It reconstructs the image recorded in the deployed
+// template for accepted-source diffs and restores.
 type DeployedImage struct {
 	Ref     sdk.ObjectRef `json:"ref"`
 	Name    string        `json:"name"`
@@ -18,6 +18,14 @@ type DeployedImage struct {
 	// template. Desired state and observation read Live, not Applied.
 	Live   string      `json:"live,omitempty"`
 	Inputs ImageInputs `json:"inputs,omitzero"`
+}
+
+// TemplateImage is the exact image reference the deployer put in the template.
+func (i DeployedImage) TemplateImage() string {
+	if i.Live != "" {
+		return i.Live
+	}
+	return i.Applied
 }
 
 // ImageInputs is copied from the trusted deployment plan, never from a lock or
