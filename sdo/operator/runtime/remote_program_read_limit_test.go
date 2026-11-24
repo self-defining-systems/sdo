@@ -131,6 +131,9 @@ func TestOversizedProgramReadCaptureMatchesReplay(t *testing.T) {
 				}
 			}
 			run(p, &sdktest.ReplayReadView{Snapshot: snapshot, Calls: sink.SnapshotCalls()})
+			captured := snapshot
+			captured.Readings = cycle.SnapshotCalls()
+			run(p, &sdktest.ReplayReadView{Snapshot: captured})
 			if tc.method == "Pods" {
 				verdict, err := remote.Diagnose(context.Background(), source, program.Bindings{})
 				if err != nil || verdict.Result != program.Match {

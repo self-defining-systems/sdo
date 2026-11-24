@@ -12,12 +12,14 @@ import (
 // fallback, including for SDK methods that cannot return an error.
 func (v *ReplayReadView) ReplayProgramReadView(source program.ReadView) program.ReadView {
 	var limits map[string][]json.RawMessage
-	for _, call := range v.Calls {
-		if call.FrameLimited {
-			if limits == nil {
-				limits = make(map[string][]json.RawMessage)
+	for _, calls := range [][]PrimitiveCall{v.Snapshot.Readings, v.Calls} {
+		for _, call := range calls {
+			if call.FrameLimited {
+				if limits == nil {
+					limits = make(map[string][]json.RawMessage)
+				}
+				limits[call.Method] = append(limits[call.Method], call.Arguments)
 			}
-			limits[call.Method] = append(limits[call.Method], call.Arguments)
 		}
 	}
 	if limits == nil {
