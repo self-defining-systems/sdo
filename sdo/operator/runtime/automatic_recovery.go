@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -42,12 +43,7 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 		}
 
 		if !report.GetStabilityDeadlineEvaluated() {
-			var firing, unavailable []string
-			if snapshot != nil {
-				firing, unavailable = c.automaticAlertStatusLocked(now, *request, keys, snapshot)
-			} else {
-				unavailable = keys
-			}
+			firing, unavailable := c.automaticAlertStatusLocked(now, *request, keys, snapshot)
 			if len(firing) == 0 && !extension.IsValid() {
 				end := c.automaticVerificationExtensionLocked(observedAt, *request)
 				report.StabilityDeadline = contractTimestamp(end)
@@ -66,11 +62,22 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 			keys = nil
 		}
 		if len(keys) == 0 {
-			if observedAt.Before(c.automaticResponseDeadlineLocked()) || !c.closureStableSince.IsZero() {
+			if observedAt.Before(c.automaticResponseDeadlineLocked()) {
 				return false, ""
 			}
+			// The extension resolved handoff. Closing still requires current
+			// evidence that every alert cleared.
+			firing, unavailable := c.automaticAlertStatusLocked(now, *request, alertKeys(request), snapshot)
+			clear := len(firing) == 0 && len(unavailable) == 0
+			if clear && !c.closureStableSince.IsZero() {
+				return false, ""
+			}
+
 			reason := "recovery unconfirmed at response deadline"
-			if len(rolloutBlockers) != 0 || check.record != nil && !check.record.GetWritesSettled() {
+			switch {
+			case !clear:
+				reason = fmt.Sprintf("alerts unresolved at response deadline (firing=%q, unavailable=%q)", firing, unavailable)
+			case len(rolloutBlockers) != 0 || check.record != nil && !check.record.GetWritesSettled():
 				reason = "write never settled"
 			}
 			if report.Error != "" {
@@ -80,6 +87,9 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 			markAutomaticRecovery(report, observedAt, contracts.RecoveryWait_EXIT_REASON_DEADLINE)
 			markUnsettledRollouts(report, check.record, rolloutBlockers)
 			c.escalateLocked(observedAt)
+			if !clear {
+				return false, ""
+			}
 			return true, reason
 		}
 	} else if !stageEscalatedIn(request.PriorStages) {
@@ -111,6 +121,9 @@ func (c *Controller) automaticRecoveryLocked(now time.Time, report *contracts.St
 // A scoped firing sample identifies the failing keys. A pending, errored
 // or absent sample cannot establish either failure or clearance.
 func (c *Controller) automaticAlertStatusLocked(now time.Time, request IncidentRequest, keys []string, snapshot sdk.DetectionContext) (firing, unavailable []string) {
+	if snapshot == nil {
+		return nil, keys
+	}
 	scope := newRecoveryScope(keys)
 	observed := make(map[string]DetectorEvaluationStatus)
 	failed := make(map[string]bool)

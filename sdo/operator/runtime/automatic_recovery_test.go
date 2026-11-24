@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 	"slices"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -825,6 +827,92 @@ func TestAutomaticExtensionConsumedDespiteLaterUnavailableRead(t *testing.T) {
 	autoStep(t, restarted, world.clock, time.Second)
 	if autoReport(restarted).GetHandoffSelected() || !restarted.escalatedAt.IsZero() {
 		t.Fatal("a restart reopened the extension decision")
+	}
+}
+
+func TestAutomaticResponseDeadlineRequiresFreshClear(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		unavailable bool
+		wantStatus  string
+	}{
+		{name: "refire after extension", wantStatus: "firing"},
+		{name: "unavailable at deadline", unavailable: true, wantStatus: "unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, world, closed := automaticRecoveryWorld(t, settlingCase{healAfter: time.Second}, settings.AfterPlaybookAgent)
+			probe := &deadlineConfirmationProbe{windowedSettlingDetector: c.detectors["traffic-health"].(windowedSettlingDetector)}
+			c.detectors[probe.id] = probe
+			c.responderLoop.Detectors[0] = probe
+			report := autoReport(c)
+			setRolloutUnsettled(t, world, sdk.ObjectRef{Kind: "Deployment", Namespace: "app", Name: "api"})
+			bound := c.currentIncidentRequest.ResponseDeadline
+			key := c.currentIncidentRequest.OpeningKeys[0]
+			autoStep(t, c, world.clock, report.GetRecoveryDeadline().AsTime().Sub(world.clock.Now()))
+			extension := report.GetStabilityDeadline().AsTime()
+			autoStep(t, c, world.clock, extension.Sub(world.clock.Now()))
+			if !report.GetStabilityDeadlineEvaluated() || report.GetHandoffSelected() || !c.escalatedAt.IsZero() {
+				t.Fatal("clear alerts at extension expiry did not consume the handoff decision")
+			}
+
+			if !tc.unavailable {
+				probe.healAt = time.Time{}
+			}
+			autoStep(t, c, world.clock, bound.Sub(world.clock.Now())-time.Second)
+			if !c.IncidentOpen() || !c.escalatedAt.IsZero() || report.GetHandoffSelected() {
+				t.Fatal("late probe changed the stage decision before the response deadline")
+			}
+			probe.unavailable = tc.unavailable
+			autoStep(t, c, world.clock, time.Second)
+			if !c.IncidentOpen() || closed.Result != nil || !c.escalatedAt.Equal(bound) {
+				t.Fatalf("response deadline must escalate in place: open=%v escalated=%s closure=%q", c.IncidentOpen(), c.escalatedAt, closed.UnconfirmedDetail)
+			}
+			if report.GetHandoffSelected() || !report.GetStabilityDeadline().AsTime().Equal(extension) {
+				t.Fatal("response deadline reopened the handoff decision")
+			}
+			wantReason := tc.wantStatus + "=[" + strconv.Quote(key) + "]"
+			if !strings.Contains(report.GetError(), wantReason) {
+				t.Fatalf("escalation reason = %q, want %q", report.GetError(), wantReason)
+			}
+			autoStep(t, c, world.clock, time.Second)
+			if !c.IncidentOpen() {
+				t.Fatal("escalated incident closed while an alert was still unresolved")
+			}
+		})
+	}
+}
+
+func TestAutomaticClearAndSettledWriteAtResponseDeadline(t *testing.T) {
+	c, world, closed := automaticRecoveryWorld(t, settlingCase{healAfter: time.Second}, settings.AfterPlaybookAgent)
+	ref := sdk.ObjectRef{Kind: "Deployment", Namespace: "app", Name: "api"}
+	setRolloutUnsettled(t, world, ref)
+	report := autoReport(c)
+	autoStep(t, c, world.clock, report.GetRecoveryDeadline().AsTime().Sub(world.clock.Now()))
+	extension := report.GetStabilityDeadline().AsTime()
+	autoStep(t, c, world.clock, extension.Sub(world.clock.Now()))
+	if !report.GetStabilityDeadlineEvaluated() || !c.IncidentOpen() || !c.escalatedAt.IsZero() {
+		t.Fatal("clear alerts with a pending write did not enter the settlement wait")
+	}
+
+	deployments := world.client.AppsV1().Deployments(ref.Namespace)
+	object, err := deployments.Get(t.Context(), ref.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	object.Status.UpdatedReplicas = 1
+	if _, err := deployments.UpdateStatus(t.Context(), object, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	autoStep(t, c, world.clock, c.currentIncidentRequest.ResponseDeadline.Sub(world.clock.Now()))
+	if !c.IncidentOpen() || !c.escalatedAt.IsZero() || report.GetHandoffSelected() {
+		t.Fatal("settling at the response deadline must allow the stability window")
+	}
+	autoStep(t, c, world.clock, c.config.ClosureStabilityWindow)
+	if c.IncidentOpen() {
+		autoStep(t, c, world.clock, 0)
+	}
+	if c.IncidentOpen() || !closed.EscalatedAt.IsZero() || closed.HealthClearedAt == nil {
+		t.Fatalf("clear settled incident did not close as verified: open=%v escalated=%s detail=%q", c.IncidentOpen(), closed.EscalatedAt, closed.UnconfirmedDetail)
 	}
 }
 

@@ -2065,8 +2065,12 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		if !verified && stage.GetRecoveryWait().GetExitReason() == contracts.RecoveryWait_EXIT_REASON_CLEARED {
 			stage.RecoveryWait = nil
 		}
+		healthSnapshot := snapshot
+		if observationErr != nil {
+			healthSnapshot = nil
+		}
 		var closeIncident bool
-		closeIncident, automaticEscalation = c.automaticRecoveryLocked(now, stage, snapshot, recovery, source.Rollouts, verified)
+		closeIncident, automaticEscalation = c.automaticRecoveryLocked(now, stage, healthSnapshot, recovery, source.Rollouts, verified)
 		if !closeIncident {
 			c.mu.Unlock()
 			return false
