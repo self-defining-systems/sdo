@@ -607,7 +607,6 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		if response.Error != "" {
 			response.Summary = response.Error
 		}
-		requestJSON, _ := json.Marshal(request)
 		if l.Request.ExternalMessage != "" {
 			response.Healthy = false
 			response.DetectorStates = nil
@@ -636,8 +635,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			return
 		}
 		l.stampProvenance(ctx, request, &response)
-		responseJSON := recordedToolResponseJSON(response, applied)
-		l.calls = append(l.calls, ToolCall{Command: request.Command, At: l.clock().UTC(), RequestJSON: string(requestJSON), ResponseJSON: string(responseJSON), Error: response.Error, Summary: response.Summary})
+		l.recordToolCall(request, response, applied)
 		persistStarted := l.clock()
 		err := l.persistToolState(ctx)
 		l.timing.persist = l.clock().Sub(persistStarted)
@@ -907,6 +905,48 @@ type truncatedToolResponse struct {
 	ProgramRevisionsCount int                  `json:"program_revisions_count"`
 	DetectorStatesCount   int                  `json:"detector_states_count"`
 	PatchesCount          int                  `json:"patches_count"`
+}
+
+// recordToolCall is the durable projection of responder tool input. Only
+// plan/apply causality uses request arguments. Never persist arbitrary inputs
+// or rejected response text, which can echo them.
+func (l *ResponderLoop) recordToolCall(request ToolRequest, response ToolResponse, applied []selectedPlan) {
+	projected := struct {
+		Command   string            `json:"command"`
+		ProgramID string            `json:"program_id,omitempty"`
+		Bindings  *program.Bindings `json:"bindings,omitempty"`
+		PlanIDs   []string          `json:"plan_ids,omitempty"`
+		Stage     bool              `json:"stage,omitempty"`
+	}{Command: request.Command, Stage: request.stage}
+	switch request.Command {
+	case "plan":
+		if plan, ok := l.plans[response.PlanID]; ok {
+			projected.ProgramID = plan.programID
+			projected.Bindings = &plan.bindings
+		}
+	case "apply":
+		for _, plan := range applied {
+			projected.PlanIDs = append(projected.PlanIDs, plan.id)
+		}
+	}
+	status := response.Report.GetStatus()
+	if response.Error != "" || status == contracts.MitigationReport_STATUS_REFUSED || status == contracts.MitigationReport_STATUS_EXECUTION_ERROR {
+		record := ToolResponse{Command: response.Command, ApplicationID: response.ApplicationID, Error: "tool call rejected"}
+		if record.ApplicationID != "" {
+			for _, run := range response.ProgramRuns {
+				record.ProgramRuns = append(record.ProgramRuns, ProgramRun{
+					ProgramID: run.ProgramID, ProgramRevision: run.ProgramRevision,
+					Bindings: program.Bindings{Objects: run.Bindings.Objects}, Verdict: program.Verdict{Result: run.Verdict.Result},
+				})
+			}
+		}
+		response = record
+	}
+	raw, _ := json.Marshal(projected)
+	l.calls = append(l.calls, ToolCall{
+		Command: projected.Command, At: l.clock().UTC(), RequestJSON: string(raw),
+		ResponseJSON: string(recordedToolResponseJSON(response, applied)), Error: response.Error, Summary: response.Summary,
+	})
 }
 
 // recordedToolResponseJSON caps the stored response. An apply record keeps every

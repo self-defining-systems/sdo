@@ -212,3 +212,9 @@ the reflection tool `capture_fields` serves typed sections for both forms.
 Provenance digests name snapshot content. `sdktest.SnapshotDigest` hashes the
 canonical form, so the version 1 and version 2 files of one capture have the
 same digest; a label digest of the exact old file bytes also still matches.
+
+Script capture identifies Secret resources by the API path and retains only
+their identity, including collection preimages whose items omit TypeMeta.
+Responder tool-call records preserve plan/apply linkage and automatic-stage
+attribution. Errored calls retain a fixed rejection message, any application
+ID, and value-free run summaries. Earlier raw records can contain credentials.

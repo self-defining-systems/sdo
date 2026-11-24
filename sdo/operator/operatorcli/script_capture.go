@@ -159,6 +159,8 @@ func (r *scriptRecorder) preimage(path string, e apihistory.Event) {
 	r.retain(path, object, nil)
 }
 func (r *scriptRecorder) retain(path string, before, after *unstructured.Unstructured) {
+	before = scriptCaptureImage(path, before)
+	after = scriptCaptureImage(path, after)
 	object := after
 	if object == nil {
 		object = before
@@ -182,6 +184,9 @@ func (r *scriptRecorder) retain(path string, before, after *unstructured.Unstruc
 	if after != nil {
 		candidate.After = after.DeepCopy()
 		candidate.AfterAbsent = false
+	}
+	if strings.EqualFold(ref.Kind, "Secret") {
+		r.gap("Secret capture contains identity only")
 	}
 	if r.persistImage != nil {
 		ref, err := r.persistImage(r.ctx, path, candidate)

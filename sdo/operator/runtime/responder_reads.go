@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"google.golang.org/protobuf/proto"
 	"maps"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
@@ -108,8 +107,7 @@ func (l *ResponderLoop) publishRead(ctx context.Context, request ToolRequest, re
 			l.appendReportNotes(&response)
 		}
 		l.stampProvenance(ctx, request, &response)
-		raw, _ := json.Marshal(request)
-		l.calls = append(l.calls, ToolCall{Command: request.Command, At: l.clock().UTC(), RequestJSON: string(raw), ResponseJSON: string(recordedToolResponseJSON(response, nil)), Error: response.Error, Summary: response.Summary})
+		l.recordToolCall(request, response, nil)
 		if err := l.persistToolState(ctx); err != nil {
 			response.Error = err.Error()
 			response.Summary = response.Error
