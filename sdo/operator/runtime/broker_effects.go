@@ -942,11 +942,7 @@ func (c *Controller) ExecuteClosureAcknowledgmentEffect(
 	c.goBackground(func() {
 		defer cancel()
 		ackErr := broker.AcknowledgeClosure(actionCtx, effect.Receipt)
-		completion := acknowledgmentCompletion{effectID: effect.Identity, err: ackErr}
-		if ackErr == nil {
-			completion.deployedRevision = c.readAcceptedDeployment(actionCtx)
-		}
-		c.acknowledgmentResults <- completion
+		c.acknowledgmentResults <- acknowledgmentCompletion{effectID: effect.Identity, deployedRevision: c.readAcceptedDeployment(ctx), err: ackErr}
 	})
 	return nil
 }
@@ -1084,12 +1080,12 @@ func (c *Controller) handleAcknowledgmentCompletion(completion acknowledgmentCom
 		c.reportBrokerError("acknowledgment transition", err)
 		return
 	}
+	c.acceptDeploymentLocked(completion.deployedRevision)
 	if completion.err != nil {
 		c.mu.Unlock()
 		c.reportBrokerError("acknowledge incident closure", completion.err)
 		return
 	}
-	c.acceptDeploymentLocked(completion.deployedRevision)
 	c.reflections.rescan = true
 	c.emitLifecycleLocked(&contracts.LifecycleEvent{Event: PhaseAcknowledged, RecordedAt: contractTimestamp(c.clock()), IncidentId: receipt.IncidentID, OutcomeCommit: receipt.OutcomeCommit})
 	if pending != nil {

@@ -78,6 +78,7 @@ func (c *Controller) admitPage(ctx context.Context, now time.Time, snapshot sdk.
 	if strings.TrimSpace(alert.Message) == "" || alert.Namespace != c.config.Namespace {
 		return errors.Join(ErrInvalidExternalIncident, errors.New("page "+alert.ID+" must name this namespace and a message"))
 	}
+	c.syncDeploymentBeforeOpening(ctx, now)
 	c.mu.Lock()
 	if alert.ID == c.lastPageID {
 		c.mu.Unlock()
@@ -101,7 +102,7 @@ func (c *Controller) admitPage(ctx context.Context, now time.Time, snapshot sdk.
 		c.mu.Unlock()
 		return nil
 	}
-	busy := c.head.running || c.earlyReportPendingLocked() || c.closureBlocksNextLocked()
+	busy := c.deploymentOpeningBlockedLocked(now) || c.earlyReportPendingLocked() || c.closureBlocksNextLocked()
 	c.mu.Unlock()
 	if busy {
 		return ErrExternalIncidentBusy

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"syscall"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory/validate"
@@ -63,6 +64,17 @@ func (b *Broker) acceptedEvidenceLocked(ctx context.Context) (SourceEvidence, bo
 		return SourceEvidence{}, false, err
 	}
 	return b.sourceEvidenceLocked(ctx, incidentID, Receipt{IncidentID: incidentID, Commit: commit})
+}
+
+// TryAcceptedDeploymentRevision reads the deployment ledger without waiting
+// for a publisher holding its lock. The controller retries on lock contention.
+func (b *Broker) TryAcceptedDeploymentRevision(ctx context.Context) (revision string, err error) {
+	err = b.lockedWith(b.lockPath, syscall.LOCK_EX|syscall.LOCK_NB, func() error {
+		evidence, _, err := b.acceptedEvidenceLocked(ctx)
+		revision = evidence.AcceptedCommit
+		return err
+	})
+	return revision, err
 }
 
 // AcceptedImagePins are the images the newest accepted deployment applied,

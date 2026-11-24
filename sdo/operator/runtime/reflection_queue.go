@@ -68,7 +68,7 @@ func (c *Controller) driveQueuedReflections(ctx context.Context, now time.Time) 
 		c.mu.Unlock()
 		return c.activateQueuedRollout(ctx, queue, incident)
 	}
-	if state.running != "" || (!state.rescan && len(state.queued) == 0) || now.Before(state.retryAt) {
+	if c.head.running || state.running != "" || (!state.rescan && len(state.queued) == 0) || now.Before(state.retryAt) {
 		c.mu.Unlock()
 		return nil
 	}
@@ -117,6 +117,7 @@ func (c *Controller) driveQueuedReflections(ctx context.Context, now time.Time) 
 	}
 	c.mu.Lock()
 	state.running = id
+	c.head.openingBound = now.Add(deploymentOpeningBound)
 	c.mu.Unlock()
 	c.goBackground(func() {
 		defer cancel()
@@ -126,11 +127,7 @@ func (c *Controller) driveQueuedReflections(ctx context.Context, now time.Time) 
 		} else {
 			err = queue.ProcessQueuedReflection(actionCtx, id)
 		}
-		completion := reflectionCompletion{incidentID: id, err: err}
-		if err == nil {
-			completion.deployedRevision = c.readAcceptedDeployment(actionCtx)
-		}
-		c.reflectionResults <- completion
+		c.reflectionResults <- reflectionCompletion{incidentID: id, deployedRevision: c.readAcceptedDeployment(ctx), err: err}
 	})
 	return nil
 }
@@ -143,8 +140,8 @@ func (c *Controller) handleReflectionCompletion(completion reflectionCompletion)
 	c.mu.Lock()
 	state := &c.reflections
 	state.running, state.rescan = "", true
+	c.acceptDeploymentLocked(completion.deployedRevision)
 	if completion.err == nil {
-		c.acceptDeploymentLocked(completion.deployedRevision)
 		delete(state.attempts, completion.incidentID)
 		delete(state.lastErr, completion.incidentID)
 		delete(state.deferred, completion.incidentID)

@@ -401,6 +401,7 @@ func (c *Controller) onboardingConfirmationExpired(now time.Time, snapshot sdk.D
 // The driver resets observer samples before invoking this entry point.
 func (c *Controller) ResumeObservation(ctx context.Context, now time.Time) error {
 	unlock := c.lockObservation("resume_observation")
+	c.syncDeploymentReceipt(ctx)
 	if c.pendingOnboarding != nil && c.onboardingReachability != nil {
 		state := c.onboardingReachability
 		state.startedAt = time.Time{}

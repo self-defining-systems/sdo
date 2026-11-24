@@ -59,6 +59,7 @@ func secretRestoreFixture() (*fake.Clientset, sdk.ObjectRef, sdk.ObjectRef, Inci
 // readers listed after it are restarted.
 func TestReconcileFromSourceRestoresASecretThenRestartsItsReaders(t *testing.T) {
 	client, secretRef, webRef, incident := secretRestoreFixture()
+	incident.DeployedCommit, incident.SourceCommit = incident.SourceCommit, "accepted-memory"
 	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	executor := PlanExecutor{Client: TypedPlanClient{Client: client}, Source: secretSource{data: map[string][]byte{"key": []byte(acceptedSyntheticValue)}},
 		Rollouts: recordedRollouts{new([]sdk.ObjectRef)}, Verifier: passingVerifier{}, Now: func() time.Time { return at }}

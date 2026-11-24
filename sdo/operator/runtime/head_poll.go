@@ -45,7 +45,8 @@ type headPollState struct {
 	running bool
 	nextAt  time.Time
 
-	lastObservedReceipt string
+	lastObservedReceipt          string
+	receiptRetryAt, openingBound time.Time
 }
 
 // SetHeadPoller makes the controller deploy branch heads SDO did not write
@@ -71,6 +72,7 @@ func (c *Controller) driveHeadPoll(ctx context.Context, now time.Time) {
 		return
 	}
 	c.head.running = true
+	c.head.openingBound = now.Add(deploymentOpeningBound)
 	interval := poller.Interval
 	if interval <= 0 {
 		interval = DefaultHeadPollInterval
@@ -79,9 +81,7 @@ func (c *Controller) driveHeadPoll(ctx context.Context, now time.Time) {
 	c.mu.Unlock()
 	actionCtx, cancel, err := c.actionContext(ctx)
 	if err != nil {
-		c.mu.Lock()
-		c.head.running = false
-		c.mu.Unlock()
+		c.handleHeadCompletion(reflectionCompletion{head: &lifecycle.HeadResult{}, deployedRevision: c.readAcceptedDeployment(ctx), err: err})
 		return
 	}
 	c.goBackground(func() {
@@ -94,7 +94,7 @@ func (c *Controller) driveHeadPoll(ctx context.Context, now time.Time) {
 		if err == nil && result.Outcome != lifecycle.HeadCurrent {
 			slog.Info("head_deployment", "outcome", string(result.Outcome), "commit", result.Commit, "hold", string(result.Hold), "detail", result.Detail, "detector_coverage", result.Verdict.CoverageNotes)
 		}
-		c.reflectionResults <- reflectionCompletion{head: &result, err: err}
+		c.reflectionResults <- reflectionCompletion{head: &result, deployedRevision: c.readAcceptedDeployment(ctx), err: err}
 	})
 }
 
@@ -102,7 +102,9 @@ func (c *Controller) driveHeadPoll(ctx context.Context, now time.Time) {
 // and tried again at the next interval: a failed look never blocks the queue.
 func (c *Controller) handleHeadCompletion(completion reflectionCompletion) {
 	c.mu.Lock()
-	if completion.head.Outcome == lifecycle.HeadDeployed {
+	if completion.deployedRevision != "" {
+		c.acceptDeploymentLocked(completion.deployedRevision)
+	} else if completion.head.Outcome == lifecycle.HeadDeployed {
 		c.acceptDeploymentLocked(completion.head.Commit)
 	}
 	c.head.running = false
@@ -114,17 +116,56 @@ func (c *Controller) handleHeadCompletion(completion reflectionCompletion) {
 
 func (c *Controller) readAcceptedDeployment(ctx context.Context) string {
 	c.mu.Lock()
-	poller := c.head.poller
+	var reader lifecycle.HeadBroker
+	if c.head.poller != nil {
+		reader = c.head.poller.Deployer.Broker
+	}
+	if native, ok := c.broker.(*NativeIncidentBroker); ok && native.Repository != nil {
+		reader = native.Repository
+	}
 	c.mu.Unlock()
-	if poller == nil || poller.Deployer.Broker == nil {
+	if reader == nil {
 		return ""
 	}
-	source, _, err := poller.Deployer.Broker.AcceptedSourceEvidence(ctx)
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	revision, err := reader.TryAcceptedDeploymentRevision(ctx)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.head.receiptRetryAt = time.Time{}
 	if err != nil {
+		c.head.receiptRetryAt = c.clock().Add(DefaultHeadPollInterval)
 		slog.Warn("read accepted deployment revision", "error", err)
 		return ""
 	}
-	return source.Evidence.AcceptedCommit
+	return revision
+}
+
+func (c *Controller) syncDeploymentReceipt(ctx context.Context) {
+	revision := c.readAcceptedDeployment(ctx)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.acceptDeploymentLocked(revision)
+}
+
+const deploymentOpeningBound = lifecycle.DefaultPauseAckTimeout + lifecycle.DefaultPauseApplyBound + lifecycle.DefaultSettleWindow
+
+func (c *Controller) deploymentOpeningBlockedLocked(now time.Time) bool {
+	return (c.head.running || c.reflections.running != "") && now.Before(c.head.openingBound)
+}
+
+func (c *Controller) syncDeploymentBeforeOpening(ctx context.Context, now time.Time) {
+	c.mu.Lock()
+	expired := (c.head.running || c.reflections.running != "") && !c.head.openingBound.IsZero() && !now.Before(c.head.openingBound)
+	retry := !c.head.receiptRetryAt.IsZero() && !now.Before(c.head.receiptRetryAt)
+	if expired {
+		c.head.openingBound = time.Time{}
+		slog.Warn("deployment completion exceeded its bound; opening against the recorded deployment")
+	}
+	c.mu.Unlock()
+	if expired || retry {
+		c.syncDeploymentReceipt(ctx)
+	}
 }
 
 func (c *Controller) acceptDeploymentLocked(revision string) {

@@ -21,8 +21,8 @@ func (v LiveReadView) acceptedRead() (gitRead, string, string, error) {
 		return nil, "", "", errors.New("accepted repository unavailable")
 	}
 	commit := v.SourceCommit
-	if v.SourceRevision != nil {
-		commit = v.SourceRevision()
+	if v.MemoryRevision != nil {
+		commit = v.MemoryRevision()
 	}
 	if commit == "" {
 		return nil, "", "", errors.New("accepted source commit unavailable")

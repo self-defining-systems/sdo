@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"cmp"
 	admissionv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	"sdo.dev/operator/sdk/servicehealth"
@@ -52,9 +53,11 @@ type LiveReadView struct {
 	ProtectedNamespace string
 	Prober             PrimitiveProber
 	Source             PlanSource
-	SourceCommit       string
-	// SourceRevision resolves lazily, after snapshot acquisition has released controller locks.
-	SourceRevision func() string
+	SourceCommit       string // accepted memory
+	RenderCommit       string // deployed configuration
+	MemoryRevision     func() string
+	// RenderRevision resolves lazily, after snapshot acquisition has released controller locks.
+	RenderRevision func() string
 	Baseline       *StateChanges
 	BaselineSource StateBaseline
 }
@@ -163,28 +166,31 @@ func (v LiveReadView) probe(ref sdk.ObjectRef, port int32, request *program.HTTP
 	return v.Prober.Probe(ctx, ref, port, request)
 }
 
+func (v LiveReadView) renderedRevision() string {
+	if v.RenderRevision != nil {
+		return v.RenderRevision()
+	}
+	return cmp.Or(v.RenderCommit, v.SourceCommit)
+}
+
 // AcceptedRefs lists the identities accepted source declares for the snapshot
 // namespace, the inventory a host needs to tell a deleted declared object from
 // one nobody declares. It fails, as DiffAgainstSource does, without an accepted
 // source.
 func (v LiveReadView) AcceptedRefs(ctx context.Context) ([]sdk.ObjectRef, error) {
-	if v.SourceRevision != nil {
-		v.SourceCommit = v.SourceRevision()
-	}
+	revision := v.renderedRevision()
 	lister, ok := v.Source.(interface {
 		AcceptedManifestRefs(context.Context, string, string) ([]sdk.ObjectRef, error)
 	})
-	if v.Source == nil || v.SourceCommit == "" || !ok {
+	if v.Source == nil || revision == "" || !ok {
 		return nil, errors.New("accepted source is unavailable")
 	}
-	return lister.AcceptedManifestRefs(ctx, v.SourceCommit, v.Namespace())
+	return lister.AcceptedManifestRefs(ctx, revision, v.Namespace())
 }
 
 func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error) {
-	if v.SourceRevision != nil {
-		v.SourceCommit = v.SourceRevision()
-	}
-	if v.Source == nil || v.SourceCommit == "" {
+	revision := v.renderedRevision()
+	if v.Source == nil || revision == "" {
 		return program.Diff{}, errors.New("accepted source is unavailable")
 	}
 	if ref.Kind == "Secret" {
@@ -202,7 +208,7 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 		if _, ok := v.Source.(interface {
 			AcceptedApplicationManifest(context.Context, string, string, sdk.ObjectRef) (*unstructured.Unstructured, error)
 		}); ok {
-			source, err = acceptedIncidentManifest(ctx, v.Source, v.SourceCommit, v.Namespace(), ref)
+			source, err = acceptedIncidentManifest(ctx, v.Source, revision, v.Namespace(), ref)
 			acceptedCluster = true
 		}
 	}
@@ -213,9 +219,9 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 		if !ok {
 			return program.Diff{}, errors.New("qualified accepted source unavailable")
 		}
-		source, err = reader.AcceptedScopedManifest(ctx, v.SourceCommit, v.Namespace(), ref)
+		source, err = reader.AcceptedScopedManifest(ctx, revision, v.Namespace(), ref)
 	} else if !acceptedCluster {
-		source, err = v.Source.AcceptedManifest(ctx, v.SourceCommit, ref)
+		source, err = v.Source.AcceptedManifest(ctx, revision, ref)
 	}
 	if errors.Is(err, ErrAcceptedManifestAbsent) {
 		if observed == nil {
@@ -433,7 +439,7 @@ func (v LiveReadView) diffSecretAgainstSource(ref sdk.ObjectRef) (program.Diff, 
 	}
 	ctx, cancel := context.WithTimeout(v.context(), DefaultDiagnosisDeadline)
 	defer cancel()
-	accepted, err := source.AcceptedSecretData(ctx, v.SourceCommit, v.Namespace(), ref)
+	accepted, err := source.AcceptedSecretData(ctx, v.renderedRevision(), v.Namespace(), ref)
 	if errors.Is(err, rendered.ErrSecretSourceHook) || errors.Is(err, rendered.ErrSecretSourceNoLiteral) {
 		return program.Diff{}, sdk.Classified("accepted Secret has no comparable literal data", sdk.ErrUnavailable)
 	}
@@ -619,11 +625,8 @@ func (v LiveReadView) scopedObject(ref sdk.ObjectRef) (*unstructured.Unstructure
 
 // ScopedRefAllowed binds drift admission to the snapshot's exact observed targets.
 func (v LiveReadView) ScopedRefAllowed(ref sdk.ObjectRef) bool {
-	if v.SourceRevision != nil {
-		v.SourceCommit = v.SourceRevision()
-	}
 	if ref.Namespace == "" && v.Source != nil {
-		_, err := acceptedIncidentManifest(v.context(), v.Source, v.SourceCommit, v.Namespace(), ref)
+		_, err := acceptedIncidentManifest(v.context(), v.Source, v.renderedRevision(), v.Namespace(), ref)
 		if err == nil {
 			return true
 		}
@@ -779,10 +782,7 @@ func (v LiveReadView) driftSourceAdditions(ref sdk.ObjectRef, observed *unstruct
 	if ref.Namespace != v.Namespace() {
 		return nil, nil
 	}
-	revision := v.SourceCommit
-	if v.SourceRevision != nil {
-		revision = v.SourceRevision()
-	}
+	revision := v.renderedRevision()
 	if v.Source == nil || revision == "" {
 		return nil, errors.New("accepted source is unavailable")
 	}

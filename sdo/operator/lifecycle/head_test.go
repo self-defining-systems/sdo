@@ -61,6 +61,10 @@ func (w *headWorld) HeadCheckout(_ context.Context, commit string) (string, func
 	return advCheckout, func() { w.log("release") }, nil
 }
 
+func (w *headWorld) TryAcceptedDeploymentRevision(context.Context) (string, error) {
+	return "", nil
+}
+
 func (w *headWorld) RecordHeadDeployment(_ context.Context, commit string, evidence broker.SourceEvidence) error {
 	w.log("record %s", commit[:4])
 	w.recorded = append(w.recorded, evidence)

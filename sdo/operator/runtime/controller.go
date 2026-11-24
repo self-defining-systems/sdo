@@ -636,6 +636,7 @@ func (c *Controller) StepEvents(ctx context.Context, now time.Time, events []sdk
 	if err := c.timePhaseErr("queued_reflections", func() error { return c.driveQueuedReflections(ctx, now) }); err != nil {
 		return err
 	}
+	c.syncDeploymentBeforeOpening(ctx, now)
 	c.timePhase("head_poll", func() { c.driveHeadPoll(ctx, now) })
 	if c.config.ExternalIncidentsOnly {
 		c.maybeCloseIncident(ctx, now, nil)
@@ -1159,7 +1160,7 @@ func (c *Controller) dispatchReady(ctx context.Context, now time.Time, snapshot 
 		return nil
 	}
 	c.mu.Lock()
-	headRunning := c.head.running
+	headRunning := c.deploymentOpeningBlockedLocked(now)
 	c.mu.Unlock()
 	if closurePending || headRunning {
 		return nil
@@ -1339,6 +1340,11 @@ func (c *Controller) nextWake() (time.Time, string) {
 	}
 	consider(c.scheduler.NextRun(), "detector schedule")
 	c.mu.Lock()
+	consider(c.head.receiptRetryAt, "deployment receipt retry")
+	deployHolding := c.deploymentOpeningBlockedLocked(c.clock())
+	if deployHolding {
+		consider(c.head.openingBound, "deployment opening bound")
+	}
 	if c.head.poller != nil && !c.head.running {
 		consider(c.head.nextAt, "head poll")
 	}
@@ -1346,7 +1352,7 @@ func (c *Controller) nextWake() (time.Time, string) {
 	// attached. Otherwise an expired deadline would spin the runtime loop for
 	// the whole incident.
 	startupHolding := c.startup.holding(c.clock())
-	batchActionable := !startupHolding && (!c.incidentOpen && (!c.closureBlocksNextLocked() || c.broker == nil)) ||
+	batchActionable := !deployHolding && !startupHolding && (!c.incidentOpen && (!c.closureBlocksNextLocked() || c.broker == nil)) ||
 		c.canAttachBeforeLaunchLocked()
 	c.mu.Unlock()
 	if deadline, ok := c.batcher.Deadline(); ok && batchActionable {
