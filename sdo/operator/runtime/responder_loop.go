@@ -109,7 +109,9 @@ type VerificationStatus string
 const VerificationAwaitingResponderCompletion VerificationStatus = "awaiting_responder_completion"
 
 type ToolResponse struct {
-	Text string `json:"text,omitempty"`
+	RecordedActions   []recordedToolAction              `json:"actions,omitempty"`
+	RecordedErrorCode contracts.MitigationReport_Status `json:"error_code,omitempty"`
+	Text              string                            `json:"text,omitempty"`
 	// Data is a structured answer (`map` with Structured), never prose in JSON.
 	Data                json.RawMessage     `json:"data,omitempty"`
 	Burst               *prober.BurstResult `json:"burst,omitempty"`
@@ -929,9 +931,14 @@ func (l *ResponderLoop) recordToolCall(request ToolRequest, response ToolRespons
 			projected.PlanIDs = append(projected.PlanIDs, plan.id)
 		}
 	}
+	actions := l.recordedToolActions(request, response, applied)
 	status := response.Report.GetStatus()
 	if response.Error != "" || status == contracts.MitigationReport_STATUS_REFUSED || status == contracts.MitigationReport_STATUS_EXECUTION_ERROR {
-		record := ToolResponse{Command: response.Command, ApplicationID: response.ApplicationID, Error: "tool call rejected"}
+		if status != contracts.MitigationReport_STATUS_REFUSED && status != contracts.MitigationReport_STATUS_EXECUTION_ERROR {
+			status = contracts.MitigationReport_STATUS_EXECUTION_ERROR
+		}
+		record := ToolResponse{Command: response.Command, ApplicationID: response.ApplicationID,
+			Error: "tool call rejected", Summary: "tool call rejected", RecordedErrorCode: status}
 		if record.ApplicationID != "" {
 			for _, run := range response.ProgramRuns {
 				record.ProgramRuns = append(record.ProgramRuns, ProgramRun{
@@ -941,7 +948,14 @@ func (l *ResponderLoop) recordToolCall(request ToolRequest, response ToolRespons
 			}
 		}
 		response = record
+	} else {
+		response.Summary = "tool call completed"
+		switch request.Command {
+		case "plan", "apply", "rollback", "mitigate":
+			response.Patches, response.ActionReports, response.MenuExecution = nil, nil, nil
+		}
 	}
+	response.RecordedActions = actions
 	raw, _ := json.Marshal(projected)
 	l.calls = append(l.calls, ToolCall{
 		Command: projected.Command, At: l.clock().UTC(), RequestJSON: string(raw),
@@ -960,7 +974,7 @@ func recordedToolResponseJSON(response ToolResponse, applied []selectedPlan) []b
 		return responseJSON
 	}
 	record := truncatedToolResponse{
-		ToolResponse: ToolResponse{Command: response.Command, Summary: boundedToolText(response.Summary), Error: boundedToolText(response.Error), PlanID: response.PlanID, ApplicationID: response.ApplicationID, LoopsUsed: response.LoopsUsed, LoopsAllowed: response.LoopsAllowed, Healthy: response.Healthy, TargetedHealthy: response.TargetedHealthy, Unresolved: response.Unresolved, RolloutPending: compactRolloutPending(response.RolloutPending), Provenance: response.Provenance},
+		ToolResponse: ToolResponse{Command: response.Command, Summary: boundedToolText(response.Summary), Error: boundedToolText(response.Error), PlanID: response.PlanID, ApplicationID: response.ApplicationID, LoopsUsed: response.LoopsUsed, LoopsAllowed: response.LoopsAllowed, Healthy: response.Healthy, TargetedHealthy: response.TargetedHealthy, Unresolved: response.Unresolved, RolloutPending: compactRolloutPending(response.RolloutPending), Provenance: response.Provenance, RecordedErrorCode: response.RecordedErrorCode},
 		Truncated:    true, ProgramRevisionsCount: len(response.ProgramRevisions), FindingsCount: len(response.Findings), ProgramRunsCount: len(response.ProgramRuns), DetectorStatesCount: len(response.DetectorStates), PatchesCount: len(response.Patches),
 	}
 	if response.Command == "verify" {
@@ -1001,6 +1015,12 @@ func recordedToolResponseJSON(response ToolResponse, applied []selectedPlan) []b
 	record.ProgramRuns = runs[:low]
 	record.ProgramRunsOmitted = omitted + len(runs) - low
 	responseJSON, _ = json.Marshal(record)
+	if len(response.RecordedActions) > 0 {
+		record.RecordedActions = response.RecordedActions
+		if expanded, err := json.Marshal(record); err == nil && len(expanded) <= limit {
+			responseJSON = expanded
+		}
+	}
 	return responseJSON
 }
 
