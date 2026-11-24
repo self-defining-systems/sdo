@@ -43,7 +43,7 @@ func Derive(ctx context.Context, closure *contractsv1alpha1.IncidentClosure, rep
 			return Result{}, fmt.Errorf("%s is required", label)
 		}
 	}
-	healthVerified := len(closure.GetFinalDetectorStates()) > 0
+	healthVerified := len(closure.GetFinalDetectorStates()) > 0 || closure.GetHealthClearedAt().IsValid()
 	for _, evaluation := range closure.GetFinalDetectorStates() {
 		if evaluation.GetStatus() != "clear" {
 			healthVerified = false

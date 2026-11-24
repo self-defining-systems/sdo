@@ -2068,6 +2068,12 @@ func (c *Controller) maybeCloseIncident(ctx context.Context, now time.Time, snap
 	var healthClearedAt *time.Time
 	if verified {
 		healthClearedAt = c.healthClearedAtLocked(finalStates)
+		if len(finalStates) == 0 {
+			// A returned responder and an empty detector scope can complete
+			// recovery without fabricating a detector evaluation.
+			cleared := c.closureStableSince
+			healthClearedAt = &cleared
+		}
 		logIncidentVerified(c.currentIncidentRequest.IncidentID, healthClearedAt, c.responderCompletedAt, verifiedAt)
 	}
 	windowUsed := time.Duration(0)

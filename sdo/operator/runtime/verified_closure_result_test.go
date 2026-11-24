@@ -36,7 +36,7 @@ func TestVerifiedClosureSettlesFailedResponderReport(t *testing.T) {
 			c.now = func() time.Time { return now }
 			c.incidentOpen, c.responderDone = true, true
 			c.dispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
-			c.currentIncidentRequest = &IncidentRequest{IncidentID: "synthetic", Application: "demo", ResponseDeadline: now.Add(time.Minute)}
+			c.currentIncidentRequest = &IncidentRequest{IncidentID: "synthetic", Application: "demo", Findings: []sdk.Finding{{DetectorID: "health", RuleID: "unhealthy", Status: sdk.FindingActive}}, ResponseDeadline: now.Add(time.Minute)}
 			c.incidentDetectedAt, c.incidentDispatchedAt, c.responderCompletedAt = now.Add(-3*time.Second), now.Add(-2*time.Second), now.Add(-time.Second)
 			result := completedResult("synthetic")
 			result.Status = IncidentFailed

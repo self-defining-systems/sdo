@@ -22,16 +22,16 @@ func closureRolloutFindings(snapshot sdk.DetectionContext, namespace string, ref
 		if d.Namespace != namespace || d.Labels["sdo.dev/responder-helper"] == "true" || !rolloutRelated(d, refs, sets, pods, services) {
 			continue
 		}
-		observation := deploymentRolloutBlocker(&d, sets, pods, events)
-		if !observation.pending {
+		ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: d.Namespace, Name: d.Name}
+		if !writeRevisionPending(snapshot, ref, false) {
 			continue
 		}
+		observation := deploymentRolloutBlocker(&d, sets, pods, events)
 		blocker := observation.blocker
 		evidence := blocker.Reason
 		if len(blocker.WarningEvents) > 0 {
 			evidence += "; " + strings.Join(blocker.WarningEvents, "; ")
 		}
-		ref := sdk.ObjectRef{APIVersion: "apps/v1", Kind: "Deployment", Namespace: d.Namespace, Name: d.Name}
 		findings = append(findings, deploymentRolloutFinding(ref, observation.summary, evidence))
 	}
 	sortFindings(findings)

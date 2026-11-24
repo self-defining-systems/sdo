@@ -380,7 +380,7 @@ func (n NativeIncidentBroker) processClosure(ctx context.Context, closure Incide
 			// acknowledged (publishSource): a repair that cannot deploy or is
 			// held must never cost the incident its outcome. The closure only
 			// records that one is owed.
-			status, detail, err := n.planSourceRepair(ctx, id, len(closure.FinalDetectorStates) > 0, closure.Request.RepairPolicy == "commit")
+			status, detail, err := n.planSourceRepair(ctx, id, (len(closure.FinalDetectorStates) > 0 || closure.HealthClearedAt != nil), closure.Request.RepairPolicy == "commit")
 			if err != nil {
 				return err
 			}
@@ -1327,7 +1327,7 @@ func (n NativeIncidentBroker) committedClosureReceipt(ctx context.Context, closu
 			return err
 		}
 		stored := closureReceiptState(ledger.Receipt)
-		if stored == nil || stored.IncidentID != closure.Request.IncidentID || stored.BaseCommit != closure.Request.RepositoryBaseCommit || (!ledger.GetFrozenMemory() && stored.ProposalCommit == "") || stored.OutcomeCommit == "" || stored.AckToken == "" || !proto.Equal(ledger.Closure, projected) || ledger.OutcomeDocument == nil || (len(closure.FinalDetectorStates) == 0 && closure.Request.ExternalMessage == "") {
+		if stored == nil || stored.IncidentID != closure.Request.IncidentID || stored.BaseCommit != closure.Request.RepositoryBaseCommit || (!ledger.GetFrozenMemory() && stored.ProposalCommit == "") || stored.OutcomeCommit == "" || stored.AckToken == "" || !proto.Equal(ledger.Closure, projected) || ledger.OutcomeDocument == nil || (len(closure.FinalDetectorStates) == 0 && closure.HealthClearedAt == nil && closure.Request.ExternalMessage == "") {
 			return nil
 		}
 		if ledger.GetFrozenMemory() {

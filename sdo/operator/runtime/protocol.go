@@ -263,7 +263,8 @@ type IncidentClosure struct {
 	ResponderCompletedAt time.Time
 	VerifiedAt           time.Time
 	// HealthClearedAt is when the closure gate's detectors began their final
-	// streak of clear evaluations. nil when no streak is on record.
+	// streak of clear evaluations, or the verified stability epoch when
+	// the incident has no detector prerequisites. nil when no proof is on record.
 	HealthClearedAt *time.Time
 	// CleanedHelpers are the responder helper objects the controller
 	// deleted after the responder completed, as Kind/namespace/name.

@@ -580,8 +580,11 @@ func (c *Controller) revalidateClosure(ctx context.Context, snapshot sdk.Detecti
 		return closureRecheck{Verdict: closureRecheckContradicted, Reason: fmt.Sprintf(format, args...)}
 	}
 	ids := map[string]bool{}
+	owners := alertDetectorOwners(closure.Request)
 	for _, state := range closure.FinalDetectorStates {
-		ids[state.DetectorID] = true
+		if owners[state.DetectorID] {
+			ids[state.DetectorID] = true
+		}
 	}
 	for _, id := range c.alertSetHealthDetectors(closure.Request) {
 		ids[id] = true

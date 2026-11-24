@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"maps"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -42,51 +41,48 @@ type recoveryObservation struct {
 // alertSetHealthDetectors are the health detectors that own the incident's
 // alerts (opening and joined). Recovered depends only on the alert set, so a
 // health detector that owns none of them (a probe pending for lack of samples,
-// a reader unavailable) never holds recovery. An incident whose alerts name no
-// health detector waits on all of them.
+// a reader unavailable) never holds recovery.
 func (c *Controller) alertSetHealthDetectors(request IncidentRequest) []string {
-	owners := map[string]bool{}
-	for _, key := range alertKeys(&request) {
-		if id, _, ok := strings.Cut(key, "\x00"); ok {
-			owners[id] = true
-		}
-	}
+	owners := alertDetectorOwners(request)
 	var scoped []string
 	for _, id := range c.healthDetectorIDs {
 		if owners[id] {
 			scoped = append(scoped, id)
 		}
 	}
-	if len(scoped) == 0 {
-		return append([]string(nil), c.healthDetectorIDs...)
-	}
+	sort.Strings(scoped)
 	return scoped
 }
 
-// recoveryDetectorIDs is the health authority for both recovery publication and
-// the final live recheck. Legacy bundles without health use learned detectors.
+func alertDetectorOwners(request IncidentRequest) map[string]bool {
+	owners := map[string]bool{}
+	for _, key := range alertKeys(&request) {
+		if id, _, ok := strings.Cut(key, "\x00"); ok {
+			owners[id] = true
+		}
+	}
+	return owners
+}
+
+// recoveryDetectorIDs includes the alert owners for legacy bundles without
+// classified health detectors, using the same key scope as current bundles.
 func (c *Controller) recoveryDetectorIDs(request IncidentRequest) []string {
-	ids := c.alertSetHealthDetectors(request)
-	if len(ids) == 0 {
-		for _, f := range request.Findings {
-			if !strings.HasPrefix(f.DetectorID, "drift.") {
-				ids = append(ids, f.DetectorID)
-			}
+	if len(c.healthDetectorIDs) > 0 {
+		return c.alertSetHealthDetectors(request)
+	}
+	var ids []string
+	for id := range alertDetectorOwners(request) {
+		if !strings.HasPrefix(id, "drift.") {
+			ids = append(ids, id)
 		}
 	}
 	sort.Strings(ids)
-	return slices.Compact(ids)
+	return ids
 }
 
-// Clearing persistence belongs to the same health authority at publication
-// and broker handoff. It overlaps the raw clear streak; it never starts a
-// second stability clock. Caller holds c.mu.
+// Tracker persistence holds only for alert-set members.
 func (c *Controller) recoveryTrackersClear(request IncidentRequest) bool {
-	if len(c.healthDetectorIDs) == 0 {
-		return !c.tracker.HasActiveKeys(alertKeys(&request))
-	}
-	scope := newRecoveryScope(alertKeys(&request))
-	return len(scope.blocking(c.tracker.ActiveFindings(c.healthDetectorIDs, nil))) == 0
+	return !c.tracker.HasActiveKeys(alertKeys(&request))
 }
 
 func validateDetectorObservation(detector sdk.Detector, snapshot sdk.DetectionContext, findings []sdk.Finding, err error, scope recoveryScope) ([]sdk.Finding, DetectorEvaluationStatus, error) {

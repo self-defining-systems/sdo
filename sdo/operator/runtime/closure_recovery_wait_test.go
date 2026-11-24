@@ -18,10 +18,9 @@ func TestClosureWaitingOnRecoveredIsBounded(t *testing.T) {
 	after := verifyT0.Add(time.Minute)
 	cfg := testControllerConfig()
 	cfg.Namespace = "app"
-	world := &sameWriteWorld{}
-	world.healthy.Store(true)
+
 	failing := func(time.Time) bool { return false }
-	controller, err := NewController(cfg, []sdk.Detector{sameWriteDetector{world: world}}, riskSnapshots{view: verifyWorld{now: now, probeOK: failing}.view()}, &recordingDispatcher{}, after)
+	controller, err := NewController(cfg, []sdk.Detector{&closureScopeDetector{id: "traffic-probe-call"}}, riskSnapshots{view: verifyWorld{now: now, probeOK: failing}.view()}, &recordingDispatcher{}, after)
 	if err != nil {
 		t.Fatal(err)
 	}
