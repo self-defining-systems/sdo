@@ -12,7 +12,7 @@ scripted commits first ran in the fastloop harness; this package makes it availa
 | SDO | production, unchanged | only engineers' pushes to its branch (`install-existing --source-branch-url/--source-branch`) |
 | Replayer | [`benchmarks/common/replay`](../common/replay/README.md): `replay`, `Series` | commit source, schedule, conflict policy; nothing of lanes, SREGym or fuzzops |
 | Series spec | a JSON file, data only | where the commits come from and why they are realistic |
-| Workload adapter | this package: `python -m benchmarks.commit_series <verb>` | walks one commit per run, records SDO's outcome |
+| Workload adapter | this package: `python -m benchmarks.commit_series <verb>` | runs one series event (a commit or a fault) per run, records SDO's outcome |
 | Subject hooks | `benchmarks/fuzzops/hooks.py`, `settings.source_branch` | creates the remote (`up`) and passes it to SDO; knows nothing of commits |
 | Lane platform | [`benchmarks/lanes`](../lanes/docs/plan.md) | generic only: a multi-seed sequence is one lane, run in order, and `plan results` has a row per run |
 
@@ -20,26 +20,64 @@ A guard test (`tests/unit/test_architecture.py`) keeps lanes free of replay and 
 
 ## How a series runs
 
-One experiment, one lane, `sequences: [[1, 2, ..., N]]`: **position i pushes commit i**. SDO and the app live on the lane
-for the whole series and nothing resets them between positions. For each position the adapter:
+A series is a list of **events**, each either a commit or a fault, and **each sequence position runs exactly one
+event**. One experiment, one lane, `sequences: [[1, 2, ..., N]]` with N the number of events. With no `events` in the
+spec, position i pushes commit i. SDO and the app live on the lane for the whole series and nothing resets them between
+positions (beyond the incident reset every run's collect makes).
 
-1. waits for the spec's schedule offset (from when position 1 ran),
+The spec's `events` list (`benchmarks/common/replay/series.py`) gives the order: each item is `{"commit": <1-based
+commit index>}` or `{"fault": "<fault id>"}`. Every commit appears exactly once and in order; faults go anywhere, several
+in a row if wanted. For example a release, a fault on it, a second fault, then the next release:
+
+```json
+"events": [{"commit": 1}, {"fault": "web-oom"}, {"fault": "db-slow"}, {"commit": 2}]
+```
+
+with `sequences: [[1, 2, 3, 4]]`. The short form `faults: {"1": "web-oom"}` means a fault event right after commit 1
+(one fault per commit); a spec gives `events` or `faults`, not both. `schedule` still gives one offset per commit and
+times commit events only.
+
+### A commit event
+
+For a commit event the adapter:
+
+1. waits for the spec's schedule offset of that commit (from when position 1 ran),
 2. pushes the commit with the replayer (`Replayed-From` trailer, never touching `.sdo/`; a conflict is recorded, and with
    `on_conflict: stop` the rest of the series cannot apply),
 3. waits for SDO's verdict: **accepted** (an accepted commit carries the upstream SHA), **held** (typed cause and owner),
    **incident**, or **timeout**,
 4. watches a quiet window, waits for an open incident to close (bounded), and
-5. prints the record: outcome, `deploy_seconds` (push to verdict), `wall_seconds`, held cause/owner, `incident_opened`,
-   `incident_resolved`, agent tasks, pod failures, controller relaunches, operability report items. `valid` is true for
-   every outcome SDO can have; only an infrastructure problem makes a run invalid (which breaks the rest of the sequence).
+5. prints the record (`event: "commit"`, `index` = the position, `commit_index`): outcome, `deploy_seconds` (push to
+   verdict), `wall_seconds`, held cause/owner, `incident_opened`, `incident_resolved`, agent tasks, pod failures,
+   controller relaunches, operability report items. `valid` is true for every outcome SDO can have; only an
+   infrastructure problem makes a run invalid (which breaks the rest of the sequence).
 
-A fault listed at a position in the spec (`faults: {"3": "<fault id>"}`) is injected after that commit through the
-wrapped fuzzops workload (`fault_instances` in the instances file); its record is kept under `fault`. The lane platform stores the instances file alone, so name the fault file (and the series spec) by absolute path; a position whose fault file is missing or does not list a fault of the series is refused before anything is pushed.
+It leaves `settle-work-only.json` in the lane directory: the position already waited (bounded) for its own incident, so
+the platform's settle waits only for work in flight.
 
-Grading is per commit: the run's record is its grade (`grade` writes `report.md`, a table of commits). `lanes plan results
-NAME --tsv --grade-fields outcome,deploy_seconds,incident_opened,agent_tasks` gives **one row per commit** (column
-`position`). Every other verb (app up, gate, report of ordinary faults) is the wrapped fuzzops workload's, found through
-`WORKLOAD_BUILTIN`.
+### A fault event
+
+A fault event is the wrapped fuzzops workload's `run` of that fault (`fault_instances` in the instances file names the
+fault file), exactly as a fault run outside a series: it injects, watches and grades the fault. Its record is the
+position's run record, plus `series`, `index` (the position), `event: "fault"`, `fault_id` and `after_commit` (the
+number of commits pushed before it). It writes no `settle-work-only.json`, so the platform's settle waits until SDO is
+fully idle (incident closed, closing turn done), bounded by the run cap, and collect then takes the evidence and resets
+the incidents, as after any fault run. The platform's safety check after the run (`run active`, then `run undo`) names
+the series, not the position, so every position leaves its event in `series-event.json` in the lane directory and the
+adapter answers that check for the fault the position injected (through the wrapped workload); after a commit event it
+answers inactive. A fault SDO did not fix is therefore undone before the next push.
+
+The lane platform stores the instances file alone, so name the fault file (and the series spec) by absolute path; a
+position whose fault file is missing or does not list every fault event of the series is refused before anything is
+pushed.
+
+### Grading
+
+The run's record is its grade (`grade` writes `report.md`, a table with one row per event: a commit row has the commit,
+outcome, deploy seconds, incident and agent tasks; a fault row has the fault id, valid, `recovered_in_window`, window
+bad seconds and `last_bad_second`). `lanes plan results NAME --tsv --grade-fields
+outcome,deploy_seconds,incident_opened,agent_tasks` gives **one row per event** (column `position`). Every other verb
+(app up, gate, report of ordinary faults) is the wrapped fuzzops workload's, found through `WORKLOAD_BUILTIN`.
 
 ## Using it
 
