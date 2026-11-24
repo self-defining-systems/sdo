@@ -36,6 +36,12 @@ def test_incident_workflow_installs_from_the_shipped_skill_root(tmp_path: Path, 
     assert metadata["name"] == WORKFLOW
     assert 0 < len(metadata["description"]) <= 200
     assert len(document.encode()) <= SKILL_BYTE_CAPS[WORKFLOW]
+    restore_rule = next(line for line in body.splitlines() if line.startswith("- **Restore lost data.**"))
+    assert "authoritative copy first" in restore_rule
+    assert "before recreating" in restore_rule.lower()
+    for location in ("configuration", "jobs", "object stores", "replicas"):
+        assert location in restore_rule
+    assert "Never seed substitute data to pass health checks." in restore_rule
 
 
 def test_the_first_message_template_renders_strictly() -> None:
