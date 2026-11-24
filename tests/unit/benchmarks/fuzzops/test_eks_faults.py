@@ -104,3 +104,11 @@ def test_a_node_level_action_that_only_delivers_an_image_runs_on_eks(tmp_path: P
     verdicts = eks_faults.classify(root, ["built-fault@d", "slow-fault@x"])
     assert verdicts["built-fault"].ok
     assert not verdicts["slow-fault"].ok
+
+
+def test_filter_classifies_every_composite_member(tmp_path: Path) -> None:
+    plain = "plain-fault@a"
+    slow = "slow-fault@b?n=2"
+    safe = f"safe[{plain}&shared-fault@c]"
+    blocked = f"blocked[{plain}&{slow}]"
+    assert eks_faults.keep_eks_ok(_fuzzops(tmp_path), [blocked, plain, safe]) == [plain, safe]
