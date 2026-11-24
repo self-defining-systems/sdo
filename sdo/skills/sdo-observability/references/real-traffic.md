@@ -10,3 +10,9 @@ Real user requests are the first signal; probes add what traffic cannot show.
   cannot tell operations apart: find one that does, or record `missing` with the configuration or source patch
   that adds it. One line per operation under `## Request metrics` in the health-objective playbook:
   `<operation id>: <series and labels for requests, errors, latency>`. Note traces and error logs the same way.
+
+- Give foreground request counters the low-cardinality label `sdo_traffic_origin`. Record SDO requests
+  marked `X-SDO-Synthetic: 1` as `synthetic` and known user requests as `user`. Preserve the classification
+  across proxies and count it on every response path, including early rejection and rate limiting.
+  Leave unknown origins unlabelled. Only `user` series can open a request-metrics incident. If the existing
+  counter combines origins, instrument it before using it for paging.

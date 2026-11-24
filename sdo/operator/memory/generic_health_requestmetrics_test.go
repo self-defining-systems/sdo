@@ -44,8 +44,9 @@ func TestRequestMetricsDetectorIsInstalledFromTheMapEntries(t *testing.T) {
 	}
 	for _, want := range []string{
 		`Route: "GET /items"`, `Method: "GET"`, `StatusLabel: "code"`,
-		`sum by (route, method, code) (increase(http_requests_total{job=\"web\"}[30s]))`,
-		`offset 2m`,
+		`sum by (route, method, code, sdo_traffic_origin) (increase(http_requests_total{job=\"web\"}[30s]))`,
+		`sum by (route, method, code, sdo_traffic_origin) (increase(http_requests_total{job=\"web\"}[10m] offset 2m))`,
+		`sum by (route, method, code, sdo_traffic_origin) (http_requests_total{job=\"web\"})`,
 		// Failing request samples come from the entry pods' access logs.
 		`logs.Watch`,
 		// An operation with no entries record is reported, not dropped.

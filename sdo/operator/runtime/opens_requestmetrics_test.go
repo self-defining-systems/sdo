@@ -8,7 +8,9 @@ import (
 	"sdo.dev/operator/contracts/settings"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
+	"sdo.dev/operator/sdk/metrics"
 	"sdo.dev/operator/sdk/requestmetrics"
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 func requestMetricsFinding(rule, fingerprint, summary string) sdk.Finding {
@@ -178,5 +180,116 @@ func TestRequestMetricsClueUpgradedInsideOpenIncidentJoinsAlertSet(t *testing.T)
 	key := FindingStateKey(memory.RequestMetricsDetectorID, fingerprint)
 	if !slices.Contains(alertKeys(request), key) {
 		t.Fatalf("upgraded finding is not in the alert set: %v", alertKeys(request))
+	}
+}
+
+func TestRequestMetricsOnlyUserTrafficOpens(t *testing.T) {
+	for _, route := range []string{"/items", "/undeclared"} {
+		for _, tc := range []struct {
+			name, origin, status         string
+			failed, probeFailed, probeOK float64
+			wantOpen                     bool
+		}{
+			{name: "probe 429", origin: "synthetic", status: "429", failed: 6},
+			{name: "probe 503", origin: "synthetic", status: "503", failed: 6},
+			{name: "unlabelled 429", status: "429", failed: 6},
+			{name: "user 429", origin: "user", status: "429", failed: 6, wantOpen: true},
+			{name: "mixed below floor", origin: "user", status: "429", failed: 2, probeFailed: 6},
+			{name: "mixed above floor", origin: "user", status: "429", failed: 6, probeFailed: 6, probeOK: 200, wantOpen: true},
+		} {
+			t.Run(route+"/"+tc.name, func(t *testing.T) {
+				start := time.Unix(0, 0).UTC()
+				times := []time.Time{start, start.Add(5 * time.Second)}
+				series := func(status, origin string, value float64) metrics.Series {
+					labels := map[string]string{"route": route, "code": status}
+					if origin != "" {
+						labels[requestmetrics.TrafficOriginLabel] = origin
+					}
+					return metrics.Series{Labels: labels, Samples: []metrics.Sample{
+						{At: times[0], Value: value}, {At: times[1], Value: value},
+					}}
+				}
+
+				userOK := series("200", "user", 6)
+				baseline := []metrics.Series{series("200", "user", 100)}
+				presence := []metrics.Series{userOK}
+				recent := []metrics.Series{userOK, series(tc.status, tc.origin, tc.failed)}
+				if tc.origin == "" {
+					recent[0] = series("200", "", 6)
+					presence = recent
+				}
+				if tc.probeFailed > 0 {
+					recent = append(recent, series("429", "synthetic", tc.probeFailed))
+				}
+				if tc.probeOK > 0 {
+					baseline = append(baseline, series("429", "synthetic", 100))
+					recent = append(recent, series("200", "synthetic", tc.probeOK))
+				}
+
+				provider := staticProvider{snapshot: sdktest.Snapshot{NamespaceName: "app", Metrics: map[string]metrics.Result{
+					"reqmetrics-front-recent":   {ObservedAt: times[1], Series: recent},
+					"reqmetrics-front-baseline": {Series: baseline},
+					"reqmetrics-front-presence": {Series: presence},
+				}}}
+				detector := requestmetrics.NewDetector(requestmetrics.Config{
+					Spec: sdk.DetectorSpec{ID: memory.RequestMetricsDetectorID, Interval: time.Second},
+					Entries: []requestmetrics.Entry{{
+						Service: "front", RouteLabel: "route", StatusLabel: "code",
+						Recent: "recent", Baseline: "baseline", Presence: "presence",
+					}},
+					Operations: []requestmetrics.Operation{{ID: "items", Service: "front", Route: "/items"}},
+					Rule:       requestmetrics.DefaultRule(),
+				})
+				cfg := testControllerConfig()
+				cfg.Namespace = "app"
+				dispatch := &recordingDispatcher{requests: make(chan IncidentRequest, 1)}
+				c, err := NewController(cfg, []sdk.Detector{detector}, provider, dispatch, start)
+				if err != nil {
+					t.Fatal(err)
+				}
+				step(t, c, 5)
+				step(t, c, 6)
+				req := currentRequest(c)
+				if (req != nil) != tc.wantOpen {
+					t.Fatalf("opened = %t, want %t, active findings = %+v", req != nil, tc.wantOpen, activeFindings(c))
+				}
+				if req != nil {
+					meta := req.Findings[0].Metadata
+					if meta["failed"] != float64(6) || meta["total"] != float64(12) || meta[requestmetrics.MetaUserTraffic] != true {
+						t.Fatalf("opening finding has incorrect traffic attribution or counts: %+v", req.Findings[0])
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestRestoredUnattributedRequestMetricsBatchMustBeReobserved(t *testing.T) {
+	legacy := failingOperation("requestmetrics/errors/items")
+	first := openersController(t, &recordingDispatcher{}, controllerDetector(memory.RequestMetricsDetectorID, time.Second, legacy))
+	first.batcher = NewDebouncedBatcher(10 * time.Second)
+	step(t, first, 0)
+	state, err := first.ExportState()
+	if err != nil || first.IncidentOpen() || len(state.GetPendingBatch().GetFindings()) != 1 {
+		t.Fatalf("want one legacy pending error, open=%v: %v", first.IncidentOpen(), err)
+	}
+
+	fresh := legacy
+	fresh.Metadata = map[string]any{requestmetrics.MetaUserTraffic: true}
+	restored := openersController(t, &recordingDispatcher{requests: make(chan IncidentRequest, 1)},
+		controllerDetector(memory.RequestMetricsDetectorID, time.Second, sdk.Finding{}, fresh))
+	// Keep the legacy finding active for one missed/quiet observation, as the
+	// generated detector does. A fresh attributed finding must activate anew.
+	restored.tracker.SetPolicy(memory.RequestMetricsDetectorID, 1, 2, 0)
+	if err := restored.RestoreState(state); err != nil {
+		t.Fatal(err)
+	}
+	step(t, restored, 10)
+	if restored.IncidentOpen() {
+		t.Fatal("the queued error from before attribution opened after restore")
+	}
+	step(t, restored, 11)
+	if !restored.IncidentOpen() {
+		t.Fatal("fresh user evidence on the same fingerprint did not open")
 	}
 }

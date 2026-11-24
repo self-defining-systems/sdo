@@ -27,6 +27,7 @@ import (
 	"sdo.dev/operator/sdk"
 	"sdo.dev/operator/sdk/inputs"
 	"sdo.dev/operator/sdk/program"
+	"sdo.dev/operator/sdk/requestmetrics"
 	"sdo.dev/operator/sdk/traffic"
 )
 
@@ -2493,9 +2494,25 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	// playbooks) are dropped: nothing would ever evaluate or clear them, so
 	// they would hold the controller non-quiet and open incidents no detector
 	// can verify.
-	c.tracker.Restore(findingStatesState(state.GetFindingStates()))
+	restoredFindings := findingStatesState(state.GetFindingStates())
+	request := incidentRequestState(state.GetIncidentRequest())
+	held := newRecoveryScope(alertKeys(request))
+	pending := state.GetPendingBatch()
+	batchFindings := findingsState(pending.GetFindings())
+	// Old queued request errors combined probe and user traffic. Wait for a
+	// fresh activation instead of letting an unattributed error open on restore.
+	batchFindings = slices.DeleteFunc(batchFindings, func(f sdk.Finding) bool {
+		if f.DetectorID != memory.RequestMetricsDetectorID || f.Metadata[requestmetrics.MetaUserTraffic] == true {
+			return false
+		}
+		if !held.holds(f) {
+			delete(restoredFindings, FindingStateKey(f.DetectorID, FindingFingerprint(f)))
+		}
+		return true
+	})
+	c.tracker.Restore(restoredFindings)
 	c.tracker.Retain(c.knownDetector)
-	c.batcher.Restore(BatcherState{Findings: findingsState(state.GetPendingBatch().GetFindings()), Deadlines: timestampsState(state.GetPendingBatch().GetDeadlines()), Deadline: controllerTime(state.GetPendingBatch().GetDeadline())})
+	c.batcher.Restore(BatcherState{Findings: batchFindings, Deadlines: timestampsState(pending.GetDeadlines()), Deadline: controllerTime(pending.GetDeadline())})
 	c.batcher.Retain(c.knownDetector)
 	c.history = append([]DetectorEvaluation(nil), evaluationsState(state.GetHistory())...)
 	c.mu.Lock()
@@ -2504,7 +2521,7 @@ func (c *Controller) RestoreState(state *contracts.ControllerState) error {
 	// A subprocess cannot survive a controller restart. Preserve the incident
 	// lock, but treat the old process as finished so detector clears can close it.
 	c.responderDone = state.ResponderDone
-	c.currentIncidentRequest = cloneIncidentRequest(incidentRequestState(state.GetIncidentRequest()))
+	c.currentIncidentRequest = cloneIncidentRequest(request)
 	c.publishHeldLocked()
 	c.currentIncidentResult = nil
 	if state.IncidentResult != nil {

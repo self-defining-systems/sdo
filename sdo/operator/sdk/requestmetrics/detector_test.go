@@ -46,7 +46,9 @@ func newDetector() sdk.Detector {
 }
 
 func series(route, status string, values ...float64) metrics.Series {
-	s := metrics.Series{Labels: map[string]string{"endpoint_id": route, "method": "GET", "status": status}}
+	s := metrics.Series{Labels: map[string]string{
+		"endpoint_id": route, "method": "GET", "status": status, requestmetrics.TrafficOriginLabel: "user",
+	}}
 	for i, v := range values {
 		s.Samples = append(s.Samples, metrics.Sample{At: t0.Add(time.Duration(i) * 5 * time.Second), Value: v})
 	}

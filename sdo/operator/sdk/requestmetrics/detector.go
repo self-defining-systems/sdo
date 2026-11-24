@@ -1,5 +1,6 @@
 // Package requestmetrics judges the application's own request metrics per user
-// operation. For each operation it counts failed requests (server errors, and
+// operation. For foreground entries it counts only positively attributed user
+// traffic. For each operation it counts failed requests (server errors, and
 // client errors that jump above their healthy share) over a rolling window and
 // reports an operation whose failures are numerous, a real share of its
 // requests and far above its healthy share, on consecutive evaluation steps.
@@ -36,6 +37,15 @@ const (
 	// RuleInsufficientBaseline is a clue: a client-error jump was visible but
 	// the route has too little healthy history to call it a jump.
 	RuleInsufficientBaseline = "request-metrics.insufficient-baseline"
+)
+
+// TrafficOriginLabel distinguishes user traffic from synthetic probe traffic
+// in foreground request counters. Preserve this label in all three queries.
+const TrafficOriginLabel = "sdo_traffic_origin"
+
+const (
+	userOrigin      = "user"
+	syntheticOrigin = "synthetic"
 )
 
 // Failure classes a finding names.
@@ -132,6 +142,10 @@ type Entry struct {
 // MetaBackground is the finding metadata key set on findings of an entry only
 // background work enters.
 const MetaBackground = "background"
+
+// MetaUserTraffic identifies findings derived from attributed user series.
+// The controller uses it to recognize queued findings written before attribution.
+const MetaUserTraffic = "user_traffic"
 
 // Operation is one user operation the detector watches.
 type Operation struct {
@@ -258,8 +272,12 @@ func (c counts) add(o counts) counts {
 	return counts{c.total + o.total, c.server + o.server, c.client + o.client}
 }
 
+func (p entryPlan) includes(labels map[string]string) bool {
+	return p.Background || labels[TrafficOriginLabel] == userOrigin
+}
+
 func (p entryPlan) matches(op Operation, labels map[string]string) bool {
-	if labels[p.RouteLabel] != op.Route {
+	if !p.includes(labels) || labels[p.RouteLabel] != op.Route {
 		return false
 	}
 	return op.Method == "" || p.MethodLabel == "" || strings.EqualFold(labels[p.MethodLabel], op.Method)
@@ -424,6 +442,15 @@ func (p entryPlan) instrumentation(results map[string]metrics.Result) string {
 			return fmt.Sprintf("metric %s%s carries no %q label", p.Metric, p.Selector, label)
 		}
 	}
+	if !p.Background {
+		for _, s := range presence {
+			switch s.Labels[TrafficOriginLabel] {
+			case userOrigin, syntheticOrigin:
+				return ""
+			}
+		}
+		return fmt.Sprintf("metric %s%s carries no %q attribution for user and synthetic traffic", p.Metric, p.Selector, TrafficOriginLabel)
+	}
 	return ""
 }
 
@@ -447,7 +474,7 @@ func (d *detector) undeclared(ctx sdk.DetectionContext, plan entryPlan, results 
 	volume, failed := map[string]float64{}, map[string]float64{}
 	for _, s := range results[plan.recent.ID].Series {
 		route := s.Labels[plan.RouteLabel]
-		if declared[route] {
+		if declared[route] || !plan.includes(s.Labels) {
 			continue
 		}
 		if _, seen := volume[route]; !seen {
@@ -773,6 +800,8 @@ func (d *detector) judge(ctx sdk.DetectionContext, op Operation, plan entryPlan,
 	}
 	if plan.Background {
 		f.Metadata[MetaBackground] = true
+	} else {
+		f.Metadata[MetaUserTraffic] = true
 	}
 	return f, true
 }

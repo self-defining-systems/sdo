@@ -2,6 +2,7 @@ package appmap
 
 import (
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -169,11 +170,11 @@ func (e MetricEntry) RateErrors(route, method, window string) string {
 	return "sum(increase(" + e.Metric + e.routeMatchers(route, method, e.Labels.Status+"=~"+quote(e.Errors)) + "[" + window + "]))"
 }
 
-// groupBy lists the entry's route, method and status labels that exist.
-func (e MetricEntry) groupBy() string {
+// groupBy lists the entry's route, method and status labels and any extra dimensions.
+func (e MetricEntry) groupBy(extra []string) string {
 	var labels []string
-	for _, l := range []string{e.Labels.Route, e.Labels.Method, e.Labels.Status} {
-		if l != "" {
+	for _, l := range append([]string{e.Labels.Route, e.Labels.Method, e.Labels.Status}, extra...) {
+		if l != "" && !slices.Contains(labels, l) {
 			labels = append(labels, l)
 		}
 	}
@@ -181,19 +182,19 @@ func (e MetricEntry) groupBy() string {
 }
 
 // IncreaseByOperation is the windowed request increase per route, method and
-// status value over the entry's selector; offset (empty for none) moves the
+// status value and any extra labels over the entry's selector; offset moves the
 // window into the past. The request-metrics detector reads it.
-func (e MetricEntry) IncreaseByOperation(window, offset string) string {
+func (e MetricEntry) IncreaseByOperation(window, offset string, extraLabels ...string) string {
 	if offset != "" {
 		offset = " offset " + offset
 	}
-	return "sum by (" + e.groupBy() + ") (increase(" + e.Metric + e.matchers() + "[" + window + "]" + offset + "))"
+	return "sum by (" + e.groupBy(extraLabels) + ") (increase(" + e.Metric + e.matchers() + "[" + window + "]" + offset + "))"
 }
 
-// SeriesByOperation is the metric total per route, method and status value,
-// including series that never counted; it shows whether the metric exists.
-func (e MetricEntry) SeriesByOperation() string {
-	return "sum by (" + e.groupBy() + ") (" + e.Metric + e.matchers() + ")"
+// SeriesByOperation is the metric total per route, method, status and extra
+// label values, including zero series to show whether the metric exists.
+func (e MetricEntry) SeriesByOperation(extraLabels ...string) string {
+	return "sum by (" + e.groupBy(extraLabels) + ") (" + e.Metric + e.matchers() + ")"
 }
 
 // SelectorText renders the selector for messages.

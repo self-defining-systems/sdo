@@ -65,12 +65,17 @@ func plannedRequestMetrics(root string) (requestmetrics.Config, bool) {
 	for _, s := range services {
 		e, _ := parsed.EntryFor(s)
 		kept[s] = true
+		background := parsed.Background(e)
+		var dimensions []string
+		if !background {
+			dimensions = append(dimensions, requestmetrics.TrafficOriginLabel)
+		}
 		cfg.Entries = append(cfg.Entries, requestmetrics.Entry{
 			Service: s, Metric: e.Metric, Selector: e.SelectorText(),
 			RouteLabel: e.Labels.Route, MethodLabel: e.Labels.Method, StatusLabel: e.Labels.Status,
-			Recent:   e.IncreaseByOperation("30s", ""),
-			Baseline: e.IncreaseByOperation(requestMetricsBaselineWindow, requestMetricsBaselineOffset),
-			Presence: e.SeriesByOperation(), Background: parsed.Background(e),
+			Recent:   e.IncreaseByOperation("30s", "", dimensions...),
+			Baseline: e.IncreaseByOperation(requestMetricsBaselineWindow, requestMetricsBaselineOffset, dimensions...),
+			Presence: e.SeriesByOperation(dimensions...), Background: background,
 		})
 	}
 	for _, op := range parsed.Operations {
