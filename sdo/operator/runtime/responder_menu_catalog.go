@@ -7,9 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"buf.build/gen/go/bufbuild/protovalidate/protocolbuffers/go/buf/validate"
 	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/contracts/wire"
@@ -39,6 +37,21 @@ func rawMenuActions() map[string]menuEntry {
 	return entries
 }
 
+// defaultActionReason is recorded when a responder applies a built-in action
+// without a reason.
+const defaultActionReason = "applied with sdo mitigate; no reason given"
+
+// menuReasonDefaults reports that f is an action's required reason, a note that
+// must not refuse a fix when the command omits it. The reason of an escalation
+// and of a source proposal is the action's content, so it stays required.
+func menuReasonDefaults(f protoreflect.FieldDescriptor) bool {
+	switch f.ContainingMessage().Name() {
+	case "Escalate", "ProposeSourceChange":
+		return false
+	}
+	return f.Name() == "reason" && f.Kind() == protoreflect.StringKind && menuFieldRequired(f)
+}
+
 func menuActionParameters(action protoreflect.FieldDescriptor) []MenuParameter {
 	fields := action.Message().Fields()
 	examples := menuActionExamples()[string(action.Message().Name())]
@@ -57,8 +70,7 @@ func menuActionParameters(action protoreflect.FieldDescriptor) []MenuParameter {
 				kind += f.MapValue().Kind().String()
 			}
 		}
-		rules, _ := proto.GetExtension(f.Options(), validate.E_Field).(*validate.FieldRules)
-		required := rules.GetRequired() || rules.GetString().GetMinLen() > 0 || rules.GetRepeated().GetMinItems() > 0
+		required := menuFieldRequired(f)
 		schema := menuInputSchema(f)
 		if action.Message().Name() == "SyncWebhookCA" && f.Name() == "secret_key" {
 			schema.Description = "Sync a named Secret key into one webhook caBundle privately; receipts expose only the reference and digest."
@@ -75,7 +87,11 @@ func menuActionParameters(action protoreflect.FieldDescriptor) []MenuParameter {
 		if f.IsList() {
 			schema.Description = strings.TrimSpace(schema.Description + " Repeat --bind " + string(f.Name()) + "=ELEMENT once per element, or give one JSON array.")
 		}
-		params = append(params, MenuParameter{Name: string(f.Name()), Kind: kind, Required: required, Repeated: f.IsList(), Schema: schema, Example: examples[string(f.Name())]})
+		var fallback any
+		if menuReasonDefaults(f) {
+			required, fallback = false, defaultActionReason
+		}
+		params = append(params, MenuParameter{Name: string(f.Name()), Kind: kind, Required: required, Default: fallback, Repeated: f.IsList(), Schema: schema, Example: examples[string(f.Name())]})
 	}
 	return params
 }
@@ -114,6 +130,9 @@ func menuRawPlan(field protoreflect.FieldDescriptor, parameters map[string]strin
 		if f == nil {
 			return program.Plan{}, fmt.Errorf("unknown parameter %q", name)
 		}
+		if menuReasonDefaults(f) && strings.TrimSpace(raw) == "" {
+			continue
+		}
 		value, err := menuActionParameter(f, raw, inputs)
 		if err != nil {
 			return program.Plan{}, fmt.Errorf("parameter %s: %w", name, err)
@@ -122,6 +141,11 @@ func menuRawPlan(field protoreflect.FieldDescriptor, parameters map[string]strin
 			return program.Plan{}, err
 		}
 		values[string(f.Name())] = value
+	}
+	if reason := field.Message().Fields().ByName("reason"); reason != nil && menuReasonDefaults(reason) {
+		if _, given := values["reason"]; !given {
+			values["reason"] = defaultActionReason
+		}
 	}
 	body, err := json.Marshal(map[string]any{string(field.Name()): values})
 	if err != nil {
