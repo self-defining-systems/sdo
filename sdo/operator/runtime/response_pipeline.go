@@ -127,8 +127,11 @@ func (c *Controller) runResponsePipeline(ctx context.Context, request IncidentRe
 		case "deterministic":
 			if source, ok := c.dispatcher.(interface{ DeterministicResponseStage() ResponseStage }); ok {
 				if stage := source.DeterministicResponseStage(); stage != nil {
-					if deterministic, ok := stage.(*DeterministicResponseStage); ok && c.config.AfterPlaybook == settings.AfterPlaybookWait {
-						deterministic.WaitBound = c.config.AfterPlaybookWait
+					if deterministic, ok := stage.(*DeterministicResponseStage); ok {
+						deterministic.StabilityWindow = c.config.ClosureStabilityWindow
+						if c.config.AfterPlaybook == settings.AfterPlaybookWait {
+							deterministic.WaitBound = c.config.AfterPlaybookWait
+						}
 					}
 					stages = append(stages, stage)
 					automaticAvailable = true

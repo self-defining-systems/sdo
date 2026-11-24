@@ -372,8 +372,14 @@ after the responder returns never escalates an incident whose alerts are clear w
 closing and before marking the responder verified; the broker asks it again at freeze (a user test that has not
 passed by its horizon plus the stability window commits `unconfirmed`, `OBSERVATION_INCOMPLETE`). That confirmation judges only the alert set: of a probe workload, only the scenarios whose findings are opening or joined alerts must have enough usable samples, and a sibling scenario that never alerted neither blocks nor counts; the stage's
 recovery wait and the claim-time check (`stageRecoveryCheck`) exit `CLEARED` on it, keep waiting while a program
-still diagnoses its fault, hand off when the stage budget ends (under `response.after_playbook: wait` the bound is `response.after_playbook_wait` and only a refuted or failed write ends the wait early), and exit `NOTHING_APPLIED` when no learned playbook
-applied. The closure and outcome carry `RecoveryVerification`: `since`, `writes_settled`, per-write settle times,
+still diagnoses its fault, and otherwise hand off only at a bound anchored on the observed settle of SDO's writes: once
+they settled (Kubernetes reports the written workloads rolled out and Ready), the alert set gets the longest clearing
+horizon among its still-open members plus the closure stability window, the time Recovered would take had the repair
+worked at settle, so an application converging later than its detectors' own lag is still credited to the stage. A
+finding that judges current state only (no evaluation window) and outlives its own horizon after settle hands off at once.
+Before settle the bound is the pre-settle floor plus the written workloads' observed startup (under
+`response.after_playbook: wait` the bound is `response.after_playbook_wait` and only a refuted or failed write ends the
+wait early), and the wait exits `NOTHING_APPLIED` when no learned playbook applied. The closure and outcome carry `RecoveryVerification`: `since`, `writes_settled`, per-write settle times,
 `opening_keys` and `stable_since`.
 After a stage applied a repair that detectors have not confirmed, the stage's recovery wait is extended by Go to
 one detector window when the program no longer matches and only probe lag remains (`runtime/handoff_state.go`).
