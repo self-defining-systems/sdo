@@ -544,7 +544,7 @@ func (c *KubernetesCache) Snapshot(ctx context.Context) (sdk.DetectionContext, e
 	}
 	c.informerMu.RUnlock()
 	if c.config.StartupObservations != nil {
-		c.config.StartupObservations.Observe(snapshot.PodList, workloadName(snapshot))
+		c.config.StartupObservations.Observe(snapshot.ObservedAtTime, snapshot.PodList, workloadName(snapshot))
 		snapshot.ObservedStartupTimes = c.config.StartupObservations.Allowances()
 	}
 	return snapshot, nil

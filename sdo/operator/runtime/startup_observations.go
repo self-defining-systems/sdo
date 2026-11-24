@@ -9,6 +9,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/durationpb"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/sdk"
@@ -27,6 +28,9 @@ const (
 	// startupMaxAllowance caps what a workload may be allowed, so a
 	// pathological history never hides a real outage for long.
 	startupMaxAllowance = 15 * time.Minute
+	// startupMaxUnseen bounds how long before its Ready transition a pod was
+	// last seen not yet Ready; a longer gap could hide a first Ready and a flap.
+	startupMaxUnseen = time.Minute
 )
 
 // StartupObservations remembers how long each workload's pods took from a
@@ -38,6 +42,9 @@ const (
 type StartupObservations struct {
 	mu        sync.Mutex
 	workloads map[string]*workloadStartups
+	// starting is when each pod whose containers have never been Ready was
+	// last seen. A pod leaves it on its first Ready, a restart or its deletion.
+	starting map[types.UID]time.Time
 }
 
 type workloadStartups struct {
@@ -50,10 +57,12 @@ func NewStartupObservations() *StartupObservations {
 	return &StartupObservations{workloads: map[string]*workloadStartups{}}
 }
 
-// Observe records the healthy starts among pods: a Running pod whose Ready
-// condition turned true with no container restart. Each Ready transition is
-// sampled once. workload names a pod's workload (sdk.PodWorkload).
-func (s *StartupObservations) Observe(pods []corev1.Pod, workload func(corev1.Pod) string) {
+// Observe records the healthy starts among pods as seen at `at`: a pod seen
+// before its containers were ever Ready that is now Ready with no container
+// restart. Kubernetes keeps only the last Ready transition, so a pod first seen
+// Ready, or that was Ready before, may have flapped and gives no sample.
+// workload names a pod's workload (sdk.PodWorkload).
+func (s *StartupObservations) Observe(at time.Time, pods []corev1.Pod, workload func(corev1.Pod) string) {
 	if s == nil {
 		return
 	}
@@ -62,16 +71,26 @@ func (s *StartupObservations) Observe(pods []corev1.Pod, workload func(corev1.Po
 		readyAt  time.Time
 		after    time.Duration
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var samples []sample
+	starting := map[types.UID]time.Time{}
 	for _, pod := range pods {
+		if podNeverReady(pod) {
+			starting[pod.UID] = at
+			continue
+		}
+		seen, ok := s.starting[pod.UID]
+		if !ok {
+			continue
+		}
 		readyAt, after, ok := podStartToReady(pod)
-		if ok {
+		if ok && readyAt.Sub(seen) <= startupMaxUnseen {
 			samples = append(samples, sample{workload(pod), readyAt, after})
 		}
 	}
+	s.starting = starting
 	sort.SliceStable(samples, func(i, j int) bool { return samples[i].readyAt.Before(samples[j].readyAt) })
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	for _, item := range samples {
 		w := s.workloads[item.workload]
 		if w == nil {
@@ -92,8 +111,35 @@ func (s *StartupObservations) Observe(pods []corev1.Pod, workload func(corev1.Po
 	}
 }
 
+// podNeverReady reports that the status proves the pod's containers have not
+// been Ready: none has started, or Ready has been false since before the first
+// of them started. A pod that lost Ready carries the time it lost it instead.
+func podNeverReady(pod corev1.Pod) bool {
+	if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodPending && pod.Status.Phase != corev1.PodRunning {
+		return false
+	}
+	var started time.Time
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.RestartCount > 0 || status.State.Terminated != nil || status.LastTerminationState.Terminated != nil {
+			return false
+		}
+		if status.State.Running == nil {
+			continue
+		}
+		if at := status.State.Running.StartedAt.Time; started.IsZero() || at.Before(started) {
+			started = at
+		}
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady {
+			return condition.Status != corev1.ConditionTrue && (started.IsZero() || !condition.LastTransitionTime.IsZero() && !condition.LastTransitionTime.Time.After(started))
+		}
+	}
+	return started.IsZero()
+}
+
 // podStartToReady is the time from a Running pod's first container start to
-// its Ready transition. A pod that restarted a container, or whose Ready
+// its last Ready transition. A pod that restarted a container, or whose Ready
 // transition precedes a container start, is not a clean start.
 func podStartToReady(pod corev1.Pod) (readyAt time.Time, after time.Duration, ok bool) {
 	if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning || len(pod.Status.ContainerStatuses) == 0 {
