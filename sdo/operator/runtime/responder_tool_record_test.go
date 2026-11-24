@@ -119,13 +119,15 @@ func TestRecordedPlanApplyPreservesTrustFields(t *testing.T) {
 	}
 }
 
-func TestSecretToolRecordDropsAcceptedBodyAndScript(t *testing.T) {
+func TestSecretToolRecordDropsAcceptedStructuralBody(t *testing.T) {
 	const canary = "synthetic-accepted-body-canary"
+	doubled, _ := json.Marshal("kind: Secret\nmetadata: {name: creds}\ndata: {key: " + canary + "}")
 	for _, tc := range []struct {
 		name, key, input string
 	}{
 		{"ApplyObject", "object_json", `{"kind":"Secret","metadata":{"name":"creds"},"data":{"key":"` + canary + `"}}`},
-		{"RunScript", "script", "kubectl apply -f - <<'YAML'\nkind: Secret\nmetadata:\n  name: creds\ndata:\n  key: " + canary + "\nYAML"},
+		{"ApplyObject", "object_json", "kind: SecretList\nitems:\n- metadata: {name: creds}\n  data: {key: " + canary + "}"},
+		{"ApplyObject", "object_json", string(doubled)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			loop := &ResponderLoop{}
@@ -151,5 +153,47 @@ func TestNonSecretToolRefusalKeepsExactText(t *testing.T) {
 	call := loop.ToolCalls()[0]
 	if response.Error == "" || call.Error != response.Error || call.Summary != response.Summary {
 		t.Fatalf("stored refusal changed: got %q, want %q", call.Error, response.Error)
+	}
+}
+
+func TestStructuralSecretEvidenceDoesNotConfuseSourceReference(t *testing.T) {
+	const body = `{"kind":"Deployment","spec":{"sourceRef":{"kind":"Secret"}}}`
+	if _, ok := structuralSecret(body, sdk.ObjectRef{}, ""); ok {
+		t.Fatal("a Secret reference was mistaken for a Secret object")
+	}
+}
+
+func TestSecretApplicationProtoDropsStructuralBody(t *testing.T) {
+	const canary = "synthetic-application-canary"
+	action := program.KubernetesRequest{Ref: sdk.ObjectRef{APIVersion: "v1", Kind: "Secret", Namespace: "app", Name: "creds"},
+		Method: "PATCH", Path: "/api/v1/namespaces/app/secrets/creds", Body: []byte(`{"data":{"key":"` + canary + `"}}`), Reason: "restore credentials"}
+	result := PlanApplicationResult{Plan: program.Plan{Actions: []program.Action{action}}, ActionsApplied: []program.Action{action}, Applied: true}
+	wire, err := incidentResultContract(IncidentResult{PlanApplications: []RecordedPlanApplication{{ID: "app-1", Result: result, Error: canary}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := protojson.Marshal(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{canary, "body"} {
+		if strings.Contains(string(data), text) {
+			t.Fatal("application evidence retained the Secret body or unsafe error")
+		}
+	}
+	if !strings.Contains(string(data), "restore credentials") || !strings.Contains(string(data), "creds") {
+		t.Fatal("application evidence lost action identity")
+	}
+	result.Patches = []PlanPatch{{Ref: action.Ref, Patch: json.RawMessage(action.Body)}}
+	loop := &ResponderLoop{applicationsLog: []RecordedPlanApplication{{ID: "app-1", Result: result}},
+		saveToolState: func(_ context.Context, state []byte) error {
+			if strings.Contains(string(state), canary) {
+				t.Error("application checkpoint retained the Secret patch")
+			}
+			return nil
+		},
+	}
+	if err := loop.persistToolState(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 }
