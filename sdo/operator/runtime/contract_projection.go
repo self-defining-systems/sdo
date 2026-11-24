@@ -8,6 +8,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -255,6 +256,9 @@ func incidentRequestContract(request IncidentRequest) (*contracts.IncidentReques
 			SourceCommit: prior.SourceCommit, ExactSourceMatch: prior.ExactSourceMatch,
 		})
 	}
+	for i, stage := range result.PriorStages {
+		result.PriorStages[i] = repairContractText(stage)
+	}
 	return result, nil
 }
 
@@ -326,7 +330,8 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 	for _, finding := range result.UnresolvedFindings {
 		encoded, err := findingContract(finding)
 		if err != nil {
-			return nil, err
+			finding.Metadata = nil
+			encoded, _ = findingContract(finding)
 		}
 		message.UnresolvedFindings = append(message.UnresolvedFindings, encoded)
 	}
@@ -356,8 +361,54 @@ func incidentResultContract(result IncidentResult) (*contracts.IncidentResult, e
 	if result.Error != "" {
 		message.Error = &result.Error
 	}
-	return message, nil
+	return repairContractText(message), nil
 }
+
+func repairContractText[T proto.Message](message T) T {
+	if _, err := proto.Marshal(message); err != nil {
+		message = proto.CloneOf(message)
+		sanitizeContractText(message.ProtoReflect())
+	}
+	return message
+}
+
+// Text from workers and tools can contain arbitrary bytes. Keep intact fields
+// and repair UTF-8 at the common result boundary.
+func sanitizeContractText(message protoreflect.Message) {
+	clean := func(field protoreflect.FieldDescriptor, value protoreflect.Value) protoreflect.Value {
+		switch field.Kind() {
+		case protoreflect.MessageKind:
+			sanitizeContractText(value.Message())
+		case protoreflect.StringKind:
+			return protoreflect.ValueOfString(validContractText(value.String()))
+		}
+		return value
+	}
+	message.Range(func(field protoreflect.FieldDescriptor, value protoreflect.Value) bool {
+		switch {
+		case field.IsList():
+			list := value.List()
+			for i := range list.Len() {
+				list.Set(i, clean(field, list.Get(i)))
+			}
+		case field.IsMap():
+			entries := value.Map()
+			entries.Range(func(key protoreflect.MapKey, item protoreflect.Value) bool {
+				if field.MapKey().Kind() == protoreflect.StringKind && key.String() != validContractText(key.String()) {
+					entries.Clear(key)
+				} else {
+					entries.Set(key, clean(field.MapValue(), item))
+				}
+				return true
+			})
+		default:
+			message.Set(field, clean(field, value))
+		}
+		return true
+	})
+}
+
+func validContractText(text string) string { return strings.ToValidUTF8(text, "�") }
 
 func incidentResultState(message *contracts.IncidentResult) IncidentResult {
 	result := IncidentResult{
@@ -474,7 +525,8 @@ func incidentClosureContract(closure IncidentClosure) (*contracts.IncidentClosur
 		}
 	}
 	if closure.DispatchError != "" {
-		message.DispatchError = &closure.DispatchError
+		detail := validContractText(closure.DispatchError)
+		message.DispatchError = &detail
 	}
 	request.PlaybookCoverage = settledApplicationCoverage(request, message.Result)
 	message.DetectorTimeline = detectorTimelineContract(closure.DetectorTimeline)

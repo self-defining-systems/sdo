@@ -90,7 +90,6 @@ const MaxProbeBodyBytes = 64 << 10
     MaxProbeBodyBytes bounds the response body a probe query reads.
 
 const MaxScriptBytes = 64 << 10
-const MaxScriptOutputBytes = 64 << 10
 const MaxScriptTimeout = 5 * time.Minute
 const MongoDB = "mongodb"
 const ProbeIdentityParam = "username"
@@ -252,4 +251,8 @@ func ValidateRemoveServicePort(a RemoveServicePort) error
 func ValidateResolvedSetField(f SetField, value any) error
     ValidateResolvedSetField checks the resolved schema without changing
     provenance.
+
+func ValidateRestartRollout(a RestartRollout) error
+    ValidateRestartRollout accepts one named, namespaced apps/v1 Deployment,
+    StatefulSet or DaemonSet: the workloads kubectl rollout restart restarts.
 ```

@@ -236,7 +236,7 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 		if err != nil {
 			report.Status = contracts.MitigationReport_STATUS_EXECUTION_ERROR
 			report.FailedPhase = "planning"
-			report.ReasonCode = mitigationPlanningReason(err, reason)
+			report.ReasonCode = reason
 			if errors.Is(err, program.ErrReplicaSetScaleRefused) {
 				report.ReasonCode = "replicaset_scale_refused"
 			}
@@ -247,10 +247,7 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 		applicationID := fmt.Sprintf("%s-r%d", attempt, round)
 		description := MenuRoundExecution{OptionID: selection.OptionId, ProgramID: entry.programID, RoundIndex: round, ApplicationID: applicationID, Plan: &contracts.Plan{Rationale: plan.Rationale}}
 		for _, action := range plan.Actions {
-			converted, convertErr := planActionProto(action)
-			if convertErr == nil {
-				description.Plan.Actions = append(description.Plan.Actions, converted)
-			}
+			description.Plan.Actions = append(description.Plan.Actions, historicalActionProto(action))
 		}
 		planned = append(planned, plan)
 		executor := l.Executor
@@ -270,6 +267,15 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 			}
 		}
 		started := lifecycleio.Now().UTC()
+		journalIndex := len(l.applicationsLog)
+		scriptPlan := hasAppliedScript(plan.Actions)
+		if scriptPlan {
+			l.applicationsLog = append(l.applicationsLog, RecordedPlanApplication{ID: applicationID, ProgramIDs: []string{entry.programID}, Result: PlanApplicationResult{Plan: plan}, StartedAt: started, Pending: true})
+			if err := l.persistToolState(ctx); err != nil {
+				response.Error = err.Error()
+				return
+			}
+		}
 		result, applyErr := executor.Apply(ctx, l.mitigationIncident([]selectedPlan{{programID: entry.programID, bindings: bindings, targetFingerprints: targetFingerprints}}), plan, false)
 		completed := lifecycleio.Now().UTC()
 
@@ -284,10 +290,7 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 		// Automatic dependency recovery is part of the actual executed plan.
 		description.Plan.Actions = nil
 		for _, action := range result.Plan.Actions {
-			converted, convertErr := planActionProto(action)
-			if convertErr == nil {
-				description.Plan.Actions = append(description.Plan.Actions, converted)
-			}
+			description.Plan.Actions = append(description.Plan.Actions, historicalActionProto(action))
 		}
 		description.ActionResults = result.ActionReports
 		description.ChangesRemain = result.Applied && !result.RolledBack
@@ -371,7 +374,11 @@ func (l *ResponderLoop) executeMenuEntry(ctx context.Context, entry menuEntry, s
 			application.Error = applyErr.Error()
 		}
 		application.RunningCommit, application.RunningDirty, _ = l.checkoutState(ctx, false, "mitigate")
-		l.applicationsLog = append(l.applicationsLog, application)
+		if scriptPlan {
+			l.applicationsLog[journalIndex] = application
+		} else {
+			l.applicationsLog = append(l.applicationsLog, application)
+		}
 		if hasAppliedScript(plan.Actions) && entry.action == nil {
 			l.recordScriptInvocation(application, entry.programID, bindings, targetVerdict)
 		}

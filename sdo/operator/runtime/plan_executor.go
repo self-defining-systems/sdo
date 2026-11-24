@@ -1002,6 +1002,9 @@ func restoreDeclaredValue(current, declared any) any {
 }
 
 func planActionRef(action program.Action) (sdk.ObjectRef, error) {
+	if gap, ok := action.(unencodableAction); ok {
+		return gap.Ref, nil
+	}
 	if ref, ok := externalRef(action); ok {
 		return ref, nil
 	}

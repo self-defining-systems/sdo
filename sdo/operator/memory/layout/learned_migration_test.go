@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"sdo.dev/operator/sdk/sdktest"
 )
 
 func writeFixtureFile(t *testing.T, root, rel, content string) {
@@ -70,8 +72,8 @@ func TestMigrateToSchema13RenamesIncidentClassToLearned(t *testing.T) {
 	if got, _ := os.ReadFile(filepath.Join(root, filepath.FromSlash(DetectorDir(ClassHealth, "health")+"/detector.go"))); string(got) != healthSource {
 		t.Fatalf("health detector changed: %q", got)
 	}
-	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "13\n" {
-		t.Fatalf("schema-version = %q, want 13", got)
+	if got, _ := os.ReadFile(filepath.Join(root, SchemaVersionFile)); string(got) != "14\n" {
+		t.Fatalf("schema-version = %q, want 14", got)
 	}
 	if changed, err := Migrate(root); err != nil || changed {
 		t.Fatalf("second Migrate = %v, %v; want unchanged", changed, err)
@@ -93,5 +95,25 @@ func TestMigrateToSchema13RefusesBothDirectories(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(DetectorsDir+"/incidents/cache/manifest.yaml"))); err != nil {
 		t.Fatalf("a refused migration moved a detector: %v", err)
+	}
+}
+
+func TestMigrateSchema13PreservesLegacyCorpusLabels(t *testing.T) {
+	root := t.TempDir()
+	label := ".sdo/corpus/synthetic/labels.json"
+	content := `{"script_origins":{"digest":"receipt"}}`
+	writeFixtureFile(t, root, SchemaVersionFile, "13\n")
+	writeFixtureFile(t, root, label, content)
+	if changed, err := Migrate(root); err != nil || !changed {
+		t.Fatalf("migration = %v, %v", changed, err)
+	}
+	if version, err := readSchemaVersion(root); err != nil || version != 14 {
+		t.Fatalf("version = %d, %v", version, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(root, label)); err != nil || string(data) != content {
+		t.Fatalf("migration changed immutable corpus labels: %v", err)
+	}
+	if _, err := sdktest.LoadCorpusMetadata(filepath.Join(root, filepath.Dir(label))); err != nil {
+		t.Fatalf("migrated labels are unreadable: %v", err)
 	}
 }

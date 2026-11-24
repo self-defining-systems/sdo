@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"sdo.dev/operator/apihistory"
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
 	"sdo.dev/operator/memory"
 	"sdo.dev/operator/sdk"
@@ -96,6 +97,11 @@ func TestPageWithoutAlertsClosesEscalatedAtVerificationBound(t *testing.T) {
 				}}
 			}
 			c := warmupPageController(t, &now, cfg, transport)
+			gate, err := apihistory.PrepareMutationGate(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.incidentGate = func(string) (*apihistory.MutationGate, error) { return gate, nil }
 			var closed *IncidentClosure
 			c.OnIncidentClosed = func(closure IncidentClosure) { closed = &closure }
 			if err := c.Step(ctx, now, nil); err != nil {
@@ -135,6 +141,12 @@ func TestPageWithoutAlertsClosesEscalatedAtVerificationBound(t *testing.T) {
 			}
 			if c.IncidentOpen() || closed == nil {
 				t.Fatal("page escalation did not finalize the incident")
+			}
+			if lease, err := gate.Begin(); err == nil || err.Error() != "incident_closed" {
+				if lease != nil {
+					_ = lease.Finish(false)
+				}
+				t.Fatalf("terminal closure left the mutation gate open: %v", err)
 			}
 			if closed.EscalatedAt.IsZero() || closed.HealthClearedAt != nil || closed.UnconfirmedReason == contracts.ClosureUnconfirmedReason_CLOSURE_UNCONFIRMED_REASON_UNSPECIFIED {
 				t.Fatalf("expected an escalated closure without recovery proof: %+v", closed)

@@ -30,7 +30,11 @@ func VerificationWarning(at time.Time) *IncidentVerified {
 // MutationGate coordinates the controller and the API sidecar through their
 // existing private session mount. Shared leases cover the entire write; an
 // exclusive observation atomically checks the journal and publishes the fence.
-type MutationGate struct{ Directory string }
+type MutationGate struct {
+	Directory        string
+	ScriptJob        string
+	ScriptJobStopped func(string) bool
+}
 type MutationLease struct {
 	gate *MutationGate
 	file *mutationLock
@@ -43,8 +47,9 @@ type MutationObservation struct {
 	Pending  bool
 }
 type mutationRecord struct {
-	Pending   bool `json:"pending"`
-	Uncertain bool `json:"uncertain"`
+	ScriptJob string `json:"script_job,omitempty"`
+	Pending   bool   `json:"pending"`
+	Uncertain bool   `json:"uncertain"`
 }
 
 func PrepareMutationGate(directory string) (*MutationGate, error) {
@@ -107,6 +112,13 @@ func (g *MutationGate) Begin() (*MutationLease, error) {
 	if err != nil {
 		return nil, err
 	}
+	if _, err = os.Stat(filepath.Join(g.Directory, "incident-closed")); !errors.Is(err, os.ErrNotExist) {
+		f.Close()
+		if err != nil {
+			return nil, err
+		}
+		return nil, errors.New("incident_closed")
+	}
 	warning, err := g.Verified()
 	if err != nil || warning != nil {
 		f.Close()
@@ -116,8 +128,10 @@ func (g *MutationGate) Begin() (*MutationLease, error) {
 		return nil, errors.New("incident_verified")
 	}
 	name := "mutation-" + apiio.Text() + ".json"
-	b, _ := json.Marshal(mutationRecord{Pending: true})
-	if err := os.WriteFile(filepath.Join(g.Directory, name), b, 0600); err != nil {
+	b, _ := json.Marshal(mutationRecord{Pending: true, ScriptJob: g.ScriptJob})
+	// The private session directory protects the journal. Its files must be
+	// readable across UIDs, including on storage that squashes root.
+	if err := os.WriteFile(filepath.Join(g.Directory, name), b, 0644); err != nil {
 		f.Close()
 		return nil, err
 	}
@@ -125,8 +139,13 @@ func (g *MutationGate) Begin() (*MutationLease, error) {
 }
 func (w *MutationLease) Finish(uncertain bool) error {
 	defer w.file.Close()
-	b, _ := json.Marshal(mutationRecord{Uncertain: uncertain})
-	return os.WriteFile(filepath.Join(w.gate.Directory, w.name), b, 0600)
+	b, _ := json.Marshal(mutationRecord{Uncertain: uncertain, ScriptJob: w.gate.ScriptJob})
+	next := filepath.Join(w.gate.Directory, "."+w.name)
+	if err := os.WriteFile(next, b, 0644); err != nil {
+		return err
+	}
+	defer os.Remove(next)
+	return os.Rename(next, filepath.Join(w.gate.Directory, w.name))
 }
 func (g *MutationGate) TryObserve() (*MutationObservation, error) {
 	f, err := g.lock(syscall.LOCK_EX | syscall.LOCK_NB)
@@ -143,6 +162,7 @@ func (g *MutationGate) TryObserve() (*MutationObservation, error) {
 		return nil, err
 	}
 	hash := sha256.New()
+	stopped := map[string]bool{}
 	for _, entry := range entries {
 		if !strings.HasPrefix(entry.Name(), "mutation-") || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
@@ -157,7 +177,14 @@ func (g *MutationGate) TryObserve() (*MutationObservation, error) {
 			f.Close()
 			return nil, err
 		}
-		result.Pending = result.Pending || record.Pending || record.Uncertain
+		if record.Pending || record.Uncertain {
+			quiescent, checked := stopped[record.ScriptJob]
+			if !checked && record.ScriptJob != "" && g.ScriptJobStopped != nil {
+				quiescent = g.ScriptJobStopped(record.ScriptJob)
+				stopped[record.ScriptJob] = quiescent
+			}
+			result.Pending = result.Pending || !quiescent
+		}
 		hash.Write([]byte(entry.Name()))
 		hash.Write(b)
 	}
@@ -179,6 +206,12 @@ func (o *MutationObservation) Fence(at time.Time) error {
 	defer os.Remove(temporary)
 	return os.Rename(temporary, filepath.Join(o.gate.Directory, "incident-verified.json"))
 }
+
+// Seal prevents further writes after a terminal closure without recording health proof.
+func (o *MutationObservation) Seal() error {
+	return os.WriteFile(filepath.Join(o.gate.Directory, "incident-closed"), nil, 0600)
+}
+
 func (o *MutationObservation) Close() error { return o.file.Close() }
 
 // Reopen withdraws a verification fence after the controller has proved the

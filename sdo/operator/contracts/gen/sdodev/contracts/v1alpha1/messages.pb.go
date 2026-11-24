@@ -5832,7 +5832,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\n" +
 	"started_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\tstartedAt\x12E\n" +
 	"\fcompleted_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampB\x06\xbaH\x03\xc8\x01\x01R\vcompletedAt:g\xbaHd\x1ab\n" +
-	"\x0etiming.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\xa4\b\n" +
+	"\x0etiming.ordered\x12*completed_at must not be before started_at\x1a$this.completed_at >= this.started_at\"\x8e\b\n" +
 	"\x13RepairActionReceipt\x12$\n" +
 	"\taction_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\bactionId\x12\x1b\n" +
 	"\x04kind\x18\x02 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\x04kind\x12\x1f\n" +
@@ -5847,8 +5847,8 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\n" +
 	"reversible\x18\n" +
 	" \x01(\bR\n" +
-	"reversible\x12\xaa\x02\n" +
-	"\x0efailure_reason\x18\v \x01(\tB\x82\x02\xbaH\xfe\x01r\xfb\x01R\x00R\x14authorization_deniedR\x10execution_failedR\x14delete_not_confirmedR\x0foutcome_unknownR\x11incident_verifiedR\x0fsource_residualR\x14script_unprovenancedR\vrolled_backR\x0frollback_failedR\x11application_errorR\x13settlement_rejectedR\x13application_pendingR\x13verification_failedR\rfailureReason\x12G\n" +
+	"reversible\x12\x94\x02\n" +
+	"\x0efailure_reason\x18\v \x01(\tB\xec\x01\xbaH\xe8\x01r\xe5\x01R\x00R\x14authorization_deniedR\x10execution_failedR\x14delete_not_confirmedR\x0foutcome_unknownR\x11incident_verifiedR\x0fsource_residualR\vrolled_backR\x0frollback_failedR\x11application_errorR\x13settlement_rejectedR\x13application_pendingR\x13verification_failedR\rfailureReason\x12G\n" +
 	"\x06owners\x18\f \x03(\v2).sdodev.contracts.v1alpha1.ResourceOwnersB\x04\xc8\xf3\x18\x01R\x06owners\x12)\n" +
 	"\rscript_digest\x18\r \x01(\tB\x04\xc8\xf3\x18\x01R\fscriptDigest\x12%\n" +
 	"\x0erunning_commit\x18\x0e \x01(\tR\rrunningCommit\x12#\n" +
@@ -6035,7 +6035,7 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\x1aRESIDUAL_CLASS_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18RESIDUAL_CLASS_PROBE_LAG\x10\x01\x12 \n" +
 	"\x1cRESIDUAL_CLASS_BASELINE_CLUE\x10\x02\x12\x19\n" +
-	"\x15RESIDUAL_CLASS_ACTIVE\x10\x03\"\x89\f\n" +
+	"\x15RESIDUAL_CLASS_ACTIVE\x10\x03\"\xf3\v\n" +
 	"\x0fStageMitigation\x12(\n" +
 	"\vplaybook_id\x18\x01 \x01(\tB\a\xbaH\x04r\x02\x10\x01R\n" +
 	"playbookId\x12)\n" +
@@ -6043,9 +6043,9 @@ const file_sdodev_contracts_v1alpha1_messages_proto_rawDesc = "" +
 	"\bbindings\x18\x03 \x03(\v2\".sdodev.contracts.v1alpha1.BindingR\bbindings\x12\x17\n" +
 	"\aplan_id\x18\x04 \x01(\tR\x06planId\x12O\n" +
 	"\rapply_receipt\x18\x05 \x01(\v2*.sdodev.contracts.v1alpha1.PlanApplicationR\fapplyReceipt\x12\xbf\x01\n" +
-	"\x06result\x18\x06 \x01(\tB\xa6\x01\xbaH\xa2\x01r\x9f\x01R\x0fapplied_clearedR\x16applied_still_matchingR\x14reverted_ineffectiveR\x0erollout_failedR\x1arollout_pending_at_handoffR\x11admission_blockedR\vapply_errorR\askippedR\tescalatedR\x06result\x12\xb8\x02\n" +
-	"\vskip_reason\x18\a \x01(\tB\x96\x02\xbaH\x92\x02r\x8f\x02R\x00R\x15multiple_entry_pointsR\rno_mitigationR\x11unbound_parameterR\x1adiagnose_no_longer_matchesR\x14diagnose_unavailableR\x14unexplained_coverageR\x11already_attemptedR\rrepair_policyR\fstage_budgetR\x13plan_not_executableR\vineffectiveR\n" +
-	"holds_dataR\x16builtin_restore_manualR\x14script_unprovenancedR\n" +
+	"\x06result\x18\x06 \x01(\tB\xa6\x01\xbaH\xa2\x01r\x9f\x01R\x0fapplied_clearedR\x16applied_still_matchingR\x14reverted_ineffectiveR\x0erollout_failedR\x1arollout_pending_at_handoffR\x11admission_blockedR\vapply_errorR\askippedR\tescalatedR\x06result\x12\xa2\x02\n" +
+	"\vskip_reason\x18\a \x01(\tB\x80\x02\xbaH\xfc\x01r\xf9\x01R\x00R\x15multiple_entry_pointsR\rno_mitigationR\x11unbound_parameterR\x1adiagnose_no_longer_matchesR\x14diagnose_unavailableR\x14unexplained_coverageR\x11already_attemptedR\rrepair_policyR\fstage_budgetR\x13plan_not_executableR\vineffectiveR\n" +
+	"holds_dataR\x16builtin_restore_manualR\n" +
 	"skipReason\x12U\n" +
 	"\x13post_apply_diagnose\x18\b \x01(\v2%.sdodev.contracts.v1alpha1.ProgramRunR\x11postApplyDiagnose\x12@\n" +
 	"\x1ccleared_finding_fingerprints\x18\t \x03(\tR\x1aclearedFindingFingerprints\x12D\n" +

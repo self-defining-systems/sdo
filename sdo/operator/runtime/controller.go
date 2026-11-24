@@ -126,6 +126,7 @@ type Controller struct {
 	signals           *incidentSignals
 	ExternalIncidents func(context.Context) (*ExternalIncident, error)
 	memoryRefresh     func(context.Context) (bool, error)
+	incidentGate      func(string) (*apihistory.MutationGate, error)
 	config            ControllerConfig
 	// closureRecheckIdentity/Since bound an incomplete closure-time recheck.
 	closureRecheckIdentity string
@@ -242,6 +243,9 @@ type Controller struct {
 	closureState            contracts.ClosureState
 	closureReceipt          *ClosureReceipt
 	closureFailure          *ClosureFailure
+	closureFreezeDelay      time.Duration
+	closureFreezeRetryAt    time.Time
+	closureFreezeCauses     map[string]bool
 	failedClosures          []*contracts.FailedIncidentClosure
 	dispatchFailureAttempts int
 	dispatchNextRetryAt     time.Time
@@ -999,8 +1003,8 @@ func (c *Controller) EvaluateAll(ctx context.Context, now time.Time) error {
 }
 
 // admitActivation is the one entry for a newly active finding. A finding
-// already in the open incident is refreshed; a clue joins the incident before
-// launch, or as a learned playbook's activation after it, and otherwise stays
+// already in the open incident is refreshed; a clue joins before
+// launch or while the automatic stage owns the repair, and otherwise stays
 // tracked only. An opener joins the incident's opening alerts before launch
 // and otherwise waits in the batcher for the next incident.
 func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, now time.Time, spec sdk.DetectorSpec) {
@@ -1023,8 +1027,8 @@ func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, n
 	// An opener inside the join window belongs to the current alert set.
 	// Later openers wait for the next incident.
 	if c.joinAlertSet(finding, now) {
-		// The alert set changed: a learned playbook for the joined symptom is
-		// evaluated against live state, not only the opening alerts' playbooks.
+		// The automatic stage can evaluate a learned playbook for the joined
+		// symptom while it owns the repair.
 		c.attachLearnedActivation(ctx, finding)
 		return
 	}
@@ -1374,6 +1378,16 @@ func (c *Controller) nextWake() (time.Time, string) {
 		earlyDeadline = c.earlyReportWakeLocked()
 		earlyReason = "early report"
 	}
+	if retry := c.closureFreezeRetryAt; retry.After(c.clock()) {
+		if !c.earlyReportPendingLocked() {
+			earlyDeadline = time.Time{}
+		}
+		// A closure write retry does not replace a future handoff bound.
+		if c.awaitingAutomaticRecoveryLocked() == nil || !verificationDeadline.After(c.clock()) {
+			verificationDeadline = time.Time{}
+		}
+		consider(retry, "closure freeze retry")
+	}
 	incidentOpen := c.incidentOpen
 	externalCompleted := c.config.ExternalIncidentsOnly && incidentOpen && c.responderDone
 	retireDeadline := c.retirementWakeLocked(c.clock())
@@ -1661,7 +1675,7 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		c.currentIncidentRequest.InitialProgramRuns = append([]ProgramRun(nil), completion.automatic.Request.InitialProgramRuns...)
 	}
 	if len(completion.priorStages) > 0 && (completion.err == nil || completion.automatic == nil) {
-		c.currentIncidentRequest.PriorStages = mergeLaterStagePasses(completion.priorStages, c.currentIncidentRequest.PriorStages)
+		c.currentIncidentRequest.PriorStages = mergeStageReports(c.currentIncidentRequest.PriorStages, completion.priorStages)
 	}
 	var jobFailed *ResponderJobFailedError
 	var capacityConfiguration *responderCapacityConfigurationError
@@ -1832,7 +1846,8 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		return false
 	}
 	c.mu.Lock()
-	if !c.incidentOpen || c.currentIncidentRequest == nil {
+	if !c.incidentOpen || c.currentIncidentRequest == nil ||
+		now.Before(c.closureFreezeRetryAt) && c.awaitingAutomaticRecoveryLocked() == nil {
 		c.mu.Unlock()
 		return false
 	}
@@ -1844,7 +1859,7 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		return false
 	}
 	requiresStability := early || c.codePath != nil && c.codePath.Selection.DetectorSource == "shell"
-	if early && c.responseStagesRunning || !early && (c.midStage.running || c.closurePreparingLocked()) {
+	if early && c.responseStagesRunning || !early && (c.midStage.running || c.pendingLearnedPassReadyLocked() || c.closurePreparingLocked()) {
 		c.mu.Unlock()
 		return false
 	}
@@ -1896,8 +1911,19 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		if safe {
 			guard = closureGuard.observation
 		}
-	} else if loop != nil && observationErr == nil {
-		guard, observationErr = loop.observeMutations()
+	} else if observationErr == nil {
+		if loop != nil {
+			guard, observationErr = loop.observeMutations()
+		} else if c.incidentGate != nil {
+			var gate *apihistory.MutationGate
+			gate, observationErr = c.incidentGate(request.IncidentID)
+			if observationErr == nil {
+				guard, observationErr = gate.TryObserve()
+				if observationErr == nil && guard == nil {
+					observationErr = errors.New("incident mutation observation is busy")
+				}
+			}
+		}
 		if guard != nil {
 			release = func() { guard.Close() }
 		}
@@ -1954,6 +1980,10 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		return false
 	}
 	c.mu.Lock()
+	if c.midStage.running || c.pendingLearnedPassReadyLocked() || automatic != c.awaitingAutomaticRecoveryLocked() {
+		c.mu.Unlock()
+		return false
+	}
 	// Any observed responder write restarts the stability window, including
 	// the last writes before the responder finished.
 	if safe && guard != nil && c.closureMutationRevision != guard.Revision {
@@ -2081,6 +2111,12 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 			return false
 		}
 	}
+	// Back off freezing the closure after deciding whether automatic recovery
+	// should hand off. A prior freeze failure cannot suppress that decision.
+	if now.Before(c.closureFreezeRetryAt) {
+		c.mu.Unlock()
+		return false
+	}
 	if !verified {
 		finalStates = nil
 	}
@@ -2131,10 +2167,25 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 			}
 		}
 	}
-	if verified && guard != nil {
-		if err := guard.Fence(now); err != nil {
+	if !verified && guard == nil && c.incidentGate != nil {
+		gate, err := c.incidentGate(request.IncidentID)
+		if err == nil {
+			guard, err = gate.TryObserve()
+		}
+		if err != nil || guard == nil {
 			c.mu.Unlock()
-			c.reportBrokerError("fence verified responder", err)
+			return false
+		}
+		defer guard.Close()
+	}
+	if guard != nil {
+		fence := guard.Seal
+		if verified {
+			fence = func() error { return guard.Fence(now) }
+		}
+		if err := fence(); err != nil {
+			c.mu.Unlock()
+			c.reportBrokerError("fence incident writes", err)
 			return false
 		}
 	}
@@ -2148,7 +2199,6 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 			cleared := c.closureStableSince
 			healthClearedAt = &cleared
 		}
-		logIncidentVerified(c.currentIncidentRequest.IncidentID, healthClearedAt, c.responderCompletedAt, verifiedAt)
 	}
 	windowUsed := time.Duration(0)
 	if requiresStability {
@@ -2230,6 +2280,31 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 	sortTimeline(closure.DetectorTimeline)
 	closure.LearnedDetectorFiredBeforeDispatch, closure.LearnedDetectorFiredAfterDispatch,
 		closure.NoLearnedDetectorFired = timelineSummary(closure.DetectorTimeline)
+	projected, err := incidentClosureContract(closure)
+	if err == nil {
+		_, err = c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Begin, At: now, Closure: projected})
+	}
+	if err != nil {
+		policy := c.config.ClosureRetry
+		if c.closureFreezeDelay == 0 {
+			c.closureFreezeDelay = policy.InitialBackoff
+		} else {
+			c.closureFreezeDelay += min(c.closureFreezeDelay, policy.MaxBackoff-c.closureFreezeDelay)
+		}
+		c.closureFreezeRetryAt = now.Add(c.closureFreezeDelay)
+		if c.closureFreezeCauses == nil {
+			c.closureFreezeCauses = map[string]bool{}
+		}
+		cause := err.Error()
+		first := !c.closureFreezeCauses[cause]
+		c.closureFreezeCauses[cause] = true
+		c.mu.Unlock()
+		if first {
+			c.reportBrokerError("freeze closure", err)
+		}
+		return false
+	}
+	c.closureFreezeDelay, c.closureFreezeRetryAt = 0, time.Time{}
 	c.emitLifecycleLocked(&contracts.LifecycleEvent{
 		Event: PhaseClosed, RecordedAt: contractTimestamp(verifiedAt), IncidentId: closure.Request.IncidentID,
 		HealthClearedAt:               optionalContractTimestamp(closure.HealthClearedAt),
@@ -2239,15 +2314,15 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		AfterDispatchFindingKeys:      afterDispatchKeys(closure.DetectorTimeline),
 	})
 	c.timeline = nil
-	projected, err := incidentClosureContract(closure)
-	if err == nil {
-		_, err = c.stepClosureLocked(lifecyclecore.Event{Kind: lifecyclecore.Begin, At: now, Closure: projected})
+	if verified {
+		logIncidentVerified(closure.Request.IncidentID, healthClearedAt, c.responderCompletedAt, verifiedAt)
 	}
-	if err != nil {
-		c.mu.Unlock()
-		c.reportBrokerError("freeze closure", err)
-		return false
+	for _, app := range projected.GetResult().GetPlanApplications() {
+		if slices.ContainsFunc(app.GetPlan().GetActions(), hasUnencodableAction) || slices.ContainsFunc(app.GetActionsApplied(), hasUnencodableAction) {
+			slog.Warn("incident_action_evidence_unencodable", "incident_id", closure.Request.IncidentID, "application_id", app.GetApplicationId())
+		}
 	}
+
 	if early {
 		c.incidentOpen = false
 		c.publishHeldLocked()
@@ -2430,7 +2505,7 @@ func (c *Controller) ExportState() (*contracts.ControllerState, error) {
 			Findings: batch, Deadlines: timestampsContract(pendingBatch.Deadlines), Deadline: optionalTimestamp(pendingBatch.Deadline),
 		},
 		History: evaluationsContract(history), IncidentOpen: c.incidentOpen, ResponderDone: c.responderDone,
-		DispatchError: c.dispatchError, IncidentDetectedAt: optionalTimestamp(c.incidentDetectedAt),
+		DispatchError: validContractText(c.dispatchError), IncidentDetectedAt: optionalTimestamp(c.incidentDetectedAt),
 		IncidentDispatchedAt: optionalTimestamp(c.incidentDispatchedAt), ResponderCompletedAt: optionalTimestamp(c.responderCompletedAt),
 		EscalatedAt:             optionalTimestamp(c.escalatedAt),
 		DispatchFailureAttempts: int32(c.dispatchFailureAttempts),

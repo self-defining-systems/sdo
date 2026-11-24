@@ -37,15 +37,20 @@ func routeErrors(t *testing.T, playbook string) sdk.Finding {
 	return finding
 }
 
-// churnController is an incident that opened on routine churn, whose responder
-// is running with the learned playbook loaded. Each automatic pass attempt
+// churnController is an incident that opened on routine churn, whose automatic stage
+// is checking recovery with the learned playbook loaded. Each automatic pass attempt
 // shows as one count of the health check that guards it.
 func churnController(t *testing.T, now time.Time) (*Controller, *atomic.Int32) {
 	t.Helper()
 	c, _ := alertSetController(t, now, &switchedProbe{id: memory.TrafficDetectorPrefix + "opening", scenario: "ssh"})
 	c.config.RequestMetricsOpens = true
-	c.responderDone = false
-	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
+	c.responderDone = true
+	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
+	c.currentIncidentResult = &IncidentResult{ResolutionPath: "deterministic"}
+	c.currentIncidentRequest.PriorStages = []*contracts.StageReport{{
+		Stage: "deterministic", RecoveryDeadline: contractTimestamp(now.Add(time.Minute)),
+		Mitigations: []*contracts.StageMitigation{{ApplyReceipt: &contracts.PlanApplication{Applied: true}}},
+	}}
 	c.codePath = &CodePath{Selection: CodePathSelection{ResponseStages: []string{"deterministic", "agent"}}}
 	registry, err := program.NewRegistry([]program.Diagnoser{routeFix{id: "route-fix"}}, []program.Mitigator{routeFix{id: "route-fix"}})
 	if err != nil {
@@ -124,6 +129,9 @@ func TestIncidentDoesNotEscalateWhileTheStabilityWindowRuns(t *testing.T) {
 func TestSymptomJoiningDuringThePipelineIsEvaluatedAfterIt(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	c, passes := churnController(t, now)
+	c.currentIncidentRequest.PriorStages = nil
+	c.responderDone = false
+	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_RUNNING
 	c.responseStagesRunning = true
 	c.admitActivation(context.Background(), routeErrors(t, "route-fix"), now, sdk.DetectorSpec{})
 	c.resumePendingLearnedPass(context.Background())
@@ -133,6 +141,16 @@ func TestSymptomJoiningDuringThePipelineIsEvaluatedAfterIt(t *testing.T) {
 	}
 	c.mu.Lock()
 	c.responseStagesRunning = false
+	c.responderDone = true
+	c.dispatchState = contracts.DispatchState_DISPATCH_STATE_COMPLETED
+	c.currentIncidentRequest.PriorStages = []*contracts.StageReport{{Stage: "deterministic",
+		RecoveryWait: &contracts.RecoveryWait{ExitReason: contracts.RecoveryWait_EXIT_REASON_NOTHING_APPLIED}}}
+	report := deterministicStageReport(c.currentIncidentRequest.PriorStages)
+	c.automaticRecoveryLocked(now, report, false, recoveryCheck{}, nil)
+	if report.GetHandoffSelected() {
+		c.mu.Unlock()
+		t.Fatal("handoff selected while the pipeline's joined symptom still needed evaluation")
+	}
 	c.mu.Unlock()
 	c.resumePendingLearnedPass(context.Background())
 	c.Wait()
@@ -150,5 +168,43 @@ func TestSymptomJoiningDuringAPassQueuesOneMorePass(t *testing.T) {
 	c.admitActivation(context.Background(), routeErrors(t, "route-fix"), now, sdk.DetectorSpec{})
 	if !c.midStage.dirty {
 		t.Fatal("the joined symptom queued no pass behind the running one")
+	}
+}
+
+func TestHandoffWaitsForRunningPassAndPreservesItsReport(t *testing.T) {
+	now := time.Unix(1000, 0).UTC()
+	c, _ := churnController(t, now)
+	c.CheckHealth = nil
+	c.currentIncidentRequest.ResponseDeadline = now.Add(time.Hour)
+	c.tuneMidStage = func(stage *DeterministicResponseStage) {
+		// Model a pass that produced no additional mitigation. The previous
+		// apply receipt must remain even when only that pass can report it.
+		stage.NewLoop = func(IncidentRequest) *ResponderLoop { return nil }
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		report := deterministicStageReport(c.currentIncidentRequest.PriorStages)
+		c.automaticRecoveryLocked(c.automaticDeadlineLocked(report).Add(time.Second), report, false, recoveryCheck{}, nil)
+		if report.GetHandoffSelected() {
+			t.Error("handoff selected while an automatic pass was running")
+		}
+	}
+	c.admitActivation(t.Context(), routeErrors(t, "route-fix"), now, sdk.DetectorSpec{})
+	c.Wait()
+	c.mu.Lock()
+	report := deterministicStageReport(c.currentIncidentRequest.PriorStages)
+	if !playbookWrote(report) {
+		c.mu.Unlock()
+		t.Fatal("later pass lost the earlier apply receipt")
+	}
+	c.automaticRecoveryLocked(c.automaticDeadlineLocked(report).Add(time.Second), report, false, recoveryCheck{}, nil)
+	if !report.GetHandoffSelected() || c.responseEntry(*c.currentIncidentRequest) != dispatchStagedHandoff {
+		c.mu.Unlock()
+		t.Fatal("drained automatic stage did not select responder handoff")
+	}
+	c.mu.Unlock()
+	c.attachLearnedActivation(t.Context(), routeErrors(t, "route-fix"))
+	c.Wait()
+	if c.midStage.passes != 1 {
+		t.Fatalf("automatic pass count after handoff = %d, want 1", c.midStage.passes)
 	}
 }

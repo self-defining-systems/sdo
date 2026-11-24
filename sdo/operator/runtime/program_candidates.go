@@ -27,6 +27,7 @@ type ProgramRun struct {
 	Bindings        program.Bindings `json:"bindings"`
 	Verdict         program.Verdict  `json:"verdict"`
 	Duration        time.Duration    `json:"duration"`
+	AskedAt         time.Time        `json:"-"`
 	ProgramRevision string           `json:"program_revision,omitempty"`
 	// MitigateCommand is the command that applies this playbook with these
 	// bindings; set on a matching diagnosis that has a fix.
@@ -209,7 +210,7 @@ func SelectKeyedProgramCandidates(ctx context.Context, registry program.ProgramR
 				return
 			}
 			verdict := program.RunDiagnose(ctx, diagnoser, view, candidate.bindings, deadline)
-			results <- ProgramRun{FindingFingerprint: candidate.fingerprint, BindingSource: candidate.source, Retrieval: candidate.retrieval, ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: verdict, Duration: lifecycleio.Since(started), suspectRank: candidate.rank}
+			results <- ProgramRun{FindingFingerprint: candidate.fingerprint, BindingSource: candidate.source, Retrieval: candidate.retrieval, ProgramID: candidate.id, Bindings: candidate.bindings, Verdict: verdict, Duration: lifecycleio.Since(started), AskedAt: started, suspectRank: candidate.rank}
 		}(item)
 	}
 	runs := make([]ProgramRun, 0, len(candidates))

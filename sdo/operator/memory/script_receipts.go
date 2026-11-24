@@ -16,7 +16,7 @@ import (
 // It adds no command bytes, benchmark verdicts, or resolved credential values.
 func CaptureRepairReceipts(root, incidentID string, outcome *contracts.OutcomeRecord) error {
 	if outcome == nil || outcome.GetIncidentId() != incidentID {
-		return fmt.Errorf("script origin incident mismatch")
+		return fmt.Errorf("repair receipt incident mismatch")
 	}
 	dir, err := IncidentCorpusDir(root, incidentID)
 	if err != nil {
@@ -32,7 +32,7 @@ func CaptureRepairReceipts(root, incidentID string, outcome *contracts.OutcomeRe
 			if !action.GetSuccess() || action.GetActionId() == "" || action.GetStartedAt() == nil || action.GetCompletedAt() == nil {
 				continue
 			}
-			receipt := program.ScriptOriginReceipt{ScriptDigest: action.GetScriptDigest(), ID: action.GetActionId(), IncidentID: incidentID, Success: true, StartedAt: action.GetStartedAt().AsTime(), CompletedAt: action.GetCompletedAt().AsTime()}
+			receipt := program.RecordedRepairReceipt{ScriptDigest: action.GetScriptDigest(), ID: action.GetActionId(), IncidentID: incidentID, Success: true, StartedAt: action.GetStartedAt().AsTime(), CompletedAt: action.GetCompletedAt().AsTime()}
 			if receipt.CompletedAt.Before(receipt.StartedAt) {
 				continue
 			}

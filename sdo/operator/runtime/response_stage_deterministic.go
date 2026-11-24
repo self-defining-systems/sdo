@@ -145,14 +145,11 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			return report, err
 		}
 	}
+	loop.locked(func() { loop.recoverInterruptedScripts(ctx) })
 	if loop.stageProgress == nil {
 		loop.stageProgress = map[string]responseStageProgress{}
 	}
 	progress := loop.stageProgress[stage.Name()]
-	for _, prior := range state.PriorStages {
-		loop.restoreScriptRefusals(prior)
-	}
-	loop.restoreScriptRefusals(progress.Report)
 	if progress.Report != nil {
 		report = proto.Clone(progress.Report).(*contracts.StageReport)
 		state.Coverage = cloneCoverage(progress.Coverage)
@@ -160,6 +157,15 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		state.Request.InitialProgramRuns = append([]ProgramRun(nil), progress.InitialProgramRuns...)
 		loop.Request = state.Request
 	}
+	if state.Refresh {
+		if prior := deterministicStageReport(state.PriorStages); prior != nil {
+			report = mergeStagePass(prior, report)
+		}
+		if !playbookWrote(report) {
+			report.ApplyCompletedAt, report.RecoveryWait = nil, nil
+		}
+	}
+
 	if report.StartedAt == nil {
 		report.StartedAt = startedAt
 	}
@@ -175,11 +181,12 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	// checkpoint. Recover it by immutable plan identity without repeating it.
 	if progress.Report != nil {
 		for _, attempt := range report.Mitigations {
-			if attempt.PlanId == "" || attempt.ApplyReceipt != nil {
+			if attempt.PlanId == "" {
 				continue
 			}
 			for _, app := range loop.ApplicationEvidence() {
-				if slices.Contains(app.PlanIDs, attempt.PlanId) {
+				if slices.Contains(app.PlanIDs, attempt.PlanId) && (attempt.ApplyReceipt == nil ||
+					app.Result.Applied && hasAppliedScript(app.Result.Plan.Actions) && app.Error != "") {
 					receipt, err := recordedPlanContract(app)
 					if err != nil {
 						return report, err
@@ -223,11 +230,11 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 		if runs, err = stage.reaskUnanswered(ctx, loop, state, runs); err != nil {
 			return report, err
 		}
+		report.Diagnoses = mergeStageDiagnoses(report.Diagnoses, stageDiagnoses(runs))
 		if state.Refresh {
 			runs = append(append([]ProgramRun(nil), state.Request.InitialProgramRuns...), runs...)
 		}
 		state.Request.InitialProgramRuns = runs
-		report.Diagnoses = mergeStageDiagnoses(report.Diagnoses, stageDiagnoses(runs))
 		state.Coverage = buildPlaybookCoverage(state.Findings, state.Request.InitialProgramRuns, loop.lastDiagnosisView, loop.Trust)
 		state.Request.PlaybookCoverage = cloneCoverage(state.Coverage)
 		loop.Request = state.Request
@@ -440,9 +447,6 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 			}
 			attempt.Result = "apply_error"
 			attempt.Error = planResponse.Error
-			if planResponse.FailureReason == "script_unprovenanced" {
-				attempt.SkipReason = "script_unprovenanced"
-			}
 			if err := save(false); err != nil {
 				return report, err
 			}
@@ -583,7 +587,7 @@ func recordedPlanContract(application RecordedPlanApplication) (*contracts.PlanA
 	receipt.StartedAt = optionalTimestamp(application.StartedAt)
 	receipt.CompletedAt = optionalTimestamp(application.CompletedAt)
 	receipt.Error = application.Error
-	return receipt, nil
+	return repairContractText(receipt), nil
 }
 
 // Protobuf receipts contain oneofs; encoding/json cannot reconstruct them.

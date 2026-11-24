@@ -24,6 +24,7 @@ import (
 type scriptCaptureStore struct {
 	maps                           typedcore.ConfigMapInterface
 	namespace, application, jobUID string
+	owner                          metav1.OwnerReference
 }
 
 const scriptImageChunkBytes = 384 << 10
@@ -34,7 +35,7 @@ func (s scriptCaptureStore) save(ctx context.Context, path string, capture progr
 	labels := map[string]string{"app.kubernetes.io/managed-by": "sdo", "sdo.dev/script-capture": s.application}
 	manifest, err := s.maps.Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
-		manifest, err = s.maps.Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: s.namespace, Labels: labels}, Data: map[string]string{"job_uid": s.jobUID, "path": path}}, metav1.CreateOptions{})
+		manifest, err = s.maps.Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: s.namespace, Labels: labels, OwnerReferences: []metav1.OwnerReference{s.owner}}, Data: map[string]string{"job_uid": s.jobUID, "path": path}}, metav1.CreateOptions{})
 	}
 	if err != nil {
 		return "", err
@@ -77,7 +78,7 @@ func (s scriptCaptureStore) save(ctx context.Context, path string, capture progr
 		for offset := 0; offset < len(raw); offset += scriptImageChunkBytes {
 			end := min(len(raw), offset+scriptImageChunkBytes)
 			chunkName := fmt.Sprintf("%s-%s-%d", name, stage.name, count)
-			chunk := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: chunkName, Namespace: s.namespace, Labels: labels}, BinaryData: map[string][]byte{"image": raw[offset:end]}}
+			chunk := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: chunkName, Namespace: s.namespace, Labels: labels, OwnerReferences: []metav1.OwnerReference{s.owner}}, BinaryData: map[string][]byte{"image": raw[offset:end]}}
 			existing, getErr := s.maps.Get(ctx, chunkName, metav1.GetOptions{})
 			if apierrors.IsNotFound(getErr) {
 				_, err = s.maps.Create(ctx, chunk, metav1.CreateOptions{})
@@ -126,7 +127,7 @@ func (s scriptCaptureStore) receipt(ctx context.Context, receipt program.ScriptA
 		return err
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256(raw))[:24]
-	_, err = s.maps.Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: s.application + "-api-" + digest, Namespace: s.namespace, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo", "sdo.dev/script-capture": s.application}}, Data: map[string]string{"job_uid": s.jobUID, "receipt.json": string(raw)}}, metav1.CreateOptions{})
+	_, err = s.maps.Create(ctx, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: s.application + "-api-" + digest, Namespace: s.namespace, OwnerReferences: []metav1.OwnerReference{s.owner}, Labels: map[string]string{"app.kubernetes.io/managed-by": "sdo", "sdo.dev/script-capture": s.application}}, Data: map[string]string{"job_uid": s.jobUID, "receipt.json": string(raw)}}, metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
 		return nil
 	}

@@ -24,11 +24,12 @@ import (
 
 // TypedPlanClient limits plan mutations to the application kinds the SDK reads.
 type TypedPlanClient struct {
-	ScriptImage        string
-	ScriptPollInterval time.Duration
-	Client             kubernetes.Interface
-	ExecConfig         *rest.Config
-	ProtectedNamespace string
+	ScriptImage, ScriptNamespace, ScriptNode                            string
+	ScriptRepositoryMount, ScriptRepositoryPVC, ScriptRepositorySubPath string
+	ScriptPollInterval                                                  time.Duration
+	Client                                                              kubernetes.Interface
+	ExecConfig                                                          *rest.Config
+	ProtectedNamespace                                                  string
 }
 
 func (c TypedPlanClient) Get(ctx context.Context, ref sdk.ObjectRef) (*unstructured.Unstructured, error) {

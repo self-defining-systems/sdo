@@ -3,8 +3,11 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
+	"google.golang.org/protobuf/encoding/protojson"
 	utiljson "k8s.io/apimachinery/pkg/util/json"
 	"sdo.dev/operator/planwire"
+	"slices"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
@@ -18,24 +21,18 @@ import (
 // Applied actions, pending-rollout observations and verification evidence cross
 // the durable boundary; pending observations never become verification credit.
 func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
-	if err := r.Plan.Validate(); err != nil {
-		return nil, err
-	}
 	plan := &contracts.Plan{Rationale: r.Plan.Rationale}
-	for _, action := range r.Plan.Actions {
-		converted, err := planActionProto(action)
-		if err != nil {
-			return nil, err
-		}
-		plan.Actions = append(plan.Actions, converted)
-	}
 	application := &contracts.PlanApplication{RolledBack: r.RolledBack, RollbackError: r.RollbackError, Plan: plan, Applied: r.Applied, DryRun: r.DryRun, VerificationCompleted: r.VerificationCompleted, VerificationPassed: r.VerificationPassed, FinalEquivalenceVerified: r.FinalEquivalenceVerified, FinalVerificationBasis: r.FinalVerificationBasis, SettlementRejectionReason: r.SettlementRejectionReason, RolloutPending: r.RolloutPending, RecoveryWait: r.RecoveryWait, EffectConfirmation: r.EffectConfirmation}
+	for _, action := range r.Plan.Actions {
+		plan.Actions = append(plan.Actions, historicalActionProto(action))
+	}
 	for _, action := range r.ActionsApplied {
-		converted, err := planActionProto(action)
-		if err != nil {
-			return nil, err
-		}
-		application.ActionsApplied = append(application.ActionsApplied, converted)
+		application.ActionsApplied = append(application.ActionsApplied, historicalActionProto(action))
+	}
+	if slices.ContainsFunc(plan.Actions, hasUnencodableAction) || slices.ContainsFunc(application.ActionsApplied, hasUnencodableAction) {
+		unverified := false
+		application.FinalEquivalenceVerified = &unverified
+		application.FinalVerificationBasis = ""
 	}
 	if r.Applied {
 		verdict := contracts.Verdict_RESULT_UNKNOWN
@@ -50,13 +47,13 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 	for _, effect := range r.observedObjectEffects() {
 		encoded := &contracts.PlanObjectEffect{Operation: effect.Operation, Ref: planRefProto(effect.Ref), Uid: effect.UID, State: effect.State, Confirmed: effect.Confirmed, Irreversible: effect.Irreversible, Reason: effect.Reason}
 		if effect.DeletedPreImage != nil {
-			object := effect.DeletedPreImage.DeepCopy().Object
-			sdk.ProjectWebhookCABundles(object)
-			image, err := structpb.NewStruct(object)
-			if err != nil {
-				return nil, fmt.Errorf("encode delete receipt")
+			if image, err := structpb.NewStruct(effect.DeletedPreImage.Object); err == nil {
+				projected := image.AsMap()
+				sdk.ProjectWebhookCABundles(projected)
+				encoded.DeletedPreImage, _ = structpb.NewStruct(projected)
+			} else {
+				encoded.Reason = "unencodable: deleted_pre_image"
 			}
-			encoded.DeletedPreImage = image
 		}
 		application.ObjectEffects = append(application.ObjectEffects, encoded)
 	}
@@ -91,18 +88,64 @@ func (r PlanApplicationResult) Proto() (*contracts.PlanApplication, error) {
 	return application, nil
 }
 
+// Embedding Action lets the receipt keep its position through a restore.
+// The executor and executable encoder reject this private action type.
+type unencodableAction struct {
+	program.Action `json:"-"`
+	Type           string
+	Ref            sdk.ObjectRef
+	Reason         string
+}
+
+// This encoding is for historical receipts only. Execution uses ActionProto.
+func historicalActionProto(action program.Action) *contracts.Action {
+	gap, exists := action.(unencodableAction)
+	if !exists {
+		encoded, err := planActionProto(action)
+		if err == nil {
+			if _, err = protojson.Marshal(encoded); err == nil {
+				return encoded
+			}
+		}
+		gap = unencodableActionFor(action)
+	}
+	return &contracts.Action{Kind: &contracts.Action_Unencodable{Unencodable: &contracts.UnencodableAction{
+		ActionType: gap.Type, Ref: planRefProto(gap.Ref), Reason: gap.Reason,
+	}}}
+}
+
+func unencodableActionFor(action program.Action) unencodableAction {
+	if gap, ok := action.(unencodableAction); ok {
+		return gap
+	}
+	ref, _ := planActionRef(action)
+	for _, field := range []*string{&ref.APIVersion, &ref.Kind, &ref.Namespace, &ref.Name} {
+		*field = strings.ToValidUTF8(*field, "")
+	}
+	return unencodableAction{Type: fmt.Sprintf("%T", action), Ref: ref, Reason: "unencodable: action_encoding"}
+}
+
+func hasUnencodableAction(action *contracts.Action) bool { return action.GetUnencodable() != nil }
+
+func historicalActionState(action *contracts.Action) program.Action {
+	if gap := action.GetUnencodable(); gap != nil {
+		return unencodableAction{Type: gap.GetActionType(), Ref: objectRefState(gap.GetRef()), Reason: gap.GetReason()}
+	}
+	return planActionState(action)
+}
+
 func planApplicationState(application *contracts.PlanApplication) RecordedPlanApplication {
 	result := PlanApplicationResult{RolledBack: application.GetRolledBack(), RollbackError: application.GetRollbackError(), Applied: application.GetApplied(), DryRun: application.GetDryRun(), FinalEquivalenceVerified: application.FinalEquivalenceVerified, FinalVerificationBasis: application.GetFinalVerificationBasis(), SettlementRejectionReason: application.GetSettlementRejectionReason(), RolloutPending: application.GetRolloutPending(), RecoveryWait: application.GetRecoveryWait(), EffectConfirmation: application.GetEffectConfirmation()}
 	if application.GetPlan() != nil {
 		result.Plan.Rationale = application.GetPlan().GetRationale()
 		for _, action := range application.GetPlan().GetActions() {
-			if decoded := planActionState(action); decoded != nil {
+			if decoded := historicalActionState(action); decoded != nil {
 				result.Plan.Actions = append(result.Plan.Actions, decoded)
 			}
 		}
 	}
 	for _, action := range application.GetActionsApplied() {
-		if decoded := planActionState(action); decoded != nil {
+		if decoded := historicalActionState(action); decoded != nil {
 			result.ActionsApplied = append(result.ActionsApplied, decoded)
 		}
 	}

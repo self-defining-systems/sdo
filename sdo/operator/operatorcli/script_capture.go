@@ -25,6 +25,7 @@ type scriptRecorder struct {
 	persistImage   func(context.Context, string, program.ScriptObjectCapture) (string, error)
 	checkpoint     func([]program.ScriptObjectCapture, []program.ScriptAPIReceipt) error
 	written        map[string]bool
+	deleteTargets  map[string]map[string]string
 	ctx            context.Context
 	upstream       *url.URL
 	transport      http.RoundTripper
@@ -36,7 +37,7 @@ type scriptRecorder struct {
 }
 
 func newScriptRecorder(ctx context.Context, u *url.URL, t http.RoundTripper) *scriptRecorder {
-	return &scriptRecorder{ctx: ctx, upstream: u, transport: t, objects: map[string]*program.ScriptObjectCapture{}, written: map[string]bool{}}
+	return &scriptRecorder{ctx: ctx, upstream: u, transport: t, objects: map[string]*program.ScriptObjectCapture{}, written: map[string]bool{}, deleteTargets: map[string]map[string]string{}}
 }
 func (r *scriptRecorder) Gap() {
 	r.mu.Lock()
@@ -76,26 +77,42 @@ func (r *scriptRecorder) Record(e apihistory.Event, raw []byte) {
 	if path == "" {
 		return
 	}
-	write := e.Verb != "get" && e.Verb != "list" && e.Verb != "watch" || e.Subresource == "exec" || e.Subresource == "attach"
+	write := apihistory.WriteClass(e)
+	deleteCollection := e.Verb == "delete" && e.Name == ""
 	if e.Phase == "start" && write {
 		if e.Name != "" {
-			r.preimage(path, e)
-		} else if e.Verb == "deletecollection" {
-			object, err := r.read(path)
+			if uid := r.preimage(path, e.Verb == "delete" && e.Resource == "pods"); uid != "" {
+				r.deleteTargets[e.RequestID] = map[string]string{path: uid}
+			}
+		} else if deleteCollection {
+			object, err := r.read(path, e.CollectionQuery)
 			if err != nil || object == nil {
 				r.gap("collection preimages unavailable")
 			} else {
 				items, _, _ := unstructured.NestedSlice(object.Object, "items")
+				targets := map[string]string{}
 				for _, item := range items {
 					m, ok := item.(map[string]any)
 					if !ok {
 						continue
 					}
 					obj := &unstructured.Unstructured{Object: m}
+					if obj.GetKind() == "" {
+						obj.SetKind(strings.TrimSuffix(object.GetKind(), "List"))
+					}
+					if obj.GetAPIVersion() == "" {
+						obj.SetAPIVersion(object.GetAPIVersion())
+					}
+					if obj.GetNamespace() == "" {
+						obj.SetNamespace(e.Namespace)
+					}
 					copy := e
 					copy.Name = obj.GetName()
-					r.retain(scriptEventPath(copy), obj, nil)
+					target := scriptEventPath(copy)
+					r.retain(target, obj, nil)
+					targets[target] = string(obj.GetUID())
 				}
+				r.deleteTargets[e.RequestID] = targets
 			}
 		}
 	}
@@ -103,16 +120,6 @@ func (r *scriptRecorder) Record(e apihistory.Event, raw []byte) {
 		return
 	}
 	receipt := program.ScriptAPIReceipt{Method: e.Verb, Path: path, Subresource: e.Subresource, Status: e.Status, StartedAt: e.Started, CompletedAt: e.Finished, Omission: e.Omission}
-	if r.persistReceipt != nil {
-		if err := r.persistReceipt(r.ctx, receipt); err != nil {
-			r.gap("private API receipt storage unavailable")
-		}
-	}
-	if len(r.receipts) < 512 {
-		r.receipts = append(r.receipts, receipt)
-	} else {
-		r.gap("inline API receipt inventory clipped; complete receipts remain in private capture storage")
-	}
 	if e.Omission != "" && e.Omission != "upgrade_metadata_only" && e.Omission != "redacted_stream_metadata_only" && e.Omission != "redacted_log_metadata_only" {
 		r.gap("API response capture omitted: " + e.Omission)
 	}
@@ -121,7 +128,7 @@ func (r *scriptRecorder) Record(e apihistory.Event, raw []byte) {
 		if object.UnmarshalJSON(raw) == nil && object.GetName() != "" && object.GetKind() != "Status" {
 			if e.Name == "" {
 				path += "/" + url.PathEscape(object.GetName())
-				if write && e.Verb == "create" {
+				if write && e.Verb == "post" {
 					r.written[path] = true
 					if r.objects[path] == nil {
 						r.objects[path] = &program.ScriptObjectCapture{BeforeAbsent: true}
@@ -132,31 +139,72 @@ func (r *scriptRecorder) Record(e apihistory.Event, raw []byte) {
 			r.retain(path, nil, object)
 		}
 	}
+	uids := r.deleteTargets[e.RequestID]
+	delete(r.deleteTargets, e.RequestID)
+	targets := []string{path}
+	if deleteCollection {
+		targets = nil
+		for target := range uids {
+			targets = append(targets, target)
+		}
+		sort.Strings(targets)
+	}
 	if write && (e.Status >= 200 && e.Status < 300 || e.Status == 101) {
-		for target, capture := range r.objects {
-			if target == path || e.Verb == "deletecollection" && strings.HasPrefix(target, path+"/") {
-				capture.Written = true
+		for _, target := range targets {
+			capture := r.objects[target]
+			if capture == nil {
+				continue
+			}
+			capture.Written = true
+			if capture.Ref.Name != "" {
+				receipt.Written = append(receipt.Written, capture.Ref)
+				if uid := uids[target]; uid != "" {
+					if receipt.WrittenUIDs == nil {
+						receipt.WrittenUIDs = map[string]string{}
+					}
+					receipt.WrittenUIDs[capture.Ref.Name] = uid
+				}
 			}
 		}
 	}
+	if r.persistReceipt != nil {
+		if err := r.persistReceipt(r.ctx, receipt); err != nil {
+			r.gap("private API receipt storage unavailable")
+		}
+	}
+	if len(r.receipts) < 512 {
+		r.receipts = append(r.receipts, receipt)
+	} else {
+		r.gap("inline API receipt inventory clipped; complete receipts remain in private capture storage")
+	}
 
 }
-func (r *scriptRecorder) preimage(path string, e apihistory.Event) {
-	if r.written[path] {
-		return
+func (r *scriptRecorder) preimage(path string, podDelete bool) string {
+	first := !r.written[path]
+	if !first && !podDelete {
+		return ""
 	}
 	r.written[path] = true
-	object, err := r.read(path)
-	if err != nil {
-		r.gap("first-write preimage unavailable: " + path)
-		r.objects[path] = &program.ScriptObjectCapture{}
-		return
+	object, err := r.read(path, "")
+	switch {
+	case err != nil:
+		r.gap("preimage unavailable: " + path)
+		if first {
+			r.objects[path] = &program.ScriptObjectCapture{}
+		}
+	case object == nil:
+		if first {
+			r.objects[path] = &program.ScriptObjectCapture{BeforeAbsent: true}
+		}
+	default:
+		if first {
+			r.retain(path, object, nil)
+		}
+		if podDelete {
+			return string(object.GetUID())
+		}
 	}
-	if object == nil {
-		r.objects[path] = &program.ScriptObjectCapture{BeforeAbsent: true}
-		return
-	}
-	r.retain(path, object, nil)
+	return ""
 }
 func (r *scriptRecorder) retain(path string, before, after *unstructured.Unstructured) {
 	before = scriptCaptureImage(path, before)
@@ -210,12 +258,12 @@ func (r *scriptRecorder) retain(path string, before, after *unstructured.Unstruc
 	r.bytes += delta
 	r.objects[path] = &candidate
 }
-func (r *scriptRecorder) read(path string) (*unstructured.Unstructured, error) {
+func (r *scriptRecorder) read(path, query string) (*unstructured.Unstructured, error) {
 	ctx, cancel := context.WithTimeout(r.ctx, 2*time.Second)
 	defer cancel()
 	target := *r.upstream
 	target.Path = strings.TrimSuffix(target.Path, "/") + path
-	target.RawQuery = ""
+	target.RawQuery = query
 	req, err := http.NewRequestWithContext(ctx, "GET", target.String(), nil)
 	if err != nil {
 		return nil, err
@@ -251,7 +299,7 @@ func (r *scriptRecorder) settle(out *program.ScriptExecutionResult) {
 	}
 	sort.Strings(keys)
 	for _, path := range keys {
-		object, err := r.read(path)
+		object, err := r.read(path, "")
 		if err != nil {
 			r.gap("settled postimage unavailable: " + path)
 		} else if object != nil {

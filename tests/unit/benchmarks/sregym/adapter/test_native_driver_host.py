@@ -68,7 +68,7 @@ def test_native_host_requires_explicit_kind_lane(monkeypatch: pytest.MonkeyPatch
         )
 
 
-@pytest.mark.parametrize(("schema_version", "provenance"), [(1, True), (13, True), (13, False)])
+@pytest.mark.parametrize(("schema_version", "provenance"), [(1, True), (13, True), (14, True), (14, False)])
 def test_seeded_workspace_installs_controller_without_running_the_lifecycle(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, schema_version: int, provenance: bool
 ) -> None:

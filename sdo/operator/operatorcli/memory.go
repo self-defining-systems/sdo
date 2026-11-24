@@ -74,7 +74,7 @@ commands:
         accepted learning before resubmitting.
         --replay (or SDO_REPLAY, default on) selects the run policy. Off skips
         all corpus requirements and replay; compilation, imports, formatting
-        and successful accepted RunScript receipt provenance remain required.
+        and authored-file hygiene remain required.
         Coverage gaps (a verified cause without a program, a skipped healthy replay,
         a recorded fault no detector reaches, a health-probe scenario on the
         default latency bound: traffic.default-latency, a map component the
