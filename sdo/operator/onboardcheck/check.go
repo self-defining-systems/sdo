@@ -455,7 +455,7 @@ func runMetrics(ctx context.Context, cfg Config, report *Report) error {
 	// Job metrics are judged for the classes the operations trigger even when
 	// no operation enters through them.
 	for _, e := range cfg.Map.Entries {
-		if _, ok := entries[e.Service]; !ok && backgroundMetric.MatchString(e.Metric) && e.Labels.Route != "" {
+		if _, ok := entries[e.Service]; !ok && cfg.Map.Background(e) && e.Labels.Route != "" {
 			entries[e.Service] = &entryState{entry: e, declared: map[string]bool{}, attributed: map[string]bool{}}
 		}
 	}

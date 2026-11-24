@@ -325,32 +325,10 @@ func (s *run) candidateManifests() map[string]*detector {
 	return byPath
 }
 
-// upkeepMigration lets Upkeep touch detectors only as part of a schema
-// migration: the same change must stamp the new schema version, and the
-// accepted detector registrations must survive it unchanged, modulo the
-// normalization of playbook references to logical IDs.
+// upkeepMigration allows only the detector files and schema stamp produced
+// by the registered Upkeep transformation of the independently exported base.
 func (s *run) upkeepMigration(base string) error {
-	fail := func(message string) {
-		s.add(Ownership, Diagnostic{Rule: RuleUpkeepMigration, Path: layout.DetectorsDir, Message: message})
-	}
-	if !containsPath(s.changed, layout.SchemaVersionFile) {
-		fail("upkeep may change detectors only together with a schema-version migration")
-		return nil
-	}
-	// Recompute the registered transformation from the independently exported
-	// accepted tree. A schema stamp is not authority to change detector behavior,
-	// including when v1 packages move to their canonical ID directories.
-	changed, err := layout.Migrate(base)
-	if err != nil {
-		return fmt.Errorf("plan accepted migration: %w", err)
-	}
-	if !changed {
-		fail("upkeep requires an older accepted schema")
-		return nil
-	}
-	// The migration also drops Go-installed generic detectors Go no longer
-	// plans (memory.WriteSchema); nothing else about a detector may change.
-	if err := memory.PruneStrandedGenericDetectors(base); err != nil {
+	if err := memory.WriteSchema(base); err != nil {
 		return fmt.Errorf("plan accepted migration: %w", err)
 	}
 	expected, err := migrationDetectorFiles(base)
@@ -362,22 +340,8 @@ func (s *run) upkeepMigration(base string) error {
 		return err
 	}
 	if !reflect.DeepEqual(expected, actual) {
-		fail("migration may change detector source only by the registered schema transformation")
-	}
-	legacy, err := layout.AcceptedDetectors(base)
-	if err != nil {
-		return fmt.Errorf("baseline manifest: %w", err)
-	}
-	after := s.candidateManifests()
-	if len(legacy) != len(after) {
-		fail(fmt.Sprintf("migration changed the detector count from %d to %d", len(legacy), len(after)))
-		return nil
-	}
-	for _, prior := range legacy {
-		current, ok := after[layout.DetectorManifestPath(prior.DetectorClass(), prior.ID)]
-		if !ok || (current.manifest != nil && !reflect.DeepEqual(prior, *current.manifest)) {
-			fail(fmt.Sprintf("migration changed detector %s", prior.ID))
-		}
+		s.add(Ownership, Diagnostic{Rule: RuleUpkeepMigration, Path: layout.DetectorsDir,
+			Message: "upkeep may change detectors only by the registered schema and generated policy transformation"})
 	}
 	return nil
 }
@@ -450,8 +414,14 @@ func (s *run) detectorOwnership(base string) error {
 
 func migrationDetectorFiles(root string) (map[string]string, error) {
 	files := map[string]string{}
+	schema, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(layout.SchemaVersionFile)))
+	if err == nil {
+		files[layout.SchemaVersionFile] = string(schema)
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
 	base := filepath.Join(root, filepath.FromSlash(layout.DetectorsDir))
-	err := filepath.WalkDir(base, func(path string, entry os.DirEntry, err error) error {
+	err = filepath.WalkDir(base, func(path string, entry os.DirEntry, err error) error {
 		if os.IsNotExist(err) {
 			return nil
 		}
@@ -465,7 +435,7 @@ func migrationDetectorFiles(root string) (map[string]string, error) {
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(base, path)
+		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
 		}

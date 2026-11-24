@@ -72,7 +72,7 @@ func WriteGoal(checkout, application, objective string, sources []layout.Source)
 	return writeBootstrapFile(checkout, layout.GoalFile, body)
 }
 
-// WriteSchema initializes the current operational-memory schema for a fresh repository.
+// WriteSchema initializes or upgrades operational memory and refreshes installed request-metrics policy.
 func WriteSchema(checkout string) error {
 	if checkout == "" {
 		return fmt.Errorf("checkout is required")
@@ -87,6 +87,9 @@ func WriteSchema(checkout string) error {
 		if err := PruneStrandedGenericDetectors(checkout); err != nil {
 			return fmt.Errorf("migrate operational memory: %w", err)
 		}
+	}
+	if err := refreshInstalledRequestMetrics(checkout); err != nil {
+		return fmt.Errorf("refresh request-metrics: %w", err)
 	}
 	// The module name belongs to whoever authored the module; rewriting it
 	// would change the accepted head under a pending install.

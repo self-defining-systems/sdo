@@ -141,16 +141,13 @@ type SecretMetadata struct {
 	Type      corev1.SecretType `json:"type"`
 	Labels    map[string]string `json:"labels,omitempty"`
 	DataKeys  []string          `json:"dataKeys"`
-	// DataChangedAt is when a manager other than SDO last wrote the Secret's
-	// data, from metadata only: the latest managedFields time of a non-SDO
-	// manager that owns data fields. Creation time stands in when the object
-	// records no field ownership at all, and for data owned by the API
-	// server's before-first-apply entry. Zero when no foreign manager owns its
-	// data (SDO alone wrote it); the stale-reader rules then stay silent.
+	// DataChangedAt is a legacy field carrying the latest managedFields time
+	// of a non-SDO manager that owns data fields. It records field ownership
+	// metadata, which cannot establish when the Secret's contents changed.
 	DataChangedAt time.Time `json:"dataChangedAt,omitzero"`
 }
-    SecretMetadata exposes only identity, type, labels, data key names and when
-    the data last changed. It cannot hold Secret values.
+    SecretMetadata exposes only identity, type, labels, data key names and a
+    legacy field-ownership timestamp. It cannot hold Secret values.
 
 func SecretMetadataFrom(secret corev1.Secret) SecretMetadata
     SecretMetadataFrom discards values, annotations and all other Secret fields.

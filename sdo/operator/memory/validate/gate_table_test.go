@@ -584,7 +584,7 @@ var gateRows = []gateRow{
 		edit: func(t *testing.T, r string) {
 			copyTree(t, filepath.Join("testdata", "good", ".sdo", "diagnostics"), filepath.Join(r, ".sdo", "diagnostics"))
 		}},
-	{name: "upkeep cannot change detectors without a schema migration", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, rules: []string{RuleUpkeepMigration}, edit: gateWrite(gateCache, "package cache\n\n// x\n")},
+	{name: "upkeep cannot hand-edit a detector", kind: gateOwnership, actor: Upkeep, phase: InitialPhase, rules: []string{RuleUpkeepMigration}, edit: gateWrite(gateCache, "package cache\n\n// x\n")},
 	{name: "unknown actor", kind: gateOwnership, actor: Actor("intern"), phase: InitialPhase, rules: []string{RuleUnknownActor}, edit: gateWrite("app.txt", "x\n")},
 	{name: "unknown phase", kind: gateOwnership, actor: Responder, phase: Phase("whenever"), rules: []string{RuleUnknownPhase}, edit: gateWrite("app.txt", "x\n")},
 	{name: "unsafe path", kind: gateOwnership, actor: Responder, phase: ProposalPhase, rules: []string{RuleUnsafePath}, edit: gateWrite(`we\ird.txt`, "x\n")},

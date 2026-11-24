@@ -12,6 +12,7 @@ Reasoning habits, not a procedure.
 - **Follow the change.** Something changed near onset on or upstream of the failing path (config, code, data, a
   dependency), or a latent condition was triggered. An unexplained finding on that path stays open until checked.
   A passing operation shows a node is alive, not that its data for the failing one is right.
+  For suspected Secret rotation, verify the authentication failure. Ownership timestamps alone are inconclusive.
 - **Hold a rival.** Name your lead explanation and the runner-up, and run the check whose outcome differs most.
 - **Change as an experiment.** Say which failing operations a change should fix, then check exactly those after
   its delay. A change that left the failure as is counts against its hypothesis.

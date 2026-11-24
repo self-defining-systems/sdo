@@ -59,6 +59,7 @@ type Reason struct {
 
 var (
 	metricNamePattern = regexp.MustCompile(`^[a-zA-Z_:][a-zA-Z0-9_:]*$`)
+	backgroundMetric  = regexp.MustCompile(`(?i)(job|queue|worker|task)`)
 	labelNamePattern  = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 )
 
@@ -88,6 +89,26 @@ func (m Map) Internal(op Operation) bool {
 	}
 	_, ok := m.EntryFor(op.Entry.Service)
 	return ok
+}
+
+// Background reports whether the metric entry counts background work. Job
+// metrics remain background even in older maps that give the entry an HTTP
+// operation. Otherwise, every operation entering the service must be internal.
+func (m Map) Background(entry MetricEntry) bool {
+	if backgroundMetric.MatchString(entry.Metric) {
+		return true
+	}
+	used := false
+	for _, op := range m.Operations {
+		if op.Entry.Service != entry.Service {
+			continue
+		}
+		used = true
+		if !m.Internal(op) {
+			return false
+		}
+	}
+	return used
 }
 
 func (c *checker) internalEntry(op Operation) bool { return c.m.Internal(op) }

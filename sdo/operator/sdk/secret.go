@@ -12,19 +12,16 @@ import (
 )
 
 // SecretMetadata exposes only identity, type, labels, data key names and
-// when the data last changed. It cannot hold Secret values.
+// a legacy field-ownership timestamp. It cannot hold Secret values.
 type SecretMetadata struct {
 	Name      string            `json:"name"`
 	Namespace string            `json:"namespace"`
 	Type      corev1.SecretType `json:"type"`
 	Labels    map[string]string `json:"labels,omitempty"`
 	DataKeys  []string          `json:"dataKeys"`
-	// DataChangedAt is when a manager other than SDO last wrote the Secret's
-	// data, from metadata only: the latest managedFields time of a non-SDO
-	// manager that owns data fields. Creation time stands in when the object
-	// records no field ownership at all, and for data owned by the API
-	// server's before-first-apply entry. Zero when no foreign manager owns its
-	// data (SDO alone wrote it); the stale-reader rules then stay silent.
+	// DataChangedAt is a legacy field carrying the latest managedFields time
+	// of a non-SDO manager that owns data fields. It records field ownership
+	// metadata, which cannot establish when the Secret's contents changed.
 	DataChangedAt time.Time `json:"dataChangedAt,omitzero"`
 }
 
@@ -77,12 +74,10 @@ func IsSDOFieldManager(manager string) bool {
 	return slices.Contains(SDOFieldManagers(), manager)
 }
 
-// SecretDataChangedAt derives when a manager other than SDO last wrote a
-// Secret's data from its object metadata alone. managedFields list the field
-// paths each manager owns and when it last changed the object, never values;
-// a manager that owns only labels or annotations does not move the time, and
-// SDO's own managers never do. Data a before-first-apply entry owns dates from
-// creation, the only bound metadata gives for it.
+// SecretDataChangedAt returns the latest field-ownership timestamp among
+// non-SDO managers that own a Secret data key. Creation time stands in for
+// objects without field ownership and for before-first-apply ownership.
+// This legacy timestamp cannot distinguish a write from a content change.
 func SecretDataChangedAt(meta metav1.ObjectMeta) time.Time {
 	if len(meta.ManagedFields) == 0 {
 		return meta.CreationTimestamp.UTC()

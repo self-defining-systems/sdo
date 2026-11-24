@@ -41,12 +41,10 @@ func ScopedObject(source ScopedObservationSource, ref ObjectRef) (*unstructured.
     It is the single projection shared by live and host-side read views.
 
 func SecretDataChangedAt(meta metav1.ObjectMeta) time.Time
-    SecretDataChangedAt derives when a manager other than SDO last wrote a
-    Secret's data from its object metadata alone. managedFields list the field
-    paths each manager owns and when it last changed the object, never values;
-    a manager that owns only labels or annotations does not move the time,
-    and SDO's own managers never do. Data a before-first-apply entry owns dates
-    from creation, the only bound metadata gives for it.
+    SecretDataChangedAt returns the latest field-ownership timestamp among
+    non-SDO managers that own a Secret data key. Creation time stands in for
+    objects without field ownership and for before-first-apply ownership.
+    This legacy timestamp cannot distinguish a write from a content change.
 
 func SelfHealHold(ctx DetectionContext) time.Duration
     SelfHealHold returns the context's self-heal hold, or DefaultSelfHealHold

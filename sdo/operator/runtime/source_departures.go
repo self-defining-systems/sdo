@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"sdo.dev/operator/sdk"
@@ -24,9 +23,6 @@ const (
 	DepartureMissing DepartureKind = "missing"
 	// DepartureExtra: the object exists live and accepted source does not declare it.
 	DepartureExtra DepartureKind = "extra"
-	// DepartureSecretData: a non-SDO manager wrote a Secret's data after a reader started.
-	// Secrets are compared by metadata only, so no values or diff are ever read.
-	DepartureSecretData DepartureKind = "secret-data"
 )
 
 // SourceDeparture is one object that differs from accepted source because a
@@ -46,8 +42,7 @@ type SourceDeparture struct {
 }
 
 // Command is the responder command that puts the object back to accepted
-// source, from the built-in actions `sdo mitigate` already offers. It is empty
-// for a Secret: a restore needs values, which are never read here.
+// source, from the built-in actions `sdo mitigate` already offers.
 func (d SourceDeparture) Command() string {
 	ref := fmt.Sprintf("%s/%s/%s", d.Ref.Kind, d.Ref.Namespace, d.Ref.Name)
 	switch d.Kind {
@@ -73,8 +68,6 @@ func (d SourceDeparture) Text() string {
 			return name + " is missing; accepted source declares it"
 		}
 		return fmt.Sprintf("%s was deleted at %s by %s (not sdo); accepted source declares it", name, hms(d.At), orQuestion(d.Manager))
-	case DepartureSecretData:
-		return fmt.Sprintf("%s data changed at %s by a non-sdo manager; values not compared", name, hms(d.At))
 	}
 	what := "changed"
 	if len(d.Fields) > 0 {
@@ -142,9 +135,8 @@ func SourceDepartures(in DepartureInput, objects []sdk.ObjectRef) []SourceDepart
 		}
 		seen[key] = true
 		if ref.Kind == "Secret" {
-			if departure, ok := secretDeparture(in, ref); ok && !late(departure.At) {
-				result = append(result, departure)
-			}
+			// Source comparisons exclude Secret data. Field ownership alone
+			// cannot establish a departure from source.
 			continue
 		}
 		diff, err := in.View.DiffAgainstSource(ref)
@@ -249,48 +241,4 @@ func sdoWroteLast(object *unstructured.Unstructured) bool {
 		}
 	}
 	return latest != "" && sdk.IsSDOFieldManager(latest)
-}
-
-// podReferencesSecret reports whether the Pod reads the named Secret.
-func podReferencesSecret(pod corev1.Pod, name string) bool {
-	for _, volume := range pod.Spec.Volumes {
-		if volume.Secret != nil && volume.Secret.SecretName == name {
-			return true
-		}
-	}
-	for _, container := range append(append([]corev1.Container{}, pod.Spec.InitContainers...), pod.Spec.Containers...) {
-		for _, from := range container.EnvFrom {
-			if from.SecretRef != nil && from.SecretRef.Name == name {
-				return true
-			}
-		}
-		for _, env := range container.Env {
-			if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil && env.ValueFrom.SecretKeyRef.Name == name {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// secretDeparture reports a Secret whose data a non-SDO manager changed after
-// a Pod that reads it started, so a running reader may hold the old value. It
-// uses SecretMetadata only; a Secret never has its values read or compared.
-// DataChangedAt counts only non-SDO managers; a later SDO write recorded as a
-// drift event retires the claim.
-func secretDeparture(in DepartureInput, ref sdk.ObjectRef) (SourceDeparture, bool) {
-	for _, secret := range in.View.Secrets() {
-		if secret.Name != ref.Name || secret.Namespace != ref.Namespace && secret.Namespace != "" && ref.Namespace != "" || secret.DataChangedAt.IsZero() {
-			continue
-		}
-		if event := latestDriftEvent(in.Events, ref); event != nil && sdk.IsSDOFieldManager(event.Manager) && !driftEventTime(event).Before(secret.DataChangedAt) {
-			continue
-		}
-		for _, pod := range in.View.Pods() {
-			if pod.CreationTimestamp.Time.Before(secret.DataChangedAt) && podReferencesSecret(pod, ref.Name) {
-				return SourceDeparture{Ref: ref, Kind: DepartureSecretData, At: secret.DataChangedAt, Manager: "a non-sdo manager"}, true
-			}
-		}
-	}
-	return SourceDeparture{}, false
 }
