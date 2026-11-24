@@ -6,6 +6,7 @@ import ssl
 import tempfile
 import urllib.error
 import urllib.request
+from ipaddress import IPv4Address
 from pathlib import Path
 
 SERVICE_ACCOUNT_ROOT = Path("/var/run/secrets/kubernetes.io/serviceaccount")
@@ -70,7 +71,11 @@ def write_application_kubeconfig(namespace: str) -> Path | None:
 
     proxy_url = os.environ.get("SDO_API_PROXY_URL", "")
     if proxy_url:
-        if proxy_url != "http://127.0.0.1:18080":
+        proxy_address = os.environ.get("SDO_API_PROXY_ADDRESS") or "127.0.0.1:18080"
+        host, _, port = proxy_address.rpartition(":")
+        if port != "18080" or not IPv4Address(host).is_loopback:
+            raise ValueError("SDO_API_PROXY_ADDRESS must be an IPv4 loopback address on port 18080")
+        if proxy_url != f"http://{proxy_address}":
             raise ValueError("SDO_API_PROXY_URL must be the responder localhost proxy")
         cluster: dict[str, str] = {"server": proxy_url}
         user: dict[str, str] = {}

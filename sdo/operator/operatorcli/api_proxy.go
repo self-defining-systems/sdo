@@ -28,8 +28,8 @@ func apiProxyAddress() (string, error) {
 		return APIProxyAddress, nil
 	}
 	parsed, err := netip.ParseAddrPort(override)
-	if err != nil || !parsed.Addr().IsLoopback() || parsed.Port() == 0 {
-		return "", errors.New("SDO_API_PROXY_ADDRESS must be a loopback address with a nonzero port")
+	if err != nil || !parsed.Addr().Is4() || !parsed.Addr().IsLoopback() || parsed.Port() != 18080 {
+		return "", errors.New("SDO_API_PROXY_ADDRESS must be an IPv4 loopback address on port 18080")
 	}
 	return parsed.String(), nil
 }
