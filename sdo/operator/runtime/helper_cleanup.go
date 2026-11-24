@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -35,47 +36,71 @@ type KubernetesHelperCleaner struct {
 // CleanupHelpers implements HelperCleaner. It deletes only objects labelled
 // ResponderHelperLabel=true and returns them as sorted Kind/namespace/name.
 func (c KubernetesHelperCleaner) CleanupHelpers(ctx context.Context) ([]string, error) {
-	selector := metav1.ListOptions{LabelSelector: ResponderHelperLabel + "=true"}
-	background := metav1.DeletePropagationBackground
-	options := metav1.DeleteOptions{PropagationPolicy: &background}
-	deleted := []string{}
-	var failures []error
+	var namespaces []string
 	seen := map[string]bool{}
 	for _, namespace := range c.Namespaces {
-		if namespace == "" || seen[namespace] {
-			continue
+		if namespace != "" && !seen[namespace] {
+			namespaces = append(namespaces, namespace)
+			seen[namespace] = true
 		}
-		seen[namespace] = true
-		jobs, err := c.Client.BatchV1().Jobs(namespace).List(ctx, selector)
-		if err != nil {
-			failures = append(failures, fmt.Errorf("list helper Jobs in %s: %w", namespace, err))
-		} else {
-			for _, job := range jobs.Items {
-				err := c.Client.BatchV1().Jobs(namespace).Delete(ctx, job.Name, options)
-				if err != nil && !apierrors.IsNotFound(err) {
-					failures = append(failures, fmt.Errorf("delete helper Job %s/%s: %w", namespace, job.Name, err))
-					continue
-				}
-				deleted = append(deleted, "Job/"+namespace+"/"+job.Name)
-			}
-		}
-		pods, err := c.Client.CoreV1().Pods(namespace).List(ctx, selector)
-		if err != nil {
-			failures = append(failures, fmt.Errorf("list helper pods in %s: %w", namespace, err))
-			continue
-		}
-		for _, pod := range pods.Items {
-			err := c.Client.CoreV1().Pods(namespace).Delete(ctx, pod.Name, options)
-			if err != nil && !apierrors.IsNotFound(err) {
-				failures = append(failures, fmt.Errorf("delete helper pod %s/%s: %w", namespace, pod.Name, err))
-				continue
-			}
-			deleted = append(deleted, "Pod/"+namespace+"/"+pod.Name)
-		}
+	}
+	type result struct {
+		deleted  []string
+		failures []error
+	}
+	results := make([]result, len(namespaces))
+	var workers sync.WaitGroup
+	// The application and controller namespaces are independent. Keep each
+	// namespace's Job-before-Pod order and join both before recovery is checked.
+	for i, namespace := range namespaces {
+		workers.Go(func() {
+			results[i].deleted, results[i].failures = c.cleanupNamespace(ctx, namespace)
+		})
+	}
+	workers.Wait()
+	deleted := []string{}
+	var failures []error
+	for _, result := range results {
+		deleted = append(deleted, result.deleted...)
+		failures = append(failures, result.failures...)
 	}
 	sort.Strings(deleted)
 	if len(failures) > 0 {
 		return deleted, fmt.Errorf("clean up responder helpers: %v", failures)
 	}
 	return deleted, nil
+}
+
+func (c KubernetesHelperCleaner) cleanupNamespace(ctx context.Context, namespace string) (deleted []string, failures []error) {
+	selector := metav1.ListOptions{LabelSelector: ResponderHelperLabel + "=true"}
+	background := metav1.DeletePropagationBackground
+	options := metav1.DeleteOptions{PropagationPolicy: &background}
+	jobsClient := c.Client.BatchV1().Jobs(namespace)
+	jobs, err := jobsClient.List(ctx, selector)
+	if err != nil {
+		failures = append(failures, fmt.Errorf("list helper Jobs in %s: %w", namespace, err))
+	} else {
+		for _, job := range jobs.Items {
+			err := jobsClient.Delete(ctx, job.Name, options)
+			if err != nil && !apierrors.IsNotFound(err) {
+				failures = append(failures, fmt.Errorf("delete helper Job %s/%s: %w", namespace, job.Name, err))
+				continue
+			}
+			deleted = append(deleted, "Job/"+namespace+"/"+job.Name)
+		}
+	}
+	podsClient := c.Client.CoreV1().Pods(namespace)
+	pods, err := podsClient.List(ctx, selector)
+	if err != nil {
+		return deleted, append(failures, fmt.Errorf("list helper pods in %s: %w", namespace, err))
+	}
+	for _, pod := range pods.Items {
+		err := podsClient.Delete(ctx, pod.Name, options)
+		if err != nil && !apierrors.IsNotFound(err) {
+			failures = append(failures, fmt.Errorf("delete helper pod %s/%s: %w", namespace, pod.Name, err))
+			continue
+		}
+		deleted = append(deleted, "Pod/"+namespace+"/"+pod.Name)
+	}
+	return deleted, failures
 }

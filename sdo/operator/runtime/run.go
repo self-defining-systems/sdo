@@ -1494,6 +1494,14 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 			return nil
 		}
 		if applied == desired && !applied.Paused {
+			// Give an already prepared workspace priority over a ready watch or
+			// timer. Otherwise StepEvents can consume it and then observe the
+			// entire application before returning to the effect driver.
+			if len(controller.workspaceResults) > 0 {
+				if err := survive(executePendingEffects(runCtx, controller)); err != nil {
+					return err
+				}
+			}
 			acceptBaseline(retryReachabilityBaseline)
 		}
 		var delay time.Duration
@@ -2410,6 +2418,17 @@ func executePendingEffects(ctx context.Context, controller *Controller) (err err
 			err = nil
 		}
 	}()
+	// A workspace that completed during observation needs no additional
+	// observation to bind it. Save the binding before preparing dispatch.
+	select {
+	case completion := <-controller.workspaceResults:
+		controller.handleWorkspaceCompletion(completion)
+		if err := controller.PersistState(ctx); err != nil {
+			controller.reportBrokerError("persist completed incident workspace", err)
+			return nil
+		}
+	default:
+	}
 	if effect, ok := controller.PendingWorkspaceEffect(); ok {
 		if err := controller.ExecuteWorkspaceEffect(ctx, effect); err != nil {
 			return fmt.Errorf("execute persisted workspace effect: %w", err)
