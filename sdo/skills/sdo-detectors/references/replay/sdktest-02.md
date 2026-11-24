@@ -24,14 +24,16 @@ type PrimitiveCall struct {
 	// class, so a program is judged on a recording exactly as it was live. A
 	// recording with no class is legacy and reads as unavailable.
 	ErrorClass string `json:"error_class,omitempty"`
-	// FrameLimited marks a bounded host reply that takes precedence over snapshot fallbacks.
-	FrameLimited bool `json:"frame_limited,omitempty"`
 }
     PrimitiveCall stores one live ReadView call for deterministic replay.
 
 func RecordPrimitiveCalls(view program.ReadView, calls []PrimitiveCall) ([]PrimitiveCall, error)
     RecordPrimitiveCalls repeats previously observed reads on a fresh view.
     It records errors as observations; malformed templates fail explicitly.
+
+func (c PrimitiveCall) FrameLimited() bool
+    FrameLimited reports an unavailable host reply that takes precedence over
+    snapshot fallbacks.
 
 type RecordingReadView struct {
 	program.ReadView

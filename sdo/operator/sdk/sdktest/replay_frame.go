@@ -14,7 +14,7 @@ func (v *ReplayReadView) ReplayProgramReadView(source program.ReadView) program.
 	var limits map[string][]json.RawMessage
 	for _, calls := range [][]PrimitiveCall{v.Snapshot.Readings, v.Calls} {
 		for _, call := range calls {
-			if call.FrameLimited {
+			if call.FrameLimited() {
 				if limits == nil {
 					limits = make(map[string][]json.RawMessage)
 				}

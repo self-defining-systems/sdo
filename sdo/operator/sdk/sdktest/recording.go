@@ -35,8 +35,11 @@ type PrimitiveCall struct {
 	// class, so a program is judged on a recording exactly as it was live. A
 	// recording with no class is legacy and reads as unavailable.
 	ErrorClass string `json:"error_class,omitempty"`
-	// FrameLimited marks a bounded host reply that takes precedence over snapshot fallbacks.
-	FrameLimited bool `json:"frame_limited,omitempty"`
+}
+
+// FrameLimited reports an unavailable host reply that takes precedence over snapshot fallbacks.
+func (c PrimitiveCall) FrameLimited() bool {
+	return c.Error == sdk.ErrReadReplyLimit.Error() && c.ErrorClass == sdk.ReadClassUnavailable
 }
 
 // RecordingReadView serializes recorded calls and OnRecord callbacks. ReadView
@@ -378,7 +381,7 @@ func (c CorpusCase) PhaseRecordings(phase string) []PrimitiveCall {
 func RecordPrimitiveCalls(view program.ReadView, calls []PrimitiveCall) ([]PrimitiveCall, error) {
 	recorder := &RecordingReadView{ReadView: view}
 	for _, call := range calls {
-		if call.FrameLimited {
+		if call.FrameLimited() {
 			continue // A transport-limited reply supplies no observation to repeat.
 		}
 		var args []json.RawMessage

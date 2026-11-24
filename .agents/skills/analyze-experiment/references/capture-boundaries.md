@@ -62,8 +62,8 @@ captures are keyed by target **and credential reference** (never a value), so a 
 admin credential and falls back to another leaves one recording per credential; before this key the
 second credential's call was dropped and the fallback could not replay. Later Diagnose calls remain in the
 existing phase-specific recording files; metrics/traffic calls are recorded there too. An oversized memory-host reply
-records the bounded SDK observation with `frame_limited: true`. Replay applies that limit for the same
-method and arguments before snapshot fallbacks. An error-less read that aborts on the limit is
+records the bounded SDK observation with `error_class: unavailable` and the memory-host message-limit
+error. Replay applies that limit for the same method and arguments before snapshot fallbacks. An error-less read that aborts on the limit is
 transport-unavailable evidence, while `QueryMetrics` keeps the query and error in its typed result.
 Repeated logical reads can appear even though the runtime served one cached source read.
 Count source cost separately; a recording count is not a network-request count. A late ConfigMap

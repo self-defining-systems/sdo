@@ -83,11 +83,8 @@ func (c *programReadCapture) recordLimit(call, reply programread.Message) {
 		}}
 	}
 	for i := range records {
-		records[i].FrameLimited = true
-		if call.Method != "QueryMetrics" {
-			records[i].Error = reply.Error
-			records[i].ErrorClass = reply.ErrorClass
-		}
+		records[i].Error = reply.Error
+		records[i].ErrorClass = reply.ErrorClass
 	}
 	for _, sink := range c.sinks {
 		sink.RecordExternalCalls(records)
