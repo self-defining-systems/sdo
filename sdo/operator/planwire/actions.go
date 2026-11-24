@@ -30,11 +30,7 @@ func ActionProto(action program.Action) (*contracts.Action, error) {
 	if wire, ok, err := contractActionProto(action); ok {
 		return wire, err
 	}
-	if IsGeneralAction(action) {
-		if _, legacyDelete := GeneralAction(action).(program.DeleteObject); !legacyDelete {
-			return generalActionProto(action)
-		}
-	}
+
 	switch a := action.(type) {
 	case program.RemoveServicePort:
 		return &contracts.Action{Kind: &contracts.Action_RemoveServicePort{RemoveServicePort: &contracts.RemoveServicePort{Ref: refProto(a.Ref), Name: a.Name, Port: a.Port, Protocol: a.Protocol, AllowEmpty: a.AllowEmpty, Reason: a.Reason}}}, nil
@@ -131,6 +127,9 @@ func ActionProto(action program.Action) (*contracts.Action, error) {
 		if a != nil {
 			return ActionProto(*a)
 		}
+	}
+	if IsGeneralAction(action) {
+		return generalActionProto(action)
 	}
 	return nil, fmt.Errorf("unsupported plan action %T", action)
 }
