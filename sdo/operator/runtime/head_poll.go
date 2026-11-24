@@ -46,6 +46,8 @@ type headPollState struct {
 	poller  *HeadPoller
 	running bool
 	nextAt  time.Time
+	// The receipt associated with the render cache. It does not select source.
+	lastObservedReceipt string
 }
 
 // SetHeadPoller makes the controller deploy branch heads SDO did not write
@@ -126,10 +128,13 @@ func (c *Controller) refreshAcceptedDeployment(ctx context.Context) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if revision != "" && revision != c.config.DeployedCommit {
+	if revision != c.head.lastObservedReceipt {
+		c.head.lastObservedReceipt = revision
 		if c.invalidateSourceCache != nil {
 			c.invalidateSourceCache()
 		}
+	}
+	if revision != "" && revision != c.config.DeployedCommit {
 		c.config.SourceCommit, c.config.DeployedCommit = revision, revision
 	}
 	return nil

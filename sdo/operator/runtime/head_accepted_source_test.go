@@ -84,3 +84,30 @@ func TestHeadAcceptanceRebindsSourceRepairWithoutRestart(t *testing.T) {
 		t.Fatalf("source %q deployment %q repaired to %v, want v2", request.SourceCommit, request.DeployedCommit, next.Object)
 	}
 }
+
+func TestHeadReceiptInvalidatesRenderOfSameRevision(t *testing.T) {
+	ctx := context.Background()
+	now := time.Unix(1_700_000_000, 0)
+	config := testControllerConfig()
+	config.SourceCommit, config.DeployedCommit = "v2", "v2"
+	c, err := NewController(config, nil, staticProvider{}, &recordingDispatcher{}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted := ""
+	c.SetHeadPoller(&HeadPoller{AcceptedRevision: func(context.Context) (string, error) { return accepted, nil }})
+	invalidations := 0
+	c.invalidateSourceCache = func() { invalidations++ }
+	if err := c.refreshAcceptedDeployment(ctx); err != nil || invalidations != 0 {
+		t.Fatalf("before acceptance: invalidations=%d err=%v", invalidations, err)
+	}
+	accepted = "v2"
+	for range 2 {
+		if err := c.refreshAcceptedDeployment(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if invalidations != 1 {
+		t.Fatalf("same-revision receipt invalidated %d times, want 1", invalidations)
+	}
+}
