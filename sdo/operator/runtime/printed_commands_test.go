@@ -85,6 +85,8 @@ var printedParameter = regexp.MustCompile(`--bind\s+([A-Za-z_]+)=`)
 
 // Every built-in action command written in production code, prompts or skills
 // binds every parameter the menu requires.
+//
+//ci:whole-tree
 func TestEveryWrittenActionCommandBindsItsRequiredParameters(t *testing.T) {
 	found := map[string]bool{}
 	err := filepath.WalkDir("../..", func(path string, d os.DirEntry, err error) error {
