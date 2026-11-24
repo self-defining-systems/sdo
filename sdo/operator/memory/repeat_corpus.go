@@ -45,8 +45,9 @@ func RecordCorpus(root, captures, incidentID string, instances map[string][]prog
 	if err != nil {
 		return nil, err
 	}
+	// A fresh accepted tree has no corpus directory yet.
 	entries, err := os.ReadDir(filepath.Join(root, layout.CorpusDir))
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
 	type labels struct {
