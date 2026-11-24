@@ -881,6 +881,9 @@ func (m *Manager) preparedFor(l *LaneFile, x *Experiment) *Prepared {
 	if o := s.Operator; o.Hooks != "" {
 		p.Hooks, p.HooksPath, p.Command = o.Hooks, m.inv.HooksPath(o.Hooks, o.Revision, l.Host), m.inv.HookCommand[o.Hooks]
 	}
+	if s.Hold {
+		p.Pool = x.Name
+	}
 	return p
 }
 
@@ -1004,8 +1007,10 @@ func (m *Manager) continueSeq(ctx context.Context, l *LaneFile) {
 	}
 }
 
-// assign binds free lanes to the sequences of each experiment's current wave. Afterwards every free lane says why it
-// was not bound while some experiment has queued sequences (explainIdle).
+// assign binds free lanes to the sequences of each experiment's current wave. First the lanes a pool has ready for a
+// claim (held ready, or reset to its golden copy) go to the pool's waiting claimants by swap; only then does each
+// experiment take its turn in name order, so a pool never refills or rebuilds a lane one of its claimants could take.
+// Afterwards every free lane says why it was not bound while some experiment has queued sequences (explainIdle).
 func (m *Manager) assign(ctx context.Context, reachable map[string]bool) {
 	var names []string
 	for n := range m.exps {
@@ -1013,86 +1018,99 @@ func (m *Manager) assign(ctx context.Context, reachable map[string]bool) {
 	}
 	sort.Strings(names)
 	m.preemptWaitingBuilds(ctx, reachable)
+	for _, n := range names {
+		m.assignExp(ctx, n, reachable, true)
+	}
 	// waiting: the experiments with queued sequences that took no (more) lanes this pass, and why ("": no lane
 	// fit, which explainIdle says per lane).
 	waiting := map[string]string{}
 	for _, n := range names {
-		x := m.exps[n]
-		if x.Spec == nil {
-			continue
-		}
-		bound := map[Seq]bool{}
-		held := 0
-		for _, l := range m.lanes {
-			if l.Experiment == n && l.Seq != nil {
-				bound[*l.Seq] = true
-				held++
-			}
-		}
-		if x.Paused {
-			if queued(x, bound) {
-				waiting[n] = "paused"
-			}
-			continue
-		}
-		s := x.Measured()
-		wave := m.wave(x)
-		why := "its current wave is still running"
-		for _, q := range wave {
-			p := x.Progress(q)
-			if p.Ended() || bound[q] {
-				continue
-			}
-			if held >= s.Lanes {
-				why = fmt.Sprintf("it holds its lanes: %d", s.Lanes)
-				break
-			}
-			l, swap := m.claimable(x, s), true
-			if l == nil {
-				l = m.resettable(x, s, reachable)
-			}
-			if l == nil && !s.ClaimWaits() {
-				// A claimant that waits for its pool never builds a lane of its own: the pool builds the lanes.
-				l, swap = m.freeLane(n, s, reachable), false
-			}
-			if l == nil {
-				why = ""
-				if s.ClaimWaits() {
-					why = fmt.Sprintf("it waits for a lane of its pool %s (claim_only)", s.Claim)
-					if m.claimWaitExceeded(x, s) {
-						why = "paused: claim wait exceeded"
-					}
-				}
-				break
-			}
-			delete(m.claimSince, n)
-			st, err := m.expStep(ctx, l, x, StepBuild)
-			if err != nil {
-				m.logf("lane %s: %v", l.Lane, err)
-				why = err.Error()
-				break
-			}
-			l.Experiment, l.Seq, l.Attempt, l.Position = n, &q, p.Attempt, 1
-			st.Create = l.Gone
-			st.Recreate = !l.Gone && (l.Recreate || s.NeedsFreshCluster(q.Fault) || !swap && m.holdsOtherApp(l, s))
-			st.New.Fault = q.Fault
-			st.ReuseApp = reusableApp(s, st, q.Fault)
-			st.Swap = swap
-			st.Hold = s.Hold
-			if !m.start(ctx, l, st) {
-				m.unbind(l, "")
-				why = "its build could not start"
-				break
-			}
-			m.setState(l, LaneBuilding, "")
-			bound[q] = true
-			held++
-		}
-		if queued(x, bound) {
+		if why, queued := m.assignExp(ctx, n, reachable, false); queued {
 			waiting[n] = why
 		}
 	}
 	m.explainIdle(waiting, reachable)
+}
+
+// assignExp binds free lanes to the queued sequences of experiment n's current wave and says whether some stay queued
+// and why. claimsOnly: only a claimant binds, and only a lane of its own pool that it takes by swap.
+func (m *Manager) assignExp(ctx context.Context, n string, reachable map[string]bool, claimsOnly bool) (string, bool) {
+	x := m.exps[n]
+	if x == nil || x.Spec == nil || claimsOnly && (x.Paused || x.Measured().Claim == "") {
+		return "", false
+	}
+	bound := map[Seq]bool{}
+	held := 0
+	for _, l := range m.lanes {
+		if l.Experiment == n && l.Seq != nil {
+			bound[*l.Seq] = true
+			held++
+		}
+	}
+	if x.Paused {
+		return "paused", queued(x, bound)
+	}
+	s := x.Measured()
+	wave := m.wave(x)
+	why := "its current wave is still running"
+	for _, q := range wave {
+		p := x.Progress(q)
+		if p.Ended() || bound[q] {
+			continue
+		}
+		if held >= s.Lanes {
+			why = fmt.Sprintf("it holds its lanes: %d", s.Lanes)
+			break
+		}
+		l, swap := m.claimable(x, s), true
+		if l == nil {
+			l = m.resettable(x, s, reachable, claimsOnly)
+		}
+		if l == nil && claimsOnly {
+			break
+		}
+		if l == nil && !s.ClaimWaits() {
+			// A claimant that waits for its pool never builds a lane of its own: the pool builds the lanes.
+			l, swap = m.freeLane(n, s, reachable), false
+		}
+		if l == nil {
+			why = ""
+			if s.ClaimWaits() {
+				why = fmt.Sprintf("it waits for a lane of its pool %s (claim_only)", s.Claim)
+				if m.claimWaitExceeded(x, s) {
+					why = "paused: claim wait exceeded"
+				}
+			}
+			break
+		}
+		delete(m.claimSince, n)
+		pool := m.poolOf(l) // before the lane is bound: the pool whose lane it is
+		st, err := m.expStep(ctx, l, x, StepBuild)
+		if err != nil {
+			m.logf("lane %s: %v", l.Lane, err)
+			why = err.Error()
+			break
+		}
+		l.Experiment, l.Seq, l.Attempt, l.Position = n, &q, p.Attempt, 1
+		st.Create = l.Gone
+		st.Recreate = !l.Gone && (l.Recreate || s.NeedsFreshCluster(q.Fault) || !swap && m.holdsOtherApp(l, s))
+		st.New.Fault = q.Fault
+		st.ReuseApp = reusableApp(s, st, q.Fault)
+		st.Swap = swap
+		st.Hold = s.Hold
+		if swap && pool != "" {
+			st.New.Pool = pool // a swap keeps the lane its pool's
+		}
+		if !m.start(ctx, l, st) {
+			m.unbind(l, "")
+			why = "its build could not start"
+			break
+		}
+		m.setState(l, LaneBuilding, "")
+		bound[q] = true
+		held++
+	}
+	return why, queued(x, bound)
 }
 
 // claimWaitExceeded starts or checks the clock of a claimant that has a sequence and no pool lane. Past the spec's
@@ -1392,25 +1410,38 @@ func (m *Manager) buildOrder(name string, s Spec) []string {
 // poolOf is the pool a lane belongs to ("" when none): the hold experiment bound to it, or the pool of the claimant
 // that holds it or of the golden copy prepared on it (a claimed lane stays its pool's lane).
 func (m *Manager) poolOf(l *LaneFile) string {
-	pool := func(name string) string {
-		x := m.exps[name]
-		if x == nil || x.Spec == nil {
-			return ""
-		}
-		if s := x.Measured(); s.Hold {
-			return name
-		} else if s.Claim != "" {
-			return s.Claim
-		}
-		return ""
-	}
-	if p := pool(l.Experiment); p != "" {
+	if p := m.poolNamed(l.Experiment); p != "" {
 		return p
 	}
-	if l.Prepared != nil && l.Prepared.Golden {
-		return pool(l.Prepared.Experiment)
+	return m.lanePool(l)
+}
+
+// poolNamed is the pool of experiment name ("" when none): itself when it holds lanes, else the pool it claims.
+func (m *Manager) poolNamed(name string) string {
+	x := m.exps[name]
+	if x == nil || x.Spec == nil {
+		return ""
+	}
+	if s := x.Measured(); s.Hold {
+		return name
+	} else if s.Claim != "" {
+		return s.Claim
 	}
 	return ""
+}
+
+// lanePool is the pool whose golden copy is on l ("" when none): the pool recorded when it built the lane
+// (Prepared.Pool), never the lane's last claimant. A lane file written before Pool existed names it by the experiment
+// last prepared on it, while that experiment exists.
+func (m *Manager) lanePool(l *LaneFile) string {
+	p := l.Prepared
+	if p == nil || !p.Golden {
+		return ""
+	}
+	if p.Pool != "" {
+		return p.Pool
+	}
+	return m.poolNamed(p.Experiment)
 }
 
 // wave returns the experiment's current wave: the next `lanes` sequences,
@@ -1786,7 +1817,11 @@ func (m *Manager) ownerDone(l *LaneFile) bool {
 	if l.Prepared == nil {
 		return false
 	}
-	x := m.exps[l.Prepared.Experiment]
+	owner := l.Prepared.Experiment
+	if p := m.lanePool(l); p != "" {
+		owner = p // a pool lane is its pool's, whichever claimant ran on it last
+	}
+	x := m.exps[owner]
 	if x == nil {
 		return true
 	}
@@ -1912,8 +1947,12 @@ func awaitsRelease(l *LaneFile) bool {
 
 // resettable is a free lane that a claimed run left at its golden copy (Prepared.Reset) whose operator profile is
 // x's: the build takes it by swap, with no teardown, app copy or prepare. Subject to the host's build limits.
-func (m *Manager) resettable(x *Experiment, s Spec, reachable map[string]bool) *LaneFile {
+// ownPool: only a lane of the pool x claims.
+func (m *Manager) resettable(x *Experiment, s Spec, reachable map[string]bool, ownPool bool) *LaneFile {
 	for _, l := range m.sortedLanes() {
+		if ownPool && m.lanePool(l) != s.Claim {
+			continue
+		}
 		if m.resetFits(l, x, s) && m.buildBlock(l.Host, s, reachable) == "" {
 			return l
 		}
@@ -1921,13 +1960,14 @@ func (m *Manager) resettable(x *Experiment, s Spec, reachable map[string]bool) *
 	return nil
 }
 
-// resetFits: l is a free lane at its golden copy whose operator profile is x's (resettable, without the host's limits).
+// resetFits: l is a free lane at its pool's golden copy whose operator profile is x's (resettable, without the host's
+// limits). The profile is the pool's (lanePool), not that of the claimant that ran on the lane last, which may be gone.
 func (m *Manager) resetFits(l *LaneFile, x *Experiment, s Spec) bool {
 	if l.State != LaneFree || l.Step != nil || !resetAndReady(l) || l.Gone || !m.inv.LaneAccepts(l.Host, l.Lane, s) {
 		return false
 	}
-	owner := m.exps[l.Prepared.Experiment]
-	return owner != nil && owner.Spec != nil && sameOperatorProfile(owner, x)
+	pool := m.exps[m.lanePool(l)]
+	return pool != nil && pool.Spec != nil && sameOperatorProfile(pool, x)
 }
 
 // resetAndReady: the lane's operator was returned to its golden copy and passed its check. A swap needs both: a reset
