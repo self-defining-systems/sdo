@@ -178,9 +178,9 @@ func (l *ResponderLoop) prepareDispatch(ctx context.Context, request IncidentReq
 	defer l.mu.Unlock()
 	l.Trust = trust
 	request.MaxResponseLoops = l.MaxBatches
-	if request.ExternalMessage != "" || deterministicStageReport(request.PriorStages).GetHandoffSelected() {
-		// Handoff already has the controller's alert decision and receipts.
-		// Optional live diagnosis may be unavailable or spend the claim budget.
+	if request.ExternalMessage != "" || pageOpened(&request) || deterministicStageReport(request.PriorStages).GetHandoffSelected() {
+		// Pages and handoffs already have a dispatch decision. The responder
+		// can request live diagnosis after it starts.
 		return request
 	}
 	// The automatic stage and the controller already stored open@detect; only a

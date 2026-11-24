@@ -149,7 +149,9 @@ def test_a_page_that_opened_a_detected_incident_is_stated_as_is() -> None:
     request = IncidentRequest(incident_id="x", namespace="app", page="users see errors\non checkout")
     request.detected_at.FromDatetime(OPENED)
     assert (
-        symptom(request) == "Opened on a page at 12:00:40 UTC; return when it is fixed:\nusers see errors\non checkout"
+        symptom(request) == "Opened on a page at 12:00:40 UTC. "
+        "Before returning `completed`, verify the reported problem is fixed. "
+        "Use `failed` if you cannot verify recovery.\nusers see errors\non checkout"
     )
     assert opened_on(request) == "page"
 

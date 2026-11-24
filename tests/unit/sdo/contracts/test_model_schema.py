@@ -62,7 +62,6 @@ def test_incident_schema_is_the_proto_message_minus_declared_omissions() -> None
         "resolution_path",
         "drift_reprompt",
         "incident_id",
-        "status",
         "timing",
         "confirmed_root_causes",
         "applied_playbooks",

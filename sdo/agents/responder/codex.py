@@ -17,7 +17,12 @@ from sdo.agents.provider import MODEL_ENV, agent_effort, resolve_agent
 from sdo.agents.replay import selected_skills_root
 from sdo.agents.responder import page_only
 from sdo.agents.responder.credentials import SKILLS_ROOT
-from sdo.agents.responder.incident_opening import earlier_attempts_block, symptom, unmatched_playbooks_block
+from sdo.agents.responder.incident_opening import (
+    earlier_attempts_block,
+    page_opened,
+    symptom,
+    unmatched_playbooks_block,
+)
 from sdo.agents.responder.result_output import parse_incident_result, with_worker_facts
 from sdo.agents.responder.session_recovery import SessionRecoveryError, open_recovery
 from sdo.agents.responder.session_turn import (
@@ -132,10 +137,11 @@ def execute_incident(
         for name, value in turn_usage(completed).items():
             usage[name] = usage.get(name, 0) + value
         try:
+            payload = unwrap_branch(completed.output_json, "incident_result")
+            if page_opened(request):
+                payload.setdefault("status", "failed")
             result = parse_incident_result(
-                with_worker_facts(
-                    unwrap_branch(completed.output_json, "incident_result"), request.incident_id, started
-                ),
+                with_worker_facts(payload, request.incident_id, started),
                 usage,
                 incident_id=request.incident_id,
             )
@@ -175,7 +181,6 @@ _MODEL_OMITS: dict[str, tuple[str, ...]] = {
     "sdodev.contracts.v1alpha1.IncidentResult": (
         "schema_version",
         "incident_id",
-        "status",
         "timing",
         "confirmed_root_causes",
         "applied_playbooks",
@@ -193,7 +198,7 @@ _MODEL_OMITS: dict[str, tuple[str, ...]] = {
 
 
 def _incident_result_schema() -> dict[str, object]:
-    """The model-facing schema of ``IncidentResult``: the findings and the changes; the worker fills the rest."""
+    """The model-facing schema of ``IncidentResult``: the disposition, findings and changes."""
 
     return model_output_schema(IncidentResult.DESCRIPTOR, omit=_MODEL_OMITS)
 

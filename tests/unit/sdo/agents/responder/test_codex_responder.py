@@ -158,12 +158,31 @@ def test_codex_failure_reports_structured_events_and_stderr() -> None:
     assert "PATH warning" in str(captured.value)
 
 
-def test_codex_output_schema_is_findings_and_changes_only() -> None:
+def test_page_opened_responder_can_report_verified_recovery_or_give_up() -> None:
+    request = _request()
+    request.ClearField("opening_keys")
+    request.page = "The user operation fails."
+    prompt = _responder_prompt(request)
+    assert "verify the reported problem is fixed" in prompt
+    assert "`failed`" in prompt
+    schema = _incident_result_schema()
+    assert "status" in schema["required"]
+
+
+def test_page_opened_responder_must_report_success_explicitly() -> None:
+    request = _request()
+    request.ClearField("opening_keys")
+    request.page = "The user operation fails."
+    agent = ScriptedAgent(lambda _request: _scripted_reply(evolve(_result(), status=""), "page-session"))
+    assert execute_incident(request, executor=agent.executor).status == "failed"
+
+
+def test_codex_output_schema_exposes_status_findings_and_changes() -> None:
     schema = _incident_result_schema()
 
     assert schema["required"] == list(schema["properties"])
     assert schema["additionalProperties"] is False
-    assert list(schema["properties"]) == ["findings", "agent_changes"]
+    assert list(schema["properties"]) == ["status", "findings", "agent_changes"]
     finding = schema["properties"]["findings"]["items"]
     assert finding["required"] == list(finding["properties"])
 
