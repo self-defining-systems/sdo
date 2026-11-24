@@ -371,11 +371,18 @@ re-prompts the agent. A joined alert (or a clue) that a learned playbook can bin
 after the responder returns never escalates an incident whose alerts are clear while the stability window is still running. Credit and symptom matching keep `opening_keys`. Clues never hold it. The controller asks it before
 closing and before marking the responder verified; the broker asks it again at freeze (a user test that has not
 passed by its horizon plus the stability window commits `unconfirmed`, `OBSERVATION_INCOMPLETE`). That confirmation judges only the alert set: of a probe workload, only the scenarios whose findings are opening or joined alerts must have enough usable samples, and a sibling scenario that never alerted neither blocks nor counts; the stage's
-recovery wait and the claim-time check (`stageRecoveryCheck`) exit `CLEARED` on it, keep waiting while a program
-still diagnoses its fault, and otherwise hand off only at a bound anchored on the observed settle of SDO's writes: once
-they settled (Kubernetes reports the written workloads rolled out and Ready), the alert set gets the longest clearing
-horizon among its still-open members plus the closure stability window, the time Recovered would take had the repair
-worked at settle, so an application converging later than its detectors' own lag is still credited to the stage. A
+recovery wait and the claim-time check (`stageRecoveryCheck`) exit `CLEARED` only once it held, with the stage's open
+findings clear, through the stability window, as closure requires (`stageRecovery`; one observation never proves it,
+so the claim-time check and the lag extension credit only what they observed holding through the window, and alerts that
+re-fire inside it hand off exactly as a failed stage); they keep waiting while a program
+still diagnoses its fault, and otherwise hand off only at a bound anchored on the observed settle of SDO's writes: the
+first time they are seen settled (Kubernetes reports the written workloads rolled out and Ready) fixes the anchor and
+the deadline, and no later Pod event (a workload that keeps becoming Ready) moves either. The alert set must clear
+within the longest clearing horizon among its still-open members plus the closure stability window after that anchor,
+the time Recovered would take had the repair worked at settle, so an application converging later than its detectors'
+own lag is still credited to the stage; past that only a running stability window keeps the stage, at most one more
+window. The stage never observes past half of the response budget left when it started, so the responder always
+inherits the other half. A
 finding that judges current state only (no evaluation window) and outlives its own horizon after settle hands off at once.
 Before settle the bound is the pre-settle floor plus the written workloads' observed startup (under
 `response.after_playbook: wait` the bound is `response.after_playbook_wait` and only a refuted or failed write ends the

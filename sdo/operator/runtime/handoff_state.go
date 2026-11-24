@@ -213,8 +213,8 @@ func (stage *DeterministicResponseStage) extendLagSettlement(ctx context.Context
 	if check := loop.stageRecoveryCheck(ctx, view, state); check.record.GetWritesSettled() && check.record.GetSince() != nil {
 		remaining = window - now().Sub(check.record.GetSince().AsTime())
 	}
-	if deadline := state.Request.ResponseDeadline; !deadline.IsZero() {
-		remaining = min(remaining, deadline.Sub(now()))
+	if end := stageObservationEnd(report, state.Request.ResponseDeadline); !end.IsZero() {
+		remaining = min(remaining, end.Sub(now()))
 	}
 	if remaining <= 0 {
 		return window, 0, nil
@@ -241,6 +241,10 @@ func (stage *DeterministicResponseStage) extendLagSettlement(ctx context.Context
 	started := now()
 	deadline := started.Add(remaining)
 	defer func() { extended = now().Sub(started) }()
+	// Recovered credits the repair only once it held through the stability
+	// window, as in the stage's own wait.
+	recovery := stageRecovery{window: loop.StabilityWindow}
+	credited := false
 	for now().Before(deadline) {
 		if err := wait(ctx, min(interval, deadline.Sub(now()))); err != nil {
 			return window, 0, err
@@ -256,11 +260,12 @@ func (stage *DeterministicResponseStage) extendLagSettlement(ctx context.Context
 		if len(state.Findings) == 0 {
 			// Silence is not recovery: keep observing until the same proof the
 			// stage's own wait requires holds, or the window ends.
-			if stageRecoveredNow(ctx, loop, state) {
+			if credited = recovery.observe(now(), stageRecoveredNow(ctx, loop, state)); credited {
 				break
 			}
 			continue
 		}
+		recovery.observe(now(), false)
 		stop := false
 		for _, finding := range state.Findings {
 			key := findingKey(finding)
@@ -287,7 +292,7 @@ func (stage *DeterministicResponseStage) extendLagSettlement(ctx context.Context
 		}
 	}
 	if len(state.Findings) == 0 {
-		if stageRecoveredNow(ctx, loop, state) {
+		if credited {
 			report.RecoveryWait = &contracts.RecoveryWait{ExitReason: contracts.RecoveryWait_EXIT_REASON_CLEARED, Duration: report.GetRecoveryWait().GetDuration()}
 			var settling []*contracts.StageMitigation
 			for _, attempt := range report.Mitigations {

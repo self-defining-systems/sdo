@@ -455,9 +455,9 @@ func (r componentResolver) readySince(ref sdk.ObjectRef) (time.Time, bool) {
 
 // stageRecoveryCheck is Recovered for the automatic stage's wait and the
 // claim-time check: the incident's opening alerts and the loop's recorded
-// writes, observed on view.
+// writes, observed on view, with the closure stability window closure uses.
 func (l *ResponderLoop) stageRecoveryCheck(ctx context.Context, view sdk.DetectionContext, state *IncidentState) recoveryCheck {
 	m, _ := acceptedVerificationMap(ctx, l.gitRead(), state.Request)
 	result := IncidentResult{PlanApplications: l.applicationEvidenceLocked()}
-	return recovered(verificationInput{m: m, view: view, request: state.Request, result: &result, detected: state.Request.DetectedAt})
+	return recovered(verificationInput{m: m, view: view, request: state.Request, result: &result, detected: state.Request.DetectedAt, stability: l.StabilityWindow})
 }

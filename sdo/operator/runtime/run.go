@@ -715,6 +715,9 @@ func RunWithOptions(ctx context.Context, detectors []sdk.Detector, options Runti
 					loop.Traffic = proberAPI
 				}
 				loop.WorkingProgramRoot = request.RepositoryWorktree
+				// The automatic stage credits recovery as closure does: held
+				// through the same stability window.
+				loop.StabilityWindow = time.Duration(policy.Detection.StabilityWindow)
 				if policy.Response.ExternalClues && request.ExternalMessage != "" {
 					loop.Detectors, loop.ExternalClues = detectors, true
 				}

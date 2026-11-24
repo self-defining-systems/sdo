@@ -126,8 +126,15 @@ type settlingCase struct {
 	// startup is how long the api workload was observed to take to become
 	// Ready; its restart settles only that long after the write.
 	startup time.Duration
-	// stability is the stage's closure stability window.
+	// stability is the closure stability window.
 	stability time.Duration
+	// readyEvery makes the api workload's Pod report a new Ready transition
+	// every readyEvery after the write (a container that keeps restarting and
+	// becoming Ready again); zero leaves its Pods unowned.
+	readyEvery time.Duration
+	// responseDeadline is the incident's response deadline after the start;
+	// zero sets none.
+	responseDeadline time.Duration
 }
 
 // settlingTraffic is the health workload's samples: one per second for scenario
@@ -135,6 +142,9 @@ type settlingCase struct {
 // the prober is starved (a loaded host, a burst of skipped arrivals).
 type settlingTraffic struct {
 	starved bool
+	// relapseAfter is how long after the restart's effect the requests fail
+	// again; zero never.
+	relapseAfter time.Duration
 }
 
 // settlingWorld adds the health workload's traffic window to the same-write world.
@@ -143,6 +153,8 @@ type settlingWorld struct {
 	clock   *settlingClock
 	traffic *settlingTraffic
 	startup time.Duration
+	// readyEvery is settlingCase.readyEvery.
+	readyEvery time.Duration
 	// effectAt is when the restart's effect reaches the samples.
 	effectAt time.Time
 	// saved collects the controller's tool-state checkpoints when set.
@@ -158,6 +170,18 @@ func (w *settlingWorld) Snapshot(ctx context.Context) (sdk.DetectionContext, err
 	if w.startup > 0 {
 		snapshot.ObservedStartupTimes = map[string]time.Duration{"Deployment/api": w.startup}
 	}
+	if w.readyEvery > 0 {
+		// The api Deployment's Pod became Ready again at its latest restart.
+		ready := w.effectAt.Add(w.clock.Now().Sub(w.effectAt).Truncate(w.readyEvery))
+		controller := true
+		pods := append([]corev1.Pod(nil), snapshot.PodList...)
+		for i := range pods {
+			pods[i] = *pods[i].DeepCopy()
+			pods[i].OwnerReferences = []metav1.OwnerReference{{APIVersion: "apps/v1", Kind: "Deployment", Name: "api", Controller: &controller}}
+			pods[i].Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue, LastTransitionTime: metav1.NewTime(ready)}}
+		}
+		snapshot.PodList = pods
+	}
 	if w.traffic == nil {
 		return snapshot, nil
 	}
@@ -165,7 +189,7 @@ func (w *settlingWorld) Snapshot(ctx context.Context) (sdk.DetectionContext, err
 	var samples []traffic.Sample
 	for at := now.Add(-time.Minute).Truncate(time.Second); !at.After(now); at = at.Add(time.Second) {
 		switch {
-		case at.Before(w.effectAt):
+		case at.Before(w.effectAt), w.traffic.relapseAfter > 0 && !at.Before(w.effectAt.Add(w.traffic.relapseAfter)):
 			samples = append(samples, traffic.Sample{At: at, Latency: 2 * time.Second, Outcome: traffic.OutcomeTimeout, Requests: 1})
 		case !w.traffic.starved:
 			samples = append(samples, traffic.Sample{At: at, Latency: 10 * time.Millisecond, Status: 200, Outcome: traffic.OutcomeOK, Requests: 1})
@@ -257,7 +281,7 @@ func newSettlingWorld(tc settlingCase) *settlingWorld {
 	// The recovery bound is also a real context deadline, so the synthetic
 	// clock starts far enough ahead that only the synthetic bound can end it.
 	clock := &settlingClock{now: time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)}
-	return &settlingWorld{sameWriteWorld: inner, clock: clock, traffic: tc.traffic, startup: tc.startup, effectAt: clock.Now().Add(time.Second)}
+	return &settlingWorld{sameWriteWorld: inner, clock: clock, traffic: tc.traffic, startup: tc.startup, readyEvery: tc.readyEvery, effectAt: clock.Now().Add(time.Second)}
 }
 
 // settlingStageOn builds the stage and incident over world, as a controller
@@ -317,6 +341,9 @@ func settlingStageOn(t *testing.T, tc settlingCase, world *settlingWorld) (*Dete
 	}
 	sortFindings(findings)
 	request := IncidentRequest{IncidentID: "synthetic-settling", Namespace: "app", SourceCommit: "synthetic-accepted", Findings: findings, RepairPolicy: "recorded-actions"}
+	if tc.responseDeadline > 0 {
+		request.ResponseDeadline = clock.Now().Add(tc.responseDeadline)
+	}
 	if tc.churnUntil > 0 {
 		// The churn detector's alert is a clue, never an opening alert.
 		for _, finding := range findings {
@@ -331,6 +358,7 @@ func settlingStageOn(t *testing.T, tc settlingCase, world *settlingWorld) (*Dete
 	executor := PlanExecutor{Client: TypedPlanClient{Client: world.client}, Source: world, Rollouts: world, Verifier: PlanHealthVerifier{Detectors: detectors, Provider: world}}
 	loop := NewResponderLoop(request, registry, world, detectors, executor, 5)
 	loop.Now = clock.Now
+	loop.StabilityWindow = tc.stability
 	loop.ReadView = func(v sdk.DetectionContext) program.ReadView {
 		return &sdktest.ReplayReadView{Snapshot: v.(sdktest.Snapshot)}
 	}
@@ -345,7 +373,7 @@ func settlingStageOn(t *testing.T, tc settlingCase, world *settlingWorld) (*Dete
 		}
 	}
 	stage := &DeterministicResponseStage{NewLoop: func(IncidentRequest) *ResponderLoop { return loop }, KeepLoop: true,
-		ObservationInterval: time.Second, StabilityWindow: tc.stability, recoveryNow: clock.Now, recoveryWait: clock.advance}
+		ObservationInterval: time.Second, recoveryNow: clock.Now, recoveryWait: clock.advance}
 	return stage, &IncidentState{Request: request, Findings: findings}
 }
 
@@ -426,12 +454,13 @@ func TestRecoveryWaitSettlesWhileEffectsAndWindowsCatchUp(t *testing.T) {
 
 // After its writes settle, the stage gives the alert set the time Recovered
 // would take had the repair worked at settle: the longest clearing horizon
-// among the alerts still open plus the closure stability window. An
+// among the alerts still open plus the closure stability window for the
+// alerts to clear, then the stability window for Recovered to hold. An
 // application that converges later than its detectors' own lag (a settings
 // cache, client retries) still recovers within that bound, so the stage
 // credits its repair and the responder is not dispatched, even past the
-// start-anchored recovery floor. A fault that never clears is handed off at
-// that bound, not before and not at the response deadline.
+// start-anchored recovery floor. A fault that never clears is handed off when
+// the alerts must have cleared, not before and not at the response deadline.
 func TestRecoveryWaitHoldsUntilTheSettleAnchoredBound(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -441,10 +470,17 @@ func TestRecoveryWaitHoldsUntilTheSettleAnchoredBound(t *testing.T) {
 		minWait, maxWait time.Duration
 	}{
 		// The window (60 s) plus its clearing interval end about 63 s after the
-		// write; the application clears 100 s after it, inside 63 s + 40 s.
+		// write; the application clears 100 s after it, inside 63 s + 40 s, and
+		// Recovered holds through the 40 s stability window.
 		{"application converges after its detectors' window", settlingCase{healAfter: 100 * time.Second, stallWindow: 60 * time.Second, stability: 40 * time.Second},
-			contracts.RecoveryWait_EXIT_REASON_CLEARED, false, 100 * time.Second, 105 * time.Second},
+			contracts.RecoveryWait_EXIT_REASON_CLEARED, false, 140 * time.Second, 145 * time.Second},
 		{"fault persists past the settle-anchored bound", settlingCase{stallWindow: 60 * time.Second, stability: 40 * time.Second},
+			contracts.RecoveryWait_EXIT_REASON_FAILED, true, 101 * time.Second, 108 * time.Second},
+		// The written workload's Pod becomes Ready again every 15 s while its
+		// requests keep failing. The bound is anchored on the first observed
+		// settle: later Ready transitions never move it, so the stage hands off
+		// at the same bound and the responder keeps its budget.
+		{"written workload keeps becoming Ready while the fault persists", settlingCase{stallWindow: 60 * time.Second, stability: 40 * time.Second, readyEvery: 15 * time.Second, responseDeadline: 10 * time.Minute},
 			contracts.RecoveryWait_EXIT_REASON_FAILED, true, 101 * time.Second, 108 * time.Second},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -460,6 +496,47 @@ func TestRecoveryWaitHoldsUntilTheSettleAnchoredBound(t *testing.T) {
 			}
 			if waited := clock.Now().Sub(started); waited < tc.minWait || waited > tc.maxWait {
 				t.Fatalf("the stage observed for %s, want %s to %s", waited, tc.minWait, tc.maxWait)
+			}
+			if agent.dispatched != tc.wantDispatched {
+				t.Fatalf("responder dispatched = %v, want %v", agent.dispatched, tc.wantDispatched)
+			}
+		})
+	}
+}
+
+// The stage credits only what closure would: Recovered holding through the
+// stability window. Requests that pass briefly after the restart and fail
+// again inside the window earn no credit; the incident goes to the responder
+// exactly as if the stage had failed.
+func TestRecoveryWaitCreditsOnlyRecoveryThatHoldsThroughTheStabilityWindow(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		settlingCase
+		wantExit       contracts.RecoveryWait_ExitReason
+		wantResult     string
+		wantDispatched bool
+	}{
+		{"requests recover and stay recovered", settlingCase{healAfter: 10 * time.Second, traffic: &settlingTraffic{}, stability: 40 * time.Second},
+			contracts.RecoveryWait_EXIT_REASON_CLEARED, "applied_cleared", false},
+		{"requests pass briefly and fail again inside the window", settlingCase{healAfter: 10 * time.Second, traffic: &settlingTraffic{relapseAfter: 20 * time.Second}, stability: 40 * time.Second},
+			contracts.RecoveryWait_EXIT_REASON_FAILED, "applied_still_matching", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stage, state, clock, _ := settlingStage(t, tc.settlingCase)
+			started := clock.Now()
+			agent := &recordingStage{}
+			if err := RunResponseStages(context.Background(), state, []ResponseStage{stage, agent}); err != nil {
+				t.Fatal(err)
+			}
+			report := state.PriorStages[0]
+			if got := report.GetRecoveryWait().GetExitReason(); got != tc.wantExit {
+				t.Fatalf("recovery wait exit = %s after %s, want %s", got, clock.Now().Sub(started), tc.wantExit)
+			}
+			if tc.wantExit == contracts.RecoveryWait_EXIT_REASON_CLEARED && clock.Now().Sub(started) < tc.stability {
+				t.Fatalf("credited after %s, before the %s stability window", clock.Now().Sub(started), tc.stability)
+			}
+			if got := report.Mitigations[0].Result; got != tc.wantResult {
+				t.Fatalf("attempt result = %s, want %s", got, tc.wantResult)
 			}
 			if agent.dispatched != tc.wantDispatched {
 				t.Fatalf("responder dispatched = %v, want %v", agent.dispatched, tc.wantDispatched)

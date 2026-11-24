@@ -95,18 +95,17 @@ type DeterministicResponseStage struct {
 	// recovery wait lasts this long (instead of DefaultMitigationRolloutTimeout)
 	// and its soft give-ups (a finding past its horizon, a program still
 	// matching) no longer end it; a refuted or failed write still does.
-	WaitBound time.Duration
-	// StabilityWindow is the closure stability window: once the stage's
-	// writes have settled, the alert set gets its clearing horizon plus this
-	// window to recover before the stage hands off, the same allowance
-	// closure gives Recovered.
-	StabilityWindow time.Duration
-	recoveryNow     func() time.Time
-	recoveryWait    func(context.Context, time.Duration) error
+	WaitBound    time.Duration
+	recoveryNow  func() time.Time
+	recoveryWait func(context.Context, time.Duration) error
 }
 
 type responseStageProgress struct {
-	RecoveryDeadline   time.Time
+	RecoveryDeadline time.Time
+	// SettledAt is when the stage's writes settled, as first observed; the
+	// hand-off bound is anchored on it and no later Pod event moves it. Zero
+	// before the writes are seen settled.
+	SettledAt          time.Time
 	Report             *contracts.StageReport
 	Coverage           *contracts.PlaybookCoverage
 	InitialProgramRuns []ProgramRun
@@ -173,7 +172,7 @@ func (stage *DeterministicResponseStage) Run(ctx context.Context, state *Inciden
 	save := func(complete bool) error {
 		retainAdmissionStageFindings(state, report)
 		report.RemainingFindingFingerprints = findingFingerprints(state.Findings)
-		loop.stageProgress[stage.Name()] = responseStageProgress{Report: report, Coverage: cloneCoverage(state.Coverage), InitialProgramRuns: append([]ProgramRun(nil), state.Request.InitialProgramRuns...), Complete: complete, RecoveryDeadline: progress.RecoveryDeadline}
+		loop.stageProgress[stage.Name()] = responseStageProgress{Report: report, Coverage: cloneCoverage(state.Coverage), InitialProgramRuns: append([]ProgramRun(nil), state.Request.InitialProgramRuns...), Complete: complete, RecoveryDeadline: progress.RecoveryDeadline, SettledAt: progress.SettledAt}
 		return loop.persistToolState(ctx)
 	}
 	// Always reobserve after recovery. A recorded attempt is never replayed,
@@ -627,6 +626,7 @@ func recordedPlanContract(application RecordedPlanApplication) (*contracts.PlanA
 // This type owns that storage edge so all checkpoints use ProtoJSON.
 type encodedResponseStageProgress struct {
 	RecoveryDeadline   time.Time
+	SettledAt          time.Time `json:",omitempty"`
 	Report             json.RawMessage
 	Coverage           json.RawMessage
 	InitialProgramRuns []ProgramRun
@@ -634,7 +634,7 @@ type encodedResponseStageProgress struct {
 }
 
 func (progress responseStageProgress) MarshalJSON() ([]byte, error) {
-	encoded := encodedResponseStageProgress{RecoveryDeadline: progress.RecoveryDeadline, InitialProgramRuns: progress.InitialProgramRuns, Complete: progress.Complete}
+	encoded := encodedResponseStageProgress{RecoveryDeadline: progress.RecoveryDeadline, SettledAt: progress.SettledAt, InitialProgramRuns: progress.InitialProgramRuns, Complete: progress.Complete}
 	if progress.Report != nil {
 		raw, err := protojson.Marshal(progress.Report)
 		if err != nil {
@@ -656,7 +656,7 @@ func (progress *responseStageProgress) UnmarshalJSON(raw []byte) error {
 	if err := json.Unmarshal(raw, &encoded); err != nil {
 		return err
 	}
-	*progress = responseStageProgress{RecoveryDeadline: encoded.RecoveryDeadline, Complete: encoded.Complete, InitialProgramRuns: encoded.InitialProgramRuns}
+	*progress = responseStageProgress{RecoveryDeadline: encoded.RecoveryDeadline, SettledAt: encoded.SettledAt, Complete: encoded.Complete, InitialProgramRuns: encoded.InitialProgramRuns}
 	if len(encoded.Report) > 0 && string(encoded.Report) != "null" {
 		progress.Report = &contracts.StageReport{}
 		if err := protojson.Unmarshal(encoded.Report, progress.Report); err != nil {
@@ -973,27 +973,29 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			budget = min(budget, stage.ObservationCeiling)
 		}
 		progress.RecoveryDeadline = now().Add(budget)
-		if deadline := state.Request.ResponseDeadline; !deadline.IsZero() && deadline.Before(progress.RecoveryDeadline) {
-			progress.RecoveryDeadline = deadline
-		}
 		if err := save(false); err != nil {
 			return err
 		}
 	}
-	// Re-entry and legacy receipt reconstruction retain the original response
-	// bound as well as the shared recovery bound.
-	if deadline := state.Request.ResponseDeadline; !deadline.IsZero() && deadline.Before(progress.RecoveryDeadline) {
-		progress.RecoveryDeadline = deadline
+	// Re-entry and legacy receipt reconstruction retain the responder's share
+	// of the response budget as well as the shared recovery bound.
+	if end := stageObservationEnd(report, state.Request.ResponseDeadline); !end.IsZero() && end.Before(progress.RecoveryDeadline) {
+		progress.RecoveryDeadline = end
 	}
 	observe, cancel := context.WithDeadline(ctx, progress.RecoveryDeadline)
 	defer func() { cancel() }()
+	// rebound moves the observation context to a deadline set once the
+	// writes are seen settled.
+	rebound := func() {
+		cancel()
+		observe, cancel = context.WithDeadline(ctx, progress.RecoveryDeadline)
+	}
 	interval := stage.ObservationInterval
 	if interval <= 0 {
 		interval = 250 * time.Millisecond
 	}
 	effects := recoveryEffects{}
-	// When this wait first saw each open finding; a finding on a component no
-	// stage write touched hands off once it outlasts its clearing horizon.
+	recovery := stageRecovery{window: loop.StabilityWindow}
 	for {
 		state.syncAlertSet()
 		scope = newRecoveryScope(alertKeys(&state.Request))
@@ -1098,23 +1100,32 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 					matching = "program " + attempt.GetPlaybookId() + " still diagnoses the fault after its write"
 				}
 			}
-			if len(open) == 0 {
-				switch decideStageRecovery(check, matching) {
-				case stageCleared:
-					exit = contracts.RecoveryWait_EXIT_REASON_CLEARED
-					if len(unrelated) > 0 {
-						slog.Info("recovery_wait_unrelated_findings", "incident_id", state.Request.IncidentID, "count", len(unrelated))
-					}
-					state.Findings = open
-					state.refreshUnexplained()
-					promoteSettledAttempts(settling)
-					return nil
-				default:
-					held, heldReason = sortedFindings(seen), check.reason
-					if matching != "" {
-						heldReason = matching
-					}
+			// Recovered, as closure judges it: the shared predicate (whose user
+			// tests also hold through the trailing stability window) with every
+			// open finding clear, holding through the stability window. Only
+			// that credits the stage's writes and skips the responder.
+			holds := len(open) == 0 && decideStageRecovery(check, matching) == stageCleared
+			if recovery.observe(now(), holds) {
+				exit = contracts.RecoveryWait_EXIT_REASON_CLEARED
+				if len(unrelated) > 0 {
+					slog.Info("recovery_wait_unrelated_findings", "incident_id", state.Request.IncidentID, "count", len(unrelated))
 				}
+				state.Findings = open
+				state.refreshUnexplained()
+				promoteSettledAttempts(settling)
+				return nil
+			}
+			reason := check.reason
+			switch {
+			case len(open) > 0:
+				reason = "finding " + FindingFingerprint(open[0]) + " still active"
+			case matching != "":
+				reason = matching
+			case holds:
+				reason = "recovery has not yet held through the stability window"
+			}
+			if len(open) == 0 {
+				held, heldReason = sortedFindings(seen), reason
 			}
 			var settled time.Duration
 			if since := check.record.GetSince(); check.record.GetWritesSettled() && since != nil {
@@ -1124,37 +1135,42 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 			}
 			// Once SDO's writes have settled, a finding that judges current state
 			// only (no evaluation window) and is still active past its own horizon
-			// says the fault is there now: hand off. Windowed findings and user
-			// tests aggregate over time, and with them the application's own
-			// convergence (caches, retries), so the alert set gets the time
-			// Recovered would take had the repair worked at settle: the longest
-			// clearing horizon among its members still open, plus the closure
-			// stability window (the allowance closure gives Recovered). Only an
-			// alert set still not clear at that bound hands off.
+			// says the fault is there now: hand off.
 			if settled >= 0 && stage.WaitBound <= 0 {
-				horizon := check.horizon + 2*interval
 				for _, finding := range open {
 					if _, window := horizonOf(finding.DetectorID); window == 0 && settled >= findingHorizon(finding) {
 						branch = "finding " + FindingFingerprint(finding) + " judges current state and persisted past its horizon after the stage's writes settled"
 						return nil
 					}
+				}
+				// Windowed findings and user tests aggregate over time, and with
+				// them the application's own convergence (caches, retries). The
+				// alert set must clear within the longest clearing horizon of its
+				// open members plus the stability window (the allowance closure
+				// gives Recovered) after the writes settled, then hold through the
+				// stability window. The settle is the one first observed: a later
+				// Pod event (a workload that keeps becoming Ready) never moves it,
+				// and the deadline is fixed then.
+				horizon := check.horizon + 2*interval
+				for _, finding := range open {
 					horizon = max(horizon, findingHorizon(finding))
 				}
-				recoverBy := check.record.GetSince().AsTime().Add(horizon + stage.StabilityWindow)
-				// One more observation at the bound itself decides it.
-				if extended := stage.settledDeadline(progress.RecoveryDeadline, recoverBy.Add(interval), state.Request.ResponseDeadline); extended.After(progress.RecoveryDeadline) {
-					progress.RecoveryDeadline = extended
-					cancel()
-					observe, cancel = context.WithDeadline(ctx, progress.RecoveryDeadline)
+				if progress.SettledAt.IsZero() {
+					progress.SettledAt = check.record.GetSince().AsTime()
+					// One more observation at the end of the window decides it.
+					if deadline := stage.settledDeadline(report, progress.RecoveryDeadline, progress.SettledAt.Add(horizon+2*loop.StabilityWindow+interval), state.Request.ResponseDeadline); deadline.After(progress.RecoveryDeadline) {
+						progress.RecoveryDeadline = deadline
+						rebound()
+					}
 					if err := save(false); err != nil {
 						return err
 					}
 				}
-				if (len(open) > 0 || check.verdict == recoveryPending) && !now().Before(recoverBy) {
-					reason := check.reason
-					if len(open) > 0 {
-						reason = "finding " + FindingFingerprint(open[0]) + " still active"
-					}
+				// Past the bound only a stability window already running keeps
+				// the stage; alerts that re-fire inside it hand off at once. A
+				// program still matching over clear alerts is judged below.
+				alertsClear := len(open) == 0 && check.verdict != recoveryPending
+				if !alertsClear && !now().Before(progress.SettledAt.Add(horizon+loop.StabilityWindow)) {
 					branch = "not recovered by its settle-anchored bound: " + reason
 					return nil
 				}
@@ -1212,19 +1228,56 @@ func (stage *DeterministicResponseStage) awaitApplications(ctx context.Context, 
 
 // settledDeadline is the recovery deadline once the stage's writes have
 // settled: the settle-anchored bound when it is later than the deadline set
-// before the writes settled, never past the response deadline. A test budget
-// or observation ceiling keeps the deadline it set.
-func (stage *DeterministicResponseStage) settledDeadline(current, recoverBy, responseDeadline time.Time) time.Time {
-	if stage.Budget > 0 || stage.ObservationCeiling > 0 || !recoverBy.After(current) {
+// before the writes settled, never past the stage's share of the response
+// budget. A test budget or observation ceiling keeps the deadline it set.
+func (stage *DeterministicResponseStage) settledDeadline(report *contracts.StageReport, current, bound, responseDeadline time.Time) time.Time {
+	if stage.Budget > 0 || stage.ObservationCeiling > 0 {
 		return current
 	}
-	if !responseDeadline.IsZero() && responseDeadline.Before(recoverBy) {
-		if responseDeadline.Before(current) {
-			return current
-		}
+	if end := stageObservationEnd(report, responseDeadline); !end.IsZero() && end.Before(bound) {
+		bound = end
+	}
+	if bound.After(current) {
+		return bound
+	}
+	return current
+}
+
+// stageObservationEnd is the latest the automatic stage may observe: halfway
+// from its start to the response deadline, so the responder always inherits
+// at least half of the budget left when the stage started. Zero when the
+// incident has no response deadline.
+func stageObservationEnd(report *contracts.StageReport, responseDeadline time.Time) time.Time {
+	if responseDeadline.IsZero() {
+		return time.Time{}
+	}
+	started := report.GetStartedAt()
+	if started == nil || !started.AsTime().Before(responseDeadline) {
 		return responseDeadline
 	}
-	return recoverBy
+	return started.AsTime().Add(responseDeadline.Sub(started.AsTime()) / 2)
+}
+
+// stageRecovery is Recovered as the stage observes it over time: closure
+// credits recovery only once it held through the stability window, and so
+// does the stage. A single observation proves it only without a window.
+type stageRecovery struct {
+	window time.Duration
+	since  time.Time
+}
+
+// observe records whether Recovered holds at now and reports whether it has
+// held, at every observation, through the stability window. An observation
+// that does not hold restarts the window.
+func (r *stageRecovery) observe(now time.Time, holds bool) bool {
+	if !holds {
+		r.since = time.Time{}
+		return false
+	}
+	if r.since.IsZero() {
+		r.since = now
+	}
+	return !now.Before(r.since.Add(r.window))
 }
 
 // writtenWorkloadsStartup is the longest observed startup of the workloads the

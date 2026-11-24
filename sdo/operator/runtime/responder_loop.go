@@ -240,6 +240,9 @@ type ResponderLoop struct {
 	pendingWrites   map[string]pendingMitigation
 	MutationGate    *apihistory.MutationGate
 	Now             func() time.Time
+	// StabilityWindow is the closure stability window: the automatic stage
+	// credits recovery only once Recovered held through it, as closure does.
+	StabilityWindow time.Duration
 	CachedFindings  func() ToolResponse
 	IncidentStatus  func() *apihistory.IncidentVerified
 	WaitClosure     func(context.Context, time.Duration) ToolResponse

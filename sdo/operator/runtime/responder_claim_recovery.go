@@ -108,15 +108,13 @@ func (d KubernetesJobDispatcher) beforeFirstResponderClaim(ctx context.Context, 
 			clear = clear && (evaluation.Status == DetectorEvaluationClear || !openingDetectors[evaluation.DetectorID])
 		}
 		if clear {
-			// The same proof the stage's own recovery wait requires; without it
-			// the wait below observes again and hands off what stays unproven.
+			// The same proof the stage's own recovery wait requires. One
+			// observation cannot show Recovered holding through a stability
+			// window, so the wait below observes it and hands off what stays
+			// unproven.
 			view, err := loop.snapshotView(ctx)
-			if err == nil {
-				check := loop.stageRecoveryCheck(ctx, view, state)
-				clear = decideStageRecovery(check, "") == stageCleared
-			} else {
-				clear = false
-			}
+			recovery := stageRecovery{window: loop.StabilityWindow}
+			clear = err == nil && recovery.observe(lifecycleio.Now(), decideStageRecovery(loop.stageRecoveryCheck(ctx, view, state), "") == stageCleared)
 		}
 		if clear {
 			report.RecoveryWait = &contracts.RecoveryWait{ExitReason: contracts.RecoveryWait_EXIT_REASON_CLEARED}
