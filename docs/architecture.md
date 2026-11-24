@@ -300,11 +300,11 @@ The automatic response stage sends all its matched plans in one apply with one r
 fixed 45 s stage budget (`DefaultStageBudget`); that apply is numbered separately and never spends the
 agent's rounds. Matches the stage could not apply or verify in time reach the agent in `prior_stages`
 with skip reason `stage_budget`.
-The stage runs again, on the responder's own loop, when a finding that a learned playbook explains
-activates after dispatch (`attachLearnedActivation`, at most eight passes, each within the same budget).
-The finding joins the open incident, a pass redoes attempts that were only skipped and never repeats one
-that wrote, and the one `deterministic` report in `prior_stages` is updated in place. The responder reads
-the new attempts once, as `prior_stages` in its next tool reply.
+Before handoff, a finding that a learned playbook explains can ask the automatic stage to run
+again (at most eight passes, each within the same budget). A pass retries skipped attempts and
+retains receipts for attempts that wrote in the one `deterministic` report. Handoff waits for
+running passes and evidence queued during the opening stage. The responder owns subsequent
+writes and reads the automatic verdicts and receipts through `sdo detect`.
 SDO refuses no repair for its kind: what an action does to stored records is recorded evidence, never a gate
 (`runtime/data_effects.go`, classes in `sdk/program/effects.go`). Go assigns each applied action a data
 effect per `holds_data` component it reaches: `Exec`, `EnsureExec`, `EnsureHTTP`, `RunScript` and `RunJob`
@@ -662,8 +662,8 @@ The controller batches persistent findings into an incident request. The request
 The controller holds at most one open incident per application, and this is deliberate. Recovery is judged on application health (every health detector clear, or without any, the incident's own findings), and a responder's own repair can break another component, so the controller cannot safely decide that a later finding belongs to someone else. While an incident is open:
 
 - A finding with the same key as one in the request replaces it. Before the responder launches, a new opener joins the request and its opening alerts, and a new clue joins the request only (`attachBeforeLaunch`).
-- After launch the request is frozen. A new opener waits in the batcher and opens the next incident after this one closes; a clue a learned playbook can bind joins the open incident (the automatic stage runs again, `attachLearnedActivation`); other clues are read live.
-- Closure waits only on the opening alerts; a second fault's opener waits in the batcher.
+- An opener inside the alert join window joins the open incident. Later openers wait in the batcher. Before handoff, a clue a learned playbook can bind can ask the automatic stage for another pass. The responder reads other clues live.
+- Closure waits for the opening and joined alerts to clear and stay clear.
 
 The overlap is made visible, never hidden. A finding that first activated after the responder launched is `after_dispatch` in the firing stream and the closure's `detector_timeline`, even when it joined the incident. `sdo verify` lists it in `new_since_dispatch[]`, and its summary tells the responder the finding may be a separate fault to report as its own cause. The `incident_closed` lifecycle event lists those findings in `after_dispatch_finding_keys`. A harness that injects faults back to back should wait for the previous incident to close (the persistent SREGym mode waits for acknowledgment); a non-empty `after_dispatch_finding_keys` marks an incident another fault overlapped.
 

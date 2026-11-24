@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"sdo.dev/operator/provenance"
-	"strings"
 	"sync"
 	"time"
 
@@ -157,10 +156,6 @@ type ToolResponse struct {
 	ApplicationID           string                         `json:"application_id,omitempty"`
 	Patches                 []PlanPatch                    `json:"patches,omitempty"`
 	ProgramRuns             []ProgramRun                   `json:"program_runs,omitempty"`
-	// PriorStages reports automatic passes that ran while the responder worked,
-	// each once, in the vocabulary of the incident's prior_stages.
-	PriorStages []StageNote `json:"prior_stages,omitempty"`
-
 	// ProgramRunsOmitted counts runs a truncated record could not list; the
 	// trust reader fails closed on it. ProgramRunsUnrelatedOmitted counts apply
 	// runs of programs or bindings the applied plans do not name, which the
@@ -294,7 +289,6 @@ type ResponderLoop struct {
 	RecoverySessionRoot string
 	capturePhase        string
 	sourceCompared      map[string]bool
-	stageNotes          []StageNote
 	timing              toolTiming
 	// trace times the phases of the Handle call in progress (nil outside one).
 	trace            *phaseTrace
@@ -892,14 +886,6 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		response.Error = fmt.Sprintf("unknown sdo command %q", request.Command)
 	}
 	response.LoopsUsed = l.batches
-	if notes := l.takeStageNotes(request); len(notes) > 0 {
-		response.PriorStages = notes
-		lines := make([]string, len(notes))
-		for i, note := range notes {
-			lines[i] = note.String()
-		}
-		response.Summary = "automatic stage ran while you worked: " + strings.Join(lines, "; ") + ". " + response.Summary
-	}
 	return response
 }
 

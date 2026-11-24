@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	contracts "sdo.dev/operator/contracts/gen/sdodev/contracts/v1alpha1"
+	"sdo.dev/operator/sdk/program"
 )
 
 const apiBinding = "Deployment/app/api"
@@ -66,6 +67,18 @@ func TestMitigateByNameAppliesTheExactProgramAndBindings(t *testing.T) {
 				t.Fatalf("exact program was not executed: %+v", response.MenuExecution)
 			}
 		})
+	}
+}
+
+func TestMitigateRechecksAnOpeningNonMatchAndAppliesInOneCall(t *testing.T) {
+	world, loop := targetLoop(t)
+	loop.Request.PlaybookCoverage = nil
+	loop.Request.InitialProgramRuns = []ProgramRun{{ProgramID: "aware-restart", Verdict: program.Verdict{Result: program.NoMatch}}}
+	response := loop.Handle(t.Context(), ToolRequest{Command: "mitigate", Targets: []MitigateTarget{{
+		Name: "aware-restart", Parameters: map[string]BindValues{"deployment": {apiBinding}},
+	}}})
+	if response.Error != "" || world.restarts.Load() != 1 {
+		t.Fatalf("live recheck and apply: writes=%d error=%q", world.restarts.Load(), response.Error)
 	}
 }
 

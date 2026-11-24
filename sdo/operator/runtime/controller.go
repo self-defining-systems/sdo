@@ -1003,8 +1003,8 @@ func (c *Controller) EvaluateAll(ctx context.Context, now time.Time) error {
 }
 
 // admitActivation is the one entry for a newly active finding. A finding
-// already in the open incident is refreshed; a clue joins the incident before
-// launch, or as a learned playbook's activation after it, and otherwise stays
+// already in the open incident is refreshed; a clue joins before
+// launch or while the automatic stage owns the repair, and otherwise stays
 // tracked only. An opener joins the incident's opening alerts before launch
 // and otherwise waits in the batcher for the next incident.
 func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, now time.Time, spec sdk.DetectorSpec) {
@@ -1027,8 +1027,8 @@ func (c *Controller) admitActivation(ctx context.Context, finding sdk.Finding, n
 	// An opener inside the join window belongs to the current alert set.
 	// Later openers wait for the next incident.
 	if c.joinAlertSet(finding, now) {
-		// The alert set changed: a learned playbook for the joined symptom is
-		// evaluated against live state, not only the opening alerts' playbooks.
+		// The automatic stage can evaluate a learned playbook for the joined
+		// symptom while it owns the repair.
 		c.attachLearnedActivation(ctx, finding)
 		return
 	}
@@ -1382,7 +1382,10 @@ func (c *Controller) nextWake() (time.Time, string) {
 		if !c.earlyReportPendingLocked() {
 			earlyDeadline = time.Time{}
 		}
-		verificationDeadline = time.Time{}
+		// A closure write retry does not replace a future handoff bound.
+		if c.awaitingAutomaticRecoveryLocked() == nil || !verificationDeadline.After(c.clock()) {
+			verificationDeadline = time.Time{}
+		}
 		consider(retry, "closure freeze retry")
 	}
 	incidentOpen := c.incidentOpen
@@ -1672,7 +1675,7 @@ func (c *Controller) handleDispatchCompletion(completion dispatchCompletion, obs
 		c.currentIncidentRequest.InitialProgramRuns = append([]ProgramRun(nil), completion.automatic.Request.InitialProgramRuns...)
 	}
 	if len(completion.priorStages) > 0 && (completion.err == nil || completion.automatic == nil) {
-		c.currentIncidentRequest.PriorStages = mergeLaterStagePasses(completion.priorStages, c.currentIncidentRequest.PriorStages)
+		c.currentIncidentRequest.PriorStages = mergeStageReports(c.currentIncidentRequest.PriorStages, completion.priorStages)
 	}
 	var jobFailed *ResponderJobFailedError
 	var capacityConfiguration *responderCapacityConfigurationError
@@ -1843,7 +1846,8 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		return false
 	}
 	c.mu.Lock()
-	if !c.incidentOpen || c.currentIncidentRequest == nil || now.Before(c.closureFreezeRetryAt) {
+	if !c.incidentOpen || c.currentIncidentRequest == nil ||
+		now.Before(c.closureFreezeRetryAt) && c.awaitingAutomaticRecoveryLocked() == nil {
 		c.mu.Unlock()
 		return false
 	}
@@ -1855,7 +1859,7 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		return false
 	}
 	requiresStability := early || c.codePath != nil && c.codePath.Selection.DetectorSource == "shell"
-	if early && c.responseStagesRunning || !early && (c.midStage.running || c.closurePreparingLocked()) {
+	if early && c.responseStagesRunning || !early && (c.midStage.running || c.pendingLearnedPassReadyLocked() || c.closurePreparingLocked()) {
 		c.mu.Unlock()
 		return false
 	}
@@ -1976,6 +1980,10 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 		return false
 	}
 	c.mu.Lock()
+	if c.midStage.running || c.pendingLearnedPassReadyLocked() || automatic != c.awaitingAutomaticRecoveryLocked() {
+		c.mu.Unlock()
+		return false
+	}
 	// Any observed responder write restarts the stability window, including
 	// the last writes before the responder finished.
 	if safe && guard != nil && c.closureMutationRevision != guard.Revision {
@@ -2102,6 +2110,12 @@ func (c *Controller) maybeCloseIncidentObserved(ctx, observationCtx context.Cont
 			c.mu.Unlock()
 			return false
 		}
+	}
+	// Back off freezing the closure after deciding whether automatic recovery
+	// should hand off. A prior freeze failure cannot suppress that decision.
+	if now.Before(c.closureFreezeRetryAt) {
+		c.mu.Unlock()
+		return false
 	}
 	if !verified {
 		finalStates = nil

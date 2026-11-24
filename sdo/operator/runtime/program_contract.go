@@ -169,5 +169,5 @@ func playbookVerdictContract(run ProgramRun) *contracts.PlaybookVerdict {
 	if len(reason) > 300 {
 		reason = reason[:300]
 	}
-	return &contracts.PlaybookVerdict{PlaybookId: run.ProgramID, ProgramRevision: run.ProgramRevision, Result: verdictResultName(run.Verdict.Result), Reason: reason, Retrieval: run.Retrieval}
+	return &contracts.PlaybookVerdict{PlaybookId: run.ProgramID, ProgramRevision: run.ProgramRevision, Result: verdictResultName(run.Verdict.Result), Reason: reason, Retrieval: run.Retrieval, AskedAt: optionalTimestamp(run.AskedAt)}
 }

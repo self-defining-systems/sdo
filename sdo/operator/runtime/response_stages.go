@@ -129,20 +129,7 @@ func RunStageAgain(ctx context.Context, state *IncidentState, stage ResponseStag
 		report.Error = err.Error()
 	}
 	if index >= 0 {
-		report.ApplyCompletedAt = earlier.ApplyCompletedAt
-		report.RecoveryDeadline = earlier.RecoveryDeadline
-		report.StabilityDeadline = earlier.StabilityDeadline
-		report.RecoveryWait = earlier.RecoveryWait
-		report.HandoffSelected = earlier.HandoffSelected
-		report.HandoffKeys = earlier.HandoffKeys
-		report.HandoffState = earlier.HandoffState
-		for _, attempt := range report.Mitigations {
-			for _, previous := range earlier.GetMitigations() {
-				if id := attempt.GetApplyReceipt().GetApplicationId(); id != "" && id == previous.GetApplyReceipt().GetApplicationId() && previous.GetRolloutUnsettledAtDeadline() {
-					attempt.RolloutUnsettledAtDeadline = true
-				}
-			}
-		}
+		report = mergeStagePass(earlier, report)
 		state.PriorStages[index] = report
 	} else {
 		state.PriorStages = append(state.PriorStages, report)
@@ -151,6 +138,56 @@ func RunStageAgain(ctx context.Context, state *IncidentState, stage ResponseStag
 		return report, fmt.Errorf("response stage %s: %w", stage.Name(), err)
 	}
 	return report, nil
+}
+
+// mergeStagePass preserves earlier receipts even when a retry fails before
+// rebuilding its report. A first write earns the normal recovery deadline.
+func mergeStagePass(earlier, report *contracts.StageReport) *contracts.StageReport {
+	if earlier.GetStartedAt() != nil {
+		report.StartedAt = earlier.StartedAt
+	}
+	if playbookWrote(earlier) || !playbookWrote(report) {
+		if earlier.GetApplyCompletedAt() != nil {
+			report.ApplyCompletedAt = earlier.ApplyCompletedAt
+		}
+		if earlier.GetRecoveryWait() != nil {
+			report.RecoveryWait = earlier.RecoveryWait
+		}
+	}
+	if earlier.GetRecoveryDeadline() != nil {
+		report.RecoveryDeadline = earlier.RecoveryDeadline
+	}
+	if earlier.GetStabilityDeadline() != nil {
+		report.StabilityDeadline = earlier.StabilityDeadline
+	}
+	if earlier.GetHandoffSelected() {
+		report.HandoffSelected, report.HandoffKeys, report.HandoffState = true, earlier.HandoffKeys, earlier.HandoffState
+	}
+	report.Diagnoses = mergeStageDiagnoses(earlier.GetDiagnoses(), report.Diagnoses)
+	byBinding := map[string]int{}
+	fresh := report.Mitigations
+	report.Mitigations = slices.Clone(earlier.GetMitigations())
+	for i, attempt := range report.Mitigations {
+		byBinding[stageAttemptKey(attempt.PlaybookId, programBindingsState(attempt.Bindings))] = i
+	}
+	for _, attempt := range fresh {
+		key := stageAttemptKey(attempt.PlaybookId, programBindingsState(attempt.Bindings))
+		if i, ok := byBinding[key]; ok {
+			previous := report.Mitigations[i]
+			oldReceipt, newReceipt := previous.GetApplyReceipt(), attempt.GetApplyReceipt()
+			if oldReceipt != nil && (newReceipt == nil ||
+				stageReceiptWrote(oldReceipt) && !stageReceiptWrote(newReceipt) ||
+				controllerTime(oldReceipt.GetCompletedAt()).After(controllerTime(newReceipt.GetCompletedAt()))) {
+				continue
+			}
+			attempt.RolloutUnsettledAtDeadline = attempt.GetRolloutUnsettledAtDeadline() || previous.GetRolloutUnsettledAtDeadline()
+			report.Mitigations[i] = attempt
+		} else {
+			byBinding[key] = len(report.Mitigations)
+			report.Mitigations = append(report.Mitigations, attempt)
+		}
+	}
+	return report
 }
 
 func cloneStageReports(reports []*contracts.StageReport) []*contracts.StageReport {

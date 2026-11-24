@@ -450,20 +450,22 @@ class ProgramRun(_message.Message):
     def __init__(self, program_id: _Optional[str] = ..., bindings: _Optional[_Iterable[_Union[Binding, _Mapping]]] = ..., verdict: _Optional[_Union[Verdict, _Mapping]] = ..., duration: _Optional[_Union[datetime.timedelta, _duration_pb2.Duration, _Mapping]] = ..., error: _Optional[str] = ..., finding_fingerprint: _Optional[str] = ..., program_revision: _Optional[str] = ..., binding_source: _Optional[str] = ..., can_mitigate: _Optional[bool] = ..., read_trace: _Optional[_Iterable[_Union[ReadStep, _Mapping]]] = ..., retrieval: _Optional[str] = ...) -> None: ...
 
 class PlaybookVerdict(_message.Message):
-    __slots__ = ("playbook_id", "program_revision", "result", "reason", "retrieval", "unknown_on_recurrence")
+    __slots__ = ("playbook_id", "program_revision", "result", "reason", "retrieval", "unknown_on_recurrence", "asked_at")
     PLAYBOOK_ID_FIELD_NUMBER: _ClassVar[int]
     PROGRAM_REVISION_FIELD_NUMBER: _ClassVar[int]
     RESULT_FIELD_NUMBER: _ClassVar[int]
     REASON_FIELD_NUMBER: _ClassVar[int]
     RETRIEVAL_FIELD_NUMBER: _ClassVar[int]
     UNKNOWN_ON_RECURRENCE_FIELD_NUMBER: _ClassVar[int]
+    ASKED_AT_FIELD_NUMBER: _ClassVar[int]
     playbook_id: str
     program_revision: str
     result: str
     reason: str
     retrieval: str
     unknown_on_recurrence: int
-    def __init__(self, playbook_id: _Optional[str] = ..., program_revision: _Optional[str] = ..., result: _Optional[str] = ..., reason: _Optional[str] = ..., retrieval: _Optional[str] = ..., unknown_on_recurrence: _Optional[int] = ...) -> None: ...
+    asked_at: _timestamp_pb2.Timestamp
+    def __init__(self, playbook_id: _Optional[str] = ..., program_revision: _Optional[str] = ..., result: _Optional[str] = ..., reason: _Optional[str] = ..., retrieval: _Optional[str] = ..., unknown_on_recurrence: _Optional[int] = ..., asked_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class ReadStep(_message.Message):
     __slots__ = ("op", "target", "outcome")

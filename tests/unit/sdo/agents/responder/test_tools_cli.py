@@ -99,7 +99,8 @@ def test_mitigate_help_is_short_and_names_one_form(capsys):
 def test_status_help_points_at_stage_results(capsys):
     with pytest.raises(SystemExit):
         tools_cli.main(["status", "--help"])
-    assert "prior_stages" in capsys.readouterr().out
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "Use detect for automatic writes, verdicts and rollout blockers." in help_text
 
 
 def test_documented_cli_examples_send_valid_requests(monkeypatch):

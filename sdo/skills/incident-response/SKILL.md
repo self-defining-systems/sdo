@@ -9,7 +9,7 @@ description: Incident repair.
 - **Follow the change.** Look for changes on or upstream of the failing path near onset, or a latent trigger.
   Check all unexplained findings there.
   Passing shows liveness, not correct data for the failing operation.
-  Check authentication for suspected Secret rotation. Ownership times alone are inconclusive.
+  See stage writes in `sdo detect`. You own repairs after handoff. Test auth on Secret drift.
 - **Hold a rival.** Name the top two explanations and run the check that best distinguishes them.
 - **Test each change.** Predict what it fixes, then recheck after it takes effect. Unchanged failure counts against the hypothesis.
 - **Restore lost data.** Restore from its authoritative copy first. Before recreating, search all app and deployment backups or copies: configuration, jobs, object stores, replicas. Never seed substitute data to pass health checks.
