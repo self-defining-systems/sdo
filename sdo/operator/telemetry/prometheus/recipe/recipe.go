@@ -57,7 +57,8 @@ func (Recipe) Build(p telemetry.BackendParams) telemetry.BackendObjects {
 	config := scrapeConfig(p.ApplicationNamespace)
 	roleName := Name + "-" + ns
 	replicas := int32(1)
-	size := resource.MustParse("2Gi")
+	// Leave space above the block retention cap for the head, WAL and compaction.
+	size := resource.MustParse("5Gi")
 	return telemetry.BackendObjects{
 		ConfigMaps:      []*corev1.ConfigMap{{ObjectMeta: meta, Data: map[string]string{"prometheus.yml": config}}},
 		ServiceAccounts: []*corev1.ServiceAccount{{ObjectMeta: meta}},
@@ -82,14 +83,18 @@ func (Recipe) Build(p telemetry.BackendParams) telemetry.BackendObjects {
 							Name: "prometheus", Image: Image,
 							Args: []string{
 								"--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus",
-								"--storage.tsdb.retention.time=6h", "--storage.tsdb.retention.size=1GB",
+								"--storage.tsdb.retention.time=6h", "--storage.tsdb.retention.size=3GB",
+								"--query.max-samples=2000000",
 								"--web.enable-otlp-receiver",
 							},
 							Ports:           []corev1.ContainerPort{{Name: "http", ContainerPort: 9090}},
 							SecurityContext: p.ContainerSecurity,
+							// A 270k-series scrape and evidence capture peaked near 1 GiB RSS
+							// in rehearsal. Reserve headroom for churn, compaction and container
+							// memory beyond RSS. The request reflects small-app steady state.
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("128Mi")},
-								Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("1Gi")},
+								Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("2Gi")},
 							},
 							ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
 								Path: "/-/ready", Port: intstr.FromInt32(9090),
