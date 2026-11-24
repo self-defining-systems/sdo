@@ -239,14 +239,17 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 			return program.Diff{}, projectErr
 		}
 		source = projected
-		before, _ := json.Marshal(v.sourceComparableFields(source.Object, ref))
+		accepted := v.sourceComparableFields(source.Object, ref)
 		var actual any
 		if observed != nil {
-			actual = v.sourceComparableFields(observed.Object, ref)
+			live := v.sourceComparableFields(observed.Object, ref)
+			normalizeSourceWire(accepted, live, source.GroupVersionKind())
+			actual = live
 			if !(sdk.ObservationTarget{Kind: ref.Kind}).Cluster() {
-				actual = projectSourceFields(actual, v.sourceComparableFields(source.Object, ref))
+				actual = projectSourceFields(actual, accepted)
 			}
 		}
+		before, _ := json.Marshal(accepted)
 		after, _ := json.Marshal(actual)
 		// Objects outside the application namespace are never accepted by
 		// adoption, so they carry no record and only declared fields compare.
@@ -267,6 +270,7 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 	}
 	accepted := v.sourceComparableFields(source.Object, ref)
 	actual := v.sourceComparableFields(observed.Object, ref)
+	normalizeSourceWire(accepted, actual, source.GroupVersionKind())
 	left := accepted
 	right := projectSourceFields(actual, left)
 	if v.Client != nil {
@@ -275,7 +279,9 @@ func (v LiveReadView) DiffAgainstSource(ref sdk.ObjectRef) (program.Diff, error)
 			return program.Diff{}, fmt.Errorf("normalize accepted manifest for %s/%s: %w", ref.Kind, ref.Name, normalizeErr)
 		}
 		left = v.sourceComparableFields(normalized.Object, ref)
-		right = actual
+		normalizedLive := v.sourceComparableFields(observed.Object, ref)
+		normalizeSourceWire(left, normalizedLive, source.GroupVersionKind())
+		right = normalizedLive
 	}
 	// Apply normalization answers whether reconciliation changes declared
 	// fields. It retains externally owned fields, so fields written after

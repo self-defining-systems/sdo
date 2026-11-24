@@ -202,7 +202,9 @@ func sourceResidualPaths(observed, source *unstructured.Unstructured) ([]string,
 	declared := source.DeepCopy()
 	preserveSourceControllerFields(declared, observed)
 	want := comparableFields(declared.Object)
-	got := projectSourceFields(comparableFields(observed.Object), want)
+	live := comparableFields(observed.Object)
+	normalizeSourceWire(want, live, source.GroupVersionKind())
+	got := projectSourceFields(live, want)
 	paths := map[string]bool{}
 	var compare func(string, any, any)
 	compare = func(path string, left, right any) {
