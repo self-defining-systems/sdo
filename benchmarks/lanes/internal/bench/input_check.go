@@ -54,8 +54,8 @@ func hookCheckInput(ctx context.Context, inv Inventory, s Spec, kind, path, phas
 	if err := writeJSON(opPath, op); err != nil {
 		return inputResult{}, true, err
 	}
-	h := Hook{Dir: dir, Command: cmd, Env: []string{"BENCH_EXPERIMENT=" + s.Name, "FUZZOPS_NAMESPACE=" + s.Namespace, "BENCH_OPERATOR=" + opPath,
-		"BENCH_OUT=" + tmp, "BENCH_INPUT_KIND=" + kind, "BENCH_INPUT_PATH=" + path, "BENCH_INPUT_PHASE=" + phase, "BENCH_INPUT_ALLOW=" + strings.Join(allow, ",")}}
+	h := Hook{Dir: dir, Command: cmd, Env: append(inv.hostEnv(local, s), "BENCH_EXPERIMENT="+s.Name, "FUZZOPS_NAMESPACE="+s.Namespace, "BENCH_OPERATOR="+opPath,
+		"BENCH_OUT="+tmp, "BENCH_INPUT_KIND="+kind, "BENCH_INPUT_PATH="+path, "BENCH_INPUT_PHASE="+phase, "BENCH_INPUT_ALLOW="+strings.Join(allow, ","))}
 	r := h.Run(ctx, "check-input", nil, nil)
 	if r.Unsupported() || (r.OK() && r.Last == "") {
 		notePreContract(log, s, "check-input")

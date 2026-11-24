@@ -27,6 +27,9 @@ func TestSubjectChecksItsInputs(t *testing.T) {
 	t.Setenv("HOOK_STATE", st)
 	base := filepath.Join(f.specDir, "base")
 	s := inputSpec(base)
+	h := inv.Hosts[inv.LocalHost()]
+	h.Env = map[string]string{"HOST_MARK": "caches"}
+	inv.Hosts[inv.LocalHost()] = h
 
 	must(t, os.WriteFile(filepath.Join(st, "check-input"), []byte(`{"ok":false,"detail":"bundle head 1234 is not the baseline commit"}`), 0o644))
 	var log bytes.Buffer
@@ -35,7 +38,7 @@ func TestSubjectChecksItsInputs(t *testing.T) {
 		t.Fatalf("a refusal by the subject must refuse the spec naming the input, got %v", err)
 	}
 	env, _ := os.ReadFile(filepath.Join(st, "check-input.env"))
-	for _, want := range []string{"BENCH_INPUT_KIND=baseline", "BENCH_INPUT_PATH=" + base, "BENCH_INPUT_PHASE=add"} {
+	for _, want := range []string{"BENCH_INPUT_KIND=baseline", "BENCH_INPUT_PATH=" + base, "BENCH_INPUT_PHASE=add", "HOST_MARK=caches"} {
 		if !strings.Contains(string(env), want) {
 			t.Errorf("the hook was not told %s; it saw %q", want, env)
 		}
