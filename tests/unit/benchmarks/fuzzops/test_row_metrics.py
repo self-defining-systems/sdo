@@ -367,3 +367,25 @@ def test_vanilla_cache_writes_count_as_fixing_writes(tmp_path: Path) -> None:
     )
     row = measure(tmp_path)
     assert (row.ttf_s, row.last_write_source) == (11, "claude_tool_start")
+
+
+def test_vanilla_sql_ddl_counts_as_a_fixing_write(tmp_path: Path) -> None:
+    # Schema changes are app state: dropping a trigger or function, or altering a constraint, is a fixing write.
+    grade(tmp_path)
+    put(tmp_path, "operator/done.json", {"started_at": at(3), "ended_at": at(40)})
+    transcript(
+        tmp_path,
+        "operator/transcript.jsonl",
+        [
+            (6, 7, "kubectl exec db-0 -- psql -Atc 'select tgname from pg_trigger'", False, "trg"),
+            (
+                12,
+                13,
+                "kubectl exec db-0 -- psql -Atc 'DROP TRIGGER trg ON public.issues; DROP FUNCTION public.f()'",
+                False,
+                "DROP TRIGGER\nDROP FUNCTION",
+            ),
+        ],
+    )
+    row = measure(tmp_path)
+    assert (row.ttf_s, row.last_write_source) == (9, "claude_tool_start")
