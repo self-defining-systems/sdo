@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -56,6 +57,7 @@ func callsOfBuildPaths(t *testing.T, scenario string) []WorkloadCall {
 	p := &Prepared{Experiment: "e", Namespace: "ns", AppPack: "pack", Pack: "pack", Hooks: "sregym"}
 	prev := &Prepared{Experiment: "old", Namespace: "old-ns", AppPack: "old-pack", Hooks: "sregym", Ready: true,
 		Operator: filepath.Join(r.s.LaneDir, "operator.json")}
+	must(t, writeJSON(prev.Operator, &HookOperator{Hooks: "test", Settings: map[string]any{"model": "old-model"}}))
 	r.s.New, r.s.Prev = p, prev
 	ctx := context.Background()
 	if err := r.writeSpecFile(); err != nil {
@@ -109,8 +111,12 @@ func TestEveryWorkloadCallOfABuildSeesTheOperatorFile(t *testing.T) {
 					t.Errorf("%s: BENCH_OPERATOR is not set in the call's env", got.call)
 					continue
 				}
-				if !strings.Contains(got.content, "synthetic-model") {
-					t.Errorf("%s: BENCH_OPERATOR=%s is not readable with the spec's settings (read %q)", got.call, got.path, got.content)
+				model := "synthetic-model"
+				if slices.Contains(c.Env, "BENCH_EXPERIMENT=old") {
+					model = "old-model"
+				}
+				if !strings.Contains(got.content, model) {
+					t.Errorf("%s: BENCH_OPERATOR=%s should contain %q, got %q", got.call, got.path, model, got.content)
 				}
 			}
 			for _, v := range verbs {
@@ -183,8 +189,79 @@ exit 0
 		t.Fatalf("the adapter was called %d times: %q", len(lines), got)
 	}
 	for _, l := range lines {
-		if !strings.Contains(l, "block=1") || !strings.Contains(l, "synthetic-model") || !strings.Contains(l, filepath.Join(root, "lane", "operator.json")) {
+		if !strings.Contains(l, "block=1") || !strings.Contains(l, "synthetic-model") || !strings.Contains(l, filepath.Join(root, hookInputDirName(s.ID), "operator.json")) {
 			t.Errorf("call %q does not see the operator file", l)
 		}
+	}
+}
+
+// A kept lane can be claimed by a different subject. Each hook validates the
+// block it received, including the old subject's teardown before the new prepare.
+func TestBuildSwitchesSubjectsWithTheirOwnOperatorFiles(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("PATH", testdata("fakebin")+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKE_STATE", root)
+	for _, args := range [][]string{{"init", "-q"}, {"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "hooks", "--allow-empty"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	adapter := filepath.Join(root, "adapter")
+	must(t, os.WriteFile(adapter, []byte(`#!/bin/sh
+case "$WORKLOAD_VERB" in
+  identity) echo '{"revision":"r","modified":false}' ;;
+esac
+`), 0o755))
+	hook := filepath.Join(root, "hook")
+	must(t, os.WriteFile(hook, []byte(`#!/bin/sh
+grep -Fq '"hooks": "'"$1"'"' "$BENCH_OPERATOR" || {
+  echo "$2: expected operator block for $1, got $(cat "$BENCH_OPERATOR")" >&2
+  if [ "$2" != idle ]; then exit 1; fi
+  echo "wrong operator for $1 $2" >> "$FAKE_STATE/hooks"
+}
+echo "$1 $2" >> "$FAKE_STATE/hooks"
+if [ "$2" = prepare ]; then echo '{"pack":"pack"}'; fi
+`), 0o755))
+
+	staging := filepath.Join(root, "staging")
+	var prev *Prepared
+	for _, subject := range []string{"subject-a", "subject-b"} {
+		s := Step{
+			ID: "build-" + subject, Kind: StepBuild, Lane: "c1", Experiment: subject,
+			Fuzzops: root, Workload: "./adapter", LaneDir: filepath.Join(staging, "c1", "lane"),
+			Cap: 1, ReadyTimeout: 1, Poll: 0.001,
+			New: &Prepared{Experiment: subject, Hooks: subject, HooksPath: root,
+				Command: shellQuote(hook) + " " + subject, AppPack: "pack"},
+			OperatorFile: &HookOperator{Hooks: subject}, Prev: prev,
+		}
+		dir := filepath.Join(staging, "c1", s.ID)
+		path := filepath.Join(dir, "step.json")
+		must(t, writeJSON(path, s))
+		must(t, RunStep(context.Background(), path))
+		var result Result
+		must(t, readJSON(filepath.Join(dir, "result.json"), &result))
+		if !result.OK || result.Prepared == nil || result.Prepared.Hooks != subject {
+			t.Fatalf("build %s failed: %s", subject, result.Reason)
+		}
+		prev = result.Prepared
+		// The manager collects the completed step directory and can run staging
+		// GC before the next experiment picks up the lane.
+		host := Host{Staging: staging}
+		manager := &Manager{
+			Root:  Root(root),
+			inv:   Inventory{Hosts: map[string]Host{"test": host}},
+			lanes: map[string]*LaneFile{"c1": {Lane: "c1", Host: "test", Prepared: prev}},
+			Ops:   func(string, Host) HostOps { return localHost{staging: host.Staging} },
+		}
+		must(t, os.RemoveAll(dir))
+		manager.gcHost(context.Background(), "test")
+	}
+	b, err := os.ReadFile(filepath.Join(root, "hooks"))
+	must(t, err)
+	log := string(b)
+	if strings.Contains(log, "wrong operator") || strings.Count(log, "subject-a teardown\n") != 2 || !strings.Contains(log, "subject-b prepare\n") {
+		t.Fatalf("expected subject A's second teardown and subject B's prepare, got:\n%s", log)
 	}
 }
