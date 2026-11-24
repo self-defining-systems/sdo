@@ -138,7 +138,8 @@ def test_incident_opened_line_names_the_opening_alerts_not_the_clues() -> None:
         },
     }
     lines, report = Watcher(started=START).step(state)
-    assert report is not None and report["summary"].startswith("SDO detector traffic-probe-call:")
+    assert report is not None
+    assert report["summary"].startswith("SDO detector traffic-probe-call:")
     assert lines == ["sdo: incident opened at 12:00:05 (traffic-probe-call: scenario commit-call violates its SLO)"]
     camel = {
         **state,
@@ -284,4 +285,5 @@ def test_harness_page_with_only_a_standing_clue_has_no_preliminary_location() ->
     assert report is None
     assert "localized_at" not in watcher.stamps
     _, diagnosed = watcher.step({**state, "incident_result": {**_result(), "incident_id": "page-1"}})
-    assert diagnosed is not None and diagnosed["summary"].startswith("SDO responder:")
+    assert diagnosed is not None
+    assert diagnosed["summary"].startswith("SDO responder:")
