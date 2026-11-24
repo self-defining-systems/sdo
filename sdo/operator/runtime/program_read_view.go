@@ -440,24 +440,20 @@ func (v LiveReadView) diffSecretAgainstSource(ref sdk.ObjectRef) (program.Diff, 
 	if err != nil && !liveAbsent {
 		return program.Diff{}, secretDiffReadError(err, sdk.ErrUnavailable)
 	}
-	var live map[string][]byte
-	if !liveAbsent {
-		live = secret.Data
+	if liveAbsent {
+		secret = &corev1.Secret{}
 	}
-	before, after := map[string]bool{}, map[string]bool{}
-	for key, value := range accepted {
-		other, present := live[key]
-		if !present || !bytes.Equal(value, other) {
-			before[key] = true
-			if present {
-				after[key] = false
-			}
+	before, after, extra := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	for key, value := range secret.Data {
+		if expected, declared := accepted[key]; !declared {
+			extra[key] = true
+		} else if !bytes.Equal(expected, value) {
+			before[key], after[key] = true, false
 		}
 	}
-	extra := map[string]bool{}
-	for key := range live {
-		if _, declared := accepted[key]; !declared {
-			extra[key] = true
+	for key := range accepted {
+		if _, present := secret.Data[key]; !present {
+			before[key] = true
 		}
 	}
 	return program.Diff{SourceAbsent: sourceAbsent, LiveAbsent: liveAbsent, Changed: len(before) > 0,

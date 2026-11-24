@@ -70,14 +70,12 @@ func (s Source) renderSecretData(ctx context.Context, revision, namespace string
 	if err != nil {
 		return nil, classifySource(err)
 	}
-	for _, object := range set.Objects() {
-		if object.Ref == ref && !object.Hook {
-			return secretLiteralData(object.Object.Object)
-		}
-	}
-	for _, object := range set.Hooks() {
+	for _, object := range append(set.Objects(), set.Hooks()...) {
 		if object.Ref == ref {
-			return nil, ErrSecretSourceHook
+			if object.Hook {
+				return nil, ErrSecretSourceHook
+			}
+			return secretLiteralData(object.Object.Object)
 		}
 	}
 	return nil, fmt.Errorf("%w: %s/%s", ErrAcceptedManifestAbsent, ref.Kind, ref.Name)
