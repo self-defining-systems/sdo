@@ -72,6 +72,26 @@ type Scalar = any
 // absent from the row.
 type Row map[string]Scalar
 
+// UnmarshalJSON keeps integer precision across program reads and corpus replay.
+func (r *Row) UnmarshalJSON(data []byte) error {
+	var raw map[string]Scalar
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&raw); err != nil {
+		return err
+	}
+	if raw == nil {
+		*r = nil
+		return nil
+	}
+	row, err := Row(raw).normalize()
+	if err != nil {
+		return err
+	}
+	*r = row
+	return nil
+}
+
 // Observation is the typed answer of a Read.
 type Observation struct {
 	// Status is the HTTP status of a probe query; 0 for a store query.
@@ -230,13 +250,22 @@ func (r Row) normalize() (Row, error) {
 	}
 	out := make(Row, len(r))
 	for name, value := range r {
+		if number, ok := value.(json.Number); ok {
+			if i, err := number.Int64(); err == nil {
+				value = i
+			} else if f, err := number.Float64(); err == nil {
+				value = f
+			} else {
+				return nil, fmt.Errorf("field %q holds an unrepresentable number", name)
+			}
+		}
 		switch v := value.(type) {
 		case nil, bool, int64:
 			out[name] = v
 		case int:
 			out[name] = int64(v)
 		case float64:
-			if v == float64(int64(v)) && v > -(1<<53) && v < 1<<53 {
+			if v >= -(1<<63) && v < 1<<63 && v == float64(int64(v)) {
 				out[name] = int64(v)
 			} else {
 				out[name] = v
@@ -377,18 +406,7 @@ func ExtractJSONFields(body []byte, fields map[string]string) (Row, error) {
 		if !found {
 			continue
 		}
-		switch v := value.(type) {
-		case json.Number:
-			if i, err := v.Int64(); err == nil {
-				row[name] = i
-			} else if f, err := v.Float64(); err == nil {
-				row[name] = f
-			}
-		case nil, bool, string:
-			row[name] = v
-		default:
-			return nil, fmt.Errorf("probe field %q is an array or object; a read returns scalars", name)
-		}
+		row[name] = value
 	}
 	return row.normalize()
 }
