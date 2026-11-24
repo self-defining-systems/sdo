@@ -109,8 +109,7 @@ type VerificationStatus string
 const VerificationAwaitingResponderCompletion VerificationStatus = "awaiting_responder_completion"
 
 type ToolResponse struct {
-	RecordedErrorCode contracts.MitigationReport_Status `json:"error_code,omitempty"`
-	Text              string                            `json:"text,omitempty"`
+	Text string `json:"text,omitempty"`
 	// Data is a structured answer (`map` with Structured), never prose in JSON.
 	Data                json.RawMessage     `json:"data,omitempty"`
 	Burst               *prober.BurstResult `json:"burst,omitempty"`
@@ -608,6 +607,7 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 		if response.Error != "" {
 			response.Summary = response.Error
 		}
+		requestJSON, _ := json.Marshal(request)
 		if l.Request.ExternalMessage != "" {
 			response.Healthy = false
 			response.DetectorStates = nil
@@ -636,7 +636,8 @@ func (l *ResponderLoop) Handle(ctx context.Context, request ToolRequest) (respon
 			return
 		}
 		l.stampProvenance(ctx, request, &response)
-		l.recordToolCall(request, response, applied)
+		responseJSON := recordedToolResponseJSON(response, applied)
+		l.calls = append(l.calls, ToolCall{Command: request.Command, At: l.clock().UTC(), RequestJSON: string(requestJSON), ResponseJSON: string(responseJSON), Error: response.Error, Summary: response.Summary})
 		persistStarted := l.clock()
 		err := l.persistToolState(ctx)
 		l.timing.persist = l.clock().Sub(persistStarted)

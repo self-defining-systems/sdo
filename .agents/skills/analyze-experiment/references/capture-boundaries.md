@@ -215,7 +215,3 @@ same digest; a label digest of the exact old file bytes also still matches.
 
 Script capture identifies Secret resources by the API path and retains only
 their identity, including collection preimages whose items omit TypeMeta.
-Secret-targeting tool calls retain action identity, redacted reason, stage,
-application ID and typed refusal code. Other tool records retain their
-ordinary diagnostic text and plan/apply linkage. Earlier raw records can
-contain credentials.

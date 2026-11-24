@@ -66,11 +66,7 @@ func (l *ResponderLoop) persistToolState(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("encode application evidence: %w", err)
 		}
-		item := applicationEvidence{Receipt: encoded, PlanIDs: application.PlanIDs, Pending: application.Pending}
-		if !hasStructuralSecret(application.Result.Plan.Actions) {
-			item.PreImages, item.Patches = application.Result.PreImages, application.Result.Patches
-		}
-		evidence = append(evidence, item)
+		evidence = append(evidence, applicationEvidence{Receipt: encoded, PlanIDs: application.PlanIDs, Pending: application.Pending, PreImages: application.Result.PreImages, Patches: application.Result.Patches})
 	}
 	var repairs []recordedRepairEvidence
 	for _, repair := range l.applicationRepairsLocked() {
