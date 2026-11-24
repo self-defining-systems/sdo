@@ -432,3 +432,22 @@ def test_terminating_a_blocking_session_is_a_fixing_write(tmp_path: Path) -> Non
     )
     row = measure(tmp_path)
     assert (row.ttf_s, row.last_write_source) == (8, "claude_tool_start")
+
+
+def test_a_fix_within_the_client_timeout_of_the_last_bad_second_counts(tmp_path: Path) -> None:
+    # A hanging request is charged to the second it started: the kill that ends the hang can land a few seconds after
+    # the last bad second. A write well after it cannot explain the recovery.
+    grade(tmp_path)  # last_bad_second 29, inject at 0
+    put(tmp_path, "operator/done.json", {"started_at": at(3), "ended_at": at(40)})
+
+    def row(second: int):
+        put(tmp_path, "operator/done.json", {"started_at": at(3), "ended_at": at(40)})
+        transcript(
+            tmp_path,
+            "operator/transcript.jsonl",
+            [(second, second + 1, "kubectl delete pod web-1", False, 'pod "web-1" deleted')],
+        )
+        return measure(tmp_path)
+
+    assert row(32).ttf_s == 29  # within the slack
+    assert row(36).ttf_s is None  # too late
