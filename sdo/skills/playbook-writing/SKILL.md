@@ -11,8 +11,8 @@ Copy the closer of `examples/template-drift/` or `examples/stuck-pods/` to
 - `Spec()`: the `ID` and no object role. SDO tries it on every pass, so `Diagnose` finds its own subject through `ReadView` (app map,
   owners, `DiffAgainstSource`) and returns `program.NoMatch` when it is absent.
 - `Diagnose`: test the state your fix changed (a row, setting, key or object field), read live, not a symptom. A log line is the symptom's echo (it can rotate away): never require it; at most `Evidence` once matched. Select the fault's own state exactly as you saw it (column type, constraint text, key).
-  Return `program.Match`, `program.NoMatch`, or `program.Unknown` (failed read, unbaselined store, unscanned `ScanTruncated`). It must Match its own incident before you save it; stay `NoMatch` on a healthy install or another fault. A gone object is not a failed read: it is missing from its list (`v.ConfigMaps()`), and `DiffAgainstSource` of it errors.
-- For a Secret, `DiffAgainstSource` compares accepted and live data inside the operator. Use `Changed` and the `data` key names in `Sides()` to diagnose drift. Changed keys appear on both sides.
+  Return `program.Match`, `program.NoMatch`, or `program.Unknown` (failed read, unbaselined store, unscanned `ScanTruncated`). It must Match its own incident before you save it; stay `NoMatch` on a healthy install or another fault. An absent object is not a failed read. Check its list.
+- Secret drift: use `DiffAgainstSource` and its key names in `Sides()`. Changed keys appear on both sides.
 - `Mitigate`: the changes that fixed it, in order: `program.DeletePod`,
   `program.RestartRollout`, `program.SetField`; for an `sdo mitigate X`, the same
   `program.X` with the same fields.
